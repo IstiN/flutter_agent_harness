@@ -36,7 +36,7 @@ name: Bench MLS
 # attribution via bench/pricing.json, #1123) — see docs/bench.md.
 #
 # Secrets (owner-provisioned; the workflow never hardcodes them):
-#   FA_BENCH_ZAI_KEY        — z.ai key for glm-5.3-flash (shared with bench-4.0.yml)
+#   FA_BENCH_ZAI_KEY        — z.ai key for glm-5.3-flash (shared with bench-harbor.yml)
 #   DAYTONA_API_KEY         — provider=daytona (OQ1: provider is a required input)
 #   MODAL_TOKEN_ID/SECRET   — provider=modal
 # A missing secret fails fast in `plan`, naming the exact key to add.
@@ -102,7 +102,7 @@ jobs:
 
       - run: dart pub get
 
-      # Same bundle contract as bench.yml / bench-4.0.yml: tar the bundle/ dir
+      # Same bundle contract as bench.yml / bench-harbor.yml: tar the bundle/ dir
       # so the adapter extracts bin/fah at the top level of /opt/fa.
       - name: Build fa CLI bundle (Linux)
         run: |
@@ -131,7 +131,7 @@ jobs:
 
       # stdlib-only builder/summary tests gate the spend: a bad command line
       # or a lost shard costs a multi-hour GPU run. Includes the REG pins on
-      # bench.yml / bench-4.0.yml (AC5).
+      # bench.yml / bench-harbor.yml (AC5).
       - name: Unit-test bench builders
         run: python -m unittest discover -s bench/mls_bench -v
 
@@ -170,7 +170,7 @@ jobs:
   # The self-hosted runner only orchestrates remote sandboxes (Daytona /
   # Modal); it needs no docker and has no 6h hosted-runner cap to trip over
   # (5h agent budget + task-specific verifier can exceed one). Same uv-managed
-  # python 3.13 as bench-4.0.yml: harbor (typer) breaks on the runner's 3.14.
+  # python 3.13 as bench-harbor.yml: harbor (typer) breaks on the runner's 3.14.
   nop:
     name: Ladder nop (sanity env check)
     needs: plan
@@ -369,7 +369,7 @@ jobs:
           .bench-venv/bin/python bench/mls_bench/build_run.py check-env \
             --provider "$PROVIDER" --stage agent --subset "$SUBSET"
 
-      # Same env contract as bench.yml / bench-4.0.yml: the adapter reads
+      # Same env contract as bench.yml / bench-harbor.yml: the adapter reads
       # FA_PROVIDER_* / the key from the harbor process env and ships them
       # base64-encoded into the task container. PYTHONPATH carries BOTH the
       # MLS checkout (its run configs' harbor_env import) and this repo's

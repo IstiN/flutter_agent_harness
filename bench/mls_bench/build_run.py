@@ -36,10 +36,10 @@ import sys
 import tomllib
 from pathlib import Path
 
-HARBOR_VERSION = "0.23.0"  # the adapter's pin (see bench-4.0.yml)
+HARBOR_VERSION = "0.23.0"  # the adapter's pin (see bench-harbor.yml)
 SANITY_TASK = "ml-clustering-algorithm"  # upstream documented harness-sanity CPU task
 AGENT_IMPORT = "bench.harbor_fa.fa_agent:FaAgent"
-MODEL_ENV_VAR = "FA_BENCH_ZAI_KEY"  # standing z.ai key, shared with bench.yml / bench-4.0.yml
+MODEL_ENV_VAR = "FA_BENCH_ZAI_KEY"  # standing z.ai key, shared with bench.yml / bench-harbor.yml
 
 # Constant NAME literals only. Values are never read anywhere in this
 # module (membership tests in missing_env_names) — the fail-fast print
@@ -62,7 +62,7 @@ TIMEOUT_KNOBS = (
 # it can be cut off while verifying (upstream documents 29 such tasks).
 MODAL_SANDBOX_CAP_SEC = 86400
 
-# z.ai coding endpoint; same preconfig shape as bench.yml / bench-4.0.yml,
+# z.ai coding endpoint; same preconfig shape as bench.yml / bench-harbor.yml,
 # with the model taken from the dispatch input (review round 3, -a5C).
 ZAI_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
 ZAI_KEY_ENV = "FA_KEY_API_Z_AI_Z_AI"
@@ -250,7 +250,7 @@ def build_command(
         "harbor", "run", "-c", config,
         "--job-name", job_name,
         "-o", "jobs",
-        "-n", "1",  # z.ai rate-limit safe, same discipline as bench-4.0.yml
+        "-n", "1",  # z.ai rate-limit safe, same discipline as bench-harbor.yml
         "-y",       # non-interactive CI: auto-confirm host-environment prompts
         "--ek", f"gpu_type={gpu_type}",
     ]
@@ -376,7 +376,12 @@ def main() -> int:
     p.add_argument("--stage", required=True, choices=("nop", "oracle", "agent", "plan"))
     p.set_defaults(func=cmd_check_required_env)
 
-    p = with_common(sub.add_parser("preconfig"))
+    # Self-sufficient: only --model, with the workflow's call shape
+    # (`preconfig --model "$MODEL"`) valid as-is. provider/subset/gpu-type
+    # are irrelevant to the preconfig and stay absent rather than required
+    # (round-5 review: with_common's required flags broke every shard).
+    p = sub.add_parser("preconfig")
+    p.add_argument("--model", default="glm-5.3-flash")
     p.set_defaults(func=cmd_preconfig)
 
     args = parser.parse_args()

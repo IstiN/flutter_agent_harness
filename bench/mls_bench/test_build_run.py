@@ -5,7 +5,7 @@ AC4  - no timeout knob in any built invocation, across every
        stage x provider x subset combination.
 AC2  - secret fail-fast names the exact key to add.
 E3   - subset=full requires confirm-full=yes.
-REG-1/AC5 - bench.yml / bench-4.0.yml byte-for-byte today's surfaces:
+REG-1/AC5 - bench.yml / bench-harbor.yml byte-for-byte today's surfaces:
        defining lines intact, zero MLS contamination, and the new workflow
        is dispatch-only.
 
@@ -235,8 +235,8 @@ class RegressionPinsTest(unittest.TestCase):
         self.assertNotIn("mls", text.lower())
 
     def test_bench_harbor_family_anchors(self):
-        # #1128 folded bench-4.0.yml into the whole-family surface; the
-        # 4.0 anchors and the MLS-free boundary move with it.
+        # #1128 folded the old bench-4.0.yml into the whole-family surface;
+        # the 4.0 anchors and the MLS-free boundary move with it.
         text = (WORKFLOWS / "bench-harbor.yml").read_text()
         self.assertIn("terminal-bench/terminal-bench@4.0.0", text)
         self.assertIn("fa_agent:FaAgent", text)
@@ -304,10 +304,12 @@ class PreconfigTest(unittest.TestCase):
         cfg = json.loads(build_run.preconfig_json('x"y\\z'))
         self.assertEqual(cfg["model"], 'x"y\\z')
 
-    def test_cli_preconfig_matches_builder(self):
+    def test_cli_preconfig_matches_workflow_call_shape(self):
+        # The workflow calls `preconfig --model "$MODEL"` with no other
+        # flags; that exact shape must work (round-5 review: with_common's
+        # required --provider/--subset broke it in every agent shard).
         proc = subprocess.run(
-            [sys.executable, "-m", "build_run", "preconfig",
-             "--provider", "daytona", "--subset", "smoke-cpu", "--model", "m1"],
+            [sys.executable, "-m", "build_run", "preconfig", "--model", "m1"],
             capture_output=True, text=True, env=os.environ,
             cwd=Path(__file__).resolve().parent,
         )
