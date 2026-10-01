@@ -258,6 +258,17 @@ Future<void> _drive(
         );
         // The tail request continues from the anchor: the completed prefix
         // rides as the last assistant message (issue #1126 AC1).
+        //
+        // The anchor stops at the first completed ToolCall, and the state
+        // DROPS the dead call(s) from that point on (issue #1132 r2): the
+        // dead call never executed (its attempt aborted before a tool
+        // phase ran), so the tail regenerates it — and the regenerated
+        // twin must be the only copy in the final message, else the loop's
+        // tool phase executes the action twice. Hosts saw the dead call
+        // stream, but the transcript settles on what actually executes.
+        final boundary = resume.blocks
+            .indexWhere((block) => block is ToolCall);
+        resume.dropFrom(boundary);
         final anchor = _anchorMessage(model, resume.blocks);
         attemptContext = Context(
           systemPrompt: context.systemPrompt,
@@ -645,25 +656,32 @@ final class _ResumeState {
     blocks.addAll(snapshot.content.take(keptBlocks));
     usage = _sumUsage(usage, snapshot.usage);
   }
+
+  /// Drops completed blocks from [index] on (issue #1132 r2: the anchor's
+  /// truncation point — a dead attempt's completed tool call never
+  /// executed, and if it rides the final message next to its regenerated
+  /// twin the tool phase runs the action twice). The kept prefix's indices
+  /// are unchanged, so event rewriting stays aligned. No-op when [index]
+  /// is negative or past the end.
+  void dropFrom(int index) {
+    if (index < 0 || index >= blocks.length) return;
+    blocks.removeRange(index, blocks.length);
+  }
 }
 
 /// The anchor assistant message handed to the tail request: the completed
 /// prefix as a plain message the model continues from (issue #1126 AC1).
 ///
-/// The anchor stops at the first completed [ToolCall] (issue #1132
-/// review): it rides into the tail REQUEST, and Anthropic/OpenAI hard-400
-/// a tool_use with no following tool_result — the loop's pairing repair
-/// never sees wrapper-built anchors. A completed call inside a dead
-/// attempt never executed, so the tail regenerates it; the host still saw
-/// the streamed call through the rewritten events and the resumed Done
-/// message still carries it (`_ResumeState` keeps every completed block —
-/// only the request-context anchor truncates). Null when nothing safe
-/// remains: the tail then reissues on the original context.
+/// Callers guarantee the prefix is ToolCall-free (`_drive` drops dead
+/// calls at the truncation point first, issue #1132 r2): a wrapper-built
+/// anchor rides into the tail REQUEST, and Anthropic/OpenAI hard-400 a
+/// tool_use with no following tool_result — the loop's pairing repair
+/// never sees wrapper-built anchors. Null when nothing remains: the tail
+/// then reissues on the original context.
 AssistantMessage? _anchorMessage(Model model, List<ContentBlock> blocks) {
-  final anchorEnd = blocks.indexWhere((block) => block is ToolCall);
-  if (anchorEnd == 0) return null;
+  if (blocks.isEmpty) return null;
   return AssistantMessage(
-    content: anchorEnd < 0 ? List.of(blocks) : blocks.sublist(0, anchorEnd),
+    content: List.of(blocks),
     api: model.api,
     provider: model.provider,
     model: model.id,

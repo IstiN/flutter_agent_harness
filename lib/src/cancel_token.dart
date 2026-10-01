@@ -53,14 +53,29 @@ class CancelToken {
 
   /// Re-opens the latch after a machine-initiated cancel that a resuming
   /// layer chose to recover from (issue #1126: the run-idle watchdog's
-  /// [TimeoutException] cancel — the transient-retry wrapper resumes the
-  /// generation and re-arms the SAME token in place).
+  /// [RunIdleWatchdogFire] cancel — the transient-retry wrapper resumes
+  /// the generation and re-arms the SAME token in place).
   ///
   /// Every holder of this token — the loop's tool phases, a later
   /// `Agent.abort()`, the next provider request — keeps working through
   /// the same object: future [CancelTokenSource.cancel] calls re-latch and
   /// fire listeners normally. Never call this for a USER abort: that
   /// cancellation is intent and stands.
+  ///
+  /// Two sharp edges to know before reusing this on another latch:
+  ///
+  /// - **`onCancel` futures are one-shot.** Listeners registered before
+  ///   the cancel have already completed and will never observe a
+  ///   post-[reset] cancel; only listeners registered AFTER the reset
+  ///   fire on the next cancel. A host that linked secondary work to the
+  ///   token across a resume (the #1085 linking pattern) must
+  ///   re-subscribe — nothing re-arms its link automatically.
+  /// - **A cancel racing the reset is dropped.** The window between the
+  ///   machine cancel and this reset is microtask-scale, but a
+  ///   [CancelTokenSource.cancel] landing inside it is a no-op (first
+  ///   reason wins) and its intent is lost — the run continues and the
+  ///   user must abort again. Accepted for the watchdog resume; do not
+  ///   copy the pattern onto latches where that loss matters.
   void reset() {
     _cancelled = false;
     _reason = null;

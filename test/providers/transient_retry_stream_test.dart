@@ -1780,14 +1780,16 @@ void main() {
           ['Working on '],
         );
         expect(anchor.content.whereType<ToolCall>(), isEmpty);
-        // The host-visible logical message still carries the streamed call
-        // exactly once, alongside the tail's completion.
+        // The host-visible logical message carries only what actually
+        // executes: the dead call is dropped from the state (it never ran
+        // — its attempt aborted before a tool phase), the tail's
+        // regeneration is the single copy the tool phase will see.
         final done = events.whereType<DoneEvent>().single;
         expect(
           done.message.content.whereType<TextContent>().map((b) => b.text),
           ['Working on ', 'done'],
         );
-        expect(done.message.content.whereType<ToolCall>(), hasLength(1));
+        expect(done.message.content.whereType<ToolCall>(), isEmpty);
       },
     );
 
@@ -1851,7 +1853,15 @@ void main() {
           requestContexts[1].messages.length,
           requestContexts[0].messages.length,
         );
-        expect(events.whereType<DoneEvent>(), isNotEmpty);
+        // The dead call is dropped entirely: the resumed message carries
+        // only the tail's content, so nothing unexecuted rides the
+        // transcript.
+        final done = events.whereType<DoneEvent>().single;
+        expect(done.message.content.whereType<ToolCall>(), isEmpty);
+        expect(
+          done.message.content.whereType<TextContent>().map((b) => b.text),
+          ['done'],
+        );
       },
     );
 
