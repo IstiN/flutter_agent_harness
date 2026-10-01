@@ -80,18 +80,25 @@ void main() {
       );
     });
 
-    test('rejects offset/limit combined with a selector', () async {
-      await env.writeFile('f.txt', 'a\nb');
-      expect(
-        tool.execute({'path': 'f.txt:1-2', 'offset': 1}, null, null),
-        throwsA(
-          isA<StateError>().having(
-            (e) => e.message,
-            'message',
-            contains('offset/limit cannot be combined with a path selector'),
-          ),
-        ),
+    test('coerces offset/limit combined with a selector: the selector wins '
+        'with an ignore notice (issue #862 AC4)', () async {
+      await env.writeFile('f.txt', 'a\nb\nc\nd');
+      final result = await tool.execute(
+        {'path': 'f.txt:2-3', 'offset': 1, 'limit': 50},
+        null,
+        null,
       );
+      expect(_text(result), contains('b\nc'));
+      expect(_text(result), contains('IGNORED'));
+      expect(_text(result), contains('offset'));
+      expect(_text(result), contains('limit'));
+    });
+
+    test('selector + limit only still reads the selector range', () async {
+      await env.writeFile('f.txt', 'a\nb\nc');
+      final result = await tool.execute({'path': 'f.txt:1', 'limit': 2}, null, null);
+      expect(_text(result), contains('a'));
+      expect(_text(result), contains('limit'));
     });
 
     group('multi-range', () {

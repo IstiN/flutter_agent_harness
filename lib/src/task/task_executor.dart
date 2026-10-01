@@ -21,6 +21,7 @@ import 'dart:convert';
 
 import '../agent/auto_compactor.dart';
 import '../agent/agent.dart';
+import '../agent/misuse_breaker.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../agent/param_validator.dart';
@@ -85,7 +86,12 @@ final class TaskExecutor {
     this.childSessionFactory,
     this.childSessionOpener,
     this.compactionEngine,
+    this.misuseBreaker = true,
   });
+
+  /// The tool-misuse circuit breaker switch (issue #862, default true):
+  /// every spawned child agent gets a breaker wired into its loop.
+  final bool misuseBreaker;
 
   /// The parent tool pool (already minus any host-hidden tools).
   final List<AgentTool> childTools;
@@ -625,6 +631,9 @@ final class TaskExecutor {
       toolRegistry: _childToolRegistry(definition),
       externalSteeringSource: () => _inboxSteeringMessages(id),
       externalSteeringProbe: () => manager.hasPendingMessages(id),
+      // Issue #862: children get the same misuse circuit breaker as the
+      // parent loop — the luna death was a child.
+      toolMisuseBreaker: misuseBreaker ? ToolMisuseBreaker() : null,
     );
     final agent = child;
     final inboxWakeSub = manager.events.listen((event) {
@@ -798,6 +807,9 @@ final class TaskExecutor {
       externalSteeringProbe: subagentManager == null
           ? null
           : () => subagentManager!.hasPendingMessages(id),
+      // Issue #862: children get the same misuse circuit breaker as the
+      // parent loop — the luna death was a child.
+      toolMisuseBreaker: misuseBreaker ? ToolMisuseBreaker() : null,
     );
     final inboxWakeSub = subagentManager?.events.listen((event) {
       if (event.handle.id == id && event.message != null) {

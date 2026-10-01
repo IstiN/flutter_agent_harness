@@ -48,6 +48,7 @@ import '../trajectory/trajectory_blobs.dart';
 import '../trajectory/trajectory_record.dart';
 import 'agent_tool.dart';
 import 'image_registry.dart';
+import 'misuse_breaker.dart';
 import 'tool_pairing.dart';
 
 /// Marker embedded in the over-window guard's error message (see
@@ -395,6 +396,7 @@ final class AgentLoopConfig {
     this.maxSteeringTurns = 20,
     this.contextWindowCap,
     this.wireDump = false,
+    this.toolMisuseBreaker,
   });
 
   /// The model to call each turn.
@@ -472,6 +474,13 @@ final class AgentLoopConfig {
   /// active pipeline and cap before persisting. Default: false.
   final bool wireDump;
 
+  /// The tool-misuse circuit breaker (issue #862): N consecutive identical
+  /// rejections of the same tool arm a corrective note for the next request
+  /// payload; M stop executing that identical call for the rest of the run.
+  /// `null` disables the breaker entirely — behavior is byte-identical to
+  /// the pre-breaker loop (E5).
+  final ToolMisuseBreaker? toolMisuseBreaker;
+
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
   AgentLoopConfig copyWith({Model? model}) {
     return AgentLoopConfig(
@@ -490,6 +499,7 @@ final class AgentLoopConfig {
       maxSteeringTurns: maxSteeringTurns,
       contextWindowCap: contextWindowCap,
       wireDump: wireDump,
+      toolMisuseBreaker: toolMisuseBreaker,
     );
   }
 }
@@ -869,6 +879,9 @@ Future<List<Message>> _runAgentLoop({
     tools: context.tools,
   );
   var currentConfig = config;
+  // Issue #862: breaker counters are per run (per user turn) — a fresh
+  // prompt starts from zero consecutive failures.
+  config.toolMisuseBreaker?.beginRun();
 
   await _emitRunStart(prompts, emit);
 
@@ -1523,6 +1536,19 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
       tools: requestContext.tools,
     );
   }
+  // Issue #862: an armed corrective note rides the NEXT request payload as
+  // a trailing user message — visible to the model, never in the transcript.
+  final misuseNote = config.toolMisuseBreaker?.drainPendingNote();
+  if (misuseNote != null) {
+    requestContext = Context(
+      systemPrompt: requestContext.systemPrompt,
+      messages: [
+        ...requestContext.messages,
+        UserMessage.text(misuseNote),
+      ],
+      tools: requestContext.tools,
+    );
+  }
   return (requestContext, repaired.report);
 }
 
@@ -2025,6 +2051,17 @@ Future<_ToolCallPreparation> _prepareToolCall(
     );
   }
 
+  // Issue #862: after 6 consecutive identical failures the loop refuses to
+  // execute this exact call again in this run — an honest error naming the
+  // misuse instead of another silent loop turn.
+  final refusal = config.toolMisuseBreaker?.refusalFor(
+    toolCall.name,
+    toolCall.arguments,
+  );
+  if (refusal != null) {
+    return _ImmediateToolCall(_errorToolResult(refusal), true);
+  }
+
   try {
     return await _runBeforeToolCallHook(
       context,
@@ -2136,6 +2173,25 @@ Future<_FinalizedToolCall> _finalizeExecutedToolCall(
 ) async {
   var result = executed.result;
   var isError = executed.isError;
+
+  // Issue #862: feed the breaker. A failure counts toward the identical-
+  // call thresholds; a success clears the tool's consecutive-failure state.
+  final breaker = config.toolMisuseBreaker;
+  if (breaker != null) {
+    if (isError) {
+      breaker.observeFailure(
+        toolCall.name,
+        toolCall.arguments,
+        result.content
+            .whereType<TextContent>()
+            .map((block) => block.text)
+            .join('\n'),
+        toolDescription: _findTool(context, toolCall.name)?.description,
+      );
+    } else {
+      breaker.observeSuccess(toolCall.name);
+    }
+  }
 
   final afterToolCall = config.afterToolCall;
   if (afterToolCall != null) {

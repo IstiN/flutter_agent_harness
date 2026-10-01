@@ -224,15 +224,15 @@ String? _parseAgentModeValue(Object? value) {
 /// (issue #679: bare prompt, 4-tool sweep, boot print) the executable
 /// re-resolves through its flag > env > config ladder. `omp` carries no
 /// harness behavior, so it never reaches that ladder.
-({int? contextWindowCap, String? mode, String? agentMode})? _parseAgentSection(
-  Object? node,
-) {
+({int? contextWindowCap, String? mode, String? agentMode, bool? misuseBreaker})?
+_parseAgentSection(Object? node) {
   if (node == null) return null;
   if (node is! YamlMap) {
     throw ConfigException('agent must be a map, got: $node');
   }
   int? cap;
   String? mode;
+  bool? misuseBreaker;
   for (final key in node.keys) {
     switch (key) {
       case 'contextWindowCap':
@@ -252,6 +252,12 @@ String? _parseAgentModeValue(Object? value) {
         cap = value;
       case 'mode':
         mode = _parseAgentModeValue(node[key]);
+      case 'misuseBreaker':
+        final value = node[key];
+        if (value is! bool) {
+          throw ConfigException('"agent.misuseBreaker" must be a boolean');
+        }
+        misuseBreaker = value;
       default:
         throw ConfigException('unknown "agent" key: $key');
     }
@@ -260,6 +266,7 @@ String? _parseAgentModeValue(Object? value) {
     contextWindowCap: cap,
     mode: mode,
     agentMode: mode == 'pi' ? 'pi' : null,
+    misuseBreaker: misuseBreaker,
   );
 }
 
@@ -348,6 +355,7 @@ final class CliConfig {
     this.wireDump = false,
     this.images,
     this.agentMode,
+    this.misuseBreaker = true,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
@@ -482,6 +490,7 @@ final class CliConfig {
       contextWindowCap: agentSection?.contextWindowCap,
       agentMode: agentSection?.agentMode,
       agentLoadMode: agentSection?.mode,
+      misuseBreaker: agentSection?.misuseBreaker ?? true,
       // The subagents section (background-subagent heartbeat, issue #383)
       subagents: SubagentsConfig.fromYaml(map['subagents']),
       waiting: WaitingConfig.fromYaml(map['waiting']),
@@ -693,6 +702,13 @@ final class CliConfig {
   /// null (absent or explicit `default`). Resolved against the flag/env
   /// tiers by the executable via `resolveHarnessMode`.
   final String? agentMode;
+
+  /// The tool-misuse circuit breaker switch (`agent.misuseBreaker`,
+  /// issue #862, default true): 3 consecutive identical tool-call
+  /// rejections arm a corrective note in the next request; 6 stop executing
+  /// that identical call for the run. `false` preserves the pre-breaker
+  /// behavior byte-identically (E5).
+  final bool misuseBreaker;
 
   /// Tool-load preset from `agent.mode` (`default|pi|omp`, issue #680):
   /// the curated essential set that boots into the schema; everything

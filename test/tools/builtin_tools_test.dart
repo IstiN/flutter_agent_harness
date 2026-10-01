@@ -483,36 +483,64 @@ void main() {
       );
     });
 
-    test('rejects mixed patch + oldText/newText arguments', () {
+    test('coerces a valid patch + complete exact-match payload: patch '
+        'applies, notice names the ignored payload (issue #862 AC1)', () async {
+      final header = await readHeader('main.dart');
+      final result = await editTool.execute(
+        {
+          'path': 'main.dart',
+          'patch': '$header\nSWAP 2.=2:\n+  print("patched");',
+          'oldText': 'void main() {',
+          'newText': 'void main() { /* exact */',
+        },
+        null,
+        null,
+      );
+      // The patch won; the exact-match payload was ignored with a notice.
+      expect(_text(result), contains('First change at line 2.'));
+      expect(_text(result), contains('IGNORED'));
+      expect(_text(result), contains('oldText/newText'));
       expect(
-        editTool.execute(
-          {
-            'path': 'main.dart',
-            'patch': '[main.dart#1A2B]\nDEL 1',
-            'oldText': 'a',
-            'newText': 'b',
-          },
-          null,
-          null,
-        ),
-        throwsA(
-          isA<StateError>().having(
-            (e) => e.message,
-            'message',
-            contains('not both'),
-          ),
-        ),
+        (await env.readTextFile('main.dart')).valueOrNull,
+        'void main() {\n  print("patched");\n}\n',
       );
     });
 
-    test('rejects calls with neither mode fully specified', () {
+    test('coerces a malformed patch + complete exact-match payload: '
+        'exact-match applies with the same notice shape (issue #862 AC2)',
+        () async {
+      final result = await editTool.execute(
+        {
+          'path': 'main.dart',
+          'patch': 'definitely not a hashline patch',
+          'oldText': '  print("hello");',
+          'newText': '  print("exact");',
+        },
+        null,
+        null,
+      );
+      expect(_text(result), contains('IGNORED'));
+      expect(_text(result), contains('patch'));
+      expect(
+        (await env.readTextFile('main.dart')).valueOrNull,
+        'void main() {\n  print("exact");\n}\n',
+      );
+    });
+
+    test('rejects calls with neither mode fully specified, with a remedy '
+        'example (issue #862 AC3)', () {
       expect(
         editTool.execute({'path': 'main.dart'}, null, null),
         throwsA(
           isA<StateError>().having(
             (e) => e.message,
             'message',
-            contains('Missing arguments'),
+            allOf(
+              contains('Missing arguments'),
+              contains('Example:'),
+              contains('oldText'),
+              contains('patch'),
+            ),
           ),
         ),
       );
@@ -572,10 +600,20 @@ void main() {
       );
     });
 
-    test('malformed patches surface a parse error', () {
+    test('malformed patches with no rescue surface the parse error plus '
+        'the remedy example (issue #862)', () {
       expect(
         editTool.execute({'patch': 'DEL 1'}, null, null),
-        throwsA(isA<HashlineFormatException>()),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('[PATH#HASH]'),
+              contains('Example:'),
+            ),
+          ),
+        ),
       );
     });
 
