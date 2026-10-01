@@ -48,9 +48,12 @@ final RegExp _secondPerson = RegExp(
 ///   regular verbs ending in -ed (minus present-tense verbs that merely
 ///   end in -ed) or a common irregular. English irregular pasts are a
 ///   finite closed set, so the irregular alternation is exhaustive for
-///   the verbs summaries use. "you just merged the PR" is a recency
-///   claim, while "you just need to re-run make", "if you just look at
-///   the failing test", and reported speech ("you just said" / "you
+///   the verbs summaries use - except the homographs whose past spelling
+///   equals their present (hit, cut, set, put, read): matching those
+///   would also strip present-tense habituals, so they are the
+///   deliberate floor. "you just merged the PR" is a recency claim,
+///   while "you just need to re-run make", "if you just look at the
+///   failing test", and reported speech ("you just said" / "you
 ///   just told me") are durable and survive.
 final RegExp _ephemeralClaim = RegExp(
   r"\byour\s+(?:last|previous|prior)\b"
@@ -58,7 +61,8 @@ final RegExp _ephemeralClaim = RegExp(
   r"|\byou(?:'ve\s+just|'re\s+about to|\s+(?:were\s+)?(?:just\s+)?about to"
   r"|\s+just(?=\s+(?:(?!(?:need|seed|embed|speed|proceed|exceed|succeed)\b)\w+ed"
   r"|(?:ran|did|went|got|saw|wrote|made|found|broke|sent|took|left|came|gave"
-  r'|built|lost|kept|held|felt|spent|brought|heard|met|paid|won))\b))\b'
+  r"|built|lost|kept|held|felt|spent|brought|heard|met|paid|won"
+  r"|began|forgot|sold|fell|rose|flew|grew|threw|drove|spoke|chose|stood))\b))\b"
   r'|\b(?:was|were)\s+dropped\b',
   caseSensitive: false,
 );

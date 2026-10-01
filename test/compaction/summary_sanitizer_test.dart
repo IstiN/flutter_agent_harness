@@ -428,5 +428,15 @@ void main() {
       expect(result.text, durable);
       expect(result.stripped, isEmpty);
     });
+
+    test('R6: unambiguous irregular pasts strip', () {
+      final result = sanitizeSummary(
+        'You just began the retry. You just forgot the flag. '
+        'You just sold the license. You just threw the switch.\n'
+        '- The license key is in the vault.\n',
+      );
+      expect(result.text, '- The license key is in the vault.\n');
+      expect(result.stripped, hasLength(4));
+    });
   });
 }
