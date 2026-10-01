@@ -140,7 +140,11 @@ extension on AgentCli {
         io.writeln(line);
       }
     }
-    io.writeln(_style.dim('─' * 20));
+    // The trailing rule is line-mode chrome only: in the TUI it costs a
+    // glass row on resume, and the resumed window anchors at the
+    // transcript region — the spare row is tail parity (issue #446
+    // wave-14).
+    if (!_useTui) io.writeln(_style.dim('─' * 20));
   }
 
   /// `/resume`: switches to the most recently created session across every
