@@ -8,6 +8,7 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'package:fa/apps/app_icon.dart';
@@ -562,13 +563,7 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     return 0.5;
   }
 
-  static bool _sameKeys(List<String> a, List<String> b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
+  static bool _sameKeys(List<String> a, List<String> b) => listEquals(a, b);
 
   // --- tile menu (hold-release without movement) ---------------------------
 

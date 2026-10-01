@@ -286,6 +286,7 @@ String faEditorKeyNote(FaUiStrings strings) => KeychainStore.isSupported
     : strings.settingsEditorKeyNote;
 
 /// The localized label for a media slot (the raw name for unknown slots).
+// crap:ignore: l10n switch table twinned with the app's AppLocalizations variant — parallel string systems with no shared supertype to delegate through — gh-1106.
 String faMediaSlotLabel(FaUiStrings strings, String slot) => switch (slot) {
   MediaSlot.imageGeneration => strings.mediaModelsSlotImageGeneration,
   MediaSlot.audioTts => strings.mediaModelsSlotAudioTts,
