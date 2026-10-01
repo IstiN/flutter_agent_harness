@@ -659,12 +659,23 @@ final class WindowedSessionStorage
   /// the tail re-reads the same range (idempotent).
   Future<List<SessionRecord>> jumpToTail() async {
     await _reAnchorToTail();
-    while (_hasOlder &&
-        _entries.length < _residentRecordCap &&
-        _residentWindowBytes < _residentByteCap) {
-      final joined = await loadOlder();
-      if (joined.isEmpty) break;
+    // The fill pages up to the resident cap WITHOUT loadOlder's
+    // deep-paging eviction running — that eviction drops the NEWEST side
+    // and would un-anchor the tail just landed, re-lighting hasNewer into
+    // an auto-follow loop (review -Ffw). Overshoot instead trims from
+    // the OLD side only, keeping the tail extent pinned.
+    _suspendEviction = true;
+    try {
+      while (_hasOlder &&
+          _entries.length < _residentRecordCap &&
+          _residentWindowBytes < _residentByteCap) {
+        final joined = await loadOlder();
+        if (joined.isEmpty) break;
+      }
+    } finally {
+      _suspendEviction = false;
     }
+    _evictToBound(newestSide: false);
     return _windowBranch();
   }
 

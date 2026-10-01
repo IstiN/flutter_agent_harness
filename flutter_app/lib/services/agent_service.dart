@@ -2086,24 +2086,48 @@ class AgentService extends ChangeNotifier
     if (_loadingHistory) return;
     final windowed = _windowed;
     if (windowed == null) return;
+    // At-tail tap: nothing sits below — skip the rebuild and the
+    // whole-file count re-scan entirely.
+    if (!windowed.hasNewer) return;
     final gen = _loadGeneration;
     _loadingHistory = true;
     notifyListeners();
     try {
       await windowed.jumpToTail();
       if (gen != _loadGeneration) return;
+      // Let an in-flight persist pass flush first so the branch read
+      // below observes just-finalized records: a turn boundary landing
+      // mid-jump must not leave its row stranded out of view until the
+      // next reprojection (review -FbK vanish variant). Best effort —
+      // a failed persist must not break the jump.
+      if (_persistPass case final pass?) {
+        try {
+          await pass;
+        } on Object {
+          // Ignored: the next persist pass retries.
+        }
+        if (gen != _loadGeneration) return;
+      }
       await _syncViewToWindow(windowed);
       if (gen != _loadGeneration) return;
-      // Mid-run the transcript carries live rows the projection cannot
-      // know yet — the streaming assistant/thinking bubbles are plain
-      // objects in [messages], not records. Rebuild the tail projection,
-      // then re-append those rows so incoming deltas keep mutating
-      // VISIBLE rows instead of orphaned ones.
-      final liveRows = [
-        _currentThinkingMessage,
-        _currentAssistantMessage,
-      ].nonNulls.toList();
       await _applyViewBranch();
+      if (gen != _loadGeneration) return;
+      // Live rows the projection cannot know — in-flight tool activity
+      // tiles and the streaming assistant/thinking bubbles are plain
+      // rows in [messages], not records yet. Re-read AFTER the rebuild
+      // settles: capturing earlier races a mid-jump turn boundary into
+      // re-appending a bubble the finalize already landed as a record —
+      // a duplicate (review -FbK). There is no await between the rebuild
+      // and this capture, so the fields are read atomically with the
+      // projection snapshot. The contains-check and the empty-bubble
+      // guard mirror _finalizeAssistant's own invariants.
+      final liveRows = [
+        ..._inFlightToolRows.map((e) => e.row),
+        if (_currentThinkingMessage case final t?) t,
+        if (_currentAssistantMessage case final a?
+            when a.content.trim().isNotEmpty)
+          a,
+      ].where((row) => !messages.contains(row)).toList();
       messages.addAll(liveRows);
       await _refreshHistoryAbove();
       if (gen != _loadGeneration) return;
@@ -2588,6 +2612,12 @@ class AgentService extends ChangeNotifier
   /// streaming). Long tool calls suppress it via [_activeToolCalls].
   Timer? _idleWatchdog;
   int _activeToolCalls = 0;
+
+  /// In-flight tool activity tiles (unpersisted live rows): start adds,
+  /// end untracks, agent start clears. A mid-run view rebuild re-appends
+  /// them so the jump-to-tail never drops a running tool from the
+  /// transcript (issue #1159 review -Fl1).
+  final List<({String toolName, FahChatMessage row})> _inFlightToolRows = [];
 
   /// Aborts the current run, if any.
   @override

@@ -525,6 +525,16 @@ void main() {
     }
     expect(service.isStreaming, isFalse);
     expect(service.messages.last.content, 'full assistant message');
+    // The mid-jump turn boundary must not duplicate: the run finalized
+    // while the jump was rebuilding, and the re-appended live rows were
+    // captured AFTER the rebuild - the finalized bubble lands exactly
+    // once, and no stale pre-finalize bubble lingers (issue #1159
+    // review).
+    expect(
+      service.messages.where((m) => m.content == 'full assistant message'),
+      hasLength(1),
+    );
+    expect(service.messages.where((m) => m.content == 'tail-jump!!'), isEmpty);
     // A follow-up page-down — the UI's at-bottom follow does this on its
     // own — drains what the recorder parked below mid-run.
     await service.loadNewerHistory();
