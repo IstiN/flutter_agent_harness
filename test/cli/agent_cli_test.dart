@@ -6,6 +6,8 @@ import 'dart:typed_data';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
+import 'package:flutter_agent_harness/src/cli/paste_image.dart';
+
 import 'agent_cli_test_support.dart';
 
 void main() {
@@ -36,6 +38,7 @@ void main() {
     String? providerKind,
     SkillsAccess? skillsAccess,
     CompactionEngine? compactionEngine,
+    ApprovalMode approvalMode = ApprovalMode.yolo,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -43,6 +46,7 @@ void main() {
         apiKey: 'test-key',
         env: envOverride ?? env,
         sessionRoot: '/sessions',
+        approvalMode: approvalMode,
         envVarIsSet: envVarIsSet,
         envVarValue: envVarValue,
         modelsFetcher: modelsFetcher,
@@ -640,6 +644,57 @@ void main() {
       await run;
       expect(fake.calls, 0);
     });
+
+    test('a message after a skill run clears that skill\'s turn grants — '
+        'path-led included (issue #1152)', () async {
+      await env.createDir('/work/.fah/skills/grants');
+      await env.writeFile(
+        '/work/.fah/skills/grants/SKILL.md',
+        '---\nname: grants\ndescription: Grant read\nallowed-tools: [read]\n'
+            '---\nGrants body.\n',
+      );
+      // Fresh env = memory maintenance due at boot; pin it off so its
+      // consolidate() cannot consume a scripted turn on slow runners.
+      await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+      final fake = FakeStreamFunction([
+        textTurn('skill done'),
+        textTurn('done again'),
+      ]);
+      // always-ask with NO approval UI (non-interactive io): a cleared
+      // read-tier call denies with "no approval UI", so the grant's
+      // presence/absence is directly observable.
+      io.isInteractive = false;
+      final cli = cliFor(fake.call, approvalMode: ApprovalMode.alwaysAsk);
+      final run = cli.run();
+      await waitForIt(() => cli.systemPrompt.contains('<name>grants</name>'));
+
+      io.sendLine('/skill:grants');
+      await waitForIt(() => fake.calls == 1 && !cli.isBusy);
+      final during = await cli.approval.authorize(
+        toolName: 'read',
+        tier: ApprovalTier.read,
+        arguments: const {},
+      );
+      expect(during.allowed, isTrue, reason: 'allowed-tools grants read');
+
+      // The next user message — the #1152 path-led shape — must clear the
+      // grant: it rides the same message tail as plain text.
+      io.sendLine('/tmp/notes find the exported csv');
+      await waitForIt(() => fake.calls == 2 && !cli.isBusy);
+      final after = await cli.approval.authorize(
+        toolName: 'read',
+        tier: ApprovalTier.read,
+        arguments: const {},
+      );
+      expect(
+        after.allowed,
+        isFalse,
+        reason: 'the next message clears turn grants',
+      );
+
+      io.sendLine('/exit');
+      await run;
+    });
   });
 
   test('durable memory facts join the system prompt after startup', () async {
@@ -1121,6 +1176,32 @@ void main() {
       messageText(fake.contexts.last.messages.last as UserMessage),
       message,
     );
+    io.sendLine('/exit');
+    await run;
+  });
+
+  test('an unknown slash token with text keeps its clipboard chips '
+      '(issue #1152: the guard fallback carries images)', () async {
+    const chip = TuiImageAttachment(
+      name: 'clipboard-1.png',
+      mimeType: 'image/png',
+      bytes: [0x89, 0x50, 0x4E, 0x47, 1, 2, 3],
+    );
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+
+    const message = '/unknowntoken объясни этот вывод';
+    await cli.tuiSubmitForTest(message, [chip]);
+    await waitForIt(() => io.out.toString().contains('ok'));
+    final blocks =
+        (fake.contexts.last.messages.last as UserMessage).content
+            as List<ContentBlock>;
+    expect(
+      blocks.whereType<TextContent>().map((b) => b.text).join(' '),
+      contains(message),
+    );
+    expect(blocks.whereType<ImageContent>(), hasLength(1));
     io.sendLine('/exit');
     await run;
   });

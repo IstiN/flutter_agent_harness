@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
+import 'package:flutter_agent_harness/src/cli/paste_image.dart';
+
 import 'agent_cli_test_support.dart';
 
 /// A stream function that blocks one chosen call on a gate (copied from
@@ -290,6 +292,59 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 300));
       expect(stream.calls, 1, reason: 'a known command must not steer');
       expect(io.out.toString(), isNot(contains('a run is already streaming')));
+
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test(
+    'a path-led TUI submit with chips mid-run steers the images too '
+    '(issue #1152 round-2)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final dir = await Directory.systemTemp.createTemp('fah_busy_chips_1152');
+      addTearDown(() => dir.delete(recursive: true));
+      const chip = TuiImageAttachment(
+        name: 'clipboard-1.png',
+        mimeType: 'image/png',
+        bytes: [0x89, 0x50, 0x4E, 0x47, 1, 2, 3],
+      );
+      final stream = _GatedStream([
+        textTurn('first answer'),
+        textTurn('steered answer'),
+      ], gateOnCall: 1);
+      final cli = buildCli(stream);
+      final run = cli.run();
+      await waitForSessions(env);
+
+      io.sendLine('start');
+      await waitForIt(() => stream.calls >= 1 && cli.isBusy);
+      // tuiSubmitForTest awaits _settled (the in-flight gated run) after
+      // handling the line — awaiting it here would deadlock against the
+      // gate below. Fire it, open the gate, THEN await it.
+      final submit = cli.tuiSubmitForTest('${dir.path} summarize this please', [
+        chip,
+      ]);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      stream.gate.complete();
+      await submit;
+      await waitForIt(() => !cli.isBusy, reason: 'first run settles');
+      await waitForIt(() => stream.calls >= 2);
+      await waitForIt(() => !cli.isBusy);
+
+      // The steered turn carries the image next to the path-led text.
+      final blocks =
+          (stream.contexts[1].messages.last as UserMessage).content
+              as List<ContentBlock>;
+      expect(
+        blocks.whereType<TextContent>().map((b) => b.text).join(' '),
+        contains('summarize this please'),
+      );
+      expect(
+        blocks.whereType<ImageContent>().map((b) => b.mimeType),
+        contains('image/png'),
+      );
 
       io.sendLine('/exit');
       await run;

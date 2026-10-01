@@ -2256,7 +2256,7 @@ class AgentCli {
     // to the shared message tail below (viewer routing, per-turn grant
     // reset, clipboard-image passthrough).
     if (trimmed.startsWith('/') && !_isPathLedChat(trimmed)) {
-      await _handleCommand(trimmed);
+      await _handleCommand(trimmed, images: images);
       return;
     }
     await _sendUserMessage(line, images);
