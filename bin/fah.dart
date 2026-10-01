@@ -60,6 +60,7 @@ import 'package:flutter_agent_harness/src/hub/hub_boot_credential.dart';
 import 'self_manage.dart';
 import 'serve_a2a.dart';
 import 'serve_bridge.dart';
+import 'fah_wire_serve.dart';
 import 'package:flutter_agent_harness/src/cli/provider_export.dart';
 
 const _fallbackVersion = '0.1.0';
@@ -122,11 +123,18 @@ var _sigtermSeen = false;
 /// the exit paths.
 Future<int>? _headlessRun;
 
+/// wire-serve (issue #1103): ends the transport (completing the serve
+/// future) so a signal-driven exit tears down GRACEFULLY — runWireServe's
+/// finally aborts any in-flight run, persists, and the process exits.
+/// Null outside wire-serve mode.
+void Function()? _wireServeSettle;
+
 /// Graceful headless abort shared by SIGINT and SIGTERM (issue #155):
 /// abort the run, wait for it to settle (bounded — a wedged provider
 /// cannot hold the exit), flush the HEP stream, exit 130.
 void _gracefulHeadlessExit(void Function() fireInterrupt) {
   fireInterrupt();
+  _wireServeSettle?.call();
   final run = _headlessRun;
   unawaited(
     Future(() async {
@@ -1162,6 +1170,20 @@ Future<void> _runApp(List<String> args) async {
   // parsing: serve-specific flags are stripped from the parsed args and
   // kept for the late interception below (after model/key resolution).
   final serve = splitServeA2aArgs(args);
+  // `fa wire-serve [--port N] [--stdio] [--token T]` (issue #1103) — the
+  // headless AWP server. Intercepted like serve: the parser does not know
+  // the form, and the words must never reach prompt parsing. Flag errors
+  // (--stdio with --port, a bad --port) are LOUD startup failures (E2) —
+  // never a silent fallback to another mode.
+  final WireServeArgs wireServe;
+  try {
+    wireServe = splitWireServeArgs(args);
+  } on FormatException catch (error) {
+    _fail(
+      'usage: fa wire-serve [--port N] [--stdio] [--token T]\n'
+      '${error.message}',
+    );
+  }
   // `fa hub serve [--port N]` — a local DAP hub, no agent boot
   // (docs/dap.md §8.1). Intercepted on the raw args BEFORE the serve
   // marker check below (`hub serve` contains the word "serve" but is a
@@ -1186,7 +1208,9 @@ Future<void> _runApp(List<String> args) async {
 
   late final CliArgs parsed;
   try {
-    parsed = switch (parseCliArgs(serve.cliArgs)) {
+    parsed = switch (parseCliArgs(
+      wireServe.wireServe ? wireServe.cliArgs : serve.cliArgs,
+    )) {
       CliArgsHelp() => _exitWithUsage(packageVersion),
       CliArgsVersion(:final output) => _exitWithVersion(
         packageVersion,
@@ -1690,7 +1714,7 @@ Future<void> _runApp(List<String> args) async {
             baseUrl: baseUrl,
             customProviders: saved.customProviders,
             defaultRoleResolved: defaultRoleResolved,
-            interactive: headlessPrompt == null,
+            interactive: headlessPrompt == null && !wireServe.wireServe,
           );
   } on ConfigException catch (error) {
     _fail(error.message);
@@ -1810,6 +1834,11 @@ Future<void> _runApp(List<String> args) async {
   ];
 
   final terminalIo = _TerminalCliIO(headless: headlessPrompt != null);
+  // wire-serve (issue #1103): the io is a SILENT sink — every rendered
+  // line dies there, so nothing TUI-shaped can ever reach the protocol
+  // stream (the one stdout line is the startup line, written by the
+  // transport, outside the CLI). Diagnostics keep stderr via writeln.
+  CliIO io = wireServe.wireServe ? _WireServeSilentCliIO() : terminalIo;
   // --log-file (issue #91): tee the rendered session trace into a file so
   // a parent CLI's stdout capture cannot swallow it. The sink is a sync
   // RandomAccessFile — unbuffered, so `tail -f` streams the trace live and
@@ -1817,7 +1846,6 @@ Future<void> _runApp(List<String> args) async {
   // (issue #178) is the env twin — the default when the flag is absent,
   // so CI hosts that cannot pass flags still leave the trace; flag wins.
   RandomAccessFile? logTeeFile;
-  CliIO io = terminalIo;
   final logPath = parsed.logFile ?? logFileFromEnv(Platform.environment);
   if (logPath case final path?) {
     final RandomAccessFile tee;
@@ -2091,6 +2119,7 @@ Future<void> _runApp(List<String> args) async {
   // FA_PI_MODE / `agent.mode: pi`) must stay deterministic.
   final freshInstallProviderFlow =
       headlessPrompt == null &&
+      !wireServe.wireServe &&
       !applyFolderModel &&
       parsed.model == null &&
       !parsed.providerExplicit &&
@@ -2531,7 +2560,9 @@ Future<void> _runApp(List<String> args) async {
 
   final sigintSub = ProcessSignal.sigint.watch().listen((_) {
     final wasBusy = cli.isBusy;
-    switch (cli.sigintPolicy.press(headless: headlessPrompt != null)) {
+    switch (cli.sigintPolicy.press(
+      headless: headlessPrompt != null || wireServe.wireServe,
+    )) {
       case SigintAction.interruptAndStay:
         // Press 1 (issue #830): abort the in-flight run (bounded) and
         // STAY ALIVE — the next press inside the window exits. The TUI
@@ -2569,6 +2600,37 @@ Future<void> _runApp(List<String> args) async {
       _sigtermSeen = true;
       _gracefulHeadlessExit(terminalIo.fireInterrupt);
     });
+  }
+
+  // `fa wire-serve` (issue #1103): headless Agent Wire Protocol v1
+  // server. SIGINT/SIGTERM: both route through _gracefulHeadlessExit,
+  // whose fireInterrupt aborts any in-flight run and whose
+  // _wireServeSettle call ends the transport — runWireServe's finally
+  // persists, and this branch's `exit(code)` continuation (registered
+  // before _gracefulHeadlessExit's) wins the race: a graceful server
+  // shutdown is a success, exit 0 (143 on a second SIGTERM, the usual
+  // supervisor escalation).
+  if (wireServe.wireServe) {
+    var sigtermSeen = false;
+    final sigtermSub = ProcessSignal.sigterm.watch().listen((_) {
+      if (sigtermSeen) exit(143);
+      sigtermSeen = true;
+      _gracefulHeadlessExit(terminalIo.fireInterrupt);
+    });
+    final int code;
+    try {
+      code = await (_headlessRun = _runWireServeHost(
+        cli: cli,
+        wireServe: wireServe,
+        terminalIo: terminalIo,
+      ));
+    } finally {
+      await sigtermSub.cancel();
+      await sigintSub.cancel();
+      await stdout.flush();
+      logTeeFile?.closeSync();
+    }
+    exit(code);
   }
 
   if (headlessPrompt != null) {
@@ -2617,4 +2679,135 @@ String? wakeExecutable() {
   final base = exe.split(Platform.pathSeparator).last.toLowerCase();
   if (base == 'dart' || base == 'dart.exe') return null;
   return exe;
+}
+
+/// `fa wire-serve` transport host (issue #1103). WS mode: binds the
+/// loopback port early (fail fast on an occupied port), and prints the
+/// one-time startup line only AFTER the boot — and its lease gate —
+/// succeeded ([runWireServe]'s `onReady`), so a parent never reads a
+/// startup line for a serve that refuses to boot. stdio mode: NDJSON
+/// over stdin/stdout, no startup line. Shutdown triggers: stdin EOF and
+/// SIGTERM (routed through [_wireServeSettle]) — BOTH transports race
+/// the shutdown trigger, so a signal never strands the teardown; boot,
+/// persist, and teardown live in [AgentCli.runWireServe].
+Future<int> _runWireServeHost({
+  required AgentCli cli,
+  required WireServeArgs wireServe,
+  required _TerminalCliIO terminalIo,
+}) async {
+  // --token T is visible in the process list; the env var keeps it out
+  // of `ps` for hosts that prefer that (review #1113 r2, suggestion #5).
+  final token =
+      wireServe.token ??
+      () {
+        final fromEnv = Platform.environment['FA_WIRE_SERVE_TOKEN'];
+        return (fromEnv == null || fromEnv.isEmpty)
+            ? wireServeToken()
+            : fromEnv;
+      }();
+  HttpServer? http;
+  if (!wireServe.stdio) {
+    try {
+      // AC20: a port race is a LOUD startup failure naming the port —
+      // never a silent fallback.
+      http = await bindLoopback(wireServe.port ?? 0);
+    } on SocketException catch (error) {
+      _fail('wire-serve: cannot bind 127.0.0.1:${wireServe.port ?? 0}: $error');
+    }
+  }
+  final shutdown = Completer<void>();
+  _wireServeSettle = () {
+    if (!shutdown.isCompleted) shutdown.complete();
+  };
+  // WS mode: a supervisor closing our stdin pipe also ends the serve
+  // (documented in docs/wire-protocol.md §8). The stdio transport owns
+  // stdin itself in --stdio mode. A stdin ERROR is transport death, not
+  // silence: log it, then end the serve through the same graceful settle
+  // (review #1113 r4 — loud, never silent).
+  StreamSubscription<void>? stdinSub;
+  if (http != null) {
+    stdinSub = stdin.listen(
+      (_) {},
+      onDone: _wireServeSettle!,
+      onError: (Object error) {
+        stderr.writeln('wire-serve: stdin failed: $error');
+        _wireServeSettle!();
+      },
+    );
+  }
+  try {
+    final code = await cli.runWireServe(
+      onReady: http == null
+          ? null
+          : () => writeStartupLine(
+              WireServeStartupLine(port: http!.port, token: token),
+            ),
+      serve: (server) async {
+        if (wireServe.stdio) {
+          final done = serveStdio(server);
+          // stdin EOF is the natural end; a signal-completed shutdown
+          // must ALSO end the serve, or the graceful teardown waits out
+          // its full settle window and the persist never runs (review
+          // #1113 r2, #3).
+          await Future.any([shutdown.future, done]);
+          // The race's loser still runs — surface a late transport
+          // failure (e.g. EPIPE on stdout mid-teardown) instead of the
+          // silent drop a bare `ignore()` would be (review #1113 r4).
+          unawaited(
+            done.catchError((Object error) {
+              stderr.writeln('wire-serve: stdio transport failed: $error');
+            }),
+          );
+          return;
+        }
+        final listenDone = httpListen(http!, server, token);
+        await Future.any([shutdown.future, listenDone]);
+        await http!.close(force: true);
+      },
+      onDiagnostic: (line) => stderr.writeln(line),
+    );
+    // Resume hint on stderr — stdout is the protocol channel.
+    final hint = await cli.sessionResumeHint();
+    if (hint != null) stderr.writeln(hint);
+    return code;
+  } finally {
+    _wireServeSettle = null;
+    await stdinSub?.cancel();
+    await http?.close(force: true);
+  }
+}
+
+/// The wire-serve CLI io: a silent sink. Every rendered line dies here so
+/// nothing TUI-shaped can reach the protocol stream; writeln keeps stderr
+/// for diagnostics. Never interactive — the constructor's null ask/secret
+/// callbacks are replaced by the wire surfaces at boot.
+final class _WireServeSilentCliIO implements CliIO {
+  final _interrupts = StreamController<void>.broadcast();
+
+  @override
+  Stream<String> get lines => const Stream<String>.empty();
+
+  @override
+  Stream<void> get interrupts => _interrupts.stream;
+
+  @override
+  Stream<KeyEvent> get keys => const Stream<KeyEvent>.empty();
+
+  @override
+  bool get supportsRawMode => false;
+
+  @override
+  bool get isInteractive => false;
+
+  @override
+  int get columns => 80;
+
+  @override
+  int get rows => 24;
+
+  @override
+  void write(String text) {}
+
+  @override
+  void writeln(String text) => stderr.writeln(text);
 }
