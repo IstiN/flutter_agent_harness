@@ -103,13 +103,6 @@ Map<String, Object?> trajectoryRecordJson(TrajectoryRecord record) {
     'recordId': record.recordId,
     ...switch (record) {
       TrajectoryAssistantRecord(
-        :final messageId,
-        :final turn,
-        :final step,
-        :final provider,
-        :final model,
-        :final usage,
-        :final thinkingDetail,
         :final outputDetail,
         :final timeSeconds,
         :final isError,
@@ -120,13 +113,7 @@ Map<String, Object?> trajectoryRecordJson(TrajectoryRecord record) {
         :final requestDetail,
       ) =>
         {
-          'messageId': messageId,
-          'turn': turn,
-          'step': step,
-          'provider': provider,
-          'model': model,
-          'usage': usage?.toJson(),
-          'thinkingDetail': thinkingDetail,
+          ...record.identityJson(),
           'outputDetail': outputDetail,
           'timeSeconds': timeSeconds?.inMilliseconds,
           'isError': isError,
