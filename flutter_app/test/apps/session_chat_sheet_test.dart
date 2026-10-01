@@ -1763,4 +1763,131 @@ void main() {
       expect(find.text('goal_builder'), findsOneWidget);
     });
   });
+
+  group('Fa entry: tap continues, long-press mints (issue #864)', () {
+    SessionChatSheetState sheetState(WidgetTester tester) =>
+        tester.state<SessionChatSheetState>(find.byType(SessionChatSheet));
+
+    testWidgets('ten consecutive taps mint NOTHING and keep the active '
+        'session (AC1)', (tester) async {
+      final harness = await _pumpSheet(tester);
+      final state = sheetState(tester);
+      // The Fa entry's tap handler is exactly [SessionChatSheetState.expand].
+      for (var i = 0; i < 10; i++) {
+        state.expand();
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+      await tester.pumpAndSettle();
+      expect(harness.manager.sessions, hasLength(2));
+      expect(harness.manager.activeId, 'sess-b');
+    });
+
+    testWidgets('a long-press mints exactly one session, activates it and '
+        'opens the panel on it (AC2)', (tester) async {
+      final harness = await _pumpSheet(tester);
+      final state = sheetState(tester);
+      final mint = state.mintAndOpenNewSession();
+      // Mid-flight (the clone is in flight): the sessions drawer must NOT
+      // flash open — the entry gesture is NOT the drawer tile's helper
+      // (review round 1, session_chat_sheet.dart).
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byKey(_drawerKey), findsNothing);
+      await mint;
+      await tester.pumpAndSettle();
+      expect(find.byKey(_drawerKey), findsNothing);
+      expect(harness.manager.sessions, hasLength(3));
+      expect(harness.manager.activeId, isNot('sess-b'));
+      expect(find.byKey(_panelKey), findsOneWidget);
+    });
+
+    /// Pumps the sheet with a HUNG-RUN session active (`sess-b`): the run
+    /// streams until [abort]ed. Shared scaffolding for the busy-session
+    /// edge cases E1/E2 (review round 1: extract over hand-rolled dup).
+    Future<({FlutterSessionManager manager, AgentService busy})> pumpBusySheet(
+      WidgetTester tester,
+    ) async {
+      final env = MemoryExecutionEnv();
+      final busy = _fakeService(env, _hungResponse());
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('sess-a', _fakeService(env))
+        ..addSession('sess-b', busy);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: SessionChatSheet(manager: manager, asr: _FakeAsrApi()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        unawaited(busy.sendText('long run'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+      expect(busy.isStreaming, isTrue);
+      return (manager: manager, busy: busy);
+    }
+
+    /// Drains the hung run so the test ends without a live stream.
+    Future<void> drainBusy(WidgetTester tester, AgentService busy) async {
+      busy.abort();
+      for (var i = 0; i < 30 && busy.isStreaming; i++) {
+        await tester.runAsync(() async {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+      }
+      expect(busy.isStreaming, isFalse);
+    }
+
+    testWidgets('a busy active session: a tap opens it and shows the run — '
+        'nothing mints to escape the busy one (E1)', (tester) async {
+      final (:manager, busy: busy) = await pumpBusySheet(tester);
+
+      sheetState(tester).expand();
+      // The streaming session's typing footer animates forever — settle
+      // with bounded pumps, never pumpAndSettle.
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 120));
+      }
+      expect(find.byKey(_panelKey), findsOneWidget);
+      expect(manager.sessions, hasLength(2));
+      expect(manager.activeId, 'sess-b');
+      expect(busy.isStreaming, isTrue);
+
+      await drainBusy(tester, busy);
+    });
+
+    testWidgets('a long-press during a run mints a fresh session while the '
+        'busy one keeps running (E2)', (tester) async {
+      final (:manager, busy: busy) = await pumpBusySheet(tester);
+
+      await sheetState(tester).mintAndOpenNewSession();
+      // The still-streaming old session keeps the typing footer animating
+      // in its slot — bounded pumps, never pumpAndSettle.
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 120));
+      }
+      expect(manager.sessions, hasLength(3));
+      expect(manager.activeId, isNot('sess-b'));
+      // The busy session was never aborted: it keeps streaming in its slot.
+      expect(busy.isStreaming, isTrue);
+
+      await drainBusy(tester, busy);
+    });
+
+    testWidgets('a rapid second trigger while the mint is in flight is '
+        'dropped — exactly one mint (E3)', (tester) async {
+      final harness = await _pumpSheet(tester);
+      final state = sheetState(tester);
+      final first = state.mintAndOpenNewSession();
+      final second = state.mintAndOpenNewSession();
+      await tester.pumpAndSettle();
+      await first;
+      await second;
+      expect(harness.manager.sessions, hasLength(3));
+    });
+  });
 }
