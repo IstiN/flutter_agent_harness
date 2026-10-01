@@ -675,6 +675,10 @@ class AppLocalizationsRu extends AppLocalizations {
   String get launcherChatActionsTooltip => 'Действия чата';
 
   @override
+  String get faEntryHintTooltip =>
+      'Касание: продолжить активный чат · Долгое нажатие: новый чат';
+
+  @override
   String get launcherChatEmptyHint => 'Пока пусто — спросите Fa о чём угодно.';
 
   @override

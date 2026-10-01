@@ -123,4 +123,131 @@ void main() {
       session.service.dispose();
     }
   });
+
+  testWidgets('a corrupt binding rebinds EXACTLY once — never per message '
+      '(issue #864)', (tester) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+    manager.addSession('original-session', _fakeService(env));
+
+    // Torn binding: the first message heals it with one rebind…
+    await env.writeFile('apps/notes/session.json', '[1,2]');
+    await forwardAppMessageToAgent(
+      manager,
+      const FaAppMessage(text: 'a', appId: 'notes'),
+    );
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    });
+    await tester.pump();
+    final boundAfterHeal = manager.activeId;
+    expect(boundAfterHeal, isNot('original-session'));
+
+    // …and the next message reuses the healed binding: the session count
+    // must never grow again (the old code could re-mint per message while
+    // the binding stayed broken).
+    final sessionsAfterHeal = manager.sessions.length;
+    await forwardAppMessageToAgent(
+      manager,
+      const FaAppMessage(text: 'b', appId: 'notes'),
+    );
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    });
+    await tester.pump();
+    expect(manager.sessions.length, sessionsAfterHeal);
+    expect(manager.activeId, boundAfterHeal);
+
+    for (final session in manager.sessions) {
+      session.service.dispose();
+    }
+  });
+
+  testWidgets('concurrent app messages mint ONE bound session '
+      '(issue #864 E3)', (tester) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+    manager.addSession('original-session', _fakeService(env));
+
+    await tester.pumpWidget(const MaterialApp(home: Scaffold()));
+    await tester.pumpAndSettle();
+
+    // Two messages racing on first contact: the per-app single-flight
+    // must collapse them into one mint.
+    final results = await tester.runAsync(
+      () => Future.wait([
+        forwardAppMessageToAgent(
+          manager,
+          const FaAppMessage(text: 'a', appId: 'notes'),
+        ),
+        forwardAppMessageToAgent(
+          manager,
+          const FaAppMessage(text: 'b', appId: 'notes'),
+        ),
+      ]),
+    );
+    await tester.runAsync(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    });
+    await tester.pump();
+
+    expect(results, hasLength(2));
+    expect(results![0], same(results[1])); // same bound service, one mint
+    expect(manager.sessions.length, 2); // original + the one bound session
+    final binding = await env.readTextFile('apps/notes/session.json');
+    expect(binding.valueOrNull, contains(manager.activeId));
+
+    for (final session in manager.sessions) {
+      session.service.dispose();
+    }
+  });
+
+  testWidgets('a real binding whose session cannot be opened never mints '
+      '(issue #864)', (tester) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+    manager.addSession('original-session', _fakeService(env));
+
+    // The sessions root is a FILE: every disk-open leg fails outright.
+    // The binding below is REAL (it names a persisted session), so this
+    // is NOT first contact — the resolver must refuse to mint and keep
+    // the binding verbatim for a later repair.
+    await env.writeFile('/sessions', 'not a directory');
+    await env.writeFile(
+      'apps/notes/session.json',
+      '{"sessionId":"persisted-session"}',
+    );
+
+    final resolved = await tester.runAsync(
+      () => resolveAppBoundSession(manager, 'notes'),
+    );
+    expect(resolved, isNull);
+    expect(manager.sessions.length, 1); // no replacement minted
+
+    final binding = await env.readTextFile('apps/notes/session.json');
+    expect(binding.valueOrNull, contains('persisted-session'));
+  });
+
+  testWidgets('an unreadable binding is not treated as first contact '
+      '(issue #864)', (tester) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+    manager.addSession('original-session', _fakeService(env));
+
+    // The binding path is a DIRECTORY: the read fails with isDirectory —
+    // a real read error, not absence. Minting would overwrite a binding
+    // the app could not even read, so the resolver must refuse.
+    await env.writeFile('apps/notes/session.json/x', 'forces a directory');
+    final bindingBefore = await env.listDir('apps/notes');
+
+    final resolved = await tester.runAsync(
+      () => resolveAppBoundSession(manager, 'notes'),
+    );
+    expect(resolved, isNull);
+    expect(manager.sessions.length, 1); // no mint over the unreadable file
+    expect(
+      (await env.listDir('apps/notes')).valueOrNull!.map((e) => e.name),
+      (bindingBefore.valueOrNull ?? const []).map((e) => e.name),
+    );
+  });
 }

@@ -1208,6 +1208,12 @@ abstract class AppLocalizations {
   /// **'Chat actions'**
   String get launcherChatActionsTooltip;
 
+  /// No description provided for @faEntryHintTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap: continue the active chat · Hold: new chat'**
+  String get faEntryHintTooltip;
+
   /// No description provided for @launcherChatEmptyHint.
   ///
   /// In en, this message translates to:
