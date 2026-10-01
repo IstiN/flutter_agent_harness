@@ -176,6 +176,7 @@ class LlmConfig {
     String? accountType,
     String? entryName,
   }) {
+    // crap:ignore: hand-rolled copyWith boilerplate (the idiomatic Dart shape every immutable config type here shares); codegen is the real fix — gh-1106.
     return LlmConfig(
       providerName: providerName ?? this.providerName,
       apiKey: apiKey ?? this.apiKey,
