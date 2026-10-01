@@ -944,6 +944,50 @@ prompts:
     });
   });
 
+  group('FA_PROVIDER_TIMEOUT_SECONDS env fold (issue #1036)', () {
+    test('blank/unset keeps the parsed section untouched', () {
+      final base = ProviderTimeoutsOverride(connect: Duration(seconds: 9));
+      expect(applyProviderTimeoutEnvOverride(base, null), same(base));
+      expect(applyProviderTimeoutEnvOverride(base, ''), same(base));
+      expect(applyProviderTimeoutEnvOverride(base, '  '), same(base));
+      expect(applyProviderTimeoutEnvOverride(null, null), isNull);
+    });
+
+    test('a valid seconds value sets fetchRead, keeping the section', () {
+      final base = ProviderTimeoutsOverride(
+        connect: Duration(seconds: 9),
+        streamIdle: Duration(seconds: 11),
+      );
+      final folded = applyProviderTimeoutEnvOverride(base, '45');
+      expect(folded!.connect, const Duration(seconds: 9));
+      expect(folded.streamIdle, const Duration(seconds: 11));
+      expect(folded.fetchRead, const Duration(seconds: 45));
+    });
+
+    test('a valid seconds value works without a parsed section', () {
+      final folded = applyProviderTimeoutEnvOverride(null, '60');
+      expect(folded!.fetchRead, const Duration(seconds: 60));
+      expect(folded.connect, isNull);
+      expect(folded.streamIdle, isNull);
+    });
+
+    test('a bad value fails loud naming the env var', () {
+      for (final raw in ['abc', '0', '-5', '1.5']) {
+        expect(
+          () => applyProviderTimeoutEnvOverride(null, raw),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('FA_PROVIDER_TIMEOUT_SECONDS'),
+            ),
+          ),
+          reason: 'raw: $raw',
+        );
+      }
+    });
+  });
+
   group('project cube section', () {
     late Directory tmp;
 
