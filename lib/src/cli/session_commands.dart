@@ -520,6 +520,16 @@ extension on AgentCli {
 
   Future<Session> _loadSession(SessionMetadata metadata) async {
     final bootSw = Stopwatch()..start();
+    // gh-968 parity: the budget must price the prompt the FIRST REQUEST
+    // will carry. The messaging section joins at mailbox-prefix sync,
+    // which runs after this walk in boot order — project the prefix
+    // here so a resume cannot materialize one section more than the
+    // live loop carried before exit (issue #1151: builtin-skills
+    // metadata exhausted the record-bucket slack this race left).
+    if (_subagentManager.messaging != null && metadata.id.isNotEmpty) {
+      _subagentManager.mailboxPrefix = metadata.id;
+      _applyPromptComposition();
+    }
     void stage(String name) => _logDiagnostic(
       'boot_stage $name ms=${bootSw.elapsedMilliseconds} sid=${metadata.id}',
     );

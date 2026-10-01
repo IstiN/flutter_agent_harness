@@ -621,7 +621,7 @@ prompts:
         );
       });
 
-      test('rejects unknown skills keys', () {
+      test('rejects malformed per-skill skills keys', () {
         final file = File('${tmp.path}/.fah/config.yaml');
         file.createSync(recursive: true);
         file.writeAsStringSync('skills:\n  bogus: 1\n');
@@ -631,7 +631,9 @@ prompts:
             isA<ConfigException>().having(
               (e) => e.message,
               'message',
-              contains('unknown "skills" key'),
+              // Per-skill keys are legal since issue #1151; only a bad
+              // value shape is rejected now.
+              contains('skills.bogus must be on/off'),
             ),
           ),
         );

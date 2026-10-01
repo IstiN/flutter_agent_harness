@@ -454,8 +454,7 @@ void main() {
         );
         io.sendLine('2'); // "Not now" — stays undecided and hidden.
         io.sendLine('/skills');
-        // Builtins are first-party: they list even while consent is
-        // withheld (issue #1151); the third-party skill stays hidden.
+        // Builtins are first-party (issue #1151): no consent gate.
         await waitForIt(
           () => io.out.toString().contains('create-goal — Turn a feature'),
         );
@@ -491,8 +490,7 @@ void main() {
         () => io.out.toString().contains('skills access: denied'),
       );
       io.sendLine('/skills');
-      // Builtins list even under denied consent (issue #1151); the codex
-      // skill stays hidden.
+      // Builtins list under denied consent; the codex skill stays hidden.
       await waitForIt(
         () => io.out.toString().contains('create-goal — Turn a feature'),
       );
@@ -548,8 +546,7 @@ void main() {
         () => io.out.toString().contains('skills access: denied'),
       );
       io.sendLine('/skills');
-      // Builtins list even under denied consent (issue #1151); the claude
-      // skill stays hidden.
+      // Builtins list under denied consent; the claude skill stays hidden.
       await waitForIt(
         () => io.out.toString().contains('create-goal — Turn a feature'),
       );
@@ -573,8 +570,7 @@ void main() {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(fake.call, skillsAccess: SkillsAccess.denied);
       final run = cli.run();
-      // No consent dialog (denied), but the startup hint explains why the
-      // Claude skills are missing.
+      // No consent dialog (denied); the hint explains the missing skills.
       await waitForIt(() => io.out.toString().contains('found but disabled'));
       expect(io.out.toString(), isNot(contains('Found Claude/Copilot/Codex')));
 
