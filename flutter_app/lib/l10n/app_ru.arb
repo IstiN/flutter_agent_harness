@@ -201,6 +201,8 @@
   "keysValueHint": "Вставьте значение ключа",
   "keysValueLabel": "Значение",
   "launcherChatActionsTooltip": "Действия чата",
+  "faEntryHintTooltip":
+      "Касание: продолжить активный чат · Долгое нажатие: новый чат",
   "launcherChatEmptyHint": "Пока пусто — спросите Fa о чём угодно.",
   "launcherDissolveFolder": "Убрать папку",
   "launcherFolderDefaultName": "Папка",
