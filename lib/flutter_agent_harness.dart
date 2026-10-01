@@ -249,4 +249,5 @@ export 'src/types.dart';
 export 'src/usage_summary.dart';
 export 'src/wire/wire_adapter.dart';
 export 'src/wire/wire_protocol.dart';
+export 'src/wire/wire_serve.dart';
 export 'src/web_search/web_search.dart';
