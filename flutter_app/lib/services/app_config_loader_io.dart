@@ -28,6 +28,13 @@ import 'package:yaml/yaml.dart';
 
 import '../sandbox/env_factory_io.dart' show desktopHomeDir;
 
+/// The `FA_PROVIDER_TIMEOUT_SECONDS` env value (issue #1036): read here,
+/// behind the same conditional import as the config file, so the web stub
+/// keeps its "no environment on this platform" contract. Function-typed so
+/// tests can inject a value without mutating the process environment.
+String? Function() faProviderTimeoutSecondsEnv =
+    () => Platform.environment['FA_PROVIDER_TIMEOUT_SECONDS'];
+
 /// Reads and resolves the app-honored config sections; null when this
 /// platform has no readable home (web-like sandboxes). [homeDir] and
 /// [projectDir] override the lookups (tests).
