@@ -104,9 +104,10 @@ def missing_secrets(provider: str, stage: str, env=None) -> list[str]:
 def check_secrets(provider: str, stage: str, env=None) -> None:
     missing = missing_secrets(provider, stage, env)
     # Only key NAMES are ever printed (repo pattern: fail fast naming the
-    # exact key to add); values are never touched here.
+    # exact key to add); values are never read here. CodeQL flags the flow
+    # because the names themselves look like credentials - false positive.
     for name in missing:
-        print(f"::error::{name} secret is not set", file=sys.stderr)
+        print(f"::error::{name} secret is not set", file=sys.stderr)  # codeql[py/clear-text-logging-sensitive-data] false positive: prints the secret NAME only, never a value (AC2 fail-fast contract)
     if missing:
         raise SystemExit(1)
 
