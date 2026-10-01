@@ -112,7 +112,9 @@ jobs:
         run: |
           # gh-1061: >=0.10.0 — analyzer 7.3→14.4 refresh. Bounded: a
           # floating >= would auto-adopt 0.11.0+ with no repo change.
-          dart pub global activate crap4dart ">=0.10.0 <0.11.0"
+          # gh-1106: ceiling bumped to 0.12.0 — the root crap4dart.yaml
+          # duplication block now uses 0.11.0-only keys.
+          dart pub global activate crap4dart ">=0.11.0 <0.12.0"
           dart pub global run crap4dart analyze
 
       - name: Duplication guard (lib/ < 1%)
