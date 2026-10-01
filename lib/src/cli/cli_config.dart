@@ -204,6 +204,13 @@ String? _parseAgentModeValue(Object? value) {
   return value == 'default' ? null : value as String;
 }
 
+bool? _parseAgentMisuseBreakerValue(Object? value) {
+  if (value is! bool) {
+    throw ConfigException('"agent.misuseBreaker" must be a boolean');
+  }
+  return value;
+}
+
 /// Parses the `agent:` section (issues #273/#679/#680):
 /// `contextWindowCap` — the owner-side effective context override — and
 /// `mode` — the `default|pi|omp` preset label. The cap SETS the EFFECTIVE
@@ -253,11 +260,7 @@ _parseAgentSection(Object? node) {
       case 'mode':
         mode = _parseAgentModeValue(node[key]);
       case 'misuseBreaker':
-        final value = node[key];
-        if (value is! bool) {
-          throw ConfigException('"agent.misuseBreaker" must be a boolean');
-        }
-        misuseBreaker = value;
+        misuseBreaker = _parseAgentMisuseBreakerValue(node[key]);
       default:
         throw ConfigException('unknown "agent" key: $key');
     }

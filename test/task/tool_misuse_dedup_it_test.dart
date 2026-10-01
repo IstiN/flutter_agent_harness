@@ -16,40 +16,8 @@ import 'dart:async';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
-const _model = Model(
-  id: 'parent-model',
-  api: 'test-api',
-  provider: 'test-provider',
-  baseUrl: 'https://example.test',
-  contextWindow: 100000,
-  maxTokens: 4096,
-);
+import '../agent/scripted_stream_harness.dart';
 
-AssistantMessage _assistant({
-  List<ContentBlock> content = const [],
-  StopReason stopReason = StopReason.stop,
-}) {
-  return AssistantMessage(
-    content: content,
-    api: 'test-api',
-    provider: 'test-provider',
-    model: 'test-model',
-    usage: Usage.zero,
-    stopReason: stopReason,
-    timestamp: DateTime.utc(2026),
-  );
-}
-
-List<AssistantMessageEvent> _textTurn(String text) {
-  final empty = _assistant();
-  final partial = _assistant(content: [TextContent(text: text)]);
-  return [
-    StartEvent(partial: empty),
-    TextStartEvent(contentIndex: 0, partial: empty),
-    TextDeltaEvent(contentIndex: 0, delta: text, partial: partial),
-    DoneEvent(reason: StopReason.stop, message: partial),
-  ];
-}
 
 AssistantMessageEventStream _immediate(List<AssistantMessageEvent> events) {
   final stream = AssistantMessageEventStream();
@@ -116,9 +84,9 @@ void main() {
     final executor = TaskExecutor(
       childTools: [_replyLeakTool(), _fakeTool('read')],
       streamFunction: () => (model, context, {cancelToken}) {
-        return _immediate(_textTurn('child finished the work'));
+        return _immediate(textTurn('child finished the work'));
       },
-      model: () => _model,
+      model: () => testModel,
       registry: TaskAgentRegistry(const []),
       semaphore: Semaphore(2),
       store: AgentOutputStore(),

@@ -7,44 +7,14 @@ library;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
-const _model = Model(
-  id: 'test-model',
-  api: 'test-api',
-  provider: 'test-provider',
-  baseUrl: 'https://example.test',
-  contextWindow: 100000,
-  maxTokens: 4096,
-);
+import 'scripted_stream_harness.dart';
 
-AssistantMessage _assistant({
-  List<ContentBlock> content = const [],
-  StopReason stopReason = StopReason.stop,
-}) {
-  return AssistantMessage(
-    content: content,
-    api: 'test-api',
-    provider: 'test-provider',
-    model: 'test-model',
-    usage: Usage.zero,
-    stopReason: stopReason,
-    timestamp: DateTime.utc(2026),
-  );
-}
-
-List<AssistantMessageEvent> _textTurn(String text) {
-  final empty = _assistant();
-  final partial = _assistant(content: [TextContent(text: text)]);
-  return [
-    StartEvent(partial: empty),
-    DoneEvent(reason: StopReason.stop, message: partial),
-  ];
-}
 
 /// A scripted turn whose assistant message repeats ONE malformed tool call.
 List<AssistantMessageEvent> _badCallTurn(String id, String toolName) {
   final call = ToolCall(id: id, name: toolName, arguments: const {});
-  final empty = _assistant();
-  final partial = _assistant(
+  final empty = scriptedAssistant();
+  final partial = scriptedAssistant(
     content: [call],
     stopReason: StopReason.toolUse,
   );
@@ -56,34 +26,6 @@ List<AssistantMessageEvent> _badCallTurn(String id, String toolName) {
   ];
 }
 
-/// Fake [StreamFunction]: replays scripted turns, records every request
-/// payload it was called with.
-class _FakeStream {
-  _FakeStream(this.turns);
-
-  final List<List<AssistantMessageEvent>> turns;
-  final contexts = <Context>[];
-
-  AssistantMessageEventStream call(
-    Model model,
-    Context context, {
-    CancelToken? cancelToken,
-  }) {
-    contexts.add(
-      Context(
-        systemPrompt: context.systemPrompt,
-        messages: List.of(context.messages),
-        tools: context.tools,
-      ),
-    );
-    final stream = AssistantMessageEventStream();
-    for (final event in turns.removeAt(0)) {
-      stream.push(event);
-    }
-    stream.end();
-    return stream;
-  }
-}
 
 Tool _tool(String name) => Tool(
   name: name,
@@ -198,9 +140,9 @@ void main() {
       ]);
       // Eight malformed turns (missing the required `target` param), then
       // the model gives up.
-      final fake = _FakeStream([
+      final fake = FakeStreamFunction([
         for (var i = 1; i <= 8; i++) _badCallTurn('c$i', 'flaky'),
-        _textTurn('giving up'),
+        textTurn('giving up'),
       ]);
 
       final stream = agentLoop(
@@ -209,7 +151,7 @@ void main() {
           messages: const [],
           tools: [_tool('flaky')],
         ),
-        config: AgentLoopConfig(model: _model, toolMisuseBreaker: breaker),
+        config: AgentLoopConfig(model: testModel, toolMisuseBreaker: breaker),
         streamFunction: fake.call,
         toolExecutor: registry.executor,
       );
@@ -277,15 +219,15 @@ void main() {
           },
         ),
       ]);
-      final fake = _FakeStream([
+      final fake = FakeStreamFunction([
         for (var i = 1; i <= 5; i++) _badCallTurn('c$i', 'flaky'),
-        _textTurn('giving up'),
+        textTurn('giving up'),
       ]);
 
       final stream = agentLoop(
         prompts: [UserMessage.text('do the thing')],
         context: Context(messages: const [], tools: [_tool('flaky')]),
-        config: AgentLoopConfig(model: _model),
+        config: AgentLoopConfig(model: testModel),
         streamFunction: fake.call,
         toolExecutor: registry.executor,
       );
@@ -333,16 +275,16 @@ void main() {
           },
         ),
       ]);
-      final fake = _FakeStream([
+      final fake = FakeStreamFunction([
         for (var i = 1; i <= 6; i++) _badCallTurn('c$i', 'sh'),
-        _textTurn('giving up'),
+        textTurn('giving up'),
       ]);
 
       final stream = agentLoop(
         prompts: [UserMessage.text('compile it')],
         context: Context(messages: const [], tools: [_tool('sh')]),
         config: AgentLoopConfig(
-          model: _model,
+          model: testModel,
           toolMisuseBreaker: ToolMisuseBreaker(),
         ),
         streamFunction: fake.call,
