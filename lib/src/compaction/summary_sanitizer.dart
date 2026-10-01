@@ -43,11 +43,15 @@ final RegExp _secondPerson = RegExp(
 ///   sentence: "rebase your previous commits" is a constraint, not a drop
 ///   claim; "your last tool call's result was dropped" is the claim.
 /// - The `you`-arm covers contracted and interpolated forms ("you've
-///   just", "you're about to", "you were (just) about to").
+///   just", "you're about to", "you were (just) about to"). A bare "you
+///   just" additionally demands a following past-tense event verb: "you
+///   just ran the sweep" is a recency claim, "you just need to re-run
+///   make" is a durable instruction.
 final RegExp _ephemeralClaim = RegExp(
   r"\byour\s+(?:last|previous|prior)\b"
   r"(?=[^.]*\b(?:dropped|trimmed|removed|lost)\b)"
-  r"|\byou(?:'ve\s+just|'re\s+about to|\s+(?:were\s+)?(?:just\s+)?about to|\s+just)\b"
+  r"|\byou(?:'ve\s+just|'re\s+about to|\s+(?:were\s+)?(?:just\s+)?about to"
+  r"|\s+just(?=\s+(?:ran|dropped|pushed|shipped|landed|deleted|removed|saw|wrote|made|finished|completed)\b))\b"
   r'|\b(?:was|were)\s+dropped\b',
   caseSensitive: false,
 );

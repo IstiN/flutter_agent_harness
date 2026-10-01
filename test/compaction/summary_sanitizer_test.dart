@@ -355,4 +355,34 @@ void main() {
       expect(result.stripped, hasLength(3));
     });
   });
+
+  group('round-3 review pins (#1133)', () {
+    test('R3: modal "you just need/have to" instructions survive', () {
+      const next =
+          '## Next Steps\n'
+          '1. You just need to re-run make to finish.\n'
+          '2. You just have to wait for CI.\n';
+      final result = sanitizeSummary(next);
+      expect(result.text, next);
+      expect(result.stripped, isEmpty);
+    });
+
+    test('R3: modal "if you just look" coaching survives', () {
+      const coaching =
+          'If you just look at the failing test, the cause is obvious.\n'
+          '- The failing test is test/compaction/token_estimation_test.dart.\n';
+      final result = sanitizeSummary(coaching);
+      expect(result.text, coaching);
+      expect(result.stripped, isEmpty);
+    });
+
+    test('R3: "you just" + past-tense event verb still strips', () {
+      final result = sanitizeSummary(
+        'You just pushed the branch. You just deleted the staging cluster.\n'
+        '- The branch is feature/next on origin.\n',
+      );
+      expect(result.text, '- The branch is feature/next on origin.\n');
+      expect(result.stripped, hasLength(2));
+    });
+  });
 }
