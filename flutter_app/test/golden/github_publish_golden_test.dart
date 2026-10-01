@@ -22,6 +22,8 @@ import 'package:fa/ui/widgets/github_account_section.dart';
 import 'package:fa/ui/widgets/github_connect_sheet.dart';
 import 'package:fa/ui/widgets/widget_publications_sheet.dart';
 import 'package:fa/ui/widgets/widget_publish_sheet.dart';
+import 'package:fa/ui/widgets/publication_state_chip.dart';
+import 'package:fa/ui/widgets/widget_status_detail_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -187,7 +189,7 @@ Future<JsAppInfo> _seedWidget(MemoryExecutionEnv env) async {
       'version': '1.0.0',
       'icon': '🍅',
       'tags': ['productivity'],
-      'minRuntime': '1.0',
+      'minRuntime': '1.0.0',
     }),
   );
   await env.writeFile(
@@ -495,5 +497,75 @@ void main() {
     await tester.tap(find.byIcon(Icons.refresh));
     await tester.pumpAndSettle();
     await expectGolden(tester, 'widget_publications_sheet_offline');
+  });
+
+  // Issue #1045 AC6: the in-flight publish UI — progress row plus a Done
+  // escape — while the underlying flow is still hung on the network.
+  testWidgets('Publish widget sheet — publish in flight', (tester) async {
+    final env = MemoryExecutionEnv();
+    final app = await _seedWidget(env);
+    final account = await _account(connected: true);
+    final ledger = WidgetPublicationStore.inMemory();
+    await _pumpSettingsPage(
+      tester,
+      GithubAccountSection(store: account, ledger: ledger),
+      open: (context) => showWidgetPublishSheet(
+        context,
+        app: app,
+        account: account,
+        service: _service(env, account, ledger),
+        ledger: ledger,
+        clientFactory: (token) =>
+            GithubApiClient(token: token, httpClient: _frozenGithub),
+      ),
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Publish'));
+    await tester.pump(const Duration(milliseconds: 50));
+    await expectGolden(tester, 'widget_publish_sheet_publishing');
+  });
+
+  // Issue #1045 AC3: the per-widget detail sheet — INVALID with the
+  // validator's verbatim error lines and the CI run link.
+  testWidgets('Widget status detail sheet — invalid with verbatim errors', (
+    tester,
+  ) async {
+    final env = MemoryExecutionEnv();
+    final ledger = await initSharedWidgetPublicationStore(env);
+    await ledger.record(
+      WidgetPublication(
+        widgetId: 'pomodoro',
+        version: '1.2.0',
+        repoFullName: 'octocat/fa-widget-pomodoro',
+        repoCommit: 'abc1234',
+        step: WidgetPublication.stepPrOpened,
+        submittedAt: DateTime.utc(2026, 2, 1, 12),
+        prNumber: 8,
+        prHtmlUrl: 'https://github.com/IstiN/fa_widgets/pull/8',
+        lastKnownState: WidgetPublication.stateInvalid,
+        validatorErrors: const [
+          "external manifest: 'minRuntime' must be a non-empty string.",
+        ],
+        lastError:
+            "ERROR 2048: external manifest: 'minRuntime' must be a "
+            "non-empty string.",
+        runHtmlUrl: 'https://github.com/IstiN/fa_widgets/actions/runs/99',
+      ),
+    );
+    await _pumpSettingsPage(
+      tester,
+      WidgetStatusDetailSheet(
+        widgetId: 'pomodoro',
+        title: 'Pomodoro',
+        version: '1.2.0',
+        description: 'Focus timer',
+        author: 'octocat',
+        env: env,
+        pollInterval: const Duration(hours: 1),
+      ),
+    );
+    // The state chip is the shared PublicationStateChip (deduped in the
+    // round-1 review): the INVALID verdict renders through it.
+    expect(find.byType(PublicationStateChip), findsOneWidget);
+    await expectGolden(tester, 'widget_status_detail_sheet_invalid');
   });
 }
