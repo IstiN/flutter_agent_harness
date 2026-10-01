@@ -177,17 +177,27 @@ extension _TuiComposerLayout on FaTuiModel {
         sticky = 0;
       } else {
         final wrapped = _wrappedLines();
-        // Floored at 0 exactly like _scrollBottom: a transcript shorter
-        // than the window paints from the top row. A raw negative anchor
-        // also put the detached clamp below into an invalid range —
-        // ArgumentError, frame killed mid-run (review round 1).
-        final paintedTop =
-            (wrapped.length - (historyNoSticky - sticky)).clamp(
-          0,
-          wrapped.length,
-        );
-        final top = followTail ? paintedTop : scrollOffset.clamp(0, paintedTop);
-        if (top < endRow) sticky = 0;
+        final history = historyNoSticky - sticky;
+        // The window top view() will paint, mirrored with THIS plan's
+        // history — the real _scrollBottom reads _viewportHeight, which
+        // is this very plan, so calling it here would recurse. Issue
+        // #827 moved the follow anchor to the current turn's first row
+        // and left a park zone above the bottom; the old bottom-only
+        // model raced both — after a burst the parked window hid the
+        // echo while the pin was denied (0 paints, CI core shard at the
+        // #827 merge), and a turn-fitting window can start AT the echo,
+        // where pinning would double-paint. Deliberately not mirrored:
+        // the boot-anchor branch of _turnAnchor — it only ever parks
+        // the window top EARLIER than the turn floor (the boot region
+        // precedes the run's echo), and an under-estimated top just
+        // leaves the echo with the transcript: the safe side.
+        final bottom = history.clamp(0, wrapped.length);
+        final paintedTop = followTail
+            ? (scrollOffset > bottom
+                  ? scrollOffset
+                  : math.max(bottom, _turnStartRow()))
+            : scrollOffset.clamp(0, bottom);
+        if (paintedTop < endRow) sticky = 0;
       }
     }
     consumable -= sticky;

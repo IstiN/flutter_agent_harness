@@ -573,9 +573,8 @@ final class FaTuiModel extends Model {
   }
 
   /// Whether a turn echo is ARMED to pin: a run streams and an echo
-  /// exists. Whether it actually pins is the frame plan's call —
-  /// [_framePlanFor] dedupes the pin against the window the frame will
-  /// paint (issue #917); this getter deliberately carries no scroll math.
+  /// exists; whether it pins is the frame plan's call — [_framePlanFor]
+  /// dedupes the pin against the painted window (#917). No scroll math.
   bool get _stickyArmed => busy && stickyLines.isNotEmpty && stickyIndex >= 0;
 
   /// The first wrapped row just past the pinned echo (rows are counted
