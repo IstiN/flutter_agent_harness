@@ -928,16 +928,19 @@ jobs:
           # coverage.run_tests: false — the merged shard lcov above is the
           # coverage source; gates must not re-run the suite.
           # gh-1061: >=0.10.0 — analyzer 7.3→14.4 refresh + the
-          # duplication.sources key (native cross-module scan; the
-          # duplication gate stays jscpd-gated, see crap4dart.yaml).
-          # Bounded (rework review): a floating >= would auto-adopt 0.11.0+
-          # with no repo change — bump the ceiling deliberately.
-          dart pub global activate crap4dart ">=0.10.0 <0.11.0"
+          # duplication.sources key (native cross-module scan).
+          # gh-1106: >=0.11.0 — Type-2 renamed-clone detection
+          # (duplication.ignore_locals) + gate baselines; the
+          # duplication gate config throws on older parsers (unknown
+          # keys are a ConfigException).
+          # Bounded (rework review): a floating >= would auto-adopt
+          # 0.12.0+ with no repo change — bump the ceiling deliberately.
+          dart pub global activate crap4dart ">=0.11.0 <0.12.0"
           dart pub global run crap4dart analyze
 
-      - name: Broken-goldens gate over core test/ goldens (issue 447)
+      - name: Quality gates (broken goldens + Type-2 duplication, issue 1106)
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
-        run: dart pub global run crap4dart check
+        run: dart pub global run crap4dart check --baseline
 
       - name: Duplication guard (lib/ < 1%)
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
@@ -1232,9 +1235,11 @@ jobs:
         run: |
           # Issue #447: pin bumped 0.2.1 → >=0.9.5 for the gate framework.
           # gh-1061: >=0.10.0 (analyzer 14.4 refresh).
+          # gh-1106: >=0.11.0 <0.12.0 — same bounded pin as the core job;
+          # 0.11.0 carries the Type-2 duplication gate the repo pins to.
           # coverage.run_tests: false in both configs — the merged shard
           # lcov above is the source; never re-run the suite here.
-          dart pub global activate crap4dart ">=0.10.0"
+          dart pub global activate crap4dart ">=0.11.0 <0.12.0"
           cd flutter_app && dart pub global run crap4dart analyze --format json > crap_report.json
 
       # Issue #490 AC2: publish the ranked CRAP JSON even when the ratchet

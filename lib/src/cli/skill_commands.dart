@@ -288,18 +288,14 @@ extension AgentCliSkillsExt on AgentCli {
   /// piece stays under the CRAP ratchet even where only the line-mode paths
   /// are test-covered.
   Future<void> _skillsSlash(String rest) async {
-    final parts = rest
-        .split(RegExp(r'\s+'))
-        .where((p) => p.isNotEmpty)
-        .toList();
-    final sub = parts.isEmpty ? '' : parts.first;
+    final (:sub, :args) = splitSlashArgs(rest);
     switch (sub) {
       case '':
         await _skillsListOrMenu();
       case 'reload':
         await _skillsReloadSlash();
       case 'access':
-        await _skillsAccessEntry(parts);
+        await _skillsAccessEntry(args);
       case 'import':
         await _importThirdPartySkills();
       default:
@@ -330,16 +326,16 @@ extension AgentCliSkillsExt on AgentCli {
   /// awaited line-prompted flow would deadlock on its own answer (guided
   /// provider flows use the same pattern; answers arrive through
   /// `_pendingPromptAnswer` from the loop's next reads).
-  Future<void> _skillsAccessEntry(List<String> parts) async {
+  Future<void> _skillsAccessEntry(List<String> args) async {
     final bareInteractiveLine =
-        parts.length == 1 &&
+        args.isEmpty &&
         io.isInteractive &&
         !(_useTui && _tuiController != null);
     if (bareInteractiveLine) {
       unawaited(_openSkillsAccessPicker());
       return;
     }
-    await _skillsAccessSlash(parts.length > 1 ? parts[1] : '');
+    await _skillsAccessSlash(args.isEmpty ? '' : args.first);
   }
 
   /// `/skills access [ask|granted|denied]`: bare opens the interactive
