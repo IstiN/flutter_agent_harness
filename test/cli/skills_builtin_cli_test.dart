@@ -176,30 +176,73 @@ void main() {
     await run;
   });
 
-  test('AC3: a broken project skills: section is data, not a crash (CQIw)',
-      () async {
+  test(
+    'AC3: a broken project skills: section is data, not a crash (CQIw)',
+    () async {
+      await env.writeFile(
+        '/work/.fah/config.yaml',
+        'skills:\n  create-goal: yes-please\n',
+      );
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      await waitForIt(
+        () => cli.systemPrompt.contains('<name>create-goal</name>'),
+      );
+
+      // Boot survived; the error printed once and the builtins stayed on
+      // (no project scope applied, last good = none).
+      expect(io.out.toString(), contains('invalid skills section in'));
+      expect(
+        io.out.toString(),
+        contains('project scope ignored, keeping last good'),
+      );
+      expect(io.out.toString(), isNot(contains('ConfigException')));
+
+      // /skills reload reports the same error without killing the REPL.
+      io.sendLine('/skills reload');
+      await waitForIt(
+        () => io.out.toString().contains('skills: invalid skills section in'),
+      );
+      io.sendLine('/exit');
+      // The REPL unwind-free exit (run() completing) IS the crash-free proof.
+      await run;
+    },
+  );
+
+  test('AC3: toggling through a valid-yaml invalid-section file is data '
+      '(CQIw merge path, review -HUfC)', () async {
+    // Syntactically valid yaml whose skills: section carries a
+    // non-boolean value: the read path already treated this as data
+    // (CQIw); the MERGE path used to let the ConfigException escape and
+    // take the line-mode REPL down on `/skills off`.
     await env.writeFile(
       '/work/.fah/config.yaml',
-      'skills:\n  create-goal: yes-please\n',
+      'skills:\n  other-skill: yes-please\n',
     );
     final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(fake.call);
     final run = cli.run();
-    await waitForIt(() => cli.systemPrompt.contains('<name>create-goal</name>'));
-
-    // Boot survived; the error printed once and the builtins stayed on
-    // (no project scope applied, last good = none).
-    expect(io.out.toString(), contains('invalid skills section in'));
-    expect(io.out.toString(), contains('project scope ignored, keeping last good'));
-    expect(io.out.toString(), isNot(contains('ConfigException')));
-
-    // /skills reload reports the same error without killing the REPL.
-    io.sendLine('/skills reload');
     await waitForIt(
-      () => io.out.toString().contains('skills: invalid skills section in'),
+      () => cli.systemPrompt.contains('<name>create-goal</name>'),
     );
+
+    io.sendLine('/skills off create-goal');
+    await waitForIt(
+      () => io.out.toString().contains('skills: cannot merge project scope'),
+    );
+    expect(io.out.toString(), contains('skills: cannot merge project scope'));
+    expect(io.out.toString(), isNot(contains('ConfigException')));
+    // Nothing persisted — the broken section is untouched.
+    final file = (await env.readTextFile('/work/.fah/config.yaml')).valueOrNull;
+    expect(file, contains('other-skill: yes-please'));
+    expect(file, isNot(contains('create-goal')));
+    // A failed persist leaves the live state untouched (the arm's
+    // contract): create-goal is still listed, and the REPL is alive.
+    expect(cli.systemPrompt, contains('<name>create-goal</name>'));
+    io.sendLine('/skills reload');
+    await waitForIt(() => io.out.toString().contains('reloaded:'));
     io.sendLine('/exit');
-    // The REPL unwind-free exit (run() completing) IS the crash-free proof.
     await run;
   });
 

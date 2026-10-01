@@ -114,6 +114,12 @@ void main() {
         '${env.cwd}/.fah/skills/self-settings/SKILL.md',
         '---\nname: self-settings\ndescription: PROJECT OVERRIDE MARKER\n---\nBody\n',
       );
+      // A user-dropped supporting file next to a stale seed survives —
+      // only SKILL.md goes (review -HUjo); the seeder never wrote it.
+      await env.writeFile(
+        '${env.cwd}/.fah/skills/create-goal/notes.md',
+        'user notes',
+      );
       final service = await AgentService.create(config: _config(), env: env);
       addTearDown(service.dispose);
 
@@ -130,6 +136,14 @@ void main() {
           '${env.cwd}/.fah/skills/fa-self-config/SKILL.md',
         )).valueOrNull,
         isNull,
+      );
+      // The user-dropped supporting file next to the stale create-goal
+      // seed survived the cleanup (only SKILL.md goes, review -HUjo).
+      expect(
+        (await env.readTextFile(
+          '${env.cwd}/.fah/skills/create-goal/notes.md',
+        )).valueOrNull,
+        'user notes',
       );
       final prompt = service.systemPromptForTest;
       expect(prompt, contains('PROJECT OVERRIDE MARKER'));

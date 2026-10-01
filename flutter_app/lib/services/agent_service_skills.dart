@@ -22,11 +22,14 @@ part of 'agent_service.dart';
 /// not user data. The cleanup is fingerprint-scoped: a copy is removed
 /// ONLY when its SKILL.md is byte-identical to the last seeded bytes
 /// (neither source carries `fa-platforms` markers or `{{FA_PLATFORM}}`,
-/// so the seeder wrote these bytes verbatim on every platform). Anything
-/// else is a deliberate project override and stays — a customized
-/// create-goal keeps shadowing the builtin (issue non-goal: migrating
-/// existing overrides), an orphaned fa-self-config stops haunting every
-/// session prompt.
+/// so the seeder wrote these bytes verbatim on every platform). Only
+/// SKILL.md goes — the seeder never wrote anything else into those
+/// dirs, so a user-dropped supporting file (script, prompt) survives
+/// (review -HUjo); an empty leftover dir is invisible to discovery.
+/// Anything else is a deliberate project override and stays — a
+/// customized create-goal keeps shadowing the builtin (issue non-goal:
+/// migrating existing overrides), an orphaned fa-self-config stops
+/// haunting every session prompt.
 const _staleSeedFingerprints = <String, String>{
   'create-goal':
       '427d831fa7c41b44a225f216a6e1961bf54b2821a538971e972dcee2c9383f72',
@@ -44,7 +47,7 @@ Future<void> _seedBundledSkills(ExecutionEnv env) async {
       if (sha256.convert(utf8.encode(body)).toString() != entry.value) {
         continue;
       }
-      await env.remove('${env.cwd}/.fah/skills/${entry.key}', recursive: true);
+      await env.remove('${env.cwd}/.fah/skills/${entry.key}/SKILL.md');
     } on Object {
       // best-effort cleanup
     }

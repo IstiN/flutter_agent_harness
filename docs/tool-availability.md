@@ -251,7 +251,8 @@ parses bare `on`/`off` as strings, which is the documented shape) or
 `true`/`false`. Names resolve case-insensitively; a name no discovered
 skill has prints one dim warning and is ignored — never fatal. A
 present-but-invalid section (non-map, bad value) is a strict parse
-error, like the rest of the config.
+error in the USER file, like the rest of the boot config; the PROJECT
+file is data, not a crash — see Scopes.
 
 ### Scopes
 
@@ -263,8 +264,14 @@ them off):
 2. **Project** — `<cwd>/.fah/config.yaml` (travels with the repo; the
    `access:`/`disableShellExecution:` keys stay user-file settings).
 
-A broken project section surfaces like a broken boot config (strict),
-instead of being silently skipped.
+A broken project section (`skills:` unparseable, not a map, or carrying
+an invalid value) is data, not a crash: the CLI prints
+`skills: <error> — project scope ignored, keeping last good` and keeps
+serving the last good toggles — one bad project yaml cannot take down
+`/skills`, `/skills reload`, the toggles, boot, or session switching.
+(Toggling through such a file reports `skills: cannot merge project
+scope — <error>` and persists nothing.) The USER file keeps the strict
+boot-config contract.
 
 ### Built-in skills and shadowing
 

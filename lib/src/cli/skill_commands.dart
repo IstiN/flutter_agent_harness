@@ -686,7 +686,15 @@ extension AgentCliSkillsExt on AgentCli {
           );
           return false;
         }
-        current = SkillsConfig.fromYaml(existing);
+        try {
+          current = SkillsConfig.fromYaml(existing);
+        } on ConfigException catch (error) {
+          // A syntactically valid file with an invalid section (e.g. a
+          // non-boolean value) is data, not a crash — same contract as
+          // the tools twin and the read path (issue #1151 review CQIw).
+          io.writeln('skills: cannot merge project scope — ${error.message}');
+          return false;
+        }
       }
     }
     final updated = SkillsConfig(skills: {...current.skills, name: enabled});
