@@ -479,21 +479,16 @@ final class FaTuiModel extends Model {
 
   /// Output-lines index where the CURRENT turn starts — the last submitted
   /// prompt's echo (or the first steered/drained echo); -1 until then
-  /// (issue #827). Drives the follow anchor [_turnAnchor]: while the tail
-  /// latch holds, the viewport never dips below this turn's first wrapped
-  /// row while the turn still fits, so a fresh prompt's window starts at
-  /// its own echo instead of showing turn N-1 above the prompt line.
+  /// (issue #827). Drives the follow anchor [_turnAnchor]: a fresh
+  /// prompt's window starts at its own echo instead of showing turn N-1
+  /// above the prompt line.
   final int turnStartLine;
 
   /// The resumed boot's replay anchor (issue #446 wave-14): the LOGICAL
-  /// line index of the restored session's first row (the reconciliation
-  /// summary + restored-session header). While following, the window
-  /// anchors here when the summary + replayed transcript fit the viewport
-  /// together — the banner above rides the fold under the #827 indicator
-  /// instead of pushing the replayed tail off the glass. 0 = no boot
-  /// anchor (plain bottom follow). Cleared by the first live submit (the
-  /// turn boundary re-arms) and by any user scroll (the park is the
-  /// boot's, not the user's).
+  /// line index of the restored session's first row. While following and
+  /// the glass overflows, the window anchors here — the banner rides the
+  /// fold under the #827 indicator. 0 = no boot anchor (plain bottom
+  /// follow). Cleared by the first live submit and by any user scroll.
   final int bootAnchorLine;
 
   /// Messages typed while a run streams (kimi-cli's queue): Enter enqueues
@@ -2590,9 +2585,8 @@ final class FaTuiController {
   final _outputBuffer = StringBuffer();
 
   /// Newlines handed to [sendOutput] so far — the transcript index the
-  /// next write lands on (the model's outputLines grow exactly per '\n').
-  /// The boot replay anchor captures this at its call site (issue #446
-  /// wave-14); a model-side count would race the boot backlog drain.
+  /// next write lands on. The boot replay anchor captures this at its
+  /// call site; a model-side count would race the boot backlog drain.
   int _sentNewlines = 0;
   Timer? _outputFlushTimer;
   // 16ms (~60 fps): frames are micro-cheap (traced p50 build 37µs on a
