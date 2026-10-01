@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -542,6 +543,39 @@ void main() {
         ).kind,
         QueueDeathKind.finishReason,
       );
+    });
+
+    test('every #1036 watchdog timeout renders retryable and classifies '
+        'timeout (review round 1)', () {
+      // The transcript path: the agent loop renders the thrown
+      // TimeoutException via formatProviderError, the queue classifies the
+      // rendered text. All five watchdog shapes must land on
+      // QueueDeathKind.timeout (the retry-next-provider death), not
+      // fall through to the verbatim unknown net.
+      for (final exception in [
+        TimeoutException(
+          'provider fetch (models list): no response headers within '
+          '30s (connect watchdog)',
+        ),
+        TimeoutException(
+          'provider fetch (models list): response did not complete within '
+          '120s (read watchdog; FA_PROVIDER_TIMEOUT_SECONDS overrides this)',
+        ),
+        TimeoutException(
+          'provider stream request to https://example.test/v1/responses '
+          'timed out: no response headers within 180s (connect watchdog)',
+        ),
+        TimeoutException(
+          'no events from the endpoint for 300s (stream idle timeout)',
+        ),
+        TimeoutException(
+          'chatgpt-codex https://example.test/v1/responses stalled: no SSE '
+          'bytes for 300s (stream idle timeout)',
+        ),
+      ]) {
+        final r = classify(_err(m, formatProviderError(exception)));
+        expect(r.kind, QueueDeathKind.timeout, reason: r.runtimeType.toString());
+      }
     });
 
     test('content_filter and user abort never advance (E-guard)', () {

@@ -12,6 +12,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/app_config_loader.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -233,6 +234,23 @@ retry:
       addTearDown(service.dispose);
       expect(providerTimeoutsOverride!.connect, const Duration(seconds: 42));
       expect(providerTimeoutsOverride!.streamIdle, const Duration(seconds: 25));
+    });
+
+    test('FA_PROVIDER_TIMEOUT_SECONDS folds over the yaml section', () async {
+      writeConfig(
+        'providerTimeouts:\n  connectTimeoutMs: 42000\n'
+        '  streamIdleTimeoutMs: 25000\n',
+      );
+      final previousEnv = faProviderTimeoutSecondsEnv;
+      faProviderTimeoutSecondsEnv = () => '30';
+      addTearDown(() => faProviderTimeoutSecondsEnv = previousEnv);
+      final service = await buildService();
+      addTearDown(service.dispose);
+      // The yaml section stands; the env var only replaces the fetch-read
+      // leg (issue #1036 precedence: env > config > defaults).
+      expect(providerTimeoutsOverride!.connect, const Duration(seconds: 42));
+      expect(providerTimeoutsOverride!.streamIdle, const Duration(seconds: 25));
+      expect(providerTimeoutsOverride!.fetchRead, const Duration(seconds: 30));
     });
 
     test('no section clears any previous override', () async {
