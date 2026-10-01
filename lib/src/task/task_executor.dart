@@ -404,11 +404,16 @@ final class TaskExecutor {
       // child's second life must not re-wire the leak silently.
       final resumeDuplicateNotes = resumeRegistry.duplicateNotes;
       if (resumeDuplicateNotes.isNotEmpty) {
+        // Read-modify-write: `put` replaces, and the spawn-time output
+        // under this id must survive the resume's warning (round-3
+        // review).
+        final existing = store.get(id);
         store.put(
           id,
+          '${existing == null || existing.isEmpty ? '' : '$existing\n\n'}'
           '[fah] warning: duplicate tool registration in the child surface '
-              '(child-specific tool won): '
-              '${resumeDuplicateNotes.join(' | ')}',
+          '(child-specific tool won): '
+          '${resumeDuplicateNotes.join(' | ')}',
         );
       }
       await _flushChildTranscript(id, child);

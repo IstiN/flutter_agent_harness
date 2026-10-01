@@ -7,14 +7,14 @@ library;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
-import 'scripted_stream_harness.dart';
+import '../support/scripted_stream_harness.dart';
 
 
 /// A scripted turn whose assistant message repeats ONE malformed tool call.
 List<AssistantMessageEvent> _badCallTurn(String id, String toolName) {
   final call = ToolCall(id: id, name: toolName, arguments: const {});
-  final empty = scriptedAssistant();
-  final partial = scriptedAssistant(
+  final empty = testAssistant();
+  final partial = testAssistant(
     content: [call],
     stopReason: StopReason.toolUse,
   );
