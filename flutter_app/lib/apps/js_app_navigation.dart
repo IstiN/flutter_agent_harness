@@ -14,6 +14,8 @@ import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa_ui/fa_ui.dart' show FaChatHost;
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show FileErrorCode;
 
 /// App-open navigation shared by the session sidebar's Apps section and the
 /// agent's `open_app` tool (see `open_app_tool.dart`): both push the same
@@ -46,16 +48,28 @@ Future<(AgentService?, _AppBindingResolution)> _resolveAppBinding(
   String? boundId;
   try {
     final raw = await active.env.readTextFile('apps/$appId/session.json');
-    final text = raw.valueOrNull;
-    if (text == null) return (null, _AppBindingResolution.firstContact);
-    try {
-      boundId = (jsonDecode(text) as Map<String, dynamic>)['sessionId']
-          ?.toString();
-    } on FormatException {
-      // A torn or agent-written file (seen on-device: a fitness-trainer
-      // tap silently dead). Rewriting the binding on the mint heals it.
-      return (null, _AppBindingResolution.firstContact);
+    if (raw.isErr) {
+      final code = raw.errorOrNull!.code;
+      if (code != FileErrorCode.notFound) {
+        // A real read failure (permission, is-a-directory, IO) is NOT
+        // absence: minting here would rewrite a binding we could not
+        // even read — the per-message proliferation the owner flagged.
+        // Keep the binding; run on the active session (issue #864).
+        AppLog.i(
+          'apps',
+          'binding read failed for $appId (${code.name}) — keeping binding',
+        );
+        return (null, _AppBindingResolution.unopenable);
+      }
+      return (null, _AppBindingResolution.firstContact); // no binding yet
     }
+    // A torn or agent-written file (seen on-device: a fitness-trainer
+    // tap silently dead) may hold any JSON shape; only a map with an id
+    // binds. Everything else heals by rewriting the binding on the mint.
+    final decoded = jsonDecode(raw.valueOrNull!);
+    boundId = decoded is Map<String, dynamic>
+        ? decoded['sessionId']?.toString()
+        : null;
   } on Object catch (error) {
     AppLog.i('apps', 'resolve bound session failed for $appId: $error');
     return (null, _AppBindingResolution.firstContact);
@@ -170,8 +184,16 @@ Future<AgentService?> forwardAppMessageToAgent(
       service = resolved;
     } else if (outcome == _AppBindingResolution.firstContact) {
       // Mint exactly once per app (issue #864): first contact only —
-      // never per open, never per message.
-      service = await _createAppBoundSessionOnce(manager, appId);
+      // never per open, never per message. A mint failure (binding
+      // write denied, clone rejected) must not drop the user's message
+      // as an unhandled zone error: log it and run on the active
+      // session; the binding heals on a later mint.
+      try {
+        service = await _createAppBoundSessionOnce(manager, appId);
+      } on Object catch (error) {
+        AppLog.i('apps', 'app binding mint failed for $appId: $error');
+        service = manager.active?.service;
+      }
     } else {
       // A real binding that cannot be opened right now: continue on the
       // active session, keep the binding untouched — never mint a

@@ -770,7 +770,8 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     if (await _resetViaRelay(target.service)) return;
     final choice = await _pickNewSessionFolder(target.service);
     if (choice == null) return;
-    _createSessionInChosenFolder(target.service, target.config);
+    // Fire-and-forget: the dialog flow controls nothing downstream.
+    unawaited(_createSessionInChosenFolder(target.service, target.config));
   }
 
   /// Everything a local new-session clone needs from the active session,
@@ -890,10 +891,7 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       if (await _resetViaRelay(target.service)) return;
       // Fire-and-forget: the ack is flow control for nobody.
       unawaited(HapticFeedback.mediumImpact());
-      await widget.manager.createSession(
-        config: target.config,
-        serviceFactory: () async => target.service.clone(),
-      );
+      await _createSessionInChosenFolder(target.service, target.config);
     } finally {
       _mintingFromBrand = false;
     }
@@ -901,14 +899,13 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 
   /// The folder is already set ('current' or a freshly applied pick);
   /// the created session's cwd (and its drawer group) follows it.
-  void _createSessionInChosenFolder(AgentService service, AgentConfig config) {
-    unawaited(
-      widget.manager.createSession(
-        config: config,
-        serviceFactory: () async => service.clone(),
-      ),
-    );
-  }
+  Future<void> _createSessionInChosenFolder(
+    AgentService service,
+    AgentConfig config,
+  ) => widget.manager.createSession(
+    config: config,
+    serviceFactory: () async => service.clone(),
+  );
 
   /// Opens a persisted-only session from the sidebar's history tail. On a
   /// A tap on an already-live sidebar row. Hosted surfaces re-dispatch

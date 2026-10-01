@@ -201,4 +201,53 @@ void main() {
       session.service.dispose();
     }
   });
+
+  testWidgets('a real binding whose session cannot be opened never mints '
+      '(issue #864)', (tester) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+    manager.addSession('original-session', _fakeService(env));
+
+    // The sessions root is a FILE: every disk-open leg fails outright.
+    // The binding below is REAL (it names a persisted session), so this
+    // is NOT first contact — the resolver must refuse to mint and keep
+    // the binding verbatim for a later repair.
+    await env.writeFile('/sessions', 'not a directory');
+    await env.writeFile(
+      'apps/notes/session.json',
+      '{"sessionId":"persisted-session"}',
+    );
+
+    final resolved = await tester.runAsync(
+      () => resolveAppBoundSession(manager, 'notes'),
+    );
+    expect(resolved, isNull);
+    expect(manager.sessions.length, 1); // no replacement minted
+
+    final binding = await env.readTextFile('apps/notes/session.json');
+    expect(binding.valueOrNull, contains('persisted-session'));
+  });
+
+  testWidgets('an unreadable binding is not treated as first contact '
+      '(issue #864)', (tester) async {
+    final env = MemoryExecutionEnv();
+    final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+    manager.addSession('original-session', _fakeService(env));
+
+    // The binding path is a DIRECTORY: the read fails with isDirectory —
+    // a real read error, not absence. Minting would overwrite a binding
+    // the app could not even read, so the resolver must refuse.
+    await env.writeFile('apps/notes/session.json/x', 'forces a directory');
+    final bindingBefore = await env.listDir('apps/notes');
+
+    final resolved = await tester.runAsync(
+      () => resolveAppBoundSession(manager, 'notes'),
+    );
+    expect(resolved, isNull);
+    expect(manager.sessions.length, 1); // no mint over the unreadable file
+    expect(
+      (await env.listDir('apps/notes')).valueOrNull!.map((e) => e.name),
+      (bindingBefore.valueOrNull ?? const []).map((e) => e.name),
+    );
+  });
 }

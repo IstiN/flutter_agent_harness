@@ -1803,7 +1803,7 @@ void main() {
     /// Pumps the sheet with a HUNG-RUN session active (`sess-b`): the run
     /// streams until [abort]ed. Shared scaffolding for the busy-session
     /// edge cases E1/E2 (review round 1: extract over hand-rolled dup).
-    Future<({FlutterSessionManager manager, AgentService busy})> _pumpBusySheet(
+    Future<({FlutterSessionManager manager, AgentService busy})> pumpBusySheet(
       WidgetTester tester,
     ) async {
       final env = MemoryExecutionEnv();
@@ -1832,7 +1832,7 @@ void main() {
     }
 
     /// Drains the hung run so the test ends without a live stream.
-    Future<void> _drainBusy(WidgetTester tester, AgentService busy) async {
+    Future<void> drainBusy(WidgetTester tester, AgentService busy) async {
       busy.abort();
       for (var i = 0; i < 30 && busy.isStreaming; i++) {
         await tester.runAsync(() async {
@@ -1844,7 +1844,7 @@ void main() {
 
     testWidgets('a busy active session: a tap opens it and shows the run — '
         'nothing mints to escape the busy one (E1)', (tester) async {
-      final (:manager, busy: busy) = await _pumpBusySheet(tester);
+      final (:manager, busy: busy) = await pumpBusySheet(tester);
 
       sheetState(tester).expand();
       // The streaming session's typing footer animates forever — settle
@@ -1857,12 +1857,12 @@ void main() {
       expect(manager.activeId, 'sess-b');
       expect(busy.isStreaming, isTrue);
 
-      await _drainBusy(tester, busy);
+      await drainBusy(tester, busy);
     });
 
     testWidgets('a long-press during a run mints a fresh session while the '
         'busy one keeps running (E2)', (tester) async {
-      final (:manager, busy: busy) = await _pumpBusySheet(tester);
+      final (:manager, busy: busy) = await pumpBusySheet(tester);
 
       await sheetState(tester).mintAndOpenNewSession();
       // The still-streaming old session keeps the typing footer animating
@@ -1875,7 +1875,7 @@ void main() {
       // The busy session was never aborted: it keeps streaming in its slot.
       expect(busy.isStreaming, isTrue);
 
-      await _drainBusy(tester, busy);
+      await drainBusy(tester, busy);
     });
 
     testWidgets('a rapid second trigger while the mint is in flight is '
