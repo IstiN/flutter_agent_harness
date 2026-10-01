@@ -70,9 +70,14 @@ const VIEWPORTS = [
   [1024, 768],
   [1280, 800],
 ];
-// The menu collapse breakpoint is 1080px (re-measured for gh-881: the
-// 11-link row + header badge fits from ~1050px). Keep this in sync with
-// site/styles.css.
+// The menu collapse breakpoint (gh-881): CSS decides visibility —
+// `@media (max-width: 1080px)` on .nav-toggle in site/styles.css — and
+// TWO more hand-synced copies must trail it exactly:
+//   site/main.js: matchMedia('(min-width: 1081px)') rotate auto-close
+//   this file: MENU_MAX_WIDTH below (which legs run the menu path)
+// Re-measured at 1080 for the 11-link row + header badge. If styles.css
+// and main.js drift apart, the burger disappears while data-open stays
+// set — the 960→1024 rotate leg below exists to catch exactly that.
 const MENU_MAX_WIDTH = 1080;
 
 let failures = 0;
@@ -326,6 +331,38 @@ async function main() {
       ok(`@${w} backdrop leaves focus alone`,
         await page.evaluate(() => document.activeElement !== document.querySelector('.nav-toggle')));
 
+      // The document handler gates on !nav.contains(target) — prove the
+      // gate, not just "a click closes": a click INSIDE the header (the
+      // brand link) must NOT close it.
+      await toggle.click();
+      await page.waitForTimeout(120);
+      await page.evaluate(() =>
+        document.querySelector('.brand').dispatchEvent(
+          new MouseEvent('click', { bubbles: true })));
+      await page.waitForTimeout(120);
+      ok(`@${w} click inside header does not close`,
+        (await toggle.getAttribute('aria-expanded')) === 'true');
+
+      // One REAL pointer click outside the header — element-addressed, so
+      // no font layout can move the target: scroll the hero H1 to the
+      // viewport bottom (clear of the open panel, which hugs the top),
+      // then click it for real. Playwright's actionability check fails
+      // this leg if any overlay intercepts the pointer, which keeps
+      // hit-testing itself covered (pointer-events, overlay z-order) —
+      // the synthetic dispatch above bypasses it by design. A bare
+      // coordinate click can't play this role: with the menu open the
+      // left edge IS the panel (nav.contains → no close), and closed-
+      // menu coordinates depend on content flow (navigated on linux).
+      await toggle.click();
+      await page.waitForTimeout(120);
+      await page.evaluate(() =>
+        document.querySelector('.hero h1').scrollIntoView({ block: 'end' }));
+      await page.waitForTimeout(150);
+      await page.locator('.hero h1').click();
+      await page.waitForTimeout(120);
+      ok(`@${w} real backdrop click closes`,
+        (await toggle.getAttribute('aria-expanded')) === 'false');
+
       // Tapping a menu link closes the menu and lands on the section.
       await toggle.click();
       await page.waitForTimeout(120);
@@ -346,6 +383,24 @@ async function main() {
           const r = document.querySelector('.nav-links a').getBoundingClientRect();
           return r.top < 60 && r.height > 0; // inside the one-row bar
         }));
+
+      // Mid-band consistency (review gh-881 r2): inside 961-1080 the
+      // collapsed menu renders, and an open menu (data-open) must
+      // coexist with a VISIBLE burger. If styles.css and main.js drift
+      // apart (CSS collapses below the JS breakpoint), the burger
+      // disappears while data-open sticks and the absolutely-positioned
+      // panel overlays desktop content — a drift rotate-to-1280 alone
+      // cannot see.
+      await page.setViewportSize({ width: 1024, height: 768 });
+      await page.waitForTimeout(150);
+      await toggle.click();
+      await page.waitForTimeout(120);
+      ok('@→1024 burger visible with menu open',
+        (await toggle.isVisible()) &&
+        (await toggle.getAttribute('aria-expanded')) === 'true');
+      ok('@→1024 no horizontal scroll',
+        await page.evaluate(() =>
+          document.documentElement.scrollWidth <= window.innerWidth));
     }
     await ctx.close();
 
@@ -368,8 +423,8 @@ async function main() {
     await ctxR.close();
 
     // E6: no-JS — wrapped links stay, never a dead button. Checked at 360px
-    // AND in the 641-960 band (the no-JS wrap guard spans the whole
-    // collapse range; the mid-width row would otherwise overflow there).
+    // AND in the collapsed band (the no-JS wrap guard spans the whole
+    // collapse range, ≤1080; the mid-width row would otherwise overflow).
     const ctxN = await browser.newContext({ javaScriptEnabled: false });
     const pageN = await ctxN.newPage();
     for (const [w, h] of [[360, 640], [768, 1024]]) {
@@ -401,7 +456,7 @@ async function main() {
         as.map((a) => a.getAttribute('href')));
       for (const href of hrefs) {
         await page.evaluate(() => window.scrollTo(0, 0));
-        const collapsed = w <= MENU_MAX_WIDTH; // menu collapse breakpoint (measured: 960px)
+        const collapsed = w <= MENU_MAX_WIDTH; // menu collapse breakpoint (see MENU_MAX_WIDTH above)
         if (collapsed) {
           // Close the menu first if a previous iteration left it open.
           if ((await page.locator('.nav-toggle').getAttribute('aria-expanded')) === 'true') {

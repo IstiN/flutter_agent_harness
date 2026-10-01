@@ -194,9 +194,10 @@
     navMenu.addEventListener('click', function (e) {
       if (e.target.closest('a')) { setMenu(false); }
     });
-    // Rotating past the breakpoint auto-closes — no stale overlay (E3).
-    // 1081 = the CSS collapse breakpoint (styles.css, re-measured for
-    // gh-881) — keep the two in sync.
+    // Rotating past the breakpoint auto-closes - no stale overlay (E3).
+    // 1081 = the CSS collapse breakpoint (styles.css @media max-width:
+    // 1080px; third hand-synced copy: scripts/site_mobile_check.mjs
+    // MENU_MAX_WIDTH) - keep all three in sync.
     var menuMq = window.matchMedia('(min-width: 1081px)');
     function onMenuMq() { if (menuMq.matches) { setMenu(false); } }
     if (menuMq.addEventListener) { menuMq.addEventListener('change', onMenuMq); }
