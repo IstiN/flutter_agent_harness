@@ -31,6 +31,8 @@ Usage:
     -a fa_agent:FaAgent -e docker -m glm-5.3-flash
 """
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import json
@@ -47,7 +49,17 @@ from harbor.agents.installed.base import BaseInstalledAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
+# Shared extraction lives one level up (bench/fa_usage.py); PYTHONPATH only
+# carries this dir.
+_BENCH_DIR = str(Path(__file__).resolve().parent.parent)
+if _BENCH_DIR not in sys.path:
+    sys.path.insert(0, _BENCH_DIR)
+import fa_usage  # noqa: E402
+
 _VERSION = "0.1.0"
+
+# Pinned $/Mtok table (data, not code) for est_cost_usd (issue #1123).
+_PRICING_PATH = Path(__file__).resolve().parent.parent / "pricing.json"
 
 # Sessions are written here inside the environment; harbor syncs /logs/agent
 # back to the host trial dir after the trial (Trial._download_agent_logs).
@@ -267,37 +279,70 @@ class FaAgent(BaseInstalledAgent):
             pass
 
     def populate_context_post_run(self, context: AgentContext) -> None:
-        """Fold fa's session token accounting into the agent context.
+        """Fold fa's session token accounting into the agent context (issue #1123).
 
         fa session JSONL assistant records embed
         ``message.usage = {input, output, cacheRead, cacheWrite, ...}``
         (Usage.toJson in lib/src/types.dart); summed across records this is
-        the billed usage for the trial. Flat ``inputTokens``-style keys are
-        accepted as a fallback for older session shapes.
+        the billed usage for the trial. Extraction is shared with the legacy
+        adapter (bench/fa_usage.py): rglob covers retries and subagent
+        sessions (E1/E2), records with omitted usage contribute a chars/4
+        estimate tallied in context.metadata, and a missing/corrupt log
+        leaves zeros + a warning.
+
+        Harbor semantics: n_input_tokens INCLUDES cache tokens. cost_usd
+        comes from the pinned bench price table (bench/pricing.json);
+        unpriced model → None, which the summary renders as n/a.
         """
-        sessions_dir = self.logs_dir / "fah-sessions"
-        if not sessions_dir.is_dir():
+        usage = fa_usage.extract_from_dir(self.logs_dir / "fah-sessions")
+        for warning in usage.warnings:
+            print(f"[fa_agent] warning: {warning}", file=sys.stderr)
+        if not (
+            usage.input_tokens
+            or usage.output_tokens
+            or usage.cache_read_tokens
+            or usage.cache_write_tokens
+            or usage.estimated_tokens
+        ):
             return
-        n_in = n_out = n_cache = 0
-        for path in sessions_dir.rglob("*.jsonl"):
-            for line in path.read_text(errors="replace").splitlines():
-                if '"usage"' not in line and '"inputTokens"' not in line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                message = rec.get("message") or {}
-                usage = message.get("usage") or rec
-                n_in += usage.get("input") or usage.get("inputTokens") or 0
-                n_out += usage.get("output") or usage.get("outputTokens") or 0
-                n_cache += (usage.get("cacheRead") or 0) + (
-                    usage.get("cacheWrite") or 0
+        context.n_input_tokens = (
+            context.n_input_tokens or 0
+        ) + usage.input_tokens + usage.cache_read_tokens + (
+            usage.cache_write_tokens + usage.estimated_input_tokens
+        )
+        context.n_output_tokens = (
+            context.n_output_tokens or 0
+        ) + usage.output_tokens + usage.estimated_output_tokens
+        context.n_cache_tokens = (
+            context.n_cache_tokens or 0
+        ) + usage.cache_read_tokens + usage.cache_write_tokens
+        pricing = fa_usage.load_pricing(_PRICING_PATH)
+        total = 0.0
+        priced = bool(usage.models)
+        for model, tally in sorted(usage.models.items()):
+            cost = fa_usage.cost_usd(
+                fa_usage.price_entry(pricing, model),
+                tally["input"],
+                tally["output"],
+                tally["cacheRead"],
+                tally["cacheWrite"],
+            )
+            if cost is None:
+                # E3: a model the table doesn't pin → no made-up total.
+                priced = False
+                print(
+                    f"[fa_agent] warning: no bench price for model '{model or '?'}'; "
+                    f"cost_usd stays n/a",
+                    file=sys.stderr,
                 )
-        if n_in or n_out:
-            context.n_input_tokens = (context.n_input_tokens or 0) + n_in
-            context.n_output_tokens = (context.n_output_tokens or 0) + n_out
-            context.n_cache_tokens = (context.n_cache_tokens or 0) + n_cache
+            else:
+                total += cost
+        context.cost_usd = total if priced else None
+        if usage.estimated_tokens:
+            context.metadata = {
+                **(context.metadata or {}),
+                "estimated_tokens": usage.estimated_tokens,
+            }
 
 
 def _b64(value: str) -> str:
