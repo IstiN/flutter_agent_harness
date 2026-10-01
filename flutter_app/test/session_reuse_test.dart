@@ -374,4 +374,38 @@ void main() {
       expect(manager.sessions, isEmpty);
     });
   });
+
+  group('ensureActiveSession (issue #864 AC3)', () {
+    late MemoryExecutionEnv env;
+    late FlutterSessionManager manager;
+
+    setUp(() {
+      env = MemoryExecutionEnv();
+      manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
+    });
+
+    test('with no active session a call creates exactly one', () async {
+      expect(manager.active, isNull);
+      await manager.ensureActiveSession(
+        config: _config,
+        serviceFactory: () async => _fakeService(env),
+      );
+      expect(manager.active, isNotNull);
+      expect(manager.sessions, hasLength(1));
+    });
+
+    test('with an active session it is a no-op — zero minting', () async {
+      await manager.ensureActiveSession(
+        config: _config,
+        serviceFactory: () async => _fakeService(env),
+      );
+      final active = manager.active;
+      await manager.ensureActiveSession(
+        config: _config,
+        serviceFactory: () async => _fakeService(env),
+      );
+      expect(manager.active, same(active));
+      expect(manager.sessions, hasLength(1));
+    });
+  });
 }
