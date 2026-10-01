@@ -334,9 +334,13 @@ void main() {
       // Files whose removals provably never touch session files:
       // - clipboard_reader: temp pasteboard images in the system temp dir
       // - sessions_root: a `.probe_<micros>` writability probe file
+      // - widget_publish_service: the `fa-validate-` system-temp scratch
+      //   dir the client-side validator materializes the widget into
+      //   (issue #1045) — never a session file
       const allowed = {
         'lib/src/cli/clipboard_reader.dart',
         'flutter_app/lib/services/sessions_root.dart',
+        'flutter_app/lib/services/widget_publish_service.dart',
       };
       final offenders = <String>[];
       for (final zone in zones) {

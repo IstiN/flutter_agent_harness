@@ -3,6 +3,7 @@
 // in the LICENSE file.
 
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:fa/apps/apps_store.dart';
@@ -11,6 +12,7 @@ import 'package:fa/services/github_api_client.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/widget_publication_store.dart';
 import 'package:fa/services/widget_publish_service.dart';
+import 'package:fa_widgets_tool/src/validator.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -105,7 +107,7 @@ Future<JsAppInfo> _seedWidget(
       'version': version,
       'icon': '🍅',
       'tags': ['productivity'],
-      'minRuntime': '1.0',
+      'minRuntime': '1.0.0',
       ...manifestExtra,
     }),
   );
@@ -499,12 +501,13 @@ void main() {
             )
             .toList();
         expect(prBlobs.single.contains('[submodule'), isFalse);
-        final overlay =
-            jsonDecode(prBlobs.single) as Map<String, dynamic>;
+        final overlay = jsonDecode(prBlobs.single) as Map<String, dynamic>;
         expect(overlay['icon'], 'icon.svg');
         expect(overlay['author'], 'octocat');
         expect(overlay['tags'], ['productivity']);
-        expect(overlay['minRuntime'], '1.0');
+        // Issue #1045 AC2: the manifest's minRuntime rides through;
+        // the floor stamp only fills a MISSING/empty value.
+        expect(overlay['minRuntime'], '1.0.0');
         expect(overlay['source'], {
           'repo': 'octocat/fa-widget-pomodoro',
           'commit': 'commit1',
@@ -681,56 +684,54 @@ void main() {
       },
     );
 
-    test(
-      'AC2 (#232): two devices publish disjoint single-file PRs',
-      () async {
-        // Two independent devices (separate env + ledger), each past the
-        // repo step, publish different widgets against one catalog fork.
-        final gh = _ScriptedGithub();
-        for (final (id, prNumber) in [('pomodoro', 11), ('timer', 12)]) {
-          final env = MemoryExecutionEnv();
-          final app = await _seedWidget(env, id: id);
-          final ledger = await WidgetPublicationStore.load(env);
-          await ledger.record(
-            WidgetPublication(
-              widgetId: id,
-              version: '1.0.0',
-              repoFullName: 'octocat/fa-widget-$id',
-              repoCommit: 'sha-$id',
-              step: WidgetPublication.stepRepoPushed,
-              submittedAt: DateTime.utc(2026, 1, 31),
-            ),
-          );
-          _scriptForkAndPr(
-            gh,
-            widgetSha: 'sha-$id',
-            id: id,
-            forkExists: true,
-            prNumber: prNumber,
-          );
-          final service = _service(env, await _connectedAccount(), ledger, gh);
-          final result = await service.publish(app: app);
-          expect(result.publication.prNumber, prNumber);
-        }
-        // Each PR tree touches exactly ONE file — its own overlay — so
-        // parallel PRs can never conflict (no shared .gitmodules left).
-        final trees = gh
-            .where('POST', '/repos/octocat/fa_widgets/git/trees')
-            .map(
-              (r) => (gh.bodyOf(r)['tree'] as List<dynamic>)
-                  .map((e) => (e as Map)['path'] as String)
-                  .toSet(),
-            )
-            .toList();
-        expect(trees, [
-          {'widgets/pomodoro/overlay.json'},
-          {'widgets/timer/overlay.json'},
-        ]);
-        expect(trees[0].intersection(trees[1]), isEmpty);
-      },
-    );
+    test('AC2 (#232): two devices publish disjoint single-file PRs', () async {
+      // Two independent devices (separate env + ledger), each past the
+      // repo step, publish different widgets against one catalog fork.
+      final gh = _ScriptedGithub();
+      for (final (id, prNumber) in [('pomodoro', 11), ('timer', 12)]) {
+        final env = MemoryExecutionEnv();
+        final app = await _seedWidget(env, id: id);
+        final ledger = await WidgetPublicationStore.load(env);
+        await ledger.record(
+          WidgetPublication(
+            widgetId: id,
+            version: '1.0.0',
+            repoFullName: 'octocat/fa-widget-$id',
+            repoCommit: 'sha-$id',
+            step: WidgetPublication.stepRepoPushed,
+            submittedAt: DateTime.utc(2026, 1, 31),
+          ),
+        );
+        _scriptForkAndPr(
+          gh,
+          widgetSha: 'sha-$id',
+          id: id,
+          forkExists: true,
+          prNumber: prNumber,
+        );
+        final service = _service(env, await _connectedAccount(), ledger, gh);
+        final result = await service.publish(app: app);
+        expect(result.publication.prNumber, prNumber);
+      }
+      // Each PR tree touches exactly ONE file — its own overlay — so
+      // parallel PRs can never conflict (no shared .gitmodules left).
+      final trees = gh
+          .where('POST', '/repos/octocat/fa_widgets/git/trees')
+          .map(
+            (r) => (gh.bodyOf(r)['tree'] as List<dynamic>)
+                .map((e) => (e as Map)['path'] as String)
+                .toSet(),
+          )
+          .toList();
+      expect(trees, [
+        {'widgets/pomodoro/overlay.json'},
+        {'widgets/timer/overlay.json'},
+      ]);
+      expect(trees[0].intersection(trees[1]), isEmpty);
+    });
 
-    test('private existing repo is rejected', () async {      final env = MemoryExecutionEnv();
+    test('private existing repo is rejected', () async {
+      final env = MemoryExecutionEnv();
       final app = await _seedWidget(env);
       final gh = _ScriptedGithub()
         ..on(
@@ -839,21 +840,23 @@ void main() {
             .map((e) => (e as Map)['path'])
             .toList();
         expect(entryPaths, ['widgets/pomodoro/overlay.json']);
-        final overlay = jsonDecode(
-          utf8.decode(
-            base64Decode(
-              gh.bodyOf(
-                    gh
-                        .where(
-                          'POST',
-                          '/repos/octocat/fa_widgets/git/blobs',
-                        )
-                        .single,
-                  )['content']
-                  as String,
-            ),
-          ),
-        ) as Map<String, dynamic>;
+        final overlay =
+            jsonDecode(
+                  utf8.decode(
+                    base64Decode(
+                      gh.bodyOf(
+                            gh
+                                .where(
+                                  'POST',
+                                  '/repos/octocat/fa_widgets/git/blobs',
+                                )
+                                .single,
+                          )['content']
+                          as String,
+                    ),
+                  ),
+                )
+                as Map<String, dynamic>;
         expect(overlay['source'], {
           'repo': 'octocat/fa-widget-pomodoro',
           'commit': 'deadbeef',
@@ -1114,5 +1117,394 @@ void main() {
       expect(records, 1);
       expect(ledger.byWidgetId('pomodoro')!.comments, hasLength(2));
     });
+  });
+
+  // Issue #1045 regression pins: the on-device preflight must surface the
+  // fa_widgets rule engine's VERBATIM errors (no swallowing), and the
+  // stamped manifest must never leave minRuntime empty (the PR #8 killer).
+  group('WidgetPublishService preflight engine parity (#1045)', () {
+    test(
+      'missing minRuntime never publishes empty - floor stamped (PR #8)',
+      () async {
+        final env = MemoryExecutionEnv();
+        final app = await _seedWidget(env);
+        // Strip minRuntime entirely — the PR #8 failure shape. Seed again
+        // without the key (the helper pins it) by overwriting the manifest.
+        await env.writeFile(
+          'apps/pomodoro/manifest.json',
+          jsonEncode({
+            'id': 'pomodoro',
+            'name': 'Pomodoro',
+            'description': 'Focus timer',
+            'version': '1.0.0',
+            'icon': '🍅',
+            'tags': ['productivity'],
+          }),
+        );
+
+        final service = _service(
+          env,
+          await _connectedAccount(),
+          await WidgetPublicationStore.load(env),
+          _ScriptedGithub(),
+        );
+        final issues = await service.preflight(app);
+        // The floor satisfies the engine (AC2): the widget publishes with
+        // minRuntime=0.4.79 instead of dying in CI with ERROR 2048.
+        expect(issues.where((i) => i.message.contains('minRuntime')), isEmpty);
+        expect(
+          WidgetPublishService.stampedManifest(const {
+            'minRuntime': null,
+          })['minRuntime'],
+          WidgetPublishService.catalogFloorRuntime,
+        );
+      },
+    );
+
+    test(
+      'preflight errors are byte-identical to the engine (REG1 parity)',
+      () async {
+        final env = MemoryExecutionEnv();
+        final app = await _seedWidget(env, version: 'not-semver');
+        final service = _service(
+          env,
+          await _connectedAccount(),
+          await WidgetPublicationStore.load(env),
+          _ScriptedGithub(),
+        );
+        final issues = await service.preflight(app);
+        final preflightMessages = issues.map((i) => i.message).toSet();
+
+        // The same broken manifest straight through the engine (with the
+        // service's minRuntime stamp, which the service also applies).
+        final parent = await Directory.systemTemp.createTemp('parity');
+        // The engine also enforces folder-name == id; mirror the app layout.
+        final dir = Directory('${parent.path}/pomodoro')..createSync();
+        final manifest = WidgetPublishService.stampedManifest(<String, Object?>{
+          'id': 'pomodoro',
+          'name': 'Pomodoro',
+          'description': 'Focus timer',
+          'version': 'not-semver',
+          'minRuntime': '1.0.0',
+          'icon': 'icon.svg',
+        });
+        await File(
+          '${dir.path}/manifest.json',
+        ).writeAsString(jsonEncode(manifest));
+        await File('${dir.path}/widget.js').writeAsString('x');
+        await File('${dir.path}/icon.svg').writeAsString('<svg/>');
+        final engine = validateWidgetDirectory(dir);
+        parent.deleteSync(recursive: true);
+
+        expect(engine.errors, isNotEmpty);
+        for (final error in engine.errors) {
+          expect(
+            preflightMessages,
+            contains(error.message),
+            reason: 'engine error must surface verbatim: ${error.message}',
+          );
+        }
+      },
+    );
+
+    test('empty minRuntime is stamped to the catalog floor (AC2)', () async {
+      final env = MemoryExecutionEnv();
+      final app = await _seedWidget(
+        env,
+        manifestExtra: const {'minRuntime': '  '},
+      );
+      final service = _service(
+        env,
+        await _connectedAccount(),
+        await WidgetPublicationStore.load(env),
+        _ScriptedGithub(),
+      );
+      final issues = await service.preflight(app);
+      // The floor satisfies the engine: preflight must NOT block on
+      // minRuntime, and publish-time overlay carries the stamped value.
+      expect(issues.where((i) => i.message.contains('minRuntime')), isEmpty);
+      expect(
+        WidgetPublishService.stampedManifest(const {})['minRuntime'],
+        WidgetPublishService.catalogFloorRuntime,
+      );
+    });
+
+    test('invalid minRuntime semver reported verbatim', () async {
+      final env = MemoryExecutionEnv();
+      final app = await _seedWidget(
+        env,
+        manifestExtra: const {'minRuntime': '1.0'},
+      );
+      final service = _service(
+        env,
+        await _connectedAccount(),
+        await WidgetPublicationStore.load(env),
+        _ScriptedGithub(),
+      );
+      final issues = await service.preflight(app);
+      expect(issues, isNotEmpty);
+      expect(
+        issues.any((i) => i.message.contains("minRuntime '1.0' must be")),
+        isTrue,
+      );
+    });
+  });
+
+  // Issue #1045 review round-1: service-level pins for the CI-verdict
+  // mapping (AC3) and the fire-and-forget ledger lifecycle (AC6/I4).
+  group('WidgetPublishService CI verdict mapping (#1045)', () {
+    WidgetPublication prPublication() => WidgetPublication(
+      widgetId: 'pomodoro',
+      version: '1.0.0',
+      repoFullName: 'octocat/fa-widget-pomodoro',
+      repoCommit: 'abc',
+      step: WidgetPublication.stepPrOpened,
+      submittedAt: DateTime.utc(2026, 2, 1),
+      prNumber: 42,
+    );
+
+    Map<String, Object?> checkRun(
+      int id, {
+      String status = 'completed',
+      String? conclusion = 'failure',
+      String? htmlUrl,
+    }) => {
+      'id': id,
+      'status': status,
+      'conclusion': ?conclusion,
+      'html_url':
+          htmlUrl ??
+          'https://github.com/IstiN/fa_widgets/actions/runs/9/job/$id',
+    };
+
+    Future<(MemoryExecutionEnv, WidgetPublicationStore, WidgetPublication)>
+    seeded() async {
+      final env = MemoryExecutionEnv();
+      final ledger = await WidgetPublicationStore.load(env);
+      final publication = await ledger.record(prPublication());
+      return (env, ledger, publication);
+    }
+
+    _ScriptedGithub checksOn(String sha, Map<String, Object?> runs) =>
+        _ScriptedGithub()
+          ..on('GET', '/repos/IstiN/fa_widgets/pulls/42', {
+            ..._pullJson(42),
+            'head': {'sha': sha},
+          })
+          ..on('GET', '/repos/IstiN/fa_widgets/commits/$sha/check-runs', runs);
+
+    test(
+      'failed validate check → invalid with verbatim job-log errors',
+      () async {
+        final (env, ledger, publication) = await seeded();
+        final gh =
+            checksOn('deadbeef', {
+              'total_count': 2,
+              'check_runs': [
+                checkRun(1, conclusion: 'success'),
+                checkRun(
+                  2,
+                  conclusion: 'failure',
+                  htmlUrl:
+                      'https://github.com/IstiN/fa_widgets/actions/runs/99/job/2',
+                ),
+              ],
+            })..on(
+              'GET',
+              '/repos/IstiN/fa_widgets/actions/jobs/2/logs',
+              'ERROR 2048: external manifest: minRuntime must be a '
+                  'non-empty string.\n',
+            );
+
+        final account = await _connectedAccount();
+        final state = await _service(
+          env,
+          account,
+          ledger,
+          gh,
+        ).refreshStatus(publication);
+
+        expect(state, WidgetPublicationState.invalid);
+        final stored = ledger.byWidgetId('pomodoro')!;
+        expect(stored.validatorErrors, isNotEmpty);
+        expect(
+          stored.validatorErrors.join('\n'),
+          contains('ERROR 2048: external manifest: minRuntime'),
+        );
+        expect(stored.runHtmlUrl, contains('actions/runs/99'));
+      },
+    );
+
+    test('timed_out validate check counts as failed, not open', () async {
+      final (env, ledger, publication) = await seeded();
+      final gh = checksOn('deadbeef', {
+        'total_count': 1,
+        'check_runs': [checkRun(3, conclusion: 'timed_out')],
+      })..on('GET', '/repos/IstiN/fa_widgets/actions/jobs/3/logs', '');
+
+      final account = await _connectedAccount();
+      final state = await _service(
+        env,
+        account,
+        ledger,
+        gh,
+      ).refreshStatus(publication);
+      expect(state, WidgetPublicationState.invalid);
+    });
+
+    test('pending checks → validating; green checks → open', () async {
+      final (env, ledger, publication) = await seeded();
+      final account = await _connectedAccount();
+
+      final gh1 = checksOn('deadbeef', {
+        'total_count': 1,
+        'check_runs': [checkRun(4, status: 'in_progress', conclusion: null)],
+      });
+      expect(
+        await _service(env, account, ledger, gh1).refreshStatus(publication),
+        WidgetPublicationState.validating,
+      );
+
+      final gh2 = checksOn('deadbeef', {
+        'total_count': 1,
+        'check_runs': [checkRun(5, conclusion: 'success')],
+      });
+      expect(
+        await _service(env, account, ledger, gh2).refreshStatus(publication),
+        WidgetPublicationState.open,
+      );
+      expect(ledger.byWidgetId('pomodoro')!.lastKnownState, 'open');
+    });
+    test('non-ERROR crash log still surfaces verbatim CI lines', () async {
+      // A `dart run` step that dies without an `error`-shaped line (Dart
+      // compile crashes print `Error:`, an OOM kill prints nothing) must
+      // not store an empty validatorErrors list — the ticket's headline
+      // outcome is verbatim errors with no digging into CI (r2 review).
+      final (env, ledger, publication) = await seeded();
+      final account = await _connectedAccount();
+      final gh =
+          checksOn('deadbeef', {
+            'total_count': 1,
+            'check_runs': [checkRun(7, conclusion: 'failure')],
+          })..on(
+            'GET',
+            '/repos/IstiN/fa_widgets/actions/jobs/7/logs',
+            '2026-10-01T00:00:00.000Z Build flutter assemble\n'
+                '2026-10-01T00:00:01.000Z Unhandled exception:\n'
+                '2026-10-01T00:00:01.100Z OSError (code = -9, errno = 9)\n'
+                '2026-10-01T00:00:02.000Z Process completed with exit code 255\n',
+            status: 200,
+          );
+      final state = await _service(
+        env,
+        account,
+        ledger,
+        gh,
+      ).refreshStatus(publication);
+      expect(state, WidgetPublicationState.invalid);
+      final stored = ledger.byWidgetId('pomodoro')!;
+      expect(stored.validatorErrors, isNotEmpty);
+      expect(
+        stored.validatorErrors.join('\n'),
+        contains('OSError (code = -9, errno = 9)'),
+      );
+    });
+  });
+
+  group('WidgetPublishService fire-and-forget lifecycle (#1045)', () {
+    test('retry after a failed first publish recomputes the repo', () async {
+      final env = MemoryExecutionEnv();
+      final app = await _seedWidget(env);
+      final account = await _connectedAccount();
+      final ledger = await WidgetPublicationStore.load(env);
+
+      // First attempt dies at the network boundary (nothing scripted).
+      final ghFail = _ScriptedGithub();
+      await expectLater(
+        _service(env, account, ledger, ghFail).publish(app: app),
+        throwsA(isA<GithubApiException>()),
+      );
+      final failed = ledger.byWidgetId('pomodoro')!;
+      expect(failed.lastKnownState, WidgetPublication.stateFailed);
+      expect(failed.repoFullName, isEmpty);
+
+      // Retry must route the REAL repo path — the blocker was a retry
+      // hitting GET /repos// from the empty optimistic record.
+      final ghRetry = _ScriptedGithub()
+        ..on('GET', '/repos/octocat/fa-widget-pomodoro', {
+          'full_name': 'octocat/fa-widget-pomodoro',
+          'private': false,
+          'description': 'Fa widget: Pomodoro',
+        });
+      await expectLater(
+        _service(env, account, ledger, ghRetry).publish(app: app),
+        throwsA(isA<GithubApiException>()),
+      );
+      final paths = ghRetry.requests.map((r) => r.url.path).toList();
+      expect(paths, contains('/repos/octocat/fa-widget-pomodoro'));
+      expect(paths, everyElement(isNot(contains('//'))));
+    });
+
+    test('second startPublish while a flow is in flight fails fast', () async {
+      final env = MemoryExecutionEnv();
+      final app = await _seedWidget(env);
+      final account = await _connectedAccount();
+      final ledger = await WidgetPublicationStore.load(env);
+      final service = _service(env, account, ledger, _ScriptedGithub());
+
+      // The guard is claimed synchronously (before the first await), so
+      // the second call trips it even before the first flow progresses.
+      final first = service.startPublish(app: app);
+      await expectLater(
+        service.startPublish(app: app),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('publish_in_progress'),
+          ),
+        ),
+      );
+      final pending = await first;
+      // The flow dies on the unscripted transport — swallow the expected
+      // error so it is not an unhandled async failure.
+      pending.flow.ignore();
+    });
+
+    test(
+      'the in-flight guard is process-wide, not per service instance',
+      () async {
+        // Every publish entry point (launcher menu, account section, apps
+        // panel) constructs its OWN WidgetPublishService — the guard must
+        // live per widget, not per instance (issue #1045 review r2).
+        final env = MemoryExecutionEnv();
+        final app = await _seedWidget(env);
+        final account = await _connectedAccount();
+        final ledger = await WidgetPublicationStore.load(env);
+        final first = _service(
+          env,
+          account,
+          ledger,
+          _ScriptedGithub(),
+        ).startPublish(app: app);
+        await expectLater(
+          _service(
+            env,
+            account,
+            ledger,
+            _ScriptedGithub(),
+          ).startPublish(app: app),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('publish_in_progress'),
+            ),
+          ),
+        );
+        final pending = await first;
+        pending.flow.ignore();
+      },
+    );
   });
 }
