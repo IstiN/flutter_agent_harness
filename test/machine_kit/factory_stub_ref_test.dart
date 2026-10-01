@@ -1,8 +1,11 @@
-// Guard: the machine-loop stubs pin the dmtools-agents factory at an
-// immutable SHA, and all THREE stubs pin the SAME ref (teammate, SM and
-// merge must never skew apart — the SM dispatches the teammate workflow,
-// the event-driven merge fast path runs mergeBot.js from the pinned
-// pack; a stale merge stub silently misses pack fixes).
+// Guard: the machine-loop stubs pin the FACTORY HOME
+// (dmtools-agentic-workflows) at an immutable SHA, and all THREE stubs
+// pin the SAME ref (teammate, SM and merge must never skew apart — the
+// SM dispatches the teammate workflow, the event-driven merge fast path
+// runs mergeBot.js from the pinned pack; a stale merge stub silently
+// misses pack fixes). The ENGINE (dmtools-agents: packs + factory code)
+// is pinned separately: ai-teammate passes factory_ref; sm/merge
+// resolve the engine from releases via vars (latest default).
 //
 // Ported from epam/dmtools-dart (test/machine_kit/factory_stub_ref_test.dart)
 // minus the submodule cross-check: fa pins the factory ref directly, there
@@ -32,7 +35,8 @@ void main() {
     final usesLine = yaml
         .split('\n')
         .firstWhere(
-          (l) => l.contains('dmtools-agents/.github/workflows/$workflowFile@'),
+          (l) => l.contains(
+              'dmtools-agentic-workflows/.github/workflows/$workflowFile@'),
           orElse: () => '',
         );
     if (!usesLine.contains('@')) return null;
@@ -96,15 +100,24 @@ void main() {
     );
   });
 
-  test('factory_ref input echoes the literal uses-ref (the factory cannot '
-      'derive its own ref)', () {
-    for (final entry in stubs.entries) {
-      final (yaml, factoryFile) = entry.value;
-      final ref = pinnedRef(yaml, factoryFile)!;
+  test('engine pin: ai-teammate passes a 40-hex factory_ref; sm/merge '
+      'carry none (AW resolves the engine from releases)', () {
+    final engineRef =
+        RegExp(r'factory_ref:\s*([0-9a-f]{40})').firstMatch(teammate);
+    expect(
+      engineRef,
+      isNotNull,
+      reason: 'ai-teammate must pass factory_ref — the factory declares it '
+          'required and cannot derive its own engine commit',
+    );
+    for (final entry in {'machine-sm.yml': sm, 'machine-merge.yml': merge}
+        .entries) {
       expect(
-        yaml.contains('factory_ref: $ref'),
-        isTrue,
-        reason: '${entry.key}: factory_ref must repeat the uses-ref literally',
+        entry.value.contains('factory_ref:'),
+        isFalse,
+        reason: '${entry.key}: AW factory-sm/merge have no factory_ref '
+            'input — the engine resolves from dmtools-agents releases '
+            'via vars (latest default)',
       );
     }
   });
