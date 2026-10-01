@@ -28,6 +28,7 @@ import 'package:yaml/yaml.dart';
 
 import '../exceptions.dart';
 import '../providers/thinking.dart';
+import '../utils/path_text.dart';
 import 'provider_catalog.dart'
     show catalogProvider, parseAuthHeaderName, validateAuthHeaderDialect;
 
@@ -482,7 +483,7 @@ String _chainsToYaml(Map<String, List<ModelRef>> roles, {int indent = 0}) {
 bool pathPatternMatches(String pattern, String cwd, {String? homeDir}) {
   final pat = _normalizePattern(pattern, homeDir);
   if (pat == null) return false;
-  final dir = _stripTrailingSlashes(cwd.trim());
+  final dir = stripTrailingSlashes(cwd.trim());
   if (pat.isEmpty || dir.isEmpty) return false;
 
   if (pat.contains('*')) {
@@ -502,17 +503,7 @@ String? _normalizePattern(String pattern, String? homeDir) {
     if (homeDir == null) return null;
     pat = pat.length == 1 ? homeDir : '$homeDir${pat.substring(1)}';
   }
-  return _stripTrailingSlashes(pat);
-}
-
-/// Strips redundant trailing slashes (matching is lexical; no filesystem
-/// access). A lone `/` root is kept.
-String _stripTrailingSlashes(String path) {
-  var result = path;
-  while (result.length > 1 && result.endsWith('/')) {
-    result = result.substring(0, result.length - 1);
-  }
-  return result;
+  return stripTrailingSlashes(pat);
 }
 
 /// Whether the glob [pattern] (`*` matches any run of non-`/` characters,

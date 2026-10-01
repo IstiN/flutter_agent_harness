@@ -73,6 +73,7 @@ final class AutoCompactorPass {
   /// The summary text the pass wrote (from the compaction record); `null`
   /// for failed / no-work / local-trim passes.
   final String? summary;
+
   /// Session records hidden behind the compaction boundary.
   final int hiddenRecords;
 
@@ -139,6 +140,7 @@ final class AutoCompactor {
     this.force = false,
     this.attemptBudget = const Duration(seconds: 300),
     this.totalBudget = const Duration(minutes: 15),
+    this.runToken,
   });
 
   /// The session to compact and to read the projected transcript from.
@@ -224,6 +226,14 @@ final class AutoCompactor {
   /// crossed).
   final bool force;
 
+  /// The owning run's cancellation token (issue #1085 M1/M3), when the
+  /// compaction runs inside a run (mid-run over-window relief). When it
+  /// cancels — a USER abort, never the suspended watchdog — every
+  /// in-flight summarization attempt is cancelled with it, so an abort
+  /// kills the compaction promptly instead of waiting out the 15-30 min
+  /// relief. `null` = not linked (standalone compaction).
+  final CancelToken? runToken;
+
   /// Transient error markers worth retrying: 5xx HTTP, aborted /
   /// reset / closed sockets. Hard refusals (rate limit, 429, content
   /// filter, auth) fail fast.
@@ -259,24 +269,35 @@ final class AutoCompactor {
   /// transcript fits in [window]), `false` when the loop gave up or
   /// every summarizer failed.
   Future<bool> run() async {
-    if (window <= 0) return true;
-    final initial = _requestTokens();
-    if (!force && !shouldCompact(initial, window, settings)) return true;
+    try {
+      if (window <= 0) return true;
+      final initial = _requestTokens();
+      if (!force && !shouldCompact(initial, window, settings)) return true;
 
-    final runFallback = _shouldRunFallback();
-    final clock = Stopwatch()..start();
+      final runFallback = _shouldRunFallback();
+      final clock = Stopwatch()..start();
 
-    for (var pass = 1; pass <= maxPasses; pass++) {
-      final result = await _runPass(
-        pass,
-        runFallback: runFallback,
-        clock: clock,
-      );
-      if (result.done) return result.success;
+      for (var pass = 1; pass <= maxPasses; pass++) {
+        final result = await _runPass(
+          pass,
+          runFallback: runFallback,
+          clock: clock,
+        );
+        if (result.done) return result.success;
+      }
+      final tokens = _requestTokens();
+      hooks.onDone(maxPasses, tokens);
+      return false;
+    } finally {
+      // A cancelled compaction is NEVER a mere failed pass (issue #1085
+      // round-4): both engines fold a cancelled summarizer into
+      // `ok: false`, which callers read as "nothing changed" — the
+      // over-window funnel then RELAUNCHES the compaction the user just
+      // stopped. Surface the cancel as an exception so every host's
+      // abort handling sees it; a success that races a late cancel is
+      // equally dead (the next request rides a cancelled run token).
+      runToken?.throwIfCancelled();
     }
-    final tokens = _requestTokens();
-    hooks.onDone(maxPasses, tokens);
-    return false;
   }
 
   /// Whether the smol summarizer is distinct from the main one and should be
@@ -608,6 +629,18 @@ final class AutoCompactor {
         // would otherwise keep the connection (and the retry pass) alive
         // past the timeout.
         final attemptToken = CancelTokenSource();
+        // Issue #1085: a linked run token (mid-run relief) forwards its
+        // cancellation to the in-flight attempt — the user abort reaches
+        // the summarizer within a microtask hop instead of waiting out
+        // the whole relief.
+        final runToken = this.runToken;
+        if (runToken != null) {
+          unawaited(
+            runToken.onCancel.then(
+              (_) => attemptToken.cancel(runToken.cancelReason),
+            ),
+          );
+        }
         final compacting = manager.compactSession(
           session,
           cancelToken: attemptToken.token,
@@ -751,6 +784,7 @@ class AutoCompactorFactory {
     this.attemptBudget = const Duration(seconds: 300),
     this.totalBudget = const Duration(minutes: 15),
     this.engine = CompactionEngine.structured,
+    this.runToken,
   });
 
   final Session session;
@@ -772,6 +806,12 @@ class AutoCompactorFactory {
   /// summary; the structured engine also falls back to it when it cannot
   /// get the context under the window).
   final CompactionEngine engine;
+
+  /// The owning run's cancellation token (issue #1085), forwarded to the
+  /// built [AutoCompactor] and linked to the structured engine's budget
+  /// token: a user abort during a mid-run relief cancels the in-flight
+  /// compaction on BOTH engines. `null` = standalone compaction.
+  final CancelToken? runToken;
 
   /// Per-attempt wall-clock budget, forwarded to the built [AutoCompactor].
   final Duration attemptBudget;
@@ -830,6 +870,17 @@ class AutoCompactorFactory {
     // the summarizer adapters receive it, and the budget expiries below
     // cancel it so the wedged call dies at the provider layer (#515).
     final budgetSource = CancelTokenSource();
+    // Issue #1085: forward a linked run token's cancellation into the
+    // budget token — a user abort mid-relief kills the structured run's
+    // in-flight judge/summarizer calls promptly.
+    final runToken = this.runToken;
+    if (runToken != null) {
+      unawaited(
+        runToken.onCancel.then(
+          (_) => budgetSource.cancel(runToken.cancelReason),
+        ),
+      );
+    }
     final compactor = StructuredCompactor(
       session: session,
       state: state,
@@ -916,6 +967,7 @@ class AutoCompactorFactory {
       force: force,
       attemptBudget: attemptBudget,
       totalBudget: totalBudget,
+      runToken: runToken,
     );
   }
 }
