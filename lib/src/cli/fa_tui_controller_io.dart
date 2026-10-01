@@ -12,6 +12,7 @@ extension FaTuiControllerIo on FaTuiController {
     // role of the flag's extra empty line).
     _outputBuffer.write(text);
     if (newline) _outputBuffer.write('\n');
+    _sentNewlines += '\n'.allMatches(text).length + (newline ? 1 : 0);
     if (_running) {
       _outputFlushTimer ??= Timer(
         FaTuiController._outputFlushInterval,
@@ -90,6 +91,17 @@ extension FaTuiControllerIo on FaTuiController {
   void setInputHistory(List<String> history) {
     _send(SetInputHistoryMsg(history));
   }
+
+  /// Marks the resumed boot's replay anchor (issue #446 wave-14): the
+  /// newline count captured HERE — before the summary/replay writes —
+  /// rides the message, so the queue lag after the boot backlog can never
+  /// re-name the anchor (CI round 2: a model-side count consumed after
+  /// the drain named the transcript END and folded the whole banner).
+  void markReplayAnchor() {
+    _flushOutput();
+    _send(SetBootAnchorMsg(_sentNewlines));
+  }
+
 
   /// Opens the interactive prompt zone (ask/secret/approval) and resolves
   /// when the user answers (or cancels). The caller awaits the returned

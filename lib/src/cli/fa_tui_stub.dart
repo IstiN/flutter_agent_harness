@@ -123,6 +123,11 @@ final class FaTuiController {
 
   void setInputHistory(List<String> history) {}
 
+  /// No-op on web: the boot replay anchor is a VM-TUI concern (issue #446
+  /// wave-14); web never runs the controller.
+  void markReplayAnchor() {}
+
+
   void sendBusy(bool busy, {String source = 'run'}) {}
 
   /// No-op on web: the stub controller renders nothing, so silent
