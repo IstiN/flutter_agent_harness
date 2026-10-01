@@ -9,14 +9,32 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// The UI-facing projection of [WidgetPublication.lastKnownState]: `open`
 /// under catalog review, `published` (PR merged), `rejected` (closed
-/// unmerged), `unknown` (never refreshed / PR gone).
-enum WidgetPublicationState { unknown, open, published, rejected }
+/// unmerged), `unknown` (never refreshed / PR gone). Issue #1045 adds the
+/// publish-lifecycle states: `publishing` (optimistic, in-flight attempt),
+/// `validating` (PR open, catalog CI running), `invalid` (a validator
+/// check failed — [WidgetPublication.validatorErrors] carries the verbatim
+/// error lines) and `failed` (the attempt itself failed —
+/// [WidgetPublication.lastError] carries why).
+enum WidgetPublicationState {
+  unknown,
+  open,
+  published,
+  rejected,
+  publishing,
+  validating,
+  invalid,
+  failed,
+}
 
 /// Maps a persisted `lastKnownState` string onto [WidgetPublicationState].
 WidgetPublicationState widgetPublicationStateOf(String raw) => switch (raw) {
   WidgetPublication.stateOpen => WidgetPublicationState.open,
   WidgetPublication.stateMerged => WidgetPublicationState.published,
   WidgetPublication.stateClosed => WidgetPublicationState.rejected,
+  WidgetPublication.statePublishing => WidgetPublicationState.publishing,
+  WidgetPublication.stateValidating => WidgetPublicationState.validating,
+  WidgetPublication.stateInvalid => WidgetPublicationState.invalid,
+  WidgetPublication.stateFailed => WidgetPublicationState.failed,
   _ => WidgetPublicationState.unknown,
 };
 
@@ -86,6 +104,9 @@ final class WidgetPublication {
     this.prHtmlUrl,
     this.lastKnownState = stateOpen,
     this.comments = const [],
+    this.validatorErrors = const [],
+    this.runHtmlUrl,
+    this.lastError,
   });
 
   factory WidgetPublication.fromJson(Map<String, dynamic> json) {
@@ -106,14 +127,29 @@ final class WidgetPublication {
           if (raw is Map<String, dynamic>)
             WidgetPublicationComment.fromJson(raw),
       ],
+      validatorErrors: [
+        for (final raw in (json['validatorErrors'] as List<dynamic>? ?? const []))
+          raw.toString(),
+      ],
+      runHtmlUrl: json['runHtmlUrl']?.toString(),
+      lastError: json['lastError']?.toString(),
     );
   }
 
-  /// Publish steps (E7 resume markers).
+  /// Publish steps (E7 resume markers). [stepPublishing] marks the
+  /// optimistic in-flight attempt recorded before any network work (the
+  /// fire-and-forget UI of issue #1045).
+  static const stepPublishing = 'publishing';
   static const stepRepoPushed = 'repo_pushed';
   static const stepPrOpened = 'pr_opened';
 
-  /// Last-known PR states.
+  /// Last-known PR states. [statePublishing]/[stateValidating]/
+  /// [stateInvalid]/[stateFailed] are the issue-#1045 lifecycle states —
+  /// every attempt that has not reached "published" stays visible (I4).
+  static const statePublishing = 'publishing';
+  static const stateValidating = 'validating';
+  static const stateInvalid = 'invalid';
+  static const stateFailed = 'failed';
   static const stateOpen = 'open';
   static const stateMerged = 'merged';
   static const stateClosed = 'closed';
@@ -151,6 +187,21 @@ final class WidgetPublication {
   /// capped by the poller). Empty until the first refresh.
   final List<WidgetPublicationComment> comments;
 
+  /// The catalog validator's error lines, VERBATIM from the failing CI run
+  /// (issue #1045 — the 2048 case: `ERROR 2048: external manifest:
+  /// 'minRuntime' must be a non-empty string`). Non-empty only in the
+  /// [stateInvalid] state; never aggregated or reworded.
+  final List<String> validatorErrors;
+
+  /// Browser URL of the failing CI run (the "run link" next to the
+  /// verbatim errors).
+  final String? runHtmlUrl;
+
+  /// Why the last publish attempt failed, verbatim from the thrown error —
+  /// set in the [stateFailed] state so a background failure that outlived
+  /// the publish sheet stays inspectable (I4).
+  final String? lastError;
+
   /// The UI-facing state projection of [lastKnownState].
   WidgetPublicationState get state => widgetPublicationStateOf(lastKnownState);
 
@@ -170,6 +221,9 @@ final class WidgetPublication {
     Object? prHtmlUrl = _unset,
     String? lastKnownState,
     List<WidgetPublicationComment>? comments,
+    List<String>? validatorErrors,
+    Object? runHtmlUrl = _unset,
+    Object? lastError = _unset,
   }) {
     return WidgetPublication(
       widgetId: widgetId,
@@ -184,6 +238,13 @@ final class WidgetPublication {
           : prHtmlUrl as String?,
       lastKnownState: lastKnownState ?? this.lastKnownState,
       comments: comments ?? this.comments,
+      validatorErrors: validatorErrors ?? this.validatorErrors,
+      runHtmlUrl: identical(runHtmlUrl, _unset)
+          ? this.runHtmlUrl
+          : runHtmlUrl as String?,
+      lastError: identical(lastError, _unset)
+          ? this.lastError
+          : lastError as String?,
     );
   }
 
@@ -198,6 +259,10 @@ final class WidgetPublication {
     if (prHtmlUrl != null) 'prHtmlUrl': prHtmlUrl,
     'lastKnownState': lastKnownState,
     if (comments.isNotEmpty) 'comments': [for (final c in comments) c.toJson()],
+    if (validatorErrors.isNotEmpty)
+      'validatorErrors': validatorErrors,
+    if (runHtmlUrl != null) 'runHtmlUrl': runHtmlUrl,
+    if (lastError != null) 'lastError': lastError,
   };
 
   @override
