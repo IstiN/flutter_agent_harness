@@ -1206,6 +1206,9 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
 ) async {
   var reliefUsed = false;
   var pairingHealed = false;
+  // Issue #862: drain the armed corrective note once per streamed response
+  // (not per built context) so a mid-turn retry re-attaches it.
+  final misuseNote = config.toolMisuseBreaker?.drainPendingNote();
   // Hardening over pi: short-circuit an already-cancelled token instead of
   // relying on the provider to surface the abort as an error event.
   if (_isCancelRequested(cancelToken)) {
@@ -1216,6 +1219,7 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
       context,
       config,
       cancelToken,
+      misuseNote: misuseNote,
     );
     // Pairing repairs are always surfaced (issue #85): hosts see exactly
     // what was dropped/synthesized/renamed before the request went out.
@@ -1495,8 +1499,9 @@ AssistantMessage _streamEndedWithoutTerminal(
 Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   Context context,
   AgentLoopConfig config,
-  CancelToken? cancelToken,
-) async {
+  CancelToken? cancelToken, {
+  String? misuseNote,
+}) async {
   // pi applies transformContext (then convertToLlm) before each provider
   // call; only the request payload is rewritten, never the transcript.
   var requestContext = context;
@@ -1538,7 +1543,9 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   }
   // Issue #862: an armed corrective note rides the NEXT request payload as
   // a trailing user message — visible to the model, never in the transcript.
-  final misuseNote = config.toolMisuseBreaker?.drainPendingNote();
+  // Drained ONCE by the caller ([_streamAssistantResponse], before the
+  // attempt loop) and re-attached on every rebuild, so an over-window
+  // retry cannot silently drop an already-armed note (issue #862 review).
   if (misuseNote != null) {
     requestContext = Context(
       systemPrompt: requestContext.systemPrompt,
@@ -2157,7 +2164,12 @@ Future<_ExecutedToolCallOutcome> _executePreparedToolCall(
   } catch (error) {
     acceptingUpdates = false;
     await Future.wait(updateEvents);
-    return _ExecutedToolCallOutcome(_errorToolResult(error), true);
+    return _ExecutedToolCallOutcome(
+      _errorToolResult(error),
+      true,
+      validationRejection:
+          error is ToolValidationException || error is ToolNotFoundException,
+    );
   }
 }
 
@@ -2174,11 +2186,16 @@ Future<_FinalizedToolCall> _finalizeExecutedToolCall(
   var result = executed.result;
   var isError = executed.isError;
 
-  // Issue #862: feed the breaker. A failure counts toward the identical-
-  // call thresholds; a success clears the tool's consecutive-failure state.
+  // Issue #862: feed the breaker. Only call-shape VALIDATION rejections
+  // count toward the identical-call thresholds; a success clears the
+  // tool's consecutive-failure state. Operational failures (bash exits,
+  // refused writes) are invisible to the breaker — a deterministic failing
+  // command must stay runnable (issue #862 review).
   final breaker = config.toolMisuseBreaker;
   if (breaker != null) {
-    if (isError) {
+    if (isError && !executed.validationRejection) {
+      // Operational failure: neither counts nor resets.
+    } else if (isError) {
       breaker.observeFailure(
         toolCall.name,
         toolCall.arguments,
@@ -2307,10 +2324,22 @@ final class _ExecutedToolCallBatch {
 }
 
 final class _ExecutedToolCallOutcome {
-  const _ExecutedToolCallOutcome(this.result, this.isError);
+  const _ExecutedToolCallOutcome(
+    this.result,
+    this.isError, {
+    this.validationRejection = false,
+  });
 
   final ToolExecutionResult result;
   final bool isError;
+
+  /// True when the failure was a call-shape rejection thrown by the
+  /// registry BEFORE any tool body ran ([ToolValidationException] — schema
+  /// mismatch — or [ToolNotFoundException] — hallucinated tool name). Only
+  /// these count toward the misuse breaker: an operational failure (a
+  /// non-zero bash exit, a refused write) is the environment's answer, not
+  /// the model misusing the tool (issue #862 review).
+  final bool validationRejection;
 }
 
 sealed class _ToolCallPreparation {

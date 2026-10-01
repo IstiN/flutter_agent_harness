@@ -138,10 +138,11 @@ void main() {
     expect(result.output, contains('child finished the work'));
     expect(result.requests, 1);
 
-    // The duplicate registration degraded loudly into a warning on the
-    // registry the child actually ran with: reachable via the manager's
-    // handle metadata? No — via the child tool surface, asserted here by
-    // the child completing at all. The registry-level warning is unit
-    // covered in tool_registry_test.dart.
+    // The duplicate registration degrades LOUDLY: the spawn result carries
+    // the wiring warning (issue #862 review), and the child-specific
+    // injected `reply` won. The registry-level note itself is unit covered
+    // in tool_registry_test.dart.
+    expect(result.output, contains('warning: duplicate tool registration'));
+    expect(result.output, contains('reply'));
   });
 }

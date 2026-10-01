@@ -145,16 +145,36 @@ void main() {
     });
   });
 
-  group('patchParses', () {
+  group('parsePatch (one shared parse, fallbackPath honored)', () {
     test('accepts a real hashline patch, rejects garbage and empty', () {
       expect(
-        patchParses('[a.txt#a1b2]\nSWAP 1.=1:\n+x'),
+        parsePatch('[a.txt#a1b2]\nSWAP 1.=1:\n+x').usable,
         isTrue,
       );
-      expect(patchParses('garbage'), isFalse);
-      expect(patchParses(''), isFalse);
-      expect(patchParses(null), isFalse);
-      expect(patchParses('   \n  '), isFalse);
+      expect(parsePatch('garbage').usable, isFalse);
+      expect(parsePatch('').usable, isFalse);
+      expect(parsePatch(null).usable, isFalse);
+      expect(parsePatch('   \n  ').usable, isFalse);
+    });
+
+    test('a header-less patch with recognizable ops is usable under the '
+        'executor fallbackPath contract — the BLOCKING regression pin '
+        '(issue #862 review)', () {
+      final parse = parsePatch('DEL 1', fallbackPath: 'f.txt');
+      expect(parse.usable, isTrue,
+          reason: 'HashlinePatch.parse(patch, fallbackPath: path) accepts '
+              'this at apply time; the gate must agree');
+      expect(parse.patch!.sections.single.path, 'f.txt');
+      // Without a fallback path the same input is unusable (no header, and
+      // the gate has no section path to offer).
+      expect(parsePatch('DEL 1').usable, isFalse);
+    });
+
+    test('a failure carries the parser diagnostic for the remedy reject',
+        () {
+      final parse = parsePatch('DEL 1');
+      expect(parse.usable, isFalse);
+      expect(parse.error, contains('[PATH#HASH]'));
     });
   });
 }

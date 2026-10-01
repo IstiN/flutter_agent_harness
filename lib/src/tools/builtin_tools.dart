@@ -2007,12 +2007,9 @@ AgentTool editFileTool(ExecutionEnv env, {HashlineSnapshotStore? snapshots}) {
       switch (plan) {
         case EditReject(:final message):
           throw StateError(message);
-        case EditRunPatch(:final patch, :final notice):
-          // Parse outside the lock: argument errors must not queue behind
-          // another holder. Section paths key the lock the same way the
-          // exact-match mode does (issue #1083), so interleaved hashline
-          // patches serialize per file and the TAG guard decides the winner.
-          final parsed = HashlinePatch.parse(patch, fallbackPath: path);
+        case EditRunPatch(:final parsed, :final notice):
+          // The plan carries the ONE shared parse (issue #862 review):
+          // no re-parse here, so the gate and the apply cannot drift.
           // Lock every file the patch can touch: the authored section paths
           // AND the canonical paths that minted each cited tag — the
           // patcher's missing-path recovery (_recoverSectionPathFromTag) can

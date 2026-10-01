@@ -623,7 +623,11 @@ class AgentCli {
       ...coreTools,
       ...monitoringTools,
       taskTool(config: _taskConfig),
-    ]);
+    ], (note) {
+      // Issue #862 review: a duplicate registration (e.g. a host passing
+      // child-injected tools through the parent surface) must be loud.
+      io.writeln(_style.dim('[fah] warning: $note'));
+    });
     _agent = Agent(
       model: config.model,
       systemPrompt: config.systemPrompt ?? _currentMode.systemPrompt,

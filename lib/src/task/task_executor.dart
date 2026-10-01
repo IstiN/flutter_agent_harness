@@ -691,10 +691,11 @@ final class TaskExecutor {
     }
 
     final wiring = _resolveChildWiring(definition);
+    final childRegistry = _childToolRegistry(definition);
     final (child, inboxWakeSub) = _buildChild(
       id: id,
       systemPrompt: _buildSystemPrompt(definition, context),
-      toolRegistry: _childToolRegistry(definition),
+      toolRegistry: childRegistry,
       wiring: wiring,
       cancelToken: cancelToken,
     );
@@ -720,7 +721,16 @@ final class TaskExecutor {
       );
 
       final capped = _capOutput(storedContent);
-      store.put(id, capped.$1);
+      // Issue #862 review: a duplicate registration in the child surface
+      // (the luna wiring bug) degraded into a note — surface it loudly on
+      // the spawn result instead of letting it sit in the registry.
+      final duplicateNotes = childRegistry.duplicateNotes;
+      final output = duplicateNotes.isEmpty
+          ? capped.$1
+          : '${capped.$1}\n\n[fah] warning: duplicate tool registration in '
+              'the child surface (child-specific tool won): '
+              '${duplicateNotes.join(' | ')}';
+      store.put(id, output);
       final usage = _usageStats(child);
 
       final failed = structured?.status == StructuredValidationStatus.invalid;
@@ -753,7 +763,7 @@ final class TaskExecutor {
         agent: agentName,
         task: item.task,
         status: failed ? TaskSpawnStatus.failed : TaskSpawnStatus.completed,
-        output: capped.$1,
+        output: output,
         truncated: capped.$2,
         duration: stopwatch.elapsed,
         tokens: usage.tokens,

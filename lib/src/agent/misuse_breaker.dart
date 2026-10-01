@@ -60,8 +60,8 @@ final class ToolMisuseBreaker {
     if (state == null || !state.stopped) return null;
     return 'Tool "$toolName" refused: this exact call already failed '
         '${state.failures} consecutive times with the same error '
-        '(${state.lastError}) and the harness stopped executing it for '
-        'this run. Change the arguments or use a different tool.';
+        '(${_excerpt(state.lastError)}) and the harness stopped executing '
+        'it for this run. Change the arguments or use a different tool.';
   }
 
   /// Records one failed execution of [toolName]. Returns true when this
@@ -114,6 +114,14 @@ final class ToolMisuseBreaker {
     return note;
   }
 
+  /// Bounds an embedded error text like the tool-description excerpt: a
+  /// bash failure can carry kilobytes of command output, and the note rides
+  /// the next request payload (issue #862 review).
+  String _excerpt(String text) =>
+      text.length <= descriptionLimit
+      ? text
+      : '${text.substring(0, descriptionLimit)}…';
+
   String _noteText(String toolName, _MisuseState state, String? description) {
     final excerpt = (description ?? '').trim();
     final contract = excerpt.isEmpty
@@ -122,7 +130,7 @@ final class ToolMisuseBreaker {
             '${excerpt.length <= descriptionLimit ? excerpt : '${excerpt.substring(0, descriptionLimit)}…'}\n';
     return '[tool-misuse notice] The "$toolName" tool has rejected the '
         'identical call ${state.failures} consecutive times. Last error: '
-        '${state.lastError}.$contract'
+        '${_excerpt(state.lastError)}.$contract'
         'Fix the call before retrying: after $stopThreshold identical '
         'failures the harness stops executing this call in this run.';
   }

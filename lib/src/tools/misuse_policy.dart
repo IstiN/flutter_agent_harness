@@ -42,16 +42,61 @@ sealed class EditModePlan {
   String? get notice => null;
 }
 
-/// Run hashline-patch mode. [patchValid] distinguishes "the model sent both
-/// modes and the patch is well-formed" (patch wins, E1) from "the patch was
-/// malformed and exact-match is complete" (exact-match rescues the call).
+/// Run hashline-patch mode. A usable patch wins whenever present (E1);
+/// [parsed] is the ONE shared parse — the executor consumes it directly so
+/// the gate and the apply can never drift apart again (issue #862 review).
 final class EditRunPatch extends EditModePlan {
-  const EditRunPatch({required this.patch, this.notice});
+  const EditRunPatch({required this.patch, required this.parsed, this.notice});
 
   final String patch;
 
+  /// The patch parsed once by [parsePatch] (with the executor's
+  /// `fallbackPath` contract honored).
+  final HashlinePatch parsed;
+
   @override
   final String? notice;
+}
+
+/// The outcome of parsing an edit call's patch input — exactly once per
+/// call (issue #862 review: the second parse was not guaranteed equivalent
+/// to the executor's).
+final class PatchParse {
+  const PatchParse.usable(HashlinePatch this.patch) : error = null;
+
+  const PatchParse.failed(String this.error) : patch = null;
+
+  /// The parsed patch when usable, null otherwise.
+  final HashlinePatch? patch;
+
+  /// The parser's own diagnostic when unusable, null when usable.
+  final String? error;
+
+  bool get usable => patch != null;
+}
+
+/// Parses [patch] once, honoring the executor's `fallbackPath` contract: a
+/// header-less input whose lines are still recognizable hashline ops parses
+/// with [fallbackPath] as the section path — exactly what
+/// `HashlinePatch.parse(patch, fallbackPath: path)` does at apply time.
+PatchParse parsePatch(String? patch, {String? fallbackPath}) {
+  if (patch == null || patch.trim().isEmpty) {
+    return const PatchParse.failed('no patch argument');
+  }
+  try {
+    final parsed = HashlinePatch.parse(patch, fallbackPath: fallbackPath);
+    if (parsed.sections.isEmpty) {
+      return const PatchParse.failed('no [path#TAG] section header found');
+    }
+    return PatchParse.usable(parsed);
+  } on Object catch (error) {
+    return PatchParse.failed(
+      '$error'.replaceFirst(
+        RegExp(r'^(Bad state:|HashlineFormatException:)\s*'),
+        '',
+      ),
+    );
+  }
 }
 
 /// Run exact-match mode because the patch input was not a usable patch
@@ -92,27 +137,6 @@ bool exactMatchComplete({
     oldText.isNotEmpty &&
     newText != null;
 
-/// Whether [patch] parses into at least one hashline section (a usable
-/// patch). Null, blank, throw, and empty parses all count as unusable.
-bool patchParses(String? patch) {
-  if (patch == null || patch.trim().isEmpty) return false;
-  return patchParseError(patch) == null;
-}
-
-/// The hashline parser's own diagnostic for an unusable [patch] (null when
-/// the patch is usable). resolveEditMode embeds it in the remedy reject so
-/// the focused parse error survives the coercion (issue #862).
-String? patchParseError(String? patch) {
-  if (patch == null || patch.trim().isEmpty) return null;
-  try {
-    return HashlinePatch.parse(patch).sections.isEmpty
-        ? 'no [path#TAG] section header found'
-        : null;
-  } on Object catch (error) {
-    return '$error'.replaceFirst(RegExp(r'^(Bad state:|HashlineFormatException:)\s*'), '');
-  }
-}
-
 /// The both-modes notice: names the ignored exact-match payload and the
 /// winner, so the model stops re-sending the pair (E4).
 String bothModesNotice({required String winner}) =>
@@ -140,12 +164,15 @@ EditModePlan resolveEditMode({
     oldText: oldText,
     newText: newText,
   );
-  final patchUsable = patchParses(patch);
+  // ONE parse, honoring the executor's fallbackPath contract, carried
+  // through the plan (issue #862 review).
+  final parse = parsePatch(patch, fallbackPath: path);
 
-  if (patchUsable) {
+  if (parse.usable) {
     final mixed = oldText != null || newText != null;
     return EditRunPatch(
       patch: patch!,
+      parsed: parse.patch!,
       notice: mixed
           ? bothModesNotice(winner: 'the hashline patch')
           : null,
@@ -168,7 +195,7 @@ EditModePlan resolveEditMode({
     // the remedy (AC3's sibling shape).
     return EditReject(
       'The patch input is not a valid hashline patch '
-      '(${patchParseError(patch)}), and the exact-match arguments are '
+      '(${parse.error}), and the exact-match arguments are '
       'incomplete. $editRemedyExample',
     );
   }

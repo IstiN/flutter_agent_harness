@@ -49,9 +49,15 @@ final class ToolRegistry {
   /// on an empty tool name; a duplicate name replaces the earlier
   /// registration and is recorded in [duplicateNotes] (issue #862:
   /// replace-and-note — a wiring bug degrades loudly, a child never dies).
-  ToolRegistry([Iterable<AgentTool> tools = const []]) {
+  /// [onDuplicate] fires for every duplicate registration (at construction
+  /// AND later) so hosts can surface the wiring bug without polling.
+  ToolRegistry([Iterable<AgentTool> tools = const [], this.onDuplicate]) {
     registerAll(tools);
   }
+
+  /// Called with each duplicate-registration note as it happens (issue
+  /// #862 review: the note must surface, not silently accumulate).
+  void Function(String note)? onDuplicate;
 
   final _tools = <String, AgentTool>{};
 
@@ -84,11 +90,12 @@ final class ToolRegistry {
     }
     final previous = _tools[tool.name];
     if (previous != null) {
-      _duplicateNotes.add(
-        'Duplicate tool name: ${tool.name} — the later registration '
-        '(runtime ${previous.runtimeType} → ${tool.runtimeType}) replaced '
-        'the earlier one',
-      );
+      final note =
+          'Duplicate tool name: ${tool.name} — the later registration '
+          '(runtime ${previous.runtimeType} → ${tool.runtimeType}) replaced '
+          'the earlier one';
+      _duplicateNotes.add(note);
+      onDuplicate?.call(note);
     }
     _tools[tool.name] = tool;
   }

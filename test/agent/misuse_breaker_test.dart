@@ -311,5 +311,64 @@ void main() {
       );
       expect(executions, 0);
     });
+
+    test('operational failures never count: the same bash-style error 6 '
+        'times stays runnable (issue #862 review)', () async {
+      var executions = 0;
+      final registry = ToolRegistry([
+        AgentTool(
+          name: 'sh',
+          description: 'Runs a command.',
+          parameters: const {
+            'type': 'object',
+            'properties': {
+              'cmd': {'type': 'string'},
+            },
+          },
+          execute: (args, cancelToken, onUpdate) async {
+            executions++;
+            // Pi-style contract: tools THROW on operational failure.
+            throw StateError('Command exited with code 1');
+          },
+        ),
+      ]);
+      final fake = _FakeStream([
+        for (var i = 1; i <= 6; i++) _badCallTurn('c$i', 'sh'),
+        _textTurn('giving up'),
+      ]);
+
+      final stream = agentLoop(
+        prompts: [UserMessage.text('compile it')],
+        context: Context(messages: const [], tools: [_tool('sh')]),
+        config: AgentLoopConfig(
+          model: _model,
+          toolMisuseBreaker: ToolMisuseBreaker(),
+        ),
+        streamFunction: fake.call,
+        toolExecutor: registry.executor,
+      );
+      final messages = await stream.result;
+
+      // Every turn EXECUTED (never refused) despite 6 identical failures.
+      expect(executions, 6);
+      for (final context in fake.contexts) {
+        expect(
+          context.messages.any(
+            (message) =>
+                message is UserMessage &&
+                '${message.content}'.contains('[tool-misuse notice]'),
+          ),
+          isFalse,
+        );
+      }
+      final results = messages.whereType<ToolResultMessage>().toList();
+      expect(results, hasLength(6));
+      for (final result in results) {
+        expect(
+          '${(result.content.single as TextContent).text}',
+          contains('Command exited with code 1'),
+        );
+      }
+    });
   });
 }
