@@ -16,6 +16,12 @@
 // bash loop, and each attempt must RESUME the partial zip via -C - so
 // slow links make forward progress). Static lint over the workflow YAML,
 // same style as release_hygiene_test.dart / dispatch_watch_test.dart.
+//
+// gh-1149 review hardening pins: PER-ARCH zip path (one self-hosted runner,
+// two matrix archs — the shared arch-less /tmp path races), --fail (HTTP
+// errors must engage the loop, not land an error page in the zip), a pinned
+// sha256 of the asset (unzip CRC32 proves internal consistency only), and
+// the load-bearing `break` on success.
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -154,6 +160,14 @@ void main() {
             'worst case) and its internal retries restart+truncate instead of '
             'resuming. The loop owns retries — exactly one retry layer.',
       );
+      expect(
+        loop.body,
+        contains('break'),
+        reason:
+            'a successful attempt must exit the loop — without break, the next '
+            '-C - attempt hits HTTP 416 on the already-complete file, curl '
+            'exits 33, and the loop reads success as failure (gh-1149 review)',
+      );
 
       // Worst case: every loop attempt burns its full --max-time, plus the
       // inter-attempt sleeps. 3 × 240s + 2 × 5s = 730s, leaving ~170s of
@@ -192,24 +206,78 @@ void main() {
       );
     });
 
-    test(
-      'the download starts from a fresh /tmp zip (deterministic -C - seed)',
-      () {
-        final run = restoreStep()['run'] as String;
-        final loopStart = run.indexOf(
-          RegExp(r'^\s*for\s+\w+\s+in\s+', multiLine: true),
-        );
-        expect(loopStart, greaterThan(0));
-        final beforeLoop = run.substring(0, loopStart);
-        expect(
-          beforeLoop,
-          contains('rm -f /tmp/WasmRun.xcframework.zip'),
-          reason:
-              'a stale /tmp zip from a previous run must never seed -C - '
-              'with an unknown byte offset — rm -f it before the loop so only '
-              'THIS step\'s own partial bytes are resumed',
-        );
-      },
-    );
+    test('the download starts from a fresh PER-ARCH zip '
+        '(deterministic -C - seed, no cross-arch race)', () {
+      final run = restoreStep()['run'] as String;
+      final loopStart = run.indexOf(
+        RegExp(r'^\s*for\s+\w+\s+in\s+', multiLine: true),
+      );
+      expect(loopStart, greaterThan(0));
+      final beforeLoop = run.substring(0, loopStart);
+      expect(
+        beforeLoop,
+        contains(r'ZIP="/tmp/WasmRun.xcframework-${{ matrix.arch }}.zip"'),
+        reason:
+            'the partial zip must be PER-ARCH: both matrix archs run on ONE '
+            'self-hosted runner and have raced shared runner state before '
+            '(the shared build.keychain — see the per-arch keychain comment '
+            'in this file). A shared arch-less /tmp zip lets one job\'s '
+            'rm -f unlink the other\'s in-flight partial, then both curls '
+            'interleave bytes into one path (gh-1149 review)',
+      );
+      expect(
+        beforeLoop,
+        contains(r'rm -f "$ZIP"'),
+        reason:
+            'a stale /tmp zip from a previous run must never seed -C - '
+            'with an unknown byte offset — rm -f it before the loop so only '
+            'THIS step\'s own partial bytes are resumed',
+      );
+      expect(
+        run.contains('/tmp/WasmRun.xcframework.zip'),
+        isFalse,
+        reason:
+            'the arch-less /tmp/WasmRun.xcframework.zip path must not come '
+            'back anywhere in the step — it is the shared-race path '
+            '(gh-1149 review)',
+      );
+    });
+
+    test('curl fails on HTTP errors (--fail) so the retry loop owns them', () {
+      final loop = DownloadLoop.parse(restoreStep()['run'] as String);
+      expect(
+        loop.curl,
+        contains('--fail'),
+        reason:
+            'without --fail curl exits 0 on HTTP 404/5xx and writes the error '
+            'page into the zip: the loop then never retries, and unzip fails '
+            'with a misleading "not a zip" error instead of the loop\'s '
+            'explicit "download failed after 3 attempts" (gh-1149 review)',
+      );
+    });
+
+    test('the downloaded zip is verified against a pinned sha256', () {
+      final run = restoreStep()['run'] as String;
+      // Real digest of the pinned asset (wasm_run-v0.1.0 tag, 97238501 bytes),
+      // computed from the release download.
+      const digest =
+          'aca903d732202bcdf9c8d19fbb8a795c3c930762419f852a5ee228468c548a98';
+      expect(
+        run,
+        contains('echo "$digest  \$ZIP" | shasum -a 256 -c -'),
+        reason:
+            'unzip CRC32 only proves the zip is INTERNALLY consistent — a '
+            'wrong-content-but-valid-zip (asset re-uploaded under the same '
+            'tag, intercepted payload) would pass unzip and be cached forever '
+            'under wasmrun-xcframework-v0.1.0. Pin the digest like the '
+            'litertlm download in this same file does (gh-1149 review)',
+      );
+      final doneIndex = run.indexOf(RegExp(r'^\s*done$', multiLine: true));
+      final checkIndex = run.indexOf('shasum -a 256 -c -');
+      final unzipIndex = run.indexOf(r'unzip -q "$ZIP"');
+      expect(doneIndex, greaterThan(0));
+      expect(checkIndex, greaterThan(doneIndex));
+      expect(unzipIndex, greaterThan(checkIndex));
+    });
   });
 }

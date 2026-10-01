@@ -340,10 +340,19 @@ jobs:
             # AND restart+truncate instead of resuming). Budget: 3 × 240s
             # max-time + 2 × 5s sleeps = 730s < the 15-min step cap, leaving
             # connect + unzip + slack (gh-1149).
-            rm -f /tmp/WasmRun.xcframework.zip
+            # PER-ARCH zip path: both matrix archs run on ONE self-hosted
+            # runner (the shared-state race this file already guards with
+            # per-arch keychains below) — a shared arch-less /tmp zip would
+            # let one job's rm -f unlink the other's in-flight partial, then
+            # both curls interleave bytes into one path.
+            ZIP="/tmp/WasmRun.xcframework-${{ matrix.arch }}.zip"
+            rm -f "$ZIP"
             for attempt in 1 2 3; do
-              if curl -L -C - --connect-timeout 30 --max-time 240 \
-                -o /tmp/WasmRun.xcframework.zip \
+              # --fail: without it curl exits 0 on HTTP 404/5xx and writes
+              # the error page into the zip; with it every HTTP error
+              # engages this loop's retries and the explicit failure below.
+              if curl --fail -L -C - --connect-timeout 30 --max-time 240 \
+                -o "$ZIP" \
                 https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip; then
                 break
               fi
@@ -354,7 +363,12 @@ jobs:
               echo "download attempt $attempt failed, resuming in 5s..."
               sleep 5
             done
-            unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
+            # The release asset is immutable per tag — pin its digest so a
+            # wrong-content-but-valid-zip cannot slip past unzip CRC32 into
+            # the permanent wasmrun-xcframework-v0.1.0 cache (same pattern
+            # as the litertlm download above).
+            echo "aca903d732202bcdf9c8d19fbb8a795c3c930762419f852a5ee228468c548a98  $ZIP" | shasum -a 256 -c -
+            unzip -q "$ZIP" -d "$DEST"
           fi
           ls -la "$DEST/WasmRun.xcframework"
 
