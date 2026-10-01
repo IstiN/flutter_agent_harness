@@ -3,9 +3,9 @@
 // found in the LICENSE file.
 //
 /// AC7 mini-test entry for the iOS-simulator lane (issue #1156). The probe
-/// body lives in `e2e_support/sandbox_agent_chat_probe.dart` so the host
-/// entry (`test/sandbox_agent_chat_host_test.dart`) can prove the same chat
-/// loop on the desktop shell.
+/// body lives in `e2e_support/sandbox_agent_chat_probe.dart`; there is
+/// deliberately no host entry — the app service stack does not run under
+/// flutter_tester.
 library;
 
 import 'package:flutter_test/flutter_test.dart';

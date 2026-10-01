@@ -428,10 +428,13 @@ final class SandboxBuiltins {
           arg == '--wait' ||
           arg.startsWith('--wait=') ||
           arg.startsWith('--waitretry')) {
-        // wget wait flags: not curl flags — drop them (with `-w`/`--wait`'s
-        // separate seconds value) instead of leaking into curl's parser,
-        // where `-w` means --write-out (issue #1156 review).
-        if ((arg == '-w' || arg == '--wait') &&
+        // wget wait flags: not curl flags — drop them (with the separate
+        // seconds value of `-w`/`--wait`/`--waitretry`) instead of leaking
+        // into curl's parser, where `-w` means --write-out (issue #1156
+        // review).
+        final takesSeparateValue =
+            arg == '-w' || arg == '--wait' || arg == '--waitretry';
+        if (takesSeparateValue &&
             i + 1 < args.length &&
             !args[i + 1].startsWith('-')) {
           i++;
