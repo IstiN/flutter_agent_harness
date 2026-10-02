@@ -8,7 +8,7 @@ name: Site mobile
 # pin the Pages boot smoke uses):
 #   AC1/AC4  documentElement.scrollWidth <= innerWidth on every inventory
 #            page (index, privacy, app-store, widgets, 3x oauth) at
-#            360x640 / 390x844 / 768x1024 / 641x800 / 1280x800
+#            360x640 / 390x844 / 768x1024 / 641x800 / 1024x768 / 1280x800
 #   AC2      header disclosure menu: tap/Esc/backdrop, aria-expanded,
 #            all 10 links reachable, sticky bar height constant
 #   AC3      every header anchor jump lands with the heading visible

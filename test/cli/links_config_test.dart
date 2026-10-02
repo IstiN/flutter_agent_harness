@@ -261,6 +261,65 @@ void main() {
     });
   });
 
+  group('header badge + hero CTA placements (issue #881)', () {
+    const flipped = LinksConfig(
+      appstore: 'https://apps.apple.com/us/app/fa/id999',
+      testflight: 'https://testflight.apple.com/join/ZZ',
+      play: 'https://play.google.com/store/apps/details?id=dev.fa1.app',
+      site: 'https://flip.example',
+    );
+
+    test('each placement carries its own referral value (AC3)', () {
+      expect(
+        renderAppStoreHeaderBadgeHtml(const LinksConfig()),
+        contains('data-store-referral="appstore-header"'),
+      );
+      expect(
+        renderAppStoreHeroCtaHtml(const LinksConfig()),
+        contains('data-store-referral="appstore-hero"'),
+      );
+      expect(
+        renderAppStoreBlockHtml(const LinksConfig()),
+        contains('data-store-referral="appstore"'),
+      );
+    });
+
+    test('a flipped store URL reaches every placement', () {
+      for (final html in [
+        renderAppStoreHeaderBadgeHtml(flipped),
+        renderAppStoreHeroCtaHtml(flipped),
+        renderAppStoreBlockHtml(flipped),
+      ]) {
+        expect(html, contains('href="https://apps.apple.com/us/app/fa/id999"'));
+      }
+    });
+
+    test('header badge carries the PAID link only (pinned policy)', () {
+      final html = renderAppStoreHeaderBadgeHtml(flipped);
+      expect(html, isNot(contains('testflight')));
+      expect(html, isNot(contains('play.google.com')));
+    });
+
+    test('a future Play link adds no header/hero buttons (E4)', () {
+      // Play going live must not pile buttons into the money positions:
+      // the header takes only the FIRST paid link, still apps.apple.com.
+      final header = renderAppStoreHeaderBadgeHtml(flipped);
+      expect(
+        RegExp(r'<a ').allMatches(header).length,
+        1,
+        reason: 'the header badge is a single link',
+      );
+      expect(header, isNot(contains('play.google.com')));
+      final hero = renderAppStoreHeroCtaHtml(flipped);
+      expect(
+        RegExp(r'<a ').allMatches(hero).length,
+        1,
+        reason: 'the hero CTA is a single link',
+      );
+      expect(hero, isNot(contains('play.google.com')));
+    });
+  });
+
   group('store copy compliance (AC6, issue #643 list)', () {
     final compound = RegExp(r'[A-Za-zА-Яа-яЁё0-9]+(?:-[A-Za-zА-Яа-яЁё0-9]+)+');
     final banned = RegExp(
