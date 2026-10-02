@@ -187,6 +187,206 @@ RegExp globToRegExp(String glob) =>
 // ── fixture helpers ────────────────────────────────────────────────────────
 
 final _fixtureRoot = Directory.systemTemp.createTempSync('release-hygiene-');
+/// Full behavioral sandbox for the gh-1172 direct-push path of
+/// scripts/auto_release.sh: a bare origin whose main carries pubspec 0.1.495
+/// tagged v0.1.495 [tagAgeHours] ago (3h = past the 2h coalesce window) plus
+/// one pending commit, a seed clone the script runs in, and a `git` shim that
+/// can advance origin/main from a second clone right before each
+/// `git push origin HEAD:main` ([raceMode] `once`/`always` — E1 race
+/// injection). No `gh` stub: the direct-push path is git + python3 only.
+AutoReleaseRun runAutoReleaseDirect(
+  String name, {
+  int tagAgeHours = 3,
+  bool dryRun = false,
+  String raceMode = 'never',
+}) {
+  final root = Directory(
+    '${_fixtureRoot.path}/direct-$name-${DateTime.now().microsecondsSinceEpoch}',
+  )..createSync(recursive: true);
+  final origin = '${root.path}/origin.git';
+  final seed = '${root.path}/seed';
+  final racer = '${root.path}/racer';
+  final bin = '${root.path}/bin';
+  Directory(bin).createSync(recursive: true);
+
+  // auto_release.sh uses GNU `sed -i` (CI-authored, ubuntu); BSD hosts need
+  // the empty-suffix form — transparent shim, real sed either way.
+  File('$bin/sed').writeAsStringSync(r'''
+#!/usr/bin/env bash
+if [ "${1:-}" = "-i" ]; then shift
+  if /usr/bin/sed --version >/dev/null 2>&1; then exec /usr/bin/sed -i "$@"
+  else exec /usr/bin/sed -i '' "$@"; fi
+fi
+exec /usr/bin/sed "$@"
+''');
+  Process.runSync('chmod', ['+x', '$bin/sed']);
+
+  final realGit = _resolveRealGit(bin);
+  // git shim: forward everything to real git, but in race mode advance
+  // origin/main from the racer clone right before each push so the script's
+  // FF-only push races for real (the recompute-on-fresh-head path of E1).
+  final raceHook = raceMode == 'never'
+      ? ''
+      : '''
+if [ "\$1" = "push" ] && [ "\${FA_RACE_LEFT:-0}" -gt 0 ]; then
+  FA_RACE_LEFT=\$((FA_RACE_LEFT-1)); export FA_RACE_LEFT
+  "\$FA_REAL_GIT" -C "\$FA_RACER" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "raced commit"
+  "\$FA_REAL_GIT" -C "\$FA_RACER" push -q origin main
+fi
+''';
+  File('$bin/git').writeAsStringSync('''
+#!/usr/bin/env bash
+$raceHook
+exec "\$FA_REAL_GIT" "\$@"
+''');
+  Process.runSync('chmod', ['+x', '$bin/git']);
+
+  void git(
+    List<String> args, {
+    String? cwd,
+    Map<String, String> env = const {},
+  }) {
+    final r = Process.runSync(
+      realGit,
+      args,
+      workingDirectory: cwd ?? seed,
+      environment: env,
+      includeParentEnvironment: true,
+    );
+    expect(r.exitCode, 0, reason: 'fixture git $args failed: ${r.stderr}');
+  }
+
+  Directory(origin).createSync();
+  git(['init', '-q', '--bare', '-b', 'main', origin], cwd: root.path);
+  git(['clone', '-q', origin, seed], cwd: root.path);
+  git(['config', 'user.email', 't@t']);
+  git(['config', 'user.name', 't']);
+  Directory('$seed/flutter_app').createSync();
+  File('$seed/pubspec.yaml').writeAsStringSync('version: 0.1.495\n');
+  File('$seed/flutter_app/pubspec.yaml').writeAsStringSync(
+    'version: 0.1.495+1\n',
+  );
+  File('$seed/CHANGELOG.md').writeAsStringSync('# Changelog\n\n## Unreleased\n');
+  git([
+    'add',
+    '-A',
+  ], env: {
+    'GIT_COMMITTER_DATE': (DateTime.now().subtract(Duration(hours: tagAgeHours)).millisecondsSinceEpoch ~/ 1000)
+        .toString(),
+  });
+  git(['commit', '-q', '-m', 'seed']);
+  git(['tag', 'v0.1.495']);
+  File('$seed/README.md').writeAsStringSync('pending\n');
+  git(['add', '-A']);
+  git(['commit', '-q', '-m', 'pending work']);
+  git(['push', '-q', 'origin', 'main']);
+  git(['clone', '-q', origin, racer], cwd: root.path);
+
+  String originMain() {
+    final r = Process.runSync(realGit, [
+      '--git-dir',
+      origin,
+      'rev-parse',
+      'refs/heads/main',
+    ]);
+    expect(r.exitCode, 0, reason: 'fixture rev-parse failed: ${r.stderr}');
+    return r.stdout.toString().trim();
+  }
+
+  final headBefore = originMain();
+
+  final env = <String, String>{
+    'PATH': '$bin:${Platform.environment['PATH']}',
+    'FA_REAL_GIT': realGit,
+    'FA_RACER': racer,
+  };
+  if (raceMode == 'once') env['FA_RACE_LEFT'] = '1';
+  if (raceMode == 'always') env['FA_RACE_LEFT'] = '9';
+  if (dryRun) env['RELEASE_DRY_RUN'] = '1';
+
+  final res = Process.runSync(
+    'bash',
+    ['${Directory.current.path}/scripts/auto_release.sh'],
+    workingDirectory: seed,
+    environment: env,
+  );
+  return AutoReleaseRun(
+    res.exitCode,
+    '${res.stdout}${res.stderr}',
+    headBefore,
+    originMain(),
+    realGit,
+    seed,
+    origin,
+  );
+}
+
+class AutoReleaseRun {
+  AutoReleaseRun(
+    this.exitCode,
+    this.output,
+    this.originHeadBefore,
+    this.originHeadAfter,
+    this._gitBin,
+    this._seedPath,
+    this._originGitDir,
+  );
+
+  final int exitCode;
+  final String output; // stdout+stderr
+  final String originHeadBefore;
+  final String originHeadAfter;
+  final String _gitBin;
+  final String _seedPath;
+  final String _originGitDir;
+
+  /// Subjects of the last [n] commits on origin/main, newest first.
+  List<String> originSubjects([int n = 3]) => _git([
+        '--git-dir',
+        _originGitDir,
+        'log',
+        '--pretty=%s',
+        '-n',
+        '$n',
+        'main',
+      ]).split('\n');
+
+  /// Author identity of origin/main's head commit.
+  String originHeadAuthor() => _git([
+        '--git-dir',
+        _originGitDir,
+        'log',
+        '--pretty=%an <%ae>',
+        '-n',
+        '1',
+        'main',
+      ]);
+
+  /// Subject of the seed clone's HEAD (the local would-be/landed bump).
+  String seedLastSubject() =>
+      _git(['-C', _seedPath, 'log', '--pretty=%s', '-n', '1', 'HEAD']);
+
+  String _git(List<String> args) {
+    final r = Process.runSync(_gitBin, args);
+    expect(r.exitCode, 0, reason: 'sandbox git $args failed: ${r.stderr}');
+    return r.stdout.toString().trim();
+  }
+}
+
+/// The real git binary for sandbox shims: the session PATH may carry
+/// git-push-guard.sh shims (agent-session push guard) — skip any copy of
+/// those AND the sandbox's own shim dir so the shim execs real git.
+String _resolveRealGit(String shimBin) {
+  for (final dir in (Platform.environment['PATH'] ?? '').split(':')) {
+    if (dir.isEmpty || dir == shimBin) continue;
+    final cand = '$dir/git';
+    if (!File(cand).existsSync()) continue;
+    final resolved = File(cand).resolveSymbolicLinksSync();
+    if (resolved.endsWith('git-push-guard.sh')) continue;
+    return resolved;
+  }
+  return '/usr/bin/git';
+}
 
 /// A real git repo fixture: commits, tags, optional post-tag commits (the
 /// "since previous tag" range), optional CHANGELOG.
@@ -1317,6 +1517,14 @@ gh release create "v9.9.9" \
             mint['with']['private-key']?.toString(),
             equals(r'${{ secrets.RELEASE_APP_PRIVATE_KEY }}'),
           );
+          expect(
+            mint['with']['permissions']?.toString(),
+            'contents:write',
+            reason:
+                '$jobName mint must scope the token to contents:write — the App '
+                'is the ruleset bypass actor, so an unscoped token carries every '
+                'permission the installation has (gh-1172 round-2 review, least privilege)',
+          );
           final checkout = steps
               .map((s) => s as YamlMap)
               .firstWhere(
@@ -1412,6 +1620,242 @@ gh release create "v9.9.9" \
           contains('actions'),
           reason: 'the stub-enforced scope list must include actions',
         );
+      },
+    );
+    test(
+      'release job never fires from a bare workflow_dispatch (SM validation dispatches pass no inputs)',
+      () {
+        // gh-1172 round-2 BLOCK: ci.yml is the repo's dispatch-only CI —
+        // machine-sm.yml -> smAgent.js dispatchCiWorkflow() runs
+        // `gh workflow run ci.yml --ref <pr-branch>` with NO inputs, and
+        // sm-kicker / machine-merge dispatch it the same way. An ungated
+        // `|| github.event_name == 'workflow_dispatch'` arm makes every green
+        // validation dispatch execute the dispatched (PR-head) ref's
+        // auto_release.sh with the bypass App's push credentials — an
+        // accidental release and a privilege-escalation path in one. Every
+        // dispatch arm must be conjunctive with an explicit inputs.release*
+        // opt-in, and the real-push arm must additionally be ref-restricted
+        // to main.
+        final ci = jobsOf('.github/workflows/ci.yml');
+        final releaseIf = (ci['release'] as YamlMap)['if'].toString();
+
+        List<String> topLevelOrArms(String cond) {
+          final arms = <String>[];
+          final buf = StringBuffer();
+          var depth = 0;
+          for (var i = 0; i < cond.length; i++) {
+            final c = cond[i];
+            if (c == '(') {
+              depth++;
+            } else if (c == ')') {
+              depth--;
+            } else if (c == '|' && depth == 0) {
+              arms.add(buf.toString().trim());
+              buf.clear();
+              continue;
+            }
+            buf.write(c);
+          }
+          final last = buf.toString().trim();
+          if (last.isNotEmpty) arms.add(last);
+          return arms;
+        }
+
+        final dispatchArms = topLevelOrArms(releaseIf)
+            .where((a) => a.contains("github.event_name == 'workflow_dispatch'"))
+            .toList();
+        expect(
+          dispatchArms,
+          isNotEmpty,
+          reason:
+              'the AC1 dry-run and the manual catch-up dispatch arms must exist',
+        );
+        for (final arm in dispatchArms) {
+          expect(
+            RegExp(r"inputs\.release[A-Za-z]*\s*==\s*true").hasMatch(arm),
+            isTrue,
+            reason:
+                'every workflow_dispatch arm must be conjunctive with an explicit '
+                'inputs.release* opt-in — a bare dispatch (no inputs) arms nothing; '
+                'got: $arm',
+          );
+          if (!arm.contains('inputs.releaseDryRun')) {
+            expect(
+              arm.contains("github.ref == 'refs/heads/main'"),
+              isTrue,
+              reason:
+                  'the real-push dispatch arm must be ref-restricted to main — a '
+                  'PR-head dispatch must never reach the bump push; got: $arm',
+            );
+            expect(
+              arm.contains('inputs.releaseDispatch'),
+              isTrue,
+              reason:
+                  'the real-push dispatch arm must require the explicit '
+                  'releaseDispatch opt-in; got: $arm',
+            );
+          }
+        }
+
+        // The typed opt-in input must exist (boolean, default false) so the
+        // gate above is satisfiable without accidents.
+        final ciRaw = read('.github/workflows/ci.yml');
+        expect(
+          RegExp(
+            r'^\s*releaseDispatch:\n\s+description:[^\n]*\n\s+required: false\n\s+type: boolean\n\s+default: false$',
+            multiLine: true,
+          ).hasMatch(ciRaw),
+          isTrue,
+          reason: 'releaseDispatch must be a typed boolean input defaulting to false',
+        );
+        // The dry-run env must normalize through == 'true' — the bare
+        // `inputs.releaseDryRun || '0'` fallback is dead code (a typed boolean
+        // input always arrives as 'true'/'false', and 'false' is truthy in
+        // GitHub expressions), so it must never return (gh-1172 round-2 thread 3).
+        expect(
+          ciRaw,
+          isNot(contains('inputs.releaseDryRun ||')),
+          reason: "the dead `inputs.releaseDryRun || '0'` fallback must not return",
+        );
+        final steps = (ci['release'] as YamlMap)['steps'] as YamlList;
+        final bumpStep = steps
+            .map((s) => s as YamlMap)
+            .firstWhere(
+              (s) => s['run']?.toString().contains('auto_release.sh') ?? false,
+            );
+        expect(
+          (bumpStep['env'] as YamlMap)['RELEASE_DRY_RUN']?.toString(),
+          equals(r"${{ github.event.inputs.releaseDryRun == 'true' && '1' || '0' }}"),
+          reason: "RELEASE_DRY_RUN must normalize via == 'true' to a literal 1/0",
+        );
+      },
+    );
+
+    test(
+      'release-tag contract comment documents the direct-push mechanism, not the retired PR path',
+      () {
+        // gh-1172 round-2 IMPORTANT: the block comment above `release-tag:`
+        // still described the retired release-PR mechanism (merged release PR,
+        // RELEASE_PAT, "bump PR job") and contradicted the job it documents.
+        // This repo treats CI comments as binding contract docs — pin the
+        // rewrite so the retired text cannot return.
+        final lines = read('.github/workflows/ci.yml').split('\n');
+        final jobLine = lines.indexWhere((l) => l == '  release-tag:');
+        expect(jobLine, greaterThan(0), reason: 'release-tag job must exist');
+        var start = jobLine - 1;
+        while (start >= 0 && lines[start].trimLeft().startsWith('#')) {
+          start--;
+        }
+        final comment = lines.sublist(start + 1, jobLine).join('\n');
+        for (final retired in [
+          'RELEASE_PAT',
+          'merged release PR',
+          'bump PR job',
+          'rejects direct bot pushes',
+        ]) {
+          expect(
+            comment,
+            isNot(contains(retired)),
+            reason: 'retired PR-path text "$retired" must not return above release-tag',
+          );
+        }
+        expect(
+          comment,
+          contains('fa-release-bot'),
+          reason: 'the comment must name the App the tag rides',
+        );
+        expect(
+          comment,
+          contains('direct push'),
+          reason: 'the comment must describe the direct-push contract',
+        );
+      },
+    );
+  });
+
+  // ── gh-1172 — direct-push behavioral coverage ────────────────────────────
+  // Round-2 review: the PR deleted the gh-1134 PR-path sandbox (bare origin +
+  // stubbed gh) together with the code it exercised — correct — but shipped
+  // the new direct-push path with string-assertions only. The riskiest logic
+  // gets the same treatment here: a bare origin IS a real git remote, so
+  // `git push origin HEAD:main` genuinely executes; a git shim races the push
+  // by advancing origin/main from a second clone between the script's fetch
+  // and its push (E1).
+  group('gh-1172 — direct-push behavioral coverage (dry-run, coalesce, E1 race)', () {
+    test(
+      'AC1 — dry-run commits the bump locally, exits before the push, origin/main unchanged',
+      () {
+        final r = runAutoReleaseDirect('dry-run', dryRun: true);
+        expect(r.exitCode, 0, reason: r.output);
+        expect(r.output, contains('DRY-RUN: would push'));
+        expect(r.output, contains('v0.1.496'));
+        expect(r.output, contains('would then cut annotated tag v0.1.496'));
+        expect(
+          r.originHeadAfter,
+          r.originHeadBefore,
+          reason: 'AC1: a dry run must not land anything on origin/main',
+        );
+        expect(
+          r.seedLastSubject(),
+          'chore(release): v0.1.496',
+          reason: 'the would-be commit+tag are computed and committed locally',
+        );
+      },
+    );
+
+    test('coalesce guard — a tag younger than 2h skips the run entirely', () {
+      final r = runAutoReleaseDirect('coalesce', tagAgeHours: 1);
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.output, contains('coalesced'));
+      expect(
+        r.originHeadAfter,
+        r.originHeadBefore,
+        reason: 'no bump may land inside the coalesce window',
+      );
+      expect(
+        r.originSubjects(1),
+        isNot(contains('chore(release): v0.1.496')),
+      );
+    });
+
+    test(
+      'E1 race — a main that advanced mid-run rejects the push; the bump recomputes on the fresh head and lands',
+      () {
+        final r = runAutoReleaseDirect('race-retry', raceMode: 'once');
+        expect(r.exitCode, 0, reason: r.output);
+        expect(r.output, contains('Main push raced, retrying'));
+        final subjects = r.originSubjects(4);
+        expect(
+          subjects.where((s) => s.startsWith('chore(release):')),
+          hasLength(1),
+          reason: 'exactly one bump lands — the raced attempt is discarded, not stacked',
+        );
+        expect(subjects.first, 'chore(release): v0.1.496');
+        expect(
+          subjects,
+          contains('raced commit'),
+          reason: 'the bump must sit on top of the raced main — recomputed, never a blind push',
+        );
+        expect(
+          r.originHeadAuthor(),
+          'fa-release-bot[bot] <fa-release-bot[bot]@users.noreply.github.com>',
+          reason: 'the bump commit is authored by the App (auditability contract)',
+        );
+      },
+    );
+
+    test(
+      'E1 exhaustion — a main that advances on every attempt exits 1 after 3 tries without landing a bump',
+      () {
+        final r = runAutoReleaseDirect('race-exhaust', raceMode: 'always');
+        expect(r.exitCode, 1, reason: 'exhaustion must fail loud: ${r.output}');
+        expect(r.output, contains('failed after 3 attempts'));
+        expect(
+          r.originSubjects(6).where((s) => s.startsWith('chore(release):')),
+          isEmpty,
+          reason: 'a raced-out run must never land a bump',
+        );
+        expect(r.originSubjects(6), contains('raced commit'));
       },
     );
   });
