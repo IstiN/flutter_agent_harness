@@ -94,7 +94,13 @@ export 'src/cli/links_surface.dart'
         StoreBannerView,
         appStoreBlockEndMarker,
         appStoreBlockStartMarker,
-        renderAppStoreBlockHtml;
+        appStoreHeaderEndMarker,
+        appStoreHeaderStartMarker,
+        appStoreHeroEndMarker,
+        appStoreHeroStartMarker,
+        renderAppStoreBlockHtml,
+        renderAppStoreHeaderBadgeHtml,
+        renderAppStoreHeroCtaHtml;
 export 'src/cli/cli_help.dart';
 export 'src/cli/hep.dart';
 export 'src/cli/stream_json.dart';

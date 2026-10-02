@@ -187,3 +187,5 @@ factory-agents/
 # REG parity suite diffs — exempted from the *.txt screenshot ignores above
 # (last rule wins). The capture test overwrites them in place.
 !test/integration/screenshots/omp_ref/**
+.fm-drill-cache/
+node_modules
