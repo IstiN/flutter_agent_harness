@@ -745,14 +745,28 @@ final class JsonlSessionRepo implements SessionRepo {
   /// [open] when the file is missing/unreadable — callers already
   /// guard.
   Future<String?> sessionNameQuick(SessionMetadata metadata) async {
-    final reader = SessionChunkReader(
-      fs: _fs,
-      path: metadata.path,
-      parseExecutor: _parseExecutor,
-    );
-    final name = await reader.readNewestSessionInfoName();
-    final trimmed = name?.trim();
-    return trimmed == null || trimmed.isEmpty ? null : trimmed;
+    // Rotated sessions (gh-1077): probe every segment, newest first —
+    // the newest session_info record anywhere in the chain decides,
+    // exactly as in a single file (an empty name CLEARS an older one).
+    final paths = await listSessionSegmentPaths(_fs, metadata.path);
+    for (final path in paths.reversed) {
+      final reader = SessionChunkReader(
+        fs: _fs,
+        path: path,
+        parseExecutor: _parseExecutor,
+      );
+      SessionInfoRecord? info;
+      try {
+        info = await reader.readNewestSessionInfo();
+      } on SessionException {
+        if (path == metadata.path) rethrow;
+        continue; // an unreadable part must not kill name resolution
+      }
+      if (info == null) continue;
+      final trimmed = info.name?.trim();
+      return trimmed == null || trimmed.isEmpty ? null : trimmed;
+    }
+    return null;
   }
 
   /// Raw file scan for custom records whose `customType` is in [types]
@@ -776,11 +790,34 @@ final class JsonlSessionRepo implements SessionRepo {
     SessionMetadata metadata,
     Set<String> types,
   ) async {
+    // Rotated sessions (gh-1077) keep older records in `.part-NN`
+    // segments: scan the whole chain in order or registry snapshots
+    // flushed before the last rotation become invisible to subagent
+    // adoption (#488), memory refresh and ttsr. Dedupe by record id:
+    // between a failed rotation seed and the next open the archived
+    // part and the restored primary hold the SAME records — the open
+    // path dedupes (seenRecordIds), the raw scan must too (round 5).
+    final records = <CustomRecord>[];
+    final seen = <String>{};
+    for (final path in await listSessionSegmentPaths(_fs, metadata.path)) {
+      for (final record in await _readCustomRecordsInFile(path, types)) {
+        if (seen.add(record.id)) records.add(record);
+      }
+    }
+    return records;
+  }
+
+  /// Single-file scan behind [readCustomRecordsOfType]; see its
+  /// docstring. Returns [] for a missing/unreadable file.
+  Future<List<CustomRecord>> _readCustomRecordsInFile(
+    String path,
+    Set<String> types,
+  ) async {
     final fs = _fs;
     if (fs case final RangedReadFileSystem ranged) {
-      return _readCustomRecordsStreamed(fs, ranged, metadata, types);
+      return _readCustomRecordsStreamed(fs, ranged, path, types);
     }
-    final read = await fs.readTextLines(metadata.path);
+    final read = await fs.readTextLines(path);
     if (read.isErr) return const [];
     final records = <CustomRecord>[];
     for (final line in read.valueOrNull ?? const <String>[]) {
@@ -810,11 +847,11 @@ final class JsonlSessionRepo implements SessionRepo {
   Future<List<CustomRecord>> _readCustomRecordsStreamed(
     FileSystem fs,
     RangedReadFileSystem ranged,
-    SessionMetadata metadata,
+    String path,
     Set<String> types,
   ) async {
     final blockBytes = debugCustomRecordScanBlockBytes;
-    final info = await fs.fileInfo(metadata.path);
+    final info = await fs.fileInfo(path);
     if (info.isErr) return const [];
     if (info.valueOrNull!.kind != FileKind.file) return const [];
     final size = info.valueOrNull!.size;
@@ -822,7 +859,7 @@ final class JsonlSessionRepo implements SessionRepo {
     var offset = 0;
     while (offset < size) {
       final end = (offset + blockBytes).clamp(0, size);
-      final read = await ranged.readRange(metadata.path, offset, end);
+      final read = await ranged.readRange(path, offset, end);
       if (read.isErr) return const [];
       final block = read.valueOrNull!;
       if (block.isEmpty) break;
