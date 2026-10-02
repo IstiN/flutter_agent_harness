@@ -383,12 +383,14 @@ class AutoReleaseRun {
   }
 }
 
-/// The real git binary for sandbox shims: the session PATH may carry
-/// git-push-guard.sh shims (agent-session push guard) — skip any copy of
-/// those AND the sandbox's own shim dir so the shim execs real git.
-String _resolveRealGit(String shimBin) {
+/// The real git binary for sandbox shims AND for the fixture helpers: the
+/// session PATH may carry git-push-guard.sh shims (agent-session push guard)
+/// — skip any copy of those plus [skipDir] (the sandbox's own shim dir) so
+/// every git call this suite makes resolves to a real binary, whatever the
+/// host put at the front of PATH (gh-1172 round-3 suggestion).
+String _resolveRealGit([String? skipDir]) {
   for (final dir in (Platform.environment['PATH'] ?? '').split(':')) {
-    if (dir.isEmpty || dir == shimBin) continue;
+    if (dir.isEmpty || dir == skipDir) continue;
     final cand = '$dir/git';
     if (!File(cand).existsSync()) continue;
     final resolved = File(cand).resolveSymbolicLinksSync();
@@ -410,13 +412,17 @@ String fixtureRepo(
   final dir = Directory('${_fixtureRoot.path}/$name');
   if (dir.existsSync()) dir.deleteSync(recursive: true);
   dir.createSync(recursive: true);
-  Process.runSync('git', ['init', '-q'], workingDirectory: dir.path);
-  Process.runSync('git', [
+  // Route through the resolved real git — a session shim first on PATH (e.g.
+  // a broken git-push-guard copy) would silently fail init/commit and the
+  // notes tests would read an empty history (gh-1172 round-3 suggestion).
+  final git = _resolveRealGit();
+  Process.runSync(git, ['init', '-q'], workingDirectory: dir.path);
+  Process.runSync(git, [
     'config',
     'user.email',
     't@t',
   ], workingDirectory: dir.path);
-  Process.runSync('git', [
+  Process.runSync(git, [
     'config',
     'user.name',
     't',
@@ -427,8 +433,8 @@ String fixtureRepo(
   for (final group in [commitSubjects, postTagSubjects]) {
     for (final subject in group) {
       File('${dir.path}/f$i.txt').writeAsStringSync('$i');
-      Process.runSync('git', ['add', '.'], workingDirectory: dir.path);
-      Process.runSync('git', [
+      Process.runSync(git, ['add', '.'], workingDirectory: dir.path);
+      Process.runSync(git, [
         'commit',
         '-q',
         '-m',
@@ -437,7 +443,7 @@ String fixtureRepo(
       i++;
     }
     for (final tag in tags) {
-      Process.runSync('git', ['tag', tag], workingDirectory: dir.path);
+      Process.runSync(git, ['tag', tag], workingDirectory: dir.path);
     }
     tags = const [];
   }
@@ -1149,11 +1155,30 @@ gh release create "v9.9.9" \
 
   // ── AC5 — generated release notes (UT-notes) ────────────────────────────
   group('AC5 — release_notes.sh', () {
+    // release_notes.sh shells out to git — route that subprocess through the
+    // resolved real git as well, so a session shim first on PATH can never
+    // decide the notes (gh-1172 round-3 suggestion; on the review host a
+    // broken shim made these tests read an empty history).
+    final gitShimBin = Directory(
+      '${_fixtureRoot.path}/gitshim-${DateTime.now().microsecondsSinceEpoch}',
+    )..createSync(recursive: true);
+    File('${gitShimBin.path}/git').writeAsStringSync(
+      '#!/usr/bin/env bash\nexec "${_resolveRealGit()}" "\$@"\n',
+    );
+    Process.runSync('chmod', ['+x', '${gitShimBin.path}/git']);
+
     String notes(String cwd, List<String> args) {
-      final r = Process.runSync('bash', [
-        File('scripts/release_notes.sh').absolute.path,
-        ...args,
-      ], workingDirectory: cwd);
+      final r = Process.runSync(
+        'bash',
+        [
+          File('scripts/release_notes.sh').absolute.path,
+          ...args,
+        ],
+        workingDirectory: cwd,
+        environment: {
+          'PATH': '${gitShimBin.path}:${Platform.environment['PATH']}',
+        },
+      );
       return r.stdout.toString();
     }
 
@@ -1544,9 +1569,13 @@ gh release create "v9.9.9" \
               );
           expect(
             checkout['with']['token']?.toString(),
-            equals(r'${{ steps.app-token.outputs.token }}'),
+            jobName == 'release'
+                ? equals(r'${{ steps.app-token.outputs.token || github.token }}')
+                : equals(r'${{ steps.app-token.outputs.token }}'),
             reason:
-                '$jobName checkout must ride the App token — GITHUB_TOKEN tags/pushes never fire tag-scoped jobs',
+                '$jobName checkout must ride the App token — GITHUB_TOKEN '
+                'tags/pushes never fire tag-scoped jobs (release additionally '
+                'falls back to github.token when the dry-run gate skips the mint)',
           );
         }
         final tagSteps = ci['release-tag']['steps'] as YamlList;
@@ -1559,6 +1588,63 @@ gh release create "v9.9.9" \
           (tagStep['env'] as YamlMap)['GH_TOKEN']?.toString(),
           equals(r'${{ steps.app-token.outputs.token }}'),
           reason: 'gh release create needs GH_TOKEN=App token (#1093 review)',
+        );
+      },
+    );
+    test(
+      'dry-run dispatch carries no bypass credential (mint gated, checkout falls back, job reads)',
+      () {
+        // gh-1172 round-3 BLOCK: the AC1 dry-run arm fires on ANY ref, so the
+        // dispatched (PR-head) auto_release.sh must never hold the bypass App
+        // token — "never pushes" would otherwise be enforced only by the very
+        // script under test (a PR can edit it to ignore the flag, or spend
+        // the checkout-stored token directly: push HEAD to main, push a v*
+        // tag → the OIDC publish job → attacker-controlled pub.dev package).
+        // A dry-run needs no push credential at all: the mint is gated off on
+        // dry-run, checkout falls back to the plain GITHUB_TOKEN, and the job
+        // token itself stays read-only so no write-capable second credential
+        // exists on an untrusted ref.
+        final ci = jobsOf('.github/workflows/ci.yml');
+        final job = ci['release'] as YamlMap;
+        final steps = job['steps'] as YamlList;
+        final mint = steps
+            .map((s) => s as YamlMap)
+            .firstWhere(
+              (s) =>
+                  s['uses']?.toString().startsWith(
+                    'actions/create-github-app-token@',
+                  ) ??
+                  false,
+            );
+        expect(
+          mint['if']?.toString(),
+          equals('inputs.releaseDryRun != true'),
+          reason:
+              'dry-run never pushes — mint NO bypass credential on untrusted '
+              'refs (the real arms — push, schedule, releaseDispatch — all see '
+              'a non-true releaseDryRun and still mint)',
+        );
+        final checkout = steps
+            .map((s) => s as YamlMap)
+            .firstWhere(
+              (s) =>
+                  s['uses']?.toString().startsWith('actions/checkout') ??
+                  false,
+            );
+        expect(
+          checkout['with']['token']?.toString(),
+          equals(r'${{ steps.app-token.outputs.token || github.token }}'),
+          reason:
+              'with the mint skipped, checkout must fall back to the plain '
+              'GITHUB_TOKEN (a skipped step emits empty outputs, falsy in GHA)',
+        );
+        expect(
+          (job['permissions'] as YamlMap)['contents'].toString(),
+          'read',
+          reason:
+              'the push rides the checkout App token exclusively — the job '
+              'GITHUB_TOKEN never needs write, so a dry-run dispatch of a PR '
+              'head holds no write-capable credential at all',
         );
       },
     );
@@ -1879,6 +1965,25 @@ gh release create "v9.9.9" \
         expect(r.originSubjects(6), contains('raced commit'));
       },
     );
+
+    test('suite git resolution is host-independent — no session shim decides fixture behavior', () {
+      // gh-1172 round-3 suggestion: the pre-existing fixture helpers called
+      // bare `Process.runSync('git', ...)`, inheriting whatever git sat first
+      // on PATH — on shim-hostile hosts that was a broken git-push-guard copy
+      // and the AC5 notes tests failed with "No changes since the previous
+      // release." All fixture/notes git traffic now routes through the
+      // resolved real binary; pin its invariants.
+      final git = _resolveRealGit();
+      expect(File(git).existsSync(), isTrue, reason: '$git must exist');
+      expect(
+        git.endsWith('git-push-guard.sh'),
+        isFalse,
+        reason: 'the resolved git must never be an agent-session guard shim',
+      );
+      final r = Process.runSync(git, ['--version']);
+      expect(r.exitCode, 0, reason: r.stderr.toString());
+      expect(r.stdout.toString(), startsWith('git version'));
+    });
   });
 
   // ── gh-995 — artifact action pins + PTY shard pipeline coherence ────────

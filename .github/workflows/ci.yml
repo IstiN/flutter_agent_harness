@@ -2932,13 +2932,24 @@ jobs:
     concurrency:
       group: release-main
       cancel-in-progress: false
+    # Defense in depth (gh-1172 round-3 BLOCK): the push rides the checkout
+    # App token EXCLUSIVELY, so this job's GITHUB_TOKEN never needs write —
+    # on a dry-run dispatch of a PR head (AC1, any ref) that keeps the job's
+    # own token read-only, leaving no write-capable credential in the run.
     permissions:
-      contents: write
+      contents: read
     steps:
       # Job-scoped App token (gh-1172 fix-contract item 1): minted per run,
       # expires with the job, never shared with other workflows.
+      # NEVER minted on a dry-run dispatch: that arm fires on ANY ref, so the
+      # bypass credential must not exist in a run that executes the (possibly
+      # untrusted) dispatched ref's auto_release.sh — "dry-run never pushes"
+      # may not depend on the script under test honoring the flag. The real
+      # arms (push, schedule, releaseDispatch) see a non-true releaseDryRun
+      # and mint as before.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
+        if: inputs.releaseDryRun != true
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
@@ -2953,7 +2964,10 @@ jobs:
           # App token (not GITHUB_TOKEN) so the pushed commit triggers the
           # follow-up ci.yml run whose release-tag job cuts the tag —
           # GITHUB_TOKEN pushes never trigger downstream workflow runs.
-          token: ${{ steps.app-token.outputs.token }}
+          # Dry-run dispatch: the mint above is skipped, its outputs are
+          # empty (falsy) and checkout falls back to the plain GITHUB_TOKEN
+          # (read-only per the job permissions block).
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
