@@ -3476,6 +3476,12 @@ abstract class AppLocalizations {
   /// **'Session ({size} MB) is over the instant-open budget and couldn\'t be opened safely.'**
   String sessionTooLargeTitle(String size);
 
+  /// Fa-entry long-press mint failure: the new session could not be created — logged and surfaced as a snack, the active session is kept (issue #864, review #1144 follow-up)
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t create a new session.'**
+  String get sessionMintFailed;
+
   /// Boot notice when the last-active session is over the instant-open budget and was not resumed (issue #381); the action opens it windowed
   ///
   /// In en, this message translates to:
