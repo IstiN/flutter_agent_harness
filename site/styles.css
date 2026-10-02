@@ -131,14 +131,15 @@ a:hover { text-decoration: underline; }
 .nav a:hover { color: var(--text); text-decoration: none; }
 .nav .brand { color: var(--text); }
 
-/* ── Mobile disclosure menu (gh-756) ────────────────────────────────────
-   Below 960px the links collapse behind a ☰ toggle (JS only handles Esc /
+/* ── Mobile disclosure menu (gh-756, re-measured for gh-881) ────────────
+   Below 1080px the links collapse behind a ☰ toggle (JS only handles Esc /
    backdrop / focus / aria; open-close itself is CSS via [data-open]).
-   The breakpoint is MEASURED, not guessed: the 10-link row is 843px wide
-   + 48px padding, i.e. it only fits from ~892px — at 641-891 it squeezed
-   and overflowed (the audit's "mid-width overflow"). 960 is the site's
-   existing named breakpoint, so the collapse lands there.
-   The toggle exists only under html.js AND the 960px breakpoint; the
+   The breakpoint is MEASURED, not guessed: the 11-link row was 843px wide
+   + 48px padding for the 10-link set (fit from ~892px, collapse at the
+   site's 960 breakpoint); the gh-881 header badge adds ~135px, so the row
+   now fits only from ~1050px — at 961-1049 it wrapped nav-ext to a second
+   row (E2). 1080 is the round breakpoint with headroom.
+   The toggle exists only under html.js AND the 1080px breakpoint; the
    `hidden` attribute keeps it gone with no CSS or no JS (E6: the no-JS
    fallback is the wrapped-links layout at ≤640px below, never a dead
    button). */
@@ -162,11 +163,16 @@ a:hover { text-decoration: underline; }
 .nav-toggle[aria-expanded="true"] .icon-open { display: none; }
 .nav-toggle[aria-expanded="true"] .icon-close { display: inline; }
 
-@media (max-width: 960px) {
+@media (max-width: 1080px) {
   html.js .nav-inner { flex-wrap: nowrap; gap: 14px; padding: 12px 18px; }
+  /* Menu collapse breakpoint (gh-881, re-measured: 11-link row + header
+     badge fits from ~1050px). Hand-synced copies: site/main.js
+     matchMedia('(min-width: 1081px)') rotate auto-close,
+     scripts/site_mobile_check.mjs MENU_MAX_WIDTH. */
   html.js .nav-toggle { display: inline-flex; margin-left: auto; }
   /* Conscious brand-sub decision (audit #3): it hides in the collapsed
-     header, and now the collapse starts at 960, not 640. */
+     header, and now the collapse starts at 1080, not 640 (gh-881
+     re-measure). */
   html.js .brand-sub { display: none; }
   /* Absolutely positioned under the sticky bar: the bar itself never
      changes height while the menu is open (AC2). Capped at viewport
@@ -199,9 +205,10 @@ a:hover { text-decoration: underline; }
   }
   html.js .nav-menu a { display: block; padding: 9px 4px; font-size: 1rem; }
   /* No-JS fallback (E6): the wrapped rows wrap instead of overflowing —
-     across the WHOLE collapse band, not only ≤640px: the 11-link row fits
-     from ~945px, so a no-JS 641–960px viewport would otherwise keep the
-     pre-existing mid-width overflow this file set out to fix. */
+     across the WHOLE collapse band, not only ≤640px: the 11-link row +
+     badge fits from ~1050px, so a no-JS viewport inside the band would
+     otherwise keep the pre-existing mid-width overflow this file set out
+     to fix. */
   html:not(.js) .nav-inner { flex-wrap: wrap; }
   html:not(.js) .nav-links { flex-wrap: wrap; row-gap: 6px; }
 }
@@ -663,6 +670,45 @@ section {
 }
 .btn-soon:hover { border-color: var(--border-bright); transform: none; }
 .app-store { padding-top: 8px; }
+
+/* ── App Store header badge + hero CTA (issue #881) — generated markup,
+      see scripts/regen_site_store_block.dart ──────────────────────────── */
+/* .nav .store-badge out-specifies `.nav a` (dim) — the money link is
+   official-badge black in every state. flex:none + nowrap = the E1 floor:
+   icon+«App Store» never truncates to icon-only, whatever the viewport. */
+.nav .store-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 5px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+  background: #000;
+  color: #f5f5f7;
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.nav .store-badge:hover {
+  text-decoration: none;
+  border-color: var(--accent);
+  color: #fff;
+}
+.store-badge-mark { flex: none; }
+/* Hero hierarchy (OQ1 lean): the store CTA leads on mobile; on desktop the
+   CLI audience lands here, so «Try it in your browser» stays the only
+   primary and the store CTA demotes to a plain button. 1081 = the nav
+   collapse breakpoint (site/styles.css): the whole ≤1080 band is the
+   mobile experience. */
+@media (min-width: 1081px) {
+  .cta-row .btn-store-hero {
+    background: none;
+    border: 1px solid var(--border-bright);
+    color: var(--text);
+  }
+  .cta-row .btn-store-hero:hover { border-color: var(--accent); }
+}
 .store-frames {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
