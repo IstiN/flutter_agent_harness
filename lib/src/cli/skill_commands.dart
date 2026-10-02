@@ -4,6 +4,12 @@
 /// members.
 part of 'agent_cli.dart';
 
+/// The merge inputs read from the existing project file: the current
+/// toggles, the raw `skills:` node (null when absent — needed to
+/// re-emit the section keys), and the error that blocks the merge
+/// (the other fields are inert when [error] is set).
+typedef _MergeSeed = ({SkillsConfig config, YamlMap? section, String? error});
+
 /// Implementation members of [AgentCli] for skills: third-party access
 /// gating (the startup consent dialog and `/skills access`), `/skill:<name>`
 /// invocation (rendering, per-turn tool grants, `context: fork`), and the
@@ -651,71 +657,114 @@ extension AgentCliSkillsExt on AgentCli {
   Map<String, bool>? get globalSkillToggles =>
       _globalSkillTogglesLoaded ? _globalSkillToggles : null;
 
+  /// Parses the existing project file body for a toggle merge. Pure —
+  /// no env — so the error branches are unit-testable as a table.
+  _MergeSeed _mergeSeed(String path, String? source) {
+    if (source == null || source.trim().isEmpty) {
+      return (config: const SkillsConfig.empty(), section: null, error: null);
+    }
+    final Object? doc;
+    try {
+      doc = loadYaml(source);
+    } on Object catch (error) {
+      return (
+        config: const SkillsConfig.empty(),
+        section: null,
+        error: '$error',
+      );
+    }
+    if (doc is! YamlMap) {
+      return (
+        config: const SkillsConfig.empty(),
+        section: null,
+        error: '$path is not a map',
+      );
+    }
+    final section = doc['skills'];
+    if (section == null) {
+      return (config: const SkillsConfig.empty(), section: null, error: null);
+    }
+    if (section is! YamlMap) {
+      return (
+        config: const SkillsConfig.empty(),
+        section: null,
+        error: 'skills must be a map in $path',
+      );
+    }
+    try {
+      return (
+        config: SkillsConfig.fromYaml(section),
+        section: section,
+        error: null,
+      );
+    } on ConfigException catch (error) {
+      // A syntactically valid file with an invalid section (e.g. a
+      // non-boolean value) is data, not a crash — same contract as
+      // the tools twin and the read path (issue #1151 review CQIw).
+      return (
+        config: const SkillsConfig.empty(),
+        section: null,
+        error: error.message,
+      );
+    }
+  }
+
+  /// Rebuilds the file body with `name: enabled` merged into the
+  /// `skills:` block. [seed] carries the parsed section, [source] the
+  /// original bytes (null/blank → a fresh file).
+  String _mergedSkillsBody(
+    _MergeSeed seed,
+    String? source,
+    String name,
+    bool enabled,
+  ) {
+    final buffer = StringBuffer('skills:\n');
+    final section = seed.section;
+    if (section != null) {
+      // The section parser only accepts these spellings, so re-emitting
+      // the parsed values keeps the file valid.
+      if (section['access'] != null) {
+        buffer.write('  access: ${section['access']}\n');
+      }
+      if (section['disableShellExecution'] != null) {
+        buffer.write(
+          '  disableShellExecution: ${section['disableShellExecution']}\n',
+        );
+      }
+    }
+    buffer.write(
+      SkillsConfig(skills: {...seed.config.skills, name: enabled}).toYaml(),
+    );
+    final body = (source == null || source.trim().isEmpty)
+        ? buffer.toString()
+        : _replaceTopLevelYamlBlock(source, 'skills', buffer.toString());
+    return '$body\n';
+  }
+
   /// Merges `name: enabled` into the `skills:` section of the yaml file at
   /// [path] (surgical top-level block rewrite; everything outside the
   /// block survives byte-for-byte). Inside the block the section's
   /// `access:`/`disableShellExecution:` keys are preserved — they are
   /// valid section keys the toggles parser [SkillsConfig] deliberately
-  /// skips, and a toYaml-only rebuild would drop them.
+  /// skips, and a toYaml-only rebuild would drop them. A file the merge
+  /// cannot parse (broken yaml, non-map doc, invalid section) is data,
+  /// not a crash: the error prints and nothing is written.
   Future<bool> _mergeSkillsIntoFile(
     String path,
     String name,
     bool enabled,
   ) async {
     final source = (await _env.readTextFile(path)).valueOrNull;
-    Object? existing;
-    var current = const SkillsConfig.empty();
-    if (source != null && source.trim().isNotEmpty) {
-      final Object? doc;
-      try {
-        doc = loadYaml(source);
-      } on Object catch (error) {
-        io.writeln('skills: cannot merge project scope — $error');
-        return false;
-      }
-      if (doc is! YamlMap) {
-        io.writeln('skills: cannot merge project scope — $path is not a map');
-        return false;
-      }
-      existing = doc['skills'];
-      if (existing != null) {
-        if (existing is! YamlMap) {
-          io.writeln(
-            'skills: cannot merge project scope — skills must be a map in '
-            '$path',
-          );
-          return false;
-        }
-        try {
-          current = SkillsConfig.fromYaml(existing);
-        } on ConfigException catch (error) {
-          // A syntactically valid file with an invalid section (e.g. a
-          // non-boolean value) is data, not a crash — same contract as
-          // the tools twin and the read path (issue #1151 review CQIw).
-          io.writeln('skills: cannot merge project scope — ${error.message}');
-          return false;
-        }
-      }
+    final seed = _mergeSeed(path, source);
+    if (seed.error != null) {
+      io.writeln('skills: cannot merge project scope — ${seed.error}');
+      return false;
     }
-    final updated = SkillsConfig(skills: {...current.skills, name: enabled});
-    final buffer = StringBuffer('skills:\n');
-    if (existing is YamlMap) {
-      // The section parser only accepts these spellings, so re-emitting
-      // the parsed values keeps the file valid.
-      if (existing['access'] != null) {
-        buffer.write('  access: ${existing['access']}\n');
-      }
-      if (existing['disableShellExecution'] != null) {
-        buffer.write(
-          '  disableShellExecution: ${existing['disableShellExecution']}\n',
-        );
-      }
-    }
-    buffer.write(updated.toYaml());
-    final next = (source == null || source.trim().isEmpty)
-        ? buffer.toString()
-        : _replaceTopLevelYamlBlock(source, 'skills', buffer.toString());
-    if (await _env.writeFile(path, '$next\n') is Err) {
+    if (await _env.writeFile(
+          path,
+          _mergedSkillsBody(seed, source, name, enabled),
+        )
+        is Err) {
       io.writeln('skills: could not write $path');
       return false;
     }
@@ -738,26 +787,54 @@ extension AgentCliSkillsExt on AgentCli {
   /// to persist in — loops until cancelled. Mirrors the Tools flow.
   Future<void> _skillsSettingsFlow() async {
     for (;;) {
-      final name = await _pickOption('skills — pick a skill', [
-        for (final skill in _skills)
-          (skill.name, skill.name, _skillsEntryDetail(skill)),
-        ('done', 'Done', ''),
-      ]);
-      if (name == null || name == 'done') return;
-      final action = await _pickOption('skills — $name', [
-        ('on', 'Enable', 'offer the skill to the model again'),
-        ('off', 'Disable', 'hide it from invocation, completion and prompt'),
-      ]);
-      if (action == null) return;
-      final scope = await _pickOption(
-        'skills — ${action == 'on' ? 'enable' : 'disable'} $name in',
-        [
-          ('project', 'Project', '${_env.cwd}/.fah/config.yaml'),
-          ('global', 'Global', '~/.fah/config.yaml'),
-        ],
-      );
-      if (scope == null) return;
-      await _applySkillToggle(action == 'on', name, scope);
+      final pick = await _pickSkillToggle();
+      if (pick == null) return;
+      await _applySkillToggle(pick.enable, pick.name, pick.scope);
     }
   }
+
+  /// One Skills-flow pass: skill → on/off → scope. Null when the user
+  /// cancels any step (or picks Done at the skill list).
+  Future<({String name, bool enable, String scope})?> _pickSkillToggle() async {
+    final name = await _pickSkillName();
+    if (name == null) return null;
+    final enable = await _pickSkillEnable(name);
+    if (enable == null) return null;
+    final scope = await _pickSkillScope(name, enable);
+    if (scope == null) return null;
+    return (name: name, enable: enable, scope: scope);
+  }
+
+  /// The skill pick; `Done` and a cancel both resolve to null.
+  Future<String?> _pickSkillName() async {
+    final name = await _pickOption('skills — pick a skill', [
+      for (final skill in _skills)
+        (skill.name, skill.name, _skillsEntryDetail(skill)),
+      ('done', 'Done', ''),
+    ]);
+    return name == 'done' ? null : name;
+  }
+
+  /// The Skills flow's enable/disable picker rows.
+  static const _skillActionOptions = <FlowOption>[
+    ('on', 'Enable', 'offer the skill to the model again'),
+    ('off', 'Disable', 'hide it from invocation, completion and prompt'),
+  ];
+
+  /// The enable/disable pick for [name]; null on cancel.
+  Future<bool?> _pickSkillEnable(String name) async {
+    final action = await _pickOption('skills — $name', _skillActionOptions);
+    return switch (action) {
+      'on' => true,
+      'off' => false,
+      _ => null,
+    };
+  }
+
+  /// The scope pick for toggling [name], worded by the chosen action.
+  Future<String?> _pickSkillScope(String name, bool enable) =>
+      _pickOption('skills — ${enable ? 'enable' : 'disable'} $name in', [
+        ('project', 'Project', '${_env.cwd}/.fah/config.yaml'),
+        ('global', 'Global', '~/.fah/config.yaml'),
+      ]);
 }

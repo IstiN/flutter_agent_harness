@@ -413,6 +413,204 @@ void main() {
       await run;
     },
   );
+
+  test(
+    'settings flow: enable/project, disable/global, then Done (AC4 hub arm)',
+    () async {
+      var globalPersisted = 0;
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        onSkillTogglesChanged: () async {
+          globalPersisted++;
+        },
+      );
+      final run = cli.run();
+      await waitForIt(
+        () => cli.systemPrompt.contains('<name>self-settings</name>'),
+      );
+      String out() => io.out.toString();
+
+      final flow = cli.pickSettingForTest('skills');
+      await waitForIt(() => out().contains('skills — pick a skill'));
+      io.sendLine('1'); // create-goal
+      await waitForIt(() => out().contains('skills — create-goal'));
+      io.sendLine('1'); // Enable
+      await waitForIt(() => out().contains('skills — enable create-goal in'));
+      io.sendLine('1'); // Project
+      await waitForIt(
+        () => out().contains('skills: enabled create-goal (scope: project)'),
+      );
+      // The loop returns to the skill pick; disable the other builtin in
+      // the global scope.
+      io.sendLine('2'); // self-settings
+      await waitForIt(() => out().contains('skills — self-settings'));
+      io.sendLine('2'); // Disable
+      await waitForIt(
+        () => out().contains('skills — disable self-settings in'),
+      );
+      io.sendLine('2'); // Global
+      await waitForIt(
+        () => out().contains('skills: disabled self-settings (scope: global)'),
+      );
+      io.sendLine('3'); // Done
+      await flow;
+
+      // The project arm persisted the enable; the global arm fired the
+      // host hook once.
+      final file = (await env.readTextFile(
+        '/work/.fah/config.yaml',
+      )).valueOrNull;
+      expect(file, contains('create-goal: true'));
+      expect(globalPersisted, 1);
+      // Same-session effect: self-settings is gone from the prompt.
+      expect(cli.systemPrompt, isNot(contains('<name>self-settings</name>')));
+      expect(cli.systemPrompt, contains('<name>create-goal</name>'));
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test('settings flow: cancel at each pick, invalid number re-prompts, Done '
+      'ends (AC4 hub arm branches)', () async {
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+    await waitForIt(
+      () => cli.systemPrompt.contains('<name>create-goal</name>'),
+    );
+    String out() => io.out.toString();
+
+    // Cancel at the skill pick: the flow returns, nothing applied.
+    var flow = cli.pickSettingForTest('skills');
+    await waitForIt(() => out().contains('skills — pick a skill'));
+    io.interrupt();
+    await flow;
+    expect(out(), isNot(contains('(scope:')));
+
+    // Cancel at the action pick.
+    flow = cli.pickSettingForTest('skills');
+    await waitForIt(() => out().contains('skills — pick a skill'));
+    io.sendLine('1'); // create-goal
+    await waitForIt(() => out().contains('skills — create-goal'));
+    io.interrupt();
+    await flow;
+    expect(out(), isNot(contains('(scope:')));
+
+    // Cancel at the scope pick: the pick ran, nothing persisted.
+    flow = cli.pickSettingForTest('skills');
+    await waitForIt(() => out().contains('skills — pick a skill'));
+    io.sendLine('1');
+    await waitForIt(() => out().contains('skills — create-goal'));
+    io.sendLine('1'); // Enable
+    await waitForIt(() => out().contains('skills — enable create-goal in'));
+    io.interrupt();
+    await flow;
+    expect(
+      (await env.readTextFile('/work/.fah/config.yaml')).valueOrNull,
+      isNull,
+    );
+
+    // A bad number re-prompts (and lists the options again), then Done
+    // exits cleanly.
+    flow = cli.pickSettingForTest('skills');
+    await waitForIt(() => out().contains('skills — pick a skill'));
+    io.sendLine('9');
+    await waitForIt(() => out().contains('invalid selection: 9'));
+    io.sendLine('3'); // Done
+    await flow;
+    // No pass completed: no toggle was ever applied or persisted.
+    expect(out(), isNot(contains('(scope:')));
+    io.sendLine('/exit');
+    await run;
+  });
+
+  test(
+    'merge seed parses every project-file shape (CRAP ladder, table)',
+    () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(fake.call);
+      final run = cli.run();
+      await waitForIt(
+        () => cli.systemPrompt.contains('<name>create-goal</name>'),
+      );
+      String out() => io.out.toString();
+
+      // One session, every file shape: (label, source to write or null for
+      // an absent file, expected merge outcome — error substring or null
+      // for success — and, on success, substrings the written body must
+      // carry).
+      final cases = <(String, String?, String?, List<String>?)>[
+        ('absent file', null, null, ['skills:', 'create-goal: false']),
+        ('blank file', '   \n', null, ['create-goal: false']),
+        (
+          'no skills key',
+          'tools:\n  a: on\n',
+          null,
+          // The surgical rewrite preserved the outside-section key.
+          ['tools:', '  a: on', 'create-goal: false'],
+        ),
+        (
+          'section keys preserved',
+          'top: keep\nskills:\n  access: ask\n'
+              '  disableShellExecution: true\n  create-goal: on\n',
+          null,
+          [
+            'top: keep',
+            'access: ask',
+            'disableShellExecution: true',
+            'create-goal: false',
+          ],
+        ),
+        // The raw yaml error text is engine-worded; the prefix assertion
+        // below is the contract.
+        ('broken yaml', 'skills: [unclosed\n', '', null),
+        ('scalar doc', 'just a string\n', 'is not a map', null),
+        ('scalar section', 'skills: 5\n', 'skills must be a map in', null),
+        (
+          'invalid value',
+          'skills:\n  create-goal: yes-please\n',
+          'skills.create-goal must be on/off',
+          null,
+        ),
+      ];
+      var successes = 0;
+      var failures = 0;
+      for (final (label, source, errorSub, expectInFile) in cases) {
+        if (source != null) {
+          await env.writeFile('/work/.fah/config.yaml', source);
+        }
+        io.sendLine('/skills off create-goal');
+        if (errorSub == null) {
+          // io.out is cumulative — wait for the count to move.
+          await waitForIt(
+            () =>
+                'skills: disabled create-goal (scope: project)'
+                    .allMatches(out())
+                    .length >
+                successes,
+          );
+          successes++;
+          final body = (await env.readTextFile(
+            '/work/.fah/config.yaml',
+          )).valueOrNull!;
+          for (final fragment in expectInFile!) {
+            expect(body, contains(fragment), reason: label);
+          }
+          continue;
+        }
+        await waitForIt(
+          () =>
+              'skills: cannot merge project scope'.allMatches(out()).length >
+              failures,
+        );
+        failures++;
+        expect(out(), contains(errorSub), reason: label);
+      }
+      io.sendLine('/exit');
+      await run;
+    },
+  );
 }
 
 /// Issue #1151 AC8: the same assertions on the REAL TUI surface —
