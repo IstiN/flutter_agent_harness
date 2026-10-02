@@ -33,6 +33,14 @@ import 'session_storage.dart';
 
 /// Append-only session storage over a byte-scanned window of the file.
 ///
+/// Segment boundary (gh-1077): this view is bound to the ACTIVE segment
+/// (the primary file). Records archived into `<path>.part-NN` siblings
+/// by segment rotation are NOT reachable through [loadOlder] — paging
+/// stops at the primary's header copy and [hasOlder] goes false there,
+/// by design: the chat path only ever renders recent history. Full-chain
+/// reads go through [JsonlSessionStorage.open] (which loads parts +
+/// primary as one chain) or `JsonlSessionRepo.readCustomRecordsOfType`.
+///
 /// The in-memory index holds the LOADED records only; every structure
 /// (`_entries`, `_byId`, `_labelsById`, offsets) is pruned in the same
 /// pass when eviction drops records, so no strong reference outlives
