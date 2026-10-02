@@ -80,6 +80,22 @@ final class _GatedRelayService extends AgentService {
   };
 }
 
+/// A hosted (relay-like) service whose new-session reset always throws:
+/// the brand mint's first await fails exactly where a clone/initialize
+/// failure would (review #1144 follow-up).
+final class _FailingRelayService extends AgentService {
+  _FailingRelayService({
+    required super.agent,
+    required super.env,
+    required super.sessionsRoot,
+    required super.config,
+  });
+
+  @override
+  Future<void> Function()? get newSessionAction =>
+      () async => throw StateError('mint exploded');
+}
+
 void main() {
   setUpAll(() async {
     await initializeDateFormatting('en');
@@ -238,6 +254,52 @@ void main() {
 
       // Exactly ONE trigger went through: one relay reset, no clone mint.
       expect(gated.resets, 1);
+      expect(manager.sessions, hasLength(1));
+      expect(manager.activeId, 'fake-session');
+    });
+
+    testWidgets('a failed mint shows the error snack instead of leaking an '
+        'unhandled zone error; nothing mints, active stays (review #1144 '
+        'follow-up)', (tester) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession(
+          'fake-session',
+          _FailingRelayService(
+            agent: Agent(
+              model: Model(
+                id: 'test-model',
+                api: 'test-api',
+                provider: 'test',
+                baseUrl: 'https://example.com',
+                contextWindow: 100000,
+                maxTokens: 4096,
+              ),
+              systemPrompt: 'You are Fa.',
+              streamFunction: _singleTextResponse('ok'),
+              toolRegistry: ToolRegistry(const []),
+            ),
+            env: env,
+            sessionsRoot: '/sessions',
+            config: AgentConfig(
+              providerKind: 'test',
+              modelId: 'test-model',
+              baseUrl: 'https://example.com',
+              apiKey: '',
+            ),
+          ),
+        );
+
+      await pumpShell(tester, manager: manager);
+      // Real gesture entry: pre-fix this long-press surfaced the failure
+      // as an unhandled zone error (unawaited(...) with no catch).
+      await tester.longPress(find.byKey(const ValueKey('wideShellFaBrand')));
+      await tester.pumpAndSettle();
+
+      // The messenger presents the same snack in every Scaffold the wide
+      // shell has registered — at least one must carry the failure text.
+      expect(find.byType(SnackBar), findsWidgets);
+      expect(find.text("Couldn't create a new session."), findsWidgets);
       expect(manager.sessions, hasLength(1));
       expect(manager.activeId, 'fake-session');
     });
