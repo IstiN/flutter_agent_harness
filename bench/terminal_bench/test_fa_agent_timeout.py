@@ -198,6 +198,59 @@ class AuditTest(unittest.TestCase):
         self.assertEqual(payload["policy"], "flat-cap")
         self.assertEqual(payload["knobs"]["base_sec"], 600.0)
 
+    def test_audit_documents_liveness_inflation_when_measured(self):
+        # AC6 (issue #1185): with a readable progress stream the audit
+        # carries the sample size and the ⏳ share the pane counter
+        # counted as progress.
+        knobs = TimeoutKnobs(base_sec=600.0)
+        payload = audit_dict(
+            knobs,
+            ProgressLadder(knobs),
+            "completed",
+            progress_bytes=1000,
+            liveness_bytes=120,
+        )
+        self.assertEqual(payload["progress_sample_bytes"], 1000)
+        self.assertEqual(payload["progress_liveness_bytes"], 120)
+        self.assertIn("#1185", payload["progress_note"])
+        self.assertEqual(json.loads(json.dumps(payload)), payload)
+
+    def test_audit_omits_liveness_fields_when_stream_unreadable(self):
+        # None propagates: an unreadable stream never fabricates zeroes.
+        knobs = TimeoutKnobs(base_sec=600.0)
+        payload = audit_dict(knobs, ProgressLadder(knobs), "completed")
+        self.assertNotIn("progress_sample_bytes", payload)
+        self.assertNotIn("progress_liveness_bytes", payload)
+        self.assertNotIn("progress_note", payload)
+
+
+class LivenessBytesTest(unittest.TestCase):
+    """AC6 (issue #1185): the ⏳ share of a progress stream, in bytes."""
+
+    def test_counts_only_liveness_lines_with_newlines(self):
+        stream = (
+            "assistant text\r\n"
+            "⏳ [bash] sleep 500 — running 60s\n"
+            "✓ bash · 61s\n"
+            "⏳ [bash] sleep 500 — running 120s\n"
+        )
+        measured = fa_agent_timeout.liveness_bytes_of(stream)
+        expected = sum(
+            len(line.encode("utf-8")) + 1
+            for line in stream.splitlines()
+            if "⏳" in line
+        )
+        self.assertEqual(measured, expected)
+        self.assertGreater(measured, 0)
+
+    def test_accepts_bytes_and_propagates_none(self):
+        self.assertEqual(
+            fa_agent_timeout.liveness_bytes_of("⏳ x\n".encode("utf-8")),
+            len("⏳ x\n".encode("utf-8")),
+        )
+        self.assertIsNone(fa_agent_timeout.liveness_bytes_of(None))
+        self.assertEqual(fa_agent_timeout.liveness_bytes_of("no anchor"), 0)
+
 
 class FakeTmuxSession:
     """Duck-typed TmuxSession: pane tap via a byte counter, keys recorded."""

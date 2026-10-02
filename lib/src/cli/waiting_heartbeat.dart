@@ -36,6 +36,7 @@ final class WaitingConfig {
     this.toolLivenessSeconds = defaultToolLivenessSeconds,
     this.toolLivenessTickSeconds = defaultToolLivenessTickSeconds,
     this.toolEscalateSeconds = defaultToolEscalateSeconds,
+    this.toolNudge = true,
   });
 
   /// Waiting-heartbeat cadence in minutes; `0` disables the heartbeat.
@@ -55,6 +56,12 @@ final class WaitingConfig {
   /// The one-time background escape-hatch hint fires once a stuck call
   /// runs this many seconds; `0` disables the hint.
   final int toolEscalateSeconds;
+
+  /// The #1185 stuck-call nudge (issue #1185): an escalation ALSO steers
+  /// one model-facing notice into the live run (the model decides:
+  /// wait / background / kill). `false` is the kill switch — the console
+  /// liveness lines stay, only the injection goes away.
+  final bool toolNudge;
 
   factory WaitingConfig.fromYaml(Object? node) {
     if (node == null) return const WaitingConfig();
@@ -80,9 +87,14 @@ final class WaitingConfig {
         'toolLivenessSeconds',
         'toolLivenessTickSeconds',
         'toolEscalateSeconds',
+        'toolNudge',
       }.contains('$key')) {
         throw ConfigException('unknown "waiting" key: $key');
       }
+    }
+    final toolNudge = node['toolNudge'];
+    if (toolNudge != null && toolNudge is! bool) {
+      throw ConfigException('"waiting.toolNudge" must be a boolean');
     }
     final parsed = WaitingConfig(
       waitHeartbeatMinutes: parse(
@@ -105,6 +117,7 @@ final class WaitingConfig {
         'toolEscalateSeconds',
         defaultToolEscalateSeconds,
       ),
+      toolNudge: toolNudge is bool ? toolNudge : true,
     );
     // Ordering (gh-1055 review): the hint fires at a LONGER threshold than
     // the reminders — AC1 starts the reminders at the configured threshold,
@@ -130,7 +143,8 @@ final class WaitingConfig {
       '  waitCeilingMinutes: $waitCeilingMinutes\n'
       '  toolLivenessSeconds: $toolLivenessSeconds\n'
       '  toolLivenessTickSeconds: $toolLivenessTickSeconds\n'
-      '  toolEscalateSeconds: $toolEscalateSeconds\n';
+      '  toolEscalateSeconds: $toolEscalateSeconds\n'
+      '  toolNudge: $toolNudge\n';
 }
 
 /// Default age belt for cross-run job manifest entries (`jobs:

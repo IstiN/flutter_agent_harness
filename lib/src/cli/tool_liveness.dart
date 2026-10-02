@@ -49,6 +49,33 @@ const String toolLivenessEscalationHint =
 /// line must stay grep-friendly and single-line (repeated every tick).
 const int toolLivenessDetailClip = 96;
 
+/// Per-run cap on #1185 stuck-call nudges (E2, the TTSR
+/// `maxInjectionsPerTurn` analog): a run whose calls keep hanging gets at
+/// most this many model-facing nudges per turn — per-call dedup already
+/// bounds one call to one nudge, so breaching the cap takes many DISTINCT
+/// stuck calls, and a model that ignores them burns the cap honestly
+/// instead of drowning its context.
+const int maxToolNudgesPerRun = 3;
+
+/// The #1185 model-facing nudge (the steering injection an escalation
+/// fires): same facts as the console escalation line, addressed to the
+/// MODEL through the steering channel — decide: keep waiting, background
+/// the work, or kill the job. The harness takes no action itself
+/// (auto-kill stays a non-goal); the notice is a `<system-notice>`
+/// user message, the same shape the background-job settle notice uses.
+String toolNudgeNotice(ToolLivenessCall call, DateTime now) {
+  final seconds = now.difference(call.startedAt).inSeconds;
+  return '<system-notice>\n'
+      '[liveness watchdog] Foreground tool call `${call.toolName}` '
+      '("${clipToolLivenessDetail(call.detail)}") has been running '
+      '${seconds}s with no output. Decide and act on your next turn: keep '
+      'waiting (continue as-is), background the work (`bash background: '
+      'true` for a new command; a call already moved to the background is '
+      'a job — manage it with bash_job action: output | status | stop), or '
+      'kill the job. This notice does not stop the call.\n'
+      '</system-notice>';
+}
+
 /// One watched foreground tool call. The tracker owns the instances; the
 /// escalated flag flips when the hint fired for THIS call.
 final class ToolLivenessCall {

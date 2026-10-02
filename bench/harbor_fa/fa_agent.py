@@ -263,8 +263,25 @@ class FaAgent(BaseInstalledAgent):
 
     async def _write_audit(self, environment, knobs, ladder, outcome) -> None:
         # AC4 (issue #1122): audit trail synced back with the agent logs.
+        # AC6 (issue #1185): the audit also documents the harness-originated
+        # share of the progress sample — the ⏳ liveness lines the pane
+        # counter counts as progress. Measured from the same stream the
+        # ladder sampled (/logs/agent/fa.txt); both fields drop when the
+        # stream is unreadable, never fabricated.
+        sample = await self._read_progress_stream(environment)
+        liveness = _timeout.liveness_bytes_of(sample)
         payload = base64.b64encode(
-            json.dumps(_timeout.audit_dict(knobs, ladder, outcome)).encode()
+            json.dumps(
+                _timeout.audit_dict(
+                    knobs,
+                    ladder,
+                    outcome,
+                    progress_bytes=None if sample is None else len(
+                        sample.encode("utf-8")
+                    ),
+                    liveness_bytes=liveness,
+                )
+            ).encode()
         ).decode()
         try:
             await self.exec_as_agent(
@@ -277,6 +294,20 @@ class FaAgent(BaseInstalledAgent):
             )
         except Exception:
             pass
+
+    async def _read_progress_stream(self, environment) -> str | None:
+        """The progress stream the ladder sampled, for the AC6 audit."""
+        try:
+            result = await self.exec_as_agent(
+                environment,
+                command="cat /logs/agent/fa.txt 2>/dev/null",
+                timeout_sec=15,
+            )
+            if result.return_code == 0 and result.stdout is not None:
+                return result.stdout
+        except Exception:
+            pass
+        return None
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         """Fold fa's session token accounting into the agent context (issue #1123).
