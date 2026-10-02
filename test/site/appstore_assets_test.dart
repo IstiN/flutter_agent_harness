@@ -1,11 +1,11 @@
-/// The fa1.dev App Store surfaces (issue #691) — CI pins so the site can
-/// never drift from the single source of truth:
+/// The fa1.dev App Store surfaces (issues #691 + #881) — CI pins so the
+/// site can never drift from the single source of truth:
 ///
-///  * the homepage App Store block (between the generated markers in
-///    site/index.html) is byte-equal to what `renderAppStoreBlockHtml`
-///    emits for the DEFAULT `links:` config — change a default without
-///    running `dart run scripts/regen_site_store_block.dart` and this
-///    fails (AC1: one change, every surface);
+///  * the homepage App Store block, the header badge, and the hero CTA
+///    (between their generated markers in site/index.html) are byte-equal
+///    to what the renderers emit for the DEFAULT `links:` config — change
+///    a default without running `dart run scripts/regen_site_store_block.dart`
+///    and this fails (AC1/AC4: one change, every placement);
 ///  * the store-frames page (site/app-store/index.html) links the same
 ///    default URLs and carries store-referral placements;
 ///  * the frames page shows EXACTLY the committed en/ios store goldens —
@@ -56,6 +56,72 @@ void main() {
       reason:
           'site/index.html App Store block drifted from the defaults — '
           'run `dart run scripts/regen_site_store_block.dart`',
+    );
+  });
+
+  /// The committed header badge / hero CTA are byte-equal to the rendered
+  /// defaults (issue #881 AC4: the regen script owns EVERY placement).
+  void expectGenerated(String startMarker, String endMarker, String rendered) {
+    final start = index.indexOf(startMarker);
+    final end = index.indexOf(endMarker);
+    expect(start, greaterThan(0), reason: '$startMarker missing');
+    expect(end, greaterThan(start), reason: '$endMarker missing');
+    expect(
+      index.substring(start + startMarker.length, end).trim(),
+      rendered.trim(),
+      reason: 'site/index.html placement drifted — run '
+          '`dart run scripts/regen_site_store_block.dart`',
+    );
+  }
+
+  test('the committed header badge is the generated one (AC4)', () {
+    expectGenerated(
+      appStoreHeaderStartMarker,
+      appStoreHeaderEndMarker,
+      renderAppStoreHeaderBadgeHtml(const LinksConfig()),
+    );
+  });
+
+  test('the committed hero CTA is the generated one (AC4)', () {
+    expectGenerated(
+      appStoreHeroStartMarker,
+      appStoreHeroEndMarker,
+      renderAppStoreHeroCtaHtml(const LinksConfig()),
+    );
+  });
+
+  test('per-position referral values ride the committed placements (AC3)', () {
+    expect(index, contains('data-store-referral="appstore-header"'));
+    expect(index, contains('data-store-referral="appstore-hero"'));
+    expect(index, contains('data-store-referral="appstore"'));
+  });
+
+  test('no hardcoded apps.apple.com outside the generated markers (AC4)', () {
+    // The hand-edit scan guard: every store link in the page must come
+    // from a generated block. A hand-edited placement rots the moment a
+    // default changes — the regen script is the only writer.
+    final spans = [
+      (appStoreHeaderStartMarker, appStoreHeaderEndMarker),
+      (appStoreHeroStartMarker, appStoreHeroEndMarker),
+      (appStoreBlockStartMarker, appStoreBlockEndMarker),
+    ].map((s) {
+      final start = index.indexOf(s.$1);
+      final end = index.indexOf(s.$2);
+      expect(start, greaterThan(0), reason: '${s.$1} missing');
+      expect(end, greaterThan(start));
+      return (start, end);
+    }).toList()
+      ..sort((a, b) => a.$1.compareTo(b.$1));
+    final strays = RegExp('apps\\.apple\\.com')
+        .allMatches(index)
+        .where((m) => !spans.any((s) => m.start > s.$1 && m.end < s.$2))
+        .map((m) => index.substring(m.start - 40, m.end + 40))
+        .toList();
+    expect(
+      strays,
+      isEmpty,
+      reason: 'hand-edited apps.apple.com outside the generated markers — '
+          'add the placement to scripts/regen_site_store_block.dart instead',
     );
   });
 
