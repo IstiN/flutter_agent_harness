@@ -92,6 +92,41 @@ final class _RelayBackedService extends AgentService {
       (id) async => openedIds.add(id);
 }
 
+/// A hosted (relay-like) service whose new-session reset always throws:
+/// the mint's first await fails exactly where a clone/initialize failure
+/// would (review #1144 follow-up).
+final class _FailingMintService extends AgentService {
+  _FailingMintService(ExecutionEnv env)
+    : super(
+        agent: Agent(
+          model: Model(
+            id: 'test-model',
+            api: 'test-api',
+            provider: 'test',
+            baseUrl: 'https://example.com',
+            contextWindow: 100000,
+            maxTokens: 4096,
+          ),
+          systemPrompt: 'You are Fa.',
+          streamFunction: _singleTextResponse('ok'),
+          toolRegistry: ToolRegistry(const []),
+        ),
+        watchExternalSessions: false,
+        env: env,
+        sessionsRoot: '/sessions',
+        config: AgentConfig(
+          providerKind: 'test',
+          modelId: 'test-model',
+          baseUrl: 'https://example.com',
+          apiKey: '',
+        ),
+      );
+
+  @override
+  Future<void> Function()? get newSessionAction =>
+      () async => throw StateError('mint exploded');
+}
+
 AgentService _fakeService(ExecutionEnv env, [StreamFunction? streamFunction]) {
   return AgentService(
     agent: Agent(
@@ -1888,6 +1923,36 @@ void main() {
       await first;
       await second;
       expect(harness.manager.sessions, hasLength(3));
+    });
+
+    testWidgets('a failed mint shows the error snack instead of leaking an '
+        'unhandled zone error; active session untouched (review #1144 '
+        'follow-up)', (tester) async {
+      final env = MemoryExecutionEnv();
+      final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions')
+        ..addSession('sess-a', _fakeService(env))
+        ..addSession('sess-b', _FailingMintService(env));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFahTheme(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: SessionChatSheet(manager: manager, asr: _FakeAsrApi()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The mint fails at its first await — must complete without throwing
+      // (pre-fix this propagated raw into the zone via unawaited(...)).
+      await sheetState(tester).mintAndOpenNewSession();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SnackBar), findsOneWidget);
+      expect(find.text("Couldn't create a new session."), findsOneWidget);
+      expect(manager.sessions, hasLength(2));
+      expect(manager.activeId, 'sess-b');
     });
   });
 }
