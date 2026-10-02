@@ -15,6 +15,7 @@ import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
@@ -892,6 +893,15 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
       // Fire-and-forget: the ack is flow control for nobody.
       unawaited(HapticFeedback.mediumImpact());
       await _createSessionInChosenFolder(target.service, target.config);
+    } on Object catch (error) {
+      // The long-press fires through unawaited(...) — a raw clone or
+      // initialize failure would surface as an unhandled zone error with
+      // zero user feedback (review #1144 follow-up). Log + snack; the
+      // active session stays untouched.
+      AppLog.i('sessions', 'Fa-brand mint failed: $error');
+      if (mounted) {
+        showFahErrorSnack(context, context.l10n.sessionMintFailed);
+      }
     } finally {
       _mintingFromBrand = false;
     }
