@@ -265,20 +265,19 @@ class FaAgent(BaseInstalledAgent):
         # AC4 (issue #1122): audit trail synced back with the agent logs.
         # AC6 (issue #1185): the audit also documents the harness-originated
         # share of the progress sample — the ⏳ liveness lines the pane
-        # counter counts as progress. Measured from the same stream the
-        # ladder sampled (/logs/agent/fa.txt); both fields drop when the
-        # stream is unreadable, never fabricated.
-        sample = await self._read_progress_stream(environment)
-        liveness = _timeout.liveness_bytes_of(sample)
+        # counter counts as progress. Both numbers are byte measures taken
+        # where the file lives (one exec, no stream round-trip: a 600s+
+        # trial can leave tens of MB of pane bytes, and a transport decode
+        # would make len(utf-8) disagree with the ladder's live wc -c).
+        # Fields drop when the stream is unreadable, never fabricated.
+        progress, liveness = await self._measure_streams(environment)
         payload = base64.b64encode(
             json.dumps(
                 _timeout.audit_dict(
                     knobs,
                     ladder,
                     outcome,
-                    progress_bytes=None if sample is None else len(
-                        sample.encode("utf-8")
-                    ),
+                    progress_bytes=progress,
                     liveness_bytes=liveness,
                 )
             ).encode()
@@ -295,19 +294,34 @@ class FaAgent(BaseInstalledAgent):
         except Exception:
             pass
 
-    async def _read_progress_stream(self, environment) -> str | None:
-        """The progress stream the ladder sampled, for the AC6 audit."""
+    async def _measure_streams(self, environment) -> tuple[int | None, int | None]:
+        """Byte-exact (progress, liveness) for the AC6 audit.
+
+        progress = `wc -c` on the pane stream — the same measure the
+        ladder's `_progress_bytes` samples, so both auditors agree.
+        liveness = byte count of the ⏳ lines inside it (grep passes whole
+        lines through, `wc -c` counts them; grep terminates a final
+        unterminated line, the only ±1 w.r.t. the pure-Python rule in
+        [_timeout.liveness_bytes_of] — an audit heuristic, not a spec).
+        """
         try:
             result = await self.exec_as_agent(
                 environment,
-                command="cat /logs/agent/fa.txt 2>/dev/null",
+                command=(
+                    "if p=$(wc -c < /logs/agent/fa.txt 2>/dev/null); then "
+                    "l=$(grep -F '\u23f3' /logs/agent/fa.txt 2>/dev/null "
+                    "| wc -c); "
+                    "printf '%s %s' \"$p\" \"$l\"; fi"
+                ),
                 timeout_sec=15,
             )
-            if result.return_code == 0 and result.stdout is not None:
-                return result.stdout
+            if result.return_code == 0 and (result.stdout or "").strip():
+                progress, _, liveness = result.stdout.strip().partition(" ")
+                if progress:
+                    return (int(progress), int(liveness or 0))
         except Exception:
             pass
-        return None
+        return (None, None)
 
     def populate_context_post_run(self, context: AgentContext) -> None:
         """Fold fa's session token accounting into the agent context (issue #1123).

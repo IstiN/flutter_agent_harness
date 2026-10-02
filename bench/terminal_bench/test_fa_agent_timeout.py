@@ -229,7 +229,7 @@ class LivenessBytesTest(unittest.TestCase):
 
     def test_counts_only_liveness_lines_with_newlines(self):
         stream = (
-            "assistant text\r\n"
+            "assistant text\n"
             "⏳ [bash] sleep 500 — running 60s\n"
             "✓ bash · 61s\n"
             "⏳ [bash] sleep 500 — running 120s\n"
@@ -237,11 +237,30 @@ class LivenessBytesTest(unittest.TestCase):
         measured = fa_agent_timeout.liveness_bytes_of(stream)
         expected = sum(
             len(line.encode("utf-8")) + 1
-            for line in stream.splitlines()
+            for line in stream.split("\n")
             if "⏳" in line
         )
         self.assertEqual(measured, expected)
         self.assertGreater(measured, 0)
+
+    def test_crlf_unterminated_and_control_bytes_count_exactly(self):
+        # CRLF: the \r belongs to the line and is counted (splitlines()
+        # would drop it — 1 byte under per line).
+        crlf = "⏳ a\r\nplain\n"
+        self.assertEqual(
+            fa_agent_timeout.liveness_bytes_of(crlf),
+            len("⏳ a\r".encode("utf-8")) + 1,
+        )
+        # A final unterminated ⏳ line counts without a newline.
+        self.assertEqual(
+            fa_agent_timeout.liveness_bytes_of("plain\n⏳ b"),
+            len("⏳ b".encode("utf-8")),
+        )
+        # A stray vertical tab no longer splits phantom lines.
+        self.assertEqual(
+            fa_agent_timeout.liveness_bytes_of("⏳ a\x0bb\n"),
+            len("⏳ a\x0bb\n".encode("utf-8")),
+        )
 
     def test_accepts_bytes_and_propagates_none(self):
         self.assertEqual(

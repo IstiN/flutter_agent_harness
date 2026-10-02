@@ -147,25 +147,28 @@ final class _WaitingCoordinator {
   /// Nudges left this turn (issue #1185 E2, the storm guard): reset at
   /// every real turn start (see [_beginUserPrompt]), spent by
   /// [_nudgeStuckCall].
-  int _nudgesLeft = maxToolNudgesPerRun;
+  int _nudgesLeft = maxToolNudgesPerTurn;
 
   /// Nudges sent overall — the dedup/cap test seam's observable.
   int _nudgesSent = 0;
 
   /// Refills the per-turn nudge budget (issue #1185 E2).
   void resetToolNudges() {
-    _nudgesLeft = maxToolNudgesPerRun;
+    _nudgesLeft = maxToolNudgesPerTurn;
   }
 
   /// The #1185 stuck-call nudge: ONE steering message into the live run
   /// per escalated call (the tracker's `escalated` flag guarantees once
-  /// per call; a NEW stuck call escalates afresh). Same channel as user
-  /// steering — `_agent.steer` fires the soft-yield, so a stuck
-  /// yield-aware bash moves to a background job and the notice delivers
-  /// at the upcoming step boundary; a non-yield tool delivers when the
-  /// call ends. The notice is a `<system-notice>` user message (the
-  /// background-job settle shape), so the incremental persister records
-  /// it in the session JSONL like any merged message.
+  /// per call; a NEW stuck call escalates afresh). Deliberately NOT
+  /// `_agent.steer`: every steer enqueue fires `steeringArrived`, which
+  /// cancels the tool-call phase's soft-yield token and would move a
+  /// yield-aware bash to a background job before the model decided
+  /// anything — the call must still be the model's to decide (AC3). The
+  /// nudge rides the follow-up queue instead: same boundary delivery and
+  /// persistence as every follow-up (`<system-notice>` user message,
+  /// one extension turn per queued message — the queue is
+  /// `oneAtATime`), zero yield signal — delivery happens when the run
+  /// would otherwise stop, never mid-call.
   void _nudgeStuckCall(ToolLivenessCall call) {
     if (_cli._exited || !_cli.isBusy) return;
     if (!_cli.config.waiting.toolNudge) return;
@@ -177,7 +180,7 @@ final class _WaitingCoordinator {
     // into context and is persisted, but steered messages skip the
     // composer echo — without this the row exists only after resume.
     _cli._tuiController?.sendOutput('$text\n');
-    _cli._agent.steer(UserMessage.text(text));
+    _cli._agent.followUp(UserMessage.text(text));
   }
 
   /// One liveness line, dimmed like every other run notice (the style is

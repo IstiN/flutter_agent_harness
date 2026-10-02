@@ -269,7 +269,7 @@ void main() {
     List<String> nudgeTexts(Context context) => [
       for (final message in context.messages)
         if (message is UserMessage &&
-            _messageText(message).contains(nudgeAnchor))
+            _messageText(message).contains(toolNudgeAnchor))
           _messageText(message),
     ];
 
@@ -290,6 +290,10 @@ void main() {
         ),
       ]),
       textTurn('done'),
+      // The follow-up queue drains one message per stop-check: each
+      // pending nudge delivers in its own extension turn.
+      textTurn('noted'),
+      textTurn('noted'),
     ]);
 
     test('AC1: an escalated call steers ONE nudge — the model sees it next '
@@ -306,30 +310,32 @@ void main() {
       cli.toolLivenessTickForTest();
       expect(cli.toolNudgesSentForTest, 1);
       // The operator surface is unchanged: the escalation line still
-      // prints, and the nudge itself never prints — it rides steering.
+      // prints, and the nudge itself never prints — it rides the
+      // follow-up queue.
       expect(io.out.toString(), contains('background candidate:'));
-      expect(io.out.toString(), isNot(contains(nudgeAnchor)));
+      expect(io.out.toString(), isNot(contains(toolNudgeAnchor)));
 
-      // The call is still stuck (gated). Ending it lets the run reach the
-      // step boundary where the queued nudge delivers (the non-yield tool
-      // path; the yield-aware bash path backgrounds instead and delivers
-      // the same way).
+      // The call is still stuck (gated). Ending it lets the run unwind:
+      // t2 fires and answers, then the stop-check drains the follow-up
+      // queue and the nudge reaches the model in its own turn — for BOTH
+      // tool flavors, with no soft-yield interruption (the no-yield
+      // regression below pins that a yield-aware bash is never
+      // backgrounded by the notice).
       shell.release();
-      await waitForIt(
-        () => fake.calls >= 2,
-        reason: 'the nudge reached the next request',
-      );
-      final nudges = nudgeTexts(fake.contexts[1]);
+      await run;
+      final nudges = nudgeTexts(fake.contexts.last);
       expect(nudges, hasLength(1));
       expect(nudges.single, contains('`bash`'));
       expect(nudges.single, contains('"sleep 500"'));
       expect(nudges.single, contains('running 300s'));
+      // The turn BEFORE the drain must not carry the nudge: it delivered
+      // at the boundary, not retroactively into the tool-result turn.
+      expect(nudgeTexts(fake.contexts[1]), isEmpty);
       // AC3: the model's «keep waiting» turn must not re-nudge the call,
       // and nothing force-kills it — the call completed on its own.
-      await run;
       expect(cli.toolNudgesSentForTest, 1);
 
-      // The session JSONL records the merged nudge as a user message.
+      // The session JSONL records the delivered nudge as a user message.
       final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
       final sessions = await repo.list(cwd: '/work');
       final session = await repo.open(sessions.first);
@@ -337,7 +343,9 @@ void main() {
         for (final entry in await session.getEntries())
           if (entry is MessageRecord &&
               entry.message is UserMessage &&
-              _messageText(entry.message as UserMessage).contains(nudgeAnchor))
+              _messageText(
+                entry.message as UserMessage,
+              ).contains(toolNudgeAnchor))
             _messageText(entry.message as UserMessage),
       ];
       expect(recorded, hasLength(1));
@@ -409,8 +417,15 @@ void main() {
           toolTurn([call('t3')]),
           toolTurn([call('t4')]),
           textTurn('done'),
+          // The follow-up queue drains one message per stop-check: each
+          // pending nudge delivers in its own extension turn.
+          textTurn('noted'),
+          textTurn('noted'),
+          textTurn('noted'),
           toolTurn([call('t5')]),
           textTurn('done'),
+          // Turn 2's drained nudge delivers in its own extension turn.
+          textTurn('noted'),
         ]);
         final cli = AgentCli(
           config: AgentCliConfig(
@@ -457,6 +472,77 @@ void main() {
         await waitForIt(() => !cli.isBusy, reason: 'turn 2 settles');
         io.sendLine('/exit');
         await run;
+      },
+    );
+
+    test(
+      'no-yield: the nudge must NOT fire the soft-yield token — a stuck '
+      'yield-aware bash stays in the foreground until the model decides',
+      () async {
+        final shell = YieldAwareGatedShell();
+        final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+        final io = FakeCliIO();
+        final fake = FakeStreamFunction([
+          toolTurn([
+            const ToolCall(
+              id: 't1',
+              name: 'bash',
+              arguments: {'command': 'sleep 500'},
+            ),
+          ]),
+          textTurn('done'),
+          // The follow-up queue drains one message per stop-check: the
+          // single pending nudge delivers in its own extension turn.
+          textTurn('noted'),
+        ]);
+        final cli = AgentCli(
+          config: AgentCliConfig(
+            model: testModel,
+            apiKey: '[REDACTED:Sensitive Value]',
+            env: env,
+            sessionRoot: '/sessions',
+            approvalMode: ApprovalMode.yolo,
+          ),
+          io: io,
+          streamFunction: fake.call,
+          waitingClock: () => now,
+        );
+        final run = cli.runHeadless('hi');
+        await waitForIt(
+          () => cli.toolLivenessCallsForTest.any((call) => call.id == 't1'),
+          reason: 'the yield-aware bash is being watched',
+        );
+
+        now = now.add(const Duration(seconds: 300));
+        cli.toolLivenessTickForTest();
+        expect(cli.toolNudgesSentForTest, 1);
+        // The soft-yield cancel fires synchronously on a steer enqueue — a
+        // beat later, nothing may have moved to the background and the
+        // model must not have been re-entered.
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(fake.calls, 1, reason: 'no soft-yield interruption');
+        expect(
+          shell.hasUnsettledJobs,
+          isTrue,
+          reason: 'the job is still awaited in the foreground',
+        );
+
+        // The call ends on its own; the transcript never shows the
+        // moved-to-background result, and the nudge delivers at the
+        // stop-check in its own turn.
+        shell.settleAll();
+        await run;
+        for (final context in fake.contexts) {
+          expect(
+            [
+              for (final m in context.messages)
+                if (m is UserMessage) _messageText(m),
+            ].join('\n'),
+            isNot(contains('moved to background job')),
+            reason: 'the nudge must not background the call',
+          );
+        }
+        expect(nudgeTexts(fake.contexts.last), hasLength(1));
       },
     );
 
@@ -524,8 +610,80 @@ final class PerCallGatedShell implements Shell {
   }
 }
 
-/// The nudge's sender anchor (issue #1185).
-const String nudgeAnchor = '[liveness watchdog]';
+/// A [Shell] + [BackgroundShell] for the yield-aware bash path: every
+/// foreground call takes `_shellViaJob` (jobs supported + a live yield
+/// token) and the detached job NEVER settles until the test settles it —
+/// the production stuck shape the soft-yield would interrupt.
+final class YieldAwareGatedShell implements Shell, BackgroundShell {
+  final _jobs = <_GatedJob>[];
+
+  /// Whether any detached job is still awaited (never settled).
+  bool get hasUnsettledJobs => _jobs.any((job) => job.isRunning);
+
+  /// Completes every pending job (the command finished on its own).
+  void settleAll() {
+    for (final job in _jobs) {
+      job.settle();
+    }
+  }
+
+  @override
+  bool get backgroundJobsSupported => true;
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) async {
+    return const Ok(ShellExecResult(stdout: '', stderr: '', exitCode: 0));
+  }
+
+  @override
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  }) async {
+    final job = _GatedJob(id: id, command: command, logPath: logPath);
+    _jobs.add(job);
+    return Ok(job);
+  }
+}
+
+final class _GatedJob implements ShellJob {
+  _GatedJob({required this.id, required this.command, required this.logPath});
+
+  final _settled = Completer<void>();
+
+  @override
+  final String id;
+  @override
+  final String command;
+  @override
+  final String logPath;
+  @override
+  int? get pid => null;
+  @override
+  bool get isRunning => !_settled.isCompleted;
+  @override
+  int? get exitCode => _settled.isCompleted ? 0 : null;
+  @override
+  Future<void> get settled => _settled.future;
+  @override
+  String? get stopReason => null;
+  @override
+  Stream<String> get output => const Stream.empty();
+  @override
+  bool writeStdin(String data) => false;
+
+  void settle() {
+    if (!_settled.isCompleted) _settled.complete();
+  }
+
+  @override
+  Future<void> stop() async => settle();
+}
 
 /// The text of a user message (string or content-block content).
 String _messageText(UserMessage message) {

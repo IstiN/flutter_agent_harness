@@ -231,13 +231,22 @@ def liveness_bytes_of(stream: str | bytes | None) -> int | None:
 
     None propagates: an unreadable stream must not fabricate a zero (the
     audit then just omits the field).
+
+    Byte accounting splits on `'\\n'` only (reproducible against `wc -c`):
+    a matched line counts its full bytes — a `\\r` stays in the line — plus
+    exactly the one newline it ends with, and a final unterminated line
+    counts without the newline. `str.splitlines()` would also split on
+    `\\r`, `\\v`, `\\x85`, … and silently miscount against the byte total.
     """
     if stream is None:
         return None
     if isinstance(stream, bytes):
         stream = stream.decode("utf-8", errors="replace")
     total = 0
-    for line in stream.splitlines():
+    lines = stream.split("\n")
+    for index, line in enumerate(lines):
         if _LIVENESS_ANCHOR in line:
-            total += len(line.encode("utf-8")) + 1  # the newline, too
+            total += len(line.encode("utf-8"))
+            if index < len(lines) - 1:
+                total += 1  # the newline this line ends with
     return total
