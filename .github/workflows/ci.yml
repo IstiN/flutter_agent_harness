@@ -26,6 +26,11 @@ on:
         required: false
         type: boolean
         default: false
+      releaseDispatch:
+        description: 'gh-1172: real release (bump push + tag) on manual dispatch — requires refs/heads/main; bare validation dispatches stay inert'
+        required: false
+        type: boolean
+        default: false
   # Any release publication (API `gh release create`, web UI, or a pushed
   # annotated tag) builds + attaches the binaries matrix. Pushed tags also
   # arrive via the push filter above; the binaries job tolerates the
@@ -2911,13 +2916,19 @@ jobs:
     # force-skipped on EVERY run since the perf gate landed (fa#456),
     # silently killing auto-release for a week. The explicit result check
     # keeps the gate red-line: no release on a failed quality gate.
-    # workflow_dispatch reaches this job for the RELEASE_DRY_RUN rollout
-    # switch (AC1) and for a manual catch-up release.
+    # workflow_dispatch reaches this job ONLY through an explicit input gate
+    # (gh-1172 round-2 BLOCK): this is the repo's dispatch-only CI — the SM
+    # runs `gh workflow run ci.yml --ref <pr-branch>` with no inputs, so a
+    # bare dispatch arm would execute the dispatched (PR-head) ref's
+    # auto_release.sh with the bypass App's push credentials. releaseDryRun
+    # exercises the rollout switch (AC1 — any ref, never pushes);
+    # releaseDispatch on refs/heads/main is the manual catch-up release.
     if: >-
       !cancelled() && needs.quality-gate.result == 'success' &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(release):'))
       || github.event_name == 'schedule'
-      || github.event_name == 'workflow_dispatch')
+      || (github.event_name == 'workflow_dispatch' && inputs.releaseDryRun == true)
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.releaseDispatch == true))
     concurrency:
       group: release-main
       cancel-in-progress: false
@@ -2931,6 +2942,10 @@ jobs:
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          # Least privilege (gh-1172 round-2 review): the App is the ruleset
+          # bypass actor, so scope the token to what the push needs instead
+          # of every permission the installation carries.
+          permissions: contents:write
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -2946,16 +2961,16 @@ jobs:
 
       - name: Bump version, changelog, push to main
         env:
-          RELEASE_DRY_RUN: ${{ github.event.inputs.releaseDryRun || '0' }}
+          RELEASE_DRY_RUN: ${{ github.event.inputs.releaseDryRun == 'true' && '1' || '0' }}
         run: bash scripts/auto_release.sh
 
-  # Cuts the annotated tag + GitHub Release from the merged release PR (see
-  # scripts/tag_release.sh). The bump now lands as a PR (protected main
-  # rejects direct bot pushes), so the tag phase keys on the merged
-  # 'chore(release):' squash commit instead of following the bump push
-  # directly. Tag push rides RELEASE_PAT (checkout token) — GITHUB_TOKEN
-  # pushes never trigger the tag-scoped binaries/publish jobs. Serialized
-  # with the bump PR job via the release-main group: tag first, next bump after.
+  # Cuts the annotated tag + GitHub Release from the pushed 'chore(release):'
+  # bump commit (see scripts/tag_release.sh). The bump lands via direct push
+  # to protected main as the fa-release-bot App (gh-1172), so the tag phase
+  # keys on that push. Tag push rides the App token (checkout token) —
+  # GITHUB_TOKEN pushes never trigger the tag-scoped binaries/publish jobs.
+  # Serialized with the bump push job via the release-main group: tag first,
+  # next bump after.
   release-tag:
     name: Auto-release (tag on push)
     runs-on: ubuntu-latest
@@ -2981,6 +2996,9 @@ jobs:
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          # Least privilege (gh-1172 round-2 review): contents:write only —
+          # the tag push + `gh release create` need nothing else.
+          permissions: contents:write
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -225,13 +225,22 @@ exec /usr/bin/sed "$@"
   // git shim: forward everything to real git, but in race mode advance
   // origin/main from the racer clone right before each push so the script's
   // FF-only push races for real (the recompute-on-fresh-head path of E1).
+  // The countdown lives in a FILE, not an env var: every push spawns a fresh
+  // shim process, so an exported decrement would never persist.
+  final raceFile = '${root.path}/race-left';
+  File(raceFile).writeAsStringSync(
+    raceMode == 'once' ? '1' : (raceMode == 'always' ? '9' : '0'),
+  );
   final raceHook = raceMode == 'never'
       ? ''
       : '''
-if [ "\$1" = "push" ] && [ "\${FA_RACE_LEFT:-0}" -gt 0 ]; then
-  FA_RACE_LEFT=\$((FA_RACE_LEFT-1)); export FA_RACE_LEFT
-  "\$FA_REAL_GIT" -C "\$FA_RACER" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "raced commit"
-  "\$FA_REAL_GIT" -C "\$FA_RACER" push -q origin main
+if [ "\$1" = "push" ] && [ -f "\$FA_RACE_FILE" ]; then
+  race_left=\$(cat "\$FA_RACE_FILE")
+  if [ "\$race_left" -gt 0 ]; then
+    echo \$((race_left-1)) > "\$FA_RACE_FILE"
+    "\$FA_REAL_GIT" -C "\$FA_RACER" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "raced commit"
+    "\$FA_REAL_GIT" -C "\$FA_RACER" push -q origin main
+  fi
 fi
 ''';
   File('$bin/git').writeAsStringSync('''
@@ -267,14 +276,16 @@ exec "\$FA_REAL_GIT" "\$@"
     'version: 0.1.495+1\n',
   );
   File('$seed/CHANGELOG.md').writeAsStringSync('# Changelog\n\n## Unreleased\n');
+  git(['add', '-A']);
   git([
-    'add',
-    '-A',
+    'commit',
+    '-q',
+    '-m',
+    'seed',
   ], env: {
     'GIT_COMMITTER_DATE': (DateTime.now().subtract(Duration(hours: tagAgeHours)).millisecondsSinceEpoch ~/ 1000)
         .toString(),
   });
-  git(['commit', '-q', '-m', 'seed']);
   git(['tag', 'v0.1.495']);
   File('$seed/README.md').writeAsStringSync('pending\n');
   git(['add', '-A']);
@@ -299,9 +310,8 @@ exec "\$FA_REAL_GIT" "\$@"
     'PATH': '$bin:${Platform.environment['PATH']}',
     'FA_REAL_GIT': realGit,
     'FA_RACER': racer,
+    'FA_RACE_FILE': raceFile,
   };
-  if (raceMode == 'once') env['FA_RACE_LEFT'] = '1';
-  if (raceMode == 'always') env['FA_RACE_LEFT'] = '9';
   if (dryRun) env['RELEASE_DRY_RUN'] = '1';
 
   final res = Process.runSync(
@@ -1639,36 +1649,47 @@ gh release create "v9.9.9" \
         final ci = jobsOf('.github/workflows/ci.yml');
         final releaseIf = (ci['release'] as YamlMap)['if'].toString();
 
-        List<String> topLevelOrArms(String cond) {
-          final arms = <String>[];
-          final buf = StringBuffer();
+        // Dispatch arms are the parenthesized `(...)` groups whose condition
+        // STARTS with the workflow_dispatch check — balanced-paren scan so a
+        // nested `chore(release):` string can never confuse the split.
+        const wd = "github.event_name == 'workflow_dispatch'";
+        final dispatchArms = <String>[];
+        for (var i = 0; i < releaseIf.length; i++) {
+          if (releaseIf[i] != '(') continue;
           var depth = 0;
-          for (var i = 0; i < cond.length; i++) {
-            final c = cond[i];
-            if (c == '(') {
+          for (var j = i; j < releaseIf.length; j++) {
+            if (releaseIf[j] == '(') {
               depth++;
-            } else if (c == ')') {
+            } else if (releaseIf[j] == ')') {
               depth--;
-            } else if (c == '|' && depth == 0) {
-              arms.add(buf.toString().trim());
-              buf.clear();
-              continue;
+              if (depth == 0) {
+                final inner = releaseIf.substring(i + 1, j).trim();
+                if (inner.startsWith(wd)) dispatchArms.add(inner);
+                break;
+              }
             }
-            buf.write(c);
           }
-          final last = buf.toString().trim();
-          if (last.isNotEmpty) arms.add(last);
-          return arms;
         }
-
-        final dispatchArms = topLevelOrArms(releaseIf)
-            .where((a) => a.contains("github.event_name == 'workflow_dispatch'"))
-            .toList();
+        // The invariant itself: EVERY occurrence of the workflow_dispatch
+        // check must live inside a gated arm. A bare `|| workflow_dispatch`
+        // arm shows up as an occurrence no arm accounts for.
+        final armOccurrences =
+            dispatchArms.fold<int>(0, (n, a) => n + a.split(wd).length - 1);
         expect(
-          dispatchArms,
-          isNotEmpty,
+          releaseIf.split(wd).length - 1,
+          armOccurrences,
           reason:
-              'the AC1 dry-run and the manual catch-up dispatch arms must exist',
+              'a bare `|| github.event_name == \'workflow_dispatch\'` arm must '
+              'never return — SM validation dispatches (machine-sm.yml -> '
+              'smAgent.js dispatchCiWorkflow, sm-kicker, machine-merge) pass NO '
+              'inputs, so an ungated arm auto-releases from any dispatched ref',
+        );
+        expect(
+          dispatchArms.length,
+          2,
+          reason:
+              'exactly two dispatch arms: the AC1 dry-run (releaseDryRun) and '
+              'the manual catch-up release (releaseDispatch on main)',
         );
         for (final arm in dispatchArms) {
           expect(
