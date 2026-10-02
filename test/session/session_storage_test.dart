@@ -998,5 +998,117 @@ void main() {
         expect(windowed.hasOlder, isFalse);
       },
     );
+
+    test('a fresh session file carries header version 3', () async {
+      await createRotating();
+      final content = (await fs.readTextFile(path)).getOrThrow();
+      final header =
+          jsonDecode(content.split('\n').first) as Map<String, dynamic>;
+      expect(header['version'], 3);
+    });
+
+    test('rotation marks every segment header with the rotated-format '
+        'version so older builds fail with a clear error', () async {
+      final storage = await createRotating();
+      await storage.appendEntry(msg('e1', null, 'x' * 220));
+      await storage.appendEntry(msg('e2', 'e1', 'e2'));
+      // gh-1077 review round 5: a rotated session is a new on-disk
+      // format for pre-rotation builds (they read only the primary and
+      // crash on the severed chain). The header version marker rides
+      // verbatim into every segment, so an old binary fails at header
+      // parse with "unsupported session version" instead of a
+      // chain-walk SessionException that looks like corruption.
+      for (final p in [path, '$path.part-0001']) {
+        final content = (await fs.readTextFile(p)).getOrThrow();
+        final header =
+            jsonDecode(content.split('\n').first) as Map<String, dynamic>;
+        expect(header['version'], greaterThan(3), reason: '$p marked');
+      }
+      // This build still opens the rotated session fine.
+      final reopened = await JsonlSessionStorage.open(fs, path);
+      expect((await reopened.getEntries()).map((e) => e.id), ['e1', 'e2']);
+    });
+
+    test('SessionHeader.fromJson accepts the rotated-format version and '
+        'rejects unknown versions', () {
+      Map<String, dynamic> headerJson(int version) => {
+        'type': 'session',
+        'version': version,
+        'id': 's1',
+        'timestamp': DateTime.utc(2026).toIso8601String(),
+        'cwd': '/work',
+      };
+      expect(SessionHeader.fromJson(headerJson(3)).id, 's1');
+      expect(
+        SessionHeader.fromJson(headerJson(SessionHeader.rotatedVersion)).id,
+        's1',
+      );
+      expect(
+        () => SessionHeader.fromJson(headerJson(99)),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('unsupported session version'),
+          ),
+        ),
+      );
+      // The old-build contract this marker relies on: a build that only
+      // knows version 3 rejects the rotated header outright.
+      expect(headerJson(SessionHeader.rotatedVersion)['version'] != 3, isTrue);
+    });
+
+    test(
+      'open exposes the primary header, not the oldest segment header',
+      () async {
+        final storage = await createRotating();
+        await storage.appendEntry(msg('e1', null, 'x' * 220));
+        await storage.appendEntry(msg('e2', 'e1', 'e2'));
+        // Rewrite the archived segment's header with a stale cwd (a valid
+        // header, just not the primary's): the storage must still expose
+        // the primary's header, matching the comment in the open loop.
+        final part = (await fs.readTextFile('$path.part-0001')).getOrThrow();
+        final lines = part.split('\n');
+        final stale = Map<String, dynamic>.from(
+          jsonDecode(lines.first) as Map<String, dynamic>,
+        );
+        stale['cwd'] = '/stale';
+        lines[0] = jsonEncode(stale);
+        await fs.writeFile('$path.part-0001', lines.join('\n'));
+
+        final reopened = await JsonlSessionStorage.open(fs, path);
+        expect(reopened.cachedMetadata.cwd, '/work');
+      },
+    );
+
+    test('the heal never writes a segment first line that is not a session '
+        'header into the primary', () async {
+      final storage = await createRotating();
+      await storage.appendEntry(msg('e1', null, 'x' * 220));
+      await storage.appendEntry(msg('e2', 'e1', 'e2'));
+      final partPath = '$path.part-0001';
+      // Corrupt the archived segment's first line (external truncation),
+      // then knock the primary's header off (racing bare append): the
+      // heal must NOT prefix the garbage line into the primary — it
+      // degrades to the classic open error instead.
+      final part = (await fs.readTextFile(partPath)).getOrThrow();
+      final partLines = part.split('\n');
+      partLines[0] = '{"definitely":"not a session header"}';
+      await fs.writeFile(partPath, partLines.join('\n'));
+      final primary = (await fs.readTextFile(path)).getOrThrow();
+      final primaryLines = primary.split('\n');
+      await fs.writeFile(path, primaryLines.sublist(1).join('\n'));
+      final barePrimary = (await fs.readTextFile(path)).getOrThrow();
+
+      await expectLater(
+        JsonlSessionStorage.open(fs, path),
+        throwsA(isA<SessionException>()),
+      );
+      expect(
+        (await fs.readTextFile(path)).getOrThrow(),
+        barePrimary,
+        reason: 'the heal left the primary untouched',
+      );
+    });
   });
 }

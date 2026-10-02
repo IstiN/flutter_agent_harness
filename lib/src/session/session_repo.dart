@@ -793,10 +793,16 @@ final class JsonlSessionRepo implements SessionRepo {
     // Rotated sessions (gh-1077) keep older records in `.part-NN`
     // segments: scan the whole chain in order or registry snapshots
     // flushed before the last rotation become invisible to subagent
-    // adoption (#488), memory refresh and ttsr.
+    // adoption (#488), memory refresh and ttsr. Dedupe by record id:
+    // between a failed rotation seed and the next open the archived
+    // part and the restored primary hold the SAME records — the open
+    // path dedupes (seenRecordIds), the raw scan must too (round 5).
     final records = <CustomRecord>[];
+    final seen = <String>{};
     for (final path in await listSessionSegmentPaths(_fs, metadata.path)) {
-      records.addAll(await _readCustomRecordsInFile(path, types));
+      for (final record in await _readCustomRecordsInFile(path, types)) {
+        if (seen.add(record.id)) records.add(record);
+      }
     }
     return records;
   }

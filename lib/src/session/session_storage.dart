@@ -599,7 +599,14 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       }
       final segmentHeader = parseSessionHeaderLine(allLines.first, segmentPath);
       // Every segment carries a copy of the same header; the primary's
-      // is the one the storage exposes.
+      // is the one the storage exposes. Rotation seeds all segments from
+      // the same header line, so today they are identical — pin the
+      // primary's explicitly so a drifted archived header can never win
+      // (the loop visits the oldest segment first).
+      if (segmentPath == filePath) {
+        header = segmentHeader;
+        headerLine = allLines.first;
+      }
       header ??= segmentHeader;
       headerLine ??= allLines.first;
       splitMs += phaseSw.elapsedMilliseconds;
@@ -790,13 +797,16 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   }
 
   /// The first non-empty line of a segment file — null when the file
-  /// cannot be read or holds none. Never throws: the heal is best effort.
+  /// cannot be read, holds none, or the line does not parse as a session
+  /// header. Never throws: the heal is best effort, and it must only ever
+  /// propagate a header that parses (a corrupted segment first line must
+  /// degrade to the classic open error, not become a poison writer).
   static Future<String?> _segmentHeaderLine(FileSystem fs, String path) async {
     try {
       final lines = await fs.readTextLines(path, maxLines: 1);
       final line = lines.valueOrNull?.firstOrNull;
       if (line == null || line.trim().isEmpty) return null;
-      return line;
+      return _primaryHeaderValid(line, path) ? line : null;
     } on Object {
       return null;
     }
@@ -980,6 +990,17 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
         return preCallSize;
       }
     }
+    // gh-1077 review: a rotated session is a new on-disk format for
+    // pre-rotation builds (they read only the primary and crash on the
+    // severed parent chain or silently miss archived records). Stamp the
+    // rotated-format version into the header line — it rides verbatim
+    // into every segment from here on, so an older binary fails at
+    // header parse with a clear "unsupported session version".
+    final rotatedLine = _rotatedHeaderLine(_headerLine!);
+    if (rotatedLine != null) {
+      _headerLine = rotatedLine;
+      await _markSegmentRotatedLocked(partPath, rotatedLine);
+    }
     final seeded = await retryTransientSessionFileIo(
       () => _fs.writeFile(_filePath, '${_headerLine!}\n'),
       op: 'rotate',
@@ -1021,6 +1042,40 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       '${partPath.split('/').last}',
     );
     return utf8.encode(_headerLine!).length + 1;
+  }
+
+  /// The header line stamped with [SessionHeader.rotatedVersion]. Null
+  /// when the line does not decode — rotation then keeps the unmarked
+  /// header (best effort; the format is otherwise unchanged).
+  static String? _rotatedHeaderLine(String headerLine) {
+    try {
+      final json = jsonDecode(headerLine);
+      if (json is! Map<String, dynamic>) return null;
+      json['version'] = SessionHeader.rotatedVersion;
+      return jsonEncode(json);
+    } on Object {
+      return null;
+    }
+  }
+
+  /// Stamps the just-archived segment's header copy with the rotated
+  /// marker too: the heal seeds future primaries from part headers, so
+  /// the marker must ride along. Best effort — a failed stamp leaves a
+  /// version-3 part header, which a later heal simply propagates.
+  Future<void> _markSegmentRotatedLocked(
+    String partPath,
+    String rotatedLine,
+  ) async {
+    try {
+      final content = await _fs.readTextFile(partPath);
+      if (content.isErr) return;
+      final lines = content.valueOrNull!.split('\n');
+      if (lines.isEmpty) return;
+      lines[0] = rotatedLine;
+      await _fs.writeFile(partPath, lines.join('\n'));
+    } on Object {
+      // Best effort — see the docstring.
+    }
   }
 
   /// Drops the oldest records of the ACTIVE segment (never the header,
