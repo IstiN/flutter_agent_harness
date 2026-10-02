@@ -644,6 +644,13 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     for (final entry in entries) {
       leafId = leafIdAfterSessionRecord(entry);
     }
+    // A quarantined record can leave the tracked leaf dangling — either a
+    // torn leaf record itself or a LeafRecord whose target dropped
+    // (issue #858). Heal to the newest surviving record: the resume walk
+    // must never start from an id the tree cannot resolve.
+    if (leafId != null && !entries.any((entry) => entry.id == leafId)) {
+      leafId = entries.isEmpty ? null : entries.last.id;
+    }
     phaseSw
       ..reset()
       ..start();
@@ -870,6 +877,9 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
 
   @override
   Future<String?> getLeafId() async {
+    // The tracked leaf is healed at load (issue #858) and every append
+    // sets a just-written id, so a persisted dangle is unreachable; the
+    // alarm below can only fire on a caller-mutated id (issue #1114).
     final leafId = _currentLeafId;
     if (leafId != null && !_byId.containsKey(leafId)) {
       throw SessionException(
@@ -1236,6 +1246,8 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   Future<List<SessionRecord>> getPathToRoot(String? leafId) async {
     if (leafId == null) return [];
     final path = <SessionRecord>[];
+    // A dangling leaf is healed at load (issue #858), so an unknown id
+    // here is a caller bug (issue #1114): fail loudly.
     var current = _byId[leafId];
     if (current == null) {
       throw SessionException(
@@ -1243,18 +1255,19 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
         code: SessionErrorCode.notFound,
       );
     }
-    while (true) {
-      path.add(current!);
+    while (current != null) {
+      path.add(current);
       final parentId = current.parentId;
       if (parentId == null) break;
       final parent = _byId[parentId];
       if (parent == null) {
         // A missing parent is a hole, not a fatal corruption: hard-cap
-        // truncation drops the oldest records by design, and a torn
-        // mid-file line can take a parent with it. Stop the walk and
-        // return the partial path — what WindowedSessionStorage already
-        // does at the window edge — instead of crashing every branch
-        // walk (auto_compactor, task_executor, …) of a resumed session.
+        // truncation (#1114) drops the oldest records by design, and a
+        // quarantined/torn mid-file line can take a parent with it
+        // (#858). Stop the walk and return the partial path — what
+        // WindowedSessionStorage already does at the window edge —
+        // instead of crashing every branch walk (auto_compactor,
+        // task_executor, …) of a resumed session.
         break;
       }
       current = parent;
