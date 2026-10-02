@@ -29,6 +29,7 @@ import 'package:fa/apps/dynamic_widget_tile.dart';
 import 'package:fa/apps/dynamic_widget_graduation.dart';
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:fa/services/chat_text_store.dart';
 import 'package:fa/services/apps_mode_store.dart';
 import 'package:fa/services/analytics.dart';
@@ -798,6 +799,15 @@ class SessionChatSheetState extends State<SessionChatSheet>
       unawaited(HapticFeedback.mediumImpact());
       await _newSession();
       if (mounted) unawaited(_openPanel());
+    } on Object catch (error) {
+      // The entry gesture fires through unawaited(...) — a raw failure
+      // would surface as an unhandled zone error with zero user feedback
+      // (review #1144 follow-up). Mirror the app-bound forward's remedy:
+      // one log line + a snack; the active session stays untouched.
+      AppLog.i('sessions', 'Fa-entry mint failed: $error');
+      if (mounted) {
+        showFahErrorSnack(context, context.l10n.sessionMintFailed);
+      }
     } finally {
       _mintingNew = false;
     }

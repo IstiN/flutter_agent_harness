@@ -673,6 +673,7 @@
     }
   },
   "sessionTooLargeTitle": "Сессия ({size} МБ) превышает бюджет мгновенного открытия — открыть её безопасно не удалось.",
+  "sessionMintFailed": "Не удалось создать новую сессию.",
   "sessionBootSkippedOversize": "Открыта новая сессия — «{name}» ({size} МБ) превышает бюджет мгновенного открытия.",
   "sessionBootSkippedOpen": "Открыть частями",
   "dynamicMessagesButtonTooltip": "Динамические сообщения",

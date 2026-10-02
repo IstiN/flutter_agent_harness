@@ -1941,6 +1941,9 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get sessionMintFailed => 'Couldn\'t create a new session.';
+
+  @override
   String sessionBootSkippedOversize(String name, String size) {
     return 'Resumed a fresh session — “$name” ($size MB) is over the instant-open budget.';
   }
