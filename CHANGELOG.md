@@ -4458,6 +4458,16 @@
 - fix(#1085): post-compaction run continuation — watchdog suspension + loud failure (#1090)
 - chore(factory): sm-kicker -> shared factory-sm-kicker stub (#1118)
 
+## 1.0.497
+
+- fix(session): segment rotation — cap JSONL traces under the git 100MB limit (#1114)
+- ci: re-pin factory-teammate @9bcec53 — kit/ (guard+creds) at invocation ref (#1183)
+- feat(#881): App Store CTA header badge (#1138)
+- ci: re-pin factory-teammate @9bcec53 — kit/ (guard+creds) at invocation ref (#1177)
+- fix(#917): deterministic wrap-turn dedupe in TUI composer (no double-paint on slow PTY) (#1137)
+- ci: re-pin factory-teammate @9bcec53 — kit/ (guard+creds) at invocation ref (#1176)
+- fix(#1134): auto_release.sh pins chore:pin label on release PRs (#1135)
+
 ## Unreleased
 
 ## Unreleased
