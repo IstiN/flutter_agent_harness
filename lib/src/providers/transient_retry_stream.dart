@@ -197,6 +197,80 @@ StreamFunction transientRetryStreamFunction(
   };
 }
 
+/// The budget-exhausted terminal for a PRE-COMMIT transport failure
+/// (issue #290 AC2): the surfaced error carries the retry story —
+/// attempts, elapsed, per-attempt outcomes, next-step hint — never the
+/// naked provider line as headline. A resume prefix already streamed
+/// rides on the terminal (issue #1132 review: the transcript keeps it).
+ErrorEvent _transientExhaustedTerminal(
+  Model model,
+  List<String> attemptLog,
+  DateTime startedAt,
+) => ErrorEvent(
+  reason: StopReason.error,
+  error: _exhausted(model, attemptLog, startedAt),
+);
+
+/// The budget-exhausted terminal for a MID-ANSWER death (issue #1126
+/// AC2): loud death with the full partial content preserved — never an
+/// infinite retry. The failure's own reason rides (issue #1168): a
+/// transport death surfaces as error, never as "aborted".
+///
+/// A TRANSPORT-class death (issue #1168 review) carries the exhaustion
+/// story instead of the raw provider wording: the roles ladder above
+/// this wrapper classifies the raw wording as retryable and would
+/// rewrap it as "not retried" — false after this chain spent its
+/// budget — and the story's signature makes every classification layer
+/// treat it as the consumed verdict it is. The abort class keeps the
+/// snapshot verbatim (its wording is never classified retryable).
+ErrorEvent _partialExhaustionTerminal(
+  Model model,
+  AssistantMessage snapshot,
+  StopReason reason,
+  List<String> attemptLog,
+  _ResumeState resume,
+  DateTime startedAt,
+) => reason == StopReason.error
+    ? ErrorEvent(
+        reason: reason,
+        error: _resumedExhaustion(
+          model,
+          snapshot,
+          attemptLog,
+          resume,
+          startedAt,
+        ),
+      )
+    : ErrorEvent(reason: reason, error: snapshot);
+
+/// The tail-request context for a mid-answer resume: the completed
+/// prefix rides as the last assistant message (issue #1126 AC1).
+///
+/// The anchor stops at the first completed ToolCall, and the state
+/// DROPS the dead call(s) from that point on (issue #1132 r2): the
+/// dead call never executed (its attempt aborted before a tool phase
+/// ran), so the tail regenerates it — and the regenerated twin must be
+/// the only copy in the final message, else the loop's tool phase
+/// executes the action twice. Hosts saw the dead call stream, but the
+/// transcript settles on what actually executes.
+Context _resumeAnchor(Context context, Model model, _ResumeState resume) {
+  final boundary = resume.blocks.indexWhere((block) => block is ToolCall);
+  resume.dropFrom(boundary);
+  final anchor = _anchorMessage(model, resume.blocks);
+  return Context(
+    systemPrompt: context.systemPrompt,
+    messages: [...context.messages, ?anchor],
+    tools: context.tools,
+  );
+}
+
+/// The [transientRetryNotice] wording for a mid-answer resume: names
+/// the failure class and how much completed content survived it.
+String _midStreamResumeNotice(StopReason reason, int completedBlocks) =>
+    'mid-stream '
+    '${reason == StopReason.aborted ? 'abort' : 'connection failure'} '
+    '— resuming from $completedBlocks completed block(s)';
+
 Future<void> _drive(
   AssistantMessageEventStream out,
   StreamFunction inner,
@@ -234,18 +308,12 @@ Future<void> _drive(
         lastFailure = error;
         attemptLog.add(_shortReason(error.errorMessage));
         if (attempt >= maxAttempts) {
-          // Budget exhausted (issue #290 AC2): the surfaced error carries
-          // the retry story — attempts, elapsed, per-attempt outcomes,
-          // next-step hint — never the naked provider line as headline.
-          // A resume prefix already streamed rides on the terminal
-          // (issue #1132 review: the transcript must keep it).
-          final terminal = ErrorEvent(
-            reason: StopReason.error,
-            error: _exhausted(model, attemptLog, startedAt),
+          final terminal = _transientExhaustedTerminal(
+            model,
+            attemptLog,
+            startedAt,
           );
-          out.push(
-            resume.isEmpty ? terminal : _resumeEvent(terminal, resume),
-          );
+          out.push(resume.isEmpty ? terminal : _resumeEvent(terminal, resume));
           return;
         }
         transientRetryNotice?.call(
@@ -259,42 +327,23 @@ Future<void> _drive(
           _pushAborted(out, model, lastFailure, resume: resume);
           return;
         }
-      case _AbortedPartial(
-        :final snapshot,
-        :final keptBlocks,
-        :final reason,
-      ):
+      case _AbortedPartial(:final snapshot, :final keptBlocks, :final reason):
         lastFailure = snapshot;
         attemptLog.add(_shortReason(snapshot.errorMessage));
         if (attempt >= maxAttempts) {
-          // Budget exhausted mid-chain (issue #1126 AC2): loud death with
-          // the full partial content preserved — never an infinite retry.
-          // The rewrite prefixes the state from EARLIER attempts only: the
-          // snapshot's own blocks already ride inside the error message.
-          // The failure's own reason rides too (issue #1168): a transport
-          // death surfaces as error, never as "aborted".
-          //
-          // A TRANSPORT-class death (issue #1168 review) carries the
-          // exhaustion story instead of the raw provider wording: the
-          // roles ladder above this wrapper classifies the raw wording as
-          // retryable and would rewrap it as "not retried" — false after
-          // this chain spent its budget — and the story's signature makes
-          // every classification layer treat it as the consumed verdict
-          // it is. The abort class keeps the snapshot verbatim (its
-          // wording is never classified retryable).
-          final terminal = reason == StopReason.error
-              ? ErrorEvent(
-                  reason: reason,
-                  error: _resumedExhaustion(
-                    model,
-                    snapshot,
-                    attemptLog,
-                    resume,
-                    startedAt,
-                  ),
-                )
-              : ErrorEvent(reason: reason, error: snapshot);
-          out.push(_resumeEvent(terminal, resume));
+          out.push(
+            _resumeEvent(
+              _partialExhaustionTerminal(
+                model,
+                snapshot,
+                reason,
+                attemptLog,
+                resume,
+                startedAt,
+              ),
+              resume,
+            ),
+          );
           return;
         }
         resume.absorb(snapshot, keptBlocks);
@@ -302,32 +351,9 @@ Future<void> _drive(
           attempt,
           maxAttempts,
           Duration.zero,
-          'mid-stream '
-          '${reason == StopReason.aborted ? 'abort' : 'connection failure'} '
-          '— resuming from ${resume.blocks.length} completed block(s)',
+          _midStreamResumeNotice(reason, resume.blocks.length),
         );
-        // The tail request continues from the anchor: the completed prefix
-        // rides as the last assistant message (issue #1126 AC1).
-        //
-        // The anchor stops at the first completed ToolCall, and the state
-        // DROPS the dead call(s) from that point on (issue #1132 r2): the
-        // dead call never executed (its attempt aborted before a tool
-        // phase ran), so the tail regenerates it — and the regenerated
-        // twin must be the only copy in the final message, else the loop's
-        // tool phase executes the action twice. Hosts saw the dead call
-        // stream, but the transcript settles on what actually executes.
-        final boundary = resume.blocks
-            .indexWhere((block) => block is ToolCall);
-        resume.dropFrom(boundary);
-        final anchor = _anchorMessage(model, resume.blocks);
-        attemptContext = Context(
-          systemPrompt: context.systemPrompt,
-          messages: [
-            ...context.messages,
-            ?anchor,
-          ],
-          tools: context.tools,
-        );
+        attemptContext = _resumeAnchor(context, model, resume);
         // A watchdog-cancelled token re-arms IN PLACE (issue #1132
         // review): `CancelToken.reset` re-opens the latch on the SAME
         // object every holder shares, so the loop's tool phases, a later
@@ -405,8 +431,8 @@ AssistantMessage _resumedExhaustion(
   final resumeNote = resume.isEmpty
       ? ''
       : ' The turn resumed from ${resume.blocks.length} completed '
-          'block(s) after each failure; the preserved partial answer is '
-          'above.';
+            'block(s) after each failure; the preserved partial answer is '
+            'above.';
   return AssistantMessage(
     content: snapshot.content,
     api: snapshot.api,
@@ -447,7 +473,9 @@ void _pushAborted(
       timestamp: DateTime.now(),
     ),
   );
-  out.push(resume == null || resume.isEmpty ? event : _resumeEvent(event, resume));
+  out.push(
+    resume == null || resume.isEmpty ? event : _resumeEvent(event, resume),
+  );
 }
 
 sealed class _AttemptOutcome {
@@ -657,9 +685,7 @@ _AttemptOutcome? _bufferedOutcome(
       run.flushBuffer();
       run.forward(event);
       return const _Forwarded();
-    case ThinkingStartEvent() ||
-        ThinkingDeltaEvent() ||
-        ThinkingEndEvent():
+    case ThinkingStartEvent() || ThinkingDeltaEvent() || ThinkingEndEvent():
       // Issue #964: thinking deltas are not user-visible content — they
       // buffer like the start event, so a stream that dies mid-reasoning
       // (minutes of thinking, zero visible deltas) is retried under the
@@ -913,16 +939,16 @@ AssistantMessageEvent _resumeEvent(
     DoneEvent(:final reason, :final message) => DoneEvent(
       // The dead attempts' usage lands here, exactly once.
       reason: reason,
-      message: prefixed(message).copyWith(
-        usage: _sumUsage(resume.usage, message.usage),
-      ),
+      message: prefixed(
+        message,
+      ).copyWith(usage: _sumUsage(resume.usage, message.usage)),
     ),
     ErrorEvent(:final reason, :final error, :final retryAfter) => ErrorEvent(
       reason: reason,
       retryAfter: retryAfter,
-      error: prefixed(error).copyWith(
-        usage: _sumUsage(resume.usage, error.usage),
-      ),
+      error: prefixed(
+        error,
+      ).copyWith(usage: _sumUsage(resume.usage, error.usage)),
     ),
   };
 }
