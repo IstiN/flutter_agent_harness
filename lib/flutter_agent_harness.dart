@@ -209,6 +209,8 @@ export 'src/trajectory/trajectory_snapshot.dart';
 export 'src/trajectory/trajectory_snapshot_builder.dart';
 export 'src/trajectory/trajectory_export.dart';
 export 'src/trajectory/search_index.dart';
+export 'src/skills/skill_availability.dart';
+export 'src/skills/builtin_skills.dart';
 export 'src/skills/skills.dart';
 export 'src/sse_decoder.dart';
 export 'src/task/task.dart';

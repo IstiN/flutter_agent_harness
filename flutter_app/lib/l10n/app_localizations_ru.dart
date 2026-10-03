@@ -1462,6 +1462,13 @@ class AppLocalizationsRu extends AppLocalizations {
       'Использовать навыки Claude, Copilot или Codex из папки проекта (.claude, .github, .codex)';
 
   @override
+  String get settingsSkillsToggles => 'Встроенные навыки';
+
+  @override
+  String get settingsSkillsTogglesHint =>
+      'Включайте и отключайте навыки, встроенные в Fa';
+
+  @override
   String get skillsAccessAsk => 'Спрашивать';
 
   @override

@@ -39,6 +39,7 @@ import '../messaging/fabric_config.dart';
 import '../mcp/mcp_config.dart';
 import '../memory_config.dart';
 import '../power_config.dart';
+import '../skills/skill_availability.dart';
 import '../model_roles/model_roles.dart';
 import '../redact/redaction_types.dart';
 import '../spill/spill.dart';
@@ -1279,7 +1280,9 @@ void _validateSkillsSection(Object? node) {
           );
         }
       default:
-        throw ConfigException('unknown "skills" key: ${entry.key}');
+        // A per-skill on/off toggle (issue #1151): any non-reserved key is
+        // a skill name; the value must be on/off or a boolean.
+        skillToggleValue('${entry.key}', entry.value);
     }
   }
 }

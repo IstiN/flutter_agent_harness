@@ -56,6 +56,7 @@ import '../lsp/lsp_tool.dart';
 import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../prompts/prompts.g.dart';
+import '../skills/builtin_skills.dart';
 import '../types.dart';
 import '../web_search/web_search.dart';
 import 'archive_reader.dart';
@@ -745,13 +746,19 @@ AgentTool readFileTool(
       if (extended != null) return extended;
 
       final path = split.path;
-      final binaryRead = await env.readBinaryFile(path);
-      if (binaryRead.isErr) throw StateError('${binaryRead.errorOrNull}');
-      final bytes = binaryRead.valueOrNull!;
-      cancelToken?.throwIfCancelled();
+      // Built-in skills (issue #1151) ride the package as compiled-in
+      // data — their `builtin://` paths resolve from the embedded copy on
+      // every host, before any filesystem access.
+      final embedded = builtinSkillTextAt(path);
+      if (embedded == null) {
+        final binaryRead = await env.readBinaryFile(path);
+        if (binaryRead.isErr) throw StateError('${binaryRead.errorOrNull}');
+        final bytes = binaryRead.valueOrNull!;
+        cancelToken?.throwIfCancelled();
 
-      final imageResult = _readImageResult(path, bytes, parsed, model);
-      if (imageResult != null) return imageResult;
+        final imageResult = _readImageResult(path, bytes, parsed, model);
+        if (imageResult != null) return imageResult;
+      }
 
       return _readTextContent(
         env,
@@ -760,6 +767,7 @@ AgentTool readFileTool(
         parsed,
         offset,
         limit,
+        embedded,
         hashlineMode,
         cancelToken,
       );
@@ -880,10 +888,13 @@ Future<ToolExecutionResult> _readTextContent(
   ReadSelector parsed,
   int? offset,
   int? limit,
+  String? embedded,
   bool hashlineMode,
   CancelToken? cancelToken,
 ) async {
-  final read = await env.readTextFile(path);
+  final read = embedded != null
+      ? Ok<String, FileError>(embedded)
+      : await env.readTextFile(path);
   if (read.isErr) throw StateError('${read.errorOrNull}');
   cancelToken?.throwIfCancelled();
 
@@ -2236,7 +2247,10 @@ ToolExecutionResult _listingOutput(
   int limit,
   bool entryLimitReached,
 ) {
-  final truncation = _truncateHead(results.join('\n'), maxLines: _unboundedMaxLines);
+  final truncation = _truncateHead(
+    results.join('\n'),
+    maxLines: _unboundedMaxLines,
+  );
   var output = truncation.content;
   final notices = <String>[];
   if (entryLimitReached) {

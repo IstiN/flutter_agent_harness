@@ -4,6 +4,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/widgets.dart' show WidgetsBinding;
 import 'package:fa_ui/fa_ui.dart'
     show
@@ -75,6 +76,7 @@ import 'package:fa/services/session_listing.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
+import 'package:fa/services/skills_toggles_store.dart';
 import 'package:fa/prompts.g.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/services/secrets_store.dart';
@@ -94,6 +96,7 @@ part 'agent_service_prompt.dart';
 part 'agent_service_assistant.dart';
 part 'agent_service_events.dart';
 part 'agent_service_sessions.dart';
+part 'agent_service_skills.dart';
 part 'agent_service_runs.dart';
 part 'agent_service_connection_guard.dart';
 part 'agent_service_persistence.dart';
@@ -174,6 +177,7 @@ class AgentService extends ChangeNotifier
        _skillsAccessStore = null,
        _skillsHomeDir = null,
        _skillsAccess = SkillsAccess.granted,
+       _skillTogglesStore = null,
        _toolsAvailabilityStore = null,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
@@ -319,6 +323,8 @@ class AgentService extends ChangeNotifier
     final savedSkillsAccess = await skillsAccessStore.load();
     final toolsAvailabilityStore = ToolsAvailabilityStore(resolvedEnv);
     final savedToolsConfig = await toolsAvailabilityStore.load();
+    final skillTogglesStore = SkillsTogglesStore(resolvedEnv);
+    final savedSkillToggles = await skillTogglesStore.load();
     final redactor = SecretRedactor.fromSecrets(secrets);
     // Agent skills + project context files (AGENTS.md & friends) ride the
     // same ExecutionEnv, so they work on every platform (web sandbox too):
@@ -336,6 +342,7 @@ class AgentService extends ChangeNotifier
       resolvedEnv,
       savedSkillsAccess ?? SkillsAccess.granted,
       homeDir: desktopHomeDir(),
+      skillToggles: savedSkillToggles,
     );
     // Always wrap: the `request_secret` tool injects user-granted keys into
     // the LIVE env at runtime (see [_handleSecretRequest]), so the wrapper
@@ -362,6 +369,8 @@ class AgentService extends ChangeNotifier
       approvalModeStore: approvalModeStore,
       initialSkillsAccess: savedSkillsAccess ?? SkillsAccess.granted,
       skillsAccessStore: skillsAccessStore,
+      initialSkillToggles: savedSkillToggles,
+      skillTogglesStore: skillTogglesStore,
       initialToolsConfig: savedToolsConfig,
       toolsAvailabilityStore: toolsAvailabilityStore,
       // Sleep prevention (issue #325): one assertion for the app
@@ -403,69 +412,6 @@ class AgentService extends ChangeNotifier
     return merged;
   }
 
-  /// Writes bundled agent skills (see `assets/skills/`) into the env's
-  /// project skill root so [discoverSkills] picks them up. Files are
-  /// refreshed when the bundled content changed (the skills are ours, not
-  /// user data). Best-effort: a missing asset or unwritable env must not
-  /// block session creation.
-  static Future<void> _seedBundledSkills(ExecutionEnv env) async {
-    const bundled = {
-      'js-apps': 'assets/skills/js-apps/SKILL.md',
-      'create-goal': 'assets/skills/create-goal/SKILL.md',
-      'fa-self-config': 'assets/skills/fa-self-config/SKILL.md',
-    };
-    for (final entry in bundled.entries) {
-      try {
-        final target = '.fah/skills/${entry.key}/SKILL.md';
-        final bundledBody = await rootBundle.loadString(entry.value);
-        final body = filterPlatformInstructions(
-          bundledBody,
-          platform: currentFaPlatform,
-        );
-        final existing = await env.readTextFile(target);
-        if (existing.valueOrNull == body) continue;
-        await env.writeFile(target, body);
-      } on Object {
-        // skip this skill
-      }
-    }
-  }
-
-  /// Discovers agent skills + project context files (AGENTS.md & friends)
-  /// and renders the system-prompt suffix. Third-party skill roots
-  /// (`.claude`, `.github/skills`, `.codex`) are read unless [access] is
-  /// [SkillsAccess.denied] (or an explicit `ask` still awaiting its startup
-  /// prompt) — discovery is on by default; only those restrict discovery to
-  /// the first-party roots (`.fah/skills`, `.agents/skills`).
-  static Future<String> _discoverPromptSuffix(
-    ExecutionEnv env,
-    SkillsAccess access, {
-    String? homeDir,
-  }) async {
-    // User-level roots (~/.claude/skills, ~/.copilot/skills, ...) need the
-    // real home directory - without it the desktop app only ever saw
-    // project-local skills no matter what the consent said.
-    final roots = defaultSkillRoots(
-      cwd: env.cwd,
-      homeDir: homeDir ?? desktopHomeDir(),
-    );
-    final skills = await discoverSkills(
-      env,
-      projectRoots: roots.projectRoots,
-      userRoots: roots.userRoots,
-      allowedSources: skillsAccessAllowsDiscovery(access, interactive: false)
-          ? null
-          : const {SkillSource.fah, SkillSource.agents},
-    );
-    final contextFiles = await loadProjectContextFiles(env);
-    return [
-      if (formatProjectContext(contextFiles).isNotEmpty)
-        formatProjectContext(contextFiles),
-      if (formatSkillsForPrompt(skills).isNotEmpty)
-        formatSkillsForPrompt(skills),
-    ].join('\n\n');
-  }
-
   AgentService._withEnv({
     Map<String, String> bootSecrets = const {},
     required this.env,
@@ -491,6 +437,8 @@ class AgentService extends ChangeNotifier
     this._approvalModeStore,
     SkillsAccess? initialSkillsAccess,
     this._skillsAccessStore,
+    Map<String, bool> initialSkillToggles = const {},
+    this._skillTogglesStore,
     ToolsConfig? initialToolsConfig,
     this._toolsAvailabilityStore,
     String? skillsHomeDir,
@@ -507,6 +455,7 @@ class AgentService extends ChangeNotifier
        _includeSharedSessionRoots = includeSharedSessionRoots,
        _config = config,
        _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
+       _skillToggles = initialSkillToggles,
        _resolveSecretName = resolveSecretName,
        // ignore: prefer_initializing_formals
        _providerRegistry = providerRegistry,
@@ -1107,6 +1056,19 @@ class AgentService extends ChangeNotifier
   /// The persisted skills-access store ([AgentService.create] path only);
   /// [setSkillsAccess] writes through fire-and-forget.
   final SkillsAccessStore? _skillsAccessStore;
+
+  /// The user's per-skill on/off wishes (issue #1151 — the app twin of the
+  /// CLI `skills:` entries; persisted via [SkillsTogglesStore]). Names
+  /// absent from the map are default-on.
+  Map<String, bool> _skillToggles = const {};
+
+  /// Generation guard for [setSkillToggle]'s async re-discovery: a newer
+  /// toggle change wins over a stale suffix.
+  int _skillTogglesGeneration = 0;
+
+  /// The persisted per-skill toggles store ([AgentService.create] path
+  /// only); [setSkillToggle] writes through fire-and-forget.
+  final SkillsTogglesStore? _skillTogglesStore;
 
   /// The tool-availability wiring (issue #19): capability floor + gate +
   /// live config, extracted to [AgentToolAvailability]. Built in both

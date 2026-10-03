@@ -274,7 +274,18 @@ factual: paths, commands, invariants — no essays.
   Claude/Copilot/Codex layouts (`.claude/skills` + `.claude/commands`,
   `.github/skills`, `.codex/skills`, user-level equivalents incl.
   `~/.copilot/skills`), each root tagged with a `SkillSource`; project >
-  user, first-name-wins. Third-party roots are discovered BY DEFAULT
+  user, first-name-wins. The package also ships first-party built-ins
+  (`create-goal`, `self-settings`) compiled from
+  `prompts/skills/<name>/SKILL.md` by `scripts/gen_prompts.dart` into
+  `builtin_skills.dart` — merged into discovery LAST (a same-named
+  project/user/granted skill shadows the built-in), never gated by the
+  skills-access consent, served to `read` from virtual
+  `builtin://skills/<name>/SKILL.md` paths. Per-skill on/off toggles
+  (`skill_availability.dart`: `skills: {<name>: on|off}`, global
+  `~/.fah/config.yaml` < project `.fah/config.yaml`, deepest mention
+  wins) gate the prompt/completion/invocation surfaces live via
+  `/skills on|off <name> [global|project]` and the `/settings` Skills
+  row. Third-party roots are discovered BY DEFAULT
   (opt-out): `skills_access.dart` `SkillsAccess` ask/granted/denied with
   `granted` as the zero-config default — `allowedSources` on
   `discoverSkills`/`discoverTaskAgents`; CLI `skills:` config section,
