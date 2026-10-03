@@ -4,6 +4,12 @@
 /// members.
 part of 'agent_cli.dart';
 
+/// The merge inputs read from the existing project file: the current
+/// toggles, the raw `skills:` node (null when absent — needed to
+/// re-emit the section keys), and the error that blocks the merge
+/// (the other fields are inert when [error] is set).
+typedef _MergeSeed = ({SkillsConfig config, YamlMap? section, String? error});
+
 /// Implementation members of [AgentCli] for skills: third-party access
 /// gating (the startup consent dialog and `/skills access`), `/skill:<name>`
 /// invocation (rendering, per-turn tool grants, `context: fork`), and the
@@ -66,8 +72,46 @@ extension AgentCliSkillsExt on AgentCli {
       projectRoots: roots.projectRoots,
       userRoots: roots.userRoots,
       allowedSources: _skillsAllowedSources,
+      builtins: builtinSkills(),
     );
+    await _resolveSkillAvailability();
     _applyPromptComposition();
+  }
+
+  /// Resolves the `skills:` toggle scopes (issue #1151 — global
+  /// [AgentCliConfig.skillToggles] < project `.fah/config.yaml`) against
+  /// [_skills], warns about unknown toggle ids once per distinct name,
+  /// and recomputes [_enabledSkills] + [_skillResolution]. A broken
+  /// project section is data, not an exception: the error prints and the
+  /// last good project toggles stay in effect (the tools twin,
+  /// `readToolsScopeFile`, works the same way).
+  Future<void> _resolveSkillAvailability() async {
+    if (!_globalSkillTogglesLoaded) {
+      _globalSkillToggles = Map.of(config.skillToggles);
+      _globalSkillTogglesLoaded = true;
+    }
+    final project = await _readProjectSkillToggles();
+    final resolution = resolveSkillAvailability(
+      skills: _skills,
+      scopes: [
+        (SkillToggleScope.global, SkillsConfig(skills: _globalSkillToggles)),
+        if (project != null)
+          (SkillToggleScope.project, SkillsConfig(skills: project)),
+      ],
+    );
+    final fresh = resolution.unknownIds.difference(_warnedSkillToggleIds);
+    for (final id in fresh) {
+      io.writeln(
+        _style.dim(
+          'skills: toggle "$id" ignored — no discovered skill has that name',
+        ),
+      );
+    }
+    if (fresh.isNotEmpty) {
+      _warnedSkillToggleIds = {..._warnedSkillToggleIds, ...fresh};
+    }
+    _skillResolution = resolution;
+    _enabledSkills = enabledSkills(_skills, resolution);
   }
 
   /// Re-runs agent-type discovery with the current access gate.
@@ -75,6 +119,46 @@ extension AgentCliSkillsExt on AgentCli {
     defaultAgentRoots(cwd: _env.cwd, homeDir: config.homeDir),
     allowedSources: _skillsAllowedSources,
   );
+
+  /// The project `skills:` toggles, read through the [ExecutionEnv] —
+  /// scopes travel with the env, mirroring the tools wiring (web-safe,
+  /// and visible to the MemoryExecutionEnv test harness). Null when the
+  /// file or the section is absent; a present-but-invalid section is
+  /// reported and the LAST GOOD toggles stay in effect — one broken
+  /// project file must never kill `/skills`, the REPL loop, or boot
+  /// (issue #1151 review; the tools twin is `readToolsScopeFile`).
+  Future<Map<String, bool>?> _readProjectSkillToggles() async {
+    final (read, error) = await _readProjectSkillTogglesFile();
+    if (error != null) {
+      io.writeln('skills: $error — project scope ignored, keeping last good');
+      return _lastGoodProjectSkillToggles;
+    }
+    if (read != null) _lastGoodProjectSkillToggles = read;
+    return read;
+  }
+
+  /// The strict parse behind [_readProjectSkillToggles]: returns
+  /// `(null, null)` when the file or the section is absent, `(null,
+  /// message)` when the file/section is broken, else the parsed toggles.
+  Future<(Map<String, bool>?, String?)> _readProjectSkillTogglesFile() async {
+    final path = '${_env.cwd}/.fah/config.yaml';
+    final source = (await _env.readTextFile(path)).valueOrNull;
+    if (source == null || source.trim().isEmpty) return (null, null);
+    final Object? doc;
+    try {
+      doc = loadYaml(source);
+    } on Object catch (error) {
+      return (null, 'cannot parse $path: $error');
+    }
+    if (doc is! YamlMap) return (null, 'cannot parse $path: not a yaml map');
+    final node = doc['skills'];
+    if (node == null) return (null, null);
+    try {
+      return (SkillsConfig.fromYaml(node).skills, null);
+    } on ConfigException catch (error) {
+      return (null, 'invalid skills section in $path: ${error.message}');
+    }
+  }
 
   /// Changes the third-party consent, persists it through the host callback,
   /// and re-discovers skills and agents under the new gate.
@@ -164,10 +248,23 @@ extension AgentCliSkillsExt on AgentCli {
   /// subagent when the manifest says `context: fork`.
   Future<void> _runSkillCommand(String rest) async {
     final (name, args) = _parseSkillInvocation(rest);
-    final skill = _skills
+    final skill = _enabledSkills
         .where((s) => s.name.toLowerCase() == name.toLowerCase())
         .firstOrNull;
     if (skill == null) {
+      // Discovered but toggled off: name the way back instead of a bare
+      // "unknown skill" (the toggle scopes, issue #1151).
+      final disabled = _skills
+          .where((s) => s.name.toLowerCase() == name.toLowerCase())
+          .firstOrNull;
+      if (disabled != null) {
+        final scope = _skillResolution.byName[disabled.name]?.scope?.name;
+        io.writeln(
+          'skill ${disabled.name} is disabled${scope == null ? '' : ' ($scope)'}'
+          ' — enable with /skills on ${disabled.name}',
+        );
+        return;
+      }
       io.writeln(
         'unknown skill: $name'
         '${_skills.isEmpty ? ' (no skills discovered)' : ''}',
@@ -282,7 +379,7 @@ extension AgentCliSkillsExt on AgentCli {
     return (name, args);
   }
 
-  /// `/skills [reload|access [ask|granted|denied]|import]`.
+  /// `/skills [reload|access [ask|granted|denied]|import|on|off <name> [global|project]]`.
   ///
   /// Dispatch only — each branch body lives in its own CC≤2 helper so every
   /// piece stays under the CRAP ratchet even where only the line-mode paths
@@ -298,9 +395,12 @@ extension AgentCliSkillsExt on AgentCli {
         await _skillsAccessEntry(args);
       case 'import':
         await _importThirdPartySkills();
+      case 'on' || 'off':
+        await _skillsToggleSlash(sub == 'on', args);
       default:
         io.writeln(
-          'unknown /skills subcommand: $sub (try reload, access, import)',
+          'unknown /skills subcommand: $sub '
+          '(try reload, access, import, on, off)',
         );
     }
   }
@@ -429,6 +529,8 @@ extension AgentCliSkillsExt on AgentCli {
 
   /// `/skills` — lists the discovered skills (name, description, location,
   /// source and invocation flags).
+  ///
+  /// The description column runs through [_skillListDetail].
   void _listSkills() {
     if (_skills.isEmpty) {
       final extra = _skillsAccess == SkillsAccess.granted
@@ -441,16 +543,41 @@ extension AgentCliSkillsExt on AgentCli {
     }
     io.writeln('skills:');
     for (final skill in _skills) {
+      final decision = _skillResolution.byName[skill.name];
+      // Display text: a builtin's model-facing description runs hundreds
+      // of chars and would wrap one row over a screenful at 80 columns -
+      // cap it so one skill stays one terminal line (issue #1151; the
+      // system-prompt block keeps the full text).
+      final detail = _skillListDetail(skill.description);
       final flags = [
         if (!skill.userInvocable) 'model-only',
         if (!skill.modelInvocable) 'user-only',
         if (skill.manifest.contextFork) 'fork',
         if (skill.manifest.paths.isNotEmpty) 'path-gated',
+        // The toggle state rides the dim tail (`; off (project)`) so the
+        // line format stays one line per skill (issue #1151).
+        if (decision != null && !decision.enabled)
+          'off (${decision.scope?.name ?? 'default'})',
       ];
       io.writeln(
-        '  ${skill.name} — ${skill.description}  '
+        '  ${skill.name} — $detail  '
         '${_style.dim('${skill.filePath} (${skill.scope.name}, ${skill.source.name}'
         '${flags.isEmpty ? '' : '; ${flags.join(', ')}'})')}',
+      );
+    }
+    // A built-in hidden under a same-named project/user/granted skill gets
+    // a shadow note: its absence from the invocation surface is a
+    // precedence decision, not a bug (issue #1151).
+    for (final builtin in builtinSkills()) {
+      final winner = _skills
+          .where((s) => s.name.toLowerCase() == builtin.name.toLowerCase())
+          .firstOrNull;
+      if (winner == null || winner.source == SkillSource.builtin) continue;
+      io.writeln(
+        _style.dim(
+          '  ${builtin.name}: builtin skill shadowed by '
+          '${winner.scope.name} skill',
+        ),
       );
     }
     // A non-empty own-skills list still explains missing third-party skills
@@ -464,4 +591,268 @@ extension AgentCliSkillsExt on AgentCli {
       );
     }
   }
+
+  /// `/skills on|off <name> [global|project]` — the per-skill toggle arm,
+  /// mirroring `/tools enable|disable <id> [scope]` (issue #1151). Defaults
+  /// to the project scope; the settings-hub Skills flow routes here.
+  Future<void> _skillsToggleSlash(bool enable, List<String> args) async {
+    if (args.isEmpty) {
+      io.writeln(
+        'usage: /skills ${enable ? 'on' : 'off'} <name> [global|project]',
+      );
+      return;
+    }
+    await _applySkillToggle(
+      enable,
+      args.first,
+      args.length > 1 ? args[1] : 'project',
+    );
+  }
+
+  /// Persists the toggle to [scope] (`global|project`), then re-resolves
+  /// availability and recomposes the prompt — same-session effect, no
+  /// restart. A failed/unwritable target leaves the live state untouched.
+  Future<void> _applySkillToggle(bool enable, String name, String scope) async {
+    final skill = _skills
+        .where((s) => s.name.toLowerCase() == name.toLowerCase())
+        .firstOrNull;
+    if (skill == null) {
+      io.writeln('unknown skill: $name (see /skills)');
+      return;
+    }
+    final persisted = switch (scope) {
+      'project' => await _mergeSkillsIntoFile(
+        '${_env.cwd}/.fah/config.yaml',
+        skill.name,
+        enable,
+      ),
+      'global' => await _persistGlobalSkillToggle(skill.name, enable),
+      _ => null,
+    };
+    if (persisted == null) {
+      io.writeln('unknown scope: $scope (try global, project)');
+      return;
+    }
+    if (!persisted) return;
+    await _resolveSkillAvailability();
+    _applyPromptComposition();
+    io.writeln(
+      'skills: ${enable ? 'enabled' : 'disabled'} ${skill.name} '
+      '(scope: $scope)',
+    );
+  }
+
+  /// The global scope is host-owned: the CLI updates its live toggles and
+  /// the executable persists them through `onSkillTogglesChanged`.
+  Future<bool> _persistGlobalSkillToggle(String name, bool enabled) async {
+    _globalSkillToggles = {..._globalSkillToggles, name: enabled};
+    _globalSkillTogglesLoaded = true;
+    final hook = config.onSkillTogglesChanged;
+    if (hook == null) {
+      io.writeln(
+        'skills: no persistence hook — global change kept for this session',
+      );
+      return true;
+    }
+    await hook();
+    return true;
+  }
+
+  /// The live global per-skill toggles for the host's persistence; null
+  /// before the first availability resolution, in which case the host
+  /// keeps the loaded `skills:` section as-is.
+  Map<String, bool>? get globalSkillToggles =>
+      _globalSkillTogglesLoaded ? _globalSkillToggles : null;
+
+  /// Parses the existing project file body for a toggle merge. Pure —
+  /// no env — so the error branches are unit-testable as a table.
+  _MergeSeed _mergeSeed(String path, String? source) {
+    if (source == null || source.trim().isEmpty) {
+      return (config: const SkillsConfig.empty(), section: null, error: null);
+    }
+    final Object? doc;
+    try {
+      doc = loadYaml(source);
+    } on Object catch (error) {
+      return (
+        config: const SkillsConfig.empty(),
+        section: null,
+        error: '$error',
+      );
+    }
+    if (doc is! YamlMap) {
+      return (
+        config: const SkillsConfig.empty(),
+        section: null,
+        error: '$path is not a map',
+      );
+    }
+    final section = doc['skills'];
+    if (section == null) {
+      return (config: const SkillsConfig.empty(), section: null, error: null);
+    }
+    if (section is! YamlMap) {
+      return (
+        config: const SkillsConfig.empty(),
+        section: null,
+        error: 'skills must be a map in $path',
+      );
+    }
+    try {
+      return (
+        config: SkillsConfig.fromYaml(section),
+        section: section,
+        error: null,
+      );
+    } on ConfigException catch (error) {
+      // A syntactically valid file with an invalid section (e.g. a
+      // non-boolean value) is data, not a crash — same contract as
+      // the tools twin and the read path (issue #1151 review CQIw).
+      return (
+        config: const SkillsConfig.empty(),
+        section: null,
+        error: error.message,
+      );
+    }
+  }
+
+  /// Rebuilds the file body with `name: enabled` merged into the
+  /// `skills:` block. [seed] carries the parsed section, [source] the
+  /// original bytes (null/blank → a fresh file).
+  String _mergedSkillsBody(
+    _MergeSeed seed,
+    String? source,
+    String name,
+    bool enabled,
+  ) {
+    final buffer = StringBuffer('skills:\n');
+    final section = seed.section;
+    if (section != null) {
+      // The section parser only accepts these spellings, so re-emitting
+      // the parsed values keeps the file valid.
+      if (section['access'] != null) {
+        buffer.write('  access: ${section['access']}\n');
+      }
+      if (section['disableShellExecution'] != null) {
+        buffer.write(
+          '  disableShellExecution: ${section['disableShellExecution']}\n',
+        );
+      }
+    }
+    buffer.write(
+      SkillsConfig(skills: {...seed.config.skills, name: enabled}).toYaml(),
+    );
+    final body = (source == null || source.trim().isEmpty)
+        ? buffer.toString()
+        : _replaceTopLevelYamlBlock(source, 'skills', buffer.toString());
+    return '$body\n';
+  }
+
+  /// Merges `name: enabled` into the `skills:` section of the yaml file at
+  /// [path] (surgical top-level block rewrite; everything outside the
+  /// block survives byte-for-byte). Inside the block the section's
+  /// `access:`/`disableShellExecution:` keys are preserved — they are
+  /// valid section keys the toggles parser [SkillsConfig] deliberately
+  /// skips, and a toYaml-only rebuild would drop them. A file the merge
+  /// cannot parse (broken yaml, non-map doc, invalid section) is data,
+  /// not a crash: the error prints and nothing is written.
+  Future<bool> _mergeSkillsIntoFile(
+    String path,
+    String name,
+    bool enabled,
+  ) async {
+    final source = (await _env.readTextFile(path)).valueOrNull;
+    final seed = _mergeSeed(path, source);
+    if (seed.error != null) {
+      io.writeln('skills: cannot merge project scope — ${seed.error}');
+      return false;
+    }
+    if (await _env.writeFile(
+          path,
+          _mergedSkillsBody(seed, source, name, enabled),
+        )
+        is Err) {
+      io.writeln('skills: could not write $path');
+      return false;
+    }
+    return true;
+  }
+
+  /// The settings-hub Skills row and `/settings` summary label: the live
+  /// on/off balance.
+  String _skillsStatusLabel() =>
+      '${_enabledSkills.length} of ${_skills.length} skills available';
+
+  String _skillsEntryDetail(Skill skill) {
+    final decision = _skillResolution.byName[skill.name];
+    if (decision == null) return 'on (default)';
+    final where = decision.scope?.name ?? 'default';
+    return decision.enabled ? 'on ($where)' : 'off ($where)';
+  }
+
+  /// The settings-hub Skills flow: pick a skill, flip it, pick the scope
+  /// to persist in — loops until cancelled. Mirrors the Tools flow.
+  Future<void> _skillsSettingsFlow() async {
+    for (;;) {
+      final pick = await _pickSkillToggle();
+      if (pick == null) return;
+      await _applySkillToggle(pick.enable, pick.name, pick.scope);
+    }
+  }
+
+  /// One Skills-flow pass: skill → on/off → scope. Null when the user
+  /// cancels any step (or picks Done at the skill list).
+  Future<({String name, bool enable, String scope})?> _pickSkillToggle() async {
+    final name = await _pickSkillName();
+    if (name == null) return null;
+    final enable = await _pickSkillEnable(name);
+    if (enable == null) return null;
+    final scope = await _pickSkillScope(name, enable);
+    if (scope == null) return null;
+    return (name: name, enable: enable, scope: scope);
+  }
+
+  /// The skill pick; `Done` and a cancel both resolve to null.
+  Future<String?> _pickSkillName() async {
+    final name = await _pickOption('skills — pick a skill', [
+      for (final skill in _skills)
+        (skill.name, skill.name, _skillsEntryDetail(skill)),
+      ('done', 'Done', ''),
+    ]);
+    return name == 'done' ? null : name;
+  }
+
+  /// The Skills flow's enable/disable picker rows.
+  static const _skillActionOptions = <FlowOption>[
+    ('on', 'Enable', 'offer the skill to the model again'),
+    ('off', 'Disable', 'hide it from invocation, completion and prompt'),
+  ];
+
+  /// The enable/disable pick for [name]; null on cancel.
+  Future<bool?> _pickSkillEnable(String name) async {
+    final action = await _pickOption('skills — $name', _skillActionOptions);
+    return switch (action) {
+      'on' => true,
+      'off' => false,
+      _ => null,
+    };
+  }
+
+  /// The scope pick for toggling [name], worded by the chosen action.
+  Future<String?> _pickSkillScope(String name, bool enable) =>
+      _pickOption('skills — ${enable ? 'enable' : 'disable'} $name in', [
+        ('project', 'Project', '${_env.cwd}/.fah/config.yaml'),
+        ('global', 'Global', '~/.fah/config.yaml'),
+      ]);
+}
+
+/// The `/skills` description column: capped so a row's visible part stays
+/// inside one ~80-col terminal line - a builtin's model-facing description
+/// runs hundreds of chars and wrapped greet off the #927 consent suite's
+/// 80x24 screen. The system-prompt block and the TUI completion overlay
+/// keep the full text.
+String _skillListDetail(String description) {
+  const cap = 57;
+  if (description.length <= cap) return description;
+  return '${description.substring(0, cap)}…';
 }
