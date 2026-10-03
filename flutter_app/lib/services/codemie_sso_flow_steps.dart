@@ -2,12 +2,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/codemie_extension_signin.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/provider_auth_surface.dart';
 import 'package:fa/services/relay/ext_runtime.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart'
@@ -302,10 +302,6 @@ Future<CodeMieSsoCredentials?> desktopCodeMieSso(
   );
 }
 
-/// The method channel driving `ASWebAuthenticationSession` on iOS (implemented
-/// in `ios/Runner/AppDelegate.swift`).
-const _webAuthSessionChannel = MethodChannel('fah/web_auth_session');
-
 /// iOS SSO via a system-browser auth session. Unlike the embedded WKWebView,
 /// `ASWebAuthenticationSession` runs the page in a Safari-grade context, so
 /// the IdP can offer WebAuthn / passkey (Face ID) sign-in.
@@ -328,7 +324,8 @@ systemAuthSessionCodeMieSso(String orgUrl) async {
   final int port;
   try {
     port = await server.start();
-  } on Object {
+  } on Object catch (error) {
+    debugPrint('[CodeMie SSO] loopback callback server failed: $error');
     return (credentials: null, sessionUnavailable: true);
   }
   final ssoUrl = buildCodeMieSsoUrl(orgUrl, port);
@@ -336,10 +333,11 @@ systemAuthSessionCodeMieSso(String orgUrl) async {
   // No callbackScheme: nothing to intercept — the token arrives through the
   // local server, the session future completes only on cancel/dismiss.
   unawaited(
-    _webAuthSessionChannel
+    systemAuthSessionChannel
         .invokeMethod<String>('authenticate', {'url': ssoUrl})
         .then((_) => server.close()) // user cancelled the sheet
-        .onError((_, _) {
+        .onError((Object error, _) {
+          debugPrint('[CodeMie SSO] auth session failed: $error');
           sessionFailed = true;
           return server.close();
         }),
@@ -347,7 +345,9 @@ systemAuthSessionCodeMieSso(String orgUrl) async {
   final token = await server.waitForToken();
   // Dismiss the sheet (shows the "Authorized" page only for a split second).
   unawaited(
-    _webAuthSessionChannel.invokeMethod<void>('cancel').onError((_, _) => null),
+    systemAuthSessionChannel
+        .invokeMethod<void>('cancel')
+        .onError((_, _) => null),
   );
   if (sessionFailed) {
     return (credentials: null, sessionUnavailable: true);
