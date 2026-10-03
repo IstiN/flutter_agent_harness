@@ -247,15 +247,19 @@ scenarios:
     var addResultFedBack = false;
     for (final body in server.chatBodies) {
       final messages =
-          (jsonDecode(body) as Map<String, dynamic>)['messages'] as List<dynamic>;
+          (jsonDecode(body) as Map<String, dynamic>)['messages']
+              as List<dynamic>;
       for (var i = 0; i < messages.length; i++) {
         final calls =
-            (messages[i] as Map<String, dynamic>)['tool_calls'] as List<dynamic>?;
+            (messages[i] as Map<String, dynamic>)['tool_calls']
+                as List<dynamic>?;
         if (calls == null) continue;
-        final isAdd = calls.any((c) =>
-            ((c as Map<String, dynamic>)['function']
-                as Map<String, dynamic>)['name'] ==
-            'memory_add');
+        final isAdd = calls.any(
+          (c) =>
+              ((c as Map<String, dynamic>)['function']
+                  as Map<String, dynamic>)['name'] ==
+              'memory_add',
+        );
         if (!isAdd) continue;
         sawAddCall = true;
         if (i + 1 < messages.length &&
@@ -264,10 +268,16 @@ scenarios:
         }
       }
     }
-    expect(sawAddCall, isTrue,
-        reason: 'a parent turn carries the memory_add tool call');
-    expect(addResultFedBack, isTrue,
-        reason: 'the memory_add result flows back as a role:tool message');
+    expect(
+      sawAddCall,
+      isTrue,
+      reason: 'a parent turn carries the memory_add tool call',
+    );
+    expect(
+      addResultFedBack,
+      isTrue,
+      reason: 'the memory_add result flows back as a role:tool message',
+    );
     // >= 3 chat round-trips: add turn, search turn, reply turn.
     expect(server.chatBodies.length, greaterThanOrEqualTo(3));
   });

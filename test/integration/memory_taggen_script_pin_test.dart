@@ -41,8 +41,7 @@ void main() {
       expect(
         scenarioStart,
         isNonNegative,
-        reason:
-            'Existing tags: taggen scenario not found — update this pin',
+        reason: 'Existing tags: taggen scenario not found — update this pin',
       );
       final scenarioTail = memoryTest.substring(scenarioStart);
       final scriptEnd = scenarioTail.indexOf("''');");
