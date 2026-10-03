@@ -239,6 +239,7 @@ void main() {
             'ok-body',
             201,
             headers: {'content-type': 'application/json'},
+            request: request,
           )),
     );
     final env = MemoryExecutionEnv(cwd: '/', shell: shell);
@@ -252,7 +253,7 @@ void main() {
     );
     expect(result.valueOrNull!.exitCode, 0, reason: result.valueOrNull!.stderr);
     expect(
-      utf8.decode(result.valueOrNull!.stdout),
+      result.valueOrNull!.stdout,
       'ok-body'
       'code=201 dl=7 ct=application/json '
       'url=https://api.example.com/things rc=201 up=0 '
@@ -273,7 +274,7 @@ void main() {
       r"curl -s -w 'a%{open and tail' https://api.example.com",
     );
     expect(result.valueOrNull!.exitCode, 0);
-    expect(utf8.decode(result.valueOrNull!.stdout), 'xa%{open and tail');
+    expect(result.valueOrNull!.stdout, 'xa%{open and tail');
   });
 }
 
