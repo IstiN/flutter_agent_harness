@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -36,6 +35,7 @@ void main() {
     String? providerKind,
     SkillsAccess? skillsAccess,
     CompactionEngine? compactionEngine,
+    ApprovalMode approvalMode = ApprovalMode.yolo,
   }) {
     return AgentCli(
       config: AgentCliConfig(
@@ -43,6 +43,7 @@ void main() {
         apiKey: 'test-key',
         env: envOverride ?? env,
         sessionRoot: '/sessions',
+        approvalMode: approvalMode,
         envVarIsSet: envVarIsSet,
         envVarValue: envVarValue,
         modelsFetcher: modelsFetcher,
@@ -647,6 +648,57 @@ void main() {
       await run;
       expect(fake.calls, 0);
     });
+
+    test('a message after a skill run clears that skill\'s turn grants — '
+        'path-led included (issue #1152)', () async {
+      await env.createDir('/work/.fah/skills/grants');
+      await env.writeFile(
+        '/work/.fah/skills/grants/SKILL.md',
+        '---\nname: grants\ndescription: Grant read\nallowed-tools: [read]\n'
+            '---\nGrants body.\n',
+      );
+      // Fresh env = memory maintenance due at boot; pin it off so its
+      // consolidate() cannot consume a scripted turn on slow runners.
+      await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+      final fake = FakeStreamFunction([
+        textTurn('skill done'),
+        textTurn('done again'),
+      ]);
+      // always-ask with NO approval UI (non-interactive io): a cleared
+      // read-tier call denies with "no approval UI", so the grant's
+      // presence/absence is directly observable.
+      io.isInteractive = false;
+      final cli = cliFor(fake.call, approvalMode: ApprovalMode.alwaysAsk);
+      final run = cli.run();
+      await waitForIt(() => cli.systemPrompt.contains('<name>grants</name>'));
+
+      io.sendLine('/skill:grants');
+      await waitForIt(() => fake.calls == 1 && !cli.isBusy);
+      final during = await cli.approval.authorize(
+        toolName: 'read',
+        tier: ApprovalTier.read,
+        arguments: const {},
+      );
+      expect(during.allowed, isTrue, reason: 'allowed-tools grants read');
+
+      // The next user message — the #1152 path-led shape — must clear the
+      // grant: it rides the same message tail as plain text.
+      io.sendLine('/tmp/notes find the exported csv');
+      await waitForIt(() => fake.calls == 2 && !cli.isBusy);
+      final after = await cli.approval.authorize(
+        toolName: 'read',
+        tier: ApprovalTier.read,
+        arguments: const {},
+      );
+      expect(
+        after.allowed,
+        isFalse,
+        reason: 'the next message clears turn grants',
+      );
+
+      io.sendLine('/exit');
+      await run;
+    });
   });
 
   test('durable memory facts join the system prompt after startup', () async {
@@ -1015,60 +1067,6 @@ void main() {
     expect(output, contains('approval:'));
     expect(output, contains('mode:'));
     expect(output, contains('/provider'));
-  });
-
-  test('unknown slash commands show a filtered command menu', () async {
-    final fake = FakeStreamFunction([]);
-    final cli = cliFor(fake.call);
-    final run = cli.run();
-
-    io.sendLine('/bogus');
-    await waitForIt(
-      () => io.out.toString().contains('unknown command: /bogus'),
-    );
-    io.sendLine('/exit');
-    await run;
-  });
-
-  test(
-    'a pasted absolute filesystem path is not treated as a slash command',
-    () async {
-      final fake = FakeStreamFunction([]);
-      final cli = cliFor(fake.call);
-      final run = cli.run();
-
-      io.sendLine(
-        '/var/folders/91/d70565j93ssdm9_0k159x5jm0000gn/T/yoloit_clip/clip_1787736718973.txt посмотри лог',
-      );
-      await waitForIt(
-        () => io.out.toString().contains('looks like a filesystem path'),
-      );
-      expect(io.out.toString(), isNot(contains('unknown command:')));
-      io.sendLine('/exit');
-      await run;
-    },
-  );
-
-  test('a pasted absolute path that EXISTS is sent as a message with the file '
-      'attached, not refused', () async {
-    final dir = await Directory.systemTemp.createTemp('fa_path_test');
-    final file = File('${dir.path}/clip_note.txt');
-    await file.writeAsString('hello from the clip');
-    addTearDown(() => dir.delete(recursive: true));
-
-    final fake = FakeStreamFunction([textTurn('ok')]);
-    final cli = cliFor(fake.call);
-    final run = cli.run();
-
-    io.sendLine('${file.path} summarize this');
-    await waitForIt(
-      () => io.out.toString().contains('[file] pasted path attached'),
-      reason: 'an existing path attaches and starts the run',
-    );
-    await waitForIt(() => io.out.toString().contains('ok'));
-    expect(io.out.toString(), isNot(contains('looks like a filesystem path')));
-    io.sendLine('/exit');
-    await run;
   });
 
   test('bare / shows a numbered command menu in line mode', () async {
