@@ -63,6 +63,7 @@ extension AgentServiceEvents on AgentService {
   void _onAgentStart() {
     isStreaming = true;
     _currentAssistantMessage = null;
+    _inFlightToolRows.clear();
     _turnStartCount = 0;
     pendingSteerTexts.clear();
     dynamicMessages.onRunStart();
@@ -108,12 +109,15 @@ extension AgentServiceEvents on AgentService {
   /// events — the idle watchdog must not fire during them.
   void _onToolExecutionStart(String toolName, Map<String, dynamic> args) {
     _activeToolCalls++;
-    messages.add(
-      FahChatMessage(
-        role: 'system',
-        content: '[$toolName] ${_shortArgs(args)}',
-      ),
+    // The activity tile is an unpersisted live row: tracked so a mid-run
+    // view rebuild (jump-to-tail) can re-append it instead of dropping
+    // the in-flight tool from the transcript (review -Fl1).
+    final row = FahChatMessage(
+      role: 'system',
+      content: '[$toolName] ${_shortArgs(args)}',
     );
+    _inFlightToolRows.add((toolName: toolName, row: row));
+    messages.add(row);
     _pushLiveActivityStatus();
     _notify();
   }
@@ -125,6 +129,12 @@ extension AgentServiceEvents on AgentService {
   }) {
     _activeToolCalls--;
     _armIdleWatchdog();
+    // The activity tile landed (its result tile follows); stop tracking
+    // it as in-flight. First match = call order per tool name.
+    final inFlight = _inFlightToolRows.indexWhere(
+      (e) => e.toolName == toolName,
+    );
+    if (inFlight >= 0) _inFlightToolRows.removeAt(inFlight);
     if (AgentService._kMutatingToolNames.contains(toolName)) {
       // "Hook" for file-watching UI: the agent may have changed files.
       fsRevision.value++;
