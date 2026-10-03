@@ -952,7 +952,9 @@ final class RelayAgentService extends AgentService {
     AgentConfig config, {
     bool fromProviderAddFlow = false,
   }) async {
-    if (providerAddFlowInProgress && !fromProviderAddFlow) {
+    // The shared predicate (the base owns the refusal rule — one shape,
+    // no drift); only the log prefix differs.
+    if (reconfigureRefusedByAddFlow(fromProviderAddFlow)) {
       debugPrint(
         '[fah][relay] reconfigure refused: a provider add flow is in '
         'progress — the active connection stays untouched until it finishes',

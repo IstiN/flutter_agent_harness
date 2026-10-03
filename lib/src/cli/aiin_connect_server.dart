@@ -43,7 +43,8 @@ final class AiinCallback {
   /// so the same `code`/`state`/`error` query the server would see arrives
   /// as a string instead of an HTTP request.
   factory AiinCallback.fromRedirectUrl(String url) {
-    final query = Uri.tryParse(url)?.queryParameters ?? const <String, String>{};
+    final query =
+        Uri.tryParse(url)?.queryParameters ?? const <String, String>{};
     return AiinCallback(
       code: query['code'],
       state: query['state'],
@@ -53,16 +54,25 @@ final class AiinCallback {
   }
 }
 
-/// Loopback HTTP server catching the AIIN OAuth proxy redirect.
+/// Loopback HTTP server catching the AIIN OAuth redirect.
+///
+/// Dual-stack on the loopback interface (gh-1044 review): the primary
+/// IPv4 listener plus a best-effort IPv6 listener on the same port, so
+/// the fallback leg (an in-sheet redirect that loads the server for
+/// real) is reachable no matter how the client resolves the host — a
+/// `localhost` label may answer `::1`, and the literal `127.0.0.1` needs
+/// the IPv4 listener. The IPv6 listener is optional: hosts without IPv6
+/// loopback skip it (debugPrint) and the flow keeps working over IPv4.
 final class AiinCallbackServer {
   HttpServer? _server;
+  HttpServer? _server6;
   Completer<AiinCallback?>? _result;
   Timer? _timer;
 
-  /// The host the callback URL advertises. `localhost` for the mobile
-  /// iOS auth-session surface (gh-1044: CodeMie's proven redirect shape —
-  /// the loopback address resolves to the same bound server); `127.0.0.1`
-  /// everywhere else.
+  /// The host the callback URL advertises. The flow advertises the
+  /// literal `127.0.0.1` on every surface (scheme interception ignores
+  /// the host; the fallback leg needs an address that reaches the IPv4
+  /// bind without resolver ambiguity); other values only for tests.
   String callbackHost = '127.0.0.1';
 
   /// The redirect URI to register with [initiateAiinOAuth]
@@ -85,6 +95,23 @@ final class AiinCallbackServer {
     _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     _timer = Timer(timeout, () => _complete(null));
     _server!.listen(_handle, onDone: () => _complete(null));
+    // Best-effort IPv6 loopback on the same port: a redirect addressed
+    // `localhost` can resolve to `::1` (gh-1044 review) — the fallback
+    // leg must answer there too. Optional: no IPv6, no problem.
+    try {
+      _server6 = await HttpServer.bind(
+        InternetAddress.loopbackIPv6,
+        _server!.port,
+        v6Only: true,
+      );
+      _server6!.listen(_handle, onDone: () => _complete(null));
+    } on IOException catch (error) {
+      _server6 = null;
+      stderr.writeln(
+        '[AIIN] no IPv6 loopback listener (the fallback leg stays '
+        'IPv4-only): $error',
+      );
+    }
     return callbackUrl!;
   }
 
@@ -123,8 +150,11 @@ final class AiinCallbackServer {
     _timer?.cancel();
     _timer = null;
     final server = _server;
+    final server6 = _server6;
     _server = null;
+    _server6 = null;
     if (server != null) await server.close(force: true);
+    if (server6 != null) await server6.close(force: true);
   }
 }
 
@@ -218,7 +248,10 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
   Future<String?> Function()? interceptedCallback,
 }) async {
   final server = AiinCallbackServer();
-  final redirectUri = await server.start(timeout: timeout, callbackHost: callbackHost);
+  final redirectUri = await server.start(
+    timeout: timeout,
+    callbackHost: callbackHost,
+  );
   try {
     // The hosted sign-in page: AIIN lists every provider, runs the whole
     // round-trip (silent for an existing session) and redirects back with
@@ -242,7 +275,11 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
     // session cannot start) surface promptly through the race instead of
     // stalling until the callback timeout.
     final callbackFuture = server.waitForCallback();
-    final opened = _openAiinBrowser(loginUrl.toString(), openBrowserFn, onStatus);
+    final opened = _openAiinBrowser(
+      loginUrl.toString(),
+      openBrowserFn,
+      onStatus,
+    );
     final intercepted = interceptedCallback?.call();
     AiinCallback? callback;
     try {
@@ -267,8 +304,10 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
         });
       }
     } on AiinSurfaceClosedException {
-      onStatus('the sign-in sheet closed without completing the sign-in '
-          '(no callback returned — user cancel)');
+      onStatus(
+        'the sign-in sheet closed without completing the sign-in '
+        '(no callback returned — user cancel)',
+      );
       rethrow;
     }
     onCallback?.call();
@@ -332,41 +371,49 @@ Future<(AiinCallback?, _AiinCallbackSource)> _firstCallbackOrOpenError(
   final interceptedCallback = Completer<(AiinCallback?, _AiinCallbackSource)>();
   if (intercepted != null) {
     unawaited(
-      intercepted.then((url) {
-        if (url != null) {
-          if (!interceptedCallback.isCompleted) {
-            interceptedCallback.complete((
-              AiinCallback.fromRedirectUrl(url),
-              _AiinCallbackSource.interceptedRedirect,
-            ));
+      intercepted.then(
+        (url) {
+          if (url != null) {
+            if (!interceptedCallback.isCompleted) {
+              interceptedCallback.complete((
+                AiinCallback.fromRedirectUrl(url),
+                _AiinCallbackSource.interceptedRedirect,
+              ));
+            }
+            return;
           }
-          return;
-        }
-        // The sheet closed without returning a callback URL — a user
-        // cancel (the same semantics as cancelWhenOpenSettles).
-        if (!surfaceClosed.isCompleted && !interceptedCallback.isCompleted) {
-          surfaceClosed.completeError(const AiinSurfaceClosedException());
-        }
-      }, onError: (Object error, StackTrace stackTrace) {
-        if (!openError.isCompleted) openError.completeError(error, stackTrace);
-      }),
+          // The sheet closed without returning a callback URL — a user
+          // cancel (the same semantics as cancelWhenOpenSettles).
+          if (!surfaceClosed.isCompleted && !interceptedCallback.isCompleted) {
+            surfaceClosed.completeError(const AiinSurfaceClosedException());
+          }
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          if (!openError.isCompleted) {
+            openError.completeError(error, stackTrace);
+          }
+        },
+      ),
     );
   }
   unawaited(
-    opened.then((_) {
-      // With an intercepted channel the sheet's resolution is reported
-      // through it alone (null = user cancel) — never duplicated here.
-      // See the doc comment for the scheduling asymmetry that makes the
-      // duplication a lost race for the intercepted URL.
-      if (cancelWhenOpenSettles &&
-          intercepted == null &&
-          !surfaceClosed.isCompleted &&
-          !interceptedCallback.isCompleted) {
-        surfaceClosed.completeError(const AiinSurfaceClosedException());
-      }
-    }, onError: (Object error, StackTrace stackTrace) {
-      if (!openError.isCompleted) openError.completeError(error, stackTrace);
-    }),
+    opened.then(
+      (_) {
+        // With an intercepted channel the sheet's resolution is reported
+        // through it alone (null = user cancel) — never duplicated here.
+        // See the doc comment for the scheduling asymmetry that makes the
+        // duplication a lost race for the intercepted URL.
+        if (cancelWhenOpenSettles &&
+            intercepted == null &&
+            !surfaceClosed.isCompleted &&
+            !interceptedCallback.isCompleted) {
+          surfaceClosed.completeError(const AiinSurfaceClosedException());
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (!openError.isCompleted) openError.completeError(error, stackTrace);
+      },
+    ),
   );
   openError.future.ignore();
   surfaceClosed.future.ignore();

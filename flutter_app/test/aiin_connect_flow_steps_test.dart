@@ -21,32 +21,32 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 http.Response _json(Object body, [int status = 200]) => http.Response(
-      jsonEncode(body),
-      status,
-      headers: {'content-type': 'application/json'},
-    );
+  jsonEncode(body),
+  status,
+  headers: {'content-type': 'application/json'},
+);
 
 /// Mock AIIN backend serving the OAuth exchange + key registration (same
 /// contract the aiin_web_auth_test coordinator suite runs against).
 MockClient _mockBackend() => MockClient((request) async {
-      final path = request.url.path;
-      if (path == '/api/oauth-proxy/exchange') {
-        return _json(const {
-          'access_token': 'jwt-a.jwt-b.jwt-c',
-          'refresh_token': 'refresh-1',
-          'token_type': 'Bearer',
-          'expires_in': 3600,
-        });
-      }
-      if (path == '/v1/keys') {
-        return _json({
-          'id': 'key-1',
-          'prefix': 'sk-aiin-abc12345',
-          'key': 'sk-aiin-${'a' * 32}',
-        }, 201);
-      }
-      return http.Response('not found', 404);
+  final path = request.url.path;
+  if (path == '/api/oauth-proxy/exchange') {
+    return _json(const {
+      'access_token': 'jwt-a.jwt-b.jwt-c',
+      'refresh_token': 'refresh-1',
+      'token_type': 'Bearer',
+      'expires_in': 3600,
     });
+  }
+  if (path == '/v1/keys') {
+    return _json({
+      'id': 'key-1',
+      'prefix': 'sk-aiin-abc12345',
+      'key': 'sk-aiin-${'a' * 32}',
+    }, 201);
+  }
+  return http.Response('not found', 404);
+});
 
 Future<BuildContext> _pumpHost(WidgetTester tester) async {
   BuildContext? flowContext;
@@ -71,9 +71,10 @@ void main() {
   // session keys store.
   setUp(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(const MethodChannel('fah/keychain'), (
-      call,
-    ) async => null);
+        .setMockMethodCallHandler(
+          const MethodChannel('fah/keychain'),
+          (call) async => null,
+        );
   });
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -106,8 +107,10 @@ void main() {
             ),
           );
         },
-        aiinModelsFetcher: (baseUrl, {required apiKey}) async =>
-            ['moonshotai/kimi-k2', 'deepseek-ai/deepseek-v3'],
+        aiinModelsFetcher: (baseUrl, {required apiKey}) async => [
+          'moonshotai/kimi-k2',
+          'deepseek-ai/deepseek-v3',
+        ],
       );
 
       // The model picker opens with the fetched list; pick one.
@@ -142,10 +145,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pump(); // one frame for the fallback dialog
       expect(find.text('AIIN API key'), findsOneWidget);
-      await tester.enterText(
-        find.byType(TextField),
-        'sk-aiin-test-1234567890',
-      );
+      await tester.enterText(find.byType(TextField), 'sk-aiin-test-1234567890');
       await tester.pump(); // rebuild: the Connect button enables
       await tester.tap(find.text('Connect'));
       await tester.pumpAndSettle();
@@ -158,8 +158,9 @@ void main() {
       expect(registry.providers.single.modelId, 'kimi-k2');
       await tester.pump(const Duration(seconds: 5)); // expire status snackbars
     });
-    testWidgets('a blocked popup reports false without any dialog',
-        (tester) async {
+    testWidgets('a blocked popup reports false without any dialog', (
+      tester,
+    ) async {
       final registry = ProviderRegistry.inMemory();
       final context = await _pumpHost(tester);
       final done = runAiinWebConnect(
@@ -188,9 +189,7 @@ void main() {
         aiinHttpClient: _mockBackend(),
         aiinOpenPopupFn: () => true,
         aiinNavigatePopupFn: (url) {
-          scheduleMicrotask(
-            () => AiinWebAuthCoordinator.instance.complete(),
-          );
+          scheduleMicrotask(() => AiinWebAuthCoordinator.instance.complete());
         },
       );
       await tester.pumpAndSettle();
@@ -203,8 +202,9 @@ void main() {
   });
 
   group('desktop hop end-to-end (linux override)', () {
-    testWidgets('a successful sign-in picks a model and saves the provider',
-        (tester) async {
+    testWidgets('a successful sign-in picks a model and saves the provider', (
+      tester,
+    ) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.linux;
       final registry = ProviderRegistry.inMemory();
       final context = await _pumpHost(tester);
@@ -229,8 +229,9 @@ void main() {
           ),
           email: 'user@aiin.by',
         ),
-        aiinModelsFetcher: (baseUrl, {required apiKey}) async =>
-            ['moonshotai/kimi-k2'],
+        aiinModelsFetcher: (baseUrl, {required apiKey}) async => [
+          'moonshotai/kimi-k2',
+        ],
       );
 
       // The opening snackbar names the browser hop; then the picker.
@@ -288,35 +289,34 @@ void main() {
     String? Function() openedUrl,
     int Function() cancelCount,
     void Function() settle,
-  }) mockAuthSessionChannel(
-    Object? Function(String url) behavior,
-  ) {
+  })
+  mockAuthSessionChannel(Object? Function(String url) behavior) {
     final opened = <String>[];
     Completer<Object?>? session;
     var cancels = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(const MethodChannel('fah/web_auth_session'), (
-      call,
-    ) async {
-      if (call.method == 'authenticate') {
-        final url = (call.arguments as Map)['url'] as String;
-        opened.add(url);
-        session = Completer<Object?>();
-        // The sheet answers only when it CLOSES (cancel below, or the
-        // behavior completing it with a callback URL).
-        final answer = behavior(url);
-        if (answer != null && !session!.isCompleted) {
-          session!.complete(answer);
-        }
-        return session!.future;
-      }
-      if (call.method == 'cancel') {
-        cancels++;
-        session?.complete(null);
-        return null;
-      }
-      return null;
-    });
+          call,
+        ) async {
+          if (call.method == 'authenticate') {
+            final url = (call.arguments as Map)['url'] as String;
+            opened.add(url);
+            session = Completer<Object?>();
+            // The sheet answers only when it CLOSES (cancel below, or the
+            // behavior completing it with a callback URL).
+            final answer = behavior(url);
+            if (answer != null && !session!.isCompleted) {
+              session!.complete(answer);
+            }
+            return session!.future;
+          }
+          if (call.method == 'cancel') {
+            cancels++;
+            session?.complete(null);
+            return null;
+          }
+          return null;
+        });
     return (
       openedUrl: () => opened.isEmpty ? null : opened.single,
       cancelCount: () => cancels,
@@ -329,13 +329,16 @@ void main() {
   group('mobile hop end-to-end (iOS auth-session override)', () {
     tearDown(() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(const MethodChannel('fah/web_auth_session'),
-              null);
+          .setMockMethodCallHandler(
+            const MethodChannel('fah/web_auth_session'),
+            null,
+          );
     });
 
     testWidgets('the sheet opens the hosted page, the loopback callback '
-        'lands and the sheet dismisses itself into the model picker',
-        (tester) async {
+        'lands and the sheet dismisses itself into the model picker', (
+      tester,
+    ) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
       final harness = mockAuthSessionChannel((url) => null);
       final registry = ProviderRegistry.inMemory();
@@ -351,12 +354,10 @@ void main() {
             service: null,
             lastConnectionStore: LastConnectionStore.inMemory(),
             aiinHttpClient: _mockBackend(),
-            aiinModelsFetcher: (baseUrl, {required apiKey}) async =>
-                ['moonshotai/kimi-k2'],
-          ).then(
-            (_) {},
-            onError: (Object _) {},
-          ),
+            aiinModelsFetcher: (baseUrl, {required apiKey}) async => [
+              'moonshotai/kimi-k2',
+            ],
+          ).then((_) {}, onError: (Object _) {}),
         );
 
         // The flow binds its loopback server and opens the auth session.
@@ -366,18 +367,21 @@ void main() {
         expect(
           harness.openedUrl(),
           isNotNull,
-          reason: 'the auth session never opened (cancels='
+          reason:
+              'the auth session never opened (cancels='
               '${harness.cancelCount()})',
         );
         final login = Uri.parse(harness.openedUrl()!);
         expect(login.host, 'auth.aiin.by');
         expect(login.path, '/login');
-        final redirect =
-            Uri.parse(login.queryParameters['client_redirect_uri']!);
+        final redirect = Uri.parse(
+          login.queryParameters['client_redirect_uri']!,
+        );
         // The CodeMie redirect shape: the sheet's `http` interception and
-        // the loopback fallback leg both answer on localhost (the server
-        // binds the same loopback interface either way).
-        expect(redirect.host, 'localhost');
+        // scheme interception ignores the host; the literal loopback
+        // address always reaches the server's IPv4 bind (no `localhost`
+        // label that could resolve to `::1`).
+        expect(redirect.host, '127.0.0.1');
 
         // The AIIN proxy redirects the sheet to the loopback server with
         // the code + our state — a REAL round-trip against the flow's
@@ -407,7 +411,11 @@ void main() {
       // tail is platform-independent — covered by the desktop/android
       // widget tests; driving it here would await a real-zone future past
       // the test binding's teardown (it never completes the test cleanly).
-      for (var i = 0; i < 40 && find.text('AIIN model').evaluate().isEmpty; i++) {
+      for (
+        var i = 0;
+        i < 40 && find.text('AIIN model').evaluate().isEmpty;
+        i++
+      ) {
         await tester.pump(const Duration(milliseconds: 100));
       }
       expect(find.text('AIIN model'), findsOneWidget);
@@ -514,8 +522,9 @@ void main() {
           ),
           email: 'user@aiin.by',
         ),
-        aiinModelsFetcher: (baseUrl, {required apiKey}) async =>
-            ['moonshotai/kimi-k2'],
+        aiinModelsFetcher: (baseUrl, {required apiKey}) async => [
+          'moonshotai/kimi-k2',
+        ],
       );
       await tester.pumpAndSettle();
       expect(find.text('AIIN model'), findsOneWidget);

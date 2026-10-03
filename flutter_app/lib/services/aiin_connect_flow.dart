@@ -1,5 +1,5 @@
 // l10n:ignore-file — connect flow screens — en-only by design
-import 'dart:async' show Completer, unawaited;
+import 'dart:async' show Completer;
 
 import 'package:http/http.dart' as http;
 
@@ -32,14 +32,14 @@ import 'package:url_launcher/url_launcher.dart' as url_launcher;
 ///
 /// **Mobile (iOS/Android)** — issue #976: the SAME loopback flow, opened in
 /// the platform browser surface. iOS opens the hosted sign-in page in an
-/// `ASWebAuthenticationSession` system sheet (via the `fah/web_auth_session`
-/// channel — an embedded WebView would break Google sign-in); the sheet
-/// intercepts the `http://localhost` redirect (gh-1044 AC9, the CodeMie
-/// contract) and hands the callback URL back to the flow — the loopback
-/// server stays armed as the fallback leg. Android opens the external
-/// browser, whose `http://localhost` redirect reaches the on-device loopback
-/// server. A failed/cancelled sign-in is a visible error (gh-1044 I4 —
-/// SSO is the only path, no key-paste fallback).
+/// `ASWebAuthenticationSession` system sheet (via the shared
+/// `fah/web_auth_session` channel — an embedded WebView would break Google
+/// sign-in); the sheet's `http` scheme interception catches the
+/// `http://127.0.0.1` redirect (gh-1044 AC9) and hands the callback URL
+/// back to the flow — the loopback server stays armed as the fallback
+/// leg. Android opens the external browser, whose redirect reaches the
+/// on-device loopback server. A failed/cancelled sign-in is a visible
+/// error (gh-1044 I4 — SSO is the only path, no key-paste fallback).
 ///
 /// **Web** — the popup OAuth round-trip ([runAiinWebConnect], issue #486).
 ///
@@ -108,13 +108,15 @@ Future<bool> runAiinConnectFlow({
     reauthenticateFor: reauthenticateFor,
   );
   _activeAiinConnectFlow = done;
-  unawaited(
-    done.whenComplete(() {
-      if (identical(_activeAiinConnectFlow, done)) {
-        _activeAiinConnectFlow = null;
-      }
-    }),
-  );
+  // `.ignore()`: whenComplete returns a NEW future that completes with
+  // `done`'s error — awaiting caller and this mirror would otherwise
+  // deliver the same failure twice (the second copy as an unhandled
+  // async exception). The mirror exists only to clear the latch.
+  done.whenComplete(() {
+    if (identical(_activeAiinConnectFlow, done)) {
+      _activeAiinConnectFlow = null;
+    }
+  }).ignore();
   return done;
 }
 
@@ -429,21 +431,51 @@ Future<bool> _completeAiinConnect(
   );
 }
 
-<<<<<<< HEAD
 /// The gh-1044 AC4 failure state: what happened plus the AC2 diagnostic
-/// bundle. The snack carries the actionable one-liner; the full trace is
-/// answerable from the log alone.
+/// bundle. The snack carries a short human reason (never a raw internal
+/// status line — those can carry login URLs with OAuth state tokens);
+/// the full trace stays answerable from the log alone.
 void _showAiinSignInError(BuildContext context, _AiinFlowTrace trace) {
-  final reason = trace.lastOutcome;
   // hideCurrent: the flow's own progress snack ('Opening AIIN sign-in…')
   // would otherwise queue the failure behind it for its full 4 s duration —
   // the visible error state (gh-1044 AC4) must surface immediately.
   showFahErrorSnack(
     context,
-    '$_aiinSignInFailedMessage — $reason. Try again.',
+    aiinSignInFailureMessage(trace.lastOutcome),
     hideCurrent: true,
   );
   debugPrint('[AIIN] flow trace: ${trace.summary}');
+}
+
+/// Maps a flow's last status line to the short visible failure message
+/// (gh-1044 AC4). The internal status lines are log-grade — some embed
+/// the login URL with its OAuth state token — so the snack only ever
+/// shows a mapped, human reason, and the full trace stays in the debug
+/// log where [runAiinMobileConnect] already prints it.
+@visibleForTesting
+String aiinSignInFailureMessage(String lastOutcome) {
+  final outcome = lastOutcome.toLowerCase();
+  // A deliberate user cancel is not an error to retry — no "try again".
+  if (outcome.contains('user cancel')) {
+    return '$_aiinSignInFailedMessage — the sign-in was cancelled.';
+  }
+  if (outcome.contains('could not start') ||
+      outcome.contains('is unavailable on this host')) {
+    return '$_aiinSignInFailedMessage — the system sign-in sheet could '
+        'not start. Try again.';
+  }
+  // The headless/launch-failure status embeds the full login URL (with
+  // its OAuth state token) — never surface that raw.
+  if (outcome.contains('could not open browser') ||
+      outcome.contains('open this url manually') ||
+      outcome.contains('could not be opened')) {
+    return '$_aiinSignInFailedMessage — the sign-in page could not be '
+        'opened. Try again.';
+  }
+  if (outcome.contains('timed out') || outcome.contains('timeout')) {
+    return '$_aiinSignInFailedMessage — the sign-in timed out. Try again.';
+  }
+  return '$_aiinSignInFailedMessage. Try again.';
 }
 
 /// The gh-1044 AC4 visible-failure headline (SSO is the only path).
@@ -464,23 +496,21 @@ final class _AiinFlowTrace {
   String get summary => _events.join(' | ');
 }
 
-/// The `fah/web_auth_session` method channel (implemented in
-/// `ios/Runner/AppDelegate.swift`): a system `ASWebAuthenticationSession`.
-/// The same channel the CodeMie SSO flow drives.
-const _webAuthSessionChannel = MethodChannel('fah/web_auth_session');
-
 /// Opens [url] in the iOS auth-session sheet and RETURNS the callback
-/// URL the native scheme interception caught (gh-1044 AC9, the CodeMie
-/// contract): `callbackScheme: 'http'` makes `ASWebAuthenticationSession`
-/// intercept the `http://localhost:<port>/callback` redirect and hand it
-/// back to Dart, so the flow's completion never depends on the redirect
-/// physically loading the loopback server inside the sheet. Resolves
-/// `null` when the sheet closed without a callback (user cancel) — a
-/// visible error for the caller, never a fallback. A sheet that cannot
-/// even start throws — the mobile flow surfaces it as the failure state.
+/// URL the native scheme interception caught (gh-1044 AC9):
+/// `callbackScheme: 'http'` makes `ASWebAuthenticationSession` intercept
+/// the `http://127.0.0.1:<port>/callback` redirect and hand it back to
+/// Dart, so completion never depends on the redirect physically loading
+/// the loopback server inside the sheet. Interception matches the
+/// redirect's SCHEME only (the host plays no role); the mechanism is
+/// Apple-deprecated for `http`, so the loopback server stays armed as the
+/// fallback leg for the day interception stops firing. Resolves `null`
+/// when the sheet closed without a callback (user cancel) — a visible
+/// error for the caller, never a fallback. A sheet that cannot even
+/// start throws — the mobile flow surfaces it as the failure state.
 Future<String?> _openAiinAuthSession(String url) {
   debugPrint('[AIIN mobile] opening the sign-in sheet (callbackScheme: http)');
-  return _webAuthSessionChannel
+  return systemAuthSessionChannel
       .invokeMethod<String>('authenticate', {
         'url': url,
         'callbackScheme': 'http',
@@ -493,17 +523,6 @@ Future<String?> _openAiinAuthSession(String url) {
         return callbackUrl;
       });
 }
-=======
-/// Opens [url] in the iOS auth-session sheet. Resolves `true` only when
-/// the sheet CLOSES — a user swipe-dismissal and the callback dismissal
-/// are indistinguishable here, so the flow races the resolution against
-/// the callback (`cancelWhenOpenSettles`): closed without a callback is a
-/// user cancel and falls straight to the paste fallback. A sheet that
-/// cannot even start throws — same fallback.
-Future<bool> _openAiinAuthSession(String url) => systemAuthSessionChannel
-    .invokeMethod<String>('authenticate', {'url': url})
-    .then((_) => true);
->>>>>>> origin/main
 
 /// Dismisses the active auth-session sheet (the callback landed on the
 /// flow's loopback server). Best-effort: the sheet may already be gone.
@@ -519,14 +538,18 @@ Future<void> _dismissAiinAuthSession() async {
 /// desktop, opened in the platform browser surface. iOS the
 /// `ASWebAuthenticationSession` system sheet — it shares Safari's cookies
 /// and passkey support, and Google refuses OAuth inside embedded WebViews.
-/// gh-1044 AC9: the sheet is driven with the CodeMie contract —
-/// `callbackScheme: 'http'` intercepts the `http://localhost:<port>/callback`
+/// gh-1044 AC9: the sheet is driven with `callbackScheme: 'http'` — the
+/// native scheme interception catches the `http://127.0.0.1:<port>/callback`
 /// redirect and returns it to the flow (the intercepted leg), while the
-/// loopback server stays armed as the fallback leg for surfaces that
-/// navigate the redirect for real (dismissed via [_dismissAiinAuthSession]).
-/// Android the external browser, whose localhost redirect reaches the
-/// on-device server directly. Public step seam (the #476 recipe): VM
-/// tests drive this with an iOS platform override and a mocked channel.
+/// loopback server stays armed as the fallback leg for the surfaces that
+/// navigate the redirect for real (dismissed via [_dismissAiinAuthSession];
+/// interception is Apple-deprecated for `http`). The redirect advertises
+/// `127.0.0.1` on every surface — scheme interception ignores the host,
+/// and the literal loopback address always reaches the server's IPv4
+/// bind (a `localhost` label could resolve to `::1`). Android the
+/// external browser, whose redirect reaches the on-device server
+/// directly. Public step seam (the #476 recipe): VM tests drive this
+/// with an iOS platform override and a mocked channel.
 Future<bool> runAiinMobileConnect({
   required BuildContext context,
   required ProviderRegistry registry,
@@ -570,11 +593,11 @@ Future<bool> runAiinMobileConnect({
               trace.add(message);
             },
             client: aiinHttpClient,
-            // CodeMie's proven redirect shape: the sheet's `http`
-            // interception and the loopback fallback leg both answer on
-            // the localhost host (the server binds the same loopback
-            // interface either way).
-            callbackHost: authSession ? 'localhost' : '127.0.0.1',
+            // The redirect advertises the literal loopback address on
+            // every surface: interception is scheme-based (host plays no
+            // role) and the fallback leg needs an address that reaches
+            // the server's IPv4 loopback bind without resolver ambiguity
+            // (`localhost` may answer `::1`).
             openBrowserFn: authSession
                 ? (url) async {
                     final callbackUrl = await _openAiinAuthSession(url);
@@ -587,8 +610,9 @@ Future<bool> runAiinMobileConnect({
                     Uri.parse(url),
                     mode: url_launcher.LaunchMode.externalApplication,
                   ),
-            interceptedCallback:
-                intercepted == null ? null : () => intercepted.future,
+            interceptedCallback: intercepted == null
+                ? null
+                : () => intercepted.future,
             onCallback: authSession ? _dismissAiinAuthSession : null,
             // The iOS sheet resolving without a callback is a user
             // cancel — surface the failure immediately instead of
