@@ -117,4 +117,61 @@ void main() {
       isNull,
     );
   });
+
+  group('pinned key name (gh-1000 AC1)', () {
+    const kimiUrl = 'https://api.kimi.com/coding/v1';
+
+    test('the pinned entry slot beats the host-scoped slot', () async {
+      final store =
+          FakeSecureKeyStore()
+            ..map['FA_KEY_API_KIMI_COM'] = 'host-scoped-wrong-account'
+            ..map['FA_KEY_API_KIMI_COM_KIMI_ME'] = 'kimi-me-key';
+      final keys = SecureKeyCache(store);
+      await keys.preload(store.map.keys.toList());
+
+      final key = optionalProviderApiKey(
+        'openai-completions',
+        keys,
+        baseUrl: kimiUrl,
+        pinnedKeyName: 'FA_KEY_API_KIMI_COM_KIMI_ME',
+        env: const {},
+      );
+
+      expect(key, 'kimi-me-key');
+    });
+
+    test('the pinned name resolves from the environment first', () async {
+      final store = FakeSecureKeyStore()
+        ..map['FA_KEY_API_KIMI_COM_KIMI_ME'] = 'stored';
+      final keys = SecureKeyCache(store);
+      await keys.preload(store.map.keys.toList());
+
+      final key = optionalProviderApiKey(
+        'openai-completions',
+        keys,
+        baseUrl: kimiUrl,
+        pinnedKeyName: 'FA_KEY_API_KIMI_COM_KIMI_ME',
+        env: const {'FA_KEY_API_KIMI_COM_KIMI_ME': 'from-env'},
+      );
+
+      expect(key, 'from-env');
+    });
+
+    test('a missing pinned slot falls through to the legacy order', () async {
+      final store = FakeSecureKeyStore()
+        ..map['FA_KEY_API_KIMI_COM'] = 'host-scoped';
+      final keys = SecureKeyCache(store);
+      await keys.preload(store.map.keys.toList());
+
+      final key = optionalProviderApiKey(
+        'openai-completions',
+        keys,
+        baseUrl: kimiUrl,
+        pinnedKeyName: 'FA_KEY_API_KIMI_COM_GONE',
+        env: const {},
+      );
+
+      expect(key, 'host-scoped');
+    });
+  });
 }
