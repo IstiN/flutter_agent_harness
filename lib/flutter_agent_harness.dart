@@ -213,6 +213,7 @@ export 'src/trajectory/search_index.dart';
 export 'src/skills/skill_availability.dart';
 export 'src/skills/builtin_skills.dart';
 export 'src/skills/skills.dart';
+export 'src/apps/js_app_errors.dart';
 export 'src/sse_decoder.dart';
 export 'src/task/task.dart';
 export 'src/task/subagent.dart';

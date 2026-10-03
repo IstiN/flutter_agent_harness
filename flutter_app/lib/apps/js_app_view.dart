@@ -818,10 +818,33 @@ class _JsAppViewState extends State<JsAppView> {
             'width': size.width,
             'height': size.height,
           }),
-          child: ClipRect(child: renderer.build(tree, context)),
+          // Render-host exception (gh-1164): a tree the native renderer
+          // cannot build must not die as a red screen only — report into
+          // the authoring session's error channel, then show the honest
+          // error surface.
+          child: ClipRect(
+            child: _buildTreeGuarded(engine, renderer, tree, context),
+          ),
         );
       },
     );
+  }
+
+  /// Builds the rendered tree, reporting a build exception through the
+  /// engine's error channel (deduped by the session gate) before
+  /// rethrowing for Flutter's error surface.
+  Widget _buildTreeGuarded(
+    JsAppEngine engine,
+    JsonWidgetRenderer renderer,
+    Map<String, dynamic> tree,
+    BuildContext context,
+  ) {
+    try {
+      return renderer.build(tree, context);
+    } on Object catch (error, stack) {
+      engine.reportHostError('$error', stack: stack.toString());
+      rethrow;
+    }
   }
 }
 

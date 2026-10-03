@@ -11,14 +11,55 @@
 @TestOn('vm')
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
+/// Platform-filter mirror (flutter_app/lib/apps/apps_store.dart): the
+/// pre-gh-1164 app seeder wrote the js-apps asset through it, so the
+/// retirement fingerprints pin the FILTERED bytes per platform.
+String _filterPlatformInstructions(String source, {required String platform}) {
+  final block = RegExp(
+    r'<!-- fa-platforms:\s*([^>]+?)\s*-->(.*?)<!-- /fa-platforms -->',
+    dotAll: true,
+  );
+  var filtered = source.replaceAllMapped(block, (match) {
+    final platforms = (match.group(1) ?? '')
+        .split(',')
+        .map((p) => p.trim().toLowerCase())
+        .toSet();
+    return platforms.contains(platform) ? (match.group(2) ?? '') : '';
+  });
+  final taggedLine = RegExp(
+    r'^.*<!-- fa-platforms:\s*([^>]+?)\s*-->.*$',
+    multiLine: true,
+  );
+  filtered = filtered.replaceAllMapped(taggedLine, (match) {
+    final platforms = (match.group(1) ?? '')
+        .split(',')
+        .map((p) => p.trim().toLowerCase())
+        .toSet();
+    if (!platforms.contains(platform)) return '';
+    return (match.group(0) ?? '').replaceFirst(
+      RegExp(r'\s*<!-- fa-platforms:\s*[^>]+?\s*-->'),
+      '',
+    );
+  });
+  return filtered.replaceAll('{{FA_PLATFORM}}', platform);
+}
+
 void main() {
   final skills = Directory('.fah/skills');
+  // gh-1164 retired the js-apps asset (promoted to a package builtin);
+  // the directory may be absent entirely — the guards below then verify
+  // the empty-bundle state instead of throwing on a missing dir.
   final bundled = Directory('flutter_app/assets/skills');
+  final bundledDirs = bundled.existsSync()
+      ? bundled.listSync().whereType<Directory>().toList()
+      : const <Directory>[];
   final embedded = builtinSkills().map((s) => s.name).toSet();
 
   test('every first-party skill ships as a builtin or a bundled app asset', () {
@@ -71,7 +112,7 @@ void main() {
   });
 
   test('bundled SKILL.md copies are byte-identical to the source skill', () {
-    for (final dir in bundled.listSync().whereType<Directory>()) {
+    for (final dir in bundledDirs) {
       final name = dir.uri.pathSegments.reversed.toList()[1];
       final source = File('.fah/skills/$name/SKILL.md');
       final copy = File('flutter_app/assets/skills/$name/SKILL.md');
@@ -85,6 +126,62 @@ void main() {
             '(the source of truth is .fah/skills/)',
       );
     }
+  });
+
+  test('gh-1164: the js-apps retirement fingerprints match the retired '
+      'asset at git HEAD', () {
+    // The app's stale-seed cleanup pins the pre-promotion seeded bytes
+    // (one sha256 per host platform, computed with the platform filter).
+    // A typo'd hash would leave the old seeded copy shadowing the builtin
+    // forever — recompute the set from the retired asset and compare.
+    final asset = Process.runSync('git', [
+      'show',
+      'HEAD:flutter_app/assets/skills/js-apps/SKILL.md',
+    ]);
+    expect(
+      asset.exitCode,
+      0,
+      reason:
+          'the retired asset must stay in git '
+          'history — the retirement fingerprints verify against it',
+    );
+    final seeder = File(
+      'flutter_app/lib/services/agent_service_skills.dart',
+    ).readAsStringSync();
+    final expected = <String>{};
+    for (final platform in [
+      'web',
+      'android',
+      'ios',
+      'macos',
+      'windows',
+      'linux',
+      'fuchsia',
+    ]) {
+      final filtered = _filterPlatformInstructions(
+        asset.stdout as String,
+        platform: platform,
+      );
+      final hash = sha256.convert(utf8.encode(filtered)).toString();
+      expected.add(hash);
+      expect(
+        seeder,
+        contains("'$hash'"),
+        reason: 'missing retirement fingerprint for platform $platform',
+      );
+    }
+    final hashPattern = RegExp(r"'([0-9a-f]{64})'");
+    final declared = hashPattern
+        .allMatches(seeder.substring(seeder.indexOf("'js-apps': {")))
+        .map((m) => m.group(1)!)
+        .toSet();
+    expect(
+      declared,
+      expected,
+      reason:
+          'the js-apps fingerprint set must '
+          'carry EXACTLY the per-platform filtered asset hashes',
+    );
   });
 
   test('AgentService._seedBundledSkills registers every bundled skill', () {
@@ -106,9 +203,7 @@ void main() {
         .allMatches(source.substring(brace, mapEnd))
         .map((m) => m.group(1)!)
         .toSet();
-    final bundledNames = bundled
-        .listSync()
-        .whereType<Directory>()
+    final bundledNames = bundledDirs
         .map((d) => d.uri.pathSegments.reversed.toList()[1])
         .toSet();
     expect(

@@ -84,6 +84,40 @@ extension AgentServiceInbox on AgentService {
     unawaited(sendText(taskAsyncResultNotice(job)));
   }
 
+  /// Called when a JS app reports a render/runtime error (gh-1164): the
+  /// deduped report re-enters the conversation as a failed-turn system
+  /// notice — the same re-entry the shell-job settle uses (steered
+  /// mid-run, a fresh turn while idle). The notice carries app id, source
+  /// revision, message and the stack head so the agent fixes the named
+  /// source range instead of guessing blind.
+  void _onJsAppError(JsAppErrorReport report) {
+    if (_disposed) return;
+    final revision = report.sourceRevision.isEmpty
+        ? '(unknown)'
+        : report.sourceRevision.substring(
+            0,
+            report.sourceRevision.length > 8 ? 8 : report.sourceRevision.length,
+          );
+    final stack = report.stackHead.isEmpty
+        ? '(no stack captured)'
+        : report.stackHead.map((frame) => '  $frame').join('\n');
+    unawaited(
+      sendText(
+        '<system-notice>\n'
+        'JS app \'${report.appId}\' reported an error '
+        '(surface: ${report.surface}, source revision $revision):\n'
+        '${report.message}\n'
+        'Stack head:\n$stack\n'
+        'Read apps/${report.appId}/ and fix the failing range with your file '
+        'tools — writing the file reloads the app and re-arms this error '
+        'channel; then verify with open_app (its pre-flight gate). The same '
+        'error re-reports only when the source revision changes; repeated '
+        'identical reports mean earlier fixes did not take.\n'
+        '</system-notice>',
+      ),
+    );
+  }
+
   Future<void> _wakeOnInboxMail() async {
     final manager = _subagentManager;
     if (manager == null || _inboxWakeRunning || _disposed) return;

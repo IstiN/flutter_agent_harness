@@ -10,7 +10,8 @@ import 'package:fa/ui/app_theme.dart';
 /// brightness plus the [FahColors] palette as hex strings, so JS apps can
 /// follow the app's light/dark mode instead of hardcoding colors.
 ///
-/// Keys (also documented in `assets/skills/js-apps/SKILL.md`):
+/// Keys (also documented in the js-apps builtin skill,
+/// `prompts/skills/js-apps/SKILL.md`):
 /// - `brightness` — `'dark'` or `'light'`
 /// - `dark` — bool, true in dark mode
 /// - `background`, `surface`, `surfaceAlt`, `border`, `borderBright`,

@@ -35,7 +35,6 @@ executables:
 dependencies:
   archive: ^4.0.9
   characters: ^1.4.0
-  crypto: ^3.0.3
   # Direct dep: lib/src/hub/local_hub.dart imports package:cryptography
   # (payload crypto via fa_hub_client types). Resolves transitively today,
   # but `pub publish` hard-errors on shipped lib imports without an
@@ -64,6 +63,7 @@ dependencies:
 
 dev_dependencies:
   coverage: ^1.15.1
+  crypto: ^3.0.7
   # Scripted mock LLM server for integration tests (issue #45).
   fa_llm_mock:
     path: packages/fa_llm_mock

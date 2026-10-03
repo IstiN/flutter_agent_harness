@@ -3,7 +3,6 @@ import 'dart:collection';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/widgets.dart' show WidgetsBinding;
 import 'package:fa_ui/fa_ui.dart'
@@ -34,7 +33,9 @@ import 'session_names_store.dart';
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/apps/js_app_error_channel.dart';
 import 'package:fa/apps/dynamic_messages.dart';
+import 'package:fa/apps/app_preflight.dart';
 import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/sandbox/env_factory.dart';
@@ -697,6 +698,11 @@ class AgentService extends ChangeNotifier
     _taskCompletionsSub = taskJobManager.completions.listen(
       _onTaskJobCompleted,
     );
+    // JS app render/runtime errors (gh-1164): each deduped report
+    // re-enters the conversation as a failed-turn system notice — the
+    // authoring agent sees its app break and fixes it without the user
+    // acting as the error clipboard.
+    _jsAppErrorsSub = JsAppErrorChannel.instance.stream.listen(_onJsAppError);
     // Interactive dynamic messages (issue #102): the host machinery behind
     // the `dynamic_message` tool — session-scoped JS widgets rendered
     // inline in the transcript with the full installed-app engine surface.
@@ -1191,8 +1197,10 @@ class AgentService extends ChangeNotifier
 
   /// UI hook that opens a JS app for the user — the chat screen installs it
   /// and pushes the app's `JsAppView`. Setting a non-null launcher registers
-  /// the `open_app` tool (see `open_app_tool.dart`); setting `null`
-  /// unregisters it, the safe headless default.
+  /// the `open_app` tool (see `open_app_tool.dart`) with the pre-flight gate
+  /// ([defaultAppPreflight]: smoke-render headless boot — the toolchain
+  /// test-runner seam stays open for hosts that can spawn `flutter test`);
+  /// setting `null` unregisters it, the safe headless default.
   AppLauncher? get appLauncher => _appLauncher;
   AppLauncher? _appLauncher;
 
@@ -1204,7 +1212,13 @@ class AgentService extends ChangeNotifier
       if (launcher == null) {
         registry.unregister(openAppToolName);
       } else {
-        registry.register(openAppTool(env, launcher: launcher));
+        registry.register(
+          openAppTool(
+            env,
+            launcher: launcher,
+            preflight: defaultAppPreflight(env),
+          ),
+        );
       }
       _agent.state.tools = registry.tools;
     } else {
@@ -1214,7 +1228,13 @@ class AgentService extends ChangeNotifier
           .where((tool) => tool.name != openAppToolName)
           .toList();
       if (launcher != null) {
-        tools.add(openAppTool(env, launcher: launcher));
+        tools.add(
+          openAppTool(
+            env,
+            launcher: launcher,
+            preflight: defaultAppPreflight(env),
+          ),
+        );
       }
       _agent.state.tools = tools;
     }
@@ -2336,6 +2356,10 @@ class AgentService extends ChangeNotifier
   /// conversation as an async-result notice (see `_onTaskJobCompleted`).
   StreamSubscription<TaskJob>? _taskCompletionsSub;
 
+  /// JS app error reports (gh-1164): each deduped report re-enters the
+  /// conversation as a system notice (see `_onJsAppError`).
+  StreamSubscription<JsAppErrorReport>? _jsAppErrorsSub;
+
   /// Opt-in for the real app bootstrap (main.dart): the periodic watcher
   /// never starts in tests (a pending periodic Timer fails flutter_test's
   /// invariants), so it is off by default.
@@ -2612,6 +2636,7 @@ class AgentService extends ChangeNotifier
     if (_subagentManager != null) _scheduledMessages.dispose();
     _inboxWatchTimer?.cancel();
     unawaited(_taskCompletionsSub?.cancel());
+    unawaited(_jsAppErrorsSub?.cancel());
     _idleWatchdog?.cancel();
     _liveActivityEndTimer?.cancel();
     _sessionWatchTimer?.cancel();

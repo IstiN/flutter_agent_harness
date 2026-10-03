@@ -9,11 +9,9 @@
 
 part of 'agent_service.dart';
 
-/// Writes the bundled app-only agent skill (`assets/skills/js-apps/`)
-/// into the env's project skill root so [discoverSkills] picks it up.
-/// The file is refreshed when the bundled content changed (the skill is
-/// ours, not user data). Best-effort: a missing asset or unwritable env
-/// must not block session creation.
+/// Retires the copies the pre-#1151 / pre-gh-1164 seeders wrote into the
+/// env's project skill root for skills that since moved INTO the package.
+/// Best-effort: an unwritable env must not block session creation.
 ///
 /// Issue #1151 review (CQE1): copies the pre-#1151 seeder wrote for
 /// skills that since moved INTO the package (`create-goal`) or retired
@@ -30,11 +28,31 @@ part of 'agent_service.dart';
 /// customized create-goal keeps shadowing the builtin (issue non-goal:
 /// migrating existing overrides), an orphaned fa-self-config stops
 /// haunting every session prompt.
-const _staleSeedFingerprints = <String, String>{
-  'create-goal':
-      '427d831fa7c41b44a225f216a6e1961bf54b2821a538971e972dcee2c9383f72',
-  'fa-self-config':
-      '88c3301a46f5298255dc3f0e3f2b65bca3c5c97ade17e616ce5ad257c28f8dea',
+///
+/// gh-1164 Part A: `js-apps` joined the package builtins
+/// (`prompts/skills/js-apps/SKILL.md` — one source, served on every
+/// host). Its last seeded bytes DID depend on the host platform (the
+/// asset carried `fa-platforms` markers + `{{FA_PLATFORM}}`), so the
+/// retirement carries one fingerprint per platform — a copy matching
+/// ANY of them is the seeder's, not the user's.
+const _staleSeedFingerprints = <String, Set<String>>{
+  'create-goal': {
+    '427d831fa7c41b44a225f216a6e1961bf54b2821a538971e972dcee2c9383f72',
+  },
+  'fa-self-config': {
+    '88c3301a46f5298255dc3f0e3f2b65bca3c5c97ade17e616ce5ad257c28f8dea',
+  },
+  'js-apps': {
+    // The pre-gh-1164 bundled asset, platform-filtered as the old seeder
+    // wrote it (one hash per host platform).
+    'c73012910a772db79dc19c7e2ad75b285cea24a25aecd77d1ca68d2dfa6f26ed',
+    '7ba90952131e1204e5240ca6e2e1c669fd55293b8e2b5cc69a19dadd1936dbce',
+    '7ecb248a65728393d362a8a092f2d5a19d16e623b16d1776bab7ac339178a8b6',
+    '83e0f64009b35bc96c0674fa3ec9d39a192a2cacce1ec942b32c026ff510375b',
+    '76cd5171a6e04ad52e2f772378a93a11e12b83b773bdde3685a3d1149e219c58',
+    '9336adfa3be78e0b890c520762aafe76c92ccf4913fc833e9c82f742b4a8e8de',
+    '185b28d4995b68821e81e73f9f81043dcb4e11e070c101d16969ea227e5fbda7',
+  },
 };
 
 Future<void> _seedBundledSkills(ExecutionEnv env) async {
@@ -44,28 +62,14 @@ Future<void> _seedBundledSkills(ExecutionEnv env) async {
         '${env.cwd}/.fah/skills/${entry.key}/SKILL.md',
       )).valueOrNull;
       if (body == null) continue;
-      if (sha256.convert(utf8.encode(body)).toString() != entry.value) {
+      if (!entry.value.contains(
+        sha256.convert(utf8.encode(body)).toString(),
+      )) {
         continue;
       }
       await env.remove('${env.cwd}/.fah/skills/${entry.key}/SKILL.md');
     } on Object {
       // best-effort cleanup
-    }
-  }
-  const bundled = {'js-apps': 'assets/skills/js-apps/SKILL.md'};
-  for (final entry in bundled.entries) {
-    try {
-      final target = '.fah/skills/${entry.key}/SKILL.md';
-      final bundledBody = await rootBundle.loadString(entry.value);
-      final body = filterPlatformInstructions(
-        bundledBody,
-        platform: currentFaPlatform,
-      );
-      final existing = await env.readTextFile(target);
-      if (existing.valueOrNull == body) continue;
-      await env.writeFile(target, body);
-    } on Object {
-      // skip this skill
     }
   }
 }

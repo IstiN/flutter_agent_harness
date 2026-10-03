@@ -31,6 +31,57 @@ Future<void> _seedShadowingSkill(ExecutionEnv env) async {
   );
 }
 
+/// Platform filter mirror (flutter_app/lib/apps/apps_store.dart): the
+/// pre-gh-1164 seeder wrote the bundled js-apps asset through it, so the
+/// retirement fingerprints pin the FILTERED bytes.
+String _filterPlatformInstructions(String source, {required String platform}) {
+  final block = RegExp(
+    r'<!-- fa-platforms:\s*([^>]+?)\s*-->(.*?)<!-- /fa-platforms -->',
+    dotAll: true,
+  );
+  var filtered = source.replaceAllMapped(block, (match) {
+    final platforms = (match.group(1) ?? '')
+        .split(',')
+        .map((p) => p.trim().toLowerCase())
+        .toSet();
+    return platforms.contains(platform) ? (match.group(2) ?? '') : '';
+  });
+  final taggedLine = RegExp(
+    r'^.*<!-- fa-platforms:\s*([^>]+?)\s*-->.*$',
+    multiLine: true,
+  );
+  filtered = filtered.replaceAllMapped(taggedLine, (match) {
+    final platforms = (match.group(1) ?? '')
+        .split(',')
+        .map((p) => p.trim().toLowerCase())
+        .toSet();
+    if (!platforms.contains(platform)) return '';
+    return (match.group(0) ?? '').replaceFirst(
+      RegExp(r'\s*<!-- fa-platforms:\s*[^>]+?\s*-->'),
+      '',
+    );
+  });
+  return filtered.replaceAll('{{FA_PLATFORM}}', platform);
+}
+
+/// The exact SKILL.md bytes the pre-gh-1164 seeder wrote on macOS hosts —
+/// reconstructed from the retired asset at git HEAD (the promotion commit
+/// removes the asset; the bytes stay recoverable in history).
+Future<String> _staleJsAppsSeedBytes() async {
+  final git = await Process.run(
+    'git',
+    ['show', 'HEAD:flutter_app/assets/skills/js-apps/SKILL.md'],
+    workingDirectory: '..',
+  );
+  if (git.exitCode != 0) {
+    throw StateError('git show failed: ${git.stderr}');
+  }
+  return _filterPlatformInstructions(
+    git.stdout as String,
+    platform: 'macos',
+  );
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -155,7 +206,8 @@ void main() {
       expect(prompt, isNot(contains('fa-self-config')));
     });
 
-    test('a fresh env resolves the builtins without any seeded copy', () async {
+    test('a fresh env resolves the builtins without any seeded copy',
+        () async {
       final env = MemoryExecutionEnv();
       final service = await AgentService.create(config: _config(), env: env);
       addTearDown(service.dispose);
@@ -173,15 +225,16 @@ void main() {
         )).valueOrNull,
         isNull,
       );
-      // The app-only skill is still seeded from assets.
+      // gh-1164: js-apps joined the builtins too — nothing is seeded, the
+      // prompt lists it once from the builtin:// location.
       expect(
         (await env.readTextFile(
           '${env.cwd}/.fah/skills/js-apps/SKILL.md',
         )).valueOrNull,
-        isNotNull,
+        isNull,
       );
 
-      // The prompt lists both builtins from the package — exactly once
+      // The prompt lists the builtins from the package — exactly once
       // each, at their builtin:// locations (the chat invocation path:
       // the model reads the listed file, the read tool serves the
       // embedded copy).
@@ -192,8 +245,45 @@ void main() {
         prompt,
         contains('<location>builtin://skills/create-goal/SKILL.md</location>'),
       );
-      expect(prompt, contains('<name>js-apps</name>'));
+      expect('<name>js-apps</name>'.allMatches(prompt), hasLength(1));
+      expect(
+        prompt,
+        contains('<location>builtin://skills/js-apps/SKILL.md</location>'),
+      );
       expect(service.isSkillEnabled('create-goal'), isTrue);
+      expect(service.isSkillEnabled('js-apps'), isTrue);
+    });
+
+    test('a stale pre-gh-1164 js-apps seed is retired; an override stays',
+        () async {
+      final env = MemoryExecutionEnv();
+      // A copy the OLD seeder wrote (byte-identical to what it seeded —
+      // any of the pinned fingerprints): must be retired so the builtin
+      // is not shadowed by a duplicate listing.
+      await env.writeFile(
+        '${env.cwd}/.fah/skills/js-apps/SKILL.md',
+        await _staleJsAppsSeedBytes(),
+      );
+      // A user-customized copy (different bytes): a deliberate override,
+      // it stays and shadows the builtin (same rule as create-goal).
+      await env.writeFile(
+        '${env.cwd}/.fah/skills/self-settings/SKILL.md',
+        '---\nname: self-settings\ndescription: PROJECT OVERRIDE MARKER\n---\nBody\n',
+      );
+      final service = await AgentService.create(config: _config(), env: env);
+      addTearDown(service.dispose);
+
+      expect(
+        (await env.readTextFile(
+          '${env.cwd}/.fah/skills/js-apps/SKILL.md',
+        )).valueOrNull,
+        isNull,
+        reason: 'the stale seeder copy is retired, not left to shadow',
+      );
+      final prompt = service.systemPromptForTest;
+      expect('<name>js-apps</name>'.allMatches(prompt), hasLength(1));
+      expect(prompt, contains('PROJECT OVERRIDE MARKER'));
+      expect(prompt, isNot(contains('builtin://skills/self-settings')));
     });
 
     test('a project skill of the same name shadows the builtin (no '

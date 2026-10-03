@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'package:fa/apps/app_preflight.dart';
 import 'package:fa/apps/apps_store.dart';
 
 /// Name of the agent tool that opens a JS app in the Fa UI.
@@ -23,7 +24,16 @@ typedef AppLauncher = FutureOr<void> Function(JsAppInfo app);
 /// and the host navigates to it. Unknown ids fail with the list of available
 /// ids so the model can recover. The description/result texts are LLM-facing
 /// and stay literal English (not UI copy).
-AgentTool openAppTool(ExecutionEnv env, {required AppLauncher launcher}) {
+///
+/// When [preflight] is wired (AgentService installs the default), the gate
+/// runs BEFORE the launch: a red standing test or a failed smoke render
+/// throws with the named gate + error excerpt — the tool never reports
+/// success for an app that cannot run (gh-1164 "no fake success").
+AgentTool openAppTool(
+  ExecutionEnv env, {
+  required AppLauncher launcher,
+  AppPreflight? preflight,
+}) {
   return AgentTool(
     name: openAppToolName,
     label: 'open_app',
@@ -34,7 +44,11 @@ AgentTool openAppTool(ExecutionEnv env, {required AppLauncher launcher}) {
         'the app so the user sees it. Use when the user asks to see or open '
         'an app, or to show an app you just created or edited. Apps live in '
         'the apps/ folder (apps/<id>/manifest.json) — list it with your file '
-        'tools to discover ids, or use an id from a provided list.',
+        'tools to discover ids, or use an id from a provided list. Before '
+        'opening, the app must pass a pre-flight gate (its standing test, or '
+        'a headless smoke render where the toolchain is unavailable); a '
+        'failure reports the gate and the error excerpt — fix the app and '
+        'call open_app again.',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -67,6 +81,15 @@ AgentTool openAppTool(ExecutionEnv env, {required AppLauncher launcher}) {
       final error = app.error;
       if (error != null) {
         throw StateError('app "$id" is broken: $error');
+      }
+      // gh-1164 AC7/AC10: never open — and never report success for — an
+      // app whose JS cannot run. The outcome names its gate; the failure
+      // text carries the excerpt so the agent can fix and re-open.
+      if (preflight != null) {
+        final outcome = await preflight(app);
+        if (outcome is AppPreflightFailure) {
+          throw StateError(preflightExcerptForTool(outcome));
+        }
       }
       await launcher(app);
       return ToolExecutionResult.text("Opened app '${app.name}'");
