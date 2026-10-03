@@ -225,7 +225,7 @@ Future<int> runSessionListCliCommand({
 
 Map<String, Object?> _sessionJsonRow(SessionMetadata m, String? name) => {
   'id': m.id,
-  'name': ?name,
+  'name':? name,
   'cwd': m.cwd,
   'createdAt': m.createdAt.toIso8601String(),
   'lastUpdatedAt': (m.lastUpdatedAt ?? m.createdAt).toIso8601String(),

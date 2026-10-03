@@ -83,8 +83,7 @@ String _escapeAttr(String value) => value
 /// `#nav-menu`), and carries ONLY the paid link (`links.appstore`): no
 /// TestFlight, no Play, no pile-up when future links land. The per-position
 /// referral value is `appstore-header` (AC3).
-String renderAppStoreHeaderBadgeHtml(LinksConfig links) =>
-    '''
+String renderAppStoreHeaderBadgeHtml(LinksConfig links) => '''
     <a class="store-badge" href="${_escapeAttr(links.appstore)}" target="_blank" rel="noopener" data-store-referral="appstore-header" aria-label="Fa on the App Store">
       ${_appleLogoSvg('store-badge-mark', 14)}
       <span class="store-badge-text">App Store</span>
@@ -94,8 +93,7 @@ String renderAppStoreHeaderBadgeHtml(LinksConfig links) =>
 /// issue #881: first in the hero CTA row, primary on mobile; the desktop
 /// demotion (CLI audience lands there) is CSS, not markup. Paid link only,
 /// referral value `appstore-hero` (AC3).
-String renderAppStoreHeroCtaHtml(LinksConfig links) =>
-    '''
+String renderAppStoreHeroCtaHtml(LinksConfig links) => '''
         <a class="btn btn-primary btn-store btn-store-hero" href="${_escapeAttr(links.appstore)}" target="_blank" rel="noopener" data-store-referral="appstore-hero">
           ${_appleLogoSvg('beta-mark', 15)}
           Download on the App Store

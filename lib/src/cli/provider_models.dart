@@ -146,8 +146,7 @@ extension on AgentCli {
     if (spec != null) return spec.kind;
     final registry = config.customProviders;
     for (final entry in registry?.entries ?? const <CustomProviderEntry>[]) {
-      if (entry.name == name)
-        return resolveCliProviderSpec(entry.apiType)?.kind;
+      if (entry.name == name) return resolveCliProviderSpec(entry.apiType)?.kind;
     }
     return null;
   }

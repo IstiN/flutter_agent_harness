@@ -44,7 +44,10 @@ extension ComposerChipsSubmit on AgentCli {
   /// and runs a composer submit through the full
   /// busy-gate → _handleLine → settle → queue-drain path (issue #276).
   @visibleForTesting
-  Future<void> tuiSubmitForTest(String line, List<TuiImageAttachment> images) {
+  Future<void> tuiSubmitForTest(
+    String line,
+    List<TuiImageAttachment> images,
+  ) {
     final controller = _tuiController ?? _createTuiController();
     _tuiController = controller;
     return _handleTuiSubmit(controller, line, images);

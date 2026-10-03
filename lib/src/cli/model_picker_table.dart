@@ -94,7 +94,8 @@ List<MenuItem> buildModelPickerTable(List<ModelRowSpec> rows, int width) {
     for (final row in sorted)
       MenuItem(
         key: '${row.provider}|${row.modelId}',
-        label: '${row.isCurrent ? '● ' : '  '}${row.modelId.padRight(idWidth)}',
+        label:
+            '${row.isCurrent ? '● ' : '  '}${row.modelId.padRight(idWidth)}',
         description: _rowDetails(
           row,
           providerWidth: providerWidth,
@@ -115,11 +116,9 @@ int _tableWidth(List<ModelRowSpec> rows, bool showProvider, bool showCost) {
   if (showProvider) {
     width += 2 + rows.map((r) => r.provider.length).reduce(_max);
   }
-  width +=
-      2 +
-      rows
-          .map((r) => formatModelContextWindow(r.contextWindow).length)
-          .reduce(_max);
+  width += 2 + rows
+        .map((r) => formatModelContextWindow(r.contextWindow).length)
+        .reduce(_max);
   if (showCost) {
     width += 2 + rows.map((r) => formatModelCost(r.cost).length).reduce(_max);
   }
@@ -138,7 +137,9 @@ String _rowDetails(
   final buffer = StringBuffer();
   if (providerWidth > 0) buffer.write(row.provider.padRight(providerWidth));
   buffer.write('  ');
-  buffer.write(formatModelContextWindow(row.contextWindow).padLeft(ctxWidth));
+  buffer.write(
+    formatModelContextWindow(row.contextWindow).padLeft(ctxWidth),
+  );
   if (costWidth > 0) {
     buffer.write('  ');
     buffer.write(formatModelCost(row.cost).padLeft(costWidth));

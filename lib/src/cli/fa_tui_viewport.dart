@@ -202,4 +202,5 @@ extension _TuiViewport on FaTuiModel {
 
   int _clampScroll(int offset, List<String> wrapped) =>
       offset.clamp(0, _scrollBottom(wrapped));
+
 }

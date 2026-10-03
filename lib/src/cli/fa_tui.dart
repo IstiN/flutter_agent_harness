@@ -905,11 +905,7 @@ final class FaTuiModel extends Model {
     final displayText = needsSystemNoticeRewrite(msg.text)
         ? renderSystemNoticeLines(msg.text).join('\n')
         : msg.text;
-    final (newLines, cut) = _appendOutput(
-      outputLines,
-      displayText,
-      msg.newline,
-    );
+    final (newLines, cut) = _appendOutput(outputLines, displayText, msg.newline);
     final next = copyWith(
       outputLines: newLines,
       // A head trim shifts every transcript index — anchor and pin (#827).

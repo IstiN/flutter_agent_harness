@@ -103,7 +103,11 @@ final class ToolCardSegments {
 /// Squeeze drops from the tail — meta first, then the badge, then the
 /// description ellipsizes; the glyph+title always fit (ellipsized only
 /// past that).
-String tuiToolCardHeader(ToolCardSegments s, TuiCardPhase phase, int width) {
+String tuiToolCardHeader(
+  ToolCardSegments s,
+  TuiCardPhase phase,
+  int width,
+) {
   final c = FaThemeController.instance;
   final styled = c.profile != null;
   String paint(String piece, String Function(String) role) =>
@@ -112,8 +116,7 @@ String tuiToolCardHeader(ToolCardSegments s, TuiCardPhase phase, int width) {
   // Fit FIRST, paint second — painting an unfitted run would emit a head
   // wider than the card (the fitted/unfitted drift the UT pins).
   final (glyph, title) = _fitCardHead(s.title, tuiCardGlyph(phase), width);
-  final headRaw =
-      paint(glyph, (g) => c.border(_phaseStyle(c, phase), g)) +
+  final headRaw = paint(glyph, (g) => c.border(_phaseStyle(c, phase), g)) +
       paint(title.isEmpty ? '' : ' $title', (t) => c.accent(t));
   final remain = width - tuiTextWidth('$glyph $title');
 
@@ -221,15 +224,17 @@ List<String> tuiToolCard(
   String paintRow(String row, {bool fit = true}) {
     final fitted = fit ? tuiFitWidth(row, width) : row;
     if (tint.isEmpty) return fitted;
-    final pad =
-        width -
-        tuiTextWidth(fitted.replaceAll(AnsiMarkdown.ansiSgrPattern, ''));
+    final pad = width - tuiTextWidth(
+      fitted.replaceAll(AnsiMarkdown.ansiSgrPattern, ''),
+    );
     return '$tint$fitted${pad > 0 ? ' ' * pad : ''}\x1b[0m';
   }
 
   return [
     paintRow(tuiToolCardHeader(segments, phase, width), fit: false),
-    ..._previewLines(detailLines, maxDetailLines).map((line) => paintRow(line)),
+    ..._previewLines(detailLines, maxDetailLines).map(
+      (line) => paintRow(line),
+    ),
   ];
 }
 
@@ -271,10 +276,7 @@ List<String> settledToolCardRows({
     ToolCardSegments(
       title: toolName,
       description: isError ? failureFirstLine(resultContent) : successDetail,
-      meta: [
-        for (final m in meta)
-          if (m.trim().isNotEmpty) m,
-      ],
+      meta: [for (final m in meta) if (m.trim().isNotEmpty) m],
     ),
     isError || interrupted ? TuiCardPhase.error : TuiCardPhase.success,
     width,
@@ -285,5 +287,8 @@ List<String> settledToolCardRows({
 /// `… N more lines` footer when something was cut.
 List<String> _previewLines(List<String> lines, int maxLines) {
   if (lines.length <= maxLines) return lines;
-  return [...lines.take(maxLines), '… ${lines.length - maxLines} more lines'];
+  return [
+    ...lines.take(maxLines),
+    '… ${lines.length - maxLines} more lines',
+  ];
 }
