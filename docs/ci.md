@@ -38,9 +38,15 @@ the safe way to smoke one channel.
 
 ## Versioning
 
-The existing scheme is unchanged: `scripts/auto_release.sh` patch-bumps
-`pubspec.yaml`, tags and pushes on every push to `main` (2h coalesce), and
-the tag drives the ci.yml `publish`/`binaries` jobs. The daily:
+The scheme: `scripts/auto_release.sh` patch-bumps
+`pubspec.yaml` and pushes the bump commit straight to protected `main` as the
+fa-release-bot GitHub App (the ruleset's only bypass actor, gh-1172 — the
+2026-09-29 release-PR stopgap is retired); the push fires the ci.yml
+`release-tag` job, and the tag drives the `publish`/`binaries` jobs. Manual
+`workflow_dispatch` runs are input-gated: `releaseDryRun: true` exercises the
+whole pipeline without the push/tag (AC1), and `releaseDispatch: true` on
+`refs/heads/main` is the real push — bare validation dispatches (the SM's
+per-PR `gh workflow run ci.yml --ref <branch>`) arm nothing. The daily:
 
 - lets `build-mobile.yml` / `build-macos.yml` derive their version
   themselves (`latest tag + 1` at the child's own dispatch moment). A tag

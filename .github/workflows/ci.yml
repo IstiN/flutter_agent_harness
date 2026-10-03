@@ -20,6 +20,17 @@ on:
   # pushes and silent branch updates are free. Required checks still
   # match: the dispatched run registers its check runs on the head SHA.
   workflow_dispatch:
+    inputs:
+      releaseDryRun:
+        description: 'gh-1172: run the release pipeline without the push/tag (logs the commit+tag that WOULD land)'
+        required: false
+        type: boolean
+        default: false
+      releaseDispatch:
+        description: 'gh-1172: real release (bump push + tag) on manual dispatch — requires refs/heads/main; bare validation dispatches stay inert'
+        required: false
+        type: boolean
+        default: false
   # Any release publication (API `gh release create`, web UI, or a pushed
   # annotated tag) builds + attaches the binaries matrix. Pushed tags also
   # arrive via the push filter above; the binaries job tolerates the
@@ -2884,18 +2895,20 @@ jobs:
           "$fa_path" --version
 
   release:
-    name: Auto-release (bump PR)
+    name: Auto-release (bump push)
     runs-on: ubuntu-latest
     needs: quality-gate
     timeout-minutes: 15
     # Every push to main gets a release with an auto-incremented patch version
     # (0.1.x -> 0.1.y), coalesced to <=1 per 2h — pub.dev rate-limits publishes
     # (~12/day; hit on 2026-07-18). Release commits are skipped (loop guard).
-    # Since 2026-09-29 protected main rejects direct bot pushes (enforce_admins
-    # + strict: "3 of 3 required status checks are expected", live 14:53-21:06Z
-    # failures), so this job OPENS the bump PR (scripts/auto_release.sh) and
-    # the machine reviews/validates/merges it; release-tag below cuts the tag.
-    # Scheduled runs catch up commits that outpaced the coalesce window.
+    # gh-1172: the bump pushes DIRECTLY to protected main authenticated as the
+    # fa-release-bot GitHub App — the only bypass actor on the main ruleset
+    # (the PR stopgap from 2026-09-29 is retired: it burned a full CI queue
+    # cycle + machine review round on every chore bump). The App token is
+    # minted job-locally; nothing else in the repo can read RELEASE_APP_*.
+    # release-tag below cuts the tag from the pushed commit. Scheduled runs
+    # catch up commits that outpaced the coalesce window.
     # !cancelled() + explicit gate check: GitHub propagates "skipped"
     # TRANSITIVELY through an always()-job's needs graph. quality-gate uses
     # if: always() and its needs include path-gated legs (perf-gate etc.)
@@ -2903,45 +2916,77 @@ jobs:
     # force-skipped on EVERY run since the perf gate landed (fa#456),
     # silently killing auto-release for a week. The explicit result check
     # keeps the gate red-line: no release on a failed quality gate.
+    # workflow_dispatch reaches this job ONLY through an explicit input gate
+    # (gh-1172 round-2 BLOCK): this is the repo's dispatch-only CI — the SM
+    # runs `gh workflow run ci.yml --ref <pr-branch>` with no inputs, so a
+    # bare dispatch arm would execute the dispatched (PR-head) ref's
+    # auto_release.sh with the bypass App's push credentials. releaseDryRun
+    # exercises the rollout switch (AC1 — any ref, never pushes);
+    # releaseDispatch on refs/heads/main is the manual catch-up release.
     if: >-
       !cancelled() && needs.quality-gate.result == 'success' &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(release):'))
-      || github.event_name == 'schedule')
+      || github.event_name == 'schedule'
+      || (github.event_name == 'workflow_dispatch' && inputs.releaseDryRun == true)
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.releaseDispatch == true))
     concurrency:
       group: release-main
       cancel-in-progress: false
+    # Defense in depth (gh-1172 round-3 BLOCK): the push rides the checkout
+    # App token EXCLUSIVELY, so this job's GITHUB_TOKEN never needs write —
+    # on a dry-run dispatch of a PR head (AC1, any ref) that keeps the job's
+    # own token read-only, leaving no write-capable credential in the run.
     permissions:
-      contents: write
-    env:
-      # auto_release.sh's gh calls (pr list / pr create) authenticate via the
-      # PAT — the job env carries no GH_TOKEN by default, so without this
-      # every call dies under set -e and no bump PR ever opens (BLOCK
-      # finding on PR #1093, live review 2026-09-30).
-      GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+      contents: read
     steps:
+      # Job-scoped App token (gh-1172 fix-contract item 1): minted per run,
+      # expires with the job, never shared with other workflows.
+      # NEVER minted on a dry-run dispatch: that arm fires on ANY ref, so the
+      # bypass credential must not exist in a run that executes the (possibly
+      # untrusted) dispatched ref's auto_release.sh — "dry-run never pushes"
+      # may not depend on the script under test honoring the flag. The real
+      # arms (push, schedule, releaseDispatch) see a non-true releaseDryRun
+      # and mint as before.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        if: inputs.releaseDryRun != true
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          # Least privilege (gh-1172 round-2 review): the App is the ruleset
+          # bypass actor, so scope the token to what the push needs instead
+          # of every permission the installation carries.
+          permissions: contents:write
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          # PAT (not GITHUB_TOKEN) so the pushed tag triggers the publish job —
+          # App token (not GITHUB_TOKEN) so the pushed commit triggers the
+          # follow-up ci.yml run whose release-tag job cuts the tag —
           # GITHUB_TOKEN pushes never trigger downstream workflow runs.
-          token: ${{ secrets.RELEASE_PAT }}
+          # Dry-run dispatch: the mint above is skipped, its outputs are
+          # empty (falsy) and checkout falls back to the plain GITHUB_TOKEN
+          # (read-only per the job permissions block).
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.x'
 
-      - name: Bump version, changelog, open release PR
+      - name: Bump version, changelog, push to main
+        env:
+          RELEASE_DRY_RUN: ${{ github.event.inputs.releaseDryRun == 'true' && '1' || '0' }}
         run: bash scripts/auto_release.sh
 
-  # Cuts the annotated tag + GitHub Release from the merged release PR (see
-  # scripts/tag_release.sh). The bump now lands as a PR (protected main
-  # rejects direct bot pushes), so the tag phase keys on the merged
-  # 'chore(release):' squash commit instead of following the bump push
-  # directly. Tag push rides RELEASE_PAT (checkout token) — GITHUB_TOKEN
-  # pushes never trigger the tag-scoped binaries/publish jobs. Serialized
-  # with the bump PR job via the release-main group: tag first, next bump after.
+  # Cuts the annotated tag + GitHub Release from the pushed 'chore(release):'
+  # bump commit (see scripts/tag_release.sh). The bump lands via direct push
+  # to protected main as the fa-release-bot App (gh-1172), so the tag phase
+  # keys on that push. Tag push rides the App token (checkout token) —
+  # GITHUB_TOKEN pushes never trigger the tag-scoped binaries/publish jobs.
+  # Serialized with the bump push job via the release-main group: tag first,
+  # next bump after.
   release-tag:
-    name: Auto-release (tag on merge)
+    name: Auto-release (tag on push)
     runs-on: ubuntu-latest
     needs: quality-gate
     timeout-minutes: 10
@@ -2954,22 +2999,31 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: write
-    env:
-      # tag_release.sh's `gh release create` needs a token; RELEASE_PAT keeps
-      # one credential for the tag push + release create. Without it the
-      # create || true was a guaranteed silent no-op and the curated
-      # CHANGELOG notes never reached the release object (BLOCK finding on
-      # PR #1093, live review 2026-09-30).
-      GH_TOKEN: ${{ secrets.RELEASE_PAT }}
     steps:
+      # Same fa-release-bot App as the bump job (gh-1172): the tag push and
+      # `gh release create` ride the App installation token — without an
+      # explicit GH_TOKEN the create || true in tag_release.sh was a
+      # guaranteed silent no-op and the curated CHANGELOG notes never reached
+      # the release object (BLOCK finding on PR #1093, live review 2026-09-30).
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          # Least privilege (gh-1172 round-2 review): contents:write only —
+          # the tag push + `gh release create` need nothing else.
+          permissions: contents:write
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          # PAT so the pushed tag triggers the publish job — GITHUB_TOKEN
-          # pushes never trigger downstream workflow runs.
-          token: ${{ secrets.RELEASE_PAT }}
+          # App token so the pushed tag triggers the publish job —
+          # GITHUB_TOKEN pushes never trigger downstream workflow runs.
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Cut annotated tag + GitHub Release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: bash scripts/tag_release.sh
 
   # PR-gate twin of the release `binaries` job: the CLI bundle must compile
