@@ -185,6 +185,8 @@ sealed class SessionRecord {
         timestamp: timestamp,
         provider: json['provider'] as String? ?? '',
         modelId: json['modelId'] as String? ?? '',
+        baseUrl: json['baseUrl'] as String?,
+        customProvider: json['customProvider'] as String?,
       ),
       'active_tools_change' => ActiveToolsChangeRecord(
         id: id,
@@ -341,7 +343,11 @@ final class ThinkingLevelChangeRecord extends SessionRecord {
 
 /// Records a change of the active model.
 ///
-/// Ported from pi's `ModelChangeEntry`.
+/// Ported from pi's `ModelChangeEntry`. [baseUrl]/[customProvider] pin
+/// the serving endpoint and saved custom-provider entry (gh-1000): a
+/// session restore re-resolves onto THAT entry instead of re-matching by
+/// model id. Both are optional — records written before gh-1000 restore
+/// with today's endpoint-keyed behavior.
 final class ModelChangeRecord extends SessionRecord {
   /// Creates a [ModelChangeRecord].
   const ModelChangeRecord({
@@ -350,6 +356,8 @@ final class ModelChangeRecord extends SessionRecord {
     required super.timestamp,
     required this.provider,
     required this.modelId,
+    this.baseUrl,
+    this.customProvider,
   });
 
   /// The provider id (e.g. `anthropic`).
@@ -358,6 +366,14 @@ final class ModelChangeRecord extends SessionRecord {
   /// The model id.
   final String modelId;
 
+  /// The endpoint base URL the model was served from (null = catalog
+  /// default).
+  final String? baseUrl;
+
+  /// The saved custom-provider entry name that supplied the key (null =
+  /// none or a pre-gh-1000 record).
+  final String? customProvider;
+
   @override
   String get type => 'model_change';
 
@@ -365,6 +381,8 @@ final class ModelChangeRecord extends SessionRecord {
   Map<String, dynamic> payloadJson() => {
     'provider': provider,
     'modelId': modelId,
+    'baseUrl': ?baseUrl,
+    'customProvider': ?customProvider,
   };
 }
 
