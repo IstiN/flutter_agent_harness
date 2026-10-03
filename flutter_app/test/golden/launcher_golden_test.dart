@@ -185,6 +185,10 @@ Future<MemoryExecutionEnv> _seededEnv({
   /// to the pinned composer bar. true writes nothing — the missing file
   /// IS the chat-expanded default.
   bool chatExpanded = true,
+
+  /// Issue #866: adds one `broken` app whose manifest.json does not
+  /// parse — its tile renders the visible error badge.
+  bool brokenManifest = false,
 }) async {
   final env = MemoryExecutionEnv();
   for (final entry in _apps.entries) {
@@ -255,6 +259,10 @@ Future<MemoryExecutionEnv> _seededEnv({
       AppsHomeModeStore.fileName,
       '{"version": 1, "chatExpanded": false}',
     );
+  }
+  if (brokenManifest) {
+    await env.writeFile('apps/broken/manifest.json', '{"name": ');
+    await env.writeFile('apps/broken/widget.js', '(function(){});');
   }
   return env;
 }
@@ -517,11 +525,13 @@ Future<void> _pumpLauncher(
   Map<String, String> extraTiles = const {},
   bool chatExpanded = true,
   bool restoreAppsMode = false,
+  bool brokenManifest = false,
 }) async {
   final env = await _seededEnv(
     liveTiles: liveTiles,
     extraTiles: extraTiles,
     chatExpanded: chatExpanded,
+    brokenManifest: brokenManifest,
   );
   final manager = FlutterSessionManager(env: env, sessionsRoot: '/sessions');
   for (final entry
@@ -606,6 +616,26 @@ void main() {
     testWidgets('launcher grid — ru', (tester) async {
       await _pumpLauncher(tester, locale: const Locale('ru'));
       await expectGolden(tester, 'launcher/grid_ru');
+    });
+
+    testWidgets('launcher grid — manifest broken by an agent edit (#866)', (
+      tester,
+    ) async {
+      await _pumpLauncher(
+        tester,
+        order: [
+          'app:notes',
+          'app:broken',
+          'app:pomodoro',
+          'app:habits',
+          'app:dice',
+          LauncherLayoutStore.settingsKey,
+          LauncherLayoutStore.filesKey,
+        ],
+        brokenManifest: true,
+      );
+      expect(find.text('!'), findsWidgets);
+      await expectGolden(tester, 'launcher/grid_broken_manifest');
     });
 
     testWidgets('folder open — dark', (tester) async {
