@@ -1550,4 +1550,46 @@ memory:
       expect(file.readAsStringSync(), contains('provider: chatgpt-codex'));
     });
   });
+
+  group('output.streamThinking (gh-1198)', () {
+    bool streamThinkingOf(String yaml) =>
+        CliConfig.fromYaml(loadYaml(yaml) as YamlMap).streamThinking;
+
+    test('defaults to false when the section is absent (byte-identical '
+        'legacy)', () {
+      expect(streamThinkingOf('mode: code\n'), isFalse);
+      final tmp = Directory.systemTemp.createTempSync('fah-output-');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      expect(loadCliConfig(tmp.path).streamThinking, isFalse);
+    });
+
+    test('parses the section', () {
+      expect(streamThinkingOf('output:\n  streamThinking: true\n'), isTrue);
+      expect(streamThinkingOf('output:\n  streamThinking: false\n'), isFalse);
+    });
+
+    test('rejects unknown output keys', () {
+      expect(
+        () => streamThinkingOf('output:\n  bogus: true\n'),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('bogus'),
+          ),
+        ),
+      );
+    });
+
+    test('rejects a non-boolean streamThinking', () {
+      expect(
+        () => streamThinkingOf('output:\n  streamThinking: "yes"\n'),
+        throwsA(isA<ConfigException>()),
+      );
+      expect(
+        () => streamThinkingOf('output: true\n'),
+        throwsA(isA<ConfigException>()),
+      );
+    });
+  });
 }

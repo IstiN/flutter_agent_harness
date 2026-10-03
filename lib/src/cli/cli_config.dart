@@ -119,6 +119,28 @@ bool _parseTrajectorySection(Object? node) {
   return wireDump;
 }
 
+/// Parses the `output:` section (gh-1198): console-output behavior flags.
+/// Today only `streamThinking` — the opt-in live thinking stream for
+/// line-mode/headless runs. Strict like every other opt-in section:
+/// unknown keys and bad types throw [ConfigException] (a typo must never
+/// silently keep the default). Public so the `config check`/`set`
+/// validators share the SAME parser the boot uses.
+void parseOutputSection(Object? node) {
+  if (node == null) return;
+  if (node is! YamlMap) {
+    throw ConfigException('output must be a map, got: $node');
+  }
+  for (final key in node.keys) {
+    if (key != 'streamThinking') {
+      throw ConfigException('unknown "output" key: $key');
+    }
+    final value = node[key];
+    if (value is! bool) {
+      throw ConfigException('"output.streamThinking" must be a boolean');
+    }
+  }
+}
+
 /// The parsed `quota:` section (issue #823): the status-line badge opt-in
 /// and the quota-cache TTL. Strict like every section: unknown keys and
 /// bad scalars throw [ConfigException] at boot; defaults are never written
@@ -358,6 +380,7 @@ final class CliConfig {
     this.tuiClassic = false,
     this.statusLine,
     this.links = const LinksConfig(),
+    this.streamThinking = false,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -505,7 +528,19 @@ final class CliConfig {
           skillsSection['skillsDisableShellExecution'] as bool? ?? false,
       skillToggles:
           skillsSection['skillToggles'] as Map<String, bool>? ?? const {},
+      // The output section (gh-1198) is strict: `streamThinking` opts
+      // line-mode/headless runs into the live dimmed thinking stream;
+      // absent = false = the byte-identical legacy output.
+      streamThinking: _outputStreamThinking(map['output']),
     );
+  }
+
+  /// The `output.streamThinking` value: the strict parser validates the
+  /// section, the walk below reads the single key (defaults false).
+  static bool _outputStreamThinking(Object? node) {
+    parseOutputSection(node);
+    if (node is YamlMap) return node['streamThinking'] == true;
+    return false;
   }
 
   /// Parses the `skills:` section: `access` (ask/granted/denied — consent
@@ -758,6 +793,13 @@ final class CliConfig {
   /// links.…`) and the site generator all resolve the same values.
   final LinksConfig links;
 
+  /// The opt-in live thinking stream for line-mode/headless runs
+  /// (gh-1198, `output.streamThinking` yaml key, default false): when
+  /// true, thinking deltas print dimmed, live, like the TUI's progress
+  /// signal. `--stream-thinking` wins for the run. The default keeps the
+  /// byte-identical legacy output (machine consumers, AC3).
+  final bool streamThinking;
+
   /// Returns a copy with [entries] as the custom-providers list; every
   /// other field carries over. [saveCliConfig] uses it for its
   /// merge-before-write union (issue #221) — keep this field list in sync
@@ -885,8 +927,14 @@ final class CliConfig {
     buffer.write(_linksYaml());
     buffer.write(_powerYaml());
     buffer.write(_quotaYaml());
+    buffer.write(_outputYaml());
     return buffer.toString();
   }
+
+  /// The `output:` section (gh-1198), only when explicitly opted in;
+  /// defaults are never written so the file stays minimal.
+  String _outputYaml() =>
+      streamThinking ? 'output:\n  streamThinking: true\n' : '';
 
   /// The `agent:` section, only when a cap or a load mode is persisted;
   /// defaults are never written so the file stays minimal.
