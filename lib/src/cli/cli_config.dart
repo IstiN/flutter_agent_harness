@@ -704,7 +704,8 @@ final class CliConfig {
   /// cadence (`waitHeartbeatMinutes`, 0 = off), the `--wait-for-jobs`
   /// ceiling (`waitCeilingMinutes`, default 30), and the per-call
   /// foreground liveness knobs (gh-1055: `toolLivenessSeconds`,
-  /// `toolLivenessTickSeconds`, `toolEscalateSeconds`).
+  /// `toolLivenessTickSeconds`, `toolEscalateSeconds`) plus the #1185
+  /// stuck-call nudge kill switch (`toolNudge`, default on).
   final WaitingConfig waiting;
 
   /// The `jobs:` section (issue #478): boot-maintenance knobs for the
