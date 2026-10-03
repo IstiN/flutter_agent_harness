@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:fa/apps/app_icon.dart';
+import 'package:fa/apps/app_load_error.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/catalog_service.dart';
 import 'package:fa/apps/js_app_navigation.dart';
@@ -127,7 +128,13 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
   Future<void> _refreshInstalled() async {
     try {
       final apps = await _appsStore.listApps();
-      _installed = {for (final app in apps) app.id: app.version};
+      // A broken app is not a usable install: excluding it from the
+      // version map keeps the Install/Update buttons honest instead of
+      // deriving a fake "1.0.0" from the degraded model (issue #866).
+      _installed = {
+        for (final app in apps)
+          if (app.error == null) app.id: app.version,
+      };
       _localApps = apps;
     } on Object {
       _installed = {};
@@ -242,6 +249,9 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
 
   /// Shared open path for catalog entries and created-on-device apps.
   Future<void> _launchApp(JsAppInfo app, String analyticsId) async {
+    // Same broken-app guard as every launch surface (issue #866): the
+    // copyable dialog replaces a silently-degraded launch.
+    if (await guardBrokenApp(context, app)) return;
     AppAnalytics.instance.widgetEvent(
       'open',
       params: {'id': analyticsId, 'source': 'catalog'},
