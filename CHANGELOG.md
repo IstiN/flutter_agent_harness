@@ -4470,7 +4470,11 @@
 - ci: re-pin factory-teammate @9bcec53 — kit/ (guard+creds) at invocation ref (#1176)
 - fix(#1134): auto_release.sh pins chore:pin label on release PRs (#1135)
 
-## Unreleased
+## 1.0.498
+
+- feat(#866): apps panel reflects reality (#1139)
+- fix(#1152): path-guard fires only on bare single-token input (#1153)
+- feat(#861): one passkey-capable auth surface for provider sign-in (#1142)
 
 ## Unreleased
 
