@@ -311,6 +311,10 @@ class AgentCli {
     _providerKind = config.providerKind;
     _apiKey = config.apiKey;
     _liveLoadMode = config.loadMode;
+    // The boot-restored saved provider entry (the folder state's name pin,
+    // gh-1000): the CLI starts with that entry active — its key slot
+    // serves the restored model and its name shows in the status bar.
+    _activeCustomName = config.activeCustomName;
     // The theme emitters' color profile: the surface's pinned palette
     // (the host's single resolution, issue #774) wins; otherwise styled
     // iff this session styles at all (TUI or colored line mode), with
@@ -863,6 +867,12 @@ class AgentCli {
 
   /// The live provider adapter kind (see [_providerKind]).
   String get providerKind => _providerKind;
+
+  /// The active saved custom provider entry's name, or null when the
+  /// session runs on a catalog provider or an explicit token. Hosts
+  /// persist it with the model triple so a restore can re-pin the same
+  /// account (gh-1000).
+  String? get activeCustomProviderName => _activeCustomName;
 
   /// Removes a saved custom provider from the registry (the `/provider`
   /// picker's Delete action). Clears the active-entry marker when needed and
