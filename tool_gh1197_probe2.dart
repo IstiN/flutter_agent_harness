@@ -91,10 +91,12 @@ Future<void> main() async {
   final build = await spawnFa(home: home.path, project: project.path, session: session);
   await build.waitScreen('[Model]', const Duration(seconds: 90));
   await Future<void>.delayed(const Duration(milliseconds: 800));
-  build.submit('build the big transcript');
-  // 10 tool turns x ~3s + text = ~60s; wait for the final answer.
-  await build.waitScreen('all-done-final', const Duration(seconds: 180));
-  await Future<void>.delayed(const Duration(seconds: 2));
+  // 11 chained turns of fat text -> a big transcript (~15KB of chat rows).
+  for (var i = 0; i < 11; i++) {
+    build.submit('build turn $i');
+    await Future<void>.delayed(const Duration(seconds: 10));
+  }
+  await Future<void>.delayed(const Duration(seconds: 3));
   stdout.writeln(
     'phase 1 done: ${build.bytes()} bytes; killing and resuming',
   );
