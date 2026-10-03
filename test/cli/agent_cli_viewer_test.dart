@@ -326,6 +326,62 @@ void main() {
     await ownerRun;
   });
 
+  test('AC2/#1152: a path-led viewer line is composer mail too — the owner '
+      'runs it, the viewer never starts a local run', () async {
+    final meta = await namedSession('shared');
+    final ownerFake = FakeStreamFunction([]);
+    final ownerIo = FakeCliIO();
+    addTearDown(ownerIo.close);
+    final owner = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+        sessionName: 'shared',
+        leaseStore: store,
+        processId: 4242,
+      ),
+      io: ownerIo,
+      streamFunction: ownerFake.call,
+    );
+    final ownerRun = owner.run();
+    await waitForIt(() => ownerIo.out.isNotEmpty, reason: 'owner boot');
+
+    final viewerFake = FakeStreamFunction([]);
+    final viewer = cliFor(viewerFake.call, sessionName: 'shared');
+    final viewerRun = viewer.run();
+    await waitForIt(
+      () => out().contains('you are viewing'),
+      reason: 'viewer boot',
+    );
+
+    // The #1152 incident shape typed in viewer mode: composer mail to the
+    // owner, never a local run on the watched session (viewer AC3).
+    io.sendLine('${meta.path} what is inside');
+    await waitForIt(
+      () => ownerFake.calls == 1 && !owner.isBusy,
+      reason: 'the owner runs the handed-over turn',
+    );
+    expect(
+      ownerFake.contexts.single.messages.whereType<UserMessage>().map(
+        (m) => m.content is String ? m.content as String : '',
+      ),
+      contains(contains('[from fa CLI user] ${meta.path} what is inside')),
+    );
+    expect(
+      viewerFake.calls,
+      0,
+      reason: 'a path-led line never starts a local viewer run',
+    );
+
+    io.sendLine('/exit');
+    await viewerRun;
+    ownerIo.sendLine('/exit');
+    await ownerRun;
+  });
+
   test('AC4: a viewer switching to a free session exits viewer mode and '
       'drives it', () async {
     final leased = await namedSession('leased');
