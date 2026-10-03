@@ -25,17 +25,16 @@ List<AssistantMessageEvent> thinkingTurn(String thinking, String text) {
     content: [ThinkingContent(thinking: thinking)],
   );
   final partial = testAssistant(
-    content: [ThinkingContent(thinking: thinking), TextContent(text: text)],
+    content: [
+      ThinkingContent(thinking: thinking),
+      TextContent(text: text),
+    ],
   );
   return [
     StartEvent(partial: empty),
     ThinkingStartEvent(contentIndex: 0, partial: empty),
     ThinkingDeltaEvent(contentIndex: 0, delta: thinking, partial: withThinking),
-    ThinkingEndEvent(
-      contentIndex: 0,
-      content: thinking,
-      partial: withThinking,
-    ),
+    ThinkingEndEvent(contentIndex: 0, content: thinking, partial: withThinking),
     TextStartEvent(contentIndex: 1, partial: withThinking),
     TextDeltaEvent(contentIndex: 1, delta: text, partial: partial),
     DoneEvent(reason: StopReason.stop, message: partial),
@@ -119,9 +118,7 @@ void main() {
         fake.call,
         streamThinking: true,
         useColor: true,
-        markdownSurface: const MarkdownSurface(
-          mode: MarkdownSurfaceMode.ansi,
-        ),
+        markdownSurface: const MarkdownSurface(mode: MarkdownSurfaceMode.ansi),
       );
       final run = cli.run();
       io.sendLine('hi');
@@ -187,9 +184,7 @@ void main() {
         fake.call,
         streamThinking: true,
         useColor: true,
-        markdownSurface: const MarkdownSurface(
-          mode: MarkdownSurfaceMode.ansi,
-        ),
+        markdownSurface: const MarkdownSurface(mode: MarkdownSurfaceMode.ansi),
       );
       final run = cli.run();
       io.sendLine('hi');
@@ -241,7 +236,11 @@ void main() {
           delta: 'why not',
           partial: withThinking,
         ),
-        TextDeltaEvent(contentIndex: 1, delta: 'let me check', partial: withText),
+        TextDeltaEvent(
+          contentIndex: 1,
+          delta: 'let me check',
+          partial: withText,
+        ),
         ToolCallStartEvent(contentIndex: 2, partial: withText),
         ToolCallEndEvent(contentIndex: 2, toolCall: call, partial: toolPartial),
         DoneEvent(reason: StopReason.toolUse, message: toolPartial),
@@ -273,10 +272,7 @@ void main() {
       expect(out, contains('let me check'));
       // The tool card prints between the two thinking bursts.
       expect(out, contains('•'));
-      expect(
-        out.indexOf('\x1B[2mwhy not\x1B[0m'),
-        lessThan(out.indexOf('•')),
-      );
+      expect(out.indexOf('\x1B[2mwhy not\x1B[0m'), lessThan(out.indexOf('•')));
       expect(
         out.indexOf('•'),
         lessThan(out.indexOf('\x1B[2msecond thought\x1B[0m')),
@@ -286,42 +282,46 @@ void main() {
   });
 
   group('AC3: flag off (default) is byte-identical', () {
-    test('line mode styled surface: thinking never reaches the output',
-        () async {
-      final fake = FakeStreamFunction([
-        thinkingTurn('secret thoughts', 'Seen'),
-      ]);
-      final cli = cliFor(
-        fake.call,
-        useColor: true,
-        markdownSurface: const MarkdownSurface(
-          mode: MarkdownSurfaceMode.ansi,
-        ),
-      );
-      final run = cli.run();
-      io.sendLine('hi');
-      await waitForIt(() => fake.calls == 1 && !cli.isBusy);
-      io.sendLine('/exit');
-      await run;
+    test(
+      'line mode styled surface: thinking never reaches the output',
+      () async {
+        final fake = FakeStreamFunction([
+          thinkingTurn('secret thoughts', 'Seen'),
+        ]);
+        final cli = cliFor(
+          fake.call,
+          useColor: true,
+          markdownSurface: const MarkdownSurface(
+            mode: MarkdownSurfaceMode.ansi,
+          ),
+        );
+        final run = cli.run();
+        io.sendLine('hi');
+        await waitForIt(() => fake.calls == 1 && !cli.isBusy);
+        io.sendLine('/exit');
+        await run;
 
-      final out = io.out.toString();
-      expect(out, contains('Seen'));
-      expect(out, isNot(contains('secret thoughts')));
-      expect(out, isNot(contains('\x1B[2msecret')));
-    });
+        final out = io.out.toString();
+        expect(out, contains('Seen'));
+        expect(out, isNot(contains('secret thoughts')));
+        expect(out, isNot(contains('\x1B[2msecret')));
+      },
+    );
 
-    test('headless raw passthrough: unchanged text stream, no thinking',
-        () async {
-      final fake = FakeStreamFunction([
-        thinkingTurn('secret thoughts', 'Seen'),
-      ]);
-      final cli = cliFor(fake.call);
-      await cli.runHeadless('hi');
+    test(
+      'headless raw passthrough: unchanged text stream, no thinking',
+      () async {
+        final fake = FakeStreamFunction([
+          thinkingTurn('secret thoughts', 'Seen'),
+        ]);
+        final cli = cliFor(fake.call);
+        await cli.runHeadless('hi');
 
-      final out = io.out.toString();
-      expect(out, contains('Seen'));
-      expect(out, isNot(contains('secret thoughts')));
-    });
+        final out = io.out.toString();
+        expect(out, contains('Seen'));
+        expect(out, isNot(contains('secret thoughts')));
+      },
+    );
   });
 
   group('AC5: SGR discipline', () {
@@ -388,8 +388,7 @@ void main() {
       expect(cli.reasoningLivenessActiveForTest, isFalse);
     });
 
-    test('a normally streaming model produces zero liveness lines',
-        () async {
+    test('a normally streaming model produces zero liveness lines', () async {
       final fake = FakeStreamFunction([
         thinkingTurn('some thinking', 'answer'),
       ]);
@@ -399,24 +398,25 @@ void main() {
       expect(io.out.toString(), isNot(contains('… reasoning')));
     });
 
-    test('flag on: the watch never arms — the live stream owns visibility',
-        () async {
-      final fake = GatedSilentStreamFunction();
-      final cli = cliFor(fake.call, streamThinking: true);
-      final run = cli.runHeadless('hi');
-      await waitForIt(() => cli.isBusy, reason: 'the run started');
-      await waitForIt(
-        () => !cli.reasoningLivenessActiveForTest,
-        reason: 'the watch stays out while the flag streams thinking',
-      );
-      cli.reasoningLivenessTickForTest();
-      expect(io.out.toString(), isNot(contains('… reasoning')));
-      fake.release();
-      await run;
-    });
+    test(
+      'flag on: the watch never arms — the live stream owns visibility',
+      () async {
+        final fake = GatedSilentStreamFunction();
+        final cli = cliFor(fake.call, streamThinking: true);
+        final run = cli.runHeadless('hi');
+        await waitForIt(() => cli.isBusy, reason: 'the run started');
+        await waitForIt(
+          () => !cli.reasoningLivenessActiveForTest,
+          reason: 'the watch stays out while the flag streams thinking',
+        );
+        cli.reasoningLivenessTickForTest();
+        expect(io.out.toString(), isNot(contains('… reasoning')));
+        fake.release();
+        await run;
+      },
+    );
 
-    test('line mode arms the same watch (same records as headless)',
-        () async {
+    test('line mode arms the same watch (same records as headless)', () async {
       final fake = GatedSilentStreamFunction();
       final cli = cliFor(
         fake.call,

@@ -39,8 +39,7 @@ final class ReasoningLivenessTracker {
     int Function()? tickSeconds,
     DateTime Function()? clock,
   }) : _onRemind = onRemind,
-       _livenessSeconds =
-           livenessSeconds ?? (() => defaultToolLivenessSeconds),
+       _livenessSeconds = livenessSeconds ?? (() => defaultToolLivenessSeconds),
        _tickSeconds = tickSeconds ?? (() => defaultToolLivenessTickSeconds),
        _clock = clock ?? DateTime.now;
 

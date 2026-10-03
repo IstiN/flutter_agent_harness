@@ -154,8 +154,7 @@ final class _WaitingCoordinator {
   /// visibility), and the TUI streams thinking regardless (its paint
   /// freeze is #1197's).
   late final ReasoningLivenessTracker reasoning = ReasoningLivenessTracker(
-    onRemind: (elapsed) =>
-        _printLiveness(reasoningLivenessLine(elapsed)),
+    onRemind: (elapsed) => _printLiveness(reasoningLivenessLine(elapsed)),
     clock: _clock,
     livenessSeconds: () => _cli.config.waiting.toolLivenessSeconds,
     tickSeconds: () => _cli.config.waiting.toolLivenessTickSeconds,
