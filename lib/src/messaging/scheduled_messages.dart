@@ -16,6 +16,7 @@ import 'dart:convert';
 import '../env/execution_env.dart';
 import 'agent_message.dart';
 import 'messaging_repository.dart';
+import 'scheduled_receipts.dart';
 
 final class ScheduledMessageQueue {
   ScheduledMessageQueue({
@@ -29,6 +30,7 @@ final class ScheduledMessageQueue {
     this.onFired,
     this.onError,
     this.failureBackoff = maxTimerLeg,
+    this.receipts,
   }) : _env = env,
        _repo = repo,
        _selfMailbox = selfMailbox,
@@ -73,6 +75,11 @@ final class ScheduledMessageQueue {
 
   /// Wait before retrying a pass that just failed (issue #270).
   final Duration failureBackoff;
+
+  /// The persisted receipt trail (gh-1180 AC4), when the host wires one:
+  /// scheduled / delivered / delivery_failed / scan_failed events keyed
+  /// by record id. Best-effort — a failing trail never breaks scheduling.
+  final ScheduledReceiptLog? receipts;
 
   String _self() => _selfMailbox?.call() ?? 'self';
 
