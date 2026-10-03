@@ -265,11 +265,17 @@ final class ModelRolesResolver {
     return CustomProviderRegistry.keyNameFor(baseUrl);
   }
 
-  /// The missing-key hint for [ref]'s skip reason: a custom endpoint names
-  /// its `/key set` fix (the catalog env name would point at the DEFAULT
-  /// endpoint — the wrong slot, gh-1000 AC2/AC5), a default endpoint names
-  /// its env var.
+  /// The missing-key hint for [ref]'s skip reason: an explicitly pinned
+  /// `apiKeyName` names THAT slot (the only name that would resolve it —
+  /// the endpoint-scoped default would be wrong-slot guidance, gh-1000
+  /// AC2), a custom endpoint names its `/key set` fix (the catalog env
+  /// name would point at the DEFAULT endpoint — the wrong slot, gh-1000
+  /// AC2/AC5), a default endpoint names its env var.
   String _missingKeyHint(ModelRef ref, ProviderSpec spec) {
+    final explicit = ref.apiKeyName;
+    if (explicit != null) {
+      return '/key set $explicit <value>';
+    }
     final scopedName = _endpointScopedKeyName(ref, spec);
     if (scopedName != null) {
       return '/key set $scopedName <value>';

@@ -690,19 +690,45 @@ extension on AgentCli {
       // already on this binding (the boot applied it)
       return;
     }
+    // The restore mutates these CLI fields before the roles re-pin runs —
+    // a FAILED re-pin rolls them back, so capture the originals FIRST.
+    final previousCustomName = _activeCustomName;
+    final previousProviderKind = _providerKind;
+    final previousApiKey = _apiKey;
+    final previousExplicitToken = _explicitToken;
+    final previousStreamFunction = _streamFunction;
+    final entry = customProviderName == null
+        ? null
+        : config.customProviders?.find(customProviderName);
+    // E1 (leaf pin variant): a pinned NAME that no longer resolves must not
+    // unpin silently — say so, exactly like the folder-state branch, before
+    // the endpoint-keyed fallback can bind a twin account's key.
+    if (customProviderName != null && entry == null) {
+      io.writeln(
+        _style.dim(
+          'note: saved provider "$customProviderName" is no longer '
+          'configured — resolved by endpoint (model kept)',
+        ),
+      );
+    }
     final Model built;
     try {
       // A saved custom-provider entry carrying this endpoint's authHeader
       // (issue #964) must survive the restore — a gateway endpoint without
-      // its header 401s.
+      // its header 401s. The PINNED entry's own header wins: two entries
+      // can share one endpoint (the gh-1000 twin fixture), and the
+      // endpoint-first scan would otherwise bind the twin's (missing)
+      // header.
       built = buildCliDefaultModel(
         providerKind,
         modelId: modelId,
         baseUrl: baseUrl,
-        authHeader: authHeaderForBaseUrl(
-          config.customProviders?.entries ?? const [],
-          baseUrl,
-        ),
+        authHeader:
+            entry?.authHeader ??
+            authHeaderForBaseUrl(
+              config.customProviders?.entries ?? const [],
+              baseUrl,
+            ),
       );
     } on ConfigException {
       io.writeln(
@@ -718,20 +744,6 @@ extension on AgentCli {
     // a raw name-shaped id here would throw at providerStreamFunction
     // (the crash this PR removes at boot) and persist itself back into
     // the state file via onProviderChanged (issue #772 review).
-    final entry = customProviderName == null
-        ? null
-        : config.customProviders?.find(customProviderName);
-    // E1 (leaf pin variant): a pinned NAME that no longer resolves must not
-    // unpin silently — say so, exactly like the folder-state branch, before
-    // the endpoint-keyed fallback can bind a twin account's key.
-    if (customProviderName != null && entry == null) {
-      io.writeln(
-        _style.dim(
-          'note: saved provider "$customProviderName" is no longer '
-          'configured — resolved by endpoint (model kept)',
-        ),
-      );
-    }
     _activeCustomName = entry?.name;
     _providerKind = spec.kind;
     final key = _providerKeyFor(spec, built.baseUrl) ?? '';
@@ -756,17 +768,10 @@ extension on AgentCli {
       if (pinnedKeyName != null && key.isNotEmpty) {
         resolver.addSecret(pinnedKeyName, key);
       }
-      // Capture everything the re-pin is allowed to touch: a FAILED re-pin
-      // (the pinned key is missing — setRoleChain mutates before
-      // applyToAgent throws) must roll ALL of it back, so the status bar,
-      // the chain, and the stream keep describing the same serving model.
+      // Capture the resolver's default chain too: a FAILED re-pin
+      // (setRoleChain mutates before applyToAgent throws) must restore it.
       final previousChain =
           resolver.config.roles[defaultModelRole] ?? const <ModelRef>[];
-      final previousCustomName = _activeCustomName;
-      final previousProviderKind = _providerKind;
-      final previousApiKey = _apiKey;
-      final previousExplicitToken = _explicitToken;
-      final previousStreamFunction = _streamFunction;
       try {
         resolver.setDefaultChain([
           ModelRef(

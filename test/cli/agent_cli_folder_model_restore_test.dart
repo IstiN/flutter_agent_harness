@@ -697,8 +697,10 @@ void main() {
         io.sendLine('/exit');
         await run;
 
-        // The agent model is untouched — NOT the restored k3-256k.
-        expect(second.agent.state.model.id, 'start-model');
+        // The agent model is untouched: roles mode boots on its chain's
+        // model (applyToAgent), so the PRE-restore model IS claude-a — the
+        // failed re-pin must keep exactly that, NOT the restored k3-256k.
+        expect(second.agent.state.model.id, 'claude-a');
         // The resolver still resolves the OLD default chain.
         final resolved = second.config.modelRolesResolver!.resolveRole(
           'default',

@@ -831,5 +831,38 @@ void main() {
       }, baseUrl: 'https://api.openai.com/v1/').chainFor('smol')!;
       expect(chain.single.keyRing.baseName, 'OPENAI_API_KEY');
     });
+
+    test('a missing key on an explicitly pinned ref names THAT slot', () {
+      // The ref pins FA_KEY_..._KIMI_ME: the hint must name the pinned
+      // slot, not the endpoint-scoped default (wrong-slot guidance is the
+      // AC2 violation gh-1000 forbids; round-3 review).
+      const pinned = 'FA_KEY_API_KIMI_COM_KIMI_ME';
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {
+            'smol': [
+              ModelRef(
+                provider: 'openai',
+                modelId: 'k3-256k',
+                baseUrl: kimiUrl,
+                apiKeyName: pinned,
+              ),
+            ],
+          },
+        ),
+        secrets: const {},
+        streamFactory: _neverStream,
+      );
+      expect(
+        () => resolver.chainFor('smol'),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('/key set $pinned'),
+          ),
+        ),
+      );
+    });
   });
 }
