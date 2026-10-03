@@ -5,8 +5,14 @@
 /// exact path real terminal users hit (the TUI never sees ctrl+c as a key).
 /// ACX.4 pins the headless `fa -p` SIGINT abort (no double-press window).
 ///
-/// The 3 s press window is a contract constant (no config knob), so ACX.3
-/// sleeps past it with a real clock — a PTY test cannot inject one.
+/// The 3 s press window is a contract constant (no user-facing config
+/// knob). A PTY test cannot inject a clock into the spawned CLI, so
+/// ACX.3 runs the window ladder against the `kSigintWindowEnvVar` TEST
+/// seam instead (gh-1014): the window is widened far past every
+/// test-side wait, making both crossings insensitive to runner-load
+/// jitter — the wait past the window can only land later (always a fresh
+/// press 1), and the presses inside the fresh window land seconds before
+/// it closes. The in-process unit tests keep pinning the 3 s default.
 @TestOn('vm')
 @Tags(['integration'])
 @Timeout(Duration(minutes: 8))
@@ -123,55 +129,69 @@ tui:
       );
     });
 
-    // QUARANTINED under gh-1014: SIGINT press-window timing flake under
-    // runner load — fix the timing flake and re-enable (mirrors gh-982).
-    test(
-      'ACX.3: a press after the window is a fresh press 1',
-      () async {
-        final harness = await spawnTui();
-        addTearDown(harness.close);
-        await harness.waitForBoot();
+    // gh-1014 fix: the ladder now runs against the widened
+    // kSigintWindowEnvVar window (see the library comment) — unskipped.
+    test('ACX.3: a press after the window is a fresh press 1', () async {
+      // Widened window: the old real-clock 3 s ladder flaked under runner
+      // load because the fresh-press side budget (output settle + the
+      // no-exit probe) ate ~2.4 s of the 3 s fresh window — the final
+      // press could land past it and silently became a fresh press 1
+      // again (no exit → -999). At 12 s every wait below sits seconds
+      // inside the fresh window, and the past-the-window wait can only
+      // run late (timers never fire early), which is the safe direction.
+      const testWindow = Duration(seconds: 12);
+      final harness = await FaCliHarness.spawn(
+        extraEnv: {
+          'HOME': tempHome.path,
+          kSigintWindowEnvVar: '${testWindow.inMilliseconds}',
+        },
+        columns: 120,
+        // Kernel default termios: ISIG on, 0x03 delivers SIGINT.
+        raw: false,
+      );
+      addTearDown(harness.close);
+      await harness.waitForBoot();
 
-        harness.sendCtrlC(); // press 1 at t=0
-        await harness.waitForScreen('press ctrl+c again to exit');
-        await Future<void>.delayed(
-          kSigintPressWindow + const Duration(seconds: 1),
-        );
-        harness.sendCtrlC(); // past the window: fresh press 1, NOT an exit
-        await harness.waitForOutput(settleMs: 200);
-        expect(
-          await exitedWithin(harness, const Duration(seconds: 2)),
-          isFalse,
-          reason: 'an expired window must reset to press 1 (ACX.3)',
-        );
+      harness.sendCtrlC(); // press 1 at t=0
+      await harness.waitForScreen('press ctrl+c again to exit');
+      await Future<void>.delayed(testWindow + const Duration(seconds: 2));
+      harness.sendCtrlC(); // past the window: fresh press 1, NOT an exit
+      // Bounded settle: the default 10 s waitForOutput timeout could
+      // itself outlive a short window; pinned to 5 s so the settle plus
+      // the probe below stay inside the 12 s fresh window even when every
+      // bound is hit.
+      await harness.waitForOutput(
+        settleMs: 200,
+        timeout: const Duration(seconds: 5),
+      );
+      expect(
+        await exitedWithin(harness, const Duration(seconds: 2)),
+        isFalse,
+        reason: 'an expired window must reset to press 1 (ACX.3)',
+      );
 
-        harness.sendCtrlC(); // now inside the fresh window: exit
-        // The 130 code is pinned by ACX.4 (headless, Process.exitCode); over
-        // the PTY pty2 can lose the waitpid race and report -1 for a clean
-        // exit, so the contract here is bounded death (ACX.2 / ACX.4 note).
-        // 30s, not 15: this case runs the longest press ladder of the file
-        // (press → window expiry → fresh press → exit) behind three PTY
-        // suites at --concurrency=4; on the hosted arm shard the exit
-        // handshake measured past 15s (run 36327531059) — the assertion is
-        // unchanged: the REPL must die, never park on -999.
-        const stillAlive = -999;
-        final code = await harness.pty.exitCode.timeout(
-          const Duration(seconds: 30),
-          onTimeout: () => stillAlive,
-        );
-        expect(
-          code,
-          isNot(stillAlive),
-          reason:
-              'press 2 inside the fresh window must exit the REPL '
-              '(issue #830); exit code $code',
-        );
-      },
-      skip:
-          'flake: gh-1014 SIGINT press-window timing under runner '
-          'load; quarantined to unblock validation — fix the timing '
-          'flake and re-enable',
-    );
+      harness.sendCtrlC(); // now inside the fresh window: exit
+      // The 130 code is pinned by ACX.4 (headless, Process.exitCode); over
+      // the PTY pty2 can lose the waitpid race and report -1 for a clean
+      // exit, so the contract here is bounded death (ACX.2 / ACX.4 note).
+      // 30s, not 15: this case runs the longest press ladder of the file
+      // (press → window expiry → fresh press → exit) behind three PTY
+      // suites at --concurrency=4; on the hosted arm shard the exit
+      // handshake measured past 15s (run 36327531059) — the assertion is
+      // unchanged: the REPL must die, never park on -999.
+      const stillAlive = -999;
+      final code = await harness.pty.exitCode.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => stillAlive,
+      );
+      expect(
+        code,
+        isNot(stillAlive),
+        reason:
+            'press 2 inside the fresh window must exit the REPL '
+            '(issue #830); exit code $code',
+      );
+    });
   });
 
   group('headless SIGINT pin (ACX.4)', () {
@@ -228,7 +248,23 @@ tui:
           'hi',
         ],
         workingDirectory: Directory.current.path,
-        environment: {'OPENAI_API_KEY': 'mock', 'HOME': tempHome.path},
+        // NOT merged: Process.start adds `environment:` ON TOP of the
+        // parent env by default, so a developer/agent machine carrying
+        // FA_PROVIDERS_QUEUE / FA_PROVIDER_* (the agent-sandbox case)
+        // made the child dial the REAL queue provider and this pin
+        // timed out waiting for a mock-server request that never came.
+        // Replace the env wholesale — same whitelist hygiene as the PTY
+        // harness (pty_harness.dart: API keys and agent env never leak
+        // into tests); PATH (executable lookup) and PUB_CACHE (package
+        // resolution under the overridden HOME) are the only pass-throughs.
+        includeParentEnvironment: false,
+        environment: {
+          'OPENAI_API_KEY': 'mock',
+          'HOME': tempHome.path,
+          'PATH': Platform.environment['PATH'] ?? '',
+          if (Platform.environment['PUB_CACHE'] != null)
+            'PUB_CACHE': Platform.environment['PUB_CACHE']!,
+        },
       );
       final stdoutBuffer = StringBuffer();
       final stderrBuffer = StringBuffer();
