@@ -38,6 +38,19 @@ const branchSummaryPrefix =
 /// `BRANCH_SUMMARY_SUFFIX`.
 const branchSummarySuffix = '\n</summary>';
 
+/// The model binding a session's active branch was recorded with: the
+/// provider kind and model id, plus — when the leaf record was a
+/// gh-1000 `model_change` — the serving endpoint and the saved
+/// custom-provider ENTRY NAME that pinned the key. Public so consumers
+/// of [SessionContext.model] (the CLI restore, the Flutter app) share
+/// one shape instead of re-spelling the record type.
+typedef SessionModelPin = ({
+  String provider,
+  String modelId,
+  String? baseUrl,
+  String? customProvider,
+});
+
 /// The model-derived state of a session along the active branch.
 ///
 /// Ported from pi's `SessionContext`.
@@ -61,13 +74,7 @@ final class SessionContext {
   /// endpoint and saved custom-provider entry when the last record was a
   /// gh-1000 model_change (a restore re-resolves onto that entry);
   /// assistant-message-derived models carry neither.
-  final ({
-    String provider,
-    String modelId,
-    String? baseUrl,
-    String? customProvider,
-  })?
-  model;
+  final SessionModelPin? model;
 
   /// The active tool names in effect at the leaf, if ever set.
   final List<String>? activeToolNames;
@@ -528,14 +535,12 @@ final class Session {
 
   ({
     String thinkingLevel,
-    ({String provider, String modelId, String? baseUrl, String? customProvider})?
-    model,
+    SessionModelPin? model,
     List<String>? activeToolNames,
   })
   _deriveState(List<SessionRecord> path) {
     var thinkingLevel = 'off';
-    ({String provider, String modelId, String? baseUrl, String? customProvider})?
-    model;
+    SessionModelPin? model;
     List<String>? activeToolNames;
     for (final entry in path) {
       switch (entry) {
