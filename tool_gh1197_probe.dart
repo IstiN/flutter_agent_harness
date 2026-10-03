@@ -44,16 +44,16 @@ Future<HttpServer> _startServer(int port) async {
         }
 
         try {
-          if (index.isEven) {
-            // A thinking burst (~3s paced), then a text answer (~3s paced).
+          if (index >= 9) {
+            // Final turn: a thinking burst (~3s paced), then a text answer.
             await paced(
               'reasoning_content',
-              'Analyzing the request $index. ' * 40,
+              'Wrapping up the run. ' * 60,
               const Duration(milliseconds: 25),
             );
             await paced(
               'content',
-              'Answer part $index: the essay continues with prose. ' * 40,
+              'Final answer: the essay concludes here with prose. ' * 40,
               const Duration(milliseconds: 20),
             );
             await chunk({
@@ -62,7 +62,7 @@ Future<HttpServer> _startServer(int port) async {
               ],
             });
           } else {
-            // A bash tool call (3s sleep) each odd turn.
+            // A bash tool call (3s sleep) per turn until the last.
             await paced(
               'reasoning_content',
               'Running the probe tool for step $index. ' * 10,
