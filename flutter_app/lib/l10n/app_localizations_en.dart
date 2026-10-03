@@ -762,6 +762,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get launcherSeedErrorTitle => 'App failed to install';
 
   @override
+  String get launcherManifestErrorTitle => 'App failed to load';
+
+  @override
+  String get appsManifestErrorLabel => 'Manifest error';
+
+  @override
   String get launcherTileSizeIcon => 'Icon (1×1)';
 
   @override
