@@ -611,6 +611,43 @@ void main() {
       await run;
     },
   );
+
+  test('/skills caps a long description so one skill stays one terminal line '
+      '(consent PTY suite #927 regressed on a 519-char builtin description '
+      'wrapping greet off the 80x24 screen)', () async {
+    await env.writeFile(
+      '/work/.fah/skills/greet/SKILL.md',
+      '---\nname: greet\ndescription: say hi\n---\nWave at the user.\n',
+    );
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+    await waitForIt(
+      () => cli.systemPrompt.contains('builtin://skills/create-goal'),
+    );
+    io.sendLine('/skills');
+    await waitForIt(() => io.out.toString().contains('greet — say hi'));
+    final listing = io.out
+        .toString()
+        .split('\n')
+        .where((l) => l.contains('— '))
+        .toList();
+    // Every row keeps name + a capped description: the builtin's
+    // model-facing text is cut (not absent), the project row is intact.
+    final createGoal = listing.firstWhere((l) => l.contains('create-goal'));
+    expect(createGoal, contains('Turn a feature idea'));
+    // SGR-stripped: name + capped detail stay inside one 80-col line; the
+    // dim tail may wrap as its own dim continuation (<= 2 lines total).
+    final plainLine = createGoal.replaceAll(
+      RegExp('\x1b\\[[0-9;?]*[ -/]*[@-~]'),
+      '',
+    );
+    expect(plainLine.indexOf('  builtin://'), lessThan(80));
+    expect(plainLine.length, lessThan(160));
+    expect(listing.join('\n'), isNot(contains('cross-platform regression')));
+    io.sendLine('/exit');
+    await run;
+  });
 }
 
 /// Issue #1151 AC8: the same assertions on the REAL TUI surface —

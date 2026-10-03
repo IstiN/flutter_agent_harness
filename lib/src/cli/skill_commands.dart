@@ -542,6 +542,15 @@ extension AgentCliSkillsExt on AgentCli {
     io.writeln('skills:');
     for (final skill in _skills) {
       final decision = _skillResolution.byName[skill.name];
+      // Display text: a builtin's model-facing description runs hundreds
+      // of chars and would wrap one row over a screenful at 80 columns -
+      // cap it so one skill stays one terminal line (issue #1151; the
+      // system-prompt block keeps the full text).
+      var detail = skill.description;
+      const cap = 57;
+      if (detail.length > cap) {
+        detail = '${detail.substring(0, cap)}…';
+      }
       final flags = [
         if (!skill.userInvocable) 'model-only',
         if (!skill.modelInvocable) 'user-only',
@@ -553,7 +562,7 @@ extension AgentCliSkillsExt on AgentCli {
           'off (${decision.scope?.name ?? 'default'})',
       ];
       io.writeln(
-        '  ${skill.name} — ${skill.description}  '
+        '  ${skill.name} — $detail  '
         '${_style.dim('${skill.filePath} (${skill.scope.name}, ${skill.source.name}'
         '${flags.isEmpty ? '' : '; ${flags.join(', ')}'})')}',
       );
