@@ -69,7 +69,7 @@ jobs:
     # runner overrides).
     # Flip in lockstep with ai-teammate.yml — guarded by
     # test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-sm.yml@2b4b83558f2e27c97b7d46cfb7beeca4ae7dfda7
+    uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-sm.yml@e611e5f4240e9c8a5cdbf10721562eb04513d006
     with:
       # Manual ticks default to dry; cron ticks run live.
       dryRun: ${{ github.event.inputs.dryRun || 'false' }}
