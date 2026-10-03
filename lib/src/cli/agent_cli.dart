@@ -2697,6 +2697,10 @@ class AgentCli {
   /// and is delivered at the next real turn). User-kind messages reset the
   /// streak when delivered: they ARE the user talking, so an attach-driven
   /// session never exhausts the cap.
+  ///
+  /// The lanes live in [AgentCli._inboxWakePolicy] (gh-1180): scheduled
+  /// self-mail is EXEMPT from this counter (deliberate agent cadence, not
+  /// chatter); this seam stays for REG tests of the cap itself.
   var _inboxWakeStreak = 0;
   static const _maxInboxWakeStreak = 10;
 
@@ -2706,6 +2710,21 @@ class AgentCli {
   int get inboxWakeStreakForTest => _inboxWakeStreak;
   @visibleForTesting
   set inboxWakeStreakForTest(int value) => _inboxWakeStreak = value;
+
+  /// The idle inbox-wake lane policy (gh-1180): user-kind mail always
+  /// wakes; delivered scheduled self-mail (`schedule_message` reminders)
+  /// is exempt from the chatter cap — a deliberate agent-chosen cadence
+  /// wakes forever, cadence-floored against a disguised busy-spin; and
+  /// foreign agent-to-agent chatter stays capped at
+  /// [_maxInboxWakeStreak].
+  @visibleForTesting
+  final InboxWakePolicy inboxWakePolicy = InboxWakePolicy();
+
+  /// The persisted wake receipts for scheduled mail (gh-1180 AC4): every
+  /// wake_attempted / turn_started / wake_refused lands here so a
+  /// post-mortem can tell "timer never fired" from "wake refused".
+  @visibleForTesting
+  ScheduledReceiptLog? scheduledReceiptsForTest;
 
   /// Compaction settings for the live model: the config override when the
   /// user pinned one, else pi's fixed defaults SCALED to the model window

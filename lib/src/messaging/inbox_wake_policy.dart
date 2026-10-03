@@ -105,8 +105,7 @@ final class InboxWakePolicy {
   /// mailbox (from == to). Foreign chatter cannot produce the shape by
   /// accident — its `fromId` is the sender's mailbox, never mine.
   static bool isScheduledSelfMail(AgentMessage message) =>
-      message.fromId == message.toId &&
-      message.text.startsWith('[scheduled] ');
+      message.fromId == message.toId && message.text.startsWith('[scheduled] ');
 
   /// Decides — and books — the wake for one pending batch. Call only when
   /// mail is pending and the host is idle; a refused decision leaves the
