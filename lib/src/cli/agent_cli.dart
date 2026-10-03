@@ -2526,6 +2526,8 @@ class AgentCli {
     _autoFoldCount = 0;
     // One empty-reply nudge per logical turn (issue #1085 M2b).
     _emptyReplyNudgesLeft = 1;
+    // The stuck-call nudge budget refills per turn (issue #1185 E2).
+    _waiting.resetToolNudges();
     // The user's explicit stop ends with the turn that was stopped
     // (issue #1085 round-1): a fresh prompt re-arms the funnel's abort
     // gate.
