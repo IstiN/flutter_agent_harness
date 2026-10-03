@@ -146,8 +146,9 @@ String _callbackPage(AiinCallback callback) {
 
 /// The mobile auth-session surface closed WITHOUT a callback — a user
 /// cancel (iOS swipe-dismissal). Thrown by [runAiinConnectCliFlow] under
-/// `cancelWhenOpenSettles`; the app's mobile branch catches it and falls
-/// straight to the paste-key fallback.
+/// `cancelWhenOpenSettles`; the app's mobile branch catches it and
+/// surfaces the visible failure state (gh-1044 I4 — SSO is the only
+/// path, never a paste sheet).
 final class AiinSurfaceClosedException implements Exception {
   const AiinSurfaceClosedException();
 
@@ -187,11 +188,15 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
 
   /// Treats a successful open completion before any callback as a user
   /// cancel — throws [AiinSurfaceClosedException] — instead of waiting
-  /// out [timeout]. For auth-session surfaces that resolve only when the
-  /// sheet CLOSES (iOS `ASWebAuthenticationSession`): a user
-  /// swipe-dismissal must short-circuit to the caller's fallback, not
-  /// leave dead air. Desktop browser launches resolve immediately, so
-  /// they must leave this off (default false).
+  /// out [timeout]. For surfaces that resolve without a completion value
+  /// (an external browser launch): when the launch future settles with no
+  /// callback and no [interceptedCallback] channel, a user abandonment
+  /// must short-circuit, not leave dead air. When [interceptedCallback]
+  /// IS present the sheet's resolution rides it alone (its null IS the
+  /// cancel) and this flag is ignored — the two signals come from the
+  /// same resolution, and the open-settle path would only race the
+  /// callback URL's delivery. Desktop callers leave this off (default
+  /// false).
   bool cancelWhenOpenSettles = false,
 
   /// The host the callback URL advertises (gh-1044): `localhost` for the
@@ -206,7 +211,10 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
   /// directly — completion no longer depends on the redirect loading the
   /// loopback server inside the sheet. The loopback server stays armed as
   /// the fallback leg (older surfaces still navigate the redirect for
-  /// real); whichever leg lands first wins the race.
+  /// real); whichever leg lands first wins the race. This future is the
+  /// sheet's single completion channel — the
+  /// [cancelWhenOpenSettles] open-settle cancel does not apply while it
+  /// exists.
   Future<String?> Function()? interceptedCallback,
 }) async {
   final server = AiinCallbackServer();
@@ -294,15 +302,25 @@ enum _AiinCallbackSource { loopbackServer, interceptedRedirect }
 /// Resolves with the first of [callbackFuture] (a landed callback or the
 /// timeout), an [intercepted] callback URL (gh-1044 AC9), an [opened]
 /// failure, or — when [cancelWhenOpenSettles] — a successful [opened]
-/// completion or an [intercepted] null ([AiinSurfaceClosedException]): an
+/// completion, or an [intercepted] null ([AiinSurfaceClosedException]): an
 /// auth-session sheet that closed WITHOUT returning a callback URL is a
 /// user cancel, not a reason to wait out the callback timeout. A late
 /// open error after the callback won is dropped from the race here and
 /// swallowed by the caller's `await opened` — the landed callback always
-/// settles the flow. The intercepted completion is fed by the same
-/// `authenticate` call that opens the sheet and completes BEFORE the
-/// open future (the wrapper completes it first), so an intercepted
-/// callback can never lose to the surface-closed signal.
+/// settles the flow.
+///
+/// When [intercepted] is present it is the sheet's SINGLE completion
+/// channel — both the callback URL and the cancel (null) ride it — so the
+/// [opened] settle never duplicates the cancel (gh-1044): the mobile
+/// wrapper resolves `opened` and [intercepted] from the SAME sheet
+/// resolution, and a Dart async function's `return` completes its future
+/// SYNCHRONOUSLY (VM `_returnAsyncNotFuture` → `_completeWithValue`) while
+/// `Completer.complete` defers its listeners to a LATER microtask — an
+/// `opened`-settle cancel evaluated in that cascade would always judge
+/// the pending [interceptedCallback] incomplete and steal the race from a
+/// callback URL sitting in the very next microtask. With no [intercepted]
+/// channel (an external browser that gives no completion value),
+/// [cancelWhenOpenSettles] keeps its original meaning.
 Future<(AiinCallback?, _AiinCallbackSource)> _firstCallbackOrOpenError(
   Future<AiinCallback?> callbackFuture,
   Future<void> opened, {
@@ -336,7 +354,12 @@ Future<(AiinCallback?, _AiinCallbackSource)> _firstCallbackOrOpenError(
   }
   unawaited(
     opened.then((_) {
+      // With an intercepted channel the sheet's resolution is reported
+      // through it alone (null = user cancel) — never duplicated here.
+      // See the doc comment for the scheduling asymmetry that makes the
+      // duplication a lost race for the intercepted URL.
       if (cancelWhenOpenSettles &&
+          intercepted == null &&
           !surfaceClosed.isCompleted &&
           !interceptedCallback.isCompleted) {
         surfaceClosed.completeError(const AiinSurfaceClosedException());

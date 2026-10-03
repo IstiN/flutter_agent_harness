@@ -33,9 +33,12 @@ import 'package:url_launcher/url_launcher.dart' as url_launcher;
 /// the platform browser surface. iOS opens the hosted sign-in page in an
 /// `ASWebAuthenticationSession` system sheet (via the `fah/web_auth_session`
 /// channel — an embedded WebView would break Google sign-in); the sheet
-/// dismisses itself when the callback lands. Android opens the external
+/// intercepts the `http://localhost` redirect (gh-1044 AC9, the CodeMie
+/// contract) and hands the callback URL back to the flow — the loopback
+/// server stays armed as the fallback leg. Android opens the external
 /// browser, whose `http://localhost` redirect reaches the on-device loopback
-/// server. A failure falls back to the cabinet paste-key path.
+/// server. A failed/cancelled sign-in is a visible error (gh-1044 I4 —
+/// SSO is the only path, no key-paste fallback).
 ///
 /// **Web** — the popup OAuth round-trip ([runAiinWebConnect], issue #486).
 ///
@@ -427,7 +430,14 @@ Future<bool> _completeAiinConnect(
 /// answerable from the log alone.
 void _showAiinSignInError(BuildContext context, _AiinFlowTrace trace) {
   final reason = trace.lastOutcome;
-  showFahErrorSnack(context, '$_aiinSignInFailedMessage — $reason. Try again.');
+  // hideCurrent: the flow's own progress snack ('Opening AIIN sign-in…')
+  // would otherwise queue the failure behind it for its full 4 s duration —
+  // the visible error state (gh-1044 AC4) must surface immediately.
+  showFahErrorSnack(
+    context,
+    '$_aiinSignInFailedMessage — $reason. Try again.',
+    hideCurrent: true,
+  );
   debugPrint('[AIIN] flow trace: ${trace.summary}');
 }
 
@@ -524,9 +534,13 @@ Future<bool> runAiinMobileConnect({
   final authSession = defaultTargetPlatform == TargetPlatform.iOS;
   // The sheet's completion value rides this completer: the same
   // `authenticate` call that opens the sheet resolves with the intercepted
-  // callback URL (or null on a user cancel). Completing it BEFORE the
-  // open future's bool keeps the flow's race order — the intercepted
-  // callback can never lose to the surface-closed signal.
+  // callback URL (or null on a user cancel). It is the sheet's SINGLE
+  // completion channel — the flow's cancel (null) and success (URL) both
+  // ride it; the flow never treats the open future's bool as a second
+  // cancel signal, because an async `return` completes its future
+  // synchronously while `Completer.complete` defers to a later microtask
+  // (an open-settle cancel evaluated in that cascade would always steal
+  // the race from an intercepted URL queued one microtask earlier).
   final intercepted = authSession ? Completer<String?>() : null;
   // gh-1044 AC2/AC4: the diagnostic bundle behind the visible failure.
   final trace = _AiinFlowTrace();
@@ -806,8 +820,6 @@ class _AiinKeyPasteDialogState extends State<_AiinKeyPasteDialog> {
     );
   }
 }
-
-/// The fallback when the automatic sign-in cannot complete: open the AIIN
 
 /// The app-side default chat endpoint of the AIIN provider (the catalog
 /// spec's default base URL).

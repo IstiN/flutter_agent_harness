@@ -2649,6 +2649,11 @@ class AgentService extends ChangeNotifier
   /// is never hijacked mid-flow.
   int _providerAddFlowDepth = 0;
 
+  /// Whether a provider add/connect flow is latched (gh-1044 I1/AC6).
+  /// Subclasses overriding [reconfigure] (the extension relay) check this
+  /// for the same restore-refusal the base implements.
+  bool get providerAddFlowInProgress => _providerAddFlowDepth > 0;
+
   /// Marks a provider add/connect flow start (see [reconfigure]'s
   /// `fromProviderAddFlow`).
   void beginProviderAddFlow() => _providerAddFlowDepth++;

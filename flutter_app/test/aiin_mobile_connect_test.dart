@@ -163,6 +163,8 @@ void main() {
     final registry = ProviderRegistry.inMemory();
     final context = await _pumpHost(tester);
 
+    var modelsFetched = false;
+    Object? flowError;
     await tester.runAsync(() async {
       unawaited(
         runAiinMobileConnect(
@@ -171,11 +173,15 @@ void main() {
           service: null,
           lastConnectionStore: LastConnectionStore.inMemory(),
           aiinHttpClient: _mockBackend(),
-          aiinModelsFetcher: (baseUrl, {required apiKey}) async =>
-              ['moonshotai/kimi-k2'],
+          aiinModelsFetcher: (baseUrl, {required apiKey}) async {
+            modelsFetched = true;
+            return ['moonshotai/kimi-k2'];
+          },
         ).then(
           (_) {},
-          onError: (Object _) {},
+          onError: (Object e, StackTrace s) {
+            flowError = e;
+          },
         ),
       );
       for (var i = 0; i < 100 && harness.argsSeen.isEmpty; i++) {
@@ -194,15 +200,35 @@ void main() {
 
     // The intercepted URL settled the flow — the exchange ran off the
     // mocked backend and the model picker opened with the fetched list.
+    // The flow's tail settles behind the loopback server's REAL socket
+    // teardown (`runAiinConnectCliFlow`'s `finally { await server.close() }`)
+    // — a real-I/O event the fake-async pumps never process, so spin the
+    // real event loop until the tail's models fetch lands, then build the
+    // pushed page.
+    await tester.runAsync(() async {
+      for (var i = 0; i < 200 && !modelsFetched; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+    });
+    // The route builds on the second frame (the entrance transition
+    // anchors to the fake clock once the pumps advance), so pump with
+    // durations until the picker page is up.
     for (var i = 0;
-        i < 60 && find.text('AIIN model').evaluate().isEmpty;
+        i < 30 && find.text('AIIN model').evaluate().isEmpty;
         i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
+    await tester.pumpAndSettle();
+    expect(modelsFetched, isTrue,
+        reason: 'the intercepted callback must settle the exchange');
+    expect(flowError, isNull, reason: 'flow error: $flowError');
     expect(find.text('AIIN model'), findsOneWidget);
     // Not yet picked — the provider row lands only after the pick.
     expect(registry.providers, isEmpty);
     await tester.pump(const Duration(seconds: 5)); // expire status snacks
+    // Restore before postTest: flutter_test's foundation-var check runs
+    // when the BODY completes — before the package-level tearDown.
+    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets('AC4: a sheet that settles without a callback surfaces a '
@@ -235,6 +261,7 @@ void main() {
     expect(find.text('AIIN API key'), findsNothing);
     expect(registry.providers, isEmpty);
     await tester.pump(const Duration(seconds: 8)); // expire the snacks
+    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets('AC3: a second Add tap while a flow runs joins it — one '
@@ -273,19 +300,24 @@ void main() {
         reason: 'the retry must reuse the running attempt');
 
     // The user swipes the sheet away — the only in-flight flow settles.
-    final session = harness.pending();
-    if (session != null && !session.isCompleted) session.complete(null);
-    expect(await second, isFalse);
+    // Both waits ride REAL async: the joined flow's tail settles behind
+    // the loopback server's real socket teardown, which the fake-async
+    // zone never processes.
     await tester.runAsync(() async {
+      final session = harness.pending();
+      if (session != null && !session.isCompleted) session.complete(null);
+      results['second'] = await second;
       for (var i = 0; i < 100 && !results.containsKey('first'); i++) {
         await Future<void>.delayed(const Duration(milliseconds: 20));
       }
     });
+    expect(results['second'], isFalse);
     expect(results['first'], isFalse);
     expect(harness.argsSeen, hasLength(1));
     await tester.pump(); // one frame for the error snack
     expect(find.textContaining('AIIN sign-in did not complete'), findsOneWidget);
     await tester.pump(const Duration(seconds: 8)); // expire the snacks
+    debugDefaultTargetPlatformOverride = null;
   });
 
   test('AC6: while an add flow is latched, restore-shaped reconfigures are '

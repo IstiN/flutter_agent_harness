@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show HttpStatus;
 
@@ -169,6 +170,117 @@ void main() {
     );
     expect(result, isNotNull);
     expect(result!.apiKey.raw, startsWith('sk-aiin-'));
+  });
+
+  test('gh-1044 AC9: the intercepted callback wins the race against the '
+      'same-resolution open settle', () async {
+    // The mobile wrapper's exact wiring: the intercepted completer is fed
+    // from the SAME sheet resolution that resolves `opened`, completed
+    // synchronously before the wrapper's `return true`. A Dart async
+    // `return` completes its future SYNCHRONOUSLY (VM
+    // `_returnAsyncNotFuture` → `_completeWithValue`) while
+    // `Completer.complete` defers its listeners to a LATER microtask — an
+    // open-settle cancel evaluated in that cascade would always judge the
+    // intercepted callback pending and steal the race from a URL sitting
+    // in the very next microtask. Regression guard: with an intercepted
+    // channel present, the open settle never cancels.
+    final intercepted = Completer<String?>();
+    final statuses = <String>[];
+    final result = await runAiinConnectCliFlow(
+      onStatus: statuses.add,
+      openBrowserFn: (url) async {
+        final login = Uri.parse(url);
+        final redirect =
+            Uri.parse(login.queryParameters['client_redirect_uri']!);
+        intercepted.complete(
+          redirect
+              .replace(
+                queryParameters: {
+                  'code': 'c-1044',
+                  'state': login.queryParameters['state']!,
+                },
+              )
+              .toString(),
+        );
+        return true;
+      },
+      interceptedCallback: () => intercepted.future,
+      cancelWhenOpenSettles: true,
+      client: mockAiinBackend(),
+    ).timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => fail('the intercepted callback lost the race'),
+    );
+    expect(result, isNotNull);
+    expect(result!.email, 'user@aiin.by');
+    expect(
+      statuses,
+      contains(
+        'AIIN redirect intercepted by the sign-in sheet (callback URL '
+        'returned to the flow)',
+      ),
+    );
+  });
+
+  test('gh-1044 AC9: the sheet settling without an intercepted URL is a '
+      'user cancel (the intercepted channel is the single cancel signal)',
+      () async {
+    final intercepted = Completer<String?>();
+    await expectLater(
+      runAiinConnectCliFlow(
+        onStatus: (_) {},
+        openBrowserFn: (url) async {
+          intercepted.complete(null); // the sheet closed with no callback
+          return true;
+        },
+        interceptedCallback: () => intercepted.future,
+        cancelWhenOpenSettles: true,
+        client: mockAiinBackend(),
+        timeout: const Duration(minutes: 5), // must NOT be waited out
+      ).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => fail('the intercepted null did not cancel the flow'),
+      ),
+      throwsA(isA<AiinSurfaceClosedException>()),
+    );
+  });
+
+  test('gh-1044 AC9: callbackHost localhost advertises the redirect the '
+      'sheet can intercept', () async {
+    var loginUrl = '';
+    await runAiinConnectCliFlow(
+      onStatus: (_) {},
+      openBrowserFn: (url) async {
+        loginUrl = url;
+        return true; // never redirected — the timeout settles the flow
+      },
+      callbackHost: 'localhost',
+      client: mockAiinBackend(),
+      timeout: const Duration(milliseconds: 100),
+    );
+    final redirect =
+        Uri.parse(Uri.parse(loginUrl).queryParameters['client_redirect_uri']!);
+    expect(redirect.host, 'localhost');
+    expect(redirect.scheme, 'http');
+  });
+
+  test('AiinCallback.fromRedirectUrl parses the intercepted redirect', () {
+    final callback = AiinCallback.fromRedirectUrl(
+      'http://localhost:54321/callback?code=c-9&state=s-9',
+    );
+    expect(callback.code, 'c-9');
+    expect(callback.state, 's-9');
+    expect(callback.succeeded, isTrue);
+
+    final failed = AiinCallback.fromRedirectUrl(
+      'http://localhost:54321/callback?error=access_denied'
+      '&error_description=user+denied',
+    );
+    expect(failed.succeeded, isFalse);
+    expect(failed.error, 'access_denied');
+
+    // A non-URL yields an empty, failed callback — never a throw.
+    expect(AiinCallback.fromRedirectUrl('not a uri').succeeded, isFalse);
   });
 
   test('the browser receives the hosted /login URL with our redirect and '
