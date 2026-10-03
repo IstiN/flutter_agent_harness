@@ -4486,4 +4486,12 @@
 
 - chore: repin factory workflows to f47d52b (kit in RUNNER_TEMP) (#1191)
 
+## 1.0.501
+
+- fix(#1121): replay zero-byte watchdog-killed requests on the shared ladder (#1188)
+- fix(#1168): resume mid-stream connection failures from the completed prefix (#1169)
+- test: deflake memory round-trip PTY waits (kill taggen 500-storm, re-anchor on terminal marker) (#1166)
+- bench-mls.yml: run fa on MLS-Bench via the existing Harbor adapter (staged nop→oracle→agent, GPU cost discipline) (#1161)
+- chore: repin factory workflows to f47d52b (kit in RUNNER_TEMP) (#1191)
+
 ## Unreleased
