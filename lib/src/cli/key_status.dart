@@ -13,6 +13,30 @@ import '../secrets/secure_key_store.dart';
 import 'custom_providers.dart';
 import 'provider_error_text.dart';
 
+/// The env-vs-store shadowing rule (gh-1000 E2), shared by the boot note
+/// (bin/fah.dart), the restore note (session_commands
+/// `_noteKeyShadowing`), and the banner hint ([KeyStatusRenderer
+/// .envKeyHint]): the slot holds DIFFERENT values in the environment and
+/// the store, and the env value is the one sent. One provenance rule —
+/// three call sites used to carry three drifting copies (round-3 review).
+bool envShadowsStoredKey(String? envValue, String? storedValue) =>
+    envValue != null &&
+    envValue.isNotEmpty &&
+    storedValue != null &&
+    storedValue != envValue;
+
+/// The provenance note for a shadowed slot (null when the env value is
+/// absent, empty, or agrees with the store): names the variable and the
+/// provenance order. Callers style it (`note: …`) for their surface.
+String? envShadowingNote(
+  String keyName,
+  String? envValue,
+  String? storedValue,
+) => envShadowsStoredKey(envValue, storedValue)
+    ? 'the environment variable $keyName shadows a DIFFERENT '
+          'stored key — the env value is the one sent'
+    : null;
+
 /// Renders the banner's key-status line and `error:` diagnostics from a
 /// snapshot of the host CLI's key inputs.
 final class KeyStatusRenderer {
@@ -222,8 +246,17 @@ final class KeyStatusRenderer {
   /// endpoint-scoped store entry → legacy env-name store entry; on a custom
   /// endpoint only the endpoint-scoped store entries can be the source (the
   /// boot resolver never probes the catalog env names there — issue #40).
+  ///
+  /// Roles mode gets the generic env-only hint ONLY for its genuine chain
+  /// failures (a catalog-default endpoint). A custom endpoint under roles
+  /// mode is a provider-binding failure — the hint names the saved entry,
+  /// the expected key slot, and the one-line fix (gh-1000 AC2): a restored
+  /// session or pinned role re-resolved onto a custom provider whose key
+  /// did not follow.
   String authHint(String baseUrl) {
     if (rolesDriven) {
+      final customHint = customEndpointAuthHint(baseUrl);
+      if (customHint != null) return customHint;
       return ' — roles mode reads keys from the environment only; check '
           'the chain env vars in ~/.fah/config.yaml';
     }
@@ -233,7 +266,10 @@ final class KeyStatusRenderer {
     }
     final names = spec.apiKeyEnvNames;
     final scopedName = CustomProviderRegistry.keyNameFor(baseUrl);
-    final onDefaultEndpoint = baseUrl == spec.defaultBaseUrl;
+    // Trailing-slash-normalized (the shared sameEndpoint rule) — one
+    // endpoint-equality rule with _isCatalogDefaultEndpoint (round-3
+    // review).
+    final onDefaultEndpoint = sameEndpoint(baseUrl, spec.defaultBaseUrl);
     if (onDefaultEndpoint) {
       // A genuine environment key in play: warn when it shadows a different
       // same-name store entry, else name it as the source.
@@ -299,11 +335,22 @@ final class KeyStatusRenderer {
   }
 
   /// The hint for a genuine environment key: the shadowing warning when a
-  /// DIFFERENT same-name store entry exists, else the source note.
+  /// DIFFERENT same-name store entry exists, else the source note. The
+  /// shadowing detection is the shared [envShadowsStoredKey] rule (the
+  /// boot and restore notes use the same one). An UNWIRED [envVarValue]
+  /// (embedded hosts may omit it) degrades conservatively: with a store
+  /// twin present the warning still fires — this hint only renders when
+  /// the env value is the one actually sent, so an uncompared twin is a
+  /// real shadow (the pre-round-3 availability); without a twin there is
+  /// nothing to shadow.
   String envKeyHint(String envActive, String baseUrl) {
     final keys = secureKeys;
     final storedTwin = keys?.read(envActive);
-    if (storedTwin != null && storedTwin.isNotEmpty) {
+    final envValue = envVarValue?.call(envActive);
+    final shadowed = envValue != null
+        ? envShadowsStoredKey(envValue, storedTwin)
+        : storedTwin != null && storedTwin.isNotEmpty;
+    if (shadowed) {
       final label = keys?.label ?? 'secure store';
       return ' — the environment variable $envActive shadows a DIFFERENT '
           'key in the $label; the env value is the one sent — fix or '
@@ -320,4 +367,62 @@ final class KeyStatusRenderer {
     if (secureKeys?.read(name) == null) return null;
     return storeHintMessage(name, baseUrl);
   }
+
+  /// The auth hint for a CUSTOM endpoint (no catalog spec's default URL)
+  /// — roles mode included, which otherwise shows its generic env-only
+  /// hint for genuine chain failures. Null for catalog-default endpoints.
+  ///
+  /// Names the failing provider (the saved entry serving the endpoint, or
+  /// the endpoint itself), the expected source (the entry's key slot or
+  /// the endpoint-scoped store slot), and the one-line fix — never the
+  /// bare roles-mode hint (gh-1000 AC2/AC5).
+  String? customEndpointAuthHint(String baseUrl) {
+    if (_isCatalogDefaultEndpoint(baseUrl)) return null;
+    final entry = _entryForEndpoint(baseUrl);
+    final keyName =
+        entry?.keyName ?? CustomProviderRegistry.keyNameFor(baseUrl);
+    final storedHint = storedKeyHint(keyName, baseUrl);
+    if (storedHint != null) return storedHint;
+    final target = entry != null ? 'provider "${entry.name}"' : baseUrl;
+    final login = entry != null ? ' (or /provider ${entry.name})' : '';
+    return ' — no key resolved for $target; set it with '
+        '/key set $keyName <value>$login';
+  }
+
+  /// Whether [baseUrl] IS the current provider kind's own default
+  /// endpoint. ONLY there is the generic roles hint honest: a
+  /// catalog-default pin resolves through the provider's env-name chain
+  /// (no endpoint slot — mirroring the resolver). Any other endpoint is a
+  /// custom binding whose endpoint-scoped slot the resolver actually
+  /// probes (gh-1000 AC2/AC5) — the hint must name that slot, not claim
+  /// "environment only". Trailing-slash-normalized (the shared
+  /// [sameEndpoint] rule): a default endpoint saved with a trailing slash
+  /// must not masquerade as a custom slot (round-3 review).
+  bool _isCatalogDefaultEndpoint(String baseUrl) {
+    final spec = resolveCliProviderSpec(providerKind, honorBuildFilter: true);
+    return spec != null && sameEndpoint(spec.defaultBaseUrl, baseUrl);
+  }
+
+  /// The saved custom entry serving [baseUrl]: the active entry when it
+  /// matches (two accounts can share one endpoint — the active one is the
+  /// one in play), else the first endpoint match.
+  CustomProviderEntry? _entryForEndpoint(String baseUrl) {
+    final registry = customProviders;
+    if (registry == null) return null;
+    final active = activeCustomName == null
+        ? null
+        : registry.find(activeCustomName!);
+    if (active != null && _sameEndpoint(active.baseUrl, baseUrl)) {
+      return active;
+    }
+    for (final entry in registry.entries) {
+      if (_sameEndpoint(entry.baseUrl, baseUrl)) return entry;
+    }
+    return null;
+  }
+
+  /// Endpoint equality ignoring a trailing slash — delegates to the shared
+  /// [sameEndpoint] rule (custom_providers.dart), so every endpoint
+  /// comparison in the CLI and the roles resolver stays one rule.
+  bool _sameEndpoint(String a, String b) => sameEndpoint(a, b);
 }

@@ -60,6 +60,7 @@ import 'package:flutter_agent_harness/src/hub/hub_boot_credential.dart';
 import 'self_manage.dart';
 import 'serve_a2a.dart';
 import 'serve_bridge.dart';
+import 'fah_boot_restore.dart';
 import 'fah_wire_serve.dart';
 import 'package:flutter_agent_harness/src/cli/provider_export.dart';
 
@@ -1506,6 +1507,21 @@ Future<void> _runApp(List<String> args) async {
                 'ignoring it and keeping "$provider"',
     );
   }
+  // gh-1000 (AC1): the state's saved-provider NAME pins WHICH saved entry
+  // serves the restored model — two entries can share one endpoint and
+  // modelId, and endpoint-keyed resolution would pick the first config
+  // match (possibly the other account's key → 401). A name that no
+  // longer resolves degrades to endpoint-keyed resolution with a note
+  // (E1 — the model is kept). The resolution lives in fah_boot_restore.dart
+  // (the pin logic's one testable home; round-3 review).
+  final folderPinned = resolveBootFolderPin(
+    state: folderStateUsable ? state : null,
+    entries: saved.customProviders,
+  );
+  if (folderPinned.note != null) {
+    stderr.writeln('note: ${folderPinned.note}');
+  }
+  final folderPinnedEntry = folderPinned.entry;
   final applyFolderModel = applyFolderState && folderStateUsable;
   if (applyFolderModel) {
     provider = folderSpec.kind;
@@ -1604,6 +1620,21 @@ Future<void> _runApp(List<String> args) async {
     storeLabel: keyCache.label,
   )) {
     stderr.writeln(line);
+  }
+
+  // gh-1000 (E2): when the boot-pinned key slot exists in BOTH the
+  // environment and the store with different values, note the provenance
+  // order (the env value wins). Detection + wording are the shared
+  // envShadowingNote rule (key_status.dart) — the restore note and the
+  // banner hint use the same one.
+  final pinnedKeyName = folderPinnedEntry?.keyName;
+  if (pinnedKeyName != null) {
+    final note = envShadowingNote(
+      pinnedKeyName,
+      Platform.environment[pinnedKeyName],
+      keyCache.read(pinnedKeyName),
+    );
+    if (note != null) stderr.writeln('note: $note');
   }
 
   // Prompt overrides: the `prompts:` section of ~/.fah/config.yaml (file
@@ -1719,6 +1750,10 @@ Future<void> _runApp(List<String> args) async {
             customProviders: saved.customProviders,
             defaultRoleResolved: defaultRoleResolved,
             interactive: headlessPrompt == null && !wireServe.wireServe,
+            // The restored folder state's saved entry (gh-1000 AC1): its
+            // own key slot resolves FIRST — the account the session
+            // actually ran on, never a same-endpoint twin.
+            pinnedKeyName: folderPinnedEntry?.keyName,
           );
   } on ConfigException catch (error) {
     _fail(error.message);
@@ -2008,6 +2043,9 @@ Future<void> _runApp(List<String> args) async {
       providerKind: cli.providerKind,
       modelId: cli.agent.state.model.id,
       baseUrl: cli.agent.state.model.baseUrl,
+      // The active saved entry (gh-1000): the pin makes the next restore
+      // land on the same account's key, not the first endpoint match.
+      customProvider: cli.activeCustomProviderName,
     );
   }
 
@@ -2170,6 +2208,10 @@ Future<void> _runApp(List<String> args) async {
       // Marathon-session resume parses its multi-hundred-MB tail off the
       // UI isolate (issue #503); the isolate executor is IO-only.
       parseExecutor: const IsolateSessionParseExecutor(),
+      // The folder state's saved provider entry (gh-1000 AC1): the CLI
+      // starts with that entry active — its key slot serves the restored
+      // model and its name shows in the status bar.
+      activeCustomName: folderPinnedEntry?.name,
       model: model,
       apiKey: apiKey,
       providerKind: provider,
