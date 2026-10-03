@@ -2288,6 +2288,7 @@ Future<void> _runApp(List<String> args) async {
       runtimeTools: runtimeTools,
       agentMode: harnessMode,
       loadMode: loadMode,
+      misuseBreaker: saved.misuseBreaker,
       compactionEngine: compactionEngine,
       compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
       wireDump: wireDump,

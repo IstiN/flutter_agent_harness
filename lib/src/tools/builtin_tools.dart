@@ -60,6 +60,7 @@ import '../skills/builtin_skills.dart';
 import '../types.dart';
 import '../web_search/web_search.dart';
 import 'archive_reader.dart';
+import 'misuse_policy.dart';
 import 'read_selector.dart';
 import 'password_prompt.dart';
 import 'shell_jobs.dart';
@@ -734,7 +735,13 @@ AgentTool readFileTool(
       // selector interpretation.
       final split = await splitPathAndSelPreferringLiteral(rawPath, env);
       final parsed = parseSel(split.sel);
-      _checkSelectorOffsetCombo(parsed, offset, limit);
+      // Issue #862: a selector already pins the window, so offset/limit are
+      // ignored with a notice instead of hard-rejecting the call.
+      final windowNotice = readWindowCoercionNotice(
+        hasSelector: parsed is! ReadSelectorNone,
+        offset: offset,
+        limit: limit,
+      );
 
       final extended = await _readExtendedTarget(
         env,
@@ -743,12 +750,11 @@ AgentTool readFileTool(
         sqlite,
         cancelToken,
       );
-      if (extended != null) return extended;
+      if (extended != null) return _withNotice(extended, windowNotice);
 
       final path = split.path;
-      // Built-in skills (issue #1151) ride the package as compiled-in
-      // data — their `builtin://` paths resolve from the embedded copy on
-      // every host, before any filesystem access.
+      // Built-in skills (issue #1151): builtin:// paths resolve from the
+      // embedded copy before any filesystem access.
       final embedded = builtinSkillTextAt(path);
       if (embedded == null) {
         final binaryRead = await env.readBinaryFile(path);
@@ -757,33 +763,25 @@ AgentTool readFileTool(
         cancelToken?.throwIfCancelled();
 
         final imageResult = _readImageResult(path, bytes, parsed, model);
-        if (imageResult != null) return imageResult;
+        if (imageResult != null) return _withNotice(imageResult, windowNotice);
       }
 
-      return _readTextContent(
-        env,
-        store,
-        path,
-        parsed,
-        offset,
-        limit,
-        embedded,
-        hashlineMode,
-        cancelToken,
+      return _withNotice(
+        await _readTextContent(
+          env,
+          store,
+          path,
+          parsed,
+          offset,
+          limit,
+          embedded,
+          hashlineMode,
+          cancelToken,
+        ),
+        windowNotice,
       );
     },
   );
-}
-
-/// Rejects the offset/limit arguments combined with a path selector: the
-/// selector already pins the window, so mixing both is ambiguous.
-void _checkSelectorOffsetCombo(ReadSelector parsed, int? offset, int? limit) {
-  if (parsed is! ReadSelectorNone && (offset != null || limit != null)) {
-    throw StateError(
-      'offset/limit cannot be combined with a path selector; use one or '
-      'the other.',
-    );
-  }
 }
 
 /// Probes [rawPath] for the extended read targets (archive inner paths and
@@ -1993,56 +1991,78 @@ AgentTool editFileTool(ExecutionEnv env, {HashlineSnapshotStore? snapshots}) {
       final newText = arguments['newText'] as String?;
       final patch = arguments['patch'] as String?;
 
-      if (patch != null) {
-        if (oldText != null || newText != null) {
-          throw StateError(
-            'Provide either patch (hashline mode) or oldText/newText '
-            '(exact-match mode), not both.',
+      // Issue #862: an unambiguous both-modes mix is coerced (patch wins;
+      // a malformed patch with a complete exact-match triple falls back),
+      // never looped on. Only "neither mode complete" rejects, with a
+      // remedy example.
+      final plan = resolveEditMode(
+        path: path,
+        oldText: oldText,
+        newText: newText,
+        patch: patch,
+      );
+      switch (plan) {
+        case EditReject(:final message):
+          throw StateError(message);
+        case EditRunPatch(:final parsed, :final notice):
+          // The plan carries the ONE shared parse (issue #862 review):
+          // no re-parse here, so the gate and the apply cannot drift.
+          // Lock every file the patch can touch: the authored section paths
+          // AND the canonical paths that minted each cited tag — the
+          // patcher's missing-path recovery (_recoverSectionPathFromTag) can
+          // redirect a section onto a snapshot's file, which must not race
+          // its own mutations either. Extra keys only over-lock briefly;
+          // sorted acquisition in [runAll] keeps that deadlock-free.
+          final keys = <String>{
+            for (final section in parsed.sections)
+              await _canonicalPath(env, section.path),
+            for (final section in parsed.sections)
+              if (section.fileHash != null)
+                for (final snapshot in store.findByHash(section.fileHash!))
+                  _normalizeLockKey(snapshot.path),
+          };
+          final result = await _pathMutationLock.runAll(keys, () {
+            // Re-check after the lock wait: the queue can span a cancel.
+            cancelToken?.throwIfCancelled();
+            return _executeHashlineEdit(env, store, path, parsed, cancelToken);
+          });
+          return _withNotice(result, notice);
+        case EditRunExactMatch(
+            :final path,
+            :final oldText,
+            :final newText,
+            :final notice,
+          ):
+          // Issue #1083: hold the lock across the read-validate-write window
+          // so a concurrent same-file edit applies on top of this one's
+          // result instead of both editing the same snapshot.
+          final result = await _pathMutationLock.run(
+            await _canonicalPath(env, path),
+            () {
+              // Re-check after the lock wait: the queue can span a cancel.
+              cancelToken?.throwIfCancelled();
+              return _executeExactMatchEdit(
+                env,
+                path,
+                oldText,
+                newText,
+                cancelToken,
+              );
+            },
           );
-        }
-        // Parse outside the lock: argument errors must not queue behind
-        // another holder. Section paths key the lock the same way the
-        // exact-match mode does (issue #1083), so interleaved hashline
-        // patches serialize per file and the TAG guard decides the winner.
-        final parsed = HashlinePatch.parse(patch, fallbackPath: path);
-        if (parsed.sections.isEmpty) {
-          throw StateError('No hashline sections found in patch input.');
-        }
-        // Lock every file the patch can touch: the authored section paths
-        // AND the canonical paths that minted each cited tag — the
-        // patcher's missing-path recovery (_recoverSectionPathFromTag) can
-        // redirect a section onto a snapshot's file, which must not race
-        // its own mutations either. Extra keys only over-lock briefly;
-        // sorted acquisition in [runAll] keeps that deadlock-free.
-        final keys = <String>{
-          for (final section in parsed.sections)
-            await _canonicalPath(env, section.path),
-          for (final section in parsed.sections)
-            if (section.fileHash != null)
-              for (final snapshot in store.findByHash(section.fileHash!))
-                _normalizeLockKey(snapshot.path),
-        };
-        return _pathMutationLock.runAll(keys, () {
-          // Re-check after the lock wait: the queue can span a cancel.
-          cancelToken?.throwIfCancelled();
-          return _executeHashlineEdit(env, store, path, parsed, cancelToken);
-        });
+          return _withNotice(result, notice);
       }
-      if (path == null || oldText == null || newText == null) {
-        throw StateError(
-          'Missing arguments: provide either patch (hashline mode) or '
-          'path + oldText + newText (exact-match mode).',
-        );
-      }
-      // Issue #1083: hold the lock across the read-validate-write window so
-      // a concurrent same-file edit applies on top of this one's result
-      // instead of both editing the same snapshot.
-      return _pathMutationLock.run(await _canonicalPath(env, path), () {
-        // Re-check after the lock wait: the queue can span a cancel.
-        cancelToken?.throwIfCancelled();
-        return _executeExactMatchEdit(env, path, oldText, newText, cancelToken);
-      });
     },
+  );
+}
+
+/// Appends a coercion [notice] to a successful [result]'s text (issue #862):
+/// the model must see what was ignored so the next call carries one mode.
+ToolExecutionResult _withNotice(ToolExecutionResult result, String? notice) {
+  if (notice == null) return result;
+  return ToolExecutionResult(
+    content: [...result.content, TextContent(text: '\n$notice')],
+    terminate: result.terminate,
   );
 }
 
