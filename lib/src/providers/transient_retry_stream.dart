@@ -49,6 +49,13 @@ import '../types.dart';
 /// engine was not in front. Mirrors the roles layer's transport set
 /// (`model_roles/fallback_stream.dart`); duplicated because providers/ sits
 /// below model_roles/.
+///
+/// The structural tag the connect watchdog's exhaustion error carries:
+/// `watchdogTimedOut()` in `provider_common.dart` builds its message with
+/// it, and the classifier below matches the CONSTANT — the producer and
+/// consumer of the wording are pinned together (issue #1121, review r1).
+const String connectWatchdogTag = '(connect watchdog)';
+
 final _transientNetworkPatterns = [
   RegExp(r'connection reset', caseSensitive: false),
   RegExp(r'socketexception', caseSensitive: false),
@@ -67,6 +74,15 @@ final _transientNetworkPatterns = [
   RegExp(r'host is (down|unreachable)', caseSensitive: false),
   RegExp(r'software caused connection abort', caseSensitive: false),
   RegExp(r'handshake ?exception', caseSensitive: false),
+  // The connect watchdog's kill (issue #1121): a request aborted before a
+  // single response byte — trivially safe to replay, nothing was streamed.
+  // Deliberately distinct from the idle watchdog's "stream idle timeout"
+  // wording below: mid-stream silence follows the #290 AC4 stand-rule.
+  // Matched via [connectWatchdogTag] — the constant `watchdogTimedOut()`
+  // builds its message with — so rewording the display string cannot
+  // silently drop a #1125 ladder exhaustion out of this ladder
+  // (review r1, thread 2).
+  RegExp(RegExp.escape(connectWatchdogTag)),
   // Truncation class (issue #312): a stream that closes without a
   // finish_reason and without content is a cut transport.
   RegExp(r'stream ended without finish_reason'),
@@ -101,7 +117,10 @@ final _rateLimitGuardPatterns = [
 /// "500 … please try again later"), auth failures stand, context overflow
 /// belongs to compaction, and the idle watchdog's own `TimeoutException`
 /// wording deliberately does NOT match (that error means "the endpoint
-/// went silent", which a retry re-arms anyway).
+/// went silent", which a retry re-arms anyway) — while the connect
+/// watchdog's zero-byte wording DOES via [connectWatchdogTag] (issue
+/// #1121: a never-started request is replayed, a silent mid-stream one
+/// is not).
 bool isTransientNetworkError(AssistantMessage message) {
   if (message.stopReason != StopReason.error) return false;
   final text = message.errorMessage;
@@ -271,6 +290,64 @@ String _midStreamResumeNotice(StopReason reason, int completedBlocks) =>
     '${reason == StopReason.aborted ? 'abort' : 'connection failure'} '
     '— resuming from $completedBlocks completed block(s)';
 
+/// The replay reason shared by the attempt log and the [transientRetryNotice]
+/// (issue #1121 review r1): names the machine trigger when the run-idle
+/// watchdog motivated the replay — "Request was aborted" alone has meant
+/// USER intent on the [net] surface, and a forensics reader must be able
+/// to tell a watchdog replay from a provider-emitted abort.
+String _replayReason(bool watchdogReplay, AssistantMessage error) =>
+    watchdogReplay
+    ? 'run-idle watchdog replay of zero-byte request: '
+          '${_shortReason(error.errorMessage)}'
+    : _shortReason(error.errorMessage);
+
+/// Re-arms a watchdog-cancelled latch IN PLACE once the failure was
+/// classed as a replay (the #1132 discipline, issue #1121): the loop's
+/// tool phases, a later `Agent.abort()`, and the tail request observe a
+/// live token again. A user cancel never reaches this —
+/// `_replaysAttempt` stands it before the outcome exists.
+void _rearmWatchdogLatch(CancelToken? cancelToken, bool watchdogReplay) {
+  if (watchdogReplay) {
+    cancelToken?.reset();
+  }
+}
+
+/// Runs the inter-attempt pause of the transient ladder: sleeps the
+/// backoff delay (racing the token), ANNOUNCES the replay with the
+/// truthful schedule — a survived wait retries in `delay`, a watchdog
+/// fire absorbed mid-sleep retries immediately (0s; issue #1121 review
+/// r1, thread 1) — and absorbs a watchdog fire landing INSIDE the sleep
+/// the same way as one landing on the failure (machine cancel, latch
+/// reset, retry — the #1132 discipline). A USER cancel ends the call
+/// here. Returns true when the loop continues to the next attempt,
+/// false after the aborted terminal was pushed.
+Future<bool> _pauseBetweenAttempts(
+  AssistantMessageEventStream out,
+  Model model,
+  AssistantMessage lastFailure,
+  _ResumeState resume,
+  CancelToken? cancelToken,
+  Duration delay,
+  int attempt,
+  int maxAttempts,
+  String reason,
+) async {
+  final survived = await transientRetrySleeper(delay, cancelToken);
+  transientRetryNotice?.call(
+    attempt,
+    maxAttempts,
+    survived ? delay : Duration.zero,
+    reason,
+  );
+  if (survived) return true;
+  if (cancelToken?.cancelReason is RunIdleWatchdogFire) {
+    cancelToken?.reset();
+    return true;
+  }
+  _pushAborted(out, model, lastFailure, resume: resume);
+  return false;
+}
+
 Future<void> _drive(
   AssistantMessageEventStream out,
   StreamFunction inner,
@@ -306,7 +383,15 @@ Future<void> _drive(
         return;
       case _TransientFailure(:final error):
         lastFailure = error;
-        attemptLog.add(_shortReason(error.errorMessage));
+        // A machine-cancelled latch re-arms IN PLACE (the issue #1132
+        // discipline): the run-idle watchdog fired over a request that
+        // never received a byte, and the replay re-opens the SAME token so
+        // the loop, tool phases and a later user abort keep working (issue
+        // #1121). A user cancel never reaches this branch —
+        // `_resumableAbort` stands it before the outcome exists.
+        final watchdogReplay = cancelToken?.cancelReason is RunIdleWatchdogFire;
+        attemptLog.add(_replayReason(watchdogReplay, error));
+        _rearmWatchdogLatch(cancelToken, watchdogReplay);
         if (attempt >= maxAttempts) {
           final terminal = _transientExhaustedTerminal(
             model,
@@ -316,15 +401,17 @@ Future<void> _drive(
           out.push(resume.isEmpty ? terminal : _resumeEvent(terminal, resume));
           return;
         }
-        transientRetryNotice?.call(
+        if (!await _pauseBetweenAttempts(
+          out,
+          model,
+          lastFailure,
+          resume,
+          cancelToken,
+          delay,
           attempt,
           maxAttempts,
-          delay,
-          _shortReason(error.errorMessage),
-        );
-        final survived = await transientRetrySleeper(delay, cancelToken);
-        if (!survived) {
-          _pushAborted(out, model, lastFailure, resume: resume);
+          _replayReason(watchdogReplay, error),
+        )) {
           return;
         }
       case _AbortedPartial(:final snapshot, :final keptBlocks, :final reason):
@@ -653,17 +740,16 @@ _AttemptOutcome? _committedOutcome(
 }
 
 /// Whether a PRE-commit failure replays the attempt (buffer discarded):
-/// the transient wire classes always do; in resume mode the abort class
-/// also replays the tail — the anchor prefix in the request context is
-/// untouched (issue #1126), while a first attempt keeps today's forward
-/// rule.
-bool _replaysAttempt(
-  ErrorEvent event,
-  CancelToken? cancelToken,
-  bool resuming,
-) {
+/// the transient wire classes always do, and so does the abort class when
+/// no one intends the abort — a zero-byte request killed by the run-idle
+/// watchdog (issue #1121 bench repro: the watchdog fired at 8 min while
+/// the connect ladder was still waiting out a black-holed endpoint) or by
+/// the provider/gateway itself with a healthy token (the E5 incident
+/// class). A USER abort (bare cancel) stands, and once the transcript
+/// holds content the #290 stand-rule owns the failure (post-commit path).
+bool _replaysAttempt(ErrorEvent event, CancelToken? cancelToken) {
   if (_retryableWireFailure(event)) return true;
-  return resuming && _resumableAbort(event, cancelToken);
+  return _resumableAbort(event, cancelToken);
 }
 
 /// The terminal outcome of a PRE-commit event, or null to keep streaming.
@@ -678,7 +764,7 @@ _AttemptOutcome? _bufferedOutcome(
       run.forward(event);
       return const _Forwarded();
     case ErrorEvent():
-      if (_replaysAttempt(event, cancelToken, run.resume != null)) {
+      if (_replaysAttempt(event, cancelToken)) {
         // Not forwarded: the buffer is discarded and the call retries.
         return _TransientFailure(event.error);
       }
