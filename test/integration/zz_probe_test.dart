@@ -1,3 +1,17 @@
+// Manual diagnostic probe (not part of any CI gate): boots a real PTY
+// CLI against the mock server and dumps the idle + busy screens.
+//
+// Integration-tagged like every other pty_harness consumer (issue #553
+// taxonomy — it spawns a real process, so it is excluded from the
+// pre-commit/unit gates): `dart test test/integration/zz_probe_test.dart
+// --tags integration`. Untagged, it executed inside every unit shard,
+// where the 30s default timeout fired on loaded runners and the timeout's
+// teardown race in the PTY native layer took whole shards down (tcache
+// abort — hostile-env job, 2026-10-03).
+@Tags(['io', 'integration'])
+@Timeout(Duration(minutes: 4))
+library;
+
 import 'dart:io';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
