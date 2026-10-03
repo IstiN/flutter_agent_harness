@@ -9,6 +9,7 @@ library;
 export 'src/agent/agent.dart';
 export 'src/agent/agent_loop.dart';
 export 'src/agent/agent_tool.dart';
+export 'src/agent/misuse_breaker.dart';
 export 'src/agent/image_registry.dart';
 export 'src/agent/tool_pairing.dart';
 export 'src/agent/auto_compactor.dart'
@@ -231,6 +232,7 @@ export 'src/tools/checkpoint_tool.dart';
 export 'src/tools/dynamic_message_tool.dart';
 export 'src/tools/inspect_image.dart';
 export 'src/tools/mobile/mobile_tools.dart';
+export 'src/tools/misuse_policy.dart';
 export 'src/tools/password_prompt.dart';
 export 'src/tools/read_selector.dart';
 export 'src/tools/request_secret_tool.dart';
