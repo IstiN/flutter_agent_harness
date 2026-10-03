@@ -1448,6 +1448,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Reuse skills Claude, Copilot or Codex left in the project folder (.claude, .github, .codex)';
 
   @override
+  String get settingsSkillsToggles => 'Built-in skills';
+
+  @override
+  String get settingsSkillsTogglesHint =>
+      'Enable or disable the skills that ship with Fa';
+
+  @override
   String get skillsAccessAsk => 'Ask';
 
   @override

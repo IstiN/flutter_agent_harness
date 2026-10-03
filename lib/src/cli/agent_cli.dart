@@ -75,6 +75,8 @@ import '../task/subagent_scope.dart';
 import '../task/subagent_heartbeat.dart';
 import '../task/subagent_tools.dart';
 import '../task/delivery_slo.dart';
+import '../skills/builtin_skills.dart';
+import '../skills/skill_availability.dart';
 import '../skills/skills.dart';
 import '../skills/skill_renderer.dart';
 import '../prompts/prompts.g.dart'
@@ -953,6 +955,11 @@ class AgentCli {
   @visibleForTesting
   Future<void> openSessionsPickerForTest() => _openSessionsPicker();
 
+  /// Test seam: builds the real slash-menu completion items for [prefix]
+  /// (commands, templates, skills) without a TUI.
+  @visibleForTesting
+  List<MenuItem> slashMenuForTest(String prefix) => _buildSlashMenu(prefix);
+
   /// The items the most recent sessions picker opened with (see
   /// [openSessionsPickerForTest]).
   @visibleForTesting
@@ -1304,6 +1311,34 @@ class AgentCli {
   /// Discovered agent skills (progressive disclosure into the system
   /// prompt) and project context files, loaded once per CLI run.
   List<Skill> _skills = const [];
+
+  /// The [_skills] subset that survived the `skills:` toggle scopes
+  /// (issue #1151: global `~/.fah/config.yaml` < project
+  /// `.fah/config.yaml`) — the invocation, completion, and prompt
+  /// surface. `/skills` keeps listing the full [_skills] so a disabled
+  /// entry can render its off-state.
+  List<Skill> _enabledSkills = const [];
+
+  /// The availability resolution behind [_enabledSkills] (decisions per
+  /// skill name + the unknown toggle ids, warned once per reload).
+  SkillAvailabilityResolution _skillResolution =
+      const SkillAvailabilityResolution(byName: {}, unknownIds: {});
+
+  /// Toggle ids already warned about — one dim line per distinct id, not
+  /// one per reload.
+  Set<String> _warnedSkillToggleIds = const {};
+
+  /// The live GLOBAL per-skill toggles (issue #1151): seeded from the
+  /// loaded config at first resolution, then owned by
+  /// `/skills <name> global` (the host persists them through
+  /// [AgentCliConfig.onSkillTogglesChanged]).
+  Map<String, bool> _globalSkillToggles = const {};
+  bool _globalSkillTogglesLoaded = false;
+
+  /// The last successfully parsed project `skills:` toggles — what
+  /// "keeping last good" serves when the project section turns broken
+  /// (issue #1151 review; mirrors the tools scope cache).
+  Map<String, bool>? _lastGoodProjectSkillToggles;
   List<ProjectContextFile> _contextFiles = const [];
 
   /// Consent for third-party (Claude/Copilot/Codex) skill & agent roots.
@@ -1648,7 +1683,9 @@ class AgentCli {
       projectRoots: roots.projectRoots,
       userRoots: roots.userRoots,
       allowedSources: _skillsAllowedSources,
+      builtins: builtinSkills(),
     );
+    await _resolveSkillAvailability();
     _thirdPartySkillDirsPresent = await _detectThirdPartySkillDirs();
     // Line mode / headless: this print is visible as-is. TUI: the terminal
     // is not ours yet — the alternate screen would wipe this line, so
@@ -1750,7 +1787,7 @@ class AgentCli {
     pluginSlashDescriptions: _pluginSlashDescriptions,
     extSlashCommands: _ext.slashCommands,
     templates: _templates,
-    skills: _skills,
+    skills: _enabledSkills,
   );
 
   /// Routes a generic TUI picker selection (sessions/mode/approval) to the

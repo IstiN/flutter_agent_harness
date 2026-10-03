@@ -471,6 +471,8 @@
   "settingsStaleModelDevice": "The previously used model ({model}) was removed from this device — pick a model to download it again.",
   "settingsSkillsAccess": "Skills access",
   "settingsSkillsAccessHint": "Reuse skills Claude, Copilot or Codex left in the project folder (.claude, .github, .codex)",
+  "settingsSkillsToggles": "Built-in skills",
+  "settingsSkillsTogglesHint": "Enable or disable the skills that ship with Fa",
   "skillsAccessAsk": "Ask",
   "skillsAccessAllowed": "Allowed",
   "skillsAccessDenied": "Denied",
