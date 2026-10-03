@@ -764,9 +764,7 @@ AgentTool readFileTool(
         cancelToken?.throwIfCancelled();
 
         final imageResult = _readImageResult(path, bytes, parsed, model);
-        if (imageResult != null) {
-          return _withNotice(imageResult, windowNotice);
-        }
+        if (imageResult != null) return _withNotice(imageResult, windowNotice);
       }
 
       return _withNotice(
