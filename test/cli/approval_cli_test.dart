@@ -435,7 +435,8 @@ void main() {
       await _waitFor(
         () => io.out.toString().contains('approval mode set to yolo'),
       );
-      final marked = cli.approvalPickerItemsForTest()
+      final marked = cli
+          .approvalPickerItemsForTest()
           .where((i) => i.description.contains('(current)'))
           .toList(growable: false);
       expect(marked.single.label, 'yolo');

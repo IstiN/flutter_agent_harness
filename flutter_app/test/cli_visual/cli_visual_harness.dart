@@ -352,7 +352,10 @@ final class CliVisualHarness {
         // grace so a still-streaming screen (spinner ticks) cannot hang the
         // wait past legacy semantics. If the pattern vanished while
         // settling (a transient state), keep polling for a stable match.
-        await waitForRawSettle(settleMs: 200, grace: const Duration(seconds: 2));
+        await waitForRawSettle(
+          settleMs: 200,
+          grace: const Duration(seconds: 2),
+        );
         final settled = screenText;
         if (settled.contains(pattern)) return settled;
       }
