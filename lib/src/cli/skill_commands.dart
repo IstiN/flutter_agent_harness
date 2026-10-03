@@ -529,6 +529,8 @@ extension AgentCliSkillsExt on AgentCli {
 
   /// `/skills` — lists the discovered skills (name, description, location,
   /// source and invocation flags).
+  ///
+  /// The description column runs through [_skillListDetail].
   void _listSkills() {
     if (_skills.isEmpty) {
       final extra = _skillsAccess == SkillsAccess.granted
@@ -546,11 +548,7 @@ extension AgentCliSkillsExt on AgentCli {
       // of chars and would wrap one row over a screenful at 80 columns -
       // cap it so one skill stays one terminal line (issue #1151; the
       // system-prompt block keeps the full text).
-      var detail = skill.description;
-      const cap = 57;
-      if (detail.length > cap) {
-        detail = '${detail.substring(0, cap)}…';
-      }
+      final detail = _skillListDetail(skill.description);
       final flags = [
         if (!skill.userInvocable) 'model-only',
         if (!skill.modelInvocable) 'user-only',
@@ -846,4 +844,15 @@ extension AgentCliSkillsExt on AgentCli {
         ('project', 'Project', '${_env.cwd}/.fah/config.yaml'),
         ('global', 'Global', '~/.fah/config.yaml'),
       ]);
+}
+
+/// The `/skills` description column: capped so a row's visible part stays
+/// inside one ~80-col terminal line - a builtin's model-facing description
+/// runs hundreds of chars and wrapped greet off the #927 consent suite's
+/// 80x24 screen. The system-prompt block and the TUI completion overlay
+/// keep the full text.
+String _skillListDetail(String description) {
+  const cap = 57;
+  if (description.length <= cap) return description;
+  return '${description.substring(0, cap)}…';
 }
