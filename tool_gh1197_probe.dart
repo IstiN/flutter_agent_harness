@@ -44,7 +44,7 @@ Future<HttpServer> _startServer(int port) async {
         }
 
         try {
-          if (index >= 9) {
+          if (index >= 1) {
             // Final turn: a thinking burst (~3s paced), then a text answer.
             await paced(
               'reasoning_content',
@@ -62,49 +62,21 @@ Future<HttpServer> _startServer(int port) async {
               ],
             });
           } else {
-            // A bash tool call (3s sleep) per turn until the last.
+            // First turn: ONE LONG CONTINUOUS stream (~80s, no tools) —
+            // the user's shape: thinking streams ~40s, then the essay.
             await paced(
               'reasoning_content',
-              'Running the probe tool for step $index. ' * 10,
-              const Duration(milliseconds: 25),
+              'Deep thinking about the essay, never pausing. ' * 400,
+              const Duration(milliseconds: 20),
+            );
+            await paced(
+              'content',
+              'The essay itself flows in long continuous prose. ' * 400,
+              const Duration(milliseconds: 20),
             );
             await chunk({
               'choices': [
-                {
-                  'delta': {
-                    'tool_calls': [
-                      {
-                        'index': 0,
-                        'id': 'call_$index',
-                        'type': 'function',
-                        'function': {'name': 'bash', 'arguments': ''},
-                      },
-                    ],
-                  },
-                  'finish_reason': null,
-                },
-              ],
-            });
-            await chunk({
-              'choices': [
-                {
-                  'delta': {
-                    'tool_calls': [
-                      {
-                        'index': 0,
-                        'function': {
-                          'arguments': '{"command": "sleep 3 && echo step-$index"}',
-                        },
-                      },
-                    ],
-                  },
-                  'finish_reason': null,
-                },
-              ],
-            });
-            await chunk({
-              'choices': [
-                {'delta': {}, 'finish_reason': 'tool_calls'},
+                {'delta': {}, 'finish_reason': 'stop'},
               ],
             });
           }
