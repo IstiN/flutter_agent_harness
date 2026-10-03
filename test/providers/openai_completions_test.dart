@@ -1296,7 +1296,8 @@ void main() {
       });
 
       test(
-        'E1: unexpected_state after partial text is never replayed',
+        'E1: unexpected_state after completed text resumes within the '
+        'budget (issue #1168)',
         () async {
           const postContentSse =
               'data: {"id":"chatcmpl-1","choices":[{"delta":{"content":"par'
@@ -1320,9 +1321,16 @@ void main() {
           final events = await wrappedCall(client).toList();
           final error = events.last as ErrorEvent;
 
-          expect(calls, 1, reason: 'a replay would duplicate the transcript');
+          // Issue #1168: the adapter finalizes the open text block when
+          // the finish_reason arrives, so the failure lands AFTER a
+          // completed block - the vendor-transient class resumes from
+          // that prefix under the standard budget instead of standing
+          // (#312 AC4's unconditional stand-rule is retired for
+          // resumable failures).
+          expect(calls, 3, reason: 'the default attempt budget');
           expect(error.reason, StopReason.error);
           expect(error.error.rawStopReason, 'unexpected_state');
+          expect(error.error.errorMessage, contains('unexpected_state'));
         },
       );
     });
