@@ -468,6 +468,45 @@ class AgentWireProtocol {
         'report': _encodeRepairReport(report),
         'providerError': ?providerError,
       },
+      // gh-1054 liveness: heartbeats and stuck-call follow-ups ride the
+      // wire so external hosts see alive-busy vs dead mid-run, same as
+      // the session ledger and the HEP frames do.
+      ToolCallHeartbeatEvent(
+        :final toolCallId,
+        :final toolName,
+        :final args,
+        :final elapsed,
+        :final outputBytes,
+        :final attempt,
+        :final timestamp,
+      ) =>
+        {
+          'toolCallId': toolCallId,
+          'toolName': toolName,
+          'args': args,
+          'elapsedMs': elapsed.inMilliseconds,
+          'outputBytes': outputBytes,
+          'attempt': attempt,
+          'timestamp': timestamp.millisecondsSinceEpoch,
+        },
+      ToolCallStuckEvent(
+        :final toolCallId,
+        :final toolName,
+        :final args,
+        :final elapsed,
+        :final action,
+        :final detail,
+        :final timestamp,
+      ) =>
+        {
+          'toolCallId': toolCallId,
+          'toolName': toolName,
+          'args': args,
+          'elapsedMs': elapsed.inMilliseconds,
+          'action': action.label,
+          'detail': detail,
+          'timestamp': timestamp.millisecondsSinceEpoch,
+        },
     };
     return {'v': version, 'kind': _kindOf(event), ...frame};
   }
@@ -558,6 +597,8 @@ class AgentWireProtocol {
     'tool_execution_end': _decodeToolExecutionEnd,
     'model_request': _decodeModelRequest,
     'tool_pairing_repair': _decodeToolPairingRepair,
+    'tool_call_heartbeat': _decodeToolCallHeartbeat,
+    'tool_call_stuck': _decodeToolCallStuck,
     'approval_request': _decodeApprovalRequest,
     'ask_request': _decodeAskRequest,
     'secret_request': _decodeSecretRequest,
@@ -749,6 +790,54 @@ class AgentWireProtocol {
     if (raw == null) return const [];
     if (raw is List) return raw;
     throw WireProtocolException('field "$field" must be an array');
+  }
+
+  static KnownWireEvent _decodeToolCallHeartbeat(Map<String, dynamic> frame) {
+    _requireKind(frame, 'tool_call_heartbeat');
+    return KnownWireEvent(
+      ToolCallHeartbeatEvent(
+        toolCallId: _requireString(frame['toolCallId'], 'toolCallId'),
+        toolName: _requireString(frame['toolName'], 'toolName'),
+        args: _requireMap(frame['args'], 'args'),
+        elapsed: Duration(
+          milliseconds: _requireInt(frame['elapsedMs'], 'elapsedMs'),
+        ),
+        outputBytes: _requireInt(frame['outputBytes'], 'outputBytes'),
+        attempt: _requireInt(frame['attempt'], 'attempt'),
+        timestamp: DateTime.fromMillisecondsSinceEpoch(
+          _requireInt(frame['timestamp'], 'timestamp'),
+        ),
+      ),
+      frame,
+    );
+  }
+
+  static KnownWireEvent _decodeToolCallStuck(Map<String, dynamic> frame) {
+    _requireKind(frame, 'tool_call_stuck');
+    return KnownWireEvent(
+      ToolCallStuckEvent(
+        toolCallId: _requireString(frame['toolCallId'], 'toolCallId'),
+        toolName: _requireString(frame['toolName'], 'toolName'),
+        args: _requireMap(frame['args'], 'args'),
+        elapsed: Duration(
+          milliseconds: _requireInt(frame['elapsedMs'], 'elapsedMs'),
+        ),
+        action: StuckFollowUpAction.values.firstWhere(
+          (action) =>
+              action.label == _requireString(frame['action'], 'action'),
+          orElse: () => throw WireProtocolException(
+            'malformed "tool_call_stuck" event frame: '
+            'unknown action "${frame['action']}"',
+          ),
+        ),
+        // Optional with the constructor default, like the event itself.
+        detail: frame['detail'] as String? ?? '',
+        timestamp: DateTime.fromMillisecondsSinceEpoch(
+          _requireInt(frame['timestamp'], 'timestamp'),
+        ),
+      ),
+      frame,
+    );
   }
 
   static KnownWireEvent _decodeToolPairingRepair(Map<String, dynamic> frame) {
@@ -1079,6 +1168,8 @@ class AgentWireProtocol {
     ToolExecutionEndEvent() => 'tool_execution_end',
     ModelRequestEvent() => 'model_request',
     ToolPairingRepairEvent() => 'tool_pairing_repair',
+    ToolCallHeartbeatEvent() => 'tool_call_heartbeat',
+    ToolCallStuckEvent() => 'tool_call_stuck',
   };
 
   static AssistantMessageEvent _decodeAssistantEvent(
