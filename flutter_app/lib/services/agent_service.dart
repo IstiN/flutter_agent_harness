@@ -547,6 +547,15 @@ class AgentService extends ChangeNotifier
     // network (issue #402) swaps the hub-primary composite in without
     // touching any holder of the reference.
     final fabricRepo = SwappableMessagingRepository(fileFabricRepo);
+    // gh-1180 AC4: the persisted receipt trail for scheduled mail —
+    // scheduled / delivered / delivery_failed / scan_failed — so a
+    // post-mortem can tell "timer never fired" from "wake refused"
+    // without reading source. Best-effort: a failing trail logs only.
+    final receiptsLog = ScheduledReceiptLog(
+      env: env,
+      path: () => '$messagesRoot/_scheduled/receipts.jsonl',
+      onError: (text) => AppLog.i('sched', text),
+    );
     _scheduledMessages = ScheduledMessageQueue(
       env: env,
       repo: () => fabricRepo,
@@ -564,6 +573,7 @@ class AgentService extends ChangeNotifier
       // app log, never kills the delivery heartbeat — the record stays
       // for the next sweep.
       onError: (text) => AppLog.i('sched', text),
+      receipts: receiptsLog,
     );
     // Arm the delivery timer; best-effort (an unwritable root keeps the
     // app booting, the tools just report unavailable).
@@ -2306,8 +2316,17 @@ class AgentService extends ChangeNotifier
   /// Consecutive inbox-triggered runs without any user input — capped so
   /// two chatty instances cannot ping-pong forever (mail still accumulates
   /// and is delivered at the next real turn).
+  ///
+  /// The lanes live in [_inboxWakePolicy] (gh-1180): scheduled self-mail
+  /// is EXEMPT from this counter (deliberate agent cadence, not chatter).
   var _inboxWakeStreak = 0;
   static const _maxInboxWakeStreak = 10;
+
+  /// The idle inbox-wake lane policy (gh-1180): user-kind mail always
+  /// wakes; delivered scheduled self-mail (`schedule_message` reminders)
+  /// is exempt from the chatter cap; foreign agent-to-agent chatter stays
+  /// capped at [_maxInboxWakeStreak].
+  final InboxWakePolicy _inboxWakePolicy = InboxWakePolicy();
 
   var _fabricHeartbeatTick = 0;
 
@@ -2369,7 +2388,10 @@ class AgentService extends ChangeNotifier
     if (trimmed.isEmpty) return;
     // Real user input resets the inbox wake streak (the ping-pong guard);
     // the watcher itself calls sendText with the flag set.
-    if (!_inboxWakeRunning) _inboxWakeStreak = 0;
+    if (!_inboxWakeRunning) {
+      _inboxWakeStreak = 0;
+      _inboxWakePolicy.resetStreak();
+    }
     // A fresh user text gets a fresh over-window auto-continuation budget.
     _overWindowAutoResumed = false;
     _clearError();
