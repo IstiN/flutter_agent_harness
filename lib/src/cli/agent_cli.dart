@@ -2040,6 +2040,11 @@ class AgentCli {
     StreamJsonWriter? streamJson,
   }) async {
     _hep = hep;
+    // The [net] retry voice reaches headless too (issue #1121): the bench
+    // runs `fa -p`, and retries that stayed silent there made a
+    // connect-stall death indistinguishable from a no-retry one in the
+    // trial artifacts.
+    _wireTransientRetryNotice();
     // Cube cache restore, mirroring [run]'s boot (the headless run sees the
     // same cached trees a REPL session would).
     await _cubeBootRestore();
@@ -2068,6 +2073,11 @@ class AgentCli {
     await _subagentManager.rehydrate();
     // Session scope (tools.yaml next to the session file) is live now.
     unawaited(AgentCliTools(this).rebuildToolAvailability());
+    // Transient retry voice (issue #1168 review): the interactive boot
+    // wires it in [run]; headless - wake runs, `fa -p`, restarts - needs
+    // the same `[net]` line, or a multi-second retry pause is silent
+    // exactly where nobody watches a TUI.
+    _wireTransientRetryNotice();
     // Sleep prevention (#325/#326) — headless wraps exactly ONE run, so
     // both holds bracket it the same way: session-held acquires on the
     // session open, per-run on the run start (the prompt below).
@@ -2521,6 +2531,8 @@ class AgentCli {
     _autoFoldCount = 0;
     // One empty-reply nudge per logical turn (issue #1085 M2b).
     _emptyReplyNudgesLeft = 1;
+    // The stuck-call nudge budget refills per turn (issue #1185 E2).
+    _waiting.resetToolNudges();
     // The user's explicit stop ends with the turn that was stopped
     // (issue #1085 round-1): a fresh prompt re-arms the funnel's abort
     // gate.
