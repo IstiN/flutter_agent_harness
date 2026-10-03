@@ -653,21 +653,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       rewriteMs += load.rewriteMs;
     }
     if (header == null) _invalidSession(filePath, 'missing session header');
-    String? leafId;
-    for (final entry in entries) {
-      leafId = leafIdAfterSessionRecord(entry);
-    }
-    // A quarantined record can leave the tracked leaf dangling — either a
-    // torn leaf record itself or a LeafRecord whose target dropped
-    // (issue #858). Heal to the newest surviving record: the resume walk
-    // must never start from an id the tree cannot resolve. The heal is
-    // surfaced through [JsonlSessionStorage.healedLeafEntries] the same
-    // way quarantine reports through [JsonlSessionStorage.quarantinedEntries].
-    var healedLeafEntries = 0;
-    if (leafId != null && !entries.any((entry) => entry.id == leafId)) {
-      leafId = entries.isEmpty ? null : entries.last.id;
-      healedLeafEntries = leafId == null ? 0 : 1;
-    }
+    final (:leafId, healed: healedLeafEntries) = _resolveTrackedLeaf(entries);
     phaseSw
       ..reset()
       ..start();
@@ -695,6 +681,29 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       'inner_ms=${storage._openInnerMs}',
     );
     return storage;
+  }
+
+  /// Computes the tracked leaf of [entries] and heals a dangling one: a
+  /// quarantined record can leave the tracked leaf unresolved — either a
+  /// torn leaf record itself or a LeafRecord whose target dropped
+  /// (issue #858). The heal retargets the leaf to the newest surviving
+  /// record so the resume walk never starts from an id the tree cannot
+  /// resolve; the healed count is surfaced through
+  /// [JsonlSessionStorage.healedLeafEntries] the same way quarantine
+  /// reports through [JsonlSessionStorage.quarantinedEntries].
+  static ({String? leafId, int healed}) _resolveTrackedLeaf(
+    List<SessionRecord> entries,
+  ) {
+    String? leafId;
+    for (final entry in entries) {
+      leafId = leafIdAfterSessionRecord(entry);
+    }
+    var healed = 0;
+    if (leafId != null && !entries.any((entry) => entry.id == leafId)) {
+      leafId = entries.isEmpty ? null : entries.last.id;
+      healed = leafId == null ? 0 : 1;
+    }
+    return (leafId: leafId, healed: healed);
   }
 
   /// Collects one segment's parsed records into [entries], skipping torn
