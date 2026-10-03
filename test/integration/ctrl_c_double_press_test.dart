@@ -79,9 +79,13 @@ tui:
         await harness.waitForOutput(settleMs: 150);
         harness.sendCtrlC(); // SIGINT press 1
 
-        await harness.waitForScreen('press ctrl+c again to exit');
+        // gh-1049: assert on the CAPTURED screen — a fresh screenText read
+        // after the wait re-samples the screen mid-render.
+        final screen = await harness.waitForScreen(
+          'press ctrl+c again to exit',
+        );
         expect(
-          harness.screenText,
+          screen,
           isNot(contains('draft text')),
           reason: 'ctrl+c clear at an idle prompt',
         );
