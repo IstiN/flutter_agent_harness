@@ -64,6 +64,99 @@ final class _FlakyRepo implements MessagingRepository {
   Future<List<MailboxEntry>> directory() => _inner.directory();
 }
 
+/// An env whose `listDir` fails for the first [failFirst] calls
+/// (AC5): one transient IO error on a scan leg must re-arm the
+/// heartbeat loudly instead of silently disarming it.
+final class _FlakyScanEnv implements ExecutionEnv {
+  _FlakyScanEnv(this._delegate, {required this.failFirst});
+
+  final MemoryExecutionEnv _delegate;
+  int failFirst;
+  int failures = 0;
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) async {
+    if (failures < failFirst) {
+      failures++;
+      return Err(
+        FileError(
+          FileErrorCode.unknown,
+          'injected listDir failure',
+          path: path,
+        ),
+      );
+    }
+    return _delegate.listDir(path);
+  }
+
+  @override
+  String get cwd => _delegate.cwd;
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _delegate.absolutePath(path);
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _delegate.readBinaryFile(path);
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _delegate.readTextFile(path);
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _delegate.readTextLines(path, maxLines: maxLines);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _delegate.writeBinaryFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _delegate.writeFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _delegate.appendFile(path, content);
+
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _delegate.fileInfo(path);
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
+
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _delegate.createDir(path, recursive: recursive);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _delegate.remove(path, recursive: recursive, force: force);
+
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _delegate.joinPath(parts);
+
+  @override
+  Future<Result<String, FileError>> rename(String from, String to) =>
+      _delegate.rename(from, to);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
+
 void main() {
   test('parseDelay handles units and combinations', () {
     expect(parseDelay('90s'), const Duration(seconds: 90));
@@ -1212,5 +1305,521 @@ void main() {
       expect(mail.single.text, contains('[scheduled] standup'));
       queue.dispose();
     });
+  });
+
+  group('gh-1180: receipts + loud scan re-arm', () {
+    test('an overdue record is delivered by the catch-up sweep immediately '
+        '(turn start), not at the next timer tick', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final (queue, repo, clock) = harness(env);
+      await queue.schedule(
+        text: 'standup notes',
+        delay: const Duration(minutes: 30),
+      );
+      // The record came due while no tick ran (host busy/asleep): the
+      // sweep a turn start performs must deliver it NOW — the armed
+      // real-time timer is still ~30 minutes out and must not be the
+      // delivery path this test waits on.
+      clock.jump(const Duration(minutes: 31));
+      expect(await queue.deliverDue(), 1);
+      final mail = await repo.peek('sid-1/main');
+      expect(mail.single.text, contains('[scheduled] standup notes'));
+      queue.dispose();
+    });
+
+    test('a clock jump (system sleep) catches up immediately and delivers '
+        'each due record exactly once (no N-fold replay)', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final (queue, repo, clock) = harness(env);
+      for (var i = 0; i < 3; i++) {
+        await queue.schedule(
+          text: 'cycle $i',
+          delay: Duration(minutes: 30 * (i + 1)),
+        );
+      }
+      // Six hours of "sleep": every record is overdue on wake.
+      clock.jump(const Duration(hours: 6));
+      // The post-wake heartbeat + a concurrent turn-start sweep race:
+      // the in-flight guard keeps delivery exactly-once per record.
+      final counts = await Future.wait([
+        queue.deliverDue(),
+        queue.deliverDue(),
+      ]);
+      expect(counts.fold<int>(0, (a, b) => a + b), 3);
+      // A repeated sweep must not replay missed cycles.
+      expect(await queue.deliverDue(), 0);
+      final mail = await repo.peek('sid-1/main');
+      expect(mail, hasLength(3));
+      // No pending record files survive the catch-up.
+      final left =
+          (await env.listDir(
+            '/sessions/--work--/messages/_scheduled',
+          )).valueOrNull ??
+          const [];
+      expect(left.where((e) => e.path.endsWith('.json')), isEmpty);
+      queue.dispose();
+    });
+
+    test('normal awake timing is unchanged: no early fire', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final (queue, repo, clock) = harness(env);
+      await queue.schedule(
+        text: 'half minute',
+        delay: const Duration(seconds: 30),
+      );
+      clock.jump(const Duration(seconds: 29));
+      expect(await queue.deliverDue(), 0);
+      expect(await repo.peek('sid-1/main'), isEmpty);
+      clock.jump(const Duration(seconds: 1));
+      expect(await queue.deliverDue(), 1);
+      expect((await repo.peek('sid-1/main')).single.text, contains('half'));
+      queue.dispose();
+    });
+
+    test(
+      'a recurring self re-arm after a clock jump resumes from "now"',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        final (queue, repo, clock) = harness(env);
+        await queue.schedule(
+          text: 'monitor',
+          delay: const Duration(minutes: 30),
+        );
+        clock.jump(const Duration(hours: 6));
+        expect(await queue.deliverDue(), 1);
+        // The agent re-arms the next cycle from the CURRENT wall clock —
+        // the missed 02:34/03:04/… cycles are not replayed.
+        await queue.schedule(
+          text: 'monitor',
+          delay: const Duration(minutes: 30),
+        );
+        final dir = '/sessions/--work--/messages/_scheduled';
+        final entry = (await env.listDir(
+          dir,
+        )).valueOrNull!.singleWhere((e) => e.path.endsWith('.json'));
+        final path = entry.path.contains('/')
+            ? entry.path
+            : '$dir/${entry.path}';
+        final record =
+            jsonDecode((await env.readTextFile(path)).valueOrNull!)
+                as Map<String, dynamic>;
+        expect(
+          record['dueMs'],
+          clock.now.millisecondsSinceEpoch +
+              const Duration(minutes: 30).inMilliseconds,
+        );
+        clock.jump(const Duration(minutes: 30));
+        expect(await queue.deliverDue(), 1);
+        expect(await repo.peek('sid-1/main'), hasLength(2));
+        queue.dispose();
+      },
+    );
+  });
+  group('leg-timer failure isolation (issue #270)', () {
+    test(
+      'a failed send re-arms the leg timer and delivers on the next leg',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        const root = '/sessions/--work--/messages';
+        final repo = FileMessagingRepository(
+          env: env,
+          root: root,
+          homeDir: '/home/user',
+          decodeSessionCwd: decodeSessionCwd,
+        );
+        final flaky = _FlakyRepo(repo)..failingTexts.add('flaky');
+        final clock = _FakeClock();
+        final errors = <String>[];
+        final queue = ScheduledMessageQueue(
+          env: env,
+          repo: () => flaky,
+          root: () => root,
+          selfMailbox: () => 'sid-1/main',
+          clock: () => clock.now,
+          failureBackoff: const Duration(milliseconds: 40),
+          onError: errors.add,
+        );
+        await repo.register('sid-1/main');
+        await queue.schedule(
+          text: 'flaky reminder',
+          delay: const Duration(milliseconds: 30),
+        );
+        clock.jump(const Duration(milliseconds: 30));
+        // Leg 1: the send throws. Pre-fix the error escaped the timer
+        // callback unhandled and _arm() never ran — the heartbeat chain
+        // died silently. Post-fix: logged, record kept, timer re-armed.
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+        expect(errors.single, contains('injected send failure'));
+        // The re-armed timer delivered the kept record on the next leg.
+        final mail = await repo.peek('sid-1/main');
+        expect(mail.single.text, contains('[scheduled] flaky reminder'));
+        expect((await queue.pendingSummary()).count, 0);
+        queue.dispose();
+      },
+    );
+
+    test(
+      'one failing record does not block its sweep-mates and is retried',
+      () async {
+        final env = MemoryExecutionEnv(cwd: '/work');
+        const root = '/sessions/--work--/messages';
+        final repo = FileMessagingRepository(
+          env: env,
+          root: root,
+          homeDir: '/home/user',
+          decodeSessionCwd: decodeSessionCwd,
+        );
+        final flaky = _FlakyRepo(repo)..failingTexts.add('poison');
+        final clock = _FakeClock();
+        final errors = <String>[];
+        final queue = ScheduledMessageQueue(
+          env: env,
+          repo: () => flaky,
+          root: () => root,
+          selfMailbox: () => 'sid-1/main',
+          clock: () => clock.now,
+          failureBackoff: const Duration(milliseconds: 40),
+          onError: errors.add,
+        );
+        await repo.register('sid-1/main');
+        // Poison sorts ahead of the healthy record (scheduled first, and
+        // ids are timestamp-ordered): a mid-sweep abort would starve it.
+        await queue.schedule(text: 'poison reminder', delay: Duration.zero);
+        await queue.schedule(text: 'healthy reminder', delay: Duration.zero);
+        await queue.deliverDue();
+        // The re-armed timer retries the failed record on the next leg
+        // (failureBackoff 40ms); every interleaving of that retry with
+        // the explicit sweeps above converges to the same end state.
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        // The sweep survived the poison failure (healthy mail delivered
+        // despite poison sorting ahead of it), the failed record was not
+        // lost — it was retried and delivered exactly once — and the
+        // failure was logged.
+        final mail = await repo.peek('sid-1/main');
+        expect(mail, hasLength(2));
+        expect(mail.where((m) => m.text.contains('poison')), hasLength(1));
+        expect(mail.where((m) => m.text.contains('healthy')), hasLength(1));
+        expect((await queue.pendingSummary()).count, 0);
+        expect(errors, isNotEmpty);
+        expect(errors.every((e) => e.contains('poison')), isTrue);
+        queue.dispose();
+      },
+    );
+  });
+
+  group('gh-970: a subagent self-reminder fires into the subagent inbox', () {
+    (ScheduledMessageQueue, FileMessagingRepository, _FakeClock) harness(
+      MemoryExecutionEnv env,
+    ) {
+      const root = '/sessions/--work--/messages';
+      final repo = FileMessagingRepository(
+        env: env,
+        root: root,
+        homeDir: '/home/user',
+        decodeSessionCwd: decodeSessionCwd,
+      );
+      final clock = _FakeClock();
+      final queue = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+        selfMailbox: () => 'sid-1/main',
+        ownerPrefix: () => 'sid-1',
+        clock: () => clock.now,
+      );
+      return (queue, repo, clock);
+    }
+
+    test('a self-addressed record naming a subagent mailbox is NOT '
+        're-addressed to main', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final (queue, repo, clock) = harness(env);
+      // The child scheduled a self-reminder: to == from == its own
+      // namespaced mailbox (subagent_scope resolved the default).
+      await queue.schedule(
+        text: 'next monitoring pass',
+        delay: const Duration(minutes: 15),
+        to: 'sid-1/monitor-a',
+        from: 'sid-1/monitor-a',
+      );
+      clock.jump(const Duration(minutes: 16));
+      expect(await queue.deliverDue(), 1);
+      final childMail = await repo.peek('sid-1/monitor-a');
+      expect(
+        childMail,
+        hasLength(1),
+        reason:
+            'gh-970: the sweeper used to re-address every self-addressed '
+            'record to its own mailbox, stealing the child reminder into '
+            'main',
+      );
+      expect(childMail.single.text, contains('[scheduled] next monitoring'));
+      expect(childMail.single.fromId, 'sid-1/monitor-a');
+      expect(await repo.peek('sid-1/main'), isEmpty);
+      queue.dispose();
+    });
+
+    test('a foreign-owned subagent reminder is left for its owner (theft '
+        'guard covers child mail too)', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final (queue, repo, clock) = harness(env);
+      // Hand-written record owned by ANOTHER session (the only way this
+      // shape exists — the tool always stamps the scheduler's own owner):
+      // session sid-2's monitor scheduled itself; sid-1's sweeper must
+      // neither deliver it (anywhere) nor delete it.
+      final dir = '/sessions/--work--/messages/_scheduled';
+      (await env.createDir(dir)).getOrThrow();
+      (await env.writeFile(
+        '$dir/foreign.json',
+        jsonEncode({
+          'id': 'foreign',
+          'dueMs': clock.now.millisecondsSinceEpoch,
+          'to': 'sid-2/monitor-b',
+          'from': 'sid-2/monitor-b',
+          'text': 'other session monitor',
+          'owner': 'sid-2',
+        }),
+      )).getOrThrow();
+      clock.jump(const Duration(minutes: 2));
+      expect(await queue.deliverDue(), 0);
+      expect(await repo.peek('sid-2/monitor-b'), isEmpty);
+      expect(await repo.peek('sid-1/main'), isEmpty);
+      // The record stays on disk for its owner's sweeper.
+      final record = jsonDecode(
+        (await env.readTextFile('$dir/foreign.json')).valueOrNull!,
+      );
+      expect(record['id'], 'foreign');
+      queue.dispose();
+    });
+
+    test('schedule_message resolves the subagent sender as the default '
+        'recipient', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final (queue, repo, clock) = harness(env);
+      final tool = scheduleMessageTool(
+        queue,
+        // The host wiring: the active subagent's mailbox, or null on the
+        // main agent (legacy defaulting).
+        senderMailbox: () => 'sid-1/monitor-a',
+      );
+      final result = await tool.execute(
+        {'text': 'next monitoring pass', 'delay': '15m'},
+        null,
+        null,
+      );
+      final text = result.content
+          .whereType<TextContent>()
+          .map((b) => b.text)
+          .join();
+      expect(text, isNot(contains('error')));
+      clock.jump(const Duration(minutes: 16));
+      expect(await queue.deliverDue(), 1);
+      final mail = await repo.peek('sid-1/monitor-a');
+      expect(mail, hasLength(1));
+      expect(mail.single.fromId, 'sid-1/monitor-a');
+      expect(await repo.peek('sid-1/main'), isEmpty);
+      queue.dispose();
+    });
+
+    test('schedule_message on the main agent (null sender) keeps the legacy '
+        'self default', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final (queue, repo, clock) = harness(env);
+      final tool = scheduleMessageTool(queue);
+      await tool.execute({'text': 'standup', 'delay': '1m'}, null, null);
+      clock.jump(const Duration(minutes: 2));
+      expect(await queue.deliverDue(), 1);
+      final mail = await repo.peek('sid-1/main');
+      expect(mail, hasLength(1));
+      expect(mail.single.text, contains('[scheduled] standup'));
+      queue.dispose();
+    });
+  });
+
+  group('gh-1180: receipts + loud scan re-arm', () {
+    /// Reads the receipts trail as decoded JSON lines (missing file: []).
+    Future<List<Map<String, dynamic>>> receiptEvents(
+      ExecutionEnv env,
+      String root,
+    ) async {
+      final text = (await env.readTextFile(
+        '$root/_scheduled/receipts.jsonl',
+      )).valueOrNull;
+      if (text == null || text.isEmpty) return const [];
+      return [
+        for (final line in text.trim().split('\n'))
+          jsonDecode(line) as Map<String, dynamic>,
+      ];
+    }
+
+    /// Waits out an async condition (no real-clock dependency).
+    Future<void> waitForTrue(Future<bool> Function() condition) async {
+      for (var i = 0; i < 400; i++) {
+        if (await condition()) return;
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      fail('timed out waiting: async condition');
+    }
+
+    test(
+      'AC5: a listDir failure on a leg is logged + receipted and the '
+      'heartbeat re-arms — the record still delivers after recovery',
+      () async {
+        const root = '/sessions/--work--/messages';
+        final env = _FlakyScanEnv(
+          MemoryExecutionEnv(cwd: '/work'),
+          // Budget covers the arming scan plus the first backoff legs; the
+          // point is the failure is LOUD and the heartbeat SURVIVES it.
+          failFirst: 2,
+        );
+        final repo = FileMessagingRepository(
+          env: env,
+          root: root,
+          homeDir: '/home/user',
+          decodeSessionCwd: decodeSessionCwd,
+        );
+        final clock = _FakeClock();
+        final errors = <String>[];
+        final queue = ScheduledMessageQueue(
+          env: env,
+          repo: () => repo,
+          root: () => root,
+          selfMailbox: () => 'sid-1/main',
+          clock: () => clock.now,
+          failureBackoff: const Duration(milliseconds: 40),
+          onError: errors.add,
+          receipts: ScheduledReceiptLog(
+            env: env,
+            path: () => '$root/_scheduled/receipts.jsonl',
+          ),
+        );
+        await repo.register('sid-1/main');
+        await queue.schedule(
+          text: 'survivor',
+          delay: const Duration(milliseconds: 60),
+        );
+        // The arming scan hit the injected failure: logged, receipted,
+        // re-armed at the backoff (pre-fix the queue silently disarmed).
+        await waitForTrue(
+          () async => errors.any((e) => e.contains('scan failed')),
+        );
+        final events = await receiptEvents(env, root);
+        expect(
+          events.any((e) => e['event'] == 'scan_failed'),
+          isTrue,
+          reason: 'the scan failure is receipted',
+        );
+        // The recovered heartbeat delivers the record once due.
+        await waitForTrue(
+          () async => (await repo.peek(
+            'sid-1/main',
+          )).any((m) => m.text.contains('survivor')),
+        );
+        queue.dispose();
+      },
+    );
+
+    test('AC4: the queue receipts the whole lifecycle — scheduled, '
+        'delivery_failed (isolated), delivered with lag', () async {
+      const root = '/sessions/--work--/messages';
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final repo = FileMessagingRepository(
+        env: env,
+        root: root,
+        homeDir: '/home/user',
+        decodeSessionCwd: decodeSessionCwd,
+      );
+      final flaky = _FlakyRepo(repo)..failingTexts.add('poison');
+      final clock = _FakeClock();
+      final queue = ScheduledMessageQueue(
+        env: env,
+        repo: () => flaky,
+        root: () => root,
+        selfMailbox: () => 'sid-1/main',
+        clock: () => clock.now,
+        failureBackoff: const Duration(milliseconds: 40),
+        onError: (_) {},
+        receipts: ScheduledReceiptLog(
+          env: env,
+          path: () => '$root/_scheduled/receipts.jsonl',
+        ),
+      );
+      await repo.register('sid-1/main');
+      await queue.schedule(
+        text: 'poison',
+        delay: const Duration(milliseconds: 30),
+      );
+      await queue.schedule(
+        text: 'healthy',
+        delay: const Duration(milliseconds: 30),
+      );
+      // Leg 1: the poison send fails (receipted, record kept); the
+      // healthy one delivers. The re-armed leg retries the poison.
+      clock.jump(const Duration(milliseconds: 30));
+      await waitForTrue(
+        () async => (await repo.peek('sid-1/main')).length == 2,
+      );
+      final events = await receiptEvents(env, root);
+      final byEvent = [for (final e in events) e['event'] as String];
+      expect(byEvent.where((e) => e == 'scheduled'), hasLength(2));
+      expect(byEvent.where((e) => e == 'delivery_failed'), hasLength(1));
+      expect(byEvent.where((e) => e == 'delivered'), hasLength(2));
+      final delivered = events.where((e) => e['event'] == 'delivered');
+      // lagMs: every delivered receipt carries its delivery lag.
+      for (final e in delivered) {
+        expect(e['lagMs'], isA<int>());
+      }
+      // A post-mortem can correlate by record id.
+      final poisonId = (events.firstWhere(
+        (e) => e['event'] == 'delivery_failed',
+      ))['id'];
+      expect(
+        delivered.any((e) => e['id'] == poisonId),
+        isTrue,
+        reason: 'the retried record delivers under the same id',
+      );
+      queue.dispose();
+    });
+
+    test(
+      'schedule() itself is receipted (id, due, target, text preview)',
+      () async {
+        const root = '/sessions/--work--/messages';
+        final env = MemoryExecutionEnv(cwd: '/work');
+        final repo = FileMessagingRepository(
+          env: env,
+          root: root,
+          homeDir: '/home/user',
+          decodeSessionCwd: decodeSessionCwd,
+        );
+        final clock = _FakeClock();
+        final queue = ScheduledMessageQueue(
+          env: env,
+          repo: () => repo,
+          root: () => root,
+          selfMailbox: () => 'sid-1/main',
+          clock: () => clock.now,
+          receipts: ScheduledReceiptLog(
+            env: env,
+            path: () => '$root/_scheduled/receipts.jsonl',
+          ),
+        );
+        await repo.register('sid-1/main');
+        await queue.schedule(
+          text: 'standup reminder',
+          delay: const Duration(minutes: 5),
+        );
+        final events = await receiptEvents(env, root);
+        final scheduled = events
+            .where((e) => e['event'] == 'scheduled')
+            .toList();
+        expect(scheduled, hasLength(1));
+        expect(scheduled.single['text'], 'standup reminder');
+        expect(scheduled.single['to'], 'sid-1/main');
+        expect(scheduled.single['dueMs'], isA<int>());
+        expect(scheduled.single['id'], isA<String>());
+        queue.dispose();
+      },
+    );
   });
 }
