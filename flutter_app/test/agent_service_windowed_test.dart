@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' as io;
 import 'dart:typed_data';
 
@@ -36,6 +37,24 @@ Agent _createAgent() {
     ),
     systemPrompt: 'You are Fa.',
     streamFunction: _singleTextResponse('ok'),
+    toolRegistry: ToolRegistry(const []),
+  );
+}
+
+/// An [Agent] wired to a caller-supplied stream function — the mid-run
+/// scenarios (#1159) script the streaming bubble themselves.
+Agent _streamAgent(StreamFunction streamFunction) {
+  return Agent(
+    model: Model(
+      id: 'test-model',
+      api: 'test-api',
+      provider: 'test',
+      baseUrl: 'https://example.com',
+      contextWindow: 100000,
+      maxTokens: 4096,
+    ),
+    systemPrompt: 'You are Fa.',
+    streamFunction: streamFunction,
     toolRegistry: ToolRegistry(const []),
   );
 }
@@ -139,6 +158,104 @@ final class CountingFileSystem implements FileSystem, RangedReadFileSystem {
   }
 }
 
+/// A [FileSystem] that parks the FIRST ranged read of [gatePath] after
+/// [armGate] until [releaseGate] — freezes a page load mid-flight to
+/// prove the generation race (issue #1159 E1).
+final class GatedFileSystem implements FileSystem, RangedReadFileSystem {
+  GatedFileSystem(this.delegate, {required this.gatePath});
+
+  final FileSystem delegate;
+  final String gatePath;
+
+  Completer<void>? _gate;
+  void armGate() => _gate = Completer<void>();
+  void releaseGate() => _gate?.complete();
+
+  @override
+  String get cwd => delegate.cwd;
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      delegate.absolutePath(path);
+
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      delegate.joinPath(parts);
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      delegate.readTextFile(path);
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      delegate.readBinaryFile(path);
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => delegate.readTextLines(path, maxLines: maxLines);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => delegate.writeBinaryFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      delegate.writeFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      delegate.appendFile(path, content);
+
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      delegate.fileInfo(path);
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      delegate.listDir(path);
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => delegate.exists(path);
+
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => delegate.createDir(path, recursive: recursive);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => delegate.remove(path, recursive: recursive, force: force);
+
+  @override
+  Future<Result<Uint8List, FileError>> readRange(
+    String path,
+    int start,
+    int end,
+  ) async {
+    final gate = _gate;
+    if (gate != null && path.contains(gatePath)) {
+      // Park with the field still set so releaseGate() reaches the
+      // parked completer; consume it after the release.
+      await gate.future;
+      _gate = null;
+    }
+    if (delegate case final RangedReadFileSystem ranged) {
+      return ranged.readRange(path, start, end);
+    }
+    return Err(
+      FileError(FileErrorCode.notSupported, 'no ranged reads', path: path),
+    );
+  }
+}
+
 void main() {
   /// Builds a big session file in one write — thousands of awaited storage
   /// appends would dominate the test runtime.
@@ -162,6 +279,7 @@ void main() {
   Future<(AgentService, CountingFileSystem)> loadedService(
     int count, {
     CountingFileSystem? countingFs,
+    Agent Function()? agentBuilder,
   }) async {
     final tmp = await io.Directory.systemTemp.createTemp('fa_windowed');
     addTearDown(() => tmp.delete(recursive: true));
@@ -169,7 +287,7 @@ void main() {
     final counting =
         countingFs ?? CountingFileSystem(LocalFileSystem(cwd: tmp.path));
     final service = AgentService(
-      agent: _createAgent(),
+      agent: agentBuilder?.call() ?? _createAgent(),
       env: LocalExecutionEnv(cwd: tmp.path),
       sessionsRoot: tmp.path,
       repo: JsonlSessionRepo(fs: counting, sessionsRoot: tmp.path),
@@ -273,6 +391,188 @@ void main() {
       'message 4200 with a bit of body to be realistic',
     );
   }, timeout: const Timeout(Duration(minutes: 3)));
+
+  test(
+    'loadNewerHistory reaches the tail in one call mid-run (#1159 AC1/E2)',
+    () async {
+      final (service, _) = await loadedService(1000);
+      addTearDown(service.dispose);
+      await waitForCount(service, 800);
+      while (service.historyAboveCount! > 0) {
+        await service.loadOlderHistory();
+      }
+      // Deep-paged: the newest side slid out below.
+      expect(service.historyHasNewer, isTrue);
+      expect(service.historyBelowCount, 400);
+
+      // Exactly the incident state: an active run with a stuck
+      // "Load newer" plate. The tap must work mid-run.
+      service.isStreaming = true;
+      await service.loadNewerHistory();
+
+      // One bounded call lands at the live tail — no chunk-by-chunk crawl.
+      expect(service.historyHasNewer, isFalse);
+      expect(service.historyBelowCount, 0);
+      // One tap = one jump: the window re-centers on the tail and fills
+      // back up to the resident cap — never a chunk-by-chunk crawl.
+      expect(service.messages, hasLength(600));
+      expect(
+        service.messages.first.content,
+        'message 400 with a bit of body to be realistic',
+      );
+      expect(
+        service.messages.last.content,
+        'message 999 with a bit of body to be realistic',
+      );
+    },
+  );
+
+  test('mid-run jump keeps the streaming bubble live (#1159 AC1)', () async {
+    AssistantMessageEventStream? live;
+    AssistantMessage? partial;
+    final (service, _) = await loadedService(
+      1000,
+      agentBuilder: () => _streamAgent((model, context, {cancelToken}) {
+        final stream = AssistantMessageEventStream();
+        live = stream;
+        partial = AssistantMessage(
+          content: [const TextContent(text: '')],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.now(),
+        );
+        stream.push(StartEvent(partial: partial!));
+        stream.push(
+          TextDeltaEvent(
+            contentIndex: 0,
+            delta: 'tail-jump',
+            partial: partial!,
+          ),
+        );
+        // No DoneEvent: the run hangs mid-bubble, exactly the incident's
+        // "Thinking… · 29s" state.
+        return stream;
+      }),
+    );
+    addTearDown(service.dispose);
+    await waitForCount(service, 800);
+    while (service.historyAboveCount! > 0) {
+      await service.loadOlderHistory();
+    }
+
+    final run = service.sendText('hi');
+    for (
+      var i = 0;
+      i < 300 &&
+          !(service.isStreaming &&
+              service.messages.last.content.contains('tail-jump'));
+      i++
+    ) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(service.isStreaming, isTrue);
+    expect(service.messages.last.content, 'tail-jump');
+
+    // Mid-run jump to the tail: the tail region lands — and the live
+    // bubble must survive the projection rebuild. The recorder keeps
+    // appending below mid-run (the pinned-to-bottom UI follows on its
+    // own — AC2 — so the banner state is not asserted mid-run here).
+    await service.loadNewerHistory();
+    expect(
+      service.messages.map((m) => m.content),
+      contains('message 999 with a bit of body to be realistic'),
+    );
+    expect(service.messages.last.content, 'tail-jump');
+
+    // Streaming continues into the SAME row: deltas mutate the re-appended
+    // bubble, not an orphaned object.
+    live?.push(TextDeltaEvent(contentIndex: 0, delta: '!!', partial: partial!));
+    for (
+      var i = 0;
+      i < 300 && service.messages.last.content != 'tail-jump!!';
+      i++
+    ) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(service.messages.last.content, 'tail-jump!!');
+
+    // Settle the run: the final record appends at the (now tail-anchored)
+    // window and the transcript stays contiguous.
+    live?.push(
+      DoneEvent(
+        reason: StopReason.stop,
+        message: AssistantMessage(
+          content: [const TextContent(text: 'full assistant message')],
+          api: partial!.api,
+          provider: partial!.provider,
+          model: partial!.model,
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.now(),
+        ),
+      ),
+    );
+    live?.end();
+    await run;
+    // The AgentEnd handler is async (persist, then the flag flip) — the
+    // run future can resolve a beat earlier; give the end boundary a
+    // bounded beat.
+    for (var i = 0; i < 300 && service.isStreaming; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(service.isStreaming, isFalse);
+    expect(service.messages.last.content, 'full assistant message');
+    // The mid-jump turn boundary must not duplicate: the run finalized
+    // while the jump was rebuilding, and the re-appended live rows were
+    // captured AFTER the rebuild - the finalized bubble lands exactly
+    // once, and no stale pre-finalize bubble lingers (issue #1159
+    // review).
+    expect(
+      service.messages.where((m) => m.content == 'full assistant message'),
+      hasLength(1),
+    );
+    expect(service.messages.where((m) => m.content == 'tail-jump!!'), isEmpty);
+    // A follow-up page-down — the UI's at-bottom follow does this on its
+    // own — drains what the recorder parked below mid-run.
+    await service.loadNewerHistory();
+    expect(service.historyHasNewer, isFalse);
+    expect(service.historyBelowCount, 0);
+  });
+
+  test('generation race: a reset mid-jump drops the stale page (E1)', () async {
+    final gated = GatedFileSystem(
+      LocalFileSystem(cwd: io.Directory.systemTemp.path),
+      gatePath: 'big.jsonl',
+    );
+    final (service, _) = await loadedService(
+      1000,
+      countingFs: CountingFileSystem(gated),
+    );
+    addTearDown(service.dispose);
+    await waitForCount(service, 800);
+    while (service.historyAboveCount! > 0) {
+      await service.loadOlderHistory();
+    }
+    expect(service.historyHasNewer, isTrue);
+    expect(service.historyBelowCount, 400);
+
+    // Park the jump's tail read mid-flight, reset underneath it: the
+    // generation bump must make the stale page vanish on resume.
+    gated.armGate();
+    final jump = service.loadNewerHistory();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await service.reset();
+    expect(service.messages, isEmpty);
+    gated.releaseGate();
+    await jump;
+
+    // The stale page must not land in the new session's state.
+    expect(service.messages, isEmpty);
+    expect(service.historyHasNewer, isFalse);
+  });
 
   test(
     'jumpToMessage: positional rows page in; record ids seek (AC6)',
