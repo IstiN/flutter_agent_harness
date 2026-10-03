@@ -823,8 +823,7 @@ class AgentWireProtocol {
           milliseconds: _requireInt(frame['elapsedMs'], 'elapsedMs'),
         ),
         action: StuckFollowUpAction.values.firstWhere(
-          (action) =>
-              action.label == _requireString(frame['action'], 'action'),
+          (action) => action.label == _requireString(frame['action'], 'action'),
           orElse: () => throw WireProtocolException(
             'malformed "tool_call_stuck" event frame: '
             'unknown action "${frame['action']}"',
