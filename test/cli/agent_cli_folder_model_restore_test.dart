@@ -566,6 +566,245 @@ void main() {
         expect(resolved.model.baseUrl, kimiUrl);
       },
     );
+
+    test(
+      'roles mode: the restored pin keeps the saved entry authHeader '
+      '(issue #964)',
+      timeout: const Timeout(Duration(seconds: 60)),
+      () async {
+        await seedSession('roles-header');
+        await saveFolderModelState(
+          env,
+          sessionsRoot: '/sessions',
+          cwd: '/work',
+          providerKind: 'openai-completions',
+          modelId: 'k3-256k',
+          baseUrl: kimiUrl,
+          customProvider: 'kimi_me',
+        );
+
+        // kimi_me is a GATEWAY entry: it carries an authHeader (issue #964).
+        final registry = CustomProviderRegistry([
+          twinRegistry().find('ira-1')!,
+          twinRegistry().find('kimi_me')!..authHeader = 'x-api-key',
+        ]);
+        final store = FakeSecureKeyStore()..map[kimiMeKeyName] = 'me-key';
+        final keys = SecureKeyCache(store);
+        await keys.preload(const [kimiMeKeyName]);
+        final resolver = ModelRolesResolver(
+          config: ModelRolesConfig(
+            roles: {
+              'default': const [
+                ModelRef(provider: 'anthropic', modelId: 'claude-a'),
+              ],
+            },
+          ),
+          secrets: const {'ANTHROPIC_API_KEY': 'test-key'},
+          streamFactory: (kind, apiKey) => _singleTextResponse('ok'),
+        );
+        final second = AgentCli(
+          config: AgentCliConfig(
+            model: Model(
+              id: 'start-model',
+              api: 'test-api',
+              provider: 'test-provider',
+              baseUrl: 'https://example.test',
+              contextWindow: 100000,
+              maxTokens: 4096,
+            ),
+            apiKey: '',
+            env: env,
+            sessionRoot: '/sessions',
+            sessionName: 'roles-header',
+            customProviders: registry,
+            secureKeys: keys,
+            modelRolesResolver: resolver,
+          ),
+          io: freshIo(),
+          streamFunction: _singleTextResponse('ok'),
+        );
+        final io = ios.last;
+        final run = second.run();
+        io.sendLine('/exit');
+        await run;
+
+        final resolved = second.config.modelRolesResolver!.resolveRole(
+          'default',
+        );
+        expect(resolved, isNotNull);
+        expect(resolved!.model.id, 'k3-256k');
+        expect(resolved.model.baseUrl, kimiUrl);
+        // The gateway header must ride the CHAIN model: the roles stream
+        // serves from the chain entry, not the agent state — a ModelRef
+        // without the header 401s on the next turn (issue #964).
+        expect(resolved.model.authHeader, 'x-api-key');
+      },
+    );
+
+    test(
+      'roles mode: a failed re-pin keeps the previous model AND chain '
+      '(no status/stream split)',
+      timeout: const Timeout(Duration(seconds: 60)),
+      () async {
+        await seedSession('roles-repin-fail');
+        await saveFolderModelState(
+          env,
+          sessionsRoot: '/sessions',
+          cwd: '/work',
+          providerKind: 'openai-completions',
+          modelId: 'k3-256k',
+          baseUrl: kimiUrl,
+          customProvider: 'kimi_me',
+        );
+
+        // The pinned key is MISSING: the chain re-pin mutates the resolver,
+        // then applyToAgent throws. The restore must roll the whole pin
+        // back — the status bar and the stream keep describing the SAME
+        // (old) provider until the key is set.
+        final second = AgentCli(
+          config: AgentCliConfig(
+            model: Model(
+              id: 'start-model',
+              api: 'test-api',
+              provider: 'test-provider',
+              baseUrl: 'https://example.test',
+              contextWindow: 100000,
+              maxTokens: 4096,
+            ),
+            apiKey: '',
+            env: env,
+            sessionRoot: '/sessions',
+            sessionName: 'roles-repin-fail',
+            customProviders: twinRegistry(),
+            secureKeys: SecureKeyCache(FakeSecureKeyStore()),
+            modelRolesResolver: ModelRolesResolver(
+              config: ModelRolesConfig(
+                roles: {
+                  'default': const [
+                    ModelRef(provider: 'anthropic', modelId: 'claude-a'),
+                  ],
+                },
+              ),
+              secrets: const {'ANTHROPIC_API_KEY': 'test-key'},
+              streamFactory: (kind, apiKey) => _singleTextResponse('ok'),
+            ),
+          ),
+          io: freshIo(),
+          streamFunction: _singleTextResponse('ok'),
+        );
+        final io = ios.last;
+        final run = second.run();
+        io.sendLine('/exit');
+        await run;
+
+        // The agent model is untouched — NOT the restored k3-256k.
+        expect(second.agent.state.model.id, 'start-model');
+        // The resolver still resolves the OLD default chain.
+        final resolved = second.config.modelRolesResolver!.resolveRole(
+          'default',
+        );
+        expect(resolved, isNotNull);
+        expect(resolved!.model.provider, 'anthropic');
+        expect(resolved.model.id, 'claude-a');
+        // The fix is named; nothing claims a completed restore.
+        expect(io.out.toString(), contains('/key set $kimiMeKeyName'));
+        expect(io.out.toString(), isNot(contains('restored k3-256k')));
+        expect(second.activeCustomProviderName, isNull);
+      },
+    );
+
+    test(
+      'E1: a stale LEAF pin degrades with the named note (model kept)',
+      timeout: const Timeout(Duration(seconds: 60)),
+      () async {
+        await seedSession('leaf-stale');
+        // The session's own last model_change pins a provider entry that no
+        // longer exists in the registry (deleted/renamed since).
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final sessions = await repo.list();
+        expect(sessions, isNotEmpty);
+        final session = await repo.open(sessions.first);
+        await session.appendModelChange(
+          provider: 'openai-completions',
+          modelId: 'k3-256k',
+          baseUrl: kimiUrl,
+          customProvider: 'gone-provider',
+        );
+
+        final second = await pinnedCliFactory(
+          sessionName: 'leaf-stale',
+          registry: twinRegistry(),
+          store: FakeSecureKeyStore()..map[kimiMeKeyName] = 'me-key',
+        );
+        final io = ios.last;
+        final run = second.run();
+        io.sendLine('/exit');
+        await run;
+
+        // E1: the model is kept, the stale name is said, the fallback is
+        // endpoint-keyed — never a silent unpin that can bind the twin
+        // account's key (round-3 review).
+        expect(second.agent.state.model.id, 'k3-256k');
+        expect(io.out.toString(), contains('gone-provider'));
+        expect(io.out.toString(), contains('no longer configured'));
+      },
+    );
+
+    test(
+      'AC1: a live-switch leaf pin survives a folder-state drift',
+      timeout: const Timeout(Duration(seconds: 60)),
+      () async {
+        // Boot A: a LIVE /provider switch — the switch must record the leaf
+        // pin itself (round-3 review: the restore alone writing pins is not
+        // enough).
+        final store =
+            FakeSecureKeyStore()
+              ..map[iraKeyName] = 'ira-key'
+              ..map[kimiMeKeyName] = 'me-key';
+        final bootA = await pinnedCliFactory(
+          sessionName: 'drift-a',
+          registry: twinRegistry(),
+          store: store,
+        );
+        final ioA = ios.last;
+        final runA = bootA.run();
+        ioA.sendLine('/provider kimi_me');
+        ioA.sendLine('/exit');
+        await runA;
+        expect(bootA.activeCustomProviderName, 'kimi_me');
+
+        // A sibling session drifts the SHARED folder state onto the twin
+        // account (the interleaved-switch case AC1 targets).
+        await saveFolderModelState(
+          env,
+          sessionsRoot: '/sessions',
+          cwd: '/work',
+          providerKind: 'openai-completions',
+          modelId: 'k3-256k',
+          baseUrl: kimiUrl,
+          customProvider: 'ira-1',
+        );
+
+        // Restoring A must follow A's OWN leaf pin — not the drifted folder
+        // state — so kimi_me's OWN key slot serves the session.
+        final bootC = await pinnedCliFactory(
+          sessionName: 'drift-a',
+          registry: twinRegistry(),
+          store: store,
+        );
+        final ioC = ios.last;
+        final runC = bootC.run();
+        ioC.sendLine('/exit');
+        await runC;
+
+        expect(bootC.agent.state.model.id, 'k3-256k');
+        expect(bootC.activeCustomProviderName, 'kimi_me');
+        expect(
+          bootC.agent.state.model.baseUrl,
+          kimiUrl,
+        );
+      },
+    );
   });
 }
 

@@ -745,6 +745,35 @@ void main() {
       );
     });
 
+    test(
+      'a headless RESTORE names the pinned key slot, not the catalog env',
+      () {
+        expect(
+          () => startupApiKey(
+            'openai-completions',
+            SecureKeyCache(null),
+            baseUrl: _openrouter,
+            customProviders: const [],
+            defaultRoleResolved: false,
+            interactive: false,
+            env: const {},
+            pinnedKeyName: 'FA_KEY_API_KIMI_COM_KIMI_ME',
+          ),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('restored provider'),
+                contains('/key set FA_KEY_API_KIMI_COM_KIMI_ME'),
+                isNot(contains('OPENROUTER_API_KEY')),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
     test('a headless hosted start with an env key resolves it', () {
       final key = startupApiKey(
         'openai-completions',

@@ -767,12 +767,15 @@ void main() {
     const kimiUrl = 'https://api.kimi.com/coding/v1';
     const scopedName = 'FA_KEY_API_KIMI_COM';
 
-    ModelRolesResolver resolverWith(Map<String, String> secrets) {
+    ModelRolesResolver resolverWith(
+      Map<String, String> secrets, {
+      String baseUrl = kimiUrl,
+    }) {
       return ModelRolesResolver(
         config: ModelRolesConfig(
           roles: {
             'smol': [
-              ModelRef(provider: 'openai', modelId: 'k3-256k', baseUrl: kimiUrl),
+              ModelRef(provider: 'openai', modelId: 'k3-256k', baseUrl: baseUrl),
             ],
           },
         ),
@@ -817,6 +820,16 @@ void main() {
         resolver.skippedEntries['smol']!.single,
         contains('/key set $scopedName'),
       );
+    });
+
+    test('a default-endpoint entry with a trailing slash keeps the '
+        'catalog env key (no scoped slot)', () {
+      // The catalog default with a trailing slash IS the default endpoint —
+      // one endpoint-equality rule with key_status (round-3 review).
+      final chain = resolverWith({
+        'OPENAI_API_KEY': 'sk-openai',
+      }, baseUrl: 'https://api.openai.com/v1/').chainFor('smol')!;
+      expect(chain.single.keyRing.baseName, 'OPENAI_API_KEY');
     });
   });
 }
