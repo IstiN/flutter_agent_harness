@@ -46,14 +46,17 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
 
 /// Slash-command dispatch on [AgentCli].
 extension SlashCommandDispatch on AgentCli {
-  Future<void> _handleCommand(String trimmed) async {
+  Future<void> _handleCommand(
+    String trimmed, {
+    List<TuiImageAttachment> images = const [],
+  }) async {
     final command = trimmed.split(_commandWhitespace).first;
     final rest = trimmed.substring(command.length).trim();
     if (await _handleInfoCommand(command, rest)) return;
     if (await _handleModelProviderCommand(command, rest)) return;
     if (await _handleSessionSwitchCommand(command, rest)) return;
     if (await _handleModeCommand(command, rest)) return;
-    await _handleUnknownCommand(trimmed, command, rest);
+    await _handleUnknownCommand(trimmed, command, rest, images: images);
   }
 
   /// Info commands without a TUI picker variant. Returns whether [command]
@@ -535,8 +538,9 @@ extension SlashCommandDispatch on AgentCli {
   Future<void> _handleUnknownCommand(
     String trimmed,
     String command,
-    String rest,
-  ) async {
+    String rest, {
+    List<TuiImageAttachment> images = const [],
+  }) async {
     final handler =
         _pluginSlashCommands[command] ?? _ext.slashCommands[command];
     if (handler != null) {
@@ -562,7 +566,7 @@ extension SlashCommandDispatch on AgentCli {
       return;
     }
     if (trimmed.startsWith('/') && trimmed.length > 1) {
-      _handlePathLikeInput(trimmed);
+      await _handlePathLikeInput(trimmed, images: images);
       return;
     }
     io.writeln('unknown command: $command (try /help)');
@@ -570,16 +574,26 @@ extension SlashCommandDispatch on AgentCli {
 
   /// A string starting with `/` followed by no spaces and containing at
   /// least one more `/` is a filesystem path (absolute or `~/...`), never a
-  /// slash command. When the referenced file EXISTS, the message is sent
-  /// with the file attached (resolveInteractiveFileReference); a
-  /// nonexistent path keeps the load hint — it cannot be attached.
-  void _handlePathLikeInput(String trimmed) {
-    if (!_leadingPathLike.hasMatch(trimmed) && !trimmed.startsWith('~/')) {
-      _printHelp(filter: trimmed.substring(1));
+  /// slash command. A bare single-token path that does not exist keeps the
+  /// load hint — it cannot be attached. Multi-word input is a message that
+  /// starts with a path (issue #1152): it takes the shared message tail
+  /// ([AgentCli._sendUserMessage] — viewer routing #428, per-turn grant
+  /// reset, clipboard images), never a refusal. Bare existing files never
+  /// reach here: `_dispatchInput` routes them to the tail before the
+  /// command tables.
+  Future<void> _handlePathLikeInput(
+    String trimmed, {
+    List<TuiImageAttachment> images = const [],
+  }) async {
+    // Broad token check is safe in this fallback: known single-segment
+    // commands (`/model gpt`) were already handled by the tables above.
+    final token = leadingPathLikeToken(trimmed);
+    if (token != null && trimmed.length > token.length) {
+      await _sendUserMessage(trimmed, images);
       return;
     }
-    if (resolveInteractiveFileReference(trimmed) != trimmed) {
-      _startRun(trimmed);
+    if (!_leadingPathLike.hasMatch(trimmed) && !trimmed.startsWith('~/')) {
+      _printHelp(filter: trimmed.substring(1));
       return;
     }
     io.writeln(
