@@ -753,9 +753,8 @@ AgentTool readFileTool(
       if (extended != null) return _withNotice(extended, windowNotice);
 
       final path = split.path;
-      // Built-in skills (issue #1151) ride the package as compiled-in
-      // data — their `builtin://` paths resolve from the embedded copy on
-      // every host, before any filesystem access.
+      // Built-in skills (issue #1151): builtin:// paths resolve from the
+      // embedded copy before any filesystem access.
       final embedded = builtinSkillTextAt(path);
       if (embedded == null) {
         final binaryRead = await env.readBinaryFile(path);
