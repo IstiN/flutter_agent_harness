@@ -396,8 +396,10 @@ void main() {
         resolver.chainFor('default');
         fail('expected chainFor to throw');
       } on UnknownProviderRoleException {
-        fail('missing keys on a KNOWN provider is not version skew — '
-            'it must stay a plain ConfigException');
+        fail(
+          'missing keys on a KNOWN provider is not version skew — '
+          'it must stay a plain ConfigException',
+        );
       } on ConfigException {
         // Expected: the pre-#760 loud failure the boot maps to _fail.
       }
@@ -421,8 +423,10 @@ void main() {
         resolver.chainFor('default');
         fail('expected chainFor to throw');
       } on UnknownProviderRoleException {
-        fail('the skip reason embedding a user-controlled model id must '
-            'not classify a known provider as version skew');
+        fail(
+          'the skip reason embedding a user-controlled model id must '
+          'not classify a known provider as version skew',
+        );
       } on ConfigException {
         // Expected.
       }
@@ -760,6 +764,112 @@ void main() {
           ),
         );
       });
+    });
+  });
+
+  group('custom-endpoint key resolution (gh-1000 AC5)', () {
+    const kimiUrl = 'https://api.kimi.com/coding/v1';
+    const scopedName = 'FA_KEY_API_KIMI_COM';
+
+    ModelRolesResolver resolverWith(
+      Map<String, String> secrets, {
+      String baseUrl = kimiUrl,
+    }) {
+      return ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {
+            'smol': [
+              ModelRef(
+                provider: 'openai',
+                modelId: 'k3-256k',
+                baseUrl: baseUrl,
+              ),
+            ],
+          },
+        ),
+        secrets: secrets,
+        streamFactory: _neverStream,
+      );
+    }
+
+    test('a custom-endpoint chain entry resolves its endpoint-scoped key', () {
+      final chain = resolverWith({
+        scopedName: 'sk-store',
+        // A foreign OPENAI_API_KEY must NOT serve the custom endpoint
+        // before the endpoint-scoped slot (issue #40 ordering).
+        'OPENAI_API_KEY': 'sk-openai',
+      }).chainFor('smol')!;
+      expect(chain, hasLength(1));
+      expect(chain.single.keyRing.baseName, scopedName);
+      expect(chain.single.keyRing.currentCredential.value, 'sk-store');
+    });
+
+    test('the catalog env name still backstops a custom endpoint', () {
+      final chain = resolverWith({
+        'OPENAI_API_KEY': 'sk-openai',
+      }).chainFor('smol')!;
+      expect(chain.single.keyRing.baseName, 'OPENAI_API_KEY');
+    });
+
+    test('a missing key names the endpoint-scoped store fix', () {
+      final resolver = resolverWith(const {});
+      expect(
+        () => resolver.chainFor('smol'),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('smol'), contains('/key set $scopedName')),
+          ),
+        ),
+      );
+      expect(
+        resolver.skippedEntries['smol']!.single,
+        contains('/key set $scopedName'),
+      );
+    });
+
+    test('a default-endpoint entry with a trailing slash keeps the '
+        'catalog env key (no scoped slot)', () {
+      // The catalog default with a trailing slash IS the default endpoint —
+      // one endpoint-equality rule with key_status (round-3 review).
+      final chain = resolverWith({
+        'OPENAI_API_KEY': 'sk-openai',
+      }, baseUrl: 'https://api.openai.com/v1/').chainFor('smol')!;
+      expect(chain.single.keyRing.baseName, 'OPENAI_API_KEY');
+    });
+
+    test('a missing key on an explicitly pinned ref names THAT slot', () {
+      // The ref pins FA_KEY_..._KIMI_ME: the hint must name the pinned
+      // slot, not the endpoint-scoped default (wrong-slot guidance is the
+      // AC2 violation gh-1000 forbids; round-3 review).
+      const pinned = 'FA_KEY_API_KIMI_COM_KIMI_ME';
+      final resolver = ModelRolesResolver(
+        config: ModelRolesConfig(
+          roles: {
+            'smol': [
+              ModelRef(
+                provider: 'openai',
+                modelId: 'k3-256k',
+                baseUrl: kimiUrl,
+                apiKeyName: pinned,
+              ),
+            ],
+          },
+        ),
+        secrets: const {},
+        streamFactory: _neverStream,
+      );
+      expect(
+        () => resolver.chainFor('smol'),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('/key set $pinned'),
+          ),
+        ),
+      );
     });
   });
 }

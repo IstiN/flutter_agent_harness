@@ -228,15 +228,30 @@ List<CustomProviderEntry> mergeCustomProviderEntries(
   ];
 }
 
+/// Endpoint equality ignoring ONE trailing slash (saved entries, resolved
+/// endpoints, and catalog defaults disagree on it routinely) — the ONE
+/// rule for "is this endpoint that endpoint": saved-entry matches
+/// (key_status), catalog-default classification (key_status, the roles
+/// resolver's endpoint-slot probe, startup's preload set) share it, so a
+/// trailing-slash spelling can never be custom in one helper and default
+/// in another (round-3 review).
+bool sameEndpoint(String a, String b) {
+  String norm(String u) => u.endsWith('/') ? u.substring(0, u.length - 1) : u;
+  return norm(a) == norm(b);
+}
+
 /// The `authHeader` of the saved entry serving [baseUrl], for the
 /// folder-model-state restores (boot in `bin/fah.dart` and session
 /// re-apply in `agent_cli.dart` — issue #964 review): a restored gateway
 /// endpoint without its header 401s. Null when [baseUrl] is null (catalog
 /// default) or no saved entry matches it.
-String? authHeaderForBaseUrl(List<CustomProviderEntry> entries, String? baseUrl) {
+String? authHeaderForBaseUrl(
+  List<CustomProviderEntry> entries,
+  String? baseUrl,
+) {
   if (baseUrl == null) return null;
   for (final entry in entries) {
-    if (entry.baseUrl == baseUrl) return entry.authHeader;
+    if (sameEndpoint(entry.baseUrl, baseUrl)) return entry.authHeader;
   }
   return null;
 }
