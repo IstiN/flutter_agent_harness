@@ -149,7 +149,19 @@ final class Redirect {
 }
 
 /// Kinds of redirect.
-enum RedirectKind { read, write, append, heredoc, hereString, background }
+enum RedirectKind {
+  read,
+  write,
+  append,
+  heredoc,
+  hereString,
+  background,
+
+  /// `2>&1` / `>&2` fd duplication ([fd] is the source fd, [Redirect.target]
+  /// the destination fd as '1' or '2'). Only honored by shells that opt in
+  /// via `allowFdDuplication` — the sandbox shells historically reject it.
+  dup,
+}
 
 /// A parsed shell script: statements plus control-flow nodes.
 final class ShellScript {
@@ -254,12 +266,17 @@ ShellCommand parseCommandLine(String input) {
 /// and `for ... in ...; do ...; done` control flow, on one line or spread
 /// over multiple lines.
 ///
+/// [allowFdDuplication] opts the caller into `2>&1`/`>&2` support (the WASI
+/// sandbox shell); the default keeps the historical rejection so shells
+/// that never supported fd duplication are byte-identical.
+///
 /// Throws [ShellParseException] on malformed input: unterminated blocks
 /// (the message names the missing keyword), stray `then`/`else`/`fi`/`do`/
 /// `done` keywords, or invalid `for` syntax.
-ShellScript parseShellScript(String input) {
+ShellScript parseShellScript(String input, {bool allowFdDuplication = false}) {
   final tokens = _tokenize(input);
-  return _ScriptParser(tokens).parseScript();
+  return _ScriptParser(tokens, allowFdDuplication: allowFdDuplication)
+      .parseScript();
 }
 
 /// Exception thrown by [parseCommandLine] for invalid syntax.
@@ -791,8 +808,11 @@ int _quotedSpanEnd(String input, int start, String quote) {
 }
 
 final class _ScriptParser {
-  _ScriptParser(this.tokens);
+  _ScriptParser(this.tokens, {this.allowFdDuplication = false});
   final List<_Token> tokens;
+
+  /// Whether `2>&1`/`>&2` fd duplication parses (WASI shell opt-in).
+  final bool allowFdDuplication;
   int _pos = 0;
 
   /// Keywords that close a block; in command position outside their block
@@ -945,9 +965,30 @@ final class _ScriptParser {
         if (_atEnd) throw const ShellParseException('missing redirect target');
         final next = _advance();
         if (next is _Redirect && next.kind == RedirectKind.background) {
-          throw const ShellParseException(
-            'fd duplication (2>&1) is not supported in the sandbox shell',
+          // `2>&1` tokenizes as redirect + background `&` + digit word.
+          if (_atEnd) {
+            throw const ShellParseException('missing redirect target');
+          }
+          final target = _advance();
+          if (target is! _Word ||
+              (target.value != '1' && target.value != '2')) {
+            throw const ShellParseException(
+              'fd duplication (2>&1) is not supported in the sandbox shell',
+            );
+          }
+          if (!allowFdDuplication) {
+            throw const ShellParseException(
+              'fd duplication (2>&1) is not supported in the sandbox shell',
+            );
+          }
+          redirects.add(
+            Redirect(
+              kind: RedirectKind.dup,
+              fd: token.fd,
+              target: target.value,
+            ),
           );
+          continue;
         }
         if (next is! _Word) {
           throw const ShellParseException('redirect target must be a word');
