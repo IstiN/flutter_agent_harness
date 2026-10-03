@@ -32,7 +32,11 @@
 #                                 leg (pages.yml assembles /outlook)
 #
 # Legs run only when main moved since the last GREEN daily run — skip-no-
-# change is green-neutral, never red (#159 lesson). Versioning stays the
+# change is green-neutral, never red (#159 lesson). One exception (gh-1192):
+# while main's pubspec version is not yet served by pub.dev the plan gate
+# (scripts/daily_plan.sh) forces the legs anyway — a release-in-flight
+# green must not become a skip baseline that stalls re-verification and
+# rerun-recovery on a quiet main. Versioning stays the
 # existing scheme: auto_release.sh patch-bumps + tags every main push
 # (2h coalesce); the daily attaches mobile/desktop artifacts to the next
 # tag and verifies/republishes pub.dev. See docs/ci.md.
@@ -108,39 +112,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FORCE: ${{ inputs.force }}
-        run: |
-          set -euo pipefail
-          repo="${GITHUB_REPOSITORY}"
-
-          # Baseline = last green run that exercised ALL legs. A single-leg
-          # green dispatch (legs=pubdev inject smoke etc.) must NOT advance
-          # the baseline — otherwise the next scheduled run would skip the
-          # legs that never ran for that sha.
-          last_green=$(gh run list --repo "$repo" --workflow daily-publish.yml \
-            --branch main --status success --limit 15 \
-            --json headSha,event,displayTitle \
-            --jq '[.[] | select(.event == "schedule" or (.event == "workflow_dispatch" and (.displayTitle | contains("(all)"))))][0].headSha // empty')
-          head=$(git rev-parse origin/main)
-          echo "last green daily: ${last_green:-<none>} — main: $head"
-
-          changed=true
-          if [ "$last_green" = "$head" ] && [ "$FORCE" != "true" ]; then
-            changed=false
-            echo "::notice::main has not moved since the last green daily — all legs skip (green-neutral, #159)"
-          fi
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
-
-          latest_tag=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
-          next_tag=v0.1.0
-          if [ -n "$latest_tag" ]; then
-            IFS='.' read -r major minor patch <<< "${latest_tag#v}"
-            next_tag="v${major}.${minor}.$((patch + 1))"
-          fi
-          {
-            echo "latest_tag=${latest_tag:-none}"
-            echo "next_tag=$next_tag"
-            echo "pubspec_version=$(grep '^version:' pubspec.yaml | awk '{print $2}')"
-          } >> "$GITHUB_OUTPUT"
+        # gh-1192: the gate (baseline + the release-unresolved re-arm that
+        # keeps AC1's «the next daily re-verifies» true on a quiet main)
+        # lives in the extracted script — shell-harness tested by
+        # test/release_flow_race_test.dart.
+        run: bash scripts/daily_plan.sh
 
   # ── Dispatch legs ────────────────────────────────────────────────────────
   # Shape per leg: dispatch the child workflow pinned to main, capture the

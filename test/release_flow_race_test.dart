@@ -77,9 +77,16 @@ exec "\$FA_REAL_GIT" "\$@"
 
   // pub.dev package API: before the tag-run rerun lands, pub.dev serves the
   // OLD version; once $GH_STUB_DIR/rerun-done exists (planted by the gh
-  // stub's `run rerun`), it serves the new one.
+  // stub's `run rerun`), it serves the new one. A $GH_STUB_DIR/curl-fail
+  // marker simulates an API outage; every invocation is logged to curl.log
+  // so tests can assert the read happened (or never did).
   File('${bin.path}/curl').writeAsStringSync('''
 #!/usr/bin/env bash
+echo "\$*" >> "\$GH_STUB_DIR/curl.log"
+if [ -f "\$GH_STUB_DIR/curl-fail" ]; then
+  echo "curl: simulated pub.dev API failure" >&2
+  exit 1
+fi
 if [ -f "\$GH_STUB_DIR/rerun-done" ] && [ -f "\$GH_STUB_DIR/pubdev-new.json" ]; then
   cat "\$GH_STUB_DIR/pubdev-new.json"
 else
@@ -104,7 +111,13 @@ case "$cmd" in
             *) shift ;;
           esac
         done
-        f="$GH_STUB_DIR/runs-$branch.json"
+        # Nth read of the same branch: runs-<branch>.N.json overrides the
+        # base fixture when present — the past-grace re-read test (review
+        # thread 2) plants a run on the SECOND read.
+        cf="$GH_STUB_DIR/list-count-$branch"
+        n=$(cat "$cf" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$cf"
+        f="$GH_STUB_DIR/runs-$branch.$n.json"
+        [ -f "$f" ] || f="$GH_STUB_DIR/runs-$branch.json"
         [ -f "$f" ] || f="$GH_STUB_DIR/runs.json"
         [ -f "$f" ] || { echo "stub: no fixture for branch '$branch'" >&2; exit 1; }
         jq -r "$jqf" "$f"
@@ -135,7 +148,15 @@ case "$cmd" in
       *) exit 0 ;;
     esac
     ;;
-  *) exit 0 ;;
+  release)
+    # tag_release.sh's GitHub Release creation — expected, quiet success.
+    exit 0 ;;
+  *)
+    # gh-1192 review thread 3: a silently-swallowed unknown subcommand lets
+    # script drift read green (a grown `gh api` call would no-op and every
+    # fixture stays vacuous). Fail loudly so drift turns into a red test.
+    echo "stub: unexpected gh invocation: $*" >&2
+    exit 1 ;;
 esac
 ''');
 
@@ -174,8 +195,10 @@ class VerifyRun {
 /// tagger date is what %(creatordate:unix) reads back), a job clone the
 /// script runs in, and stub gh/curl fixtures. [runsJson] is what
 /// `gh run list --branch v<version>` serves ('[]' = the run is not visible
-/// yet); [conclusion] is the completed run's conclusion (served once the
-/// stub sees the run id); [rerunToSuccess] makes the post-rerun view green.
+/// yet); [secondReadJson] overrides the SECOND read of that branch (the
+/// past-grace re-read, review thread 2); [conclusion] is the completed
+/// run's conclusion (served once the stub sees the run id);
+/// [rerunToSuccess] makes the post-rerun view green.
 VerifyRun runVerify(
   String name, {
   String version = '0.1.497',
@@ -187,6 +210,7 @@ VerifyRun runVerify(
   int commitsOnTop = 0, // ordinary PRs that landed on main after the bump
   bool publishToNone = false,
   String? runsJson = '[]',
+  String? secondReadJson,
   String conclusion = 'success',
   bool rerunToSuccess = false,
   Map<String, String> extraEnv = const {},
@@ -232,6 +256,9 @@ VerifyRun runVerify(
   File('${dir.path}/pubdev-new.json')
       .writeAsStringSync('{"latest":{"version":"$version"}}');
   File('${dir.path}/runs-v$version.json').writeAsStringSync(runsJson ?? '[]');
+  if (secondReadJson != null) {
+    File('${dir.path}/runs-v$version.2.json').writeAsStringSync(secondReadJson);
+  }
   if (runsJson != null && runsJson != '[]') {
     final id = RegExp(r'"databaseId":\s*(\d+)').firstMatch(runsJson)?.group(1);
     if (id != null) {
@@ -456,6 +483,100 @@ ReportRun runReport(String name) {
   );
 }
 
+class PlanRun {
+  PlanRun(this.exitCode, this.output, this.outputs, this.ghLog, this.curlLog);
+  final int exitCode;
+  final String output;
+  final Map<String, String> outputs; // GITHUB_OUTPUT key=values
+  final List<String> ghLog; // stubbed gh invocations
+  final List<String> curlLog; // stubbed curl invocations
+
+  bool get changed => outputs['changed'] == 'true';
+}
+
+/// Sandbox for scripts/daily_plan.sh (the daily-publish plan job's
+/// «Detect main movement and derive versions» step): an origin whose main
+/// carries `version: [version]` plus an annotated latest tag one patch
+/// below it, a FULL job clone (the plan job checks out with fetch-depth: 0,
+/// so `git rev-parse origin/main` and the tag sort must resolve), the
+/// shared gh/curl stubs, and a `gh run list --branch main` fixture.
+/// [lastGreen]: 'head' — the newest successful scheduled daily ran at
+/// main's current sha; 'older' — at an older sha (main moved); null — no
+/// green all-legs daily recorded. [servedVersion] is what the pub.dev API
+/// fixture serves; [pubdevApiDown] makes every curl fail (the re-arm must
+/// fail OPEN, never block on an API outage).
+PlanRun runPlan(
+  String name, {
+  String version = '0.1.497',
+  String? lastGreen,
+  bool force = false,
+  String? servedVersion,
+  bool pubdevApiDown = false,
+}) {
+  final dir = Directory(
+          '${_fixtureRoot.path}/plan-$name-${DateTime.now().microsecondsSinceEpoch}')
+    ..createSync(recursive: true);
+  final origin = '${dir.path}/origin.git';
+  final seed = '${dir.path}/seed';
+  final job = '${dir.path}/job';
+  final stub = _installStubs(dir.path);
+
+  Directory(origin).createSync();
+  _git(['init', '-q', '--bare', '-b', 'main', origin], cwd: dir.path);
+  _git(['clone', '-q', origin, seed], cwd: dir.path);
+  _git(['config', 'user.email', 't@t'], cwd: seed);
+  _git(['config', 'user.name', 't'], cwd: seed);
+  File('$seed/pubspec.yaml').writeAsStringSync('name: demo\nversion: $version\n');
+  _git(['add', '-A'], cwd: seed);
+  _git(['commit', '-q', '-m', 'chore(release): v$version'], cwd: seed);
+  _git(['tag', '-a', 'v0.1.496', '-m', 'Release v0.1.496'], cwd: seed);
+  _git(['push', '-q', 'origin', 'main', 'refs/tags/v0.1.496'], cwd: seed);
+  final headSha = _gitOut(['rev-parse', 'HEAD'], cwd: seed);
+  // The plan job's checkout is FULL (fetch-depth: 0) — origin/main and the
+  // pushed tag must both resolve in the job clone.
+  _git(['clone', '-q', origin, job], cwd: dir.path);
+
+  File('${dir.path}/pubdev.json')
+      .writeAsStringSync('{"latest":{"version":"${servedVersion ?? version}"}}');
+  final green = switch (lastGreen) {
+    null => '[]',
+    'head' =>
+      '[{"headSha":"$headSha","event":"schedule","displayTitle":"Daily"}]',
+    _ =>
+      '[{"headSha":"0000000000000000000000000000000000000000","event":"schedule","displayTitle":"Daily"}]',
+  };
+  File('${dir.path}/runs-main.json').writeAsStringSync(green);
+  if (pubdevApiDown) File('${dir.path}/curl-fail').writeAsStringSync('');
+
+  final outPath = '${dir.path}/github_output';
+  final res = Process.runSync(
+    'bash',
+    [File('scripts/daily_plan.sh').absolute.path],
+    workingDirectory: job,
+    environment: {
+      'PATH': '${stub.bin}:${Platform.environment['PATH']}',
+      'FA_REAL_GIT': stub.realGit,
+      'GITHUB_REPOSITORY': 'OWNER/REPO',
+      'GH_TOKEN': 'stub',
+      'GH_STUB_DIR': dir.path,
+      'GH_LOG_FILE': '${dir.path}/gh.log',
+      'GITHUB_OUTPUT': outPath,
+      if (force) 'FORCE': 'true',
+    },
+  );
+  return PlanRun(
+    res.exitCode,
+    '${res.stdout}${res.stderr}',
+    File(outPath).existsSync() ? _parseOutputs(outPath) : {},
+    File('${dir.path}/gh.log').existsSync()
+        ? File('${dir.path}/gh.log').readAsLinesSync()
+        : <String>[],
+    File('${dir.path}/curl.log').existsSync()
+        ? File('${dir.path}/curl.log').readAsLinesSync()
+        : <String>[],
+  );
+}
+
 void main() {
   // ── AC1/AC4 — «release in flight» is neutral, never an alarm ────────────
   group('AC1/AC4 — verify classifies release-in-flight, no ::error::', () {
@@ -546,6 +667,37 @@ void main() {
       expect(r.exitCode, isNot(0), reason: r.output);
       expect(r.errored, isTrue);
       expect(r.output, contains(expectedError));
+      expect(
+        r.ghLog.where((l) => l.contains('--branch v0.1.497')),
+        hasLength(2),
+        reason: 'the alarm fires only after one spaced re-read (review thread 2)',
+      );
+    });
+
+    test(
+        'review thread 2 (E4 residual): run registers between the reads -> '
+        'the past-grace re-read finds it and the leg skips, never alarms', () {
+      // An operator re-pushed the stale tag while the daily was between its
+      // `git ls-remote` and the `gh run list`: the first read saw nothing,
+      // the tag is past the grace — the old code false-errored here. The
+      // re-read must find the fresh (queued) run and classify in-flight.
+      final r = runVerify(
+        'repush-second-read',
+        tagAge: const Duration(hours: 2),
+        runsJson: '[]',
+        secondReadJson:
+            '[{"databaseId":4242,"status":"queued","conclusion":null}]',
+      );
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.inFlight, isTrue, reason: r.output);
+      expect(r.errored, isFalse, reason: 'the #1189 false-alarm class');
+      expect(r.outputs['run_url'],
+          'https://github.com/OWNER/REPO/actions/runs/4242');
+      expect(
+        r.ghLog.where((l) => l.contains('--branch v0.1.497')),
+        hasLength(2),
+        reason: 'exactly one spaced re-read, then the run governs (E1)',
+      );
     });
 
     test('tag never cut + bump wedged past the horizon -> same alarm', () {
@@ -748,6 +900,136 @@ void main() {
       final report = read('scripts/daily_publish_report.sh');
       expect(report, contains('release-in-flight'));
       expect(report, contains('skipped: release in flight'));
+    });
+
+    test('plan job change detection runs the extracted, tested script', () {
+      final daily = read('.github/workflows/daily-publish.yml');
+      expect(daily, contains('scripts/daily_plan.sh'),
+          reason:
+              'the plan gate (baseline + gh-1192 release-unresolved re-arm) '
+              'must be the shell-harness tested script, not inline drift');
+      expect(daily, contains('Detect main movement and derive versions'),
+          reason: 'the step name stays (log-excerpt correlation keys on it)');
+    });
+  });
+
+  // ── review thread 1 — the release-unresolved re-arm ──────────────────────
+  // A release-in-flight pubdev leg exits 0, so that daily goes GREEN and
+  // becomes the plan job's new baseline AT THE BUMP'S sha. If main then
+  // stays quiet, every later daily would skip all legs — AC1's «the next
+  // scheduled daily re-verifies» and the failed-run `rerun --failed`
+  // recovery would stall until an unrelated push. The gate must therefore
+  // force the legs while main's pubspec version is not served by pub.dev.
+  group('plan gate — re-arms the daily while a release is unresolved', () {
+    test('main moved since the last green daily -> legs run, pub.dev not consulted',
+        () {
+      final r = runPlan('main-moved', lastGreen: 'older');
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.changed, isTrue, reason: r.output);
+      expect(r.curlLog, isEmpty,
+          reason: 'the baseline decision already forces the legs');
+    });
+
+    test('main quiet + pub.dev serves the pubspec version -> all legs skip (unchanged)',
+        () {
+      final r = runPlan('quiet-served', lastGreen: 'head');
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.changed, isFalse, reason: r.output);
+      expect(r.outputs['latest_tag'], 'v0.1.496');
+      expect(r.outputs['next_tag'], 'v0.1.497');
+      expect(r.outputs['pubspec_version'], '0.1.497');
+    });
+
+    test(
+        'main quiet + pub.dev BEHIND (release-in-flight green became the '
+        'baseline) -> re-armed: changed=true, next daily re-verifies', () {
+      final r = runPlan('quiet-release-unresolved',
+          lastGreen: 'head', servedVersion: '0.1.496');
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.changed, isTrue,
+          reason: 'AC1 re-verification must not stall on a quiet main');
+      expect(r.output, contains('release unresolved'));
+      expect(r.outputs['next_tag'], 'v0.1.497',
+          reason: 'version derivation still runs after the re-arm');
+    });
+
+    test('pub.dev read fails -> fail OPEN: the baseline skip stands, exit 0', () {
+      final r = runPlan('api-down', lastGreen: 'head', pubdevApiDown: true);
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.changed, isFalse,
+          reason: 'an API outage must not force daily legs by itself');
+    });
+
+    test('FORCE=true forces the legs without consulting pub.dev', () {
+      final r = runPlan('forced', lastGreen: 'head', force: true);
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.changed, isTrue, reason: r.output);
+      expect(r.curlLog, isEmpty, reason: 'FORCE short-circuits before the re-arm');
+    });
+
+    test('no green all-legs daily recorded -> legs run (first-run path unchanged)',
+        () {
+      final r = runPlan('first-run', lastGreen: null);
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.changed, isTrue, reason: r.output);
+      expect(r.curlLog, isEmpty);
+    });
+  });
+
+  // ── review thread 3 — the fixture must not swallow unknown gh calls ──────
+  group('fixture hygiene — the gh stub fails loudly on unexpected commands', () {
+    late Directory dir;
+    late StubEnv stub;
+    setUp(() {
+      dir = Directory(
+              '${_fixtureRoot.path}/stub-strict-${DateTime.now().microsecondsSinceEpoch}')
+        ..createSync(recursive: true);
+      stub = _installStubs(dir.path);
+    });
+
+    Map<String, String> stubEnv() => {
+          'GH_STUB_DIR': dir.path,
+          'GH_LOG_FILE': '${dir.path}/gh.log',
+        };
+
+    test('an unknown subcommand exits non-zero with a loud stderr', () {
+      final r = Process.runSync('${stub.bin}/gh', ['api', 'repos/OWNER/REPO'],
+          environment: stubEnv());
+      expect(r.exitCode, isNot(0), reason: 'script drift must turn red');
+      expect(r.stderr, contains('unexpected gh invocation'));
+    });
+
+    test('gh release create stays a quiet success (tag_release.sh path)', () {
+      final r = Process.runSync(
+          '${stub.bin}/gh',
+          [
+            'release',
+            'create',
+            'v0.1.496',
+            '--title',
+            'v0.1.496',
+            '--notes',
+            'notes',
+            '--latest',
+            '--repo',
+            'OWNER/REPO',
+          ],
+          environment: stubEnv());
+      expect(r.exitCode, 0, reason: r.stderr);
+    });
+
+    test('the known subcommands still answer (no over-tightening)', () {
+      File('${dir.path}/runs-v1.json')
+          .writeAsStringSync('[{"databaseId":7,"status":"queued"}]');
+      final list = Process.runSync('${stub.bin}/gh',
+          ['run', 'list', '--branch', 'v1', '--jq', '.[0].databaseId'],
+          environment: stubEnv());
+      expect(list.exitCode, 0, reason: list.stderr);
+      expect(list.stdout.trim(), '7');
+      final label = Process.runSync(
+          '${stub.bin}/gh', ['label', 'create', 'daily-publish'],
+          environment: stubEnv());
+      expect(label.exitCode, 0, reason: label.stderr);
     });
   });
 }

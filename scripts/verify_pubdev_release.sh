@@ -131,8 +131,22 @@ if [ -z "$tag_run" ]; then
     # completed 05:37). Neutral skip; the next daily re-verifies.
     in_flight "$tag exists (${tag_age}s old < ${grace}s grace) but its ci.yml run is not visible yet"
   fi
-  # AC2 — past the grace window with no run at all: genuinely never
-  # triggered (e.g. a GITHUB_TOKEN push cannot cascade). Alarm unchanged.
+  # Review thread 2 (E4 residual): a freshly re-pushed tag takes seconds to
+  # register in the API — an operator re-pushing while this leg sits between
+  # its `git ls-remote` and the read above must not trip «never triggered»
+  # once. One spaced re-read; alarm only if it is empty too.
+  sleep "$read_sleep"
+  tag_run=$(gh run list --repo "$repo" --workflow ci.yml \
+    --branch "$tag" --limit 1 \
+    --json databaseId,status,conclusion --jq '.[0] // empty')
+  if [ -n "$tag_run" ]; then
+    echo "::notice::$tag's ci run registered between the reads — continuing with it"
+  fi
+fi
+if [ -z "$tag_run" ]; then
+  # AC2 — past the grace window with no run at all (both reads empty):
+  # genuinely never triggered (e.g. a GITHUB_TOKEN push cannot cascade).
+  # Alarm unchanged.
   echo "::error::$tag has no ci.yml run — the tag-publish never triggered. Manual fix: re-push the tag (git push origin $tag --force) or run ci.yml on the tag ref."
   exit 1
 fi
