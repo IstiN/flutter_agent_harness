@@ -1692,7 +1692,13 @@ extension on AgentCli {
     _modelMaxTokens = const {};
     _lastModelList = null;
     unawaited(_refreshModelCache());
-    await _session?.appendModelChange(provider: spec.name, modelId: modelId);
+    await _session?.appendModelChange(
+      provider: spec.name,
+      modelId: modelId,
+      // A LIVE switch records the pin too (gh-1000 AC1, round-3 review).
+      baseUrl: baseUrl,
+      customProvider: _activeCustomName,
+    );
     io.writeln('switched provider to ${spec.name} (${spec.api})');
     io.writeln('  endpoint: $baseUrl');
     io.writeln('  key: SSO cookie (saved as $keyName)');
@@ -2119,6 +2125,12 @@ extension on AgentCli {
         await _session?.appendModelChange(
           provider: spec.name,
           modelId: modelId,
+          // A LIVE switch records the pin too: the session's own last
+          // model_change must re-bind to THIS entry on restore — the shared
+          // per-folder state alone cannot survive an interleaved switch to
+          // a twin account (gh-1000 AC1, round-3 review).
+          baseUrl: baseUrl,
+          customProvider: _activeCustomName,
         );
         io.writeln('switched provider to ${spec.name} (endpoint: $baseUrl)');
         io.writeln(modelLine);
@@ -2160,7 +2172,13 @@ extension on AgentCli {
       _modelMaxTokens = const {};
       _lastModelList = null;
       unawaited(_refreshModelCache());
-      await _session?.appendModelChange(provider: spec.name, modelId: modelId);
+      await _session?.appendModelChange(
+        provider: spec.name,
+        modelId: modelId,
+        // A LIVE switch records the pin too (gh-1000 AC1, round-3 review).
+        baseUrl: baseUrl,
+        customProvider: _activeCustomName,
+      );
       var keyLine = _providerKeyLine(spec, baseUrl, explicit: token != null);
       if (token != null) {
         final savedTo = await _storeProviderToken(
