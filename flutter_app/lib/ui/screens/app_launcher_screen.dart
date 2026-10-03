@@ -13,6 +13,7 @@ import 'package:flutter/services.dart';
 
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/app_tile_host.dart';
+import 'package:fa/apps/app_load_error.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/catalog_auto_update.dart';
 import 'package:fa/apps/catalog_service.dart';
@@ -806,6 +807,10 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   // --- navigation ----------------------------------------------------------
 
   Future<void> _launchApp(JsAppInfo app) async {
+    // Every launch surface funnels through the broken-app guard (issue
+    // #866 review): home tiles, search results, deep links.
+    if (await guardBrokenApp(context, app)) return;
+    if (!mounted) return;
     AppLog.i('apps', 'open app: ${app.id}');
     try {
       await pushJsApp(
@@ -1617,11 +1622,15 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
   }
 
   /// The corner badge on a tile whose demo seed failed (missing/corrupt
-  /// asset): the app stays on the grid — flagged, never fatal.
+  /// asset) or whose manifest no longer parses (an agent edit, issue
+  /// #866): the app stays on the grid — flagged, never fatal.
   Widget _maybeSeedErrorBadge(FahColors colors, String key, Widget tile) {
     if (!key.startsWith('app:')) return tile;
-    final failed = _appsStore.failedSeeds.value;
-    if (!failed.containsKey(key.substring(4))) return tile;
+    final id = key.substring(4);
+    final failed =
+        _appsStore.failedSeeds.value.containsKey(id) ||
+        (_appsById[id]?.error != null);
+    if (!failed) return tile;
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -1734,43 +1743,19 @@ class _AppLauncherScreenState extends State<AppLauncherScreen> {
     // dead-end launch — copyable, so the user can hand it to Fa for a fix.
     final seedError = _appsStore.failedSeeds.value[app.id];
     if (seedError != null) {
-      unawaited(_showSeedError(app, seedError));
+      unawaited(
+        showAppLoadError(
+          context,
+          app,
+          seedError,
+          context.l10n.launcherSeedErrorTitle,
+        ),
+      );
       return;
     }
+    // A manifest the agent edited into garbage (issue #866) is caught by
+    // the shared guard inside [_launchApp] — same copyable dialog.
     unawaited(_launchApp(app));
-  }
-
-  Future<void> _showSeedError(JsAppInfo app, String error) async {
-    final l10n = context.l10n;
-    final appName = app.displayName(
-      Localizations.localeOf(context).toLanguageTag(),
-    );
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(l10n.launcherSeedErrorTitle),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(appName, style: const TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            SelectableText(error),
-            const SizedBox(height: 12),
-            Text(l10n.launcherSeedErrorHint),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              unawaited(Clipboard.setData(ClipboardData(text: error)));
-              Navigator.of(dialogContext).pop();
-            },
-            child: Text(l10n.launcherSeedErrorCopy),
-          ),
-        ],
-      ),
-    );
   }
 
   /// Full-screen drop surface behind the open folder panel: a tile dragged
