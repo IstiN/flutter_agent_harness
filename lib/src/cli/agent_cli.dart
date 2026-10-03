@@ -294,13 +294,15 @@ class AgentCli {
     MarkdownSurface? markdownSurface,
     DateTime Function()? waitingClock,
     Future<void> Function(Duration)? waitingSleep,
+    SigintPolicy? sigintPolicy,
   }) : io = useTui && io.supportsRawMode ? _TuiCliIO(io) : io,
        _style = _Style(enabled: useColor),
        _markdownSurface = markdownSurface ?? const MarkdownSurface(),
        _waitingClock = waitingClock ?? DateTime.now,
        _waitingSleep =
            waitingSleep ?? ((Duration d) => Future<void>.delayed(d)),
-       _useTui = useTui && io.supportsRawMode {
+       _useTui = useTui && io.supportsRawMode,
+       sigintPolicy = sigintPolicy ?? SigintPolicy() {
     // Sleep prevention (issue #325): null runner (tests, web) → none.
     _powerAssertions = sessionPowerAssertions(config, this.io.writeln);
     _env = CwdOverrideEnv(config.env);
@@ -1409,8 +1411,10 @@ class AgentCli {
 
   /// The process-wide double-press Ctrl+C window (issue #830): the SIGINT
   /// handler and the TUI's ctrl+c KeyMsg path resolve THIS instance, so
-  /// the two input paths can never disagree (ACX.5).
-  final SigintPolicy sigintPolicy = SigintPolicy();
+  /// the two input paths can never disagree (ACX.5). Injectable (gh-1014):
+  /// `bin/fah.dart` passes the policy resolved from the
+  /// [kSigintWindowEnvVar] test seam; null builds the contract default.
+  final SigintPolicy sigintPolicy;
 
   /// The SIGINT-parity exit the TUI's ctrl+c press 2 triggers
   /// (issue #830): abort-if-running bounded, session resume hint,
