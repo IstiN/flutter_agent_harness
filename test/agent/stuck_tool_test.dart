@@ -191,7 +191,6 @@ void main() {
         () => StuckToolConfig.fromYaml({'followUp': 'sometimes'}),
         throwsA(isA<ConfigException>()),
       );
-    );
       expect(
         () => StuckToolConfig.fromYaml({'heartbeatSeconds': 0}),
         throwsA(isA<ConfigException>()),
@@ -218,6 +217,7 @@ void main() {
         ToolCall(id: 'c1', name: 'bash', arguments: {'command': 'long-thing'}),
       ],
       StuckToolConfig config = stuck,
+      String registeredTool = 'bash',
     }) async {
       final fake = _FakeStreamFunction([
         _toolTurn(calls),
@@ -236,7 +236,7 @@ void main() {
           return executor(attempt, onUpdate, cancelToken);
         },
       );
-      agent.state.tools = [_tool('bash')];
+      agent.state.tools = [_tool(registeredTool)];
       final heartbeats = <ToolCallHeartbeatEvent>[];
       final stuckEvents = <ToolCallStuckEvent>[];
       agent.subscribe((event, token) async {
@@ -731,8 +731,9 @@ void main() {
         expect(outcome.resultText, contains('late completion'));
         expect(outcome.resultText, isNot(contains('[stuck-call')));
         expect(
-          outcome.stuckEvents
-              .where((e) => e.action == StuckFollowUpAction.cancelRetry),
+          outcome.stuckEvents.where(
+            (e) => e.action == StuckFollowUpAction.cancelRetry,
+          ),
           isEmpty,
           reason: 'no retry started — no cancel_retry record',
         );
@@ -783,6 +784,7 @@ void main() {
         // unit) would inflate its threshold to factor × arg and never be
         // supervised. Only bash declares a seconds-based `timeout`.
         final outcome = await runSupervisedTurn(
+          registeredTool: 'read',
           calls: const [
             ToolCall(
               id: 'c1',

@@ -179,52 +179,49 @@ void main() {
       );
     },
   );
-  test(
-    'the interactive host defaults to advisory supervision; a headless run '
-    'defaults to autonomous (issue review)',
-    () {
-      // gh-1054 review: auto-cancelling under a present human is the
-      // ticket's non-goal — the REPL/TUI default is advisory; `fa run`
-      // (unattended) keeps the autonomous default. No explicit config in
-      // either construction.
-      AgentCli cli({required bool headless}) => AgentCli(
-        config: AgentCliConfig(
-          model: testModel,
-          apiKey: 'k',
-          env: MemoryExecutionEnv(cwd: '/work'),
-          sessionRoot: '/sessions',
-          headlessRun: headless,
+  test('the interactive host defaults to advisory supervision; a headless run '
+      'defaults to autonomous (issue review)', () {
+    // gh-1054 review: auto-cancelling under a present human is the
+    // ticket's non-goal — the REPL/TUI default is advisory; `fa run`
+    // (unattended) keeps the autonomous default. No explicit config in
+    // either construction.
+    AgentCli cli({required bool headless}) => AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'k',
+        env: MemoryExecutionEnv(cwd: '/work'),
+        sessionRoot: '/sessions',
+        headlessRun: headless,
+      ),
+      io: FakeCliIO(),
+      streamFunction: FakeStreamFunction(const []).call,
+    );
+    expect(
+      cli(headless: false).agent.stuckTool!.followUp,
+      StuckFollowUpMode.advisory,
+      reason: 'a human is present in the REPL/TUI — advise only',
+    );
+    expect(
+      cli(headless: true).agent.stuckTool!.followUp,
+      StuckFollowUpMode.autonomous,
+      reason: 'fa run is unattended — the autonomous default',
+    );
+    // An explicit agent.stuckTool wins in both.
+    final explicit = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'k',
+        env: MemoryExecutionEnv(cwd: '/work'),
+        sessionRoot: '/sessions',
+        stuckTool: const StuckToolConfig(
+          followUp: StuckFollowUpMode.autonomous,
         ),
-        io: FakeCliIO(),
-        streamFunction: FakeStreamFunction(const []).call,
-      );
-      expect(
-        cli(headless: false).agent.stuckTool!.followUp,
-        StuckFollowUpMode.advisory,
-        reason: 'a human is present in the REPL/TUI — advise only',
-      );
-      expect(
-        cli(headless: true).agent.stuckTool!.followUp,
-        StuckFollowUpMode.autonomous,
-        reason: 'fa run is unattended — the autonomous default',
-      );
-      // An explicit agent.stuckTool wins in both.
-      final explicit = AgentCli(
-        config: AgentCliConfig(
-          model: testModel,
-          apiKey: 'k',
-          env: MemoryExecutionEnv(cwd: '/work'),
-          sessionRoot: '/sessions',
-          stuckTool: const StuckToolConfig(
-            followUp: StuckFollowUpMode.autonomous,
-          ),
-        ),
-        io: FakeCliIO(),
-        streamFunction: (_) async => Stream.empty(),
-      );
-      expect(explicit.agent.stuckTool!.followUp, StuckFollowUpMode.autonomous);
-    },
-  );
+      ),
+      io: FakeCliIO(),
+      streamFunction: FakeStreamFunction(const []).call,
+    );
+    expect(explicit.agent.stuckTool!.followUp, StuckFollowUpMode.autonomous);
+  });
 
   test(
     'the stuck record bypasses no secrets: liveness records are redacted '
@@ -243,9 +240,7 @@ void main() {
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
           stuckTool: _stuckTool,
-          redactionPipeline: RedactionPipeline(
-            registeredSecrets: [secret],
-          ),
+          redactionPipeline: RedactionPipeline(registeredSecrets: [secret]),
         ),
         io: io,
         streamFunction: FakeStreamFunction([
@@ -303,24 +298,30 @@ void main() {
       final texts = [
         for (final message in messages)
           if (message is ToolResultMessage)
-            [for (final block in message.content)
-              if (block is TextContent) block.text,
+            [
+              for (final block in message.content)
+                if (block is TextContent) block.text,
             ].join(),
       ];
-      final handback = texts.where((t) => t.contains('moved to background job'));
+      final handback = texts.where(
+        (t) => t.contains('moved to background job'),
+      );
       expect(handback, isNotEmpty, reason: 'the retry was converted');
       expect(
         handback.join('\n'),
-        isNot(contains('steering message')),
+        isNot(contains('steering message arrived')),
         reason: 'no steering arrived — the supervisor moved it',
       );
-      final records = await livenessRecords(env);
       expect(
-        [for (final r in records)
-          if (r.customType == toolStuckRecordType) (r.data as Map)['action'],
-        ],
-        contains('background_convert'),
+        handback.join('\n'),
+        contains('stuck-call supervisor converted it'),
+        reason: 'the hand-back names the real cause',
       );
+      final records = await livenessRecords(env);
+      expect([
+        for (final r in records)
+          if (r.customType == toolStuckRecordType) (r.data as Map)['action'],
+      ], contains('background_convert'));
     },
   );
 }
@@ -356,11 +357,7 @@ class _ConvertShell implements Shell, BackgroundShell {
 }
 
 final class _ConvertJob implements ShellJob {
-  _ConvertJob({
-    required this.id,
-    required this.command,
-    required this.logPath,
-  });
+  _ConvertJob({required this.id, required this.command, required this.logPath});
 
   @override
   final String id;
@@ -393,5 +390,4 @@ final class _ConvertJob implements ShellJob {
     _stopped = true;
     _settled.complete();
   }
-}
 }
