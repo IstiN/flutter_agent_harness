@@ -49,8 +49,7 @@ final class _ThrowingViewModel extends Model {
   bool throwNext = false;
 
   @override
-  Cmd? init() =>
-      () async {
+  Cmd? init() => () async {
         await Future<void>.delayed(const Duration(milliseconds: 30));
         return const _FrameMsg('first');
       };

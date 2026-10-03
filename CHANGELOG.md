@@ -4487,3 +4487,5 @@
 - chore: repin factory workflows to f47d52b (kit in RUNNER_TEMP) (#1191)
 
 ## Unreleased
+
+- fix(#1197): TUI frame pipeline self-heals a throwing view/render (gh-1197 AC3) — a mid-run render exception now logs loudly, invalidates the diff state (no stranded DEC 2026 BSU), and repaints instead of dying or freezing; PTY liveness regression test proving paced thinking + answer text + a long silent tool call paint continuously (AC1/AC2/AC4), via the scripted stream's new paced `chunks`/`pace_ms`, `thinking`, and `sleep_ms` steps

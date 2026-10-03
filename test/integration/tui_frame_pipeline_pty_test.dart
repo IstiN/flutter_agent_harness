@@ -158,7 +158,8 @@ void main() {
     expect(
       maxGapMs,
       lessThan(8000),
-      reason: 'the frame pipeline went silent for ${maxGapMs}ms mid-run — '
+      reason:
+          'the frame pipeline went silent for ${maxGapMs}ms mid-run — '
           'the gh-1197 freeze shape. Screen at failure:\n$finalScreen',
     );
 
@@ -168,13 +169,15 @@ void main() {
     expect(
       finalScreen.contains(_thinkMarker),
       isTrue,
-      reason: 'the reasoning text must be part of the painted transcript:\n'
+      reason:
+          'the reasoning text must be part of the painted transcript:\n'
           '$finalScreen',
     );
     expect(
       finalScreen.contains(_partOneMarker),
       isTrue,
-      reason: 'the first answer half must have painted incrementally '
+      reason:
+          'the first answer half must have painted incrementally '
           '(part one streamed BEFORE the tool call):\n$finalScreen',
     );
 
@@ -190,7 +193,8 @@ void main() {
     expect(
       harness.viewportLines.any((l) => l.contains('╰─')),
       isTrue,
-      reason: 'the REPL is idle again — the run ended with the composer '
+      reason:
+          'the REPL is idle again — the run ended with the composer '
           'prompt row, not a pending teardown dump:\n'
           '${harness.screenText}',
     );

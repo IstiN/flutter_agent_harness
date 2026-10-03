@@ -342,15 +342,20 @@ final class Program {
     // guards), invalidates the renderer so the NEXT frame is one full
     // repaint from clean state (a mid-frame throw can strand partial
     // diff state, e.g. an unclosed BSU), and schedules the repaint. The
-    // exception is rethrown on the FIRST frame only — a program that
-    // cannot paint its initial screen has nothing to heal into.
+    // exception is rethrown only when NOTHING has ever painted — a
+    // program that cannot paint its initial screen has nothing to heal
+    // into, so it dies loudly instead of freezing on a blank glass.
+    var renderedOnce = false;
+    var lastRenderFailed = false;
     Future<void> renderGuarded({bool force = false}) async {
       try {
         await render(_runningModel!.view, force: force);
+        renderedOnce = true;
+        lastRenderFailed = false;
       } catch (e, st) {
-        // ignore: avoid_print
-        print('DBG guard: lrm=' + lastRenderMicros.toString() + ' force=' + force.toString());
-        if (lastRenderMicros < 0) rethrow;
+        if (!renderedOnce) rethrow;
+        final repeatFailure = lastRenderFailed;
+        lastRenderFailed = true;
         _renderer?.invalidate();
         lastRenderMicros = -1;
         redrawArmed = false;
@@ -362,7 +367,10 @@ final class Program {
           'ev': 'render_error',
           'err': '$e',
         });
-        if (_running) enqueue(const RenderTickMsg());
+        // A repeat retry lands only on the next REAL message: re-arming
+        // immediately would hot-spin a permanently throwing view through
+        // catch -> RenderTick -> catch forever.
+        if (_running && !repeatFailure) enqueue(const RenderTickMsg());
       }
     }
 

@@ -123,7 +123,9 @@ List<(AssistantMessageEvent?, int)> _events(List<_Step> steps, Model model) {
     stopReason: reason,
     timestamp: DateTime.now(),
   );
-  final events = <(AssistantMessageEvent?, int)>[(StartEvent(partial: partial()), 0)];
+  final events = <(AssistantMessageEvent?, int)>[
+    (StartEvent(partial: partial()), 0),
+  ];
   var contentIndex = 0;
   final blocks = <ContentBlock>[];
   var toolUse = false;
@@ -169,7 +171,10 @@ List<(AssistantMessageEvent?, int)> _events(List<_Step> steps, Model model) {
     if (text != null) {
       var acc = '';
       blocks.add(const TextContent(text: ''));
-      events.add((TextStartEvent(contentIndex: contentIndex, partial: partial()), 0));
+      events.add((
+        TextStartEvent(contentIndex: contentIndex, partial: partial()),
+        0,
+      ));
       for (final piece in _pieces(text, step.chunks)) {
         acc += piece;
         blocks[blocks.length - 1] = TextContent(text: acc);
