@@ -505,6 +505,13 @@ jobs:
   # a rerun keeps the original push-tag event and OIDC claims, so the real
   # publish path retries. Unrecoverable states fail loudly and self-file an
   # issue with a manual-publish instruction instead of silently hanging.
+  # gh-1192: a tag-publish still EXECUTING (tag pushed, ci run not visible
+  # yet or queued/in_progress, tag younger than the grace window; or the
+  # release-tag job has not cut the tag off a fresh bump yet) is classified
+  # «release in flight» by scripts/verify_pubdev_release.sh — a neutral skip
+  # (no error, no auto-filed issue); the next scheduled daily re-verifies.
+  # The 2026-10-03 collision fired the old «no ci.yml run» error one minute
+  # before the healthy run completed (#1189, false alarm).
 
   pubdev:
     name: 'Leg: pub.dev'
@@ -535,95 +542,10 @@ jobs:
 
       - name: Verify pub.dev serves the pubspec version
         id: check
-        run: |
-          set -euo pipefail
-          repo="${GITHUB_REPOSITORY}"
-          pubspec=$(grep '^version:' pubspec.yaml | awk '{print $2}')
-          echo "pubspec=$pubspec" >> "$GITHUB_OUTPUT"
-          echo "published=" >> "$GITHUB_OUTPUT" # re-exported below after query
-
-          if grep -q '^publish_to: *none' pubspec.yaml; then
-            echo "status=private" >> "$GITHUB_OUTPUT"
-            echo "::notice::pubspec declares publish_to: none — package is private, nothing to verify on pub.dev"
-            exit 0
-          fi
-
-          # pub.dev API reads lag minutes behind a fresh publish (CDN
-          # replicas) — a single stale read must not send us into recovery.
-          # Three spaced reads, take the newest by version.
-          published=""
-          for attempt in 1 2 3; do
-            v=$(curl -fsS --retry 3 \
-              https://pub.dev/api/packages/flutter_agent_harness | jq -r '.latest.version')
-            published=$(printf '%s\n%s\n' "$published" "$v" | sed '/^$/d' | sort -V | tail -1)
-            [ "$attempt" = 3 ] || sleep 10
-          done
-          echo "published=$published" >> "$GITHUB_OUTPUT"
-          echo "pubspec=$pubspec published=$published"
-          newest=$(printf '%s\n%s\n' "$pubspec" "$published" | sort -V | tail -1)
-          if [ "$newest" = "$published" ]; then
-            echo "status=up-to-date" >> "$GITHUB_OUTPUT"
-            echo "::notice::pub.dev already serves $published"
-            exit 0
-          fi
-
-          # Behind: recover via the real publish path. auto_release tags the
-          # commit whose pubspec it bumps, so the tag for $pubspec should
-          # exist and its ci.yml run carries the OIDC tag-push publish.
-          tag="v$pubspec"
-          tag_run=$(gh run list --repo "$repo" --workflow ci.yml \
-            --branch "$tag" --limit 1 \
-            --json databaseId,status,conclusion --jq '.[0] // empty')
-          if [ -z "$tag_run" ]; then
-            echo "::error::$tag has no ci.yml run — the tag-publish never triggered. Manual fix: re-push the tag (git push origin $tag --force) or run ci.yml on the tag ref."
-            exit 1
-          fi
-          run_id=$(jq -r '.databaseId' <<<"$tag_run")
-          echo "run_url=https://github.com/$repo/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
-
-          status=$(jq -r '.status' <<<"$tag_run")
-          if [ "$status" != "completed" ]; then
-            echo "tag run $run_id still in progress — waiting for it to finish first"
-            gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 >/dev/null 2>&1 || true
-          fi
-          conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
-
-          if [ "$conclusion" = "success" ]; then
-            # Publish job went green but pub.dev still serves $published —
-            # not recoverable by rerunning (e.g. publish skipped by a gate).
-            echo "::error::tag run for $tag succeeded but pub.dev still serves $published — publish did not upload. Manual publish needed (see issue)."
-            exit 1
-          fi
-
-          echo "tag run $run_id concluded $conclusion — re-running its failed jobs (keeps the original tag-push event/OIDC claims)"
-          gh run rerun "$run_id" --repo "$repo" --failed
-          sleep 20
-          gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 >/dev/null 2>&1 || true
-          conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
-          if [ "$conclusion" != "success" ]; then
-            echo "::error::rerun of the $tag publish run failed again ($conclusion) — see https://github.com/$repo/actions/runs/$run_id"
-          fi
-
-          # Poll until the API catches up. The rerun's publish job already
-          # verified 'pub.dev verified: flutter_agent_harness <v>' itself;
-          # a single read 52s later hit a stale replica and false-errored
-          # the whole leg (2026-09-28 daily run) — match the publish job's
-          # poll approach: up to 10 min.
-          published2=""
-          for attempt in $(seq 1 30); do
-            published2=$(curl -fsS --retry 3 \
-              https://pub.dev/api/packages/flutter_agent_harness | jq -r '.latest.version')
-            [ "$published2" = "$pubspec" ] && break
-            echo "pub.dev API still serves '$published2' (want $pubspec, attempt $attempt/30)"
-            sleep 20
-          done
-          echo "published=$published2" >> "$GITHUB_OUTPUT"
-          if [ "$published2" != "$pubspec" ]; then
-            echo "::error::rerun went green but the pub.dev API keeps serving $published2 after 10 min, not $pubspec — publish did not upload; manual publish needed"
-            exit 1
-          fi
-          echo "status=recovered" >> "$GITHUB_OUTPUT"
-          echo "::notice::recovered — re-ran the $tag publish run, pub.dev now serves $pubspec"
+        # gh-1192: the classification (up-to-date / release-in-flight /
+        # recovered + the unchanged alarms) lives in the extracted script so
+        # it is shell-harness testable (test/release_flow_race_test.dart).
+        run: bash scripts/verify_pubdev_release.sh
 
   # ── Release-draft sweeper (issue #282) ────────────────────────────────────
   # Hygiene leg: no pipeline step may leave a draft release behind (the
