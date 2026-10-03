@@ -183,7 +183,14 @@ void main() {
         ),
       ];
       final fake = FakeStreamFunction([events]);
-      final cli = cliFor(fake.call, streamThinking: true, useColor: true);
+      final cli = cliFor(
+        fake.call,
+        streamThinking: true,
+        useColor: true,
+        markdownSurface: const MarkdownSurface(
+          mode: MarkdownSurfaceMode.ansi,
+        ),
+      );
       final run = cli.run();
       io.sendLine('hi');
       await waitForIt(() => fake.calls == 1 && !cli.isBusy);
@@ -191,34 +198,80 @@ void main() {
       await run;
 
       final out = io.out.toString();
-      expect(out, contains('\x1B[2mthink A\x1B[0m'));
-      expect(out, contains('\x1B[2mthink B\x1B[0m'));
-      expect(out, contains('part one. part two'));
+      final dimA = '\x1B[2mthink A\x1B[0m';
+      final dimB = '\x1B[2mthink B\x1B[0m';
+      expect(out, contains(dimA));
+      expect(out, contains(dimB));
+      // The answer renders once at message end, on its own line after the
+      // first burst (the E1 separation rule).
+      expect(out, contains('$dimA\n'));
+      expect('part one. part two'.allMatches(out), hasLength(1));
     });
   });
 
   group('AC2: headless -p, flag on', () {
     test('captured stdout carries the dimmed thinking before the answer, '
         'interleaved with the tool card across turns', () async {
-      final toolCalls = [
-        const ToolCall(
-          id: 't1',
-          name: 'bash',
-          arguments: {'command': 'echo hi'},
+      // Turn 1: think → partial answer → a tool call (stopReason toolUse)
+      // so the run continues; the tool card prints between the turns.
+      final empty = testAssistant();
+      final withThinking = testAssistant(
+        content: [ThinkingContent(thinking: 'why not')],
+      );
+      final withText = testAssistant(
+        content: [TextContent(text: 'let me check')],
+      );
+      const call = ToolCall(
+        id: 't1',
+        name: 'bash',
+        arguments: {'command': 'echo hi'},
+      );
+      final toolPartial = testAssistant(
+        content: [
+          ThinkingContent(thinking: 'why not'),
+          TextContent(text: 'let me check'),
+          call,
+        ],
+        stopReason: StopReason.toolUse,
+      );
+      final firstTurn = <AssistantMessageEvent>[
+        StartEvent(partial: empty),
+        ThinkingDeltaEvent(
+          contentIndex: 0,
+          delta: 'why not',
+          partial: withThinking,
         ),
+        TextDeltaEvent(contentIndex: 1, delta: 'let me check', partial: withText),
+        ToolCallStartEvent(contentIndex: 2, partial: withText),
+        ToolCallEndEvent(contentIndex: 2, toolCall: call, partial: toolPartial),
+        DoneEvent(reason: StopReason.toolUse, message: toolPartial),
       ];
       final fake = FakeStreamFunction([
-        thinkingTurn('why not', 'let me check'),
-        toolTurn(toolCalls),
+        firstTurn,
         thinkingTurn('second thought', 'All done'),
       ]);
-      final cli = cliFor(fake.call, streamThinking: true, useColor: true);
+      final shell = FakeShell(stdout: 'hi');
+      final cliEnv = MemoryExecutionEnv(cwd: '/work', shell: shell);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: cliEnv,
+          sessionRoot: '/sessions',
+          approvalMode: ApprovalMode.yolo,
+          streamThinking: true,
+        ),
+        io: io,
+        streamFunction: fake.call,
+        useColor: true,
+        waitingClock: () => now,
+      );
       await cli.runHeadless('hi');
 
       final out = io.out.toString();
       expect(out, contains('\x1B[2mwhy not\x1B[0m'));
       expect(out, contains('let me check'));
-      // The tool card still prints between the two thinking turns.
+      // The tool card prints between the two thinking bursts.
       expect(out, contains('•'));
       expect(
         out.indexOf('\x1B[2mwhy not\x1B[0m'),
@@ -286,9 +339,10 @@ void main() {
 
       final out = io.out.toString();
       // The whole burst rides exactly one dim SGR pair (verbatim dim, the
-      // TUI branch's discipline — no per-delta markdown formatting).
+      // TUI branch's discipline — no per-delta markdown formatting split
+      // the delta into many pairs).
       expect(out, contains('\x1B[2m$burst\x1B[0m'));
-      expect('\x1B[2m'.allMatches(out), hasLength(1));
+      expect('\x1B[2m$burst'.allMatches(out), hasLength(1));
     });
   });
 

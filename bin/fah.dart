@@ -2294,6 +2294,12 @@ Future<void> _runApp(List<String> args) async {
       contextWindowCap: saved.contextWindowCap,
       subagents: saved.subagents,
       jobs: saved.jobs,
+      // The gh-1198 thinking stream: the `--stream-thinking` flag wins
+      // over the `output.streamThinking` config for this run.
+      streamThinking: resolveStreamThinking(
+        flag: parsed.streamThinking,
+        configValue: saved.streamThinking,
+      ),
       modelRolesResolver: rolesResolver,
       providersQueueRuntime: queueRuntime,
       // The live models config (`models:` section): `/models set`/`remove`
