@@ -96,7 +96,6 @@ extension AgentServiceInbox on AgentService {
     if (pending.isEmpty) return;
     final decision = _inboxWakePolicy.wakeDecisionFor(pending);
     if (!decision.wake) return;
-    if (decision.countsAgainstCap) _inboxWakeStreak++;
     final count = pending.length;
     _inboxWakeRunning = true;
     try {

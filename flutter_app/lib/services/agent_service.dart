@@ -2313,19 +2313,13 @@ class AgentService extends ChangeNotifier
   /// invariants), so it is off by default.
   static bool enableInboxWatcher = false;
 
-  /// Consecutive inbox-triggered runs without any user input — capped so
-  /// two chatty instances cannot ping-pong forever (mail still accumulates
-  /// and is delivered at the next real turn).
-  ///
-  /// The lanes live in [_inboxWakePolicy] (gh-1180): scheduled self-mail
-  /// is EXEMPT from this counter (deliberate agent cadence, not chatter).
-  var _inboxWakeStreak = 0;
-  static const _maxInboxWakeStreak = 10;
-
   /// The idle inbox-wake lane policy (gh-1180): user-kind mail always
   /// wakes; delivered scheduled self-mail (`schedule_message` reminders)
-  /// is exempt from the chatter cap; foreign agent-to-agent chatter stays
-  /// capped at [_maxInboxWakeStreak].
+  /// is exempt from the chatter cap — a deliberate agent-chosen cadence
+  /// wakes forever, cadence-floored against a disguised busy-spin; and
+  /// foreign agent-to-agent chatter stays capped at
+  /// [InboxWakePolicy.defaultMaxInboxWakeStreak] consecutive wakes
+  /// without user input.
   final InboxWakePolicy _inboxWakePolicy = InboxWakePolicy();
 
   var _fabricHeartbeatTick = 0;
@@ -2388,10 +2382,7 @@ class AgentService extends ChangeNotifier
     if (trimmed.isEmpty) return;
     // Real user input resets the inbox wake streak (the ping-pong guard);
     // the watcher itself calls sendText with the flag set.
-    if (!_inboxWakeRunning) {
-      _inboxWakeStreak = 0;
-      _inboxWakePolicy.resetStreak();
-    }
+    if (!_inboxWakeRunning) _inboxWakePolicy.resetStreak();
     // A fresh user text gets a fresh over-window auto-continuation budget.
     _overWindowAutoResumed = false;
     _clearError();

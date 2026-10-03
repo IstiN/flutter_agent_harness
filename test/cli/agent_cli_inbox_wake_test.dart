@@ -17,6 +17,9 @@ Future<void> waitForTrue(Future<bool> Function() condition) async {
 /// The idle inbox-wake lanes (gh-1180): scheduled self-mail must be exempt
 /// from the agent-chatter wake cap, foreign chatter must stay capped, and
 /// every refused wake must leave a visible receipt.
+///
+/// `run()` boots with one turn (the initial prompt), so all call counts
+/// are measured as deltas over the post-boot baseline.
 void main() {
   late MemoryExecutionEnv env;
   late FakeCliIO io;
@@ -40,10 +43,12 @@ void main() {
     streamFunction: fake.call,
   );
 
-  Future<String> sessionId() async {
+  /// Waits out the boot turn; returns (sessionId, calls after boot).
+  Future<(String, int)> boot(FakeStreamFunction fake, AgentCli cli) async {
+    await waitForTrue(() async => fake.calls >= 1 && !cli.isBusy);
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-    await waitForTrue(() async => (await repo.list(cwd: '/work')).isNotEmpty);
-    return (await repo.list(cwd: '/work')).first.id;
+    final id = (await repo.list(cwd: '/work')).first.id;
+    return (id, fake.calls);
   }
 
   /// Sends one message shaped exactly like the scheduler's delivery of a
@@ -81,10 +86,9 @@ void main() {
   }
 
   Future<List<Map<String, dynamic>>> receipts() async {
-    final text =
-        (await env.readTextFile(
-          '/sessions/--work--/messages/_scheduled/receipts.jsonl',
-        )).valueOrNull;
+    final text = (await env.readTextFile(
+      '/sessions/--work--/messages/_scheduled/receipts.jsonl',
+    )).valueOrNull;
     if (text == null || text.isEmpty) return const [];
     return [
       for (final line in text.trim().split('\n'))
@@ -102,7 +106,7 @@ void main() {
       ]);
       final cli = buildCli(fake);
       final run = cli.run();
-      final id = await sessionId();
+      final (id, baseline) = await boot(fake, cli);
       // Ten agent-to-agent wakes already burned (the attach-driven REG
       // tests use the same seam): a pure self-scheduled chain has no
       // user-kind input to reset the streak, so pre-fix the gate refuses.
@@ -111,7 +115,7 @@ void main() {
       await sendScheduledSelfMail(id, 'night-watch sweep');
 
       await waitForTrue(
-        () async => fake.calls == 1,
+        () async => fake.calls == baseline + 1 && !cli.isBusy,
       ); // RED pre-fix: the watcher never wakes.
       expect(
         cli.inboxWakeStreakForTest,
@@ -125,38 +129,34 @@ void main() {
     timeout: const Timeout(Duration(seconds: 60)),
   );
 
-  test(
-    'gh-1180 AC4: a scheduled-self wake leaves a persisted receipt trail '
-    '(wake_attempted + turn_started, correlated by message id)',
-    () async {
-      final fake = FakeStreamFunction([textTurn('on watch'), textTurn('ok')]);
-      final cli = buildCli(fake);
-      final run = cli.run();
-      final id = await sessionId();
-      cli.inboxWakeStreakForTest = 10;
-      final mailId = await sendScheduledSelfMail(id, 'night-watch sweep');
+  test('gh-1180 AC4: a scheduled-self wake leaves a persisted receipt trail '
+      '(wake_attempted + turn_started, correlated by message id)', () async {
+    final fake = FakeStreamFunction([textTurn('on watch'), textTurn('ok')]);
+    final cli = buildCli(fake);
+    final run = cli.run();
+    final (id, baseline) = await boot(fake, cli);
+    cli.inboxWakeStreakForTest = 10;
+    final mailId = await sendScheduledSelfMail(id, 'night-watch sweep');
 
-      await waitForTrue(() async => fake.calls == 1);
-      await waitForTrue(
-        () async => (await receipts()).any(
-          (event) => event['event'] == 'turn_started',
-        ),
-      );
-      final attempted = (await receipts()).where(
-        (event) => event['event'] == 'wake_attempted',
-      );
-      expect(attempted, isNotEmpty);
-      expect(
-        (attempted.first['ids'] as List).cast<String>(),
-        contains(mailId),
-        reason: 'the receipt names the scheduled mail that prompted the wake',
-      );
+    await waitForTrue(() async => fake.calls == baseline + 1 && !cli.isBusy);
+    final trail = await receipts();
+    final attempted = trail.where(
+      (event) => event['event'] == 'wake_attempted',
+    );
+    expect(attempted, isNotEmpty);
+    expect(
+      (attempted.first['ids'] as List).cast<String>(),
+      contains(mailId),
+      reason: 'the receipt names the scheduled mail that prompted the wake',
+    );
+    expect(
+      trail.where((event) => event['event'] == 'turn_started'),
+      isNotEmpty,
+    );
 
-      io.sendLine('/exit');
-      await run;
-    },
-    timeout: const Timeout(Duration(seconds: 60)),
-  );
+    io.sendLine('/exit');
+    await run;
+  }, timeout: const Timeout(Duration(seconds: 60)));
 
   test(
     'gh-1180 AC2 REG: foreign agent chatter stays capped — no wake past '
@@ -165,7 +165,7 @@ void main() {
       final fake = FakeStreamFunction([textTurn('unused')]);
       final cli = buildCli(fake);
       final run = cli.run();
-      final id = await sessionId();
+      final (id, baseline) = await boot(fake, cli);
       cli.inboxWakeStreakForTest = 10;
 
       await sendForeignMail(id, 'ping from a peer agent');
@@ -173,7 +173,7 @@ void main() {
       await Future<void>.delayed(const Duration(seconds: 6));
       expect(
         fake.calls,
-        0,
+        baseline,
         reason: 'anti-storm REG: capped chatter must not wake the agent',
       );
       expect(
