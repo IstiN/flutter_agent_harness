@@ -2044,6 +2044,11 @@ class AgentCli {
     StreamJsonWriter? streamJson,
   }) async {
     _hep = hep;
+    // The [net] retry voice reaches headless too (issue #1121): the bench
+    // runs `fa -p`, and retries that stayed silent there made a
+    // connect-stall death indistinguishable from a no-retry one in the
+    // trial artifacts.
+    _wireTransientRetryNotice();
     // Cube cache restore, mirroring [run]'s boot (the headless run sees the
     // same cached trees a REPL session would).
     await _cubeBootRestore();
