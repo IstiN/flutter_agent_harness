@@ -73,6 +73,42 @@ scenarios:
       expect(script.scenarios, isEmpty);
       expect(script.responses, isEmpty);
     });
+
+    test('parses a sticky scenario flag (gh-1171 wildcard)', () {
+      final script = MockLlmScript.parse('''
+scenarios:
+  - match: "Existing tags:"
+    sticky: true
+    responses:
+      - text: ""
+  - match: "strict scenario"
+    responses:
+      - text: "once"
+''');
+      expect(script.scenarios, hasLength(2));
+      expect(script.scenarios[0].sticky, isTrue);
+      // The flag is opt-in: a scenario without it stays strict.
+      expect(script.scenarios[1].sticky, isFalse);
+    });
+
+    test('sticky must be a boolean', () {
+      expect(
+        () => MockLlmScript.parse('''
+scenarios:
+  - match: x
+    sticky: sometimes
+    responses:
+      - text: hi
+'''),
+        throwsA(
+          isA<MockLlmConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('must be a boolean'),
+          ),
+        ),
+      );
+    });
   });
 
   group('MockLlmScript.parse validation', () {
