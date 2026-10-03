@@ -11,7 +11,9 @@ library;
 import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/reasoning_liveness.dart';
+import 'package:flutter_agent_harness/src/cli/waiting_heartbeat.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
@@ -272,7 +274,8 @@ void main() {
   group('AC5: SGR discipline', () {
     test('a 10KB single-delta burst dims verbatim — one SGR pair, no '
         'per-delta markdown', () async {
-      const burst = 'x' * 10 * 1024;
+      const burstLength = 10 * 1024;
+      final burst = 'x' * burstLength;
       final fake = FakeStreamFunction([thinkingTurn(burst, 'done')]);
       final cli = cliFor(fake.call, streamThinking: true, useColor: true);
       final run = cli.run();

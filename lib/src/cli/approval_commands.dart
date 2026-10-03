@@ -1025,6 +1025,14 @@ extension ApprovalCommands on AgentCli {
       default:
     }
     await _persistIncremental(event);
+    // Reasoning-phase liveness (gh-1198 tier 2): a request going out arms
+    // the silent-window watch (line mode/headless with the thinking
+    // stream off); ANY other event is visible progress and disarms it.
+    if (event is ModelRequestEvent) {
+      _waiting.reasoningRequestStarted();
+    } else {
+      _waiting.reasoningProgress();
+    }
     await handleAgentEvent(
       event,
       onMessageLifecycle: _onMessageLifecycle,
@@ -1102,15 +1110,21 @@ extension ApprovalCommands on AgentCli {
   /// #638 AC3); only the real viewport clips.
   int get _rowWidth => _tuiController?.termWidth ?? 0;
 
-  /// Streaming deltas: answer text and — TUI only — dimmed thinking as the
-  /// progress signal. Where the answer goes depends on the surface: the
-  /// TUI streams raw into its history (rendered at view time); raw-mode
-  /// passthrough streams deltas live (byte-identical output AND live);
-  /// the styled modes (ansi/plain) buffer the answer and render it through
-  /// the markdown policy at message end (issue #774) — line mode and
-  /// headless cannot repaint, so a half-streamed table or fence would
-  /// print raw mid-flight; the whole message renders once, correctly.
+  /// Streaming deltas: answer text and — when the surface streams it —
+  /// dimmed thinking as the progress signal. Where the answer goes
+  /// depends on the surface: the TUI streams raw into its history
+  /// (rendered at view time); raw-mode passthrough streams deltas live
+  /// (byte-identical output AND live); the styled modes (ansi/plain)
+  /// buffer the answer and render it through the markdown policy at
+  /// message end (issue #774) — line mode and headless cannot repaint, so
+  /// a half-streamed table or fence would print raw mid-flight; the whole
+  /// message renders once, correctly.
   bool get _buffersAnswer => _markdownSurface.mode != MarkdownSurfaceMode.raw;
+
+  /// Whether this surface streams thinking deltas live (gh-1198): the TUI
+  /// always has; line mode and headless opt in through the effective run
+  /// setting (`--stream-thinking` flag or `output.streamThinking`).
+  bool get _streamsThinking => _useTui || config.streamThinking;
 
   void _onMessageUpdate(AssistantMessageEvent assistantMessageEvent) {
     if (assistantMessageEvent is TextDeltaEvent) {
@@ -1121,17 +1135,23 @@ extension ApprovalCommands on AgentCli {
         _writeAssistantPrefix();
         io.write(assistantMessageEvent.delta);
       } else {
+        // The buffered surfaces keep the same separation rule (E1): a
+        // `\n` lands the moment the first answer delta follows streamed
+        // thinking, so the end-of-message render starts on a fresh line.
+        if (_streamedThinking && !_streamedText) io.write('\n');
         _assistantText.write(assistantMessageEvent.delta);
       }
       _streamedText = true;
-    } else if (assistantMessageEvent is ThinkingDeltaEvent && _useTui) {
+    } else if (assistantMessageEvent is ThinkingDeltaEvent &&
+        _streamsThinking) {
       // Reasoning models stream long thinking before any text; showing
-      // it dimmed under the user message is the TUI's progress signal.
-      // The delta is dimmed VERBATIM — no per-delta inline markdown: a
-      // markdown span split across deltas can never pair anyway (each
-      // fragment opens+closes its own SGR pair), and the per-delta escape
-      // density used to be the TUI's worst quadratic input (a long
-      // thinking burst froze the whole UI — see
+      // it dimmed under the user message is the TUI's progress signal —
+      // and, since gh-1198, the opt-in progress signal of line mode and
+      // headless too. The delta is dimmed VERBATIM — no per-delta inline
+      // markdown: a markdown span split across deltas can never pair
+      // anyway (each fragment opens+closes its own SGR pair), and the
+      // per-delta escape density used to be the TUI's worst quadratic
+      // input (a long thinking burst froze the whole UI — see
       // AnsiMarkdown.inlineFormatMaxChars).
       io.write(_style.dim(assistantMessageEvent.delta));
       _streamedThinking = true;
@@ -1159,6 +1179,15 @@ extension ApprovalCommands on AgentCli {
       io.write('\n');
       _assistantText.clear();
       _streamedText = false;
+      // The thinking deltas streamed dimmed while the answer buffered
+      // (gh-1198): the stream line closed above the render — reset here,
+      // exactly like the streaming surfaces do.
+      _streamedThinking = false;
+    } else if (_streamedThinking) {
+      // A pure-thinking message (e.g. a tool-call turn) on a buffered
+      // surface: close the dimmed stream line and reset.
+      io.write('\n');
+      _streamedThinking = false;
     }
     switch (message.stopReason) {
       case StopReason.error:

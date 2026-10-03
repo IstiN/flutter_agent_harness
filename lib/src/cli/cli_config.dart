@@ -34,6 +34,7 @@ import '../tools/load_modes.dart';
 import 'custom_providers.dart';
 import '../task/subagent_heartbeat.dart';
 import 'links_config.dart';
+import 'output_config.dart';
 import 'tui_status_line.dart';
 
 /// Parses the `providerTimeouts:` section: provider watchdog overrides
@@ -117,28 +118,6 @@ bool _parseTrajectorySection(Object? node) {
     wireDump = value;
   }
   return wireDump;
-}
-
-/// Parses the `output:` section (gh-1198): console-output behavior flags.
-/// Today only `streamThinking` — the opt-in live thinking stream for
-/// line-mode/headless runs. Strict like every other opt-in section:
-/// unknown keys and bad types throw [ConfigException] (a typo must never
-/// silently keep the default). Public so the `config check`/`set`
-/// validators share the SAME parser the boot uses.
-void parseOutputSection(Object? node) {
-  if (node == null) return;
-  if (node is! YamlMap) {
-    throw ConfigException('output must be a map, got: $node');
-  }
-  for (final key in node.keys) {
-    if (key != 'streamThinking') {
-      throw ConfigException('unknown "output" key: $key');
-    }
-    final value = node[key];
-    if (value is! bool) {
-      throw ConfigException('"output.streamThinking" must be a boolean');
-    }
-  }
 }
 
 /// The parsed `quota:` section (issue #823): the status-line badge opt-in
@@ -539,8 +518,7 @@ final class CliConfig {
   /// section, the walk below reads the single key (defaults false).
   static bool _outputStreamThinking(Object? node) {
     parseOutputSection(node);
-    if (node is YamlMap) return node['streamThinking'] == true;
-    return false;
+    return outputStreamThinkingValue(node);
   }
 
   /// Parses the `skills:` section: `access` (ask/granted/denied — consent
@@ -1495,6 +1473,10 @@ const _diskPreservedSections = {
   // omits a default-valued section — the raw block (future keys the
   // typed renderer does not know yet) survives untouched.
   'links',
+  // The output section (gh-1198): the emitter writes only the opt-in
+  // `streamThinking: true`; a hand-written block (the default-false
+  // form, comments, future keys) survives a save untouched.
+  'output',
 };
 
 /// Re-attaches the [_diskPreservedSections] blocks of [diskText] to

@@ -100,6 +100,7 @@ final class AgentCliConfig {
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
+    this.streamThinking = false,
     this.cubeSpec,
     this.cubeSource,
     this.cubeSettings,
@@ -767,6 +768,14 @@ final class AgentCliConfig {
   /// cross-run shell-job state (manifest age belt + log GC), plus the
   /// `maxLogBytes` per-log ceiling (issue #919).
   final JobsConfig jobs;
+
+  /// The effective gh-1198 thinking-stream setting for the run
+  /// (`--stream-thinking` flag OR the `output.streamThinking` config,
+  /// resolved by the host): line-mode/headless runs print thinking
+  /// deltas dimmed, live, like the TUI. False — the default — keeps the
+  /// byte-identical legacy output and enables the reasoning-phase
+  /// liveness line instead.
+  final bool streamThinking;
 
   /// This host's machine name for `name@machine` addressing (issue #27
   /// phase 2): a `@machine` suffix matching it is stripped before local

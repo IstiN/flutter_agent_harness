@@ -66,6 +66,7 @@ import 'agent_hub_projection.dart';
 import 'agent_hub_tui.dart';
 import 'waiting_heartbeat.dart';
 import 'tool_liveness.dart';
+import 'reasoning_liveness.dart';
 import 'agent_hub_view.dart';
 import '../task/agent_discovery.dart';
 import '../task/child_session_io.dart';
