@@ -27,6 +27,7 @@ import '../context.dart';
 import '../model.dart';
 import '../types.dart';
 import 'agent_loop.dart';
+import 'misuse_breaker.dart';
 import 'tool_registry.dart';
 
 /// Thrown (as [ArgumentError]) when neither a tool executor nor a tool
@@ -205,6 +206,7 @@ class Agent {
     this.contextWindowCap,
     this.wireDump = false,
     this.overWindowRelief,
+    this.toolMisuseBreaker,
   }) : toolExecutor =
            toolExecutor ?? toolRegistry?.executor ?? _missingToolExecutor(),
        _state = AgentState(
@@ -260,6 +262,13 @@ class Agent {
 
   /// Executes tool calls requested by the model. See [ToolExecutor].
   ToolExecutor toolExecutor;
+
+  /// The tool-misuse circuit breaker (issue #862): 3 consecutive identical
+  /// tool-call rejections arm a corrective note in the next request
+  /// payload; 6 stop executing that identical call for the rest of the run.
+  /// `null` (default) disables it — byte-identical to the pre-breaker
+  /// harness.
+  ToolMisuseBreaker? toolMisuseBreaker;
 
   /// Called before a tool is executed; can block it. See [BeforeToolCallHook].
   BeforeToolCallHook? beforeToolCall;
@@ -545,6 +554,7 @@ class Agent {
       prepareNextTurn: prepareNextTurn == null
           ? null
           : (context) => prepareNextTurn?.call(context),
+      toolMisuseBreaker: toolMisuseBreaker,
       getSteeringMessages: () async {
         if (skip) {
           skip = false;
