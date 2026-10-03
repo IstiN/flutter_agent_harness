@@ -721,6 +721,17 @@ extension on AgentCli {
     final entry = customProviderName == null
         ? null
         : config.customProviders?.find(customProviderName);
+    // E1 (leaf pin variant): a pinned NAME that no longer resolves must not
+    // unpin silently — say so, exactly like the folder-state branch, before
+    // the endpoint-keyed fallback can bind a twin account's key.
+    if (customProviderName != null && entry == null) {
+      io.writeln(
+        _style.dim(
+          'note: saved provider "$customProviderName" is no longer '
+          'configured — resolved by endpoint (model kept)',
+        ),
+      );
+    }
     _activeCustomName = entry?.name;
     _providerKind = spec.kind;
     final key = _providerKeyFor(spec, built.baseUrl) ?? '';
@@ -745,6 +756,17 @@ extension on AgentCli {
       if (pinnedKeyName != null && key.isNotEmpty) {
         resolver.addSecret(pinnedKeyName, key);
       }
+      // Capture everything the re-pin is allowed to touch: a FAILED re-pin
+      // (the pinned key is missing — setRoleChain mutates before
+      // applyToAgent throws) must roll ALL of it back, so the status bar,
+      // the chain, and the stream keep describing the same serving model.
+      final previousChain =
+          resolver.config.roles[defaultModelRole] ?? const <ModelRef>[];
+      final previousCustomName = _activeCustomName;
+      final previousProviderKind = _providerKind;
+      final previousApiKey = _apiKey;
+      final previousExplicitToken = _explicitToken;
+      final previousStreamFunction = _streamFunction;
       try {
         resolver.setDefaultChain([
           ModelRef(
@@ -754,6 +776,11 @@ extension on AgentCli {
             contextWindow: built.contextWindow,
             maxTokens: built.maxTokens,
             apiKeyName: pinnedKeyName,
+            // A saved entry carrying this endpoint's authHeader (issue
+            // #964) must survive the restore — the roles stream serves
+            // from the CHAIN entry, so a header-less ModelRef 401s even
+            // though the agent state's model carries the header.
+            authHeader: built.authHeader,
           ),
         ]);
         resolver.applyToAgent(_agent);
@@ -761,7 +788,23 @@ extension on AgentCli {
       } on ConfigException catch (error) {
         // A keyless restore keeps the old wiring and says so — never a
         // raw 401 on the next turn (AC3/E3).
+        if (previousChain.isNotEmpty) {
+          resolver.setRoleChain(defaultModelRole, previousChain);
+        }
+        _activeCustomName = previousCustomName;
+        _providerKind = previousProviderKind;
+        _apiKey = previousApiKey;
+        _explicitToken = previousExplicitToken;
+        _streamFunction = previousStreamFunction;
+        _agent.streamFunction = previousStreamFunction;
         io.writeln(_style.dim('note: ${error.message}'));
+        io.writeln(
+          _style.dim(
+            'keeping ${current.id} (${current.provider}) — set the key, '
+            'then restart this session to retry the restore',
+          ),
+        );
+        return;
       }
     } else {
       _streamFunction = _catalogStreamFunction(spec.kind, key);

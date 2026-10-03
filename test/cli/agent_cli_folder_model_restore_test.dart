@@ -768,7 +768,11 @@ void main() {
         );
         final ioA = ios.last;
         final runA = bootA.run();
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        ioA.sendLine('hi');
+        await Future<void>.delayed(const Duration(milliseconds: 200));
         ioA.sendLine('/provider kimi_me');
+        await Future<void>.delayed(const Duration(milliseconds: 100));
         ioA.sendLine('/exit');
         await runA;
         expect(bootA.activeCustomProviderName, 'kimi_me');
@@ -797,7 +801,9 @@ void main() {
         ioC.sendLine('/exit');
         await runC;
 
-        expect(bootC.agent.state.model.id, 'k3-256k');
+        if (bootC.agent.state.model.id != 'k3-256k') {
+          fail('BOOT-C-OUT:\n${ioC.out.toString()}');
+        }
         expect(bootC.activeCustomProviderName, 'kimi_me');
         expect(
           bootC.agent.state.model.baseUrl,
