@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- fix(messaging): gh-1180 — `schedule_message` self-chains no longer die
+  silently at the agent-chatter wake cap. The idle inbox-wake gate
+  (`InboxWakePolicy`, shared by the CLI and the app hosts) now exempts a
+  delivered scheduled self-reminder (`[scheduled] ` prefix, from == to)
+  from the 10-consecutive-wake streak: a deliberate agent-chosen cadence
+  (night watch, periodic sweep) wakes forever, while foreign
+  agent-to-agent chatter stays capped (anti-storm REG) and user-kind
+  mail always wakes. A 30s cadence floor bounds a zero-delay
+  re-schedule spin (E5). Refused wakes are visible (`[mail] wake
+  refused`, once per episode) and every lifecycle step is receipted to
+  `<messagesRoot>/_scheduled/receipts.jsonl` (`ScheduledReceiptLog`):
+  scheduled / delivered / delivery_failed / scan_failed /
+  wake_attempted / turn_started / wake_refused. A failed scheduler scan
+  (transient `listDir` error) now re-arms at `failureBackoff` with an
+  `onError` log instead of silently disarming the delivery heartbeat.
+
 ## 1.0.485
 
 
