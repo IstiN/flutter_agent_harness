@@ -21,6 +21,7 @@ import '../cube/config/cube_settings.dart';
 import 'waiting_heartbeat.dart';
 import '../providers/provider_common.dart';
 import '../spill/spill.dart';
+import '../skills/skill_availability.dart';
 import '../skills/skills_access.dart';
 import '../memory_config.dart';
 import '../messaging/fabric_config.dart';
@@ -335,6 +336,7 @@ final class CliConfig {
     this.providerTimeouts,
     this.skillsAccess = SkillsAccess.granted,
     this.skillsDisableShellExecution = false,
+    this.skillToggles = const {},
     this.memory,
     this.fabric,
     this.cube,
@@ -495,18 +497,21 @@ final class CliConfig {
           ? const LinksConfig()
           : LinksConfig.fromYaml(map['links']),
       // The skills section (third-party skills access consent + shell
-      // execution toggle) is strict too.
+      // execution toggle + per-skill on/off entries) is strict too.
       skillsAccess:
           skillsSection['skillsAccess'] as SkillsAccess? ??
           SkillsAccess.granted,
       skillsDisableShellExecution:
           skillsSection['skillsDisableShellExecution'] as bool? ?? false,
+      skillToggles:
+          skillsSection['skillToggles'] as Map<String, bool>? ?? const {},
     );
   }
 
   /// Parses the `skills:` section: `access` (ask/granted/denied — consent
-  /// to read third-party `.claude`/`.github`/`.codex` skill directories)
-  /// and `disableShellExecution` (Claude-style `!`cmd`` skill injections).
+  /// to read third-party `.claude`/`.github`/`.codex` skill directories),
+  /// `disableShellExecution` (Claude-style `!`cmd`` skill injections), and
+  /// per-skill `<name>: on|off` toggles (issue #1151).
   static Map<String, Object?> _parseSkillsSection(Object? node) {
     if (node == null) return const {};
     if (node is! YamlMap) {
@@ -532,7 +537,11 @@ final class CliConfig {
           }
           result['skillsDisableShellExecution'] = value;
         default:
-          throw ConfigException('unknown "skills" key: $key');
+          final name = '$key';
+          result['skillToggles'] = {
+            ...(result['skillToggles'] as Map<String, bool>? ?? const {}),
+            name: skillToggleValue(name, node[key]),
+          };
       }
     }
     return result;
@@ -604,6 +613,13 @@ final class CliConfig {
   /// skill bodies render as a disabled placeholder instead of executing
   /// (the `skills.disableShellExecution` yaml key).
   final bool skillsDisableShellExecution;
+
+  /// Per-skill on/off toggles from the GLOBAL scope (`skills:` section,
+  /// `skillName: on|off` entries in `~/.fah/config.yaml`, issue #1151). The
+  /// project scope loads live via [loadProjectSkillsConfig] and wins per
+  /// key — the same deepest-wins rule as the `tools:` stack. Skills not
+  /// named here are enabled.
+  final Map<String, bool> skillToggles;
 
   /// Optional `fabric:` section — the host's discovery announcements for
   /// the agent messaging fabric (issue #27 phase 2): capabilities peers
@@ -764,6 +780,7 @@ final class CliConfig {
       providerTimeouts: providerTimeouts,
       skillsAccess: skillsAccess,
       skillsDisableShellExecution: skillsDisableShellExecution,
+      skillToggles: skillToggles,
       memory: memory,
       fabric: fabric,
       cube: cube,
@@ -1003,11 +1020,16 @@ final class CliConfig {
     final buffer = StringBuffer('skills:\n');
     _writeSkillsAccess(buffer);
     _writeSkillsDisableShellExecution(buffer);
+    for (final entry in skillToggles.entries) {
+      buffer.write('  ${entry.key}: ${entry.value}\n');
+    }
     return buffer.toString();
   }
 
   bool get _skillsSectionNeeded =>
-      skillsAccess != SkillsAccess.granted || skillsDisableShellExecution;
+      skillsAccess != SkillsAccess.granted ||
+      skillsDisableShellExecution ||
+      skillToggles.isNotEmpty;
 
   void _writeSkillsAccess(StringBuffer buffer) {
     if (skillsAccess != SkillsAccess.granted) {

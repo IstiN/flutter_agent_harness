@@ -1,13 +1,13 @@
 ---
 name: create-goal
-description: Turn a feature idea into a complete, testable GOAL document (issue body / card text) using the discipline proven on this repo's [GOAL] cards — one-sentence product frame, explicit subject of every capability, exhaustive tiered platform inventory, pinned platform facts, named protocols, sharing/secret design, security threat model, maximal layered test matrix with cross-platform regression guards. Use when the user asks to draft, revise, or audit goal/issue/card TEXT. Not for creating GitHub issues or running gh commands.
+description: Turn a feature idea into a complete, testable GOAL document (issue body / card text) using the discipline proven on real [GOAL] cards — one-sentence product frame, explicit subject of every capability, exhaustive tiered platform inventory, pinned platform facts, named protocols, sharing/secret design, security threat model, maximal layered test matrix with cross-platform regression guards. Use when the user asks to draft, revise, or audit goal/issue/card TEXT. Not for creating GitHub issues or running gh commands.
 argument-hint: "[topic or existing draft]"
 ---
 
 # Create Goal — writing complete, correction-proof GOAL documents
 
-This skill encodes the discipline that emerged from drafting real [GOAL] cards in
-this repository, including every owner correction made mid-draft. It produces
+This skill encodes the discipline that emerged from drafting real [GOAL] cards,
+including every owner correction made mid-draft. It produces
 **text**, not tickets. The deliverable is a goal document another agent (or a
 human, months later) can implement and test without asking a single clarifying
 question that the text should have answered.

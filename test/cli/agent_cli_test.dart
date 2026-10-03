@@ -455,8 +455,9 @@ void main() {
         );
         io.sendLine('2'); // "Not now" — stays undecided and hidden.
         io.sendLine('/skills');
+        // Builtins are first-party (issue #1151): no consent gate.
         await waitForIt(
-          () => io.out.toString().contains('no skills discovered'),
+          () => io.out.toString().contains('create-goal — Turn a feature'),
         );
         expect(io.out.toString(), isNot(contains('review — Review code')));
 
@@ -490,7 +491,10 @@ void main() {
         () => io.out.toString().contains('skills access: denied'),
       );
       io.sendLine('/skills');
-      await waitForIt(() => io.out.toString().contains('no skills discovered'));
+      // Builtins list under denied consent; the codex skill stays hidden.
+      await waitForIt(
+        () => io.out.toString().contains('create-goal — Turn a feature'),
+      );
       io.sendLine('/exit');
       await run;
       expect(io.out.toString(), isNot(contains('release — Ship a release')));
@@ -543,7 +547,11 @@ void main() {
         () => io.out.toString().contains('skills access: denied'),
       );
       io.sendLine('/skills');
-      await waitForIt(() => io.out.toString().contains('no skills discovered'));
+      // Builtins list under denied consent; the claude skill stays hidden.
+      await waitForIt(
+        () => io.out.toString().contains('create-goal — Turn a feature'),
+      );
+      expect(io.out.toString(), isNot(contains('review — Review code')));
       io.sendLine('/exit');
       await run;
     });
@@ -563,8 +571,7 @@ void main() {
       final fake = FakeStreamFunction([textTurn('ok')]);
       final cli = cliFor(fake.call, skillsAccess: SkillsAccess.denied);
       final run = cli.run();
-      // No consent dialog (denied), but the startup hint explains why the
-      // Claude skills are missing.
+      // No consent dialog (denied); the hint explains the missing skills.
       await waitForIt(() => io.out.toString().contains('found but disabled'));
       expect(io.out.toString(), isNot(contains('Found Claude/Copilot/Codex')));
 

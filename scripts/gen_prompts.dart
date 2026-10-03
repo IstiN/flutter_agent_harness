@@ -385,6 +385,8 @@ String renderPromptsFile(String header, List<LoadedPrompt> prompts) {
 }
 
 /// The generation targets, in order: core package, then the example app.
+/// The core target additionally compiles the bundled agent skills
+/// (`prompts/skills/<name>/SKILL.md`) into a `builtinSkillFiles` map.
 const targets = <({List<PromptSpec> specs, String output, String header})>[
   (specs: rootSpecs, output: rootOutputPath, header: rootHeader),
   (specs: exampleSpecs, output: exampleOutputPath, header: exampleHeader),
@@ -396,7 +398,57 @@ Future<String> renderTarget(
   ({List<PromptSpec> specs, String output, String header}) target,
 ) async {
   final prompts = await loadPrompts(repoRoot, target.specs);
-  return renderPromptsFile(target.header, prompts);
+  final buffer = StringBuffer(renderPromptsFile(target.header, prompts));
+  if (target.output == rootOutputPath) {
+    buffer.write(await renderBuiltinSkills(repoRoot));
+  }
+  return buffer.toString();
+}
+
+/// Compiles every `prompts/skills/<name>/SKILL.md` into the
+/// `builtinSkillFiles` map constant (name → full file text, frontmatter
+/// included) the pure-Dart core embeds as its first-party skill source.
+Future<String> renderBuiltinSkills(String repoRoot) async {
+  final dir = Directory('$repoRoot/prompts/skills');
+  final names =
+      (dir.existsSync() ? dir.listSync() : <FileSystemEntity>[])
+          .whereType<Directory>()
+          .map((d) => d.uri.pathSegments.reversed.toList()[1])
+          .toList()
+        ..sort();
+  final buffer = StringBuffer('''
+/// Compiled-in built-in agent skills (issue #1151): every
+/// `prompts/skills/<name>/SKILL.md` becomes an entry of [builtinSkillFiles]
+/// (name → full SKILL.md text, YAML frontmatter included). Edit the Markdown
+/// sources and rerun `dart run scripts/gen_prompts.dart`.
+const builtinSkillFiles = <String, String>{''');
+  for (final name in names) {
+    final file = File('$repoRoot/prompts/skills/$name/SKILL.md');
+    if (!file.existsSync()) {
+      throw StateError('builtin skill source not found: ${file.path}');
+    }
+    final text = file.readAsStringSync();
+    final (:frontmatter, :body) = parseFrontmatter(text);
+    if (frontmatter['name'] != name) {
+      throw StateError(
+        'prompts/skills/$name/SKILL.md: frontmatter name must be "$name", '
+        'got "${frontmatter['name']}"',
+      );
+    }
+    if ('${frontmatter['description']}'.trim().isEmpty) {
+      throw StateError(
+        'prompts/skills/$name/SKILL.md: missing frontmatter description',
+      );
+    }
+    buffer
+      ..writeln()
+      ..writeln("  '$name':")
+      ..writeln('      ${dartStringLiteral(text)},');
+  }
+  buffer
+    ..writeln('};')
+    ..writeln();
+  return buffer.toString();
 }
 
 Future<void> main(List<String> args) async {

@@ -61,6 +61,9 @@ const _documentedExemptions = <String, String>{
   'lib/ui/screens/tools_availability_section.dart':
       'Not a screen — the settings sub-section for per-tool availability; '
       'its host SettingsScreen logs screenOpened.',
+  'lib/ui/screens/skills_toggles_section.dart':
+      'Not a screen — the settings sub-section for per-skill toggles '
+      '(issue #1151); its host SettingsScreen logs screenOpened.',
   'lib/ui/screens/oauth_webview_scaffold.dart':
       'Shared WebView chrome (issue #773) — both SSO/OAuth sign-in screens '
       'render through it; the concrete pages carry the analytics: '

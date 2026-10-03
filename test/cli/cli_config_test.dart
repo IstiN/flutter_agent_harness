@@ -621,7 +621,7 @@ prompts:
         );
       });
 
-      test('rejects unknown skills keys', () {
+      test('rejects malformed per-skill skills keys', () {
         final file = File('${tmp.path}/.fah/config.yaml');
         file.createSync(recursive: true);
         file.writeAsStringSync('skills:\n  bogus: 1\n');
@@ -631,7 +631,9 @@ prompts:
             isA<ConfigException>().having(
               (e) => e.message,
               'message',
-              contains('unknown "skills" key'),
+              // Per-skill keys are legal since issue #1151; only a bad
+              // value shape is rejected now.
+              contains('skills.bogus must be on/off'),
             ),
           ),
         );
@@ -1478,9 +1480,8 @@ memory:
   });
 
   group('saved provider canonicalization (issue #772)', () {
-    CliConfig configOf(String yaml) => CliConfig.fromYaml(
-          loadYaml(yaml) as YamlMap,
-        );
+    CliConfig configOf(String yaml) =>
+        CliConfig.fromYaml(loadYaml(yaml) as YamlMap);
 
     test('the CLI-written name-shape loads as the kind (AC1)', () {
       expect(
@@ -1510,21 +1511,20 @@ memory:
     });
 
     test('shared-kind names stay — the baseUrl carries that identity', () {
-      expect(
-        configOf('provider: openrouter\n').providerKind,
-        'openrouter',
-      );
+      expect(configOf('provider: openrouter\n').providerKind, 'openrouter');
       expect(configOf('provider: openai\n').providerKind, 'openai');
       expect(configOf('provider: kimi\n').providerKind, 'kimi');
     });
 
-    test('a kind-id no version knows stays verbatim (E2, warn-dont-mutate)',
-        () {
-      expect(
-        configOf('provider: from-the-future\n').providerKind,
-        'from-the-future',
-      );
-    });
+    test(
+      'a kind-id no version knows stays verbatim (E2, warn-dont-mutate)',
+      () {
+        expect(
+          configOf('provider: from-the-future\n').providerKind,
+          'from-the-future',
+        );
+      },
+    );
 
     test('an absent provider keeps the default', () {
       expect(configOf('mode: code\n').providerKind, 'openai-completions');
@@ -1537,8 +1537,7 @@ memory:
       expect(config.providerKind, 'openai-completions');
     });
 
-    test('the next save persists the kind (write-back on save only)',
-        () async {
+    test('the next save persists the kind (write-back on save only)', () async {
       final tmp = Directory.systemTemp.createTempSync('fah-canonical-');
       addTearDown(() => tmp.deleteSync(recursive: true));
       final file = File('${tmp.path}/.fah/config.yaml')

@@ -469,6 +469,8 @@
   "settingsStaleModelDevice": "Ранее использованная модель ({model}) удалена с этого устройства — выберите модель, чтобы скачать её снова.",
   "settingsSkillsAccess": "Доступ к навыкам",
   "settingsSkillsAccessHint": "Использовать навыки Claude, Copilot или Codex из папки проекта (.claude, .github, .codex)",
+  "settingsSkillsToggles": "Встроенные навыки",
+  "settingsSkillsTogglesHint": "Включайте и отключайте навыки, встроенные в Fa",
   "skillsAccessAsk": "Спрашивать",
   "skillsAccessAllowed": "Разрешено",
   "skillsAccessDenied": "Запрещено",
