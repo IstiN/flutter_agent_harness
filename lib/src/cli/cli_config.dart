@@ -205,6 +205,13 @@ String? _parseAgentModeValue(Object? value) {
   return value == 'default' ? null : value as String;
 }
 
+bool? _parseAgentMisuseBreakerValue(Object? value) {
+  if (value is! bool) {
+    throw ConfigException('"agent.misuseBreaker" must be a boolean');
+  }
+  return value;
+}
+
 /// Parses the `agent:` section (issues #273/#679/#680):
 /// `contextWindowCap` — the owner-side effective context override — and
 /// `mode` — the `default|pi|omp` preset label. The cap SETS the EFFECTIVE
@@ -229,6 +236,7 @@ String? _parseAgentModeValue(Object? value) {
   int? contextWindowCap,
   String? mode,
   String? agentMode,
+  bool? misuseBreaker,
   StuckToolConfig? stuckTool,
 })?
 _parseAgentSection(Object? node) {
@@ -238,6 +246,7 @@ _parseAgentSection(Object? node) {
   }
   int? cap;
   String? mode;
+  bool? misuseBreaker;
   StuckToolConfig? stuckTool;
   for (final key in node.keys) {
     switch (key) {
@@ -258,6 +267,8 @@ _parseAgentSection(Object? node) {
         cap = value;
       case 'mode':
         mode = _parseAgentModeValue(node[key]);
+      case 'misuseBreaker':
+        misuseBreaker = _parseAgentMisuseBreakerValue(node[key]);
       case 'stuckTool':
         stuckTool = StuckToolConfig.fromYaml(node[key]);
       default:
@@ -268,6 +279,7 @@ _parseAgentSection(Object? node) {
     contextWindowCap: cap,
     mode: mode,
     agentMode: mode == 'pi' ? 'pi' : null,
+    misuseBreaker: misuseBreaker,
     stuckTool: stuckTool,
   );
 }
@@ -358,6 +370,7 @@ final class CliConfig {
     this.wireDump = false,
     this.images,
     this.agentMode,
+    this.misuseBreaker = true,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
@@ -490,9 +503,10 @@ final class CliConfig {
       // The agent section (owner-side context cap + mode, issues
       // #273/#679/#680) is strict too.
       contextWindowCap: agentSection?.contextWindowCap,
+      stuckTool: agentSection?.stuckTool,
       agentMode: agentSection?.agentMode,
       agentLoadMode: agentSection?.mode,
-      stuckTool: agentSection?.stuckTool,
+      misuseBreaker: agentSection?.misuseBreaker ?? true,
       // The subagents section (background-subagent heartbeat, issue #383)
       subagents: SubagentsConfig.fromYaml(map['subagents']),
       waiting: WaitingConfig.fromYaml(map['waiting']),
@@ -710,6 +724,13 @@ final class CliConfig {
   /// tiers by the executable via `resolveHarnessMode`.
   final String? agentMode;
 
+  /// The tool-misuse circuit breaker switch (`agent.misuseBreaker`,
+  /// issue #862, default true): 3 consecutive identical tool-call
+  /// rejections arm a corrective note in the next request; 6 stop executing
+  /// that identical call for the run. `false` preserves the pre-breaker
+  /// behavior byte-identically (E5).
+  final bool misuseBreaker;
+
   /// Tool-load preset from `agent.mode` (`default|pi|omp`, issue #680):
   /// the curated essential set that boots into the schema; everything
   /// else stays discoverable. `null` = default mode (no preset,
@@ -905,8 +926,9 @@ final class CliConfig {
     return buffer.toString();
   }
 
-  /// The `agent:` section, only when a cap or a load mode is persisted;
-  /// defaults are never written so the file stays minimal.
+  /// The `agent:` section, only when a cap, a load mode, or a stuck-tool
+  /// config is persisted; defaults are never written so the file stays
+  /// minimal.
   String _agentSectionYaml() {
     final stuckYaml = _stuckToolYaml();
     if (contextWindowCap == null &&
