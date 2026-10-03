@@ -126,29 +126,37 @@ void main() {
       },
     );
 
-    test('repeated flags: last occurrence wins for --port and --token (r2 #7)',
-        () {
-      final split = splitWireServeArgs(const [
-        'wire-serve',
-        '--port',
-        '1111',
-        '--port',
-        '2222',
-        '--token',
-        'a',
-        '--token',
-        'b',
-      ]);
-      expect(split.port, 2222);
-      expect(split.token, 'b');
-    });
+    test(
+      'repeated flags: last occurrence wins for --port and --token (r2 #7)',
+      () {
+        final split = splitWireServeArgs(const [
+          'wire-serve',
+          '--port',
+          '1111',
+          '--port',
+          '2222',
+          '--token',
+          'a',
+          '--token',
+          'b',
+        ]);
+        expect(split.port, 2222);
+        expect(split.token, 'b');
+      },
+    );
 
-    test('a value-flag value is consumed verbatim (r2 #7): --token --stdio',
-        () {
-      final split = splitWireServeArgs(const ['wire-serve', '--token', '--stdio']);
-      expect(split.stdio, isFalse, reason: 'the word is the token VALUE');
-      expect(split.token, '--stdio');
-    });
+    test(
+      'a value-flag value is consumed verbatim (r2 #7): --token --stdio',
+      () {
+        final split = splitWireServeArgs(const [
+          'wire-serve',
+          '--token',
+          '--stdio',
+        ]);
+        expect(split.stdio, isFalse, reason: 'the word is the token VALUE');
+        expect(split.token, '--stdio');
+      },
+    );
 
     test('--stdio and --port together are a loud usage error', () {
       expect(
@@ -535,6 +543,43 @@ void main() {
       );
       expect(names, isEmpty);
     });
+
+    test('collects the endpoint-scoped slots of custom-endpoint refs '
+        '(gh-1000 AC5)', () {
+      final names = roleKeyNames(
+        ModelRolesConfig(
+          roles: {
+            'smol': const [
+              ModelRef(
+                provider: 'openai',
+                modelId: 'k3-256k',
+                baseUrl: 'https://api.kimi.com/coding/v1',
+              ),
+            ],
+          },
+        ),
+      );
+      expect(names, {
+        CustomProviderRegistry.keyNameFor('https://api.kimi.com/coding/v1'),
+      });
+    });
+
+    test('a catalog-default ref adds no endpoint slot', () {
+      final names = roleKeyNames(
+        ModelRolesConfig(
+          roles: {
+            'default': const [
+              ModelRef(
+                provider: 'openrouter',
+                modelId: 'm1',
+                baseUrl: _openrouter,
+              ),
+            ],
+          },
+        ),
+      );
+      expect(names, isEmpty);
+    });
   });
 
   group('secureKeyPreloadNames', () {
@@ -639,6 +684,30 @@ void main() {
       );
       expect(secrets, {'CHAIN_KEY': 'storevalue1'});
     });
+
+    test('the endpoint-scoped slot of a custom-endpoint ref is collected '
+        '(gh-1000 AC6)', () async {
+      final config = ModelRolesConfig(
+        roles: {
+          'smol': const [
+            ModelRef(
+              provider: 'openai',
+              modelId: 'k3-256k',
+              baseUrl: 'https://api.kimi.com/coding/v1',
+            ),
+          ],
+        },
+      );
+      final scoped = CustomProviderRegistry.keyNameFor(
+        'https://api.kimi.com/coding/v1',
+      );
+      final secrets = collectRoleSecrets(
+        config,
+        await _cache({scoped: 'sk-store'}),
+        env: const {},
+      );
+      expect(secrets[scoped], 'sk-store');
+    });
   });
 
   group('startupApiKey', () {
@@ -683,6 +752,35 @@ void main() {
         ),
       );
     });
+
+    test(
+      'a headless RESTORE names the pinned key slot, not the catalog env',
+      () {
+        expect(
+          () => startupApiKey(
+            'openai-completions',
+            SecureKeyCache(null),
+            baseUrl: _openrouter,
+            customProviders: const [],
+            defaultRoleResolved: false,
+            interactive: false,
+            env: const {},
+            pinnedKeyName: 'FA_KEY_API_KIMI_COM_KIMI_ME',
+          ),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('restored provider'),
+                contains('/key set FA_KEY_API_KIMI_COM_KIMI_ME'),
+                isNot(contains('OPENROUTER_API_KEY')),
+              ),
+            ),
+          ),
+        );
+      },
+    );
 
     test('a headless hosted start with an env key resolves it', () {
       final key = startupApiKey(

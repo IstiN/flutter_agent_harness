@@ -343,7 +343,12 @@ extension AgentServiceSessions on AgentService {
   /// must never hard-fail on this. Works with a config-less service
   /// too (pre-constructed agents): the kind check then compares against
   /// the agent's live model.
-  void _restoreSessionModel(({String provider, String modelId})? sessionModel) {
+  ///
+  /// The pin's [SessionModelPin.baseUrl]/[SessionModelPin.customProvider]
+  /// fields are deliberately not consumed here: the app's restore stays
+  /// the conservative kind-checked modelId override (the CLI honors the
+  /// entry-name pin; the app keeps the configured Keychain connection).
+  void _restoreSessionModel(SessionModelPin? sessionModel) {
     final config = _config;
     if (sessionModel == null ||
         sessionModel.modelId.isEmpty ||
@@ -378,10 +383,7 @@ extension AgentServiceSessions on AgentService {
   /// Whether [sessionModel] is a same-kind model id worth restoring
   /// (compared against the configured provider kind, falling back to the
   /// agent's live wire kind when no config owns the service).
-  bool _sessionModelApplies(
-    AgentConfig? config,
-    ({String provider, String modelId}) sessionModel,
-  ) {
+  bool _sessionModelApplies(AgentConfig? config, SessionModelPin sessionModel) {
     if (sessionModel.modelId == _agent.state.model.id) return false;
     final activeApi = _agent.state.model.api;
     return config == null
