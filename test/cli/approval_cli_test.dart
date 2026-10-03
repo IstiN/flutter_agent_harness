@@ -401,4 +401,46 @@ void main() {
       await run;
     });
   });
+
+  // gh-1204: the Terminal visual leg went red asserting the bare `/approval`
+  // picker marks the active mode with `(current)`. These cheap dart-test
+  // pins cover the picker-item contract without a PTY so a regression here
+  // fails the fast core lane pre-merge.
+  group('TUI approval picker items', () {
+    test('always-ask mode is the single (current) row', () {
+      final cli = cliFor([], approvalMode: ApprovalMode.alwaysAsk);
+      final items = cli.approvalPickerItemsForTest();
+      expect(items.map((i) => i.label), [
+        'always-ask',
+        'write',
+        'yolo',
+        'autopilot',
+      ]);
+      final marked = items
+          .where((i) => i.description.contains('(current)'))
+          .toList(growable: false);
+      expect(marked, hasLength(1), reason: 'exactly one row is current');
+      expect(marked.single.label, 'always-ask');
+      expect(
+        marked.single.description,
+        contains('prompt before every write/exec tool call'),
+        reason: 'the marker rides the row description, not a separate row',
+      );
+    });
+
+    test('/approval <mode> moves the (current) marker', () async {
+      final cli = cliFor([], approvalMode: ApprovalMode.write);
+      final run = cli.run();
+      io.sendLine('/approval yolo');
+      await _waitFor(
+        () => io.out.toString().contains('approval mode set to yolo'),
+      );
+      final marked = cli.approvalPickerItemsForTest()
+          .where((i) => i.description.contains('(current)'))
+          .toList(growable: false);
+      expect(marked.single.label, 'yolo');
+      io.sendLine('/exit');
+      await run;
+    });
+  });
 }
