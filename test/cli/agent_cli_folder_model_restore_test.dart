@@ -158,6 +158,70 @@ void main() {
   );
 
   test(
+    'a saved entry spelled with a trailing slash still supplies its '
+    'authHeader on restore (sameEndpoint rule — round-4 follow-up)',
+    timeout: const Timeout(Duration(seconds: 60)),
+    () async {
+      final first = cliFactory(sessionName: 'gateway-slash');
+      final firstIo = ios.single;
+      final run1 = first.run();
+      firstIo.sendLine('hi');
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      firstIo.sendLine('/exit');
+      await run1;
+
+      // The saved entry carries the endpoint's authHeader (issue #964)
+      // but its baseUrl is hand-edited with a trailing slash; the folder
+      // state spells the endpoint clean. The header match goes through
+      // the shared sameEndpoint rule — a raw == would return null and
+      // 401 the restored gateway session.
+      await saveFolderModelState(
+        env,
+        sessionsRoot: '/sessions',
+        cwd: '/work',
+        providerKind: 'openai-completions',
+        modelId: 'bedrock-model',
+        baseUrl: 'https://gateway.example.com/v1',
+      );
+
+      final second = AgentCli(
+        config: AgentCliConfig(
+          model: Model(
+            id: 'other-model',
+            api: 'test-api',
+            provider: 'test-provider',
+            baseUrl: 'https://example.test',
+            contextWindow: 100000,
+            maxTokens: 4096,
+          ),
+          apiKey: 'test-key',
+          env: env,
+          sessionRoot: '/sessions',
+          sessionName: 'gateway-slash',
+          customProviders: CustomProviderRegistry([
+            CustomProviderEntry(
+              name: 'gateway.example.com',
+              apiType: 'openai',
+              baseUrl: 'https://gateway.example.com/v1/',
+              modelId: 'bedrock-model',
+              authHeader: 'x-api-key',
+            ),
+          ]),
+        ),
+        io: freshIo(),
+        streamFunction: _singleTextResponse('ok'),
+      );
+      final secondIo = ios.last;
+      final run2 = second.run();
+      secondIo.sendLine('/exit');
+      await run2;
+
+      expect(second.agent.state.model.id, 'bedrock-model');
+      expect(second.agent.state.model.authHeader, 'x-api-key');
+    },
+  );
+
+  test(
     'a name-shaped folder state restores through the seam (issue #772)',
     timeout: const Timeout(Duration(seconds: 60)),
     () async {

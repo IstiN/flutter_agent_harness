@@ -59,20 +59,50 @@ String? optionalProviderApiKey(
   String? pinnedKeyName,
 }) {
   final environment = env ?? Platform.environment;
-  final names = apiKeyEnvNames(provider);
+  final pinned = _pinnedKeyValue(pinnedKeyName, environment, keys);
+  if (pinned != null) return pinned;
   final spec = _keySpec(provider);
   final customEndpoint =
       spec != null && baseUrl != null && baseUrl != spec.defaultBaseUrl;
-  if (pinnedKeyName != null) {
-    final pinned =
-        environment[pinnedKeyName] ??
-        _firstStoredValue([pinnedKeyName], keys);
-    if (pinned != null && pinned.isNotEmpty) return pinned;
-  }
   if (!customEndpoint) {
-    final envKey = _firstEnvValue(names, environment);
+    final envKey = _firstEnvValue(apiKeyEnvNames(provider), environment);
     if (envKey != null) return envKey;
   }
+  return _storedValueFor(
+    baseUrl,
+    customEndpoint,
+    provider,
+    keys,
+    scopedKeyNames: scopedKeyNames,
+  );
+}
+
+/// The pinned saved-entry slot (gh-1000 AC1) resolving FIRST: the
+/// environment value, then the store — it names the account the session
+/// actually ran on, so it wins over every other slot. Null without a pin
+/// or when the slot is empty.
+String? _pinnedKeyValue(
+  String? pinnedKeyName,
+  Map<String, String> environment,
+  SecureKeyCache keys,
+) {
+  if (pinnedKeyName == null) return null;
+  final pinned =
+      environment[pinnedKeyName] ?? _firstStoredValue([pinnedKeyName], keys);
+  if (pinned == null || pinned.isEmpty) return null;
+  return pinned;
+}
+
+/// The stored half of the chain: endpoint-scoped entries on ANY endpoint,
+/// then the legacy catalog env-name entries on the DEFAULT endpoint only
+/// (issue #40 — the catalog names must never hijack a custom endpoint).
+String? _storedValueFor(
+  String? baseUrl,
+  bool customEndpoint,
+  String provider,
+  SecureKeyCache keys, {
+  Iterable<String>? scopedKeyNames,
+}) {
   if (baseUrl != null) {
     final stored = _firstStoredValue([
       CustomProviderRegistry.keyNameFor(baseUrl),
@@ -80,11 +110,8 @@ String? optionalProviderApiKey(
     ], keys);
     if (stored != null) return stored;
   }
-  if (!customEndpoint) {
-    final stored = _firstStoredValue(names, keys);
-    if (stored != null) return stored;
-  }
-  return null;
+  if (customEndpoint) return null;
+  return _firstStoredValue(apiKeyEnvNames(provider), keys);
 }
 
 /// The first non-empty environment value among [names], or null.

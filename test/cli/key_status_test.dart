@@ -331,5 +331,44 @@ void main() {
       expect(note, contains('DIFFERENT'));
       expect(note, contains('the env value is the one sent'));
     });
+
+    test('an unwired envVarValue degrades conservatively: a store twin still '
+        'warns (round-4 follow-up)', () async {
+      Future<SecureKeyCache> cacheOf(FakeSecureKeyStore store) async {
+        final keys = SecureKeyCache(store);
+        await keys.preload(store.map.keys.toList());
+        return keys;
+      }
+
+      // A store twin + no lookup = a real shadow: the hint only renders
+      // when the env value is the one sent, so warn (pre-round-3
+      // availability restored).
+      final shadowed = KeyStatusRenderer(
+        rolesDriven: false,
+        providerKind: 'openai-completions',
+        explicitToken: false,
+        activeCustomName: null,
+        red: (message) => message,
+        secureKeys: await cacheOf(
+          FakeSecureKeyStore()..map['FA_KEY_X'] = 'store-2',
+        ),
+      ).envKeyHint('FA_KEY_X', openRouterUrl);
+      expect(shadowed, contains('shadows a DIFFERENT key'));
+
+      // No store twin = nothing to shadow.
+      final noTwin = KeyStatusRenderer(
+        rolesDriven: false,
+        providerKind: 'openai-completions',
+        explicitToken: false,
+        activeCustomName: null,
+        red: (message) => message,
+        secureKeys: await cacheOf(FakeSecureKeyStore()),
+      ).envKeyHint('FA_KEY_X', openRouterUrl);
+      expect(noTwin, isNot(contains('shadows a DIFFERENT key')));
+
+      // Wired lookup that comes back equal stays precise: no warning.
+      // (covered by envShadowingNote('K', 'env-1', 'env-1') above and
+      // the wired renderer tests — listed here for the contract.)
+    });
   });
 }

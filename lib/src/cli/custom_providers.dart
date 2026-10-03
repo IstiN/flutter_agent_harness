@@ -251,7 +251,7 @@ String? authHeaderForBaseUrl(
 ) {
   if (baseUrl == null) return null;
   for (final entry in entries) {
-    if (entry.baseUrl == baseUrl) return entry.authHeader;
+    if (sameEndpoint(entry.baseUrl, baseUrl)) return entry.authHeader;
   }
   return null;
 }

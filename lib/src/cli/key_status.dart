@@ -337,11 +337,20 @@ final class KeyStatusRenderer {
   /// The hint for a genuine environment key: the shadowing warning when a
   /// DIFFERENT same-name store entry exists, else the source note. The
   /// shadowing detection is the shared [envShadowsStoredKey] rule (the
-  /// boot and restore notes use the same one).
+  /// boot and restore notes use the same one). An UNWIRED [envVarValue]
+  /// (embedded hosts may omit it) degrades conservatively: with a store
+  /// twin present the warning still fires — this hint only renders when
+  /// the env value is the one actually sent, so an uncompared twin is a
+  /// real shadow (the pre-round-3 availability); without a twin there is
+  /// nothing to shadow.
   String envKeyHint(String envActive, String baseUrl) {
     final keys = secureKeys;
     final storedTwin = keys?.read(envActive);
-    if (envShadowsStoredKey(envVarValue?.call(envActive), storedTwin)) {
+    final envValue = envVarValue?.call(envActive);
+    final shadowed = envValue != null
+        ? envShadowsStoredKey(envValue, storedTwin)
+        : storedTwin != null && storedTwin.isNotEmpty;
+    if (shadowed) {
       final label = keys?.label ?? 'secure store';
       return ' — the environment variable $envActive shadows a DIFFERENT '
           'key in the $label; the env value is the one sent — fix or '
