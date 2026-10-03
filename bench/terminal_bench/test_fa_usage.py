@@ -37,7 +37,11 @@ def _module(name, **attrs):
 def _stub_terminal_bench():
     failure_mode = _module("terminal_bench.agents.failure_mode")
     failure_mode.FailureMode = types.SimpleNamespace(
-        NONE="none", AGENT_TIMEOUT="agent_timeout"
+        NONE="none",
+        AGENT_TIMEOUT="agent_timeout",
+        # gh-1209: the never-started modes fa_agent's fold-skip set names.
+        UNKNOWN_AGENT_ERROR="unknown_agent_error",
+        AGENT_INSTALLATION_FAILED="agent_installation_failed",
     )  # AGENT_TIMEOUT: fa_agent.py:212 needs it (test_fa_agent_timeout LegacyWatcherTest loads fa_agent against this stub in the shared discover process)
 
     def installed_perform_task(self, instruction, session, logging_dir=None):
@@ -264,6 +268,49 @@ class FaAgentTest(unittest.TestCase):
         )
         with monkey:
             result = agent.perform_task("do it", PreFailedSession())
+        self.assertIs(result, original)
+
+    def test_timeout_result_folds_session_usage(self):
+        # gh-1209: a timed-out run is the EXPENSIVE run — the session usage
+        # fold must run for any outcome where fa actually ran, not only for
+        # healthy results. tb's harness discards the adapter's result on its
+        # own timeout and records its own zeros, so whenever a timeout
+        # result does round-trip through perform_task, it must carry the
+        # session's real numbers.
+        original = self.AgentResult(failure_mode="agent_timeout")
+        agent = self.legacy_agent()
+        session = self.FakeSession(MAIN_SESSION + SUBAGENT_SESSION)
+        monkey = unittest.mock.patch.object(
+            legacy_fa_agent.AbstractInstalledAgent,
+            "perform_task",
+            return_value=original,
+        )
+        with monkey:
+            result = agent.perform_task("do it", session)
+        self.assertEqual(result.total_input_tokens, EXPECTED_IN)
+        self.assertEqual(result.total_output_tokens, EXPECTED_OUT)
+
+    def test_unknown_agent_error_result_untouched(self):
+        # gh-1209: unknown_agent_error is a true never-started trial — the
+        # harness never got the agent going, so there is nothing to fold
+        # and the result passes through byte-for-byte.
+        class PreStartedSession:
+            class Container:
+                def exec_run(self, cmd):  # pragma: no cover — must not be reached
+                    raise AssertionError("exec_run called after unknown_agent_error")
+
+            def copy_to_container(self, *args, **kwargs):
+                pass
+
+        original = self.AgentResult(failure_mode="unknown_agent_error")
+        agent = self.legacy_agent()
+        monkey = unittest.mock.patch.object(
+            legacy_fa_agent.AbstractInstalledAgent,
+            "perform_task",
+            return_value=original,
+        )
+        with monkey:
+            result = agent.perform_task("do it", PreStartedSession())
         self.assertIs(result, original)
 
 
