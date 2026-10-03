@@ -1,0 +1,498 @@
+name: Bench MLS
+
+# Runs the fa coding agent against MLS-Bench (140 ML-science tasks; the 30-task
+# MLS-Bench-Lite slice is the cheap comparison set) through the Harbor runtime,
+# reusing bench/harbor_fa/fa_agent.py — the same adapter Terminal-Bench 4.0
+# runs on — as a custom Harbor agent (issue #1160):
+#
+#   harbor run -c run-<provider>[-lite].yaml -a bench.harbor_fa.fa_agent:FaAgent
+#
+# No fork of MLS-Bench: we consume Imbernoulli/MLS-Bench at the pinned SHA
+# (mls-sha input) and its own run configs verbatim — including their
+# harbor_env:DaytonaEnvironment / harbor_env:ModalEnvironment clamp layers
+# (E2: provider org ceilings are upstream's problem, not ours).
+#
+# Cost-disciplined staging ladder — each job needs the previous one, so any
+# stage's failure stops the spend before the next:
+#   plan   → build the fa bundle, resolve the subset, unit-test the builders,
+#            fail fast on missing secrets (AC2)
+#   nop    → image builds + sandbox starts on the sanity CPU task
+#            (ml-clustering-algorithm; the dispatch target itself for
+#            subset=task=<name>), no agent, no verification
+#   oracle → strongest declared baseline replay over the target subset
+#            (validates the environment before spending agent tokens)
+#   agent  → fa over the target subset via the adapter
+#
+# Timeout fidelity (contract 4): every task ships [agent] timeout_sec = 18000
+# (5h) and Harbor enforces it; the builder (bench/mls_bench/build_run.py)
+# NEVER emits --*-timeout-multiplier or override_timeout_sec — changing the
+# budget voids leaderboard comparability. The summary step re-checks the
+# recorded trial configs and fails the run if any knob leaked in.
+#
+# Artifacts (owner ruling 2026-09-30: publishing material): per-trial
+# result.json + logs + the run identity (dataset SHA, model, fa commit,
+# budget statement) with 90-day retention, plus a permanent copy attached to
+# the `bench-mls-archive` release. Scores stay pending the first full run (cost
+# attribution via bench/pricing.json, #1123) — see docs/bench.md.
+#
+# Secrets (owner-provisioned; the workflow never hardcodes them):
+#   FA_BENCH_ZAI_KEY        — z.ai key for glm-5.3-flash (shared with bench-harbor.yml)
+#   DAYTONA_API_KEY         — provider=daytona (OQ1: provider is a required input)
+#   MODAL_TOKEN_ID/SECRET   — provider=modal
+# A missing secret fails fast in `plan`, naming the exact key to add.
+
+on:
+  workflow_dispatch:
+    inputs:
+      subset:
+        description: 'smoke-cpu | lite (30 MLS-Bench-Lite tasks) | full (~138 GPU-sandboxed tasks, needs confirm-full=yes) | task=<name>'
+        required: false
+        default: 'smoke-cpu'
+      provider:
+        description: 'Sandbox provider (OQ1): daytona or modal'
+        required: true
+        type: choice
+        options:
+          - daytona
+          - modal
+      model:
+        description: 'Model id recorded with the run (provider preconfig is authoritative for fa)'
+        required: false
+        default: 'glm-5.3-flash'
+      gpu-type:
+        description: 'GPU type passed as --ek gpu_type (H100 default; H200 only for tasks with a native h200 profile)'
+        required: false
+        default: 'H100'
+      mls-sha:
+        description: 'Pinned MLS-Bench commit (Imbernoulli/MLS-Bench)'
+        required: false
+        default: '80cf5c5cc8f70fb1b09f185e59ebf5eca04f610c'
+      shards:
+        description: 'Shard count for lite/full matrices (~6 tasks/shard; each task can run up to its 5h budget)'
+        required: false
+        default: '5'
+      confirm-full:
+        description: "Must be 'yes' when subset=full (E3 cost control)"
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+# A full run holds shards for hours (5h agent budget per task); queue a second
+# dispatch instead of stacking them.
+concurrency:
+  group: bench-mls
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Build bundle & plan the ladder
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # stable satisfies the repo SDK constraint (>=3.12.0 <4.0.0).
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        with:
+          sdk: stable
+
+      - run: dart pub get
+
+      # Same bundle contract as bench.yml / bench-harbor.yml: tar the bundle/ dir
+      # so the adapter extracts bin/fah at the top level of /opt/fa.
+      - name: Build fa CLI bundle (Linux)
+        run: |
+          bundle_dir="$(mktemp -d)/fa-bundle"
+          dart build cli --target=bin/fah.dart --output="$bundle_dir"
+          tar -czf fa-bundle.tar.gz -C "$bundle_dir/bundle" .
+
+      - name: Upload fa bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fa-bundle
+          path: fa-bundle.tar.gz
+
+      # The pinned external dataset: task.tomls (verifier budgets, clip risk),
+      # run configs (Lite task_names), README (per-task research areas).
+      - name: Checkout MLS-Bench at pinned SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Imbernoulli/MLS-Bench
+          ref: ${{ inputs.mls-sha }}
+          path: mls
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      # stdlib-only builder/summary tests gate the spend: a bad command line
+      # or a lost shard costs a multi-hour GPU run. Includes the REG pins on
+      # bench.yml / bench-harbor.yml (AC5).
+      - name: Unit-test bench builders
+        run: python -m unittest discover -s bench/mls_bench -v
+
+      # E3 gate lives inside (subset=full requires confirm-full=yes), then the
+      # AC2 secret pre-flight — everything fails HERE, before any stage spends.
+      - name: Plan subset, shards & run identity
+        id: plan
+        env:
+          SUBSET: ${{ inputs.subset }}
+          PROVIDER: ${{ inputs.provider }}
+          MODEL: ${{ inputs.model }}
+          GPU_TYPE: ${{ inputs.gpu-type }}
+          SHARDS: ${{ inputs.shards }}
+          CONFIRM_FULL: ${{ inputs.confirm-full }}
+          MLS_SHA: ${{ inputs.mls-sha }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          FA_BENCH_ZAI_KEY: ${{ secrets.FA_BENCH_ZAI_KEY }}
+        run: |
+          python bench/mls_bench/build_run.py plan \
+            --subset "$SUBSET" --provider "$PROVIDER" --model "$MODEL" \
+            --gpu-type "$GPU_TYPE" --shards "$SHARDS" --confirm-full "$CONFIRM_FULL" \
+            --mls-root mls --mls-sha "$MLS_SHA" --fa-commit '${{ github.sha }}' \
+            --out "$GITHUB_OUTPUT" --run-config-out mls-run-config.json
+
+      # AC6: the identity bundle rides its own artifact so every later job —
+      # and the restore-and-inspect step — replays the same run identity.
+      - name: Upload run identity bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mls-run-config
+          path: mls-run-config.json
+          retention-days: 90
+
+  # The self-hosted runner only orchestrates remote sandboxes (Daytona /
+  # Modal); it needs no docker and has no 6h hosted-runner cap to trip over
+  # (5h agent budget + task-specific verifier can exceed one). Same uv-managed
+  # python 3.13 as bench-harbor.yml: harbor (typer) breaks on the runner's 3.14.
+  nop:
+    name: Ladder nop (sanity env check)
+    needs: plan
+    runs-on: self-hosted
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Checkout MLS-Bench at pinned SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Imbernoulli/MLS-Bench
+          ref: ${{ inputs.mls-sha }}
+          path: mls
+
+      - name: Install harbor (uv-managed python 3.13)
+        env:
+          PROVIDER: ${{ inputs.provider }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          uv venv --python 3.13 .bench-venv
+          uv pip install --python .bench-venv/bin/python "harbor[$PROVIDER]==0.23.0"
+          .bench-venv/bin/python -c 'import sys; print("venv python:", sys.version.split()[0])'
+
+      - name: Check provider secrets (AC2)
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          SUBSET: ${{ inputs.subset }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          .bench-venv/bin/python bench/mls_bench/build_run.py check-env \
+            --provider "$PROVIDER" --stage nop --subset "$SUBSET"
+
+      # PYTHONPATH=. so the run config's harbor_env:<provider> environment
+      # import resolves exactly as upstream documents it (E2).
+      - name: Run ladder nop stage
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          SUBSET: ${{ inputs.subset }}
+          MODEL: ${{ inputs.model }}
+          GPU_TYPE: ${{ inputs.gpu-type }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/.bench-venv/bin:$PATH"
+          export PYTHONPATH="$GITHUB_WORKSPACE/mls/harbor"
+          cmd="$(.bench-venv/bin/python bench/mls_bench/build_run.py command \
+            --stage nop --provider "$PROVIDER" --subset "$SUBSET" \
+            --model "$MODEL" --gpu-type "$GPU_TYPE" \
+            --job-name "fa-mls-$PROVIDER-nop")"
+          echo "+ $cmd"
+          cd mls/harbor
+          eval "$cmd"
+
+      - name: Upload nop jobs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mls-jobs-nop
+          path: mls/harbor/jobs/
+          retention-days: 90
+
+  oracle:
+    name: Ladder oracle, shard ${{ matrix.i }} (${{ inputs.provider }})
+    needs: [plan, nop]
+    runs-on: self-hosted
+    # Worst case per shard: tasks x (5h agent + task-specific verifier); the
+    # self-hosted runner has no 6h cap, 12h guards a hung sandbox. On modal,
+    # tasks whose budgets exceed the 24h sandbox cap are flagged in the
+    # summary (E1), not hidden.
+    timeout-minutes: 720
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Checkout MLS-Bench at pinned SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Imbernoulli/MLS-Bench
+          ref: ${{ inputs.mls-sha }}
+          path: mls
+
+      - name: Install harbor (uv-managed python 3.13)
+        env:
+          PROVIDER: ${{ inputs.provider }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          uv venv --python 3.13 .bench-venv
+          uv pip install --python .bench-venv/bin/python "harbor[$PROVIDER]==0.23.0"
+          .bench-venv/bin/python -c 'import sys; print("venv python:", sys.version.split()[0])'
+
+      - name: Check provider secrets (AC2)
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          SUBSET: ${{ inputs.subset }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          .bench-venv/bin/python bench/mls_bench/build_run.py check-env \
+            --provider "$PROVIDER" --stage oracle --subset "$SUBSET"
+
+      # Oracle replays the strongest declared baseline through the same guard
+      # and verifier — no model key involved; this validates the environment
+      # before the agent leg spends tokens.
+      - name: Run ladder oracle stage (shard ${{ matrix.i }})
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          SUBSET: ${{ inputs.subset }}
+          MODEL: ${{ inputs.model }}
+          GPU_TYPE: ${{ inputs.gpu-type }}
+          TASKS: ${{ matrix.tasks }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/.bench-venv/bin:$PATH"
+          export PYTHONPATH="$GITHUB_WORKSPACE/mls/harbor"
+          cmd="$(.bench-venv/bin/python bench/mls_bench/build_run.py command \
+            --stage oracle --provider "$PROVIDER" --subset "$SUBSET" \
+            --model "$MODEL" --gpu-type "$GPU_TYPE" \
+            --tasks "$TASKS" \
+            --job-name "fa-mls-$PROVIDER-oracle-shard-${{ matrix.i }}")"
+          echo "+ $cmd"
+          cd mls/harbor
+          eval "$cmd"
+
+      - name: Upload oracle jobs (shard ${{ matrix.i }})
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mls-jobs-oracle-shard-${{ matrix.i }}
+          path: mls/harbor/jobs/
+          retention-days: 90
+
+  agent:
+    name: fa on MLS-Bench, shard ${{ matrix.i }} (${{ inputs.provider }}, ${{ inputs.model }})
+    needs: [plan, oracle]
+    runs-on: self-hosted
+    timeout-minutes: 720
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Checkout MLS-Bench at pinned SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Imbernoulli/MLS-Bench
+          ref: ${{ inputs.mls-sha }}
+          path: mls
+
+      - name: Download fa bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: fa-bundle
+
+      - name: Install harbor (uv-managed python 3.13)
+        env:
+          PROVIDER: ${{ inputs.provider }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          uv venv --python 3.13 .bench-venv
+          uv pip install --python .bench-venv/bin/python "harbor[$PROVIDER]==0.23.0"
+          .bench-venv/bin/python -c 'import sys; print("venv python:", sys.version.split()[0])'
+
+      - name: Check provider + model secrets (AC2)
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          SUBSET: ${{ inputs.subset }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          # The builder requires the secret under its own name (MODEL_ENV_VAR);
+          # inside the task container it travels as FA_KEY_API_Z_AI_Z_AI via
+          # the provider preconfig in the run step below.
+          FA_BENCH_ZAI_KEY: ${{ secrets.FA_BENCH_ZAI_KEY }}
+        run: |
+          [ -n "$FA_BENCH_ZAI_KEY" ] || { echo '::error::FA_BENCH_ZAI_KEY secret is not set'; exit 1; }
+          .bench-venv/bin/python bench/mls_bench/build_run.py check-env \
+            --provider "$PROVIDER" --stage agent --subset "$SUBSET"
+
+      # Same env contract as bench.yml / bench-harbor.yml: the adapter reads
+      # FA_PROVIDER_* / the key from the harbor process env and ships them
+      # base64-encoded into the task container. PYTHONPATH carries BOTH the
+      # MLS checkout (its run configs' harbor_env import) and this repo's
+      # root (the bench.harbor_fa.fa_agent agent import path).
+      - name: Run fa agent stage (shard ${{ matrix.i }})
+        env:
+          FA_BUNDLE_TARBALL: ${{ github.workspace }}/fa-bundle.tar.gz
+          PYTHONPATH: ${{ github.workspace }}/mls/harbor:${{ github.workspace }}
+          FA_PROVIDER_TYPE: zai
+          PROVIDER: ${{ inputs.provider }}
+          SUBSET: ${{ inputs.subset }}
+          MODEL: ${{ inputs.model }}
+          GPU_TYPE: ${{ inputs.gpu-type }}
+          TASKS: ${{ matrix.tasks }}
+          FA_KEY_API_Z_AI_Z_AI: ${{ secrets.FA_BENCH_ZAI_KEY }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/.bench-venv/bin:$PATH"
+          # The preconfig model comes from the dispatch input (builder emits
+          # the JSON, json-escaped), so the archived run identity names the
+          # model that actually ran. apiKeyEnvVar names the env var mapped
+          # above; the adapter ships it base64-encoded into the container.
+          FA_PROVIDER_CONFIG="$(.bench-venv/bin/python bench/mls_bench/build_run.py preconfig --model "$MODEL")"
+          export FA_PROVIDER_CONFIG
+          # fa_agent.py ships the key into the container base64-encoded; GitHub
+          # auto-masks only the raw value, so mask the base64 form too.
+          echo "::add-mask::$(printf %s "$FA_KEY_API_Z_AI_Z_AI" | base64 -w0)"
+          cmd="$(.bench-venv/bin/python bench/mls_bench/build_run.py command \
+            --stage agent --provider "$PROVIDER" --subset "$SUBSET" \
+            --model "$MODEL" --gpu-type "$GPU_TYPE" \
+            --tasks "$TASKS" \
+            --job-name "fa-mls-$PROVIDER-agent-shard-${{ matrix.i }}")"
+          echo "+ $cmd"
+          cd mls/harbor
+          eval "$cmd"
+
+      - name: Upload agent jobs (shard ${{ matrix.i }})
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mls-jobs-agent-shard-${{ matrix.i }}
+          path: mls/harbor/jobs/
+          retention-days: 90
+
+  summary:
+    name: Aggregate & restore-and-inspect
+    needs: [plan, agent]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      # harbor exits 0 even with unresolved trials; the verdict below covers
+      # run completeness — every expected trial attempted — after the merged
+      # artifact is uploaded.
+      - name: Restore bundle (download all ladder jobs)
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: mls-jobs-*
+          merge-multiple: true
+          path: jobs
+
+      - name: Download run identity bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: mls-run-config
+
+      # AC6 restore-and-inspect: replays the run identity (dataset SHA, model,
+      # fa commit, budget statement) from the restored bundle, computes the
+      # per-domain arithmetic-mean aggregate, flags modal clip-risk tasks (E1)
+      # and fails on comparability violations or a lost shard.
+      - name: Inspect bundle & per-domain summary
+        if: always()
+        run: python bench/mls_bench/summary_mls.py --run-config mls-run-config.json jobs
+
+      - name: Upload merged run bundle
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mls-jobs-merged
+          path: jobs/
+          retention-days: 90
+
+  # Owner ruling 2026-09-30: bench artifacts are publishing material — never
+  # only ephemeral. The merged bundle gets a permanent copy as a release
+  # asset; assets are prefixed with the run id so uploads never clobber.
+  archive:
+    name: Permanent archive copy
+    needs: [plan, summary]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Restore merged bundle
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: mls-jobs-merged
+          path: jobs
+
+      - name: Attach bundle to the bench-mls-archive release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          asset="$RUNNER_TEMP/mls-${{ github.run_id }}-bundle.zip"
+          [ -d jobs ] && [ -n "$(ls -A jobs)" ] || {
+            echo "::warning::no merged bundle to archive"; exit 0; }
+          (cd jobs && zip -qr "$asset" .)
+          gh release view bench-mls-archive --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create bench-mls-archive --repo "$GITHUB_REPOSITORY" \
+              --title "MLS-Bench run archive" \
+              --notes "Permanent copies of bench-mls.yml result bundles (issue #1160). One zip per workflow run; scores pending the first full run; cost via bench/pricing.json (#1123)."
+          gh release upload bench-mls-archive "$asset" --repo "$GITHUB_REPOSITORY"
+          echo "archived: $asset"
