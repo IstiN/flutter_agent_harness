@@ -232,6 +232,49 @@ void main() {
     expect(result.exitCode, 0, reason: utf8.decode(result.stderr));
     expect(bodies.single, bytes);
   });
+
+  test('curl -w renders variables, escapes and unknown tokens', () async {
+    final shell = MemoryShell(
+      httpClient: MockClient((request) async => http.Response(
+            'ok-body',
+            201,
+            headers: {'content-type': 'application/json'},
+          )),
+    );
+    final env = MemoryExecutionEnv(cwd: '/', shell: shell);
+    shell.attach(env);
+
+    final result = await env.exec(
+      "curl -s -w 'code=%{http_code} dl=%{size_download} ct=%{content_type} "
+      "url=%{url_effective} rc=%{response_code} up=%{size_upload} "
+      "pct=%% unk=<<%{no_such_var}>> esc=[\\t\\r\\n\\q] trail=%' "
+      "https://api.example.com/things",
+    );
+    expect(result.valueOrNull!.exitCode, 0, reason: result.valueOrNull!.stderr);
+    expect(
+      utf8.decode(result.valueOrNull!.stdout),
+      'ok-body'
+      'code=201 dl=7 ct=application/json '
+      'url=https://api.example.com/things rc=201 up=0 '
+      'pct=% unk=<<>> esc=[\t\r\nq] trail=%',
+    );
+  });
+
+  test('curl -w with an unclosed %{ writes it literally', () async {
+    final shell = MemoryShell(
+      httpClient: MockClient(
+        (request) async => http.Response('x', 200),
+      ),
+    );
+    final env = MemoryExecutionEnv(cwd: '/', shell: shell);
+    shell.attach(env);
+
+    final result = await env.exec(
+      r"curl -s -w 'a%{open and tail' https://api.example.com",
+    );
+    expect(result.valueOrNull!.exitCode, 0);
+    expect(utf8.decode(result.valueOrNull!.stdout), 'xa%{open and tail');
+  });
 }
 
 class RequestRecord {
