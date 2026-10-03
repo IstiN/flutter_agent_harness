@@ -222,6 +222,37 @@ class FaAgent(AbstractInstalledAgent):
         )
 
     @staticmethod
+    def _tap_pane(session, on: bool) -> None:
+        line = (
+            f"rm -f {_PROGRESS_LOG}; tmux pipe-pane 'cat >> {_PROGRESS_LOG}'"
+            if on
+            else "tmux pipe-pane"
+        )
+        session.send_keys([line, "Enter"], block=False, min_timeout_sec=1.0 if on else 0.0)
+
+    @staticmethod
+    def _progress_bytes(session):
+        try:
+            result = session.container.exec_run(
+                ["sh", "-c", f"wc -c < {_PROGRESS_LOG} 2>/dev/null"]
+            )
+            if result.exit_code == 0:
+                return int(result.output.decode(errors="replace").strip() or 0)
+        except Exception:
+            # Best-effort sample: a broken/wedged container must never kill
+            # a healthy run — None keeps the ladder's previous state, and a
+            # genuinely dead container fails the stock body on its own.
+            pass
+        return None
+
+    @staticmethod
+    def _write_audit(logging_dir, knobs, ladder, outcome) -> None:
+        # AC4 (issue #1122): extension decisions land in the trial artifact.
+        path = Path(logging_dir) / "fa-agent-timeout.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(_timeout.audit_dict(knobs, ladder, outcome)))
+
+    @staticmethod
     def _fold_session_usage(session, result):
         """Issue #1123: tb's AbstractInstalledAgent hardcodes
         AgentResult(total_input_tokens=0, total_output_tokens=0) — the
