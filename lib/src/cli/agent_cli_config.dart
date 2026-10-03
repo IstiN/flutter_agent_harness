@@ -22,6 +22,7 @@ final class AgentCliConfig {
     required this.sessionRoot,
     this.wakeExecutable,
     this.folderModelStateApplies = true,
+    this.activeCustomName,
     this.presenceStore,
     this.leaseStore,
     this.parseExecutor,
@@ -587,6 +588,12 @@ final class AgentCliConfig {
   /// disable it). Defaults to true so tests and embedded hosts behave like
   /// an unpinned launch.
   final bool folderModelStateApplies;
+
+  /// The saved custom provider entry the boot restored (the folder model
+  /// state's name pin, gh-1000): the CLI starts with that entry marked
+  /// active — its key slot and its name in the status bar. Null when the
+  /// boot restored no named entry.
+  final String? activeCustomName;
 
   /// Live-session presence heartbeats: the running CLI registers its
   /// session here so the Fa app (sharing the sessions root) can mark the
