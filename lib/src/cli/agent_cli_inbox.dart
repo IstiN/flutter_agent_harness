@@ -136,7 +136,7 @@ extension AgentCliMessagingFlow on AgentCli {
   ScheduledMessageQueue _newScheduledMessages() {
     final receiptsLog = ScheduledReceiptLog(
       env: _env,
-      path: () => '$_scheduledMessagesRoot/receipts.jsonl',
+      path: () => '$_scheduledMessagesRoot/_scheduled/receipts.jsonl',
       onError: (text) => io.writeln('[sched] $text'),
     );
     scheduledReceiptsForTest = receiptsLog;
