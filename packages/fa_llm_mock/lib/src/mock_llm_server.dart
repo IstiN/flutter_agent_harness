@@ -32,6 +32,19 @@ import 'dart:io';
 
 import 'mock_llm_script.dart';
 
+/// One scenario's live routing state: the parsed [match]/[sticky] flags,
+/// the deep-copied [queue], and the LAST served response (a sticky
+/// scenario re-serves it once the queue runs dry).
+final class _ScenarioQueue {
+  _ScenarioQueue(this.match, this.sticky, List<MockResponse> responses)
+    : queue = List.of(responses);
+
+  final String match;
+  final bool sticky;
+  final List<MockResponse> queue;
+  MockResponse? last;
+}
+
 final class MockLlmServer {
   MockLlmServer._(this._server, this.baseUrl)
     : _model = null,
@@ -44,13 +57,13 @@ final class MockLlmServer {
       // same parsed script stays reusable for a second start().
       _scenarios = [
         for (final scenario in script.scenarios)
-          (match: scenario.match, queue: List.of(scenario.responses)),
+          _ScenarioQueue(scenario.match, scenario.sticky, scenario.responses),
       ],
       _fallback = List.of(script.responses);
 
   final HttpServer _server;
   final String? _model;
-  final List<({String match, List<MockResponse> queue})> _scenarios;
+  final List<_ScenarioQueue> _scenarios;
   final List<MockResponse> _fallback;
   var _chatCalls = 0;
   final _chatBodies = <String>[];
@@ -163,12 +176,18 @@ final class MockLlmServer {
   /// Pops the next scripted response: the first scenario whose [match] is
   /// a substring of the last user message, else the fallback queue. A
   /// matched-but-empty scenario stays exhausted (500) — it owns the
-  /// conversation once matched.
+  /// conversation once matched — unless it is sticky, which keeps serving
+  /// its LAST response forever (background-noise tolerance, gh-1171).
   MockResponse? _nextEntry(String body) {
     final user = _lastUserText(body);
     for (final scenario in _scenarios) {
       if (scenario.match.isEmpty || user.contains(scenario.match)) {
-        return scenario.queue.isEmpty ? null : scenario.queue.removeAt(0);
+        if (scenario.queue.isNotEmpty) {
+          final next = scenario.queue.removeAt(0);
+          scenario.last = next;
+          return next;
+        }
+        return scenario.sticky ? scenario.last : null;
       }
     }
     return _fallback.isEmpty ? null : _fallback.removeAt(0);
