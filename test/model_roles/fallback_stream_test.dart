@@ -809,6 +809,89 @@ void main() {
         );
       });
 
+      test(
+          'issue #1168: a resumed-exhaustion terminal passes the '
+          'mid-answer guard unwrapped', () async {
+        // The production wiring composes the transient wrapper INSIDE the
+        // ladder (providerStreamFunction per chain entry): the wrapper
+        // resumes a mid-answer transport cut until its own budget dies,
+        // and the ladder must NOT re-narrate the consumed verdict as
+        // "not retried".
+        final a = _model('openai', 'gpt-a');
+        var innerCalls = 0;
+        AssistantMessageEventStream dying(Model model) {
+          final stream = AssistantMessageEventStream();
+          scheduleMicrotask(() {
+            ++innerCalls;
+            final part = _msg(model, text: 'part');
+            stream
+              ..push(StartEvent(partial: _msg(model)))
+              ..push(TextStartEvent(contentIndex: 0, partial: _msg(model)))
+              ..push(
+                TextDeltaEvent(contentIndex: 0, delta: 'part', partial: part),
+              )
+              ..push(
+                TextEndEvent(contentIndex: 0, content: 'part', partial: part),
+              )
+              ..push(
+                ErrorEvent(
+                  reason: StopReason.error,
+                  error: _msg(
+                    model,
+                    stop: StopReason.error,
+                    text: 'part',
+                    error:
+                        'SocketException: Connection failed (OS Error: '
+                        'Operation timed out, errno = 60)',
+                  ),
+                ),
+              )
+              ..end();
+          });
+          return stream;
+        }
+
+        final w = wrapper([
+          ChainEntry(
+            model: a,
+            keyRing: ApiKeyRing(
+              baseName: 'K_gpt-a',
+              credentials: [ApiKeyCredential('K_gpt-a', 'v-a')],
+              startIndex: 0,
+              now: () => now,
+            ),
+            streamForKey: (apiKey) => (model, context, {cancelToken}) {
+              return transientRetryStreamFunction(
+                (innerModel, innerContext, {cancelToken}) =>
+                    dying(innerModel),
+                maxAttempts: 2,
+              )(model, context, cancelToken: cancelToken);
+            },
+          ),
+        ]);
+
+        final stream = w.call(
+          _model('ignored', 'ignored'),
+          const Context(messages: []),
+        );
+        final events = await stream.toList();
+        final terminal = events.whereType<ErrorEvent>().single;
+
+        // The wrapper spent its own budget (2 attempts, resumed between
+        // them); the ladder adds no false narration and no extra retry.
+        expect(innerCalls, 2);
+        expect(
+          terminal.error.errorMessage,
+          startsWith('Provider retry chain exhausted after 2 attempt(s)'),
+        );
+        expect(terminal.error.errorMessage, isNot(contains('not retried')));
+        // The preserved prefix rides (nothing the host streamed is lost).
+        expect(
+          terminal.error.content.whereType<TextContent>().map((b) => b.text),
+          containsAllInOrder(['part', 'part']),
+        );
+      });
+
       test('fails over to the next entry when retries are spent', () async {
         final a = _model('openai', 'gpt-a');
         final b = _model('anthropic', 'claude-b');
