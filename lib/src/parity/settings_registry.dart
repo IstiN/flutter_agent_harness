@@ -67,6 +67,10 @@ enum SharedSetting {
   /// Consent for reading third-party skill roots (Claude/Copilot/Codex).
   skillsAccess,
 
+  /// Per-skill enable/disable toggles — the `skills: {<name>: on|off}`
+  /// entries (issue #1151), persisted app-side in skills_toggles.json.
+  skillsToggles,
+
   /// fa_cube sandbox profiles (declarative fs/shell/network clamps).
   cubeSandbox,
 
@@ -233,6 +237,12 @@ const nonYamlSettings = <SharedSetting>{
   // is here so the completeness gate accepts its empty yamlKeys while
   // its interactive surface stays parity-tracked.
   SharedSetting.loadMode,
+  // The per-skill toggles (issue #1151) are ENTRIES inside the `skills:`
+  // section (`skills: {<name>: on|off}`) whose top-level key skillsAccess
+  // already owns (single-owner rule above) — the entry is here so the
+  // completeness gate accepts its empty yamlKeys while its interactive
+  // surface stays parity-tracked.
+  SharedSetting.skillsToggles,
 };
 
 /// User-readable justifications for the [cliOnlySettings] exemptions.
@@ -452,6 +462,15 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'Third-party skill roots live on the HOST filesystem '
         '(~/.claude, ~/.copilot, …); the browser sandbox and the extension '
         'have no host filesystem to read them from.',
+  ),
+  SharedSetting.skillsToggles: SettingSurfaces(
+    macos: true,
+    ios: true,
+    web: true,
+    extensionPanel: false,
+    gapWhy:
+        'The extension panel runs single embedded turns; there is no '
+        'settings surface to list per-skill toggles.',
   ),
   SharedSetting.dapHub: SettingSurfaces(
     macos: true,
@@ -696,6 +715,14 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     appRef: 'SkillsAccessStore',
     yamlKeys: ['skills'],
     description: 'Consent for reading third-party skill roots.',
+  ),
+  SharedSetting.skillsToggles: _SettingMeta(
+    cliRef: 'skillToggles',
+    appRef: 'SkillsTogglesStore',
+    // The per-skill toggles are ENTRIES inside the `skills:` section — no
+    // top-level key of their own (see nonYamlSettings).
+    yamlKeys: [],
+    description: 'Per-skill enable/disable toggles (issue #1151).',
   ),
   SharedSetting.cubeSandbox: _SettingMeta(
     cliRef: '/cube',
