@@ -71,7 +71,9 @@ final class AgentCliConfig {
     this.onApprovalChanged,
     this.skillsAccess = SkillsAccess.granted,
     this.skillsDisableShellExecution = false,
+    this.skillToggles = const {},
     this.onSkillsAccessChanged,
+    this.onSkillTogglesChanged,
     this.isShiftPressed,
     this.processId,
     this.homeDir,
@@ -472,9 +474,22 @@ final class AgentCliConfig {
   /// executed; the placeholder renders as a disabled note instead.
   final bool skillsDisableShellExecution;
 
+  /// The GLOBAL per-skill on/off toggles (`skills:` section of
+  /// `~/.fah/config.yaml`, issue #1151): skill name → enabled. The CLI
+  /// seeds its live view from this at first resolution;
+  /// `/skills NAME global` mutates the live view and the host persists it
+  /// through [onSkillTogglesChanged].
+  final Map<String, bool> skillToggles;
+
   /// Called when the skills-access consent changes (startup prompt,
   /// `/skills access ...`) so the executable can persist it.
   final void Function(SkillsAccess access)? onSkillsAccessChanged;
+
+  /// Called when a global per-skill toggle changes
+  /// (`/skills NAME global`, the settings-hub Skills flow) so the
+  /// executable can persist the live toggles
+  /// (`AgentCli.globalSkillToggles`).
+  final Future<void> Function()? onSkillTogglesChanged;
 
   /// Host-provided Shift modifier check (e.g. macOS Core Graphics via FFI).
   /// When null, Shift+Enter is not specially handled.

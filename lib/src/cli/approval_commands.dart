@@ -783,7 +783,7 @@ extension ApprovalCommands on AgentCli {
   /// choice resolves to `/skill:<name>` (line mode has no input field to
   /// pre-fill, so the skill runs immediately, without args).
   Future<String?> _showLineModeMenu(StreamIterator<String> lineIterator) async {
-    for (final line in lineModeMenuLines(_style, skills: _skills)) {
+    for (final line in lineModeMenuLines(_style, skills: _enabledSkills)) {
       io.writeln(line);
     }
     io.write('Pick a command (number or name), or press Enter to cancel: ');
@@ -796,7 +796,7 @@ extension ApprovalCommands on AgentCli {
   }
 
   String? _resolveMenuChoice(String trimmed) =>
-      resolveLineModeMenuChoice(trimmed, _skills);
+      resolveLineModeMenuChoice(trimmed, _enabledSkills);
 
   /// The numbered command list of the line-mode menu.
   void _printHelp({String filter = ''}) {
@@ -819,7 +819,7 @@ extension ApprovalCommands on AgentCli {
       pluginSlashCommands: _pluginSlashCommands,
       templates: _templates,
       style: _style,
-      skills: _skills,
+      skills: _enabledSkills,
     )) {
       io.writeln(line);
     }
