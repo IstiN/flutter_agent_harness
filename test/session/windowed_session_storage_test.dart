@@ -671,6 +671,38 @@ void main() {
     );
 
     test(
+      'jumpToTail pins the tail: fill overshoot trims the OLD side',
+      () async {
+        await seedRaw(20);
+        final storage = await WindowedSessionStorage.open(
+          fs,
+          path,
+          chunkRecords: 2,
+          residentRecords: 6,
+          residentBytes: 24 * 1024 * 1024,
+        );
+        // Deep-page to the very top: 2-record chunks against a 6-record
+        // residency overshoot, and the deep-paging eviction drops the
+        // NEWEST side - countBelow lights up.
+        while (storage.hasOlder) {
+          final joined = await storage.loadOlder();
+          if (joined.isEmpty) fail('loadOlder stalled with history above');
+        }
+        expect(storage.countBelow, greaterThan(0));
+        expect(storage.hasNewer, isTrue);
+
+        // The jump re-anchors the tail, then fills upward: the fill's
+        // overshoot must trim the OLD side only - a newest-side eviction
+        // here would un-anchor the tail and re-light hasNewer into an
+        // auto-follow loop (issue #1159 review).
+        final branch = await storage.jumpToTail();
+        expect(storage.hasNewer, isFalse);
+        expect(storage.countBelow, 0);
+        expect(idsOf(branch), ['e14', 'e15', 'e16', 'e17', 'e18', 'e19']);
+      },
+    );
+
+    test(
       'jumpToOffset recenters the window; leaf and counts behave (AC6)',
       () async {
         await seedRaw(3000);
