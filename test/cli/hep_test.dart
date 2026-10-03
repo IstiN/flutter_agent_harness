@@ -116,6 +116,33 @@ void main() {
         '"action":"escalate","elapsed_ms":620000}',
       );
     });
+    test('heartbeat frames carry the captured-output size (issue review)', () {
+      expect(
+        hepToolLivenessFrame(
+          turnId: 3,
+          id: 'c1',
+          name: 'bash',
+          action: 'heartbeat',
+          elapsedMs: 61000,
+          outputBytes: 512,
+          detail: 'attempt 1',
+        ),
+        '{"type":"tool_liveness","turn_id":3,"id":"c1","name":"bash",'
+        '"action":"heartbeat","elapsed_ms":61000,"output_bytes":512,'
+        '"detail":"attempt 1"}',
+      );
+      // Absent stays absent (additive, back-compat).
+      expect(
+        hepToolLivenessFrame(
+          turnId: 3,
+          id: 'c1',
+          name: 'bash',
+          action: 'escalate',
+          elapsedMs: 620000,
+        ),
+        isNot(contains('output_bytes')),
+      );
+    });
 
     test(
       'a heartbeat and a stuck event ride the writer as tool_liveness',

@@ -179,4 +179,219 @@ void main() {
       );
     },
   );
+  test(
+    'the interactive host defaults to advisory supervision; a headless run '
+    'defaults to autonomous (issue review)',
+    () {
+      // gh-1054 review: auto-cancelling under a present human is the
+      // ticket's non-goal — the REPL/TUI default is advisory; `fa run`
+      // (unattended) keeps the autonomous default. No explicit config in
+      // either construction.
+      AgentCli cli({required bool headless}) => AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'k',
+          env: MemoryExecutionEnv(cwd: '/work'),
+          sessionRoot: '/sessions',
+          headlessRun: headless,
+        ),
+        io: FakeCliIO(),
+        streamFunction: FakeStreamFunction(const []).call,
+      );
+      expect(
+        cli(headless: false).agent.stuckTool!.followUp,
+        StuckFollowUpMode.advisory,
+        reason: 'a human is present in the REPL/TUI — advise only',
+      );
+      expect(
+        cli(headless: true).agent.stuckTool!.followUp,
+        StuckFollowUpMode.autonomous,
+        reason: 'fa run is unattended — the autonomous default',
+      );
+      // An explicit agent.stuckTool wins in both.
+      final explicit = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'k',
+          env: MemoryExecutionEnv(cwd: '/work'),
+          sessionRoot: '/sessions',
+          stuckTool: const StuckToolConfig(
+            followUp: StuckFollowUpMode.autonomous,
+          ),
+        ),
+        io: FakeCliIO(),
+        streamFunction: (_) async => Stream.empty(),
+      );
+      expect(explicit.agent.stuckTool!.followUp, StuckFollowUpMode.autonomous);
+    },
+  );
+
+  test(
+    'the stuck record bypasses no secrets: liveness records are redacted '
+    'through the host pipeline (issue review)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      const secret = 'sk-test-secret-abc123';
+      final env = MemoryExecutionEnv(cwd: '/work', shell: HangingShell());
+      await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+      final io = FakeCliIO();
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'k',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          stuckTool: _stuckTool,
+          redactionPipeline: RedactionPipeline(
+            registeredSecrets: [secret],
+          ),
+        ),
+        io: io,
+        streamFunction: FakeStreamFunction([
+          toolTurn(const [
+            ToolCall(
+              id: 'c1',
+              name: 'bash',
+              arguments: {
+                'command': 'curl -H "Authorization: Bearer $secret" https://x',
+              },
+            ),
+          ]),
+          textTurn('moved on'),
+        ]).call,
+      );
+      final exitCode = await cli.runHeadless('run the thing');
+      expect(exitCode, 0);
+      final records = await livenessRecords(env);
+      expect(
+        records.where((r) => r.customType == toolHeartbeatRecordType),
+        isNotEmpty,
+      );
+      final raw = records.map((r) => r.data.toString()).join('\n');
+      expect(raw, isNot(contains(secret)), reason: 'no raw secret in records');
+      expect(raw, contains('[REDACTED:'), reason: 'masked, not dropped');
+    },
+  );
+
+  test(
+    'a supervisor-driven background conversion does not blame a steering '
+    'message (issue review)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final env = MemoryExecutionEnv(cwd: '/work', shell: _ConvertShell());
+      await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+      final io = FakeCliIO();
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: 'k',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          stuckTool: _stuckTool,
+        ),
+        io: io,
+        streamFunction: FakeStreamFunction(_turns()).call,
+      );
+      final exitCode = await cli.runHeadless('run the long thing');
+      expect(exitCode, 0, reason: 'the turn continues past the conversion');
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final sessions = await repo.list(cwd: '/work');
+      final session = await repo.open(sessions.first);
+      final messages = await session.buildContextMessages();
+      final texts = [
+        for (final message in messages)
+          if (message is ToolResultMessage)
+            [for (final block in message.content)
+              if (block is TextContent) block.text,
+            ].join(),
+      ];
+      final handback = texts.where((t) => t.contains('moved to background job'));
+      expect(handback, isNotEmpty, reason: 'the retry was converted');
+      expect(
+        handback.join('\n'),
+        isNot(contains('steering message')),
+        reason: 'no steering arrived — the supervisor moved it',
+      );
+      final records = await livenessRecords(env);
+      expect(
+        [for (final r in records)
+          if (r.customType == toolStuckRecordType) (r.data as Map)['action'],
+        ],
+        contains('background_convert'),
+      );
+    },
+  );
+}
+
+/// A jobs-capable shell whose background jobs hang until stopped — the
+/// wedge behind the supervisor-driven background-conversion scenario.
+class _ConvertShell implements Shell, BackgroundShell {
+  @override
+  bool get backgroundJobsSupported => true;
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) async {
+    return const Err(
+      ExecutionError(
+        ExecutionErrorCode.shellUnavailable,
+        'No shell is available in this environment',
+      ),
+    );
+  }
+
+  @override
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  }) async {
+    return Ok(_ConvertJob(id: id, command: command, logPath: logPath));
+  }
+}
+
+final class _ConvertJob implements ShellJob {
+  _ConvertJob({
+    required this.id,
+    required this.command,
+    required this.logPath,
+  });
+
+  @override
+  final String id;
+  @override
+  final String command;
+  @override
+  final String logPath;
+  @override
+  int? get pid => null;
+
+  var _stopped = false;
+  final _settled = Completer<void>();
+
+  @override
+  bool get isRunning => !_stopped;
+  @override
+  int? get exitCode => _stopped ? 9 : null;
+  @override
+  Future<void> get settled => _settled.future;
+  @override
+  String? get stopReason => _stopped ? 'cancelled' : null;
+  @override
+  Stream<String> get output => const Stream.empty();
+  @override
+  bool writeStdin(String data) => false;
+
+  @override
+  Future<void> stop() async {
+    if (_stopped) return;
+    _stopped = true;
+    _settled.complete();
+  }
+}
 }

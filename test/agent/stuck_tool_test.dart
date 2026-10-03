@@ -192,6 +192,15 @@ void main() {
         throwsA(isA<ConfigException>()),
       );
     });
+      expect(
+        () => StuckToolConfig.fromYaml({'heartbeatSeconds': 0}),
+        throwsA(isA<ConfigException>()),
+      );
+      // A zero cancel grace stays legal — the grace gate handles it.
+      expect(
+        StuckToolConfig.fromYaml({'cancelGraceSeconds': 0}).cancelGrace,
+        Duration.zero,
+      );
   });
 
   group('stuck-call supervision in the agent loop', () {
@@ -662,6 +671,135 @@ void main() {
         await agent.prompt('ask the user');
         expect(executions, 1);
         expect(stuckEvents, isEmpty);
+      },
+    );
+    test(
+      'advisory mode: a tool error after the threshold is the executor\'s '
+      'own — rethrown with no retry and no follow-up record',
+      timeout: const Timeout(Duration(seconds: 30)),
+      () async {
+        // Issue review (gh-1054): `cancelledBySupervisor: stuckFired`
+        // conflated "the threshold fired" with "the supervisor cancelled".
+        // In advisory mode nothing is ever cancelled, so a self-failed
+        // call must propagate as the plain tool error — never re-executed.
+        var invocations = 0;
+        final outcome = await runSupervisedTurn(
+          config: const StuckToolConfig(
+            floor: Duration(milliseconds: 200),
+            declaredTimeoutFactor: 2,
+            heartbeatInterval: Duration(milliseconds: 50),
+            cancelGrace: Duration(milliseconds: 100),
+            followUp: StuckFollowUpMode.advisory,
+          ),
+          executor: (attempt, onUpdate, _) async {
+            invocations++;
+            // Runs past the threshold (the advisory fires), then fails on
+            // its own — the error is the executor's, not a cancel's.
+            await Future<void>.delayed(const Duration(milliseconds: 350));
+            throw StateError('self failure');
+          },
+        );
+        expect(invocations, 1, reason: 'advisory never retries');
+        expect(outcome.resultText, contains('self failure'));
+        expect(outcome.resultText, isNot(contains('[stuck-call')));
+        expect(
+          {for (final event in outcome.stuckEvents) event.action},
+          {StuckFollowUpAction.advisory},
+          reason: 'no cancel_retry / escalate records in advisory mode',
+        );
+      },
+    );
+
+    test(
+      'a call that completes right after the cancel lands no cancel_retry '
+      'record — the retry never happened',
+      timeout: const Timeout(Duration(seconds: 30)),
+      () async {
+        // Issue review: the stage record fired at the threshold claimed
+        // "cancelling and retrying once" even when the call then completed
+        // on its own (the cancel raced a real completion). The record is
+        // only truthful when the retry actually starts.
+        final outcome = await runSupervisedTurn(
+          executor: (attempt, onUpdate, cancelToken) async {
+            // Cancel-obeying but finishing: on the supervisor's cancel it
+            // returns the (just-completed) work instead of aborting.
+            if (cancelToken != null) await cancelToken.onCancel;
+            return ToolExecutionResult.text('late completion');
+          },
+        );
+        expect(outcome.resultText, contains('late completion'));
+        expect(outcome.resultText, isNot(contains('[stuck-call')));
+        expect(
+          outcome.stuckEvents
+              .where((e) => e.action == StuckFollowUpAction.cancelRetry),
+          isEmpty,
+          reason: 'no retry started — no cancel_retry record',
+        );
+      },
+    );
+
+    test(
+      'a retry that self-completes past the threshold is not marked as a '
+      'background conversion',
+      timeout: const Timeout(Duration(seconds: 30)),
+      () async {
+        // Issue review: the attempt-2 completion mark claimed "converted to
+        // a background job" even when the tool ignored the yield token and
+        // finished its own work inside the grace window.
+        final outcome = await runSupervisedTurn(
+          executor: (attempt, onUpdate, cancelToken) async {
+            if (attempt == 1) {
+              // Wedged: cancelled and retried.
+              await Completer<void>().future;
+            }
+            // The retry ignores the yield token entirely and just finishes
+            // (past the threshold, inside the cancel grace).
+            await Future<void>.delayed(const Duration(milliseconds: 340));
+            return ToolExecutionResult.text('real work output');
+          },
+        );
+        expect(outcome.resultText, contains('real work output'));
+        expect(
+          outcome.resultText,
+          isNot(contains('converted to a background job')),
+          reason: 'the retry completed its own work — no conversion happened',
+        );
+        expect(
+          outcome.resultText,
+          contains('retried once'),
+          reason: 'the truthful mark: attempt 1 was cancelled and retried',
+        );
+      },
+    );
+
+    test(
+      'a declared timeout is honored for bash only — a stray timeout arg '
+      'on another tool cannot suppress supervision',
+      timeout: const Timeout(Duration(seconds: 30)),
+      () async {
+        // Issue review: `_declaredTimeoutOf` read `timeout` as seconds for
+        // every tool; a tool whose schema has no such arg (or uses another
+        // unit) would inflate its threshold to factor × arg and never be
+        // supervised. Only bash declares a seconds-based `timeout`.
+        final outcome = await runSupervisedTurn(
+          calls: const [
+            ToolCall(
+              id: 'c1',
+              name: 'read',
+              arguments: {'path': 'x', 'timeout': 30},
+            ),
+          ],
+          executor: (attempt, onUpdate, _) async {
+            // Far past the floor (300ms) but far under factor × 30s.
+            await Future<void>.delayed(const Duration(milliseconds: 700));
+            return ToolExecutionResult.text('ok');
+          },
+        );
+        expect(
+          outcome.stuckEvents.map((e) => e.action),
+          contains(StuckFollowUpAction.cancelRetry),
+          reason: 'the floor, not 2×30s, is the threshold for non-bash tools',
+        );
       },
     );
   });

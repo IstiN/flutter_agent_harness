@@ -51,6 +51,26 @@ const defaultStuckCancelGraceSeconds = 10;
 /// for the autonomy).
 enum StuckFollowUpMode { autonomous, advisory }
 
+/// The cancel reason the stuck supervisor puts on a call/yield token — a
+/// marker, not an error: the tokens' other listeners only check
+/// [CancelToken.isCancelled]. Lives here (pure data) so the tool layer can
+/// recognize a supervisor-driven yield without importing the loop.
+class StuckCallFollowUp {
+  const StuckCallFollowUp(this.reason);
+
+  final String reason;
+
+  @override
+  String toString() => reason;
+}
+
+/// The text marker a soft-yield hand-back result carries when the command
+/// moved to a background job (both the steering and the supervisor-driven
+/// flavors): the supervisor reads it to tell a real background conversion
+/// apart from a retry that completed its own work (gh-1054 review — no
+/// false "converted" marks).
+const stuckBackgroundHandbackMarker = 'moved to background job';
+
 /// Session record type for a liveness heartbeat (`CustomRecord.customType`):
 /// cheap append-only proof that a long tool call is alive-busy.
 const toolHeartbeatRecordType = 'tool_heartbeat';

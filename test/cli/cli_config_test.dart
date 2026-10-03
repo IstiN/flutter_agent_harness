@@ -1017,6 +1017,52 @@ prompts:
           ),
         );
       });
+      test(
+        'the effective supervision is advisory for interactive hosts, '
+        'autonomous for headless — explicit config wins everywhere',
+        () {
+          // Issue review (gh-1054): the ticket's non-goal — auto-cancelling
+          // interactive sessions with a human present. The autonomous
+          // default is a headless-only policy; `agent.stuckTool:` in the
+          // yaml always wins.
+          AgentCliConfig cli({bool headless = false, StuckToolConfig? stuck}) =>
+              AgentCliConfig(
+                model: const Model(
+                  id: 'm',
+                  api: 'test-api',
+                  provider: 'test-provider',
+                  baseUrl: 'https://example.test',
+                  contextWindow: 100000,
+                  maxTokens: 4096,
+                ),
+                apiKey: 'k',
+                env: MemoryExecutionEnv(cwd: '/work'),
+                sessionRoot: '/sessions',
+                headlessRun: headless,
+                stuckTool: stuck,
+              );
+          expect(
+            cli().effectiveStuckTool().followUp,
+            StuckFollowUpMode.advisory,
+            reason: 'REPL/TUI: a human is present — advise only',
+          );
+          expect(
+            cli(headless: true).effectiveStuckTool().followUp,
+            StuckFollowUpMode.autonomous,
+            reason: 'fa run: unattended — the autonomous default',
+          );
+          const explicit = StuckToolConfig(followUp: StuckFollowUpMode.advisory);
+          expect(
+            cli(headless: true, stuck: explicit).effectiveStuckTool(),
+            same(explicit),
+            reason: 'an explicit agent.stuckTool wins in both modes',
+          );
+          expect(
+            cli(stuck: explicit).effectiveStuckTool(),
+            same(explicit),
+          );
+        },
+      );
     });
   });
 
