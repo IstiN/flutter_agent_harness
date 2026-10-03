@@ -1,24 +1,27 @@
-// REG guard for the gh-1049 deflake (PR #1166, review r2): the memory
-// round-trip leg's `Existing tags:` mock scenario must keep ONE scripted
-// response per KBTagGeneratorAgent call — THREE per round trip:
-//   1. memory_add → KBMemoryEnrichment (the add's tag enrichment)
-//   2. memory_search → MemoryController.search() project scope (searchByText)
-//   3. the same search() → user scope, because results.length < limit (the
-//      KB holds fewer records than the limit-10 cap)
-//      — lib/src/memory/memory_controller.dart `search()`.
-// Dropping a response passes every screen and wire assert yet silently
-// resurrects the 500-storm (script-exhausted HTTP 500 → 3 retries + 2×5s
-// adapter sleeps + `[net] retrying` lines) that buries the tool rows and
-// re-flakes the PTY wait. Hermetic source grep (no PTY, no network),
-// deliberately in the DEFAULT suite so the pre-commit gate enforces it —
-// same pattern as `pty_screen_wait_reg_test.dart`.
+// REG guard for the memory round-trip leg's `Existing tags:` mock scenario
+// (gh-1049 deflake PR #1166; gh-1171 turns the exact-count pin into a
+// WILDCARD pin): the scenario must be `sticky: true` with at least ONE
+// scripted response. The KBTagGeneratorAgent fires once per LLM-backed
+// memory op — the add's enrichment, then one per search scope (project,
+// then user: the KB holds fewer records than the limit-10 cap) — but the
+// count is emergent from flutter_agent_memory internals
+// (lib/src/memory/memory_controller.dart `search()`) and shifts with
+// scheduling: gh-1171 saw a 4th call exhaust an exact-count script into
+// the 500-storm (script-exhausted HTTP 500 → 3 retries + 2×5s adapter
+// sleeps + `[net] retrying` lines) that buries the tool rows and re-flakes
+// the PTY wait. The sticky wildcard answers every extra call with the
+// scripted empty response forever; the parent-conversation scenario stays
+// strict so a real loop regression still fails loudly. Hermetic source
+// grep (no PTY, no network), deliberately in the DEFAULT suite so the
+// pre-commit gate enforces it — same pattern as
+// `pty_screen_wait_reg_test.dart`.
 import 'dart:io';
 
 import 'package:test/test.dart';
 
 void main() {
   test(
-    'memory leg scripts a response for every taggen call (gh-1049 pin)',
+    'memory leg scripts a sticky wildcard for every taggen call (gh-1171 pin)',
     () {
       final source = File(
         'test/integration/subagent_integration_test.dart',
@@ -47,16 +50,24 @@ void main() {
           ? scenarioTail
           : scenarioTail.substring(0, scriptEnd);
 
+      expect(
+        scenario,
+        contains('sticky: true'),
+        reason:
+            'the taggen scenario must stay a STICKY wildcard: the '
+            'KBTagGeneratorAgent call count is schedule-dependent and an '
+            'extra call against a dry exact-count script exhausts the mock '
+            'FIFO into the 500-retry storm that re-flakes the PTY wait '
+            '(gh-1171)',
+      );
       final responses = RegExp(r'-\s+text:').allMatches(scenario).length;
       expect(
         responses,
-        greaterThanOrEqualTo(3),
+        greaterThanOrEqualTo(1),
         reason:
-            'the memory round trip makes THREE KBTagGeneratorAgent calls '
-            '(add enrichment + project-scope search + user-scope search on '
-            'the results < limit fallback — memory_controller.dart search()); '
-            'a missing response exhausts the mock FIFO into the 500-retry '
-            'storm that re-flakes the PTY wait (gh-1049, PR #1166 r0)',
+            'a sticky scenario has nothing to re-serve without at least one '
+            'scripted response (matched-but-dry still answers 500 — '
+            'mock_llm_server.dart _nextEntry)',
       );
     },
   );

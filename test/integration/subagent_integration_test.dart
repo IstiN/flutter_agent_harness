@@ -76,7 +76,8 @@ tui:
       // Content-routed script (substring match on the LAST user message):
       // each request is answered by its own content, so background LLM
       // noise (memory tag generation, title/summary calls) can never steal
-      // a slot — unmatched traffic degrades to a tolerated mock 500.
+      // a slot — the taggen scenario is a sticky wildcard (gh-1171), and
+      // any other unmatched traffic degrades to a tolerated mock 500.
       final script = MockLlmScript.parse('''
 scenarios:
   - match: "Use the task tool"
@@ -92,6 +93,7 @@ scenarios:
     responses:
       - text: "subagent-done: 3 files listed"
   - match: "Existing tags:"
+    sticky: true
     responses:
       - text: ""
 ''');
@@ -181,13 +183,18 @@ scenarios:
   });
 
   test('memory_add and memory_search tools are available', () async {
-    // Content-routed script: the parent prompt drives add → search → reply;
-    // the memory package's background tag generator (its prompt carries
-    // "Existing tags:") fires THREE times per round trip — once for the
-    // add's enrichment, then once per search scope (project, then user:
-    // the KB holds fewer records than the limit), so each gets a scripted
-    // empty response and no call exhausts the FIFO into the 500-retry
-    // storm (gh-1049 family).
+    // Content-routed script: the parent prompt drives add → search → reply.
+    // The memory package's background tag generator (its prompt carries
+    // "Existing tags:") fires once per LLM-backed memory op — the add's
+    // enrichment, then one per search scope (project, then user: the KB
+    // holds fewer records than the limit) — but the count is emergent from
+    // flutter_agent_memory internals and shifts with scheduling (gh-1171:
+    // a 4th call exhausted an exact-count script into the 500-retry storm
+    // — 3 adapter retries at 5s sleeps — that buried the tool rows and
+    // timed out the PTY wait). The scenario is therefore STICKY: a
+    // wildcard that answers every taggen call with the scripted empty
+    // response forever, while the parent-conversation scenario stays
+    // strict so a real loop regression still fails loudly.
     final script = MockLlmScript.parse('''
 scenarios:
   - match: "Use the memory_add tool"
@@ -200,9 +207,8 @@ scenarios:
           arguments: '{"query": "Dart"}'
       - text: "memory round-trip complete"
   - match: "Existing tags:"
+    sticky: true
     responses:
-      - text: ""
-      - text: ""
       - text: ""
 ''');
     final server = await MockLlmServer.start(script: script);

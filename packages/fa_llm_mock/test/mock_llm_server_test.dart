@@ -233,10 +233,11 @@ scenarios:
     expect(await content('even more noise'), 'noise-last');
     expect(await content('noise again'), 'noise-last');
 
-    // Sticky is per-scenario: the strict scenario still exhausts with 500
-    // (a real conversation regression must keep failing loudly), and the
-    // unmatched traffic still drains the fallback queue — the sticky
-    // scenario never leaks into it.
+    // Sticky is per-scenario: the strict scenario plays its queue, then
+    // still exhausts with 500 (a real conversation regression must keep
+    // failing loudly), and the unmatched traffic still drains the fallback
+    // queue — the sticky scenario never leaks into it.
+    expect(await content('strict'), 'strict-once');
     final strictRequest = await scriptedClient.postUrl(
       Uri.parse('${scripted.baseUrl}/chat/completions'),
     );

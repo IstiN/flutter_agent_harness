@@ -17,6 +17,10 @@
 ///       - toolResultEcho: true
 ///       - text: "listed"
 ///       - error: {status: 503, message: "mock outage"}
+///   - match: "Existing tags:"  # background noise: call count is
+///     sticky: true             # schedule-dependent — re-serve the LAST
+///     responses:               # response forever instead of exhausting
+///       - text: ""
 /// ```
 ///
 /// One response entry per map, keyed by exactly one of:
@@ -29,10 +33,18 @@
 ///   (defaults 500 / `mock llm error`), surfaced by adapters as an error
 ///   turn.
 ///
+/// Scenario key `sticky: true` — once the queue runs dry, every further
+/// matching request re-serves the LAST response instead of answering HTTP
+/// 500 `script exhausted`. For background-noise scenarios whose call count
+/// is schedule-dependent (memory auto-tag generation, title/summary
+/// calls); the scripted conversation itself stays strict so a missing
+/// response still fails loudly.
+///
 /// Routing per `/chat/completions` request: the FIRST scenario whose
 /// `match` is a substring of the last user message pops the front of its
 /// queue; no match pops the top-level `responses` queue; an empty queue
-/// (or no fallback) answers HTTP 500 `script exhausted`.
+/// (or no fallback) answers HTTP 500 `script exhausted` — unless the
+/// matched scenario is sticky, which keeps serving its last response.
 library;
 
 import 'dart:convert';
@@ -193,12 +205,13 @@ MockScenario _parseScenario(Object? node, String path) {
     node['responses'],
     _join(path, 'responses'),
   );
+  final sticky = _optBool(node, 'sticky', path) ?? false;
   for (final key in node.keys) {
-    if (key != 'match' && key != 'responses') {
+    if (key != 'match' && key != 'responses' && key != 'sticky') {
       throw MockLlmConfigException('${_at(_join(path, '$key'))}unknown key');
     }
   }
-  return MockScenario(match: match, responses: responses);
+  return MockScenario(match: match, responses: responses, sticky: sticky);
 }
 
 List<MockResponse> _parseResponses(Object? node, String path) {
@@ -297,6 +310,15 @@ int? _optInt(YamlMap map, String key, String path) {
   if (value == null) return null;
   if (value is! int) {
     throw MockLlmConfigException('${_at(_join(path, key))}must be an integer');
+  }
+  return value;
+}
+
+bool? _optBool(YamlMap map, String key, String path) {
+  final value = map[key];
+  if (value == null) return null;
+  if (value is! bool) {
+    throw MockLlmConfigException('${_at(_join(path, key))}must be a boolean');
   }
   return value;
 }
