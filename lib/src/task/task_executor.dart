@@ -21,6 +21,7 @@ import 'dart:convert';
 
 import '../agent/auto_compactor.dart';
 import '../agent/agent.dart';
+import '../agent/misuse_breaker.dart';
 import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../agent/param_validator.dart';
@@ -85,7 +86,12 @@ final class TaskExecutor {
     this.childSessionFactory,
     this.childSessionOpener,
     this.compactionEngine,
+    this.misuseBreaker = true,
   });
+
+  /// The tool-misuse circuit breaker switch (issue #862, default true):
+  /// every spawned child agent gets a breaker wired into its loop.
+  final bool misuseBreaker;
 
   /// The parent tool pool (already minus any host-hidden tools).
   final List<AgentTool> childTools;
@@ -350,10 +356,14 @@ final class TaskExecutor {
       deliveryStage(id, 'wake', since: since);
       await semaphore.acquire();
       semaphoreAcquired = true;
+      final resumeRegistry = _childToolRegistry(
+        _resolveDefinition(handle.agentType),
+      );
       final (built, wakeSub, wiring) = _buildResumeChild(
         id: id,
         handle: handle,
         manager: manager,
+        toolRegistry: resumeRegistry,
       );
       child = built;
       inboxWakeSub = wakeSub;
@@ -389,6 +399,10 @@ final class TaskExecutor {
       // The agent loop surfaces provider failures as an error-tagged final
       // assistant message, not a throw — the same check `_run` relies on.
       _finalAssistantText(child);
+      // Issue #862 review (round 2): the resume output carries the same
+      // loud duplicate-registration warning as a fresh spawn — a resumed
+      // child's second life must not re-wire the leak silently.
+      _surfaceDuplicateRegistrationNotes(resumeRegistry.duplicateNotes, id);
       await _flushChildTranscript(id, child);
       // Turn-boundary billing already added each finished turn (issue
       // #332); the completion update bills only what is left and settles
@@ -427,6 +441,29 @@ final class TaskExecutor {
       _currentSubagentIds.remove(id);
       _inFlightCancels.remove(id);
     }
+  }
+
+  /// Appends the loud duplicate-registration warning to the child's stored
+  /// output artifact (issue #862 review, round 2). Read-modify-write:
+  /// [AgentOutputStore.put] replaces, and the spawn-time output under the
+  /// child's id must survive the resumed second life (round-3 review).
+  /// Single source of the warning text for BOTH child-result paths — the
+  /// spawn path passes its capped output as [existingOutput], the resume
+  /// path reads what the spawn stored (round-4 review).
+  void _surfaceDuplicateRegistrationNotes(
+    List<String> duplicateNotes,
+    String id, {
+    String? existingOutput,
+  }) {
+    if (duplicateNotes.isEmpty) return;
+    final existing = existingOutput ?? store.get(id);
+    store.put(
+      id,
+      '${existing == null || existing.isEmpty ? '' : '$existing\n\n'}'
+      '[fah] warning: duplicate tool registration in the child surface '
+      '(child-specific tool won): '
+      '${duplicateNotes.join(' | ')}',
+    );
   }
 
   /// Failure-path requeue of warm-wake mail (issue #647): the drained
@@ -611,6 +648,7 @@ final class TaskExecutor {
     required String id,
     required SubagentHandle handle,
     required SubagentManager manager,
+    required ToolRegistry toolRegistry,
   }) {
     final definition = _resolveDefinition(handle.agentType);
     final wiring = _resolveChildWiring(definition);
@@ -622,9 +660,12 @@ final class TaskExecutor {
       // shared background.
       systemPrompt: _buildSystemPrompt(definition, handle.context),
       streamFunction: wiring.stream,
-      toolRegistry: _childToolRegistry(definition),
+      toolRegistry: toolRegistry,
       externalSteeringSource: () => _inboxSteeringMessages(id),
       externalSteeringProbe: () => manager.hasPendingMessages(id),
+      // Issue #862: children get the same misuse circuit breaker as the
+      // parent loop — the luna death was a child.
+      toolMisuseBreaker: misuseBreaker ? ToolMisuseBreaker() : null,
     );
     final agent = child;
     final inboxWakeSub = manager.events.listen((event) {
@@ -682,10 +723,11 @@ final class TaskExecutor {
     }
 
     final wiring = _resolveChildWiring(definition);
+    final childRegistry = _childToolRegistry(definition);
     final (child, inboxWakeSub) = _buildChild(
       id: id,
       systemPrompt: _buildSystemPrompt(definition, context),
-      toolRegistry: _childToolRegistry(definition),
+      toolRegistry: childRegistry,
       wiring: wiring,
       cancelToken: cancelToken,
     );
@@ -711,7 +753,20 @@ final class TaskExecutor {
       );
 
       final capped = _capOutput(storedContent);
+      // Issue #862 review: a duplicate registration in the child surface
+      // (the luna wiring bug) degraded into a note — surface it loudly on
+      // the spawn result instead of letting it sit in the registry. The
+      // warning text is single-sourced in the shared helper so both child
+      // -result paths can't drift.
       store.put(id, capped.$1);
+      _surfaceDuplicateRegistrationNotes(
+        childRegistry.duplicateNotes,
+        id,
+        existingOutput: capped.$1,
+      );
+      // The stored artifact IS the source of truth for the result output:
+      // base content, or base + the single-sourced warning.
+      final output = store.get(id)!;
       final usage = _usageStats(child);
 
       final failed = structured?.status == StructuredValidationStatus.invalid;
@@ -744,7 +799,7 @@ final class TaskExecutor {
         agent: agentName,
         task: item.task,
         status: failed ? TaskSpawnStatus.failed : TaskSpawnStatus.completed,
-        output: capped.$1,
+        output: output,
         truncated: capped.$2,
         duration: stopwatch.elapsed,
         tokens: usage.tokens,
@@ -798,6 +853,9 @@ final class TaskExecutor {
       externalSteeringProbe: subagentManager == null
           ? null
           : () => subagentManager!.hasPendingMessages(id),
+      // Issue #862: children get the same misuse circuit breaker as the
+      // parent loop — the luna death was a child.
+      toolMisuseBreaker: misuseBreaker ? ToolMisuseBreaker() : null,
     );
     final inboxWakeSub = subagentManager?.events.listen((event) {
       if (event.handle.id == id && event.message != null) {

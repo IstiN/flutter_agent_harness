@@ -24,6 +24,7 @@ import 'package:yaml/yaml.dart';
 import '../hashline/hashline.dart';
 
 import '../agent/agent.dart';
+import '../agent/misuse_breaker.dart';
 import '../dap/dap_hub_snapshot.dart';
 import 'agent_event_handler.dart';
 import 'ansi_markdown.dart';
@@ -571,6 +572,8 @@ class AgentCli {
       // Issue #439: children compact on the host's engine choice (live
       // settings override, else config, else structured default).
       compactionEngine: config.liveCompactionEngine ?? config.compactionEngine,
+      // Issue #862: the `agent.misuseBreaker` switch covers children too.
+      misuseBreaker: config.misuseBreaker,
       // Real JSONL child sessions, created at child completion (fast
       // register keeps the steering race away; the transcript lands when
       // the child finishes).
@@ -620,7 +623,11 @@ class AgentCli {
       ...coreTools,
       ...monitoringTools,
       taskTool(config: _taskConfig),
-    ]);
+    ], (note) {
+      // Issue #862 review: a duplicate registration (e.g. a host passing
+      // child-injected tools through the parent surface) must be loud.
+      io.writeln(_style.dim('[fah] warning: $note'));
+    });
     _agent = Agent(
       model: config.model,
       systemPrompt: config.systemPrompt ?? _currentMode.systemPrompt,
@@ -644,6 +651,9 @@ class AgentCli {
       // Issue #387: the loop's over-window guard hands the transcript to
       // this relief before refusing — one synchronous compaction pass.
       overWindowRelief: (overWindow) => _relieveOverWindow(overWindow),
+      // Issue #862: tool-misuse circuit breaker (off switch:
+      // `agent.misuseBreaker: false`).
+      toolMisuseBreaker: config.misuseBreaker ? ToolMisuseBreaker() : null,
     );
     // The main agent's inbox in the messaging fabric: messages from
     // children (agent_message to "main") and from other Fa instances
