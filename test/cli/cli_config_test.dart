@@ -828,6 +828,40 @@ prompts:
         expect(loaded.agentMode, isNull);
       });
 
+      test('parses agent.misuseBreaker = false (issue #862)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  misuseBreaker: false\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.misuseBreaker, isFalse);
+      });
+
+      test('misuseBreaker defaults to true when the key is absent '
+          '(issue #862)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: pi\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.misuseBreaker, isTrue);
+      });
+
+      test('rejects a non-boolean misuseBreaker with the exact message '
+          '(issue #862)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  misuseBreaker: "off"\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              '"agent.misuseBreaker" must be a boolean',
+            ),
+          ),
+        );
+      });
+
       test('rejects an unknown agent.mode value', () {
         final file = File('${tmp.path}/.fah/config.yaml');
         file.createSync(recursive: true);
