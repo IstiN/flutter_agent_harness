@@ -122,7 +122,7 @@ Future<void> main(List<String> args) async {
     environment: env,
     raw: true,
   );
-  pty.resize(80, 24);
+  pty.resize(0, 0); // python pty.fork default: no TIOCSWINSZ — 0x0 pty
   final terminal = Terminal(maxLines: 400);
   final chunkLog = File('/tmp/gh1197_chunks.log').openWrite();
   final rawSink = File('/tmp/gh1197_raw.log').openWrite();
