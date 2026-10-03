@@ -27,6 +27,7 @@ void main() {
       expect(config.toolLivenessSeconds, 60);
       expect(config.toolLivenessTickSeconds, 60);
       expect(config.toolEscalateSeconds, 300);
+      expect(config.toolNudge, isTrue, reason: 'the #1185 nudge ships on');
     });
 
     test('fromYaml parses all five keys', () {
@@ -42,6 +43,23 @@ void main() {
       expect(config.toolLivenessSeconds, 30);
       expect(config.toolLivenessTickSeconds, 45);
       expect(config.toolEscalateSeconds, 600);
+    });
+
+    test('fromYaml parses the toolNudge kill switch (issue #1185 E5)', () {
+      expect(
+        WaitingConfig.fromYaml({
+          'toolLivenessSeconds': 30,
+          'toolEscalateSeconds': 600,
+          'toolNudge': false,
+        }).toolNudge,
+        isFalse,
+      );
+      expect(WaitingConfig.fromYaml({'toolNudge': true}).toolNudge, isTrue);
+      expect(
+        () => WaitingConfig.fromYaml({'toolNudge': 'off'}),
+        throwsA(anything),
+        reason: 'a non-boolean kill switch is a schema error, not a disable',
+      );
     });
 
     test('fromYaml rejects unknown and negative values', () {
@@ -106,6 +124,11 @@ void main() {
       expect(config.toYaml(), contains('toolLivenessSeconds: 90'));
       expect(config.toYaml(), contains('toolLivenessTickSeconds: 30'));
       expect(config.toYaml(), contains('toolEscalateSeconds: 240'));
+      expect(config.toYaml(), contains('toolNudge: true'));
+      expect(
+        const WaitingConfig(toolNudge: false).toYaml(),
+        contains('toolNudge: false'),
+      );
     });
   });
 
@@ -443,6 +466,55 @@ void main() {
         start.add(const Duration(milliseconds: 59900)),
       );
       expect(line, '⏳ [bash] sleep 500 — running 59s');
+    });
+  });
+
+  group('toolNudgeNotice (issue #1185)', () {
+    final start = DateTime.utc(2026, 1, 1, 12);
+
+    test('names the tool, the elapsed, and the three decisions', () {
+      final call = ToolLivenessCall(
+        id: 't1',
+        toolName: 'bash',
+        detail: 'sleep 500',
+        startedAt: start,
+      );
+      final notice = toolNudgeNotice(
+        call,
+        start.add(const Duration(seconds: 312)),
+      );
+      expect(notice, startsWith('<system-notice>'));
+      expect(notice, contains('[liveness watchdog]'));
+      expect(notice, contains('`bash`'));
+      expect(notice, contains('"sleep 500"'));
+      expect(notice, contains('312s'));
+      expect(notice, contains('keep waiting'));
+      expect(notice, contains('bash background: true'));
+      expect(notice, contains('kill'));
+      expect(
+        notice,
+        contains('does not stop the call'),
+        reason: 'the model must know the call kept running',
+      );
+      expect(notice, endsWith('</system-notice>'));
+    });
+
+    test('a multi-line command tail stays single-line inside the notice', () {
+      final call = ToolLivenessCall(
+        id: 't1',
+        toolName: 'bash',
+        detail: 'line one\nline two',
+        startedAt: start,
+      );
+      final notice = toolNudgeNotice(
+        call,
+        start.add(const Duration(seconds: 60)),
+      );
+      expect(
+        notice.split('\n').where((l) => l.contains('line one')),
+        hasLength(1),
+      );
+      expect(notice, isNot(contains('line one\nline two')));
     });
   });
 }
