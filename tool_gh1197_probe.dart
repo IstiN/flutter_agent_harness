@@ -73,11 +73,16 @@ Future<void> main() async {
   pty.resize(80, 24);
   final terminal = Terminal(maxLines: 200);
   final chunks = <({int ms, int bytes})>[];
+  final rawLog = File('/tmp/gh1197_raw.log');
+  final rawSink = rawLog.openWrite();
+  final chunkLog = File('/tmp/gh1197_chunks.log').openWrite();
   final sw = Stopwatch()..start();
   var received = 0;
   pty.out.listen((text) {
     received += text.length;
     chunks.add((ms: sw.elapsedMilliseconds, bytes: text.length));
+    chunkLog.writeln('${sw.elapsedMilliseconds}\t${text.length}');
+    rawSink.write(text);
     terminal.write(text);
   });
   terminal.onOutput = pty.write;
@@ -143,8 +148,10 @@ Future<void> main() async {
     );
   }
   stdout.writeln('total bytes: $received');
+  stdout.writeln('home kept at ${home.path}');
+  await rawSink.flush();
+  await rawSink.close();
+  await chunkLog.flush();
+  await chunkLog.close();
   pty.kill(ProcessSignal.sigkill);
-  await pty.exitCode.timeout(const Duration(seconds: 5), onTimeout: () => -1);
-  await home.delete(recursive: true);
-  await project.delete(recursive: true);
 }
