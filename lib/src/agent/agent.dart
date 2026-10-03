@@ -165,7 +165,10 @@ final class _ActiveRun {
 /// Default for [Agent.runIdleTimeout]: eight minutes of event silence
 /// outside tool execution. Legitimate silent windows are bounded well below
 /// this — the connect timeout (180s) covers request setup and the provider
-/// stream idle watchdog (300s) covers mid-stream gaps.
+/// stream idle watchdog (300s) covers mid-stream gaps. The one declared
+/// exception is the over-window relief compaction (issue #1085): it is
+/// suspended around `overWindowRelief` instead of being allowed to fire
+/// mid-relief and kill the run the relief is trying to save.
 const defaultRunIdleTimeout = Duration(minutes: 8);
 
 /// `Agent` owns the current transcript, emits lifecycle events, executes
@@ -198,6 +201,7 @@ class Agent {
     this.maxEmptyRetries = 1,
     this.runIdleTimeout = defaultRunIdleTimeout,
     this.onRunIdleTimeout,
+    this.onRunWatchdogPaused,
     this.contextWindowCap,
     this.wireDump = false,
     this.overWindowRelief,
@@ -238,6 +242,12 @@ class Agent {
   /// Reports every run-idle watchdog fire (after [runIdleTimeout] of event
   /// silence); hosts log it for post-mortem "who held the busy row".
   final void Function(Object error)? onRunIdleTimeout;
+
+  /// Reports every run-idle watchdog PAUSE (issue #1085 M3): the
+  /// over-window relief is a declared long silent window, so [Agent]
+  /// suspends the watchdog for its duration — hosts surface that pause
+  /// visibly (a dim note), not only in the diagnostic log. Default: none.
+  final void Function()? onRunWatchdogPaused;
 
   /// Opt-in raw wire dumps (issue #385 F5, default off): when on, every
   /// [ModelRequestEvent] carries the raw serialized outbound payload for
@@ -368,7 +378,10 @@ class Agent {
     return _steeringQueue.hasItems() || _followUpQueue.hasItems();
   }
 
-  /// Active cancel token for the current run, if any.
+  /// Active cancel token for the current run, if any. Hosts use it to
+  /// LINK secondary work (issue #1085: the over-window relief's
+  /// compaction tokens) to the run, so a user abort reaches in-flight
+  /// work the watchdog never owned.
   CancelToken? get cancelToken => _activeRun?.source.token;
 
   /// Aborts the current run, if one is active. Also disarms the idle
@@ -493,10 +506,38 @@ class Agent {
 
   AgentLoopConfig _createLoopConfig({bool skipInitialSteeringPoll = false}) {
     var skip = skipInitialSteeringPoll;
+    final relief = overWindowRelief;
     return AgentLoopConfig(
       model: _state.model,
       contextWindowCap: contextWindowCap,
-      overWindowRelief: overWindowRelief,
+      // Issue #1085 M1: the over-window relief is a DECLARED long silent
+      // window (structured ≤15 min + classic fallback ≤15 min, zero agent
+      // events) — like tool execution, not a wedge. Suspend the run idle
+      // watchdog for its duration; the disarm happens synchronously BEFORE
+      // the relief await, so a watchdog firing exactly as relief starts
+      // has no race window left. Re-armed after relief unless the run was
+      // cancelled meanwhile (an explicit user abort must not be revived
+      // into a fresh timer). User aborts themselves are unaffected: they
+      // cancel the run token directly, never through this timer.
+      overWindowRelief: relief == null
+          ? null
+          : (messages) async {
+              // Signal BEFORE disarming: the pause is observable only if
+              // the check sees the still-armed timer (a watchdog that was
+              // actually running — with runIdleTimeout disabled nothing
+              // was armed and no fiction is reported).
+              final watchdogWasArmed = _runWatchdogTimer != null;
+              _disarmRunWatchdog();
+              if (watchdogWasArmed) onRunWatchdogPaused?.call();
+              try {
+                return await relief(messages);
+              } finally {
+                final run = _activeRun;
+                if (run != null && !run.source.token.isCancelled) {
+                  _armRunWatchdog();
+                }
+              }
+            },
       toolExecution: toolExecution,
       beforeToolCall: beforeToolCall,
       afterToolCall: afterToolCall,
@@ -645,7 +686,7 @@ class Agent {
     _runWatchdogTimer = null;
     final run = _activeRun;
     if (run == null) return;
-    final error = TimeoutException(
+    final error = RunIdleWatchdogFire(
       'agent run produced no events for '
       '${runIdleTimeout.inSeconds}s (run idle watchdog)',
       runIdleTimeout,

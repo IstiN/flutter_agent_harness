@@ -11,7 +11,7 @@ extension on AgentCli {
   /// prefills and [editName] are set) without awaiting it: the REPL loop
   /// must keep reading lines so the flow's prompts can be answered
   /// (awaiting it here would deadlock the loop on the first question).
-  void _startProviderFlow({
+  Future<void>? _startProviderFlow({
     String? initialType,
     String? initialBaseUrl,
     String? initialName,
@@ -19,34 +19,55 @@ extension on AgentCli {
     String? editName,
     ({String label, Future<String?> Function() run})? reauth,
   }) {
-    if (_providerFlowActive) return;
+    if (_providerFlowActive) return null;
     _providerFlowActive = true;
-    unawaited(
-      runCustomProviderFlow(
-        io,
-        CustomProviderFlowConfig(
-          askLine: _askLine,
-          pickOption: _pickOption,
-          fetchModels: _fetchModelsForFlow,
-          applyResult: (setup) =>
-              _applyCustomProviderSetup(setup, editName: editName),
-          currentModelId: () => _agent.state.model.id,
-          rolesActive: config.modelRolesResolver != null,
-          deriveName: (baseUrl) =>
-              config.customProviders?.deriveName(baseUrl) ?? 'custom',
-          initialType: initialType,
-          initialBaseUrl: initialBaseUrl,
-          initialName: initialName,
-          initialModelId: initialModelId,
-          editName: editName,
-          reauth: reauth,
-        ),
-      ).whenComplete(() {
-        _providerFlowActive = false;
-        // Leftover buffered lines are flow answers, not user prompts.
-        _promptLineBuffer.clear();
-      }),
-    );
+    // The future is surfaced (line-mode fresh-install redraw chains on it)
+    // while staying fire-and-forget for every slash-command caller: the
+    // REPL loop must keep reading lines so the flow's prompts can be
+    // answered (awaiting it would deadlock the loop on the first question).
+    final done =
+        runCustomProviderFlow(
+          io,
+          CustomProviderFlowConfig(
+            askLine: _askLine,
+            pickOption: _pickOption,
+            fetchModels: _fetchModelsForFlow,
+            applyResult: (setup) =>
+                _applyCustomProviderSetup(setup, editName: editName),
+            currentModelId: () => _agent.state.model.id,
+            rolesActive: config.modelRolesResolver != null,
+            deriveName: (baseUrl) =>
+                config.customProviders?.deriveName(baseUrl) ?? 'custom',
+            initialType: initialType,
+            initialBaseUrl: initialBaseUrl,
+            initialName: initialName,
+            initialModelId: initialModelId,
+            editName: editName,
+            reauth: reauth,
+          ),
+        ).whenComplete(() {
+          _providerFlowActive = false;
+          // Leftover buffered lines are flow answers, not user prompts.
+          _promptLineBuffer.clear();
+        });
+    unawaited(done);
+    return done;
+  }
+
+  /// Fresh-install gate (issue #969): the executable flagged a REPL boot
+  /// with nothing configured and no key anywhere — open the same guided
+  /// add-provider wizard `/provider custom` opens, before the first
+  /// prompt, so the user adds a provider instead of staring at the
+  /// default provider's "no key set" noise. Fire-and-forget like every
+  /// flow start: the REPL loop answers the prompts. Piped input (and
+  /// headless, which never gets the flag) never enters the wizard.
+  /// Returns the wizard's future (null when the boot is not fresh) so the
+  /// line-mode entry can redraw the idle prompt when it settles — the flow
+  /// completes outside `_handleLine`, when the loop is parked reading the
+  /// next line.
+  Future<void>? _maybeStartFreshInstallProviderFlow() {
+    if (!config.freshInstallProviderFlow || !io.isInteractive) return null;
+    return _startProviderFlow();
   }
 
   /// The Edit/Delete picker for a custom provider entry.
@@ -449,6 +470,7 @@ extension on AgentCli {
       entry.modelId,
       token: token,
       tokenKeyName: keyName,
+      authHeader: entry.authHeader,
     );
   }
 
@@ -1750,19 +1772,19 @@ extension on AgentCli {
     return host;
   }
 
-/// The shared refusal wording for a provider id no enabled catalog entry
-/// names (issue #772): the enabled names, plus the kinds that add
-/// information (`chatgpt-codex`), so a kind-shaped typo is discoverable.
-/// One constant for the `/provider` and `/model` refusals.
-String _unknownProviderMessage(String id) {
-  final kinds = [
-    for (final name in enabledProviderNames())
-      if (canonicalProviderKind(name) != name) canonicalProviderKind(name),
-  ];
-  return 'unknown provider: $id — supported providers: '
-      '${enabledProviderNames().join(', ')}'
-      '${kinds.isEmpty ? '' : ' — kinds accepted too: ${kinds.join(', ')}'}';
-}
+  /// The shared refusal wording for a provider id no enabled catalog entry
+  /// names (issue #772): the enabled names, plus the kinds that add
+  /// information (`chatgpt-codex`), so a kind-shaped typo is discoverable.
+  /// One constant for the `/provider` and `/model` refusals.
+  String _unknownProviderMessage(String id) {
+    final kinds = [
+      for (final name in enabledProviderNames())
+        if (canonicalProviderKind(name) != name) canonicalProviderKind(name),
+    ];
+    return 'unknown provider: $id — supported providers: '
+        '${enabledProviderNames().join(', ')}'
+        '${kinds.isEmpty ? '' : ' — kinds accepted too: ${kinds.join(', ')}'}';
+  }
 
   /// The catalog-switch branch of [_handleProviderCommand]: resolves the
   /// provider name against the catalog and switches with the optional
@@ -2033,6 +2055,7 @@ String _unknownProviderMessage(String id) {
     String modelId, {
     String? token,
     String? tokenKeyName,
+    String? authHeader,
   }) async {
     try {
       final modelLine = modelId == _agent.state.model.id
@@ -2080,6 +2103,7 @@ String _unknownProviderMessage(String id) {
               modelId: modelId,
               baseUrl: baseUrl,
               apiKeyName: pinnedKeyName,
+              authHeader: authHeader,
             ),
           ]);
           rolesResolver.applyToAgent(_agent);
@@ -2128,6 +2152,7 @@ String _unknownProviderMessage(String id) {
         maxTokens: builtModel.maxTokens,
         headers: builtModel.headers,
         compat: builtModel.compat,
+        authHeader: authHeader,
       );
       // The cached model list belongs to the previous provider/endpoint.
       _modelCache = const [];
@@ -2378,6 +2403,17 @@ String _unknownProviderMessage(String id) {
       io.writeln(
         'secure storage: ${keys.label} '
         '(/key set <NAME> <value>, /key delete <NAME>)',
+      );
+    }
+    // gh-1059 review: save degradations can only happen AFTER boot (every
+    // `keys.save()` call site is interactive), so the boot summary can
+    // never see them — the status print is where they are live.
+    if (keys != null && keys.saveFailures > 0) {
+      final last = keys.lastSaveError;
+      io.writeln(
+        'warning: ${keys.saveFailures} secure-store save(s) degraded to '
+        'session-only${last == null ? '' : ' ($last)'} — re-enter the keys '
+        'once the store is writable',
       );
     }
   }

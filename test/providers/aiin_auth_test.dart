@@ -2,9 +2,11 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/src/providers/aiin_auth.dart';
+import 'package:flutter_agent_harness/src/providers/provider_common.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart' as http_testing;
 import 'package:test/test.dart';
@@ -233,5 +235,33 @@ void main() {
         ),
       );
     });
+  });
+
+  group('provider fetch watchdog (issue #1036)', () {
+    tearDown(() => providerTimeoutsOverride = null);
+
+    test(
+      'a hanging auth endpoint fails fast with a TimeoutException instead '
+      'of hanging the session',
+      timeout: const Timeout(Duration(seconds: 20)),
+      () async {
+        providerTimeoutsOverride = const ProviderTimeoutsOverride(
+          fetchRead: Duration(milliseconds: 150),
+        );
+        final client = http_testing.MockClient(
+          (_) => Completer<http.Response>().future,
+        );
+        await expectLater(
+          fetchAiinOAuthProviders(client: client),
+          throwsA(
+            isA<AiinAuthException>().having(
+              (e) => e.message,
+              'message',
+              allOf(contains('TimeoutException'), contains('aiin auth')),
+            ),
+          ),
+        );
+      },
+    );
   });
 }

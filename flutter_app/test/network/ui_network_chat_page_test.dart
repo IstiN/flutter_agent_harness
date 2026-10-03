@@ -110,6 +110,32 @@ void main() {
       await rig.session.close();
     });
 
+    testWidgets('hub-originated envelope renders the envelope senderName '
+        '(fa_network#2)', (tester) async {
+      final rig = await pumpChat(tester);
+      final payload = await encryptAs(
+        sender: otherIdentity,
+        channelPub: channelKeys.pub,
+        envelopeId: 'e-dap',
+        plaintext: 'hello from dap',
+        aadTarget: 'c1',
+      );
+      rig.channel.serverEvent('envelope', {
+        'id': 'e-dap',
+        'channelId': 'c1',
+        // A hub agent id — deliberately NOT in the fa_network roster.
+        'senderId': '05de571e0cea983f',
+        'senderName': 'fa-agent',
+        'payload': payload,
+      });
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      expect(find.textContaining('hello from dap'), findsWidgets);
+      expect(find.textContaining('fa-agent'), findsWidgets);
+      await rig.session.close();
+    });
+
     testWidgets('the composer hint names the channel; sending goes to the '
         'socket as ciphertext', (tester) async {
       final rig = await pumpChat(tester);
@@ -120,7 +146,10 @@ void main() {
       expect(field, findsOneWidget);
 
       await tester.enterText(field, 'hello channel');
-      await tester.tap(find.byKey(const ValueKey('channelSend')));
+      // The shared ChatComposer chrome: the filled send button carries
+      // the localized send tooltip (the 'composerTrailingSend' key only
+      // exists in the one-action swap slot).
+      await tester.tap(find.byTooltip('Send'));
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 20));
       }

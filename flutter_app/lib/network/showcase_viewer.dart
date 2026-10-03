@@ -45,11 +45,17 @@ final class ShowcaseMessage {
     required this.id,
     required this.senderId,
     required this.text,
+    this.senderName,
     this.createdAt,
   });
 
   final String id;
   final String senderId;
+
+  /// The sender's display name when the envelope carries one
+  /// (hub-originated DAP agents — fa_network#2); the raw [senderId]
+  /// renders otherwise.
+  final String? senderName;
   final String? text;
   final DateTime? createdAt;
 }
@@ -107,6 +113,7 @@ final class ShowcaseViewer extends ChangeNotifier {
           ShowcaseMessage(
             id: envelope.id,
             senderId: envelope.senderId,
+            senderName: envelope.senderName,
             text: decodePublicChannelPayload(envelope.payload),
             createdAt: envelope.createdAt,
           ),

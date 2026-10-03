@@ -351,6 +351,37 @@ void main() {
       expect(passwordField.autofocus, isTrue);
     });
 
+    testWidgets(
+      'public directory hides networks the wallet already belongs to',
+      (tester) async {
+        final wallet = await KeyWallet.load(MemoryWalletBackend());
+        await wallet.addNetwork(networkId: 'net1', name: 'fa-team');
+        final controller = NetworkModeController.inMemory(
+          mode: AppMode.network,
+        );
+        final httpClient = FakeHttpClient()
+          ..publicNetworksResponse = http.Response(
+            '{"items":[{"id":"net1","name":"fa-team","publicChannels":1,'
+            '"memberCount":4},{"id":"pub-1","name":"open-hub",'
+            '"publicChannels":3,"memberCount":42}],"nextCursor":""}',
+            200,
+          );
+        final manager = await _manager(wallet: wallet, httpClient: httpClient);
+
+        await tester.pumpWidget(
+          _wrap(NetworksSidebar(controller: controller, manager: manager)),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        // My network appears exactly once — in my list, not the catalog.
+        expect(find.text('fa-team'), findsOneWidget);
+        expect(find.text('open-hub'), findsOneWidget);
+        expect(find.byKey(const ValueKey('publicView:net1')), findsNothing);
+        expect(find.byKey(const ValueKey('publicJoin:net1')), findsNothing);
+      },
+    );
+
     testWidgets('a join re-probes the public directory', (tester) async {
       final wallet = await KeyWallet.load(MemoryWalletBackend());
       await wallet.addNetwork(

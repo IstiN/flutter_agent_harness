@@ -295,7 +295,18 @@ enum ExecutionErrorCode {
 /// Ported from pi's `ExecutionError`.
 final class ExecutionError implements Exception {
   /// Creates an [ExecutionError] with a [code] and [message].
-  const ExecutionError(this.code, this.message, {this.cause});
+  ///
+  /// [stdout]/[stderr] carry the captured partial output when the command
+  /// was killed mid-run (timeout/cancel, gh-1053): the bounded return must
+  /// deliver the evidence of WHERE the call stalled, not just the fact.
+  /// Empty for every other failure class.
+  const ExecutionError(
+    this.code,
+    this.message, {
+    this.cause,
+    this.stdout = '',
+    this.stderr = '',
+  });
 
   /// Backend-independent error code.
   final ExecutionErrorCode code;
@@ -305,6 +316,17 @@ final class ExecutionError implements Exception {
 
   /// The original backend error, when available.
   final Object? cause;
+
+  /// Captured partial stdout of a killed run (timeout/cancel), empty
+  /// otherwise. Tail-capped at the source to the last 64 KiB
+  /// (`LocalShell._captureMax`) — renderers may truncate further, but no
+  /// consumer inherits an unbounded retention.
+  final String stdout;
+
+  /// Captured partial stderr of a killed run (timeout/cancel), empty
+  /// otherwise. Tail-capped at the source to the last 64 KiB — see
+  /// [stdout].
+  final String stderr;
 
   @override
   String toString() => 'ExecutionError(${code.name}): $message';
@@ -354,6 +376,8 @@ final class ShellExecOptions {
     this.onStderr,
     this.stdinData,
     this.liveStdin,
+    this.jobLogMaxBytes,
+    this.onJobLogWarning,
   });
 
   /// Working directory for the command. Defaults to [FileSystem.cwd].
@@ -386,6 +410,16 @@ final class ShellExecOptions {
   /// arrives mid-run can be answered through [LiveStdinChannel.write].
   /// Null keeps the old behavior: stdin closes right after start.
   final LiveStdinChannel? liveStdin;
+
+  /// Size ceiling for a detached job's log in bytes (issue #919). Only
+  /// honored by [BackgroundShell.startShellJob]; null means the shell's
+  /// default ([defaultJobLogMaxBytes]). Foreground execs ignore it.
+  final int? jobLogMaxBytes;
+
+  /// Fired at most once per detached job when the low-disk guard stops log
+  /// writes (issue #919). Only honored by [BackgroundShell.startShellJob];
+  /// foreground execs ignore it.
+  final void Function(String message)? onJobLogWarning;
 }
 
 /// Outcome of a completed [Shell.exec] invocation.

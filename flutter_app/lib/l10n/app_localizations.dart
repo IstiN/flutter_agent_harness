@@ -806,12 +806,6 @@ abstract class AppLocalizations {
   /// **'Show all ({count})'**
   String chatShowAll(Object count);
 
-  /// No description provided for @chatTyping.
-  ///
-  /// In en, this message translates to:
-  /// **'Fa is typing...'**
-  String get chatTyping;
-
   /// No description provided for @chatUploadFailed.
   ///
   /// In en, this message translates to:
@@ -1214,6 +1208,12 @@ abstract class AppLocalizations {
   /// **'Chat actions'**
   String get launcherChatActionsTooltip;
 
+  /// No description provided for @faEntryHintTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap: continue the active chat · Hold: new chat'**
+  String get faEntryHintTooltip;
+
   /// No description provided for @launcherChatEmptyHint.
   ///
   /// In en, this message translates to:
@@ -1369,6 +1369,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'App failed to install'**
   String get launcherSeedErrorTitle;
+
+  /// No description provided for @launcherManifestErrorTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'App failed to load'**
+  String get launcherManifestErrorTitle;
+
+  /// No description provided for @appsManifestErrorLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Manifest error'**
+  String get appsManifestErrorLabel;
 
   /// No description provided for @launcherTileSizeIcon.
   ///
@@ -2606,6 +2618,18 @@ abstract class AppLocalizations {
   /// **'Reuse skills Claude, Copilot or Codex left in the project folder (.claude, .github, .codex)'**
   String get settingsSkillsAccessHint;
 
+  /// No description provided for @settingsSkillsToggles.
+  ///
+  /// In en, this message translates to:
+  /// **'Built-in skills'**
+  String get settingsSkillsToggles;
+
+  /// No description provided for @settingsSkillsTogglesHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable or disable the skills that ship with Fa'**
+  String get settingsSkillsTogglesHint;
+
   /// No description provided for @skillsAccessAsk.
   ///
   /// In en, this message translates to:
@@ -3170,6 +3194,18 @@ abstract class AppLocalizations {
   /// **'Turn tools off or on for Fa — applies immediately, no restart.'**
   String get toolsAvailabilityHint;
 
+  /// No description provided for @settingsRedaction.
+  ///
+  /// In en, this message translates to:
+  /// **'Secret redaction'**
+  String get settingsRedaction;
+
+  /// No description provided for @settingsRedactionHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Mask API keys and secrets in everything Fa sends or stores. Applies immediately, no restart.'**
+  String get settingsRedactionHint;
+
   /// No description provided for @toolsAvailabilityUnavailable.
   ///
   /// In en, this message translates to:
@@ -3296,6 +3332,54 @@ abstract class AppLocalizations {
   /// **'Unknown'**
   String get publicationStateUnknown;
 
+  /// No description provided for @widgetStatusNotPublished.
+  ///
+  /// In en, this message translates to:
+  /// **'Not published'**
+  String get widgetStatusNotPublished;
+
+  /// No description provided for @widgetStatusValidating.
+  ///
+  /// In en, this message translates to:
+  /// **'Validating…'**
+  String get widgetStatusValidating;
+
+  /// No description provided for @widgetStatusInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid'**
+  String get widgetStatusInvalid;
+
+  /// No description provided for @widgetStatusFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Publish failed'**
+  String get widgetStatusFailed;
+
+  /// No description provided for @widgetStatusErrors.
+  ///
+  /// In en, this message translates to:
+  /// **'Validator errors:'**
+  String get widgetStatusErrors;
+
+  /// No description provided for @widgetStatusOpenRun.
+  ///
+  /// In en, this message translates to:
+  /// **'Open CI run'**
+  String get widgetStatusOpenRun;
+
+  /// No description provided for @widgetDetailVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Version'**
+  String get widgetDetailVersion;
+
+  /// No description provided for @widgetDetailAuthor.
+  ///
+  /// In en, this message translates to:
+  /// **'Author'**
+  String get widgetDetailAuthor;
+
   /// No description provided for @publicationSubmittedAt.
   ///
   /// In en, this message translates to:
@@ -3403,6 +3487,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Session ({size} MB) is over the instant-open budget and couldn\'t be opened safely.'**
   String sessionTooLargeTitle(String size);
+
+  /// Fa-entry long-press mint failure: the new session could not be created — logged and surfaced as a snack, the active session is kept (issue #864, review #1144 follow-up)
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t create a new session.'**
+  String get sessionMintFailed;
 
   /// Boot notice when the last-active session is over the instant-open budget and was not resumed (issue #381); the action opens it windowed
   ///
@@ -4103,7 +4193,7 @@ abstract class AppLocalizations {
   /// Composer replacement in the anonymous showcase
   ///
   /// In en, this message translates to:
-  /// **'Public showcase — read-only preview. Join the network to participate.'**
+  /// **'Read-only preview — tap to join the network and write.'**
   String get networkShowcaseReadOnly;
 
   /// Channel rail placeholder while the session connects
@@ -4153,6 +4243,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No keys for this channel on this device.'**
   String get networkAddAgentNoKeys;
+
+  /// Network-scope agent invite note when the wallet can produce no channel invites to bundle
+  ///
+  /// In en, this message translates to:
+  /// **'No channel keys in this wallet — the agent will see channels only after a key invite'**
+  String get networkAddAgentNoChannelKeys;
 
   /// Agent invite scope segment: channel-only access
   ///

@@ -215,6 +215,49 @@ void main() {
       expect(state.messages.last.text, 'hi me');
     });
 
+    test(
+      '#1002: pure-DAP frame (AAD = channel id, no name) decrypts',
+      () async {
+        final httpClient = FakeHttpClient()
+          ..respond(200, body: channelsBody)
+          ..respond(200, body: membersBody)
+          ..respond(200, body: jsonEncode({'items': <dynamic>[]}));
+        final connector = FakeWsConnector();
+        final wallet = await walletWithChannel(
+          channelPub: channelKeys.pub,
+          channelPriv: channelKeys.priv,
+        );
+        final session = buildSession(
+          httpClient: httpClient,
+          connector: connector,
+          wallet: wallet,
+        );
+        addTearDown(session.close);
+        await session.start();
+        await session.openChannel('c1');
+        await pumpEventQueue();
+        final state = session.channelStates['c1']!;
+
+        // A pure-DAP agent (fah_hub_client sendChannelEnvelope) seals with
+        // the hub-side channel id — it cannot know the display name.
+        final payload = await encryptAs(
+          sender: otherIdentity,
+          channelPub: channelKeys.pub,
+          envelopeId: 'e-dap',
+          plaintext: 'hello from a pure-DAP agent',
+          aadTarget: 'c1',
+        );
+        connector.channels.single.serverEvent('envelope', {
+          'id': 'e-dap',
+          'channelId': 'c1',
+          'senderId': 'relay-1',
+          'payload': payload,
+        });
+        await pumpEventQueue();
+        expect(state.messages.single.text, 'hello from a pure-DAP agent');
+      },
+    );
+
     test('presence.changed updates the roster', () async {
       final httpClient = FakeHttpClient()
         ..respond(200, body: channelsBody)

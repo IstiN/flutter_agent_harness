@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.0.485
+
+
+- fix(ci): Daily auto-publish `pub.dev` leg — poll the pub.dev API until it
+  reflects the rerun's publish instead of a single read. 2026-09-28: the
+  recovery rerun published AND self-verified 1.0.483 (`pub.dev verified`
+  at 05:44:11Z), but the leg's one-shot API query 52s later hit a stale
+  replica, saw 1.0.482 and false-errored "manual publish needed". Initial
+  behind-check now takes three spaced reads (newest wins) so a stale read
+  cannot trigger unnecessary recovery either.
+- fix(ci): `install-pin-bump` no longer hard-gates on `release-provenance`.
+  When provenance FAILED (binaries/signature upload race), the marker job
+  was left SKIPPED — and `rerun --failed` never resurrects skipped jobs, so
+  the `vpinned` marker stayed stale forever (v1.0.483: the recovery rerun
+  went green, the marker never advanced). The job now uses
+  `if: always()`; `pin_release.sh`'s own pre-move provenance gate
+  (`check_install_pin.sh` with `FA_PIN_TARGET`) fails it loudly instead of
+  moving the marker, and a FAILED job IS part of `rerun --failed` — so the
+  recovery cascade reaches it.
+
+## 1.0.483
+
+
+- fix(install): the pinned default is now the `vpinned` RELEASE MARKER —
+  no committed pin at all. `install-config.yaml` `pinned_cli_version`
+  said 0.1.452 while the generated `site/install.sh` carried 1.0.480
+  (#1015 hand-edited only the generated file): a committed pin rots, and a
+  pin advanced by committing/pushing from the release pipeline re-races
+  `auto_release` and re-triggers Pages on every tag. Instead, the
+  installer resolves the standing `vpinned` release marker (its
+  `PINNED_VERSION` asset names the known-good release) and verifies the
+  pointed release exactly as before — the marker is only a pointer, so a
+  tampered one fails closed (DoS at worst, never a bad binary; the
+  embedded trust anchor stays the real trust root).
+  `scripts/pin_release.sh` advances the marker from the tag-scoped
+  `install-pin-bump` CI job after `release-provenance` signs the release:
+  pure release-artifact manipulation — zero commits, zero pushes, no
+  `RELEASE_PAT`, no regeneration (`is-newer` keeps bumps forward-only; a
+  pre-move `check_install_pin.sh` run with `FA_PIN_TARGET` proves the new
+  release BEFORE the marker moves, and a post-move run proves the
+  published marker). `scripts/check_install_pin.sh` (new ci.yml
+  `install-pin-gate` job on every PR, aggregated into the Quality gate)
+  fails when the generated installer drifts from the marker model
+  (`E_PIN_DRIFT`), the marker is missing/ill-formed (`E_PIN_MISSING` /
+  `E_PIN_INVALID`), or the marked release lacks a signature-verified
+  `SHA256SUMS` covering every platform archive (`E_PIN_PROVENANCE_MISSING`
+  / `E_PIN_PROVENANCE_INVALID` / `E_PIN_ASSET_COVERAGE`). Fixture coverage
+  in `installer_verify_selftest.sh`: contracts 1/1b/5/6, including
+  end-to-end `pin_release.sh` runs against a `file://` fixture release
+  root. `gen_installers.dart` drops the `pinned_cli_version` knob.
+
 ## 1.0.472
 
 - feat(818): herdr integration — fa as a supported herdr agent. The
@@ -4325,10 +4376,114 @@
 - fix(install): bump SEC-07 pin 0.1.452 -> 1.0.480 (#1015)
 - quarantine(#1012 #1014): linux shard-0 PTY timing flakes (scheduled_indicator + ctrl_c_double_press) (#1013)
 
-## Unreleased
+## 1.0.482
 
-## Unreleased
+- chore: pin factory 60571fed (validation_failed sticky park) (#1027)
+- hotfix: correct uses: factory sha in all 3 workflows (fake sha from #1024) (#1025)
+- chore: pin factory 5e2a8051 (session quarantine) (#1024)
+- chore: pin factory a18361b2 (red-park + dryRun + dup-guard + teammate watchdog) (#1023)
+- chore(factory): bump dmtools-agents to b44b5493 — latch-skip + stamp links + auto-anchor fallback (#547/#548/#549) in lockstep (#1019)
 
-## Unreleased
+## 1.0.486
+
+- fix(926): CodeMie budget/spending exhaustion is terminal — no retry loops, immediate fallback (#929)
+- chore: pin factory 1fdb4c6 (git-guard double-shim exec-loop fix) (#1043)
+
+## 1.0.487
+
+- Fix #947: store goldens render real text; Play listing images ship via whole-set replace + verify (#962)
+- fix(920): optimal space usage in the CLI TUI status band (#923)
+
+## 1.0.488
+
+- fix(#973): Enter sends, Shift+Enter inserts newline in chat composer (#978)
+- site: add /oauth/callback page — the web app's OAuth popup receiver target (#1048)
+
+## 1.0.489
+
+- fix(web): conditionally export FFI-backed io.dart members
+- feat(#977): provider name step + multi-account coexistence in app add-provider flow (#984)
+- feat(#969): show add-provider flow first on fresh install (#971)
+
+## 1.0.490
+
+- gh-1041 [GOAL] Submission ≠ appearance — never fail a green store submit deferred 1–2h store-appearance re-check job (TestFlight / Play / pub.dev) (#1046)
+- gh-1032 Migrate to flutter_agent_memory 0.2.3: conflict-free deletions (tombstones + deleted/ dir) (#1050)
+
+## 1.0.492
+
+- chore(deps): bump ruby/setup-ruby in the github-actions group (#1056)
+
+## 1.0.494
+
+- fix(release): land the version bump as a PR — protected main rejects direct bot pushes (#1093)
+- fix(sm-kicker): rescue ticks must pass -f dryRun=false (machine-sm defaults dry) (#1092)
+- fix(#964): configurable auth header (x-api-key) + reasoning-aware stream retry boundary (#1088)
+- revert: undo the stale-tree mass revert in 80a5ebeeb, keep the FFI web fix (#1071)
+- fix(web): restore /oauth/callback page + open the OAuth popup eagerly on user gesture (#1068)
+- fix(#1083): per-path mutation lock for same-file concurrent tool edits (#1084)
+- feat(#1078): flutter_app honors ~/.fah/config.yaml (parity v1) (#1087)
+
+## 1.0.495
+
+- feat(1086): sandbox shell heredocs, here-strings, fail-fast guards (#1094)
+- chore(factory): pin dmtools-agents @cee5996 — mutexExcludeSelf + conflict-rework + release-bump authorship + teammate dev-leg timeout (#1111)
+
+## 1.0.496
+
+- gh-1149 [daily-publish] cli leg failed (#1154)
+- fix(#916): replayed tool rows paint the settled band card — #807 chrome migration completed (#1136)
+- feat(#864): one-Fa-one-session tap (#1144)
+- fix(#1131): compaction summaries must not re-render time-scoped claims as current facts (#1133)
+- feat(#1124): Terminal-Bench family coverage 2.0/2.1/3.0/4.0 from one dispatch surface (#1128)
+- fix(#1126): resume mid-stream provider aborts with partial content via TransientRetryStream (#1132)
+- feat(#1123): real token/cost accounting in bench results (#1129)
+- fix(app): flutter_agent_memory override 0.2.1 -> ^0.2.3 — track the lib floor (#1158)
+- chore(factory): runners parent agent packs from the registry, not the git checkout (#1155)
+- feat(#1122): configurable + progress-aware bench agent timeout (#1127)
+- feat(#827): TUI viewport never loses shown content (#1097)
+- pin: factory workflows -> dmtools-agentic-workflows@b93dc51 (#1146)
+- fix(#1036): bound provider HTTP calls with client-side timeouts (#1108)
+- fix(#1045): per-widget publish status with verbatim validator errors (#1141)
+- fix(#1121): transparent bounded retry on zero-byte connect-stall watchdog timeout (#1125)
+- feat(#1106): enable Type-2 duplication gate (crap4dart 0.11.0) + 13-file triage (#1116)
+- feat(#1103): fa wire-serve - headless AWP server over WS + NDJSON-stdio (#1113)
+- feat(#1096): release size manifest gate + unambiguous extension/web cuts (slice 1) (#1110)
+- fix(#1117): close web network-auth popup after grant + handle post-auth redirect (#1119)
+- fix(#1102): persist chain re-runs skipped passes (lost assistant record) (#1112)
+- feat(#1101): Agent Wire Protocol v1 schema, versioning, fixtures, in-process adapter (slice 1) (#1109)
+- feat(#1100): ship rehostable web SPA bundle (fa-web-spa.zip) on releases (#1107)
+- feat(#823): provider quota & budget monitoring — CORE tier (model, OpenRouter adapter, TTL service, CLI /quota + badge, app meters, resolver feed) (#1099)
+- feat(#1079): SDK slice 1 — HostCapabilityProfile + HostWiringBuilder foundation (#1091)
+- fix(#1085): post-compaction run continuation — watchdog suspension + loud failure (#1090)
+- chore(factory): sm-kicker -> shared factory-sm-kicker stub (#1118)
+
+## 1.0.497
+
+- feat(#1172): release pipeline pushes bump directly to main via fa-release-bot App (#1174)
+- fix(#864): gesture-entry mint failures surface a snack, not a zone error (#1144 follow-up) (#1170)
+- fix(session): segment rotation — cap JSONL traces under the git 100MB limit (#1114)
+- ci: re-pin factory-teammate @9bcec53 — kit/ (guard+creds) at invocation ref (#1183)
+- feat(#881): App Store CTA header badge (#1138)
+- ci: re-pin factory-teammate @9bcec53 — kit/ (guard+creds) at invocation ref (#1177)
+- fix(#917): deterministic wrap-turn dedupe in TUI composer (no double-paint on slow PTY) (#1137)
+- ci: re-pin factory-teammate @9bcec53 — kit/ (guard+creds) at invocation ref (#1176)
+- fix(#1134): auto_release.sh pins chore:pin label on release PRs (#1135)
+
+## 1.0.498
+
+- feat(#866): apps panel reflects reality (#1139)
+- fix(#1152): path-guard fires only on bare single-token input (#1153)
+- feat(#861): one passkey-capable auth surface for provider sign-in (#1142)
+
+## 1.0.499
+
+- feat(cli): stuck foreground tool calls nudge the model via steering (#1185) (#1187)
+- fix(#1122): restore bench timeout-ladder helpers lost in the #1127×#1129 merge (#1184)
+- feat(#1151): built-in skills shipped with fa — /skill-name on every surface, toggleable like tools (#1157)
+
+## 1.0.500
+
+- chore: repin factory workflows to f47d52b (kit in RUNNER_TEMP) (#1191)
 
 ## Unreleased

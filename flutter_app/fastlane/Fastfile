@@ -24,6 +24,7 @@
 #         Distribution cert) and MACOS_BUNDLE_ID overrides dev.fa1.app.
 
 require_relative "appstore_preflight"
+require_relative "play_listing_sync"
 require_relative "play_upload_preflight"
 require_relative "version_floor"
 
@@ -135,21 +136,18 @@ def find_external_testflight_group!(bundle_id:, group:)
   [app, found.first]
 end
 
-# AC4/E1: assert the build actually landed in the external group. Beta App
-# Review pending is NOT a failure — Apple flips external visibility
-# automatically on approval, so that path ends in a neutral notice. Only a
-# build that never appears in the group fails (the daily's self-filed
-# issue pattern). Bounded by TESTFLIGHT_VERIFY_TIMEOUT_SECONDS (15 min).
+# gh-1041 (AC1): appearance is NO LONGER the submit leg's job — ASC
+# read-side lag (group membership trailing an already-successful
+# distribution, #855: run 36382214186 died in a 900s wait-loop while the
+# build was in fact live) must never fail a green `upload_to_testflight`.
+# After a successful upload ONE read-only probe runs, purely informational
+# and unable to raise: found → ✅ line; not yet → a note pointing at the
+# deferred store-appearance-check workflow, which re-checks the store
+# 120 min after the legs start and files/updates exactly one stub if the
+# version is still absent past the horizon. Leg success = upload success.
 def verify_external_distribution!(bundle_id:, group:, app_version:)
-  timeout = ENV["TESTFLIGHT_VERIFY_TIMEOUT_SECONDS"].to_i
-  timeout = 900 if timeout <= 0
-  app, beta_group = find_external_testflight_group!(bundle_id: bundle_id, group: group)
-  deadline = Time.now + timeout
-  loop do
-    # get_builds_for_beta_group ships NO includes (app_version would raise
-    # "No pre_release_version included"), so select by ID: the group's
-    # builds give the membership set, Build.all gives the full models with
-    # preReleaseVersion + buildBetaDetail attached.
+  probe = lambda do
+    app, beta_group = find_external_testflight_group!(bundle_id: bundle_id, group: group)
     group_build_ids = beta_group.fetch_builds.map(&:id)
     build = Spaceship::ConnectAPI::Build.all(
       app_id: app.id,
@@ -172,12 +170,14 @@ def verify_external_distribution!(bundle_id:, group:, app_version:)
       else
         UI.important("Build #{app_version} (#{build.version}) is in '#{group}' and waiting for Beta App Review — external visibility flips automatically on approval, no clicks needed.")
       end
-      return
+    else
+      UI.important("Build #{app_version} not visible in '#{group}' yet — the submit stays GREEN (gh-1041: store read-side lag is not a failure). The deferred store-appearance-check workflow re-checks ASC 120 min after the daily legs start and files/updates one stub if the version is still absent past the horizon.")
     end
-    if Time.now > deadline
-      UI.user_error!("Build #{app_version} never appeared in the external group '#{group}' (TESTFLIGHT_EXTERNAL_GROUP) within #{timeout}s — check the Beta App Review state in App Store Connect.")
-    end
-    sleep(60)
+  end
+  begin
+    probe.call
+  rescue StandardError => e
+    UI.important("Post-submit appearance probe skipped (#{e.class}: #{e.message.to_s[0, 160]}) — the upload above already succeeded; the deferred store-appearance-check workflow owns appearance verification (gh-1041, #855).")
   end
 end
 
@@ -876,21 +876,39 @@ platform :android do
     # test/play_store_listing_guard_test.dart). Never a binary — AABs ride
     # upload_only — and never changelogs (Play release notes need a
     # version code and belong to the binary upload).
+    #
+    # Issue #947: supply only APPENDS screenshot uploads, which is how the
+    # old "The first…" screenshot survived on the live listing after the
+    # repo goldens were fixed. The images go through PlayListingSync: the
+    # whole set is replaced per locale + device type (stale shots deleted,
+    # ru-RU tenInch and other dropped sets cleared) and the committed
+    # state is verified via edits.images.list — a mismatch fails the lane.
     do_metadata = ENV.fetch("PLAY_DEPLOY_METADATA", "true") == "true"
     do_images = ENV.fetch("PLAY_DEPLOY_IMAGES", "true") == "true"
     repo_root = File.expand_path("..", __dir__)
     track = PlayUploadPreflight.track!(ENV)
     validate_only = PlayUploadPreflight.validate_only?(ENV)
+    json_key = PlayUploadPreflight.play_json_key!(ENV)
+    package_name = PlayUploadPreflight.package_name!(repo_root)
     UI.message("Play store listing deploy: metadata=#{do_metadata}, images=#{do_images}, track=#{track}, validate_only=#{validate_only}")
 
+    if do_images && !validate_only
+      store_summary_line(
+        PlayListingSync.sync_and_verify!(
+          metadata_dir: File.expand_path("metadata/android", __dir__),
+          json_key: json_key,
+          package_name: package_name
+        )
+      )
+    end
     upload_to_play_store(
       PlayUploadPreflight
         .supply_listing_options(
           track: track, metadata: do_metadata, images: do_images,
           validate_only: validate_only
         )
-        .merge(json_key_data: PlayUploadPreflight.play_json_key!(ENV),
-               package_name: PlayUploadPreflight.package_name!(repo_root))
+        .merge(json_key_data: json_key,
+               package_name: package_name)
     )
     if validate_only
       UI.success("✅ Play listing validate-only pass: authenticated, track '#{track}' resolved — nothing uploaded")

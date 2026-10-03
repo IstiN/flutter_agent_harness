@@ -19,6 +19,7 @@
 library;
 
 import 'markers.dart';
+import '../summary_sanitizer.dart';
 import '../token_estimation.dart';
 import '../../context.dart';
 import '../../types.dart';
@@ -332,11 +333,14 @@ Message _checkpointMessage(
     final covered = byId[id];
     if (covered != null) coveredTokens += recordTokens(covered);
   }
+  // Issue #1131: sanitize once — the header's token estimate must describe
+  // the text actually rendered, not the raw (possibly poisoned) record.
+  final text = sanitizeSummary(record.text).text;
   final header = checkpointMarkerHeader(
     startSeq: startSeq,
     endSeq: endSeq,
     coveredTokens: coveredTokens,
-    textTokens: estimateTokens(UserMessage.text(record.text)),
+    textTokens: estimateTokens(UserMessage.text(text)),
     coversRanges: idsToRanges(covers),
   );
   final index = hiddenIndexSection([
@@ -348,7 +352,7 @@ Message _checkpointMessage(
       if (!state.hiddenRecordIds.contains(id)) ?byId[id],
   ], seqs);
   return UserMessage.text(
-    '$header\n${record.text}$index',
+    '$header\n$text$index',
     timestamp: record.timestamp,
   );
 }

@@ -299,7 +299,12 @@ class _NetworksSidebarState extends State<NetworksSidebar> {
               e.key.toLowerCase().contains(query),
         )
         .toList();
-    final public = _publicNetworks;
+    // The public directory is a discovery surface for strangers: a
+    // network the wallet already belongs to lives in the list above,
+    // never duplicated here.
+    final public = _publicNetworks
+        ?.where((n) => !widget.manager.wallet.networks.containsKey(n.id))
+        .toList();
     final walletEmpty = widget.manager.wallet.networks.isEmpty;
     if (walletEmpty && public == null) {
       return Center(
@@ -375,7 +380,7 @@ class _NetworksSidebarState extends State<NetworksSidebar> {
                   : null,
               onTap: () => unawaited(_openNetwork(entry.key)),
             ),
-        if (public != null) ...[
+        if (public != null && public.isNotEmpty) ...[
           Padding(
             key: const ValueKey('publicNetworksSection'),
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 2),

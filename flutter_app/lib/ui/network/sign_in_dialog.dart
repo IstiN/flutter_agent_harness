@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'package:fa/l10n/l10n_ext.dart';
+import 'package:fa/ui/network/network_input_style.dart';
 import 'package:fa/network/auth_flow.dart';
 import 'package:fa/network/fa_network_client.dart';
 import 'package:fa/network/network_session_manager.dart';
@@ -282,9 +283,8 @@ class _SignInDialogState extends State<SignInDialog> {
         TextField(
           key: const ValueKey('signInLogin'),
           controller: _loginController,
-          decoration: InputDecoration(
-            labelText: context.l10n.networkLoginLabel,
-            isDense: true,
+          decoration: networkInputDecoration(
+            hint: context.l10n.networkLoginLabel,
           ),
           onSubmitted: (_) => unawaited(_devSignIn()),
         ),
@@ -293,9 +293,8 @@ class _SignInDialogState extends State<SignInDialog> {
           key: const ValueKey('signInPassword'),
           controller: _passwordController,
           obscureText: true,
-          decoration: InputDecoration(
-            labelText: context.l10n.networkPasswordLabel,
-            isDense: true,
+          decoration: networkInputDecoration(
+            hint: context.l10n.networkPasswordLabel,
           ),
           onSubmitted: (_) => unawaited(_devSignIn()),
         ),

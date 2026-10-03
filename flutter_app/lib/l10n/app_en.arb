@@ -137,7 +137,6 @@
   "chatSessionsTooltip": "Sessions & model",
   "chatSettingsTooltip": "Connection settings",
   "chatShowAll": "Show all ({count})",
-  "chatTyping": "Fa is typing...",
   "chatUploadFailed": "Upload failed: {error}",
   "commonCancel": "Cancel",
   "commonDelete": "Delete",
@@ -205,6 +204,7 @@
   "keysValueHint": "Paste the key value",
   "keysValueLabel": "Value",
   "launcherChatActionsTooltip": "Chat actions",
+  "faEntryHintTooltip": "Tap: continue the active chat · Hold: new chat",
   "launcherChatEmptyHint": "Nothing here yet — ask Fa anything.",
   "launcherDissolveFolder": "Remove folder",
   "launcherFolderDefaultName": "Folder",
@@ -257,6 +257,8 @@
   "launcherSeedErrorCopy": "Copy error",
   "launcherSeedErrorHint": "Send this error to Fa — it can fix the app.",
   "launcherSeedErrorTitle": "App failed to install",
+  "launcherManifestErrorTitle": "App failed to load",
+  "appsManifestErrorLabel": "Manifest error",
   "launcherTileSizeIcon": "Icon (1×1)",
   "launcherTileSizeLarge": "Large (4×4)",
   "launcherTileSizeMedium": "Medium (4×2)",
@@ -469,6 +471,8 @@
   "settingsStaleModelDevice": "The previously used model ({model}) was removed from this device — pick a model to download it again.",
   "settingsSkillsAccess": "Skills access",
   "settingsSkillsAccessHint": "Reuse skills Claude, Copilot or Codex left in the project folder (.claude, .github, .codex)",
+  "settingsSkillsToggles": "Built-in skills",
+  "settingsSkillsTogglesHint": "Enable or disable the skills that ship with Fa",
   "skillsAccessAsk": "Ask",
   "skillsAccessAllowed": "Allowed",
   "skillsAccessDenied": "Denied",
@@ -582,6 +586,8 @@
   "workspaceDialogRestrictToolsHint": "Disable anything that would read or write outside the mounted folder. Off-project attempts will be blocked (and a dialog will ask you to approve them once that flow is wired up).",
   "toolsAvailabilityTitle": "Tools",
   "toolsAvailabilityHint": "Turn tools off or on for Fa — applies immediately, no restart.",
+  "settingsRedaction": "Secret redaction",
+  "settingsRedactionHint": "Mask API keys and secrets in everything Fa sends or stores. Applies immediately, no restart.",
   "toolsAvailabilityUnavailable": "Unavailable: {reason}",
   "githubAccountSection": "GitHub account",
   "githubAccountHint": "Connect GitHub to publish your widgets to the fa_widgets catalog.",
@@ -603,6 +609,14 @@
   "publicationStatePublished": "Published",
   "publicationStateRejected": "Rejected",
   "publicationStateUnknown": "Unknown",
+  "widgetStatusNotPublished": "Not published",
+  "widgetStatusValidating": "Validating…",
+  "widgetStatusInvalid": "Invalid",
+  "widgetStatusFailed": "Publish failed",
+  "widgetStatusErrors": "Validator errors:",
+  "widgetStatusOpenRun": "Open CI run",
+  "widgetDetailVersion": "Version",
+  "widgetDetailAuthor": "Author",
   "publicationSubmittedAt": "Submitted {date}",
   "@publicationSubmittedAt": {
     "placeholders": {
@@ -675,6 +689,10 @@
         "type": "String"
       }
     }
+  },
+  "sessionMintFailed": "Couldn't create a new session.",
+  "@sessionMintFailed": {
+    "description": "Fa-entry long-press mint failure: the new session could not be created — logged and surfaced as a snack, the active session is kept (issue #864, review #1144 follow-up)"
   },
   "sessionBootSkippedOversize": "Resumed a fresh session — “{name}” ({size} MB) is over the instant-open budget.",
   "@sessionBootSkippedOversize": {
@@ -1167,7 +1185,7 @@
   "@networkShowcasesSection": {
     "description": "Channel rail section header: public showcases"
   },
-  "networkShowcaseReadOnly": "Public showcase — read-only preview. Join the network to participate.",
+  "networkShowcaseReadOnly": "Read-only preview — tap to join the network and write.",
   "@networkShowcaseReadOnly": {
     "description": "Composer replacement in the anonymous showcase"
   },
@@ -1202,6 +1220,10 @@
   "networkAddAgentNoKeys": "No keys for this channel on this device.",
   "@networkAddAgentNoKeys": {
     "description": "Agent invite placeholder when the wallet holds no channel keys"
+  },
+  "networkAddAgentNoChannelKeys": "No channel keys in this wallet — the agent will see channels only after a key invite",
+  "@networkAddAgentNoChannelKeys": {
+    "description": "Network-scope agent invite note when the wallet can produce no channel invites to bundle"
   },
   "networkAddAgentScopeChannel": "This channel",
   "@networkAddAgentScopeChannel": {

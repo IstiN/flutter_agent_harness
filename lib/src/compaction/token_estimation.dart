@@ -136,7 +136,104 @@ int estimateSessionBranchTokens(List<SessionRecord> branch) {
 /// Estimated token cost of the one-line marker a hidden record renders as
 /// in the structured projection (`[3:hidden·tool_result·4.2k]` ≈ 30–40
 /// chars).
-const _hiddenMarkerTokens = 10;
+const hiddenRecordMarkerTokens = 10;
+const _hiddenMarkerTokens = hiddenRecordMarkerTokens;
+
+/// Token budget for the windowed resume walk (gh-968, AC-R3): the
+/// transcript tally the walk may stop at, derived from the SAME basis as
+/// the ctx meter, `_maybeAutoCompact` and the loop's over-window guard.
+///
+/// `effectiveContextWindow − system-prompt/tool-schema overhead −
+/// reserveTokens`, floored at 0. The old budget priced the transcript
+/// alone against the window, so a resume filled the resident records to
+/// ~the whole window and the meter — which adds the unanchored
+/// system+tools overhead on top — read past 100% (the reported
+/// `127%/200k` resume). With the parity budget, meter = transcript +
+/// overhead ≤ window − reserve: below the compaction trigger, below the
+/// guard, on every fresh resume.
+int resumeParityBudget({
+  required int effectiveContextWindow,
+  required int reserveTokens,
+  String? systemPrompt,
+  List<Tool> tools = const [],
+}) {
+  final budget =
+      effectiveContextWindow -
+      estimateRequestOverheadTokens(systemPrompt, tools) -
+      reserveTokens;
+  return budget > 0 ? budget : 0;
+}
+
+/// The index of the OLDEST record of [branch] (root-first) to keep so the
+/// projected estimate of the kept suffix stays within [budget] — walking
+/// from the newest end backward, the record that would push the tally
+/// PAST the budget is dropped together with everything older — or `null`
+/// when the whole branch already fits. The newest record is always kept
+/// (a `0` budget floors at keeping the tail: never an empty window).
+///
+/// Record-granular budget stop for the resume walk (gh-968, AC-R4): the
+/// old stop fired after a whole doubling block was paged, so one giant
+/// record in the last block read the tally tens of thousands of tokens
+/// past the budget. Exact mirror of [estimateProjectedBranchTokens]
+/// walked in reverse: hidden-range/checkpoint markers sit NEWER than the
+/// records they hide, so the backward pass already knows every record's
+/// hidden/covered state when it reaches it, and the classic compaction
+/// transform makes everything below the last compaction record's kept id
+/// price zero — those records are never the crossing.
+int? projectedBranchBudgetCut(List<SessionRecord> branch, int budget) {
+  final hidden = <String>{};
+  final covered = <String>{};
+  var belowTransform = false; // passed the last compaction record
+  var tally = 0;
+  for (var i = branch.length - 1; i >= 0; i--) {
+    final record = branch[i];
+    if (belowTransform) continue; // dropped by the classic transform
+    final contribution = covered.contains(record.id)
+        ? 0
+        : hidden.contains(record.id)
+        ? _hiddenMarkerTokens
+        : switch (record) {
+            MessageRecord(:final message) => estimateTokens(message),
+            CustomMessageRecord(:final content, :final timestamp) =>
+              estimateTokens(
+                UserMessage(content: content, timestamp: timestamp),
+              ),
+            CompactionRecord(:final summary) => estimateStringTokens(summary),
+            BranchSummaryRecord(:final summary) => estimateStringTokens(
+              summary,
+            ),
+            CompactCheckpointRecord(:final text) => estimateStringTokens(text),
+            _ => 0,
+          };
+    if (tally + contribution > budget && i < branch.length - 1) {
+      return i + 1; // stop BEFORE the crossing record
+    }
+    tally += contribution;
+    // Marker sets grow only from records that project (mirror: the
+    // forward estimator collects markers over the KEPT region only).
+    switch (record) {
+      case HiddenRangeRecord(:final recordIds):
+        hidden.addAll(recordIds);
+      case CompactCheckpointRecord(
+        :final coversRecordIds,
+        :final firstRecordId,
+        :final lastRecordId,
+      ):
+        covered
+          ..addAll(coversRecordIds)
+          ..add(firstRecordId)
+          ..add(lastRecordId);
+      case CompactionRecord():
+        // The last (newest) compaction record on the branch: its summary
+        // contributed above; everything OLDER is dropped by the classic
+        // transform and projects zero from here on.
+        belowTransform = true;
+      default:
+        break;
+    }
+  }
+  return null; // whole branch fits
+}
 
 /// Projection-aware variant of [estimateSessionBranchTokens] (issue #503
 /// round 3b): counts what `Session.buildContextMessages` would ACTUALLY

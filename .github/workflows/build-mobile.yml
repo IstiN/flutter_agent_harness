@@ -200,7 +200,7 @@ jobs:
       - name: Setup Ruby
         # ubuntu-24.04 runner images ship no Ruby — `bundle: command not
         # found` exit 127 (issue #353). Same setup as store-metadata.yml.
-        uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1.99.0 (branch head; v1 moves)
+        uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.99.0 (branch head; v1 moves)
         with:
           ruby-version: '3.2'
 
@@ -288,7 +288,7 @@ jobs:
       - name: Setup Ruby
         # ubuntu-24.04 runner images ship no Ruby — `bundle: command not
         # found` exit 127 (issue #353). Same setup as store-metadata.yml.
-        uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1.99.0 (branch head; v1 moves)
+        uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.99.0 (branch head; v1 moves)
         with:
           ruby-version: '3.2'
 
@@ -315,6 +315,29 @@ jobs:
           AAB_PATH="$(find "$GITHUB_WORKSPACE/flutter_app/aab" -name '*.aab' -type f | head -1)"
           echo "Uploading $AAB_PATH to the Play '$PLAY_TRACK' track..."
           ANDROID_AAB_PATH="$AAB_PATH" bundle exec fastlane android upload_only
+
+      # Issue #947: android_content=all means the LISTING ships too. The
+      # listing lane replaces the whole image set per locale + device type
+      # (supply appends, which is how a stale rejected screenshot survived
+      # on the live listing) and verifies the committed state via
+      # edits.images.list. Runs after the AAB upload so a release train
+      # never ships a binary against a stale listing.
+      - name: Deploy Play listing (metadata + images)
+        if: inputs.android_content == 'all'
+        working-directory: flutter_app
+        env:
+          PLAY_STORE_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
+          PLAY_TRACK: ${{ inputs.android_track }}
+          PLAY_DEPLOY_METADATA: 'true'
+          PLAY_DEPLOY_IMAGES: 'true'
+        run: |
+          set -euo pipefail
+          if [ -z "${PLAY_STORE_SERVICE_ACCOUNT_JSON:-}" ]; then
+            echo "::notice::Play service account not configured — skipping the listing deploy."
+            exit 0
+          fi
+          echo "Deploying the Play listing (texts + images)..."
+          bundle exec fastlane android play_store
 
   build-android-apks:
     # Issue #622: the flavor matrix. The AAB job above stays the Play
@@ -876,13 +899,15 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64]
     # Issue #344 wedge bound + #351 arithmetic: the submit_only lane waits
     # for Apple processing (TESTFLIGHT_WAIT_TIMEOUT_SECONDS, default 5400s
-    # = 90m — a healthy slow ASC processing is NOT a wedge) then verifies
-    # external distribution (TESTFLIGHT_VERIFY_TIMEOUT_SECONDS, 900s =
-    # 15m). Job ceiling must exceed the lane worst case:
+    # = 90m — a healthy slow ASC processing is NOT a wedge); distribution
+    # appearance is verified by the DEFERRED store-appearance-check
+    # workflow (gh-1041 — a single non-failing probe runs after the upload,
+    # the 900s wait-loop is gone). Job ceiling must exceed the lane worst
+    # case:
     #   ~5m setup (mirror clone + artifact + bundle install)
     # + ~10m IPA upload to ASC
     # + 90m wait_processing_timeout_duration
-    # + 15m distribution verify
+    # + ~1m one-shot appearance probe
     # = 120m. The old 45m killed healthy slow submits mid-wait (the exact
     # failure #351 was filed for); a genuinely wedged job is still bounded
     # server-side at 120m, and the daily testflight watch budget (240m)

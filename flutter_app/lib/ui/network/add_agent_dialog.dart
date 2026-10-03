@@ -173,6 +173,41 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
     );
   }
 
+  /// The network-scope chankey bundle: one invite per channel of the
+  /// network the app knows about (the live session's channel list — the
+  /// same source the channel rail uses). Private channels carry the
+  /// chankey in the fragment when the wallet holds it; public channels
+  /// get a keyless invite. Channels the wallet can produce no invite for
+  /// are skipped — the invited agent sees those only after a key invite.
+  List<(Channel, String)> get _channelInvites {
+    final channels =
+        widget.manager.sessions[widget.networkId]?.channels ??
+        const <Channel>[];
+    final hubUri = Uri.parse(AddAgentDialog.hubUrl);
+    final invites = <(Channel, String)>[];
+    for (final channel in channels) {
+      if (channel.isPublic) {
+        invites.add((
+          channel,
+          buildPublicAgentInvite(hubUri: hubUri, channel: channel.id),
+        ));
+        continue;
+      }
+      final keys = widget.wallet.channelKeysFor(widget.networkId, channel.id);
+      if (keys == null) continue;
+      invites.add((
+        channel,
+        buildAgentInvite(
+          hubUri: hubUri,
+          channel: channel.id,
+          pub: keys.pub,
+          priv: keys.priv,
+        ),
+      ));
+    }
+    return invites;
+  }
+
   /// The network-scope join link. Always producible; the password rides
   /// the fragment when this device has it.
   String get _networkInvite {
@@ -225,17 +260,30 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
         final password = _hasNetworkPassword
             ? "FA_NETWORK_PASSWORD='$_networkPassword' "
             : '';
-        return "FA_NETWORK_URL='$_networkUrlNoPassword' "
+        final env =
+            "FA_NETWORK_URL='$_networkUrlNoPassword' "
             '${password}FA_AGENT_NAME=$_agentName fa';
+        // The chankey bundle rides as plain `fa dap import` commands —
+        // a pure-DAP CI agent needs them today (the CLI network mode
+        // will consume FA_NETWORK_URL later).
+        final imports = [
+          for (final (_, channelInvite) in _channelInvites)
+            "fa dap import '$channelInvite'",
+        ];
+        return imports.isEmpty ? env : "${imports.join(' && ')} && $env";
       }
       return "FA_CHANNEL_URL='$invite' FA_AGENT_NAME=$_agentName fa";
     }
     if (_format == AgentInviteFormat.dap) {
       final enrollment = _enrollment;
       if (enrollment == null) return null;
-      final import = _scope == AgentInviteScope.channel
-          ? "fa dap import '$invite' && "
-          : '';
+      final imports = _scope == AgentInviteScope.channel
+          ? ["fa dap import '$invite'"]
+          : [
+              for (final (_, channelInvite) in _channelInvites)
+                "fa dap import '$channelInvite'",
+            ];
+      final import = imports.isEmpty ? '' : "${imports.join(' && ')} && ";
       return '$import$hubUrlPrefix${enrollment.hubUrl} '
           "$clientSecretPrefix'${enrollment.clientSecret}' "
           '$agentNamePrefix${enrollment.name} fa';
@@ -408,6 +456,25 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
                 display: 'FA_AGENT_NAME=$_agentName',
                 copyText: 'FA_AGENT_NAME=$_agentName',
               ),
+              // The network-scope chankey bundle: one import command per
+              // channel this wallet can hand over (pure-DAP CI agents
+              // need them today — the CLI network mode will consume
+              // FA_NETWORK_URL later).
+              if (_scope == AgentInviteScope.network) ...[
+                for (final (channel, channelInvite) in _channelInvites)
+                  _envCopyRow(
+                    context,
+                    keyName: 'IMPORT:${channel.id}',
+                    display: "fa dap import '$channelInvite'",
+                    copyText: "fa dap import '$channelInvite'",
+                  ),
+                if (_channelInvites.isEmpty)
+                  Text(
+                    l10n.networkAddAgentNoChannelKeys,
+                    key: const ValueKey('inviteNoChannelKeys'),
+                    style: TextStyle(color: colors.dim, fontSize: 12),
+                  ),
+              ],
             ],
             if (_format == AgentInviteFormat.dap) ...[
               const SizedBox(height: 8),
@@ -490,6 +557,26 @@ class _AddAgentDialogState extends State<AddAgentDialog> {
                     display: '$agentNamePrefix${_enrollment!.name}',
                     copyText: '$agentNamePrefix${_enrollment!.name}',
                   ),
+                  // The network scope: the identity alone cannot read or
+                  // post — hand over every channel invite this wallet can
+                  // produce, one IMPORT row per channel.
+                  if (_scope == AgentInviteScope.network) ...[
+                    for (final (channel, channelInvite) in _channelInvites)
+                      _envCopyRow(
+                        context,
+                        keyName: 'IMPORT:${channel.id}',
+                        display: "fa dap import '$channelInvite'",
+                        copyText: "fa dap import '$channelInvite'",
+                      ),
+                    if (_channelInvites.isEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        l10n.networkAddAgentNoChannelKeys,
+                        key: const ValueKey('inviteNoChannelKeys'),
+                        style: TextStyle(color: colors.dim, fontSize: 12),
+                      ),
+                    ],
+                  ],
                 ],
               ],
             ],

@@ -2,7 +2,7 @@ name: flutter_agent_harness
 description: >-
   Cross-platform AI agent harness for Dart and Flutter: streaming provider
   adapters, agent loop with tools, session persistence, context compaction.
-version: 1.0.481
+version: 1.0.500
 homepage: https://fa1.dev
 repository: https://github.com/IstiN/flutter_agent_harness
 issue_tracker: https://github.com/IstiN/flutter_agent_harness/issues
@@ -49,7 +49,12 @@ dependencies:
   # DAP hub client (IstiN/fa_hub_client on GitHub). 0.2.8 carries the
   # backoff-overflow CPU fix — the dead-hub reconnect tight loop.
   fa_hub_client: ^0.2.8
-  flutter_agent_memory: ^0.2.1
+  # 0.2.2/0.2.3: conflict-free deletions — KbTombstoneCapable tombstones
+  # entity files in place (no git delete/modify conflicts), per-record
+  # `deleted/` files + set-difference consolidation progress, union merge
+  # drivers for entity/deleted files. Our ExecutionEnvKbStorage implements
+  # KbTombstoneCapable so the project store gets all of it.
+  flutter_agent_memory: ^0.2.3
   http: ^1.6.0
   image: ^4.9.1
   meta: ^1.18.0

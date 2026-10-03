@@ -72,6 +72,93 @@ maxTokens: 4096
         throwsA(isA<ConfigException>()),
       );
     });
+
+    test('parses and round-trips authHeader (issue #964)', () {
+      final ref = ModelRef.fromYaml(
+        _yaml(
+          'provider: openai\nmodel: gpt-4o\n'
+          'baseUrl: https://gateway.example.com/v1\n'
+          'authHeader: x-api-key\n',
+        ),
+      );
+      expect(ref.authHeader, 'x-api-key');
+      // JSON-quoted: a raw scalar would round-trip tokens leading with
+      // yaml specials (`#`, `*`, `!`) as comments/aliases (issue #964
+      // review).
+      expect(ref.toYaml(), contains('authHeader: "x-api-key"'));
+      expect(ModelRef.fromYaml(_yaml(ref.toYaml())).authHeader, 'x-api-key');
+      // Unset stays unset.
+      expect(
+        ModelRef.fromYaml(_yaml('provider: openai\nmodel: gpt-4o\n')).authHeader,
+        isNull,
+      );
+    });
+
+    test('authHeader round-trips yaml-special tokens losslessly '
+        '(issue #964 review)', () {
+      const token = '#gateway-key';
+      final ref = ModelRef.fromYaml(
+        _yaml(
+          'provider: openai\nmodel: gpt-4o\n'
+          'authHeader: "$token"\n',
+        ),
+      );
+      expect(ref.authHeader, token);
+      expect(ModelRef.fromYaml(_yaml(ref.toYaml())).authHeader, token);
+    });
+
+    test('rejects authHeader on a non-openai-completions dialect '
+        '(issue #964 review)', () {
+      expect(
+        () => ModelRef.fromYaml(
+          _yaml(
+            'provider: anthropic\nmodel: claude-x\n'
+            'authHeader: x-api-key\n',
+          ),
+          role: 'default',
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('model chain entry in role "default"'),
+              contains('provider "anthropic"'),
+              contains('anthropic adapter'),
+            ),
+          ),
+        ),
+      );
+      // An unknown provider passes parse (the resolver skips it later).
+      expect(
+        ModelRef.fromYaml(
+          _yaml(
+            'provider: bogus\nmodel: x\nauthHeader: x-api-key\n',
+          ),
+        ).authHeader,
+        'x-api-key',
+      );
+    });
+
+    test('rejects invalid authHeader values naming the role '
+        '(issue #964 AC5)', () {
+      expect(
+        () => ModelRef.fromYaml(
+          _yaml(
+            'provider: openai\nmodel: gpt-4o\n'
+            'authHeader: "x-api-key\\r\\nX-Evil: 1"\n',
+          ),
+          role: 'default',
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('invalid authHeader'), contains('role "default"')),
+          ),
+        ),
+      );
+    });
   });
 
   group('ModelRolesConfig.fromYaml', () {

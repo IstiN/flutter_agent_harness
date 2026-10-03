@@ -886,62 +886,57 @@ void main() {
       return (queue, repo, clock);
     }
 
-    test(
-      'an overdue record is delivered by the catch-up sweep immediately '
-      '(turn start), not at the next timer tick',
-      () async {
-        final env = MemoryExecutionEnv(cwd: '/work');
-        final (queue, repo, clock) = harness(env);
-        await queue.schedule(
-          text: 'standup notes',
-          delay: const Duration(minutes: 30),
-        );
-        // The record came due while no tick ran (host busy/asleep): the
-        // sweep a turn start performs must deliver it NOW — the armed
-        // real-time timer is still ~30 minutes out and must not be the
-        // delivery path this test waits on.
-        clock.jump(const Duration(minutes: 31));
-        expect(await queue.deliverDue(), 1);
-        final mail = await repo.peek('sid-1/main');
-        expect(mail.single.text, contains('[scheduled] standup notes'));
-        queue.dispose();
-      },
-    );
+    test('an overdue record is delivered by the catch-up sweep immediately '
+        '(turn start), not at the next timer tick', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final (queue, repo, clock) = harness(env);
+      await queue.schedule(
+        text: 'standup notes',
+        delay: const Duration(minutes: 30),
+      );
+      // The record came due while no tick ran (host busy/asleep): the
+      // sweep a turn start performs must deliver it NOW — the armed
+      // real-time timer is still ~30 minutes out and must not be the
+      // delivery path this test waits on.
+      clock.jump(const Duration(minutes: 31));
+      expect(await queue.deliverDue(), 1);
+      final mail = await repo.peek('sid-1/main');
+      expect(mail.single.text, contains('[scheduled] standup notes'));
+      queue.dispose();
+    });
 
-    test(
-      'a clock jump (system sleep) catches up immediately and delivers '
-      'each due record exactly once (no N-fold replay)',
-      () async {
-        final env = MemoryExecutionEnv(cwd: '/work');
-        final (queue, repo, clock) = harness(env);
-        for (var i = 0; i < 3; i++) {
-          await queue.schedule(
-            text: 'cycle $i',
-            delay: Duration(minutes: 30 * (i + 1)),
-          );
-        }
-        // Six hours of "sleep": every record is overdue on wake.
-        clock.jump(const Duration(hours: 6));
-        // The post-wake heartbeat + a concurrent turn-start sweep race:
-        // the in-flight guard keeps delivery exactly-once per record.
-        final counts = await Future.wait([
-          queue.deliverDue(),
-          queue.deliverDue(),
-        ]);
-        expect(counts.fold<int>(0, (a, b) => a + b), 3);
-        // A repeated sweep must not replay missed cycles.
-        expect(await queue.deliverDue(), 0);
-        final mail = await repo.peek('sid-1/main');
-        expect(mail, hasLength(3));
-        // No pending record files survive the catch-up.
-        final left =
-            (await env.listDir('/sessions/--work--/messages/_scheduled'))
-                .valueOrNull ??
-            const [];
-        expect(left.where((e) => e.path.endsWith('.json')), isEmpty);
-        queue.dispose();
-      },
-    );
+    test('a clock jump (system sleep) catches up immediately and delivers '
+        'each due record exactly once (no N-fold replay)', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final (queue, repo, clock) = harness(env);
+      for (var i = 0; i < 3; i++) {
+        await queue.schedule(
+          text: 'cycle $i',
+          delay: Duration(minutes: 30 * (i + 1)),
+        );
+      }
+      // Six hours of "sleep": every record is overdue on wake.
+      clock.jump(const Duration(hours: 6));
+      // The post-wake heartbeat + a concurrent turn-start sweep race:
+      // the in-flight guard keeps delivery exactly-once per record.
+      final counts = await Future.wait([
+        queue.deliverDue(),
+        queue.deliverDue(),
+      ]);
+      expect(counts.fold<int>(0, (a, b) => a + b), 3);
+      // A repeated sweep must not replay missed cycles.
+      expect(await queue.deliverDue(), 0);
+      final mail = await repo.peek('sid-1/main');
+      expect(mail, hasLength(3));
+      // No pending record files survive the catch-up.
+      final left =
+          (await env.listDir(
+            '/sessions/--work--/messages/_scheduled',
+          )).valueOrNull ??
+          const [];
+      expect(left.where((e) => e.path.endsWith('.json')), isEmpty);
+      queue.dispose();
+    });
 
     test('normal awake timing is unchanged: no early fire', () async {
       final env = MemoryExecutionEnv(cwd: '/work');
@@ -980,7 +975,9 @@ void main() {
         final entry = (await env.listDir(
           dir,
         )).valueOrNull!.singleWhere((e) => e.path.endsWith('.json'));
-        final path = entry.path.contains('/') ? entry.path : '$dir/${entry.path}';
+        final path = entry.path.contains('/')
+            ? entry.path
+            : '$dir/${entry.path}';
         final record =
             jsonDecode((await env.readTextFile(path)).valueOrNull!)
                 as Map<String, dynamic>;
@@ -1088,4 +1085,132 @@ void main() {
     );
   });
 
+  group('gh-970: a subagent self-reminder fires into the subagent inbox', () {
+    (ScheduledMessageQueue, FileMessagingRepository, _FakeClock) harness(
+      MemoryExecutionEnv env,
+    ) {
+      const root = '/sessions/--work--/messages';
+      final repo = FileMessagingRepository(
+        env: env,
+        root: root,
+        homeDir: '/home/user',
+        decodeSessionCwd: decodeSessionCwd,
+      );
+      final clock = _FakeClock();
+      final queue = ScheduledMessageQueue(
+        env: env,
+        repo: () => repo,
+        root: () => root,
+        selfMailbox: () => 'sid-1/main',
+        ownerPrefix: () => 'sid-1',
+        clock: () => clock.now,
+      );
+      return (queue, repo, clock);
+    }
+
+    test('a self-addressed record naming a subagent mailbox is NOT '
+        're-addressed to main', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final (queue, repo, clock) = harness(env);
+      // The child scheduled a self-reminder: to == from == its own
+      // namespaced mailbox (subagent_scope resolved the default).
+      await queue.schedule(
+        text: 'next monitoring pass',
+        delay: const Duration(minutes: 15),
+        to: 'sid-1/monitor-a',
+        from: 'sid-1/monitor-a',
+      );
+      clock.jump(const Duration(minutes: 16));
+      expect(await queue.deliverDue(), 1);
+      final childMail = await repo.peek('sid-1/monitor-a');
+      expect(
+        childMail,
+        hasLength(1),
+        reason:
+            'gh-970: the sweeper used to re-address every self-addressed '
+            'record to its own mailbox, stealing the child reminder into '
+            'main',
+      );
+      expect(childMail.single.text, contains('[scheduled] next monitoring'));
+      expect(childMail.single.fromId, 'sid-1/monitor-a');
+      expect(await repo.peek('sid-1/main'), isEmpty);
+      queue.dispose();
+    });
+
+    test('a foreign-owned subagent reminder is left for its owner (theft '
+        'guard covers child mail too)', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final (queue, repo, clock) = harness(env);
+      // Hand-written record owned by ANOTHER session (the only way this
+      // shape exists — the tool always stamps the scheduler's own owner):
+      // session sid-2's monitor scheduled itself; sid-1's sweeper must
+      // neither deliver it (anywhere) nor delete it.
+      final dir = '/sessions/--work--/messages/_scheduled';
+      (await env.createDir(dir)).getOrThrow();
+      (await env.writeFile(
+        '$dir/foreign.json',
+        jsonEncode({
+          'id': 'foreign',
+          'dueMs': clock.now.millisecondsSinceEpoch,
+          'to': 'sid-2/monitor-b',
+          'from': 'sid-2/monitor-b',
+          'text': 'other session monitor',
+          'owner': 'sid-2',
+        }),
+      )).getOrThrow();
+      clock.jump(const Duration(minutes: 2));
+      expect(await queue.deliverDue(), 0);
+      expect(await repo.peek('sid-2/monitor-b'), isEmpty);
+      expect(await repo.peek('sid-1/main'), isEmpty);
+      // The record stays on disk for its owner's sweeper.
+      final record = jsonDecode(
+        (await env.readTextFile('$dir/foreign.json')).valueOrNull!,
+      );
+      expect(record['id'], 'foreign');
+      queue.dispose();
+    });
+
+    test('schedule_message resolves the subagent sender as the default '
+        'recipient', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final (queue, repo, clock) = harness(env);
+      final tool = scheduleMessageTool(
+        queue,
+        // The host wiring: the active subagent's mailbox, or null on the
+        // main agent (legacy defaulting).
+        senderMailbox: () => 'sid-1/monitor-a',
+      );
+      final result = await tool.execute(
+        {'text': 'next monitoring pass', 'delay': '15m'},
+        null,
+        null,
+      );
+      final text = result.content
+          .whereType<TextContent>()
+          .map((b) => b.text)
+          .join();
+      expect(text, isNot(contains('error')));
+      clock.jump(const Duration(minutes: 16));
+      expect(await queue.deliverDue(), 1);
+      final mail = await repo.peek('sid-1/monitor-a');
+      expect(mail, hasLength(1));
+      expect(mail.single.fromId, 'sid-1/monitor-a');
+      expect(await repo.peek('sid-1/main'), isEmpty);
+      queue.dispose();
+    });
+
+    test('schedule_message on the main agent (null sender) keeps the legacy '
+        'self default', () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final (queue, repo, clock) = harness(env);
+      final tool = scheduleMessageTool(queue);
+      await tool.execute({'text': 'standup', 'delay': '1m'}, null, null);
+      clock.jump(const Duration(minutes: 2));
+      expect(await queue.deliverDue(), 1);
+      final mail = await repo.peek('sid-1/main');
+      expect(mail, hasLength(1));
+      expect(mail.single.text, contains('[scheduled] standup'));
+      queue.dispose();
+    });
+  });
 }

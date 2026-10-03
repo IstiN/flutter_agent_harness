@@ -97,6 +97,80 @@ void main() {
     expect(statussJoined(statuses), isNot(contains('sk-aiin-')));
   });
 
+  test('onCallback fires when the callback lands (the mobile auth-session '
+      'sheet dismisses here)', () async {
+    var dismissed = false;
+    final result = await runAiinConnectCliFlow(
+      onStatus: (_) {},
+      openBrowserFn: fakeBrowser(code: 'c-1'),
+      client: mockAiinBackend(),
+      onCallback: () => dismissed = true,
+    );
+    expect(result, isNotNull);
+    expect(dismissed, isTrue);
+  });
+
+  test('onCallback also fires on the timeout (a stale sheet closes too)',
+      () async {
+    var dismissed = false;
+    final result = await runAiinConnectCliFlow(
+      onStatus: (_) {},
+      openBrowserFn: (url) async => true, // opened, never redirected
+      client: mockAiinBackend(),
+      timeout: const Duration(milliseconds: 100),
+      onCallback: () => dismissed = true,
+    );
+    expect(result, isNull);
+    expect(dismissed, isTrue);
+  });
+
+  test('an open failure surfaces ahead of the callback timeout', () async {
+    // The flow must rethrow the open failure promptly instead of waiting
+    // out the (deliberately huge) callback timeout.
+    await expectLater(
+      runAiinConnectCliFlow(
+        onStatus: (_) {},
+        openBrowserFn: (url) => throw StateError('no surface'),
+        client: mockAiinBackend(),
+        timeout: const Duration(minutes: 5), // must NOT be waited out
+      ).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => fail('open failure stalled until the callback timeout'),
+      ),
+      throwsA(isA<StateError>()),
+    );
+  });
+
+  test('cancelWhenOpenSettles: the sheet closing without a callback is a '
+      'user cancel, not a timeout wait', () async {
+    await expectLater(
+      runAiinConnectCliFlow(
+        onStatus: (_) {},
+        openBrowserFn: (url) async => true, // sheet opens...
+        // ...and closes by the user without ever redirecting.
+        client: mockAiinBackend(),
+        timeout: const Duration(minutes: 5), // must NOT be waited out
+        cancelWhenOpenSettles: true,
+      ).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => fail('surface cancel stalled until the callback timeout'),
+      ),
+      throwsA(isA<AiinSurfaceClosedException>()),
+    );
+  });
+
+  test('cancelWhenOpenSettles: a landed callback still wins over the '
+      'sheet closing', () async {
+    final result = await runAiinConnectCliFlow(
+      onStatus: (_) {},
+      openBrowserFn: fakeBrowser(code: 'c-1'),
+      client: mockAiinBackend(),
+      cancelWhenOpenSettles: true,
+    );
+    expect(result, isNotNull);
+    expect(result!.apiKey.raw, startsWith('sk-aiin-'));
+  });
+
   test('the browser receives the hosted /login URL with our redirect and '
       'state embedded', () async {
     final client = mockAiinBackend();

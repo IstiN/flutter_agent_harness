@@ -41,11 +41,14 @@ export 'src/cli/cli_args.dart';
 export 'src/cli/cli_config.dart'
     show
         CliConfig,
+        applyProviderTimeoutEnvOverride,
         loadCliConfig,
         loadProjectCompactionEngine,
         loadProjectMemoryConfig,
         loadProjectCubeSettings,
+        parseProviderTimeouts,
         resolveStartupCubeSource;
+export 'src/config/app_config_sections.dart';
 export 'src/cli/pi_mode.dart';
 export 'src/cli/links_config.dart'
     show LinksConfig, defaultAppStoreUrl, defaultSiteUrl, defaultTestFlightUrl;
@@ -91,7 +94,13 @@ export 'src/cli/links_surface.dart'
         StoreBannerView,
         appStoreBlockEndMarker,
         appStoreBlockStartMarker,
-        renderAppStoreBlockHtml;
+        appStoreHeaderEndMarker,
+        appStoreHeaderStartMarker,
+        appStoreHeroEndMarker,
+        appStoreHeroStartMarker,
+        renderAppStoreBlockHtml,
+        renderAppStoreHeaderBadgeHtml,
+        renderAppStoreHeroCtaHtml;
 export 'src/cli/cli_help.dart';
 export 'src/cli/hep.dart';
 export 'src/cli/stream_json.dart';
@@ -103,10 +112,12 @@ export 'src/cli/prompt_templates.dart';
 export 'src/cli/tui_mouse_mode.dart';
 export 'src/compaction/branch_summarization.dart';
 export 'src/compaction/compaction.dart';
+export 'src/compaction/summary_sanitizer.dart';
 export 'src/compaction/token_estimation.dart';
 export 'src/context.dart';
 export 'src/cube/cube.dart';
 export 'src/env/execution_env.dart';
+export 'src/env/job_log_ceiling.dart';
 export 'src/env/session_parse_executor.dart';
 export 'src/a2a/a2a_client.dart';
 export 'src/a2a/a2a_mail_gateway.dart';
@@ -157,6 +168,10 @@ export 'src/providers/models_for_endpoint.dart';
 export 'src/providers/openai_completions.dart';
 export 'src/providers/openrouter_oauth.dart';
 export 'src/providers/provider_common.dart';
+export 'src/providers/quota.dart';
+export 'src/providers/quota_codemie.dart';
+export 'src/providers/quota_openrouter.dart';
+export 'src/providers/quota_service.dart';
 export 'src/providers/transient_retry_stream.dart';
 export 'src/providers/remote_catalog.dart';
 export 'src/providers/thinking.dart';
@@ -194,6 +209,8 @@ export 'src/trajectory/trajectory_snapshot.dart';
 export 'src/trajectory/trajectory_snapshot_builder.dart';
 export 'src/trajectory/trajectory_export.dart';
 export 'src/trajectory/search_index.dart';
+export 'src/skills/skill_availability.dart';
+export 'src/skills/builtin_skills.dart';
 export 'src/skills/skills.dart';
 export 'src/sse_decoder.dart';
 export 'src/task/task.dart';
@@ -202,6 +219,7 @@ export 'src/task/subagent_manager.dart';
 export 'src/task/subagent_heartbeat.dart';
 export 'src/task/delivery_slo.dart';
 export 'src/task/subagent_tools.dart';
+export 'src/task/subagent_scope.dart';
 export 'src/tools/ask_tool.dart';
 export 'src/tools/availability.dart';
 export 'src/tools/availability_gate.dart';
@@ -229,6 +247,12 @@ export 'src/uploads.dart';
 export 'src/prompt_tools/prompt_tools.dart';
 export 'src/prompts/prompt_overrides.dart';
 export 'src/parity/settings_registry.dart';
+export 'src/hosts/host_capability_profile.dart';
+export 'src/hosts/host_wiring_builder.dart';
 export 'src/types.dart';
 export 'src/usage_summary.dart';
+export 'src/utils/path_text.dart';
+export 'src/wire/wire_adapter.dart';
+export 'src/wire/wire_protocol.dart';
+export 'src/wire/wire_serve.dart';
 export 'src/web_search/web_search.dart';

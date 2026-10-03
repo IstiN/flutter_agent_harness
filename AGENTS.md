@@ -41,6 +41,24 @@ factual: paths, commands, invariants — no essays.
   `builtinTools` in the CLI (`AgentCli`) and the app (`AgentService`).
   `LocalShell` merges `ShellExecOptions.env` OVER `Platform.environment`
   (never replaces), so injected vars keep the inherited environment.
+- `lib/src/env/io_execution_env.dart` — `LocalShell`: foreground `exec`
+  runs under `setsid` when the host has it (probe
+  `ownProcessGroupAvailable`, seam `ownProcessGroupOverride`) and the
+  timeout/cancel paths reap the whole tree (`killTree` + direct-kill
+  backstop) with a capped pipe-drain (`_drainGrace`) — timeout/cancel'd
+  calls complete in ≤ timeout + kill grace + drain grace; a no-timeout
+  call within `_drainGrace` of the direct child's exit (the drain is
+  capped unconditionally: after the child is reaped every remaining pipe
+  byte comes from an orphan). Killed calls are marked `timeout`/`aborted`
+  and carry the captured partial output on `ExecutionError.stdout`/
+  `stderr` — tail-capped at the source to the last 64 KiB (`_captureTail`)
+  — rendered by the bash tool and the skill renderer's `!cmd` failure
+  branch (every string that branch embeds is tail-capped to ~2 KB)
+  (gh-1053; the timeout timer stays
+  armed after the child exits because an orphaned descendant can hold
+  the pipes — a drain that outlives the deadline marks the call
+  `timedOut` even when the child exited 0). Background jobs (issue #517)
+  keep their own group + `stop()` semantics.
 - `lib/src/tools/checkpoint_tool.dart` — `checkpoint`/`rewind` tools:
   context hygiene for detours. `CheckpointRewindController` wraps
   `Agent.prepareNextTurn`, persists via host `CheckpointSessionSink`.
@@ -256,7 +274,18 @@ factual: paths, commands, invariants — no essays.
   Claude/Copilot/Codex layouts (`.claude/skills` + `.claude/commands`,
   `.github/skills`, `.codex/skills`, user-level equivalents incl.
   `~/.copilot/skills`), each root tagged with a `SkillSource`; project >
-  user, first-name-wins. Third-party roots are discovered BY DEFAULT
+  user, first-name-wins. The package also ships first-party built-ins
+  (`create-goal`, `self-settings`) compiled from
+  `prompts/skills/<name>/SKILL.md` by `scripts/gen_prompts.dart` into
+  `builtin_skills.dart` — merged into discovery LAST (a same-named
+  project/user/granted skill shadows the built-in), never gated by the
+  skills-access consent, served to `read` from virtual
+  `builtin://skills/<name>/SKILL.md` paths. Per-skill on/off toggles
+  (`skill_availability.dart`: `skills: {<name>: on|off}`, global
+  `~/.fah/config.yaml` < project `.fah/config.yaml`, deepest mention
+  wins) gate the prompt/completion/invocation surfaces live via
+  `/skills on|off <name> [global|project]` and the `/settings` Skills
+  row. Third-party roots are discovered BY DEFAULT
   (opt-out): `skills_access.dart` `SkillsAccess` ask/granted/denied with
   `granted` as the zero-config default — `allowedSources` on
   `discoverSkills`/`discoverTaskAgents`; CLI `skills:` config section,
@@ -305,7 +334,20 @@ factual: paths, commands, invariants — no essays.
   addressable: real JSONL child sessions, `task_status`/`task_observe`/
   `task_send`/`task_cancel` (model-facing job abort), child-only `reply` +
   sibling `agent_message` (pending-queue + hop-capped),
-  `completed_without_reply` notice.
+  `completed_without_reply` notice. Child IDENTITY for tool calls is
+  zone-scoped (`subagent_scope.dart`, gh-970): `runSpawn`/`resumeChild`
+  publish the running child's id via `runWithSubagentScope`, and
+  `TaskExecutor.currentSubagentId` reads the zone FIRST — the executor's
+  in-flight id stack is shared by all concurrent children, so its head is
+  "started last", not "executing" (that shift mislabeled every sender
+  envelope and recorded replies on sibling handles). Hosts also resolve
+  shared tools' self-mailbox semantics through the zone (`activeSubagentId`
+  → `schedule_message`'s `senderMailbox`), and the CLI wires
+  `SubagentManager.wakeChild` so mail that fires into a finished child's
+  inbox (a self-scheduled reminder, sibling mail) resumes it in its own
+  session — the child-side analog of the idle inbox wake (the sweep is
+  `wakeChildrenWithPendingMail`, status-gated to completed/idle, one wake
+  per child per settle, a throwing wake retires the child).
 - Steer soft-yield: a steering message (user `Ctrl+S`, subagent completion,
   inbox mail) arriving DURING a tool-call phase cancels the phase's
   zone-scoped yield token — `currentYieldToken()` in `cancel_token.dart`,
@@ -345,7 +387,13 @@ factual: paths, commands, invariants — no essays.
   `schedule_message` (issue #59): records under `<messagesRoot>/_scheduled/`;
   self-addressed records deliver to the host's LIVE mailbox at fire time
   (the address pinned at schedule time goes stale on session switch/restart
-  and would strand the reminder) — hosts re-arm on every mailbox change
+  and would strand the reminder) — EXCEPT self-addressed records naming a
+  subagent mailbox of this session (`<prefix>/<childId>`, gh-970): those
+  deliver as recorded (the address rides the same owner prefix and is as
+  stable; re-addressing stole the child's reminder into main), and the
+  tool's `senderMailbox` override (host-wired from `activeSubagentId()`)
+  makes a subagent's no-`to` schedule default to the CHILD's mailbox, not
+  main's — hosts re-arm on every mailbox change
   (CLI `_syncMailboxPrefix`, app `_setMailboxPrefix`) and sweep due records
   on their inbox ticks; `dispose()` cancels only the timer, the files stay.
   Sleep resilience (issue #259): all due math rides an injectable wall
@@ -787,9 +835,10 @@ factual: paths, commands, invariants — no essays.
   transcript message tile (`chat_message_tile.dart`), the composer
   (`chat_composer.dart` — file/gallery/camera picking through the
   `FaChatHost.uploadPicker`/`galleryPicker`/`cameraPicker` hooks, voice
-  input through `FaChatHost.voiceInput`; desktop keys: Shift+Enter inserts
-  a newline (a Focus ancestor swallows the key before the text-input plugin
-  turns it into `send`), Cmd/Ctrl+V is smart paste — a clipboard image
+  input through `FaChatHost.voiceInput`; desktop keys: Enter sends and
+  Shift+Enter inserts a newline (issue #973 — the Focus ancestor swallows
+  plain Enter before the IME turns it into a break; the touch return key
+  keeps its IME newline path), Cmd/Ctrl+V is smart paste — a clipboard image
   (via the `FaChatHost.clipboardImageReader` hook) or long/multi-line text
   is staged as an `uploads/` attachment chip, short single-line text pastes
   inline), and the single-service chat
@@ -1516,8 +1565,10 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   `ci_fast_gate.sh` (ratchet — only tighten; the per-package gates above
   cannot see across module boundaries).
 - CRAP ratchet (`crap4dart analyze`, tool pinned as
-  `dart pub global activate crap4dart 0.2.1`), one config per package,
-  thresholds are the current per-package max — only down from here:
+  `dart pub global activate crap4dart ">=0.10.0 <0.11.0"` — gh-1061;
+  bounded so a future 0.11.0+ is adopted deliberately, never
+  auto-floating), one config per package, thresholds are the current
+  per-package max — only down from here:
   - core (`crap4dart.yaml`, sources `[lib, bin]`): **12.0** — three
     TUI-only dispatchers at CC 3 / 0% cov pending PTY tests (documented
     exception).
@@ -1583,13 +1634,35 @@ in `lib/src/parity/settings_registry.dart` with a comment explaining WHY.
    with a one-line reason comment
 4. Run `dart test test/parity/` — the parity guard must pass
 
+**Capability rules (issue #1079, host-wiring SDK layer):** every NEW
+host-wiring capability declares its matrix state AT BIRTH — for all seven
+hosts (`cli`, `macos`, `ios`, `android`, `web`, `extension`, `outlook`) a
+state: `on`, `off(reason)`, or `transport(choice, reason)` for a
+partial/different transport. The record types, validation and transport
+vocabularies live in `lib/src/hosts/host_capability_profile.dart`; the
+seven built-in profiles — where those per-host cells are actually
+declared — live in `lib/src/hosts/host_wiring_builder.dart`. The
+matrix-completeness test rejects undeclared capabilities, so "CLI got X,
+app didn't" cannot happen silently. A capability that is
+`off` is INVISIBLE: hidden from the host's UI (menus, settings, slash
+commands, tool palettes) AND from everything model-facing (tool schemas,
+system-prompt sections, skills listings, help) — the agent never sees
+what it cannot use and the user never sees a button that errors; on a
+`transport` cell only the available transports surface. Profiles can only
+NARROW what the platform floor allows: force-enabling a floored
+capability throws `HostProfileViolation` at construction, never a runtime
+surprise.
+
 ## Commits and releases
 
 - Commit identity: human/AI contributors commit as `ai.teammate
   <agent.ai.native@gmail.com>` (history was rewritten to it — set
   `git config user.name ai.teammate` + `git config user.email
   agent.ai.native@gmail.com` repo-locally). Release commits from
-  `scripts/auto_release.sh` stay `github-actions[bot]`.
+  `scripts/auto_release.sh` are authored `fa-release-bot[bot]
+  <fa-release-bot[bot]@users.noreply.github.com>` — the gh-1172 ruleset-
+  bypass App pushes the bump straight to protected main, so the App identity
+  is what auditability hangs on.
 - Commit subjects: `type(scope): ...` (`feat:`, `fix:`, `fix(example):`,
   `ci:`, `test(providers):`, `refactor(prompts):`).
 - Every push to `main` auto-releases a patch to pub.dev
@@ -1664,4 +1737,10 @@ in `lib/src/parity/settings_registry.dart` with a comment explaining WHY.
   play_store` in `flutter_app` (env gates `PLAY_DEPLOY_METADATA`/
   `PLAY_DEPLOY_IMAGES`, `PLAY_VALIDATE_ONLY=1` dry-run; Play service-account
   secret `PLAY_STORE_SERVICE_ACCOUNT_JSON`) or the `store-metadata.yml`
-  android leg (`android_content`: none/metadata_only/images_only/all).
+  android leg (`android_content`: none/metadata_only/images_only/all). Images
+  never ride supply (it only APPENDS uploads — issue #947): the `play_store`
+  lane pushes them through `play_listing_sync.rb`, which replaces the whole
+  image set per locale + device type (dropped sets are cleared) and verifies
+  the committed goldens against `edits.images.list`. The daily
+  `daily-publish.yml` play leg dispatches `build-mobile.yml` with
+  `android_content=all`, so every release train redeploys the listing.

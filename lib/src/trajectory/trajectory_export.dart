@@ -184,12 +184,6 @@ Map<String, dynamic> _recordJson(TrajectoryRecord record) {
   };
   switch (record) {
     case TrajectoryAssistantRecord(
-      :final messageId,
-      :final turn,
-      :final step,
-      :final provider,
-      :final model,
-      :final usage,
       :final inputTokens,
       :final cacheReadTokens,
       :final cacheWriteTokens,
@@ -202,7 +196,6 @@ Map<String, dynamic> _recordJson(TrajectoryRecord record) {
       :final outputBlocks,
       :final partialBlocks,
       :final schemaDetail,
-      :final thinkingDetail,
       :final inputDetail,
       :final outputDetail,
       :final promptDetail,
@@ -215,41 +208,36 @@ Map<String, dynamic> _recordJson(TrajectoryRecord record) {
       :final displayText,
       :final requestDetail,
     ):
-      json.addAll({
-        'messageId': messageId,
-        'turn': turn,
-        'step': step,
-        'provider': provider,
-        'model': model,
-        'usage': usage?.toJson(),
-        'inputTokens': inputTokens,
-        'cacheReadTokens': cacheReadTokens,
-        'cacheWriteTokens': cacheWriteTokens,
-        'outputTokens': outputTokens,
-        'reasoningTokens': reasoningTokens,
-        'stepStartTime': _timestamp(stepStartTime),
-        'firstTokenTime': _timestamp(firstTokenTime),
-        'completedTime': _timestamp(completedTime),
-        'sourceBlocks': _sourceBlocksJson(sourceBlocks),
-        'outputBlocks': _sourceBlocksJson(outputBlocks),
-        'partialBlocks': [
-          for (final block in partialBlocks)
-            {'type': block.type, 'content': block.content},
-        ],
-        'schemaDetail': schemaDetail,
-        'thinkingDetail': thinkingDetail,
-        'inputDetail': inputDetail,
-        'outputDetail': outputDetail,
-        'promptDetail': promptDetail,
-        'previousPromptDetail': previousPromptDetail,
-        'timeSeconds': _duration(timeSeconds),
-        'isError': isError,
-        'errorCode': errorCode,
-        'errorMessage': errorMessage,
-        'requestOnly': requestOnly,
-        'displayText': displayText,
-        'requestDetail': requestDetail?.toJson(),
-      });
+      json
+        ..addAll(record.identityJson())
+        ..addAll({
+          'inputTokens': inputTokens,
+          'cacheReadTokens': cacheReadTokens,
+          'cacheWriteTokens': cacheWriteTokens,
+          'outputTokens': outputTokens,
+          'reasoningTokens': reasoningTokens,
+          'stepStartTime': _timestamp(stepStartTime),
+          'firstTokenTime': _timestamp(firstTokenTime),
+          'completedTime': _timestamp(completedTime),
+          'sourceBlocks': _sourceBlocksJson(sourceBlocks),
+          'outputBlocks': _sourceBlocksJson(outputBlocks),
+          'partialBlocks': [
+            for (final block in partialBlocks)
+              {'type': block.type, 'content': block.content},
+          ],
+          'schemaDetail': schemaDetail,
+          'inputDetail': inputDetail,
+          'outputDetail': outputDetail,
+          'promptDetail': promptDetail,
+          'previousPromptDetail': previousPromptDetail,
+          'timeSeconds': _duration(timeSeconds),
+          'isError': isError,
+          'errorCode': errorCode,
+          'errorMessage': errorMessage,
+          'requestOnly': requestOnly,
+          'displayText': displayText,
+          'requestDetail': requestDetail?.toJson(),
+        });
     case TrajectoryToolRecord(
       :final callId,
       :final parentCallId,

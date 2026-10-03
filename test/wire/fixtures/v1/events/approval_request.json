@@ -1,0 +1,1 @@
+{"kind":"approval_request","protocolVersion":1,"frame":{"v":1,"kind":"approval_request","id":"ap_1","toolName":"bash","tier":"exec","arguments":{"command":"rm -rf /tmp/x"},"reason":"critical pattern matched"}}

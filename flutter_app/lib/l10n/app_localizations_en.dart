@@ -425,9 +425,6 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get chatTyping => 'Fa is typing...';
-
-  @override
   String chatUploadFailed(Object error) {
     return 'Upload failed: $error';
   }
@@ -672,6 +669,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get launcherChatActionsTooltip => 'Chat actions';
 
   @override
+  String get faEntryHintTooltip =>
+      'Tap: continue the active chat · Hold: new chat';
+
+  @override
   String get launcherChatEmptyHint => 'Nothing here yet — ask Fa anything.';
 
   @override
@@ -759,6 +760,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get launcherSeedErrorTitle => 'App failed to install';
+
+  @override
+  String get launcherManifestErrorTitle => 'App failed to load';
+
+  @override
+  String get appsManifestErrorLabel => 'Manifest error';
 
   @override
   String get launcherTileSizeIcon => 'Icon (1×1)';
@@ -1441,6 +1448,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Reuse skills Claude, Copilot or Codex left in the project folder (.claude, .github, .codex)';
 
   @override
+  String get settingsSkillsToggles => 'Built-in skills';
+
+  @override
+  String get settingsSkillsTogglesHint =>
+      'Enable or disable the skills that ship with Fa';
+
+  @override
   String get skillsAccessAsk => 'Ask';
 
   @override
@@ -1761,6 +1775,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Turn tools off or on for Fa — applies immediately, no restart.';
 
   @override
+  String get settingsRedaction => 'Secret redaction';
+
+  @override
+  String get settingsRedactionHint =>
+      'Mask API keys and secrets in everything Fa sends or stores. Applies immediately, no restart.';
+
+  @override
   String toolsAvailabilityUnavailable(Object reason) {
     return 'Unavailable: $reason';
   }
@@ -1827,6 +1848,30 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get publicationStateUnknown => 'Unknown';
+
+  @override
+  String get widgetStatusNotPublished => 'Not published';
+
+  @override
+  String get widgetStatusValidating => 'Validating…';
+
+  @override
+  String get widgetStatusInvalid => 'Invalid';
+
+  @override
+  String get widgetStatusFailed => 'Publish failed';
+
+  @override
+  String get widgetStatusErrors => 'Validator errors:';
+
+  @override
+  String get widgetStatusOpenRun => 'Open CI run';
+
+  @override
+  String get widgetDetailVersion => 'Version';
+
+  @override
+  String get widgetDetailAuthor => 'Author';
 
   @override
   String publicationSubmittedAt(Object date) {
@@ -1900,6 +1945,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String sessionTooLargeTitle(String size) {
     return 'Session ($size MB) is over the instant-open budget and couldn\'t be opened safely.';
   }
+
+  @override
+  String get sessionMintFailed => 'Couldn\'t create a new session.';
 
   @override
   String sessionBootSkippedOversize(String name, String size) {
@@ -2313,7 +2361,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get networkShowcaseReadOnly =>
-      'Public showcase — read-only preview. Join the network to participate.';
+      'Read-only preview — tap to join the network and write.';
 
   @override
   String get networkConnecting => 'Connecting…';
@@ -2340,6 +2388,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get networkAddAgentNoKeys =>
       'No keys for this channel on this device.';
+
+  @override
+  String get networkAddAgentNoChannelKeys =>
+      'No channel keys in this wallet — the agent will see channels only after a key invite';
 
   @override
   String get networkAddAgentScopeChannel => 'This channel';

@@ -42,7 +42,7 @@ void main() {
       final workspace = Directory('/tmp').createTempSync('f');
       addTearDown(() => workspace.deleteSync(recursive: true));
       final server = await MockLlmServer.start()
-        ..enqueueToolCall('bash', '{"command": "sleep 15"}')
+        ..enqueueToolCall('bash', '{"command": "sleep 60"}')
         ..enqueueText('sleep finished');
       addTearDown(server.stop);
       File('${tempHome.path}/.fah/config.yaml')
@@ -75,7 +75,7 @@ tui:
       harness.sendEnter();
       await harness.waitForText('· submit', timeout: const Duration(seconds: 20));
 
-      // Compose the long line mid-run, then let two 1 Hz ticks repaint.
+      // Compose the long line mid-run, then let the 1 Hz ticks repaint.
       for (var i = 0; i < _composed.length; i += 10) {
         harness.sendText(
           _composed.substring(i, i + 10 > _composed.length
@@ -84,10 +84,14 @@ tui:
         );
         await Future<void>.delayed(const Duration(milliseconds: 20));
       }
-      await Future<void>.delayed(const Duration(milliseconds: 1200));
-      final gridA = _grid(harness);
-      await Future<void>.delayed(const Duration(milliseconds: 1200));
-      final gridB = _grid(harness);
+      // gh-1026: readiness handshake before the grid math — the composed
+      // line must actually be PAINTED in the composer region (the old
+      // fixed 1200ms sleep raced the render loop on loaded hosts and
+      // sampled half-echoed frames). The sleep above gives the bounded
+      // sampling below 20s+25s of budget inside the busy window; the
+      // teardown kills the CLI, so the extra sleep never costs wall time.
+      await _waitForComposedInRegion(harness, columns);
+      final (gridA, gridB) = await _oneRowTickDiffPair(harness);
 
       // ── (1) the composed line soft-wraps across rows ───────────────────
       final rule = '─' * columns;
@@ -132,16 +136,18 @@ tui:
           reason: 'a full-width rule separates the composer from the status');
 
       // ── (3) the ticker updates IN PLACE ─────────────────────────────────
-      expect(gridB.length, gridA.length, reason: 'no row count drift');
-      var changedRows = 0;
+      // _oneRowTickDiffPair already guarantees exactly ONE differing row
+      // (anything else resamples); what remains here is the CONTRACT:
+      // that row must be the busy ticker, and inside it only the spinner
+      // glyph and the seconds cell may move.
       var busyIdx = -1;
       for (var i = 0; i < gridA.length; i++) {
         if (gridA[i] != gridB[i]) {
-          changedRows++;
           busyIdx = i;
         }
       }
-      expect(changedRows, 1, reason: 'only the busy row may change');
+      expect(busyIdx, greaterThanOrEqualTo(0),
+          reason: 'the sampled pair must differ in the busy row');
       String masked(String row) => row
           .substring(row.indexOf(' ') + 1) // drop the spinner glyph
           .replaceAll(RegExp(r'\d'), '#');
@@ -399,3 +405,76 @@ tui:
 List<String> _grid(FaCliHarness harness) => [
   for (final line in harness.viewportLines) line.trimRight(),
 ];
+
+/// The composer region: the rows between the last two full-width rules.
+List<String> _composerRegion(List<String> grid, int columns) {
+  final rule = '─' * columns;
+  final rules = <int>[
+    for (var i = 0; i < grid.length; i++)
+      if (grid[i].trim() == rule) i,
+  ];
+  if (rules.length < 2) return const [];
+  return grid.sublist(rules[rules.length - 2] + 1, rules.last);
+}
+
+/// gh-1026 readiness handshake: poll until the composer region actually
+/// paints the FULL composed text (content compare, spaces stripped) — the
+/// deterministic replacement for the old fixed 1200ms sleep before the
+/// grid math, which sampled half-echoed frames on loaded hosts (#550
+/// family: the raw echo settles long before the render loop repaints).
+Future<void> _waitForComposedInRegion(
+  FaCliHarness harness,
+  int columns,
+) async {
+  final want = _composed.replaceAll(' ', '');
+  final deadline = DateTime.now().add(const Duration(seconds: 20));
+  while (DateTime.now().isBefore(deadline)) {
+    final visible = _composerRegion(_grid(harness), columns)
+        .map((l) => l.replaceAll(' ', ''))
+        .join();
+    if (visible.contains(want)) return;
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+  }
+  fail(
+    'the composed line never fully painted in the composer region:\n'
+    '${harness.screenText}',
+  );
+}
+
+/// gh-1026 tick-diff sampler: returns a pair of consecutive painted frames
+/// that differ in EXACTLY one row (same row count). The old shape — wait a
+/// fixed 1200ms, sample twice, assert one changed row — lotteried on the
+/// render loop: under load a non-tick repaint can land inside the window
+/// (multi-row diff) or the loop can stall past it (no diff). Resampling
+/// keeps the assertion (there EXISTS a consecutive-frame pair where only
+/// one row moved) and drops the timing bet. Bounded; fails with both
+/// frames dumped when the budget runs out.
+Future<(List<String>, List<String>)> _oneRowTickDiffPair(
+  FaCliHarness harness,
+) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 25));
+  var gridA = _grid(harness);
+  var gridB = gridA;
+  while (DateTime.now().isBefore(deadline)) {
+    final pairDeadline = DateTime.now().add(const Duration(seconds: 5));
+    gridB = gridA;
+    while (DateTime.now().isBefore(pairDeadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      gridB = _grid(harness);
+      if (gridB.join('\n') != gridA.join('\n')) break;
+    }
+    final changedRows = [
+      for (var i = 0; i < gridA.length && i < gridB.length; i++)
+        if (gridA[i] != gridB[i]) i,
+    ];
+    if (gridA.length == gridB.length && changedRows.length == 1) {
+      return (gridA, gridB);
+    }
+    gridA = gridB;
+  }
+  fail(
+    'no clean one-row tick diff within budget — last pair:\n'
+    '--- A ---\n${gridA.join('\n')}\n'
+    '--- B ---\n${gridB.join('\n')}',
+  );
+}

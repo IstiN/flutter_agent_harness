@@ -1,3 +1,7 @@
+## 0.2.1 — 2026-09-30
+
+- `LlmConfig.fromEnvironment` base URLs (the explicit argument or `{PROVIDER}_BASE_PATH`/`{PROVIDER}_BASE_URL`) are normalized for the OpenAI-compatible providers: a bare origin or versioned base (`…/v1`) resolves to the full `/v1/chat/completions` endpoint, replacing the ollama-only fixup. Full endpoints, custom gateway paths, and query-string URLs pass through verbatim; `copilot` base URLs are never rewritten. The resolution order and accepted shapes are now documented in the class docs and the package README.
+
 ## 0.2.0 — 2026-08-28
 
 - GitHub Copilot as a first-class provider: OAuth device-flow auth (request/poll with pending/slow_down/expired/denied semantics), GitHub-token-to-Copilot-token exchange with dead-token detection, and login resolution.

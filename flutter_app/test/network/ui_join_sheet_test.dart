@@ -57,6 +57,29 @@ _pumpHost(
 
 void main() {
   group('JoinSheet', () {
+    testWidgets('fields use the unified session-composer pill style', (
+      tester,
+    ) async {
+      final wallet = await KeyWallet.load(MemoryWalletBackend());
+      await _pumpHost(tester, httpClient: FakeHttpClient(), wallet: wallet);
+
+      final passwordField = tester.widget<TextField>(
+        find.widgetWithText(TextField, 'Password'),
+      );
+      final decoration = passwordField.decoration!;
+      // Borderless filled pill with a hint — the composer look, not the
+      // default Material outlined field with a floating label.
+      expect(decoration.filled, isTrue);
+      expect(decoration.hintText, isNotNull);
+      expect(decoration.labelText, isNull);
+      final border = decoration.border! as OutlineInputBorder;
+      expect(border.borderSide, BorderSide.none);
+      expect(
+        (border.borderRadius as BorderRadius).topLeft.x,
+        greaterThanOrEqualTo(20),
+      );
+    });
+
     testWidgets('guest flow: join records the wallet entry and enters the '
         'network', (tester) async {
       final wallet = await KeyWallet.load(MemoryWalletBackend());

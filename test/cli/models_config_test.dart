@@ -130,6 +130,57 @@ models:
       expect(fast.input, ['text', 'image']);
     });
 
+    test('parses authHeader on a custom definition (issue #964)', () {
+      final config = CliConfig.fromYaml(
+        loadYaml('''
+models:
+  custom:
+    bedrock:
+      provider: openai
+      baseUrl: https://gateway.example.com/v1
+      model: gpt-4o-mini
+      authHeader: x-api-key
+''')
+            as YamlMap,
+      );
+      final bedrock = config.models!.custom['bedrock']!;
+      expect(bedrock.authHeader, 'x-api-key');
+      // Unset keeps the Bearer default.
+      final fast = CliConfig.fromYaml(
+        loadYaml('''
+models:
+  custom:
+    fast:
+      provider: openai
+      baseUrl: https://api.openai.com/v1
+      model: gpt-4o-mini
+''')
+            as YamlMap,
+      );
+      expect(fast.models!.custom['fast']!.authHeader, isNull);
+    });
+
+    test('round-trips authHeader through toYaml/loadYaml (issue #964)', () {
+      final models = ModelsConfig(
+        custom: {
+          'bedrock': const CustomModelDefinition(
+            provider: 'openai',
+            baseUrl: 'https://gateway.example.com/v1',
+            model: 'gpt-4o-mini',
+            authHeader: 'x-api-key',
+          ),
+        },
+      );
+      final once = CliConfig(models: models).toYaml();
+      expect(once, contains('authHeader: "x-api-key"'));
+      final reparsed = CliConfig.fromYaml(
+        loadYaml(once) as YamlMap,
+      ).models!;
+      expect(reparsed.custom['bedrock']!.authHeader, 'x-api-key');
+      // Byte-stable second write.
+      expect(CliConfig(models: reparsed).toYaml(), once);
+    });
+
     test('round-trips through toYaml/loadYaml unchanged', () {
       final models = ModelsConfig(
         slots: {
@@ -280,6 +331,61 @@ models:
           'models:\n  custom:\n    fast:\n      provider: openai\n'
               '      baseUrl: https://x\n      model: m\n      region: eu',
           'unknown field "region" in models.custom.fast',
+        );
+      });
+
+      test('custom empty authHeader is rejected, naming the entry '
+          '(issue #964 AC5)', () {
+        expectBad(
+          'models:\n  custom:\n    fast:\n      provider: openai\n'
+              '      baseUrl: https://x\n      model: m\n      authHeader: ""',
+          'models.custom.fast: invalid authHeader',
+        );
+      });
+
+      test('custom whitespace authHeader is rejected (issue #964 AC5)', () {
+        expectBad(
+          'models:\n  custom:\n    fast:\n      provider: openai\n'
+              '      baseUrl: https://x\n      model: m\n      authHeader: " "',
+          'models.custom.fast: invalid authHeader',
+        );
+      });
+
+      test('custom CRLF authHeader is rejected (issue #964 AC5)', () {
+        expectBad(
+          'models:\n  custom:\n    fast:\n      provider: openai\n'
+              '      baseUrl: https://x\n      model: m\n'
+              r'      authHeader: "x-api-key\r\nX-Evil: 1"',
+          'models.custom.fast: invalid authHeader',
+        );
+      });
+
+      test('custom non-string authHeader is rejected (issue #964 AC5)', () {
+        expectBad(
+          'models:\n  custom:\n    fast:\n      provider: openai\n'
+              '      baseUrl: https://x\n      model: m\n      authHeader: 7',
+          'models.custom.fast: invalid authHeader',
+        );
+      });
+
+      test('custom authHeader on a non-openai-completions dialect is '
+          'rejected (issue #964 review)', () {
+        expectBad(
+          'models:\n  custom:\n    fast:\n      provider: anthropic\n'
+              '      baseUrl: https://x\n      model: m\n'
+              '      authHeader: x-api-key',
+          'models.custom.fast: authHeader only applies to the '
+              'OpenAI-completions adapter',
+        );
+      });
+
+      test('custom authHeader on the dial adapter is rejected — dial '
+          'hardcodes Api-Key (issue #964 round-2)', () {
+        expectBad(
+          'models:\n  custom:\n    fast:\n      provider: dial\n'
+              '      baseUrl: https://x\n      model: m\n'
+              '      authHeader: x-api-key',
+          'provider "dial" routes to the dial adapter, which ignores it',
         );
       });
     });

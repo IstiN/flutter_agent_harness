@@ -33,6 +33,14 @@ import 'session_storage.dart';
 
 /// Append-only session storage over a byte-scanned window of the file.
 ///
+/// Segment boundary (gh-1077): this view is bound to the ACTIVE segment
+/// (the primary file). Records archived into `<path>.part-NN` siblings
+/// by segment rotation are NOT reachable through [loadOlder] — paging
+/// stops at the primary's header copy and [hasOlder] goes false there,
+/// by design: the chat path only ever renders recent history. Full-chain
+/// reads go through [JsonlSessionStorage.open] (which loads parts +
+/// primary as one chain) or `JsonlSessionRepo.readCustomRecordsOfType`.
+///
 /// The in-memory index holds the LOADED records only; every structure
 /// (`_entries`, `_byId`, `_labelsById`, offsets) is pruned in the same
 /// pass when eviction drops records, so no strong reference outlives
@@ -347,6 +355,13 @@ final class WindowedSessionStorage
           // sees the hiding markers, which sit LATER on the branch than
           // the records they hide.
           if (estimateProjectedBranchTokens(branch) >= tokenBudget) {
+            // gh-968 (AC-R4): the stop fires AFTER a whole doubling block
+            // was paged, so accepting the block wholesale overshoots the
+            // budget by one BLOCK's tokens — a giant tool result in the
+            // last block read the resume tens of thousands of tokens past
+            // it (the reported 127%). Trim back to the parity bound: the
+            // kept tail overshoots by at most ONE record's tokens.
+            _trimTokenBudget(branch, tokenBudget);
             return true;
           }
         }
@@ -367,6 +382,33 @@ final class WindowedSessionStorage
   /// bounds the transient strip buffer).
   static const maxWalkBlockRecords = 4096;
   static const maxWalkBlockBytes = 64 << 20;
+
+  /// Record-granular budget trim for the [growOlderUntil] stop (gh-968,
+  /// AC-R4): un-indexes the OLDEST resident records down to the cut
+  /// [projectedBranchBudgetCut] finds walking the branch from the newest
+  /// end backward, so the kept tail's projected estimate stays within
+  /// [tokenBudget] — overshoot bounded by one record, never one block.
+  ///
+  /// The dropped records stay on disk and page back lazily through
+  /// [loadOlder]: `_windowTopOffset` rides [_dropOldest] up and
+  /// `_hasOlder` is restored when anything was dropped (the walk may have
+  /// stopped before any page — a tail window alone over the budget). The
+  /// tail anchor (`_branchBottomId`, the leaf) is never touched: the cut
+  /// keeps at least the newest record.
+  void _trimTokenBudget(List<SessionRecord> branch, int tokenBudget) {
+    final cut = projectedBranchBudgetCut(branch, tokenBudget);
+    if (cut == null) return; // whole branch fits — defensive, never the stop
+    final cutId = branch[cut].id;
+    var dropped = 0;
+    // The kept cut record is on the branch, hence resident; everything
+    // file-older than it (branch records AND interleaved side-branch
+    // records) leaves the window.
+    while (_entries.isNotEmpty && _entries.first.id != cutId) {
+      _dropOldest();
+      dropped++;
+    }
+    if (dropped > 0) _hasOlder = true;
+  }
 
   /// One block page-up for the boundary walk ([growOlderUntil]): a
   /// single-read strip above the window (see
@@ -456,7 +498,9 @@ final class WindowedSessionStorage
     _indexChunk(chunk);
     _knownFileBytes = chunk.endOffset;
     if (_belowCount != null) {
-      _belowCount = (_belowCount! - chunk.entries.length).clamp(0, 1 << 31);
+      // 0x80000000 == the VM value of `1 << 31`; the shift form is negative
+      // on dart2js and would throw inside clamp (issue #1074).
+      _belowCount = (_belowCount! - chunk.entries.length).clamp(0, 0x80000000);
     }
     if (chunk.endOffset >= _fileSize) _belowCount = 0;
     final joined = _joinBranchDownward(chunk);

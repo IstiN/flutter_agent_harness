@@ -321,6 +321,254 @@ void main() {
       );
       expect(result.getOrThrow().stdout.trim(), '1');
     });
+
+    // gh-1053: on timeout the foreground path used to signal ONLY the direct
+    // `sh -c` child and then waited UNBOUNDED for the stdout/stderr pipes to
+    // close — a surviving descendant (a `flutter test` stuck on a flock, a
+    // detached `(... &)`) held the write end forever and the tool call never
+    // returned. The contract: the exec future completes in
+    // ≤ timeout + kill grace + drain grace, is marked timedOut/aborted, and
+    // the whole tree is reaped.
+    Future<Set<String>> liveMarkerProcesses(String marker) async {
+      final ps = await Process.run('ps', ['-ax', '-o', 'command=']);
+      return (ps.stdout as String)
+          .split('\n')
+          .where((line) => line.contains(marker))
+          .toSet();
+    }
+
+    /// Runs [run] and asserts the gh-1053 contract: bounded completion,
+    /// the expected error marking, and no [marker] process left in the
+    /// process table after the kill round.
+    Future<void> expectBoundedTreeKill(
+      String marker, {
+      required Future<Result<ShellExecResult, ExecutionError>> Function() run,
+      required ExecutionErrorCode code,
+    }) async {
+      // Best-effort cleanup so a failed run never leaks sleep orphans.
+      addTearDown(() => Process.run('pkill', ['-f', marker]));
+      final watch = Stopwatch()..start();
+      final result = await run();
+      watch.stop();
+      // 2 s timeout + 400 ms kill grace + 3 s drain grace < 6 s — with the
+      // wedge the future never completes (30 s suite timeout).
+      expect(watch.elapsed, lessThan(const Duration(seconds: 6)));
+      expect(result.isErr, isTrue, reason: '${result.valueOrNull}');
+      expect(result.errorOrNull?.code, code);
+
+      // No descendant survives the kill round: poll briefly — the KILL
+      // round lands one 400 ms grace after the TERM round.
+      for (var i = 0; i < 20; i++) {
+        if (await liveMarkerProcesses(marker).then((s) => s.isEmpty)) {
+          return;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      final survivors = await liveMarkerProcesses(marker);
+      expect(survivors, isEmpty, reason: 'orphaned descendant survived');
+    }
+
+    test(
+      'timeout reaps the whole tree and returns bounded (gh-1053)',
+      skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+      () async {
+        await expectBoundedTreeKill(
+          'sleep 601.1053',
+          code: ExecutionErrorCode.timeout,
+          run: () => const LocalShell().exec(
+            'sleep 601.1053',
+            options: const ShellExecOptions(timeout: Duration(seconds: 2)),
+          ),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    test(
+      'timeout reaps a detached grandchild that outlived the shell '
+      '(gh-1053 wedge: run 36421037356)',
+      skip: Platform.isWindows
+          ? 'POSIX process semantics only'
+          // Reaping a grandchild whose parent shell already exited needs the
+          // process-group kill (setsid): the reparented orphan is invisible
+          // to the live ps descendant walk.
+          : (LocalShell.ownProcessGroupAvailable
+                ? false
+                : 'setsid unavailable — no group kill to reach the orphan'),
+      () async {
+        // `(sleep … &); wait` — the subshell forks the sleeper, exits, sh's
+        // `wait` returns instantly, so the DIRECT child is long gone when
+        // the timeout fires; only the group kill can reach the sleeper.
+        await expectBoundedTreeKill(
+          'sleep 602.1053',
+          code: ExecutionErrorCode.timeout,
+          run: () => const LocalShell().exec(
+            '(sleep 602.1053 &); wait',
+            options: const ShellExecOptions(timeout: Duration(seconds: 2)),
+          ),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    test(
+      'cancel token: bounded abort with the tree reaped',
+      skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+      () async {
+        await expectBoundedTreeKill(
+          'sleep 603.1053',
+          code: ExecutionErrorCode.aborted,
+          run: () {
+            final source = CancelTokenSource();
+            Future<void>.delayed(
+              const Duration(milliseconds: 300),
+              source.cancel,
+            );
+            return const LocalShell().exec(
+              'sleep 603.1053',
+              options: ShellExecOptions(cancelToken: source.token),
+            );
+          },
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    test(
+      'cancel token reaps a detached grandchild that outlived the shell',
+      skip: Platform.isWindows
+          ? 'POSIX process semantics only'
+          : (LocalShell.ownProcessGroupAvailable
+                ? false
+                : 'setsid unavailable — no group kill to reach the orphan'),
+      () async {
+        await expectBoundedTreeKill(
+          'sleep 604.1053',
+          code: ExecutionErrorCode.aborted,
+          run: () {
+            final source = CancelTokenSource();
+            Future<void>.delayed(
+              const Duration(milliseconds: 300),
+              source.cancel,
+            );
+            return const LocalShell().exec(
+              '(sleep 604.1053 &); wait',
+              options: ShellExecOptions(cancelToken: source.token),
+            );
+          },
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    test(
+      'the walk fallback (no setsid) reaps the tree identically (AC3)',
+      skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+      () async {
+        LocalShell.ownProcessGroupOverride = false;
+        addTearDown(() => LocalShell.ownProcessGroupOverride = null);
+        // The shell stays alive under the timeout, so the live ps descendant
+        // walk roots at an observable pid and reaches the sleeper without any
+        // group leadership.
+        await expectBoundedTreeKill(
+          'sleep 605.1053',
+          code: ExecutionErrorCode.timeout,
+          run: () => const LocalShell().exec(
+            'sleep 605.1053',
+            options: const ShellExecOptions(timeout: Duration(seconds: 2)),
+          ),
+        );
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    // Review rework (PR #1058): the bounded return must carry the evidence —
+    // the whole point of gh-1053's fix is that a 10-minute hung `flutter
+    // test` comes back with the output that explains where it stalled.
+    test(
+      'timeout error carries the captured partial stdout/stderr',
+      skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+      () async {
+        addTearDown(() => Process.run('pkill', ['-f', 'sleep 609.1053']));
+        final result = await const LocalShell().exec(
+          'echo out-marker-609.1; echo err-marker-609.1 1>&2; sleep 609.1053',
+          options: const ShellExecOptions(timeout: Duration(seconds: 2)),
+        );
+        expect(result.isErr, isTrue, reason: '${result.valueOrNull}');
+        expect(result.errorOrNull?.code, ExecutionErrorCode.timeout);
+        expect(result.errorOrNull?.stdout, contains('out-marker-609.1'));
+        expect(result.errorOrNull?.stderr, contains('err-marker-609.1'));
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+    // Review rework (PR #1058 thread 8): the capture is tail-capped AT THE
+    // SOURCE — a chatty killed command (megabytes before the timeout) must
+    // not retain its full output on the error object; the diagnostic tail
+    // (last ≤ 64 KiB) is what a bounded return needs.
+    test(
+      'timeout capture is tail-capped at the source',
+      skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+      () async {
+        addTearDown(() => Process.run('pkill', ['-f', 'sleep 611.1053']));
+        final result = await const LocalShell().exec(
+          'head -c 70000 /dev/zero; echo TAIL-MARKER-611; sleep 611.1053',
+          options: const ShellExecOptions(timeout: Duration(seconds: 2)),
+        );
+        expect(result.isErr, isTrue, reason: '${result.valueOrNull}');
+        expect(result.errorOrNull?.code, ExecutionErrorCode.timeout);
+        final stdout = result.errorOrNull?.stdout ?? '';
+        // Capped at the source: bounded (64 KiB tail + marker), newest
+        // bytes win, marker on top. 70000 bytes in → 65536 + marker out.
+        expect(stdout.length, lessThan(70 * 1024));
+        expect(stdout.length, greaterThan(64 * 1024));
+        expect(stdout, contains('TAIL-MARKER-611'));
+        expect(stdout, startsWith('…[truncated]'));
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    test(
+      'aborted error carries the captured partial stdout/stderr',
+      skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+      () async {
+        addTearDown(() => Process.run('pkill', ['-f', 'sleep 610.1053']));
+        final source = CancelTokenSource();
+        Future<void>.delayed(const Duration(milliseconds: 300), source.cancel);
+        final result = await const LocalShell().exec(
+          'echo out-marker-610.1; sleep 610.1053',
+          options: ShellExecOptions(cancelToken: source.token),
+        );
+        expect(result.isErr, isTrue, reason: '${result.valueOrNull}');
+        expect(result.errorOrNull?.code, ExecutionErrorCode.aborted);
+        expect(result.errorOrNull?.stdout, contains('out-marker-610.1'));
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
+
+    // Review rework (PR #1058 thread 4): the reported wedge shape with NO
+    // timeout and NO cancel used to hang forever — after the direct child
+    // is reaped every remaining byte comes from an orphan holding the
+    // write end, so the drain is capped unconditionally. Deliberately no
+    // kill round here: a no-timeout caller that detached a daemon
+    // (`nohup server &`) wants it to KEEP running — the call just returns.
+    test(
+      'no-timeout exec returns once the direct child has exited '
+      '(orphan-capped drain)',
+      skip: Platform.isWindows ? 'POSIX process semantics only' : false,
+      () async {
+        addTearDown(() => Process.run('pkill', ['-f', 'sleep 611.1053']));
+        final watch = Stopwatch()..start();
+        final result = await const LocalShell().exec(
+          '(sleep 611.1053 &); wait',
+        );
+        watch.stop();
+        expect(watch.elapsed, lessThan(const Duration(seconds: 6)));
+        // The command itself succeeded — the orphan is not ours to kill.
+        expect(result.isOk, isTrue, reason: '${result.errorOrNull}');
+        expect(result.valueOrNull?.exitCode, 0);
+      },
+      timeout: const Timeout(Duration(seconds: 30)),
+    );
   });
 
   group('LocalExecutionEnv custom shell', () {

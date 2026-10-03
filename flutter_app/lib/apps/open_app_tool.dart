@@ -63,6 +63,11 @@ AgentTool openAppTool(ExecutionEnv env, {required AppLauncher launcher}) {
           '${available.isEmpty ? '(none installed)' : available}',
         );
       }
+      // Issue #866: a manifest the agent broke is surfaced, not launched.
+      final error = app.error;
+      if (error != null) {
+        throw StateError('app "$id" is broken: $error');
+      }
       await launcher(app);
       return ToolExecutionResult.text("Opened app '${app.name}'");
     },

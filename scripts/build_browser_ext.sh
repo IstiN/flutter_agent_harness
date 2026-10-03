@@ -82,6 +82,16 @@ if [ "$with_app" -eq 1 ]; then
   rm -rf browser_ext/panel/app
   mkdir -p browser_ext/panel/app
   cp -R flutter_app/build/web/. browser_ext/panel/app/
+  # Vendored WASI interpreter assets are mobile-only (#1096 AC2): the
+  # assets/wasm/* modules are loaded exclusively through WasiSandboxShell
+  # (env_factory_io.dart — Android/iOS only; every rootBundle.load of
+  # assets/wasm lives there). The web panel compiles env_factory_stub
+  # instead (package:wasm_run needs dart:ffi, uncompilable for browsers)
+  # and runs python/js/sqlite from cdn.jsdelivr.net
+  # (web_interpreters_web.dart); the extension's live interpreter is the
+  # vendored pyodide in offscreen/ (interpreters.js), not python.wasm.
+  # So this ~47MB never loads in the panel — drop it from the bundle.
+  rm -rf browser_ext/panel/app/assets/assets/wasm
   # CWS single-manifest rule (#291): the Flutter web build ships a PWA
   # manifest (panel/app/manifest.json, <link rel=manifest> in its
   # index.html) — the Chrome Web Store hard-rejects any package with more
@@ -131,6 +141,14 @@ PYS
       }
     done
     echo "canvaskit mirrored to canvaskit/$REV/chromium/ (verified)"
+    # canvaskit dedup (#1096 AC2): the engine only ever requests
+    # canvaskit/<rev>/chromium/... (FLUTTER_WEB_CANVASKIT_URL=./canvaskit/
+    # + the engineRevision the bootstrap pins), so the flat top-level
+    # copy from build/web — canvaskit.js/wasm, chromium/, webparagraph/ —
+    # is unreachable dead weight (~13MB duplicate subtree). Keep the rev
+    # mirror (the verified-complete copy), drop its flat siblings.
+    find browser_ext/panel/app/canvaskit -mindepth 1 -maxdepth 1 ! -name "$REV" -exec rm -rf {} +
+    echo "canvaskit deduplicated to canvaskit/$REV/ (#1096)"
   else
     echo "FATAL: engineRevision not found in flutter_bootstrap.js" >&2
     exit 1

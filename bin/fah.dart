@@ -32,6 +32,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/ext_cli.dart';
+import 'package:flutter_agent_harness/src/cli/jsr_cli.dart';
 import 'package:flutter_agent_harness/src/cli/session_tree.dart';
 import 'package:flutter_agent_harness/src/cli/tui_key_hints.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
@@ -59,6 +60,7 @@ import 'package:flutter_agent_harness/src/hub/hub_boot_credential.dart';
 import 'self_manage.dart';
 import 'serve_a2a.dart';
 import 'serve_bridge.dart';
+import 'fah_wire_serve.dart';
 import 'package:flutter_agent_harness/src/cli/provider_export.dart';
 
 const _fallbackVersion = '0.1.0';
@@ -121,11 +123,18 @@ var _sigtermSeen = false;
 /// the exit paths.
 Future<int>? _headlessRun;
 
+/// wire-serve (issue #1103): ends the transport (completing the serve
+/// future) so a signal-driven exit tears down GRACEFULLY — runWireServe's
+/// finally aborts any in-flight run, persists, and the process exits.
+/// Null outside wire-serve mode.
+void Function()? _wireServeSettle;
+
 /// Graceful headless abort shared by SIGINT and SIGTERM (issue #155):
 /// abort the run, wait for it to settle (bounded — a wedged provider
 /// cannot hold the exit), flush the HEP stream, exit 130.
 void _gracefulHeadlessExit(void Function() fireInterrupt) {
   fireInterrupt();
+  _wireServeSettle?.call();
   final run = _headlessRun;
   unawaited(
     Future(() async {
@@ -222,6 +231,7 @@ void _handleUncaughtError(Object error, StackTrace stackTrace) {
       final buffer = StringBuffer()
         ..writeln('timestamp: $timestamp')
         ..writeln('version: $version')
+        ..writeln('type: ${error.runtimeType}')
         ..writeln('error: $error')
         ..writeln('stack:')
         ..writeln(stackTrace);
@@ -236,6 +246,10 @@ void _handleUncaughtError(Object error, StackTrace stackTrace) {
 }
 
 Future<void> main(List<String> args) async {
+  // Session segment rotation warnings (fa gh-1077): the session layer has
+  // no console dependency — the CLI surfaces hard-cap truncations and
+  // rotation fallbacks on stderr.
+  JsonlSessionStorage.onRotationWarning = stderr.writeln;
   await runZoned(
     () => _runApp(args),
     zoneSpecification: ZoneSpecification(
@@ -1160,6 +1174,20 @@ Future<void> _runApp(List<String> args) async {
   // parsing: serve-specific flags are stripped from the parsed args and
   // kept for the late interception below (after model/key resolution).
   final serve = splitServeA2aArgs(args);
+  // `fa wire-serve [--port N] [--stdio] [--token T]` (issue #1103) — the
+  // headless AWP server. Intercepted like serve: the parser does not know
+  // the form, and the words must never reach prompt parsing. Flag errors
+  // (--stdio with --port, a bad --port) are LOUD startup failures (E2) —
+  // never a silent fallback to another mode.
+  final WireServeArgs wireServe;
+  try {
+    wireServe = splitWireServeArgs(args);
+  } on FormatException catch (error) {
+    _fail(
+      'usage: fa wire-serve [--port N] [--stdio] [--token T]\n'
+      '${error.message}',
+    );
+  }
   // `fa hub serve [--port N]` — a local DAP hub, no agent boot
   // (docs/dap.md §8.1). Intercepted on the raw args BEFORE the serve
   // marker check below (`hub serve` contains the word "serve" but is a
@@ -1184,7 +1212,9 @@ Future<void> _runApp(List<String> args) async {
 
   late final CliArgs parsed;
   try {
-    parsed = switch (parseCliArgs(serve.cliArgs)) {
+    parsed = switch (parseCliArgs(
+      wireServe.wireServe ? wireServe.cliArgs : serve.cliArgs,
+    )) {
       CliArgsHelp() => _exitWithUsage(packageVersion),
       CliArgsVersion(:final output) => _exitWithVersion(
         packageVersion,
@@ -1231,6 +1261,30 @@ Future<void> _runApp(List<String> args) async {
     );
   }
 
+  // `fa jsr widget:test|widget:screenshot …` — the js_widget_runtime agent
+  // CLI pass-through (gh-1033), intercepted like trajectory: no agent
+  // boot. The child's stdout/stderr stream straight through and its exit
+  // code propagates (CI-usable); platform bits (PATH) come from the
+  // process, the only dart:io layer here.
+  final jsr = parsed.jsr;
+  if (jsr != null) {
+    final jsrEnv = LocalExecutionEnv(cwd: parsed.cwd ?? Directory.current.path);
+    exit(
+      await runJsrCliCommand(
+        jsr,
+        io: SinkJsrCliIo(
+          onStdout: stdout.write,
+          onStderr: stderr.write,
+          onNote: stderr.writeln,
+        ),
+        env: jsrEnv,
+        projectDir: jsrEnv.cwd,
+        pathEnv: Platform.environment['PATH'] ?? '',
+        pathListSeparator: Platform.isWindows ? ';' : ':',
+        windowsQuoting: Platform.isWindows,
+      ),
+    );
+  }
   // `fa session list [--json] [--flat]` (issue #198) — the tree-grouped
   // session listing, intercepted like trajectory: no agent boot.
   final sessionList = parsed.sessionList;
@@ -1311,8 +1365,17 @@ Future<void> _runApp(List<String> args) async {
     _fail('invalid ~/.fah/config.yaml: ${error.message}');
   }
   // Provider watchdog overrides (`providerTimeouts:` section): process-wide,
-  // read by the adapters' connect/idle watchdogs on every request.
-  providerTimeoutsOverride = saved.providerTimeouts;
+  // read by the adapters' connect/idle watchdogs on every request. The
+  // FA_PROVIDER_TIMEOUT_SECONDS env value folds in over the section
+  // (issue #1036: non-streaming fetch bound; env wins for CI runners).
+  try {
+    providerTimeoutsOverride = applyProviderTimeoutEnvOverride(
+      saved.providerTimeouts,
+      Platform.environment['FA_PROVIDER_TIMEOUT_SECONDS'],
+    );
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
   // Session image registry (`images:` section, issue #171): process-wide,
   // read inside the agent loop's request build. Default: on.
   imageRegistryConfig = saved.images ?? const ImageRegistryConfig();
@@ -1454,6 +1517,12 @@ Future<void> _runApp(List<String> args) async {
           provider,
           modelId: folderState.modelId,
           baseUrl: folderState.baseUrl,
+          // A saved custom-provider entry carrying this endpoint's
+          // authHeader (issue #964) must survive the restore.
+          authHeader: authHeaderForBaseUrl(
+            saved.customProviders,
+            folderState.baseUrl,
+          ),
           thinkingLevel: faPreconfig?.thinkingLevel,
         )
       : _buildModel(
@@ -1517,8 +1586,25 @@ Future<void> _runApp(List<String> args) async {
   // not set. Reads are process spawns, so the store is preloaded once into
   // a synchronous session cache — every later lookup (startup resolution,
   // the banner, `/provider`, `/key`) hits the snapshot.
+  //
+  // gh-1059: the preload report feeds the boot diagnostics — every read
+  // logged under --debug-secrets / FA_DEBUG_KEYS, and a config that
+  // references store keys while NONE resolve prints a warning instead of
+  // the silent keyless boot.
   final keyCache = SecureKeyCache(platformSecureKeyStore());
-  await keyCache.preload(secureKeyPreloadNames(saved, baseUrl: baseUrl));
+  final keyPreloadReport = await keyCache.preload(
+    secureKeyPreloadNames(saved, baseUrl: baseUrl),
+  );
+  for (final line in secureKeyBootDiagnostics(
+    report: keyPreloadReport,
+    referencedKeyNames: referencedSecureKeyNames(saved),
+    debug:
+        parsed.debugSecrets ||
+        isTruthyEnvValue(Platform.environment['FA_DEBUG_KEYS']),
+    storeLabel: keyCache.label,
+  )) {
+    stderr.writeln(line);
+  }
 
   // Prompt overrides: the `prompts:` section of ~/.fah/config.yaml (file
   // paths resolve against the agent cwd, `~` expands; missing files are a
@@ -1632,7 +1718,7 @@ Future<void> _runApp(List<String> args) async {
             baseUrl: baseUrl,
             customProviders: saved.customProviders,
             defaultRoleResolved: defaultRoleResolved,
-            interactive: headlessPrompt == null,
+            interactive: headlessPrompt == null && !wireServe.wireServe,
           );
   } on ConfigException catch (error) {
     _fail(error.message);
@@ -1752,6 +1838,11 @@ Future<void> _runApp(List<String> args) async {
   ];
 
   final terminalIo = _TerminalCliIO(headless: headlessPrompt != null);
+  // wire-serve (issue #1103): the io is a SILENT sink — every rendered
+  // line dies there, so nothing TUI-shaped can ever reach the protocol
+  // stream (the one stdout line is the startup line, written by the
+  // transport, outside the CLI). Diagnostics keep stderr via writeln.
+  CliIO io = wireServe.wireServe ? _WireServeSilentCliIO() : terminalIo;
   // --log-file (issue #91): tee the rendered session trace into a file so
   // a parent CLI's stdout capture cannot swallow it. The sink is a sync
   // RandomAccessFile — unbuffered, so `tail -f` streams the trace live and
@@ -1759,7 +1850,6 @@ Future<void> _runApp(List<String> args) async {
   // (issue #178) is the env twin — the default when the flag is absent,
   // so CI hosts that cannot pass flags still leave the trace; flag wins.
   RandomAccessFile? logTeeFile;
-  CliIO io = terminalIo;
   final logPath = parsed.logFile ?? logFileFromEnv(Platform.environment);
   if (logPath case final path?) {
     final RandomAccessFile tee;
@@ -2021,6 +2111,40 @@ Future<void> _runApp(List<String> args) async {
     width: io.columns,
   );
 
+  // Fresh install (issue #969): an interactive REPL boot with NOTHING
+  // configured — no saved custom providers, no persisted provider switch,
+  // no explicit provider/model/endpoint declaration, no roles or queue
+  // driving the boot, and no key resolving anywhere — opens the guided
+  // add-provider wizard before the first prompt instead of the default
+  // provider's "no key set" banner noise. Headless (-p / prompt args)
+  // never gets the flag; its hard key gate stays byte-identical. Two
+  // explicit boot modes are also excluded: a named `--session` resume is
+  // never a fresh install, and the pi benchmark profile (`--pi` /
+  // FA_PI_MODE / `agent.mode: pi`) must stay deterministic.
+  final freshInstallProviderFlow =
+      headlessPrompt == null &&
+      !wireServe.wireServe &&
+      !applyFolderModel &&
+      parsed.model == null &&
+      !parsed.providerExplicit &&
+      parsed.baseUrl == null &&
+      faPreconfig == null &&
+      !defaultRoleResolved &&
+      queueRuntime == null &&
+      effective.session == null &&
+      harnessMode == null &&
+      saved.providerKind == 'openai-completions' &&
+      saved.baseUrl == providerCatalog['openrouter']!.defaultBaseUrl &&
+      // The customProviders emptiness mirrors the pure decision's first
+      // check (startup.dart) on purpose: the unit-tested function owns the
+      // semantics; the glue names the term it gates on for readability.
+      saved.customProviders.isEmpty &&
+      freshInstallProviderState(
+        customProviders: saved.customProviders,
+        keys: keyCache,
+        env: Platform.environment,
+      );
+
   cli = AgentCli(
     // Same source of truth as the palette (issue #778 round 2): chrome
     // (status line, keyhints, warnings) styles iff the resolved theme
@@ -2095,6 +2219,7 @@ Future<void> _runApp(List<String> args) async {
       // headless branch).
       customProviders: CustomProviderRegistry(saved.customProviders)
         ..mergeNotes.forEach(stderr.writeln),
+      freshInstallProviderFlow: freshInstallProviderFlow,
       sessionRoot: sessionRoot,
       // Backend agent mode (issue #155): a graceful SIGTERM/SIGINT
       // cancel leaves a resumable partial transcript.
@@ -2116,6 +2241,10 @@ Future<void> _runApp(List<String> args) async {
       powerSleepPrevention:
           saved.powerSleepPrevention ?? PowerAssertionLevel.idle,
       powerRunner: hostPowerRunner(pid: pid),
+      // Provider quota monitoring (issue #823): badge opt-in (default off)
+      // + cache TTL; the http client stays the shared provider keep-alive.
+      quotaBadge: saved.quota.badge,
+      quotaTtl: Duration(minutes: saved.quota.ttlMinutes),
       sessionName: effective.session,
       visionConfig: visionConfig,
       transcribeConfig: transcribeConfig,
@@ -2283,10 +2412,14 @@ Future<void> _runApp(List<String> args) async {
       // skill bodies follow `disableShellExecution`.
       skillsAccess: saved.skillsAccess,
       skillsDisableShellExecution: saved.skillsDisableShellExecution,
+      // Global per-skill toggles (`skills:` config section, issue #1151):
+      // the CLI owns the live view; persistConfig writes it back.
+      skillToggles: saved.skillToggles,
       onSkillsAccessChanged: (access) async {
         skillsAccess = access;
         await persistConfig();
       },
+      onSkillTogglesChanged: () async => persistConfig(),
       // Shift+Enter in the TUI: HID polling when the startup gate allows
       // it (issue #355) — null over SSH, under FA_TUI_SHIFT_HID=0, after
       // a probe timeout, and on non-macOS hosts.
@@ -2308,6 +2441,11 @@ Future<void> _runApp(List<String> args) async {
     io: io,
   );
   if (redactorAttached) attachSecretRedactor(cli.agent, redactor);
+
+  // Issue #823: boot builds the queue runtime before the CLI (and its
+  // quota service) exist — rebind once so depletion hints steer the
+  // resolver from the first turn. No-op without a configured queue.
+  await cli.attachProviderQueueQuotaFeed();
 
   persistConfig = () async {
     await saveCliConfig(
@@ -2346,6 +2484,10 @@ Future<void> _runApp(List<String> args) async {
         // `/skills access`); shell-execution policy is static per session.
         skillsAccess: skillsAccess,
         skillsDisableShellExecution: saved.skillsDisableShellExecution,
+        // The live global `skills:` toggles (read from the loaded config,
+        // updated by `/skills <name> global`); null before the first
+        // resolution, in which case the loaded section is kept as-is.
+        skillToggles: cli.globalSkillToggles ?? saved.skillToggles,
         // The saved cube default (the live value the Cube sandbox flow
         // rewrites; `saved.cube` keeps the section when nothing changed).
         cube: cli.config.cubeSettings ?? saved.cube,
@@ -2439,7 +2581,9 @@ Future<void> _runApp(List<String> args) async {
 
   final sigintSub = ProcessSignal.sigint.watch().listen((_) {
     final wasBusy = cli.isBusy;
-    switch (cli.sigintPolicy.press(headless: headlessPrompt != null)) {
+    switch (cli.sigintPolicy.press(
+      headless: headlessPrompt != null || wireServe.wireServe,
+    )) {
       case SigintAction.interruptAndStay:
         // Press 1 (issue #830): abort the in-flight run (bounded) and
         // STAY ALIVE — the next press inside the window exits. The TUI
@@ -2477,6 +2621,37 @@ Future<void> _runApp(List<String> args) async {
       _sigtermSeen = true;
       _gracefulHeadlessExit(terminalIo.fireInterrupt);
     });
+  }
+
+  // `fa wire-serve` (issue #1103): headless Agent Wire Protocol v1
+  // server. SIGINT/SIGTERM: both route through _gracefulHeadlessExit,
+  // whose fireInterrupt aborts any in-flight run and whose
+  // _wireServeSettle call ends the transport — runWireServe's finally
+  // persists, and this branch's `exit(code)` continuation (registered
+  // before _gracefulHeadlessExit's) wins the race: a graceful server
+  // shutdown is a success, exit 0 (143 on a second SIGTERM, the usual
+  // supervisor escalation).
+  if (wireServe.wireServe) {
+    var sigtermSeen = false;
+    final sigtermSub = ProcessSignal.sigterm.watch().listen((_) {
+      if (sigtermSeen) exit(143);
+      sigtermSeen = true;
+      _gracefulHeadlessExit(terminalIo.fireInterrupt);
+    });
+    final int code;
+    try {
+      code = await (_headlessRun = _runWireServeHost(
+        cli: cli,
+        wireServe: wireServe,
+        terminalIo: terminalIo,
+      ));
+    } finally {
+      await sigtermSub.cancel();
+      await sigintSub.cancel();
+      await stdout.flush();
+      logTeeFile?.closeSync();
+    }
+    exit(code);
   }
 
   if (headlessPrompt != null) {
@@ -2525,4 +2700,135 @@ String? wakeExecutable() {
   final base = exe.split(Platform.pathSeparator).last.toLowerCase();
   if (base == 'dart' || base == 'dart.exe') return null;
   return exe;
+}
+
+/// `fa wire-serve` transport host (issue #1103). WS mode: binds the
+/// loopback port early (fail fast on an occupied port), and prints the
+/// one-time startup line only AFTER the boot — and its lease gate —
+/// succeeded ([runWireServe]'s `onReady`), so a parent never reads a
+/// startup line for a serve that refuses to boot. stdio mode: NDJSON
+/// over stdin/stdout, no startup line. Shutdown triggers: stdin EOF and
+/// SIGTERM (routed through [_wireServeSettle]) — BOTH transports race
+/// the shutdown trigger, so a signal never strands the teardown; boot,
+/// persist, and teardown live in [AgentCli.runWireServe].
+Future<int> _runWireServeHost({
+  required AgentCli cli,
+  required WireServeArgs wireServe,
+  required _TerminalCliIO terminalIo,
+}) async {
+  // --token T is visible in the process list; the env var keeps it out
+  // of `ps` for hosts that prefer that (review #1113 r2, suggestion #5).
+  final token =
+      wireServe.token ??
+      () {
+        final fromEnv = Platform.environment['FA_WIRE_SERVE_TOKEN'];
+        return (fromEnv == null || fromEnv.isEmpty)
+            ? wireServeToken()
+            : fromEnv;
+      }();
+  HttpServer? http;
+  if (!wireServe.stdio) {
+    try {
+      // AC20: a port race is a LOUD startup failure naming the port —
+      // never a silent fallback.
+      http = await bindLoopback(wireServe.port ?? 0);
+    } on SocketException catch (error) {
+      _fail('wire-serve: cannot bind 127.0.0.1:${wireServe.port ?? 0}: $error');
+    }
+  }
+  final shutdown = Completer<void>();
+  _wireServeSettle = () {
+    if (!shutdown.isCompleted) shutdown.complete();
+  };
+  // WS mode: a supervisor closing our stdin pipe also ends the serve
+  // (documented in docs/wire-protocol.md §8). The stdio transport owns
+  // stdin itself in --stdio mode. A stdin ERROR is transport death, not
+  // silence: log it, then end the serve through the same graceful settle
+  // (review #1113 r4 — loud, never silent).
+  StreamSubscription<void>? stdinSub;
+  if (http != null) {
+    stdinSub = stdin.listen(
+      (_) {},
+      onDone: _wireServeSettle!,
+      onError: (Object error) {
+        stderr.writeln('wire-serve: stdin failed: $error');
+        _wireServeSettle!();
+      },
+    );
+  }
+  try {
+    final code = await cli.runWireServe(
+      onReady: http == null
+          ? null
+          : () => writeStartupLine(
+              WireServeStartupLine(port: http!.port, token: token),
+            ),
+      serve: (server) async {
+        if (wireServe.stdio) {
+          final done = serveStdio(server);
+          // stdin EOF is the natural end; a signal-completed shutdown
+          // must ALSO end the serve, or the graceful teardown waits out
+          // its full settle window and the persist never runs (review
+          // #1113 r2, #3).
+          await Future.any([shutdown.future, done]);
+          // The race's loser still runs — surface a late transport
+          // failure (e.g. EPIPE on stdout mid-teardown) instead of the
+          // silent drop a bare `ignore()` would be (review #1113 r4).
+          unawaited(
+            done.catchError((Object error) {
+              stderr.writeln('wire-serve: stdio transport failed: $error');
+            }),
+          );
+          return;
+        }
+        final listenDone = httpListen(http!, server, token);
+        await Future.any([shutdown.future, listenDone]);
+        await http!.close(force: true);
+      },
+      onDiagnostic: (line) => stderr.writeln(line),
+    );
+    // Resume hint on stderr — stdout is the protocol channel.
+    final hint = await cli.sessionResumeHint();
+    if (hint != null) stderr.writeln(hint);
+    return code;
+  } finally {
+    _wireServeSettle = null;
+    await stdinSub?.cancel();
+    await http?.close(force: true);
+  }
+}
+
+/// The wire-serve CLI io: a silent sink. Every rendered line dies here so
+/// nothing TUI-shaped can reach the protocol stream; writeln keeps stderr
+/// for diagnostics. Never interactive — the constructor's null ask/secret
+/// callbacks are replaced by the wire surfaces at boot.
+final class _WireServeSilentCliIO implements CliIO {
+  final _interrupts = StreamController<void>.broadcast();
+
+  @override
+  Stream<String> get lines => const Stream<String>.empty();
+
+  @override
+  Stream<void> get interrupts => _interrupts.stream;
+
+  @override
+  Stream<KeyEvent> get keys => const Stream<KeyEvent>.empty();
+
+  @override
+  bool get supportsRawMode => false;
+
+  @override
+  bool get isInteractive => false;
+
+  @override
+  int get columns => 80;
+
+  @override
+  int get rows => 24;
+
+  @override
+  void write(String text) {}
+
+  @override
+  void writeln(String text) => stderr.writeln(text);
 }

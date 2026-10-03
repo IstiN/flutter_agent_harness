@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa_ui/src/providers/connection.dart';
-import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/host_config.dart';
 import 'package:fa_ui/src/providers/media_slot_picker_page.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
@@ -99,7 +98,9 @@ class DefaultChatModelSection extends StatelessWidget {
   final Map<String, String> providerKindLabels;
 
   /// Host-provided builder for the "Add provider" page (preset picker).
-  /// When null, the fallback [pushProviderEditor] is used.
+  /// When null, [MediaSlotProviderPickerPage] builds the same
+  /// `AddProviderPresetPickerPage` from its registry via
+  /// `pushAddProviderFlow` (issue #975).
   final WidgetBuilder? addProviderPage;
 
   String _activeProviderLabel(BuildContext context) {

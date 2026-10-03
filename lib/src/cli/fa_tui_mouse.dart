@@ -142,26 +142,18 @@ extension _TuiMouseRegions on FaTuiModel {
                 're-enable';
         _mouseHintShown = true;
         return (
-          copyWith(
+          (hint == null ? this : _appendServiceLine(_dim(hint))).copyWith(
             mouseCapture: false,
             inputText: '',
             cursor: 0,
-            outputLines: hint == null
-                ? null
-                : FaTuiModel._appendOutput(outputLines, _dim(hint), true),
           ),
           null,
         );
       default:
         return (
-          copyWith(
+          _appendServiceLine(_dim('usage: /mouse [on|off]')).copyWith(
             inputText: '',
             cursor: 0,
-            outputLines: FaTuiModel._appendOutput(
-              outputLines,
-              _dim('usage: /mouse [on|off]'),
-              true,
-            ),
           ),
           null,
         );

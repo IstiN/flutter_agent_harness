@@ -1,6 +1,6 @@
 /// App Store screenshot generator: real app screens at real device
 /// resolutions, composited into the [StoreFrame] marketing canvas and
-/// committed under `test/goldens/store/<lang>/<device>/`. The
+/// committed under `test/golden/goldens/store/<lang>/<device>/`. The
 /// `ios app_store` / `mac app_store` fastlane lanes upload these PNGs to
 /// App Store Connect, so they are marketing material: full app frames,
 /// real fonts, deterministic content, localized UI (en + ru).
@@ -88,11 +88,7 @@ const _locales = [Locale('en'), Locale('ru')];
 //     test/play_store_listing_guard_test.dart enforces the ratio.)
 //     en-US only — the tablet set is optional and the ru listing falls
 //     back to its phone shots on tablets.
-const _Device _playPhone = (
-  name: 'play',
-  physical: Size(1080, 1920),
-  dpr: 2.0,
-);
+const _Device _playPhone = (name: 'play', physical: Size(1080, 1920), dpr: 2.0);
 const _Device _playTenInch = (
   name: 'tenInch',
   physical: Size(1440, 2560),
@@ -251,6 +247,9 @@ Future<void> _pumpStore(
       home: StoreFrame(screen: screen, lang: locale.languageCode, child: child),
     ),
   );
+  // Issue #947: no Ahem placeholder blocks may reach a store golden —
+  // a family-less label style falls back to the test font.
+  expectRealFontText(tester);
 }
 
 Future<void> _expectStore(
@@ -259,7 +258,7 @@ Future<void> _expectStore(
   Locale locale,
   String screen,
 ) {
-  // App Store devices land in test/goldens/store/<lang>/<device>/; the
+  // App Store devices land in test/golden/goldens/store/<lang>/<device>/; the
   // Play devices land straight in the supply metadata tree with their
   // listing order prefix (Play sorts screenshots by file name).
   final String golden;
@@ -276,10 +275,7 @@ Future<void> _expectStore(
       golden =
           '../goldens/store/${locale.languageCode}/${device.name}/$screen.png';
   }
-  return expectLater(
-    find.byType(MaterialApp),
-    matchesGoldenFile(golden),
-  );
+  return expectLater(find.byType(MaterialApp), matchesGoldenFile(golden));
 }
 
 /// Lets sandbox reads + image codec decodes (real async hops) land: the
@@ -1286,7 +1282,7 @@ void main() {
   // tree: phone 1080×1920 (en-US + ru-RU) and 10-inch 1440×2560 (en-US).
   // Regeneration note: `--update-goldens` also refreshes the App Store
   // goldens above on a non-canonical host — restore those
-  // (`git checkout -- test/goldens/store`) so only the intended files
+  // (`git checkout -- test/golden/goldens/store`) so only the intended files
   // change; the committed listing files are then guarded by
   // test/play_store_listing_guard_test.dart.
   group('Google Play listing screenshots — the story at Play sizes', () {

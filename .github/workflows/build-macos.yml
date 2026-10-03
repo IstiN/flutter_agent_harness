@@ -83,8 +83,10 @@ jobs:
     needs: version
     runs-on: [self-hosted, macOS, ARM64]
     # Issue #239: TestFlight submit now waits for Apple processing (bounded,
-    # default 90 min) + a 15-min distribution verify AFTER the build/notarize
-    # work — the job ceiling must cover the worst case, not just the build.
+    # default 90 min) + a ~1-min one-shot appearance probe AFTER the
+    # build/notarize work (gh-1041: the blocking distribution wait moved to
+    # the deferred store-appearance-check workflow) — the job ceiling must
+    # cover the worst case, not just the build.
     timeout-minutes: 150
     strategy:
       fail-fast: false
@@ -313,8 +315,15 @@ jobs:
           #    every slot is first-run-warm forever;
           # 2) local working copy on this self-hosted runner;
           # 3) upstream release asset — the curl budget MUST fit the 15-min
-          #    step cap: 3 retries × 240s max-time + connect + unzip < 900s
-          #    (the old 3 × 600s floor guaranteed a timeout on slow links).
+          #    step cap WITH CORRECT ARITHMETIC (gh-1149): --retry N is N
+          #    retries ON TOP OF the initial attempt, so worst case is
+          #    (N+1) × max-time + N × retry-delay. 3 × 240s + 2 × 5s + one
+          #    30s connect + unzip ≈ 790s < 900s. The old "3 retries × 240s"
+          #    math forgot the initial attempt (975s > 900s → the step
+          #    timeout fired mid-retry), and without -C - no 240s attempt
+          #    could ever deliver the 92.7MB asset at this link's ~300KB/s
+          #    (it needs ~309s) — every attempt died at the cap having
+          #    restarted from byte 0.
           LOCAL_SRC="/Users/Uladzimir_Klyshevich/git/flutter_agent/vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework"
           DEST="vendor/wasm_run_flutter/macos/Frameworks"
           mkdir -p "$DEST"
@@ -325,11 +334,41 @@ jobs:
             cp -R "$LOCAL_SRC" "$DEST/"
           else
             echo "No cache, no local copy — downloading from upstream release..."
-            # --retry alone skips transient mid-transfer resets (curl 56)
-            curl -L --retry 3 --retry-all-errors --retry-delay 5 --connect-timeout 30 --max-time 240 \
-              -o /tmp/WasmRun.xcframework.zip \
-              https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip
-            unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
+            # -C - makes each loop attempt RESUME the partial zip (Range
+            # requests), so slow links make forward progress; retries live
+            # in THIS loop (not curl --retry, which would add extra attempts
+            # AND restart+truncate instead of resuming). Budget: 3 × 240s
+            # max-time + 2 × 5s sleeps = 730s < the 15-min step cap, leaving
+            # connect + unzip + slack (gh-1149).
+            # PER-ARCH zip path: both matrix archs run on ONE self-hosted
+            # runner (the shared-state race this file already guards with
+            # per-arch keychains below) — a shared arch-less /tmp zip would
+            # let one job's rm -f unlink the other's in-flight partial, then
+            # both curls interleave bytes into one path.
+            ZIP="/tmp/WasmRun.xcframework-${{ matrix.arch }}.zip"
+            rm -f "$ZIP"
+            for attempt in 1 2 3; do
+              # --fail: without it curl exits 0 on HTTP 404/5xx and writes
+              # the error page into the zip; with it every HTTP error
+              # engages this loop's retries and the explicit failure below.
+              if curl --fail -L -C - --connect-timeout 30 --max-time 240 \
+                -o "$ZIP" \
+                https://github.com/juancastillo0/wasm_run/releases/download/wasm_run-v0.1.0/WasmRun.xcframework.zip; then
+                break
+              fi
+              if [ "$attempt" = "3" ]; then
+                echo "WasmRun.xcframework download failed after $attempt attempts" >&2
+                exit 1
+              fi
+              echo "download attempt $attempt failed, resuming in 5s..."
+              sleep 5
+            done
+            # The release asset is immutable per tag — pin its digest so a
+            # wrong-content-but-valid-zip cannot slip past unzip CRC32 into
+            # the permanent wasmrun-xcframework-v0.1.0 cache (same pattern
+            # as the litertlm download above).
+            echo "aca903d732202bcdf9c8d19fbb8a795c3c930762419f852a5ee228468c548a98  $ZIP" | shasum -a 256 -c -
+            unzip -q "$ZIP" -d "$DEST"
           fi
           ls -la "$DEST/WasmRun.xcframework"
 
@@ -599,6 +638,31 @@ jobs:
             > "$MANIFEST_NAME"
           echo "zip_name=$ZIP_NAME" >> $GITHUB_OUTPUT
           echo "manifest_name=$MANIFEST_NAME" >> $GITHUB_OUTPUT
+          echo "baseline_arch=$MANIFEST_ARCH" >> $GITHUB_OUTPUT
+
+      # AC1 (#1096): per-entry uncompressed size table + +5% budget gate on
+      # the shipped mac zip (auto-update channel). arm64 baseline is
+      # committed (the cut is extension/web-only, so the release shape
+      # stays the floor); unknown archs FAIL — never self-seed green.
+      - name: Size manifest + budget gate (mac zip)
+        run: |
+          case "${{ steps.package.outputs.baseline_arch }}" in
+            arm64|x64) ;;
+            *) echo "::error::mac arch '${{ steps.package.outputs.baseline_arch }}' has no size baseline mapping — add scripts/size_budget/fa-macos-<arch>.tsv and extend this whitelist" >&2; exit 1 ;;
+          esac
+          python3 scripts/size_manifest.py check "${{ steps.package.outputs.zip_name }}" \
+            --baseline "scripts/size_budget/fa-macos-${{ steps.package.outputs.baseline_arch }}.tsv" --init-if-missing
+
+      # A self-seeded baseline (e.g. first x86_64 release) lands only in
+      # this job's ephemeral workspace — upload it so it can be fetched
+      # and committed to arm that arch's gate (same as pages.yml).
+      - name: Upload seeded size baselines (#1096 ratchet)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: size-baselines-macos
+          path: scripts/size_budget/*.tsv
+          if-no-files-found: ignore
 
       - name: Package TestFlight PKG (arm64)
         if: matrix.arch == 'arm64'
@@ -860,6 +924,12 @@ jobs:
       # landing page links it directly).
       - name: Build extension zip
         run: bash scripts/build_browser_ext.sh --with-app
+
+      # AC1 (#1096): per-entry uncompressed size table + +5% budget gate
+      # against the committed v1.0.493 release baseline. Shrink passes;
+      # growth (e.g. a dropped interpreter re-added) fails the release.
+      - name: Size manifest + budget gate (fa-extension.zip)
+        run: python3 scripts/size_manifest.py check build/fa-extension.zip --baseline scripts/size_budget/fa-extension.tsv
 
       - name: Upload extension to the release
         env:

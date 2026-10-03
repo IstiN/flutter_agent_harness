@@ -19,6 +19,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../golden/golden_test_helper.dart';
 import 'cli_visual_harness.dart';
+import 'package:flutter_agent_harness/src/cli/omp_reg_scenarios.dart';
 
 void main() {
   late String repoRoot;
@@ -26,7 +27,7 @@ void main() {
 
   setUpAll(() async {
     await ensureGoldenFonts();
-    repoRoot = _findRepoRoot();
+    repoRoot = findRepoRoot();
     shotsDir = '$repoRoot/test/integration/screenshots';
     final dir = Directory(shotsDir);
     if (!dir.existsSync()) dir.createSync(recursive: true);
@@ -65,8 +66,9 @@ void main() {
   }
 
   group('compaction report block', () {
-    testWidgets('two big turns → post-run auto compaction → report golden',
-      (tester) async {
+    testWidgets('two big turns → post-run auto compaction → report golden', (
+      tester,
+    ) async {
       final port = await _freePort(tester);
       final server = await _startServer(tester, port, _compactServerPy);
       // `agent.contextWindowCap: 64000` shrinks the window: reserve 16000 →
@@ -189,9 +191,7 @@ void main() {
         );
         await harness.settle(settleMs: 500);
         expect(
-          File(
-            '${tempHome.path}/.fah/config.yaml',
-          ).readAsStringSync(),
+          File('${tempHome.path}/.fah/config.yaml').readAsStringSync(),
           contains('catppuccin'),
         );
         await harness.screenshot(shotsDir, '120_theme_catppuccin');
@@ -203,9 +203,7 @@ void main() {
         );
         await harness.settle(settleMs: 500);
         expect(
-          File(
-            '${tempHome.path}/.fah/config.yaml',
-          ).readAsStringSync(),
+          File('${tempHome.path}/.fah/config.yaml').readAsStringSync(),
           contains('dracula'),
         );
         await harness.screenshot(shotsDir, '130_theme_dracula');
@@ -215,21 +213,6 @@ void main() {
       }
     });
   });
-}
-
-/// Walks up from the CWD until a directory containing `bin/fah.dart` is
-/// found — the flutter_agent repo root regardless of where the test runner
-/// was started from.
-String _findRepoRoot() {
-  var dir = Directory.current;
-  while (true) {
-    if (File('${dir.path}/bin/fah.dart').existsSync()) return dir.path;
-    final parent = dir.parent;
-    if (parent.path == dir.path) {
-      throw StateError('flutter_agent repo root not found from $dir');
-    }
-    dir = parent;
-  }
 }
 
 /// Creates a temp HOME whose endpoint URL is given (e.g. a test HTTP server
@@ -310,7 +293,6 @@ class H(http.server.BaseHTTPRequestHandler):
 
 http.server.HTTPServer(('127.0.0.1', PORT), H).serve_forever()
 ''';
-
 
 /// Canned SSE endpoint for the compaction golden. Turn replies are keyed on
 /// the LAST user message text (never a counter — the CLI fires hidden model

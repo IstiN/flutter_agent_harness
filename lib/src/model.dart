@@ -103,6 +103,7 @@ final class Model {
     required this.maxTokens,
     this.headers,
     this.compat,
+    this.authHeader,
   });
 
   /// The model id sent to the provider (e.g. `gpt-4o-mini`,
@@ -150,6 +151,15 @@ final class Model {
   /// Compatibility overrides for OpenAI-compatible APIs. When `null`, the
   /// adapter auto-detects from [provider]/[baseUrl].
   final OpenAICompletionsCompat? compat;
+
+  /// Config-declared auth header NAME (`authHeader:` on a `models.custom`
+  /// or `customProviders` entry, issue #964): when set, the OpenAI-
+  /// completions adapter sends `<authHeader>: <apiKey>` INSTEAD of the
+  /// default `Authorization: Bearer <apiKey>` — an AWS API Gateway fronting
+  /// Bedrock rejects Bearer and requires `x-api-key`. Null keeps the Bearer
+  /// default; a keyless request sends neither (see
+  /// OpenAICompletionsOptions.apiKey).
+  final String? authHeader;
 }
 
 /// The effective context window: the owner override ([cap],

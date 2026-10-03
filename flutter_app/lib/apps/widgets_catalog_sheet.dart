@@ -2,9 +2,11 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:fa/apps/app_icon.dart';
+import 'package:fa/apps/app_load_error.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/catalog_service.dart';
 import 'package:fa/apps/js_app_navigation.dart';
@@ -12,6 +14,7 @@ import 'package:fa/l10n/l10n_ext.dart';
 import 'package:fa/services/analytics.dart';
 import 'package:fa/services/app_log.dart';
 import 'package:fa/services/flutter_session_manager.dart';
+import 'package:fa/ui/widgets/widget_status_detail_sheet.dart';
 import 'package:fa_ui/fa_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -125,7 +128,13 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
   Future<void> _refreshInstalled() async {
     try {
       final apps = await _appsStore.listApps();
-      _installed = {for (final app in apps) app.id: app.version};
+      // A broken app is not a usable install: excluding it from the
+      // version map keeps the Install/Update buttons honest instead of
+      // deriving a fake "1.0.0" from the degraded model (issue #866).
+      _installed = {
+        for (final app in apps)
+          if (app.error == null) app.id: app.version,
+      };
       _localApps = apps;
     } on Object {
       _installed = {};
@@ -240,6 +249,9 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
 
   /// Shared open path for catalog entries and created-on-device apps.
   Future<void> _launchApp(JsAppInfo app, String analyticsId) async {
+    // Same broken-app guard as every launch surface (issue #866): the
+    // copyable dialog replaces a silently-degraded launch.
+    if (await guardBrokenApp(context, app)) return;
     AppAnalytics.instance.widgetEvent(
       'open',
       params: {'id': analyticsId, 'source': 'catalog'},
@@ -382,11 +394,46 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
                   onOpen: () => _open(entry),
                   onPreview: () => _preview(entry),
                   onRemove: () => _remove(entry.id),
+                  // Issue #1045 AC3: tapping a row opens the widget's
+                  // detail sheet (info + live publish status).
+                  onTap: () => _showStatusDetail(
+                    id: entry.id,
+                    title: entry.displayName(
+                      Localizations.localeOf(context).toLanguageTag(),
+                    ),
+                    version: entry.version,
+                    description: entry.displayDescription(
+                      Localizations.localeOf(context).toLanguageTag(),
+                    ),
+                    author: entry.author,
+                  ),
                 ),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  /// Opens the per-widget status detail sheet (issue #1045 AC3): widget
+  /// info + live publish status with the validator's verbatim errors.
+  void _showStatusDetail({
+    required String id,
+    required String title,
+    String? version,
+    String? description,
+    String? author,
+  }) {
+    unawaited(
+      showWidgetStatusDetailSheet(
+        context,
+        widgetId: id,
+        title: title,
+        version: version,
+        description: description,
+        author: author,
+        env: widget.env,
+      ),
     );
   }
 
@@ -461,85 +508,94 @@ class _WidgetsCatalogSheetState extends State<WidgetsCatalogSheet> {
       ),
       // Same visual language as the catalog rows below: framed icon,
       // name + description, two equal-width stacked action buttons —
-      // the group differs only by its section header.
+      // the group differs only by its section header. Tapping a row
+      // opens the status detail sheet (issue #1045 AC3).
       for (final app in mine)
-        Container(
-          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
-            ),
+        InkWell(
+          onTap: () => _showStatusDetail(
+            id: app.id,
+            title: app.displayName(locale),
+            version: app.version,
+            description: app.displayDescription(locale),
           ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surface,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: theme.colorScheme.outlineVariant),
-                ),
-                child: Center(
-                  child: AppIcon(app: app, env: widget.env, size: 26),
-                ),
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      app.displayName(locale),
-                      style: theme.textTheme.titleSmall,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (app.displayDescription(locale).isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(
-                          app.displayDescription(locale),
-                          style: theme.textTheme.bodySmall,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                  ],
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surface,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: theme.colorScheme.outlineVariant),
+                  ),
+                  child: Center(
+                    child: AppIcon(app: app, env: widget.env, size: 26),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 108,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    FilledButton.tonal(
-                      onPressed: () => _launchApp(app, app.id),
-                      child: const Text('Open'), // l10n:ignore
-                    ),
-                    OutlinedButton(
-                      onPressed: () => _remove(app.id),
-                      style: OutlinedButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        foregroundColor: theme.colorScheme.error,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        minimumSize: const Size(0, 36),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: const Text(
-                        'Remove',
-                        maxLines: 1,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        app.displayName(locale),
+                        style: theme.textTheme.titleSmall,
                         overflow: TextOverflow.ellipsis,
-                      ), // l10n:ignore
-                    ),
-                  ],
+                      ),
+                      if (app.displayDescription(locale).isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            app.displayDescription(locale),
+                            style: theme.textTheme.bodySmall,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 108,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      FilledButton.tonal(
+                        onPressed: () => _launchApp(app, app.id),
+                        child: const Text('Open'), // l10n:ignore
+                      ),
+                      OutlinedButton(
+                        onPressed: () => _remove(app.id),
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          foregroundColor: theme.colorScheme.error,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: const Size(0, 36),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text(
+                          'Remove',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ), // l10n:ignore
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       const Divider(height: 24),
@@ -562,6 +618,7 @@ class _CatalogTile extends StatelessWidget {
     required this.onOpen,
     required this.onPreview,
     required this.onRemove,
+    required this.onTap,
   });
 
   final CatalogEntry entry;
@@ -575,6 +632,9 @@ class _CatalogTile extends StatelessWidget {
   final VoidCallback onPreview;
   final VoidCallback onRemove;
 
+  /// Row tap — the per-widget status detail sheet (issue #1045 AC3).
+  final VoidCallback onTap;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -587,153 +647,158 @@ class _CatalogTile extends StatelessWidget {
     final hasUpdate =
         installedVersion != null &&
         semverNewer(installedVersion!, entry.version);
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
+          ),
         ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _CatalogIcon(entry: entry, iconFuture: iconFuture),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${entry.displayName(locale)}  ·  v${entry.version}',
-                  style: theme.textTheme.titleSmall,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                if (entry.displayDescription(locale).isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(
-                      entry.displayDescription(locale),
-                      style: theme.textTheme.bodySmall,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _CatalogIcon(entry: entry, iconFuture: iconFuture),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${entry.displayName(locale)}  ·  v${entry.version}',
+                    style: theme.textTheme.titleSmall,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                if (chips.isNotEmpty || entry.platforms.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Wrap(
-                      spacing: 6,
-                      children: [
-                        for (final chip in chips)
-                          Chip(
-                            label: Text(
-                              chip,
-                              style: const TextStyle(fontSize: 11),
+                  if (entry.displayDescription(locale).isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        entry.displayDescription(locale),
+                        style: theme.textTheme.bodySmall,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  if (chips.isNotEmpty || entry.platforms.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Wrap(
+                        spacing: 6,
+                        children: [
+                          for (final chip in chips)
+                            Chip(
+                              label: Text(
+                                chip,
+                                style: const TextStyle(fontSize: 11),
+                              ),
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
                             ),
-                            visualDensity: VisualDensity.compact,
-                            padding: EdgeInsets.zero,
-                            materialTapTargetSize:
-                                MaterialTapTargetSize.shrinkWrap,
-                          ),
-                        // Platform tags are compatibility info, not topics:
-                        // always shown, outlined in the tertiary accent.
-                        for (final platform in entry.platforms)
-                          Chip(
-                            label: Text(
-                              platform,
-                              style: TextStyle(
-                                fontSize: 11,
+                          // Platform tags are compatibility info, not topics:
+                          // always shown, outlined in the tertiary accent.
+                          for (final platform in entry.platforms)
+                            Chip(
+                              label: Text(
+                                platform,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: theme.colorScheme.tertiary,
+                                ),
+                              ),
+                              side: BorderSide(
                                 color: theme.colorScheme.tertiary,
                               ),
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
                             ),
-                            side: BorderSide(color: theme.colorScheme.tertiary),
-                            visualDensity: VisualDensity.compact,
-                            padding: EdgeInsets.zero,
-                            materialTapTargetSize:
-                                MaterialTapTargetSize.shrinkWrap,
-                          ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          // Two equal-width stacked buttons: the primary action on top,
-          // the secondary (Preview / Remove) as a compact outline under
-          // it — no ragged text links hanging off the button's edge.
-          SizedBox(
-            width: 108,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                FilledButton.tonal(
-                  onPressed: busy
-                      ? null
-                      : (installedVersion == null || hasUpdate)
-                      ? onInstall
-                      : onOpen,
-                  child: busy
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Text(
-                          installedVersion == null
-                              ? 'Install'
-                              : hasUpdate
-                              ? 'Update'
-                              : 'Open',
-                        ),
-                ),
-                const SizedBox(height: 6),
-                if (installedVersion != null && !hasUpdate)
-                  // Installed & current: Preview == Open, so the secondary
-                  // action is Remove instead.
-                  // Text-only + maxLines 1: icon+label OutlinedButtons
-                  // wrapped ("Remo / ve") inside the 108px column at the
-                  // user's system text scale.
-                  OutlinedButton(
-                    onPressed: busy ? null : onRemove,
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: theme.colorScheme.error,
-                      side: BorderSide(
-                        color: theme.colorScheme.error.withValues(alpha: 0.4),
+                        ],
                       ),
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      minimumSize: const Size(0, 36),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
-                    child: const Text(
-                      'Remove',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ), // l10n:ignore
-                  )
-                else
-                  OutlinedButton(
-                    onPressed: busy ? null : onPreview,
-                    style: OutlinedButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      minimumSize: const Size(0, 36),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: const Text(
-                      'Preview',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ), // l10n:ignore
-                  ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+            const SizedBox(width: 8),
+            // Two equal-width stacked buttons: the primary action on top,
+            // the secondary (Preview / Remove) as a compact outline under
+            // it — no ragged text links hanging off the button's edge.
+            SizedBox(
+              width: 108,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  FilledButton.tonal(
+                    onPressed: busy
+                        ? null
+                        : (installedVersion == null || hasUpdate)
+                        ? onInstall
+                        : onOpen,
+                    child: busy
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(
+                            installedVersion == null
+                                ? 'Install'
+                                : hasUpdate
+                                ? 'Update'
+                                : 'Open',
+                          ),
+                  ),
+                  const SizedBox(height: 6),
+                  if (installedVersion != null && !hasUpdate)
+                    // Installed & current: Preview == Open, so the secondary
+                    // action is Remove instead.
+                    // Text-only + maxLines 1: icon+label OutlinedButtons
+                    // wrapped ("Remo / ve") inside the 108px column at the
+                    // user's system text scale.
+                    OutlinedButton(
+                      onPressed: busy ? null : onRemove,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: theme.colorScheme.error,
+                        side: BorderSide(
+                          color: theme.colorScheme.error.withValues(alpha: 0.4),
+                        ),
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        minimumSize: const Size(0, 36),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      child: const Text(
+                        'Remove',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ), // l10n:ignore
+                    )
+                  else
+                    OutlinedButton(
+                      onPressed: busy ? null : onPreview,
+                      style: OutlinedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        minimumSize: const Size(0, 36),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      child: const Text(
+                        'Preview',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ), // l10n:ignore
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -110,34 +110,42 @@ void main() {
 /// partial frames), so shared markers make the row measurement race with
 /// history; unique markers can only ever match the CURRENT composer render.
 /// Backspaces the buffer clean afterwards so variants can share one harness.
+///
+/// gh-1026: every wait is a bounded POLL on the painted viewport, not a
+/// fixed sleep plus a single frame read. On a loaded host the raw echo
+/// settles long before the render loop repaints (the #550 family), so the
+/// old `waitForOutput(settleMs:)` + immediate `viewportLines` read raced
+/// the paint and failed ambient runs. The poller is the same bounded-retry
+/// shape `waitForScreen` uses, lifted to a row RELATIONSHIP.
 Future<void> expectNewline(FaCliHarness harness, String rawKey) async {
   _newlineVariant++;
   final ab = 'a${_newlineVariant}b';
   final cd = 'c${_newlineVariant}d';
   harness.sendText(ab);
-  await harness.waitForOutput(settleMs: 200);
+  await _waitForViewport(
+    harness,
+    '$ab visible in the composer',
+    (lines) => lines.lastIndexWhere((l) => l.contains(ab)) >= 0,
+  );
   harness.sendText(rawKey);
-  await harness.waitForOutput(settleMs: 300);
   harness.sendText(cd);
-  await harness.waitForOutput(settleMs: 300);
-  // Search from the END of the viewport: the composer re-renders in
-  // place as it grows, so a stale earlier frame (with cd already typed
-  // but the newline not yet rendered) can sit ABOVE the current one —
-  // first-match indexWhere would pin cd to that ghost row.
-  final abRow = harness.viewportLines.lastIndexWhere((l) => l.contains(ab));
-  final cdRow = harness.viewportLines.lastIndexWhere((l) => l.contains(cd));
-  expect(
-    abRow,
-    greaterThanOrEqualTo(0),
-    reason: 'input prefix lost on screen for $rawKey',
+  await _waitForViewport(
+    harness,
+    '"$cd" on a row BELOW "$ab" (newline inserted for $rawKey)',
+    (lines) {
+      // Search from the END of the viewport: the composer re-renders in
+      // place as it grows, so a stale earlier frame (with cd already typed
+      // but the newline not yet rendered) can sit ABOVE the current one —
+      // first-match indexWhere would pin cd to that ghost row.
+      final abRow = lines.lastIndexWhere((l) => l.contains(ab));
+      if (abRow < 0) return false;
+      return lines.lastIndexWhere((l) => l.contains(cd)) > abRow;
+    },
   );
-  expect(
-    cdRow,
-    greaterThan(abRow),
-    reason:
-        '"$cd" must land on a row BELOW "$ab" (newline inserted), '
-        'got rows ab=$abRow cd=$cdRow for $rawKey',
-  );
+  // A frame that fuses ab+cd onto ONE row is the newline never applied —
+  // a genuine contract failure (the wire was lost or submitted), asserted
+  // only AFTER the newline frame is confirmed so a mid-echo transient
+  // frame cannot fail the run.
   expect(
     harness.screenText.contains('$ab$cd'),
     isFalse,
@@ -149,7 +157,25 @@ Future<void> expectNewline(FaCliHarness harness, String rawKey) async {
   for (var i = 0; i < ab.length + cd.length + 1; i++) {
     harness.sendBackspace();
   }
-  await harness.waitForOutput(settleMs: 150);
+}
+
+/// Bounded poll on the painted viewport until [ready] holds — the
+/// gh-1026 replacement for fixed sleeps ahead of frame assertions.
+/// Fails with the current screen when the deadline passes.
+Future<void> _waitForViewport(
+  FaCliHarness harness,
+  String description,
+  bool Function(List<String> lines) ready,
+) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 15));
+  while (DateTime.now().isBefore(deadline)) {
+    if (ready(harness.viewportLines)) return;
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+  }
+  fail(
+    'timed out waiting for $description on the painted viewport:\n'
+    '${harness.screenText}',
+  );
 }
 
 int _newlineVariant = 0;

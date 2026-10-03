@@ -30,6 +30,33 @@ cd flutter_app && flutter test test/cli_visual --tags integration
   output, xterm screen model)
 - `fa_cli_integration_test.dart` — test scenarios
 
+## Load-sensitive (PTY/grid timing) tests — gh-1026 protocol
+
+PTY and grid assertions are load-sensitive: on a busy host the CLI's raw
+echo settles long before the render loop repaints, so a fixed sleep plus a
+single frame read is a lottery. The rules every integration test follows:
+
+- Assert on the PAINTED viewport through a bounded poller
+  (`waitForScreen`, or a viewport-state poll loop like
+  `expectNewline` in `fa_cli_newline_wires_test.dart` and
+  `_oneRowTickDiffPair` in `composer_tui_grid_pty_test.dart`) — never a
+  fixed sleep ahead of a frame read.
+- State-dependent menus whose content rides a bounded probe (the `/dap`
+  menu's 1 s `/healthz` hub probe) re-open under a bounded retry until the
+  probed shape paints (`_openRunningHubMenu` in `dap_tui_menu_test.dart`).
+- Quarantine (`skip: 'flake: gh-XXXX …'`) is the LAST resort, only when a
+  case cannot be made deterministic (gh-1007/gh-1012/gh-1014).
+
+Files hardened under gh-1026 after 3 red pre-commit gate runs on an
+unchanged head: `fa_cli_newline_wires_test.dart`,
+`composer_tui_grid_pty_test.dart` (grid integrity mid-run),
+`dap_tui_menu_test.dart` (running-hub leading row).
+
+Local gate flake budget: `FA_GATE_PTY_RETRIES=N` makes the gate's
+integration-mock stage rerun ONLY its failed files, up to N times
+(scripts/ci_fast_gate.sh + scripts/gate_failed_targets.py), instead of
+costing a full leg per ambient flake. Default 0 = single-shot.
+
 ## Writing new tests
 
 1. Spawn: `final harness = await FaCliHarness.spawn(extraEnv: {'HOME': tempHome.path})`

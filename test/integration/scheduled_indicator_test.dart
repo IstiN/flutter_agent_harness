@@ -14,8 +14,17 @@ import 'package:test/test.dart';
 import 'pty_harness.dart';
 
 void main() {
-  // QUARANTINED under gh-1012: indicator/schedule timing flake under
-  // runner load — fix the timing flake and re-enable (mirrors gh-982).
+  // gh-1012 root cause (re-enabled): the original version sent the prompt
+  // straight after spawn, so the unbounded JIT boot sat INSIDE the 30s
+  // indicator window — on a loaded validation runner the boot alone ate it
+  // (TimeoutException), and when boot+turn crossed the scripted 20s
+  // reminder delay, the mid-run steering drain consumed the record and
+  // cleared the indicator before the idle-persistence assert. Hardened by
+  // awaiting the boot FIRST (the suite-wide pattern) so every window below
+  // starts from a booted TUI — over the local mock the schedule →
+  // indicator → turn-complete tail is then a bounded ~2s — plus screen
+  // polling for the painted-row contract (#550/#557) and longer wait
+  // windows that cost nothing while green.
   test('a scheduled follow-up shows on top of the working row, persists '
       'while idle, and clears when it fires', () async {
     final mock = _SchedulingMock();
@@ -29,32 +38,40 @@ void main() {
       tempHome.deleteSync(recursive: true);
       await mock.close();
     });
-    // Turn 1: the scripted answer schedules a follow-up 20s out — long
-    // enough that the idle-persistence assert below always lands BEFORE
-    // the fire, even on a cold run.
+    await harness.waitForBoot();
+    // Turn 1: the scripted answer schedules a follow-up 20s out — with the
+    // boot already paid, the idle-persistence assert below always lands
+    // well BEFORE the fire.
     harness.sendText('set a reminder');
     harness.sendEnter();
 
     // The pending indicator appears as soon as the record exists — while
-    // the run is still streaming.
-    await harness.waitForText(
+    // the run is still streaming. Screen-polled: the contract is the
+    // painted row, and raw bytes can lead the frame on loaded runners.
+    await harness.waitForScreen(
       '⏰ 1 scheduled',
-      timeout: const Duration(seconds: 30),
+      timeout: const Duration(seconds: 60),
     );
-    await harness.waitForText(
+    await harness.waitForScreen(
       'turn-complete',
-      timeout: const Duration(seconds: 30),
+      timeout: const Duration(seconds: 60),
     );
 
-    // The run settled; the indicator persists while idle (the reminder has
-    // not fired yet — its whole point is to stay visible).
-    await harness.waitForOutput(settleMs: 300);
-    expect(harness.screenText, contains('⏰ 1 scheduled'));
+    // The run settled; the indicator persists while idle AND the record is
+    // still pending — the `· next in` ETA proves it has not fired (a fired
+    // row flips to `· due now`, then clears on delivery).
+    await harness.waitForOutput(settleMs: 500);
+    await harness.waitForScreen(
+      '⏰ 1 scheduled · next in',
+      timeout: const Duration(seconds: 10),
+    );
 
-    // The record fires; the wake turn carries the [scheduled] mail.
+    // The record fires; the wake turn carries the [scheduled] mail. Raw
+    // contains-match: the [sched] line is written once and stays in the
+    // append-only buffer even when later frames scroll it off-screen.
     await harness.waitForText(
       '[sched] fired:',
-      timeout: const Duration(seconds: 45),
+      timeout: const Duration(seconds: 90),
     );
 
     expect(
@@ -64,7 +81,7 @@ void main() {
     );
 
     // Delivery consumes the record: the indicator clears.
-    final deadline = DateTime.now().add(const Duration(seconds: 30));
+    final deadline = DateTime.now().add(const Duration(seconds: 45));
     while (harness.screenText.contains('⏰') &&
         DateTime.now().isBefore(deadline)) {
       await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -74,9 +91,7 @@ void main() {
       isNot(contains('⏰')),
       reason: 'a fired follow-up must not stay on the indicator',
     );
-  }, skip: 'flake: gh-1012 indicator/schedule timing under runner load; '
-      'quarantined to unblock validation — fix the timing flake and '
-      're-enable');
+  });
 }
 
 /// Temp HOME pointing at the local mock; yolo so the `schedule_message`
