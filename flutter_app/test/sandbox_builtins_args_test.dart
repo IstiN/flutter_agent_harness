@@ -73,6 +73,21 @@ void main() {
       );
       // A dangling -O drops the flag (a missing value).
       expect(SandboxBuiltins.curlArgsFromWget(['-O']), isEmpty);
+      // wget wait flags never reach curl's parser: `-w` is curl
+      // --write-out, so the flag and its seconds operand are dropped
+      // (issue #1156 review).
+      expect(SandboxBuiltins.curlArgsFromWget(['-w', '5', 'u']), ['u']);
+      expect(SandboxBuiltins.curlArgsFromWget(['--wait', '2', 'u']), ['u']);
+      expect(
+        SandboxBuiltins.curlArgsFromWget(['--waitretry=10', 'u']),
+        ['u'],
+      );
+      expect(
+        SandboxBuiltins.curlArgsFromWget(['--waitretry', '10', 'u']),
+        ['u'],
+      );
+      // A `-w` at end of line (no operand) still just disappears.
+      expect(SandboxBuiltins.curlArgsFromWget(['u', '-w']), ['u']);
     });
   });
 
