@@ -585,7 +585,7 @@ Future<ToolExecutionResult> _runBlocking(
   final buffer = StringBuffer(
     'Moved ${moved.length} still-running '
     '${moved.length == 1 ? 'agent' : 'agents'} to background jobs (they were '
-    'NOT aborted) because the user sent a message, which follows next:\n',
+    'NOT aborted) because a steering message arrived, which follows next:\n',
   );
   for (final id in moved) {
     buffer.writeln('- `$id` (result arrives as agent://$id)');
