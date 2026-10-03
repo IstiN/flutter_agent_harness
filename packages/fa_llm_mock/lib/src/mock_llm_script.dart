@@ -78,13 +78,27 @@ final class MockError extends MockResponse {
 
 /// One scenario: when [match] occurs in the last user message, the server
 /// pops [responses] in order.
+///
+/// [sticky] turns the scenario into a wildcard once its queue runs dry: the
+/// LAST response is re-served for every further matching request instead of
+/// exhausting into the HTTP 500. Use it for background-noise traffic whose
+/// call count is schedule-dependent (memory auto-tag generation, session
+/// title/summary calls) — never for the scripted conversation itself, whose
+/// exhaustion must keep failing loudly.
 final class MockScenario {
-  const MockScenario({required this.match, required this.responses});
+  const MockScenario({
+    required this.match,
+    required this.responses,
+    this.sticky = false,
+  });
 
   /// Substring tested against the last `role: "user"` message content.
   final String match;
 
   final List<MockResponse> responses;
+
+  /// When true, a dry queue keeps answering with its last response forever.
+  final bool sticky;
 }
 
 /// A parsed mock script: the reported [model], per-message [scenarios],

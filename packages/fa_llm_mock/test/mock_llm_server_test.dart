@@ -183,6 +183,133 @@ scenarios:
     );
   });
 
+  test('sticky scenario re-serves its last response past exhaustion', () async {
+    // gh-1171: background-noise scenarios (memory auto-tag generation) fire
+    // a schedule-dependent number of times; a sticky scenario answers every
+    // extra call with its LAST scripted response instead of exhausting into
+    // the 500-retry storm.
+    final scripted = await MockLlmServer.start(
+      script: MockLlmScript.parse('''
+responses:
+  - text: fallback answer
+scenarios:
+  - match: "noise"
+    sticky: true
+    responses:
+      - text: noise-one
+      - text: noise-last
+  - match: "strict"
+    responses:
+      - text: strict-once
+'''),
+    );
+    addTearDown(scripted.stop);
+    final scriptedClient = HttpClient();
+    addTearDown(scriptedClient.close);
+
+    Future<String> content(String user) async {
+      final request = await scriptedClient.postUrl(
+        Uri.parse('${scripted.baseUrl}/chat/completions'),
+      );
+      request.headers.contentType = ContentType.json;
+      request.write(
+        jsonEncode({
+          'model': 'm',
+          'messages': [
+            {'role': 'user', 'content': user},
+          ],
+        }),
+      );
+      final response = await request.close();
+      expect(response.statusCode, 200, reason: 'sticky never exhausts');
+      final body = await response.transform(utf8.decoder).join();
+      return _sseChunks(body).first['choices'].first['delta']['content']
+          as String;
+    }
+
+    // The queue plays in order, then the LAST response repeats forever.
+    expect(await content('some noise'), 'noise-one');
+    expect(await content('more noise'), 'noise-last');
+    expect(await content('even more noise'), 'noise-last');
+    expect(await content('noise again'), 'noise-last');
+
+    // Sticky is per-scenario: the strict scenario still exhausts with 500
+    // (a real conversation regression must keep failing loudly), and the
+    // unmatched traffic still drains the fallback queue — the sticky
+    // scenario never leaks into it.
+    final strictRequest = await scriptedClient.postUrl(
+      Uri.parse('${scripted.baseUrl}/chat/completions'),
+    );
+    strictRequest.headers.contentType = ContentType.json;
+    strictRequest.write(
+      jsonEncode({
+        'model': 'm',
+        'messages': [
+          {'role': 'user', 'content': 'strict'},
+        ],
+      }),
+    );
+    final strictResponse = await strictRequest.close();
+    expect(strictResponse.statusCode, 500);
+    expect(
+      await strictResponse.transform(utf8.decoder).join(),
+      contains('script exhausted'),
+    );
+
+    final fallbackRequest = await scriptedClient.postUrl(
+      Uri.parse('${scripted.baseUrl}/chat/completions'),
+    );
+    fallbackRequest.headers.contentType = ContentType.json;
+    fallbackRequest.write(
+      jsonEncode({
+        'model': 'm',
+        'messages': [
+          {'role': 'user', 'content': 'unmatched entirely'},
+        ],
+      }),
+    );
+    final fallbackResponse = await fallbackRequest.close();
+    expect(fallbackResponse.statusCode, 200);
+    final fallbackBody = await fallbackResponse.transform(utf8.decoder).join();
+    expect(
+      _sseChunks(fallbackBody).first['choices'].first['delta']['content'],
+      'fallback answer',
+    );
+  });
+
+  test('sticky scenario with no responses still exhausts', () async {
+    final scripted = await MockLlmServer.start(
+      script: MockLlmScript.parse('''
+scenarios:
+  - match: "noise"
+    sticky: true
+    responses: []
+'''),
+    );
+    addTearDown(scripted.stop);
+    final scriptedClient = HttpClient();
+    addTearDown(scriptedClient.close);
+
+    final request = await scriptedClient.postUrl(
+      Uri.parse('${scripted.baseUrl}/chat/completions'),
+    );
+    request.headers.contentType = ContentType.json;
+    request.write(
+      jsonEncode({
+        'model': 'm',
+        'messages': [
+          {'role': 'user', 'content': 'noise'},
+        ],
+      }),
+    );
+    final response = await request.close();
+    expect(response.statusCode, 500);
+    expect(
+      await response.transform(utf8.decoder).join(),
+      contains('script exhausted'),
+    );
+  });
+
   test('scripted error entry answers the requested status', () async {
     final scripted = await MockLlmServer.start(
       script: MockLlmScript.parse('''
