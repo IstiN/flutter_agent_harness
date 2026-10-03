@@ -4,6 +4,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
@@ -182,8 +183,11 @@ scenarios:
   test('memory_add and memory_search tools are available', () async {
     // Content-routed script: the parent prompt drives add → search → reply;
     // the memory package's background tag generator (its prompt carries
-    // "Existing tags:") gets an empty response or a tolerated 500 instead
-    // of stealing a slot.
+    // "Existing tags:") fires THREE times per round trip — once for the
+    // add's enrichment, then once per search scope (project, then user:
+    // the KB holds fewer records than the limit), so each gets a scripted
+    // empty response and no call exhausts the FIFO into the 500-retry
+    // storm (gh-1049 family).
     final script = MockLlmScript.parse('''
 scenarios:
   - match: "Use the memory_add tool"
@@ -197,6 +201,8 @@ scenarios:
       - text: "memory round-trip complete"
   - match: "Existing tags:"
     responses:
+      - text: ""
+      - text: ""
       - text: ""
 ''');
     final server = await MockLlmServer.start(script: script);
@@ -213,16 +219,50 @@ scenarios:
     );
     harness.sendEnter();
 
-    // The add row and the search row prove both tool turns executed; the
-    // scripted reply proves the result flowed back into a final turn — the
-    // full loop, not just boot (issue #551 AC).
-    await harness.waitForText(
-      '✔ memory_add',
-      timeout: const Duration(seconds: 30),
-    );
-    await harness.waitForText(
+    // gh-1049 flake family, two stacked burial mechanisms: the TUI
+    // diff-renders only changed cells (the raw stream never holds a
+    // contiguous tool row), and the tag generator unconditionally print()s
+    // its full prompt (~25-30 PTY lines per call, once per search scope)
+    // between the add row and the final reply — the add row scrolls out of
+    // the sampled viewport before the marker paints. waitForScreen samples
+    // the visible viewport ONLY, so the surviving screen anchors are the
+    // persistent terminal marker and the search row (it paints after the
+    // last print burst). The add leg is proven at the wire level instead:
+    // a parent turn must carry the memory_add tool call and the follow-up
+    // turn its role:tool result (same chatBodies convention as the
+    // task-tool leg; issue #551 AC: the full loop, not just boot).
+    final screen = await harness.waitForScreen(
       'memory round-trip complete',
       timeout: const Duration(seconds: 30),
     );
+    expect(screen, contains('✔ memory_search'));
+
+    var sawAddCall = false;
+    var addResultFedBack = false;
+    for (final body in server.chatBodies) {
+      final messages =
+          (jsonDecode(body) as Map<String, dynamic>)['messages'] as List<dynamic>;
+      for (var i = 0; i < messages.length; i++) {
+        final calls =
+            (messages[i] as Map<String, dynamic>)['tool_calls'] as List<dynamic>?;
+        if (calls == null) continue;
+        final isAdd = calls.any((c) =>
+            ((c as Map<String, dynamic>)['function']
+                as Map<String, dynamic>)['name'] ==
+            'memory_add');
+        if (!isAdd) continue;
+        sawAddCall = true;
+        if (i + 1 < messages.length &&
+            (messages[i + 1] as Map<String, dynamic>)['role'] == 'tool') {
+          addResultFedBack = true;
+        }
+      }
+    }
+    expect(sawAddCall, isTrue,
+        reason: 'a parent turn carries the memory_add tool call');
+    expect(addResultFedBack, isTrue,
+        reason: 'the memory_add result flows back as a role:tool message');
+    // >= 3 chat round-trips: add turn, search turn, reply turn.
+    expect(server.chatBodies.length, greaterThanOrEqualTo(3));
   });
 }
