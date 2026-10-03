@@ -21,7 +21,7 @@ watches the run.
 | Leg | Runs | Publishes |
 | --- | --- | --- |
 | TestFlight | `build-mobile.yml` (`ios_content=all`, `android_content=none`) | iOS IPA → TestFlight, distributed straight to the EXTERNAL group (`TESTFLIGHT_EXTERNAL_GROUP` repo variable + Beta App Review contact variables — lanes fail loudly without them). Android stays excluded (standing owner decision). |
-| pub.dev | in-job | **Verifier + recovery**, never publishes directly: pub.dev trusted publishing only accepts OIDC from tag-push runs, which a schedule/dispatch run can never be. When behind, it re-runs the failed ci.yml tag-publish run (a rerun keeps the original tag-push event/OIDC claims); unrecoverable states fail loudly → issue with a manual-publish instruction. |
+| pub.dev | in-job | **Verifier + recovery**, never publishes directly: pub.dev trusted publishing only accepts OIDC from tag-push runs, which a schedule/dispatch run can never be. When behind, it classifies first (gh-1192): a tag-publish still **executing** (tag-run queued/in-progress at any age, or not visible yet / tag not cut while the bump is fresh) is a neutral **skipped: release in flight** — no error, no issue; the next daily re-verifies. Past the grace windows the recovery path applies: re-run the failed ci.yml tag-publish run (a rerun keeps the original tag-push event/OIDC claims); unrecoverable states fail loudly → issue with a manual-publish instruction. |
 | CLI + desktop | `build-macos.yml` (`create_release=true`) | macOS DMG/ZIP (signed + notarized), macOS CLI bundles, `fa-extension.zip` → GitHub Release. |
 | Website | `pages.yml` | fa1.dev: landing + web demo + `/extension/` + `/outlook/` slice. |
 | Outlook add-in | `office-addin.yml` | Acceptance suite (manifest validation, dart2js taskpane, Node + Playwright e2e). The fa1.dev `/outlook` deploy itself rides the Website leg — `pages.yml` assembles the same add-in into the Pages artifact. |
@@ -63,7 +63,12 @@ per-PR `gh workflow run ci.yml --ref <branch>`) arm nothing. The daily:
 daily **that ran all legs** (schedule runs, or `legs=all` dispatches). A
 single-leg green dispatch never advances the baseline, so a partial smoke
 can't make the next scheduled run skip the legs it never exercised.
-A failing `plan` job (not just legs) files its own
+One exception (gh-1192): a release-in-flight pubdev leg exits 0, so that
+green daily becomes the baseline at the bump's sha — the plan gate
+(`scripts/daily_plan.sh`) therefore still forces the legs while main's
+pubspec version is not yet served by pub.dev, keeping the re-verification
+and the failed-run recovery alive on a quiet main. A failing `plan` job
+(not just legs) files its own
 `[daily-publish] plan leg failed` issue — nothing escapes the loop.
 
 ## Self-healing issues
