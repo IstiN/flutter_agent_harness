@@ -60,6 +60,129 @@ import 'headless_provider_key.dart';
   );
 }
 
+/// The `fa wire-serve` interception result (see [splitWireServeArgs]).
+typedef WireServeArgs = ({
+  bool wireServe,
+  bool stdio,
+  int? port,
+  String? token,
+  List<String> cliArgs,
+});
+
+/// `fa wire-serve [--port N] [--stdio] [--token T]` interception (issue
+/// #1103): same shape as [splitServeA2aArgs] — the args parser does not
+/// know the wire-serve form, so the bare invocation is detected ONLY in
+/// the subcommand position (`fa wire-serve ...`; the literal word as any
+/// other argument — e.g. a prompt — never intercepts, review #1113 r2)
+/// and the wire-serve flags are stripped from the list that reaches
+/// [parseCliArgs]. Exactly one transport: `--stdio` and `--port` together
+/// are a usage error (the card pins a loud startup failure, never a
+/// silent fallback); a bad `--port` value is one too. Repeated flags:
+/// last occurrence wins, for both --port and --token (review #1113 r2).
+/// Decomposed into one-decision helpers — each stays at cyclomatic 3 or
+/// under, the CRAP ratchet floor for covered code.
+WireServeArgs splitWireServeArgs(List<String> args) {
+  final isWireServe = args.isNotEmpty && args.first == 'wire-serve';
+  if (!isWireServe) {
+    return (
+      wireServe: false,
+      stdio: false,
+      port: null,
+      token: null,
+      cliArgs: args,
+    );
+  }
+  final stdio = _hasStandaloneFlag(args, '--stdio');
+  final port = _readPort(args);
+  final token = _readToken(args);
+  _checkTransportExclusivity(stdio, port);
+  return (
+    wireServe: true,
+    stdio: stdio,
+    port: port,
+    token: token,
+    cliArgs: _keepCliArgs(args),
+  );
+}
+
+/// The card pins exactly one transport per serve process.
+void _checkTransportExclusivity(bool stdio, int? port) {
+  if (stdio && port != null) {
+    throw const FormatException(
+      'wire-serve: --stdio and --port are mutually exclusive',
+    );
+  }
+}
+
+/// The last `--port` value in [args] (repeated flags: last wins, same as
+/// [_readToken]), or null when the flag is absent. A present-but-
+/// unparseable value is a usage error.
+int? _readPort(List<String> args) {
+  final index = args.lastIndexOf('--port');
+  if (index < 0) {
+    return null;
+  }
+  return _parsePortValue(_flagValue(args, index));
+}
+
+int _parsePortValue(String? raw) {
+  final parsed = int.tryParse(raw ?? '');
+  if (parsed == null || parsed < 0) {
+    throw const FormatException('wire-serve: --port needs a port number');
+  }
+  return parsed;
+}
+
+/// The last `--token` value in [args] (later flags win, matching a scan),
+/// or null when the flag is absent. A present-but-missing value is a
+/// usage error.
+String? _readToken(List<String> args) {
+  final index = args.lastIndexOf('--token');
+  if (index < 0) {
+    return null;
+  }
+  final raw = _flagValue(args, index);
+  if (raw == null) {
+    throw const FormatException('wire-serve: --token needs a value');
+  }
+  return raw;
+}
+
+/// The value following the flag at [flagIndex], or null at the end.
+String? _flagValue(List<String> args, int flagIndex) =>
+    flagIndex + 1 < args.length ? args[flagIndex + 1] : null;
+
+/// True when [flag] appears at an index that is NOT the verbatim value
+/// of a value-taking flag — `fa wire-serve --token --stdio` consumes the
+/// word as the token and must not also mean `--stdio` (review #1113 r2).
+bool _hasStandaloneFlag(List<String> args, String flag) {
+  for (var i = 0; i < args.length; i++) {
+    if (args[i] != flag) continue;
+    if (_wireServeValueFlags.contains(_previousArg(args, i))) continue;
+    return true;
+  }
+  return false;
+}
+
+const _wireServeFlags = {'wire-serve', '--stdio', '--port', '--token'};
+const _wireServeValueFlags = {'--port', '--token'};
+
+/// The args that survive wire-serve interception: the subcommand and its
+/// flags (and each flag's value) are stripped; everything else reaches
+/// [parseCliArgs].
+List<String> _keepCliArgs(List<String> args) => _dropFlagValues(
+  args,
+).where((arg) => !_wireServeFlags.contains(arg)).toList();
+
+/// Drops the value that follows every value-taking flag (`--port N`).
+List<String> _dropFlagValues(List<String> args) => [
+  for (var i = 0; i < args.length; i++)
+    if (!_wireServeValueFlags.contains(_previousArg(args, i))) args[i],
+];
+
+String? _previousArg(List<String> args, int index) =>
+    index == 0 ? null : args[index - 1];
+
 /// Provider/model restoration. Precedence: an explicit `--provider` flag
 /// (full manual control, preconfigs disabled) > the `FA_PROVIDER_*` env
 /// declaration ([faProviderPreconfig]) > the saved `provider:` (the
@@ -196,8 +319,9 @@ _savedRestoreReports({
     return (unknownSavedProvider: null, incompatibleSavedEndpoint: null);
   }
   return (
-    unknownSavedProvider:
-        savedSpec == null && savedRaw.isNotEmpty ? savedRaw : null,
+    unknownSavedProvider: savedSpec == null && savedRaw.isNotEmpty
+        ? savedRaw
+        : null,
     incompatibleSavedEndpoint: endpointConflict ? savedRaw : null,
   );
 }
@@ -295,6 +419,205 @@ Set<String> secureKeyPreloadNames(CliConfig saved, {required String? baseUrl}) {
     'TRANSCRIBE_API_KEY',
     if (saved.modelRoles != null) ...roleKeyNames(saved.modelRoles!),
   };
+}
+
+/// Fresh-install detection (issue #969): true when NO saved custom provider
+/// exists AND no provider key resolves anywhere — no catalog env name (nor
+/// its rotation stack) in the environment, and nothing in the preloaded
+/// secure-store snapshot. This is the state where the REPL would otherwise
+/// boot into the default provider's "no key set" banner noise with no way
+/// to configure one except discovering `/provider` first. Every stored
+/// snapshot name counts as a resolved key (the host preloads exactly the
+/// provider slots: catalog name backups, endpoint-scoped names, media
+/// slots, role apiKeyNames) — conservative: anything configured means the
+/// user is not fresh and the wizard must not hijack the boot.
+///
+/// The executable's boot glue (`bin/fah.dart`) ANDs this pure decision with
+/// conditions the snapshot cannot see — enumerate there when touching the
+/// glue so the two levels stay in sync:
+///
+/// - not headless (`-p`/positional prompt args and `--output` events mode
+///   never get the wizard; the headless hard key gate stays untouched);
+/// - no per-folder model restore pending, no explicit `--provider`/`--model`
+///   /`--base-url`, no `FA_PROVIDER_*` preconfig, no roles resolution, no
+///   provider queue — an explicitly driven boot is not fresh;
+/// - the saved default entry is undisturbed: default `providerKind`
+///   (`openai-completions`) and default catalog `baseUrl` (a pointed
+///   elsewhere entry is a configured provider);
+/// - no `--session <name>` resume (a named resumed boot is never fresh)
+///   and no pi harness mode (`--pi`/`FA_PI_MODE`/`agent.mode: pi` — the
+///   benchmark profile stays deterministic).
+bool freshInstallProviderState({
+  required Iterable<CustomProviderEntry> customProviders,
+  required SecureKeyCache keys,
+  Map<String, String>? env,
+}) {
+  // The snapshot answers first: an O(1) read that covers every store slot,
+  // while the env sweep below costs O(env entries × catalog base names).
+  if (keys.names.isNotEmpty) return false;
+  if (customProviders.isNotEmpty) return false;
+  final environment = env ?? Platform.environment;
+  final bases = {
+    for (final spec in providerCatalog.values) ...spec.apiKeyEnvNames,
+  };
+  // One sweep: exact base names plus rotation stacks (`NAME_2`, `NAME_3`,
+  // …) — a base prefix + `_` + digits only (empty values never count).
+  for (final entry in environment.entries) {
+    if (entry.value.isEmpty) continue;
+    for (final base in bases) {
+      if (entry.key == base) return false;
+      if (entry.key.length > base.length &&
+          entry.key.startsWith(base) &&
+          entry.key.codeUnitAt(base.length) == 0x5f &&
+          int.tryParse(entry.key.substring(base.length + 1)) != null) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/// The store-key names the SAVED CONFIG explicitly references (gh-1059):
+/// every custom provider entry's own `keyName` plus the roles config's
+/// `apiKeyName`s. Env-only setups reference nothing — the boot warning
+/// must stay silent for them (a missing env key has its own loud banner).
+Set<String> referencedSecureKeyNames(CliConfig saved) {
+  return {
+    for (final entry in saved.customProviders)
+      if (entry.keyName != null) entry.keyName!,
+    if (saved.modelRoles != null) ...roleKeyNames(saved.modelRoles!),
+  };
+}
+
+/// The referenced names whose preload outcome classified [status].
+Set<String> _referencedNamesWithStatus(
+  Set<String> referencedKeyNames,
+  SecureKeyPreloadReport report,
+  SecureKeyReadStatus status,
+) {
+  return referencedKeyNames
+      .where(
+        (name) =>
+            report.outcomes.any((o) => o.name == name && o.status == status),
+      )
+      .toSet();
+}
+
+/// The hint suffix shared by the boot warnings: point at the `[keys]`
+/// lines when they were printed, else at the debug switch.
+String _bootWarningHint(bool debug, String debugTail) {
+  return debug
+      ? 'see the [keys] lines above'
+      : 'run with --debug-secrets (or FA_DEBUG_KEYS=1) to see $debugTail';
+}
+
+/// The store-unavailable boot lines: the debug marker when asked, plus the
+/// nothing-resolved warning when the config references store keys (with no
+/// backend they resolve 0 too — "never stay invisible").
+List<String> _storeUnavailableLines({
+  required String label,
+  required bool debug,
+  required Set<String> referencedKeyNames,
+}) {
+  return [
+    if (debug) '[keys] $label unavailable — no keychain reads attempted',
+    if (referencedKeyNames.isNotEmpty)
+      'warning: ${referencedKeyNames.length} provider key(s) referenced '
+          'by the config (custom providers / roles) resolved NOTHING from '
+          'the $label (store unavailable, no reads attempted) — those '
+          'providers boot keyless',
+  ];
+}
+
+/// One `[keys]` line per preload outcome plus the totals summary.
+List<String> _debugKeyLines({
+  required SecureKeyPreloadReport report,
+  required Set<String> referencedKeyNames,
+  required String label,
+}) {
+  return [
+    for (final outcome in report.outcomes)
+      switch (outcome.status) {
+        SecureKeyReadStatus.found => '[keys] ${outcome.name}: found',
+        SecureKeyReadStatus.absent => '[keys] ${outcome.name}: absent',
+        SecureKeyReadStatus.error =>
+          '[keys] ${outcome.name}: error: ${outcome.error ?? 'unknown'}',
+      },
+    '[keys] ${referencedKeyNames.length} config-referenced, '
+        '${report.foundCount} found, ${report.absentCount} absent, '
+        '${report.errorCount} errors ($label)',
+  ];
+}
+
+/// The boot key-snapshot diagnostics (gh-1059): the lines the executable
+/// prints after `preload`. With [debug] (`--debug-secrets` / truthy
+/// `FA_DEBUG_KEYS`) one `[keys]` line per preload outcome plus a summary —
+/// `found` / `absent` / `error: <diagnostic>` — so a degraded keychain is
+/// diagnosable instead of silently empty. INDEPENDENT of [debug]:
+/// - one warning fires when the store answered but NONE of the
+///   config-referenced [referencedKeyNames] resolved — the "every provider
+///   boots keyless with no log trail" state — naming the count;
+/// - a per-name warning fires whenever any referenced name classified
+///   `error` (gh-1059 review: a boot where 7 of 8 keys fail to read but one
+///   resolves is just as keyless for those 7) — the store ANSWERED and
+///   failed, exactly the state worth naming.
+List<String> secureKeyBootDiagnostics({
+  required SecureKeyPreloadReport report,
+  required Set<String> referencedKeyNames,
+  required bool debug,
+  String? storeLabel,
+}) {
+  final lines = <String>[];
+  final label = storeLabel ?? 'secure store';
+  if (!report.storeAvailable) {
+    // Referenced store keys with no backend resolve 0 too — the boot is
+    // keyless for them all the same ("never stay invisible").
+    return _storeUnavailableLines(
+      label: label,
+      debug: debug,
+      referencedKeyNames: referencedKeyNames,
+    );
+  }
+  if (debug) {
+    lines.addAll(
+      _debugKeyLines(
+        report: report,
+        referencedKeyNames: referencedKeyNames,
+        label: label,
+      ),
+    );
+  }
+  final resolvedReferenced = _referencedNamesWithStatus(
+    referencedKeyNames,
+    report,
+    SecureKeyReadStatus.found,
+  );
+  if (referencedKeyNames.isNotEmpty && resolvedReferenced.isEmpty) {
+    final hint = _bootWarningHint(debug, 'the per-name reads');
+    lines.add(
+      'warning: ${referencedKeyNames.length} provider key(s) referenced by '
+      'the config (custom providers / roles) resolved NOTHING from the '
+      '$label — those providers boot keyless; re-enter a key or $hint '
+      '(the stored values were not touched)',
+    );
+  }
+  // gh-1059 review: `error` means the store answered and FAILED — the
+  // exact state worth naming, even when other referenced keys resolved.
+  final erroredReferenced = _referencedNamesWithStatus(
+    referencedKeyNames,
+    report,
+    SecureKeyReadStatus.error,
+  ).toList()..sort();
+  if (erroredReferenced.isNotEmpty) {
+    final hint = _bootWarningHint(debug, 'the errors');
+    lines.add(
+      'warning: ${erroredReferenced.length} provider key(s) referenced by '
+      'the config failed to read from the $label: '
+      '${erroredReferenced.join(', ')} — those providers boot keyless; '
+      're-enter a key or $hint (the stored values were not touched)',
+    );
+  }
+  return lines;
 }
 
 /// Collects the secrets snapshot for the model-roles resolver: every

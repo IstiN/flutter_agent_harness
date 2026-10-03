@@ -83,6 +83,8 @@ final _messageRandom = Random();
 String newMessageId() {
   final micros = DateTime.now().toUtc().microsecondsSinceEpoch;
   final counter = (_messageCounter++).toRadixString(36).padLeft(4, '0');
-  final rand = _messageRandom.nextInt(1 << 32).toRadixString(36);
+  // dart2js: shifts are 32-bit — `1 << 32` == 0, so nextInt(0) would throw
+  // on web (issue #1074). Spell the bound literally.
+  final rand = _messageRandom.nextInt(0xFFFFFFFF).toRadixString(36);
   return '${micros.toString().padLeft(16, '0')}_${counter}_$rand';
 }

@@ -49,6 +49,12 @@ void main() {
     test(
       'binding a taken port throws (the serve command probes first)',
       () async {
+        // Plain bind (issue #943 review): a second hub on a taken port is
+        // a loud failure at THIS layer — no SO_REUSEPORT split-brain. The
+        // idempotency gate is `fa hub serve`'s /healthz pre-probe plus
+        // its healthz-aware bind retry (fah_hub_serve_ports_test.dart:
+        // "serve onto a taken port that frees mid-retry" / "bind
+        // failure, exit 1").
         final first = LocalHub(port: 0);
         await first.start();
         addTearDown(first.stop);

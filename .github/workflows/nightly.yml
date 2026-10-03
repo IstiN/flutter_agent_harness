@@ -95,6 +95,13 @@ jobs:
       - name: dart test --coverage (excluding integration)
         run: dart test --coverage=coverage --exclude-tags integration
 
+      # gh-1033 (review thread 7 + gate wiring): integration-tagged jsr
+      # delegate suites feed the PTY leg's CLI coverage ratchet AND must
+      # reach this unit-side lcov (the 80% ratchet + CRAP below read it) —
+      # same rationale as scripts/ci_fast_gate.sh stage_test_core.
+      - name: dart test --tags integration (jsr delegate trio → unit lcov)
+        run: dart test --tags integration --coverage=coverage test/cli/jsr_cli_test.dart test/cli/cli_args_jsr_test.dart test/cli/agent_cli_jsr_test.dart
+
       - name: Format coverage to lcov
         run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
 
@@ -103,7 +110,11 @@ jobs:
 
       - name: CRAP ratchet (threshold pinned in crap4dart.yaml)
         run: |
-          dart pub global activate crap4dart ">=0.9.5"
+          # gh-1061: >=0.10.0 — analyzer 7.3→14.4 refresh. Bounded: a
+          # floating >= would auto-adopt 0.11.0+ with no repo change.
+          # gh-1106: ceiling bumped to 0.12.0 — the root crap4dart.yaml
+          # duplication block now uses 0.11.0-only keys.
+          dart pub global activate crap4dart ">=0.11.0 <0.12.0"
           dart pub global run crap4dart analyze
 
       - name: Duplication guard (lib/ < 1%)
@@ -128,50 +139,15 @@ jobs:
   # lib/src/cli/** feeds the only-up ratchet (coverage-gardener.yml bumps
   # the baseline weekly) — terminal-test coverage can never silently drop.
   # ─────────────────────────────────────────────────────────────────────────
-  # PTY runner picker: prefer the self-hosted fa-m5 minis (dedicated hardware,
-  # warm caches, no VM boot, no port contention — the hosted pty-integration
-  # leg loses 20-40 min to queue+load flake), fall back to the hosted labels
-  # when the pool is busy. GitHub has no OR in runs-on (an array is AND), so
-  # the choice happens HERE by counting in-progress jobs already parked on
-  # fa-m5 runners (jobs API, actions:read — no admin token needed).
-  # ─────────────────────────────────────────────────────────────────────────
-  runner-pick:
-    name: Pick PTY runners (fa-m5 or hosted fallback)
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    permissions:
-      actions: read
-    outputs:
-      pty_integration: ${{ steps.pick.outputs.pty_integration }}
-      pty_visual: ${{ steps.pick.outputs.pty_visual }}
-    steps:
-      - name: Probe fa-m5 pool and pick
-        id: pick
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          M5_POOL: '2'
-        run: |
-          busy=0
-          for rid in $(gh api "repos/$REPO/actions/runs?status=in_progress&per_page=100" --jq '.workflow_runs[].id'); do
-            n=$(gh api "repos/$REPO/actions/runs/$rid/jobs" --jq '[.jobs[] | select(.status == "in_progress" and ((.runner_name // "") | startswith("fa-m5")))] | length' || echo 0)
-            busy=$((busy + n))
-          done
-          free=$((M5_POOL - busy))
-          if [ "$free" -ge 2 ]; then
-            echo "pool: $free free of $M5_POOL fa-m5 -> self-hosted"
-            echo 'pty_integration=["self-hosted","macos-m5"]' >> "$GITHUB_OUTPUT"
-            echo 'pty_visual=["self-hosted","macos-m5"]' >> "$GITHUB_OUTPUT"
-          else
-            echo "pool: $free free of $M5_POOL fa-m5 -> hosted fallback"
-            echo 'pty_integration=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
-            echo 'pty_visual=["macos-latest"]' >> "$GITHUB_OUTPUT"
-          fi
-
+  # gh-1005 (2026-09-30): the fa-m5 runner-pick probe is GONE — the on-prem
+  # M5 pool is ONE runner (fa-m5-1) reserved for genuinely macOS-only work
+  # (cube-kernel-live, release macOS/iOS legs). The PTY/CLI integration +
+  # Terminal-visual legs run on hosted ubuntu-24.04-arm, mirroring the PR
+  # legs in ci.yml so the coverage/duration ratchets measure ONE
+  # environment (PR gate == nightly backstop == coverage-gardener).
   pty-integration:
     name: PTY/CLI integration + cli coverage
-    runs-on: ${{ fromJSON(needs.runner-pick.outputs.pty_integration) }}
-    needs: runner-pick
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
     env:
@@ -181,9 +157,6 @@ jobs:
       OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Self-hosted toolcache redirect (fa-m5)
-        if: startsWith(runner.name, 'fa-m5')
-        run: echo "RUNNER_TOOL_CACHE=${{ runner.workspace }}/toolcache" >> "$GITHUB_ENV"
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
@@ -235,21 +208,34 @@ jobs:
 
   # Terminal-visual suite: the real CLI in a PTY screenshotted through the
   # Flutter TerminalView. Never ran in CI before issue #177 (manual only) —
-  # it needs no LLM (local test-provider configs) but does need a real
-  # display stack, so it gets the macOS runner. Screenshots land as an
-  # artifact for eyeballing.
+  # it needs no LLM (local test-provider configs); the old "needs a real
+  # display stack" assumption never held (flutter test renders through the
+  # FlutterTester with the BUNDLED JetBrainsMono — no host fonts, no
+  # display), so gh-1005 pins it to hosted ubuntu-24.04-arm like the PR
+  # leg. Screenshots land as an artifact for eyeballing.
   cli-visual:
     name: Terminal visual (PTY screenshots)
-    runs-on: ${{ fromJSON(needs.runner-pick.outputs.pty_visual) }}
-    needs: runner-pick
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+      # arm64: no official linux-arm64 Flutter tarball — git bootstrap,
+      # same as ci.yml's flutter-tests / pty-visual legs.
+      - name: Flutter SDK (arm64 git bootstrap)
+        shell: bash
+        run: |
+          git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/flutter/bin:$PATH"
+          flutter --version
+          flutter precache
+      - name: Pub cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          channel: stable
-          cache: true
+          path: ~/.pub-cache
+          key: pubcache-flutter-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: pubcache-flutter-${{ runner.os }}-
       # cli-visual runs `flutter test` inside flutter_app — the asset is
       # declared in flutter_app/pubspec.yaml, so the placeholder must land
       # at flutter_app/.env, not the repo root. (This line previously
@@ -273,7 +259,6 @@ jobs:
           name: cli-visual-screenshots
           path: test/integration/screenshots/
           retention-days: 7
-
 
   # Full flutter_app suite on macOS (issue #177): the ubuntu PR leg excludes
   # native-dependent tests (scripts/flutter_test_ubuntu_exclude.txt —

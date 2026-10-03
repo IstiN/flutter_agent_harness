@@ -113,6 +113,50 @@ final class _WaitingCoordinator {
 
   ScheduledMessageQueue get _timers => _cli._scheduledMessages;
 
+  /// Per-call foreground liveness (gh-1055): the third waiting horizon —
+  /// a tool call running long in the FOREGROUND. Headless/line mode prints
+  /// grep-friendly single lines (elapsed, tool name, command tail) past
+  /// `toolLivenessSeconds`, then — once per stuck call — the background
+  /// escape-hatch hint past `toolEscalateSeconds`. Every elapsed value
+  /// rides the same waiting-clock seam the heartbeat uses (AC5: no second
+  /// clock); when #1054's stuck-call heartbeat records land, its detector
+  /// feeds this tracker instead of a private one.
+  late final ToolLivenessTracker liveness = ToolLivenessTracker(
+    onRemind: (call) =>
+        _printLiveness(toolLivenessReminderLine(call, _clock())),
+    onEscalate: (call) =>
+        _printLiveness(toolLivenessEscalationLine(call, _clock())),
+    clock: _clock,
+    livenessSeconds: () => _cli.config.waiting.toolLivenessSeconds,
+    tickSeconds: () => _cli.config.waiting.toolLivenessTickSeconds,
+    escalateSeconds: () => _cli.config.waiting.toolEscalateSeconds,
+  );
+
+  /// One liveness line, dimmed like every other run notice (the style is
+  /// off in headless, so the piped output stays plain). Never after exit —
+  /// the timer chain can outlive the session by a tick.
+  void _printLiveness(String line) {
+    if (_cli._exited) return;
+    _cli.io.writeln(_cli._style.dim(line));
+  }
+
+  /// Foreground tool call started (gh-1055): arm the headless/line-mode
+  /// liveness watch. TUI mode stays untouched — its waiting row already
+  /// shows the live call.
+  void toolCallStarted(String toolCallId, String toolName, String detail) {
+    if (_cli._useTui) return;
+    liveness.callStarted(toolCallId, toolName, detail);
+  }
+
+  /// Foreground tool call ended: this call's watch (and escalation state)
+  /// stops with it. The TUI gate mirrors [toolCallStarted] so the pair
+  /// stays symmetric — an end-without-start must never touch the chain
+  /// while other calls are legitimately in flight.
+  void toolCallEnded(String toolCallId) {
+    if (_cli._useTui) return;
+    liveness.callEnded(toolCallId);
+  }
+
   /// The cross-run job registry (`<cwd>/.fah/bash_jobs/running.json`):
   /// one entry per job any fa process in this workspace still considers
   /// running. Boot reconcile (issue #478) drops entries whose owning
@@ -150,6 +194,39 @@ final class _WaitingCoordinator {
   /// survived get one warning line, then are reaped.
   Future<void> captureLostJobs() async {
     lostJobs = 0;
+    final reconcile = await _reconcileRegistry();
+    lostJobs = reconcile.dropped;
+    final pids = reconcile.pids;
+    final quarantined = reconcile.quarantined;
+    final dropped = reconcile.dropped;
+    final aged = reconcile.aged;
+    // The orphan-group reaper (issue #517) wants every previous-run pid —
+    // it skips live leaders itself.
+    await reapOrphanJobGroups(
+      env: _cli._env,
+      candidatePids: pids,
+      onWarn: (message) => _cli.io.writeln(tuiWarning('⚠ $message')),
+    );
+    final prunedLogs = await _pruneOldJobLogs();
+    final notes = <String>[
+      if (quarantined) 'corrupt running.json quarantined as running.json.bad',
+      if (dropped > 0)
+        '$dropped stale job ${dropped == 1 ? 'entry' : 'entries'} dropped'
+            '${aged > 0 ? ', $aged past the age belt' : ''}',
+      if (prunedLogs > 0) '$prunedLogs old job log(s) pruned',
+    ];
+    if (notes.isNotEmpty) {
+      _cli.io.writeln(tuiWarning('⚠ bash_jobs: ${notes.join(' · ')}'));
+    }
+  }
+
+  /// The registry reconcile half of [captureLostJobs] (extracted so the
+  /// public entry stays under the CRAP complexity threshold): verifies
+  /// each recorded entry against the live process table, drops the dead
+  /// and the past-the-age-belt ones, and rewrites the registry when
+  /// anything changed. Behavior is identical to the inlined loop.
+  Future<({List<int> pids, bool quarantined, int dropped, int aged})>
+  _reconcileRegistry() async {
     var pids = const <int>[];
     var quarantined = false;
     var dropped = 0;
@@ -181,29 +258,11 @@ final class _WaitingCoordinator {
         }
         kept.add(entry);
       }
-      lostJobs = dropped;
       if (quarantined || kept.length != entries.length) {
         await _writeRegistryEntries(kept);
       }
     });
-    // The orphan-group reaper (issue #517) wants every previous-run pid —
-    // it skips live leaders itself.
-    await reapOrphanJobGroups(
-      env: _cli._env,
-      candidatePids: pids,
-      onWarn: (message) => _cli.io.writeln(tuiWarning('⚠ $message')),
-    );
-    final prunedLogs = await _pruneOldJobLogs();
-    final notes = <String>[
-      if (quarantined) 'corrupt running.json quarantined as running.json.bad',
-      if (dropped > 0)
-        '$dropped stale job ${dropped == 1 ? 'entry' : 'entries'} dropped'
-            '${aged > 0 ? ', $aged past the age belt' : ''}',
-      if (prunedLogs > 0) '$prunedLogs old job log(s) pruned',
-    ];
-    if (notes.isNotEmpty) {
-      _cli.io.writeln(tuiWarning('⚠ bash_jobs: ${notes.join(' · ')}'));
-    }
+    return (pids: pids, quarantined: quarantined, dropped: dropped, aged: aged);
   }
 
   Future<void> _manifestAdd(
@@ -828,4 +887,24 @@ extension AgentCliWaitingSeams on AgentCli {
   @visibleForTesting
   Future<String> waitingScheduleTimerForTest(String text, Duration delay) =>
       _waiting._timers.schedule(text: text, delay: delay);
+
+  /// Test seam: fires one tool-liveness evaluation now (gh-1055), the
+  /// analog of [waitingHeartbeatTickForTest] for #450.
+  @visibleForTesting
+  void toolLivenessTickForTest() => _waiting.liveness.tick();
+
+  /// Test seam: the watched foreground calls, oldest first (gh-1055).
+  @visibleForTesting
+  List<ToolLivenessCall> get toolLivenessCallsForTest =>
+      _waiting.liveness.inFlight;
+
+  /// Test seam: feeds the liveness watch directly, bypassing the agent
+  /// event path — the TUI-gate test drives this.
+  @visibleForTesting
+  void toolCallStartedForTest(String id, String name, String detail) =>
+      _waiting.toolCallStarted(id, name, detail);
+
+  /// Test seam: ends the watched call started by [toolCallStartedForTest].
+  @visibleForTesting
+  void toolCallEndedForTest(String id) => _waiting.toolCallEnded(id);
 }

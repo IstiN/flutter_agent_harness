@@ -173,6 +173,28 @@ class ProviderRegistry extends ChangeNotifier {
   /// The persisted providers, in insertion order.
   List<CustomProvider> get providers => List.unmodifiable(_providers);
 
+  /// The first entry named [name] (case-insensitive), or null — the CLI
+  /// `CustomProviderRegistry.find` convention: a name is an entry's
+  /// identity, and name lookups fold case (issue #977).
+  CustomProvider? byName(String name) {
+    final lower = name.trim().toLowerCase();
+    for (final provider in _providers) {
+      if (provider.name.toLowerCase() == lower) return provider;
+    }
+    return null;
+  }
+
+  /// The first entry serving [baseUrl], or null — the CLI
+  /// `_entryForBaseUrl` convention: base-URL lookups survive renames, so a
+  /// re-connect finds a renamed entry instead of duplicating it (issue
+  /// #977).
+  CustomProvider? byBaseUrl(String baseUrl) {
+    for (final provider in _providers) {
+      if (provider.baseUrl == baseUrl) return provider;
+    }
+    return null;
+  }
+
   /// The session-only API key remembered for provider [id], if any.
   String? keyFor(String id) => _sessionKeys[id];
 

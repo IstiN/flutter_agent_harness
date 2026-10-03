@@ -93,6 +93,47 @@ final class TaskJob {
   void cancel() => _cancelSource.cancel();
 }
 
+/// The async-result message re-injected into the parent conversation when
+/// a background job settles (omp's `<system-notice>` + `<task-result>`
+/// envelope, reduced: no artifact spill — the pointer is `agent://<id>`).
+///
+/// Shared by every host that wires [TaskJobManager.completions] (CLI, app):
+/// one envelope, so a settled job reads the same everywhere.
+const int taskAsyncResultPreviewChars = 4000;
+
+String taskAsyncResultNotice(TaskJob job) {
+  final result = job.result;
+  final buffer = StringBuffer()
+    ..writeln('<system-notice>')
+    ..writeln(
+      'Background agent ${job.id} (${job.agent}) finished with status: '
+      '${job.status.name}.',
+    )
+    ..writeln('Task: ${job.task}')
+    ..writeln()
+    ..write(
+      '<task-result id="${job.id}" agent="${job.agent}" '
+      'status="${job.status.name}">',
+    );
+  final output = result?.output ?? '';
+  if (output.isNotEmpty) {
+    buffer
+      ..writeln()
+      ..writeln(
+        output.length > taskAsyncResultPreviewChars
+            ? '${output.substring(0, taskAsyncResultPreviewChars)}\n…\n'
+                  '[Full output: agent://${job.id}]'
+            : output,
+      );
+  }
+  final error = result?.error;
+  if (error != null) buffer.write('\nerror: $error');
+  buffer
+    ..write('\n</task-result>')
+    ..write('\n</system-notice>');
+  return buffer.toString();
+}
+
 /// Session-scoped registry of background `task` jobs (reduced port of omp's
 /// `AsyncJobManager` role for task spawns).
 ///

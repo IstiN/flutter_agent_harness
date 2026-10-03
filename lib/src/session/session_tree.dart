@@ -10,6 +10,7 @@
 library;
 
 import '../compaction/structured/projection.dart';
+import '../compaction/summary_sanitizer.dart';
 import '../context.dart';
 import '../exceptions.dart';
 import '../types.dart';
@@ -612,7 +613,9 @@ final class Session {
       ],
       CompactionRecord(:final summary, :final timestamp) => [
         UserMessage.text(
-          '$compactionSummaryPrefix$summary$compactionSummarySuffix'
+          '$compactionSummaryPrefix'
+          '${sanitizeSummary(summary).text}'
+          '$compactionSummarySuffix'
           '${_classicHiddenIndex(classicHidden, seqs)}',
           timestamp: timestamp,
         ),
@@ -622,7 +625,9 @@ final class Session {
             ? const []
             : [
                 UserMessage.text(
-                  '$branchSummaryPrefix$summary$branchSummarySuffix',
+                  '$branchSummaryPrefix'
+                  '${sanitizeSummary(summary).text}'
+                  '$branchSummarySuffix',
                   timestamp: timestamp,
                 ),
               ],

@@ -86,16 +86,23 @@ final class CliVisualHarness {
     required String repoRoot,
     Map<String, String>? extraEnv,
     List<String> args = const [],
+    String executable = 'dart',
+    List<String>? executableArgs,
+    String? workingDirectory,
   }) async {
     final (env, sandboxHome) = resolveSpawnEnv(extraEnv);
     final pty = PseudoTerminal.start(
-      'dart',
-      // `dart bin/fah.dart`, NOT `dart run ...`: `dart run` spawns a
-      // separate child VM that escapes pty.kill() and keeps the PTY (and
+      executable,
+      // Default `dart bin/fah.dart`, NOT `dart run ...`: `dart run` spawns
+      // a separate child VM that escapes pty.kill() and keeps the PTY (and
       // the whole test run) alive. Direct execution runs in-process, so
       // kill() in close() actually terminates the CLI.
-      ['bin/fah.dart', ...args],
-      workingDirectory: repoRoot,
+      executableArgs ?? ['bin/fah.dart', ...args],
+      // [workingDirectory] overrides the default (the fa repo root) — the
+      // omp REG captures boot in a GIT-CLEAN sandbox so the git segment is
+      // hidden on BOTH sides of the parity diff (issue #810). Pass an
+      // absolute script path in [executableArgs] when overriding.
+      workingDirectory: workingDirectory ?? repoRoot,
       environment: env,
       raw: true,
     );

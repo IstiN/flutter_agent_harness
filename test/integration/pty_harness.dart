@@ -33,6 +33,26 @@ import 'dart:io';
 import 'package:pty2/pty2.dart';
 import 'package:xterm/xterm.dart';
 
+/// The visible viewport with each line's trailing blank cells stripped —
+/// the CONTENT-faithful view for cross-frame equality (gh-982).
+///
+/// The two dart_tui paint paths disagree about row tails
+/// (vendor/dart_tui/lib/src/renderer.dart): the scroll fast path ends
+/// every painted row with an erase (`_paintRow` → `CSI K`; the emulator's
+/// erased cells become empty and vanish from `BufferLine.getText`), while
+/// the cell-diff path (`_diffAndEmit`) writes only changed cells and never
+/// erases the tail — whatever an earlier full repaint materialized there
+/// (explicit space cells) stays. Which history a logical row carries
+/// depends on the renderer's frame-shift heuristics, i.e. on platform
+/// timing: macOS/fa-m5 and linux produced different histories for the
+/// same scenario and the frozen `· older` board row failed a raw list
+/// equality despite byte-identical counts. Raw [FaCliHarness.viewportLines]
+/// equality is only valid for genuinely full-width rows (the composer
+/// rule); compare content frames for everything else.
+List<String> frameContentLines(List<String> viewport) => [
+  for (final line in viewport) line.trimRight(),
+];
+
 /// Spawns the Fa CLI as a subprocess with a PTY, feeds output to an xterm
 /// terminal emulator, and provides keystroke sending + output capture.
 final class FaCliHarness {
@@ -58,10 +78,17 @@ final class FaCliHarness {
   /// explicitly; package resolution stays on the repo either way (the
   /// script path is absolute).
   ///
-  /// Unique per spawn (issue #931 part 3.1, harness piece): every test gets
-  /// its own root, so the in-suite `--concurrency=4` (part 3.3) can never
-  /// race two CLIs through one shared git-init/config-write directory (the
-  /// #936 incident class). The full session/dir-race program stays in #948.
+  /// Unique per spawn (issue #931 part 3.1 + issue #943 vector 1): every
+  /// test gets its own root — no in-suite concurrency races two CLIs
+  /// through one shared git-init/config-write directory, and no run's
+  /// teardown deletes a FIXED root (the old `/tmp/fa_pty_cwd`) under
+  /// another run's live ext process. The full session/dir-race program
+  /// landed here via #948.
+  /// The old fixed `/tmp/fa_pty_cwd` was shared by EVERY run of EVERY PR's
+  /// PTY leg: one run's teardown deleted it under another run's live ext
+  /// process (`PathNotFoundException: Getting current working directory
+  /// failed`). A unique `Directory.systemTemp` dir per spawn plus the
+  /// [FaCliHarness]-owned cleanup below kills that race class.
   static Directory _shortDefaultCwd() {
     final dir = Directory.systemTemp.createTempSync('fa_pty_cwd_');
     // Match the checkout's shape: the CLI's git-root discovery (and the
@@ -72,10 +99,14 @@ final class FaCliHarness {
     // runner instead of one.
     final git = Process.runSync('git', ['init', '-q', dir.path]);
     if (git.exitCode != 0) {
-      throw StateError('git init failed for harness cwd ${dir.path}: ${git.stderr}');
+      throw StateError(
+        'git init failed for harness cwd ${dir.path}: ${git.stderr}',
+      );
     }
     return dir;
   }
+
+  var _closed = false;
 
   /// Spawns the Fa CLI with a PTY of fixed size.
   ///
@@ -103,6 +134,16 @@ final class FaCliHarness {
       // explicitly. Without this a HOME override breaks package resolution.
       if (Platform.environment['PUB_CACHE'] != null)
         'PUB_CACHE': Platform.environment['PUB_CACHE']!,
+      // Hub hygiene (issue #943, vector 2): pin the CLI's hub client and
+      // local-hub URLs to a dead loopback port so a boot NEVER dials — or
+      // auto-starts against — the zero-config 8787, where another run's
+      // orphaned hub would silently adopt this fa instance (foreign tasks
+      // in captured frames). Loopback-refused is instant, so the boot-time
+      // dial fails in microseconds and stays quieter than the old
+      // "not configured" hint. Tests that exercise the hub pass their own
+      // URLs via [extraEnv] (spread after these).
+      'DAP_HUB_URL': 'ws://127.0.0.1:1/ws',
+      'DAP_LOCAL_HUB_URL': 'ws://127.0.0.1:1/ws',
       ...?extraEnv,
     };
     // FA_BIN (test-only seam): run a prebuilt binary (e.g. the AOT bundle
@@ -138,13 +179,7 @@ final class FaCliHarness {
     pty.resize(columns, rows);
     final terminal = Terminal(maxLines: rows * 4);
     if (columns != 80 || rows != 24) terminal.resize(columns, rows);
-    final harness = FaCliHarness._(
-      pty,
-      terminal,
-      columns,
-      rows,
-      ownedCwd,
-    );
+    final harness = FaCliHarness._(pty, terminal, columns, rows, ownedCwd);
     harness.startListening();
     // Answer the CLI's terminal queries (device attributes etc.) so it
     // does not wait out a response timeout on every boot.
@@ -318,6 +353,17 @@ final class FaCliHarness {
   /// the raw buffer first and an immediate `expect(screenText, …)` still
   /// sees the previous frame (#550/#557 flake family). Use this when the
   /// assertion contract is the SCREEN.
+  ///
+  /// CAPTURE THE RESULT and assert on it: `final screen = await
+  /// harness.waitForScreen(marker)` — the returned string IS the anchored
+  /// screen. A bare `await waitForScreen(header)` followed by a fresh
+  /// `harness.screenText` read re-samples the screen mid-render: the wait
+  /// returns the first frame containing the header (no settle) while
+  /// pickers/cards paint their remaining rows a frame later, and the read
+  /// loses that race on loaded hosts (gh-1049 flake family). Screens may
+  /// only be re-read after a `waitForOutput(settleMs:)` settle.
+  /// `test/integration/pty_screen_wait_reg_test.dart` greps for the
+  /// anti-pattern and fails the default suite when it regrows.
   Future<String> waitForScreen(
     Pattern pattern, {
     Duration timeout = const Duration(seconds: 10),
@@ -354,6 +400,10 @@ final class FaCliHarness {
     return lines;
   }
 
+  /// [viewportLines] with each line's trailing blank cells stripped —
+  /// the CONTENT-faithful view for cross-frame equality (gh-982).
+  List<String> get viewportContentLines => frameContentLines(viewportLines);
+
   /// The terminal screen as text lines (ANSI-stripped, empty lines dropped).
   List<String> get screenLines => [
     for (final line in viewportLines)
@@ -365,8 +415,11 @@ final class FaCliHarness {
 
   /// Kills the CLI process, cancels the output subscription (otherwise an
   /// open stream keeps the test runner's event loop alive), and waits for
-  /// the process to exit.
+  /// the process to exit. Deletes the harness-owned temp CWD only AFTER
+  /// the process is dead — never under a live CLI (issue #936 vector 1).
   Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
     pty.kill();
     await pty.exitCode.timeout(const Duration(seconds: 5), onTimeout: () => -1);
     await _outputSub?.cancel();

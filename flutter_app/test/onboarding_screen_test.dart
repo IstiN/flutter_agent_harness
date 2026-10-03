@@ -21,6 +21,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'model_picking.dart';
+
 /// Pumps the onboarding flow full-screen with the app's real theme and
 /// localization; [keysStore] is exposed through a [SessionKeysScope] like
 /// the app shell does.
@@ -246,16 +248,107 @@ void main() {
         find.widgetWithText(TextField, 'API key (optional)'),
         'sk-onboarding',
       );
+      // Issue #1020: the model is mandatory now — pick one through the
+      // selector (see test/model_picking.dart).
+      await tester.pickModel('acme-model');
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 
       // Provider + key persisted, the connection saved for the boot
       // auto-connect, and the flow advanced to the permissions page.
       expect(registry.providers, hasLength(1));
+      expect(registry.providers.single.modelId, 'acme-model');
       expect(registry.keyFor(registry.providers.single.id), 'sk-onboarding');
       expect(lastConnection.connection?.baseUrl, 'https://acme.example/v1');
+      expect(lastConnection.connection?.modelId, 'acme-model');
       expect(find.text('Give access only when it helps.'), findsOneWidget);
       expect(find.text('Skip'), findsOneWidget); // gate is past
+    });
+
+    testWidgets('saving a provider without a model keeps the step locked', (
+      tester,
+    ) async {
+      // Issue #1020 reproduction: Z.AI prefills name/URL but no model —
+      // saving must refuse with the inline error and leave the gate up,
+      // not unlock the flow into an unusable chat.
+      final registry = ProviderRegistry.inMemory();
+      final lastConnection = LastConnectionStore.inMemory();
+      await _pumpOnboarding(
+        tester,
+        initialPage: 1,
+        registry: registry,
+        lastConnectionStore: lastConnection,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.scrollUntilVisible(
+        find.text('Z.AI'),
+        200,
+        scrollable: find.descendant(
+          of: find.byType(SingleChildScrollView),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Z.AI'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+
+      // Name and base URL come prefilled from the preset; only the model
+      // is missing. Save refuses instead of unlocking the step.
+      await tester.enterText(
+        find.widgetWithText(TextField, 'API key (optional)'),
+        'sk-zai',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Model id is required'), findsOneWidget);
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+      expect(registry.providers, isEmpty);
+      expect(lastConnection.connection, isNull);
+
+      // Nothing was configured — backing out keeps Continue locked.
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+      expect(find.text('Choose how Fa thinks.'), findsOneWidget);
+    });
+
+    testWidgets('a preset editor unlocks with its seeded default model', (
+      tester,
+    ) async {
+      // Issue #1020 review: preset-mode editors (OpenRouter et al) seed a
+      // non-empty default model, so the model gate is a no-op there —
+      // saving immediately unlocks the step without the selector.
+      final registry = ProviderRegistry.inMemory();
+      final lastConnection = LastConnectionStore.inMemory();
+      await _pumpOnboarding(
+        tester,
+        initialPage: 1,
+        registry: registry,
+        lastConnectionStore: lastConnection,
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('OpenRouter'));
+      await tester.pumpAndSettle();
+      expect(find.byType(ProviderEditorPage), findsOneWidget);
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'API key (optional)'),
+        'sk-or',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+
+      // The seeded default model saved with the provider and the
+      // connection — the gate never tripped.
+      expect(find.text('Model id is required'), findsNothing);
+      expect(registry.providers.single.modelId, isNotEmpty);
+      expect(lastConnection.connection?.modelId, isNotEmpty);
+      expect(find.text('Give access only when it helps.'), findsOneWidget);
     });
 
     testWidgets('without a registry the provider cards are inert', (

@@ -55,7 +55,9 @@ final class HubFabricRepository
   Future<String?> resolveTarget(String toId) async {
     if (!isConnected) return null;
     // Channels are always hub-shaped (the package client routes the send
-    // and auto-creates unknown channels on first use).
+    // and auto-creates unknown channels on first use — except on
+    // master-gated hubs (hub.fa1.dev), where joining an unknown channel
+    // is access_denied and only a master connection creates channels).
     if (toId.startsWith('#')) return toId;
     final me = _agentId;
     if (me != null && toId == me) return null; // our own fabric mailbox

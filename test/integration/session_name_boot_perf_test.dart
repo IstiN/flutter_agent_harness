@@ -13,7 +13,6 @@
 @TestOn('vm')
 @Tags(['integration', 'perf'])
 @Timeout(Duration(minutes: 10))
-@Skip('infra: #936 boot perf budget too tight under concurrency')
 library;
 
 import 'dart:io';
@@ -93,7 +92,7 @@ Future<void> main() async {
   });
 
   test(
-    'AC3: fa --session existing-name boots <= 2 s over 300 + 2 giants',
+    'AC3: fa --session existing-name boots within budget over 300 + 2 giants',
     () async {
       final elapsed = await _bootWallClock(
         env,
@@ -101,14 +100,20 @@ Future<void> main() async {
         'existing-name',
         resolvedId: targetId,
       );
-      expect(elapsed, lessThan(const Duration(seconds: 2)));
+      // Issue #943: budget from measured clean runs + busy-box headroom —
+      // local clean p95 is sub-second (2026-09-25, M4 Pro, both ACs finish
+      // inside the first wall second), the CI-idle ceiling sat at the old
+      // 2 s line, and concurrent-CI disk/CPU dilation blew it 2-3x. 6 s is
+      // 3x the idle ceiling yet still 6x under the ~36 s pre-fix
+      // chunk-paged-scan regression this gate exists to catch (#369).
+      expect(elapsed, lessThan(const Duration(seconds: 6)));
     },
   );
 
-  test('AC4: fa --session brand-new-name stays <= 2 s (all excluded, '
-      'then created)', () async {
+  test('AC4: fa --session brand-new-name stays within budget (all '
+      'excluded, then created)', () async {
     final elapsed = await _bootWallClock(env, sessionsRoot, 'brand-new-name');
-    expect(elapsed, lessThan(const Duration(seconds: 2)));
+    expect(elapsed, lessThan(const Duration(seconds: 6)));
   });
 }
 

@@ -120,6 +120,7 @@ Future<void> _runCopilotStream(
               maxTokens: model.maxTokens,
               headers: model.headers,
               compat: model.compat,
+              authHeader: model.authHeader,
             )
           : model;
       final inner = streamOpenAICompletions(

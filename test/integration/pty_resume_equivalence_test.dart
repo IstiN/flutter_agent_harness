@@ -7,10 +7,9 @@
 /// — tool rows, notice blockquotes, markdown rows, user echo — must EQUAL
 /// the live screen's, modulo the contract's permitted differences (settled
 /// durations `—` vs live cells; board re-print cards are dropped from both
-/// sides, their shape is #429's own coverage; and since #807 the live edge
-/// paints band tool cards `✔ name: detail 0s` while the replay keeps the
-/// legacy row grammar `✓ name · detail —` — both canonicalize to the
-/// shared `name: detail` core).
+/// sides, their shape is #429's own coverage; and since #916 both edges
+/// paint the settled band tool card `✔ name: detail`, the replay's meta
+/// zone carrying the honest `—` where the live card shows `0s`).
 ///
 /// AC6/AC8: a 3k-record session resumes through the unified pipeline — the
 /// tail's pinned grammar rows render, zero `[name]` markers leak, and
@@ -22,7 +21,6 @@
 @TestOn('vm')
 @Tags(['integration'])
 @Timeout(Duration(minutes: 10))
-@Skip('infra: #936 resume perf budget too tight under load')
 library;
 
 import 'dart:convert';
@@ -121,28 +119,21 @@ final _runningCard = RegExp(r'^[⟳⏳] \S+: ');
 /// A live SETTLED band tool card (`✔ bash: sleep 2 … 0s`, `✘ … [exit 1]`).
 final _settledCard = RegExp(r'^[✔✘] (\S+): (.+)$');
 
-/// A replayed legacy tool row (`✓ bash · sleep 2 … —`, `✗ …` when the
-/// result record never landed).
-final _replayedRow = RegExp(r'^[✓✗] (\S+) · (.+)$');
+/// A settled card's trailing meta zone: the bracketed badge, the elapsed
+/// cell (`0s`, `12.4ms`), or the replay's honest `—` (issue #916).
+final _cardMeta = RegExp(r'(?:\s\[[^\]]+\]|\s\d+(?:\.\d+)?(?:ms|s)|\s—)+$');
 
-/// A settled card's trailing meta zone: the bracketed badge and/or the
-/// elapsed cell (`0s`, `12.4ms`).
-final _cardMeta = RegExp(r'(?:\s\[[^\]]+\]|\s\d+(?:\.\d+)?(?:ms|s))+$');
-
-/// Canonicalizes one settled tool row to its shared `name: detail`
-/// grammar. The live band card (`✔ bash: sleep 2 … 0s`) and the replayed
-/// row (`✓ bash · sleep 2 … —`) render the same call with different
-/// glyph/separator/elapsed chrome (#807 vs the legacy row grammar), so the
-/// comparison reads the name+detail core both share. Running cards
-/// (`⟳ …`) normalize to null: live-only transient.
+/// Canonicalizes one settled tool row to its shared `name: detail` core.
+/// Since #916 BOTH edges paint the settled band card — it is the ONLY
+/// tool-row grammar — so this is a strict parser, not a tolerance layer: a
+/// card canonicalizes, a running card (`⟳ …`, live-only transient)
+/// normalizes to null, and ANYTHING else (e.g. a regressed legacy
+/// `✓ name · detail` row) passes through raw and breaks the live/replay
+/// equality — drift detection is this canonicalizer's whole job.
 String? _canonicalToolRow(String t) {
   if (_runningCard.hasMatch(t)) return null;
   final card = _settledCard.firstMatch(t);
   if (card != null) return '${card[1]}: ${card[2]!.replaceAll(_cardMeta, '')}';
-  final row = _replayedRow.firstMatch(t);
-  if (row != null) {
-    return '${row[1]}: ${row[2]!.replaceFirst(RegExp(r'\s+—$'), '')}';
-  }
   return t;
 }
 
@@ -219,11 +210,12 @@ void main() {
   late File turnsFile;
 
   setUp(() async {
-    // Short fixed dirs (#446): long macOS temp paths wrap mid-path and
-    // desync the two frames' wrap continuations; /tmp keeps every row on
-    // one physical line.
-    home = Directory('/tmp/fa_446_home')..createSync(recursive: true);
-    project = Directory('/tmp/fa_446_proj')..createSync(recursive: true);
+    // Unique SHORT dirs (the #936/#938 class — fixed /tmp paths race
+    // concurrent suite copies). Long macOS temp paths wrap mid-path and
+    // desync the two frames' wrap continuations (#446); /tmp keeps every
+    // row on one physical line.
+    home = Directory('/tmp').createTempSync('fa446h');
+    project = Directory('/tmp').createTempSync('fa446p');
     // Pin the classic chrome: this suite asserts the classic transcript
     // grammar; the band redesign (#805-#807) has its own surface. The
     // harness configures providers via FA_PROVIDER_CONFIG env only, so the
@@ -416,9 +408,12 @@ ${resumeTail.join('\n')}''',
       try {
         // The restored header scrolls out of the small scrollback at 3k
         // records; the tail's last rendered row is the settled marker.
+        // 90 s (issue #943): the watch budget below (60 s) must bind
+        // BEFORE the wait does, or the gate reports a wait timeout
+        // instead of a budget breach.
         await resumed.waitForText(
           'answer $turns',
-          timeout: const Duration(seconds: 60),
+          timeout: const Duration(seconds: 90),
         );
         final timeToTail = watch.elapsed;
         await resumed.waitForOutput(
@@ -427,14 +422,23 @@ ${resumeTail.join('\n')}''',
         );
         // The tail rides the unified pipeline: pinned rows visible.
         final tail = resumed.screenText;
-        expect(tail, contains('✓ bash'));
+        // Post-#916 the replayed settled tool row IS the band card
+        // (`✔ bash: echo probe-N —`); a legacy `✓ bash` row here would be
+        // the #916 drift class regressing.
+        expect(tail, contains('✔ bash:'));
         expect(tail, contains('echo probe-$turns'));
         expect(tail, contains('answer $turns'));
         expect(tail, isNot(contains('[bash]')));
         // AC8 fixed ceiling: PTY boot + windowed open + tail render.
+        // 45 -> 60 s (issue #943): the old line was idle-tuned; concurrent
+        // CI dilates the JIT boot + windowed open past it (the #938 skip).
+        // 60 s is 1.33x the old ceiling and still an order of magnitude
+        // under any real resume regression (full-file parse class, seconds
+        // to minutes). Inspection-derived: this leg needs a PTY host and
+        // cannot be budget-measured in the sandboxed dev checkout.
         expect(
           timeToTail,
-          lessThan(const Duration(seconds: 45)),
+          lessThan(const Duration(seconds: 60)),
           reason: 'resume time-to-tail: $timeToTail',
         );
       } finally {

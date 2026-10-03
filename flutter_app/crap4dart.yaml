@@ -37,14 +37,6 @@ exclude:
   - '**.freezed.dart'
   - '**.mocks.dart'
   - 'build/**'
-  # TEMPORARY (gh-952 re-release): hosted-ubuntu app shards skip the
-  # catalog + wasm-lazy groups (gh-936 / gh-951 infra isolation), so these
-  # files' only coverage providers are dark -> phantom 272/342 beasts.
-  # Root causes land via #948 (issue #943); REMOVE these excludes the
-  # moment #948 merges and coverage re-measures green.
-  - 'lib/apps/catalog_auto_update.dart'
-  - 'lib/apps/catalog_service.dart'
-  - 'lib/sandbox/wasm_shell_builtins.dart'
 
 crap:
   enabled: true
@@ -118,7 +110,9 @@ gates:
   unused_code: {enabled: false}
   unused_files: {enabled: false}
   banned_imports: {enabled: false}
-  duplication: {enabled: false} # own jscpd <1% guard
+  duplication: {enabled: false} # own jscpd <1% guard (global %) — 0.10.0's
+    # `duplication.sources` cross-module key stays available if the jscpd
+    # guards are ever retired (mirrors the root crap4dart.yaml)
   file_naming: {enabled: false}
   magic_constants: {enabled: false}
   test_assertions: {enabled: false}

@@ -31,6 +31,16 @@ APP_DIR = os.path.join(REPO_ROOT, "flutter_app")
 GOLDENS_DIR = os.path.join(APP_DIR, "test", "golden", "goldens")
 GUARD_TEST = os.path.join(APP_DIR, "test", "golden", "golden_guard_test.dart")
 GOLDEN_TESTS_DIR = os.path.join(APP_DIR, "test", "golden")
+# Committed PTY reference fixtures (issue #810, S7): the omp reference
+# captures are the ONLY tracked files under the PTY screenshots dir (the
+# runtime screenshot outputs are gitignored, issue #860) — the orphan guard
+# covers them so a renamed/dropped scenario never leaves dead PNGs/TXTs.
+PTY_SHOTS_DIR = os.path.join(REPO_ROOT, "test", "integration", "screenshots")
+PTY_SOURCE_DIRS = [
+    GOLDEN_TESTS_DIR,
+    os.path.join(APP_DIR, "test", "cli_visual"),
+    os.path.join(REPO_ROOT, "test", "cli"),
+]
 
 # Single-line quoted string literal carrying an interpolation (multi-line
 # scanning would mispair on apostrophes inside comments; golden names are
@@ -124,6 +134,38 @@ def find_orphan_snapshots() -> list[str]:
     return orphans
 
 
+def find_pty_orphans() -> list[str]:
+    """Committed omp reference twins (png/txt) nothing references anymore.
+
+    A twin is covered when its stem ('01_welcome_idle') appears verbatim in
+    the capture/parity test sources — the capture test writes exactly those
+    names and the REG suites read them back. provenance.json and stray
+    runtime files that are gitignored are not tracked, so they cannot be
+    orphans in git terms; anything tracked but unreferenced is one.
+    """
+    if not os.path.isdir(PTY_SHOTS_DIR):
+        return []
+    omp_ref = os.path.join(PTY_SHOTS_DIR, "omp_ref")
+    if not os.path.isdir(omp_ref):
+        return []
+    sources = ""
+    for root_dir in PTY_SOURCE_DIRS:
+        for root, _dirs, files in os.walk(root_dir):
+            for name in files:
+                if name.endswith(".dart"):
+                    with open(os.path.join(root, name), encoding="utf-8") as fh:
+                        sources += fh.read()
+    orphans = []
+    for name in sorted(os.listdir(omp_ref)):
+        if not (name.endswith(".png") or name.endswith(".txt")):
+            continue
+        stem = name[: name.rfind(".")]
+        if stem in sources:
+            continue
+        orphans.append(f"omp_ref/{name}")
+    return orphans
+
+
 def main() -> int:
     quick = "--quick" in sys.argv
 
@@ -147,6 +189,15 @@ def main() -> int:
             "stale golden snapshots no test references (delete them —\n"
             "every regenerated/deleted widget otherwise keeps its PNGs in\n"
             "git history forever):\n" + listing
+        )
+
+    pty_orphans = find_pty_orphans()
+    if pty_orphans:
+        listing = "\n".join(f"  - {name}" for name in pty_orphans)
+        return fail(
+            "stale omp reference twins no test references (issue #810 —\n"
+            "re-capture or delete them; every omp_ref file must be written\n"
+            "by the capture test):\n" + listing
         )
 
     if quick:

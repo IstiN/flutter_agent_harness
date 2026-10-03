@@ -2,19 +2,20 @@
   "_meta": {
     "issue": 928,
     "seeded": "2026-09-24 no-key local run (M-class arm64), --tags integration --exclude-tags browser-ext,llm",
+    "reseated": "gh-1005 (2026-09-30): the gate's measurement environment moved with its leg mac -> hosted linux (pty-integration-linux, ubuntu-24.04-arm). Re-seeded from a full-manifest no-key run on a linux x64 runner-class host (--tags integration --exclude-tags browser-ext, --concurrency=4, json file-reporter): budget = measured x 1.5 — a hardware-class buffer until keyed arm64 runner data lands (x64-hosted vs Graviton skew is inside it). headless_tools_flag uses the clean-env green total; all other suites ran green in the base run.",
     "metric": "suite total = sum of per-test spans (dart test json reporter)",
     "seed_policy": "suites budgeted ONLY when every test passed locally with a meaningful span (sub-second totals are silent early-return skips, not measurements)",
-    "provisional": "budgets are measured_local x 2.0 \u2014 a hardware-class buffer until the first RUNNER-class data lands: download the integration-json artifact from a keyed ci.yml/nightly pty leg and run scripts/check_test_durations.py --update-baseline on it in a reviewed PR (ratchet only tightens); any suite needing a HIGHER budget than this seed requires a hand-edited reviewed PR",
+    "provisional": "budgets tighten from RUNNER-class data: download the integration-json-shard-* artifacts from a keyed ci.yml pty-integration-linux run and run scripts/check_test_durations.py --update-baseline on them in a reviewed PR (ratchet only tightens); any suite needing a HIGHER budget than this seed requires a hand-edited reviewed PR",
     "ratchet": "down-only via check_test_durations.py --update-baseline; raises require a hand-edited reviewed PR",
     "note": "no scheduled workflow writes this file"
   },
   "suites": {
-    "test/integration/dap_cli_e2e_test.dart": 40.4,
-    "test/integration/dap_start_test.dart": 21.0,
-    "test/integration/headless_tools_flag_test.dart": 27.1,
-    "test/integration/poisoned_provider_boot_test.dart": 64.2,
-    "test/integration/trajectory/cli_integration_test.dart": 80.7,
-    "test/integration/trajectory/perf_open_gate_test.dart": 15.0
+    "test/integration/dap_cli_e2e_test.dart": 140.1,
+    "test/integration/dap_start_test.dart": 17.4,
+    "test/integration/headless_tools_flag_test.dart": 111.2,
+    "test/integration/poisoned_provider_boot_test.dart": 196.2,
+    "test/integration/trajectory/cli_integration_test.dart": 209.9,
+    "test/integration/trajectory/perf_open_gate_test.dart": 41.7
   },
   "per_test": {}
 }

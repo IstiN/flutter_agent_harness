@@ -10,6 +10,9 @@ import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+// dart:io side (host VMs only; the web build never imports this file —
+// wasm_run pulls dart:ffi): the low-disk probe for the job log ceiling.
+import 'package:flutter_agent_harness/io.dart' show diskFreeBytes;
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:wasm_run/wasm_run.dart';
@@ -487,9 +490,53 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (token != null && token.isCancelled) {
       return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
     }
-    final io.IOSink sink;
+    // Issue #919 (review round 3): build the ceiling BEFORE the eager log
+    // open — a bad ceiling used to throw out of _wireJob after the open
+    // succeeded, leaking the RAF fd (no job existed to run closeLog).
+    // Here it degrades to a plain Err.
+    final warn = options?.onJobLogWarning;
+    final JobLogCeiling ceiling;
     try {
-      sink = io.File(logPath).openWrite(mode: io.FileMode.append);
+      ceiling = JobLogCeiling(
+        maxBytes: options?.jobLogMaxBytes ?? defaultJobLogMaxBytes,
+        probe: () => diskFreeBytes(io.File(logPath).parent.path),
+        onWarn: warn == null
+            ? null
+            : (message) => warn('background job $id: $message'),
+      );
+    } on ArgumentError catch (error) {
+      return Err(
+        ExecutionError(
+          ExecutionErrorCode.spawnError,
+          'invalid jobLogMaxBytes: ${error.message}',
+          cause: error,
+        ),
+      );
+    }
+    final logOpen = await _openJobLog(logPath);
+    if (logOpen.isErr) return Err(logOpen.errorOrNull!);
+    return Ok(
+      _wireJob(
+        command,
+        id: id,
+        logPath: logPath,
+        logFile: logOpen.valueOrNull!,
+        ceiling: ceiling,
+        options: options,
+        token: token,
+      ),
+    );
+  }
+
+  /// Issue #925: same guarded eager open as LocalShell.startShellJob.
+  /// `File.openWrite` under a try/catch is false safety — the open starts
+  /// eagerly but its failure is async and unowned, so open-class errors
+  /// (missing dir, permissions, ENOSPC) escaped to the zone mid-job.
+  Future<Result<io.RandomAccessFile, ExecutionError>> _openJobLog(
+    String logPath,
+  ) async {
+    try {
+      return Ok(await io.File(logPath).open(mode: io.FileMode.append));
     } on Object catch (error) {
       return Err(
         ExecutionError(
@@ -499,14 +546,48 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         ),
       );
     }
+  }
+
+  /// Builds the job over the opened log, wires the cancel token, and
+  /// detaches the script run. SandboxShellJob serializes writers
+  /// (RandomAccessFile allows one op at a time) and consumes write errors.
+  /// [ceiling] is built by the caller before the log opens; [options] still
+  /// carries the exec side (cwd/env/timeout) into the job-local run.
+  SandboxShellJob _wireJob(
+    String command, {
+    required String id,
+    required String logPath,
+    required io.RandomAccessFile logFile,
+    required JobLogCeiling ceiling,
+    required ShellExecOptions? options,
+    required CancelToken? token,
+  }) {
     final job = SandboxShellJob(
       id: id,
       command: command,
       logPath: logPath,
-      logWriter: sink.write,
+      logWriter: logFile.writeString,
+      ceiling: ceiling,
+      applyLogOp: (op) async {
+        if (op.offset == null) {
+          await logFile.writeString(op.text);
+          return;
+        }
+        // In-place overwrite of the marker+tail region at the advancing
+        // offset, truncated to the new region end — the file stays exactly
+        // bounded (append-mode RAF honors setPosition/truncate).
+        await logFile.setPosition(op.offset!);
+        await logFile.writeString(op.text);
+        await logFile.truncate(op.offset! + utf8.encode(op.text).length);
+      },
       closeLog: () async {
-        await sink.flush();
-        await sink.close();
+        // Issue #925: a broken log sink must not break the settle path.
+        try {
+          await logFile.flush();
+        } on Object {}
+        try {
+          await logFile.close();
+        } on Object {}
       },
     );
     // An outer abort stops the job too (same contract as the local shell).
@@ -526,7 +607,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
           )
           .then(job.completeWith),
     );
-    return Ok(job);
+    return job;
   }
 
   /// A job-local clone: shares the WASM modules, HTTP client, and sandbox
@@ -645,10 +726,24 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     final expandedStage = expansion.valueOrNull!;
 
     final redirects = collectStageRedirects(expandedStage.redirects);
-    // Resolve input source for this stage.
-    final input = redirects.stdinFile != null
-        ? _resolveSandboxPath(redirects.stdinFile!, options?.cwd ?? _currentDir)
-        : inputSource;
+    // Resolve input source for this stage. A heredoc/here-string body
+    // (gh-1086) lands in a temp file — stdin flows by sandbox path here —
+    // and outranks a `< file` redirect / pipe input by POSIX last-wins
+    // (the collector already cleared [StageRedirects.stdinFile]).
+    String? input = inputSource;
+    if (redirects.stdinBody != null) {
+      final bodyFile = await _writePipeFile(
+        utf8.encode(redirects.stdinBody!),
+        'heredoc_$index',
+        tempFiles,
+      );
+      input = '/${bodyFile.path.split('/').last}';
+    } else if (redirects.stdinFile != null) {
+      input = _resolveSandboxPath(
+        redirects.stdinFile!,
+        options?.cwd ?? _currentDir,
+      );
+    }
 
     final result = await _runCommand(
       command: expandedStage.command,
@@ -707,7 +802,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       _captureStageStdout(data.stdout);
     }
     if (isLast) return null;
-    return _writePipeFile(data.stdout, index, tempFiles);
+    return _writePipeFile(data.stdout, '$index', tempFiles);
   }
 
   /// Appends the final stage's stdout text to the exec accumulator and the
@@ -764,10 +859,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// derives the next stage's sandbox input path from it.
   Future<io.File> _writePipeFile(
     List<int> bytes,
-    int index,
+    String name,
     List<io.File> tempFiles,
   ) async {
-    final temp = _hostFile('.fah_pipe_$index');
+    final temp = _hostFile('.fah_pipe_$name');
     await temp.parent.create(recursive: true);
     await temp.writeAsBytes(bytes);
     tempFiles.add(temp);
@@ -821,18 +916,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
 
   /// Normalizes a sandbox path: collapses `.` and `..` segments and always
   /// returns an absolute path starting at the sandbox root `/`.
-  String _normalizeSandboxPath(String path) {
-    final segments = <String>[];
-    for (final part in path.split('/')) {
-      if (part.isEmpty || part == '.') continue;
-      if (part == '..') {
-        if (segments.isNotEmpty) segments.removeLast();
-        continue;
-      }
-      segments.add(part);
-    }
-    return '/${segments.join('/')}';
-  }
+  String _normalizeSandboxPath(String path) => normalizeLexicalPath(path);
 
   /// Resolves [path] against [cwd] inside the sandbox, returning an absolute
   /// sandbox path.

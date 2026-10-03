@@ -5,7 +5,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/widgets.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// A live-tile size in icon-slot cells (width × height).
@@ -503,15 +503,7 @@ class LauncherLayoutStore extends ChangeNotifier {
   static bool _folderEquals(LauncherFolder? parsed, LauncherFolder current) =>
       parsed != null &&
       parsed.name == current.name &&
-      _tilesEqual(parsed.tiles, current.tiles);
-
-  static bool _tilesEqual(List<String> a, List<String> b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
+      listEquals(parsed.tiles, current.tiles);
 
   bool _tileSizesEqual(Map<String, TileSize> other) {
     if (_tileSizes.length != other.length) return false;

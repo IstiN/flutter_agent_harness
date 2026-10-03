@@ -26,6 +26,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../model_picking.dart';
 import 'integration_fakes.dart';
 
 /// Builds the app shell around [BootstrapScreen] the way `MyApp` does, with
@@ -184,6 +185,9 @@ void main() {
           find.widgetWithText(TextField, 'API key (optional)'),
           'sk-first-boot',
         );
+        // Issue #1020: the model is mandatory now — pick one through the
+        // selector (see test/model_picking.dart).
+        await tester.pickModel('acme-model');
         await tester.tap(find.widgetWithText(FilledButton, 'Save'));
         await tester.pumpAndSettle();
 
@@ -220,6 +224,8 @@ void main() {
           '${env.cwd}/${LastConnectionStore.fileName}',
         )).valueOrNull!;
         expect(raw, contains('https://acme.example/v1'));
+        // Boarding can only leave WITH a chat model (issue #1020).
+        expect(raw, contains('acme-model'));
         expect(raw, isNot(contains('sk-first-boot')));
       }, getCurrentDirectory: emptyCwd);
     });

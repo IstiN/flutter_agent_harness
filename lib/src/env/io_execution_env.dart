@@ -14,6 +14,8 @@ import 'dart:typed_data';
 import '../cancel_token.dart';
 import '../cube/config/fs_policy.dart';
 import 'execution_env.dart';
+import 'free_space_io.dart';
+import 'job_log_ceiling.dart';
 
 FileError _toFileError(Object error, String path) {
   if (error is FileError) return error;
@@ -399,7 +401,11 @@ final class LocalCubeFsProbe implements CubeFsProbe {
 /// is deferred until a tool actually needs it.
 final class LocalShell implements Shell, BackgroundShell {
   /// Creates a [LocalShell].
-  const LocalShell();
+  const LocalShell({this.diskFreeProbe = diskFreeBytes});
+
+  /// Low-disk probe for the job-log guard (issue #919); takes the log's
+  /// directory, injectable for tests. Null disables the guard.
+  final Future<int?> Function(String directory)? diskFreeProbe;
 
   @override
   bool get backgroundJobsSupported => true;
@@ -409,12 +415,14 @@ final class LocalShell implements Shell, BackgroundShell {
   static bool? ownProcessGroupOverride;
   static bool? _ownGroupCached;
 
-  /// Whether background jobs start as their own session and process-group
-  /// leader (`setsid sh -c …`, posix only): stop() then signals the whole
-  /// tree with one group kill, and the boot sweep can recognize a job's
-  /// leftover group after a crash (issue #517). setsid execs sh in place —
+  /// Whether children can start as their own session and process-group
+  /// leader (`setsid sh -c …`, posix only): background jobs then stop with
+  /// one group kill and the boot sweep can recognize a job's leftover group
+  /// after a crash (issue #517), and a timed-out/cancelled FOREGROUND exec
+  /// reaps its whole tree the same way instead of stranding a surviving
+  /// grandchild on the output pipe (gh-1053). setsid execs sh in place —
   /// no fork — so the tracked pid IS the group id.
-  static bool get jobsGetOwnProcessGroup =>
+  static bool get ownProcessGroupAvailable =>
       ownProcessGroupOverride ?? (_ownGroupCached ??= _probeOwnProcessGroup());
 
   static bool _probeOwnProcessGroup() {
@@ -434,6 +442,26 @@ final class LocalShell implements Shell, BackgroundShell {
   /// well-behaved children to exit, short enough to keep `bash_job stop`
   /// snappy.
   static const _killGrace = Duration(milliseconds: 400);
+
+  /// Cap on the stdout/stderr pipe-drain wait after a foreground tree kill
+  /// (gh-1053): a descendant that survived the kill (or one the walk could
+  /// not see) can hold the pipe write end indefinitely — the exec future
+  /// must still return, with the partial capture. Total foreground bound:
+  /// timeout + [_killGrace] + this grace.
+  static const _drainGrace = Duration(seconds: 3);
+
+  /// Stops a foreground process tree (gh-1053): [killTree] reaps the whole
+  /// tree — one group signal when the child leads its own group, the live
+  /// `ps` walk otherwise, `taskkill /T` on Windows — then a direct kill
+  /// backstops whatever the tree round missed. Mirrors `_LocalShellJob
+  /// .stop()`. Best-effort: never throws.
+  static Future<void> _stopTree(
+    Process process, {
+    required bool ownGroup,
+  }) async {
+    await LocalShell.killTree(process.pid, ownGroup: ownGroup);
+    process.kill();
+  }
 
   /// Terminates [pid]'s whole process tree (issue #517): the process group
   /// when the job is its own group leader (one signal — also covers
@@ -610,6 +638,18 @@ final class LocalShell implements Shell, BackgroundShell {
     }
   }
 
+  /// Tail-caps a killed run's capture at the source (review thread 8):
+  /// keep the last [_captureMax] bytes with a marker — the diagnostic tail
+  /// of a timeout/abort. Successful runs keep the full output (this is
+  /// only used for the error fields).
+  static const _captureMax = 64 * 1024;
+
+  static String _captureTail(StringBuffer buffer) {
+    final s = buffer.toString();
+    if (s.length <= _captureMax) return s;
+    return '…[truncated]${s.substring(s.length - _captureMax)}';
+  }
+
   static Result<ShellExecResult, ExecutionError> _result({
     required ExecutionError? callbackError,
     required bool timedOut,
@@ -620,13 +660,31 @@ final class LocalShell implements Shell, BackgroundShell {
     required int exitCode,
   }) {
     if (callbackError != null) return Err(callbackError);
+    // gh-1053 (review rework): a killed call returns the captured partial
+    // output — the bounded return exists so a hung call comes back WITH
+    // its evidence, not just a verdict. Capped AT THE SOURCE (review
+    // thread 8): a chatty command streaming tens of MB before its timeout
+    // must not keep its full output on the error object — the diagnostic
+    // tail is what a bounded return needs.
     if (timedOut) {
       return Err(
-        ExecutionError(ExecutionErrorCode.timeout, 'timeout: $timeout'),
+        ExecutionError(
+          ExecutionErrorCode.timeout,
+          'timeout: $timeout',
+          stdout: _captureTail(stdout),
+          stderr: _captureTail(stderr),
+        ),
       );
     }
     if (cancelled) {
-      return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
+      return Err(
+        ExecutionError(
+          ExecutionErrorCode.aborted,
+          'aborted',
+          stdout: _captureTail(stdout),
+          stderr: _captureTail(stderr),
+        ),
+      );
     }
     return Ok(
       ShellExecResult(
@@ -646,7 +704,12 @@ final class LocalShell implements Shell, BackgroundShell {
     if (token?.isCancelled ?? false) {
       return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
     }
-    final started = await _start(command, options);
+    // gh-1053: start the child in its own session/process group when the
+    // host can (same probe the background jobs use) — the timeout and
+    // cancel paths below then reap the WHOLE tree with one group signal
+    // instead of stranding a surviving grandchild on the output pipe.
+    final ownGroup = LocalShell.ownProcessGroupAvailable;
+    final started = await _start(command, options, ownSession: ownGroup);
     if (started.isErr) return Err(started.errorOrNull!);
     final process = started.valueOrNull!;
 
@@ -676,34 +739,89 @@ final class LocalShell implements Shell, BackgroundShell {
             (error) => callbackError = error,
           ),
         );
+    // Open-pipe tracker for the kill guards below: both futures complete
+    // when the pipe write end closes. A late stream error is consumed HERE
+    // only for the counting future — the awaiters below keep the original
+    // propagation semantics.
+    var openStreams = 2;
+    void streamClosed() => openStreams--;
+    unawaited(
+      stdoutDone.then(
+        (_) => streamClosed(),
+        onError: (Object _) => streamClosed(),
+      ),
+    );
+    unawaited(
+      stderrDone.then(
+        (_) => streamClosed(),
+        onError: (Object _) => streamClosed(),
+      ),
+    );
+    var childGone = false;
+    unawaited(process.exitCode.then((_) => childGone = true));
 
     Timer? timer;
     var timedOut = false;
     final timeout = options?.timeout;
     if (timeout != null) {
       timer = Timer(timeout, () {
+        // The exec is fully settled: the child exited AND both pipes
+        // closed — nothing to reap, never signal (mirrors the job
+        // registry's isRunning check, which this approximates). With the
+        // child gone but a drain still in flight the signal still fires:
+        // a live group member is what's holding the pipe, so the group is
+        // ours — the residual recycled-pid window (pid freed by the reap
+        // and re-led before the signal lands) is theoretical and accepted,
+        // as in the job path.
+        if (childGone && openStreams == 0) return;
         timedOut = true;
-        process.kill();
+        unawaited(_stopTree(process, ownGroup: ownGroup));
       });
     }
     void onCancel(_) {
-      process.kill();
+      if (childGone && openStreams == 0) return;
+      unawaited(_stopTree(process, ownGroup: ownGroup));
     }
 
     token?.onCancel.then(onCancel);
 
     final exitCode = await process.exitCode;
-    timer?.cancel();
+    // gh-1053: the timer stays ARMED after the direct child exits — an
+    // orphaned descendant can hold the pipes past the child's death, and
+    // this timer is what bounds the call ("≤ timeout + kill grace + drain
+    // grace regardless of what descendants do"). It no-ops once the exec
+    // is fully settled (guard above); the settled drain
+    // cancels it below. Cancel-on-exit used to strand exactly the
+    // run-36421037356 shape (shell long dead, grandchild on the pipe).
     if (options?.liveStdin != null) {
       unawaited(process.stdin.close().catchError((_) {}));
     }
-    await Future.wait([stdoutDone, stderrDone]);
+    // gh-1053 (review rework): the drain is capped UNCONDITIONALLY. This
+    // point is only reached after `process.exitCode` resolved, so every
+    // remaining byte on the pipes comes from an ORPHANED descendant
+    // holding the write end — waiting for it full-unbounded has no
+    // legitimate use (a caller wanting daemon output should use
+    // `run_in_bg`), with or without a timeout. The race never delays a
+    // healthy call: after the child's death the pipe buffer drains in
+    // milliseconds. Timeout/cancel'd calls complete in
+    // ≤ timeout + _killGrace + _drainGrace; a no-timeout call in
+    // ≤ child runtime + _drainGrace. No kill round for the no-timeout
+    // case — a detached daemon is the caller's on purpose.
+    final drained = Future.wait([stdoutDone, stderrDone]);
+    await Future.any([drained, Future<void>.delayed(_drainGrace)]);
+    // Once the grace won the race, a late stream error (malformed bytes
+    // from the dying tree) must never surface unhandled.
+    drained.ignore();
+    timer?.cancel();
+    // Read AFTER the waits: a cancel that lands mid-drain must still mark
+    // the result (the flag used to be captured pre-drain and lost).
+    final cancelled = token?.isCancelled ?? false;
 
     return _result(
       callbackError: callbackError,
       timedOut: timedOut,
       timeout: timeout,
-      cancelled: token?.isCancelled ?? false,
+      cancelled: cancelled,
       stdout: stdout,
       stderr: stderr,
       exitCode: exitCode,
@@ -746,7 +864,32 @@ final class LocalShell implements Shell, BackgroundShell {
     if (token?.isCancelled ?? false) {
       return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
     }
-    final ownGroup = LocalShell.jobsGetOwnProcessGroup;
+    // Issue #919 (review): build the ceiling BEFORE anything is spawned —
+    // a bad ceiling used to throw after `Process.start` plus the eager log
+    // open, stranding an orphan child and leaking the fd with no job
+    // object to stop or settle. Here it degrades to a plain Err.
+    final warn = options?.onJobLogWarning;
+    final JobLogCeiling ceiling;
+    try {
+      ceiling = JobLogCeiling(
+        maxBytes: options?.jobLogMaxBytes ?? defaultJobLogMaxBytes,
+        probe: diskFreeProbe == null
+            ? null
+            : () => diskFreeProbe!(File(logPath).parent.path),
+        onWarn: warn == null
+            ? null
+            : (message) => warn('background job $id: $message'),
+      );
+    } on ArgumentError catch (error) {
+      return Err(
+        ExecutionError(
+          ExecutionErrorCode.spawnError,
+          'invalid jobLogMaxBytes: ${error.message}',
+          cause: error,
+        ),
+      );
+    }
+    final ownGroup = LocalShell.ownProcessGroupAvailable;
     final started = await _start(command, options, ownSession: ownGroup);
     if (started.isErr) return Err(started.errorOrNull!);
     final process = started.valueOrNull!;
@@ -768,9 +911,15 @@ final class LocalShell implements Shell, BackgroundShell {
       }
     }
     if (liveStdin == null) unawaited(process.stdin.close());
-    final IOSink logSink;
+    final RandomAccessFile logSink;
     try {
-      logSink = File(logPath).openWrite(mode: FileMode.append);
+      // Issue #925: open the log eagerly and guard it HERE. `File.openWrite`
+      // starts its open lazily-but-eagerly with no owner for the failure —
+      // an error (missing directory, permissions, ENOSPC) surfaced as an
+      // unlistened future and reached the root-zone handler, killing the
+      // whole fa process. An awaited open turns every open-class failure
+      // into this clean Err instead.
+      logSink = await File(logPath).open(mode: FileMode.append);
     } on Object catch (error) {
       process.kill();
       return Err(
@@ -781,6 +930,9 @@ final class LocalShell implements Shell, BackgroundShell {
         ),
       );
     }
+    // Issue #919: bound the log — the ceiling (size ceiling with
+    // head+marker+rolling tail, plus the low-disk guard with the probe
+    // injectable via [LocalShell]) was built pre-spawn above.
     return Ok(
       _LocalShellJob(
         id: id,
@@ -788,6 +940,7 @@ final class LocalShell implements Shell, BackgroundShell {
         logPath: logPath,
         process: process,
         logSink: logSink,
+        ceiling: ceiling,
         timeout: options?.timeout,
         token: token,
         ownGroup: ownGroup,
@@ -805,6 +958,7 @@ final class _LocalShellJob implements ShellJob {
     required this.logPath,
     required Process process,
     required this._logSink,
+    required this._ceiling,
     required this._ownGroup,
     Duration? timeout,
     CancelToken? token,
@@ -815,8 +969,32 @@ final class _LocalShellJob implements ShellJob {
     // wait and then cancel the subscriptions.
     final stdoutDone = Completer<void>();
     final stderrDone = Completer<void>();
+    // Issue #925: a log write failure (disk full, removed file, closed
+    // handle) must never escape into the zone — the error of every write
+    // is consumed here and the job keeps running headless, its log frozen
+    // at the last successful chunk. RandomAccessFile allows one op at a
+    // time, so writes serialize through the chain and the settle path
+    // drains it before flush/close.
+    //
+    // Issue #919: chunks flow through the ceiling policy first — below the
+    // ceiling it yields the plain append (byte-identical to the old
+    // `writeString(chunk)`); past it, patch ops that keep the file bounded
+    // while the job keeps running. A write stop (low disk) yields no ops.
     void fanOut(String chunk) {
-      _logSink.write(chunk);
+      if (!_logBroken) {
+        _writeChain = _writeChain
+            .then((_) => _ceiling.ingest(chunk))
+            .then(
+              (ops) async {
+                for (final op in ops) {
+                  await _applyLogWrite(op);
+                }
+              },
+              onError: (Object _) {
+                _logBroken = true;
+              },
+            );
+      }
       _output.add(chunk);
     }
 
@@ -862,15 +1040,64 @@ final class _LocalShellJob implements ShellJob {
         await _stderrSub.cancel();
         unawaited(_process.stdin.close().catchError((_) {}));
         await _output.close();
-        await _logSink.flush();
-        await _logSink.close();
+        // Issue #925: the settle path runs inside an unawaited future — a
+        // throwing flush/close escaped to the root zone AND left _settled
+        // incomplete (the job board showed the job as running forever).
+        // Drain pending writes first (RAF allows one op at a time), then
+        // swallow every sink failure and settle regardless.
+        await _writeChain;
+        // Issue #919: final tail patch — the exact dropped count.
+        if (!_logBroken) {
+          try {
+            final finalOp = _ceiling.settleFlush();
+            if (finalOp != null) await _applyLogWrite(finalOp);
+          } on Object {
+            _logBroken = true;
+          }
+        }
+        // Guarded separately so a failed flush never skips close() — a
+        // leaked RAF fd would live for the whole fa process (issue #925).
+        try {
+          await _logSink.flush();
+        } on Object {
+          _logBroken = true;
+        }
+        try {
+          await _logSink.close();
+        } on Object {
+          _logBroken = true;
+        }
         _settled.complete();
       }),
     );
   }
 
   final Process _process;
-  final IOSink _logSink;
+  final RandomAccessFile _logSink;
+  final JobLogCeiling _ceiling;
+
+  /// Executes one ceiling op against the sink: a plain append at the
+  /// advancing position, or an in-place overwrite of the marker+tail
+  /// region (Dart's append-mode RAF honors setPosition/truncate, so the
+  /// file never needs reopening). Region overwrites also truncate to the
+  /// new region end, keeping the file exactly bounded.
+  Future<void> _applyLogWrite(JobLogWrite op) async {
+    if (op.offset == null) {
+      await _logSink.writeString(op.text);
+      return;
+    }
+    await _logSink.setPosition(op.offset!);
+    await _logSink.writeString(op.text);
+    await _logSink.truncate(op.offset! + utf8.encode(op.text).length);
+  }
+
+  /// Set on the first log-sink failure (issue #925): the job keeps
+  /// running but its log stays frozen at the last successful write.
+  bool _logBroken = false;
+
+  /// Serialized log writes (issue #925): RandomAccessFile forbids
+  /// overlapping ops, and the settle path drains this before flush/close.
+  Future<void> _writeChain = Future<void>.value();
 
   /// Whether the job is its own session/process-group leader (`setsid`
   /// spawn) — stop() then signals the whole group, not a pid walk.
@@ -944,10 +1171,20 @@ final class LocalExecutionEnv
   /// Creates a [LocalExecutionEnv] rooted at [cwd].
   ///
   /// A custom [shell] may be provided to swap the default [LocalShell] for a
-  /// sandboxed WASM shell on mobile targets.
-  LocalExecutionEnv({String? cwd, Shell? shell})
+  /// sandboxed WASM shell on mobile targets. [diskFreeProbe] backs the
+  /// job-log low-disk guard of the default shell (issue #919); injectable
+  /// for tests, ignored when [shell] is given.
+  LocalExecutionEnv({String? cwd, Shell? shell, this.diskFreeProbe})
     : _fs = LocalFileSystem(cwd: cwd),
-      _shell = shell ?? const LocalShell();
+      _shell =
+          shell ??
+          (diskFreeProbe == null
+              ? const LocalShell()
+              : LocalShell(diskFreeProbe: diskFreeProbe));
+
+  /// Low-disk probe for background-job logs (issue #919); null = default
+  /// `df`-based probe.
+  final Future<int?> Function(String directory)? diskFreeProbe;
 
   final LocalFileSystem _fs;
   final Shell _shell;

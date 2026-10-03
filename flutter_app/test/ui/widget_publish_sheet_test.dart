@@ -42,6 +42,29 @@ class _FakePublishService implements WidgetPublishService {
   }
 
   @override
+  Future<PendingPublish> startPublish({
+    required JsAppInfo app,
+    String? repoName,
+  }) async {
+    publishCalls++;
+    return PendingPublish(
+      publication: _publication(),
+      // The real flow fails mid-network — throw asynchronously so the
+      // failure rides the flow future (the sheet's catchError path),
+      // not the startPublish await.
+      flow: Future<WidgetPublishResult>(() async {
+        await Future<void>.delayed(Duration.zero);
+        final outcome = this.outcome;
+        if (outcome != null) throw outcome;
+        return WidgetPublishResult(
+          publication: _publication(),
+          reusedPr: false,
+        );
+      }),
+    );
+  }
+
+  @override
   Future<WidgetPublicationState> refreshStatus(
     WidgetPublication publication,
   ) async => WidgetPublicationState.open;
@@ -59,20 +82,12 @@ WidgetPublication _publication() => WidgetPublication(
 );
 
 JsAppInfo _app() => JsAppInfo.fromManifest(
-  const {
-    'id': 'demo',
-    'name': 'Demo',
-    'description': 'd',
-    'version': '1.0.0',
-  },
+  const {'id': 'demo', 'name': 'Demo', 'description': 'd', 'version': '1.0.0'},
   bundled: false,
   fallbackId: 'demo',
 );
 
-Future<void> _pump(
-  WidgetTester tester,
-  WidgetPublishSheet sheet,
-) async {
+Future<void> _pump(WidgetTester tester, WidgetPublishSheet sheet) async {
   await tester.pumpWidget(MaterialApp(home: Scaffold(body: sheet)));
   // The preflight hop completes on real async.
   await tester.pump();
@@ -170,8 +185,10 @@ void main() {
 
     expect(service.publishCalls, 1);
     expect(find.text('Publishing…'), findsNothing);
-    expect(find.text('https://github.com/octocat/fa_widgets/pull/12'),
-        findsOneWidget);
+    expect(
+      find.text('https://github.com/octocat/fa_widgets/pull/12'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('a GitHub API failure lands back on the form with the message', (
@@ -202,12 +219,9 @@ void main() {
     expect(button.onPressed, isNotNull);
   });
 
-  testWidgets('an unexpected failure surfaces its string form', (
-    tester,
-  ) async {
+  testWidgets('an unexpected failure surfaces its string form', (tester) async {
     await account.connect(token: 'gho_t', login: 'octocat');
-    final service = _FakePublishService()
-      ..outcome = StateError('offline');
+    final service = _FakePublishService()..outcome = StateError('offline');
     await _pump(
       tester,
       WidgetPublishSheet(
@@ -225,7 +239,7 @@ void main() {
     expect(find.textContaining('Bad state: offline'), findsOneWidget);
   });
 
-  testWidgets('the publish button shows progress and locks while in flight', (
+  testWidgets('an in-flight publish shows progress plus Done, then lands', (
     tester,
   ) async {
     await account.connect(token: 'gho_t', login: 'octocat');
@@ -247,13 +261,13 @@ void main() {
     await tester.tap(find.widgetWithText(FilledButton, 'Publish'));
     await tester.pump();
 
+    // AC6: the tap returned immediately — the sheet shows the publishing
+    // state with a Done escape instead of a locked button.
     expect(find.text('Publishing…'), findsOneWidget);
-    expect(
-      tester
-          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Publishing…'))
-          .onPressed,
-      isNull,
+    final done = tester.widget<OutlinedButton>(
+      find.widgetWithText(OutlinedButton, 'Done'),
     );
+    expect(done.onPressed, isNotNull);
 
     completer.complete(
       WidgetPublishResult(publication: _publication(), reusedPr: false),
@@ -263,6 +277,63 @@ void main() {
       find.text('https://github.com/octocat/fa_widgets/pull/12'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('Done pops while the flow is still in flight (AC6)', (
+    tester,
+  ) async {
+    await account.connect(token: 'gho_t', login: 'octocat');
+    final service = _FakePublishService();
+    final hung = _HungService(
+      service,
+      Completer<WidgetPublishResult>(), // never completes
+    );
+    // Open the sheet on a pushed route so Done's Navigator.pop has a
+    // route to close (a plain route avoids the modal-sheet off-screen
+    // layout quirk; the pop call is the same Navigator.of(context).pop).
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => Center(
+              child: FilledButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => Scaffold(
+                      body: WidgetPublishSheet(
+                        app: _app(),
+                        account: account,
+                        service: hung,
+                        ledger: ledger,
+                      ),
+                    ),
+                  ),
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    // Settle the route push transition before interacting — a tap during
+    // the slide-in hits a mid-animation offset.
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Publish'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Done'));
+    // Timed pumps (not pumpAndSettle): the closing route animates out,
+    // while the sheet's own spinner would keep pumpAndSettle busy.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // The sheet is gone; the hung flow keeps running in the background
+    // and its outcome lands in the ledger for the detail sheet (I4).
+    expect(find.text('Publishing…'), findsNothing);
+    expect(find.byType(WidgetPublishSheet), findsNothing);
   });
 }
 
@@ -281,4 +352,13 @@ class _HungService extends _FakePublishService {
     required JsAppInfo app,
     String? repoName,
   }) => completer.future;
+
+  @override
+  Future<PendingPublish> startPublish({
+    required JsAppInfo app,
+    String? repoName,
+  }) async {
+    publishCalls++;
+    return PendingPublish(publication: _publication(), flow: completer.future);
+  }
 }

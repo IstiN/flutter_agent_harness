@@ -528,4 +528,20 @@ void main() {
       expect(warned, isEmpty);
     });
   });
+
+  test('newShellJobId mints unique ids in the 32-bit random range (#1074)', () {
+    // Same n on purpose: uniqueness must come from micros + random tail.
+    final ids = [for (var i = 0; i < 50; i++) newShellJobId(7)];
+    expect(ids.toSet(), hasLength(50));
+    // Tail = base36 micros + base36 nextInt draw, no separator. The draw
+    // uses the dart2js-safe literal bound (the old `1 << 32` is 0 on web,
+    // where nextInt(0) threw for every bash call): < 2^32 → ≤ 7 digits.
+    final micros36 = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+    for (final id in ids) {
+      expect(id, matches(RegExp(r'^sh-7-[0-9a-z]+$')));
+      final tail = id.split('-').last;
+      expect(tail.length, lessThan(micros36.length + 8));
+      expect(tail.length, greaterThanOrEqualTo(micros36.length));
+    }
+  });
 }

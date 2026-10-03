@@ -52,13 +52,18 @@ final class ShowcaseChatService implements FaChatService {
         role: 'assistant',
         content: message.text == null
             ? '_(unreadable message)_'
-            : '**${message.senderId}**\n\n${message.text}',
+            : '**${_senderName(message)}**\n\n${message.text}',
       ),
   ];
 
+  String _senderName(ShowcaseMessage message) {
+    final claimed = message.senderName;
+    return (claimed != null && claimed.isNotEmpty) ? claimed : message.senderId;
+  }
+
   @override
   String transcriptMarkdown() => _messages
-      .map((m) => '**${m.senderId}**: ${m.text ?? '(unreadable)'}')
+      .map((m) => '**${_senderName(m)}**: ${m.text ?? '(unreadable)'}')
       .join('\n\n');
 
   // ------------------------------------------------------------- read-only

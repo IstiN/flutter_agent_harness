@@ -8,6 +8,7 @@ import 'package:fa/network/envelope_codec.dart';
 import 'package:fa/network/invite_codec.dart';
 import 'package:fa/network/key_wallet.dart';
 import 'package:fa/network/models.dart';
+import 'package:fa/network/network_session.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/network/add_agent_dialog.dart';
@@ -650,6 +651,199 @@ void _registerNetworkScopeGroup() {
           .data!;
       expect(payload, startsWith('DAP_HUB_URL='));
       expect(payload, isNot(contains('fa dap import')));
+    });
+
+    group('network scope channel bundle', () {
+      /// Two keyed private channels (c1, c2) + one the wallet has no keys
+      /// for (c3) — the dialog must bundle an invite per keyed channel and
+      /// skip the keyless one.
+      const threeChannelsBody =
+          '[{"id":"c1","networkId":"net1","name":"general","public":false},'
+          '{"id":"c2","networkId":"net1","name":"random","public":false},'
+          '{"id":"c3","networkId":"net1","name":"vault","public":false}]';
+
+      /// A canned enroll response for the network-scope `fa-agent` name.
+      const networkEnrollBody =
+          '{"name":"fa-agent","hubUrl":"wss://hub.fa1.dev/ws",'
+          '"clientSecret":"sk_enroll_456",'
+          '"enrolledAt":"2026-02-03T04:05:06Z",'
+          '"note":"store clientSecret now"}';
+
+      /// A wallet + a session-seeded manager: the session knows c1/c2/c3
+      /// (the dialog's channel source), the wallet holds c1/c2 chankeys
+      /// unless [withChannelKeys] is false.
+      Future<
+        ({
+          KeyWallet wallet,
+          NetworkSessionManager manager,
+          NetworkSession session,
+        })
+      >
+      buildRig({bool withChannelKeys = true}) async {
+        final wallet = await KeyWallet.load(MemoryWalletBackend());
+        await wallet.createIfMissing(displayName: 'Me');
+        await wallet.addNetwork(networkId: 'net1', name: 'fa-team');
+        if (withChannelKeys) {
+          for (final channelId in ['c1', 'c2']) {
+            final keys = await EnvelopeCodec.newX25519KeyPair();
+            await wallet.addChannelKeys(
+              networkId: 'net1',
+              channel: channelId,
+              pub: keys.pub,
+              priv: keys.priv,
+            );
+          }
+        }
+        final sessionHttp = FakeHttpClient()
+          ..respond(200, body: threeChannelsBody) // start: channels
+          ..respond(200, body: membersBody); // start: members
+        final session = buildSession(
+          httpClient: sessionHttp,
+          connector: FakeWsConnector(),
+          wallet: wallet,
+        );
+        await session.start();
+        addTearDown(session.close);
+        final managerHttp = FakeHttpClient()
+          ..respond(201, body: networkEnrollBody);
+        final manager = await buildManager(
+          wallet: wallet,
+          httpClient: managerHttp,
+          jwt: 'jwt-1',
+        );
+        manager.sessions['net1'] = session;
+        addTearDown(manager.disconnectAll);
+        return (wallet: wallet, manager: manager, session: session);
+      }
+
+      Future<void> pumpNetwork(
+        WidgetTester tester, {
+        required KeyWallet wallet,
+        required NetworkSessionManager manager,
+      }) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildFahTheme(),
+            home: Scaffold(
+              body: AddAgentDialog(
+                wallet: wallet,
+                manager: manager,
+                networkId: 'net1',
+                channel: null,
+                initialScope: AgentInviteScope.network,
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+      }
+
+      Future<void> enroll(WidgetTester tester) async {
+        final button = find.byKey(const ValueKey('enrollAgent'));
+        await tester.ensureVisible(button);
+        await tester.pumpAndSettle();
+        await tester.tap(button);
+        await tester.pumpAndSettle();
+      }
+
+      testWidgets('DAP after enroll: one IMPORT row per keyed channel, the '
+          'payload leads with the import bundle', (tester) async {
+        final rig = await buildRig();
+        await pumpNetwork(tester, wallet: rig.wallet, manager: rig.manager);
+        await tester.tap(find.text('DAP'));
+        await tester.pumpAndSettle();
+        await enroll(tester);
+
+        expect(find.byKey(const ValueKey('envRow:IMPORT:c1')), findsOneWidget);
+        expect(find.byKey(const ValueKey('envRow:IMPORT:c2')), findsOneWidget);
+        // c3 has no chankey in this wallet — no invite, no row.
+        expect(find.byKey(const ValueKey('envRow:IMPORT:c3')), findsNothing);
+        expect(find.byKey(const ValueKey('inviteNoChannelKeys')), findsNothing);
+
+        final c1Row = tester
+            .widget<Text>(find.byKey(const ValueKey('envRow:IMPORT:c1')))
+            .data!;
+        expect(c1Row, startsWith("fa dap import 'wss://hub.fa1.dev/ws"));
+        expect(c1Row, contains('channel=c1'));
+
+        final payload = tester
+            .widget<Text>(find.byKey(const ValueKey('agentInvite')))
+            .data!;
+        expect(payload, startsWith("fa dap import '"));
+        expect(payload, contains('channel=c1'));
+        expect(payload, contains('channel=c2'));
+        expect(payload, isNot(contains('channel=c3')));
+        expect(payload, contains(' && DAP_HUB_URL=wss://hub.fa1.dev/ws'));
+        expect(payload, contains("DAP_CLIENT_SECRET='sk_enroll_456'"));
+        expect(payload, contains('DAP_AGENT_NAME=fa-agent fa'));
+        await rig.session.close();
+      });
+
+      testWidgets('a wallet with no channel keys shows the no-keys note and '
+          'the payload has no import', (tester) async {
+        final rig = await buildRig(withChannelKeys: false);
+        await pumpNetwork(tester, wallet: rig.wallet, manager: rig.manager);
+        await tester.tap(find.text('DAP'));
+        await tester.pumpAndSettle();
+        await enroll(tester);
+
+        expect(
+          find.byKey(const ValueKey('inviteNoChannelKeys')),
+          findsOneWidget,
+        );
+        expect(find.byKey(const ValueKey('envRow:IMPORT:c1')), findsNothing);
+        expect(find.byKey(const ValueKey('envRow:IMPORT:c2')), findsNothing);
+        final payload = tester
+            .widget<Text>(find.byKey(const ValueKey('agentInvite')))
+            .data!;
+        expect(payload, isNot(contains('fa dap import')));
+        expect(payload, startsWith('DAP_HUB_URL='));
+        await rig.session.close();
+      });
+
+      testWidgets('the IMPORT row copy puts the exact fa dap import command '
+          'on the clipboard', (tester) async {
+        final clipboard = FakeClipboard()..install(tester);
+        final rig = await buildRig();
+        await pumpNetwork(tester, wallet: rig.wallet, manager: rig.manager);
+        await tester.tap(find.text('DAP'));
+        await tester.pumpAndSettle();
+        await enroll(tester);
+
+        final copy = find.byKey(const ValueKey('envCopy:IMPORT:c1'));
+        await tester.ensureVisible(copy);
+        await tester.pumpAndSettle();
+        await tester.tap(copy);
+        await tester.pump();
+
+        final expected = tester
+            .widget<Text>(find.byKey(const ValueKey('envRow:IMPORT:c1')))
+            .data!;
+        expect(clipboard.text, expected);
+        expect(clipboard.text, startsWith("fa dap import '"));
+        expect(clipboard.text, endsWith("'"));
+        expect(clipboard.text, contains('channel=c1'));
+        await rig.session.close();
+      });
+
+      testWidgets('Env (CI) on the network scope carries the same import '
+          'bundle before the FA_ vars', (tester) async {
+        final rig = await buildRig();
+        await pumpNetwork(tester, wallet: rig.wallet, manager: rig.manager);
+        await tester.tap(find.text('Env (CI)'));
+        await tester.pumpAndSettle();
+
+        expect(find.byKey(const ValueKey('envRow:IMPORT:c1')), findsOneWidget);
+        expect(find.byKey(const ValueKey('envRow:IMPORT:c2')), findsOneWidget);
+        expect(find.byKey(const ValueKey('envRow:IMPORT:c3')), findsNothing);
+        final payload = tester
+            .widget<Text>(find.byKey(const ValueKey('agentInvite')))
+            .data!;
+        expect(payload, startsWith("fa dap import '"));
+        expect(payload, contains(' && FA_NETWORK_URL='));
+        expect(payload, contains('FA_AGENT_NAME=fa-agent fa'));
+        await rig.session.close();
+      });
     });
   });
 }

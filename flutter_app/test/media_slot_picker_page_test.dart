@@ -6,7 +6,7 @@ import 'package:fa_ui/fa_ui.dart' show FaVoicePresetPicker;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fa_ui/fa_ui.dart' show FaUiHost;
+import 'package:fa_ui/fa_ui.dart' show AddProviderPresetPickerPage, FaUiHost;
 
 /// A `/models` fetch reporting image and vision models.
 Future<ModelsEndpointInfo> _someModels(
@@ -205,9 +205,8 @@ void main() {
       expect(result!.override, isNull);
     });
 
-    testWidgets('add provider continues straight to its model page', (
-      tester,
-    ) async {
+    testWidgets('add provider routes through the settings preset picker; '
+        'the saved provider opens its model page', (tester) async {
       final registry = ProviderRegistry.inMemory();
       await _pumpWithOpener(
         tester,
@@ -222,6 +221,24 @@ void main() {
       await _open(tester);
 
       await tester.tap(find.text('Add provider'));
+      await tester.pumpAndSettle();
+      // Issue #975 (d54180f0): EVERY add-provider entry opens the ONE
+      // settings flow — the preset picker, never the bare editor push.
+      expect(find.byType(AddProviderPresetPickerPage), findsOneWidget);
+      expect(find.byType(ProviderEditorPage), findsNothing);
+
+      // The preset list is a lazy ListView — scroll the trailing Custom
+      // tile into view before tapping it.
+      await tester.scrollUntilVisible(
+        find.text('Custom'),
+        200,
+        scrollable: find.descendant(
+          of: find.byType(AddProviderPresetPickerPage),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Custom'));
       await tester.pumpAndSettle();
       expect(find.byType(ProviderEditorPage), findsOneWidget);
 
@@ -258,9 +275,16 @@ void main() {
       await tester.tap(find.widgetWithText(FilledButton, 'Save'));
       await tester.pumpAndSettle();
 
-      // The provider was added and its model page opened (prefilled with
-      // the provider's model).
+      // The provider was added and the whole add flow unwound back to the
+      // media-slot picker (editor + preset picker both popped).
       expect(registry.providers, hasLength(1));
+      expect(find.byType(AddProviderPresetPickerPage), findsNothing);
+      expect(find.byType(ProviderEditorPage), findsNothing);
+
+      // The added provider lists and its model page opens, prefilled with
+      // the provider's model.
+      await tester.tap(find.text('Acme'));
+      await tester.pumpAndSettle();
       expect(find.byType(MediaSlotModelPage), findsOneWidget);
       expect(
         tester

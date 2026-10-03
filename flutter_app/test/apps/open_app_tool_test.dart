@@ -116,6 +116,31 @@ void main() {
         throwsA(isA<StateError>()),
       );
     });
+
+    test(
+      'a broken manifest is refused with the reason, never launched',
+      () async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('apps/broken/manifest.json', '{"id": "broken", ');
+        var launcherCalled = false;
+        final tool = openAppTool(env, launcher: (_) => launcherCalled = true);
+
+        await expectLater(
+          tool.execute({'id': 'broken'}, null, null),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('app "broken" is broken'),
+                contains('manifest.json does not parse'),
+              ),
+            ),
+          ),
+        );
+        expect(launcherCalled, isFalse);
+      },
+    );
   });
 
   group('AgentService.appLauncher', () {

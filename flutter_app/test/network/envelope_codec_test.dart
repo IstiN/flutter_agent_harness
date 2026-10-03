@@ -23,13 +23,13 @@ void main() {
           senderIdentity: await codec.keyPairFromPriv(sender.priv),
           channelPub: codec.publicKeyFromB64(channel.pub),
           frameId: 'frame-1',
-          channelName: 'general',
+          aadTarget: 'general',
           plaintext: 'hello fa_network',
         );
         final result = await codec.decrypt(
           channelKeyPair: await codec.keyPairFromPriv(channel.priv),
           frameId: 'frame-1',
-          channelName: 'general',
+          aadTarget: 'general',
           payloadB64: payload,
         );
         expect(result.plaintext, 'hello fa_network');
@@ -48,13 +48,13 @@ void main() {
           senderIdentity: await a.keyPairFromPriv(sender.priv),
           channelPub: a.publicKeyFromB64(channel.pub),
           frameId: 'f2',
-          channelName: 'ops',
+          aadTarget: 'ops',
           plaintext: 'cross instance',
         );
         final result = await b.decrypt(
           channelKeyPair: await b.keyPairFromPriv(channel.priv),
           frameId: 'f2',
-          channelName: 'ops',
+          aadTarget: 'ops',
           payloadB64: payload,
         );
         expect(result.plaintext, 'cross instance');
@@ -69,14 +69,14 @@ void main() {
         senderIdentity: await codec.keyPairFromPriv(sender.priv),
         channelPub: codec.publicKeyFromB64(channel.pub),
         frameId: 'f3',
-        channelName: 'general',
+        aadTarget: 'general',
         plaintext: 'secret',
       );
       await expectLater(
         codec.decrypt(
           channelKeyPair: await codec.keyPairFromPriv(otherChannel.priv),
           frameId: 'f3',
-          channelName: 'general',
+          aadTarget: 'general',
           payloadB64: payload,
         ),
         throwsA(isA<EnvelopeCryptoException>()),
@@ -90,7 +90,7 @@ void main() {
         senderIdentity: await codec.keyPairFromPriv(sender.priv),
         channelPub: codec.publicKeyFromB64(channel.pub),
         frameId: 'f4',
-        channelName: 'general',
+        aadTarget: 'general',
         plaintext: 'tamper me',
       );
       final bytes = base64Decode(payload);
@@ -100,7 +100,7 @@ void main() {
         codec.decrypt(
           channelKeyPair: await codec.keyPairFromPriv(channel.priv),
           frameId: 'f4',
-          channelName: 'general',
+          aadTarget: 'general',
           payloadB64: base64Encode(bytes),
         ),
         throwsA(isA<EnvelopeCryptoException>()),
@@ -114,7 +114,7 @@ void main() {
         senderIdentity: await codec.keyPairFromPriv(sender.priv),
         channelPub: codec.publicKeyFromB64(channel.pub),
         frameId: 'f5',
-        channelName: 'general',
+        aadTarget: 'general',
         plaintext: 'tag tamper',
       );
       final bytes = base64Decode(payload);
@@ -123,7 +123,7 @@ void main() {
         codec.decrypt(
           channelKeyPair: await codec.keyPairFromPriv(channel.priv),
           frameId: 'f5',
-          channelName: 'general',
+          aadTarget: 'general',
           payloadB64: base64Encode(bytes),
         ),
         throwsA(isA<EnvelopeCryptoException>()),
@@ -144,7 +144,7 @@ void main() {
             codec.decrypt(
               channelKeyPair: await codec.keyPairFromPriv(channel.priv),
               frameId: 'f6',
-              channelName: 'general',
+              aadTarget: 'general',
               payloadB64: garbage,
             ),
             throwsA(isA<EnvelopeCryptoException>()),
@@ -161,14 +161,14 @@ void main() {
         senderIdentity: await codec.keyPairFromPriv(sender.priv),
         channelPub: codec.publicKeyFromB64(channel.pub),
         frameId: 'f7',
-        channelName: 'general',
+        aadTarget: 'general',
         plaintext: 'aad',
       );
       await expectLater(
         codec.decrypt(
           channelKeyPair: await codec.keyPairFromPriv(channel.priv),
           frameId: 'f7',
-          channelName: 'random',
+          aadTarget: 'random',
           payloadB64: payload,
         ),
         throwsA(isA<EnvelopeCryptoException>()),
@@ -182,14 +182,14 @@ void main() {
         senderIdentity: await codec.keyPairFromPriv(sender.priv),
         channelPub: codec.publicKeyFromB64(channel.pub),
         frameId: 'f8',
-        channelName: 'general',
+        aadTarget: 'general',
         plaintext: 'aad',
       );
       await expectLater(
         codec.decrypt(
           channelKeyPair: await codec.keyPairFromPriv(channel.priv),
           frameId: 'f8-other',
-          channelName: 'general',
+          aadTarget: 'general',
           payloadB64: payload,
         ),
         throwsA(isA<EnvelopeCryptoException>()),
@@ -204,16 +204,62 @@ void main() {
         senderIdentity: await codec.keyPairFromPriv(sender.priv),
         channelPub: codec.publicKeyFromB64(channel.pub),
         frameId: 'f9',
-        channelName: 'general',
+        aadTarget: 'general',
         plaintext: text,
       );
       final result = await codec.decrypt(
         channelKeyPair: await codec.keyPairFromPriv(channel.priv),
         frameId: 'f9',
-        channelName: 'general',
+        aadTarget: 'general',
         payloadB64: payload,
       );
       expect(result.plaintext, text);
+    });
+
+    test(
+      '#1002: pre-contract name-AAD frame decrypts via legacyAadTarget',
+      () async {
+        final sender = await keyPair();
+        final channel = await keyPair();
+        // Legacy frame: sealed when the AAD was the display name, not the id.
+        final payload = await codec.encrypt(
+          senderIdentity: await codec.keyPairFromPriv(sender.priv),
+          channelPub: codec.publicKeyFromB64(channel.pub),
+          frameId: 'f10',
+          aadTarget: 'private',
+          plaintext: 'legacy name-AAD frame',
+        );
+        final result = await codec.decrypt(
+          channelKeyPair: await codec.keyPairFromPriv(channel.priv),
+          frameId: 'f10',
+          aadTarget: 'c429035e8af9', // the channel id — the new contract
+          legacyAadTarget: 'private',
+          payloadB64: payload,
+        );
+        expect(result.plaintext, 'legacy name-AAD frame');
+        expect(result.senderPub, sender.pub);
+      },
+    );
+
+    test('#1002: name-AAD frame fails without the legacy fallback', () async {
+      final sender = await keyPair();
+      final channel = await keyPair();
+      final payload = await codec.encrypt(
+        senderIdentity: await codec.keyPairFromPriv(sender.priv),
+        channelPub: codec.publicKeyFromB64(channel.pub),
+        frameId: 'f11',
+        aadTarget: 'private',
+        plaintext: 'legacy',
+      );
+      await expectLater(
+        codec.decrypt(
+          channelKeyPair: await codec.keyPairFromPriv(channel.priv),
+          frameId: 'f11',
+          aadTarget: 'c429035e8af9',
+          payloadB64: payload,
+        ),
+        throwsA(isA<EnvelopeCryptoException>()),
+      );
     });
 
     test('newX25519KeyPair returns 32-byte keys; priv derives pub', () async {

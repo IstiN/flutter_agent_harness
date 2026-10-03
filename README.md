@@ -91,7 +91,9 @@ from the [latest GitHub
 Release](https://github.com/IstiN/flutter_agent_harness/releases/latest),
 puts it on your PATH, and (on macOS) strips Gatekeeper quarantine and
 re-signs it. More install paths — the web demo, the Flutter app — live on
-[fa1.dev](https://fa1.dev).
+[fa1.dev](https://fa1.dev). Every release also ships
+[`fa-web-spa.zip`](docs/web-rehosting.md), a rehostable copy of the web app
+you can drop onto any static host.
 
 ## CLI (`fa` / `fah`)
 
@@ -287,3 +289,5 @@ cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+<!-- factory ladder smoke: trivial doc touch to walk the full machine pipeline (review → validate → merge) -->

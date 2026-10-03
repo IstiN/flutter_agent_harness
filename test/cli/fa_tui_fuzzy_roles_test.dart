@@ -162,6 +162,180 @@ void main() {
     }
   });
 
+  test('gh-1049 AC4: the picker open frame carries the FULL visible row set '
+      'atomically', () {
+    // The /theme picker's rows ride ONE OpenPickerMsg — the first frame
+    // rendered after the open must hold the title, EVERY in-window row
+    // with its swatch, the current row's '✓ current' marker and the
+    // cursor. A row that only lands in a LATER frame regresses to the
+    // progressive-paint race the gh-1049 PTY flake sampled mid-render.
+    // The generic-picker reveal test hook (FA_TUI_PICKER_REVEAL_MS) is
+    // env-gated and unset here, so this pins the production atomic open.
+    addTearDown(controller.reset);
+    final items = themePickerItems(current: 'default').take(5).toList();
+    expect(items, hasLength(5));
+    var m = FaTuiModel(
+      callbacks: FaTuiCallbacks(
+        onSubmit: (_, {images = const []}) async {},
+        onModelSelected: (_) async {},
+        buildSlashMenu: (_) => const [],
+        buildModelMenu: (_, _) => const [],
+        statusLine: () => 'ready',
+        prompt: 'fa> ',
+      ),
+      isExited: () => false,
+      // Tall enough that the 5 rows fit the menu window (no scroll hints).
+      termWidth: 80,
+      termHeight: 20,
+    );
+    m =
+        m
+                .update(
+                  OpenPickerMsg(
+                    'theme',
+                    'Select theme',
+                    items,
+                    initialIndex: 0,
+                  ),
+                )
+                .$1
+            as FaTuiModel;
+    final frame = m.view().content.replaceAll(_sgr, '');
+    expect(frame, contains('Select theme'), reason: 'the picker title');
+    for (final item in items) {
+      expect(
+        frame,
+        contains(item.label),
+        reason: 'row "${item.label}" must paint in the OPEN frame',
+      );
+      expect(
+        frame,
+        contains('███'),
+        reason: 'row "${item.label}" must keep its swatch in the open frame',
+      );
+    }
+    // The current row (default, preselected) is text-marked and cursor'ed.
+    expect(frame, contains('✓ current'));
+    expect(
+      RegExp(r'▸\s*default').hasMatch(frame),
+      isTrue,
+      reason: 'the cursor opens on the current theme row',
+    );
+  });
+
+  test('gh-1049 review: Enter during the reveal window accepts the last '
+      'REVEALED row — no RangeError', () async {
+    // _pickerRevealOpen clamps menuSelected to the FULL item list while
+    // menuItems holds only the revealed prefix, so Enter/Tab mid-reveal
+    // indexed menuItems[menuSelected] past the prefix and threw
+    // RangeError (boot theme nord → initialIndex 2 with ONE row revealed).
+    // The accept must clamp to what is actually painted.
+    FaTuiModel.pickerRevealDelayMsOverride = 1;
+    addTearDown(() => FaTuiModel.pickerRevealDelayMsOverride = null);
+    final picked = <String>[];
+    var m = FaTuiModel(
+      callbacks: FaTuiCallbacks(
+        onSubmit: (_, {images = const []}) async {},
+        onModelSelected: (_) async {},
+        onPickerSelected: (pickerId, key) async => picked.add(key),
+        buildSlashMenu: (_) => const [],
+        buildModelMenu: (_, _) => const [],
+        statusLine: () => 'ready',
+        prompt: 'fa> ',
+      ),
+      isExited: () => false,
+      termWidth: 80,
+      termHeight: 20,
+    );
+    const items = [
+      MenuItem(key: 'default', label: 'default', description: '███'),
+      MenuItem(key: 'dracula', label: 'dracula', description: '███'),
+      MenuItem(key: 'nord', label: 'nord', description: '███'),
+    ];
+    m =
+        m
+                .update(
+                  OpenPickerMsg(
+                    'theme',
+                    'Select theme',
+                    items,
+                    initialIndex: 2,
+                  ),
+                )
+                .$1
+            as FaTuiModel;
+    final enter = m.update(KeyPressMsg(const TeaKey(code: KeyCode.enter)));
+    m = enter.$1 as FaTuiModel;
+    await enter.$2?.call();
+    expect(
+      picked,
+      ['default'],
+      reason:
+          'Enter mid-reveal accepts the last revealed row (the prefix), '
+          'not the out-of-range full-list index',
+    );
+  });
+
+  test('gh-1049 review: a pending reveal does not clobber an active '
+      'type-to-filter', () async {
+    // The reveal leg rebuilt menuItems from menuAllItems and ignored
+    // modelFilter: filter 'd' narrowed the picker to the matching rows,
+    // the pending leg then painted an UNFILTERED prefix over it while the
+    // filter stayed set. A filter owns the row set — the leg must stand
+    // down.
+    FaTuiModel.pickerRevealDelayMsOverride = 1;
+    addTearDown(() => FaTuiModel.pickerRevealDelayMsOverride = null);
+    var m = FaTuiModel(
+      callbacks: FaTuiCallbacks(
+        onSubmit: (_, {images = const []}) async {},
+        onModelSelected: (_) async {},
+        buildSlashMenu: (_) => const [],
+        buildModelMenu: (_, _) => const [],
+        statusLine: () => 'ready',
+        prompt: 'fa> ',
+      ),
+      isExited: () => false,
+      termWidth: 80,
+      termHeight: 20,
+    );
+    final res = m.update(
+      OpenPickerMsg('theme', 'Select theme', const [
+        MenuItem(key: 'default', label: 'default', description: '███'),
+        MenuItem(key: 'dracula', label: 'dracula', description: '███'),
+        MenuItem(key: 'nord', label: 'nord', description: '███'),
+        MenuItem(key: 'ohmypi', label: 'ohmypi', description: '███'),
+        MenuItem(key: 'monokai', label: 'monokai', description: '███'),
+      ], initialIndex: 0),
+    );
+    m = res.$1 as FaTuiModel;
+    final revealLeg = res.$2;
+    expect(revealLeg, isNotNull, reason: 'the hook must be active (seam set)');
+    // Type-to-filter: 'dr' narrows the row set to dracula only ('nord'
+    // contains a bare 'd' — it must NOT stay visible).
+    for (final ch in 'dr'.split('')) {
+      m =
+          m.update(KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch))).$1
+              as FaTuiModel;
+    }
+    // The pending reveal leg fires into the filtered picker.
+    final reveal = await revealLeg!();
+    if (reveal != null) {
+      m = m.update(reveal).$1 as FaTuiModel;
+    }
+    final frame = m.view().content.replaceAll(_sgr, '');
+    expect(frame, contains('dracula'), reason: 'a filtered row stays');
+    expect(
+      frame,
+      isNot(contains('nord')),
+      reason: 'the reveal must not paint unfiltered rows over the filter',
+    );
+    expect(
+      frame,
+      isNot(contains('monokai')),
+      reason: 'the reveal must not paint unfiltered rows over the filter',
+    );
+  });
+
   test('gh-671: a TRUNCATED selected label wears the accent too', () {
     // Narrow terminal: the label does not fit, so `_menuItemRow` renders
     // the stripped fitted text. The old truncated branch returned it

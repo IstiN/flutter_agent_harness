@@ -49,9 +49,9 @@ tui:
     final config = File('${tempHome.path}/.fah/config.yaml');
     config.writeAsStringSync(
       config.readAsStringSync().replaceFirst(
-            'baseUrl: http://localhost:9999/v1',
-            'baseUrl: ${server.baseUrl}',
-          ),
+        'baseUrl: http://localhost:9999/v1',
+        'baseUrl: ${server.baseUrl}',
+      ),
     );
   }
 
@@ -118,11 +118,21 @@ scenarios:
         'agent://',
         timeout: const Duration(seconds: 60),
       );
-      await harness.waitForText(
-        'subagent finished',
+      // The contract is the PAINTED screen: the streamed sentence can hit
+      // the raw stream (and paint prefix-first on a delta split) before the
+      // frame carrying the whole row lands — an immediate screenText read
+      // raced that window on loaded runners and saw a truncated row
+      // (#920 PTY legs). gh-1049: anchor BOTH asserted rows on the screen
+      // — the tool row and the finish line land a frame apart — and assert
+      // on the captured screen instead of a fresh mid-render read.
+      await harness.waitForScreen(
+        '✔ task: Prove the task loop',
         timeout: const Duration(seconds: 30),
       );
-      final screen = harness.screenText;
+      final screen = await harness.waitForScreen(
+        'subagent finished: agent://explorer1',
+        timeout: const Duration(seconds: 30),
+      );
       expect(screen, contains('✔ task: Prove the task loop'));
       expect(screen, contains('subagent finished: agent://explorer1'));
       // >= 3 chat round-trips: parent tool-call turn, subagent turn, parent

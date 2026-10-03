@@ -396,6 +396,19 @@ final class TrajectoryAssistantRecord extends TrajectoryRecord {
   /// Fallback row label when the message has no visible content.
   final String displayText;
 
+  /// Identity/summary entries shared by the lossless JSON export
+  /// (`trajectory_export.dart`) and the UI cell JSON (fa_ui
+  /// `trajectory_cell.dart`); both extend this map with their own fields.
+  Map<String, dynamic> identityJson() => {
+    'messageId': messageId,
+    'turn': turn,
+    'step': step,
+    'provider': provider,
+    'model': model,
+    'usage': usage?.toJson(),
+    'thinkingDetail': thinkingDetail,
+  };
+
   @override
   TrajectoryCellKind get kind => TrajectoryCellKind.message;
 }

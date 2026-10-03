@@ -2,6 +2,10 @@
 .dart_tool/
 build/
 coverage/
+# Local coverage scratch runs (e.g. cov-raw2/) — same artifact class as
+# coverage/; a WIP auto-save swept one onto the branch once (gh-1033
+# review thread 11).
+cov-*/
 # The Pages workflow assembles the Flutter web demo here; never commit it.
 site/app/
 # library package: lockfile is not committed
@@ -178,3 +182,10 @@ factory-agents/
 # source of truth there, only derivatives are ignored (memory/.gitignore).
 /input/
 /outputs/
+
+# omp REFERENCE screen twins (issue #810): committed capture artifacts the
+# REG parity suite diffs — exempted from the *.txt screenshot ignores above
+# (last rule wins). The capture test overwrites them in place.
+!test/integration/screenshots/omp_ref/**
+.fm-drill-cache/
+node_modules

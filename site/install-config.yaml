@@ -93,10 +93,13 @@ approval_modes:
 # Edit this section, then regenerate site/install.sh / site/install.ps1:
 #   dart run scripts/gen_installers.dart
 install:
-  # SEC-07 (#795): the version install.sh installs BY DEFAULT (a known-good
-  # release whose assets carry signed provenance). FA_VERSION=latest opts
-  # into the moving latest release explicitly. Bump this when a signed
-  # release lands — install.sh must never default to an unsigned one.
+  # SEC-07 (#795): the default install tracks the `vpinned` release marker
+  # — a release whose PINNED_VERSION asset names the known-good release.
+  # The tag-scoped install-pin-bump CI job advances the marker only after
+  # release-provenance signed the new release. There is deliberately NO
+  # version knob in this file: a committed pin rots (#1015) or forces
+  # release-pipeline commits; the marker is release metadata.
+  #
   # Release-signing trust anchor (SEC-07 #795): the PUBLIC half of the
   # FA_RELEASE_SIGNING_KEY repo secret, embedded into install.sh at
   # generation time via {{SIGNING_PEM}}. Rotate = new keypair, update this
@@ -117,7 +120,6 @@ install:
     +GmhARJnFP2Nem6owJ1PSYzIWT5zVjrA4pK4VJGA6EC2H2poBq4x7tkDugQYxdgC
     P2gLH2uyw0KaQBQa1CQVCnUCAwEAAQ==
     -----END PUBLIC KEY-----
-  pinned_cli_version: "0.1.452"
   banner:
     - "  ███████╗ █████╗       ████████╗███████╗██████╗ ███╗   ███╗██╗███╗   ██╗ █████╗ ██╗"
     - "  ██╔════╝██╔══██╗      ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║██║████╗  ██║██╔══██╗██║"

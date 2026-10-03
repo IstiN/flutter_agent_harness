@@ -1,8 +1,12 @@
-# Runner split (2026-09-22): PURE-DART jobs -> ubuntu-24.04-arm (public repo:
-# free, SEPARATE capacity pool from the x64 queue). Flutter jobs stay x64 —
-# Flutter ships NO official linux-arm64 SDK (stable 3.47.5 manifest is x64
-# only; subosito/flutter-action fails 'version: any architecture: arm64').
-# cube-kernel-live -> self-hosted M5 (fa-m5-1, user LaunchAgent).
+# Runner split (gh-1005, 2026-09-30): pure-Dart AND all PTY/terminal jobs ->
+# ubuntu-24.04-arm (public repo: free, SEPARATE capacity pool from the x64
+# queue). Flutter-test legs on arm64 bootstrap the SDK via git clone — Flutter
+# ships NO official linux-arm64 SDK (stable manifest is x64 only;
+# subosito/flutter-action fails 'version: any architecture: arm64'); x64
+# Flutter jobs keep the action. The self-hosted M5 pool is ONE runner
+# (fa-m5-1, user LaunchAgent) reserved for genuinely macOS-only work:
+# cube-kernel-live. PR PTY legs (integration shards, coverage/duration gates,
+# Terminal visual) run hosted-Linux only and never wait on fa-m5-1.
 name: CI
 
 on:
@@ -16,6 +20,17 @@ on:
   # pushes and silent branch updates are free. Required checks still
   # match: the dispatched run registers its check runs on the head SHA.
   workflow_dispatch:
+    inputs:
+      releaseDryRun:
+        description: 'gh-1172: run the release pipeline without the push/tag (logs the commit+tag that WOULD land)'
+        required: false
+        type: boolean
+        default: false
+      releaseDispatch:
+        description: 'gh-1172: real release (bump push + tag) on manual dispatch — requires refs/heads/main; bare validation dispatches stay inert'
+        required: false
+        type: boolean
+        default: false
   # Any release publication (API `gh release create`, web UI, or a pushed
   # annotated tag) builds + attaches the binaries matrix. Pushed tags also
   # arrive via the push filter above; the binaries job tolerates the
@@ -187,6 +202,16 @@ jobs:
       - name: dart test cube backends (live kernel legs)
         run: dart test test/cube/backends
 
+      # gh-1059 AC4: the real-keychain runner guard — `security`
+      # add/find/delete against the runner's login keychain through the
+      # bounded-helper machinery (outcome classification incl. stderr
+      # tails, env merge, timeout kill). The group is tagged `integration`
+      # (real side effects), so the Linux core shards and the pre-commit
+      # gate skip it; this macOS leg is where it actually executes. Skips
+      # with a named reason when no `security` binary / default keychain.
+      - name: dart test secure key store (macOS Keychain live legs)
+        run: dart test test/secrets/secure_key_store_test.dart --tags integration
+
   static:
     name: Static gates
     runs-on: ubuntu-latest
@@ -216,6 +241,52 @@ jobs:
             ! -name '*.g.dart' ! -name '*.freezed.dart' ! -name '*.mocks.dart' \
             -exec sh -c 'lines=$(wc -l < "$1"); if [ "$lines" -gt 2800 ]; then echo "$1: $lines lines"; fi' _ {} \;)
           if [ -n "$violations" ]; then echo "$violations"; exit 1; fi
+
+      # Issue #1100: the fa-web-spa.zip packaging guard (base-tag patch +
+      # absolute-/app/ grep) must stay functional on every PR — a release
+      # run is the wrong place to first discover a broken guard. Fixture
+      # self-test: positive path + all red exits, pure bash, no web build.
+      - name: Web SPA packaging guard self-test (#1100)
+        run: |
+          set -euo pipefail
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          mkdir -p "$d/build"
+          printf '<html><head>\n<base href="/app/">\n</head></html>\n' > "$d/build/index.html"
+          for f in flutter_service_worker.js flutter_bootstrap.js; do echo "// $f" > "$d/build/$f"; done
+          echo '{"name":"fa"}' > "$d/build/manifest.json"
+          bash scripts/package_web_spa.sh "$d/build" "$d/out.zip" > /dev/null
+          unzip -p "$d/out.zip" index.html | grep -F '<base href="./">'
+          # AC4 pin: packaging never mutates its input — the Pages deploy's
+          # build dir must stay byte-identical.
+          grep -F '<base href="/app/">' "$d/build/index.html"
+          # Red exit 1: an absolute /app/ sneaking into a touchpoint.
+          echo '{"x":"/app/y"}' > "$d/build/manifest.json"
+          if bash scripts/package_web_spa.sh "$d/build" "$d/bad.zip" 2>/dev/null; then
+            echo "::error::package_web_spa guard passed a build containing /app/ (AC3 #1100)"
+            exit 1
+          fi
+          # Red exit 2: no base tag to patch.
+          echo '{"name":"fa"}' > "$d/build/manifest.json"
+          echo '<html></html>' > "$d/build/index.html"
+          if bash scripts/package_web_spa.sh "$d/build" "$d/bad2.zip" 2>/dev/null; then
+            echo "::error::package_web_spa guard passed an unpatchable base tag (AC1 #1100)"
+            exit 1
+          fi
+          # Red exit 3: a missing touchpoint file.
+          rm "$d/build/manifest.json"
+          if bash scripts/package_web_spa.sh "$d/build" "$d/bad3.zip" 2>/dev/null; then
+            echo "::error::package_web_spa guard passed an incomplete build (AC3 #1100)"
+            exit 1
+          fi
+          # fa1.dev parity pin: both web builds must keep the identical
+          # release flags AND the same pinned SDK — the bundle's only edit
+          # stays the base tag.
+          for wf in .github/workflows/pages.yml .github/workflows/ci.yml; do
+            grep -q -- '--release' "$wf" || { echo "::error::$wf lost the --release web flag (#1100 parity)"; exit 1; }
+            grep -q -- '--base-href /app/' "$wf" || { echo "::error::$wf lost --base-href /app/ (#1100 parity, pages + bundle must share it)"; exit 1; }
+            grep -q "flutter-version: '3.47.x'" "$wf" || { echo "::error::$wf unpinned Flutter SDK (#1100 parity, pages + bundle must share it)"; exit 1; }
+          done
 
       # Issue #433 AC1: README CRAP badge must equal the crap4dart.yaml
       # threshold (they drifted to 8.0-vs-12.0 once). Pure python — runs on
@@ -353,6 +424,22 @@ jobs:
             test-results/dart-shard-${{ matrix.shard }}.json \
             test-results/junit-shard-${{ matrix.shard }}.xml
 
+      # gh-1033 (review thread 7 + gate wiring): the fa jsr delegate suites
+      # are integration-tagged (the PTY leg's CLI coverage ratchet measures
+      # lib/src/cli hits from them), so the sharded unit run above skips
+      # them. Their hits must ALSO reach the unit-side lcov consumers
+      # (>= 80% ratchet, PR diff-coverage, CRAP — jsr_cli.dart at 0% reads
+      # CRAP 156 > 12), so they run into shard 0's coverage dir; the gate
+      # merge is a union, so one shard carrying them is enough. Keep this
+      # list in sync with scripts/ci_fast_gate.sh stage_test_core and
+      # nightly.yml.
+      - name: dart test --tags integration (jsr delegate trio → unit lcov)
+        if: matrix.shard == 0 && (needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true')
+        run: >-
+          dart test --tags integration --coverage=coverage
+          test/cli/jsr_cli_test.dart test/cli/cli_args_jsr_test.dart
+          test/cli/agent_cli_jsr_test.dart
+
       - name: Format coverage to lcov
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
@@ -404,6 +491,13 @@ jobs:
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
 
+      # Issue #943 (vector 3): warm the build hooks before the first test
+      # process boots fa (same rationale as the pty-integration leg).
+      - name: Prewarm build hooks + fa boot
+        run: |
+          dart bin/fah.dart --help > /dev/null
+          dart run bin/fah.dart --help > /dev/null
+
       - name: dart test test/integration (excluding llm, browser-ext, perf, pty)
         run: dart test test/integration --exclude-tags llm,browser-ext,perf,pty
 
@@ -452,67 +546,47 @@ jobs:
   # Main remains backstopped by nightly.yml.
   # ─────────────────────────────────────────────────────────────────────────
   # ─────────────────────────────────────────────────────────────────────────
-  # PTY runner picker: prefer the self-hosted fa-m5 minis (dedicated hardware,
-  # warm caches, no VM boot, no port contention — the hosted pty-integration
-  # leg loses 20-40 min to queue+load flake), fall back to the hosted labels
-  # when the pool is busy. GitHub has no OR in runs-on (an array is AND), so
-  # the choice happens HERE by counting in-progress jobs already parked on
-  # fa-m5 runners (jobs API, actions:read — no admin token needed).
+  # gh-1005 (2026-09-30): the PTY legs are hosted-Linux ONLY. The audit of
+  # the whole shard manifest (scripts/test_integration_shards.json) found
+  # ZERO genuinely macOS-specific tests: the PTY harness allocates terminals
+  # via libc openpty FFI (package:pty2 — OS/arch independent), no suite
+  # depends on zsh defaults or /bin/bash 3.2 quirks, and the one macOS-only
+  # assertion (fa_cube_integration_test.dart's SBPL kernel nested-rw probe)
+  # is `if (Platform.isMacOS)`-guarded inside a test that passes on Linux.
+  # The genuinely macOS-only terminal behavior keeps its dedicated gates:
+  # cube-kernel-live (above) runs the real sandbox-exec E2E (test/cube/
+  # backends) on fa-m5-1, and the mac-only CLI lines (shift_hid CoreGraphics
+  # probe, stty -f device flag) stay unit-covered on ubuntu
+  # (test/cli/shift_hid_test.dart, fa_tui_controller_overlay_test.dart).
+  # Consequence: the fa-m5 runner-pick probe (M5_POOL) is GONE and the mac
+  # leg merged INTO the linux leg below — ONE sharded PTY/CLI integration
+  # job on ubuntu-24.04-arm that now also carries the per-shard coverage +
+  # dart-json/junit reporting the gate consumes. A PR validation's PTY legs
+  # never wait on fa-m5-1; hosted macOS (10x minute cost) is never used.
   # ─────────────────────────────────────────────────────────────────────────
-  runner-pick:
-    name: Pick PTY runners (fa-m5 or hosted fallback)
-    runs-on: ubuntu-latest
-    needs: changes
-    timeout-minutes: 3
-    permissions:
-      actions: read
-    outputs:
-      pty_integration: ${{ steps.pick.outputs.pty_integration }}
-      pty_visual: ${{ steps.pick.outputs.pty_visual }}
-    steps:
-      - name: Probe fa-m5 pool and pick
-        id: pick
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          M5_POOL: '2'
-        run: |
-          busy=0
-          for rid in $(gh api "repos/$REPO/actions/runs?status=in_progress&per_page=100" --jq '.workflow_runs[].id'); do
-            n=$(gh api "repos/$REPO/actions/runs/$rid/jobs" --jq '[.jobs[] | select(.status == "in_progress" and ((.runner_name // "") | startswith("fa-m5")))] | length' || echo 0)
-            busy=$((busy + n))
-          done
-          free=$((M5_POOL - busy))
-          if [ "$free" -ge 1 ]; then
-            echo "pool: $free free of $M5_POOL fa-m5 -> self-hosted"
-            echo 'pty_integration=["self-hosted","macos-m5"]' >> "$GITHUB_OUTPUT"
-            echo 'pty_visual=["self-hosted","macos-m5"]' >> "$GITHUB_OUTPUT"
-          else
-            echo "pool: $free free of $M5_POOL fa-m5 -> hosted fallback"
-            echo 'pty_integration=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
-            echo 'pty_visual=["macos-latest"]' >> "$GITHUB_OUTPUT"
-          fi
-
-  pty-integration:
-    # Issue #931 part 2: the leg was ONE job (~40 min hosted, the CI
-    # critical path); it is now 3 duration-balanced shards
-    # (scripts/test_integration_shards.json, file-level units). New
-    # integration-tagged files bin-pack in at runtime
+  pty-integration-linux:
+    # THE PR PTY/CLI integration leg (gh-1005: the former mac leg merged in;
+    # before that, issue #931 part 2 sharded ONE ~40-min job into 3
+    # duration-balanced shards — scripts/test_integration_shards.json,
+    # file-level units). New integration-tagged files bin-pack in at runtime
     # (shard_files.py --tags integration), so a PR adding one never
     # silently skips it. Explicit --concurrency=4 bounds in-suite
     # parallelism (part 3.3 — package:test forbids `concurrency` in
     # dart_test.yaml tag overrides, so the knob lives here; it bounds
-    # concurrent live-provider tests PER JOB — the cross-leg ceiling with
-    # the linux leg is documented on the llm tag in dart_test.yaml).
+    # concurrent live-provider tests PER JOB — the rate-limit rationale is
+    # documented on the llm tag in dart_test.yaml).
     # Per-shard coverage artifacts merge in pty-coverage-gate —
     # a single shard's ratchet would see partial lib/src/cli coverage
     # and false-regress. Each shard also emits the dart json
     # file-reporter: junit feeds rebalancing/budget-tightening PRs, the
     # raw json feeds the #928 duration gate (pty-coverage-gate below).
-    name: PTY/CLI integration (shard ${{ matrix.shard }}/3)
-    runs-on: ${{ fromJSON(needs.runner-pick.outputs.pty_integration) }}
-    needs: [changes, runner-pick]
-    timeout-minutes: 30
+    name: PTY/CLI integration (linux, shard ${{ matrix.shard }}/3)
+    runs-on: ubuntu-24.04-arm
+    # 40 > 30: the leg now carries the coverage + file-reporter overhead the
+    # old mac leg had (the coverage-free linux twin never paid it) and arm64
+    # Graviton cores run somewhat slower than the M-series minis did — margin
+    # without stretching the watchdog much.
+    timeout-minutes: 40
     permissions:
       contents: read
     strategy:
@@ -520,11 +594,10 @@ jobs:
       matrix:
         shard: [0, 1, 2]
     env:
-      # SAME secret shape as nightly.yml's pty-integration leg and the
-      # Trust model (review 2026-09-23): this is the first pull_request-time
-      # leg in ci.yml that receives real provider secrets. GitHub withholds
-      # secrets from forks, so external contributions never see them — but
-      # every SAME-REPO branch runs this suite with the keys in its process
+      # Secret shape (review 2026-09-23): this is the pull_request-time leg
+      # that receives real provider secrets. GitHub withholds secrets from
+      # forks, so external contributions never see them — but every
+      # SAME-REPO branch runs this suite with the keys in its process
       # environment before human review (this repo's agent-authored-branch
       # model). The marginal escalation vs the nightly (same suites, same
       # keys, post-merge on main) is small and the watchdog already hands
@@ -533,49 +606,39 @@ jobs:
       #
       # The live-provider legs (unlocked by these keys) load extra
       # lib/src/cli surface into the coverage measurement, so a no-key run
-      # measures a DIFFERENT — higher-numbered — regression and would pass
-      # while the nightly fails. Missing keys (forks) self-skip those legs
-      # gracefully; the gate stays honest either way.
+      # measures a DIFFERENT — lower-numbered — value; missing keys (forks)
+      # self-skip those legs gracefully and the gate stays honest either
+      # way.
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
       OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      # Self-hosted fa-m5 minis have no /Users/runner home — setup-* would
-      # try to mkdir the hosted toolcache and die. Redirect it to a stable
-      # per-runner path (warm across runs); hosted runners are untouched.
-      - name: Self-hosted toolcache redirect (fa-m5)
-        if: startsWith(runner.name, 'fa-m5')
-        run: echo "RUNNER_TOOL_CACHE=${{ runner.workspace }}/toolcache" >> "$GITHUB_ENV"
-      # Shared-box pub-cache isolation (flake fix — run 36258687531): the
-      # fa-m5 minis all share ONE user pub cache (~/.pub-cache) with every
-      # concurrent job AND the box owner's local builds. A concurrent cache
-      # mutation yanked image-4.10.1 sources mid-compile and exit-254'd
-      # headless_tools_flag_test ("Error when reading
-      # .pub-cache/.../luminance_threshold_cmd.dart") while the same
-      # compile passed seconds later. Give each fa-m5 job a private cache
-      # under the per-job temp root (runner-cleaned); `dart pub get` below
-      # repopulates it (~1 min) and every spawned CLI sees it because the
-      # PTY/headless harnesses forward PUB_CACHE explicitly. Hosted runners
-      # are single-job VMs — the default cache is already private there.
-      - name: Job-private pub cache (fa-m5 shared box)
-        if: startsWith(runner.name, 'fa-m5')
-        run: echo "PUB_CACHE=$RUNNER_TEMP/pub-cache" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
           sdk: stable
-      # setup-python hardcodes AGENT_TOOLSDIRECTORY=/Users/runner/hostedtoolcache
-      # on every macOS runner (hosted layout assumption) and overwrites
-      # RUNNER_TOOL_CACHE, so on self-hosted macs without a 'runner' user it
-      # dies with "mkdir: /Users/runner: Permission denied". The only python
-      # consumers here are the pure-python shard selector, the junit
-      # converter and the duration-gate step below — system python3
-      # (CLT on macOS, preinstalled on hosted images) suffices.
-      - name: python3 available
-        run: python3 --version
       - run: dart pub get
-      - name: dart test --tags integration (shard ${{ matrix.shard }}/3)
+
+      - name: Native-assets hook cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+
+      # Issue #943 (vector 3): one warm fa boot before the PTY shards. The
+      # first `dart` invocation pays the native-assets build hooks (20-30 s
+      # under load) — paid HERE instead of inside a test's boot timeout
+      # (tui_prototype_snapshot ×5 on 2026-09-24). Both invocation shapes
+      # the tests use (file path + `dart run`) are warmed; every shard of
+      # this matrix job does it, so each shard process meets a warm cache
+      # and the duration gate below measures warm-boot truth.
+      - name: Prewarm build hooks + fa boot
+        run: |
+          dart bin/fah.dart --help > /dev/null
+          dart run bin/fah.dart --help > /dev/null
+      - name: dart test --tags integration (linux, shard ${{ matrix.shard }}/3)
         run: |
           targets=$(python3 scripts/shard_files.py scripts/test_integration_shards.json ${{ matrix.shard }} --tags integration --exclude browser_ext)
           echo "shard targets: $targets"
@@ -596,13 +659,17 @@ jobs:
           test-results/junit-integration-shard-${{ matrix.shard }}.xml
       # Raw dart json for the #928 duration gate (per-test spans incl. suite
       # paths); junit is the human/rebalancer-facing form of the same data.
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      # Upload MUST stay on the current upload-artifact line (gh-995): the
+      # gate's download-artifact v8 digest-validates every download, so an
+      # old-line upload digest-mismatches and the shard merge loses its
+      # report (test/release_hygiene_test.dart pins the pin).
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: integration-json-shard-${{ matrix.shard }}
           path: test-results/integration-shard-${{ matrix.shard }}.json
           retention-days: 2
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: junit-integration-shard-${{ matrix.shard }}
@@ -613,86 +680,33 @@ jobs:
       - name: Format coverage to lcov (shard ${{ matrix.shard }})
         if: always()
         run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: pty-coverage-shard-${{ matrix.shard }}
           path: coverage/lcov.info
           retention-days: 2
 
-  # Issue #931 part 2: standing Linux leg. The dart-level PTY/CLI suite is
-  # Linux-capable by design (ubuntu is its designed hosted fallback —
-  # runner-pick below already routes the mac leg here under pool
-  # saturation); it now ALSO runs on hosted arm64 IN PARALLEL with the
-  # fa-m5 minis on EVERY invocation, unconditioned by path like the mac
-  # leg. Motivation: 2026-09-24 the shared Mac box hit load 13-17 and
-  # stretched the PTY legs to ~80 min — the hosted pool is separate
-  # capacity no mini-pool saturation can starve, and a linux-only
-  # regression now red-blocks the PR that caused it instead of the
-  # nightly. Same suite, same shards, same --concurrency bound; NO
-  # coverage: the cli-coverage ratchet stays wired to the mac-owned leg
-  # (the baseline's measurement environment — nightly feeds the gardener
-  # from a mac-or-fallback run with keys), and NO file-reporter for the
-  # same reason: the #928 duration gate consumes the mac leg's json only
-  # (both legs run the same suites; mixing them would double-count).
-  # arm64: pure-dart jobs route here per the runner-split note at the top
-  # of this file (free, separate capacity pool); pty2 allocates PTYs
-  # through libc openpty FFI — arch-independent.
-  pty-integration-linux:
-    name: PTY/CLI integration (linux, shard ${{ matrix.shard }}/3)
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1, 2]
-    env:
-      # Same secret shape as the mac leg: same-repo PRs get the keys, forks
-      # self-skip the live-provider legs gracefully.
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-      OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
-        with:
-          sdk: stable
-      - run: dart pub get
-
-      - name: Native-assets hook cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .dart_tool/hooks_runner/shared
-          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
-          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: dart test --tags integration (linux, shard ${{ matrix.shard }}/3)
-        run: |
-          targets=$(python3 scripts/shard_files.py scripts/test_integration_shards.json ${{ matrix.shard }} --tags integration --exclude browser_ext)
-          echo "shard targets: $targets"
-          dart test --tags integration --exclude-tags browser-ext \
-            --concurrency=4 \
-            $targets
-
-  # Coverage home for the SHARDED pty-integration leg (mirrors
+  # Coverage home for the SHARDED pty-integration-linux leg (mirrors
   # faui-coverage): the 3 shard lcovs merge into ONE report (union DA hits
   # per file, NOT cat — a single shard's ratchet would see partial
   # lib/src/cli coverage and false-regress), then the CLI coverage ratchet
   # runs on the merged report, and the duration-budget gate (issue #928
-  # Part 1, this PR) consumes the mac leg's three dart-json shard reports:
+  # Part 1) consumes the leg's three dart-json shard reports:
   # per-suite totals vs scripts/test_duration_baseline.json (down-only
   # ratchet, >10% suite regression or a per-test budget breach fails the
   # merge) and the top-10 slowest tests land in the job summary on every
   # run. The gate NEVER rewrites the baseline — budgets move only through
   # reviewed PRs running check_test_durations.py --update-baseline locally
-  # against an integration-json artifact.
+  # against an integration-json artifact. gh-1005: the measurement
+  # environment moved mac -> ubuntu-24.04-arm together with the leg (the
+  # coverage-gardener already measured on ubuntu); a baseline re-seat, if
+  # the first linux runs sit below the floor, takes the same reviewed-PR
+  # path.
   pty-coverage-gate:
     name: PTY gates (coverage ratchet + duration budget, merged shards)
     runs-on: ubuntu-24.04-arm
-    needs: [pty-integration]
+    needs: [pty-integration-linux]
     timeout-minutes: 5
     permissions:
       contents: read
@@ -711,35 +725,11 @@ jobs:
       # every unit on disk. Fails loudly BEFORE the ratchet reads shard data.
       - name: Assert integration shard manifest (union/disjoint/exists)
         run: python3 scripts/assert_shard_manifest.py scripts/test_integration_shards.json --shards 3 --tags integration --exclude browser_ext
-      # Mac-leg dart json for the #928 duration gate below.
+      # The leg's dart json reports for the #928 duration gate below.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: integration-json-shard-*
           path: integration-json-shards
-      # Issue #928 review: same discipline as faui's assert_shard_manifest —
-      # the 2 selections must cover exactly the integration-tagged suite
-      # (browser-ext excluded, it owns browser-ext.yml), pairwise disjoint,
-      # every unit on disk. Fails loudly BEFORE the ratchets read shard data.
-      - name: Assert integration shard manifest (union/disjoint/exists)
-        run: |
-          python3 - <<'EOF'
-          import glob, json, os, sys
-          sys.path.insert(0, 'scripts')
-          from shard_files import file_has_tag
-          manifest = json.load(open('scripts/test_integration_shards.json'))
-          shards = manifest['shards']
-          units = [u for s in shards for u in s]
-          on_disk = {p.replace(os.sep, '/') for p in glob.glob('test/**/*_test.dart', recursive=True)
-                     if '/browser_ext/' not in p.replace(os.sep, '/')
-                     and file_has_tag(p, 'integration')}
-          assert len(units) == len(set(units)), f"duplicate unit in manifest: {units}"
-          assert not (set(shards[0]) & set(shards[1])), f"shard overlap: {set(shards[0]) & set(shards[1])}"
-          missing = on_disk - set(units)
-          assert not missing, f"integration-tagged files missing from manifest (never sharded): {sorted(missing)}"
-          gone = set(units) - on_disk
-          assert not gone, f"manifest units not on disk: {sorted(gone)}"
-          print(f"integration manifest OK: {len(units)} units, disjoint, == suite on disk")
-          EOF
       - name: Merge shard coverage (union DA hits per file, NOT cat)
         run: |
           count=$(ls pty-coverage-shards/*/lcov.info | wc -l | tr -d ' ')
@@ -747,6 +737,15 @@ jobs:
             echo "::error::expected 3 pty shard coverage reports, got $count"
             exit 1
           fi
+          # gh-995: a report that downloads but carries no SF: records
+          # (empty/truncated upload) still satisfies the count check and
+          # merges into a silently partial report — the 2026-09-27 wedge
+          # also showed the ratchet reading 7.95% vs the 11.00% baseline
+          # off exactly such a merge. Fail loudly naming the hollow shard
+          # instead of letting the ratchet chase a phantom regression.
+          for f in pty-coverage-shards/*/lcov.info; do
+            grep -q '^SF:' "$f" || { echo "::error::$f carries no SF: records — hollow shard coverage upload"; exit 1; }
+          done
           mkdir -p coverage
           python3 scripts/merge_lcov.py \
             -o coverage/lcov.merged.info \
@@ -760,19 +759,41 @@ jobs:
             --baseline scripts/test_duration_baseline.json \
             integration-json-shards/*/integration-shard-*.json
 
+  # gh-1005: Terminal visual is platform-independent and pinned to hosted
+  # linux arm64. Evidence: every assertion reads the xterm terminal BUFFER /
+  # screen text (never pixels — each PNG even ships a .txt twin "for
+  # pixel-independent verification"), rendering goes through the BUNDLED
+  # JetBrainsMono font (no host system fonts), and pty2 allocates the PTY
+  # via libc openpty FFI. Nothing needs macOS — the old fa-m5 / macos-latest
+  # routing (10x hosted-macOS minute cost, single-runner queue risk) is
+  # gone; the nightly keeps an eyeball-only screenshot leg.
   pty-visual:
     name: Terminal visual (PTY screenshots, PR)
-    runs-on: ${{ fromJSON(needs.runner-pick.outputs.pty_visual) }}
-    needs: [changes, runner-pick]
+    runs-on: ubuntu-24.04-arm
+    needs: changes
     timeout-minutes: 45
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # arm64: no official linux-arm64 release tarball (x64-only manifest) —
+      # subosito/flutter-action cannot fetch stable here. Git bootstrap
+      # (same as the flutter-tests leg): flutter_tools pulls the official
+      # arm64 Dart SDK itself.
+      - name: Flutter SDK (arm64 git bootstrap)
+        shell: bash
+        run: |
+          git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/flutter/bin:$PATH"
+          flutter --version
+          flutter precache
+      - name: Pub cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          channel: stable
-          cache: true
+          path: ~/.pub-cache
+          key: pubcache-flutter-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: pubcache-flutter-${{ runner.os }}-
       - name: Create placeholder .env asset
         working-directory: flutter_app
         run: touch .env
@@ -782,9 +803,16 @@ jobs:
       # a root package config it resolves the package to the pub-cache copy
       # (an old published build) and the CLI dies before the first frame.
       - run: dart pub get
+      # Issue #943 (vector 3): warm the build hooks — the cli_visual harness
+      # spawns `dart bin/fah.dart` from the repo root and its boot budget
+      # must not pay the cold-hook cost (tui_prototype_snapshot ×5).
+      - name: Prewarm build hooks + fa boot
+        run: |
+          dart bin/fah.dart --help > /dev/null
+          dart run bin/fah.dart --help > /dev/null
       - name: flutter test test/cli_visual --tags integration
         run: cd flutter_app && flutter test test/cli_visual --tags integration
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: cli-visual-screenshots-pr
@@ -910,12 +938,20 @@ jobs:
           # et al.); 0.2.1 knew only the CRAP ratchet. Both configs set
           # coverage.run_tests: false — the merged shard lcov above is the
           # coverage source; gates must not re-run the suite.
-          dart pub global activate crap4dart ">=0.9.5"
+          # gh-1061: >=0.10.0 — analyzer 7.3→14.4 refresh + the
+          # duplication.sources key (native cross-module scan).
+          # gh-1106: >=0.11.0 — Type-2 renamed-clone detection
+          # (duplication.ignore_locals) + gate baselines; the
+          # duplication gate config throws on older parsers (unknown
+          # keys are a ConfigException).
+          # Bounded (rework review): a floating >= would auto-adopt
+          # 0.12.0+ with no repo change — bump the ceiling deliberately.
+          dart pub global activate crap4dart ">=0.11.0 <0.12.0"
           dart pub global run crap4dart analyze
 
-      - name: Broken-goldens gate over core test/ goldens (issue 447)
+      - name: Quality gates (broken goldens + Type-2 duplication, issue 1106)
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
-        run: dart pub global run crap4dart check
+        run: dart pub global run crap4dart check --baseline
 
       - name: Duplication guard (lib/ < 1%)
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
@@ -1209,9 +1245,12 @@ jobs:
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
         run: |
           # Issue #447: pin bumped 0.2.1 → >=0.9.5 for the gate framework.
+          # gh-1061: >=0.10.0 (analyzer 14.4 refresh).
+          # gh-1106: >=0.11.0 <0.12.0 — same bounded pin as the core job;
+          # 0.11.0 carries the Type-2 duplication gate the repo pins to.
           # coverage.run_tests: false in both configs — the merged shard
           # lcov above is the source; never re-run the suite here.
-          dart pub global activate crap4dart ">=0.9.5"
+          dart pub global activate crap4dart ">=0.11.0 <0.12.0"
           cd flutter_app && dart pub global run crap4dart analyze --format json > crap_report.json
 
       # Issue #490 AC2: publish the ranked CRAP JSON even when the ratchet
@@ -1349,21 +1388,37 @@ jobs:
   # Aggregate required check: branch protection requires ONE stable context.
   # Skipped legs (path-filtered out) count as pass — a docs PR must go green
   # on static alone.
+  # gh-1005: pinned to hosted linux arm64 alongside pty-visual — same
+  # platform-independence evidence (buffer/screen-text assertions, bundled
+  # JetBrainsMono, openpty PTYs); PTY screenshots need no macOS, hosted or
+  # self-hosted.
   cli-visual-settings:
     name: Settings screenshots (PTY)
-    runs-on: macos-latest
+    runs-on: ubuntu-24.04-arm
     needs: changes
     if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+      # arm64 git bootstrap (no official linux-arm64 Flutter tarball) — same
+      # as the flutter-tests and pty-visual legs.
+      - name: Flutter SDK (arm64 git bootstrap)
+        shell: bash
+        run: |
+          git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/flutter/bin:$PATH"
+          flutter --version
+          flutter precache
+      - name: Pub cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          channel: stable
-          cache: true
+          path: ~/.pub-cache
+          key: pubcache-flutter-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: pubcache-flutter-${{ runner.os }}-
 
       # Same placeholder assets the nightly cli-visual job and the ubuntu
       # flutter-tests leg create (see those jobs for the why).
@@ -1955,14 +2010,32 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Installer verification fixtures (AC1-AC4)
         run: bash scripts/installer_verify_selftest.sh
+
+  # SEC-07 follow-up (#1015 incident): the release install.sh pins by default
+  # must itself carry signed provenance — otherwise a fresh curl|sh refuses
+  # the installer's own default with E_PIN_PROVENANCE_MISSING. Runs the pin
+  # gate live (network to github.com releases, read-only) on EVERY PR — no
+  # path gating, same reasoning as installer-verify. Fixture coverage of the
+  # gate's failure modes lives in installer-verify (contract 5).
+  install-pin-gate:
+    name: Install pin provenance gate
+    runs-on: ubuntu-latest
+    needs: changes
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Pinned release must carry signed provenance
+        run: bash scripts/check_install_pin.sh
 
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, pty-integration, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify]
+    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify, install-pin-gate]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -1988,13 +2061,13 @@ jobs:
           echo "build-macos   = ${{ needs.build-macos.result }}"
           echo "integ-mock    = ${{ needs.integration-mock.result }}"
           echo "hostile-env   = ${{ needs.hostile-env.result }}"
-          echo "pty-integ     = ${{ needs.pty-integration.result }}"
           echo "pty-integ-linux = ${{ needs.pty-integration-linux.result }}"
           echo "pty-gates     = ${{ needs.pty-coverage-gate.result }}"
           echo "pty-visual    = ${{ needs.pty-visual.result }}"
           echo "supply-chain  = ${{ needs.supply-chain.result }}"
           echo "dep-audit     = ${{ needs.dep-audit.result }}"
           echo "installer-it = ${{ needs.installer-verify.result }}"
+          echo "pin-gate    = ${{ needs.install-pin-gate.result }}"
       - name: Fail on any real failure (skipped security = dodge = FAIL)
         env:
           R_CHANGES: ${{ needs.changes.result }}
@@ -2017,11 +2090,11 @@ jobs:
           R_BUILD_MACOS: ${{ needs.build-macos.result }}
           R_INTEG: ${{ needs.integration-mock.result }}
           R_HOSTILE: ${{ needs.hostile-env.result }}
-          R_PTY_INTEG: ${{ needs.pty-integration.result }}
           R_PTY_LINUX: ${{ needs.pty-integration-linux.result }}
           R_PTY_GATES: ${{ needs.pty-coverage-gate.result }}
           R_PTY_VISUAL: ${{ needs.pty-visual.result }}
           R_INSTALLER_VERIFY: ${{ needs.installer-verify.result }}
+          R_INSTALL_PIN_GATE: ${{ needs.install-pin-gate.result }}
         run: |
           fail() { echo "Quality gate FAILED: $1"; exit 1; }
           # The classifier itself must have run: a failed or skipped
@@ -2046,8 +2119,8 @@ jobs:
                     "cli-visual-settings:$R_CLI_VISUAL" "build-web:$R_BUILD_WEB" \
                     "build-android:$R_BUILD_ANDROID" "build-ios:$R_BUILD_IOS" "build-macos:$R_BUILD_MACOS" \
                     "integration-mock:$R_INTEG" "hostile-env:$R_HOSTILE" \
-                    "pty-integration:$R_PTY_INTEG" "pty-integration-linux:$R_PTY_LINUX" "pty-coverage-gate:$R_PTY_GATES" "pty-visual:$R_PTY_VISUAL" \
-                    "installer-verify:$R_INSTALLER_VERIFY"; do
+                    "pty-integration-linux:$R_PTY_LINUX" "pty-coverage-gate:$R_PTY_GATES" "pty-visual:$R_PTY_VISUAL" \
+                    "installer-verify:$R_INSTALLER_VERIFY" "install-pin-gate:$R_INSTALL_PIN_GATE"; do
             name="${kv%%:*}"; r="${kv#*:}"
             if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
               fail "a leg is $r ($name)"
@@ -2106,7 +2179,23 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" > /tmp/jobs.json
+          set -euo pipefail
+          # The jobs endpoint intermittently answers 502 (live on the
+          # gh-1086 rework head 81ed7186: a single 502 failed the whole
+          # telemetry leg). Same 3-attempt pattern as build-mobile's
+          # "Install Flutter dependencies" — transient API errors retry,
+          # a real failure still reds the step loudly.
+          for attempt in 1 2 3; do
+            if gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" > /tmp/jobs.json; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::gh api jobs fetch failed after 3 attempts — GitHub API is erroring (502-class)"
+              exit 1
+            fi
+            echo "::warning::gh api jobs fetch failed (attempt $attempt/3) — retrying in 10s"
+            sleep 10
+          done
           python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
           import datetime, json
           jobs = json.load(open('/tmp/jobs.json'))['jobs']
@@ -2140,14 +2229,12 @@ jobs:
     name: Watchdog (degraded-runner retrigger)
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # pty-integration/pty-visual/pty-integration-linux ride along (review
-    # 2026-09-23, #963): the longest legs. The mac shards are no longer
-    # reliably last to settle (their timeout dropped 60 -> 30), so the
-    # linux shards (30-min timeout, hosted pool) must be in `needs` too or
-    # the watchdog fires before they settle — a degraded-runner timeout
-    # there would land after the scan and never get its one-shot
+    # pty-integration-linux/pty-visual ride along (review 2026-09-23, #963;
+    # gh-1005 retired the mac shards): the longest legs. They must be in
+    # `needs` or the watchdog fires before they settle — a degraded-runner
+    # timeout there would land after the scan and never get its one-shot
     # empty-commit retrigger. Cost: the watchdog waits for them.
-    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui, pty-integration, pty-integration-linux, pty-visual]
+    needs: [changes, static, test-core, coverage-gate, guards, flutter-tests, test-faui, pty-integration-linux, pty-visual]
     # Same-repo PRs only: the empty-commit retrigger pushes to the PR branch,
     # which this token cannot do for a fork's ref.
     if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
@@ -2532,6 +2619,113 @@ jobs:
           fi
           gh release upload "${GITHUB_REF_NAME}" "$asset" --clobber --repo "${GITHUB_REPOSITORY}"
 
+  # Rehostable web SPA bundle (issue #1100): every release ships
+  # fa-web-spa.zip — the release web build with <base href> rewritten to
+  # ./, so it rehosts on any static host (incl. path-prefixed) or sandboxed
+  # iframe with zero edits (docs/web-rehosting.md). Same build command AND
+  # base-href as the Pages deploy; scripts/package_web_spa.sh patches the
+  # tag on a COPY and enforces the absolute-path guard (AC3) before zipping.
+  # Lives here, not in pages.yml: release commits (pubspec/CHANGELOG bumps)
+  # fall outside pages.yml's path filters, so a Pages-produced bundle could
+  # never attach to the actual release commit.
+  web-spa:
+    name: Build web SPA bundle
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    timeout-minutes: 30
+    # Additive asset: a web-build failure (guard trip, SDK flake) must NOT
+    # hold the release hostage — CLI provenance (SHA256SUMS) and the vpinned
+    # bump still ship. Job-level continue-on-error reports the job (and its
+    # check) as SUCCESS — the failed steps stay visible on the run page for
+    # the manual check. Downstream needs see success; the provenance fa-*
+    # sweep then deterministically finds no zip (success -> signed,
+    # failure -> absent — never a half-updated manifest).
+    continue-on-error: true
+    if: >-
+      !cancelled() && needs.quality-gate.result == 'success' &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'release')
+    permissions:
+      contents: write # attach fa-web-spa.zip to the GitHub Release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same pinned SDK as build-web / the release path (#281).
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.47.x'
+          channel: stable
+          cache: true
+
+      - name: Example app pub get
+        working-directory: flutter_app
+        run: flutter pub get
+
+      # Same placeholders as the Pages job (both files are gitignored).
+      - name: Placeholder .env for the example app
+        run: touch flutter_app/.env
+
+      - name: Placeholder firebase_options.dart for the example app
+        run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      - name: Build web (release, Pages base)
+        working-directory: flutter_app
+        run: flutter build web --release --base-href /app/
+
+      # Same AC3 cut as the Pages deploy (#1096): the vendored WASI
+      # interpreter assets are mobile-only (loaded exclusively through
+      # WasiSandboxShell under Android/iOS guards; the web sandbox boots
+      # env_factory_stub -> MemoryShell -> CDN pyodide/quickjs), so zipping
+      # them into fa-web-spa.zip would ship ~47 MB of dead weight.
+      - name: Prune mobile-only wasm interpreter assets (#1096 AC3)
+        run: rm -rf flutter_app/build/web/assets/assets/wasm
+
+      - name: Package fa-web-spa.zip (relative base + AC3 guard)
+        run: bash scripts/package_web_spa.sh flutter_app/build/web fa-web-spa.zip
+
+      # AC1 (#1096): size manifest + +5% budget gate on the shipped SPA
+      # zip. First run self-seeds web-spa.tsv (--init-if-missing) — the
+      # step below uploads it for fetch+commit; committed floor afterwards.
+      - name: Size manifest + budget gate (fa-web-spa.zip)
+        run: |
+          python3 scripts/size_manifest.py check fa-web-spa.zip \
+            --baseline scripts/size_budget/web-spa.tsv --init-if-missing
+
+      - name: Upload seeded size baselines (#1096 ratchet)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: size-baselines-web-spa
+          path: scripts/size_budget/*.tsv
+          if-no-files-found: ignore
+
+      - name: Upload bundle to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # gh release upload needs the release to exist; create it lazily
+          # (matrix jobs race here, so a duplicate create is tolerated).
+          if ! gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" --generate-notes \
+              --repo "${GITHUB_REPOSITORY}" || true
+          fi
+          gh release upload "${GITHUB_REF_NAME}" fa-web-spa.zip --clobber --repo "${GITHUB_REPOSITORY}"
+
+      # continue-on-error keeps the job/check green even on failure — a
+      # release can then only be gated on a MISSING asset. Surface the miss
+      # in the run's step summary too (covers upload flakes, not just guard
+      # trips); the failed steps remain visible in the job view.
+      - name: Flag missing bundle in step summary
+        if: failure()
+        run: |
+          {
+            echo '## fa-web-spa.zip NOT shipped this release'
+            echo ''
+            echo 'The web SPA bundle job failed (continue-on-error: the release ships without it). See the failed steps above.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # SEC-07 (#795): the installer's default trust path is SIGNED checksums.
   # This job aggregates every fa-* asset of the release into SHA256SUMS and
   # signs it with the FA_RELEASE_SIGNING_KEY repo secret (openssl RSA —
@@ -2540,10 +2734,14 @@ jobs:
   # the same compromised source as the binary cannot vouch for itself.
   # Fail-closed: without the secret the release publishes NO provenance and
   # this job goes red — install.sh aborts with E_PROVENANCE_MISSING on it.
+  # Needs web-spa (#1100, continue-on-error) for ordering only: the web
+  # bundle cannot hold CLI provenance hostage. The ordering makes the fa-*
+  # sweep deterministic — web-spa success -> zip signed, web-spa failure ->
+  # zip absent — never a half-updated manifest.
   release-provenance:
     name: Sign release checksums
     runs-on: ubuntu-latest
-    needs: binaries
+    needs: [binaries, web-spa]
     timeout-minutes: 10
     if: >-
       !cancelled() && needs.binaries.result == 'success' &&
@@ -2555,7 +2753,7 @@ jobs:
       # gh-814 r2: the trust-anchor drift gate below diffs the secret's public
       # key against the PEM embedded in site/install.sh — that file must be
       # present, so the signing job checks out the site/ tree.
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Collect release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -2604,6 +2802,39 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" \
             provenance/SHA256SUMS provenance/SHA256SUMS.sig \
             --clobber --repo "${GITHUB_REPOSITORY}"
+
+  # Advance the vpinned release marker to the freshly signed tag. PURE
+  # RELEASE-ARTIFACT MANIPULATION — no commits, no pushes: pin_release.sh
+  # re-verifies the target's signature itself (fail-closed), then uploads
+  # the PINNED_VERSION asset to the standing `vpinned` release. Runs after
+  # release-provenance so the signed SHA256SUMS it checks are already
+  # published. The marker is only a pointer — installers verify the pointed
+  # release's signature against the committed trust anchor, so a tampered
+  # marker degrades to a DoS, never a bad binary.
+  install-pin-bump:
+    name: Advance vpinned marker
+    runs-on: ubuntu-latest
+    needs: release-provenance
+    timeout-minutes: 10
+    # always(): when release-provenance FAILS (e.g. the binaries/signature
+    # upload race), plain needs-gating leaves this job SKIPPED — and a
+    # `rerun --failed` never resurrects skipped jobs, so the marker stays
+    # stale forever (v1.0.483: publish+provenance flaked, the recovery rerun
+    # went green, the marker never advanced). With always() the job RUNS
+    # even after a failed provenance: pin_release.sh's own pre-move
+    # provenance gate (check_install_pin.sh with FA_PIN_TARGET) fails the
+    # job loudly instead of moving the marker — and a FAILED job IS part of
+    # rerun --failed, so the recovery cascade reaches it.
+    if: >-
+      always() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Point the vpinned marker at ${{ github.ref_name }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/pin_release.sh "${{ github.ref_name }}"
 
   installer-smoke:
     name: Installer smoke
@@ -2664,14 +2895,20 @@ jobs:
           "$fa_path" --version
 
   release:
-    name: Auto-release (patch bump + tag)
+    name: Auto-release (bump push)
     runs-on: ubuntu-latest
     needs: quality-gate
     timeout-minutes: 15
     # Every push to main gets a release with an auto-incremented patch version
     # (0.1.x -> 0.1.y), coalesced to <=1 per 2h — pub.dev rate-limits publishes
     # (~12/day; hit on 2026-07-18). Release commits are skipped (loop guard).
-    # Scheduled runs catch up commits that outpaced the coalesce window.
+    # gh-1172: the bump pushes DIRECTLY to protected main authenticated as the
+    # fa-release-bot GitHub App — the only bypass actor on the main ruleset
+    # (the PR stopgap from 2026-09-29 is retired: it burned a full CI queue
+    # cycle + machine review round on every chore bump). The App token is
+    # minted job-locally; nothing else in the repo can read RELEASE_APP_*.
+    # release-tag below cuts the tag from the pushed commit. Scheduled runs
+    # catch up commits that outpaced the coalesce window.
     # !cancelled() + explicit gate check: GitHub propagates "skipped"
     # TRANSITIVELY through an always()-job's needs graph. quality-gate uses
     # if: always() and its needs include path-gated legs (perf-gate etc.)
@@ -2679,29 +2916,115 @@ jobs:
     # force-skipped on EVERY run since the perf gate landed (fa#456),
     # silently killing auto-release for a week. The explicit result check
     # keeps the gate red-line: no release on a failed quality gate.
+    # workflow_dispatch reaches this job ONLY through an explicit input gate
+    # (gh-1172 round-2 BLOCK): this is the repo's dispatch-only CI — the SM
+    # runs `gh workflow run ci.yml --ref <pr-branch>` with no inputs, so a
+    # bare dispatch arm would execute the dispatched (PR-head) ref's
+    # auto_release.sh with the bypass App's push credentials. releaseDryRun
+    # exercises the rollout switch (AC1 — any ref, never pushes);
+    # releaseDispatch on refs/heads/main is the manual catch-up release.
     if: >-
       !cancelled() && needs.quality-gate.result == 'success' &&
       ((github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(release):'))
-      || github.event_name == 'schedule')
+      || github.event_name == 'schedule'
+      || (github.event_name == 'workflow_dispatch' && inputs.releaseDryRun == true)
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.releaseDispatch == true))
+    concurrency:
+      group: release-main
+      cancel-in-progress: false
+    # Defense in depth (gh-1172 round-3 BLOCK): the push rides the checkout
+    # App token EXCLUSIVELY, so this job's GITHUB_TOKEN never needs write —
+    # on a dry-run dispatch of a PR head (AC1, any ref) that keeps the job's
+    # own token read-only, leaving no write-capable credential in the run.
+    permissions:
+      contents: read
+    steps:
+      # Job-scoped App token (gh-1172 fix-contract item 1): minted per run,
+      # expires with the job, never shared with other workflows.
+      # NEVER minted on a dry-run dispatch: that arm fires on ANY ref, so the
+      # bypass credential must not exist in a run that executes the (possibly
+      # untrusted) dispatched ref's auto_release.sh — "dry-run never pushes"
+      # may not depend on the script under test honoring the flag. The real
+      # arms (push, schedule, releaseDispatch) see a non-true releaseDryRun
+      # and mint as before.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        if: inputs.releaseDryRun != true
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          # Least privilege (gh-1172 round-2 review): the App is the ruleset
+          # bypass actor, so scope the token to what the push needs instead
+          # of every permission the installation carries.
+          permissions: contents:write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # App token (not GITHUB_TOKEN) so the pushed commit triggers the
+          # follow-up ci.yml run whose release-tag job cuts the tag —
+          # GITHUB_TOKEN pushes never trigger downstream workflow runs.
+          # Dry-run dispatch: the mint above is skipped, its outputs are
+          # empty (falsy) and checkout falls back to the plain GITHUB_TOKEN
+          # (read-only per the job permissions block).
+          token: ${{ steps.app-token.outputs.token || github.token }}
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.x'
+
+      - name: Bump version, changelog, push to main
+        env:
+          RELEASE_DRY_RUN: ${{ github.event.inputs.releaseDryRun == 'true' && '1' || '0' }}
+        run: bash scripts/auto_release.sh
+
+  # Cuts the annotated tag + GitHub Release from the pushed 'chore(release):'
+  # bump commit (see scripts/tag_release.sh). The bump lands via direct push
+  # to protected main as the fa-release-bot App (gh-1172), so the tag phase
+  # keys on that push. Tag push rides the App token (checkout token) —
+  # GITHUB_TOKEN pushes never trigger the tag-scoped binaries/publish jobs.
+  # Serialized with the bump push job via the release-main group: tag first,
+  # next bump after.
+  release-tag:
+    name: Auto-release (tag on push)
+    runs-on: ubuntu-latest
+    needs: quality-gate
+    timeout-minutes: 10
+    if: >-
+      !cancelled() && needs.quality-gate.result == 'success' &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      startsWith(github.event.head_commit.message, 'chore(release):')
     concurrency:
       group: release-main
       cancel-in-progress: false
     permissions:
       contents: write
     steps:
+      # Same fa-release-bot App as the bump job (gh-1172): the tag push and
+      # `gh release create` ride the App installation token — without an
+      # explicit GH_TOKEN the create || true in tag_release.sh was a
+      # guaranteed silent no-op and the curated CHANGELOG notes never reached
+      # the release object (BLOCK finding on PR #1093, live review 2026-09-30).
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          # Least privilege (gh-1172 round-2 review): contents:write only —
+          # the tag push + `gh release create` need nothing else.
+          permissions: contents:write
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          # PAT (not GITHUB_TOKEN) so the pushed tag triggers the publish job —
+          # App token so the pushed tag triggers the publish job —
           # GITHUB_TOKEN pushes never trigger downstream workflow runs.
-          token: ${{ secrets.RELEASE_PAT }}
+          token: ${{ steps.app-token.outputs.token }}
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.x'
-
-      - name: Bump version, changelog, tag and push
-        run: bash scripts/auto_release.sh
+      - name: Cut annotated tag + GitHub Release
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bash scripts/tag_release.sh
 
   # PR-gate twin of the release `binaries` job: the CLI bundle must compile
   # on every supported platform and actually run (`fa --help`) BEFORE a PR

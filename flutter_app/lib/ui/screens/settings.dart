@@ -33,6 +33,7 @@ import 'package:fa/gemma/gemma_types.dart';
 import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/ondevice_config_store.dart';
+import 'package:fa/services/quota_store.dart';
 import 'package:fa/services/launcher_layout_store.dart';
 import 'package:fa/services/openrouter_oauth_coordinator.dart';
 import 'package:fa/services/openrouter_oauth_links_stub.dart'
@@ -44,7 +45,9 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/ui/screens/settings_key_dialogs.dart';
+import 'package:fa/ui/screens/skills_toggles_section.dart';
 import 'package:fa/ui/screens/tools_availability_section.dart';
+import 'package:fa/ui/screens/redaction_section.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/services/theme_controller.dart';
 import 'package:fa/services/theme_pack_store.dart';
@@ -1999,6 +2002,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     return ProvidersSection(
       registry: widget.registry,
       modelsFetcher: widget.modelsFetcher,
+      // Quota meters + pull-to-refresh (issue #823 AC6).
+      quotas: QuotaStore.instance.service,
       openRouterOAuthCallbackUrl:
           OpenRouterOAuthCoordinator.instance.platformCallbackUrl,
       openRouterOAuthCapture: OpenRouterOAuthCoordinator.instance.capture,
@@ -2150,9 +2155,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const Divider(),
         const SizedBox(height: 16),
       ],
+      // Per-skill toggles (issue #1151): the package builtins are embedded
+      // data on every host — the rows render wherever the settings screen
+      // does, no consent-style platform gating.
+      SkillsTogglesSection(service: service),
+      const SizedBox(height: 24),
+      const Divider(),
+      const SizedBox(height: 16),
       // Capability-gated tools (issue #19): live toggles, every
       // platform — the tool set exists everywhere.
       ToolsAvailabilitySection(service: service),
+      const SizedBox(height: 24),
+      const Divider(),
+      const SizedBox(height: 16),
+      // Secret redaction (issue #1078 AC4/E3): the live pipeline toggle.
+      RedactionSection(service: service),
       const SizedBox(height: 24),
       const Divider(),
       const SizedBox(height: 16),

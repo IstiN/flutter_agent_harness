@@ -119,6 +119,15 @@ extension AgentCliMessagingFlow on AgentCli {
   String get _scheduledMessagesRoot =>
       '${config.sessionRoot}/${encodeSessionCwd(_env.cwd)}/messages';
 
+  /// The mailbox of the subagent whose run encloses the caller, or null on
+  /// the main agent (gh-970). `schedule_message` resolves "your own
+  /// mailbox" through this — the queue's `selfMailbox` always names MAIN,
+  /// so without it every child self-reminder landed in main's inbox.
+  String? _childSenderMailbox() {
+    final id = activeSubagentId();
+    return id == null ? null : _subagentManager.mailboxOf(id);
+  }
+
   /// Namespaces this instance's mailboxes with the active session id: two
   /// Fa instances sharing the messaging root never drain each other's
   /// inboxes. Called after every session init/switch.
@@ -158,16 +167,24 @@ extension AgentCliMessagingFlow on AgentCli {
     );
   }
 
+  /// The prompt-affecting half of [_syncMailboxPrefix]: assigns the
+  /// mailbox prefix and recomposes (the messaging section rides the
+  /// prompt). Split out so the resume budget can project the section
+  /// BEFORE the gh-968 parity walk (`_loadSession`, issue #1151 review)
+  /// without the prefix assignment drifting between the two sites.
+  void _assignMailboxPrefix(String id) {
+    _subagentManager.mailboxPrefix = id;
+    _applyPromptComposition();
+  }
+
   void _syncMailboxPrefix() {
-    _subagentManager.mailboxPrefix = _session?.cachedId ?? '';
+    _assignMailboxPrefix(_session?.cachedId ?? '');
     // Issue #426: child session headers carry `metadata.parent` from the
     // manager's parentSessionId — pinned empty at construction because
     // the session id does not exist yet. Assign it here (the moment the
     // id materializes) so children of THIS session link back to it
     // instead of being written with `parent: ""`.
     _subagentManager.parentSessionId = _subagentManager.mailboxPrefix;
-    // The prompt's messaging section carries the live mailbox address.
-    _applyPromptComposition();
     // Re-arm scheduled-message delivery: pending records that came due
     // while another session was active surface in the now-active mailbox
     // (start() is an idempotent re-arm + drain).

@@ -56,6 +56,7 @@ import '../lsp/lsp_tool.dart';
 import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../prompts/prompts.g.dart';
+import '../skills/builtin_skills.dart';
 import '../types.dart';
 import '../web_search/web_search.dart';
 import 'archive_reader.dart';
@@ -78,6 +79,11 @@ const defaultLsEntryLimit = 500;
 
 /// Maximum shell timeout: pi clamps at the int32 max milliseconds.
 const _maxTimeoutMs = 2147483647;
+
+/// "Unbounded" line cap for truncation helpers: 2^62 as a literal because
+/// dart2js shifts are 32-bit — `1 << 62` evaluates to 0 on web, which would
+/// truncate everything (issue #1074).
+const _unboundedMaxLines = 0x4000000000000000;
 
 /// Transient-failure retries for foreground bash runs: timeout-class
 /// failures (a hung transport, or the model's own per-call cap) are
@@ -740,13 +746,19 @@ AgentTool readFileTool(
       if (extended != null) return extended;
 
       final path = split.path;
-      final binaryRead = await env.readBinaryFile(path);
-      if (binaryRead.isErr) throw StateError('${binaryRead.errorOrNull}');
-      final bytes = binaryRead.valueOrNull!;
-      cancelToken?.throwIfCancelled();
+      // Built-in skills (issue #1151) ride the package as compiled-in
+      // data — their `builtin://` paths resolve from the embedded copy on
+      // every host, before any filesystem access.
+      final embedded = builtinSkillTextAt(path);
+      if (embedded == null) {
+        final binaryRead = await env.readBinaryFile(path);
+        if (binaryRead.isErr) throw StateError('${binaryRead.errorOrNull}');
+        final bytes = binaryRead.valueOrNull!;
+        cancelToken?.throwIfCancelled();
 
-      final imageResult = _readImageResult(path, bytes, parsed, model);
-      if (imageResult != null) return imageResult;
+        final imageResult = _readImageResult(path, bytes, parsed, model);
+        if (imageResult != null) return imageResult;
+      }
 
       return _readTextContent(
         env,
@@ -755,6 +767,7 @@ AgentTool readFileTool(
         parsed,
         offset,
         limit,
+        embedded,
         hashlineMode,
         cancelToken,
       );
@@ -875,10 +888,13 @@ Future<ToolExecutionResult> _readTextContent(
   ReadSelector parsed,
   int? offset,
   int? limit,
+  String? embedded,
   bool hashlineMode,
   CancelToken? cancelToken,
 ) async {
-  final read = await env.readTextFile(path);
+  final read = embedded != null
+      ? Ok<String, FileError>(embedded)
+      : await env.readTextFile(path);
   if (read.isErr) throw StateError('${read.errorOrNull}');
   cancelToken?.throwIfCancelled();
 
@@ -1581,7 +1597,7 @@ ToolExecutionResult _readArchiveDirectory(
   // Byte truncation only; the entry count is already capped above (omp sets
   // the list-limit metadata without a text notice).
   return ToolExecutionResult.text(
-    _truncateHead(output, maxLines: 1 << 62).content,
+    _truncateHead(output, maxLines: _unboundedMaxLines).content,
   );
 }
 
@@ -1773,6 +1789,97 @@ ToolExecutionResult _readSqliteSchema(
 }
 
 // ---------------------------------------------------------------------------
+// per-path mutation lock (issue #1083)
+// ---------------------------------------------------------------------------
+
+/// Serializes mutating built-in tools (`write`, `edit`) on the same resolved
+/// file path (issue #1083): a parallel batch of same-file edits used to
+/// interleave their read-modify-write windows — every call reported success
+/// but only the last write survived on disk. Holding the whole
+/// read-validate-write body makes each edit apply on top of the previous
+/// one; different files and read-only tools are unaffected. The registry is
+/// process-wide, matching the conflict domain: one agent process
+/// (cross-process locking is a separate OS-level problem, out of scope).
+///
+/// ponytail: covers the built-in file tools only; third-party plugin file
+/// tools don't inherit this yet — lift the guard into the ToolExecutor keyed
+/// by a `mutatesPath` tool hint if plugins ever need it.
+final _pathMutationLock = _PathMutationLock();
+
+/// The canonical lock key for [path]: the env-absolute spelling collapsed
+/// to one POSIX-normal form, so aliased spellings of one file (`f.md`,
+/// `./f.md`, `x/../f.md`) serialize together on EVERY env — production IO
+/// envs do not normalize (`io_execution_env._resolve` merely prefixes the
+/// cwd) while [MemoryExecutionEnv] does, so the lock must not rely on
+/// either. Mirrors `HashlinePatcher._canonicalPath` for the absolute step;
+/// symlink aliasing stays out of scope (the pure-Dart env seam does not
+/// resolve links).
+///
+/// Documented residual (issue #1083 review round 2): on case-insensitive
+/// backends (macOS default APFS, Windows) `F.md` and `f.md` are one file
+/// but keep two lock keys. The env seam carries no case-sensitivity
+/// signal, and folding keys unconditionally would spuriously serialize
+/// distinct files on case-sensitive backends (Linux production targets) —
+/// the same out-of-scope class as symlink aliasing above.
+Future<String> _canonicalPath(ExecutionEnv env, String path) async {
+  final resolved = await env.absolutePath(path);
+  return _normalizeLockKey(resolved.valueOrNull ?? path);
+}
+
+/// Collapses duplicate separators, `.` and `..` segments so one absolute
+/// file has exactly one lock-key spelling. Windows drive letters survive
+/// as a segment — keys only need to be equal iff the spellings alias.
+String _normalizeLockKey(String path) {
+  final out = <String>[];
+  for (final segment in path.replaceAll('\\', '/').split('/')) {
+    if (segment.isEmpty || segment == '.') continue;
+    if (segment == '..') {
+      if (out.isNotEmpty) out.removeLast();
+      continue;
+    }
+    out.add(segment);
+  }
+  return '/${out.join('/')}';
+}
+
+/// Per-path async mutex. Waiters chain per key: a body runs only after the
+/// previous body for the same path settled. Every wait is single-resource
+/// (one path), so acquisition order can never deadlock and no timeouts are
+/// needed (issue #1083 E2).
+final class _PathMutationLock {
+  final _tails = <String, Future<void>>{};
+
+  /// Runs [body] holding the lock on [path].
+  Future<T> run<T>(String path, Future<T> Function() body) {
+    final previous = _tails[path];
+    final released = Completer<void>();
+    _tails[path] = released.future;
+    return Future<T>(() async {
+      // [previous] always settles normally — [released] completes in a
+      // finally below, so a failed body leaves its error with its own
+      // caller and merely frees the path.
+      if (previous != null) await previous;
+      try {
+        return await body();
+      } finally {
+        released.complete();
+        if (identical(_tails[path], released.future)) _tails.remove(path);
+      }
+    });
+  }
+
+  /// Runs [body] holding the locks on every distinct [paths] entry,
+  /// acquired in sorted order to keep multi-path waits deadlock-free.
+  Future<T> runAll<T>(Iterable<String> paths, Future<T> Function() body) {
+    final ordered = paths.toSet().toList()..sort();
+    Future<T> acquire(int index) => index == ordered.length
+        ? Future<T>(body)
+        : run(ordered[index], () => acquire(index + 1));
+    return acquire(0);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // write (ported from pi's tools/write.ts)
 // ---------------------------------------------------------------------------
 
@@ -1804,11 +1911,18 @@ AgentTool writeFileTool(ExecutionEnv env) {
       cancelToken?.throwIfCancelled();
       final path = arguments['path'] as String;
       final content = arguments['content'] as String;
-      final written = await env.writeFile(path, content);
-      if (written.isErr) throw StateError('${written.errorOrNull}');
-      return ToolExecutionResult.text(
-        'Successfully wrote ${_byteLength(content)} bytes to $path',
-      );
+      // Issue #1083: hold the per-path lock across the whole mutation so a
+      // concurrent same-file tool call queues behind it instead of racing.
+      return _pathMutationLock.run(await _canonicalPath(env, path), () async {
+        // Re-check after the lock wait: the queue can span a cancel, and a
+        // cancelled call must not run its mutation once its turn arrives.
+        cancelToken?.throwIfCancelled();
+        final written = await env.writeFile(path, content);
+        if (written.isErr) throw StateError('${written.errorOrNull}');
+        return ToolExecutionResult.text(
+          'Successfully wrote ${_byteLength(content)} bytes to $path',
+        );
+      });
     },
   );
 }
@@ -1886,7 +2000,33 @@ AgentTool editFileTool(ExecutionEnv env, {HashlineSnapshotStore? snapshots}) {
             '(exact-match mode), not both.',
           );
         }
-        return _executeHashlineEdit(env, store, path, patch, cancelToken);
+        // Parse outside the lock: argument errors must not queue behind
+        // another holder. Section paths key the lock the same way the
+        // exact-match mode does (issue #1083), so interleaved hashline
+        // patches serialize per file and the TAG guard decides the winner.
+        final parsed = HashlinePatch.parse(patch, fallbackPath: path);
+        if (parsed.sections.isEmpty) {
+          throw StateError('No hashline sections found in patch input.');
+        }
+        // Lock every file the patch can touch: the authored section paths
+        // AND the canonical paths that minted each cited tag — the
+        // patcher's missing-path recovery (_recoverSectionPathFromTag) can
+        // redirect a section onto a snapshot's file, which must not race
+        // its own mutations either. Extra keys only over-lock briefly;
+        // sorted acquisition in [runAll] keeps that deadlock-free.
+        final keys = <String>{
+          for (final section in parsed.sections)
+            await _canonicalPath(env, section.path),
+          for (final section in parsed.sections)
+            if (section.fileHash != null)
+              for (final snapshot in store.findByHash(section.fileHash!))
+                _normalizeLockKey(snapshot.path),
+        };
+        return _pathMutationLock.runAll(keys, () {
+          // Re-check after the lock wait: the queue can span a cancel.
+          cancelToken?.throwIfCancelled();
+          return _executeHashlineEdit(env, store, path, parsed, cancelToken);
+        });
       }
       if (path == null || oldText == null || newText == null) {
         throw StateError(
@@ -1894,7 +2034,14 @@ AgentTool editFileTool(ExecutionEnv env, {HashlineSnapshotStore? snapshots}) {
           'path + oldText + newText (exact-match mode).',
         );
       }
-      return _executeExactMatchEdit(env, path, oldText, newText, cancelToken);
+      // Issue #1083: hold the lock across the read-validate-write window so
+      // a concurrent same-file edit applies on top of this one's result
+      // instead of both editing the same snapshot.
+      return _pathMutationLock.run(await _canonicalPath(env, path), () {
+        // Re-check after the lock wait: the queue can span a cancel.
+        cancelToken?.throwIfCancelled();
+        return _executeExactMatchEdit(env, path, oldText, newText, cancelToken);
+      });
     },
   );
 }
@@ -1939,20 +2086,16 @@ Future<ToolExecutionResult> _executeExactMatchEdit(
   );
 }
 
-/// Runs one hashline-mode edit: parses [patchText], applies it all-or-
-/// nothing via [HashlinePatcher], and renders the post-edit `[path#TAG]`
-/// header(s) the model anchors its next edit on (omp's edit response).
+/// Runs one hashline-mode edit: applies the parsed [patch] all-or-nothing
+/// via [HashlinePatcher], and renders the post-edit `[path#TAG]` header(s)
+/// the model anchors its next edit on (omp's edit response).
 Future<ToolExecutionResult> _executeHashlineEdit(
   ExecutionEnv env,
   HashlineSnapshotStore store,
   String? path,
-  String patchText,
+  HashlinePatch patch,
   CancelToken? cancelToken,
 ) async {
-  final patch = HashlinePatch.parse(patchText, fallbackPath: path);
-  if (patch.sections.isEmpty) {
-    throw StateError('No hashline sections found in patch input.');
-  }
   final patcher = HashlinePatcher(env: env, snapshots: store);
   final result = await patcher.apply(patch);
   cancelToken?.throwIfCancelled();
@@ -2104,7 +2247,10 @@ ToolExecutionResult _listingOutput(
   int limit,
   bool entryLimitReached,
 ) {
-  final truncation = _truncateHead(results.join('\n'), maxLines: 1 << 62);
+  final truncation = _truncateHead(
+    results.join('\n'),
+    maxLines: _unboundedMaxLines,
+  );
   var output = truncation.content;
   final notices = <String>[];
   if (entryLimitReached) {
@@ -2354,18 +2500,36 @@ StateError _bashFailureError(
   List<String> notices,
   num? timeoutArg,
 ) {
+  // gh-1053 (review rework): a killed call's error carries the captured
+  // partial output — render it so the model sees WHERE the call stalled,
+  // not just the verdict.
   return switch (error.code) {
     ExecutionErrorCode.aborted => StateError(
-      _appendStatus('', 'Command aborted'),
+      _bashFailureWithCapture(error, _appendStatus('', 'Command aborted')),
     ),
     ExecutionErrorCode.timeout => StateError(
-      _appendStatus(
-        _retryNoticePrefix(notices),
-        'Command timed out after ${timeoutArg ?? 'unknown'} seconds',
+      _bashFailureWithCapture(
+        error,
+        _appendStatus(
+          _retryNoticePrefix(notices),
+          'Command timed out after ${timeoutArg ?? 'unknown'} seconds',
+        ),
       ),
     ),
     _ => StateError('${_retryNoticePrefix(notices)}$error'),
   };
+}
+
+/// Appends the killed call's partial capture (stderr after stdout, each
+/// tail-truncated to the tool budget) to a bash failure message.
+String _bashFailureWithCapture(ExecutionError error, String message) {
+  final parts = <String>[
+    if (error.stdout.isNotEmpty)
+      '--- partial stdout ---\n${_truncateBashOutput(error.stdout)}',
+    if (error.stderr.isNotEmpty)
+      '--- partial stderr ---\n${_truncateBashOutput(error.stderr)}',
+  ];
+  return parts.isEmpty ? message : '$message\n${parts.join('\n')}';
 }
 
 /// Joins exec stdout and stderr (stderr after stdout).

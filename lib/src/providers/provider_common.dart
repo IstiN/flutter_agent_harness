@@ -11,6 +11,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -22,6 +23,7 @@ import '../model.dart';
 import '../rate_limit_info.dart';
 import '../sse_decoder.dart';
 import '../types.dart';
+import 'transient_retry_stream.dart';
 
 /// Placeholder substituted for user-message images when the target model has
 /// no `image` input (pi's `NON_VISION_USER_IMAGE_PLACEHOLDER`).
@@ -334,6 +336,15 @@ String formatProviderError(Object error) {
   if (error is http.ClientException) {
     return error.message;
   }
+  // Issue #1036 (review round 1): keep the "TimeoutException" word in the
+  // rendered text — it IS the contract the model-roles failover chain
+  // (`fallback_stream._transportPatterns`) and the providers queue
+  // (`providers_queue_runtime._timeoutPatterns`) classify on, routing every
+  // watchdog timeout to the retry/failover path. Render the diagnostic
+  // message after the keyword, not the exception wrapper's clock noise.
+  if (error is TimeoutException) {
+    return 'TimeoutException: ${error.message ?? 'provider request timed out'}';
+  }
   if (error is StateError) {
     return error.message;
   }
@@ -531,7 +542,11 @@ Future<http.StreamedResponse> sendProviderRequest(
   request.followRedirects = false;
   var current = request;
   for (var redirects = 0; ; redirects++) {
-    final response = await _sendWatched(httpClient, current, cancelToken);
+    final response = await sendWatchedProviderRequest(
+      httpClient,
+      current,
+      cancelToken,
+    );
     final location = response.headers['location'];
     final target = _redirectTarget(current.url, response.statusCode, location);
     if (target == null) return _validateStreamResponse(current, response);
@@ -551,22 +566,140 @@ Future<http.StreamedResponse> sendProviderRequest(
   }
 }
 
-/// One watched send: the cancel-token race plus the connect watchdog.
-Future<http.StreamedResponse> _sendWatched(
+/// One watched send: the cancel-token race plus the connect watchdog, with
+/// a bounded TRANSPARENT retry when the watchdog kills a request that never
+/// received a byte (issue #1121).
+///
+/// Public for transports that must own their response semantics and so
+/// bypass [sendProviderRequest]'s redirect decision and status/body
+/// validation — chatgpt-codex stores Cloudflare cookies from error
+/// responses and replays challenges itself, so it takes the raw watched
+/// send and keeps its own cookie/challenge logic.
+Future<http.StreamedResponse> sendWatchedProviderRequest(
   http.Client httpClient,
   http.Request request,
   CancelToken? cancelToken,
 ) async {
-  final responseFuture = httpClient.send(request);
+  for (var attempt = 0; ; attempt++) {
+    // A sent `http.Request` is finalized by the client and cannot be sent
+    // again — every attempt after the first rides a fresh clone (the
+    // redirect `_reissue` clones for the same reason).
+    final attemptRequest = attempt == 0
+        ? request
+        : _reissue(request, request.url, 0);
+    try {
+      return await _sendWatchedOnce(
+        httpClient,
+        attemptRequest,
+        cancelToken,
+        attempt,
+      );
+    } on TimeoutException {
+      // The connect watchdog fired (issue #1121). `httpClient.send`
+      // completes only when the response HEADERS arrive, so a timeout in
+      // THIS layer means zero response bytes — the provider never started
+      // generating. That makes an in-place retry safe where a mid-stream
+      // retry is not: no partial stream to corrupt, no committed state, and
+      // nothing double-billed (a request the endpoint never answered is not
+      // a billed generation) — the identical payload is simply re-sent.
+      // The budget is deliberately separate from the roles failover ladder
+      // (a network stall must not rotate the model chain, #1066 semantics)
+      // and from TransientRetryStream (governed by bytes AFTER the first).
+      // Mid-stream silence never re-enters here — the idle watchdog fires
+      // downstream in createSseIterator — so only the never-started request
+      // ever retries.
+      if (attempt >= providerConnectRetries) rethrow;
+      final delay = providerConnectRetryBackoff * (1 << attempt);
+      // Observable on the EXISTING retry surface: the CLI host prints a dim
+      // `[net]` line + fa.log entry; hosts leaving the hook null stay
+      // silent — no new telemetry.
+      transientRetryNotice?.call(
+        attempt + 1,
+        providerConnectRetries + 1,
+        delay,
+        'connect stall: no response bytes',
+      );
+      // Bounded backoff; the sleeper races the cancel token, so a user
+      // abort during the wait wins over the pending retry.
+      final survived = await transientRetrySleeper(delay, cancelToken);
+      if (!survived) {
+        cancelToken?.throwIfCancelled(); // the abort propagates
+        rethrow;
+      }
+    }
+  }
+}
+
+/// One connect-watched send attempt: no retry. [attempt] (0-based) only
+/// labels the orphan janitor's notice.
+Future<http.StreamedResponse> _sendWatchedOnce(
+  http.Client httpClient,
+  http.Request request,
+  CancelToken? cancelToken,
+  int attempt,
+) async {
+  // Re-pin the runtime type parameter BEFORE the watchdog: IOClient.send's
+  // future is reified as package:http's internal IOStreamedResponse, and
+  // `.timeout` runtime-checks its value-returning onTimeout closure against
+  // that reified type — the () => http.StreamedResponse watchdog fails the
+  // cast the moment a REAL client is used (CI core shard 1/4, run
+  // 36802277315: "type '() => StreamedResponse' is not a subtype of type
+  // '(() => FutureOr<IOStreamedResponse>)?' of 'onTimeout'"). A `.then<S>`
+  // round-trip reifies the future as Future<http.StreamedResponse> so the
+  // closure matches; one microtask hop at header time, no semantic change.
+  final responseFuture = httpClient
+      .send(request)
+      .then<http.StreamedResponse>((response) => response);
+  // Issue #1036 (review round 1): name the endpoint in the watchdog error —
+  // the rendered "TimeoutException: …" text is the always-retryable contract
+  // the failover/queue classifiers match on.
+  http.StreamedResponse watchdogTimedOut() {
+    // The attempt is ABANDONED, not aborted: package:http cannot cancel a
+    // pending send, and a slow-but-alive endpoint (reasoning model over
+    // the first-byte budget) may still answer. Attach a janitor so the
+    // late answer is (a) announced on the existing `[net]`/fa.log retry
+    // surface instead of dropping silently — the provider may have started
+    // generating a body nobody will read — and (b) released: cancelling
+    // the body subscription closes the connection at once rather than
+    // draining a dead generation into the void (which usually aborts the
+    // generation server-side, keeping the nothing-double-billed claim as
+    // true as the protocol allows). Late errors land in the janitor's own
+    // handler, never the zone (issue #921 discipline). The retry cap
+    // bounds the abandoned-attempt multiplication at
+    // providerConnectRetries + 1 per stalled turn.
+    unawaited(
+      responseFuture.then<Object?>((late) {
+        transientRetryNotice?.call(
+          0,
+          providerConnectRetries + 1,
+          Duration.zero,
+          'abandoned connect attempt ${attempt + 1} answered late — '
+          'response detached, generation dropped',
+        );
+        return late.stream
+            .listen((_) {}, onError: (Object _) {}, cancelOnError: true)
+            .cancel();
+      }, onError: (Object _) {}),
+    );
+    throw TimeoutException(
+      'provider stream request to ${redactProviderUrl(request.url)} timed out: '
+      'no response headers within ${effectiveProviderConnectTimeout.inSeconds}s '
+      '(connect watchdog)',
+    );
+  }
+
   if (cancelToken == null) {
-    return responseFuture.timeout(effectiveProviderConnectTimeout);
+    return responseFuture.timeout(
+      effectiveProviderConnectTimeout,
+      onTimeout: watchdogTimedOut,
+    );
   }
   return Future.any([
     responseFuture,
     cancelToken.onCancel.then<http.StreamedResponse>(
       (_) => throw const AbortedError(),
     ),
-  ]).timeout(effectiveProviderConnectTimeout);
+  ]).timeout(effectiveProviderConnectTimeout, onTimeout: watchdogTimedOut);
 }
 
 /// The terminal-hop validations: non-200 statuses and the 200 answers
@@ -628,11 +761,41 @@ Future<http.StreamedResponse> _validateStreamResponse(
   return response;
 }
 
+/// Renders [url] for watchdog/error text: scheme, host, port and path
+/// survive; userinfo and query are dropped — a custom provider's baseUrl
+/// can carry credentials (`https://user:key@gateway/…`, `?api_key=…`), and
+/// the rendered assistant error lands in the transcript verbatim
+/// (issue #1036, review round 2).
+String redactProviderUrl(Uri url) {
+  final port = url.hasPort ? ':${url.port}' : '';
+  return '${url.scheme}://${url.host}$port${url.path}';
+}
+
 /// Connect/first-headers watchdog for provider calls: an endpoint that
 /// never answers the request would otherwise hang the turn forever. Three
 /// minutes on purpose: loaded reasoning endpoints (kimi-k3 et al.) may hold
 /// a big request for over a minute before the first byte.
 const providerConnectTimeout = Duration(seconds: 180);
+
+/// Bounded connect-stall retry budget (issue #1121): how many times a
+/// request the connect watchdog killed with ZERO response bytes is re-sent
+/// before the failure escalates to the run. 2 retries (3 total attempts):
+/// the connect leg alone costs ≈ 3×(180s + 1s+2s backoff) ≈ 9 min against
+/// an endpoint that black-holes. This leg sits BELOW TransientRetryStream
+/// (3 attempts, 5s apart) and the roles failover ladder, so a hard-down
+/// endpoint stacks ≈ 3 connect legs × 3 transient attempts ≈ 27 min per
+/// role entry before failover (pre-PR: ≈ 9 min), and the ladder repeats
+/// per queue entry — the recovery path of last resort stays the ladder's
+/// own budgets, and environments that prefer faster failure shrink
+/// `providerTimeouts: connect:` in `~/.fah/config.yaml` (issue #1036),
+/// which this retry inherits automatically. This budget is NOT the roles
+/// failover ladder's — a connect stall never consumes a failover attempt.
+const providerConnectRetries = 2;
+
+/// Base backoff between connect-stall retries; doubles per retry (1s, 2s).
+/// Process-wide and injectable in tests, same pattern as
+/// [transientRetrySleeper].
+Duration providerConnectRetryBackoff = const Duration(seconds: 1);
 
 /// Idle watchdog for provider streams: with no bytes for this long the
 /// endpoint is considered wedged — the stream errors (and the roles
@@ -643,16 +806,26 @@ const providerStreamIdleTimeout = Duration(minutes: 5);
 
 /// Provider watchdog overrides from the `providerTimeouts:` section of
 /// `~/.fah/config.yaml` (strict [ConfigException] parsing in
-/// `cli_config.dart`).
+/// `cli_config.dart`) plus the `FA_PROVIDER_TIMEOUT_SECONDS` env override
+/// folded in at boot (issue #1036).
 final class ProviderTimeoutsOverride {
   /// Creates an override; null fields keep the defaults.
-  const ProviderTimeoutsOverride({this.connect, this.streamIdle});
+  const ProviderTimeoutsOverride({
+    this.connect,
+    this.streamIdle,
+    this.fetchRead,
+  });
 
   /// Connect/first-headers watchdog override ([providerConnectTimeout]).
   final Duration? connect;
 
   /// Idle-stream watchdog override ([providerStreamIdleTimeout]).
   final Duration? streamIdle;
+
+  /// Non-streaming fetch watchdog override ([providerFetchReadTimeout]) —
+  /// the `FA_PROVIDER_TIMEOUT_SECONDS` env value; the yaml section has no
+  /// key for it by design.
+  final Duration? fetchRead;
 }
 
 /// Process-wide watchdog override, set once at startup from the config file
@@ -692,6 +865,104 @@ Duration get effectiveProviderConnectTimeout =>
 Duration get effectiveProviderStreamIdleTimeout =>
     providerTimeoutsOverride?.streamIdle ?? providerStreamIdleTimeout;
 
+/// Connect/first-headers watchdog for NON-streaming provider fetches
+/// (model lists, OAuth/token endpoints, quota probes): an endpoint that
+/// never even answers headers fails fast instead of hanging the session
+/// (issue #1036). Tighter than [providerConnectTimeout] on purpose — a
+/// fetch is small, unlike a streamed generation.
+const providerFetchConnectTimeout = Duration(seconds: 30);
+
+/// Read watchdog for NON-streaming provider fetches: the whole response
+/// (headers already arrived) must complete within this budget. The
+/// `FA_PROVIDER_TIMEOUT_SECONDS` env override (folded into
+/// [ProviderTimeoutsOverride.fetchRead] at boot) replaces this default.
+const providerFetchReadTimeout = Duration(seconds: 120);
+
+/// The effective fetch read watchdog: the override or the default.
+Duration get effectiveProviderFetchReadTimeout =>
+    providerTimeoutsOverride?.fetchRead ?? providerFetchReadTimeout;
+
+/// The effective fetch connect watchdog: the 30s default capped by the
+/// overall read budget — one knob ([effectiveProviderFetchReadTimeout])
+/// tightens both legs.
+Duration get effectiveProviderFetchConnectTimeout {
+  final read = effectiveProviderFetchReadTimeout;
+  return providerFetchConnectTimeout < read
+      ? providerFetchConnectTimeout
+      : read;
+}
+
+/// Sends a NON-streaming provider HTTP request under the fetch watchdogs
+/// (issue #1036): connect/first-headers
+/// ([effectiveProviderFetchConnectTimeout]) then the full body
+/// ([effectiveProviderFetchReadTimeout]). On timeout throws a
+/// [TimeoutException] whose message names [endpoint] — the caller surfaces
+/// a clear, retryable error instead of hanging forever.
+///
+/// This is the bounded counterpart of [_sendWatched] for the call paths
+/// streaming adapters never take. The connect leg cannot cancel the in-flight
+/// socket (no headers, no response object — same ceiling as the streaming
+/// connect watchdog); the read leg cancels the abandoned body subscription so
+/// the socket is released back to the client instead of trickling into a
+/// dead listener (the non-SSE twin of the issue-#921 abandonment).
+Future<http.Response> sendProviderFetch(
+  http.Client client,
+  http.BaseRequest request, {
+  String endpoint = 'provider endpoint',
+}) async {
+  final connect = effectiveProviderFetchConnectTimeout;
+  final read = effectiveProviderFetchReadTimeout;
+  final streamed = await client
+      .send(request)
+      .timeout(
+        connect,
+        onTimeout: () => throw TimeoutException(
+          'provider fetch ($endpoint): no response headers within '
+          '${connect.inSeconds}s (connect watchdog)',
+        ),
+      );
+  // The read leg owns the body subscription directly: `Response.fromStream`
+  // hides its listen, so on timeout the abandoned body would keep trickling
+  // into a handlerless sink (the issue-#921 class). Owning the subscription
+  // makes the watchdog's cancellation real.
+  final body = BytesBuilder(copy: false);
+  final completer = Completer<http.Response>();
+  final subscription = streamed.stream.listen(
+    body.add,
+    onError: (Object error, StackTrace stackTrace) {
+      if (!completer.isCompleted) completer.completeError(error, stackTrace);
+    },
+    onDone: () {
+      if (!completer.isCompleted) {
+        completer.complete(
+          // The field set mirrors `Response.fromStream`.
+          http.Response.bytes(
+            body.takeBytes(),
+            streamed.statusCode,
+            request: request,
+            headers: streamed.headers,
+            isRedirect: streamed.isRedirect,
+            persistentConnection: streamed.persistentConnection,
+            reasonPhrase: streamed.reasonPhrase,
+          ),
+        );
+      }
+    },
+  );
+  return completer.future.timeout(
+    read,
+    onTimeout: () {
+      // Detach so the socket closes (or returns to the keep-alive pool).
+      unawaited(subscription.cancel().then((_) {}, onError: (Object _) {}));
+      throw TimeoutException(
+        'provider fetch ($endpoint): response did not complete within '
+        '${read.inSeconds}s (read watchdog; FA_PROVIDER_TIMEOUT_SECONDS '
+        'overrides this)',
+      );
+    },
+  );
+}
+
 /// Wires an SSE [StreamIterator] over [response]'s body, cancelling the
 /// subscription when [cancelToken] fires so the connection closes promptly.
 ///
@@ -704,13 +975,16 @@ Duration get effectiveProviderStreamIdleTimeout =>
 /// `: comment` heartbeat gateways use to keep wedged generations alive.
 /// Event-level silence per `moveNext` is the honest signal.
 ///
-/// Cancellation through the `async*` [SseDecoder] is lazy: the cancel future
-/// only completes once the generator body resumes, so the response-body
-/// subscription can still be active when `runProviderStream` force-closes
-/// the owned HTTP client on abort. The injected "connection closed" error
-/// is therefore swallowed here whenever [cancelToken] is cancelled; real
-/// mid-stream errors (token not cancelled) propagate to the adapter's
-/// try/catch unchanged.
+/// The raw body subscription is owned here with a stable error sink
+/// (issue #921): the `async*` [SseDecoder] cannot finish cancelling while
+/// it is suspended awaiting input, so after the SSE iteration is abandoned
+/// (idle watchdog, abort) the byte pipeline stays attached to the socket —
+/// and a flaky link's late failure arriving in that window used to find a
+/// handlerless chain and kill the process ('fa crashed: ClientException:
+/// Connection closed while receiving data'). Late errors now land in the
+/// owned `onError` and are swallowed once the stream is abandoned; live
+/// errors ride into the pipeline for the adapter's try/catch. Done is
+/// always forwarded: it is what unsticks the pending lazy cancellation.
 StreamIterator<ServerSentEvent> createSseIterator(
   http.StreamedResponse response,
   CancelToken? cancelToken, {
@@ -718,20 +992,48 @@ StreamIterator<ServerSentEvent> createSseIterator(
 }) {
   final effectiveIdleTimeout =
       idleTimeout ?? effectiveProviderStreamIdleTimeout;
-  Stream<List<int>> stream = response.stream;
-  if (cancelToken != null) {
-    stream = stream.handleError((Object error) {
-      if (!cancelToken.isCancelled) {
-        throw error;
-      }
-    });
-  }
-  final inner = StreamIterator(
-    stream.transform(utf8.decoder).transform(const SseDecoder()),
+  var abandoned = false;
+  void abandon() => abandoned = true;
+  StreamSubscription<List<int>>? rawSub;
+  final body = StreamController<List<int>>(
+    onPause: () => rawSub?.pause(),
+    onResume: () => rawSub?.resume(),
+    onCancel: () {
+      abandon();
+      return rawSub?.cancel() ?? Future<void>.value();
+    },
   );
-  final iterator = _IdleWatchdogSseIterator(inner, effectiveIdleTimeout);
+  rawSub = response.stream.listen(
+    (data) {
+      // isClosed mirrors onError: a misbehaving source emitting after the
+      // done forward would throw StateError inside this handler — the
+      // same handlerless-crash class this sink exists to prevent.
+      if (!abandoned && !body.isClosed) body.add(data);
+    },
+    onError: (Object error, StackTrace stackTrace) {
+      if (abandoned || (cancelToken?.isCancelled ?? false) || body.isClosed) {
+        return; // the link's death rattle after abandonment — noise.
+      }
+      body.addError(error, stackTrace);
+    },
+    onDone: body.close,
+  );
+  final inner = StreamIterator(
+    body.stream.transform(utf8.decoder).transform(const SseDecoder()),
+  );
+  final iterator = _IdleWatchdogSseIterator(
+    inner,
+    effectiveIdleTimeout,
+    onAbandon: abandon,
+  );
   if (cancelToken != null) {
-    unawaited(cancelToken.onCancel.then((_) => unawaited(iterator.cancel())));
+    // cancel() is already quiet — no extra swallow needed here.
+    unawaited(
+      cancelToken.onCancel.then((_) {
+        abandon();
+        return iterator.cancel();
+      }),
+    );
   }
   return iterator;
 }
@@ -740,10 +1042,15 @@ StreamIterator<ServerSentEvent> createSseIterator(
 /// after [idleTimeout] without a decoded SSE event, and cancels the inner
 /// subscription on fire so the dead connection is released.
 class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
-  _IdleWatchdogSseIterator(this._inner, this._idleTimeout);
+  _IdleWatchdogSseIterator(this._inner, this._idleTimeout, {this.onAbandon});
 
   final StreamIterator<ServerSentEvent> _inner;
   final Duration _idleTimeout;
+
+  /// Called before any cancel so the byte sink starts swallowing late
+  /// transport errors (issue #921).
+  final void Function()? onAbandon;
+
   Timer? _timer;
 
   @override
@@ -753,9 +1060,24 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
   Future<bool> moveNext() {
     _timer?.cancel();
     final completer = Completer<bool>();
+    final Future<bool> inner;
+    try {
+      inner = _inner.moveNext();
+    } catch (error, stackTrace) {
+      // Sync misuse throw (StreamIterator's 'Already waiting'): fail the
+      // caller WITHOUT arming the timer — an orphaned timer would later
+      // complete this completer unlistened in the root zone, the exact
+      // crash class of issue #921.
+      completer.completeError(error, stackTrace);
+      return completer.future;
+    }
     _timer = Timer(_idleTimeout, () {
       if (completer.isCompleted) return;
-      unawaited(_inner.cancel());
+      // Abandon before cancelling so the byte sink swallows the dying
+      // link's error, and quiet-cancel: the cancel future rides that
+      // dying pipeline and may itself fail (issue #921).
+      onAbandon?.call();
+      unawaited(_quietCancel(_inner.cancel()));
       completer.completeError(
         TimeoutException(
           'no events from the endpoint for '
@@ -765,7 +1087,7 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
       );
     });
     unawaited(
-      _inner.moveNext().then(
+      inner.then(
         (value) {
           _timer?.cancel();
           if (!completer.isCompleted) completer.complete(value);
@@ -784,8 +1106,18 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
   @override
   Future<void> cancel() {
     _timer?.cancel();
-    return _inner.cancel();
+    onAbandon?.call();
+    // The quieted future IS the contract: the abandoned pipeline is by
+    // definition noise, so a caller's `await iterator.cancel()` can never
+    // see a dying-pipeline cancel failure (issue #921).
+    return _quietCancel(_inner.cancel());
   }
+}
+
+/// Awaits a cancellation whose pipeline may be dying: its failure is noise
+/// (issue #921) — swallowed, never an unawaited-error crash.
+Future<void> _quietCancel(Future<void> cancel) {
+  return cancel.then((_) {}, onError: (Object _) {});
 }
 
 /// Mutable accumulation state for one streamed assistant message.

@@ -204,10 +204,15 @@ A channel is nothing but an X25519 keypair plus a name
 (`channels.dart` `newChannelKeypair`). The hub knows only the name and
 the public key.
 
-- **Join**: `{"op":"join","channel":c,"chanPubkey":pub}` — the first
-  join creates the channel and registers the pubkey; re-joins are
+- **Join**: `{"op":"join","channel":c,"chanPubkey":pub}` — re-joins are
   idempotent and replayed after every reconnect/welcome
-  (`hub_client.dart` `join`, `_joinKnownChannels`).
+  (`hub_client.dart` `join`, `_joinKnownChannels`). **Channel creation
+  is master-gated on the public hub (hub.fa1.dev, dap@main 2026-09):**
+  a client-secret connection may only join EXISTING channels — joining
+  an unknown channel answers `access_denied`. The legacy "first join
+  creates the channel" behaviour remains on self-hosted/local hubs
+  without the gate; clients must treat `access_denied` on join as a
+  normal "not invited / wrong id" signal, never as a transient error.
 - **Membership = possession of the channel private key.** The hub's
   fan-out is broadcast (every connected agent except the sender gets the
   frame — `fake_hub.dart` `_send`); privacy comes from the key, not from
@@ -222,7 +227,10 @@ Key lifecycle (`ChannelStore`, backed by the machine-shared
 
 1. First send/join/invite touching an unknown channel **auto-generates**
    a keypair and persists it (`ChannelStore.keysFor`) — zero-config
-   channel creation.
+   channel creation **on self-hosted hubs**; on the gated public hub
+   (§5) the join is rejected and the freshly minted keypair belongs to
+   a channel that never comes into existence — importing agents should
+   surface the `access_denied` rather than retry.
 2. An accepted invite persists the received keypair
    (`ChannelStore.accept`).
 3. Agents on the same machine share the file, so they share channels for
@@ -596,3 +604,32 @@ against it: CLI peers reach it by name, and the app's roster view
 (composer in the same section) sends hub-ward. The LAN listener pairing
 (E2/A3) ships behind the same controller — the app connects to
 `ws://<mac>:<port>` with the pairing token once the LAN bind lands.
+
+## 14. fa_network bridging: channel ids are unstable
+
+When fa_network bridges a channel onto the hub (the relay joins a hub
+channel whose name is the fa_network channel id), remember that
+**fa_network channel ids are random 32-byte tokens** (`newToken()`), not
+deterministic derivations: deleting and recreating a channel mints a NEW
+id under the same display name, and every invite/bundle carrying the old
+id silently points at a dead hub channel (the relay only joins channels
+its store knows — frames to the stale id fan out on the hub but never
+reach fa_network).
+
+Consequences for invite producers and consumers:
+
+- Treat a network/channel invite as **point-in-time**. A stale invite is
+  indistinguishable from a working one on the hub side — always verify
+  liveness by resolving the channel list at join time:
+  `GET /api/networks/{networkId}/channels` (any member sessionToken,
+  guest included), match by channel **name** (stable), take the current
+  id. Name-based resolution at join is the recommended pattern; the id
+  in the invite is a fast path, not a contract.
+- The fanet1 envelope AAD binds to the channel **id**
+  (`dap1|<frameId>|<channelId>` — see
+  `flutter_app/lib/network/envelope_codec.dart`), so an id change also
+  re-keys every new frame; the app decrypts pre-recreation history via
+  its legacy display-name AAD fallback only while the name is unchanged.
+- Public (keyless) channels accept hub joins with an empty `chanPubkey`
+  (`{"op":"join","channel":<id>,"chanPubkey":""}`); payloads are raw
+  UTF-8 (no fanet1 wrapper) and render as plain text.

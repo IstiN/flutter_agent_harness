@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -474,6 +475,32 @@ void main() {
       expect(r.cooldown, providerQueueDefaultCooldown);
     });
 
+    test(
+      'budget/spending exhaustion → quota death, immediate (issue #926)',
+      () {
+        final r = classify(
+          _err(
+            m,
+            '403: CodeMie monthly budget limit reached '
+            '(\$150.08 / \$150.00). Next budget reset: 01/10/2026',
+          ),
+        );
+        expect(r.kind, QueueDeathKind.quota);
+        expect(r.immediate, isTrue);
+        expect(r.cooldown, isNull);
+      },
+    );
+
+    test('budget wording outranks the gateway 5xx and finish_reason nets', () {
+      // A budget error wrapped in transport/terminal wordings must still
+      // advance immediately, never surface verbatim or ride the ladder.
+      final wrapped = classify(
+        _err(m, '500: Internal network failure — spending limit reached'),
+      );
+      expect(wrapped.kind, QueueDeathKind.quota);
+      expect(wrapped.immediate, isTrue);
+    });
+
     test('401/403 → auth, immediate, no cooldown (UT-10)', () {
       for (final text in ['401 Unauthorized', '403 Forbidden: bad key']) {
         final r = classify(_err(m, text));
@@ -516,6 +543,39 @@ void main() {
         ).kind,
         QueueDeathKind.finishReason,
       );
+    });
+
+    test('every #1036 watchdog timeout renders retryable and classifies '
+        'timeout (review round 1)', () {
+      // The transcript path: the agent loop renders the thrown
+      // TimeoutException via formatProviderError, the queue classifies the
+      // rendered text. All five watchdog shapes must land on
+      // QueueDeathKind.timeout (the retry-next-provider death), not
+      // fall through to the verbatim unknown net.
+      for (final exception in [
+        TimeoutException(
+          'provider fetch (models list): no response headers within '
+          '30s (connect watchdog)',
+        ),
+        TimeoutException(
+          'provider fetch (models list): response did not complete within '
+          '120s (read watchdog; FA_PROVIDER_TIMEOUT_SECONDS overrides this)',
+        ),
+        TimeoutException(
+          'provider stream request to https://example.test/v1/responses '
+          'timed out: no response headers within 180s (connect watchdog)',
+        ),
+        TimeoutException(
+          'no events from the endpoint for 300s (stream idle timeout)',
+        ),
+        TimeoutException(
+          'chatgpt-codex https://example.test/v1/responses stalled: no SSE '
+          'bytes for 300s (stream idle timeout)',
+        ),
+      ]) {
+        final r = classify(_err(m, formatProviderError(exception)));
+        expect(r.kind, QueueDeathKind.timeout, reason: r.runtimeType.toString());
+      }
     });
 
     test('content_filter and user abort never advance (E-guard)', () {
@@ -824,6 +884,46 @@ void main() {
         expect(text, contains('Provider chain exhausted'));
         expect(text, contains('5xx'));
         expect(text, contains('quota'));
+        expect(text, contains('Queue health'));
+      },
+    );
+
+    test(
+      'sole queue entry waits out a quota wall: waited total in the story '
+      '(issue #1066)',
+      () async {
+        final m = _model('anthropic', 'm1');
+        List<AssistantMessageEvent> quotaWallTurn() => [
+          StartEvent(partial: _msg(m)),
+          _err(m, '429: quota', retryAfter: const Duration(seconds: 90)),
+        ];
+        final probe = _Probe({
+          'key-head': [quotaWallTurn(), quotaWallTurn(), quotaWallTurn()],
+        });
+        final rt = runtime([
+          _entry('anthropic', 'm1'),
+        ], probe, policy: const ModelRolesRetryPolicy(
+          retriesPerEntry: 2,
+          maxWait: Duration(seconds: 30),
+        ));
+
+        final events = await drive(rt.streamFunction);
+
+        // Queue deaths ride the transport-flagged rotation path, but the
+        // QUOTA class keys the accounting: two 90s wait-outs announced as
+        // plain retries, and the story reports the waited total.
+        expect(sleeps, [
+          const Duration(seconds: 90),
+          const Duration(seconds: 90),
+        ]);
+        expect(
+          notices.map((n) => n.kind),
+          everyElement(FallbackNoticeKind.retry),
+        );
+        final error = events.whereType<ErrorEvent>().single;
+        final text = error.error.errorMessage!;
+        expect(text, contains('Provider chain exhausted'));
+        expect(text, contains('waited 3m on rate limits'));
         expect(text, contains('Queue health'));
       },
     );

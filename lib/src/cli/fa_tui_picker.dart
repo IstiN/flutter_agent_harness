@@ -143,7 +143,14 @@ extension _TuiPickerKeys on FaTuiModel {
       case 'enter':
       case 'tab':
         if (menuItems.isEmpty) return (this, null);
-        return _acceptPickerAt(menuSelected);
+        // gh-1049 review: under the progressive-reveal test hook
+        // [menuSelected] may point past the revealed prefix (it is clamped
+        // to the FULL list so the cursor lands on the initial row once the
+        // reveal completes). Clamp to what is actually painted so Enter
+        // mid-reveal accepts the last VISIBLE row instead of throwing
+        // RangeError. Production opens are atomic, where the clamp is a
+        // no-op.
+        return _acceptPickerAt(menuSelected.clamp(0, menuItems.length - 1));
       default:
         return null;
     }

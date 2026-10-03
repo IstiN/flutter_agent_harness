@@ -68,6 +68,115 @@ void main() {
     });
   });
 
+  group('splitWireServeArgs', () {
+    test('a plain invocation passes through untouched', () {
+      final split = splitWireServeArgs(const ['--model', 'm', 'prompt']);
+      expect(split.wireServe, isFalse);
+      expect(split.cliArgs, const ['--model', 'm', 'prompt']);
+    });
+
+    test('stdio mode is detected and flags are stripped', () {
+      final split = splitWireServeArgs(const [
+        'wire-serve',
+        '--stdio',
+        '--model',
+        'm1',
+      ]);
+      expect(split.wireServe, isTrue);
+      expect(split.stdio, isTrue);
+      expect(split.port, isNull);
+      expect(split.token, isNull);
+      expect(split.cliArgs, const ['--model', 'm1']);
+    });
+
+    test('ws mode keeps port and token, strips flags and their values', () {
+      final split = splitWireServeArgs(const [
+        'wire-serve',
+        '--port',
+        '9999',
+        '--token',
+        'sekret',
+        '--model',
+        'm1',
+      ]);
+      expect(split.wireServe, isTrue);
+      expect(split.stdio, isFalse);
+      expect(split.port, 9999);
+      expect(split.token, 'sekret');
+      expect(split.cliArgs, const ['--model', 'm1']);
+    });
+
+    test('a value directly after --port/--token drops, the next one stays', () {
+      final split = splitWireServeArgs(const [
+        'wire-serve',
+        '--token',
+        'sekret',
+        'positional',
+      ]);
+      expect(split.token, 'sekret');
+      expect(split.cliArgs, const ['positional']);
+    });
+
+    test(
+      'the word as any non-subcommand argument never intercepts (r2 #6)',
+      () {
+        final split = splitWireServeArgs(const ['-p', 'wire-serve']);
+        expect(split.wireServe, isFalse);
+        expect(split.cliArgs, const ['-p', 'wire-serve']);
+      },
+    );
+
+    test('repeated flags: last occurrence wins for --port and --token (r2 #7)',
+        () {
+      final split = splitWireServeArgs(const [
+        'wire-serve',
+        '--port',
+        '1111',
+        '--port',
+        '2222',
+        '--token',
+        'a',
+        '--token',
+        'b',
+      ]);
+      expect(split.port, 2222);
+      expect(split.token, 'b');
+    });
+
+    test('a value-flag value is consumed verbatim (r2 #7): --token --stdio',
+        () {
+      final split = splitWireServeArgs(const ['wire-serve', '--token', '--stdio']);
+      expect(split.stdio, isFalse, reason: 'the word is the token VALUE');
+      expect(split.token, '--stdio');
+    });
+
+    test('--stdio and --port together are a loud usage error', () {
+      expect(
+        () =>
+            splitWireServeArgs(const ['wire-serve', '--stdio', '--port', '1']),
+        throwsFormatException,
+      );
+    });
+
+    test('a missing or non-numeric --port value is a usage error', () {
+      expect(
+        () => splitWireServeArgs(const ['wire-serve', '--port']),
+        throwsFormatException,
+      );
+      expect(
+        () => splitWireServeArgs(const ['wire-serve', '--port', 'main']),
+        throwsFormatException,
+      );
+    });
+
+    test('a --token without a value is a usage error', () {
+      expect(
+        () => splitWireServeArgs(const ['wire-serve', '--token']),
+        throwsFormatException,
+      );
+    });
+  });
+
   group('splitServeA2aArgs', () {
     test('a plain invocation passes through untouched', () {
       final split = splitServeA2aArgs(const ['--model', 'm', 'prompt']);
@@ -223,8 +332,7 @@ void main() {
       expect(resolved.unknownSavedProvider, 'from-the-future');
     });
 
-    test('a BLANK saved provider is unset, not unknown (gh-760 review)',
-        () {
+    test('a BLANK saved provider is unset, not unknown (gh-760 review)', () {
       // `provider: ""` is a hand-edit artifact — pre-#760 it silently took
       // the default; it must not wear the version-skew warning.
       final resolved = resolveEffectiveCliArgs(
@@ -694,6 +802,272 @@ void main() {
         env: const {},
       );
       expect(key, isEmpty);
+    });
+
+    test('gh-1059 AC3: a seeded snapshot resolves every saved entry key BY '
+        'keyName (H2 seam guard, multi-entry)', () async {
+      // Owner-shaped: several saved custom providers, each with its own
+      // name-scoped key, all values persisted in the store snapshot —
+      // the boot key for the ACTIVE endpoint must resolve from the
+      // entry's keyName (not the host-scoped slot, which is empty here).
+      const active = 'https://api.chatgpt.com/v1';
+      const other = 'https://api.z.ai/api/paas/v4';
+      final customProviders = [
+        CustomProviderEntry(
+          name: 'chatgpt.com',
+          apiType: 'openai',
+          baseUrl: active,
+          modelId: 'gpt-5',
+          keyName: 'FA_KEY_CHATGPT_COM',
+        ),
+        CustomProviderEntry(
+          name: 'z.ai',
+          apiType: 'openai',
+          baseUrl: other,
+          modelId: 'glm-4.7',
+          keyName: 'FA_KEY_Z_AI',
+        ),
+      ];
+      final cache = await _cache({
+        'FA_KEY_CHATGPT_COM': 'active-entry-key',
+        'FA_KEY_Z_AI': 'other-entry-key',
+      });
+
+      final key = startupApiKey(
+        'openai-completions',
+        cache,
+        baseUrl: active,
+        customProviders: customProviders,
+        defaultRoleResolved: false,
+        interactive: false,
+        env: const {},
+      );
+
+      expect(key, 'active-entry-key');
+
+      // Interactive boot (the owner's REPL case) resolves the same way.
+      expect(
+        startupApiKey(
+          'openai-completions',
+          cache,
+          baseUrl: active,
+          customProviders: customProviders,
+          defaultRoleResolved: false,
+          interactive: true,
+          env: const {},
+        ),
+        'active-entry-key',
+      );
+    });
+
+    test('gh-1059 AC3: an empty snapshot reads as keyless (the reported '
+        'symptom, H1 discriminator)', () async {
+      const active = 'https://api.chatgpt.com/v1';
+      final cache = await _cache({});
+
+      final key = startupApiKey(
+        'openai-completions',
+        cache,
+        baseUrl: active,
+        customProviders: [
+          CustomProviderEntry(
+            name: 'chatgpt.com',
+            apiType: 'openai',
+            baseUrl: active,
+            modelId: 'gpt-5',
+            keyName: 'FA_KEY_CHATGPT_COM',
+          ),
+        ],
+        defaultRoleResolved: false,
+        interactive: true,
+        env: const {},
+      );
+
+      // The resolution seam consults the snapshot correctly — an EMPTY
+      // snapshot is the only way providers boot keyless, which pins the
+      // bug to the preload/read path (H1), not this seam (H2).
+      expect(key, isEmpty);
+    });
+  });
+
+  group('referencedSecureKeyNames + secureKeyBootDiagnostics (gh-1059)', () {
+    final savedWithKeys = CliConfig(
+      customProviders: [
+        CustomProviderEntry(
+          name: 'chatgpt.com',
+          apiType: 'openai',
+          baseUrl: 'https://api.chatgpt.com/v1',
+          modelId: 'gpt-5',
+          keyName: 'FA_KEY_CHATGPT_COM',
+        ),
+        CustomProviderEntry(
+          name: 'z.ai',
+          apiType: 'openai',
+          baseUrl: 'https://api.z.ai/api/paas/v4',
+          modelId: 'glm-4.7',
+          keyName: 'FA_KEY_Z_AI',
+        ),
+        CustomProviderEntry(
+          name: 'keyless-local',
+          apiType: 'openai',
+          baseUrl: 'http://llama.local:8080',
+          modelId: 'm1',
+        ),
+      ],
+    );
+
+    test('referenced names are exactly the saved entries keyNames', () {
+      expect(referencedSecureKeyNames(savedWithKeys), {
+        'FA_KEY_CHATGPT_COM',
+        'FA_KEY_Z_AI',
+      });
+    });
+
+    test('an env-only config references nothing', () {
+      expect(referencedSecureKeyNames(CliConfig()), isEmpty);
+    });
+
+    test('debug: one line per outcome plus the summary', () {
+      final report = SecureKeyPreloadReport(
+        storeAvailable: true,
+        outcomes: const [
+          SecureKeyReadOutcome(
+            'FA_KEY_CHATGPT_COM',
+            SecureKeyReadStatus.found,
+            value: 'x',
+          ),
+          SecureKeyReadOutcome('FA_KEY_Z_AI', SecureKeyReadStatus.absent),
+          SecureKeyReadOutcome(
+            'OPENAI_API_KEY',
+            SecureKeyReadStatus.error,
+            error: 'exit 45: Interaction is not allowed.',
+          ),
+        ],
+      );
+
+      final lines = secureKeyBootDiagnostics(
+        report: report,
+        referencedKeyNames: referencedSecureKeyNames(savedWithKeys),
+        debug: true,
+        storeLabel: 'macOS Keychain',
+      );
+
+      expect(lines, contains('[keys] FA_KEY_CHATGPT_COM: found'));
+      expect(lines, contains('[keys] FA_KEY_Z_AI: absent'));
+      expect(
+        lines,
+        contains(
+          '[keys] OPENAI_API_KEY: error: exit 45: Interaction is '
+          'not allowed.',
+        ),
+      );
+      expect(
+        lines.lastWhere((l) => l.startsWith('[keys] ')),
+        contains('2 config-referenced, 1 found, 1 absent, 1 errors'),
+      );
+      // Some referenced keys resolved → no zero-resolved warning.
+      expect(lines.where((l) => l.startsWith('warning:')), isEmpty);
+    });
+
+    test('zero referenced keys resolved → the NOTHING warning plus a '
+        'per-name list of the errored reads', () {
+      SecureKeyPreloadReport reportOf(List<SecureKeyReadOutcome> outcomes) =>
+          SecureKeyPreloadReport(storeAvailable: true, outcomes: outcomes);
+      final referenced = referencedSecureKeyNames(savedWithKeys);
+
+      for (final debug in [false, true]) {
+        final lines = secureKeyBootDiagnostics(
+          report: reportOf(const [
+            SecureKeyReadOutcome(
+              'FA_KEY_CHATGPT_COM',
+              SecureKeyReadStatus.error,
+              error: 'timed out after 15s',
+            ),
+            SecureKeyReadOutcome('FA_KEY_Z_AI', SecureKeyReadStatus.absent),
+          ]),
+          referencedKeyNames: referenced,
+          debug: debug,
+        );
+        final warnings = lines.where((l) => l.startsWith('warning:'));
+        expect(warnings, hasLength(2), reason: 'debug=$debug');
+        expect(warnings.first, contains('2 provider key(s)'));
+        expect(warnings.first, contains('resolved NOTHING'));
+        // gh-1059 review: `error` means the store ANSWERED and failed —
+        // worth naming even though the NOTHING line already fired.
+        expect(warnings.last, contains('1 provider key(s)'));
+        expect(warnings.last, contains('failed to read'));
+        expect(warnings.last, contains('FA_KEY_CHATGPT_COM'));
+      }
+    });
+
+    test('a partial read failure warns per-name even though other '
+        'referenced keys resolve (debug off)', () {
+      final lines = secureKeyBootDiagnostics(
+        report: const SecureKeyPreloadReport(
+          storeAvailable: true,
+          outcomes: [
+            SecureKeyReadOutcome(
+              'FA_KEY_CHATGPT_COM',
+              SecureKeyReadStatus.found,
+              value: 'x',
+            ),
+            SecureKeyReadOutcome(
+              'FA_KEY_Z_AI',
+              SecureKeyReadStatus.error,
+              error: 'exit 45: interaction not allowed',
+            ),
+          ],
+        ),
+        referencedKeyNames: referencedSecureKeyNames(savedWithKeys),
+        debug: false,
+      );
+      final warnings = lines.where((l) => l.startsWith('warning:'));
+      expect(warnings, hasLength(1));
+      expect(warnings.single, contains('1 provider key(s)'));
+      expect(warnings.single, contains('failed to read'));
+      expect(warnings.single, contains('FA_KEY_Z_AI'));
+      expect(warnings.single, contains('--debug-secrets'));
+    });
+
+    test('an env-only boot (nothing referenced) never warns', () {
+      final lines = secureKeyBootDiagnostics(
+        report: const SecureKeyPreloadReport(
+          storeAvailable: true,
+          outcomes: [],
+        ),
+        referencedKeyNames: referencedSecureKeyNames(CliConfig()),
+        debug: false,
+      );
+      expect(lines, isEmpty);
+    });
+
+    test('an unavailable store stays quiet for env-only configs but warns '
+        'when the config references store keys', () {
+      final base = {
+        'report': const SecureKeyPreloadReport(
+          storeAvailable: false,
+          outcomes: [],
+        ),
+        'debug': false,
+      };
+      // Env-only: nothing referenced, nothing to warn about.
+      expect(
+        secureKeyBootDiagnostics(
+          report: base['report'] as SecureKeyPreloadReport,
+          referencedKeyNames: const {},
+          debug: base['debug'] as bool,
+        ),
+        isEmpty,
+      );
+      // Referenced keys + no backend: the boot is keyless for them — loud.
+      final lines = secureKeyBootDiagnostics(
+        report: base['report'] as SecureKeyPreloadReport,
+        referencedKeyNames: {'FA_KEY_CHATGPT_COM', 'FA_KEY_Z_AI'},
+        debug: false,
+      );
+      expect(lines, hasLength(1));
+      expect(lines.single, contains('2 provider key(s)'));
+      expect(lines.single, contains('store unavailable'));
     });
   });
 

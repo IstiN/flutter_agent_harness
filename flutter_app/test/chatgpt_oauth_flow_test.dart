@@ -2,11 +2,14 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show HttpServer, InternetAddress, Socket, SocketException;
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/chatgpt_oauth_flow.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/provider_auth_surface.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:flutter/material.dart';
@@ -69,8 +72,8 @@ ChatGptOAuthCredentials _credentials(String email) => ChatGptOAuthCredentials(
 
 /// Pumps a 'go' button that launches the flow with in-memory stores and a
 /// canned OAuth result (no browser, no callback server). The [iosFn] /
-/// [pushWebView] / [exchangeFn] seams switch the flow onto its iOS WebView
-/// hop (the injected flowFn must then stay unused).
+/// [systemSessionFn] / [pushWebView] / [exchangeFn] seams switch the flow
+/// onto its iOS hops (the injected flowFn must then stay unused).
 Future<(Future<bool>, _RecordingService, ProviderRegistry)> _launch(
   WidgetTester tester, {
   ProviderRegistry? registry,
@@ -81,6 +84,7 @@ Future<(Future<bool>, _RecordingService, ProviderRegistry)> _launch(
   bool Function()? iosFn,
   ChatGptCodeExchange? exchangeFn,
   Future<String?> Function(BuildContext, Uri, String)? pushWebView,
+  ChatGptSystemAuthSession? systemSessionFn,
 }) async {
   final resolvedRegistry = registry ?? ProviderRegistry.inMemory();
   final service = _RecordingService(MemoryExecutionEnv());
@@ -104,6 +108,7 @@ Future<(Future<bool>, _RecordingService, ProviderRegistry)> _launch(
                 iosFn: iosFn,
                 exchangeFn: exchangeFn,
                 pushWebView: pushWebView,
+                systemSessionFn: systemSessionFn,
               );
             },
             child: const Text('go'),
@@ -344,9 +349,19 @@ void main() {
     expect(keys.valueOf('FA_KEY_CHATGPT_COM_ALICE_EXAMPLE_COM'), isNull);
   });
 
-  group('the iOS WebView hop (issue #773)', () {
+  group('the iOS WebView fallback hop (issue #773 via #861)', () {
     // The loopback redirect the webview intercepts; the port is never bound.
     const redirectUri = 'http://localhost:1455/auth/callback';
+
+    // The production hop binds real ports and talks to the platform
+    // channel — every test in this group forces `sessionUnavailable`, so
+    // what they actually pin is the WebView FALLBACK contract (issue
+    // #861): the #773 semantics survive the degraded surface.
+    Future<({ChatGptOAuthCredentials? credentials, bool sessionUnavailable})>
+    sessionUnavailableFn({
+      ChatGptCodeExchange? exchangeFn,
+      void Function(String message)? onExchangeError,
+    }) async => (credentials: null, sessionUnavailable: true);
 
     testWidgets('an iOS-shaped run lands the same entry, key slot and '
         'service reconfigure as the macOS flow', (tester) async {
@@ -356,6 +371,7 @@ void main() {
         tester,
         keys: keys,
         iosFn: () => true,
+        systemSessionFn: sessionUnavailableFn,
         pushWebView: (context, url, state) async {
           authorizeUrl = url;
           return 'code-1';
@@ -398,6 +414,7 @@ void main() {
       await _launch(
         tester,
         iosFn: () => true,
+        systemSessionFn: sessionUnavailableFn,
         pushWebView: (context, url, state) async {
           authorizeUrl = url;
           expectedState = state;
@@ -427,6 +444,7 @@ void main() {
         tester,
         keys: keys,
         iosFn: () => true,
+        systemSessionFn: sessionUnavailableFn,
         pushWebView: (context, url, state) async {
           authorizeUrl = url;
           return 'code-1';
@@ -485,6 +503,7 @@ void main() {
       final (done, service, registry) = await _launch(
         tester,
         iosFn: () => true,
+        systemSessionFn: sessionUnavailableFn,
         pushWebView: (context, url, state) async => null,
       );
       expect(await done, isFalse);
@@ -498,6 +517,7 @@ void main() {
       final (done, service, registry) = await _launch(
         tester,
         iosFn: () => true,
+        systemSessionFn: sessionUnavailableFn,
         pushWebView: (context, url, state) async => 'code-1',
         exchangeFn:
             ({
@@ -517,6 +537,402 @@ void main() {
         findsOneWidget,
       );
       expect(find.textContaining('authorization code expired'), findsOneWidget);
+    });
+  });
+
+  group('the iOS auth-session hop (issue #861)', () {
+    testWidgets('a completed session hop feeds the same shared tail '
+        '(entry, key slot, service reconfigure)', (tester) async {
+      final keys = SessionKeysStore.inMemory();
+      final (done, service, registry) = await _launch(
+        tester,
+        keys: keys,
+        iosFn: () => true,
+        systemSessionFn:
+            ({
+              ChatGptCodeExchange? exchangeFn,
+              void Function(String message)? onExchangeError,
+            }) async => (
+              credentials: _credentials('alice@example.com'),
+              sessionUnavailable: false,
+            ),
+      );
+      expect(await done, isTrue);
+
+      final entry = registry.providers.single;
+      expect(entry.name, 'alice@example.com');
+      expect(entry.baseUrl, chatGptCodexBaseUrl);
+      expect(
+        registry.keyFor(entry.id),
+        _credentials('alice@example.com').encode(),
+      );
+      expect(
+        keys.valueOf('FA_KEY_CHATGPT_COM_ALICE_EXAMPLE_COM'),
+        _credentials('alice@example.com').encode(),
+      );
+      expect(service.reconfigured, isNotNull);
+    });
+
+    testWidgets('sessionUnavailable degrades to the WebView fallback '
+        '(E2)', (tester) async {
+      var fallbackCalled = false;
+      final (done, service, registry) = await _launch(
+        tester,
+        iosFn: () => true,
+        systemSessionFn:
+            ({
+              ChatGptCodeExchange? exchangeFn,
+              void Function(String message)? onExchangeError,
+            }) async => (credentials: null, sessionUnavailable: true),
+        pushWebView: (context, url, state) async {
+          fallbackCalled = true;
+          return null; // cancel inside the fallback
+        },
+      );
+      expect(await done, isFalse);
+      expect(fallbackCalled, isTrue);
+      expect(registry.providers, isEmpty);
+      expect(service.reconfigured, isNull);
+    });
+
+    testWidgets('a cancelled session hop saves nothing and skips the '
+        'fallback', (tester) async {
+      var fallbackCalled = false;
+      final (done, service, registry) = await _launch(
+        tester,
+        iosFn: () => true,
+        systemSessionFn:
+            ({
+              ChatGptCodeExchange? exchangeFn,
+              void Function(String message)? onExchangeError,
+            }) async => (credentials: null, sessionUnavailable: false),
+        pushWebView: (context, url, state) async {
+          fallbackCalled = true;
+          return 'code-1';
+        },
+      );
+      expect(await done, isFalse);
+      expect(fallbackCalled, isFalse);
+      expect(registry.providers, isEmpty);
+      expect(service.reconfigured, isNull);
+    });
+
+    testWidgets('an auth-session exchange failure surfaces the named '
+        'error snackbar', (tester) async {
+      final (done, service, registry) = await _launch(
+        tester,
+        iosFn: () => true,
+        systemSessionFn:
+            ({
+              ChatGptCodeExchange? exchangeFn,
+              void Function(String message)? onExchangeError,
+            }) async {
+              onExchangeError?.call(
+                'ChatGPT sign-in failed at the token exchange: '
+                'authorization code expired (400)',
+              );
+              return (credentials: null, sessionUnavailable: false);
+            },
+      );
+      await done;
+      await tester.pump(); // let the snackbar animate in
+
+      expect(registry.providers, isEmpty);
+      expect(service.reconfigured, isNull);
+      expect(
+        find.textContaining('ChatGPT sign-in failed at the token exchange'),
+        findsOneWidget,
+      );
+    });
+  });
+
+  group('systemAuthSessionChatGptSignIn — the fah/web_auth_session channel '
+      '(issue #861)', () {
+    const channel = systemAuthSessionChannel;
+
+    /// The binding fakes all `package:http` traffic — but dart:io sockets
+    /// are real. The loopback callback server speaks HTTP, so fire the
+    /// redirect through a raw socket and return the status line.
+    Future<String> hitCallback(Uri url) async {
+      final socket = await Socket.connect(url.host, url.port);
+      socket.add(
+        utf8.encode(
+          'GET ${url.path}?${url.query} HTTP/1.1\r\n'
+          'Host: ${url.host}:${url.port}\r\n'
+          'Connection: close\r\n\r\n',
+        ),
+      );
+      await socket.flush();
+      final body = await utf8.decoder.bind(socket).join();
+      return body.split('\r\n').first;
+    }
+
+    final recordedCalls = <MethodCall>[];
+    Completer<Object?>? sheet;
+    var authenticateUrl = '';
+
+    /// The channel mock: `authenticate` captures the authorize URL and
+    /// stays pending (the sheet is up) until [sheet] completes; `cancel`
+    /// is recorded.
+    void mockChannel() {
+      sheet = Completer<Object?>();
+      authenticateUrl = '';
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'authenticate') {
+              authenticateUrl = call.arguments['url'] as String;
+              return sheet!.future;
+            }
+            recordedCalls.add(call);
+            return null;
+          });
+    }
+
+    /// Waits until the hop has bound its server and reached the channel
+    /// (real loopback bind + invokeMethod — plain-test event loop).
+    Future<void> waitForAuthenticate() async {
+      for (var i = 0; i < 2000 && authenticateUrl.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      expect(
+        authenticateUrl,
+        isNotEmpty,
+        reason: 'the hop never reached the auth-session channel',
+      );
+    }
+
+    /// The bound loopback redirect the authorize URL carries (the REAL
+    /// server shape — byte-equal with the CLI flow, AC4).
+    (Uri, Uri) authorizeShape() {
+      final url = Uri.parse(authenticateUrl);
+      expect(url.host, 'auth.openai.com');
+      expect(url.path, '/oauth/authorize');
+      final redirect = Uri.parse(url.queryParameters['redirect_uri']!);
+      expect(redirect.host, 'localhost');
+      expect(redirect.path, '/auth/callback');
+      expect(redirect.port, isNot(0));
+      return (url, redirect);
+    }
+
+    setUp(() {
+      recordedCalls.clear();
+      authenticateUrl = '';
+      TestWidgetsFlutterBinding.ensureInitialized();
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    test('the page passkey prompt rides the system session: the callback '
+        'lands on the REAL loopback server, the sheet is dismissed, the '
+        'code exchanges (AC1 half)', () async {
+      mockChannel();
+      ({String code, String redirectUri, String codeVerifier})? exchangeArgs;
+      final done = systemAuthSessionChatGptSignIn(
+        exchangeFn:
+            ({
+              required String code,
+              required String redirectUri,
+              required String codeVerifier,
+            }) async {
+              exchangeArgs = (
+                code: code,
+                redirectUri: redirectUri,
+                codeVerifier: codeVerifier,
+              );
+              return _credentials('alice@example.com');
+            },
+      );
+      await waitForAuthenticate();
+      final (url, redirect) = authorizeShape();
+      final state = url.queryParameters['state']!;
+      expect(url.queryParameters['response_type'], 'code');
+      expect(url.queryParameters['client_id'], chatGptOAuthClientId);
+      expect(url.queryParameters['code_challenge_method'], 'S256');
+
+      // The page's final redirect loads the loopback server for real.
+      final statusLine = await hitCallback(
+        redirect.replace(queryParameters: {'code': 'code-9', 'state': state}),
+      );
+      expect(statusLine, contains(' 200 '));
+
+      final result = await done;
+      expect(result.sessionUnavailable, isFalse);
+      expect(result.credentials, isNotNull);
+      expect(result.credentials!.idToken, isNotEmpty);
+      expect(exchangeArgs!.code, 'code-9');
+      // The exchange used the BOUND redirect — byte-equal with the CLI
+      // shape auth.openai.com already knows (AC4).
+      expect(exchangeArgs!.redirectUri, redirect.toString());
+      expect(recordedCalls.map((c) => c.method), contains('cancel'));
+    });
+
+    test('user dismisses the sheet → no credentials, session was '
+        'available, server torn down (AC5)', () async {
+      mockChannel();
+      sheet!.complete(null); // the user swipes the sheet away right away
+      final done = systemAuthSessionChatGptSignIn();
+      final result = await done;
+      expect(result.sessionUnavailable, isFalse);
+      expect(result.credentials, isNull);
+      expect(recordedCalls.map((c) => c.method), contains('cancel'));
+      // The callback server did not survive the cancellation.
+      final (_, redirect) = authorizeShape();
+      await expectLater(
+        Socket.connect(redirect.host, redirect.port),
+        throwsA(isA<SocketException>()),
+      );
+    });
+
+    test('channel error (session could not start) → sessionUnavailable '
+        'fallback flag', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'authenticate') {
+              throw PlatformException(code: 'auth_session_unavailable');
+            }
+            return null;
+          });
+      final result = await systemAuthSessionChatGptSignIn();
+      expect(result.sessionUnavailable, isTrue);
+      expect(result.credentials, isNull);
+    });
+
+    test('both callback ports are taken → sessionUnavailable (the server '
+        'cannot bind)', () async {
+      final s1 = await HttpServer.bind(InternetAddress.loopbackIPv4, 1455);
+      final s2 = await HttpServer.bind(InternetAddress.loopbackIPv4, 1457);
+      try {
+        final result = await systemAuthSessionChatGptSignIn();
+        expect(result.sessionUnavailable, isTrue);
+        expect(result.credentials, isNull);
+      } finally {
+        await s1.close(force: true);
+        await s2.close(force: true);
+      }
+    });
+
+    test('a callback with a foreign state is rejected, not exchanged '
+        '(the #773 state contract holds on the system surface)', () async {
+      mockChannel();
+      var exchanged = false;
+      final done = systemAuthSessionChatGptSignIn(
+        exchangeFn:
+            ({
+              required String code,
+              required String redirectUri,
+              required String codeVerifier,
+            }) async {
+              exchanged = true;
+              return _credentials('alice@example.com');
+            },
+      );
+      await waitForAuthenticate();
+      final (url, redirect) = authorizeShape();
+      await hitCallback(
+        redirect.replace(
+          queryParameters: {'code': 'code-9', 'state': 'not-my-state'},
+        ),
+      );
+      final result = await done;
+      expect(result.credentials, isNull);
+      expect(result.sessionUnavailable, isFalse);
+      expect(exchanged, isFalse);
+    });
+
+    test(
+      'an OAuth error callback cancels the flow without an exchange',
+      () async {
+        mockChannel();
+        var exchanged = false;
+        final done = systemAuthSessionChatGptSignIn(
+          exchangeFn:
+              ({
+                required String code,
+                required String redirectUri,
+                required String codeVerifier,
+              }) async {
+                exchanged = true;
+                return _credentials('alice@example.com');
+              },
+        );
+        await waitForAuthenticate();
+        final (url, redirect) = authorizeShape();
+        final statusLine = await hitCallback(
+          redirect.replace(
+            queryParameters: {
+              'error': 'access_denied',
+              'state': url.queryParameters['state']!,
+            },
+          ),
+        );
+        expect(statusLine, contains(' 400 '));
+        final result = await done;
+        expect(result.credentials, isNull);
+        expect(result.sessionUnavailable, isFalse);
+        expect(exchanged, isFalse);
+      },
+    );
+
+    test('a failing token exchange surfaces the named error — no exchange '
+        'success, not sessionUnavailable', () async {
+      mockChannel();
+      Object? reported;
+      final done = systemAuthSessionChatGptSignIn(
+        exchangeFn:
+            ({
+              required String code,
+              required String redirectUri,
+              required String codeVerifier,
+            }) async => throw Exception('expired (400)'),
+        onExchangeError: (message) => reported = message,
+      );
+      await waitForAuthenticate();
+      final (url, redirect) = authorizeShape();
+      final statusLine = await hitCallback(
+        redirect.replace(
+          queryParameters: {
+            'code': 'code-9',
+            'state': url.queryParameters['state']!,
+          },
+        ),
+      );
+      expect(statusLine, contains(' 200 '));
+      final result = await done;
+      expect(result.credentials, isNull);
+      expect(result.sessionUnavailable, isFalse);
+      expect(reported, contains('token exchange'));
+    });
+
+    test('E4: cancel exactly when the callback lands — the callback wins '
+        'deterministically, no crash, no half credentials', () async {
+      mockChannel();
+      final done = systemAuthSessionChatGptSignIn(
+        exchangeFn:
+            ({
+              required String code,
+              required String redirectUri,
+              required String codeVerifier,
+            }) async => _credentials('alice@example.com'),
+      );
+      await waitForAuthenticate();
+      final (url, redirect) = authorizeShape();
+      final statusLine = await hitCallback(
+        redirect.replace(
+          queryParameters: {
+            'code': 'code-9',
+            'state': url.queryParameters['state']!,
+          },
+        ),
+      );
+      expect(statusLine, contains(' 200 '));
+      sheet!.complete(null); // the dismissal racing the callback
+      final result = await done;
+      expect(result.sessionUnavailable, isFalse);
+      expect(result.credentials, isNotNull);
+      expect(recordedCalls.map((c) => c.method), contains('cancel'));
     });
   });
 }

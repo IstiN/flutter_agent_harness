@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -199,6 +201,54 @@ void main() {
       expect(w.activeIndex, 1);
       expect(w.currentModel.id, 'claude-b');
     });
+
+    test(
+      'budget exhaustion advances to the fallback at once (issue #926)',
+      () async {
+        final a = _model('openai', 'gpt-a');
+        final b = _model('anthropic', 'claude-b');
+        final probe = _Probe({
+          'v-a': [
+            _rateLimitTurn(
+              a,
+              error:
+                  '403: CodeMie monthly budget limit reached '
+                  '(\$150.08 / \$150.00). Next budget reset: 01/10/2026',
+            ),
+          ],
+          'v-b': [_okTurn(b, 'hello from b')],
+        });
+        // DEFAULT policy (paid retries per entry) — the budget death must
+        // skip the whole ladder.
+        final w = wrapper([
+          entry(probe, a, ['v-a']),
+          entry(probe, b, ['v-b']),
+        ]);
+
+        final events = await run(w);
+
+        expect(events, [
+          'start:${b.id}',
+          'textStart',
+          'delta:hello from b',
+          'done:${b.id}',
+        ]);
+        expect(probe.calls, [
+          'v-a',
+          'v-b',
+        ], reason: 'no paid retries against the dead budget');
+        expect(sleeps, isEmpty);
+        // The clear user notice: the modelFallback reason carries the
+        // provider's budget wording verbatim.
+        expect(notices, hasLength(1));
+        expect(notices.single.kind, FallbackNoticeKind.modelFallback);
+        expect(notices.single.fromModel, 'openai/gpt-a');
+        expect(notices.single.toModel, 'anthropic/claude-b');
+        expect(notices.single.reason, contains('budget limit reached'));
+        expect(notices.single.reason, contains('\$150.08'));
+        expect(w.activeIndex, 1);
+      },
+    );
 
     test(
       'retries the same entry with capped backoff before succeeding',
@@ -531,6 +581,146 @@ void main() {
       },
     );
 
+    test(
+      'sole entry waits out a Retry-After beyond maxWait (issue #1066)',
+      () async {
+        final a = _model('openai', 'gpt-a');
+        final probe = _Probe({
+          'v-a': [
+            _rateLimitTurn(a, retryAfter: const Duration(seconds: 60)),
+            _okTurn(a, 'recovered after the wait'),
+          ],
+        });
+        final w = wrapper([
+          entry(probe, a, ['v-a']),
+        ], policy: const ModelRolesRetryPolicy(maxWait: Duration(seconds: 30)));
+
+        final events = await run(w);
+
+        // No fallback exists, so 60s > 30s maxWait no longer kills the
+        // chain: the engine waits out the full minute (under the 5m
+        // sole-entry ceiling) and the retry succeeds.
+        expect(sleeps, [const Duration(seconds: 60)]);
+        expect(probe.calls, ['v-a', 'v-a']);
+        expect(events.last, 'done:${a.id}');
+        expect(notices.single.kind, FallbackNoticeKind.retry);
+      },
+    );
+
+    test(
+      'a pathological Retry-After waits out the ceiling, then exhausts '
+      '(issue #1066)',
+      () async {
+        final a = _model('openai', 'gpt-a');
+        final probe = _Probe({
+          'v-a': [
+            _rateLimitTurn(a, retryAfter: const Duration(hours: 2)),
+            _rateLimitTurn(a, retryAfter: const Duration(hours: 2)),
+            _rateLimitTurn(a, retryAfter: const Duration(hours: 2)),
+          ],
+        });
+        final w = wrapper([
+          entry(probe, a, ['v-a']),
+        ], policy: const ModelRolesRetryPolicy(maxWait: Duration(seconds: 30)));
+
+        final events = await run(w);
+
+        // Each wait-out is bounded to the 5m sole-entry ceiling; the
+        // retries keep consuming the per-entry budget, so the chain still
+        // exhausts — with the waited total in the story.
+        expect(sleeps, [
+          const Duration(minutes: 5),
+          const Duration(minutes: 5),
+        ]);
+        expect(probe.calls, hasLength(3)); // 1 + retriesPerEntry(2)
+        expect(
+          events.single,
+          startsWith('error(error):${a.id}:Provider chain exhausted'),
+        );
+        expect(events.single, contains('waited 10m on rate limits'));
+      },
+    );
+
+    test(
+      'the waited-total label counts rate-limit waits only (issue #1066)',
+      () async {
+        final a = _model('openai', 'gpt-a');
+        final partial = _msg(a);
+        List<AssistantMessageEvent> transportTurn() => [
+          StartEvent(partial: partial),
+          ErrorEvent(
+            reason: StopReason.error,
+            error: _msg(
+              a,
+              stop: StopReason.error,
+              error: 'ClientException: Connection closed while receiving data',
+            ),
+            retryAfter: const Duration(seconds: 90),
+          ),
+        ];
+        final probe = _Probe({
+          'v-a': [transportTurn(), transportTurn(), transportTurn()],
+        });
+        final w = wrapper([
+          entry(probe, a, ['v-a']),
+        ], policy: const ModelRolesRetryPolicy(
+          retriesPerEntry: 2,
+          maxWait: Duration(seconds: 30),
+        ));
+
+        final events = await run(w);
+
+        // Two bounded 90s wait-outs, both transport-class: the chain
+        // exhausted after real waiting, but an outage must not be
+        // misdiagnosed as rate limiting in the story.
+        expect(sleeps, [
+          const Duration(seconds: 90),
+          const Duration(seconds: 90),
+        ]);
+        expect(
+          events.single,
+          startsWith('error(error):${a.id}:Provider chain exhausted'),
+        );
+        expect(events.single, isNot(contains('waited')));
+      },
+    );
+
+    test(
+      'the last eligible entry waits out even after an instant failover '
+      '(issue #1066)',
+      () async {
+        final a = _model('openai', 'gpt-a');
+        final b = _model('anthropic', 'claude-b');
+        final probe = _Probe({
+          'v-a': [_rateLimitTurn(a, retryAfter: const Duration(minutes: 10))],
+          'v-b': [
+            _rateLimitTurn(b, retryAfter: const Duration(seconds: 60)),
+            _okTurn(b, 'b waited it out'),
+          ],
+        });
+        final w = wrapper([
+          entry(probe, a, ['v-a']),
+          entry(probe, b, ['v-b']),
+        ], policy: const ModelRolesRetryPolicy(
+          retriesPerEntry: 1,
+          maxWait: Duration(seconds: 30),
+        ));
+
+        final events = await run(w);
+
+        // A's 10m wall instant-fails over to B (a fallback exists — the
+        // old policy); B is the last eligible entry, so its 60s wall is
+        // waited out instead of exhausting the chain.
+        expect(sleeps, [const Duration(seconds: 60)]);
+        expect(probe.calls, ['v-a', 'v-b', 'v-b']);
+        expect(events.last, 'done:${b.id}');
+        expect(notices.map((n) => n.kind), [
+          FallbackNoticeKind.modelFallback,
+          FallbackNoticeKind.retry,
+        ]);
+      },
+    );
+
     test('single-key exhaustion ends with the all-rate-limited path', () async {
       final a = _model('openai', 'gpt-a');
       final probe = _Probe({
@@ -820,10 +1010,18 @@ void main() {
         final w = wrapper([
           entry(probe, a, ['v-a', 'v-a2']),
           entry(probe, b, ['v-b', 'v-b2']),
-        ], policy: const ModelRolesRetryPolicy(retriesPerEntry: 1));
+        ], policy: const ModelRolesRetryPolicy(
+          retriesPerEntry: 1,
+          // Issue #1066: the 30s sole-entry ceiling keeps the wait-outs
+          // short so the 10m wall outlasts them and the budget burns out.
+          maxWaitForLastEntry: Duration(seconds: 30),
+        ));
 
-        // Call 1 benches every key (10m retryAfter) and cools both
-        // entries down; call 2 starts with the whole chain benched.
+        // Call 1 benches every key (10m retryAfter): A instant-fails over
+        // to B, B (last eligible) waits out 30s, and the spent budget
+        // exhausts the run. Call 2 starts with the whole chain still
+        // benched — no attempt lands, and the run tells the cooldown-wall
+        // story.
         await run(w);
         final events = await run(w);
 
@@ -1103,6 +1301,58 @@ void main() {
           isTransientTransportError(errorMessage(text)),
           isTrue,
           reason: text,
+        );
+      }
+    });
+
+    test('formatProviderError keeps every watchdog timeout retryable '
+        '(issue #1036)', () {
+      // The five TimeoutException shapes the provider watchdogs produce —
+      // message texts are the asserted contracts in
+      // provider_common_test/chatgpt_codex_test. Each is classified through
+      // the REAL transcript path: formatProviderError renders the
+      // assistant error, the failover chain reads it.
+      final m = _model('openai', 'gpt-a');
+      for (final exception in [
+        // sendProviderFetch connect leg.
+        TimeoutException(
+          'provider fetch (models list): no response headers within '
+          '30s (connect watchdog)',
+        ),
+        // sendProviderFetch read leg.
+        TimeoutException(
+          'provider fetch (models list): response did not complete within '
+          '120s (read watchdog; FA_PROVIDER_TIMEOUT_SECONDS overrides this)',
+        ),
+        // _sendWatched connect leg.
+        TimeoutException(
+          'provider stream request to https://example.test/v1/responses '
+          'timed out: no response headers within 180s (connect watchdog)',
+        ),
+        // createSseIterator idle leg.
+        TimeoutException(
+          'no events from the endpoint for 300s (stream idle timeout)',
+        ),
+        // codex bypass idle leg.
+        TimeoutException(
+          'chatgpt-codex https://example.test/v1/responses stalled: no SSE '
+          'bytes for 300s (stream idle timeout)',
+        ),
+      ]) {
+        final message = _msg(
+          m,
+          stop: StopReason.error,
+          error: formatProviderError(exception),
+        );
+        expect(
+          message.errorMessage,
+          contains('TimeoutException'),
+          reason: 'rendered watchdog error must keep the keyword',
+        );
+        expect(
+          isTransientTransportError(message),
+          isTrue,
+          reason: message.errorMessage,
         );
       }
     });

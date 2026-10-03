@@ -46,16 +46,13 @@ void main() {
   File stateFileFor() =>
       defaultHubStateFile(home: tempHome.path, environment: const {});
 
-  /// A free loopback port (bind-close dance). The port-binding SERVE
-  /// paths live in fah_hub_serve_ports_test.dart; the graceful-exit seam
-  /// above needs short-lived hubs on free ports and is gate-safe.
-  Future<int> freePort() async {
-    final probe = LocalHub(port: 0);
-    await probe.start();
-    final port = probe.url.port;
-    await probe.stop();
-    return port;
-  }
+  /// Hubs in this file bind port 0 and read the kernel-assigned port back
+  /// from `hub.url.port` (issue #943): the old freePort() bind-close dance
+  /// handed out a port another parallel-gate test could take between close
+  /// and start — the hosted "Hostile ambient env" leg's green-on-retry
+  /// flake. Nothing here needs the port BEFORE the hub starts.
+  LocalHub ephemeralHub() =>
+      LocalHub(port: 0, stateFile: stateFileFor());
 
   group('parseFlagValues / parseHubServeSpec', () {
     test('collapses --flag value pairs; later duplicates win', () {
@@ -283,9 +280,9 @@ void main() {
 
   group('hubGracefulExit (the seam)', () {
     test('stops the hub, clears the pid state, exits 0', () async {
-      final port = await freePort();
-      final hub = LocalHub(port: port, stateFile: stateFileFor());
+      final hub = ephemeralHub();
       await hub.start();
+      final port = hub.url.port;
       final pidFile = File('${tempHome.path}/gone.pid')
         ..writeAsStringSync('{"pid":1,"port":1,"startedAt":"x"}');
       final exits = <int>[];
@@ -302,8 +299,7 @@ void main() {
     }, timeout: timeout);
 
     test('a stuck pid file never blocks shutdown', () async {
-      final port = await freePort();
-      final hub = LocalHub(port: port, stateFile: stateFileFor());
+      final hub = ephemeralHub();
       await hub.start();
       // A directory where the pid file should be: deleteSync throws.
       final stuck = Directory('${tempHome.path}/stuck.pid')
@@ -320,20 +316,24 @@ void main() {
     }, timeout: timeout);
   });
 
-  // gh-938: this leg wires the REAL terminate signals to the test process —
-  // a hostile ambient environment (stray SIGINT/SIGTERM on a hosted runner)
-  // fires the real graceful exit mid-test and breaks 'keeps serving'.
+  // Issue #943: re-enabled (gh-938 skip 'stray terminate signal'). Root
+  // cause: the leg wired the REAL terminate watchers, so a hosted
+  // runner's stray SIGINT/SIGTERM (orphan cleanup pkill) fired the
+  // graceful exit mid-test. The new [watchSignals] seam keeps the wiring
+  // under test while excluding ambient delivery by construction; the
+  // real-signal path stays covered by test/hub/fah_hub_serve_test.dart.
   test(
     'wireHubTerminate: wired but not fired — the hub keeps serving',
     () async {
-      final port = await freePort();
-      final hub = LocalHub(port: port, stateFile: stateFileFor());
+      final hub = ephemeralHub();
       await hub.start();
+      final port = hub.url.port;
       final exits = <int>[];
       final subs = wireHubTerminate(
         hub,
         stateFileFor(),
         exitProcess: exits.add,
+        watchSignals: (_) => const [],
       );
       // Nothing terminated the hub: still up, no exit.
       await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -345,13 +345,12 @@ void main() {
       await hub.stop();
     },
     timeout: timeout,
-    skip: 'infra: #936 hostile ambient env leg (stray terminate signal)',
   );
 
   test('hubTerminateHandler: firing it runs the graceful exit', () async {
-    final port = await freePort();
-    final hub = LocalHub(port: port, stateFile: stateFileFor());
+    final hub = ephemeralHub();
     await hub.start();
+    final port = hub.url.port;
     final pidFile = File('${tempHome.path}/fired.pid')
       ..writeAsStringSync('{"pid":1,"port":1,"startedAt":"x"}');
     final exits = <int>[];

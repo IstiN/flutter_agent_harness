@@ -25,17 +25,54 @@ Future<CustomProvider?> pushProviderEditor(
   ProviderRegistry registry, {
   required String title,
   ModelsEndpointFetcher? modelsFetcher,
+  bool requireModel = false,
 }) async {
   final result = await pushFaPage<ProviderEditorResult>(
     context,
-    ProviderEditorPage(title: title, modelsFetcher: modelsFetcher),
+    ProviderEditorPage(
+      title: title,
+      registry: registry,
+      modelsFetcher: modelsFetcher,
+      requireModel: requireModel,
+    ),
   );
   if (result == null || result.deleted) return null;
-  final provider = await registry.add(
-    name: result.name,
-    baseUrl: result.baseUrl,
-    modelId: result.modelId,
-  );
+  return landProviderResult(registry, result);
+}
+
+/// Lands an editor result in [registry] (issue #977): the name already
+/// belongs to an entry on the SAME endpoint updates that entry in place —
+/// re-auth/re-connect semantics, the id (and with it every dropdown
+/// selection) survives; anything else adds a new entry (a fresh name on a
+/// shared endpoint is a second account). A name on a DIFFERENT endpoint
+/// never reaches here — [_ProviderEditorPageState._save] rejects it. The
+/// typed key is remembered either way.
+Future<CustomProvider> landProviderResult(
+  ProviderRegistry registry,
+  ProviderEditorResult result,
+) async {
+  final existing = registry.byName(result.name);
+  final CustomProvider provider;
+  if (existing != null && existing.baseUrl == result.baseUrl) {
+    provider = CustomProvider(
+      id: existing.id,
+      name: result.name,
+      baseUrl: result.baseUrl,
+      // An empty model id means "unchanged" on the update landing — a
+      // re-auth-shaped re-add must not wipe the stored model.
+      modelId: result.modelId.isEmpty ? existing.modelId : result.modelId,
+      requiresKey: existing.requiresKey || result.apiKey.isNotEmpty,
+      provenance: existing.provenance,
+      kind: existing.kind,
+    );
+    await registry.update(provider);
+  } else {
+    provider = await registry.add(
+      name: result.name,
+      baseUrl: result.baseUrl,
+      modelId: result.modelId,
+    );
+  }
   if (result.apiKey.isNotEmpty) {
     registry.rememberKey(provider.id, result.apiKey);
   }
@@ -91,7 +128,8 @@ final class ProviderEditorResult {
 ///
 /// - **create** ([preset] and [initial] null): collects a new
 ///   [CustomProvider] — name and base URL required, model id optional (a
-///   provider may have no model yet), key optional.
+///   provider may have no model yet) unless [requireModel] is set, key
+///   optional.
 /// - **edit** ([initial] set): edits that provider; the key field is
 ///   write-only — it starts empty and an empty save keeps the current key
 ///   ([hasSavedKey] shows a note). A Delete action pops
@@ -120,6 +158,7 @@ class ProviderEditorPage extends StatefulWidget {
     this.keyHelpUrl,
     this.onReauthenticate,
     this.modelsFetcher,
+    this.requireModel = false,
   });
 
   /// App bar title (`Add provider` / `Edit provider` / the preset label).
@@ -179,6 +218,13 @@ class ProviderEditorPage extends StatefulWidget {
   /// `/models` fetch override (tests), forwarded to the model selector the
   /// model row opens.
   final ModelsEndpointFetcher? modelsFetcher;
+
+  /// Refuses a model-less save (issue #1020): a boarding flow cannot
+  /// leave the editor without a chat model — an empty model id pops the
+  /// same inline error as the other required fields. Settings keeps the
+  /// default `false` (a provider row without a model is legitimate
+  /// there; the default-chat-model flow picks one later).
+  final bool requireModel;
 
   @override
   State<ProviderEditorPage> createState() => _ProviderEditorPageState();
@@ -257,6 +303,36 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
     }
     if (baseUrl.isEmpty) {
       setState(() => _error = strings.settingsBaseUrlRequired);
+      return;
+    }
+    // CLI-parity name rule (issue #977, `_askConnectProviderName`): a name
+    // already used by an entry on a DIFFERENT endpoint is rejected — two
+    // providers cannot share a name, or pickers become ambiguous.
+    //
+    // The same name on the SAME endpoint is only legal in CREATE mode —
+    // the re-connect shape that lands as an update
+    // ([landProviderResult]). In EDIT mode ([initial] set) ANY clash with
+    // another entry is rejected: a rename onto a sibling's name (same
+    // endpoint or not) would leave two same-name entries and every
+    // by-name landing would then mis-target (round-1 review).
+    final registry = widget.registry;
+    if (registry != null) {
+      final clash = registry.byName(name);
+      final sameEndpointTakeover =
+          widget.initial == null && clash != null && clash.baseUrl == baseUrl;
+      if (clash != null &&
+          clash.id != widget.initial?.id &&
+          !sameEndpointTakeover) {
+        setState(
+          () => _error = strings.settingsProviderNameClash(clash.baseUrl),
+        );
+        return;
+      }
+    }
+    // Boarding flows (issue #1020) cannot leave without a chat model —
+    // the same inline error the name/base-URL checks use.
+    if (widget.requireModel && modelId.isEmpty) {
+      setState(() => _error = strings.settingsModelIdRequired);
       return;
     }
     // The model id is optional: a provider may have no model yet (the
@@ -376,7 +452,7 @@ class _ProviderEditorPageState extends State<ProviderEditorPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _isPreset
+                    _isPreset || widget.requireModel
                         ? strings.settingsModelIdLabel
                         : strings.settingsModelIdOptionalLabel,
                   ),

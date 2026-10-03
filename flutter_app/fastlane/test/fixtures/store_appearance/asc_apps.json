@@ -1,0 +1,9 @@
+{
+  "data": [
+    {
+      "id": "APP-1",
+      "type": "apps",
+      "attributes": { "name": "Fa", "bundleId": "dev.fa1.app" }
+    }
+  ]
+}

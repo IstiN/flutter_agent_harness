@@ -503,4 +503,251 @@ void main() {
       expect(identical(reset[0], fresh), isTrue);
     });
   });
+
+  group('resumeParityBudget (gh-968 UT-BUDGET)', () {
+    final tool = Tool(
+      name: 'read',
+      description: 'd' * 40,
+      parameters: const {'type': 'object', 'properties': <String, dynamic>{}},
+    );
+
+    test(
+      'window − system+tools overhead − reserve: the meter\'s own basis',
+      () {
+        const window = 200000;
+        const reserve = 16384;
+        final budget = resumeParityBudget(
+          effectiveContextWindow: window,
+          reserveTokens: reserve,
+          systemPrompt: 'a' * 4000, // 1000 tokens
+          tools: [tool],
+        );
+        final overhead = estimateRequestOverheadTokens('a' * 4000, [tool]);
+        // The parity identity: transcript budget + overhead + reserve must
+        // reassemble the window, so the meter (transcript + overhead) can
+        // never read past window − reserve on a fresh resume.
+        expect(budget + overhead + reserve, window);
+        // The overhead already prices the prompt in — subtracted once.
+        expect(budget, window - reserve - overhead);
+      },
+    );
+
+    test('no prompt and no tools: budget = window − reserve', () {
+      expect(
+        resumeParityBudget(effectiveContextWindow: 50000, reserveTokens: 8192),
+        50000 - 8192,
+      );
+    });
+
+    test(
+      'an unanchored overhead is SUBTRACTED, never swallowed (the '
+      'reported 127% resume priced system+tools on top of a full window)',
+      () {
+        const window = 32768;
+        const reserve = 8192;
+        final prompt = 'x' * 40000; // 10k tokens of system prompt
+        final budget = resumeParityBudget(
+          effectiveContextWindow: window,
+          reserveTokens: reserve,
+          systemPrompt: prompt,
+          tools: [tool],
+        );
+        expect(
+          budget,
+          window - reserve - estimateRequestOverheadTokens(prompt, [tool]),
+        );
+      },
+    );
+
+    test('a clamped window (contextWindowCap) scales the budget (E4)', () {
+      // The caller passes the EFFECTIVE window; the formula is honest
+      // about whatever window it is given.
+      expect(
+        resumeParityBudget(effectiveContextWindow: 32768, reserveTokens: 8192),
+        24576,
+      );
+      expect(
+        resumeParityBudget(effectiveContextWindow: 8192, reserveTokens: 2048),
+        6144,
+      );
+    });
+
+    test('a system prompt alone near the window floors the budget at 0 '
+        'without throwing (E6: huge AGENTS.md chain)', () {
+      final budget = resumeParityBudget(
+        effectiveContextWindow: 8192,
+        reserveTokens: 2048,
+        systemPrompt: 'x' * 40000, // 10k tokens > the whole window
+      );
+      expect(budget, 0);
+    });
+  });
+
+  group('projectedBranchBudgetCut (gh-968 UT-OVERSHOOT)', () {
+    MessageRecord msg(String id, String? parent, String text) => MessageRecord(
+      id: id,
+      parentId: parent,
+      timestamp: DateTime.utc(2026),
+      message: UserMessage.text(text),
+    );
+
+    /// 100 tokens per record (400 chars), chained e(from)..e(from+count-1).
+    List<MessageRecord> msgs(int count, {int from = 0}) => [
+      for (var i = 0; i < count; i++)
+        msg(
+          'e${from + i}',
+          from + i == 0 ? null : 'e${from + i - 1}',
+          'a' * 400,
+        ),
+    ];
+
+    test('whole branch fits the budget → null (nothing to trim)', () {
+      final branch = msgs(10); // 1000 tokens
+      expect(projectedBranchBudgetCut(branch, 1000), isNull);
+      expect(projectedBranchBudgetCut(branch, 1001), isNull);
+      expect(projectedBranchBudgetCut(branch, 100000), isNull);
+    });
+
+    test(
+      'cuts before the record that would push the kept tail PAST the '
+      'budget walking backward (kept tail ≤ budget, never a blockful over)',
+      () {
+        final branch = msgs(20); // 2000 tokens
+        final cut = projectedBranchBudgetCut(branch, 1000);
+        // Walking backward: 100..1000 stay at/below budget; the record that
+        // would reach 1100 is dropped, so the kept suffix prices 1000.
+        expect(cut, 10);
+        final kept = branch.sublist(cut!);
+        expect(estimateProjectedBranchTokens(kept), 1000);
+        expect(estimateProjectedBranchTokens(kept), lessThanOrEqualTo(1000));
+      },
+    );
+
+    test('a whole branch exactly at the budget fits (budget is inclusive)', () {
+      final branch = msgs(10); // 1000 tokens
+      expect(projectedBranchBudgetCut(branch, 999), 1);
+      expect(estimateProjectedBranchTokens(branch.sublist(1)), 900);
+    });
+
+    test('the overshoot is bounded by ONE record, never one block: a giant '
+        'record at the crossing is dropped, not accepted', () {
+      // e0..e9 (100 tokens each), a 5000-token giant, then 49 tail records
+      // of 100 tokens chained onto it.
+      final branch = [
+        ...msgs(10),
+        msg('giant', 'e9', 'g' * 20000),
+        ...msgs(49, from: 10),
+      ];
+      for (var i = 11; i < branch.length; i++) {
+        branch[i] = msg(
+          branch[i].id,
+          i == 11 ? 'giant' : branch[i - 1].id,
+          'a' * 400,
+        );
+      }
+      const budget = 5500;
+      final cut = projectedBranchBudgetCut(branch, budget)!;
+      final kept = branch.sublist(cut);
+      final estimate = estimateProjectedBranchTokens(kept);
+      // The giant (which alone would push the tally to 9900) is NOT
+      // accepted: the walk stops BEFORE it — the kept tail is the 49
+      // small records (4900). The old block-granular stop landed on
+      // whatever doubling block crossed, tens of thousands of tokens
+      // past the budget.
+      expect(estimate, 4900);
+      expect(estimate, lessThanOrEqualTo(budget));
+      expect(kept, hasLength(49));
+      expect(kept.any((r) => r.id == 'giant'), isFalse);
+    });
+
+    test('hidden records price as markers in the cut arithmetic (same '
+        'estimator as the meter — REG-STRUCTURED)', () {
+      // 20 hidden 10k-token giants + 20 visible 100-token tail records +
+      // the range marker at the tail.
+      final hidden = [
+        for (var i = 0; i < 20; i++)
+          msg('e$i', i == 0 ? null : 'e${i - 1}', 'x' * 40000),
+      ];
+      final tail = [
+        for (var i = 20; i < 40; i++) msg('e$i', 'e${i - 1}', 'a' * 400),
+      ];
+      final branch = [
+        ...hidden,
+        ...tail,
+        HiddenRangeRecord(
+          id: 'h0',
+          parentId: 'e39',
+          timestamp: DateTime.utc(2026),
+          recordIds: [for (var i = 0; i < 20; i++) 'e$i'],
+        ),
+      ];
+      const budget = 2100;
+      final cut = projectedBranchBudgetCut(branch, budget)!;
+      final kept = branch.sublist(cut);
+      // Hidden giants price as 10-token markers: the kept tail reaches
+      // e10 (31 records). A raw tally would have stopped at e19 — 10
+      // records newer — because it prices the giants' full 100k tokens.
+      expect(cut, 10);
+      expect(kept, hasLength(31));
+      expect(estimateProjectedBranchTokens(kept), 2100);
+      expect(estimateSessionBranchTokens(kept), greaterThan(100000));
+    });
+
+    test('a checkpoint-covered span prices as its checkpoint text once', () {
+      final branch = [
+        msg('e0', null, 'x' * 40000), // covered → 0
+        msg('e1', 'e0', 'y' * 40000), // covered → 0
+        CompactCheckpointRecord(
+          id: 'k0',
+          parentId: 'e1',
+          timestamp: DateTime.utc(2026),
+          firstRecordId: 'e0',
+          lastRecordId: 'e1',
+          text: 's' * 200, // 50 tokens
+          coversRecordIds: const ['e0', 'e1'],
+          flattenedRecordIds: const [],
+        ),
+        msg('e2', 'k0', 'a' * 400), // 100
+        msg('e3', 'e2', 'b' * 400), // 100
+      ];
+      // Walking backward: e3 (100), e2 (200), checkpoint text (250) — the
+      // covered records ride free below it. Budget 249 crosses at the
+      // checkpoint → keep e2..e3 (200). Budget 250 never crosses (the
+      // covered records add nothing) → nothing to trim.
+      expect(projectedBranchBudgetCut(branch, 249), 3);
+      expect(estimateProjectedBranchTokens(branch.sublist(3)), 200);
+      expect(projectedBranchBudgetCut(branch, 250), isNull);
+    });
+
+    test('budget 0 floors at keeping the newest record (never an empty '
+        'window)', () {
+      final branch = msgs(5);
+      expect(projectedBranchBudgetCut(branch, 0), 4);
+    });
+
+    test('the classic compaction transform bounds the cut: records below '
+        'firstKeptEntryId project zero and are never the crossing', () {
+      final branch = [
+        msg('e0', null, 'x' * 40000), // dropped by the transform
+        msg('e1', 'e0', 'y' * 40000), // dropped
+        CompactionRecord(
+          id: 'c0',
+          parentId: 'e1',
+          timestamp: DateTime.utc(2026),
+          summary: 's' * 200, // 50 tokens
+          firstKeptEntryId: 'e2',
+          tokensBefore: 99999,
+        ),
+        msg('e2', 'c0', 'a' * 400), // 100
+        msg('e3', 'e2', 'b' * 400), // 100
+      ];
+      // The kept region prices 250 (e3 + e2 + the summary): the two
+      // 40k-char records below the transform line never push the tally —
+      // a raw tally would have crossed ten records earlier.
+      expect(projectedBranchBudgetCut(branch, 300), isNull);
+      // Budget 150 crosses at e2 (200 > 150) → keep e3 only.
+      expect(projectedBranchBudgetCut(branch, 150), 4);
+      expect(estimateProjectedBranchTokens(branch.sublist(4)), 100);
+    });
+  });
 }
