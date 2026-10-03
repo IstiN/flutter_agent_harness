@@ -4512,4 +4512,12 @@
 - bench-mls.yml: run fa on MLS-Bench via the existing Harbor adapter (staged nop→oracle→agent, GPU cost discipline) (#1161)
 - chore: repin factory workflows to f47d52b (kit in RUNNER_TEMP) (#1191)
 
+## 1.0.502
+
+- fix(#1175): one Fa, one session — FAB continues the app-bound session, never re-mints (#1173)
+- WASI sandbox fidelity: dup-merge, per-exec pipe dirs, drain-before-cancel, clean errors (#1156) (#1163)
+- fix(chat): Load-newer banner works mid-run, auto-clears at the live tail (#1159) (#1165)
+- feat(#862): tool-misuse resilience (#1143)
+- fix(#858): Codex/Responses wire — no replayable history may ever brick a session (#1140)
+
 ## Unreleased
