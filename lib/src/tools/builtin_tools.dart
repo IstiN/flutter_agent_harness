@@ -2630,13 +2630,16 @@ Future<ToolExecutionResult> _awaitJobOutcome(
   ]);
 
   if (!finished) {
-    // The user steered mid-run: the process keeps running as a background
-    // job; the loop delivers the user message right after this result.
+    // A steering message arrived mid-run: the process keeps running as a
+    // background job; the loop delivers the message right after this
+    // result. Source-neutral wording — the steer may be the user's or a
+    // harness-originated notice (#1185), the tool result must not
+    // misattribute it.
     final tail = await jobs.tail(entry.id, maxLines: 20);
     return ToolExecutionResult.text(
       'The command is still running and was moved to background job '
-      '${entry.id} (the process was NOT killed) because the user sent a '
-      'message, which follows next.\n'
+      '${entry.id} (the process was NOT killed) because a steering '
+      'message arrived, which follows next.\n'
       'Log: ${entry.logPath}\n'
       'You will be notified when the job finishes; check progress with '
       'bash_job.'
