@@ -2192,6 +2192,15 @@ Future<void> _runApp(List<String> args) async {
     environment: Platform.environment,
     useTui: useTui,
     version: packageVersion,
+    // The double-press Ctrl+C window (issue #830): the 3 s contract, or
+    // the kSigintWindowEnvVar test-seam override resolved HERE (the only
+    // dart:io context — lib/src stays pure). One instance for both input
+    // paths (ACX.5) rides the cli into the TUI.
+    sigintPolicy: SigintPolicy(
+      window:
+          resolveSigintWindowOverride(env: Platform.environment) ??
+          kSigintPressWindow,
+    ),
     // Markdown parity (issue #774): every non-TUI surface renders
     // assistant markdown through ONE policy — resolveMarkdownSurface
     // above (pipes stay byte-identical raw; NO_COLOR / TERM=dumb degrade
