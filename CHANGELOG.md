@@ -4476,7 +4476,11 @@
 - fix(#1152): path-guard fires only on bare single-token input (#1153)
 - feat(#861): one passkey-capable auth surface for provider sign-in (#1142)
 
-## Unreleased
+## 1.0.499
+
+- feat(cli): stuck foreground tool calls nudge the model via steering (#1185) (#1187)
+- fix(#1122): restore bench timeout-ladder helpers lost in the #1127×#1129 merge (#1184)
+- feat(#1151): built-in skills shipped with fa — /skill-name on every surface, toggleable like tools (#1157)
 
 ## Unreleased
 
