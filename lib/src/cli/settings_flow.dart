@@ -2560,6 +2560,11 @@ extension SettingsFlow on AgentCli {
       ),
       MenuItem(key: 'tools', label: 'Tools', description: _toolsStatusLabel()),
       MenuItem(
+        key: 'skills',
+        label: 'Skills',
+        description: _skillsStatusLabel(),
+      ),
+      MenuItem(
         key: 'compaction',
         label: 'Compaction',
         description: 'engine: ${_compactionStatusLabel()}',
@@ -2654,6 +2659,7 @@ extension SettingsFlow on AgentCli {
     'media': startMediaSlotFlow,
     'agent-models': startAgentModelFlow,
     'tools': _toolsSettingsFlow,
+    'skills': _skillsSettingsFlow,
     'compaction': startCompactionEngineFlow,
     'ttsr': startTtsrRulesFlow,
     'keys': () => _handleKeyCommand(''),
@@ -2682,6 +2688,7 @@ extension SettingsFlow on AgentCli {
     io.writeln('resilience: ${_resilienceStatusLabel()}');
     io.writeln('dap: ${_dapHubStatusLabel()}');
     io.writeln('tools: ${_toolsStatusLabel()}');
+    io.writeln('skills: ${_skillsStatusLabel()}');
     io.writeln('compaction: ${_compactionStatusLabel()}');
     io.writeln('ttsr: ${_ttsrStatusLabel()}');
     io.writeln('redact: ${_redactionStatusLabel()}');
@@ -2694,7 +2701,7 @@ extension SettingsFlow on AgentCli {
     io.writeln('mcp: ${_mcpStatusLabel()}');
     io.writeln(
       'change via /provider, /model, /approval, /mode, /key, /mcp, /cube, '
-      '/tools (agent models: the /settings hub)',
+      '/tools, /skills (agent models: the /settings hub)',
     );
   }
 

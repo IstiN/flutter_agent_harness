@@ -651,7 +651,9 @@ void main() {
         await env.writeFile(_globalConfig, 'skills:\n  bogus: 1\n');
         expect(
           (await service.check()).errors.single.message,
-          contains('unknown "skills" key: bogus'),
+          // Per-skill keys are legal since issue #1151; only a bad value
+          // shape is rejected now.
+          contains('skills.bogus must be on/off'),
         );
       },
     );
@@ -813,8 +815,8 @@ void main() {
     test('agent validation agrees on the #729 raise path too', () {
       // A cap above the catalog window is the raise override: both the
       // shared validator and the boot parser accept it identically.
-      final raised = loadYaml('agent:\n  contextWindowCap: 1000000\n')
-          as YamlMap;
+      final raised =
+          loadYaml('agent:\n  contextWindowCap: 1000000\n') as YamlMap;
       final agentNode = raised['agent'] as YamlMap;
       expect(() => validateAgentSection(agentNode), returnsNormally);
       expect(() => CliConfig.fromYaml(raised), returnsNormally);

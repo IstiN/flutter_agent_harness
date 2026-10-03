@@ -218,3 +218,92 @@ settings — so the model can react instead of crashing the turn.
   they were registered but disabled by config the gate keeps them
   hidden for the whole session. Once configured, `dap: false` in any
   scope turns the family off like any other id.
+
+## Skills availability
+
+Skills carry the same kind of per-skill toggle as tools (issue #1151):
+a `skills:` config section stacks two scopes over discovery, the
+deepest scope that mentions a skill wins, and a disabled skill
+disappears from every surface — the system prompt block, slash-command
+completion, the line-mode menu and help, and invocation (`/<name>`,
+`/skill:<name>`) answers a `disabled — enable with /skills on <name>`
+note naming the deciding scope.
+
+### A full example
+
+```yaml
+# ~/.fah/config.yaml — GLOBAL scope: every project on this machine.
+skills:
+  create-goal: off
+
+# <project>/.fah/config.yaml — PROJECT scope: travels with the repo.
+skills:
+  create-goal: on      # deepest mention wins → enabled here
+  ship: off
+```
+
+### Yaml reference
+
+The `skills:` section holds the two skills-access keys (`access:`,
+`disableShellExecution:` — see `docs/` and AGENTS.md) plus one
+`<name>: <on|off>` entry per skill. Values are `on`/`off` (YAML 1.2
+parses bare `on`/`off` as strings, which is the documented shape) or
+`true`/`false`. Names resolve case-insensitively; a name no discovered
+skill has prints one dim warning and is ignored — never fatal. A
+present-but-invalid section (non-map, bad value) is a strict parse
+error in the USER file, like the rest of the boot config; the PROJECT
+file is data, not a crash — see Scopes.
+
+### Scopes
+
+Deepest wins, per skill name — there is no session or runtime scope,
+and no capability floor (skills default to enabled; only config turns
+them off):
+
+1. **Global** — `~/.fah/config.yaml` (`CliConfig.skillToggles`).
+2. **Project** — `<cwd>/.fah/config.yaml` (travels with the repo; the
+   `access:`/`disableShellExecution:` keys stay user-file settings).
+
+A broken project section (`skills:` unparseable, not a map, or carrying
+an invalid value) is data, not a crash: the CLI prints
+`skills: <error> — project scope ignored, keeping last good` and keeps
+serving the last good toggles — one bad project yaml cannot take down
+`/skills`, `/skills reload`, the toggles, boot, or session switching.
+(Toggling through such a file reports `skills: cannot merge project
+scope — <error>` and persists nothing.) The USER file keeps the strict
+boot-config contract.
+
+### Built-in skills and shadowing
+
+The package ships first-party skills (`create-goal`, `self-settings`)
+compiled from `prompts/skills/<name>/SKILL.md` into package data by
+`scripts/gen_prompts.dart` — they load on every host with no
+filesystem, are served to the `read` tool from virtual
+`builtin://skills/<name>/SKILL.md` paths, and are never gated by the
+skills-access consent. Discovery merges them LAST: a project, user, or
+granted third-party skill of the same name shadows the built-in (the
+project copy wins invocation and the prompt block; `/skills` prints a
+`builtin skill shadowed by <scope> skill` note so the precedence
+decision is visible). Deleting the shadowing skill restores the
+built-in. Built-ins carry the `(builtin)` badge in slash-command
+completion.
+
+### Runtime
+
+| Command | Effect |
+|---|---|
+| `/skills` | List every discovered skill with source, flags, and — for disabled ones — `; off (scope)` in the dim tail. |
+| `/skills on <name> [global\|project]` | Persist `on` and re-resolve live. Default scope: project. |
+| `/skills off <name> [global\|project]` | Persist `off` and re-resolve live. Default scope: project. |
+| `/skills reload` | Re-scan skills and re-resolve availability. |
+
+Nothing needs a restart: a persisted toggle re-resolves availability
+and recomposes the prompt immediately. The global scope is host-owned
+(the CLI mutates its live view; the executable persists it through the
+`onSkillTogglesChanged` hook — without a hook the change is kept for
+the session only). A toggle that cannot persist (broken/unwritable
+project file) leaves the live state untouched.
+
+- **CLI `/settings`** — a Skills entry (label: "N of M skills
+  available") opening a picker flow: pick a skill, pick on/off, pick
+  the scope to persist in (project default or global).

@@ -45,6 +45,7 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
 import 'package:fa/ui/screens/settings_key_dialogs.dart';
+import 'package:fa/ui/screens/skills_toggles_section.dart';
 import 'package:fa/ui/screens/tools_availability_section.dart';
 import 'package:fa/ui/screens/redaction_section.dart';
 import 'package:fa/services/task_models_store.dart';
@@ -2154,6 +2155,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
         const Divider(),
         const SizedBox(height: 16),
       ],
+      // Per-skill toggles (issue #1151): the package builtins are embedded
+      // data on every host — the rows render wherever the settings screen
+      // does, no consent-style platform gating.
+      SkillsTogglesSection(service: service),
+      const SizedBox(height: 24),
+      const Divider(),
+      const SizedBox(height: 16),
       // Capability-gated tools (issue #19): live toggles, every
       // platform — the tool set exists everywhere.
       ToolsAvailabilitySection(service: service),
