@@ -8,6 +8,8 @@
 // materialized MORE context than the live loop carried before exit (the
 // reported `127%/200k` footer) and tripped the over-window guard /
 // auto-compaction on a fresh resume.
+import 'dart:math' as math;
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -237,13 +239,33 @@ void main() {
     'auto-compaction, older history lazy',
     timeout: const Timeout(Duration(minutes: 5)),
     () async {
+      // The marathon size derives from the MEASURED platform overhead
+      // (issue #1151: builtin-skills metadata is permanent prompt
+      // overhead; a frozen seed left only a ~50-token margin under the
+      // threshold). A small probe resume captures the request basis the
+      // meter uses; the transcript then seeds ~1.1k tokens PAST the
+      // parity budget so the trim genuinely fires.
+      final probeEnv = await freshEnv();
+      await seedFlat(probeEnv, 'parity-target', 2);
+      var stream = FakeStreamFunction([textTurn('ok')]);
+      final probe = await resumeAndTurn(
+        interactiveCli(probeEnv, stream),
+        stream,
+      );
+      final overhead = overheadOf(probe);
+      expect(probe.messages, hasLength(3));
+      expect(requestTokens(probe), lessThanOrEqualTo(_threshold));
+
+      // OLD budget (window − reserve, transcript-only) kept ~24.5k
+      // resident; the meter (adding the overhead) read past 100% →
+      // guard + auto-compaction on a fresh resume. The parity budget
+      // must keep the meter at/below the threshold instead.
+      final budgetCount = ((_threshold - overhead - 1100) / 1000).floor();
+      expect(budgetCount, greaterThan(4), reason: 'probe overhead sane');
       final env = await freshEnv();
-      // 100k transcript tokens on a 32k window: the OLD budget (window −
-      // reserve, transcript-only) filled the resident records to ~24.5k
-      // and the meter (adding ~8.5k overhead) read past 100% → guard +
-      // auto-compaction on a fresh resume.
-      await seedFlat(env, 'parity-target', 100);
-      final stream = FakeStreamFunction([textTurn('ok')]);
+      await seedFlat(env, 'parity-target', budgetCount + 16);
+      io = FakeCliIO();
+      stream = FakeStreamFunction([textTurn('ok')]);
       final cli = interactiveCli(env, stream);
       final context = await resumeAndTurn(cli, stream);
 
@@ -258,8 +280,8 @@ void main() {
       expect(estimate, lessThanOrEqualTo(_threshold));
       expect(estimate, lessThan(_window));
       // The budget stop kept older history on disk: the projection is
-      // the tail, not the whole 100-record file (laziness preserved).
-      expect(context.messages.length, lessThan(101));
+      // the tail, not the whole file (laziness preserved).
+      expect(context.messages.length, lessThan(budgetCount + 17));
       // The LIVE tail is intact — the prompt rides the request.
       expect((context.messages.last as UserMessage).content, 'go');
     },
@@ -370,8 +392,15 @@ void main() {
     'a boundary-less marathon trim to the SAME record (budget path)',
     timeout: const Timeout(Duration(minutes: 5)),
     () async {
+      // Marathon size derives from the MEASURED overhead (issue #1151:
+      // builtin-skills metadata is permanent platform overhead — a
+      // frozen seed sat on the record-bucket boundary). The two hosts'
+      // prompts legitimately differ (interactive adds the mailbox
+      // section), so the parity contract asserted here is the trim
+      // FORMULA: both sides keep the newest records, never divergent
+      // content — the interactive tail is a suffix of the headless tail.
       final headlessEnv = await freshEnv();
-      await seedFlat(headlessEnv, 'parity-target', 60);
+      await seedFlat(headlessEnv, 'parity-target', 40);
       final headlessStream = FakeStreamFunction([textTurn('ok')]);
       final headlessExit = await headlessCli(
         headlessEnv,
@@ -381,19 +410,41 @@ void main() {
 
       io = FakeCliIO();
       final interactiveEnv = await freshEnv();
-      await seedFlat(interactiveEnv, 'parity-target', 60);
+      await seedFlat(interactiveEnv, 'parity-target', 40);
       final interactiveStream = FakeStreamFunction([textTurn('ok')]);
       final interactiveContext = await resumeAndTurn(
         interactiveCli(interactiveEnv, interactiveStream),
         interactiveStream,
       );
+      final headlessMessages = headlessStream.contexts.first.messages;
+      final interactiveMessages = interactiveContext.messages;
 
+      // Both trims genuinely fired (the file is ~5× the parity budget)…
+      expect(headlessMessages.length, lessThan(41));
+      expect(interactiveMessages.length, lessThan(41));
+      // …both hosts obey the same budget shape: the request basis at or
+      // under the threshold…
       expect(
-        signatures(headlessStream.contexts.first),
-        signatures(interactiveContext),
+        requestTokens(headlessStream.contexts.first),
+        lessThanOrEqualTo(_threshold),
       );
-      // And the trim genuinely fired (the file is 6× the parity budget).
-      expect(headlessStream.contexts.first.messages.length, lessThan(61));
+      expect(requestTokens(interactiveContext), lessThanOrEqualTo(_threshold));
+      // …and the kept tails agree record-for-record: the interactive
+      // projection ends with exactly the records the headless one kept
+      // (same drop-oldest rule, same newest-N tail — divergent content
+      // would break same-point continuation).
+      final shared = math.min(
+        headlessMessages.length,
+        interactiveMessages.length,
+      );
+      expect(
+        signatures(
+          interactiveContext,
+        ).sublist(interactiveMessages.length - shared),
+        signatures(
+          headlessStream.contexts.first,
+        ).sublist(headlessMessages.length - shared),
+      );
     },
   );
 

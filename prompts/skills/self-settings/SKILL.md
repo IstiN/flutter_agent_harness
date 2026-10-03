@@ -1,5 +1,5 @@
 ---
-name: fa-self-config
+name: self-settings
 description: >
   Configure fa (flutter_agent_harness) itself by editing the exact config
   files the CLI settings commands write: provider/model selection and roles,
