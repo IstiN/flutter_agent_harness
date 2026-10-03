@@ -52,6 +52,7 @@ import '../trajectory/trajectory_record.dart' show TrajectoryCompactedRecord;
 import '../trajectory/trajectory_blobs.dart';
 import '../agent/agent_tool.dart';
 import '../agent/auto_compactor.dart';
+import '../agent/stuck_tool.dart';
 import '../providers/models_for_endpoint.dart';
 import '../agent/tool_registry.dart';
 import '../a2a/a2a_config.dart';
@@ -618,6 +619,7 @@ class AgentCli {
       onRunIdleTimeout: (error) =>
           _logDiagnostic('RUN IDLE WATCHDOG fired sid=$_logSid error=$error'),
       contextWindowCap: config.contextWindowCap,
+      stuckTool: config.stuckTool,
       wireDump: config.wireDump,
       // Issue #387: the loop's over-window guard hands the transcript to
       // this relief before refusing — one synchronous compaction pass.

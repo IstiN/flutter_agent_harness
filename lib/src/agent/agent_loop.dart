@@ -48,6 +48,7 @@ import '../trajectory/trajectory_blobs.dart';
 import '../trajectory/trajectory_record.dart';
 import 'agent_tool.dart';
 import 'image_registry.dart';
+import 'stuck_tool.dart';
 import 'tool_pairing.dart';
 
 /// Marker embedded in the over-window guard's error message (see
@@ -395,6 +396,7 @@ final class AgentLoopConfig {
     this.maxSteeringTurns = 20,
     this.contextWindowCap,
     this.wireDump = false,
+    this.stuckTool,
   });
 
   /// The model to call each turn.
@@ -472,6 +474,11 @@ final class AgentLoopConfig {
   /// active pipeline and cap before persisting. Default: false.
   final bool wireDump;
 
+  /// Stuck-call supervision (gh-1054): liveness heartbeats for long-running
+  /// tool calls plus the autonomous cancel/retry/convert follow-up.
+  /// `null` = unsupervised (byte-identical legacy behavior).
+  final StuckToolConfig? stuckTool;
+
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
   AgentLoopConfig copyWith({Model? model}) {
     return AgentLoopConfig(
@@ -490,6 +497,7 @@ final class AgentLoopConfig {
       maxSteeringTurns: maxSteeringTurns,
       contextWindowCap: contextWindowCap,
       wireDump: wireDump,
+      stuckTool: stuckTool,
     );
   }
 }
@@ -696,6 +704,111 @@ final class ToolExecutionEndEvent extends AgentEvent {
   /// Whether the result is an error (unknown tool, executor threw, blocked,
   /// aborted, or truncated arguments).
   final bool isError;
+}
+
+/// Liveness heartbeat for a long-outstanding tool call (gh-1054).
+///
+/// Emitted every [StuckToolConfig.heartbeatInterval] once the call has run
+/// past [StuckToolConfig.heartbeatStart] — cheap, append-only sideband
+/// records that let external watchers (and the owner) distinguish
+/// alive-busy from dead. Never provider traffic.
+final class ToolCallHeartbeatEvent extends AgentEvent {
+  const ToolCallHeartbeatEvent({
+    required this.toolCallId,
+    required this.toolName,
+    required this.args,
+    required this.elapsed,
+    required this.outputBytes,
+    required this.attempt,
+    required this.timestamp,
+  });
+
+  /// The [ToolCall.id] still executing.
+  final String toolCallId;
+
+  /// The tool's name.
+  final String toolName;
+
+  /// The parsed tool call arguments (the command/args of the call).
+  final Map<String, dynamic> args;
+
+  /// How long the call has been running.
+  final Duration elapsed;
+
+  /// Captured output so far — the size of the last partial result the tool
+  /// reported (0 when the tool reports no progress updates).
+  final int outputBytes;
+
+  /// 1-based execution attempt (the stuck-follow-up retry is attempt 2).
+  final int attempt;
+
+  /// When the heartbeat fired.
+  final DateTime timestamp;
+}
+
+/// What the stuck-call follow-up did (or decided) at the threshold.
+enum StuckFollowUpAction {
+  /// Advisory only (interactive mode): the threshold was hit, nothing was
+  /// cancelled.
+  advisory,
+
+  /// The stuck call was cancelled and is being retried once (marked).
+  cancelRetry,
+
+  /// The retry also exceeded the threshold and was converted to a
+  /// background job via its soft-yield path; the turn continues with the
+  /// job id + log path.
+  backgroundConvert,
+
+  /// Recovery failed: the session-visible escalation names the call, its
+  /// duration, and the partial output.
+  escalate;
+
+  /// The snake_case label used in session records and HEP frames
+  /// (`cancel_retry`, `background_convert`).
+  String get label => switch (this) {
+    advisory => 'advisory',
+    cancelRetry => 'cancel_retry',
+    backgroundConvert => 'background_convert',
+    escalate => 'escalate',
+  };
+}
+
+/// A stuck-call follow-up transition (gh-1054): the threshold fired and the
+/// supervisor acted — advised, cancelled+retried, background-converted, or
+/// escalated. Session-visible so a hung call never dies silently.
+final class ToolCallStuckEvent extends AgentEvent {
+  const ToolCallStuckEvent({
+    required this.toolCallId,
+    required this.toolName,
+    required this.args,
+    required this.elapsed,
+    required this.action,
+    this.detail = '',
+    required this.timestamp,
+  });
+
+  /// The [ToolCall.id] that was stuck.
+  final String toolCallId;
+
+  /// The tool's name.
+  final String toolName;
+
+  /// The parsed tool call arguments.
+  final Map<String, dynamic> args;
+
+  /// How long the call had run when the action fired.
+  final Duration elapsed;
+
+  /// The follow-up action taken.
+  final StuckFollowUpAction action;
+
+  /// Human-readable detail (the reason, or the partial-output pointer for
+  /// an escalation).
+  final String detail;
+
+  /// When the action fired.
+  final DateTime timestamp;
 }
 
 /// The event stream returned by [agentLoop] and [agentLoopContinue].
@@ -1830,6 +1943,7 @@ Future<_ExecutedToolCallBatch> _executeToolCallsSequential(
           toolExecutor,
           cancelToken,
           emit,
+          stuckTool: config.stuckTool,
         ),
         config,
         cancelToken,
@@ -1891,6 +2005,7 @@ Future<_ExecutedToolCallBatch> _executeToolCallsParallel(
             toolExecutor,
             cancelToken,
             emit,
+            stuckTool: config.stuckTool,
           );
           final finalized = await _finalizeExecutedToolCall(
             context,
@@ -2002,31 +2117,58 @@ Tool? _findTool(Context context, String name) {
 }
 
 /// Port of pi's `executePreparedToolCall`: run the executor, relay partial
-/// updates, convert a throw into an error result.
+/// updates, convert a throw into an error result. When a [StuckToolConfig]
+/// is configured (and the tool is not excluded) the execution runs under
+/// the stuck-call supervisor (gh-1054): liveness heartbeats past half the
+/// threshold, then the autonomous cancel/retry/convert follow-up.
 Future<_ExecutedToolCallOutcome> _executePreparedToolCall(
   ToolCall toolCall,
   ToolExecutor toolExecutor,
   CancelToken? cancelToken,
-  AgentEventSink emit,
-) async {
+  AgentEventSink emit, {
+  StuckToolConfig? stuckTool,
+}) async {
   final updateEvents = <Future<void>>[];
   var acceptingUpdates = true;
-  try {
-    final result = await toolExecutor(toolCall, cancelToken, (partialResult) {
-      if (!acceptingUpdates) return;
-      updateEvents.add(
-        Future<void>(
-          () => emit(
-            ToolExecutionUpdateEvent(
-              toolCallId: toolCall.id,
-              toolName: toolCall.name,
-              args: toolCall.arguments,
-              partialResult: partialResult,
-            ),
+  void onPartial(ToolExecutionResult partialResult) {
+    if (!acceptingUpdates) return;
+    updateEvents.add(
+      Future<void>(
+        () => emit(
+          ToolExecutionUpdateEvent(
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            args: toolCall.arguments,
+            partialResult: partialResult,
           ),
         ),
-      );
-    });
+      ),
+    );
+  }
+
+  Future<ToolExecutionResult> run(
+    CancelToken? token, [
+    void Function(ToolExecutionResult partialResult)? observe,
+  ]) => toolExecutor(toolCall, token, (partialResult) {
+    observe?.call(partialResult);
+    onPartial(partialResult);
+  });
+
+  final supervised =
+      stuckTool != null &&
+      stuckTool.enabled &&
+      !stuckTool.excludes(toolCall.name);
+  final execution = supervised
+      ? _superviseToolExecution(
+          toolCall: toolCall,
+          run: run,
+          runToken: cancelToken,
+          stuck: stuckTool,
+          emit: emit,
+        )
+      : run(cancelToken);
+  try {
+    final result = await execution;
     acceptingUpdates = false;
     await Future.wait(updateEvents);
     return _ExecutedToolCallOutcome(result, false);
@@ -2035,6 +2177,460 @@ Future<_ExecutedToolCallOutcome> _executePreparedToolCall(
     await Future.wait(updateEvents);
     return _ExecutedToolCallOutcome(_errorToolResult(error), true);
   }
+}
+
+/// The supervised execution runner: invoke the tool executor for the call
+/// under the given cancel token; the optional observer sees every partial
+/// result (for the heartbeat's captured-output size and the escalation's
+/// partial-output pointer) while the loop's own update emitter stays wired.
+typedef _SupervisedRun =
+    Future<ToolExecutionResult> Function(
+      CancelToken? token, [
+      void Function(ToolExecutionResult partialResult)? observe,
+    ]);
+
+/// The cancel reason the stuck supervisor puts on a call/yield token — a
+/// marker, not an error: the tokens' other listeners only check
+/// [CancelToken.isCancelled].
+class StuckCallFollowUp {
+  const StuckCallFollowUp(this.reason);
+
+  final String reason;
+
+  @override
+  String toString() => reason;
+}
+
+/// One supervised execution attempt's outcome.
+final class _SupervisedAttempt {
+  _SupervisedAttempt.completed(this.result, {required this.afterStuck})
+    : error = null,
+      hung = false,
+      cancelledBySupervisor = false,
+      elapsed = Duration.zero,
+      outputBytes = 0,
+      partialText = '';
+
+  _SupervisedAttempt.failed(
+    this.error, {
+    required this.cancelledBySupervisor,
+    this.elapsed = Duration.zero,
+    this.outputBytes = 0,
+    this.partialText = '',
+  }) : result = null,
+       hung = false,
+       afterStuck = false;
+
+  _SupervisedAttempt.hung(this.elapsed, this.outputBytes, this.partialText)
+    : result = null,
+      error = null,
+      hung = true,
+      afterStuck = false,
+      cancelledBySupervisor = false;
+
+  final ToolExecutionResult? result;
+  final Object? error;
+
+  /// True when the attempt was abandoned at its threshold (the executor
+  /// did not answer within the cancel grace).
+  final bool hung;
+
+  /// True when the supervisor's own threshold cancel fired during the
+  /// attempt. An error landing after it is that cancel's consequence
+  /// (bash's `Command aborted` once the job registry kills the process, a
+  /// token-obeying executor's throw) — not a fresh failure — and it
+  /// follows the same stage logic as a hang instead of short-circuiting
+  /// the follow-up.
+  final bool cancelledBySupervisor;
+
+  /// True when the attempt completed only after the stuck threshold had
+  /// fired (a yield-converted background hand-back lands here).
+  final bool afterStuck;
+
+  final Duration elapsed;
+  final int outputBytes;
+  final String partialText;
+}
+
+/// The declared shell timeout of a tool call's arguments (`bash`'s
+/// `timeout` seconds), or null when the arguments declare none. The
+/// stuck threshold is derived from it (2× declared, floored) so a
+/// legitimately long declared-timeout call is never pestered early.
+Duration? _declaredTimeoutOf(Map<String, dynamic> args) {
+  final value = args['timeout'];
+  if (value is! num || !value.isFinite || value <= 0) return null;
+  return Duration(milliseconds: (value * 1000).round());
+}
+
+/// The captured-output size of a (partial) result: the total text length
+/// across its text blocks.
+int _resultOutputSize(ToolExecutionResult result) {
+  var size = 0;
+  for (final block in result.content) {
+    if (block is TextContent) size += block.text.length;
+  }
+  return size;
+}
+
+/// The tail of a (partial) result's text, for an escalation's
+/// partial-output pointer.
+String _resultPartialText(ToolExecutionResult result, {int max = 300}) {
+  final text = [
+    for (final block in result.content)
+      if (block is TextContent) block.text,
+  ].join('\n').trim();
+  if (text.length <= max) return text;
+  return '…${text.substring(text.length - max)}';
+}
+
+/// Human elapsed for marked results (`4m05s`).
+String _formatElapsed(Duration duration) {
+  final minutes = duration.inMinutes;
+  final seconds = duration.inSeconds % 60;
+  if (minutes == 0) return '${duration.inMilliseconds / 1000}s';
+  return '${minutes}m${seconds.toString().padLeft(2, '0')}s';
+}
+
+/// Prepends the stuck-call marks to a result's first text block.
+ToolExecutionResult _prefixMarks(
+  List<String> marks,
+  ToolExecutionResult result,
+) {
+  if (marks.isEmpty) return result;
+  final prefix = '${marks.join('\n')}\n';
+  for (var i = 0; i < result.content.length; i++) {
+    final block = result.content[i];
+    if (block is TextContent) {
+      final content = List<ContentBlock>.of(result.content);
+      content[i] = TextContent(text: '$prefix${block.text}');
+      return ToolExecutionResult(content: content, terminate: result.terminate);
+    }
+  }
+  return ToolExecutionResult(
+    content: [
+      TextContent(text: prefix),
+      ...result.content,
+    ],
+    terminate: result.terminate,
+  );
+}
+
+/// Stuck-call supervision (gh-1054): runs [run] under a watchdog.
+///
+/// Per attempt: a per-call cancel token (linked from the run token) and a
+/// per-call yield token (shadowing the phase's, linked from it) so the
+/// follow-up acts on THIS call only. Heartbeats fire every
+/// [StuckToolConfig.heartbeatInterval] once the attempt is past half its
+/// threshold. At the threshold the follow-up runs:
+///
+/// - attempt 1 hung → the call is cancelled (bounded by the cancel grace —
+///   a wedged executor cannot block the follow-up) and retried once, with
+///   a `[stuck-call]` mark on the eventual result;
+/// - attempt 2 hung → its YIELD token is cancelled: a yield-aware tool
+///   (bash over a jobs-capable env) hands the call back as a background
+///   job and the turn continues with the job id + log path; a tool that
+///   cannot be recovered escalates — a session-visible stuck event naming
+///   the call, its total duration, and the partial output — and the
+///   result is a marked error. Never die silently.
+///
+/// Advisory mode ([StuckFollowUpMode.advisory]) stops after the advisory
+/// stuck event: nothing is ever cancelled (interactive sessions with a
+/// human present).
+Future<ToolExecutionResult> _superviseToolExecution({
+  required ToolCall toolCall,
+  required _SupervisedRun run,
+  required CancelToken? runToken,
+  required StuckToolConfig stuck,
+  required AgentEventSink emit,
+}) async {
+  final declared = _declaredTimeoutOf(toolCall.arguments);
+  final threshold = stuck.stuckThreshold(declared);
+  final heartbeatStart = stuck.heartbeatStart(declared);
+  final marks = <String>[];
+  var attempt = 0;
+  var totalElapsed = Duration.zero;
+  var lastOutputBytes = 0;
+  var lastPartialText = '';
+
+  while (true) {
+    attempt++;
+    final stage = attempt == 1
+        ? StuckFollowUpAction.cancelRetry
+        : StuckFollowUpAction.backgroundConvert;
+    final outcome = await _supervisedAttempt(
+      toolCall: toolCall,
+      run: run,
+      runToken: runToken,
+      stuck: stuck,
+      emit: emit,
+      attempt: attempt,
+      threshold: threshold,
+      heartbeatStart: heartbeatStart,
+      stageIfHung: stage,
+    );
+    totalElapsed += outcome.elapsed;
+    lastOutputBytes = outcome.outputBytes;
+    lastPartialText = outcome.partialText;
+
+    // The run is over (user abort / host teardown) — no follow-up stages
+    // may outlive it; the loop's abort handling owns the result.
+    if (runToken != null && runToken.isCancelled) {
+      throw CancelledException(runToken.cancelReason);
+    }
+    if (outcome.error != null) {
+      // A failure before the threshold is the executor's own — rethrow.
+      // A failure after the supervisor's cancel is that cancel's
+      // consequence (bash's `Command aborted` once the job registry kills
+      // the process, a token-obeying executor's throw): it follows the
+      // same stage logic as a hang below, so the follow-up (retry /
+      // background conversion / escalation) still runs.
+      if (!outcome.cancelledBySupervisor) throw outcome.error!;
+    }
+    if (outcome.error == null && !outcome.hung) {
+      if (attempt > 1) {
+        if (outcome.afterStuck) {
+          marks.add(
+            '[stuck-call] the retry of ${toolCall.name} also exceeded '
+            '${_formatElapsed(threshold)} and was converted to a background '
+            'job (the process was NOT killed); the turn continues.',
+          );
+        } else {
+          marks.add(
+            '[stuck-call] ${toolCall.name} was cancelled after '
+            '${_formatElapsed(threshold)} with no completion and retried '
+            'once (this result is the marked retry).',
+          );
+        }
+      }
+      return _prefixMarks(marks, outcome.result!);
+    }
+
+    switch (stage) {
+      case StuckFollowUpAction.cancelRetry:
+        marks.add(
+          '[stuck-call] ${toolCall.name} was cancelled after '
+          '${_formatElapsed(outcome.elapsed)} with no completion and is '
+          'being retried once.',
+        );
+      case StuckFollowUpAction.backgroundConvert:
+        // The yield cancel already fired inside the attempt and the
+        // executor did not answer within the cancel grace: recovery
+        // failed — escalate, session-visibly.
+        final partialPointer = lastOutputBytes > 0
+            ? ' Partial output (~$lastOutputBytes chars) captured: '
+                  '"$lastPartialText"'
+            : ' No output was captured.';
+        final cause = outcome.error == null
+            ? ''
+            : ' The retry failed with: ${outcome.error}';
+        await emit(
+          ToolCallStuckEvent(
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            args: toolCall.arguments,
+            elapsed: totalElapsed,
+            action: StuckFollowUpAction.escalate,
+            detail:
+                '${toolCall.name} could not be recovered after '
+                '${_formatElapsed(totalElapsed)} '
+                '(cancel + retry + background conversion all failed).'
+                '$cause$partialPointer',
+            timestamp: DateTime.now(),
+          ),
+        );
+        throw StateError(
+          '[stuck-call escalation] ${toolCall.name} could not be recovered '
+          'after ${_formatElapsed(totalElapsed)} (cancel + retry + '
+          'background conversion all failed).'
+          '$cause$partialPointer',
+        );
+      case StuckFollowUpAction.advisory:
+      case StuckFollowUpAction.escalate:
+        // Advisory hangs are never abandoned (no cancel, no grace gate);
+        // escalate is produced below, never consumed as a stage.
+        break;
+    }
+  }
+}
+
+/// One supervised attempt: run the executor under per-call cancel/yield
+/// tokens with the heartbeat + stuck timers. See [_superviseToolExecution].
+Future<_SupervisedAttempt> _supervisedAttempt({
+  required ToolCall toolCall,
+  required _SupervisedRun run,
+  required CancelToken? runToken,
+  required StuckToolConfig stuck,
+  required AgentEventSink emit,
+  required int attempt,
+  required Duration threshold,
+  required Duration heartbeatStart,
+  required StuckFollowUpAction stageIfHung,
+}) async {
+  final callSource = CancelTokenSource();
+  final yieldSource = CancelTokenSource();
+  final phaseYield = currentYieldToken();
+  // Link: the run token cancels this call; the phase yield (a real steering
+  // arrival) yields this call — the follow-up tokens stay call-local.
+  if (runToken != null) {
+    unawaited(
+      runToken.onCancel.then((_) => callSource.cancel(runToken.cancelReason)),
+    );
+  }
+  if (phaseYield != null) {
+    unawaited(
+      phaseYield.onCancel.then((_) => yieldSource.cancel('steering arrived')),
+    );
+  }
+
+  var alive = true;
+  var outputBytes = 0;
+  var partialText = '';
+  var stuckFired = false;
+  final stopwatch = Stopwatch()..start();
+
+  // Serialized event chain: heartbeats/stuck events never interleave with
+  // each other, and the attempt drains the chain before reporting so the
+  // records land between tool start and tool end in the ledger.
+  var chain = Future<void>.value();
+  void enqueue(AgentEvent event) {
+    chain = chain
+        .then((_) => emit(event))
+        .then((_) {})
+        .catchError((Object _) {});
+  }
+
+  Timer? heartbeatTimer;
+  Timer? stuckTimer;
+  Timer? graceTimer;
+  final graceGate = Completer<void>();
+  void disarm() {
+    heartbeatTimer?.cancel();
+    stuckTimer?.cancel();
+    graceTimer?.cancel();
+  }
+
+  // Observes partial results for the heartbeat's captured-output size and
+  // the escalation's partial-output pointer. Forwarding to the loop's
+  // update emitter stays inside `run` — this only reads.
+  void observe(ToolExecutionResult partial) {
+    if (!alive) return;
+    outputBytes = _resultOutputSize(partial);
+    partialText = _resultPartialText(partial);
+  }
+
+  final inner = runZoned<Future<ToolExecutionResult>>(
+    () => run(callSource.token, observe),
+    zoneValues: {yieldTokenZoneKey: yieldSource.token},
+  );
+
+  stuckTimer = Timer(threshold, () {
+    if (!alive) return;
+    stuckFired = true;
+    if (stuck.followUp == StuckFollowUpMode.advisory) {
+      enqueue(
+        ToolCallStuckEvent(
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          args: toolCall.arguments,
+          elapsed: stopwatch.elapsed,
+          action: StuckFollowUpAction.advisory,
+          detail:
+              '${toolCall.name} has been running for '
+              '${_formatElapsed(stopwatch.elapsed)} (no action taken in '
+              'advisory mode)',
+          timestamp: DateTime.now(),
+        ),
+      );
+      return;
+    }
+    enqueue(
+      ToolCallStuckEvent(
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        args: toolCall.arguments,
+        elapsed: stopwatch.elapsed,
+        action: stageIfHung,
+        detail:
+            '${toolCall.name} exceeded ${_formatElapsed(threshold)}; '
+            '${stageIfHung == StuckFollowUpAction.cancelRetry ? 'cancelling and retrying once' : 'converting to a background job'}',
+        timestamp: DateTime.now(),
+      ),
+    );
+    switch (stageIfHung) {
+      case StuckFollowUpAction.cancelRetry:
+        callSource.cancel(
+          StuckCallFollowUp('stuck call cancelled after exceeding threshold'),
+        );
+      case StuckFollowUpAction.backgroundConvert:
+        yieldSource.cancel(
+          StuckCallFollowUp('stuck retry converted to a background job'),
+        );
+      case StuckFollowUpAction.advisory || StuckFollowUpAction.escalate:
+        break;
+    }
+    if (graceGate.isCompleted) return;
+    if (stuck.cancelGrace > Duration.zero) {
+      graceTimer = Timer(stuck.cancelGrace, graceGate.complete);
+    } else {
+      graceGate.complete();
+    }
+  });
+  heartbeatTimer = Timer.periodic(stuck.heartbeatInterval, (_) {
+    if (!alive) return;
+    final elapsed = stopwatch.elapsed;
+    if (elapsed < heartbeatStart) return;
+    enqueue(
+      ToolCallHeartbeatEvent(
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        args: toolCall.arguments,
+        elapsed: elapsed,
+        outputBytes: outputBytes,
+        attempt: attempt,
+        timestamp: DateTime.now(),
+      ),
+    );
+  });
+  // The run ending disarms everything and unblocks the wait: no timers may
+  // outlive the run (they would pin the host's process at exit).
+  if (runToken != null) {
+    unawaited(
+      runToken.onCancel.then((_) {
+        disarm();
+        callSource.cancel(runToken.cancelReason);
+        if (!graceGate.isCompleted) graceGate.complete();
+      }),
+    );
+  }
+
+  ToolExecutionResult? completedResult;
+  Object? completedError;
+  final waiter = inner.then<void>(
+    (result) => completedResult = result,
+    onError: (Object error) {
+      completedError = error;
+    },
+  );
+  await Future.any<void>([waiter, graceGate.future]);
+  alive = false;
+  disarm();
+  await chain;
+  if (completedError != null) {
+    return _SupervisedAttempt.failed(
+      completedError!,
+      cancelledBySupervisor: stuckFired,
+      elapsed: stopwatch.elapsed,
+      outputBytes: outputBytes,
+      partialText: partialText,
+    );
+  }
+  if (completedResult != null) {
+    return _SupervisedAttempt.completed(
+      completedResult!,
+      afterStuck: stuckFired,
+    );
+  }
+  return _SupervisedAttempt.hung(stopwatch.elapsed, outputBytes, partialText);
 }
 
 /// Port of pi's `finalizeExecutedToolCall`: apply the `afterToolCall` hook's

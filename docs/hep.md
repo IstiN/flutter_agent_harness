@@ -48,6 +48,7 @@ round carries the same id.
 | `message_delta` | `turn_id`, `delta` | A chunk of assistant TEXT. Thinking deltas are never emitted here. |
 | `tool_start` | `turn_id`, `id`, `name`, `args_summary` | A tool call starts. `args_summary`: one-line `key=value` summary; `events=full` carries the raw JSON arguments instead (bounded, see Bounds). |
 | `tool_delta` | `turn_id`, `id`, `update` | Partial tool output (text only; omitted while empty). |
+| `tool_liveness` | `turn_id`, `id`, `name`, `action`, `elapsed_ms`, `detail` | Liveness heartbeat (`action: "heartbeat"`) or stuck-call follow-up (`cancel_retry`, `background_convert`, `escalate`, `advisory`) for a long-outstanding tool call (gh-1054). `detail` is human-readable; omitted while empty. |
 | `turn_done` | `turn_id`, `message`, `tool_results`, `usage`, `stop_reason` | Terminal for the round. `message` is the round's assistant text (empty for tool-call-only rounds). `tool_results[]`: `{id, name, ok, text}`. `usage`: `{input, output, cost}` (cost is a number, dollars). `stop_reason`: the provider stop reason (`stop`, `toolUse`, …). |
 | `turn_error` | `turn_id`, `error`, `fatal` | The round failed (provider error). `fatal` is `true` today: headless runs end the run. |
 | `cancelled` | `turn_id` | The run was aborted (SIGINT/SIGTERM); exit code 130. |

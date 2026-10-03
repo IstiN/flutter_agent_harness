@@ -923,6 +923,64 @@ prompts:
           contains('agent:\n  contextWindowCap: 256000\n  mode: omp\n'),
         );
       });
+
+      test('absent agent.stuckTool parses to null', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: omp\n');
+        expect(loadCliConfig(tmp.path).stuckTool, isNull);
+      });
+
+      test('parses agent.stuckTool and persists only non-defaults back', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync(
+          'agent:\n'
+          '  stuckTool:\n'
+          '    floorSeconds: 42\n'
+          '    heartbeatSeconds: 7\n'
+          '    followUp: advisory\n'
+          '    excludeTools: [task]\n',
+        );
+        final loaded = loadCliConfig(tmp.path);
+        final stuck = loaded.stuckTool;
+        expect(stuck, isNotNull);
+        expect(stuck!.floor, const Duration(seconds: 42));
+        expect(stuck.heartbeatInterval, const Duration(seconds: 7));
+        expect(stuck.followUp, StuckFollowUpMode.advisory);
+        expect(stuck.excludeTools, ['task']);
+        final yaml = loaded
+            .withCustomProviders(loaded.customProviders)
+            .toYaml();
+        expect(
+          yaml,
+          contains(
+            '  stuckTool:\n'
+            '    followUp: advisory\n'
+            '    floorSeconds: 42\n'
+            '    heartbeatSeconds: 7\n'
+            '    excludeTools: [task]\n',
+          ),
+        );
+      });
+
+      test('rejects an unknown agent.stuckTool key', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync(
+          'agent:\n  stuckTool:\n    floorSeconds: 10\n    turbo: true\n',
+        );
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('unknown "agent.stuckTool" key'),
+            ),
+          ),
+        );
+      });
     });
   });
 
@@ -1434,9 +1492,8 @@ memory:
   });
 
   group('saved provider canonicalization (issue #772)', () {
-    CliConfig configOf(String yaml) => CliConfig.fromYaml(
-          loadYaml(yaml) as YamlMap,
-        );
+    CliConfig configOf(String yaml) =>
+        CliConfig.fromYaml(loadYaml(yaml) as YamlMap);
 
     test('the CLI-written name-shape loads as the kind (AC1)', () {
       expect(
@@ -1466,21 +1523,20 @@ memory:
     });
 
     test('shared-kind names stay — the baseUrl carries that identity', () {
-      expect(
-        configOf('provider: openrouter\n').providerKind,
-        'openrouter',
-      );
+      expect(configOf('provider: openrouter\n').providerKind, 'openrouter');
       expect(configOf('provider: openai\n').providerKind, 'openai');
       expect(configOf('provider: kimi\n').providerKind, 'kimi');
     });
 
-    test('a kind-id no version knows stays verbatim (E2, warn-dont-mutate)',
-        () {
-      expect(
-        configOf('provider: from-the-future\n').providerKind,
-        'from-the-future',
-      );
-    });
+    test(
+      'a kind-id no version knows stays verbatim (E2, warn-dont-mutate)',
+      () {
+        expect(
+          configOf('provider: from-the-future\n').providerKind,
+          'from-the-future',
+        );
+      },
+    );
 
     test('an absent provider keeps the default', () {
       expect(configOf('mode: code\n').providerKind, 'openai-completions');
@@ -1493,8 +1549,7 @@ memory:
       expect(config.providerKind, 'openai-completions');
     });
 
-    test('the next save persists the kind (write-back on save only)',
-        () async {
+    test('the next save persists the kind (write-back on save only)', () async {
       final tmp = Directory.systemTemp.createTempSync('fah-canonical-');
       addTearDown(() => tmp.deleteSync(recursive: true));
       final file = File('${tmp.path}/.fah/config.yaml')

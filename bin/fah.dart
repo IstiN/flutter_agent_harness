@@ -2164,6 +2164,7 @@ Future<void> _runApp(List<String> args) async {
       compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
       wireDump: wireDump,
       contextWindowCap: saved.contextWindowCap,
+      stuckTool: saved.stuckTool,
       subagents: saved.subagents,
       jobs: saved.jobs,
       modelRolesResolver: rolesResolver,

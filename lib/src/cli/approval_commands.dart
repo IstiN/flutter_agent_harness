@@ -986,6 +986,52 @@ extension ApprovalCommands on AgentCli {
         _logDiagnostic('turn end sid=$_logSid stop=${message.stopReason.name}');
       case AgentEndEvent():
         _logDiagnostic('run end sid=$_logSid');
+      case ToolCallHeartbeatEvent(
+        :final toolCallId,
+        :final toolName,
+        :final args,
+        :final elapsed,
+        :final outputBytes,
+        :final attempt,
+      ):
+        // Liveness heartbeat (gh-1054): the session record keeps the trace
+        // fresh for external watchers; the terminal stays quiet (the busy
+        // row already names the running tool).
+        _logDiagnostic(
+          'tool heartbeat sid=$_logSid name=$toolName '
+          'elapsed=${elapsed.inSeconds}s out=${outputBytes}B '
+          'attempt=$attempt',
+        );
+        await _persistToolLivenessRecord(toolHeartbeatRecordType, {
+          'tool': toolName,
+          'toolCallId': toolCallId,
+          'elapsedMs': elapsed.inMilliseconds,
+          'outputBytes': outputBytes,
+          'attempt': attempt,
+          'args': _stuckArgsSummary(args),
+        });
+      case ToolCallStuckEvent(
+        :final toolCallId,
+        :final toolName,
+        :final elapsed,
+        :final action,
+        :final detail,
+      ):
+        _logDiagnostic(
+          'tool stuck sid=$_logSid name=$toolName action=${action.name} '
+          'elapsed=${elapsed.inSeconds}s',
+        );
+        await _persistToolLivenessRecord(toolStuckRecordType, {
+          'tool': toolName,
+          'toolCallId': toolCallId,
+          'elapsedMs': elapsed.inMilliseconds,
+          'action': action.label,
+          'detail': detail,
+        });
+        io.writeln(
+          '[stuck-call] $toolName: ${action.label} after '
+          '${elapsed.inSeconds}s${detail.isEmpty ? '' : ' — $detail'}',
+        );
       default:
     }
     await _persistIncremental(event);

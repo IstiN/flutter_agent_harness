@@ -10,6 +10,7 @@ export 'src/agent/agent.dart';
 export 'src/agent/agent_loop.dart';
 export 'src/agent/agent_tool.dart';
 export 'src/agent/image_registry.dart';
+export 'src/agent/stuck_tool.dart';
 export 'src/agent/tool_pairing.dart';
 export 'src/agent/auto_compactor.dart'
     show

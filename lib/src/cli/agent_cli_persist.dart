@@ -55,6 +55,33 @@ extension AgentCliPersist on AgentCli {
     _persistedCount = messages.length;
   }
 
+  /// Persists a stuck-call liveness record (`tool_heartbeat` /
+  /// `tool_stuck`, gh-1054) at the session leaf. Custom records stay out of
+  /// model context — they are the session-visible audit trail external
+  /// watchers (and post-mortems) read to distinguish alive-busy from dead.
+  Future<void> _persistToolLivenessRecord(
+    String customType,
+    Map<String, Object?> data,
+  ) async {
+    final session = _session;
+    if (session == null) return;
+    await session.appendCustomEntry(customType: customType, data: data);
+  }
+
+  /// The args summary for a liveness record: the command for shell calls,
+  /// otherwise the truncated JSON of the arguments — the record must name
+  /// WHAT was stuck without bloating the ledger.
+  Object? _stuckArgsSummary(Map<String, dynamic> args) {
+    const cap = 500;
+    final command = args['command'];
+    if (command is String) {
+      return command.length > cap ? command.substring(0, cap) : command;
+    }
+    if (args.isEmpty) return null;
+    final json = jsonEncode(args);
+    return json.length > cap ? '${json.substring(0, cap)}…' : json;
+  }
+
   /// Persists one in-memory [message] at the session leaf on demand (the
   /// checkpoint/rewind controller's sink), keeping [_persistedCount] aligned
   /// so the run-end batch persistence skips it. Returns the new record id.

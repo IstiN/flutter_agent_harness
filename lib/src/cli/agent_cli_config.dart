@@ -91,6 +91,7 @@ final class AgentCliConfig {
     this.compactionEngine,
     this.compactionJudgeBudgetSeconds,
     this.contextWindowCap,
+    this.stuckTool,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
@@ -159,6 +160,12 @@ final class AgentCliConfig {
   /// it raises the effective window to the served truth. `null` =
   /// uncapped.
   final int? contextWindowCap;
+
+  /// Stuck-call supervision (`agent.stuckTool`, gh-1054): liveness
+  /// heartbeats for long-running tool calls plus the autonomous
+  /// cancel/retry/convert follow-up. `null` = unsupervised (the loop runs
+  /// byte-identically to before).
+  final StuckToolConfig? stuckTool;
 
   /// Per-call judge/summarizer budget seconds (`compaction.
   /// judgeBudgetSeconds`, issue #541), resolved by the host from the

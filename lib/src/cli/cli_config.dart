@@ -26,6 +26,7 @@ import '../memory_config.dart';
 import '../messaging/fabric_config.dart';
 import '../redact/redaction_types.dart';
 import '../agent/image_registry.dart';
+import '../agent/stuck_tool.dart';
 import '../power_config.dart';
 import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
@@ -124,15 +125,20 @@ String? _parseAgentModeValue(Object? value) {
 /// (issue #679: bare prompt, 4-tool sweep, boot print) the executable
 /// re-resolves through its flag > env > config ladder. `omp` carries no
 /// harness behavior, so it never reaches that ladder.
-({int? contextWindowCap, String? mode, String? agentMode})? _parseAgentSection(
-  Object? node,
-) {
+({
+  int? contextWindowCap,
+  String? mode,
+  String? agentMode,
+  StuckToolConfig? stuckTool,
+})?
+_parseAgentSection(Object? node) {
   if (node == null) return null;
   if (node is! YamlMap) {
     throw ConfigException('agent must be a map, got: $node');
   }
   int? cap;
   String? mode;
+  StuckToolConfig? stuckTool;
   for (final key in node.keys) {
     switch (key) {
       case 'contextWindowCap':
@@ -152,6 +158,8 @@ String? _parseAgentModeValue(Object? value) {
         cap = value;
       case 'mode':
         mode = _parseAgentModeValue(node[key]);
+      case 'stuckTool':
+        stuckTool = StuckToolConfig.fromYaml(node[key]);
       default:
         throw ConfigException('unknown "agent" key: $key');
     }
@@ -160,6 +168,7 @@ String? _parseAgentModeValue(Object? value) {
     contextWindowCap: cap,
     mode: mode,
     agentMode: mode == 'pi' ? 'pi' : null,
+    stuckTool: stuckTool,
   );
 }
 
@@ -228,6 +237,7 @@ final class CliConfig {
     this.modelRoles,
     this.ttsr,
     this.contextWindowCap,
+    this.stuckTool,
     this.agentLoadMode,
     this.customProviders = const [],
     this.models,
@@ -271,8 +281,8 @@ final class CliConfig {
       // Issue #772: the persisted provider identity is the catalog KIND.
       // Old name-shaped values (`chatgpt`, `chatgpt.com`) canonicalize on
       // load — the file itself is rewritten only on the next save.
-      providerKind: _canonicalSavedProvider(map['provider']) ??
-          'openai-completions',
+      providerKind:
+          _canonicalSavedProvider(map['provider']) ?? 'openai-completions',
       modelId: map['model'] as String? ?? 'openai/gpt-4o-mini',
       baseUrl: map['baseUrl'] as String? ?? 'https://openrouter.ai/api/v1',
       mode: map['mode'] as String? ?? 'code',
@@ -376,6 +386,7 @@ final class CliConfig {
       contextWindowCap: agentSection?.contextWindowCap,
       agentMode: agentSection?.agentMode,
       agentLoadMode: agentSection?.mode,
+      stuckTool: agentSection?.stuckTool,
       // The subagents section (background-subagent heartbeat, issue #383)
       subagents: SubagentsConfig.fromYaml(map['subagents']),
       waiting: WaitingConfig.fromYaml(map['waiting']),
@@ -569,6 +580,11 @@ final class CliConfig {
   /// raw model window).
   final int? contextWindowCap;
 
+  /// Stuck-call supervision config (`agent.stuckTool`, gh-1054): liveness
+  /// heartbeats for long-running tool calls plus the autonomous
+  /// cancel/retry/convert follow-up. `null` = unsupervised.
+  final StuckToolConfig? stuckTool;
+
   /// The parsed harness mode preset (`agent.mode`, issue #679): `'pi'` or
   /// null (absent or explicit `default`). Resolved against the flag/env
   /// tiers by the executable via `resolveHarnessMode`.
@@ -661,6 +677,7 @@ final class CliConfig {
       wireDump: wireDump,
       images: images,
       contextWindowCap: contextWindowCap,
+      stuckTool: stuckTool,
       agentLoadMode: agentLoadMode,
       powerSleepPrevention: powerSleepPrevention,
       powerHold: powerHold,
@@ -698,7 +715,8 @@ final class CliConfig {
   /// switch, statusLine); the file stays minimal.
   String _tuiSectionYaml() {
     final statusLineYaml = statusLine?.toYaml();
-    if (tuiTheme == null && !tuiClassic &&
+    if (tuiTheme == null &&
+        !tuiClassic &&
         (statusLineYaml == null || statusLineYaml.isEmpty)) {
       return '';
     }
@@ -758,7 +776,12 @@ final class CliConfig {
   /// The `agent:` section, only when a cap or a load mode is persisted;
   /// defaults are never written so the file stays minimal.
   String _agentSectionYaml() {
-    if (contextWindowCap == null && agentLoadMode == null) return '';
+    final stuckYaml = _stuckToolYaml();
+    if (contextWindowCap == null &&
+        agentLoadMode == null &&
+        stuckYaml.isEmpty) {
+      return '';
+    }
     final section = StringBuffer('agent:\n');
     if (contextWindowCap != null) {
       section.write('  contextWindowCap: $contextWindowCap\n');
@@ -766,7 +789,27 @@ final class CliConfig {
     if (agentLoadMode != null) {
       section.write('  mode: $agentLoadMode\n');
     }
+    section.write(stuckYaml);
     return section.toString();
+  }
+
+  /// The `agent.stuckTool:` sub-map, only when explicitly configured
+  /// (defaults are never written so the file stays minimal).
+  String _stuckToolYaml() {
+    final stuck = stuckTool;
+    if (stuck == null) return '';
+    final map = stuck.toYamlMap();
+    if (map.isEmpty) return '';
+    final buffer = StringBuffer('  stuckTool:\n');
+    for (final entry in map.entries) {
+      final value = entry.value;
+      if (value is List) {
+        buffer.write('    ${entry.key}: [${value.join(', ')}]\n');
+      } else {
+        buffer.write('    ${entry.key}: $value\n');
+      }
+    }
+    return buffer.toString();
   }
 
   /// The `links:` section (issue #691), only when explicitly configured;
