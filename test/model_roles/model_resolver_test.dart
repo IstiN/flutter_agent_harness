@@ -396,8 +396,10 @@ void main() {
         resolver.chainFor('default');
         fail('expected chainFor to throw');
       } on UnknownProviderRoleException {
-        fail('missing keys on a KNOWN provider is not version skew — '
-            'it must stay a plain ConfigException');
+        fail(
+          'missing keys on a KNOWN provider is not version skew — '
+          'it must stay a plain ConfigException',
+        );
       } on ConfigException {
         // Expected: the pre-#760 loud failure the boot maps to _fail.
       }
@@ -421,8 +423,10 @@ void main() {
         resolver.chainFor('default');
         fail('expected chainFor to throw');
       } on UnknownProviderRoleException {
-        fail('the skip reason embedding a user-controlled model id must '
-            'not classify a known provider as version skew');
+        fail(
+          'the skip reason embedding a user-controlled model id must '
+          'not classify a known provider as version skew',
+        );
       } on ConfigException {
         // Expected.
       }
@@ -775,7 +779,11 @@ void main() {
         config: ModelRolesConfig(
           roles: {
             'smol': [
-              ModelRef(provider: 'openai', modelId: 'k3-256k', baseUrl: baseUrl),
+              ModelRef(
+                provider: 'openai',
+                modelId: 'k3-256k',
+                baseUrl: baseUrl,
+              ),
             ],
           },
         ),
@@ -784,8 +792,7 @@ void main() {
       );
     }
 
-    test('a custom-endpoint chain entry resolves its endpoint-scoped key',
-        () {
+    test('a custom-endpoint chain entry resolves its endpoint-scoped key', () {
       final chain = resolverWith({
         scopedName: 'sk-store',
         // A foreign OPENAI_API_KEY must NOT serve the custom endpoint

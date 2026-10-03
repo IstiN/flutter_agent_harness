@@ -114,21 +114,23 @@ void main() {
       );
     });
 
-    test('a trailing-slash default endpoint keeps the environment source',
-        () async {
-      // Saved entries and resolved endpoints disagree on the trailing slash
-      // routinely — ONE endpoint-equality rule for both helpers (round-3
-      // review): this must read as the CATALOG default, not a custom slot.
-      final renderer = await rendererOf(
-        env: const {'OPENROUTER_API_KEY': 'sk-openrouter'},
-        store: FakeSecureKeyStore(),
-      );
+    test(
+      'a trailing-slash default endpoint keeps the environment source',
+      () async {
+        // Saved entries and resolved endpoints disagree on the trailing slash
+        // routinely — ONE endpoint-equality rule for both helpers (round-3
+        // review): this must read as the CATALOG default, not a custom slot.
+        final renderer = await rendererOf(
+          env: const {'OPENROUTER_API_KEY': 'sk-openrouter'},
+          store: FakeSecureKeyStore(),
+        );
 
-      expect(
-        renderer.authHint('$openRouterUrl/'),
-        contains('came from the environment (OPENROUTER_API_KEY)'),
-      );
-    });
+        expect(
+          renderer.authHint('$openRouterUrl/'),
+          contains('came from the environment (OPENROUTER_API_KEY)'),
+        );
+      },
+    );
   });
 
   group('boot resolution parity (optionalProviderApiKey)', () {
@@ -193,7 +195,6 @@ void main() {
     });
   });
 
-
   group('keyStatusLine by provider kind (issue #772 identity)', () {
     test('the chatgpt-codex kind resolves the catalog env names', () async {
       final keys = SecureKeyCache(FakeSecureKeyStore());
@@ -231,9 +232,7 @@ void main() {
       String? activeCustomName,
     }) async {
       final keys = SecureKeyCache(store ?? FakeSecureKeyStore());
-      await keys.preload(
-        store == null ? const [] : store.map.keys.toList(),
-      );
+      await keys.preload(store == null ? const [] : store.map.keys.toList());
       return KeyStatusRenderer(
         rolesDriven: true,
         providerKind: 'openai-completions',
@@ -255,33 +254,37 @@ void main() {
       );
     });
 
-    test('a custom endpoint never shows the generic roles hint (AC2)',
-        () async {
-      final renderer = await rolesRendererOf();
-      expect(
-        renderer.authHint(kimiUrl),
-        isNot(contains('roles mode reads keys from the environment only')),
-      );
-    });
+    test(
+      'a custom endpoint never shows the generic roles hint (AC2)',
+      () async {
+        final renderer = await rolesRendererOf();
+        expect(
+          renderer.authHint(kimiUrl),
+          isNot(contains('roles mode reads keys from the environment only')),
+        );
+      },
+    );
 
-    test('a custom endpoint names the saved entry and its key slot (AC2)',
-        () async {
-      final renderer = await rolesRendererOf(
-        registry: CustomProviderRegistry([
-          CustomProviderEntry(
-            name: 'kimi_me',
-            apiType: 'openai',
-            baseUrl: kimiUrl,
-            modelId: 'k3-256k',
-            keyName: kimiMeKey,
-          ),
-        ]),
-        activeCustomName: 'kimi_me',
-      );
-      final hint = renderer.authHint(kimiUrl);
-      expect(hint, contains('kimi_me'));
-      expect(hint, contains('/key set $kimiMeKey'));
-    });
+    test(
+      'a custom endpoint names the saved entry and its key slot (AC2)',
+      () async {
+        final renderer = await rolesRendererOf(
+          registry: CustomProviderRegistry([
+            CustomProviderEntry(
+              name: 'kimi_me',
+              apiType: 'openai',
+              baseUrl: kimiUrl,
+              modelId: 'k3-256k',
+              keyName: kimiMeKey,
+            ),
+          ]),
+          activeCustomName: 'kimi_me',
+        );
+        final hint = renderer.authHint(kimiUrl);
+        expect(hint, contains('kimi_me'));
+        expect(hint, contains('/key set $kimiMeKey'));
+      },
+    );
 
     test('a stored key names the store as the source to verify', () async {
       final renderer = await rolesRendererOf(
@@ -302,17 +305,20 @@ void main() {
       expect(hint, isNot(contains('sk-stale')));
     });
 
-    test('a custom endpoint without a saved entry names the scoped slot',
-        () async {
-      final renderer = await rolesRendererOf();
-      final hint = renderer.authHint(kimiUrl);
-      expect(hint, contains('/key set FA_KEY_API_KIMI_COM'));
-    });
+    test(
+      'a custom endpoint without a saved entry names the scoped slot',
+      () async {
+        final renderer = await rolesRendererOf();
+        final hint = renderer.authHint(kimiUrl);
+        expect(hint, contains('/key set FA_KEY_API_KIMI_COM'));
+      },
+    );
   });
 
   group('envShadowingNote (E2 — one provenance rule)', () {
     test('non-null only when the env value is non-empty and DIFFERENT', () {
-      expect(envShadowingNote('K', 'env-1', null), isNotNull);
+      // No store entry = nothing shadowed (all three original copies agree).
+      expect(envShadowingNote('K', 'env-1', null), isNull);
       expect(envShadowingNote('K', 'env-1', 'store-2'), isNotNull);
       expect(envShadowingNote('K', 'env-1', 'env-1'), isNull);
       expect(envShadowingNote('K', null, 'store-2'), isNull);

@@ -853,24 +853,19 @@ extension on AgentCli {
 
   /// E2: when the restored key slot exists in BOTH the environment and the
   /// store with DIFFERENT values, note the provenance order (the env value
-  /// is the one sent — mirrors the banner's envActiveHint).
+  /// is the one sent). The detection and wording are the shared
+  /// [envShadowingNote] rule — the boot (bin/fah.dart) and the banner hint
+  /// (key_status) use the same one.
   void _noteKeyShadowing(CustomProviderEntry? entry, String? baseUrl) {
     final keyName = entry?.keyName;
     if (keyName == null) return;
-    final envValue = config.envVarValue?.call(keyName);
-    final storedValue = config.secureKeys?.read(keyName);
-    if (envValue == null ||
-        envValue.isEmpty ||
-        storedValue == null ||
-        storedValue == envValue) {
-      return;
-    }
-    io.writeln(
-      _style.dim(
-        'note: the environment variable $keyName shadows a DIFFERENT '
-        'stored key — the env value is the one sent',
-      ),
+    final note = envShadowingNote(
+      keyName,
+      config.envVarValue?.call(keyName),
+      config.secureKeys?.read(keyName),
     );
+    if (note == null) return;
+    io.writeln(_style.dim('note: $note'));
   }
 
   /// The label for a startup-resumed session's replay header, or null when

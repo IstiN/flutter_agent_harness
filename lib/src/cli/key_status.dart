@@ -13,6 +13,30 @@ import '../secrets/secure_key_store.dart';
 import 'custom_providers.dart';
 import 'provider_error_text.dart';
 
+/// The env-vs-store shadowing rule (gh-1000 E2), shared by the boot note
+/// (bin/fah.dart), the restore note (session_commands
+/// `_noteKeyShadowing`), and the banner hint ([KeyStatusRenderer
+/// .envKeyHint]): the slot holds DIFFERENT values in the environment and
+/// the store, and the env value is the one sent. One provenance rule —
+/// three call sites used to carry three drifting copies (round-3 review).
+bool envShadowsStoredKey(String? envValue, String? storedValue) =>
+    envValue != null &&
+    envValue.isNotEmpty &&
+    storedValue != null &&
+    storedValue != envValue;
+
+/// The provenance note for a shadowed slot (null when the env value is
+/// absent, empty, or agrees with the store): names the variable and the
+/// provenance order. Callers style it (`note: …`) for their surface.
+String? envShadowingNote(
+  String keyName,
+  String? envValue,
+  String? storedValue,
+) => envShadowsStoredKey(envValue, storedValue)
+    ? 'the environment variable $keyName shadows a DIFFERENT '
+          'stored key — the env value is the one sent'
+    : null;
+
 /// Renders the banner's key-status line and `error:` diagnostics from a
 /// snapshot of the host CLI's key inputs.
 final class KeyStatusRenderer {
@@ -242,7 +266,10 @@ final class KeyStatusRenderer {
     }
     final names = spec.apiKeyEnvNames;
     final scopedName = CustomProviderRegistry.keyNameFor(baseUrl);
-    final onDefaultEndpoint = baseUrl == spec.defaultBaseUrl;
+    // Trailing-slash-normalized (the shared sameEndpoint rule) — one
+    // endpoint-equality rule with _isCatalogDefaultEndpoint (round-3
+    // review).
+    final onDefaultEndpoint = sameEndpoint(baseUrl, spec.defaultBaseUrl);
     if (onDefaultEndpoint) {
       // A genuine environment key in play: warn when it shadows a different
       // same-name store entry, else name it as the source.
@@ -308,11 +335,13 @@ final class KeyStatusRenderer {
   }
 
   /// The hint for a genuine environment key: the shadowing warning when a
-  /// DIFFERENT same-name store entry exists, else the source note.
+  /// DIFFERENT same-name store entry exists, else the source note. The
+  /// shadowing detection is the shared [envShadowsStoredKey] rule (the
+  /// boot and restore notes use the same one).
   String envKeyHint(String envActive, String baseUrl) {
     final keys = secureKeys;
     final storedTwin = keys?.read(envActive);
-    if (storedTwin != null && storedTwin.isNotEmpty) {
+    if (envShadowsStoredKey(envVarValue?.call(envActive), storedTwin)) {
       final label = keys?.label ?? 'secure store';
       return ' — the environment variable $envActive shadows a DIFFERENT '
           'key in the $label; the env value is the one sent — fix or '
@@ -357,11 +386,13 @@ final class KeyStatusRenderer {
   /// (no endpoint slot — mirroring the resolver). Any other endpoint is a
   /// custom binding whose endpoint-scoped slot the resolver actually
   /// probes (gh-1000 AC2/AC5) — the hint must name that slot, not claim
-  /// "environment only".
-  bool _isCatalogDefaultEndpoint(String baseUrl) =>
-      resolveCliProviderSpec(providerKind, honorBuildFilter: true)
-          ?.defaultBaseUrl ==
-      baseUrl;
+  /// "environment only". Trailing-slash-normalized (the shared
+  /// [sameEndpoint] rule): a default endpoint saved with a trailing slash
+  /// must not masquerade as a custom slot (round-3 review).
+  bool _isCatalogDefaultEndpoint(String baseUrl) {
+    final spec = resolveCliProviderSpec(providerKind, honorBuildFilter: true);
+    return spec != null && sameEndpoint(spec.defaultBaseUrl, baseUrl);
+  }
 
   /// The saved custom entry serving [baseUrl]: the active entry when it
   /// matches (two accounts can share one endpoint — the active one is the
@@ -381,11 +412,8 @@ final class KeyStatusRenderer {
     return null;
   }
 
-  /// Endpoint equality ignoring a trailing slash (saved entries and
-  /// resolved endpoints disagree on it routinely).
-  bool _sameEndpoint(String a, String b) {
-    String norm(String u) =>
-        u.endsWith('/') ? u.substring(0, u.length - 1) : u;
-    return norm(a) == norm(b);
-  }
+  /// Endpoint equality ignoring a trailing slash — delegates to the shared
+  /// [sameEndpoint] rule (custom_providers.dart), so every endpoint
+  /// comparison in the CLI and the roles resolver stays one rule.
+  bool _sameEndpoint(String a, String b) => sameEndpoint(a, b);
 }

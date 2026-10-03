@@ -1622,21 +1622,17 @@ Future<void> _runApp(List<String> args) async {
 
   // gh-1000 (E2): when the boot-pinned key slot exists in BOTH the
   // environment and the store with different values, note the provenance
-  // order (the env value wins — the same rule the banner's shadowing hint
-  // teaches).
+  // order (the env value wins). Detection + wording are the shared
+  // envShadowingNote rule (key_status.dart) — the restore note and the
+  // banner hint use the same one.
   final pinnedKeyName = folderPinnedEntry?.keyName;
   if (pinnedKeyName != null) {
-    final envValue = Platform.environment[pinnedKeyName];
-    final storedValue = keyCache.read(pinnedKeyName);
-    if (envValue != null &&
-        envValue.isNotEmpty &&
-        storedValue != null &&
-        storedValue != envValue) {
-      stderr.writeln(
-        'note: the environment variable $pinnedKeyName shadows a DIFFERENT '
-        'stored key — the env value is the one sent',
-      );
-    }
+    final note = envShadowingNote(
+      pinnedKeyName,
+      Platform.environment[pinnedKeyName],
+      keyCache.read(pinnedKeyName),
+    );
+    if (note != null) stderr.writeln('note: $note');
   }
 
   // Prompt overrides: the `prompts:` section of ~/.fah/config.yaml (file

@@ -126,29 +126,37 @@ void main() {
       },
     );
 
-    test('repeated flags: last occurrence wins for --port and --token (r2 #7)',
-        () {
-      final split = splitWireServeArgs(const [
-        'wire-serve',
-        '--port',
-        '1111',
-        '--port',
-        '2222',
-        '--token',
-        'a',
-        '--token',
-        'b',
-      ]);
-      expect(split.port, 2222);
-      expect(split.token, 'b');
-    });
+    test(
+      'repeated flags: last occurrence wins for --port and --token (r2 #7)',
+      () {
+        final split = splitWireServeArgs(const [
+          'wire-serve',
+          '--port',
+          '1111',
+          '--port',
+          '2222',
+          '--token',
+          'a',
+          '--token',
+          'b',
+        ]);
+        expect(split.port, 2222);
+        expect(split.token, 'b');
+      },
+    );
 
-    test('a value-flag value is consumed verbatim (r2 #7): --token --stdio',
-        () {
-      final split = splitWireServeArgs(const ['wire-serve', '--token', '--stdio']);
-      expect(split.stdio, isFalse, reason: 'the word is the token VALUE');
-      expect(split.token, '--stdio');
-    });
+    test(
+      'a value-flag value is consumed verbatim (r2 #7): --token --stdio',
+      () {
+        final split = splitWireServeArgs(const [
+          'wire-serve',
+          '--token',
+          '--stdio',
+        ]);
+        expect(split.stdio, isFalse, reason: 'the word is the token VALUE');
+        expect(split.token, '--stdio');
+      },
+    );
 
     test('--stdio and --port together are a loud usage error', () {
       expect(

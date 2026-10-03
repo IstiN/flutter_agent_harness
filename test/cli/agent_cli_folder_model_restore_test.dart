@@ -194,10 +194,7 @@ void main() {
       expect(second.agent.state.model.id, 'gpt-5-codex');
       expect(second.agent.state.model.provider, 'chatgpt');
       expect(second.providerKind, 'chatgpt-codex');
-      expect(
-        secondIo.out.toString(),
-        isNot(contains('Unknown provider kind')),
-      );
+      expect(secondIo.out.toString(), isNot(contains('Unknown provider kind')));
       // The state file keeps the name spelling (restore never mutates);
       // the fix is at the seam, not a rewrite.
       final state = await loadFolderModelState(
@@ -339,10 +336,9 @@ void main() {
           customProvider: 'kimi_me',
         );
 
-        final store =
-            FakeSecureKeyStore()
-              ..map[iraKeyName] = 'ira-key'
-              ..map[kimiMeKeyName] = 'me-key';
+        final store = FakeSecureKeyStore()
+          ..map[iraKeyName] = 'ira-key'
+          ..map[kimiMeKeyName] = 'me-key';
         final second = await pinnedCliFactory(
           sessionName: 'twin',
           registry: twinRegistry(),
@@ -362,8 +358,10 @@ void main() {
         expect(second.agent.state.model.baseUrl, kimiUrl);
         expect(
           io.out.toString(),
-          contains('kimi_me — https://api.kimi.com/coding/v1 · '
-              'k3-256k (current)'),
+          contains(
+            'kimi_me — https://api.kimi.com/coding/v1 · '
+            'k3-256k (current)',
+          ),
         );
         expect(io.out.toString(), contains('kimi_me/k3-256k'));
         expect(io.out.toString(), contains('key: $kimiMeKeyName'));
@@ -759,10 +757,9 @@ void main() {
         // Boot A: a LIVE /provider switch — the switch must record the leaf
         // pin itself (round-3 review: the restore alone writing pins is not
         // enough).
-        final store =
-            FakeSecureKeyStore()
-              ..map[iraKeyName] = 'ira-key'
-              ..map[kimiMeKeyName] = 'me-key';
+        final store = FakeSecureKeyStore()
+          ..map[iraKeyName] = 'ira-key'
+          ..map[kimiMeKeyName] = 'me-key';
         final bootA = await pinnedCliFactory(
           sessionName: 'drift-a',
           registry: twinRegistry(),
@@ -807,10 +804,7 @@ void main() {
           fail('BOOT-C-OUT:\n${ioC.out.toString()}');
         }
         expect(bootC.activeCustomProviderName, 'kimi_me');
-        expect(
-          bootC.agent.state.model.baseUrl,
-          kimiUrl,
-        );
+        expect(bootC.agent.state.model.baseUrl, kimiUrl);
       },
     );
   });

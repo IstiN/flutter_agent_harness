@@ -23,7 +23,7 @@ import '../cancel_token.dart';
 import '../exceptions.dart';
 import '../model.dart';
 import '../secrets/secrets_store.dart';
-import '../cli/custom_providers.dart' show CustomProviderRegistry;
+import '../cli/custom_providers.dart' show CustomProviderRegistry, sameEndpoint;
 import 'fallback_stream.dart';
 import 'key_rotation.dart';
 import 'roles_config.dart';
@@ -193,7 +193,9 @@ final class ModelRolesResolver {
     }
     final keyBase = _keyBaseName(ref, spec);
     if (keyBase == null) {
-      skipped.add('${ref.label} (missing API key: ${_missingKeyHint(ref, spec)})');
+      skipped.add(
+        '${ref.label} (missing API key: ${_missingKeyHint(ref, spec)})',
+      );
       return null;
     }
     final ring = _rings.putIfAbsent(
@@ -261,7 +263,12 @@ final class ModelRolesResolver {
   /// every custom-endpoint slot a roles chain can need — gh-1000).
   String? _endpointScopedKeyName(ModelRef ref, ProviderSpec spec) {
     final baseUrl = ref.baseUrl;
-    if (baseUrl == null || baseUrl == spec.defaultBaseUrl) return null;
+    // Trailing-slash-normalized (the shared sameEndpoint rule): a default
+    // endpoint saved with a trailing slash must not mint a bogus scoped
+    // slot — one endpoint-equality rule with key_status (round-3 review).
+    if (baseUrl == null || sameEndpoint(baseUrl, spec.defaultBaseUrl)) {
+      return null;
+    }
     return CustomProviderRegistry.keyNameFor(baseUrl);
   }
 
