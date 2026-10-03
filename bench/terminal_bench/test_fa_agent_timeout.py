@@ -325,7 +325,9 @@ class LegacyWatcherTest(unittest.TestCase):
 
     def test_no_knobs_delegates_to_stock(self):
         agent = self._agent()
-        sentinel = object()
+        # issue #1123's perform_task guard reads result.failure_mode before
+        # delegating — the stock sentinel must carry it (NONE = healthy).
+        sentinel = types.SimpleNamespace(failure_mode=None)
         session = FakeTmuxSession()
         with mock.patch.dict(os.environ, clean_env()), self._with_stock(
             agent, lambda *args, **kwargs: sentinel
