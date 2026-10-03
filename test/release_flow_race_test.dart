@@ -361,8 +361,13 @@ TagReleaseRun runTagRelease(
   }
 
   // The release-tag checkout: main AFTER the interloper — the drifted tree
-  // the 2026-10-03 tag was cut from.
+  // the 2026-10-03 tag was cut from. The job clone needs its own identity:
+  // the preExistingTag fixture tags FROM HERE, and CI runners have no
+  // global git ident (validation run 37114132425 died on «Committer
+  // identity unknown» — the seed/racer clones configure one, this missed it).
   _git(['clone', '-q', origin, job], cwd: dir.path);
+  _git(['config', 'user.email', 't@t'], cwd: job);
+  _git(['config', 'user.name', 't'], cwd: job);
   if (preExistingTag) {
     _git(['tag', '-a', 'v0.1.496', '-m', 'Release v0.1.496', bumpSha], cwd: job);
     _git(['push', '-q', 'origin', 'refs/tags/v0.1.496'], cwd: job);
