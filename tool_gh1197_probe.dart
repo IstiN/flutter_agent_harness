@@ -15,36 +15,29 @@ Future<void> main() async {
     ..createSync(recursive: true)
     ..writeAsStringSync('tui:\n  classic: true\n');
 
-  // ~40KB of streamed text per text step, several turns, slow bash calls.
+  // ~40KB of streamed text per text step.
   String bigText(String tag) {
     final line = 'paragraph $tag lorem ipsum dolor sit amet consectetur 0123 ';
     return List.filled(700, line).join();
   }
 
+  // Long run: many turns of streamed text + slow bash calls, so output
+  // gaps can strike WHILE the run is still going (the ticket's shape).
   final turns = [
-    [
-      {'text': bigText('t1a')},
-      {'text': bigText('t1b')},
-      {
-        'tool_call': {
-          'id': 'c1',
-          'name': 'bash',
-          'arguments': {'command': 'sleep 8 && echo done-c1'},
+    for (var i = 0; i < 12; i++) ...[
+      [
+        {'text': bigText('t$i')},
+        {
+          'tool_call': {
+            'id': 'c$i',
+            'name': 'bash',
+            'arguments': {'command': 'sleep 4 && echo done-c$i'},
+          },
         },
-      },
+      ],
     ],
     [
-      {'text': bigText('t2a')},
-      {
-        'tool_call': {
-          'id': 'c2',
-          'name': 'bash',
-          'arguments': {'command': 'sleep 8 && echo done-c2'},
-        },
-      },
-    ],
-    [
-      {'text': bigText('t3-final')},
+      {'text': 'all-done-final'},
     ],
   ];
   final turnsFile = File('${home.path}/turns.json')
@@ -118,7 +111,7 @@ Future<void> main() async {
   var lastBytes = 0;
   var lastChangeMs = sw.elapsedMilliseconds;
   final start = DateTime.now();
-  final deadline = start.add(const Duration(seconds: 100));
+  final deadline = start.add(const Duration(seconds: 150));
   while (DateTime.now().isBefore(deadline)) {
     await Future<void>.delayed(const Duration(milliseconds: 250));
     if (received != lastBytes) {
