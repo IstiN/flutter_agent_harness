@@ -21,6 +21,15 @@ name: Bench
 # bench job patches the downloaded dataset so debian:-based task images
 # build again after Debian archived bullseye (expired Release file kills
 # `apt-get update` during docker compose build).
+#
+# Issue #1122: the flat agent cap becomes a per-run ladder — `agent-timeout`
+# (base cap seconds) plus optional `progress-extension` (deadline recedes
+# while the agent's rendered output grows; idle window 120s, hard ceiling
+# 4x base, decisions audited per trial). With both inputs absent the run
+# is byte-for-byte today's behavior (dataset declared caps x multiplier;
+# REG-1). E3 shard math: with extension on, worst case per task is the
+# ceiling (4x agent-timeout) + test budget — the defaults fit the current
+# LPT sizing below; raise the ceiling and shrink shards accordingly.
 
 on:
   workflow_dispatch:
@@ -37,6 +46,14 @@ on:
         description: 'Matrix shard count (10 tasks/shard on the 80-task core dataset)'
         required: false
         default: '8'
+      agent-timeout:
+        description: 'Base agent cap seconds (issue #1122; absent = dataset-declared caps, median 360s)'
+        required: false
+        default: ''
+      progress-extension:
+        description: 'Extend the agent cap while the agent output grows (idle window 120s, hard ceiling 4x base)'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -155,6 +172,8 @@ jobs:
           FA_PROVIDER_CONFIG: '{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"glm-5.3-flash","apiKeyEnvVar":"FA_KEY_API_Z_AI_Z_AI"}'
           FA_KEY_API_Z_AI_Z_AI: ${{ secrets.FA_BENCH_ZAI_KEY }}
           DATASET: ${{ inputs.dataset }}
+          AGENT_TIMEOUT: ${{ inputs.agent-timeout }}
+          PROGRESS_EXTENSION: ${{ inputs.progress-extension }}
           # dataset task dir names: no whitespace, safe to word-split.
           SHARD_TASKS: ${{ matrix.tasks }}
         run: |
@@ -165,6 +184,26 @@ jobs:
           echo "::add-mask::$(printf %s "$FA_KEY_API_Z_AI_Z_AI" | base64 -w0)"
           args=()
           for t in $SHARD_TASKS; do args+=(-t "$t"); done
+          # Issue #1122 knobs: absent inputs leave both env vars unset — the
+          # adapter then delegates to the stock flat-cap behavior (REG-1).
+          if [ -n "$AGENT_TIMEOUT" ]; then
+            case "$AGENT_TIMEOUT" in *[!0-9]*)
+              echo '::error::agent-timeout must be integer seconds'; exit 1;; esac
+            export FA_AGENT_TIMEOUT_SEC="$AGENT_TIMEOUT"
+            # Force base-10: $((...)) reads leading zeros as octal, so an
+            # input like '010' would silently mean 8.
+            AGENT_TIMEOUT=$((10#$AGENT_TIMEOUT))
+            # Outer harness cap above the ladder ceiling (4x base + slack) so
+            # the progress ladder decides, never the flat harness wait_for.
+            args+=(--global-agent-timeout-sec "$((AGENT_TIMEOUT * 4 + 180))")
+          fi
+          case "$PROGRESS_EXTENSION" in
+            ''|0|1|true|TRUE|True|yes|on|false|FALSE|False|no|off) ;;
+            *) echo "::error::progress-extension must be boolean (true/false), got '$PROGRESS_EXTENSION'"; exit 1 ;;
+          esac
+          case "$PROGRESS_EXTENSION" in
+            1|true|TRUE|True|yes|on) export FA_PROGRESS_EXTENSION=1;;
+          esac
           # Pinned --run-id: one tb-runs/shard-N/ dir per shard, so the merge
           # job's downloads cannot collide on tb's timestamped default.
           tb run -d "$DATASET" --agent-import-path fa_agent:FaAgent \

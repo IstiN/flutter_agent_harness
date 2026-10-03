@@ -15,5 +15,10 @@ Rules:
 - Keep decisions, conclusions, final answers, error causes, and file paths
   the agent still needs. Preserve important tool outputs (test verdicts,
   command results, error traces) with what produced them.
+- Timeless content only: never record ephemeral, second-person, or
+  time-scoped statements ("your last tool call's result was dropped", "you
+  just ran X") — harness notes about dropped or trimmed context are one-time
+  delivery events, not facts; record only the durable outcome. Durable
+  temporal wording ("the last release was v1.0.492") is fine.
 - Keep it dense prose or tight bullets; no preamble, no restating these
   instructions.

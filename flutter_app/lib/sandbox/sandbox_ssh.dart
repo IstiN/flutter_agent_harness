@@ -9,6 +9,7 @@ import 'dart:typed_data';
 import 'package:path/path.dart' as p;
 
 import 'package:fa/sandbox/sandbox_builtins.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Result of one remote command executed over SSH.
 final class SandboxSshExecResult {
@@ -1405,18 +1406,7 @@ final class SandboxSshBuiltins {
 
   /// Normalizes a local sandbox path: collapses `.` and `..` segments and
   /// always returns an absolute path (mirrors the shells' own normalizer).
-  static String _normalizeLocal(String path) {
-    final segments = <String>[];
-    for (final part in path.split('/')) {
-      if (part.isEmpty || part == '.') continue;
-      if (part == '..') {
-        if (segments.isNotEmpty) segments.removeLast();
-        continue;
-      }
-      segments.add(part);
-    }
-    return '/${segments.join('/')}';
-  }
+  static String _normalizeLocal(String path) => normalizeLexicalPath(path);
 }
 
 /// One parsed scp operand.

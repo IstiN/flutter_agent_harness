@@ -7,13 +7,16 @@
 #
 #   testflight  build-mobile.yml   ios_content=all (the iOS half of the
 #                                 mobile build)
-#   play        build-mobile.yml   android_content=app_only,
+#   play        build-mobile.yml   android_content=all,
 #                                 android_track=beta (Android external
 #                                 beta / open testing — issue #289 lifts
 #                                 the standing "Android excluded" owner
-#                                 decision for the release track; the leg
-#                                 green-skips while the Play secrets are
-#                                 absent)
+#                                 decision for the release track; #947
+#                                 adds the listing deploy — texts +
+#                                 whole-set image replace + verify — so
+#                                 the listing never trails the goldens;
+#                                 the leg green-skips while the Play
+#                                 secrets are absent)
 #   pubdev      in-job OIDC publish, only when pubspec > pub.dev; otherwise
 #               a green up-to-date check. The tag-time OIDC publish job
 #               (ci.yml) stays the primary path; this leg is the catch-up +
@@ -236,7 +239,7 @@ jobs:
     # Independent of the testflight leg (#359). The #348 serialization was
     # a mitigation for the #343 sibling-dispatch race; #351 eliminated that
     # race structurally — exact displayTitle correlation (this leg's child
-    # runs as "build-mobile (app_only/none)", the testflight leg's as
+    # runs as "build-mobile (all/none)", the testflight leg's as
     # "(none/all)"), NEWEST match, a tight 30s window, and build-mobile's
     # per-run_id concurrency group (no dispatch can cancel another). With
     # the race gone the needs-edge only bought harm: a cancelled testflight
@@ -311,26 +314,29 @@ jobs:
         id: dispatch
         run: |
           set -euo pipefail
-          # app_only: build + Play upload, no store metadata/screenshots
-          # (Android store CONTENT is a follow-up — reuse iOS texts later).
+          # all: build + Play upload + LISTING deploy (issue #947) — the
+          # listing lane replaces the whole image set per locale + device
+          # type and verifies it via edits.images.list, so the listing can
+          # never trail the committed goldens by more than one train.
           # beta = the external/open testing track, mirroring the iOS leg's
           # external TestFlight group (#239 pattern).
           # Shared watcher (issues #343/#344). Since #359 the TestFlight
           # sibling leg fires CONCURRENTLY with this one (both needs: plan)
           # and dispatches the SAME workflow in the same minute —
           # correlation is by the child's run-name ("build-mobile
-          # (app_only/none)" vs the sibling's "(none/all)", pinned by
+          # (all/none)" vs the sibling's "(none/all)", pinned by
           # test), never by "first run in the window", with newest-match +
           # the 30s window; a wedged run is cancelled and re-dispatched
           # once (with the same distinct inputs → same distinct title).
-          # Budget 100m = child worst-case 85m (#351: version 10 +
-          # build-android 45 + submit-android 30) + 15m margin.
+          # Budget 110m = child worst-case 85m (#351: version 10 +
+          # build-android 45 + submit-android 30; the #947 listing
+          # deploy rides the submit-android job's slack) + 25m margin.
           rc=0
           bash scripts/dispatch_and_watch.sh build-mobile.yml \
             --repo "${GITHUB_REPOSITORY}" --ref main \
-            --title 'build-mobile (app_only/none)' \
-            --budget-seconds 6000 \
-            -f android_content=app_only -f android_track=beta -f ios_content=none \
+            --title 'build-mobile (all/none)' \
+            --budget-seconds 6600 \
+            -f android_content=all -f android_track=beta -f ios_content=none \
             --out-run-id run_id.txt || rc=$?
           if [ -s run_id.txt ]; then
             echo "run_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/$(cat run_id.txt)" >> "$GITHUB_OUTPUT"

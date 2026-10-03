@@ -1,0 +1,1 @@
+{"kind":"tool_execution_update","protocolVersion":1,"frame":{"v":1,"kind":"tool_execution_update","toolCallId":"call_1","toolName":"bash","args":{"command":"ls -la"},"partialResult":{"content":[{"type":"text","text":"partial"}],"terminate":false}}}

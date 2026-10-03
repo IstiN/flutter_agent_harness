@@ -2,3 +2,10 @@
 # right semantics for two branches appending deletions concurrently.
 DELETIONS.md merge=union
 # flutter_agent_memory merge drivers
+questions/*.md merge=union
+answers/*.md merge=union
+notes/*.md merge=union
+deleted/*.md merge=union
+question/*.md merge=union
+answer/*.md merge=union
+note/*.md merge=union

@@ -29,19 +29,20 @@ export 'skill_manifest.dart';
 export 'skills_access.dart';
 
 /// Where a skill was discovered (listing order in the prompt).
-enum SkillScope { project, user }
+enum SkillScope { project, user, builtin }
 
 /// Which tool's directory layout the skill came from. First-party roots
 /// (`.fah`, `.agents`) are always readable; third-party roots
 /// (`.claude`/`.github`/`.codex`) are gated by the user's skills-access
-/// consent (see `skills_access.dart`).
-enum SkillSource { fah, agents, claude, copilot, codex }
+/// consent (see `skills_access.dart`). [builtin] skills ship inside the fa
+/// package itself (see `builtin_skills.dart`) — first-party, never gated.
+enum SkillSource { fah, agents, claude, copilot, codex, builtin }
 
 /// Whether [source] is a third-party directory that requires the user's
 /// skills-access consent before reading.
 bool skillSourceIsThirdParty(SkillSource source) {
   return switch (source) {
-    SkillSource.fah || SkillSource.agents => false,
+    SkillSource.fah || SkillSource.agents || SkillSource.builtin => false,
     SkillSource.claude || SkillSource.copilot || SkillSource.codex => true,
   };
 }
@@ -70,6 +71,7 @@ final class Skill {
     required this.scope,
     required this.source,
     this.manifest = SkillManifest.empty,
+    this.embeddedText,
   });
 
   /// The skill name (`name` frontmatter, else the directory/file stem).
@@ -93,6 +95,12 @@ final class Skill {
 
   /// The typed frontmatter ([SkillManifest.empty] when absent).
   final SkillManifest manifest;
+
+  /// The full SKILL.md text for compiled-in skills (issue #1151) — set when
+  /// there is no backing file on the host FS ([Skill.filePath] is then a
+  /// `builtin://` virtual path the `read` tool serves from the embedded
+  /// copy). Null for every disk-discovered skill.
+  final String? embeddedText;
 
   /// Claude's `disable-model-invocation`: hidden from the model catalog,
   /// invocable by the user only.
@@ -131,6 +139,26 @@ Future<Skill?> _loadSkillFile(
 ) async {
   final text = (await env.readTextFile(path)).valueOrNull;
   if (text == null) return null;
+  return skillFromText(
+    text,
+    filePath: path,
+    fallbackName: fallbackName,
+    scope: scope,
+    source: source,
+  );
+}
+
+/// Parses one SKILL.md text into a [Skill] (shared by disk discovery and
+/// the compiled-in built-ins, issue #1151). Returns null when the name is
+/// empty.
+Skill? skillFromText(
+  String text, {
+  required String filePath,
+  required String fallbackName,
+  required SkillScope scope,
+  required SkillSource source,
+  String? embeddedText,
+}) {
   final (frontmatter, body) = parseFrontmatterTyped(text);
   final manifest = SkillManifest.fromFrontmatter(
     frontmatter,
@@ -141,10 +169,11 @@ Future<Skill?> _loadSkillFile(
   return Skill(
     name: name,
     description: _skillDescription(manifest, body),
-    filePath: path,
+    filePath: filePath,
     scope: scope,
     source: source,
     manifest: manifest,
+    embeddedText: embeddedText,
   );
 }
 
@@ -248,11 +277,17 @@ Future<List<Skill>> _scanFlatFiles(
 /// not in [allowedSources] (defaults: everything) are skipped — hosts pass
 /// the first-party set when the user has not granted third-party skills
 /// access. Missing roots are silently skipped.
+///
+/// [builtins] are the package's compiled-in skills (issue #1151), merged
+/// LAST so every project/user/third-party skill of the same name shadows
+/// them (precedence ladder: project > user > third-party-granted > builtin).
+/// Built-ins are first-party and never gated by [allowedSources].
 Future<List<Skill>> discoverSkills(
   ExecutionEnv env, {
   List<SkillRoot> projectRoots = const [],
   List<SkillRoot> userRoots = const [],
   Set<SkillSource>? allowedSources,
+  List<Skill> builtins = const [],
 }) {
   bool allowed(SkillRoot root) =>
       allowedSources == null || allowedSources.contains(root.source);
@@ -269,6 +304,9 @@ Future<List<Skill>> discoverSkills(
   return () async {
     await scan(SkillScope.project, projectRoots);
     await scan(SkillScope.user, userRoots);
+    for (final skill in builtins) {
+      if (seen.add(skill.name.toLowerCase())) skills.add(skill);
+    }
     return skills;
   }();
 }

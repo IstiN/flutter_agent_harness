@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -240,6 +241,52 @@ void main() {
       expect(sessionIds, hasLength(2));
       expect(sessionIds[0], isNotEmpty);
       expect(sessionIds[1], sessionIds[0]);
+    });
+
+    test('a connected-but-silent SSE stream errors under the stream idle '
+        'watchdog, never hangs (#1036)', () async {
+      providerTimeoutsOverride = ProviderTimeoutsOverride(
+        streamIdle: const Duration(milliseconds: 150),
+      );
+      addTearDown(() => providerTimeoutsOverride = null);
+      // One line arrives, then the endpoint goes silent forever: the codex
+      // consumption bypasses createSseIterator, so before the fix this hung
+      // on the pending moveNext with no watchdog anywhere on the path.
+      final controller = StreamController<List<int>>();
+      final client = http_testing.MockClient.streaming((request, body) async {
+        unawaited(
+          controller
+              .addStream(
+                Stream.value(
+                  utf8.encode(
+                    sseChunk({
+                      'type': 'response.created',
+                      'response': {'id': 'resp_1', 'model': 'gpt-5-codex'},
+                    }),
+                  ),
+                ),
+              )
+              .then((_) {}, onError: (Object _) {}),
+        );
+        return http.StreamedResponse(
+          controller.stream,
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      });
+
+      final events = await streamChatGptCodex(
+        chatGptModel,
+        simpleContext(),
+        credentials: credentials.encode(),
+        client: client,
+      ).toList().timeout(const Duration(seconds: 10));
+
+      expect(events.whereType<TextDeltaEvent>(), isEmpty);
+      final message = events.whereType<ErrorEvent>().single.error.errorMessage!;
+      expect(message, contains('TimeoutException'));
+      expect(message, contains('stalled'));
+      expect(message, contains('stream idle timeout'));
     });
 
     test('replays learned Cloudflare cookies on a challenge retry', () async {
@@ -1122,5 +1169,33 @@ void main() {
       expect(error.retryAfter, const Duration(minutes: 2));
       expect(error.error.rateLimit?.retryAfter, const Duration(minutes: 2));
     });
+
+    test(
+      'a /responses send that never completes errors fast with a timeout '
+      'naming the endpoint instead of hanging (issue #1036)',
+      timeout: const Timeout(Duration(seconds: 20)),
+      () async {
+        addTearDown(() => providerTimeoutsOverride = null);
+        providerTimeoutsOverride = const ProviderTimeoutsOverride(
+          connect: Duration(milliseconds: 150),
+        );
+        // The send future never completes — a wedged endpoint.
+        final client = http_testing.MockClient.streaming(
+          (request, requestBody) => Completer<http.StreamedResponse>().future,
+        );
+        final events = await streamChatGptCodex(
+          chatGptModel,
+          simpleContext(),
+          credentials: credentials.encode(),
+          client: client,
+        ).toList();
+
+        final error = events.whereType<ErrorEvent>().single;
+        expect(
+          error.error.errorMessage,
+          allOf(contains('timed out'), contains('/responses')),
+        );
+      },
+    );
   });
 }

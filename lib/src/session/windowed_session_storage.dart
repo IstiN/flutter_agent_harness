@@ -33,6 +33,14 @@ import 'session_storage.dart';
 
 /// Append-only session storage over a byte-scanned window of the file.
 ///
+/// Segment boundary (gh-1077): this view is bound to the ACTIVE segment
+/// (the primary file). Records archived into `<path>.part-NN` siblings
+/// by segment rotation are NOT reachable through [loadOlder] — paging
+/// stops at the primary's header copy and [hasOlder] goes false there,
+/// by design: the chat path only ever renders recent history. Full-chain
+/// reads go through [JsonlSessionStorage.open] (which loads parts +
+/// primary as one chain) or `JsonlSessionRepo.readCustomRecordsOfType`.
+///
 /// The in-memory index holds the LOADED records only; every structure
 /// (`_entries`, `_byId`, `_labelsById`, offsets) is pruned in the same
 /// pass when eviction drops records, so no strong reference outlives
@@ -490,7 +498,9 @@ final class WindowedSessionStorage
     _indexChunk(chunk);
     _knownFileBytes = chunk.endOffset;
     if (_belowCount != null) {
-      _belowCount = (_belowCount! - chunk.entries.length).clamp(0, 1 << 31);
+      // 0x80000000 == the VM value of `1 << 31`; the shift form is negative
+      // on dart2js and would throw inside clamp (issue #1074).
+      _belowCount = (_belowCount! - chunk.entries.length).clamp(0, 0x80000000);
     }
     if (chunk.endOffset >= _fileSize) _belowCount = 0;
     final joined = _joinBranchDownward(chunk);

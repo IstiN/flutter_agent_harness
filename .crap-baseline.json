@@ -1,0 +1,1301 @@
+{
+  "version": 1,
+  "violations": [
+    {
+      "gate": "duplication",
+      "file": "bin/fah_hub_plugin.dart",
+      "line": 205,
+      "message": "6.15% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "bin/fah_hub_serve.dart",
+      "line": 611,
+      "message": "2.40% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "bin/self_manage.dart",
+      "line": 64,
+      "message": "1.15% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/apps/app_tile_host.dart",
+      "line": 132,
+      "message": "21.14% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/apps/apps_store.dart",
+      "line": 164,
+      "message": "1.71% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/apps/catalog_auto_update.dart",
+      "line": 40,
+      "message": "26.96% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/apps/catalog_service.dart",
+      "line": 130,
+      "message": "1.57% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/apps/dynamic_messages_sheet.dart",
+      "line": 16,
+      "message": "12.12% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/apps/fa_chat_overlay.dart",
+      "line": 83,
+      "message": "16.62% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/apps/fa_work_bar.dart",
+      "line": 119,
+      "message": "13.75% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/apps/js_app_engine.dart",
+      "line": 1077,
+      "message": "1.39% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/apps/js_app_view.dart",
+      "line": 200,
+      "message": "7.60% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/apps/session_chat_sheet.dart",
+      "line": 740,
+      "message": "5.37% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/apps/widgets_catalog_sheet.dart",
+      "line": 466,
+      "message": "5.39% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/gemma/gemma_cache_section.dart",
+      "line": 49,
+      "message": "7.97% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/gemma/gemma_service_plugin.dart",
+      "line": 204,
+      "message": "2.52% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/gemma/gemma_service_stub.dart",
+      "line": 40,
+      "message": "17.19% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/gemma/gemma_types.dart",
+      "line": 305,
+      "message": "2.99% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/network/channel_chat_service.dart",
+      "line": 47,
+      "message": "25.40% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/network/fa_network_client.dart",
+      "line": 182,
+      "message": "2.31% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/network/models.dart",
+      "line": 207,
+      "message": "2.18% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/network/network_mode.dart",
+      "line": 52,
+      "message": "3.30% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/network/showcase_chat_service.dart",
+      "line": 36,
+      "message": "29.09% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/network/ws_connector_io.dart",
+      "line": 29,
+      "message": "38.71% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/network/ws_connector_web.dart",
+      "line": 29,
+      "message": "40.00% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/env_factory_io.dart",
+      "line": 189,
+      "message": "36.39% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/memory_shell.dart",
+      "line": 103,
+      "message": "8.35% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/memory_shell/pipeline.dart",
+      "line": 24,
+      "message": "11.36% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/memory_shell/tar.dart",
+      "line": 211,
+      "message": "2.38% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/memory_shell/test_expr.dart",
+      "line": 65,
+      "message": "20.24% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/persistent_web_env.dart",
+      "line": 419,
+      "message": "14.81% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/sandbox_builtins.dart",
+      "line": 231,
+      "message": "2.08% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/sandbox_pip.dart",
+      "line": 565,
+      "message": "2.74% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/sandbox_ssh.dart",
+      "line": 335,
+      "message": "4.07% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/shell_script.dart",
+      "line": 172,
+      "message": "4.14% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/wasm_shell.dart",
+      "line": 446,
+      "message": "5.95% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/wasm_shell_builtins.dart",
+      "line": 126,
+      "message": "3.24% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/wasm_shell_git.dart",
+      "line": 503,
+      "message": "12.80% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/wasm_shell_ssh.dart",
+      "line": 131,
+      "message": "4.04% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/web_git.dart",
+      "line": 343,
+      "message": "10.13% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/web_interpreters_stub.dart",
+      "line": 5,
+      "message": "18.67% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/sandbox/web_interpreters_web.dart",
+      "line": 11,
+      "message": "3.42% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/agent_network_store.dart",
+      "line": 66,
+      "message": "13.56% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/agent_service_compaction.dart",
+      "line": 115,
+      "message": "3.28% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/agent_service_config.dart",
+      "line": 68,
+      "message": "12.61% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/agent_service_connection_guard.dart",
+      "line": 171,
+      "message": "4.78% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/aiin_connect_flow.dart",
+      "line": 53,
+      "message": "14.21% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/aiin_web_auth.dart",
+      "line": 158,
+      "message": "6.04% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/approval_mode_store.dart",
+      "line": 29,
+      "message": "14.75% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/apps_mode_store.dart",
+      "line": 42,
+      "message": "9.21% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/asr_service.dart",
+      "line": 167,
+      "message": "3.81% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/asr_tool.dart",
+      "line": 140,
+      "message": "22.50% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/calendar_service.dart",
+      "line": 77,
+      "message": "7.09% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/calendar_service_io.dart",
+      "line": 143,
+      "message": "12.29% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/calendar_service_stub.dart",
+      "line": 34,
+      "message": "38.16% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/calendar_tool.dart",
+      "line": 95,
+      "message": "11.41% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/chat_text_store.dart",
+      "line": 41,
+      "message": "10.89% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/contact_tool.dart",
+      "line": 177,
+      "message": "10.76% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/health_tool.dart",
+      "line": 97,
+      "message": "8.57% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/home_service_io.dart",
+      "line": 63,
+      "message": "5.52% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/image_preview_store.dart",
+      "line": 39,
+      "message": "11.58% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/last_connection.dart",
+      "line": 150,
+      "message": "6.02% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/media_tools.dart",
+      "line": 434,
+      "message": "2.82% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/notify_tool.dart",
+      "line": 60,
+      "message": "20.39% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/onboarding_store.dart",
+      "line": 37,
+      "message": "9.86% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/openrouter_oauth_callback.dart",
+      "line": 34,
+      "message": "47.85% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/project_mount_env.dart",
+      "line": 82,
+      "message": "43.23% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/providers_queue_loader_io.dart",
+      "line": 71,
+      "message": "12.50% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/session_listing.dart",
+      "line": 6,
+      "message": "19.44% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/session_names_store.dart",
+      "line": 156,
+      "message": "6.03% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/session_ui_prefs_store.dart",
+      "line": 85,
+      "message": "17.27% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/skills_access_store.dart",
+      "line": 47,
+      "message": "13.33% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/theme_controller.dart",
+      "line": 109,
+      "message": "12.05% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/services/tools_availability_store.dart",
+      "line": 30,
+      "message": "17.24% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/transformers_js/transformers_js_cache_section.dart",
+      "line": 38,
+      "message": "47.73% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/transformers_js/transformers_js_service_stub.dart",
+      "line": 33,
+      "message": "14.81% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/transformers_js/transformers_js_service_web.dart",
+      "line": 107,
+      "message": "9.95% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/transformers_js/transformers_js_stream_function.dart",
+      "line": 138,
+      "message": "12.88% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/transformers_js/transformers_js_types.dart",
+      "line": 365,
+      "message": "1.77% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/network/add_agent_dialog.dart",
+      "line": 457,
+      "message": "3.41% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/network/channel_rail.dart",
+      "line": 87,
+      "message": "7.04% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/network/create_network_dialog.dart",
+      "line": 46,
+      "message": "3.95% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/network/join_sheet.dart",
+      "line": 160,
+      "message": "5.15% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/network/network_center.dart",
+      "line": 76,
+      "message": "6.98% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/network/network_chat_page.dart",
+      "line": 288,
+      "message": "2.61% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/network/network_home.dart",
+      "line": 72,
+      "message": "8.74% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/network/network_mode_chip.dart",
+      "line": 87,
+      "message": "9.60% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/network/networks_sidebar.dart",
+      "line": 113,
+      "message": "3.54% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/network/quick_switcher.dart",
+      "line": 98,
+      "message": "3.66% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/network/wallet_menu.dart",
+      "line": 146,
+      "message": "13.58% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/screens/app_launcher_screen.dart",
+      "line": 589,
+      "message": "6.20% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/screens/attached_session_screen.dart",
+      "line": 46,
+      "message": "6.45% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/screens/settings.dart",
+      "line": 551,
+      "message": "10.76% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/screens/settings_sections.dart",
+      "line": 20,
+      "message": "3.91% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/widgets/apps_panel.dart",
+      "line": 172,
+      "message": "10.11% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/widgets/downloaded_models_quick_start.dart",
+      "line": 136,
+      "message": "4.51% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/widgets/fa_mark.dart",
+      "line": 30,
+      "message": "10.19% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/widgets/file_browser.dart",
+      "line": 188,
+      "message": "1.48% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/widgets/file_preview.dart",
+      "line": 36,
+      "message": "1.64% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/widgets/github_account_section.dart",
+      "line": 208,
+      "message": "4.04% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/widgets/github_connect_sheet.dart",
+      "line": 295,
+      "message": "10.55% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/widgets/model_cache_section.dart",
+      "line": 215,
+      "message": "2.28% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/widgets/provider_selection_list.dart",
+      "line": 78,
+      "message": "4.48% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/widgets/sidebar_sessions_list.dart",
+      "line": 269,
+      "message": "5.02% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/widgets/wide_layout_shell.dart",
+      "line": 550,
+      "message": "2.76% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/ui/widgets/widget_publish_sheet.dart",
+      "line": 160,
+      "message": "10.61% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/webllm/webllm_cache_section.dart",
+      "line": 33,
+      "message": "50.60% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/webllm/webllm_service_stub.dart",
+      "line": 36,
+      "message": "14.81% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/webllm/webllm_service_web.dart",
+      "line": 123,
+      "message": "10.23% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/webllm/webllm_stream_function.dart",
+      "line": 98,
+      "message": "22.40% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "flutter_app/lib/webllm/webllm_types.dart",
+      "line": 280,
+      "message": "2.33% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/a2a/a2a_server.dart",
+      "line": 141,
+      "message": "11.06% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/agent/agent_loop.dart",
+      "line": 1724,
+      "message": "1.00% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/agent/auto_compactor.dart",
+      "line": 135,
+      "message": "6.44% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/agent_cli_persist.dart",
+      "line": 78,
+      "message": "16.13% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/agent_cli_tools.dart",
+      "line": 62,
+      "message": "2.75% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/agent_cli_viewer.dart",
+      "line": 57,
+      "message": "7.64% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/agent_commands.dart",
+      "line": 320,
+      "message": "1.51% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/agent_tree.dart",
+      "line": 35,
+      "message": "5.50% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/aiin_connect_server.dart",
+      "line": 57,
+      "message": "8.68% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/chatgpt_oauth_server.dart",
+      "line": 83,
+      "message": "6.63% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/cli_config.dart",
+      "line": 1065,
+      "message": "3.63% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/codemie_provider_commands.dart",
+      "line": 236,
+      "message": "11.88% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/codemie_sso_server.dart",
+      "line": 25,
+      "message": "13.95% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/fa_tui.dart",
+      "line": 92,
+      "message": "1.73% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/fa_tui_paste.dart",
+      "line": 139,
+      "message": "5.45% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/fa_tui_picker.dart",
+      "line": 57,
+      "message": "9.41% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/fa_tui_slash_menu.dart",
+      "line": 39,
+      "message": "12.42% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/fa_tui_stub.dart",
+      "line": 27,
+      "message": "21.91% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/model_picker_table.dart",
+      "line": 154,
+      "message": "4.49% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/openrouter_oauth_server.dart",
+      "line": 27,
+      "message": "32.10% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/paste_image.dart",
+      "line": 17,
+      "message": "3.97% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/provider_commands.dart",
+      "line": 1655,
+      "message": "2.01% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/provider_keys.dart",
+      "line": 13,
+      "message": "10.09% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/provider_models.dart",
+      "line": 944,
+      "message": "2.47% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/session_commands.dart",
+      "line": 59,
+      "message": "3.24% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/settings_flow.dart",
+      "line": 704,
+      "message": "1.38% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/startup.dart",
+      "line": 708,
+      "message": "3.05% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/tui_prompt.dart",
+      "line": 272,
+      "message": "1.81% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cli/tui_symbols.dart",
+      "line": 70,
+      "message": "8.14% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/compaction/branch_summarization.dart",
+      "line": 134,
+      "message": "4.31% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/compaction/compaction.dart",
+      "line": 784,
+      "message": "3.84% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/compaction/structured/judge.dart",
+      "line": 128,
+      "message": "10.00% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/compaction/token_estimation.dart",
+      "line": 121,
+      "message": "8.86% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/config/config_service.dart",
+      "line": 1200,
+      "message": "1.23% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cube/backends/linux_unshare.dart",
+      "line": 32,
+      "message": "10.48% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cube/backends/macos_sandbox.dart",
+      "line": 30,
+      "message": "5.60% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cube/runtime/cube_fs_guard.dart",
+      "line": 180,
+      "message": "3.76% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/cube/runtime/sandboxed_env.dart",
+      "line": 107,
+      "message": "13.31% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/env/cwd_override_env.dart",
+      "line": 58,
+      "message": "33.65% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/env/io_execution_env.dart",
+      "line": 103,
+      "message": "8.19% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/env/memory_execution_env.dart",
+      "line": 150,
+      "message": "8.06% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/env/secrets_execution_env.dart",
+      "line": 64,
+      "message": "55.50% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/env/session_vars_execution_env.dart",
+      "line": 64,
+      "message": "59.39% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/fanet/fanet_models.dart",
+      "line": 53,
+      "message": "12.75% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/js_ext/ext_bridge.dart",
+      "line": 197,
+      "message": "8.45% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/lsp/io_lsp_transport.dart",
+      "line": 42,
+      "message": "28.75% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/lsp/lsp_client.dart",
+      "line": 345,
+      "message": "2.26% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/mcp/io_mcp_transport.dart",
+      "line": 47,
+      "message": "23.96% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/mcp/mcp_client.dart",
+      "line": 265,
+      "message": "3.58% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/memory/harness_llm_provider.dart",
+      "line": 33,
+      "message": "16.67% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/memory/memory_tools.dart",
+      "line": 152,
+      "message": "5.18% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/messaging/file_messaging_repository.dart",
+      "line": 61,
+      "message": "1.97% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/messaging/scheduled_messages.dart",
+      "line": 115,
+      "message": "7.14% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/model_roles/fallback_stream.dart",
+      "line": 50,
+      "message": "2.34% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/model_roles/providers_queue_runtime.dart",
+      "line": 125,
+      "message": "1.92% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/providers/anthropic.dart",
+      "line": 139,
+      "message": "2.00% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/providers/codemie_sso.dart",
+      "line": 124,
+      "message": "28.32% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/providers/google.dart",
+      "line": 121,
+      "message": "1.83% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/providers/models_for_endpoint.dart",
+      "line": 172,
+      "message": "19.07% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/providers/transient_retry_stream.dart",
+      "line": 63,
+      "message": "9.95% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/redact/redaction_hooks.dart",
+      "line": 218,
+      "message": "3.68% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/secrets/secret_redactor.dart",
+      "line": 123,
+      "message": "6.47% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/secrets/secure_key_store_io.dart",
+      "line": 244,
+      "message": "6.75% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/session/session_repo.dart",
+      "line": 130,
+      "message": "2.04% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/session/session_storage.dart",
+      "line": 176,
+      "message": "4.48% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/session/session_tree.dart",
+      "line": 590,
+      "message": "2.29% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/session/windowed_session_storage.dart",
+      "line": 682,
+      "message": "3.74% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/tools/builtin_tools.dart",
+      "line": 207,
+      "message": "1.45% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/tools/generate_image.dart",
+      "line": 174,
+      "message": "20.00% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/tools/generate_video.dart",
+      "line": 106,
+      "message": "44.93% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/tools/inspect_image.dart",
+      "line": 250,
+      "message": "1.83% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/tools/transcribe_audio.dart",
+      "line": 69,
+      "message": "28.80% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/trajectory/trajectory_snapshot_builder.dart",
+      "line": 549,
+      "message": "2.40% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/utils/path_text.dart",
+      "line": 15,
+      "message": "29.41% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "lib/src/web_search/site_handlers.dart",
+      "line": 202,
+      "message": "4.27% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_llm/lib/src/copilot/copilot_provider.dart",
+      "line": 199,
+      "message": "4.66% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_llm/lib/src/openai_provider.dart",
+      "line": 33,
+      "message": "14.75% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/chat/agents_section.dart",
+      "line": 191,
+      "message": "1.31% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/chat/ask_ui.dart",
+      "line": 91,
+      "message": "8.39% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/chat/chat_message_tile.dart",
+      "line": 422,
+      "message": "5.01% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/chat/fa_chat_screen.dart",
+      "line": 425,
+      "message": "3.01% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/chat/fa_glyphs.dart",
+      "line": 17,
+      "message": "22.92% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/chat/markdown_style.dart",
+      "line": 198,
+      "message": "3.83% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/chat/media_player.dart",
+      "line": 402,
+      "message": "8.85% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/chat/secret_request_sheet.dart",
+      "line": 88,
+      "message": "13.27% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/chat/upload_utils.dart",
+      "line": 90,
+      "message": "9.00% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/providers/add_provider_picker.dart",
+      "line": 418,
+      "message": "2.42% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/providers/copilot_connect_sheet.dart",
+      "line": 249,
+      "message": "6.93% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/providers/default_chat_model.dart",
+      "line": 67,
+      "message": "8.10% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/providers/media_models_section.dart",
+      "line": 83,
+      "message": "14.51% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/providers/media_slot_picker_page.dart",
+      "line": 223,
+      "message": "5.44% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/providers/provider_editor_page.dart",
+      "line": 589,
+      "message": "3.79% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/providers/providers_section.dart",
+      "line": 117,
+      "message": "6.81% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/providers/task_models_section.dart",
+      "line": 66,
+      "message": "16.57% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/providers/unified_model_picker.dart",
+      "line": 68,
+      "message": "6.81% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/stores/media_models_store.dart",
+      "line": 68,
+      "message": "7.11% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/stores/session_keys_store.dart",
+      "line": 136,
+      "message": "10.70% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/stores/task_models_store.dart",
+      "line": 40,
+      "message": "2.58% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/strings/fa_ui_strings.dart",
+      "line": 497,
+      "message": "2.23% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/theme/app_theme.dart",
+      "line": 180,
+      "message": "12.56% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/trajectory/trajectory_cell_context.dart",
+      "line": 19,
+      "message": "44.12% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/trajectory/trajectory_cell_user.dart",
+      "line": 19,
+      "message": "44.12% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/trajectory/trajectory_controller.dart",
+      "line": 466,
+      "message": "1.43% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/trajectory/trajectory_details_tabs.dart",
+      "line": 222,
+      "message": "2.61% duplicated lines > 1.0%"
+    },
+    {
+      "gate": "duplication",
+      "file": "packages/fa_ui/lib/src/trajectory/trajectory_table.dart",
+      "line": 344,
+      "message": "1.71% duplicated lines > 1.0%"
+    }
+  ]
+}

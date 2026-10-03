@@ -294,8 +294,10 @@ final class SessionChunkReader {
         fromOffset,
         size: info.size,
         mtimeMs: info.mtimeMs,
-        maxRecords: maxRecords ?? 1 << 40,
-        maxBytes: maxBytes ?? 1 << 60,
+        // Literals, not `1 << 40`/`1 << 60`: dart2js shifts are 32-bit —
+        // 0 on web would read nothing (issue #1074).
+        maxRecords: maxRecords ?? 0x10000000000,
+        maxBytes: maxBytes ?? 0x1000000000000000,
       );
     }
     final bytes = await _readRange(fromOffset, info.size);
@@ -438,7 +440,14 @@ final class SessionChunkReader {
   /// probed record clears the name (empty/whitespace — the caller's
   /// contract). Throws [SessionException] like [readTail] when the
   /// file is missing.
-  Future<String?> readNewestSessionInfoName() async {
+  Future<String?> readNewestSessionInfoName() async =>
+      (await readNewestSessionInfo())?.name;
+
+  /// The newest `session_info` record of the file (null when it holds
+  /// none) — the record form of [readNewestSessionInfoName], so callers
+  /// probing several segments can tell "no record" apart from an empty
+  /// (name-clearing) one.
+  Future<SessionInfoRecord?> readNewestSessionInfo() async {
     final info = await stat();
     if (info == null) {
       throw SessionException(
@@ -449,7 +458,7 @@ final class SessionChunkReader {
     if (info.size == 0) return null;
     if (info.size <= _nameProbeBytes) {
       // One window covers the file - the whole name history is probed.
-      return (await _newestSessionInfoInWindow(0, info.size, info.size))?.name;
+      return _newestSessionInfoInWindow(0, info.size, info.size);
     }
     final head = await _newestSessionInfoInWindow(
       0,
@@ -461,7 +470,7 @@ final class SessionChunkReader {
       info.size,
       info.size,
     );
-    return tail?.name ?? head?.name;
+    return tail ?? head;
   }
 
   /// The newest `session_info` record whose LINE starts inside

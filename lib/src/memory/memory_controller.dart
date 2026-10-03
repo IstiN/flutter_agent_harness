@@ -12,6 +12,7 @@ import 'package:flutter_agent_memory/flutter_agent_memory.dart';
 import '../env/execution_env.dart';
 import '../memory_config.dart';
 import 'execution_env_kb_storage.dart';
+import 'memory_repo_git_support.dart';
 
 /// Formats the `/memory` stats block (pure, testable): counts per type,
 /// last maintenance, and the due hint.
@@ -119,11 +120,14 @@ final class MemoryController {
     _projectStorage = ExecutionEnvKbStorage(_env, _resolvedProjectPath());
     await _projectStorage!.initialize();
     // Git-backed memory: the store dir carries .gitignore (derived
-    // artifacts never committed) + .gitattributes (DELETIONS.md
-    // merge=union). Idempotent — appends only missing lines, never
-    // touches user content. Project scope only: the user store is
-    // machine-local by design.
+    // artifacts never committed) + .gitattributes (union merge drivers).
+    // Idempotent — appends only missing lines, never touches user content.
+    // Project scope only: the user store is machine-local by design.
+    // ensureGitSupport() covers the library's own file layout; the harness
+    // adapter's singular entity dirs need their own union driver lines
+    // (memory_repo_git_support.dart).
     await MemoryRepoInit(_projectStorage!).ensureGitSupport();
+    await ensureHarnessMergeDrivers(_projectStorage!);
     _projectStore = KBMemoryStore(_projectStorage!, provider: _llmProvider);
     _projectSearch = KBSearchEngine(_projectStorage!, provider: _llmProvider);
     return _projectStore!;

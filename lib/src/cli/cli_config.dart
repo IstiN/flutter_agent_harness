@@ -21,6 +21,7 @@ import '../cube/config/cube_settings.dart';
 import 'waiting_heartbeat.dart';
 import '../providers/provider_common.dart';
 import '../spill/spill.dart';
+import '../skills/skill_availability.dart';
 import '../skills/skills_access.dart';
 import '../memory_config.dart';
 import '../messaging/fabric_config.dart';
@@ -67,6 +68,35 @@ ProviderTimeoutsOverride? parseProviderTimeouts(Object? node) {
   return ProviderTimeoutsOverride(connect: connect, streamIdle: streamIdle);
 }
 
+/// Folds the `FA_PROVIDER_TIMEOUT_SECONDS` env override (issue #1036) into
+/// [base]: a positive integer number of seconds bounding every
+/// NON-streaming provider fetch (model lists, OAuth/token endpoints, quota
+/// probes) — [ProviderTimeoutsOverride.fetchRead].
+///
+/// Resolution order (one, documented): **env wins over the yaml section,
+/// both over the defaults** — a CI runner (the issue's leg 36353318722)
+/// tightens the bound at boot without editing `~/.fah/config.yaml`. Blank /
+/// unset keeps [base] as-is; any other invalid value throws
+/// [ConfigException] naming the env var, like every other `FA_*` input.
+ProviderTimeoutsOverride? applyProviderTimeoutEnvOverride(
+  ProviderTimeoutsOverride? base,
+  String? raw,
+) {
+  if (raw == null || raw.trim().isEmpty) return base;
+  final seconds = int.tryParse(raw.trim());
+  if (seconds == null || seconds <= 0) {
+    throw ConfigException(
+      'FA_PROVIDER_TIMEOUT_SECONDS must be a positive integer of seconds, '
+      'got: "$raw"',
+    );
+  }
+  return ProviderTimeoutsOverride(
+    connect: base?.connect,
+    streamIdle: base?.streamIdle,
+    fetchRead: Duration(seconds: seconds),
+  );
+}
+
 /// Parses the `trajectory:` section (issue #385): today only the
 /// `wireDump` boolean. Unknown keys are strict errors (a typo must never
 /// silently skip the opt-in).
@@ -87,6 +117,76 @@ bool _parseTrajectorySection(Object? node) {
     wireDump = value;
   }
   return wireDump;
+}
+
+/// The parsed `quota:` section (issue #823): the status-line badge opt-in
+/// and the quota-cache TTL. Strict like every section: unknown keys and
+/// bad scalars throw [ConfigException] at boot; defaults are never written
+/// so the file stays minimal.
+final class QuotaSection {
+  const QuotaSection({
+    this.badge = false,
+    this.ttlMinutes = defaultQuotaTtlMinutes,
+  });
+
+  /// Render the provider-quota badge on the status line (OQ2 lean: OFF by
+  /// default — the status line stays quiet until the user asks for it).
+  final bool badge;
+
+  /// The quota-cache TTL in minutes (fed to [ProviderQuotaService]).
+  final int ttlMinutes;
+
+  @override
+  bool operator ==(Object other) =>
+      other is QuotaSection &&
+      other.badge == badge &&
+      other.ttlMinutes == ttlMinutes;
+
+  @override
+  int get hashCode => Object.hash(badge, ttlMinutes);
+
+  @override
+  String toString() => 'QuotaSection(badge: $badge, ttlMinutes: $ttlMinutes)';
+}
+
+/// The `quota.badge` default (issue #823 OQ2): off.
+const defaultQuotaBadge = false;
+
+/// The `quota.ttl_minutes` default: the service's own 15-minute TTL.
+const defaultQuotaTtlMinutes = 15;
+
+/// Parses the `quota:` yaml section (issue #823). A null [node] means the
+/// section is absent — the caller applies the defaults. Any present-but-
+/// invalid shape, value or key throws [ConfigException], consistent with
+/// the other strict config sections.
+QuotaSection parseQuotaSection(Object? node) {
+  if (node == null) return const QuotaSection();
+  if (node is! YamlMap) {
+    throw ConfigException('quota must be a map, got: $node');
+  }
+  var badge = defaultQuotaBadge;
+  var ttlMinutes = defaultQuotaTtlMinutes;
+  for (final key in node.keys) {
+    switch (key) {
+      case 'badge':
+        final value = node[key];
+        if (value is! bool) {
+          throw ConfigException('"quota.badge" must be a boolean');
+        }
+        badge = value;
+      case 'ttl_minutes':
+        final value = node[key];
+        if (value is! int || value <= 0) {
+          throw ConfigException(
+            '"quota.ttl_minutes" must be a positive integer (minutes)',
+          );
+        }
+        ttlMinutes = value;
+      default:
+        throw ConfigException('unknown "quota" key: $key');
+    }
+  }
+  return QuotaSection(badge: badge, ttlMinutes: ttlMinutes);
 }
 
 /// Validates one `agent.mode` value (issues #679/#680): the shared rule
@@ -236,6 +336,7 @@ final class CliConfig {
     this.providerTimeouts,
     this.skillsAccess = SkillsAccess.granted,
     this.skillsDisableShellExecution = false,
+    this.skillToggles = const {},
     this.memory,
     this.fabric,
     this.cube,
@@ -252,6 +353,7 @@ final class CliConfig {
     this.jobs = const JobsConfig(),
     this.powerSleepPrevention,
     this.powerHold,
+    this.quota = const QuotaSection(),
     this.tuiTheme,
     this.tuiClassic = false,
     this.statusLine,
@@ -263,6 +365,8 @@ final class CliConfig {
     // The power section (sleep-prevention level + hold lifecycle) is
     // parsed once, strictly (issues #325/#326).
     final powerSection = parsePowerSection(map['power']);
+    // The quota section (issue #823) is parsed once, strictly too.
+    final quotaSection = parseQuotaSection(map['quota']);
     final agentSection = _parseAgentSection(map['agent']);
     // The tui section (issue #805) is strict: theme, classic kill
     // switch and statusLine parsed once, schema errors throw.
@@ -271,8 +375,8 @@ final class CliConfig {
       // Issue #772: the persisted provider identity is the catalog KIND.
       // Old name-shaped values (`chatgpt`, `chatgpt.com`) canonicalize on
       // load — the file itself is rewritten only on the next save.
-      providerKind: _canonicalSavedProvider(map['provider']) ??
-          'openai-completions',
+      providerKind:
+          _canonicalSavedProvider(map['provider']) ?? 'openai-completions',
       modelId: map['model'] as String? ?? 'openai/gpt-4o-mini',
       baseUrl: map['baseUrl'] as String? ?? 'https://openrouter.ai/api/v1',
       mode: map['mode'] as String? ?? 'code',
@@ -371,6 +475,8 @@ final class CliConfig {
       images: parseImagesSection(map['images']),
       powerSleepPrevention: powerSection.sleepPrevention,
       powerHold: powerSection.hold,
+      // The quota section (issue #823): badge opt-in + cache TTL, strict.
+      quota: quotaSection,
       // The agent section (owner-side context cap + mode, issues
       // #273/#679/#680) is strict too.
       contextWindowCap: agentSection?.contextWindowCap,
@@ -391,18 +497,21 @@ final class CliConfig {
           ? const LinksConfig()
           : LinksConfig.fromYaml(map['links']),
       // The skills section (third-party skills access consent + shell
-      // execution toggle) is strict too.
+      // execution toggle + per-skill on/off entries) is strict too.
       skillsAccess:
           skillsSection['skillsAccess'] as SkillsAccess? ??
           SkillsAccess.granted,
       skillsDisableShellExecution:
           skillsSection['skillsDisableShellExecution'] as bool? ?? false,
+      skillToggles:
+          skillsSection['skillToggles'] as Map<String, bool>? ?? const {},
     );
   }
 
   /// Parses the `skills:` section: `access` (ask/granted/denied — consent
-  /// to read third-party `.claude`/`.github`/`.codex` skill directories)
-  /// and `disableShellExecution` (Claude-style `!`cmd`` skill injections).
+  /// to read third-party `.claude`/`.github`/`.codex` skill directories),
+  /// `disableShellExecution` (Claude-style `!`cmd`` skill injections), and
+  /// per-skill `<name>: on|off` toggles (issue #1151).
   static Map<String, Object?> _parseSkillsSection(Object? node) {
     if (node == null) return const {};
     if (node is! YamlMap) {
@@ -428,7 +537,11 @@ final class CliConfig {
           }
           result['skillsDisableShellExecution'] = value;
         default:
-          throw ConfigException('unknown "skills" key: $key');
+          final name = '$key';
+          result['skillToggles'] = {
+            ...(result['skillToggles'] as Map<String, bool>? ?? const {}),
+            name: skillToggleValue(name, node[key]),
+          };
       }
     }
     return result;
@@ -500,6 +613,13 @@ final class CliConfig {
   /// skill bodies render as a disabled placeholder instead of executing
   /// (the `skills.disableShellExecution` yaml key).
   final bool skillsDisableShellExecution;
+
+  /// Per-skill on/off toggles from the GLOBAL scope (`skills:` section,
+  /// `skillName: on|off` entries in `~/.fah/config.yaml`, issue #1151). The
+  /// project scope loads live via [loadProjectSkillsConfig] and wins per
+  /// key — the same deepest-wins rule as the `tools:` stack. Skills not
+  /// named here are enabled.
+  final Map<String, bool> skillToggles;
 
   /// Optional `fabric:` section — the host's discovery announcements for
   /// the agent messaging fabric (issue #27 phase 2): capabilities peers
@@ -581,13 +701,17 @@ final class CliConfig {
   final String? agentLoadMode;
 
   /// The `waiting:` section (issue #450): visible-waiting heartbeat
-  /// cadence (`waitHeartbeatMinutes`, 0 = off) and the `--wait-for-jobs`
-  /// ceiling (`waitCeilingMinutes`, default 30).
+  /// cadence (`waitHeartbeatMinutes`, 0 = off), the `--wait-for-jobs`
+  /// ceiling (`waitCeilingMinutes`, default 30), and the per-call
+  /// foreground liveness knobs (gh-1055: `toolLivenessSeconds`,
+  /// `toolLivenessTickSeconds`, `toolEscalateSeconds`) plus the #1185
+  /// stuck-call nudge kill switch (`toolNudge`, default on).
   final WaitingConfig waiting;
 
   /// The `jobs:` section (issue #478): boot-maintenance knobs for the
   /// cross-run shell-job state — `staleHours` (manifest age belt,
-  /// default 24) and `logRetentionDays` (log GC, default 3; 0 keeps all).
+  /// default 24), `logRetentionDays` (log GC, default 3; 0 keeps all),
+  /// and `maxLogBytes` (per-log ceiling, issue #919, default 50 MB).
   final JobsConfig jobs;
 
   /// The `subagents:` section (issue #383): heartbeat cadence
@@ -607,6 +731,11 @@ final class CliConfig {
   /// start, release at settle); `session` is the explicit hold-the-whole-
   /// session opt-in.
   final PowerAssertionHold? powerHold;
+
+  /// The `quota:` section (issue #823): status-line badge opt-in and the
+  /// quota-cache TTL. Defaults (`badge: false`, `ttl_minutes: 15`) are
+  /// never written so the file stays minimal.
+  final QuotaSection quota;
 
   /// Persisted TUI theme name (`tui.theme`): a built-in key or a user
   /// theme file stem from `~/.fah/themes/<name>.json`. `null` = default
@@ -651,6 +780,7 @@ final class CliConfig {
       providerTimeouts: providerTimeouts,
       skillsAccess: skillsAccess,
       skillsDisableShellExecution: skillsDisableShellExecution,
+      skillToggles: skillToggles,
       memory: memory,
       fabric: fabric,
       cube: cube,
@@ -664,6 +794,7 @@ final class CliConfig {
       agentLoadMode: agentLoadMode,
       powerSleepPrevention: powerSleepPrevention,
       powerHold: powerHold,
+      quota: quota,
       tuiTheme: tuiTheme,
       tuiClassic: tuiClassic,
       statusLine: statusLine,
@@ -698,7 +829,8 @@ final class CliConfig {
   /// switch, statusLine); the file stays minimal.
   String _tuiSectionYaml() {
     final statusLineYaml = statusLine?.toYaml();
-    if (tuiTheme == null && !tuiClassic &&
+    if (tuiTheme == null &&
+        !tuiClassic &&
         (statusLineYaml == null || statusLineYaml.isEmpty)) {
       return '';
     }
@@ -752,6 +884,7 @@ final class CliConfig {
     buffer.write(_jobsYaml());
     buffer.write(_linksYaml());
     buffer.write(_powerYaml());
+    buffer.write(_quotaYaml());
     return buffer.toString();
   }
 
@@ -820,6 +953,18 @@ final class CliConfig {
     return buffer.toString();
   }
 
+  /// The `quota:` section (issue #823), only when explicitly configured;
+  /// defaults are never written so the file stays minimal.
+  String _quotaYaml() {
+    if (quota == const QuotaSection()) return '';
+    final buffer = StringBuffer('quota:\n');
+    if (quota.badge) buffer.write('  badge: true\n');
+    if (quota.ttlMinutes != defaultQuotaTtlMinutes) {
+      buffer.write('  ttl_minutes: ${quota.ttlMinutes}\n');
+    }
+    return buffer.toString();
+  }
+
   /// The `redact:` section, only when explicitly configured; defaults are
   /// never written so the file stays minimal.
   String _redactYaml() {
@@ -875,11 +1020,16 @@ final class CliConfig {
     final buffer = StringBuffer('skills:\n');
     _writeSkillsAccess(buffer);
     _writeSkillsDisableShellExecution(buffer);
+    for (final entry in skillToggles.entries) {
+      buffer.write('  ${entry.key}: ${entry.value}\n');
+    }
     return buffer.toString();
   }
 
   bool get _skillsSectionNeeded =>
-      skillsAccess != SkillsAccess.granted || skillsDisableShellExecution;
+      skillsAccess != SkillsAccess.granted ||
+      skillsDisableShellExecution ||
+      skillToggles.isNotEmpty;
 
   void _writeSkillsAccess(StringBuffer buffer) {
     if (skillsAccess != SkillsAccess.granted) {
@@ -935,6 +1085,10 @@ final class CliConfig {
       );
       if (entry.keyName != null) {
         buffer.write('    keyName: ${_yamlScalar(entry.keyName!)}\n');
+      }
+      final authHeader = entry.authHeader;
+      if (authHeader != null) {
+        buffer.write('    authHeader: ${_yamlScalar(authHeader)}\n');
       }
       buffer.write('    modelId: ${_yamlScalar(entry.modelId)}\n');
     }

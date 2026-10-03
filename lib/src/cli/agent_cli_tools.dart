@@ -471,11 +471,7 @@ extension AgentCliTools on AgentCli {
   /// Dispatch only — each branch body lives in its own CC≤2 helper (the
   /// `/skills` pattern).
   Future<void> _toolsSlash(String rest) async {
-    final parts = rest
-        .split(RegExp(r'\s+'))
-        .where((part) => part.isNotEmpty)
-        .toList();
-    final sub = parts.isEmpty ? '' : parts.first;
+    final (:sub, :args) = splitSlashArgs(rest);
     switch (sub) {
       case '':
         _toolsList();
@@ -483,7 +479,7 @@ extension AgentCliTools on AgentCli {
         await rebuildToolAvailability();
         io.writeln('tools: availability reloaded');
       case 'enable' || 'disable':
-        await _toolsToggleSlash(sub == 'enable', parts);
+        await _toolsToggleSlash(sub == 'enable', args);
       default:
         io.writeln(
           'unknown /tools subcommand: $sub (try enable, disable, reload)',
@@ -514,8 +510,8 @@ extension AgentCliTools on AgentCli {
         .trimRight();
   }
 
-  Future<void> _toolsToggleSlash(bool enable, List<String> parts) async {
-    if (parts.length < 2) {
+  Future<void> _toolsToggleSlash(bool enable, List<String> args) async {
+    if (args.isEmpty) {
       io.writeln(
         'usage: /tools ${enable ? 'enable' : 'disable'} <id> '
         '[global|project|session]',
@@ -524,8 +520,8 @@ extension AgentCliTools on AgentCli {
     }
     await _applyToolsToggle(
       enable,
-      parts[1],
-      parts.length > 2 ? parts[2] : 'project',
+      args.first,
+      args.length > 1 ? args[1] : 'project',
     );
   }
 

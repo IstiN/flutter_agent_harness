@@ -4,6 +4,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/widgets.dart' show WidgetsBinding;
 import 'package:fa_ui/fa_ui.dart'
     show
@@ -24,6 +25,7 @@ import 'power_guard.dart';
 
 import 'app_log.dart';
 import 'image_registry_loader.dart';
+import 'app_config_loader.dart';
 import 'memory_config_loader.dart';
 import 'compaction_engine_loader.dart';
 import 'agent_tool_availability.dart';
@@ -74,6 +76,7 @@ import 'package:fa/services/session_listing.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
+import 'package:fa/services/skills_toggles_store.dart';
 import 'package:fa/prompts.g.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/services/secrets_store.dart';
@@ -88,10 +91,12 @@ import 'package:fa_office_agent/fa_office_agent.dart'
 import 'package:fa/webllm/webllm_types.dart';
 
 part 'agent_service_compaction.dart';
+part 'agent_service_config.dart';
 part 'agent_service_prompt.dart';
 part 'agent_service_assistant.dart';
 part 'agent_service_events.dart';
 part 'agent_service_sessions.dart';
+part 'agent_service_skills.dart';
 part 'agent_service_runs.dart';
 part 'agent_service_connection_guard.dart';
 part 'agent_service_persistence.dart';
@@ -172,6 +177,7 @@ class AgentService extends ChangeNotifier
        _skillsAccessStore = null,
        _skillsHomeDir = null,
        _skillsAccess = SkillsAccess.granted,
+       _skillTogglesStore = null,
        _toolsAvailabilityStore = null,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
@@ -303,6 +309,9 @@ class AgentService extends ChangeNotifier
     /// inject a fake to keep parsing deterministic; production passes
     /// `createSessionParseExecutor()` (null on web → inline parsing).
     @visibleForTesting SessionParseExecutor? parseExecutor,
+
+    /// Overrides the `~/.fah` home the yaml loader reads (issue #1078).
+    String? configHomeDir,
   }) async {
     final resolvedEnv =
         env ?? await createPlatformEnv(httpClient: createPlatformHttpClient());
@@ -314,6 +323,8 @@ class AgentService extends ChangeNotifier
     final savedSkillsAccess = await skillsAccessStore.load();
     final toolsAvailabilityStore = ToolsAvailabilityStore(resolvedEnv);
     final savedToolsConfig = await toolsAvailabilityStore.load();
+    final skillTogglesStore = SkillsTogglesStore(resolvedEnv);
+    final savedSkillToggles = await skillTogglesStore.load();
     final redactor = SecretRedactor.fromSecrets(secrets);
     // Agent skills + project context files (AGENTS.md & friends) ride the
     // same ExecutionEnv, so they work on every platform (web sandbox too):
@@ -331,6 +342,7 @@ class AgentService extends ChangeNotifier
       resolvedEnv,
       savedSkillsAccess ?? SkillsAccess.granted,
       homeDir: desktopHomeDir(),
+      skillToggles: savedSkillToggles,
     );
     // Always wrap: the `request_secret` tool injects user-granted keys into
     // the LIVE env at runtime (see [_handleSecretRequest]), so the wrapper
@@ -357,6 +369,8 @@ class AgentService extends ChangeNotifier
       approvalModeStore: approvalModeStore,
       initialSkillsAccess: savedSkillsAccess ?? SkillsAccess.granted,
       skillsAccessStore: skillsAccessStore,
+      initialSkillToggles: savedSkillToggles,
+      skillTogglesStore: skillTogglesStore,
       initialToolsConfig: savedToolsConfig,
       toolsAvailabilityStore: toolsAvailabilityStore,
       // Sleep prevention (issue #325): one assertion for the app
@@ -373,6 +387,7 @@ class AgentService extends ChangeNotifier
           sessionKeys?.valueOf(name) ??
           secrets[name],
       promptSuffix: promptSuffix,
+      configHomeDir: configHomeDir,
     );
   }
 
@@ -395,69 +410,6 @@ class AgentService extends ChangeNotifier
       }
     }
     return merged;
-  }
-
-  /// Writes bundled agent skills (see `assets/skills/`) into the env's
-  /// project skill root so [discoverSkills] picks them up. Files are
-  /// refreshed when the bundled content changed (the skills are ours, not
-  /// user data). Best-effort: a missing asset or unwritable env must not
-  /// block session creation.
-  static Future<void> _seedBundledSkills(ExecutionEnv env) async {
-    const bundled = {
-      'js-apps': 'assets/skills/js-apps/SKILL.md',
-      'create-goal': 'assets/skills/create-goal/SKILL.md',
-      'fa-self-config': 'assets/skills/fa-self-config/SKILL.md',
-    };
-    for (final entry in bundled.entries) {
-      try {
-        final target = '.fah/skills/${entry.key}/SKILL.md';
-        final bundledBody = await rootBundle.loadString(entry.value);
-        final body = filterPlatformInstructions(
-          bundledBody,
-          platform: currentFaPlatform,
-        );
-        final existing = await env.readTextFile(target);
-        if (existing.valueOrNull == body) continue;
-        await env.writeFile(target, body);
-      } on Object {
-        // skip this skill
-      }
-    }
-  }
-
-  /// Discovers agent skills + project context files (AGENTS.md & friends)
-  /// and renders the system-prompt suffix. Third-party skill roots
-  /// (`.claude`, `.github/skills`, `.codex`) are read unless [access] is
-  /// [SkillsAccess.denied] (or an explicit `ask` still awaiting its startup
-  /// prompt) — discovery is on by default; only those restrict discovery to
-  /// the first-party roots (`.fah/skills`, `.agents/skills`).
-  static Future<String> _discoverPromptSuffix(
-    ExecutionEnv env,
-    SkillsAccess access, {
-    String? homeDir,
-  }) async {
-    // User-level roots (~/.claude/skills, ~/.copilot/skills, ...) need the
-    // real home directory - without it the desktop app only ever saw
-    // project-local skills no matter what the consent said.
-    final roots = defaultSkillRoots(
-      cwd: env.cwd,
-      homeDir: homeDir ?? desktopHomeDir(),
-    );
-    final skills = await discoverSkills(
-      env,
-      projectRoots: roots.projectRoots,
-      userRoots: roots.userRoots,
-      allowedSources: skillsAccessAllowsDiscovery(access, interactive: false)
-          ? null
-          : const {SkillSource.fah, SkillSource.agents},
-    );
-    final contextFiles = await loadProjectContextFiles(env);
-    return [
-      if (formatProjectContext(contextFiles).isNotEmpty)
-        formatProjectContext(contextFiles),
-      if (formatSkillsForPrompt(skills).isNotEmpty)
-        formatSkillsForPrompt(skills),
-    ].join('\n\n');
   }
 
   AgentService._withEnv({
@@ -485,10 +437,15 @@ class AgentService extends ChangeNotifier
     this._approvalModeStore,
     SkillsAccess? initialSkillsAccess,
     this._skillsAccessStore,
+    Map<String, bool> initialSkillToggles = const {},
+    this._skillTogglesStore,
     ToolsConfig? initialToolsConfig,
     this._toolsAvailabilityStore,
     String? skillsHomeDir,
     this.powerAssertion,
+
+    /// The `~/.fah` home the yaml loader reads (issue #1078).
+    String? configHomeDir,
   }) // ignore: prefer_initializing_formals — private fields, public params
     // ignore: prefer_initializing_formals
     : _skillsHomeDir = skillsHomeDir,
@@ -498,6 +455,7 @@ class AgentService extends ChangeNotifier
        _includeSharedSessionRoots = includeSharedSessionRoots,
        _config = config,
        _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
+       _skillToggles = initialSkillToggles,
        _resolveSecretName = resolveSecretName,
        // ignore: prefer_initializing_formals
        _providerRegistry = providerRegistry,
@@ -644,6 +602,32 @@ class AgentService extends ChangeNotifier
     _childSessionFactory = childSessionFactory;
     // Project-level .fah/config.yaml memory: wins over the user one.
     final memoryConfig = loadAppMemoryConfig(env.sessionCwd);
+    // The yaml sections the app honors (issue #1078): the CLI's own
+    // parsers; warnings surface once here, boot never blocks (E2/AC7).
+    final appConfig = loadAppFahConfig(
+      projectDir: env.sessionCwd,
+      homeDir: configHomeDir,
+    );
+    for (final warning in appConfig?.warnings ?? const <String>[]) {
+      AppLog.i('config', warning);
+    }
+    // AC5: the SAME global the CLI publishes — re-set every creation so
+    // a config edit applies to the next session; AC4's pipeline config.
+    // FA_PROVIDER_TIMEOUT_SECONDS folds in over the yaml section (issue
+    // #1036, review round 1): the same env-wins precedence the CLI boot
+    // applies, so both hosts resolve identical watchdog budgets.
+    try {
+      providerTimeoutsOverride = applyProviderTimeoutEnvOverride(
+        appConfig?.providerTimeouts,
+        faProviderTimeoutSecondsEnv(),
+      );
+    } on ConfigException catch (error) {
+      // Degrade like every other config problem here (E2): warn and keep
+      // the yaml section — boot never blocks on a malformed env override.
+      AppLog.i('config', error.message);
+      providerTimeoutsOverride = appConfig?.providerTimeouts;
+    }
+    _yamlRedactConfig = appConfig?.redact;
     // Session image registry (`images:` section, issue #171): process-wide
     // like in the CLI; core default is on, user config honored where the
     // config is readable.
@@ -663,13 +647,27 @@ class AgentService extends ChangeNotifier
     // Model-roles resolver backed by the TaskModelsStore: `smol` (compaction
     // + explore) and `subagent` (delegation) overrides resolve through it;
     // the Map reads the store lazily, so settings changes apply on the next
-    // spawn without rebuilding the agent.
+    // spawn without rebuilding the agent. yaml `roles:` fills the gaps
+    // (AC1, E1: store wins per role); the MAIN model is never re-pointed
+    // from config — unlike the CLI, it stays the explicit UI choice.
     final taskModelsStore = _taskModelsStore;
-    if (taskModelsStore != null) {
+    final yamlRoles = appConfig?.roles;
+    if (taskModelsStore != null || yamlRoles != null) {
       _taskRolesResolver = ModelRolesResolver(
-        config: ModelRolesConfig(roles: _StoreBackedRolesMap(taskModelsStore)),
+        config: ModelRolesConfig(
+          roles: _StoreBackedRolesMap(
+            taskModelsStore,
+            fallback: yamlRoles?.roles,
+          ),
+          pathOverrides: yamlRoles?.pathOverrides ?? const [],
+          retry: yamlRoles?.retry ?? const ModelRolesRetryPolicy(),
+        ),
         secrets: _secretsEnv?.secretsSnapshot() ?? const {},
       );
+      // 429 rotation notices surface in the log (CLI parity).
+      _taskRolesResolver!.onNotice = (notice) =>
+          AppLog.i('roles', notice.describe());
+      _taskRolesResolver!.sessionId = () => _session?.cachedId;
     }
     // Task tool config: childTools is set after the full registry is built
     // (children inherit the core surface minus `task` itself). ONE shared
@@ -887,6 +885,8 @@ class AgentService extends ChangeNotifier
     };
     _attachRedactor(redactor, bootSecrets);
     _attachApproval();
+    // ttsr: rules (AC3) — the CLI's controller/manager pair.
+    attachAppConfigTtsr(appConfig);
     // Structured compaction recall (issue #148 D3): `compact_expand`
     // resolves numeric marker ids against the LIVE session; the per-turn
     // expand budget resets on every new user message through the agent
@@ -909,6 +909,12 @@ class AgentService extends ChangeNotifier
       onDevice: isOnDevice,
       registry: registry,
       initialConfig: initialToolsConfig ?? const ToolsConfig(),
+      // yaml `tools:` scopes under the runtime store (AC2/E1).
+      configScopes: [
+        if (appConfig case final s?) (ToolScope.global, s.userTools),
+        if (appConfig case final s?) (ToolScope.project, s.projectTools),
+      ],
+      loadMode: appConfig?.loadMode ?? AgentLoadMode.defaultMode,
       rebuildPrompt: () {
         _agent.state.systemPrompt = _composeSystemPrompt(config);
       },
@@ -991,17 +997,21 @@ class AgentService extends ChangeNotifier
     SecretRedactor? redactor, [
     Map<String, String> bootSecrets = const {},
   ]) {
+    // Seed for the live re-enable ([AgentServiceAppConfig]).
+    if (bootSecrets.isNotEmpty) _bootSecrets = bootSecrets;
     if (redactor == null) return;
     attachSecretRedactor(_agent, redactor);
-    // The layered pipeline (issue #24) rides the same lifecycle: default
-    // config (mask mode) — the app has no `redact:` yaml section yet. Its
-    // registered layer starts from the boot secret values and grows with
-    // every `request_secret` grant via [_registerRedactionSecret].
+    // The layered pipeline (issue #24), now config-driven (AC4); a
+    // yaml-disabled one stays null, exactly like the CLI.
+    if (_yamlRedactConfig is RedactionConfig && !_yamlRedactConfig!.enabled) {
+      return;
+    }
     _redactionPipeline ??= RedactionPipeline(
       registeredSecrets: [
         for (final value in bootSecrets.values)
           if (value.length >= SecretRedactor.minValueLength) value,
       ],
+      config: _yamlRedactConfig ?? const RedactionConfig(),
     );
     attachRedactionPipeline(_agent, _redactionPipeline!);
   }
@@ -1046,6 +1056,19 @@ class AgentService extends ChangeNotifier
   /// The persisted skills-access store ([AgentService.create] path only);
   /// [setSkillsAccess] writes through fire-and-forget.
   final SkillsAccessStore? _skillsAccessStore;
+
+  /// The user's per-skill on/off wishes (issue #1151 — the app twin of the
+  /// CLI `skills:` entries; persisted via [SkillsTogglesStore]). Names
+  /// absent from the map are default-on.
+  Map<String, bool> _skillToggles = const {};
+
+  /// Generation guard for [setSkillToggle]'s async re-discovery: a newer
+  /// toggle change wins over a stale suffix.
+  int _skillTogglesGeneration = 0;
+
+  /// The persisted per-skill toggles store ([AgentService.create] path
+  /// only); [setSkillToggle] writes through fire-and-forget.
+  final SkillsTogglesStore? _skillTogglesStore;
 
   /// The tool-availability wiring (issue #19): capability floor + gate +
   /// live config, extracted to [AgentToolAvailability]. Built in both
@@ -1508,6 +1531,12 @@ class AgentService extends ChangeNotifier
   /// lazily on first attach from the redactor's registered values.
   RedactionPipeline? _redactionPipeline;
 
+  /// The yaml `redact:` section (AC4); null = the mask-mode default.
+  RedactionConfig? _yamlRedactConfig;
+
+  /// Boot secrets snapshot ([_attachRedactor]): the live re-enable seed.
+  Map<String, String> _bootSecrets = const {};
+
   /// Rendered skills + project-context sections appended to the composed
   /// system prompt (discovered in [AgentService.create]; re-discovered by
   /// [setSkillsAccess] when the third-party consent changes).
@@ -1885,9 +1914,11 @@ class AgentService extends ChangeNotifier
   /// ([FaChatService.historyAboveCount]): `null` while the background
   /// count is still running or unknown (right after a jump), `0` once
   /// the whole transcript is loaded, `N` — what the "Load earlier"
-  /// banner shows.
+  /// banner shows. A full-open session has no pages above anything —
+  /// it reports the contract's complete-transcript `0`, so the banner
+  /// never renders on it (issue #974: the first-message sticker).
   @override
-  int? get historyAboveCount => _historyAboveCount;
+  int? get historyAboveCount => _windowed == null ? 0 : _historyAboveCount;
   int? _historyAboveCount;
 
   /// Hidden-range drill-in (issue #385 F4): resolves a compacted row's
@@ -2510,9 +2541,16 @@ class AgentService extends ChangeNotifier
   @override
   void abort() => _agent.abort();
 
-  /// Serializes `_persist` runs so concurrent triggers never double-append
-  /// the same message.
-  Future<void> _persistChain = Future<void>.value();
+  /// The in-flight `_persist` drain, or `null` when idle. While one pass
+  /// sweeps the transcript, late triggers mark `_persistDirty` and await
+  /// this drain instead of dropping their payload (issue #1102) — and a
+  /// stored future from another zone can't stall a stored-null guard, so
+  /// no cross-zone future capture is possible here.
+  Future<void>? _persistPass;
+
+  /// Set when a `_persist` trigger landed while a pass was in flight; the
+  /// running drain re-runs the full-state sweep once more before it ends.
+  bool _persistDirty = false;
 
   @override
   void dispose() {
@@ -2700,16 +2738,6 @@ class AgentService extends ChangeNotifier
     if (encoded.length <= 80) return encoded;
     return '${encoded.substring(0, 80)}...';
   }
-
-  /// Whether a [_persist] pass is currently draining the transcript.
-  /// Concurrent triggers (a `_persistSoon` pass racing the run
-  /// finalizer's direct call) must not both iterate
-  /// `_agent.state.messages`: both would read the same
-  /// `_persistedCount == 0` before either finishes and append every
-  /// message twice (duplicate JSONL rows, duplicated chat on reload).
-  /// The skip is safe — the live pass iterates the live list and
-  /// advances `_persistedCount` for everything it saw.
-  bool _persistRunning = false;
 
   /// Persists presented dynamic messages as `dynamic_widget` custom
   /// records (the replay source; see [DynamicMessagesService.adoptBranch]).

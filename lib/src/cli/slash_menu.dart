@@ -113,9 +113,12 @@ List<MenuItem> _skillMenuItems(List<Skill> skills, String lower) {
   final items = <MenuItem>[];
   for (final skill in userInvocableSkills(skills)) {
     final hint = skill.manifest.argumentHint;
+    // First-party badge (issue #1151 AC5): package-shipped skills are
+    // greppable in completion so users can tell them from project skills.
+    final badge = skill.source == SkillSource.builtin ? ' (builtin)' : '';
     final description = hint == null || hint.isEmpty
-        ? skill.description
-        : '${skill.description} $hint';
+        ? '${skill.description}$badge'
+        : '${skill.description}$badge $hint';
     if (skill.name.toLowerCase().contains(needle) ||
         skill.description.toLowerCase().contains(needle) ||
         _fuzzyKeyHit('/${skill.name}', needle)) {
@@ -147,10 +150,14 @@ const builtinSlashCommands = <String, String>{
   '/queue': '[clear] — queued follow-up messages (strip above the input)',
   '/memory': '[maintain] — memory stats or run consolidation',
   '/power': 'show sleep prevention (caffeinate) level and state',
+  '/quota': '[refresh] — provider quota: used/limit, reset, updated',
   '/redact': '[on|off|block on|block off|stats|layers] — secret redaction',
   '/a2a': 'show A2A remote agent servers status',
   '/skills': 'list discovered skills (invoke with /skill:<name>)',
   '/ext': '[list|enable|disable|audit|remove|update|reload] — JS extensions',
+  '/jsr':
+      '[widget:test|widget:screenshot] — jsr widget CLI pass-through '
+      '(js_widget_runtime)',
   '/agents':
       '[types|<id>|open <id>] — agents hub: fleet tree, transcript, '
       'observe, open session',

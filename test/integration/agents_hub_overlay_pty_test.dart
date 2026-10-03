@@ -77,9 +77,12 @@ allowedTools: []
       // tree carries the spawned child — the live feature still works.
       await harness.runSlashCommand('/agents');
       // Anchor on the painted screen: raw echo satisfies waitForText a
-      // frame ahead of the full hub tree paint (#550 family).
-      await harness.waitForScreen('agents hub');
-      expect(harness.screenText, contains('scout'));
+      // frame ahead of the full hub tree paint (#550 family). Anchor on
+      // the ASSERTED row itself (gh-1049): the hub paints its tree
+      // progressively, so a header-wait + fresh screenText read raced the
+      // child rows mid-render; the captured screen cannot.
+      final screen = await harness.waitForScreen('scout');
+      expect(screen, contains('scout'));
 
       harness.sendCtrlC();
       await harness.waitForOutput(settleMs: 300);

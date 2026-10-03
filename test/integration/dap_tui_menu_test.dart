@@ -89,11 +89,13 @@ void main() {
       // two observations (#550 family — raw echo races frame paint on
       // loaded runners); anchoring on the asserted marker itself makes the
       // wait and the expect agree by construction.
-      await harness.waitForScreen(
+      // wait and the expect agree by construction (gh-1049: assert on the
+      // CAPTURED screen — a fresh screenText read re-samples mid-render).
+      final aboutScreen = await harness.waitForScreen(
         'DAP_MASTER_SECRET',
         timeout: const Duration(seconds: 20),
       );
-      expect(harness.screenText, contains('DAP_MASTER_SECRET'));
+      expect(aboutScreen, contains('DAP_MASTER_SECRET'));
 
       // Regression: plugin output must land in the TRANSCRIPT, above the
       // input frame — a raw-io bypass left it in the composer zone (and a
@@ -251,11 +253,12 @@ void main() {
           reason: harness.screenText,
         );
         for (final label in dapMenuOptions(hubRunning: true).map((o) => o.$2)) {
-          await harness.waitForScreen(
+          // gh-1049: assert on the CAPTURED screen, not a fresh read.
+          final screen = await harness.waitForScreen(
             label,
             timeout: const Duration(seconds: 20),
           );
-          expect(harness.screenText, contains(label));
+          expect(screen, contains(label));
         }
 
         await harness.runSlashCommand('/exit');

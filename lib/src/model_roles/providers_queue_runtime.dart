@@ -11,6 +11,7 @@ library;
 
 import '../agent/agent_loop.dart';
 import '../cancel_token.dart';
+import '../providers/quota.dart';
 import 'roles_config.dart';
 import '../types.dart';
 import '../exceptions.dart';
@@ -235,7 +236,9 @@ final class ProviderQueueRuntime {
 
   /// Builds the runtime from a resolution and the secrets snapshot.
   /// [policy]/[now]/[jitterFraction]/[sleeper] pass through to the wrapper
-  /// (tests inject a deterministic clock).
+  /// (tests inject a deterministic clock). [quotaFeed] threads through to
+  /// the [FallbackStreamFunction] (issue #823 AC8 soft-bench); null keeps
+  /// routing byte-identical.
   factory ProviderQueueRuntime.build(
     ProviderQueueResolution resolution, {
     required Map<String, String> secrets,
@@ -245,6 +248,7 @@ final class ProviderQueueRuntime {
     double Function()? jitterFraction,
     Future<bool> Function(Duration delay, CancelToken? cancelToken)? sleeper,
     void Function(FallbackNotice notice)? onNotice,
+    QuotaFeed? quotaFeed,
   }) {
     final entries = resolution.entries;
     final state = ProviderQueueState();
@@ -262,6 +266,7 @@ final class ProviderQueueRuntime {
       jitterFraction: jitterFraction,
       sleeper: sleeper,
       onNotice: onNotice,
+      quotaFeed: quotaFeed,
     );
     return ProviderQueueRuntime._(resolution, entries, state, streamFunction);
   }

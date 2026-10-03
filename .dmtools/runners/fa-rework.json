@@ -1,6 +1,6 @@
 {
   "parent": {
-    "path": "../../factory-agents/pr_rework.json"
+    "path": "pr_rework@latest"
   },
   "params": {
     "envVariables": {
@@ -13,7 +13,7 @@
     "inputJql": "",
     "cliPromptsByTracker": {
       "github": [
-        "./factory-agents/instructions/common/github_comment_format.md"
+        "pack:instructions/common/github_comment_format.md"
       ]
     },
     "customParams": {
@@ -21,25 +21,6 @@
         "workingDir": ".",
         "baseBranch": "main"
       }
-    },
-    "preJSAction": "factory-agents/js/checkWipLabel.js",
-    "preCliJSAction": "factory-agents/js/preCliReworkSetup.js",
-    "postJSAction": "factory-agents/js/pushReworkChanges.js",
-    "cliCommands": [
-      "./factory-agents/scripts/run-agent.sh"
-    ],
-    "cliPrompts": [
-      "Senior Developer Engineer focused on code fixes",
-      "./factory-agents/instructions/common/agent_task_preamble.md",
-      "./factory-agents/instructions/common/coding_guidelines.md",
-      "./factory-agents/instructions/pr_rework/general_guidelines.md",
-      "./factory-agents/instructions/pr_rework/tdd_approach.md",
-      "./factory-agents/instructions/pr_rework/formatting_rules.md",
-      "./factory-agents/instructions/pr_rework/output_rules.md",
-      "./factory-agents/instructions/common/dmtools_cli.md",
-      "./factory-agents/prompts/bash_tools.md"
-    ],
-    "timerIntervalSeconds": 300,
-    "timerJSAction": "factory-agents/js/timerAutoCommitAndSave.js"
+    }
   }
 }

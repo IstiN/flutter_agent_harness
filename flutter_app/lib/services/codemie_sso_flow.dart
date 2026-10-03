@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/codemie_sso_flow_steps.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/provider_auth_surface.dart';
 import 'package:fa/services/relay/ext_runtime.dart';
 import 'package:fa/ui/screens/codemie_sso_pickers.dart';
 import 'package:fa/ui/screens/codemie_sso_webview.dart';
@@ -130,16 +131,29 @@ Future<bool> _webSignin({
   return false;
 }
 
-/// The per-surface SSO hop (Step 1): macOS uses the CLI flow (local server
-/// + system browser), iOS the system auth session with the in-app WebView
-/// as the fallback, every other platform the in-app WebView directly.
+/// The per-surface SSO hop (Step 1): resolved through the shared platform
+/// matrix (`resolveProviderAuthSurface`, issue #861) — macOS the CLI flow
+/// (local server + system browser), iOS the system auth session with the
+/// in-app WebView as the fallback, every other platform the in-app
+/// WebView directly.
 Future<CodeMieSsoCredentials?> _authenticate(
   BuildContext context,
   String orgUrl,
 ) async {
-  if (Platform.isMacOS) return desktopCodeMieSso(context, orgUrl);
-  if (Platform.isIOS) return _iosSso(context, orgUrl);
-  return _webViewSso(context, orgUrl);
+  final surface = resolveProviderAuthSurface(
+    provider: ProviderAuthId.codemie,
+    isMacOS: Platform.isMacOS,
+    isIOS: Platform.isIOS,
+    isWeb: kIsWeb,
+  );
+  switch (surface.primary) {
+    case ProviderAuthSurfaceKind.systemBrowserLoopback:
+      return desktopCodeMieSso(context, orgUrl);
+    case ProviderAuthSurfaceKind.systemAuthSession:
+      return _iosSso(context, orgUrl);
+    case ProviderAuthSurfaceKind.embeddedWebView:
+      return _webViewSso(context, orgUrl);
+  }
 }
 
 /// iOS: the system auth session first; when the session cannot even start
@@ -211,6 +225,28 @@ Future<bool> _completeSignIn({
   );
   if (modelId == null || !context.mounted) return false;
 
+  // Issue #977: the CLI-parity name step. The user names the connection
+  // (existing entry's name on a re-login, the org host otherwise); a
+  // different name on the same org mints a SECOND account entry instead of
+  // overwriting the first. Cancel falls back to the prefill — the SSO
+  // credentials are already minted (the CLI's OAuth/SSO convention).
+  final suggestedName = existing?.name ?? codeMieHostFromUrl(orgUrl);
+  final name =
+      await showCodeMieNamePrompt(
+        context,
+        registry: registry,
+        baseUrl: baseUrl,
+        initial: suggestedName,
+      ) ??
+      suggestedName;
+  // Landing by NAME (the CLI registry's `add`-replaces-on-name-clash rule):
+  // the entry carrying the chosen name on this endpoint is the update
+  // target — a kept prefill re-logins in place, a fresh name adds.
+  final target = registry.byName(name);
+  final existingByName = (target != null && target.baseUrl == baseUrl)
+      ? target
+      : null;
+
   await saveCodemieConnection(
     registry: registry,
     service: service,
@@ -219,7 +255,8 @@ Future<bool> _completeSignIn({
     baseUrl: baseUrl,
     modelId: modelId,
     key: cookie,
-    existing: existing,
+    name: name,
+    existing: existingByName,
   );
   return true;
 }

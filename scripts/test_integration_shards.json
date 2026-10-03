@@ -58,6 +58,9 @@
       "test/integration/tools_runtime_toggle_test.dart"
     ],
     [
+      "test/cli/agent_cli_jsr_test.dart",
+      "test/cli/cli_args_jsr_test.dart",
+      "test/cli/jsr_cli_test.dart",
       "test/cli/tui_prototype_snapshot_test.dart",
       "test/integration/agents_hub_overlay_pty_test.dart",
       "test/integration/backend_mode_cli_test.dart",
@@ -88,7 +91,7 @@
   "meta": {
     "generated": "2026-09-25",
     "sources": "per-file wall: serial no-key run on arm64 (json file-reporter, this PR); PTY-denied-sandbox files from #932's measured seed baseline or the owner-stated 2.5 min fa_cli_integration figure split 7/2/2/1; 100s default elsewhere",
-    "note": "3-way split of the PTY/CLI critical path; file-level units. New integration-tagged files bin-pack in at runtime via shard_files.py --tags integration. gh-1005 (2026-09-30): the manifest is audited macOS-free (the only macOS-gated assertion, fa_cube_integration_test's kernel nested-rw probe, passes on Linux; the real macOS kernel E2E lives in test/cube/backends on cube-kernel-live) — ONE consolidated hosted-linux leg (ci.yml pty-integration-linux) runs it; the parallel fa-m5 mac leg is retired.",
+    "note": "3-way split of the PTY/CLI critical path; file-level units. New integration-tagged files bin-pack in at runtime via shard_files.py --tags integration. gh-1005 (2026-09-30): the manifest is audited macOS-free (the only macOS-gated assertion, fa_cube_integration_test's kernel nested-rw probe, passes on Linux; the real macOS kernel E2E lives in test/cube/backends on cube-kernel-live) — ONE consolidated hosted-linux leg (ci.yml pty-integration-linux) runs it; the parallel fa-m5 mac leg is retired. gh-1033 (2026-09-29): the fa jsr delegate/REPL suites join the leg explicitly (no runtime bin-pack) — runJsrCliCommand lives in lib/src/cli, so the CLI coverage ratchet must see its hits or the new code dilutes the ratio below the baseline (review thread 7).",
     "weights": {
       "test/cli/ext_engine_process_test.dart": 100.0,
       "test/cli/fah_hub_serve_ports_test.dart": 100.0,
@@ -161,6 +164,9 @@
       "test/integration/theme_readability_pty_test.dart": 100.0,
       "test/integration/tiny_geometry_grid_pty_test.dart": 100.0,
       "test/integration/tools_runtime_toggle_test.dart": 0.5,
+      "test/cli/agent_cli_jsr_test.dart": 1.0,
+      "test/cli/cli_args_jsr_test.dart": 1.0,
+      "test/cli/jsr_cli_test.dart": 1.0,
       "test/integration/tools_scoped_config_e2e_test.dart": 1.1,
       "test/integration/trajectory/cli_integration_test.dart": 80.7,
       "test/integration/trajectory/perf_open_gate_test.dart": 15.0,

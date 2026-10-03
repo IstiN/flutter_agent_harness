@@ -42,6 +42,10 @@ jobs:
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
+          # Same pinned SDK as ci.yml web-spa (#1100): fa1.dev and
+          # fa-web-spa.zip must never drift onto different Flutter stables
+          # (resolves to the same SDK the floating channel picked today).
+          flutter-version: '3.47.x'
           channel: stable
 
       - name: Example app pub get
@@ -69,6 +73,17 @@ jobs:
           flutter build web --release
           --base-href /app/
           --output ../build/pages/app
+
+      # The vendored WASI interpreter assets are mobile-only (#1096 AC3):
+      # assets/wasm/* loads exclusively through WasiSandboxShell
+      # (env_factory_io.dart — Android/iOS); the web build compiles
+      # env_factory_stub (wasm_run needs dart:ffi) and runs python/js/
+      # sqlite from cdn.jsdelivr.net (web_interpreters_web.dart). ~47MB
+      # of dead weight in the deploy root — prune post-build, flags
+      # untouched. The extension/office panel builds prune the same set
+      # inside their packaging scripts.
+      - name: Prune mobile-only wasm interpreter assets (#1096 AC3)
+        run: rm -rf build/pages/app/assets/assets/wasm
 
       # The Chrome extension ships on the site too (download + load
       # unpacked): dart2js the SW agent and zip it — flutter is already on
@@ -123,6 +138,37 @@ jobs:
           sed -i -E 's|src="main\.js" defer|src="main.js?v='"${BUILD_ID}"'" defer|g' build/pages/root/index.html
           sed -i -E 's|src="\./app/"|src="./app/index.html?v='"${BUILD_ID}"'"|g' build/pages/root/index.html
           sed -i -E 's|href="\./app/" target="_blank"|href="./app/index.html?v='"${BUILD_ID}"'" target="_blank"|g' build/pages/root/index.html
+
+      - name: Size manifest + budget gate (#1096 AC1)
+        run: |
+          # Per-entry uncompressed size table + +5% budget per line (issue
+          # inventory format). First run seeds web-app.tsv/outlook-app.tsv
+          # in the workspace (--init-if-missing) — the step below uploads
+          # them as a ride-along artifact; commit them to arm the web
+          # gates. The extension zip is gated against the committed
+          # cut-shape baseline (same file the release gate in
+          # build-macos.yml uses).
+          python3 scripts/size_manifest.py check build/pages/app \
+            --baseline scripts/size_budget/web-app.tsv --init-if-missing
+          if [ -d build/pages/root/outlook/app ]; then
+            python3 scripts/size_manifest.py check build/pages/root/outlook/app \
+              --baseline scripts/size_budget/outlook-app.tsv --init-if-missing
+          fi
+          if [ -f build/fa-extension.zip ]; then
+            python3 scripts/size_manifest.py check build/fa-extension.zip \
+              --baseline scripts/size_budget/fa-extension.tsv
+          fi
+
+      # The self-seeded baselines live only in this runner's workspace —
+      # upload them so "commit it to arm the gate" is actually recoverable
+      # (grab the artifact, commit the two TSVs).
+      - name: Upload seeded size baselines (#1096 ratchet)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: size-baselines
+          path: scripts/size_budget/*.tsv
+          if-no-files-found: ignore
 
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

@@ -8,8 +8,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_chat_service.dart';
 
-/// The composer-adjacent live status row (issue #865): phase label, current
-/// tool, elapsed seconds on a 1 s tick — hidden the frame the run ends.
+/// The single transient status row (issues #865, #1042): phase label,
+/// current tool, elapsed seconds on a 1 s tick — mounted as the
+/// transcript's visually-last entry, hidden the frame the run ends.
 ///
 /// Elapsed time is ticker-driven, so `tester.pump` IS the fake clock.
 class _PhaseService extends FakeChatService {
@@ -76,10 +77,7 @@ void main() {
     expect(find.textContaining('Thinking'), findsOneWidget);
 
     service.rows.add(
-      FaChatMessage(
-        role: 'system',
-        content: '[wasm_shell] {"argv": ["true"]}',
-      ),
+      FaChatMessage(role: 'system', content: '[wasm_shell] {"argv": ["true"]}'),
     );
     service.notify();
     await tester.pump();
@@ -95,20 +93,111 @@ void main() {
     expect(find.textContaining('wasm_shell'), findsNothing);
   });
 
-  testWidgets('AC3: stream deltas flip the row to writing', (tester) async {
+  testWidgets('AC3: stream deltas flip the row to typing', (tester) async {
     final service = _PhaseService()
       ..rows.add(FaChatMessage(role: 'user', content: 'hi'))
       ..streaming = true;
     await _pump(tester, service);
 
+    service.rows.add(FaChatMessage(role: 'assistant', content: 'partial ans'));
+    service.notify();
+    await tester.pump();
+    // Issue #1042 fix contract: token emission reads «Fa is typing...» —
+    // the retired typing footer's string, reused on the single row.
+    expect(find.textContaining('Fa is typing'), findsOneWidget);
+  });
+
+  testWidgets('#1042 I1: exactly ONE status row in every run phase — '
+      'thinking, typing, tool', (tester) async {
+    final service = _PhaseService()
+      ..rows.add(FaChatMessage(role: 'user', content: 'fix the tests'))
+      ..streaming = true
+      ..notify();
+    await _pump(tester, service);
+
+    // Pre-first-token: the thinking label with the timer.
+    expect(find.byKey(content), findsOneWidget);
+    expect(find.textContaining('Thinking'), findsOneWidget);
+    expect(find.textContaining('· 0s'), findsOneWidget);
+
+    // Token emission: still exactly one row, now the typing label.
+    service.rows.add(FaChatMessage(role: 'assistant', content: 'partial'));
+    service.notify();
+    await tester.pump();
+    expect(find.byKey(content), findsOneWidget);
+    expect(find.textContaining('Fa is typing'), findsOneWidget);
+
+    // Tool phase: still exactly one row.
     service.rows.add(
-      FaChatMessage(role: 'assistant', content: 'partial ans'),
+      FaChatMessage(role: 'system', content: '[bash] {"command": "ls"}'),
     );
     service.notify();
     await tester.pump();
-    expect(find.textContaining('Writing'), findsOneWidget);
-    // The in-list typing footer is still the only «Fa is typing...» surface.
-    expect(find.text('Fa is typing...'), findsOneWidget);
+    expect(find.byKey(content), findsOneWidget);
+    expect(find.textContaining('Running bash'), findsOneWidget);
+    // The transcript mounts exactly one row widget (the retired typing
+    // footer's key renders nothing anywhere).
+    expect(find.byKey(const ValueKey('faChatRunStatusRow')), findsOneWidget);
+    expect(find.byKey(const ValueKey('faChatTypingFooter')), findsNothing);
+  });
+
+  testWidgets('#1042 I2: the row is the transcript last entry — inside '
+      'the scrollable, no composer-docked badge', (tester) async {
+    final service = _PhaseService()
+      ..rows.add(FaChatMessage(role: 'user', content: 'hello'))
+      ..streaming = true
+      ..notify();
+    await _pump(tester, service);
+
+    final row = find.byKey(content);
+    expect(row, findsOneWidget);
+    expect(
+      find.descendant(of: find.byType(Scrollable), matching: row),
+      findsOneWidget,
+    );
+    // One label surface only — nothing outside the scrollable.
+    expect(find.textContaining('Thinking'), findsOneWidget);
+  });
+
+  testWidgets('#1042: on completion the row is replaced by the assistant '
+      'message — no gap, no lingering row', (tester) async {
+    final service = _PhaseService()
+      ..rows.add(FaChatMessage(role: 'user', content: 'hi'))
+      ..streaming = true
+      ..notify();
+    await _pump(tester, service);
+    expect(find.byKey(content), findsOneWidget);
+
+    // The assistant message lands while the run is still open: the row
+    // stays up beneath it (the visually-last entry).
+    service.rows.add(FaChatMessage(role: 'assistant', content: 'all done'));
+    service.notify();
+    await tester.pump();
+    // The list's 250 ms insert animation settles the new tile.
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(content), findsOneWidget);
+    expect(find.text('all done', findRichText: true), findsOneWidget);
+
+    // Run end: the row goes the same frame — the assistant message is the
+    // last entry, nothing dangles.
+    service
+      ..streaming = false
+      ..notify();
+    await tester.pump();
+    expect(find.byKey(content), findsNothing);
+    expect(find.text('all done', findRichText: true), findsOneWidget);
+    expect(find.textContaining('Fa is typing'), findsNothing);
+  });
+
+  testWidgets('#1042 E1: empty transcript + run — the row is the only item '
+      '(the package "No messages yet" overlay is suppressed)', (tester) async {
+    final service = _PhaseService()
+      ..streaming = true
+      ..notify();
+    await _pump(tester, service);
+
+    expect(find.byKey(content), findsOneWidget);
+    expect(find.text('No messages yet'), findsNothing);
   });
 
   testWidgets('AC4: run end hides the row within one frame', (tester) async {
