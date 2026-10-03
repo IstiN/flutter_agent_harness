@@ -2068,6 +2068,11 @@ class AgentCli {
     await _subagentManager.rehydrate();
     // Session scope (tools.yaml next to the session file) is live now.
     unawaited(AgentCliTools(this).rebuildToolAvailability());
+    // Transient retry voice (issue #1168 review): the interactive boot
+    // wires it in [run]; headless - wake runs, `fa -p`, restarts - needs
+    // the same `[net]` line, or a multi-second retry pause is silent
+    // exactly where nobody watches a TUI.
+    _wireTransientRetryNotice();
     // Sleep prevention (#325/#326) — headless wraps exactly ONE run, so
     // both holds bracket it the same way: session-held acquires on the
     // session open, per-run on the run start (the prompt below).
