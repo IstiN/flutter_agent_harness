@@ -348,6 +348,8 @@ final class Program {
       try {
         await render(_runningModel!.view, force: force);
       } catch (e, st) {
+        // ignore: avoid_print
+        print('DBG guard: lrm=' + lastRenderMicros.toString() + ' force=' + force.toString());
         if (lastRenderMicros < 0) rethrow;
         _renderer?.invalidate();
         lastRenderMicros = -1;
