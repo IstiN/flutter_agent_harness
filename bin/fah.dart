@@ -2163,6 +2163,10 @@ Future<void> _runApp(List<String> args) async {
     markdownSurface: markdownSurface,
     config: AgentCliConfig(
       wakeExecutable: wakeExecutable(),
+      // The dispatch below: a prompt argument is a headless run (autonomous
+      // supervision default); an interactive REPL/TUI session defaults to
+      // advisory — a human is present (gh-1054 review).
+      headlessRun: headlessPrompt != null,
       // Marathon-session resume parses its multi-hundred-MB tail off the
       // UI isolate (issue #503); the isolate executor is IO-only.
       parseExecutor: const IsolateSessionParseExecutor(),

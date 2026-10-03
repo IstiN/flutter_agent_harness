@@ -115,6 +115,7 @@ String hepToolLivenessFrame({
   required String name,
   required String action,
   required int elapsedMs,
+  int? outputBytes,
   String detail = '',
 }) => jsonEncode({
   'type': 'tool_liveness',
@@ -123,6 +124,7 @@ String hepToolLivenessFrame({
   'name': name,
   'action': action,
   'elapsed_ms': elapsedMs,
+  'output_bytes': ?outputBytes,
   if (detail.isNotEmpty) 'detail': detail,
 });
 
@@ -324,6 +326,7 @@ class HepWriter {
         :final toolCallId,
         :final toolName,
         :final elapsed,
+        :final outputBytes,
         :final attempt,
       ):
         _emit(
@@ -333,6 +336,7 @@ class HepWriter {
             name: toolName,
             action: 'heartbeat',
             elapsedMs: elapsed.inMilliseconds,
+            outputBytes: outputBytes,
             detail: 'attempt $attempt',
           ),
         );

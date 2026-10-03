@@ -1064,9 +1064,12 @@ extension ApprovalCommands on AgentCli {
           'action': action.label,
           'detail': detail,
         });
+        // The terminal line shows the same detail the record carries —
+        // redacted the same way (the detail embeds captured output).
+        final shownDetail = config.redactionPipeline?.redact(detail) ?? detail;
         io.writeln(
           '[stuck-call] $toolName: ${action.label} after '
-          '${elapsed.inSeconds}s${detail.isEmpty ? '' : ' — $detail'}',
+          '${elapsed.inSeconds}s${shownDetail.isEmpty ? '' : ' — $shownDetail'}',
         );
       default:
     }

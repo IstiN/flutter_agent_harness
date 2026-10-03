@@ -26,6 +26,7 @@
 /// [ConfigException] at boot.
 library;
 
+import '../cancel_token.dart';
 import '../exceptions.dart';
 
 /// Default absolute floor for the stuck threshold (`agent.stuckTool.
@@ -155,14 +156,20 @@ final class StuckToolConfig {
     if (node is! Map) {
       throw ConfigException('agent.stuckTool must be a map, got: $node');
     }
-    int seconds(String key, int fallback) {
+    int seconds(String key, int fallback, {bool positive = false}) {
       final value = node[key];
       if (value == null) return fallback;
       if (value is! int) {
         throw ConfigException('"agent.stuckTool.$key" must be an integer');
       }
-      if (value < 0) {
-        throw ConfigException('"agent.stuckTool.$key" must be >= 0');
+      // A heartbeat cadence of zero would spin the event loop
+      // (Timer.periodic(Duration.zero)); a grace/floor of zero is a legal
+      // "immediately" knob (gh-1054 review).
+      if (positive ? value <= 0 : value < 0) {
+        throw ConfigException(
+          '"agent.stuckTool.$key" must be '
+          '${positive ? '> 0' : '>= 0'}',
+        );
       }
       return value;
     }
@@ -215,6 +222,7 @@ final class StuckToolConfig {
           heartbeatSeconds = seconds(
             'heartbeatSeconds',
             defaultStuckHeartbeatSeconds,
+            positive: true,
           );
         case 'cancelGraceSeconds':
           cancelGraceSeconds = seconds(

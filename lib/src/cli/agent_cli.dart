@@ -620,15 +620,14 @@ class AgentCli {
     // status gates) lives on the manager; this host supplies the resume.
     _subagentManager.wakeChild = (id) =>
         _taskConfig.executor.resumeChild(id, childInboxWakePrompt);
-    _toolRegistry = ToolRegistry([
-      ...coreTools,
-      ...monitoringTools,
-      taskTool(config: _taskConfig),
-    ], (note) {
-      // Issue #862 review: a duplicate registration (e.g. a host passing
-      // child-injected tools through the parent surface) must be loud.
-      io.writeln(_style.dim('[fah] warning: $note'));
-    });
+    _toolRegistry = ToolRegistry(
+      [...coreTools, ...monitoringTools, taskTool(config: _taskConfig)],
+      (note) {
+        // Issue #862 review: a duplicate registration (e.g. a host passing
+        // child-injected tools through the parent surface) must be loud.
+        io.writeln(_style.dim('[fah] warning: $note'));
+      },
+    );
     _agent = Agent(
       model: config.model,
       systemPrompt: config.systemPrompt ?? _currentMode.systemPrompt,
@@ -648,7 +647,7 @@ class AgentCli {
         _style.dim('watchdog paused — over-window compaction in progress'),
       ),
       contextWindowCap: config.contextWindowCap,
-      stuckTool: config.stuckTool,
+      stuckTool: config.effectiveStuckTool(),
       wireDump: config.wireDump,
       // Issue #387: the loop's over-window guard hands the transcript to
       // this relief before refusing — one synchronous compaction pass.

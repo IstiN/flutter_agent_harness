@@ -59,13 +59,27 @@ extension AgentCliPersist on AgentCli {
   /// `tool_stuck`, gh-1054) at the session leaf. Custom records stay out of
   /// model context — they are the session-visible audit trail external
   /// watchers (and post-mortems) read to distinguish alive-busy from dead.
+  ///
+  /// Free-text fields (the args summary, the stuck detail with its
+  /// partial-output pointer) pass through the host's redaction pipeline
+  /// first: the session JSONL is an audit surface and must not leak
+  /// secrets the in-run hooks already mask elsewhere (gh-1054 review).
   Future<void> _persistToolLivenessRecord(
     String customType,
     Map<String, Object?> data,
   ) async {
     final session = _session;
     if (session == null) return;
-    await session.appendCustomEntry(customType: customType, data: data);
+    final pipeline = config.redactionPipeline;
+    final safe = pipeline == null
+        ? data
+        : {
+            for (final entry in data.entries)
+              entry.key: entry.value is String
+                  ? pipeline.redact(entry.value as String)
+                  : entry.value,
+          };
+    await session.appendCustomEntry(customType: customType, data: safe);
   }
 
   /// The args summary for a liveness record: the command for shell calls,

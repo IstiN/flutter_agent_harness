@@ -191,7 +191,7 @@ void main() {
         () => StuckToolConfig.fromYaml({'followUp': 'sometimes'}),
         throwsA(isA<ConfigException>()),
       );
-    });
+    );
       expect(
         () => StuckToolConfig.fromYaml({'heartbeatSeconds': 0}),
         throwsA(isA<ConfigException>()),
@@ -201,6 +201,7 @@ void main() {
         StuckToolConfig.fromYaml({'cancelGraceSeconds': 0}).cancelGrace,
         Duration.zero,
       );
+    });
   });
 
   group('stuck-call supervision in the agent loop', () {
