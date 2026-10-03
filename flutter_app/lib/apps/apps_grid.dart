@@ -10,9 +10,11 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/apps/app_icon.dart';
+import 'package:fa/apps/app_load_error.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/js_app_view.dart';
+import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa_ui/fa_ui.dart' show FaChatHost;
 import 'package:fa/ui/widgets/fah_wallpaper.dart';
 
@@ -151,6 +153,11 @@ class _AppsGridViewState extends State<AppsGridView> {
   }
 
   Future<void> _openApp(JsAppInfo app) async {
+    // Same broken-app guard as every launch surface (issue #866): the
+    // card's red line is the short label; the dialog carries the parser
+    // detail the user can copy for Fa.
+    if (await guardBrokenApp(context, app)) return;
+    if (!mounted) return;
     final appService =
         (await widget.resolveAppService?.call(app.id)) ?? widget.agentService;
     if (!mounted) return;
@@ -205,8 +212,16 @@ class _AppCard extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
-                app.displayDescription(locale),
-                style: theme.textTheme.bodySmall,
+                // Issue #866: a manifest the agent broke is a visible
+                // error state on the card — a localized label here (the
+                // raw parser output goes to the tap's copyable dialog,
+                // so the pixels stay locale-agnostic).
+                app.error != null
+                    ? AppLocalizations.of(context).appsManifestErrorLabel
+                    : app.displayDescription(locale),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: app.error == null ? null : theme.colorScheme.error,
+                ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
