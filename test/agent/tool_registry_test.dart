@@ -73,17 +73,25 @@ void main() {
       );
     });
 
-    test('duplicate name throws ConfigException', () {
-      expect(
-        () => ToolRegistry([_tool('read'), _tool('read')]),
-        throwsA(
-          isA<ConfigException>().having(
-            (e) => e.message,
-            'message',
-            contains('read'),
-          ),
-        ),
-      );
+    test('duplicate name replaces the earlier registration and notes it '
+        '(issue #862: replace-and-note, later registration wins)', () {
+      final inherited = _tool('reply');
+      final registry = ToolRegistry([inherited, _tool('read')]);
+      final childReply = _tool('reply');
+      registry.register(childReply);
+      // No throw; the child-specific tool won (later registration) and the
+      // wiring bug degraded loudly into a warning record instead of killing
+      // a spawn in 0.0s (the luna death).
+      expect(identical(registry.lookup('reply'), childReply), isTrue);
+      expect(registry.length, 2);
+      expect(registry.duplicateNotes, hasLength(1));
+      expect(registry.duplicateNotes.single, contains('reply'));
+    });
+
+    test('duplicate via constructor records the same warning', () {
+      final registry = ToolRegistry([_tool('read'), _tool('read')]);
+      expect(registry.length, 1);
+      expect(registry.duplicateNotes, hasLength(1));
     });
 
     test('empty name throws ConfigException', () {
