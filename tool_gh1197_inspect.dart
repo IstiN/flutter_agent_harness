@@ -55,13 +55,7 @@ Future<void> main() async {
     stdout.writeln('│$r');
   }
   // CPU sample of the child for 3s.
-  final pid = pty.pid;
-  stdout.writeln('child pid: $pid');
-  final r1 = File('/proc/$pid/stat').readAsStringSync();
-  await Future<void>.delayed(const Duration(seconds: 3));
-  final r2 = File('/proc/$pid/stat').readAsStringSync();
-  final ticks = (int.parse(r2.split(' ')[13]) + int.parse(r2.split(' ')[14])) -
-      (int.parse(r1.split(' ')[13]) + int.parse(r1.split(' ')[14]));
-  stdout.writeln('cpu ticks over 3s: $ticks (100 = one full core)');
+  stdout.writeln("sampling fa dart processes...");
+  await Process.run("/tmp/sample_cpu.sh", []).then((r) => stdout.write(r.stdout));
   pty.kill(ProcessSignal.sigkill);
 }
