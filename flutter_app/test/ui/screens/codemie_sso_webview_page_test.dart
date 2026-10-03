@@ -14,6 +14,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show CodeMieSsoCredentials;
 
 import 'package:fa/ui/screens/codemie_sso_webview.dart';
+import 'package:fa/ui/screens/oauth_webview_scaffold.dart';
 
 import '../../fake_webview_platform.dart';
 
@@ -226,6 +227,17 @@ void main() {
         ),
       );
       await tester.pump();
+    });
+  });
+
+  group('the no-passkey notice (issue #861 AC2)', () {
+    testWidgets('visible from the first build — before the page renders', (
+      tester,
+    ) async {
+      await pumpPage(tester);
+      // No onPageFinished has fired: the page has not rendered, yet the
+      // degradation is already stated (the iOS fallback included).
+      expect(find.text(oauthWebViewPasskeyNotice), findsOneWidget);
     });
   });
 }

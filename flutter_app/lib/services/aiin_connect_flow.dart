@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'
-    show MethodChannel, MissingPluginException, PlatformException;
+    show MissingPluginException, PlatformException;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart'
     if (dart.library.html) 'package:fa/services/oauth_cli_flow_stubs.dart';
@@ -12,6 +12,7 @@ import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/aiin_web_auth.dart';
 import 'package:fa/services/keychain_store.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/provider_auth_surface.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa_ui/fa_ui.dart'
@@ -267,7 +268,10 @@ Future<bool> _completeAiinConnect(
   required SessionKeysStore? sessionKeysStore,
   required KeychainStore? keychainStore,
   required AiinConnectResult? result,
-  required Future<List<String>> Function(String baseUrl, {required String apiKey})?
+  required Future<List<String>> Function(
+    String baseUrl, {
+    required String apiKey,
+  })?
   aiinModelsFetcher,
   required CustomProvider? reauthenticateFor,
 }) async {
@@ -305,27 +309,21 @@ Future<bool> _completeAiinConnect(
   );
 }
 
-/// The `fah/web_auth_session` method channel (implemented in
-/// `ios/Runner/AppDelegate.swift`): a system `ASWebAuthenticationSession`.
-/// The same channel the CodeMie SSO flow drives.
-const _webAuthSessionChannel = MethodChannel('fah/web_auth_session');
-
 /// Opens [url] in the iOS auth-session sheet. Resolves `true` only when
 /// the sheet CLOSES — a user swipe-dismissal and the callback dismissal
 /// are indistinguishable here, so the flow races the resolution against
 /// the callback (`cancelWhenOpenSettles`): closed without a callback is a
 /// user cancel and falls straight to the paste fallback. A sheet that
 /// cannot even start throws — same fallback.
-Future<bool> _openAiinAuthSession(String url) =>
-    _webAuthSessionChannel
-        .invokeMethod<String>('authenticate', {'url': url})
-        .then((_) => true);
+Future<bool> _openAiinAuthSession(String url) => systemAuthSessionChannel
+    .invokeMethod<String>('authenticate', {'url': url})
+    .then((_) => true);
 
 /// Dismisses the active auth-session sheet (the callback landed on the
 /// flow's loopback server). Best-effort: the sheet may already be gone.
 Future<void> _dismissAiinAuthSession() async {
   try {
-    await _webAuthSessionChannel.invokeMethod<void>('cancel');
+    await systemAuthSessionChannel.invokeMethod<void>('cancel');
   } on Object {
     // The sheet was never opened or is already dismissed.
   }
