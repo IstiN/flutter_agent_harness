@@ -112,6 +112,7 @@ final class AgentCliConfig {
     this.dapHubState,
     this.runtimeTools,
     this.agentMode,
+    this.misuseBreaker = true,
     this.loadMode = AgentLoadMode.defaultMode,
     this.onToolsConfigChanged,
     this.onDapHubConfigChanged,
@@ -344,6 +345,12 @@ final class AgentCliConfig {
   /// surface to read/write/edit/bash and the prompt composition strips
   /// every optional section.
   final String? agentMode;
+
+  /// The tool-misuse circuit breaker switch (`agent.misuseBreaker`,
+  /// issue #862, default true): wired into the [Agent] and every spawned
+  /// child. `false` disables it everywhere — byte-identical to the
+  /// pre-breaker harness (E5).
+  final bool misuseBreaker;
 
   /// The tool-load preset for this boot (issue #680): resolves
   /// `--omp` > `FA_AGENT_MODE` > `agent.mode`. [AgentLoadMode.defaultMode]
