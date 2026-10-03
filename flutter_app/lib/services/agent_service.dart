@@ -2035,24 +2035,62 @@ class AgentService extends ChangeNotifier
     }
   }
 
-  /// Pages one chunk of records back in BELOW the window
+  /// Pages the transcript back to the live tail
   /// ([FaChatService.loadNewerHistory]) — the page-down path after deep
-  /// paging slid the newest side out. Same guards as [loadOlderHistory].
+  /// paging slid the newest side out. NEVER gated on [isStreaming]: the
+  /// page-down is a VIEW operation, and mid-run is exactly when the banner
+  /// must work — the run keeps appending below a deep-paged window while
+  /// the tap was a no-op (issue #1159). One bounded tail read re-centers
+  /// the window (jump-to-tail, no chunk crawl); the only guards are a
+  /// concurrent page load and a stale load generation.
   @override
   Future<void> loadNewerHistory() async {
-    if (_loadingHistory || isStreaming) return;
+    if (_loadingHistory) return;
     final windowed = _windowed;
     if (windowed == null) return;
+    // At-tail tap: nothing sits below — skip the rebuild and the
+    // whole-file count re-scan entirely.
+    if (!windowed.hasNewer) return;
     final gen = _loadGeneration;
     _loadingHistory = true;
     notifyListeners();
     try {
-      final joined = await windowed.loadNewer();
+      await windowed.jumpToTail();
       if (gen != _loadGeneration) return;
-      if (joined.isNotEmpty) {
-        await _syncViewToWindow(windowed);
-        await _applyViewBranch();
+      // Let an in-flight persist pass flush first so the branch read
+      // below observes just-finalized records: a turn boundary landing
+      // mid-jump must not leave its row stranded out of view until the
+      // next reprojection (review -FbK vanish variant). Best effort —
+      // a failed persist must not break the jump.
+      if (_persistPass case final pass?) {
+        try {
+          await pass;
+        } on Object {
+          // Ignored: the next persist pass retries.
+        }
+        if (gen != _loadGeneration) return;
       }
+      await _syncViewToWindow(windowed);
+      if (gen != _loadGeneration) return;
+      await _applyViewBranch();
+      if (gen != _loadGeneration) return;
+      // Live rows the projection cannot know — in-flight tool activity
+      // tiles and the streaming assistant/thinking bubbles are plain
+      // rows in [messages], not records yet. Re-read AFTER the rebuild
+      // settles: capturing earlier races a mid-jump turn boundary into
+      // re-appending a bubble the finalize already landed as a record —
+      // a duplicate (review -FbK). There is no await between the rebuild
+      // and this capture, so the fields are read atomically with the
+      // projection snapshot. The contains-check and the empty-bubble
+      // guard mirror _finalizeAssistant's own invariants.
+      final liveRows = [
+        ..._inFlightToolRows.map((e) => e.row),
+        if (_currentThinkingMessage case final t?) t,
+        if (_currentAssistantMessage case final a?
+            when a.content.trim().isNotEmpty)
+          a,
+      ].where((row) => !messages.contains(row)).toList();
+      messages.addAll(liveRows);
       await _refreshHistoryAbove();
       if (gen != _loadGeneration) return;
       _historyLoadError = null;
@@ -2536,6 +2574,12 @@ class AgentService extends ChangeNotifier
   /// streaming). Long tool calls suppress it via [_activeToolCalls].
   Timer? _idleWatchdog;
   int _activeToolCalls = 0;
+
+  /// In-flight tool activity tiles (unpersisted live rows): start adds,
+  /// end untracks, agent start clears. A mid-run view rebuild re-appends
+  /// them so the jump-to-tail never drops a running tool from the
+  /// transcript (issue #1159 review -Fl1).
+  final List<({String toolName, FahChatMessage row})> _inFlightToolRows = [];
 
   /// Aborts the current run, if any.
   @override
