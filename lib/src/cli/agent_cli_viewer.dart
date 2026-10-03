@@ -187,9 +187,7 @@ extension AgentCliLease on AgentCli {
   Future<void> _printViewerBannerIfAny() async {
     final viewer = _viewer;
     if (viewer == null) return;
-    io.writeln(
-      tuiWarning(viewerBannerText(viewer.lease, stale: viewer.stale)),
-    );
+    io.writeln(tuiWarning(viewerBannerText(viewer.lease, stale: viewer.stale)));
   }
 
   /// Viewer composer line → the owner's mailbox with CLI attribution.

@@ -192,7 +192,11 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
     // session cannot start) surface promptly through the race instead of
     // stalling until the callback timeout.
     final callbackFuture = server.waitForCallback();
-    final opened = _openAiinBrowser(loginUrl.toString(), openBrowserFn, onStatus);
+    final opened = _openAiinBrowser(
+      loginUrl.toString(),
+      openBrowserFn,
+      onStatus,
+    );
     final callback = await _firstCallbackOrOpenError(
       callbackFuture,
       opened,

@@ -328,8 +328,7 @@ List<String> restoredInputHistory(List<Message> messages) {
 /// WHOLE messages rather than decapitating the tail's content. Tool results
 /// attach to their calls' rows (see [replayToolRow]); they never render
 /// standalone.
-(List<List<String>> entries, int firstIndex)
-buildReplayEntries(
+(List<List<String>> entries, int firstIndex) buildReplayEntries(
   List<Message> messages, {
   required bool tui,
   required int width,
@@ -389,10 +388,7 @@ buildReplayEntries(
     rows += entry.length;
     firstIndex = i;
   }
-  return (
-    _withFenceFixup(messages, firstIndex, entries),
-    firstIndex,
-  );
+  return (_withFenceFixup(messages, firstIndex, entries), firstIndex);
 }
 
 /// Whether a formatted replay [entry] still fits the boot [rowBudget]:
@@ -427,8 +423,13 @@ List<List<String>> _withFenceFixup(
   int firstIndex,
   List<List<String>> entries,
 ) {
-  if (firstIndex > 0 && entries.isNotEmpty && _fenceOpenBefore(messages, firstIndex)) {
-    return [const ['```'], ...entries];
+  if (firstIndex > 0 &&
+      entries.isNotEmpty &&
+      _fenceOpenBefore(messages, firstIndex)) {
+    return [
+      const ['```'],
+      ...entries,
+    ];
   }
   return entries;
 }

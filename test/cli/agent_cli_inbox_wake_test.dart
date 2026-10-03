@@ -18,8 +18,9 @@ Future<void> waitForTrue(Future<bool> Function() condition) async {
 /// from the agent-chatter wake cap, foreign chatter must stay capped, and
 /// every refused wake must leave a visible receipt.
 ///
-/// `run()` boots with one turn (the initial prompt), so all call counts
-/// are measured as deltas over the post-boot baseline.
+/// `run()` creates the session at boot WITHOUT starting a turn — the
+/// first stream call is the first wake — so the post-boot baseline is
+/// zero calls.
 void main() {
   late MemoryExecutionEnv env;
   late FakeCliIO io;
@@ -43,12 +44,11 @@ void main() {
     streamFunction: fake.call,
   );
 
-  /// Waits out the boot turn; returns (sessionId, calls after boot).
+  /// Waits for the session to exist; returns (sessionId, 0 calls).
   Future<(String, int)> boot(FakeStreamFunction fake, AgentCli cli) async {
-    await waitForTrue(() async => fake.calls >= 1 && !cli.isBusy);
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-    final id = (await repo.list(cwd: '/work')).first.id;
-    return (id, fake.calls);
+    await waitForTrue(() async => (await repo.list(cwd: '/work')).isNotEmpty);
+    return ((await repo.list(cwd: '/work')).first.id, fake.calls);
   }
 
   /// Sends one message shaped exactly like the scheduler's delivery of a

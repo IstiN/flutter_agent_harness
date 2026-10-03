@@ -1,10 +1,10 @@
- // Vendored from the dart_tui fork (`vendor/dart_tui/lib/src/editor.dart`, issue
- // #613): hosted dart_tui ships no editor, so the published package cannot
- // reference the fork-only symbol — the composer carries its own copy instead.
- // Types renamed Tui* so they coexist with the fork barrel's own exports
+// Vendored from the dart_tui fork (`vendor/dart_tui/lib/src/editor.dart`, issue
+// #613): hosted dart_tui ships no editor, so the published package cannot
+// reference the fork-only symbol — the composer carries its own copy instead.
+// Types renamed Tui* so they coexist with the fork barrel's own exports
 // (published builds resolve hosted dart_tui, which exports neither).
 // Otherwise byte-identical to the fork source; keep in sync when
- // the fork editor changes.
+// the fork editor changes.
 // TuiLineEditor: readline-grade immutable line editing for the TUI composer
 // (issue #275 scope 3). Value semantics — every mutation returns a new
 // TuiLineEditor, so FaTuiModel.copyWith can carry it like any other field.
@@ -79,7 +79,7 @@ class TuiLineEditor {
   });
 
   TuiLineEditor([String text = '', int cursor = 0])
-      : this._(TuiLineBuffer(text, cursor));
+    : this._(TuiLineBuffer(text, cursor));
 
   /// An empty editor — const, usable as a default parameter value.
   const TuiLineEditor.empty() : this._(const TuiLineBuffer('', 0));
@@ -88,12 +88,12 @@ class TuiLineEditor {
   /// Programmatic whole-line sets (history recall, menu-accept prefills)
   /// and cursor-only motion ride this; neither is an undoable edit.
   TuiLineEditor withBuffer(TuiLineBuffer next) => TuiLineEditor._(
-        next,
-        killRing: killRing,
-        killIndex: killIndex,
-        undoStack: undoStack,
-        lastActionWasYank: lastActionWasYank,
-      );
+    next,
+    killRing: killRing,
+    killIndex: killIndex,
+    undoStack: undoStack,
+    lastActionWasYank: lastActionWasYank,
+  );
 
   String get text => buffer.text;
   int get cursor => buffer.cursor;
@@ -187,8 +187,10 @@ class TuiLineEditor {
     final index = killIndex < 0 ? killRing.length - 1 : killIndex;
     final killed = killRing[index];
     final b = buffer;
-    final next =
-        TuiLineBuffer(b.before + killed + b.after, b.cursor + killed.length);
+    final next = TuiLineBuffer(
+      b.before + killed + b.after,
+      b.cursor + killed.length,
+    );
     // Keep the pushed undo step: undo after a yank removes the yanked
     // span (a discarded step made undo restore garbage instead).
     final pushed = _push(next, _YankGroup);
@@ -216,8 +218,9 @@ class TuiLineEditor {
     final nextText = replaced
         ? b.text.substring(0, start) + killed + b.after
         : b.before + killed + b.after;
-    final nextCursor =
-        replaced ? start + killed.length : b.cursor + killed.length;
+    final nextCursor = replaced
+        ? start + killed.length
+        : b.cursor + killed.length;
     final pushed = _push(TuiLineBuffer(nextText, nextCursor), _YankGroup);
     return TuiLineEditor._(
       pushed.buffer,
@@ -251,7 +254,8 @@ class TuiLineEditor {
     if (c == 0) return this;
     if (c == b.text.length) c -= 1; // caret at EOL transposes last two chars
     if (c < 1) return this;
-    final t = b.text.substring(0, c - 1) +
+    final t =
+        b.text.substring(0, c - 1) +
         b.text[c] +
         b.text[c - 1] +
         b.text.substring(c + 1);

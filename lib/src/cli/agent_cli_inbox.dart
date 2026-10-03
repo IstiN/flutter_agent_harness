@@ -27,7 +27,6 @@ extension AgentCliMessagingFlow on AgentCli {
     // app) burns the 10-run agent-chat cap and the CLI goes permanently
     // silent on further app mail until restart.
     if (queued.any((message) => message.isUserInput)) {
-      _inboxWakeStreak = 0;
       _inboxWakePolicy.resetStreak();
     }
     // The btw panels: each drained fabric message lands as a bordered
@@ -63,7 +62,6 @@ extension AgentCliMessagingFlow on AgentCli {
         continue;
       }
       if (drained.any((message) => message.kind == AgentMessageKind.user)) {
-        _inboxWakeStreak = 0;
         _inboxWakePolicy.resetStreak();
       }
       messages.addAll([
@@ -299,7 +297,8 @@ extension AgentCliMessagingFlow on AgentCli {
     if (decision.lane != InboxWakeLane.scheduledSelf) {
       _inboxWakeRefusalAnnounced = false;
     }
-    if (decision.countsAgainstCap) _inboxWakeStreak++;
+    // The policy books cap-consuming wakes itself (its streak is the one
+    // source of truth; the legacy seam proxies it).
     _inboxWakeRunning = true;
     final count = pending.length;
     io.writeln(

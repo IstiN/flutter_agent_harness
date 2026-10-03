@@ -233,7 +233,10 @@ List<CustomProviderEntry> mergeCustomProviderEntries(
 /// re-apply in `agent_cli.dart` — issue #964 review): a restored gateway
 /// endpoint without its header 401s. Null when [baseUrl] is null (catalog
 /// default) or no saved entry matches it.
-String? authHeaderForBaseUrl(List<CustomProviderEntry> entries, String? baseUrl) {
+String? authHeaderForBaseUrl(
+  List<CustomProviderEntry> entries,
+  String? baseUrl,
+) {
   if (baseUrl == null) return null;
   for (final entry in entries) {
     if (entry.baseUrl == baseUrl) return entry.authHeader;

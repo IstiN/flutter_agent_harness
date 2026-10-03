@@ -818,7 +818,8 @@ final class FaThemeController {
 
   String toolPendingBg(String text) => _render(_current.toolPendingBg, text);
 
-  String customMessageBg(String text) => _render(_current.customMessageBg, text);
+  String customMessageBg(String text) =>
+      _render(_current.customMessageBg, text);
 
   String customMessageText(String text) =>
       _render(_current.customMessageText, text);
@@ -827,7 +828,8 @@ final class FaThemeController {
 
   String thinkingOff(String text) => _render(_current.thinkingOff, text);
 
-  String thinkingMinimal(String text) => _render(_current.thinkingMinimal, text);
+  String thinkingMinimal(String text) =>
+      _render(_current.thinkingMinimal, text);
 
   String thinkingLow(String text) => _render(_current.thinkingLow, text);
 
@@ -862,9 +864,11 @@ final class FaThemeController {
 
   String toolDiffAdded(String text) => _render(_current.toolDiffAdded, text);
 
-  String toolDiffRemoved(String text) => _render(_current.toolDiffRemoved, text);
+  String toolDiffRemoved(String text) =>
+      _render(_current.toolDiffRemoved, text);
 
-  String toolDiffContext(String text) => _render(_current.toolDiffContext, text);
+  String toolDiffContext(String text) =>
+      _render(_current.toolDiffContext, text);
 
   String syntaxComment(String text) => _render(_current.syntaxComment, text);
 
@@ -891,7 +895,8 @@ final class FaThemeController {
 
   String statusLineSep(String text) => _render(_current.statusLineSep, text);
 
-  String statusLineModel(String text) => _render(_current.statusLineModel, text);
+  String statusLineModel(String text) =>
+      _render(_current.statusLineModel, text);
 
   String statusLinePath(String text) => _render(_current.statusLinePath, text);
 
@@ -904,12 +909,14 @@ final class FaThemeController {
   String statusLineContext(String text) =>
       _render(_current.statusLineContext, text);
 
-  String statusLineSpend(String text) => _render(_current.statusLineSpend, text);
+  String statusLineSpend(String text) =>
+      _render(_current.statusLineSpend, text);
 
   String statusLineStaged(String text) =>
       _render(_current.statusLineStaged, text);
 
-  String statusLineDirty(String text) => _render(_current.statusLineDirty, text);
+  String statusLineDirty(String text) =>
+      _render(_current.statusLineDirty, text);
 
   String statusLineUntracked(String text) =>
       _render(_current.statusLineUntracked, text);
@@ -1026,10 +1033,7 @@ final class FaThemeController {
     if (leadSgr.isEmpty) return null;
     final candidates = <String, List<Style>>{
       'bubble': [_current.userMessageBg, kDefaultTuiTheme.userMessageBg],
-      'success': [
-        _current.toolSuccessBg,
-        kDefaultTuiTheme.toolSuccessBg,
-      ],
+      'success': [_current.toolSuccessBg, kDefaultTuiTheme.toolSuccessBg],
       'error': [_current.toolErrorBg, kDefaultTuiTheme.toolErrorBg],
       'pending': [
         _current.toolPendingBg,

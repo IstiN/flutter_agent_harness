@@ -2230,7 +2230,6 @@ class AgentCli {
     if (_routePendingInput(trimmed)) return;
     if (trimmed.isEmpty) return;
     // Real user input resets the inbox wake streak (the ping-pong guard).
-    _inboxWakeStreak = 0;
     _inboxWakePolicy.resetStreak();
     // A tool call waiting on an approval decision owns the next input line;
     // it must not be steered into the agent as a user message.
@@ -2694,31 +2693,29 @@ class AgentCli {
   /// Idle-wake guard: one inbox-triggered run at a time.
   var _inboxWakeRunning = false;
 
+  /// Test seam: observe/reset the inbox-wake streak without driving ten
+  /// real runs (the cap is exactly [InboxWakePolicy.defaultMaxInboxWakeStreak]).
+  /// The streak lives in [_inboxWakePolicy] — this proxy keeps the old
+  /// seam name working for REG tests.
+  @visibleForTesting
+  int get inboxWakeStreakForTest => _inboxWakePolicy.streak;
+  @visibleForTesting
+  set inboxWakeStreakForTest(int value) => _inboxWakePolicy.streak = value;
+
   /// Consecutive inbox-triggered runs without any user input — capped so
   /// two chatty instances cannot ping-pong forever (mail still accumulates
   /// and is delivered at the next real turn). User-kind messages reset the
   /// streak when delivered: they ARE the user talking, so an attach-driven
-  /// session never exhausts the cap.
-  ///
-  /// The lanes live in [AgentCli._inboxWakePolicy] (gh-1180): scheduled
-  /// self-mail is EXEMPT from this counter (deliberate agent cadence, not
-  /// chatter); this seam stays for REG tests of the cap itself.
-  var _inboxWakeStreak = 0;
+  /// session never exhausts the cap. gh-1180: scheduled self-mail is
+  /// EXEMPT (see [_inboxWakePolicy]).
   static const _maxInboxWakeStreak = 10;
-
-  /// Test seam: observe/reset the inbox-wake streak without driving ten
-  /// real runs (the cap is exactly [_maxInboxWakeStreak]).
-  @visibleForTesting
-  int get inboxWakeStreakForTest => _inboxWakeStreak;
-  @visibleForTesting
-  set inboxWakeStreakForTest(int value) => _inboxWakeStreak = value;
 
   /// The idle inbox-wake lane policy (gh-1180): user-kind mail always
   /// wakes; delivered scheduled self-mail (`schedule_message` reminders)
   /// is exempt from the chatter cap — a deliberate agent-chosen cadence
   /// wakes forever, cadence-floored against a disguised busy-spin; and
   /// foreign agent-to-agent chatter stays capped at
-  /// [_maxInboxWakeStreak].
+  /// [_maxInboxWakeStreak] consecutive wakes without user input.
   final InboxWakePolicy _inboxWakePolicy = InboxWakePolicy(
     maxStreak: _maxInboxWakeStreak,
   );

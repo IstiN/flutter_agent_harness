@@ -313,5 +313,4 @@ final class ShellJobBoard {
       )
       .map((c) => c.toRecord())
       .toList();
-
 }

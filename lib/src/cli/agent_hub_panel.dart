@@ -246,7 +246,8 @@ String shellJobResumeLostSummaryLine({
   required int width,
 }) {
   final n = ids.length;
-  final head = '✗ $n background task${n == 1 ? '' : 's'} lost on restart'
+  final head =
+      '✗ $n background task${n == 1 ? '' : 's'} lost on restart'
       ' ($shellJobLostReason)';
   final line = ids.isEmpty ? head : '$head: ${ids.join(' · ')}';
   return line.length <= width ? line : '${line.substring(0, width - 1)}…';

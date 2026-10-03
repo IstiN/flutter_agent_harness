@@ -109,7 +109,10 @@ extension _TuiComposerLayout on FaTuiModel {
     final fixed =
         mandatory -
         (inPrompt ? 1 : 0) /* the input zone's bottom rule never paints */ +
-        (busy ? 1 : 0) + _menuReservedLines + promptH + inputVisible;
+        (busy ? 1 : 0) +
+        _menuReservedLines +
+        promptH +
+        inputVisible;
     final (
       boardWanted,
       waitingWanted,
@@ -117,7 +120,9 @@ extension _TuiComposerLayout on FaTuiModel {
       chipsWanted,
       queueWanted,
       stickyWanted,
-    ) = _optionalSectionWants(width);
+    ) = _optionalSectionWants(
+      width,
+    );
     final optionalWanted =
         boardWanted +
         waitingWanted +

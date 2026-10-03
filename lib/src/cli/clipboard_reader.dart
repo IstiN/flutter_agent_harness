@@ -51,6 +51,7 @@ Future<PasteboardRead> readPasteboardImage({
   ProcessRunner? runner,
   Directory? tempDir,
   Map<String, String> environment = const {},
+
   /// Pins the platform branch so unit tests can exercise every
   /// platform path (macOS/Windows readers are unreachable on a Linux
   /// CI runner, which would push their CRAP through the roof).
@@ -74,12 +75,8 @@ Future<PasteboardRead> readPasteboardImage({
   // a ProcessException here — turn it into the named unavailable result
   // the transcript prints as a clean note (edge E1).
   try {
-    final isMacOS = platform != null
-        ? platform == 'macos'
-        : Platform.isMacOS;
-    final isLinux = platform != null
-        ? platform == 'linux'
-        : Platform.isLinux;
+    final isMacOS = platform != null ? platform == 'macos' : Platform.isMacOS;
+    final isLinux = platform != null ? platform == 'linux' : Platform.isLinux;
     final isWindows = platform != null
         ? platform == 'windows'
         : Platform.isWindows;

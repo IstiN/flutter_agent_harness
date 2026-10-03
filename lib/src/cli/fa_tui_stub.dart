@@ -127,7 +127,6 @@ final class FaTuiController {
   /// wave-14); web never runs the controller.
   void markReplayAnchor() {}
 
-
   void sendBusy(bool busy, {String source = 'run'}) {}
 
   /// No-op on web: the stub controller renders nothing, so silent

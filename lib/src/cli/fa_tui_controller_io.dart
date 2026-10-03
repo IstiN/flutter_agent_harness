@@ -102,7 +102,6 @@ extension FaTuiControllerIo on FaTuiController {
     _send(SetBootAnchorMsg(_sentNewlines));
   }
 
-
   /// Opens the interactive prompt zone (ask/secret/approval) and resolves
   /// when the user answers (or cancels). The caller awaits the returned
   /// future, which completes from the model once the prompt key handler

@@ -1202,6 +1202,7 @@ final class TranscriptMarkdown {
     _expose(r, src);
   }
 }
+
 /// How [MarkdownSurface.render] emits assistant markdown.
 enum MarkdownSurfaceMode {
   /// ANSI-rendered: an interactive terminal with color.
@@ -1273,10 +1274,9 @@ final class MarkdownSurface {
   String render(String text) => switch (mode) {
     MarkdownSurfaceMode.raw => text,
     MarkdownSurfaceMode.ansi => _renderWhole(text),
-    MarkdownSurfaceMode.plain => _renderWhole(text).replaceAll(
-      _ansiEscapeRe,
-      '',
-    ),
+    MarkdownSurfaceMode.plain => _renderWhole(
+      text,
+    ).replaceAll(_ansiEscapeRe, ''),
   };
 
   String _renderWhole(String text) {
@@ -1285,9 +1285,9 @@ final class MarkdownSurface {
     // the HOST pins once (bin/fah.dart resolves the surface; AgentCli's
     // constructor pins the controller from surface.profile) — render()
     // only formats.
-    return AnsiMarkdown(width: width)
-        .formatAll(resolveSetextHeadings(text.split('\n')))
-        .join('\n');
+    return AnsiMarkdown(
+      width: width,
+    ).formatAll(resolveSetextHeadings(text.split('\n'))).join('\n');
   }
 }
 
@@ -1318,8 +1318,7 @@ MarkdownSurface resolveMarkdownSurface({
   return MarkdownSurface.resolving(
     tty: ansiSupported,
     color: profile != null,
-    format:
-        !noFormatFlag && !isTruthyEnvValue(environment['FA_NO_FORMAT']),
+    format: !noFormatFlag && !isTruthyEnvValue(environment['FA_NO_FORMAT']),
     width: width,
     profile: profile,
   );
