@@ -2618,6 +2618,18 @@ abstract class AppLocalizations {
   /// **'Reuse skills Claude, Copilot or Codex left in the project folder (.claude, .github, .codex)'**
   String get settingsSkillsAccessHint;
 
+  /// No description provided for @settingsSkillsToggles.
+  ///
+  /// In en, this message translates to:
+  /// **'Built-in skills'**
+  String get settingsSkillsToggles;
+
+  /// No description provided for @settingsSkillsTogglesHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable or disable the skills that ship with Fa'**
+  String get settingsSkillsTogglesHint;
+
   /// No description provided for @skillsAccessAsk.
   ///
   /// In en, this message translates to:
