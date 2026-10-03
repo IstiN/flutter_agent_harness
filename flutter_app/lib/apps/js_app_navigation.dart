@@ -75,6 +75,10 @@ Future<(AgentService?, _AppBindingResolution)> _resolveAppBinding(
     return (null, _AppBindingResolution.firstContact);
   }
   if (boundId == null || boundId.isEmpty) {
+    // Issue #864 AC6: a binding that parses but binds nothing (wrong-shape
+    // JSON, missing/empty sessionId) heals via the caller's first-contact
+    // mint — announce it, never heal silently.
+    AppLog.i('apps', 'binding unusable for $appId — healing as first contact');
     return (null, _AppBindingResolution.firstContact);
   }
   // Already open in this app run?
@@ -109,7 +113,26 @@ Future<(AgentService?, _AppBindingResolution)> _resolveAppBinding(
     AppLog.i('apps', 'bound session unopenable for $appId: $error');
     return (null, _AppBindingResolution.unopenable);
   }
-  // Stale binding (session deleted): rewriting it on the mint heals.
+  // The store answered without the bound id: a STALE binding (session
+  // deleted) — rewriting it on the mint heals (issue #864 E4). BUT
+  // `listSessions` swallows store failures into an empty list, so
+  // "absent" must be verified before minting over a REAL binding: a
+  // sessions root that cannot even be listed (a file in its place,
+  // permission, IO) means the store is broken — the bound session may
+  // still be recoverable, and minting here would rewrite the binding on
+  // EVERY cold open (the surviving member of the owner's per-open mint
+  // family, issue #1175). Keep the binding; run on the active session.
+  final probe = await active.env.listDir(active.sessionsRoot);
+  if (probe.isErr && probe.errorOrNull!.code != FileErrorCode.notFound) {
+    AppLog.i(
+      'apps',
+      'sessions store unlistable for $appId '
+          '(${probe.errorOrNull!.code.name}) — keeping binding',
+    );
+    return (null, _AppBindingResolution.unopenable);
+  }
+  // notFound = a healthy store with nothing in it: the bound session is
+  // truly gone — one heal-mint rewrites the binding (issue #864 E4).
   return (null, _AppBindingResolution.firstContact);
 }
 
