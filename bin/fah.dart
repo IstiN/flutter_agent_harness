@@ -60,6 +60,7 @@ import 'package:flutter_agent_harness/src/hub/hub_boot_credential.dart';
 import 'self_manage.dart';
 import 'serve_a2a.dart';
 import 'serve_bridge.dart';
+import 'fah_boot_restore.dart';
 import 'fah_wire_serve.dart';
 import 'package:flutter_agent_harness/src/cli/provider_export.dart';
 
@@ -1511,10 +1512,11 @@ Future<void> _runApp(List<String> args) async {
   // modelId, and endpoint-keyed resolution would pick the first config
   // match (possibly the other account's key → 401). A name that no
   // longer resolves degrades to endpoint-keyed resolution with a note
-  // (E1 — the model is kept).
-  final folderPinned = folderStateProviderEntry(
-    folderStateUsable ? state : null,
-    CustomProviderRegistry(saved.customProviders),
+  // (E1 — the model is kept). The resolution lives in fah_boot_restore.dart
+  // (the pin logic's one testable home; round-3 review).
+  final folderPinned = resolveBootFolderPin(
+    state: folderStateUsable ? state : null,
+    entries: saved.customProviders,
   );
   if (folderPinned.note != null) {
     stderr.writeln('note: ${folderPinned.note}');
