@@ -4482,6 +4482,8 @@
 - fix(#1122): restore bench timeout-ladder helpers lost in the #1127×#1129 merge (#1184)
 - feat(#1151): built-in skills shipped with fa — /skill-name on every surface, toggleable like tools (#1157)
 
-## Unreleased
+## 1.0.500
+
+- chore: repin factory workflows to f47d52b (kit in RUNNER_TEMP) (#1191)
 
 ## Unreleased
