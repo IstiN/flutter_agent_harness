@@ -33,6 +33,7 @@ export 'src/dap/dap_hub_snapshot.dart';
 export 'src/cli/agent_cli.dart';
 export 'src/cli/browser_bridge_commands.dart';
 export 'src/cli/custom_providers.dart';
+export 'src/cli/key_status.dart';
 export 'src/cli/env_provider_preconfig.dart';
 export 'src/model_roles/provider_key_resolver.dart';
 export 'src/cli/config_command.dart';
