@@ -1648,7 +1648,10 @@ surprise.
   <agent.ai.native@gmail.com>` (history was rewritten to it — set
   `git config user.name ai.teammate` + `git config user.email
   agent.ai.native@gmail.com` repo-locally). Release commits from
-  `scripts/auto_release.sh` stay `github-actions[bot]`.
+  `scripts/auto_release.sh` are authored `fa-release-bot[bot]
+  <fa-release-bot[bot]@users.noreply.github.com>` — the gh-1172 ruleset-
+  bypass App pushes the bump straight to protected main, so the App identity
+  is what auditability hangs on.
 - Commit subjects: `type(scope): ...` (`feat:`, `fix:`, `fix(example):`,
   `ci:`, `test(providers):`, `refactor(prompts):`).
 - Every push to `main` auto-releases a patch to pub.dev
