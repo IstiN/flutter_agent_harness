@@ -8,6 +8,15 @@ tar -xzf /installed-agent/fa-bundle.tar.gz -C /opt/fa
 chmod +x /opt/fa/bin/fah
 ln -sf /opt/fa/bin/fah /usr/local/bin/fa
 
+# Pre-seed a system-level git identity so git-touching tasks don't burn
+# agent turns on `Author identity unknown` (gh-1210). System scope keeps
+# repo-local config winning, so tasks whose subject is broken git config
+# keep their premise. Guarded: a git-less image must not abort the install
+# (set -e ignores a failed non-final command of an && list).
+command -v git >/dev/null &&
+    git config --system user.name fa-bench &&
+    git config --system user.email fa@bench.local
+
 # No user is present during benchmark runs; autopilot skips the
 # critical-pattern bash interceptor that headless mode would deny.
 mkdir -p ~/.fah
