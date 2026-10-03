@@ -128,7 +128,7 @@ Future<void> main(List<String> args) async {
   final project = await Directory('/tmp').createTemp('fa1197p');
   File('${home.path}/.fah/config.yaml')
     ..createSync(recursive: true)
-    ..writeAsStringSync('tui:\n  classic: true\n');
+    ..writeAsStringSync('');
 
   final env = <String, String>{
     'TERM': 'xterm-256color',
