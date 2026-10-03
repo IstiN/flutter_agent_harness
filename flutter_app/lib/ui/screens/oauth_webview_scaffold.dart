@@ -21,6 +21,15 @@ abstract final class OAuthWebViewOps<T> {
   void showError(String message);
 }
 
+/// The notice a degraded surface shows before the page renders
+/// (issue #861): an embedded WebView cannot offer platform passkeys
+/// (Face ID), so when this scaffold runs as the sign-in surface — as a
+/// fallback or on a webview-only platform — the user is told BEFORE the
+/// login page loads. Both provider flows pass the same string.
+const String oauthWebViewPasskeyNotice =
+    'Passkey sign-in (Face ID) is not available in this embedded browser. '
+    'Sign in with your email and password instead.';
+
 /// Shared full-screen WebView for the hosted OAuth/SSO sign-in pages
 /// (the CodeMie SSO fallback, the ChatGPT sign-in - issue #773): walks
 /// the user through the hosted login and intercepts the loopback redirect
@@ -41,6 +50,7 @@ class OAuthWebViewScaffold<T> extends StatefulWidget {
     required this.onNavigationRequest,
     this.onPageFinished,
     this.timeout = const Duration(minutes: 5),
+    this.degradedNotice,
   });
 
   /// App-bar title (a proper noun for both flows, en-only by design).
@@ -64,6 +74,11 @@ class OAuthWebViewScaffold<T> extends StatefulWidget {
   /// How long to wait before giving up (the user may be slow on the login
   /// page). Defaults to 5 minutes.
   final Duration timeout;
+
+  /// The no-passkey notice shown above the page from the FIRST build —
+  /// visible before the login page renders (issue #861 AC2). Null on a
+  /// passkey-capable primary surface.
+  final String? degradedNotice;
 
   @override
   State<OAuthWebViewScaffold<T>> createState() =>
@@ -166,27 +181,63 @@ class _OAuthWebViewScaffoldState<T> extends State<OAuthWebViewScaffold<T>> {
             ),
         ],
       ),
-      body: Stack(
+      body: Column(
         children: [
-          WebViewWidget(controller: _controller),
-          if (_errorMessage.isNotEmpty)
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: 16,
-              child: Material(
-                elevation: 4,
-                borderRadius: BorderRadius.circular(12),
-                color: theme.colorScheme.errorContainer,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    _errorMessage,
-                    style: TextStyle(color: theme.colorScheme.onErrorContainer),
-                  ),
+          if (widget.degradedNotice != null)
+            Material(
+              color: theme.colorScheme.secondaryContainer,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.key_off_outlined,
+                      size: 18,
+                      color: theme.colorScheme.onSecondaryContainer,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        widget.degradedNotice!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSecondaryContainer,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
+          Expanded(
+            child: Stack(
+              children: [
+                WebViewWidget(controller: _controller),
+                if (_errorMessage.isNotEmpty)
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: 16,
+                    child: Material(
+                      elevation: 4,
+                      borderRadius: BorderRadius.circular(12),
+                      color: theme.colorScheme.errorContainer,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(
+                          _errorMessage,
+                          style: TextStyle(
+                            color: theme.colorScheme.onErrorContainer,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ],
       ),
     );
