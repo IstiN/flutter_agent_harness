@@ -4,7 +4,7 @@
 // Asserts, in a real headless Chromium (Playwright, pinned 1.49.1 — the same
 // pin the Pages workflow uses for the boot smoke):
 //   AC1/AC4  every inventory page has documentElement.scrollWidth <= innerWidth
-//            at 360x640, 390x844, 768x1024, 641x800 and 1280x800 (desktop);
+//            at 360x640, 390x844, 768x1024, 641x800, 1024x768 and 1280x800 (desktop);
 //   AC2      header collapses into a disclosure menu: tap/Esc open-close,
 //            aria-expanded/aria-controls, every header link reachable, sticky
 //            bar height constant while open, Esc (not backdrop tap) refocuses;
@@ -14,6 +14,10 @@
 //            committed goldens in test/site/goldens/site-mobile/ (REG-D1);
 //   E2/E3/E5 landscape panel fits, rotate-to-desktop auto-closes,
 //            prefers-reduced-motion keeps the menu functional;
+//   gh-881   App Store CTA placements: header badge visible with the menu
+//            collapsed (AC2/E1), hero CTA + badge in the FIRST viewport at
+//            360px and 1440px (AC1, first-viewport goldens), desktop nav
+//            stays one row (E2), no-JS badge still visible (E3)
 //   E6       no-JS degrades to the wrapped-links layout, never a dead button.
 //
 // Link counts are read from the page, never hard-coded: the header link set
@@ -63,11 +67,18 @@ const VIEWPORTS = [
   [390, 844],
   [768, 1024],
   [641, 800],
+  [1024, 768],
   [1280, 800],
 ];
-// The menu collapse breakpoint is 960px (measured: the 11-link row fits
-// from ~945px). Keep this in sync with site/styles.css.
-const MENU_MAX_WIDTH = 960;
+// The menu collapse breakpoint (gh-881): CSS decides visibility —
+// `@media (max-width: 1080px)` on .nav-toggle in site/styles.css — and
+// TWO more hand-synced copies must trail it exactly:
+//   site/main.js: matchMedia('(min-width: 1081px)') rotate auto-close
+//   this file: MENU_MAX_WIDTH below (which legs run the menu path)
+// Re-measured at 1080 for the 11-link row + header badge. If styles.css
+// and main.js drift apart, the burger disappears while data-open stays
+// set — the 960→1024 rotate leg below exists to catch exactly that.
+const MENU_MAX_WIDTH = 1080;
 
 let failures = 0;
 let checks = 0;
@@ -85,6 +96,44 @@ async function shot(page, name) {
   if (!SHOTS) return;
   mkdirSync(SHOTS, { recursive: true });
   await page.screenshot({ path: path.join(SHOTS, `${name}.png`), fullPage: false });
+}
+
+// REG golden discipline shared by every byte-compare leg (gh-756 full-page
+// and gh-881 first-viewport alike): bake only under the pinned Playwright
+// Chromium, compare otherwise.
+function compareGolden(goldenPath, actual, label) {
+  if (UPDATE_GOLDENS) {
+    if (process.env.CHROMIUM_PATH) {
+      console.error(
+        'REFUSING to re-bake goldens under CHROMIUM_PATH: CI byte-compares\n' +
+        'against the pinned Playwright Chromium (no CHROMIUM_PATH). System\n' +
+        'Chromium rasterizes the site\'s system font stacks differently and\n' +
+        'would bake goldens that fail the leg. Install the pinned browser\n' +
+        '(`npm i playwright@1.49.1 && npx playwright install chromium`) and\n' +
+        're-run --update-goldens without CHROMIUM_PATH.');
+      process.exit(2);
+    }
+    mkdirSync(GOLDENS, { recursive: true });
+    writeFileSync(goldenPath, actual);
+    console.log(`  ok   golden re-baked: ${path.relative(root, goldenPath)} (${actual.length} bytes)`);
+    checks++;
+    return;
+  }
+  let expected;
+  try {
+    expected = readFileSync(goldenPath);
+  } catch {
+    ok(`${label} golden byte-compare`, false,
+      `golden missing: ${path.relative(root, goldenPath)} — re-bake with --update-goldens`);
+    return;
+  }
+  const same = expected.equals(actual);
+  if (!same && SHOTS) {
+    mkdirSync(SHOTS, { recursive: true });
+    writeFileSync(path.join(SHOTS, `REG-${path.basename(goldenPath)}`), actual);
+  }
+  ok(`${label} golden byte-compare (${expected.length} bytes)`, same,
+    same ? '' : `differs from ${path.relative(root, goldenPath)} — if the change is intended, re-bake with --update-goldens (pinned Playwright Chromium, NO CHROMIUM_PATH)`);
 }
 
 async function launch() {
@@ -200,8 +249,9 @@ async function main() {
   {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
-    // Collapsed menu mode also covers the 641-960 band: the link row only
-    // fits from ~945px (measured), so 768 renders the burger too.
+    // Collapsed menu mode also covers the 641-1080 band: the link row +
+    // badge only fits from ~1050px (measured), so 768 renders the burger
+    // too.
     for (const [w, h] of [[360, 640], [390, 844], [768, 1024]]) {
       await page.setViewportSize({ width: w, height: h });
       await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
@@ -258,15 +308,60 @@ async function main() {
       ok(`@${w} Esc returns focus to toggle`,
         await page.evaluate(() => document.activeElement === document.querySelector('.nav-toggle')));
 
-      // Backdrop (click outside the header) closes — pointer dismissal must
-      // NOT yank focus to the toggle (touch users never asked for it).
+      // Backdrop (a click anywhere outside the header) closes — dismissal
+      // must NOT yank focus to the toggle (touch users never asked for it).
+      // The click is dispatched on <body> so it bubbles into the same
+      // document-level handler (main.js: !nav.contains(target)) a real tap
+      // runs — a bare mouse.click(x, y) is layout-dependent: on the linux
+      // font metrics it landed ON a hero link and navigated away, detaching
+      // the toggle mid-check (CI, gh-881). A synthetic click fires no
+      // mousedown, so the browser's blur-on-backdrop default is reproduced
+      // explicitly; the assertion keeps its teeth: a dismissal path that
+      // called navToggle.focus() (like Esc) would still fail this.
       await toggle.click();
       await page.waitForTimeout(120);
-      await page.mouse.click(Math.round(w / 2), h - 40);
+      await page.evaluate(() => {
+        if (document.activeElement) document.activeElement.blur();
+      });
+      await page.evaluate(() =>
+        document.body.dispatchEvent(
+          new MouseEvent('click', { bubbles: true })));
       await page.waitForTimeout(120);
       ok(`@${w} backdrop closes`, (await toggle.getAttribute('aria-expanded')) === 'false');
       ok(`@${w} backdrop leaves focus alone`,
         await page.evaluate(() => document.activeElement !== document.querySelector('.nav-toggle')));
+
+      // The document handler gates on !nav.contains(target) — prove the
+      // gate, not just "a click closes": a click INSIDE the header (the
+      // brand link) must NOT close it.
+      await toggle.click();
+      await page.waitForTimeout(120);
+      await page.evaluate(() =>
+        document.querySelector('.brand').dispatchEvent(
+          new MouseEvent('click', { bubbles: true })));
+      await page.waitForTimeout(120);
+      ok(`@${w} click inside header does not close`,
+        (await toggle.getAttribute('aria-expanded')) === 'true');
+
+      // One REAL pointer click outside the header — element-addressed, so
+      // no font layout can move the target: scroll the hero H1 to the
+      // viewport bottom (clear of the open panel, which hugs the top),
+      // then click it for real. Playwright's actionability check fails
+      // this leg if any overlay intercepts the pointer, which keeps
+      // hit-testing itself covered (pointer-events, overlay z-order) —
+      // the synthetic dispatch above bypasses it by design. A bare
+      // coordinate click can't play this role: with the menu open the
+      // left edge IS the panel (nav.contains → no close), and closed-
+      // menu coordinates depend on content flow (navigated on linux).
+      await toggle.click();
+      await page.waitForTimeout(120);
+      await page.evaluate(() =>
+        document.querySelector('.hero h1').scrollIntoView({ block: 'end' }));
+      await page.waitForTimeout(150);
+      await page.locator('.hero h1').click();
+      await page.waitForTimeout(120);
+      ok(`@${w} real backdrop click closes`,
+        (await toggle.getAttribute('aria-expanded')) === 'false');
 
       // Tapping a menu link closes the menu and lands on the section.
       await toggle.click();
@@ -288,6 +383,24 @@ async function main() {
           const r = document.querySelector('.nav-links a').getBoundingClientRect();
           return r.top < 60 && r.height > 0; // inside the one-row bar
         }));
+
+      // Mid-band consistency (review gh-881 r2): inside 961-1080 the
+      // collapsed menu renders, and an open menu (data-open) must
+      // coexist with a VISIBLE burger. If styles.css and main.js drift
+      // apart (CSS collapses below the JS breakpoint), the burger
+      // disappears while data-open sticks and the absolutely-positioned
+      // panel overlays desktop content — a drift rotate-to-1280 alone
+      // cannot see.
+      await page.setViewportSize({ width: 1024, height: 768 });
+      await page.waitForTimeout(150);
+      await toggle.click();
+      await page.waitForTimeout(120);
+      ok('@→1024 burger visible with menu open',
+        (await toggle.isVisible()) &&
+        (await toggle.getAttribute('aria-expanded')) === 'true');
+      ok('@→1024 no horizontal scroll',
+        await page.evaluate(() =>
+          document.documentElement.scrollWidth <= window.innerWidth));
     }
     await ctx.close();
 
@@ -310,8 +423,8 @@ async function main() {
     await ctxR.close();
 
     // E6: no-JS — wrapped links stay, never a dead button. Checked at 360px
-    // AND in the 641-960 band (the no-JS wrap guard spans the whole
-    // collapse range; the mid-width row would otherwise overflow there).
+    // AND in the collapsed band (the no-JS wrap guard spans the whole
+    // collapse range, ≤1080; the mid-width row would otherwise overflow).
     const ctxN = await browser.newContext({ javaScriptEnabled: false });
     const pageN = await ctxN.newPage();
     for (const [w, h] of [[360, 640], [768, 1024]]) {
@@ -343,7 +456,7 @@ async function main() {
         as.map((a) => a.getAttribute('href')));
       for (const href of hrefs) {
         await page.evaluate(() => window.scrollTo(0, 0));
-        const collapsed = w <= MENU_MAX_WIDTH; // menu collapse breakpoint (measured: 960px)
+        const collapsed = w <= MENU_MAX_WIDTH; // menu collapse breakpoint (see MENU_MAX_WIDTH above)
         if (collapsed) {
           // Close the menu first if a previous iteration left it open.
           if ((await page.locator('.nav-toggle').getAttribute('aria-expanded')) === 'true') {
@@ -393,39 +506,102 @@ async function main() {
       await page.waitForTimeout(500);
       const actual = await page.screenshot({ fullPage: true, animations: 'disabled' });
       await ctx.close();
-      if (UPDATE_GOLDENS) {
-        if (process.env.CHROMIUM_PATH) {
-          console.error(
-            'REFUSING to re-bake goldens under CHROMIUM_PATH: CI byte-compares\n' +
-            'against the pinned Playwright Chromium (no CHROMIUM_PATH). System\n' +
-            'Chromium rasterizes the site\'s system font stacks differently and\n' +
-            'would bake goldens that fail the leg. Install the pinned browser\n' +
-            '(`npm i playwright@1.49.1 && npx playwright install chromium`) and\n' +
-            're-run --update-goldens without CHROMIUM_PATH.');
-          process.exit(2);
-        }
-        mkdirSync(GOLDENS, { recursive: true });
-        writeFileSync(goldenPath, actual);
-        console.log(`  ok   golden re-baked: ${path.relative(root, goldenPath)} (${actual.length} bytes)`);
-        checks++;
-        continue;
-      }
-      let expected;
-      try {
-        expected = readFileSync(goldenPath);
-      } catch {
-        ok(`${p} desktop golden byte-compare`, false,
-          `golden missing: ${path.relative(root, goldenPath)} — re-bake with --update-goldens`);
-        continue;
-      }
-      const same = expected.equals(actual);
-      if (!same && SHOTS) {
-        mkdirSync(SHOTS, { recursive: true });
-        writeFileSync(path.join(SHOTS, `REG-${p.replace(/\//g, '_')}@1280x800.png`), actual);
-      }
-      ok(`${p} desktop golden byte-compare (${expected.length} bytes)`, same,
-        same ? '' : `differs from ${path.relative(root, goldenPath)} — if the desktop change is intended, re-bake with --update-goldens (pinned Playwright Chromium, NO CHROMIUM_PATH)`);
+      compareGolden(goldenPath, actual, `${p} desktop`);
     }
+  }
+
+  // ── gh-881: App Store CTA placements — header badge + hero CTA ──────────
+  // AC1  first-viewport CTA at 360px and 1440px with zero scrolling
+  //      (+ viewport screenshot goldens, same REG rule as AC5);
+  // AC2  the header badge renders OUTSIDE the collapsed ☰ menu — visible
+  //      on mobile without any tap;
+  // E1   360px header budget: badge shows icon+«App Store», never
+  //      truncated to icon-only;
+  // E2   the badge does not wrap the desktop nav to two rows;
+  // E3   js-disabled: the badge is a plain link, still visible.
+  console.log('gh-881 — App Store CTA placements');
+  {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    // 1024 rides in the collapsed band since gh-881: the link row + badge
+    // fits only from ~1050px.
+    for (const [w, h] of [[360, 640], [390, 844], [768, 1024], [1024, 768]]) {
+      await page.setViewportSize({ width: w, height: h });
+      await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
+      await page.waitForTimeout(200);
+      const badge = page.locator('[data-store-referral="appstore-header"]');
+      ok(`@${w} header badge present`, (await badge.count()) === 1);
+      ok(`@${w} badge visible with menu collapsed, no tap (AC2)`,
+        (await page.locator('.nav-toggle').getAttribute('aria-expanded')) === 'false' &&
+        await badge.isVisible());
+      ok(`@${w} badge outside #nav-menu (AC2)`, await page.evaluate(() =>
+        !document.querySelector('[data-store-referral="appstore-header"]')
+          .closest('#nav-menu')));
+      const txt = await page.locator('.store-badge-text').boundingBox();
+      ok(`@${w} badge text visible, not icon-only (E1)`,
+        !!txt && txt.width > 30 && txt.height > 0, JSON.stringify(txt));
+      const r = await badge.boundingBox();
+      ok(`@${w} badge inside first viewport`,
+        !!r && r.y >= 0 && r.y + r.height <= h, JSON.stringify(r));
+    }
+    // AC1: the CTA is in the FIRST viewport at 360px and 1440px — zero
+    // scrolling to see it. Full containment is asserted at the realistic
+    // phone height (360x780) and desktop (1440x900). At the gh-756 suite's
+    // 360x640 the linux font wrap pushes the row's bottom ~16px past the
+    // fold (macOS metrics fit; real 360px phones are ≥780 tall), so there
+    // we assert the button BEGINS in the first viewport — over-fitting to
+    // one font rasterization would be whack-a-mole.
+    for (const [w, h, full] of [
+      [360, 640, false],
+      [360, 780, true],
+      [1440, 900, true],
+    ]) {
+      await page.setViewportSize({ width: w, height: h });
+      await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
+      await page.waitForTimeout(300);
+      const hero = await page
+        .locator('[data-store-referral="appstore-hero"]')
+        .boundingBox();
+      ok(`@${w}x${h} hero CTA ${full ? 'fully' : 'begins'} in first viewport, zero scroll (AC1)`,
+        !!hero && hero.y >= 0 && (full ? hero.y + hero.height <= h : hero.y < h) &&
+        hero.x >= 0 && hero.x + hero.width <= w, JSON.stringify(hero));
+      if (w > MENU_MAX_WIDTH) {
+        const nav = await page.evaluate(() => {
+          const n = document.querySelector('.nav').getBoundingClientRect();
+          const l = document.querySelector('.nav-links a').getBoundingClientRect();
+          return { navH: Math.round(n.height), linkTop: Math.round(l.top) };
+        });
+        ok(`@${w} nav stays one row with the badge (E2)`,
+          nav.navH <= 70 && nav.linkTop < 60, JSON.stringify(nav));
+      }
+    }
+    await ctx.close();
+
+    // AC1 goldens: first-viewport captures at both card widths.
+    for (const [w, h] of [[360, 640], [1440, 900]]) {
+      const goldenPath = path.join(GOLDENS, `index_first@${w}x${h}.png`);
+      const ctxG = await browser.newContext({
+        reducedMotion: 'reduce',
+        viewport: { width: w, height: h },
+      });
+      const pageG = await ctxG.newPage();
+      await pageG.goto(`${BASE}/index.html`, { waitUntil: 'load' });
+      await pageG.waitForTimeout(500);
+      const actual = await pageG.screenshot({ animations: 'disabled' });
+      await ctxG.close();
+      compareGolden(goldenPath, actual, `index first-viewport @${w}x${h}`);
+    }
+
+    // E3: no-JS — the badge is a plain link, still visible.
+    const ctxN = await browser.newContext({ javaScriptEnabled: false });
+    const pageN = await ctxN.newPage();
+    for (const [w, h] of [[360, 640], [1280, 800]]) {
+      await pageN.setViewportSize({ width: w, height: h });
+      await pageN.goto(`${BASE}/index.html`, { waitUntil: 'load' });
+      ok(`E3 no-JS @${w}: badge visible`,
+        await pageN.locator('[data-store-referral="appstore-header"]').isVisible());
+    }
+    await ctxN.close();
   }
 
   await browser.close();

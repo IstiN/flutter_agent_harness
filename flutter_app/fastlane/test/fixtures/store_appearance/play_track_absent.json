@@ -1,0 +1,10 @@
+{
+  "track": "beta",
+  "releases": [
+    {
+      "name": "1.0.484",
+      "versionCodes": ["990"],
+      "status": "completed"
+    }
+  ]
+}

@@ -531,12 +531,48 @@ extension ApprovalCommands on AgentCli {
         ? ''
         : '[auto-compacted${_autoFoldCount > 1 ? ' ×$_autoFoldCount' : ''}'
               ' · continuing] · ';
-    return '$foldBadge$cwd · ctx $pct% '
+    var line =
+        '$foldBadge$cwd · ctx $pct% '
         '(${_formatTokenCount(contextTokens)}/${_formatTokenCount(window)}) · '
         '${_formatTokenCount(totalTokens)}tok'
         '$costPart · turn ${_usage.turns}$badge · '
-        '${_statusProviderLabel(model)}/${model.id}';
+        '${_statusProviderLabel(model)}/${model.id}'
+        '${_quotaBadgeSuffix(model.provider)}';
+    return line;
   }
+
+  /// The status-line quota badge (issue #823 AC5): `' [OR $48/$150 · 11d]'`
+  /// when fresh, `' [OR …]'` while cold, and empty when the config opts
+  /// out (default OFF, OQ2), the provider has no quota source, the state
+  /// is unmetered (silent), or the cached state is a terminal unknown —
+  /// failure reasons live in `/quota`, not the chrome (review round 1).
+  /// Cache-only peek: cold kicks a background fetch without blocking (E1).
+  String _quotaBadgeSuffix(String providerId) {
+    if (!config.quotaBadge ||
+        providerId.isEmpty ||
+        !quotaService.hasSource(providerId)) {
+      return '';
+    }
+    final result = quotaService.peek(providerId);
+    if (result != null && result.quota == null) return '';
+    final badgeText = formatQuotaBadge(
+      shortName: _quotaBadgeTag(providerId),
+      quota: result?.quota,
+      now: DateTime.now().toUtc(),
+    );
+    return badgeText.isEmpty ? '' : ' $badgeText';
+  }
+
+  /// The 2-letter quota badge tag for a provider id. `openrouter` brands
+  /// as `OR` (the contract's example tag), `codemie` as `CM`; anything
+  /// unmapped falls back to its first two letters uppercased.
+  static const _quotaBadgeTags = {'openrouter': 'OR', 'codemie': 'CM'};
+
+  String _quotaBadgeTag(String providerId) =>
+      _quotaBadgeTags[providerId] ??
+      (providerId.length < 2
+          ? providerId.toUpperCase()
+          : providerId.substring(0, 2).toUpperCase());
 
   /// The host-built status-bar snapshot (issue #806, the S3 band
   /// attachment): everything the TUI's status band renders from,
@@ -747,7 +783,7 @@ extension ApprovalCommands on AgentCli {
   /// choice resolves to `/skill:<name>` (line mode has no input field to
   /// pre-fill, so the skill runs immediately, without args).
   Future<String?> _showLineModeMenu(StreamIterator<String> lineIterator) async {
-    for (final line in lineModeMenuLines(_style, skills: _skills)) {
+    for (final line in lineModeMenuLines(_style, skills: _enabledSkills)) {
       io.writeln(line);
     }
     io.write('Pick a command (number or name), or press Enter to cancel: ');
@@ -760,7 +796,7 @@ extension ApprovalCommands on AgentCli {
   }
 
   String? _resolveMenuChoice(String trimmed) =>
-      resolveLineModeMenuChoice(trimmed, _skills);
+      resolveLineModeMenuChoice(trimmed, _enabledSkills);
 
   /// The numbered command list of the line-mode menu.
   void _printHelp({String filter = ''}) {
@@ -783,7 +819,7 @@ extension ApprovalCommands on AgentCli {
       pluginSlashCommands: _pluginSlashCommands,
       templates: _templates,
       style: _style,
-      skills: _skills,
+      skills: _enabledSkills,
     )) {
       io.writeln(line);
     }
@@ -1079,6 +1115,10 @@ extension ApprovalCommands on AgentCli {
       home: config.homeDir,
     );
     _toolStarts[toolCallId] = (DateTime.now(), detail);
+    // Per-call liveness (gh-1055): headless/line mode watch the foreground
+    // call and speak up when it runs long. TUI mode is skipped inside —
+    // its waiting row already covers it.
+    _waiting.toolCallStarted(toolCallId, toolName, detail);
     // TUI chrome (issue #807): the phase-tinted card replaces the compact
     // row — omp's card grammar keeps fa's detail extraction. Line mode and
     // headless keep the legacy row byte-identically.
@@ -1243,36 +1283,34 @@ extension ApprovalCommands on AgentCli {
     required bool isError,
   }) {
     final (started, startDetail) = _toolStarts.remove(toolCallId) ?? (null, '');
+    _waiting.toolCallEnded(toolCallId);
     final elapsed = started == null
         ? ''
         : '${DateTime.now().difference(started).inSeconds}s';
-    var detail = startDetail;
     final state = isError ? ToolRowState.failed : ToolRowState.done;
-    if (isError) {
-      // The failure text is the news: keep it bright, not muted.
-      final text = result.content
-          .whereType<TextContent>()
-          .map((block) => block.text)
-          .join();
-      detail = text.split('\n').first;
-    }
     // TUI chrome (issue #807): the settled card carries the phase tint
     // (success/error), the elapsed meta, and — on failure — the bright
-    // first line of the failure text as the news. Line mode and headless
-    // keep the legacy row byte-identically.
+    // first line of the failure text as the news. The SAME builder the
+    // replay paints ([settledToolCardRows], issue #916) — parity by
+    // construction. Line mode and headless keep the legacy row
+    // byte-identically.
     if (_useTui && tuiChromeEnabled) {
       io.writeln(
-        tuiToolCard(
-          ToolCardSegments(
-            title: toolName,
-            description: detail,
-            meta: elapsed.isEmpty ? const [] : [elapsed],
-          ),
-          isError ? TuiCardPhase.error : TuiCardPhase.success,
-          _rowWidth,
+        settledToolCardRows(
+          toolName: toolName,
+          successDetail: startDetail,
+          isError: isError,
+          width: _rowWidth,
+          resultContent: result.content,
+          meta: [elapsed],
         ).join('\n'),
       );
       return;
+    }
+    var detail = startDetail;
+    if (isError) {
+      // The failure text is the news: keep it bright, not muted.
+      detail = failureFirstLine(result.content);
     }
     io.writeln(
       tuiToolRow(

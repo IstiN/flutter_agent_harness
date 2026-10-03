@@ -165,6 +165,7 @@ final class RedactionConfig {
     Set<String>? toolAllow,
     Set<String>? toolDeny,
   }) {
+    // crap:ignore: hand-rolled copyWith boilerplate (the idiomatic Dart shape every immutable config type here shares); codegen is the real fix — gh-1106.
     return RedactionConfig(
       enabled: enabled ?? this.enabled,
       blockMode: blockMode ?? this.blockMode,

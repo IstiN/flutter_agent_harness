@@ -166,12 +166,14 @@ extension AgentCliRunNotices on AgentCli {
   /// a dim transcript line + an fa.log entry instead of a silent 5s pause.
   void _wireTransientRetryNotice() {
     transientRetryNotice = (attempt, maxAttempts, delay, reason) {
-      io.writeln(
-        _style.dim(
-          '[net] connection lost ($reason) — retrying in '
-          '${delay.inSeconds}s (attempt ${attempt + 1}/$maxAttempts)',
-        ),
-      );
+      // A zero delay is not a retry schedule — it's the connect-stall
+      // janitor reporting an abandoned attempt that answered late
+      // (issue #1121): drop the retry tail for it.
+      final retryTail = delay == Duration.zero
+          ? ''
+          : ' — retrying in ${delay.inSeconds}s '
+                '(attempt ${attempt + 1}/$maxAttempts)';
+      io.writeln(_style.dim('[net] connection lost ($reason)$retryTail'));
       _logDiagnostic(
         'transient retry sid=$_logSid attempt=${attempt + 1}/$maxAttempts '
         'reason=$reason',
@@ -195,6 +197,7 @@ extension AgentCliRunNotices on AgentCli {
       );
     };
   }
+
   /// Text-only model image drop visibility (issue #638): when a model
   /// declared text-only forced the request-time strip, say so - a dim
   /// transcript line + an fa.log entry instead of a silent degradation.
@@ -205,9 +208,7 @@ extension AgentCliRunNotices on AgentCli {
           '[images] $dropped image(s) dropped — model declared text-only',
         ),
       );
-      _logDiagnostic(
-        'text-only image drop sid=$_logSid count=$dropped',
-      );
+      _logDiagnostic('text-only image drop sid=$_logSid count=$dropped');
     };
   }
 

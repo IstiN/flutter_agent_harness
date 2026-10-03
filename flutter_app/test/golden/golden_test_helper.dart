@@ -116,8 +116,8 @@ Future<void> expectGolden(WidgetTester tester, String name) {
 /// rendered paragraph is always this bug.
 void expectRealFontText(WidgetTester tester) {
   final offenders = <String>{};
-  for (final renderObject in tester.allRenderObjects
-      .whereType<RenderParagraph>()) {
+  for (final renderObject
+      in tester.allRenderObjects.whereType<RenderParagraph>()) {
     final plain = renderObject.text.toPlainText().trim();
     final family = renderObject.text.style?.fontFamily;
     if (plain.isNotEmpty && (family == null || family.isEmpty)) {

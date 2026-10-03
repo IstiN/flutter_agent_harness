@@ -178,11 +178,19 @@ void main() {
       harness.sendText('\x1b[6~'); // pgdown
       await Future<void>.delayed(const Duration(milliseconds: 90));
     }
-    await harness.waitForScreen(
+    // gh-1049: anchor on the DEEPEST asserted card line, not the first one
+    // — a header-wait + fresh screenText read sampled the card mid-render
+    // when the frame split across the PTY. The settled layout read below
+    // waits out the tail through the harness's own settle primitive.
+    var bottom = await harness.waitForScreen(
       'bash task completed in background',
       timeout: const Duration(minutes: 2),
     );
-    final bottom = harness.screenText;
+    bottom = await harness.waitForScreen(
+      '… 59 more — bash_job output',
+      timeout: const Duration(seconds: 30),
+    );
+    await harness.waitForOutput(settleMs: 200);
     expectComposerReserved(harness.viewportLines, 80);
 
     // ONE card, bounded: the first command line + the overflow hint.

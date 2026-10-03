@@ -140,7 +140,11 @@ extension on AgentCli {
         io.writeln(line);
       }
     }
-    io.writeln(_style.dim('─' * 20));
+    // The trailing rule is line-mode chrome only: in the TUI it costs a
+    // glass row on resume, and the resumed window anchors at the
+    // transcript region — the spare row is tail parity (issue #446
+    // wave-14).
+    if (!_useTui) io.writeln(_style.dim('─' * 20));
   }
 
   /// `/resume`: switches to the most recently created session across every
@@ -516,6 +520,15 @@ extension on AgentCli {
 
   Future<Session> _loadSession(SessionMetadata metadata) async {
     final bootSw = Stopwatch()..start();
+    // gh-968 parity: the budget must price the prompt the FIRST REQUEST
+    // will carry. The messaging section joins at mailbox-prefix sync,
+    // which runs after this walk in boot order — project the prefix
+    // here so a resume cannot materialize one section more than the
+    // live loop carried before exit (issue #1151: builtin-skills
+    // metadata exhausted the record-bucket slack this race left).
+    if (_subagentManager.messaging != null && metadata.id.isNotEmpty) {
+      _assignMailboxPrefix(metadata.id);
+    }
     void stage(String name) => _logDiagnostic(
       'boot_stage $name ms=${bootSw.elapsedMilliseconds} sid=${metadata.id}',
     );
@@ -611,10 +624,17 @@ extension on AgentCli {
     }
     final Model built;
     try {
+      // A saved custom-provider entry carrying this endpoint's authHeader
+      // (issue #964) must survive the restore — a gateway endpoint without
+      // its header 401s.
       built = buildCliDefaultModel(
         state.providerKind,
         modelId: state.modelId,
         baseUrl: state.baseUrl,
+        authHeader: authHeaderForBaseUrl(
+          config.customProviders?.entries ?? const [],
+          state.baseUrl,
+        ),
       );
     } on ConfigException {
       io.writeln(

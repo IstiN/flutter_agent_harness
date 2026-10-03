@@ -249,6 +249,7 @@ final class Usage {
     int? totalTokens,
     UsageCost? cost,
   }) {
+    // crap:ignore: hand-rolled copyWith boilerplate (the idiomatic Dart shape every immutable type here shares); codegen is the real fix — gh-1106.
     return Usage(
       input: input ?? this.input,
       output: output ?? this.output,

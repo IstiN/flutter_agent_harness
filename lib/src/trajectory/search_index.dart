@@ -13,6 +13,7 @@ import 'dart:convert';
 import 'trajectory_layout.dart';
 import 'trajectory_preview.dart';
 import 'trajectory_record.dart';
+import '../utils/list_equals.dart';
 
 /// Minimum gap between throttled index flushes, mirroring the TS
 /// `SEARCH_INDEX_THROTTLE_MS`.
@@ -36,14 +37,6 @@ String _searchableJson(Object? value) {
   } on JsonUnsupportedObjectError {
     return '';
   }
-}
-
-bool _sameSources(List<String> left, List<String> right) {
-  if (left.length != right.length) return false;
-  for (var i = 0; i < left.length; i++) {
-    if (left[i] != right[i]) return false;
-  }
-  return true;
 }
 
 String _turnLabel(TrajectoryTurnModel turn) =>
@@ -99,7 +92,7 @@ class TrajectorySearchIndex {
             final sources = _recordSources(turn, group, record);
             final previous = _entries[record.recordId];
             _entries[record.recordId] =
-                previous != null && _sameSources(previous.sources, sources)
+                previous != null && listEquals(previous.sources, sources)
                 ? previous
                 : _SearchEntry(
                     sources,

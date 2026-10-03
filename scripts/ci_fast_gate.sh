@@ -265,6 +265,19 @@ stage_test_core() {
   local conc="${FA_DART_TEST_CONCURRENCY:-$(detect_test_concurrency)}"
   echo "   concurrency: ${conc:-default}"
   dart test ${conc:+--concurrency=$conc} --coverage=coverage --exclude-tags integration
+  # gh-1033 (review thread 7 + gate wiring): the fa jsr delegate suites are
+  # integration-tagged — the PTY leg's CLI coverage ratchet measures
+  # lib/src/cli hits from them — so the unit run above skips them. Their
+  # hits must ALSO reach the unit-side lcov consumers (>= 80% ratchet, PR
+  # diff-coverage, CRAP: jsr_cli.dart at 0% line coverage reads CRAP 156
+  # against the 12.0 ceiling), so the trio runs into the SAME coverage/
+  # dir; format_coverage merges the per-isolate files. Keep this list in
+  # sync with ci.yml (test-core shard 0) and nightly.yml.
+  dart test ${conc:+--concurrency=$conc} --tags integration \
+    test/cli/jsr_cli_test.dart \
+    test/cli/cli_args_jsr_test.dart \
+    test/cli/agent_cli_jsr_test.dart \
+    --coverage=coverage
 }
 
 stage_integration_mock() {

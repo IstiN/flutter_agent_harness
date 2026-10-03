@@ -88,11 +88,7 @@ const _locales = [Locale('en'), Locale('ru')];
 //     test/play_store_listing_guard_test.dart enforces the ratio.)
 //     en-US only — the tablet set is optional and the ru listing falls
 //     back to its phone shots on tablets.
-const _Device _playPhone = (
-  name: 'play',
-  physical: Size(1080, 1920),
-  dpr: 2.0,
-);
+const _Device _playPhone = (name: 'play', physical: Size(1080, 1920), dpr: 2.0);
 const _Device _playTenInch = (
   name: 'tenInch',
   physical: Size(1440, 2560),
@@ -279,10 +275,7 @@ Future<void> _expectStore(
       golden =
           '../goldens/store/${locale.languageCode}/${device.name}/$screen.png';
   }
-  return expectLater(
-    find.byType(MaterialApp),
-    matchesGoldenFile(golden),
-  );
+  return expectLater(find.byType(MaterialApp), matchesGoldenFile(golden));
 }
 
 /// Lets sandbox reads + image codec decodes (real async hops) land: the

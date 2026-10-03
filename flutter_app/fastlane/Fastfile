@@ -136,21 +136,18 @@ def find_external_testflight_group!(bundle_id:, group:)
   [app, found.first]
 end
 
-# AC4/E1: assert the build actually landed in the external group. Beta App
-# Review pending is NOT a failure — Apple flips external visibility
-# automatically on approval, so that path ends in a neutral notice. Only a
-# build that never appears in the group fails (the daily's self-filed
-# issue pattern). Bounded by TESTFLIGHT_VERIFY_TIMEOUT_SECONDS (15 min).
+# gh-1041 (AC1): appearance is NO LONGER the submit leg's job — ASC
+# read-side lag (group membership trailing an already-successful
+# distribution, #855: run 36382214186 died in a 900s wait-loop while the
+# build was in fact live) must never fail a green `upload_to_testflight`.
+# After a successful upload ONE read-only probe runs, purely informational
+# and unable to raise: found → ✅ line; not yet → a note pointing at the
+# deferred store-appearance-check workflow, which re-checks the store
+# 120 min after the legs start and files/updates exactly one stub if the
+# version is still absent past the horizon. Leg success = upload success.
 def verify_external_distribution!(bundle_id:, group:, app_version:)
-  timeout = ENV["TESTFLIGHT_VERIFY_TIMEOUT_SECONDS"].to_i
-  timeout = 900 if timeout <= 0
-  app, beta_group = find_external_testflight_group!(bundle_id: bundle_id, group: group)
-  deadline = Time.now + timeout
-  loop do
-    # get_builds_for_beta_group ships NO includes (app_version would raise
-    # "No pre_release_version included"), so select by ID: the group's
-    # builds give the membership set, Build.all gives the full models with
-    # preReleaseVersion + buildBetaDetail attached.
+  probe = lambda do
+    app, beta_group = find_external_testflight_group!(bundle_id: bundle_id, group: group)
     group_build_ids = beta_group.fetch_builds.map(&:id)
     build = Spaceship::ConnectAPI::Build.all(
       app_id: app.id,
@@ -173,12 +170,14 @@ def verify_external_distribution!(bundle_id:, group:, app_version:)
       else
         UI.important("Build #{app_version} (#{build.version}) is in '#{group}' and waiting for Beta App Review — external visibility flips automatically on approval, no clicks needed.")
       end
-      return
+    else
+      UI.important("Build #{app_version} not visible in '#{group}' yet — the submit stays GREEN (gh-1041: store read-side lag is not a failure). The deferred store-appearance-check workflow re-checks ASC 120 min after the daily legs start and files/updates one stub if the version is still absent past the horizon.")
     end
-    if Time.now > deadline
-      UI.user_error!("Build #{app_version} never appeared in the external group '#{group}' (TESTFLIGHT_EXTERNAL_GROUP) within #{timeout}s — check the Beta App Review state in App Store Connect.")
-    end
-    sleep(60)
+  end
+  begin
+    probe.call
+  rescue StandardError => e
+    UI.important("Post-submit appearance probe skipped (#{e.class}: #{e.message.to_s[0, 160]}) — the upload above already succeeded; the deferred store-appearance-check workflow owns appearance verification (gh-1041, #855).")
   end
 end
 

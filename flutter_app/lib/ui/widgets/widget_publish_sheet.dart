@@ -128,27 +128,50 @@ class _WidgetPublishSheetState extends State<WidgetPublishSheet> {
     if (connected == true && mounted) setState(() {});
   }
 
+  /// Fire-and-forget publish (issue #1045 AC6 — «я не хочу чтобы
+  /// пользователь когда нажмет паблишь ждал так долго»): the tap hands the
+  /// flow to [WidgetPublishService.startPublish] — which validates and
+  /// records the optimistic `publishing` ledger state — and RETURNS; the
+  /// sheet shows «Publishing…» with a Done escape while the PR creation
+  /// continues in the background. A later completion still updates the
+  /// open sheet, and the outcome lives on in the ledger for the detail
+  /// sheet even after this one is gone (I4).
   Future<void> _publish() async {
-    setState(() {
-      _publishing = true;
-      _error = null;
-    });
+    final PendingPublish pending;
     try {
-      final result = await widget.service.publish(
+      pending = await widget.service.startPublish(
         app: widget.app,
         repoName: _repoController.text.trim(),
       );
-      if (mounted) {
-        setState(() {
-          _publishing = false;
-          _result = result;
-        });
-      }
     } on GithubApiException catch (error) {
       _setPublishError(error.message);
+      return;
     } on Object catch (error) {
       _setPublishError(error.toString());
+      return;
     }
+    if (mounted) {
+      setState(() {
+        _publishing = true;
+        _error = null;
+      });
+    }
+    unawaited(
+      pending.flow
+          .then((result) {
+            if (mounted) {
+              setState(() {
+                _publishing = false;
+                _result = result;
+              });
+            }
+          })
+          .catchError((Object error) {
+            _setPublishError(
+              error is GithubApiException ? error.message : error.toString(),
+            );
+          }),
+    );
   }
 
   /// Lands a failed publish back on the form (never when unmounted).
@@ -199,23 +222,30 @@ class _WidgetPublishSheetState extends State<WidgetPublishSheet> {
                 onChanged: (_) => setState(() {}),
               ),
               const SizedBox(height: 12),
-              FilledButton(
-                onPressed: _canPublish ? _publish : null,
-                child: _publishing
-                    ? Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(l10n.publishInProgress),
-                        ],
-                      )
-                    : Text(l10n.publishButton),
-              ),
+              if (_publishing)
+                Row(
+                  children: [
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(l10n.publishInProgress)),
+                    // AC6: the user never waits on the network — Done
+                    // closes immediately; the flow finishes in the
+                    // background and the detail sheet shows the outcome.
+                    OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: Text(l10n.publishDone),
+                    ),
+                  ],
+                )
+              else
+                FilledButton(
+                  onPressed: _canPublish ? _publish : null,
+                  child: Text(l10n.publishButton),
+                ),
             ],
           ],
           if (_error != null) ...[

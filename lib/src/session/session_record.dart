@@ -28,6 +28,16 @@ final class SessionHeader {
   /// On-disk format version. Only version 3 is supported.
   static const version = 3;
 
+  /// Format marker written into every segment header once a session has
+  /// been rotated (gh-1077): a rotated session is a new on-disk format
+  /// for pre-rotation builds — they read only the primary and either
+  /// crash on the severed parent chain or silently miss the archived
+  /// records. The marker (identical record format, higher version) makes
+  /// an older build fail at header parse with a clear "unsupported
+  /// session version" instead. This build accepts both [version] and
+  /// [rotatedVersion].
+  static const rotatedVersion = 4;
+
   /// Unique session id.
   final String id;
 
@@ -64,7 +74,8 @@ final class SessionHeader {
     if (json['type'] != 'session') {
       throw invalid('first line is not a valid session header');
     }
-    if (json['version'] != version) {
+    final headerVersion = json['version'];
+    if (headerVersion != version && headerVersion != rotatedVersion) {
       throw invalid('unsupported session version');
     }
     if (json['id'] is! String || (json['id'] as String).isEmpty) {

@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
-import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:flutter/services.dart'
+    show Clipboard, ClipboardData, HapticFeedback;
 
 import 'package:path/path.dart' as p;
 
@@ -14,6 +15,7 @@ import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/sandbox/env_factory.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/analytics.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
@@ -492,12 +494,30 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
 
   Widget _buildBrandHeader(FahColors colors) {
     // The Fa brand mark: sparkle SVG without any background (matching the
-    // prototype's clean icon style).
-    const brandIcon = SizedBox(
-      width: 28,
-      height: 28,
-      child: Center(
-        child: SizedBox(width: 24, height: 24, child: FaBrandTile(size: 24)),
+    // prototype's clean icon style). The entry gesture contract (#864):
+    // long-press mints a fresh session (haptic, no dialog); a tap needs
+    // no action here — the wide layout always shows the active chat.
+    final brandIcon = Tooltip(
+      // Hover-only hint: triggerMode manual — the touch long-press is
+      // deliberately yielded to the InkWell below so it ALWAYS mints
+      // (#864); the hint still reaches screen readers via semantics.
+      message: context.l10n.faEntryHintTooltip,
+      triggerMode: TooltipTriggerMode.manual,
+      child: InkWell(
+        key: const ValueKey('wideShellFaBrand'),
+        borderRadius: BorderRadius.circular(8),
+        onLongPress: () => unawaited(_mintSessionFromBrand()),
+        child: const SizedBox(
+          width: 28,
+          height: 28,
+          child: Center(
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: FaBrandTile(size: 24),
+            ),
+          ),
+        ),
       ),
     );
 
@@ -751,7 +771,8 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     if (await _resetViaRelay(target.service)) return;
     final choice = await _pickNewSessionFolder(target.service);
     if (choice == null) return;
-    _createSessionInChosenFolder(target.service, target.config);
+    // Fire-and-forget: the dialog flow controls nothing downstream.
+    unawaited(_createSessionInChosenFolder(target.service, target.config));
   }
 
   /// Everything a local new-session clone needs from the active session,
@@ -854,16 +875,47 @@ class _WideLayoutShellState extends State<WideLayoutShell> {
     leading: const Icon(Icons.folder_outlined),
   );
 
+  /// The Fa brand mark's long-press (#864): mint one new session straight
+  /// from the active config — no folder dialog (the owner ruling is
+  /// long-press = new; the sidebar's explicit flow keeps its dialog).
+  /// Single-flight like the sheet's [mintAndOpenNewSession]: createSession
+  /// is not internally serialized, so a rapid second long-press inside the
+  /// clone window would double-mint (ticket E3).
+  bool _mintingFromBrand = false;
+
+  Future<void> _mintSessionFromBrand() async {
+    if (_mintingFromBrand) return;
+    _mintingFromBrand = true;
+    try {
+      final target = _newSessionTarget;
+      if (target == null) return;
+      if (await _resetViaRelay(target.service)) return;
+      // Fire-and-forget: the ack is flow control for nobody.
+      unawaited(HapticFeedback.mediumImpact());
+      await _createSessionInChosenFolder(target.service, target.config);
+    } on Object catch (error) {
+      // The long-press fires through unawaited(...) — a raw clone or
+      // initialize failure would surface as an unhandled zone error with
+      // zero user feedback (review #1144 follow-up). Log + snack; the
+      // active session stays untouched.
+      AppLog.i('sessions', 'Fa-brand mint failed: $error');
+      if (mounted) {
+        showFahErrorSnack(context, context.l10n.sessionMintFailed);
+      }
+    } finally {
+      _mintingFromBrand = false;
+    }
+  }
+
   /// The folder is already set ('current' or a freshly applied pick);
   /// the created session's cwd (and its drawer group) follows it.
-  void _createSessionInChosenFolder(AgentService service, AgentConfig config) {
-    unawaited(
-      widget.manager.createSession(
-        config: config,
-        serviceFactory: () async => service.clone(),
-      ),
-    );
-  }
+  Future<void> _createSessionInChosenFolder(
+    AgentService service,
+    AgentConfig config,
+  ) => widget.manager.createSession(
+    config: config,
+    serviceFactory: () async => service.clone(),
+  );
 
   /// Opens a persisted-only session from the sidebar's history tail. On a
   /// A tap on an already-live sidebar row. Hosted surfaces re-dispatch

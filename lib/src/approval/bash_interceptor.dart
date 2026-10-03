@@ -9,6 +9,8 @@
 /// positives remain actionable (the user can still approve the prompt).
 library;
 
+import '../utils/path_text.dart';
+
 /// The canonical name of the shell tool the interceptor applies to
 /// (`shellTool` in `builtin_tools.dart` registers under this name).
 const bashToolName = 'bash';
@@ -244,7 +246,7 @@ String _unquote(String word) {
 bool _isRootLikePath(String target) {
   if (_isHomeRoot(target)) return true;
   if (RegExp(r'^[A-Za-z]:[\\/]?[*]?$').hasMatch(target)) return true;
-  return _isRootAbsolute(_stripTrailingSlashes(target));
+  return _isRootAbsolute(stripTrailingSlashes(target));
 }
 
 /// `~`, `~/`, `~/*`, `$HOME`, `${HOME}` and their `/` and `/*` suffixes.
@@ -253,14 +255,6 @@ bool _isHomeRoot(String target) {
   const homeChildren = {r'$HOME/', r'$HOME/*', r'${HOME}/', r'${HOME}/*'};
   if (target == '~' || target == '~/' || target == '~/*') return true;
   return home.contains(target) || homeChildren.contains(target);
-}
-
-String _stripTrailingSlashes(String path) {
-  var stripped = path;
-  while (stripped.length > 1 && stripped.endsWith('/')) {
-    stripped = stripped.substring(0, stripped.length - 1);
-  }
-  return stripped;
 }
 
 /// Root-likeness of a trailing-slash-free [path] (see

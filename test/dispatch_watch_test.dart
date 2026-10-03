@@ -252,13 +252,7 @@ void main() {
     test('prefers the NEWEST same-title match inside the window', () {
       final dw = runDw(
         'newest-match',
-        [
-          'build-mobile.yml',
-          '--title',
-          playTitle,
-          '-f',
-          'android_content=all',
-        ],
+        ['build-mobile.yml', '--title', playTitle, '-f', 'android_content=all'],
         {
           'runs.json': runJson([
             run(111, playTitle, iso(-20)),
@@ -282,13 +276,7 @@ void main() {
       // outside the window.
       final dw = runDw(
         'stale-run',
-        [
-          'build-mobile.yml',
-          '--title',
-          playTitle,
-          '-f',
-          'android_content=all',
-        ],
+        ['build-mobile.yml', '--title', playTitle, '-f', 'android_content=all'],
         {
           'runs.json': runJson([
             run(999, playTitle, iso(-300)),

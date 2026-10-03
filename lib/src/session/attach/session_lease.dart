@@ -219,7 +219,9 @@ final class FileSessionLeaseStore {
   static String newBootId() {
     final random = Random();
     final micros = DateTime.now().toUtc().microsecondsSinceEpoch;
-    return '$micros-${random.nextInt(1 << 32).toRadixString(36)}';
+    // dart2js: shifts are 32-bit — `1 << 32` == 0, so nextInt(0) would throw
+    // on web (issue #1074). Spell the bound literally.
+    return '$micros-${random.nextInt(0xFFFFFFFF).toRadixString(36)}';
   }
 
   /// Reads and classifies the current lease for [sessionFilePath].

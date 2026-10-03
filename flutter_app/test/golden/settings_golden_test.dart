@@ -34,6 +34,8 @@ import 'package:fa/ui/screens/dap_settings_page.dart';
 import 'package:fa/services/dap_service.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/ui/screens/settings.dart';
+import 'package:fa/ui/screens/skills_toggles_section.dart';
+import 'package:fa/ui/screens/redaction_section.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:fa/ui/screens/tools_availability_section.dart';
@@ -583,6 +585,29 @@ void main() {
 
       // Icon + title + hint, dropdown at the default (granted = Allowed).
       await expectGolden(tester, 'settings_skills_access');
+    });
+
+    testWidgets('skills toggles section', (tester) async {
+      final service = _fakeService();
+      await _pumpSettingsFrame(
+        tester,
+        child: SkillsTogglesSection(service: service),
+      );
+
+      // One default-on switch per package builtin (create-goal,
+      // self-settings), each with a one-line description.
+      await expectGolden(tester, 'settings_skills_toggles');
+    });
+
+    testWidgets('redaction section', (tester) async {
+      final service = _fakeService();
+      await _pumpSettingsFrame(
+        tester,
+        child: RedactionSection(service: service),
+      );
+
+      // Icon + title + hint, the switch at the core default (on).
+      await expectGolden(tester, 'settings_redaction');
     });
   });
 

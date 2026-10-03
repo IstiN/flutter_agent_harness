@@ -95,6 +95,8 @@ final class CwdOverrideEnv
             cancelToken: options?.cancelToken,
             onStdout: options?.onStdout,
             onStderr: options?.onStderr,
+            jobLogMaxBytes: options?.jobLogMaxBytes,
+            onJobLogWarning: options?.onJobLogWarning,
           )
         : options;
     return bg.startShellJob(

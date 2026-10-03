@@ -33,7 +33,9 @@ final class Semaphore {
   /// `max <= 0` means unbounded.
   Semaphore(int max) : _max = max > 0 ? max : _unbounded;
 
-  static const _unbounded = 1 << 62;
+  // Literal, not `1 << 62`: dart2js shifts are 32-bit — 0 on web would make
+  // the unbounded semaphore admit nobody (issue #1074).
+  static const _unbounded = 0x4000000000000000;
 
   int _max;
   var _current = 0;

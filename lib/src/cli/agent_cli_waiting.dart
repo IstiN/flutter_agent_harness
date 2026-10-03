@@ -113,6 +113,99 @@ final class _WaitingCoordinator {
 
   ScheduledMessageQueue get _timers => _cli._scheduledMessages;
 
+  /// Per-call foreground liveness (gh-1055): the third waiting horizon —
+  /// a tool call running long in the FOREGROUND. Headless/line mode prints
+  /// grep-friendly single lines (elapsed, tool name, command tail) past
+  /// `toolLivenessSeconds`, then — once per stuck call — the background
+  /// escape-hatch hint past `toolEscalateSeconds`. Every elapsed value
+  /// rides the same waiting-clock seam the heartbeat uses (AC5: no second
+  /// clock); when #1054's stuck-call heartbeat records land, its detector
+  /// feeds this tracker instead of a private one.
+  ///
+  /// Issue #1185: an escalation is no longer console-only — it ALSO steers
+  /// one model-facing nudge into the live run ([_nudgeStuckCall]) so the
+  /// model itself decides wait / background / kill. The tracker therefore
+  /// arms in TUI mode too (AC4); only the console LINES stay line-mode
+  /// — the TUI waiting row owns that presentation.
+  late final ToolLivenessTracker liveness = ToolLivenessTracker(
+    onRemind: (call) {
+      if (_cli._useTui) return; // the TUI waiting row owns this surface.
+      _printLiveness(toolLivenessReminderLine(call, _clock()));
+    },
+    onEscalate: (call) {
+      if (!_cli._useTui) {
+        _printLiveness(toolLivenessEscalationLine(call, _clock()));
+      }
+      _nudgeStuckCall(call);
+    },
+    clock: _clock,
+    livenessSeconds: () => _cli.config.waiting.toolLivenessSeconds,
+    tickSeconds: () => _cli.config.waiting.toolLivenessTickSeconds,
+    escalateSeconds: () => _cli.config.waiting.toolEscalateSeconds,
+  );
+
+  /// Nudges left this turn (issue #1185 E2, the storm guard): reset at
+  /// every real turn start (see [_beginUserPrompt]), spent by
+  /// [_nudgeStuckCall].
+  int _nudgesLeft = maxToolNudgesPerTurn;
+
+  /// Nudges sent overall — the dedup/cap test seam's observable.
+  int _nudgesSent = 0;
+
+  /// Refills the per-turn nudge budget (issue #1185 E2).
+  void resetToolNudges() {
+    _nudgesLeft = maxToolNudgesPerTurn;
+  }
+
+  /// The #1185 stuck-call nudge: ONE steering message into the live run
+  /// per escalated call (the tracker's `escalated` flag guarantees once
+  /// per call; a NEW stuck call escalates afresh). Deliberately NOT
+  /// `_agent.steer`: every steer enqueue fires `steeringArrived`, which
+  /// cancels the tool-call phase's soft-yield token and would move a
+  /// yield-aware bash to a background job before the model decided
+  /// anything — the call must still be the model's to decide (AC3). The
+  /// nudge rides the follow-up queue instead: same boundary delivery and
+  /// persistence as every follow-up (`<system-notice>` user message,
+  /// one extension turn per queued message — the queue is
+  /// `oneAtATime`), zero yield signal — delivery happens when the run
+  /// would otherwise stop, never mid-call.
+  void _nudgeStuckCall(ToolLivenessCall call) {
+    if (_cli._exited || !_cli.isBusy) return;
+    if (!_cli.config.waiting.toolNudge) return;
+    if (_nudgesLeft <= 0) return;
+    _nudgesLeft--;
+    _nudgesSent++;
+    final text = toolNudgeNotice(call, _clock());
+    // TUI transcript echo (the job-settle precedent): the notice merges
+    // into context and is persisted, but steered messages skip the
+    // composer echo — without this the row exists only after resume.
+    _cli._tuiController?.sendOutput('$text\n');
+    _cli._agent.followUp(UserMessage.text(text));
+  }
+
+  /// One liveness line, dimmed like every other run notice (the style is
+  /// off in headless, so the piped output stays plain). Never after exit —
+  /// the timer chain can outlive the session by a tick.
+  void _printLiveness(String line) {
+    if (_cli._exited) return;
+    _cli.io.writeln(_cli._style.dim(line));
+  }
+
+  /// Foreground tool call started (gh-1055): arm the liveness watch. Since
+  /// #1185 the tracker arms in TUI mode too (the escalation drives the
+  /// model nudge there — AC4); only the console LINES stay line-mode
+  /// ([_printLiveness] gates, the TUI waiting row owns the presentation).
+  void toolCallStarted(String toolCallId, String toolName, String detail) {
+    liveness.callStarted(toolCallId, toolName, detail);
+  }
+
+  /// Foreground tool call ended: this call's watch (and escalation state)
+  /// stops with it — an end-without-start must never touch the chain
+  /// while other calls are legitimately in flight.
+  void toolCallEnded(String toolCallId) {
+    liveness.callEnded(toolCallId);
+  }
+
   /// The cross-run job registry (`<cwd>/.fah/bash_jobs/running.json`):
   /// one entry per job any fa process in this workspace still considers
   /// running. Boot reconcile (issue #478) drops entries whose owning
@@ -150,6 +243,39 @@ final class _WaitingCoordinator {
   /// survived get one warning line, then are reaped.
   Future<void> captureLostJobs() async {
     lostJobs = 0;
+    final reconcile = await _reconcileRegistry();
+    lostJobs = reconcile.dropped;
+    final pids = reconcile.pids;
+    final quarantined = reconcile.quarantined;
+    final dropped = reconcile.dropped;
+    final aged = reconcile.aged;
+    // The orphan-group reaper (issue #517) wants every previous-run pid —
+    // it skips live leaders itself.
+    await reapOrphanJobGroups(
+      env: _cli._env,
+      candidatePids: pids,
+      onWarn: (message) => _cli.io.writeln(tuiWarning('⚠ $message')),
+    );
+    final prunedLogs = await _pruneOldJobLogs();
+    final notes = <String>[
+      if (quarantined) 'corrupt running.json quarantined as running.json.bad',
+      if (dropped > 0)
+        '$dropped stale job ${dropped == 1 ? 'entry' : 'entries'} dropped'
+            '${aged > 0 ? ', $aged past the age belt' : ''}',
+      if (prunedLogs > 0) '$prunedLogs old job log(s) pruned',
+    ];
+    if (notes.isNotEmpty) {
+      _cli.io.writeln(tuiWarning('⚠ bash_jobs: ${notes.join(' · ')}'));
+    }
+  }
+
+  /// The registry reconcile half of [captureLostJobs] (extracted so the
+  /// public entry stays under the CRAP complexity threshold): verifies
+  /// each recorded entry against the live process table, drops the dead
+  /// and the past-the-age-belt ones, and rewrites the registry when
+  /// anything changed. Behavior is identical to the inlined loop.
+  Future<({List<int> pids, bool quarantined, int dropped, int aged})>
+  _reconcileRegistry() async {
     var pids = const <int>[];
     var quarantined = false;
     var dropped = 0;
@@ -181,29 +307,11 @@ final class _WaitingCoordinator {
         }
         kept.add(entry);
       }
-      lostJobs = dropped;
       if (quarantined || kept.length != entries.length) {
         await _writeRegistryEntries(kept);
       }
     });
-    // The orphan-group reaper (issue #517) wants every previous-run pid —
-    // it skips live leaders itself.
-    await reapOrphanJobGroups(
-      env: _cli._env,
-      candidatePids: pids,
-      onWarn: (message) => _cli.io.writeln(tuiWarning('⚠ $message')),
-    );
-    final prunedLogs = await _pruneOldJobLogs();
-    final notes = <String>[
-      if (quarantined) 'corrupt running.json quarantined as running.json.bad',
-      if (dropped > 0)
-        '$dropped stale job ${dropped == 1 ? 'entry' : 'entries'} dropped'
-            '${aged > 0 ? ', $aged past the age belt' : ''}',
-      if (prunedLogs > 0) '$prunedLogs old job log(s) pruned',
-    ];
-    if (notes.isNotEmpty) {
-      _cli.io.writeln(tuiWarning('⚠ bash_jobs: ${notes.join(' · ')}'));
-    }
+    return (pids: pids, quarantined: quarantined, dropped: dropped, aged: aged);
   }
 
   Future<void> _manifestAdd(
@@ -828,4 +936,35 @@ extension AgentCliWaitingSeams on AgentCli {
   @visibleForTesting
   Future<String> waitingScheduleTimerForTest(String text, Duration delay) =>
       _waiting._timers.schedule(text: text, delay: delay);
+
+  /// Test seam: fires one tool-liveness evaluation now (gh-1055), the
+  /// analog of [waitingHeartbeatTickForTest] for #450.
+  @visibleForTesting
+  void toolLivenessTickForTest() => _waiting.liveness.tick();
+
+  /// Test seam: the watched foreground calls, oldest first (gh-1055).
+  @visibleForTesting
+  List<ToolLivenessCall> get toolLivenessCallsForTest =>
+      _waiting.liveness.inFlight;
+
+  /// Test seam: feeds the liveness watch directly, bypassing the agent
+  /// event path — the TUI-gate test drives this.
+  @visibleForTesting
+  void toolCallStartedForTest(String id, String name, String detail) =>
+      _waiting.toolCallStarted(id, name, detail);
+
+  /// Test seam: ends the watched call started by [toolCallStartedForTest].
+  @visibleForTesting
+  void toolCallEndedForTest(String id) => _waiting.toolCallEnded(id);
+
+  /// Test seam: the stuck-call nudges sent so far (issue #1185) — the
+  /// dedup/cap observable (a nudge steers into the agent queue; counting
+  /// sends is exact regardless of run shape).
+  @visibleForTesting
+  int get toolNudgesSentForTest => _waiting._nudgesSent;
+
+  /// Test seam: refills the stuck-call nudge budget (issue #1185 E2) —
+  /// the same reset a fresh turn performs, without driving a new prompt.
+  @visibleForTesting
+  void resetToolNudgesForTest() => _waiting.resetToolNudges();
 }

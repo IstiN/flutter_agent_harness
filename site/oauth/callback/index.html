@@ -30,31 +30,100 @@
   </div>
   <script>
     // OAuth proxy callback receiver. The Fa web app opens the provider
-    // sign-in in a popup and polls this window's location for
-    // ?code=…&state=… (same-origin read); this page only needs to exist
-    // at /oauth/callback and reflect the outcome for the human inside
-    // the popup — the app closes it as soon as it observes the code.
+    // sign-in in a popup; when the proxy redirect lands here with
+    // ?code=…&state=…, the grant is handed back to the app and this
+    // window closes itself (issue #1117) — the app should sign in
+    // without any manual step. The page only reflects the outcome for
+    // the human inside the popup when no channel could deliver.
     (function () {
       var params = new URLSearchParams(window.location.search);
+      var code = params.get('code');
+      var error = params.get('error');
+      var errorDescription = params.get('error_description') || error;
       var title = document.getElementById('title');
       var message = document.getElementById('message');
-      if (params.get('error')) {
-        title.textContent = 'Sign-in failed';
+
+      if (!code && !error) {
+        title.textContent = 'Missing authorization code';
         title.className = 'error';
-        message.textContent = params.get('error_description') || params.get('error');
+        message.textContent = 'This page expects a ?code= or ?error= parameter. Close the window and try signing in again.';
         message.className = 'error';
         return;
       }
-      if (params.get('code')) {
-        title.textContent = 'Sign-in complete';
-        title.className = 'success';
-        message.textContent = 'The app has your authorization. You can close this window.';
+
+      // The opener may be served from fa1.dev, localhost (dev), or a
+      // browser-extension/Office pane origin. The payload IS a
+      // completable grant for whoever this popup names as opener:
+      // `code` + `state` complete via the anonymous /oauth-proxy/exchange
+      // — which is why the app validates the state against its own
+      // initiate before completing. The opener's origin cannot be learned
+      // here (document.referrer is the auth service after the redirect
+      // chain, cross-origin opener origins are unreadable), so the
+      // postMessage target stays '*'; server-side PKCE on the proxy is
+      // the proper hardening (see the follow-up on #1117).
+      var payload = {
+        type: 'fa_oauth_code',
+        code: code,
+        state: params.get('state'),
+        error: error,
+        error_description: errorDescription,
+        ts: Date.now()
+      };
+      var delivered = false;
+      if (window.opener) {
+        try { window.opener.postMessage(payload, '*'); delivered = true; }
+        catch (e) { /* cross-origin or closed opener */ }
+      }
+      // Safari's ITP can strip window.opener across the redirect chain.
+      // Honest guarantees: BroadcastChannel post "succeeds" even with
+      // zero listeners, and it is same-origin-scoped — it reaches an app
+      // served from THIS origin only (exactly the ITP case it exists
+      // for), never a cross-origin pane. delivered is therefore
+      // optimistic: "a channel accepted the payload".
+      try {
+        var channel = new BroadcastChannel('fa_oauth');
+        channel.postMessage(payload);
+        channel.close();
+        delivered = true;
+      } catch (e) { /* unsupported */ }
+      // Last resort (parity with the AIIN/OpenRouter pages): localStorage
+      // hand-off for browsers with neither opener postMessage nor BC.
+      // Same-origin by definition; the app's receiver polls the key with
+      // a 90s freshness window and clears it after consuming.
+      try {
+        var existing = window.localStorage.getItem('fa_oauth_code');
+        var existingTs = existing ? (JSON.parse(existing).ts || 0) : 0;
+        if (payload.ts >= existingTs) {
+          window.localStorage.setItem('fa_oauth_code', JSON.stringify(payload));
+        }
+        delivered = true;
+      } catch (e) { /* private mode */ }
+
+      function closePopup() {
+        try { window.close(); } catch (e) { /* ignore */ }
+        try {
+          var named = window.open('', 'fa_oauth');
+          if (named) named.close();
+        } catch (e) { /* ignore */ }
+      }
+      if (delivered && code) {
+        closePopup();
+        setTimeout(closePopup, 150);
+        setTimeout(closePopup, 500);
+      }
+
+      if (error) {
+        title.textContent = 'Sign-in failed';
+        title.className = 'error';
+        message.textContent = errorDescription || error;
+        message.className = 'error';
         return;
       }
-      title.textContent = 'Missing authorization code';
-      title.className = 'error';
-      message.textContent = 'This page expects a ?code= or ?error= parameter. Close the window and try signing in again.';
-      message.className = 'error';
+      title.textContent = 'Sign-in complete';
+      title.className = 'success';
+      message.textContent = delivered
+        ? 'The app has your authorization. Returning you to Fa…'
+        : 'The app has your authorization. You can close this window.';
     })();
   </script>
 </body>

@@ -33,6 +33,7 @@ library;
 import 'package:yaml/yaml.dart';
 
 import '../../exceptions.dart';
+import '../../utils/path_text.dart' show normalizeLexicalPath;
 
 /// One symlink-probe result for a path component:
 ///
@@ -364,17 +365,21 @@ final class CubeFsPolicy {
 
   /// Collapses `.` and `..` segments; `null` when the path escapes above `/`.
   static String? _normalize(String target) {
-    final stack = <String>[];
-    for (final segment in target.split('/')) {
+    if (_escapesRoot(target)) return null;
+    return normalizeLexicalPath(target);
+  }
+
+  /// Whether [path] climbs above `/` — the shared lexical normalizer
+  /// clamps excess `..` at the root, but a policy must DENY the escape
+  /// instead, so the escape is detected before normalizing.
+  static bool _escapesRoot(String path) {
+    var depth = 0;
+    for (final segment in path.split('/')) {
       if (segment.isEmpty || segment == '.') continue;
-      if (segment == '..') {
-        if (stack.isEmpty) return null; // traversal above the root
-        stack.removeLast();
-      } else {
-        stack.add(segment);
-      }
+      depth += segment == '..' ? -1 : 1;
+      if (depth < 0) return true;
     }
-    return '/${stack.join('/')}';
+    return false;
   }
 
   /// Whether [path] equals or lives under [prefix]. The root prefix

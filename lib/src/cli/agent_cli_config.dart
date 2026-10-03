@@ -64,19 +64,25 @@ final class AgentCliConfig {
     this.onProviderChanged,
     this.secureKeys,
     this.customProviders,
+    this.freshInstallProviderFlow = false,
     this.onSecretStored,
     this.onSecretGranted,
     this.onModeChanged,
     this.onApprovalChanged,
     this.skillsAccess = SkillsAccess.granted,
     this.skillsDisableShellExecution = false,
+    this.skillToggles = const {},
     this.onSkillsAccessChanged,
+    this.onSkillTogglesChanged,
     this.isShiftPressed,
     this.processId,
     this.homeDir,
     this.powerSleepPrevention = PowerAssertionLevel.idle,
     this.powerSleepPreventionHold = PowerAssertionHold.perRun,
     this.powerRunner,
+    this.quotaBadge = false,
+    this.quotaTtl,
+    this.quotaHttpClient,
     this.tuiTheme,
     this.tuiProgramHooks,
     this.sttyRunner,
@@ -436,6 +442,15 @@ final class AgentCliConfig {
   /// adds nothing to the list.
   final CustomProviderRegistry? customProviders;
 
+  /// Fresh-install boot (issue #969): the executable computed that NOTHING
+  /// is configured — no saved custom providers, no persisted provider
+  /// switch, and no key resolving anywhere (env or the secure store) — and
+  /// this is an interactive REPL boot. The REPL then opens the guided
+  /// add-provider wizard (the same flow `/provider custom` opens) before
+  /// the first prompt. Never set for headless runs; the CLI re-checks
+  /// `CliIO.isInteractive`, so piped input never sees the wizard either.
+  final bool freshInstallProviderFlow;
+
   /// Called when the user stores a secret via `/key set`, so the executable
   /// can redact the value from tool results and session files.
   final void Function(String name, String value)? onSecretStored;
@@ -466,9 +481,22 @@ final class AgentCliConfig {
   /// executed; the placeholder renders as a disabled note instead.
   final bool skillsDisableShellExecution;
 
+  /// The GLOBAL per-skill on/off toggles (`skills:` section of
+  /// `~/.fah/config.yaml`, issue #1151): skill name → enabled. The CLI
+  /// seeds its live view from this at first resolution;
+  /// `/skills NAME global` mutates the live view and the host persists it
+  /// through [onSkillTogglesChanged].
+  final Map<String, bool> skillToggles;
+
   /// Called when the skills-access consent changes (startup prompt,
   /// `/skills access ...`) so the executable can persist it.
   final void Function(SkillsAccess access)? onSkillsAccessChanged;
+
+  /// Called when a global per-skill toggle changes
+  /// (`/skills NAME global`, the settings-hub Skills flow) so the
+  /// executable can persist the live toggles
+  /// (`AgentCli.globalSkillToggles`).
+  final Future<void> Function()? onSkillTogglesChanged;
 
   /// Host-provided Shift modifier check (e.g. macOS Core Graphics via FFI).
   /// When null, Shift+Enter is not specially handled.
@@ -495,6 +523,19 @@ final class AgentCliConfig {
   /// entirely — the test runtime and web hosts pass no runner, so no
   /// unit test ever spawns a real `caffeinate`.
   final PowerAssertionRunner? powerRunner;
+
+  /// Status-line provider-quota badge (`quota.badge`, issue #823): default
+  /// OFF (OQ2 lean) — the status line stays quiet until the user opts in.
+  final bool quotaBadge;
+
+  /// Quota-cache TTL override (`quota.ttl_minutes`, issue #823). Null keeps
+  /// the service's 15-minute default.
+  final Duration? quotaTtl;
+
+  /// Injectable http client for the quota adapters (issue #823): tests
+  /// inject a MockClient here; production shares the keep-alive provider
+  /// client. Null = shared client, no IO is made until a surface peeks.
+  final http.Client? quotaHttpClient;
 
   /// Headless TUI test hooks (scripted key bytes, captured frames) handed to
   /// the TUI controller — null in production, where the dart_tui program
@@ -725,11 +766,13 @@ final class AgentCliConfig {
   final List<AgentCapability> agentCapabilities;
 
   /// The `waiting:` section (issue #450): visible-waiting heartbeat
-  /// cadence and the `--wait-for-jobs` ceiling.
+  /// cadence, the `--wait-for-jobs` ceiling, and the per-call foreground
+  /// liveness thresholds (gh-1055).
   final WaitingConfig waiting;
 
   /// The `jobs:` section (issue #478): boot-maintenance knobs for the
-  /// cross-run shell-job state (manifest age belt + log GC).
+  /// cross-run shell-job state (manifest age belt + log GC), plus the
+  /// `maxLogBytes` per-log ceiling (issue #919).
   final JobsConfig jobs;
 
   /// This host's machine name for `name@machine` addressing (issue #27

@@ -3,7 +3,7 @@ description: >-
   Fa — the Flutter Agent app: a chat UI that runs the agent with a mobile
   ExecutionEnv backed by path_provider and Process.run.
 publish_to: 'none'
-version: 1.0.487+1
+version: 1.0.500+1
 
 environment:
   sdk: ^3.12.2
@@ -59,6 +59,15 @@ dependencies:
   # Back on hosted pub: 0.4.79 ships the queued-callEvent-after-dispose guard
   # (5c3a733) and the restart-safe bridge channels the git pin carried.
   js_widget_runtime: ^0.4.121
+
+  # The fa_widgets catalog validator — the SAME rule engine the catalog CI
+  # runs (issue #1045): publish pre-flight imports it so a manifest that
+  # passes on-device passes in CI, with byte-identical error strings.
+  # publish_to: none upstream → git dep, sha-pinned for reproducibility.
+  fa_widgets_tool:
+    git:
+      url: https://github.com/IstiN/fa_widgets.git
+      ref: 3aa82cfd381e9b786fde363d7cde63cf31d1ef7a
 
   # TileProvider type for injecting offline map tiles (tests, custom hosts).
   flutter_map: ^8.2.2
@@ -189,11 +198,17 @@ dev_dependencies:
     path: ../packages/fa_llm_mock
 
 dependency_overrides:
+  # fa_widgets_tool declares archive ^3.6.1 while the app needs ^4.0.9 (the
+  # wasm/zip sandbox builtins). The override resolves the graph to 4.x; the
+  # client only exercises validateWidgetDirectory, which never touches
+  # archive — the packaging/pin-fetch code paths that do run in CI, not in
+  # the app. ponytail: if a client path ever needs pin_fetcher, revisit.
+  archive: ^4.0.9
   # (meta override removed with Flutter 3.47.4: the SDK now declares
   # meta ^1.18.3 and dart_tui 2.x declares ^1.19.0, so meta 1.19.0
   # resolves for both without an override.)
   freezed_annotation: ^3.1.0
-  flutter_agent_memory: ^0.2.1
+  flutter_agent_memory: ^0.2.3
   fa_llm:
     path: ../packages/fa_llm
   # Same as the root pubspec_overrides.yaml: the vendored patched fork is
@@ -223,8 +238,6 @@ flutter:
   assets:
     - .env
     - assets/skills/js-apps/SKILL.md
-    - assets/skills/create-goal/SKILL.md
-    - assets/skills/fa-self-config/SKILL.md
     - assets/wasm/add.wasm
     - assets/wasm/coreutils.wasm
     - assets/wasm/rg.wasm
