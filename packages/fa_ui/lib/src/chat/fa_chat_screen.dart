@@ -524,12 +524,28 @@ class _FaChatScreenState extends State<FaChatScreen>
     }
     if (!_chatScrollController.hasClients) return;
     final pixels = _chatScrollController.position.pixels;
+    final wasAway = _userScrolledAway;
     if (notification is ScrollUpdateNotification &&
         notification.dragDetails != null) {
       _userScrolledAway = pixels >= 150;
     } else if (pixels < 150) {
       _userScrolledAway = false;
     }
+    if (wasAway && !_userScrolledAway) {
+      // Landing back at the bottom with a deep-paged window rejoins the
+      // live tail on its own — no stuck banner post-run (issue #1159
+      // AC4).
+      _followTailIfPinned();
+    }
+  }
+
+  /// User-at-bottom follow (issue #1159 AC2/AC4): a deep-paged window
+  /// never strands a "Load newer" banner under a user parked at the
+  /// bottom — the view rejoins the live tail on its own, mid-run
+  /// included. A deliberately scrolled-away user is never auto-paged.
+  void _followTailIfPinned() {
+    if (!_historyHasNewer || _userScrolledAway || _historyLoading) return;
+    widget.service.loadNewerHistory();
   }
 
   /// Pins the chat to the tail after a sync when the user hasn't scrolled
@@ -880,6 +896,10 @@ class _FaChatScreenState extends State<FaChatScreen>
         if (target != null) _releasedClamps.add(target.$1);
       }
       if (mounted) setState(() {});
+      // A "newer" state arriving while the user is parked at the bottom
+      // is followed immediately — the tail rejoin clears it (issue #1159
+      // AC2).
+      _followTailIfPinned();
     }
   }
 
@@ -1452,7 +1472,17 @@ class _FaChatScreenState extends State<FaChatScreen>
         onTap: tappable
             ? (top
                   ? widget.service.loadOlderHistory
-                  : widget.service.loadNewerHistory)
+                  : () async {
+                      await widget.service.loadNewerHistory();
+                      if (!mounted) return;
+                      // The tap's promise is the live tail (issue #1159
+                      // AC1): relatch follow and land on the newest row
+                      // of the rejoined window.
+                      _userScrolledAway = false;
+                      if (_chatScrollController.hasClients) {
+                        _chatScrollController.jumpTo(0);
+                      }
+                    })
             : null,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
