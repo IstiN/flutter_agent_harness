@@ -56,9 +56,11 @@ dependencies:
 
   # JS apps platform: runs JavaScript widgets and renders them as native
   # Flutter UI (QuickJS via flutter_js on VM, web worker on web).
-  # Back on hosted pub: 0.4.79 ships the queued-callEvent-after-dispose guard
-  # (5c3a733) and the restart-safe bridge channels the git pin carried.
-  js_widget_runtime: ^0.4.121
+  # 0.4.153: ships the bridge-side voxel renderer (`voxel.attach`, >=
+  # 0.4.127) that fa-craft 0.2.x probes for — older runtimes fall back to
+  # the legacy scene3d path (slower, and not what fa-craft field testing
+  # exercises).
+  js_widget_runtime: ^0.4.153
 
   # The fa_widgets catalog validator — the SAME rule engine the catalog CI
   # runs (issue #1045): publish pre-flight imports it so a manifest that
