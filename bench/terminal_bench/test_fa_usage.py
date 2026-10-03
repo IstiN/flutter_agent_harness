@@ -36,7 +36,9 @@ def _module(name, **attrs):
 
 def _stub_terminal_bench():
     failure_mode = _module("terminal_bench.agents.failure_mode")
-    failure_mode.FailureMode = types.SimpleNamespace(NONE="none")
+    failure_mode.FailureMode = types.SimpleNamespace(
+        NONE="none", AGENT_TIMEOUT="agent_timeout"
+    )  # AGENT_TIMEOUT: fa_agent.py:212 needs it (test_fa_agent_timeout LegacyWatcherTest loads fa_agent against this stub in the shared discover process)
 
     def installed_perform_task(self, instruction, session, logging_dir=None):
         # tb's AbstractInstalledAgent hardcodes zeros (the issue's bug).
