@@ -22,6 +22,7 @@ final cliPlatformServices = {
   'hubFabric': Object(),
   'cubeSpec': Object(),
   'fsProbe': Object(),
+  'shellJobFactory': Object(),
   'sqliteEngine': Object(),
   'lspTransportFactory': Object(),
   'webSearchSecrets': Object(),

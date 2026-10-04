@@ -202,6 +202,7 @@ final class AgentCoreServices {
   /// input. Names match [CapabilitySpec.requiredServices] keys exactly.
   Set<String> get providedServiceNames => {
     if (sandbox != null) ...{'cubeSpec', 'fsProbe'},
+    if (shellJobsFactory != null) 'shellJobFactory',
     if (webSearch != null) 'webSearchSecrets',
     if (mcp != null) 'mcpTransportFactory',
     if (sqlite != null) 'sqliteEngine',
@@ -269,8 +270,10 @@ final class WiredAgentCore {
 
   /// The capability-gated core tools, in the canonical registration
   /// order (builtins → memory → schedule → ask → secret → vision →
-  /// transcribe → media → browser → host tools).
-  late final List<AgentTool> tools;
+  /// transcribe → media → browser → host tools). Set at construction by
+  /// [wireAgentCore] — a wired core ALWAYS carries its tools (no
+  /// post-hoc assignment that a refactor could orphan).
+  final List<AgentTool> tools;
 
   Agent? _agent;
 
@@ -280,6 +283,7 @@ final class WiredAgentCore {
     required this.sandboxEnv,
     required this.networkGate,
     required this.shellJobs,
+    required this.tools,
   });
 
   /// Assembles the [ToolRegistry] (core tools first, then
@@ -310,85 +314,99 @@ final class WiredAgentCore {
     );
     return WiredAgentStack(registry: registry, agent: agent);
   }
+}
 
-  /// The canonical core tool list over [services]; media/browser
-  /// closures read this core's late-bound agent.
-  List<AgentTool> _buildTools({
-    required AgentCoreServices services,
-    required ConfigService? configService,
-  }) {
-    final media = services.media;
-    final browser = switch (plan.planFor(HostCapability.browserBridge)) {
-      WiredCapability() => browserTools(
-        controller: services.browserController!,
-        saveScreenshot: services.saveBrowserScreenshot!,
-      ),
-      _ => null,
-    };
-    return [
-      // Core builtins: read/write/edit/list/shell (+ job board, lsp, web
-      // search, config, mcp). The nullable params agree with the plan by
-      // construction: run-narrowing declared the absent facilities off.
-      ...builtinTools(
-        env,
-        snapshots: services.snapshots ?? HashlineSnapshotStore(),
-        webSearch: services.webSearch,
-        networkGate: networkGate,
-        config: configService,
-        model: () => _agent?.state.model,
-        sqlite: services.sqlite,
-        lsp: services.lsp,
-        mcp: services.mcp,
-        shellJobs: shellJobs,
-        onPasswordPrompt: services.onPasswordPrompt,
-      ),
-      ...memoryTools(services.memory, onChanged: services.onMemoryChanged),
-      ...?services.scheduledMessages == null
-          ? null
-          : [
-              scheduleMessageTool(
-                services.scheduledMessages!,
-                senderMailbox: services.scheduleSenderMailbox,
-              ),
-            ],
-      // ask / request_secret register UNCONDITIONALLY: a null callback is
-      // the tools' documented headless mode (executing throws a StateError
-      // the agent loop converts into a graceful "cannot answer questions" /
-      // "cannot request secrets" result) — byte-identical to the
-      // pre-conversion CLI, which always registered them. Dropping them
-      // would surface a bare "Tool ask not found" instead.
-      askTool(callback: services.onAsk),
-      requestSecretTool(callback: services.onRequestSecret),
-      ...?services.vision == null
-          ? null
-          : [inspectImageTool(env, services.vision!)],
-      ...?services.transcribe == null
-          ? null
-          : [transcribeAudioTool(env, services.transcribe!)],
-      ...?media == null
-          ? null
-          : [
-              generateImageTool(
-                env: env,
-                modelsConfig: media.modelsConfig,
-                mainBaseUrl: () => _agent!.state.model.baseUrl,
-                mainModelId: () => _agent!.state.model.id,
-                mainApiKey: media.mainApiKey,
-                resolveKey: media.resolveKey,
-              ),
-              generateVideoTool(
-                env: env,
-                modelsConfig: media.modelsConfig,
-                mainBaseUrl: () => _agent!.state.model.baseUrl,
-                mainModelId: () => _agent!.state.model.id,
-                mainApiKey: media.mainApiKey,
-                resolveKey: media.resolveKey,
-              ),
-            ],
-      ...?browser,
-      ...services.hostTools,
-    ];
-  }
+// The canonical core tool list over [services]. Top-level by design:
+// [wireAgentCore] computes it BEFORE the core exists and hands it in as a
+// constructor parameter — "a wired core always has its tools" holds by
+// construction. Media/browser/model closures read the agent lazily
+// through [currentAgent] (the agent is built later, in buildAgentStack).
+List<AgentTool> _buildCoreTools({
+  required HostWiringPlan plan,
+  required ExecutionEnv env,
+  required CubeNetworkGate? networkGate,
+  required ShellJobRegistry? shellJobs,
+  required AgentCoreServices services,
+  required ConfigService? configService,
+  required Agent? Function() currentAgent,
+}) {
+  final media = services.media;
+  final browser = switch (plan.planFor(HostCapability.browserBridge)) {
+    WiredCapability() => browserTools(
+      controller: services.browserController!,
+      saveScreenshot: services.saveBrowserScreenshot!,
+    ),
+    _ => null,
+  };
+  return [
+    // Core builtins: read/write/edit/list/shell (+ job board, lsp, web
+    // search, config, mcp). The nullable params agree with the plan by
+    // construction: run-narrowing declared the absent facilities off.
+    ...builtinTools(
+      env,
+      snapshots: services.snapshots ?? HashlineSnapshotStore(),
+      webSearch: services.webSearch,
+      networkGate: networkGate,
+      config: configService,
+      model: () => currentAgent()?.state.model,
+      sqlite: services.sqlite,
+      lsp: services.lsp,
+      mcp: services.mcp,
+      shellJobs: shellJobs,
+      onPasswordPrompt: services.onPasswordPrompt,
+    ),
+    ...memoryTools(services.memory, onChanged: services.onMemoryChanged),
+    ...?services.scheduledMessages == null
+        ? null
+        : [
+            scheduleMessageTool(
+              services.scheduledMessages!,
+              senderMailbox: services.scheduleSenderMailbox,
+            ),
+          ],
+    // ask / request_secret register UNCONDITIONALLY: a null callback is
+    // the tools' documented headless mode (executing throws a StateError
+    // the agent loop converts into a graceful "cannot answer questions" /
+    // "cannot request secrets" result) — byte-identical to the
+    // pre-conversion CLI, which always registered them. Dropping them
+    // would surface a bare "Tool ask not found" instead.
+    askTool(callback: services.onAsk),
+    requestSecretTool(callback: services.onRequestSecret),
+    // Deliberate env-chain change vs the pre-conversion CLI (review,
+    // #1230): vision/transcribe/media used to ride the RAW base env and
+    // bypassed the sandbox; they now take the decorated chain
+    // (base → sandbox → session vars), so image reads, transcription
+    // input and media file writes are clamped by the active cube fs
+    // policy — closing a sandbox escape, not a regression.
+    ...?services.vision == null
+        ? null
+        : [inspectImageTool(env, services.vision!)],
+    ...?services.transcribe == null
+        ? null
+        : [transcribeAudioTool(env, services.transcribe!)],
+    ...?media == null
+        ? null
+        : [
+            generateImageTool(
+              env: env,
+              modelsConfig: media.modelsConfig,
+              mainBaseUrl: () => currentAgent()!.state.model.baseUrl,
+              mainModelId: () => currentAgent()!.state.model.id,
+              mainApiKey: media.mainApiKey,
+              resolveKey: media.resolveKey,
+            ),
+            generateVideoTool(
+              env: env,
+              modelsConfig: media.modelsConfig,
+              mainBaseUrl: () => currentAgent()!.state.model.baseUrl,
+              mainModelId: () => currentAgent()!.state.model.id,
+              mainApiKey: media.mainApiKey,
+              resolveKey: media.resolveKey,
+            ),
+          ],
+    ...?browser,
+    ...services.hostTools,
+  ];
 }
 
 /// The registry + agent a host shell drives after wiring.
@@ -455,16 +473,35 @@ WiredAgentCore wireAgentCore({
   final shellJobs = services.shellJobsFactory?.call(env);
   final configService = services.configServiceFactory?.call(env);
 
-  final core = WiredAgentCore._(
+  // backgroundShellJobs is PLAN-gated, not factory-gated (review, #1230):
+  // "off means absent from tools AND surfaced tokens" — a host that
+  // profiles the capability off but still provides a factory must not
+  // see the bash_job board.
+  final gatedShellJobs =
+      plan.planFor(HostCapability.backgroundShellJobs) is WiredCapability
+      ? shellJobs
+      : null;
+
+  // Tools first, core second: the list rides the constructor so a wired
+  // core can never exist without its tools. The agent closures read the
+  // late-bound agent through the (already-assigned by first use) core.
+  late final WiredAgentCore core;
+  final tools = _buildCoreTools(
+    plan: plan,
+    env: env,
+    networkGate: networkGate,
+    shellJobs: gatedShellJobs,
+    services: services,
+    configService: configService,
+    currentAgent: () => core._agent,
+  );
+  core = WiredAgentCore._(
     plan: plan,
     env: env,
     sandboxEnv: sandboxEnv,
     networkGate: networkGate,
-    shellJobs: shellJobs,
-  );
-  core.tools = core._buildTools(
-    services: services,
-    configService: configService,
+    shellJobs: gatedShellJobs,
+    tools: tools,
   );
   return core;
 }

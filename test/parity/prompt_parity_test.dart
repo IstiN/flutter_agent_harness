@@ -39,24 +39,35 @@ void main() {
       cliSource = await File('lib/src/cli/agent_cli.dart').readAsString();
       // Also read part files (approval, provider, etc.) since methods
       // are split across them to keep agent_cli.dart under the size gate.
-      for (final part in [
+      const partFiles = [
         'lib/src/cli/approval_commands.dart',
         'lib/src/cli/provider_commands.dart',
         'lib/src/cli/agent_commands.dart',
         'lib/src/cli/settings_flow.dart',
-        // Issue #1079 slice 2: the CLI constructs its stack through
-        // wireAgentCore — the interactive tool factories register there
-        // (host_agent_wiring.dart), not in the shell anymore. The parity
-        // guard follows the wiring, so the builder file is CLI source
-        // for this test's purpose.
-        'lib/src/hosts/host_agent_wiring.dart',
-      ]) {
+      ];
+      for (final part in partFiles) {
         try {
           cliSource += await File(part).readAsString();
         } on Object {
           // Part file may not exist in all branches.
         }
       }
+      // Issue #1079 slice 2: the CLI constructs its stack through
+      // wireAgentCore — the interactive tool factories register in the
+      // builder's tool ASSEMBLY, not in the shell anymore. Scoped to the
+      // assembly region (_buildCoreTools onward): as the other six
+      // profiles land in this file, a factory wired for a NON-CLI
+      // profile must not satisfy the CLI guard.
+      const wiringPath = 'lib/src/hosts/host_agent_wiring.dart';
+      final wiringSource = await File(wiringPath).readAsString();
+      final assemblyStart = wiringSource.indexOf(
+        'List<AgentTool> _buildCoreTools(',
+      );
+      assert(
+        assemblyStart >= 0,
+        '$wiringPath: tool assembly moved — update the parity slice',
+      );
+      cliSource += wiringSource.substring(assemblyStart);
       appSource = await File(
         'flutter_app/lib/services/agent_service.dart',
       ).readAsString();

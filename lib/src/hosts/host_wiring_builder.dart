@@ -201,6 +201,9 @@ hostCapabilityCatalog = Map.unmodifiable({
       'bin/fah.dart (jobs)',
       'lib/src/cli/agent_cli.dart (ShellJobRegistry)',
     ],
+    // Review #1230: with no required services the capability could never
+    // be run-narrowed off — a host without a job factory kept it "wired".
+    requiredServices: {'shellJobFactory'},
     surface: CapabilitySurface(tokens: {'bash_job'}),
   ),
   HostCapability.sqliteLspDap: CapabilitySpec(
