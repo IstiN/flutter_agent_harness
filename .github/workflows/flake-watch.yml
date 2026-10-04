@@ -26,7 +26,7 @@ jobs:
       issues: write # flake tracker issues
       pull-requests: write # quarantine PRs
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410b181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # quarantine PR branches from origin/main
 
