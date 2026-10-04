@@ -9,22 +9,28 @@ part of 'agent_cli.dart';
 
 /// Usage-ledger (gh-1241) members of [AgentCli].
 extension AgentCliUsageLedger on AgentCli {
-  /// Appends the segment-start marker: EVERY owner boot — fresh session,
-  /// `--continue`/`--session` resume, headless run, mid-REPL `/sessions`
-  /// switch — opens a new usage segment (I1: the fold derives segment
-  /// boundaries and `resumedCount` from these markers). Runs only after the
-  /// ownership lease is claimed; a VIEWER must never append to the owner's
-  /// chain. Failures are swallowed — the ledger is a best-effort artifact,
-  /// never a boot blocker.
+  /// Appends the segment-start marker: ONE per owner process per session
+  /// (I1: the fold derives segment boundaries and `resumedCount` from
+  /// these markers). The REPL marks lazily at the first drive
+  /// ([_runPrompt]) so an idle boot/switch adds zero session bytes
+  /// (issue #428 invariant); the headless/serve boots mark eagerly right
+  /// after the lease gate (they always drive). A VIEWER must never append
+  /// to the owner's chain. Failures are swallowed — the ledger is a
+  /// best-effort artifact, never a boot blocker.
   Future<void> _markUsageSegmentStart() async {
     if (_viewer != null) return;
     final session = _session;
     if (session == null) return;
+    // Per-session idempotency: identical() holds across turns of one
+    // process; a `/sessions` switch installs a fresh instance, so the new
+    // session re-marks on its first drive.
+    if (identical(_usageSegmentMarkedFor, session)) return;
     try {
       await session.appendCustomEntry(
         customType: usageSegmentStartCustomType,
         data: {'at': DateTime.now().toIso8601String()},
       );
+      _usageSegmentMarkedFor = session;
     } on Object catch (error) {
       _logDiagnostic('usage ledger segment marker failed: $error');
     }

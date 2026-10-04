@@ -69,8 +69,12 @@ extension on AgentCli {
       return;
     }
     // gh-1241: close the outgoing session's usage segment before the
-    // switch (after the empty-cleanup: a deleted session folds nothing).
-    await deleteSessionIfEmpty();
+    // switch. NO deleteSessionIfEmpty() here: the switch's own cleanup ran
+    // at the top of _switchSession (BEFORE _subagentManager.reset()) —
+    // this create path runs AFTER the reset, when the registry handles are
+    // already gone, so a session holding only a persisted subagent_registry
+    // record would wrongly count as "empty" and be trashed (#332 data
+    // loss). The fresh session's marker lands lazily at its first drive.
     await _flushUsageLedger();
     _agent.reset();
     _checkpoints.clear();
@@ -82,8 +86,6 @@ extension on AgentCli {
     await _releaseSessionLease();
     await _claimSessionLease();
     await _printViewerBannerIfAny();
-    // gh-1241: the fresh session's first usage segment.
-    // await _markUsageSegmentStart(); // TEMP-DEBUG
     _persistedCount = 0;
     io.writeln("created session '$trimmed'");
   }
@@ -125,7 +127,7 @@ extension on AgentCli {
     await _printViewerBannerIfAny();
     // gh-1241: a session switch is a resume — the owner opens a new usage
     // segment (viewer never appends).
-    // await _markUsageSegmentStart(); // TEMP-DEBUG
+    await _markUsageSegmentStart();
     // Now that `_session` is assigned, the registry source can read the
     // resumed session's `subagent_registry` records. Awaited (issue #332):
     // zombie rows settle before the next prompt can spawn children, and no
@@ -254,7 +256,7 @@ extension on AgentCli {
     await _claimSessionLease();
     await _printViewerBannerIfAny();
     // gh-1241: the fresh session's first usage segment.
-    // await _markUsageSegmentStart(); // TEMP-DEBUG
+    await _markUsageSegmentStart();
     _persistedCount = 0;
     io.writeln("created session '$trimmed'");
   }

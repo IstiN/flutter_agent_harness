@@ -1306,6 +1306,16 @@ class AgentCli {
   var _persistedCount = 0;
   var _streamedText = false;
 
+  /// The session instance the gh-1241 usage segment-start marker was
+  /// appended for in THIS process (null = not yet marked). Lazily set at
+  /// first drive (see [_runPrompt]) or eagerly by the headless/serve boot:
+  /// an idle owner boot must add zero session bytes (issue #428's
+  /// "no idle session bytes" invariant), and a `/sessions` switch must not
+  /// mark the new session until it is actually driven. Identity-keyed: a
+  /// switch replaces `_session` with a fresh instance, so the next drive
+  /// re-marks.
+  Session? _usageSegmentMarkedFor;
+
   /// Whether the current assistant message already printed its `fa> ` prefix
   /// and whether any thinking deltas were streamed (TUI-only progress for
   /// reasoning models).
@@ -1509,9 +1519,9 @@ class AgentCli {
     // Ownership lease (#428): claim before anything can drive — a live
     // lease flips this boot into viewer mode (no takeover exists).
     await _claimSessionLease();
-    // gh-1241: the owner opens a usage segment (viewer never appends);
-    // after the lease gate so the marker lands on the owner's chain only.
-    // await _markUsageSegmentStart(); // TEMP-DEBUG
+    // gh-1241: NO segment marker here — an idle owner boot must add zero
+    // session bytes (issue #428 invariant); the marker lands lazily at the
+    // first drive ([_runPrompt]) instead.
     // Sleep prevention (#325/#326): only the EXPLICIT session hold
     // acquires here — the default per-run hold acquires at every run
     // start instead, so an idle agent never pins the machine awake.
@@ -1704,7 +1714,7 @@ class AgentCli {
       return 3;
     }
     // gh-1241: the owner opens a usage segment (viewer never appends).
-    // await _markUsageSegmentStart(); // TEMP-DEBUG
+    await _markUsageSegmentStart();
     // HEP (issue #155) + stream-json (issue #695) headers: the FIRST
     // stdout line of each structured mode, written the moment the
     // session id exists — before any event can race them.
