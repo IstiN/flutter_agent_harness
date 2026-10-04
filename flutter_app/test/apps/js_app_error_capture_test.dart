@@ -23,10 +23,13 @@ JsAppInfo _app() => JsAppInfo.fromManifest(
 );
 
 void main() {
-  testWidgets(
-    'a load-time throw is captured through jsr.showError',
-    skip: _engineSkip,
-    (tester) async {
+  // The group carries the skip: testWidgets' skip is bool-only, while the
+  // guard's reason is a string (issue #184) — same convention as the
+  // js_app_view suite.
+  group('engine error capture', skip: _engineSkip, () {
+    testWidgets('a load-time throw is captured through jsr.showError', (
+      tester,
+    ) async {
       final captured = <JsAppErrorEvent>[];
       await tester.runAsync(() async {
         final env = MemoryExecutionEnv();
@@ -58,19 +61,17 @@ void main() {
         contains('load blew up'),
         reason: 'captured: ${captured.first.message}',
       );
-    },
-  );
+    });
 
-  testWidgets(
-    'per-frame callback errors are captured with the callback kind',
-    skip: _engineSkip,
-    (tester) async {
-      final captured = <JsAppErrorEvent>[];
-      await tester.runAsync(() async {
-        final env = MemoryExecutionEnv();
-        await env.writeFile(
-          'apps/demo/widget.js',
-          '''
+    testWidgets(
+      'per-frame callback errors are captured with the callback kind',
+      (tester) async {
+        final captured = <JsAppErrorEvent>[];
+        await tester.runAsync(() async {
+          final env = MemoryExecutionEnv();
+          await env.writeFile(
+            'apps/demo/widget.js',
+            '''
 (function() {
   jsr.render({type: 'text', data: 'hi'});
   var n = 0;
@@ -80,61 +81,61 @@ void main() {
   }, 30);
 })();
 ''',
+          );
+          final engine = JsAppEngine(
+            app: _app(),
+            env: env,
+            permissions: const AppPermissions(),
+            errorSink: captured.add,
+          );
+          await engine.start();
+          for (var i = 0; i < 40 && captured.isEmpty; i++) {
+            await Future<void>.delayed(const Duration(milliseconds: 150));
+          }
+          await engine.dispose();
+        });
+        expect(captured, isNotEmpty, reason: 'frame errors must be captured');
+        expect(
+          captured.first.kind,
+          JsAppErrorKind.callback,
+          reason: 'captured kinds: ${captured.map((e) => e.kind.name)}',
         );
-        final engine = JsAppEngine(
-          app: _app(),
-          env: env,
-          permissions: const AppPermissions(),
-          errorSink: captured.add,
-        );
-        await engine.start();
-        for (var i = 0; i < 40 && captured.isEmpty; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 150));
-        }
-        await engine.dispose();
-      });
-      expect(captured, isNotEmpty, reason: 'frame errors must be captured');
-      expect(
-        captured.first.kind,
-        JsAppErrorKind.callback,
-        reason: 'captured kinds: ${captured.map((e) => e.kind.name)}',
-      );
-    },
-  );
+      },
+    );
 
-  testWidgets(
-    'sourceRevision re-arms when the app source changes (AC4)',
-    skip: _engineSkip,
-    (tester) async {
-      await tester.runAsync(() async {
-        final env = MemoryExecutionEnv();
-        await env.writeFile(
-          'apps/demo/widget.js',
-          '(function(){jsr.render({type:"text",data:"v1"});})();',
-        );
-        final engine = JsAppEngine(
-          app: _app(),
-          env: env,
-          permissions: const AppPermissions(),
-        );
-        await engine.start();
-        final first = engine.sourceRevision;
-        expect(first, isNotEmpty);
-        await engine.dispose();
+    testWidgets(
+      'sourceRevision re-arms when the app source changes (AC4)',
+      (tester) async {
+        await tester.runAsync(() async {
+          final env = MemoryExecutionEnv();
+          await env.writeFile(
+            'apps/demo/widget.js',
+            '(function(){jsr.render({type:"text",data:"v1"});})();',
+          );
+          final engine = JsAppEngine(
+            app: _app(),
+            env: env,
+            permissions: const AppPermissions(),
+          );
+          await engine.start();
+          final first = engine.sourceRevision;
+          expect(first, isNotEmpty);
+          await engine.dispose();
 
-        await env.writeFile(
-          'apps/demo/widget.js',
-          '(function(){jsr.render({type:"text",data:"v2"});})();',
-        );
-        final second = JsAppEngine(
-          app: _app(),
-          env: env,
-          permissions: const AppPermissions(),
-        );
-        await second.start();
-        expect(second.sourceRevision, isNot(first));
-        await second.dispose();
-      });
-    },
-  );
+          await env.writeFile(
+            'apps/demo/widget.js',
+            '(function(){jsr.render({type:"text",data:"v2"});})();',
+          );
+          final second = JsAppEngine(
+            app: _app(),
+            env: env,
+            permissions: const AppPermissions(),
+          );
+          await second.start();
+          expect(second.sourceRevision, isNot(first));
+          await second.dispose();
+        });
+      },
+    );
+  });
 }

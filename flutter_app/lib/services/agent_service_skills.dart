@@ -35,17 +35,45 @@ const _staleSeedFingerprints = <String, String>{
       '427d831fa7c41b44a225f216a6e1961bf54b2821a538971e972dcee2c9383f72',
   'fa-self-config':
       '88c3301a46f5298255dc3f0e3f2b65bca3c5c97ade17e616ce5ad257c28f8dea',
-  // gh-1164 Part A: js-apps promoted to a package builtin (source of truth
-  // `prompts/skills/js-apps/SKILL.md`). The seeder used to write the
-  // asset bytes verbatim (filterPlatformInstructions passes platforms:
-  // all sources through unchanged), so seeded copies are removed only
-  // when byte-identical to the LAST bundled asset (git parent of the
-  // promotion) — a user-customized copy keeps shadowing the builtin.
-  'js-apps':
-      '8e5cbeb3a8ba1fc4bd7d520a47fdda9d55267f5c4ed75a0455c64ed5ed8d8bcd',
+};
+
+/// gh-1164 Part A: js-apps promoted to a package builtin (source of truth
+/// `prompts/skills/js-apps/SKILL.md`), retiring its bundled seed. Unlike
+/// the skills above, the old seeder wrote
+/// `filterPlatformInstructions(rawAsset, platform: currentFaPlatform)` —
+/// the bytes it left on user machines VARY BY PLATFORM — so the cleanup
+/// pins every historical per-platform variant and removes a copy when it
+/// matches ANY of them. A user-customized copy keeps shadowing the
+/// builtin. The raw pre-filter bytes are frozen at
+/// `flutter_app/test/fixtures/retired_js_apps_skill.md`, pinned by
+/// test/skills/retired_seed_frozen_test.dart.
+const _staleBundledSeedFingerprints = <String, Set<String>>{
+  'js-apps': {
+    '83e0f64009b35bc96c0674fa3ec9d39a192a2cacce1ec942b32c026ff510375b', // macos
+    '7ecb248a65728393d362a8a092f2d5a19d16e623b16d1776bab7ac339178a8b6', // ios
+    '7ba90952131e1204e5240ca6e2e1c669fd55293b8e2b5cc69a19dadd1936dbce', // android
+    '76cd5171a6e04ad52e2f772378a93a11e12b83b773bdde3685a3d1149e219c58', // windows
+    '9336adfa3be78e0b890c520762aafe76c92ccf4913fc833e9c82f742b4a8e8de', // linux
+    'c73012910a772db79dc19c7e2ad75b285cea24a25aecd77d1ca68d2dfa6f26ed', // web
+  },
+};
 };
 
 Future<void> _seedBundledSkills(ExecutionEnv env) async {
+  for (final entry in _staleBundledSeedFingerprints.entries) {
+    try {
+      final body = (await env.readTextFile(
+        '${env.cwd}/.fah/skills/${entry.key}/SKILL.md',
+      )).valueOrNull;
+      if (body == null) continue;
+      if (!entry.value.contains(sha256.convert(utf8.encode(body)).toString())) {
+        continue;
+      }
+      await env.remove('${env.cwd}/.fah/skills/${entry.key}/SKILL.md');
+    } on Object {
+      // best-effort cleanup
+    }
+  }
   for (final entry in _staleSeedFingerprints.entries) {
     try {
       final body = (await env.readTextFile(

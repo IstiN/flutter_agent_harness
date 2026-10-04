@@ -38,6 +38,54 @@ final _fingerprintEntries = RegExp(
   r"'([a-z0-9-]+)':\s*'([0-9a-f]{64})',",
 ).allMatches(_fingerprintMap ?? '');
 
+/// gh-1164 Part A: the js-apps retirement pins EVERY historical
+/// per-platform variant of the bundled seed (the old seeder wrote
+/// `filterPlatformInstructions(rawAsset, platform: P)`), recomputed from
+/// the frozen raw bytes.
+final _bundledMap = RegExp(
+  r'const _staleBundledSeedFingerprints = <String, Set<String>>\{([\s\S]*?)\};',
+).firstMatch(_appSource)?.group(1);
+
+final _bundledEntries = RegExp(
+  r"'([a-z0-9-]+)':\s*\{([\s\S]*?)\}",
+).allMatches(_bundledMap ?? '');
+
+/// Dart port of `filterPlatformInstructions` (flutter_app apps_store.dart)
+/// — the root package cannot import the app, and the guard must recompute
+/// the exact bytes the old seeder wrote per platform.
+String _filterPlatformInstructions(String source, String platform) {
+  final block = RegExp(
+    'r<!-- fa-platforms:\\s*([^>]+?)\\s*-->(.*?)<!-- /fa-platforms -->'
+        .replaceFirst('r', ''),
+    dotAll: true,
+  );
+  var filtered = source.replaceAllMapped(block, (match) {
+    return _platformList(match.group(1)).contains(platform)
+        ? match.group(2)!
+        : '';
+  });
+  final taggedLine = RegExp(
+    '^.*<!-- fa-platforms:\\s*([^>]+?)\\s*-->.*\$',
+    multiLine: true,
+  );
+  filtered = filtered.replaceAllMapped(taggedLine, (match) {
+    if (!_platformList(match.group(1)).contains(platform)) return '';
+    return match
+        .group(0)!
+        .replaceFirst(RegExp('\\s*<!-- fa-platforms:\\s*[^>]+?\\s*-->'), '');
+  });
+  return filtered.replaceAll('{{FA_PLATFORM}}', platform);
+}
+
+Set<String> _platformList(Object? value) => {
+  for (final item in switch (value) {
+    List<Object?> values => values,
+    String text => text.split(','),
+    _ => const <Object?>[],
+  })
+    if (item.toString().trim().isNotEmpty) item.toString().trim().toLowerCase(),
+};
+
 void main() {
   test(
     'every retired-seed fingerprint matches the repo copy byte-for-byte',
