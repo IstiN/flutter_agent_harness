@@ -813,12 +813,26 @@ class _JsAppViewState extends State<JsAppView> {
             unawaited(engine.callEvent(actionId, payload));
           },
         );
+        // gh-1164 Part B: a host-side render/build failure is reported to
+        // the authoring agent through the same gate as JS-side errors —
+        // the framework still renders its own error UI for the user.
+        Widget rendered;
+        try {
+          rendered = renderer.build(tree, context);
+        } on Object catch (error, stackTrace) {
+          engine.reportHostError(
+            'render: $error',
+            kind: 'render',
+            stack: '$stackTrace',
+          );
+          rethrow;
+        }
         return ViewportReporter(
           onSize: (size) => engine.dispatchHostEvent('viewport', {
             'width': size.width,
             'height': size.height,
           }),
-          child: ClipRect(child: renderer.build(tree, context)),
+          child: ClipRect(child: rendered),
         );
       },
     );

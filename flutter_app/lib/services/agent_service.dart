@@ -709,6 +709,12 @@ class AgentService extends ChangeNotifier
     _taskCompletionsSub = taskJobManager.completions.listen(
       _onTaskJobCompleted,
     );
+    // gh-1164 Part B: JS app render/runtime/load errors ride the shared
+    // error channel — a gated notice re-enters the conversation the same
+    // way (steered mid-run, a fresh system-notice turn while idle).
+    _jsAppErrorSub = JsAppErrorChannel.instance.onDeliver.listen(
+      _onJsAppError,
+    );
     // Interactive dynamic messages (issue #102): the host machinery behind
     // the `dynamic_message` tool — session-scoped JS widgets rendered
     // inline in the transcript with the full installed-app engine surface.

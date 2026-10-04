@@ -21,8 +21,29 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+
+/// Parses one raw engine-log line into a [JsAppErrorEvent] when it is a
+/// structured `faAppError:{json}` record (the marker the bootstrap emits);
+/// returns null for every other line. Exported for the engine's log tap
+/// and for tests.
+JsAppErrorEvent? parseJsAppErrorLogLine(String line) {
+  const marker = 'faAppError:';
+  final index = line.indexOf(marker);
+  if (index < 0) return null;
+  final payload = line.substring(index + marker.length).trim();
+  try {
+    final decoded = jsonDecode(payload);
+    if (decoded is Map<String, dynamic>) {
+      return JsAppErrorEvent.fromLogJson(decoded);
+    }
+  } on Object {
+    // Not our record — a stray console line mentioning the marker.
+  }
+  return null;
+}
 
 /// One dedup-gate decision: whether a report is new enough to deliver,
 /// and the bounded notice text when it is.
