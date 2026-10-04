@@ -217,24 +217,48 @@ jobs:
           for t in $SHARD_TASKS; do args+=(-t "$t"); done
           # Issue #1122 knobs: absent inputs leave both env vars unset — the
           # adapter then delegates to the stock flat-cap behavior (REG-1).
-          if [ -n "$AGENT_TIMEOUT" ]; then
-            case "$AGENT_TIMEOUT" in *[!0-9]*)
-              echo '::error::agent-timeout must be integer seconds'; exit 1;; esac
-            export FA_AGENT_TIMEOUT_SEC="$AGENT_TIMEOUT"
-            # Force base-10: $((...)) reads leading zeros as octal, so an
-            # input like '010' would silently mean 8.
-            AGENT_TIMEOUT=$((10#$AGENT_TIMEOUT))
-            # Outer harness cap above the ladder ceiling (4x base + slack) so
-            # the progress ladder decides, never the flat harness wait_for.
-            args+=(--global-agent-timeout-sec "$((AGENT_TIMEOUT * 4 + 180))")
-          fi
+          # gh-1209: while a ladder is active, the outer harness cap MUST sit
+          # above the ladder ceiling. On its own flat wait_for timeout tb
+          # fabricates a zero-token AGENT_TIMEOUT result and discards the
+          # adapter's usage-folded one — only a ladder-decided kill returns
+          # the real token/cost numbers into results.json.
           case "$PROGRESS_EXTENSION" in
             ''|0|1|true|TRUE|True|yes|on|false|FALSE|False|no|off) ;;
             *) echo "::error::progress-extension must be boolean (true/false), got '$PROGRESS_EXTENSION'"; exit 1 ;;
           esac
           case "$PROGRESS_EXTENSION" in
-            1|true|TRUE|True|yes|on) export FA_PROGRESS_EXTENSION=1;;
+            1|true|TRUE|True|yes|on) PROGRESS_EXTENSION_ON=1;;
+            *) PROGRESS_EXTENSION_ON=;;
           esac
+          ladder_base=''
+          if [ -n "$AGENT_TIMEOUT" ]; then
+            # gh-1209 review: 0 passes the digit check but
+            # TimeoutKnobs.from_env → _number then raises ValueError inside
+            # EVERY trial's perform_task — reject it here so a bad input
+            # costs one step, not a whole multi-hour shard.
+            case "$AGENT_TIMEOUT" in
+              0) echo '::error::agent-timeout must be a positive integer number of seconds'; exit 1;;
+              *[!0-9]*) echo '::error::agent-timeout must be integer seconds'; exit 1;;
+            esac
+            # Force base-10: $((...)) reads leading zeros as octal, so an
+            # input like '010' would silently mean 8.
+            ladder_base=$((10#$AGENT_TIMEOUT))
+            export FA_AGENT_TIMEOUT_SEC="$AGENT_TIMEOUT"
+          elif [ -n "$PROGRESS_EXTENSION_ON" ]; then
+            # Extension on with no explicit base runs the ladder at its
+            # 360s default (fa_agent_timeout._BASE_DEFAULT) — pin the base
+            # explicitly so the cap below and the ladder agree on one number.
+            ladder_base=360
+            export FA_AGENT_TIMEOUT_SEC="$ladder_base"
+          fi
+          if [ -n "$ladder_base" ]; then
+            # Outer harness cap above the ladder ceiling (4x base + slack) so
+            # the progress ladder decides, never the flat harness wait_for.
+            args+=(--global-agent-timeout-sec "$((ladder_base * 4 + 180))")
+          fi
+          if [ -n "$PROGRESS_EXTENSION_ON" ]; then
+            export FA_PROGRESS_EXTENSION=1
+          fi
           # Pinned --run-id: one tb-runs/shard-N/ dir per shard, so the merge
           # job's downloads cannot collide on tb's timestamped default.
           tb run -d "$DATASET" --agent-import-path fa_agent:FaAgent \
