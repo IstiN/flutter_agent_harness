@@ -116,5 +116,6 @@ One schema, embedded-first: the in-process Dart adapter
 (`toWire()`/`fromWire()`) is the default when the host IS Dart/Flutter.
 Native hosts embed the fa engine in-app (zero WebView, zero remote — owner
 ruling 2026-09-30). The DAP hub is out of scope and frozen; `fa wire-serve`
-is a separate card (#1103). Reference clients per platform land in `sdk/`
-(slices 2–3 of #1101).
+is a separate card (#1103). Reference clients per platform land in `sdk/` —
+`sdk/web` (TypeScript) ships with this protocol; iOS/Android/macOS/RN follow
+(slices 3+ of #1101).
