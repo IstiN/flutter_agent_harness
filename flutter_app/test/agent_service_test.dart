@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show MethodChannel;
@@ -6,6 +7,7 @@ import 'package:fa/prompts.g.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/app_log.dart';
+import 'package:fa/services/project_mount_env.dart' show SessionCwd;
 import 'package:fa/sandbox/memory_shell.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -1463,6 +1465,403 @@ void main() {
         expect(seen, contains('wake up, app'));
       },
     );
+
+    test('gh-1180 review T3: a refused wake on the app host is receipted '
+        '(wake_attempted + wake_refused, once per episode) — not a silent, '
+        'unreceipted drop', () async {
+      AgentService.enableInboxWatcher = true;
+      addTearDown(() => AgentService.enableInboxWatcher = false);
+      final env = MemoryExecutionEnv(cwd: '/');
+      AssistantMessageEventStream recording(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        final stream = AssistantMessageEventStream();
+        final message = AssistantMessage(
+          content: [TextContent(text: 'ok')],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.now(),
+        );
+        stream.push(DoneEvent(reason: StopReason.stop, message: message));
+        stream.end();
+        return stream;
+      }
+
+      final service = await AgentService.create(
+        config: AgentConfig(
+          providerKind: 'openai-completions',
+          modelId: 'test-model',
+          baseUrl: 'https://example.test',
+          apiKey: '[REDACTED:Sensitive Value]',
+        ),
+        env: env,
+        streamFunction: recording,
+        sessionsRoot: '/sessions',
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+      final manager = service.subagentManager!;
+      // The cap is burned: foreign chatter must refuse.
+      service.inboxWakeStreakForTest = 10;
+      final receiptsPath =
+          '/sessions/${encodeSessionCwd(env.sessionCwd)}'
+          '/messages/_scheduled/receipts.jsonl';
+      Future<List<Map<String, dynamic>>> receipts() async {
+        final text = (await env.readTextFile(receiptsPath)).valueOrNull;
+        if (text == null || text.isEmpty) return const [];
+        return [
+          for (final line in text.trim().split('\n'))
+            jsonDecode(line) as Map<String, dynamic>,
+        ];
+      }
+
+      await manager.enqueueMessage(
+        'main',
+        SubagentMessage(
+          fromId: 'peer-session/main',
+          text: 'capped chatter ping',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      // The watcher ticks every 3 s; wait for the first refusal.
+      for (var i = 0; i < 1500; i++) {
+        final trail = await receipts();
+        if (trail.any((event) => event['event'] == 'wake_refused')) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      var trail = await receipts();
+      expect(
+        trail.where((event) => event['event'] == 'wake_refused'),
+        hasLength(1),
+        reason: 'the refusal is receipted on the app host too (AC4)',
+      );
+      expect(
+        trail.where((event) => event['event'] == 'wake_attempted'),
+        hasLength(1),
+      );
+      expect(
+        service.error,
+        isNull,
+        reason:
+            'a held gate is not a run '
+            'failure — it must not raise the error banner',
+      );
+      // The gate holds across further ticks: still one receipt per
+      // episode, not one per tick.
+      await Future<void>.delayed(const Duration(seconds: 4));
+      trail = await receipts();
+      expect(
+        trail.where((event) => event['event'] == 'wake_refused'),
+        hasLength(1),
+        reason: 'one receipt per refusal episode',
+      );
+      expect(
+        trail.where((event) => event['event'] == 'wake_attempted'),
+        hasLength(1),
+      );
+    });
+
+    test('gh-1180 review T3: an allowed wake on the app host receipts '
+        'turn_started on the same trail', () async {
+      AgentService.enableInboxWatcher = true;
+      addTearDown(() => AgentService.enableInboxWatcher = false);
+      final env = MemoryExecutionEnv(cwd: '/');
+      final contexts = <Context>[];
+      AssistantMessageEventStream recording(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        contexts.add(context);
+        final stream = AssistantMessageEventStream();
+        final message = AssistantMessage(
+          content: [TextContent(text: 'ok')],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.now(),
+        );
+        stream.push(DoneEvent(reason: StopReason.stop, message: message));
+        stream.end();
+        return stream;
+      }
+
+      final service = await AgentService.create(
+        config: AgentConfig(
+          providerKind: 'openai-completions',
+          modelId: 'test-model',
+          baseUrl: 'https://example.test',
+          apiKey: '[REDACTED:Sensitive Value]',
+        ),
+        env: env,
+        streamFunction: recording,
+        sessionsRoot: '/sessions',
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+      final manager = service.subagentManager!;
+      final receiptsPath =
+          '/sessions/${encodeSessionCwd(env.sessionCwd)}'
+          '/messages/_scheduled/receipts.jsonl';
+      Future<List<Map<String, dynamic>>> receipts() async {
+        final text = (await env.readTextFile(receiptsPath)).valueOrNull;
+        if (text == null || text.isEmpty) return const [];
+        return [
+          for (final line in text.trim().split('\n'))
+            jsonDecode(line) as Map<String, dynamic>,
+        ];
+      }
+
+      await manager.enqueueMessage(
+        'main',
+        SubagentMessage(
+          fromId: 'a1',
+          text: 'wake up, app (receipted)',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      for (var i = 0; i < 1500; i++) {
+        if (contexts.isNotEmpty) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(contexts, isNotEmpty);
+      final trail = await receipts();
+      expect(
+        trail.where((event) => event['event'] == 'turn_started'),
+        hasLength(1),
+      );
+      expect(
+        trail.where((event) => event['event'] == 'wake_attempted'),
+        hasLength(1),
+      );
+    });
+
+    test('gh-1180 review T8: user-kind mail drained on the app host ends '
+        'the refusal episode — a SECOND refusal episode after user input '
+        'is announced and receipted again (CLI parity)', () async {
+      AgentService.enableInboxWatcher = true;
+      addTearDown(() => AgentService.enableInboxWatcher = false);
+      final env = MemoryExecutionEnv(cwd: '/');
+      AssistantMessageEventStream recording(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        final stream = AssistantMessageEventStream();
+        final message = AssistantMessage(
+          content: [TextContent(text: 'ok')],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.now(),
+        );
+        stream.push(DoneEvent(reason: StopReason.stop, message: message));
+        stream.end();
+        return stream;
+      }
+
+      final service = await AgentService.create(
+        config: AgentConfig(
+          providerKind: 'openai-completions',
+          modelId: 'test-model',
+          baseUrl: 'https://example.test',
+          apiKey: '[REDACTED:Sensitive Value]',
+        ),
+        env: env,
+        streamFunction: recording,
+        sessionsRoot: '/sessions',
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+      final manager = service.subagentManager!;
+      final receiptsPath =
+          '/sessions/${encodeSessionCwd(env.sessionCwd)}'
+          '/messages/_scheduled/receipts.jsonl';
+      Future<List<Map<String, dynamic>>> receipts() async {
+        final text = (await env.readTextFile(receiptsPath)).valueOrNull;
+        if (text == null || text.isEmpty) return const [];
+        return [
+          for (final line in text.trim().split('\n'))
+            jsonDecode(line) as Map<String, dynamic>,
+        ];
+      }
+
+      // Episode #1: capped foreign chatter refuses (receipted, once).
+      service.inboxWakeStreakForTest = 10;
+      await manager.enqueueMessage(
+        'main',
+        SubagentMessage(
+          fromId: 'peer-session/main',
+          text: 'capped chatter ping 1',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      for (var i = 0; i < 1500; i++) {
+        final trail = await receipts();
+        if (trail.any((event) => event['event'] == 'wake_refused')) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(
+        (await receipts()).where((event) => event['event'] == 'wake_refused'),
+        hasLength(1),
+      );
+
+      // User-kind mail (an attached client handing over user input) wakes
+      // the idle agent and is drained by _mainInboxMessages: THAT drain
+      // is the user talking — it must end the refusal episode exactly
+      // like the CLI's drain (sendText's own reset is a no-op while the
+      // wake flag is held).
+      await manager.enqueueMessage(
+        'main',
+        SubagentMessage(
+          fromId: 'attached-client',
+          text: 'hello, are you there?',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+          isUserInput: true,
+        ),
+      );
+      for (var i = 0; i < 1500; i++) {
+        if (service.inboxWakeStreakForTest == 0) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(
+        service.inboxWakeStreakForTest,
+        0,
+        reason: 'the user-kind drain resets the streak (CLI parity)',
+      );
+
+      // Episode #2: burn the freshly reset cap again — the repeat refusal
+      // must be receipted, not swallowed by the stale episode latch.
+      service.inboxWakeStreakForTest = 10;
+      await manager.enqueueMessage(
+        'main',
+        SubagentMessage(
+          fromId: 'peer-session/main',
+          text: 'capped chatter ping 2',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      for (var i = 0; i < 1500; i++) {
+        final trail = await receipts();
+        if (trail.where((event) => event['event'] == 'wake_refused').length >=
+            2) {
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(
+        (await receipts()).where((event) => event['event'] == 'wake_refused'),
+        hasLength(2),
+        reason:
+            'the second refusal episode is receipted too — never silent '
+            'AND unreceipted (AC4)',
+      );
+    });
+
+    test('gh-1180 review T10: an allowed wake whose turn FAILS still '
+        'leaves wake_attempted + turn_started in the trail — the app '
+        'host appends turn_started BEFORE starting the turn (CLI parity), '
+        'so a throwing turn never ends the trail at wake_attempted with '
+        'neither turn_started nor wake_refused', () async {
+      AgentService.enableInboxWatcher = true;
+      addTearDown(() => AgentService.enableInboxWatcher = false);
+      final env = MemoryExecutionEnv(cwd: '/');
+      // The turn fails at the provider layer: the stream errors out
+      // (providers-never-throw: the failure arrives as an ErrorEvent).
+      AssistantMessageEventStream failing(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        final stream = AssistantMessageEventStream();
+        stream.push(
+          ErrorEvent(
+            reason: StopReason.error,
+            error: AssistantMessage(
+              content: const [TextContent(text: '')],
+              api: model.api,
+              provider: model.provider,
+              model: model.id,
+              usage: Usage.zero,
+              stopReason: StopReason.error,
+              timestamp: DateTime.now(),
+              errorMessage: 'provider exploded',
+            ),
+          ),
+        );
+        stream.end();
+        return stream;
+      }
+
+      final service = await AgentService.create(
+        config: AgentConfig(
+          providerKind: 'openai-completions',
+          modelId: 'test-model',
+          baseUrl: 'https://example.test',
+          apiKey: '[REDACTED:Sensitive Value]',
+        ),
+        env: env,
+        streamFunction: failing,
+        sessionsRoot: '/sessions',
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+      final manager = service.subagentManager!;
+      final receiptsPath =
+          '/sessions/${encodeSessionCwd(env.sessionCwd)}'
+          '/messages/_scheduled/receipts.jsonl';
+      Future<List<Map<String, dynamic>>> receipts() async {
+        final text = (await env.readTextFile(receiptsPath)).valueOrNull;
+        if (text == null || text.isEmpty) return const [];
+        return [
+          for (final line in text.trim().split('\n'))
+            jsonDecode(line) as Map<String, dynamic>,
+        ];
+      }
+
+      await manager.enqueueMessage(
+        'main',
+        SubagentMessage(
+          fromId: 'a1',
+          text: 'wake up and fail',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      // Wait for the wake receipts to land.
+      for (var i = 0; i < 1500; i++) {
+        final trail = await receipts();
+        if (trail.any((event) => event['event'] == 'turn_started')) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      final trail = await receipts();
+      expect(
+        trail.where((event) => event['event'] == 'wake_attempted'),
+        hasLength(1),
+        reason: 'the wake itself was attempted',
+      );
+      expect(
+        trail.where((event) => event['event'] == 'turn_started'),
+        hasLength(1),
+        reason:
+            'the trail records that a turn BEGAN even when the turn then '
+            'fails — never the was-it-refused ambiguity AC4 exists to '
+            'resolve (CLI appends turn_started before starting the run)',
+      );
+      expect(
+        trail.where((event) => event['event'] == 'wake_refused'),
+        isEmpty,
+        reason: 'the wake was ALLOWED — no refusal receipt',
+      );
+    });
 
     test(
       'scheduled message survives a session recreate and lands in the live session (#59)',
