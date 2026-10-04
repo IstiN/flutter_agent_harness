@@ -200,6 +200,16 @@ extension AgentCliPickers on AgentCli {
   }
 
   void _openApprovalPicker() {
+    _tuiController?.openPicker(
+      'approval',
+      'Approval mode',
+      approvalPickerItems(),
+    );
+  }
+
+  /// The bare `/approval` picker rows: one per approval mode, the active
+  /// mode's description carrying the ` (current)` marker.
+  List<MenuItem> approvalPickerItems() {
     const descriptions = {
       'always-ask': 'prompt before every write/exec tool call',
       'write': 'auto-approve writes, prompt for exec',
@@ -207,7 +217,7 @@ extension AgentCliPickers on AgentCli {
       'autopilot':
           'auto-approve everything, never asks — for runs without a user',
     };
-    final items = [
+    return [
       for (final mode in ApprovalMode.values)
         MenuItem(
           key: mode.label,
@@ -217,6 +227,11 @@ extension AgentCliPickers on AgentCli {
               '${mode == _approval.mode ? ' (current)' : ''}',
         ),
     ];
-    _tuiController?.openPicker('approval', 'Approval mode', items);
   }
+
+  /// Test seam over [approvalPickerItems] (gh-1204): the visual leg caught a
+  /// red here; this cheap dart-test seam pins the marker contract without a
+  /// PTY.
+  @visibleForTesting
+  List<MenuItem> approvalPickerItemsForTest() => approvalPickerItems();
 }
