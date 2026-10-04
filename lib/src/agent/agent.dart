@@ -28,6 +28,7 @@ import '../model.dart';
 import '../types.dart';
 import 'agent_loop.dart';
 import 'misuse_breaker.dart';
+import 'stuck_tool.dart';
 import 'tool_registry.dart';
 
 /// Thrown (as [ArgumentError]) when neither a tool executor nor a tool
@@ -207,6 +208,7 @@ class Agent {
     this.wireDump = false,
     this.overWindowRelief,
     this.toolMisuseBreaker,
+    this.stuckTool,
   }) : toolExecutor =
            toolExecutor ?? toolRegistry?.executor ?? _missingToolExecutor(),
        _state = AgentState(
@@ -296,6 +298,12 @@ class Agent {
   /// threaded into every [AgentLoopConfig]. `null` = the guard keeps
   /// today's behavior (verbatim error, no mid-turn compaction).
   final OverWindowRelief? overWindowRelief;
+
+  /// Stuck-call supervision (gh-1054), threaded into every
+  /// [AgentLoopConfig]: liveness heartbeats for long-running tool calls
+  /// plus the autonomous cancel/retry/convert follow-up. `null` =
+  /// unsupervised.
+  final StuckToolConfig? stuckTool;
 
   /// External messages merged into the steering poll at every turn boundary
   /// (before the first turn and after each one) — e.g. the agent's inbox in
@@ -547,6 +555,7 @@ class Agent {
                 }
               }
             },
+      stuckTool: stuckTool,
       toolExecution: toolExecution,
       beforeToolCall: beforeToolCall,
       afterToolCall: afterToolCall,

@@ -2028,11 +2028,11 @@ AgentTool editFileTool(ExecutionEnv env, {HashlineSnapshotStore? snapshots}) {
           });
           return _withNotice(result, notice);
         case EditRunExactMatch(
-            :final path,
-            :final oldText,
-            :final newText,
-            :final notice,
-          ):
+          :final path,
+          :final oldText,
+          :final newText,
+          :final notice,
+        ):
           // Issue #1083: hold the lock across the read-validate-write window
           // so a concurrent same-file edit applies on top of this one's
           // result instead of both editing the same snapshot.
@@ -2061,7 +2061,10 @@ AgentTool editFileTool(ExecutionEnv env, {HashlineSnapshotStore? snapshots}) {
 ToolExecutionResult _withNotice(ToolExecutionResult result, String? notice) {
   if (notice == null) return result;
   return ToolExecutionResult(
-    content: [...result.content, TextContent(text: '\n$notice')],
+    content: [
+      ...result.content,
+      TextContent(text: '\n$notice'),
+    ],
     terminate: result.terminate,
   );
 }
@@ -2650,20 +2653,15 @@ Future<ToolExecutionResult> _awaitJobOutcome(
   ]);
 
   if (!finished) {
-    // A steering message arrived mid-run: the process keeps running as a
-    // background job; the loop delivers the message right after this
-    // result. Source-neutral wording — the steer may be the user's or a
-    // harness-originated notice (#1185), the tool result must not
-    // misattribute it.
+    final supervisorMoved = yieldToken.cancelReason is StuckCallFollowUp;
     final tail = await jobs.tail(entry.id, maxLines: 20);
     return ToolExecutionResult.text(
-      'The command is still running and was moved to background job '
-      '${entry.id} (the process was NOT killed) because a steering '
-      'message arrived, which follows next.\n'
-      'Log: ${entry.logPath}\n'
-      'You will be notified when the job finishes; check progress with '
-      'bash_job.'
-      '${tail.isEmpty ? '' : '\n\nPartial output so far:\n$tail'}',
+      stuckBackgroundHandbackText(
+        jobId: entry.id,
+        logPath: entry.logPath,
+        supervisorMoved: supervisorMoved,
+        partialOutput: tail,
+      ),
     );
   }
 
