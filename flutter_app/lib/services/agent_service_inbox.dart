@@ -103,10 +103,7 @@ extension AgentServiceInbox on AgentService {
     // misreport a healthy-but-held gate as a failed run.
     if (!decision.wake) {
       if (_inboxWakePolicy.announceRefusal()) {
-        AppLog.i(
-          'inbox',
-          'wake refused — ${decision.refusalReason}',
-        );
+        AppLog.i('inbox', 'wake refused — ${decision.refusalReason}');
         final ids = [for (final message in pending) message.id];
         await _scheduledReceipts.append('wake_attempted', {
           'lane': decision.lane.name,

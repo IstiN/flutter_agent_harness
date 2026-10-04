@@ -396,6 +396,18 @@ factual: paths, commands, invariants — no essays.
   main's — hosts re-arm on every mailbox change
   (CLI `_syncMailboxPrefix`, app `_setMailboxPrefix`) and sweep due records
   on their inbox ticks; `dispose()` cancels only the timer, the files stay.
+  gh-1180: a re-addressed SELF record also delivers FROM the live mailbox
+  (`from` rewritten alongside `to` in `_deliverDueInner`) — an adopted
+  reminder keeps the self shape (from == to) the wake policy needs to
+  classify it exempt, so a chain survives a session-id change. Every
+  lifecycle step lands in the receipt trail
+  (`<messagesRoot>/_scheduled/receipts.jsonl`, `ScheduledReceiptLog`,
+  best-effort): scheduled / delivered / delivery_failed / scan_failed
+  (queue) and wake_attempted / turn_started / wake_refused (both hosts'
+  wake paths; refusal receipts are once per refusal EPISODE — the latch
+  lives in `InboxWakePolicy` next to the streak, so a held gate cannot
+  spam the trail and a repeat episode after user input is receipted
+  again).
   Sleep resilience (issue #259): all due math rides an injectable wall
   clock (`ScheduledMessageQueue(clock:)`), long waits are split into ≤60s
   timer legs (`maxTimerLeg`) that recompute the remaining delay from the

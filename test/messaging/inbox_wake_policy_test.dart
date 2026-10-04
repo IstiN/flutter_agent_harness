@@ -217,10 +217,7 @@ void main() {
       '(review thread 4: the contract is stated, not an accident)', () {
     final policy = InboxWakePolicy();
     for (var fire = 0; fire < 10; fire++) {
-      final decision = policy.wakeDecisionFor(
-        const [],
-        pluginPending: true,
-      );
+      final decision = policy.wakeDecisionFor(const [], pluginPending: true);
       expect(decision.wake, isTrue);
       expect(decision.lane, InboxWakeLane.chatter);
       expect(decision.countsAgainstCap, isTrue);
@@ -234,10 +231,9 @@ void main() {
       'lanes own that classification (a non-empty batch is never silently '
       're-laned by the flag)', () {
     final policy = InboxWakePolicy();
-    final decision = policy.wakeDecisionFor(
-      [scheduledSelf('self-1')],
-      pluginPending: true,
-    );
+    final decision = policy.wakeDecisionFor([
+      scheduledSelf('self-1'),
+    ], pluginPending: true);
     expect(decision.lane, InboxWakeLane.scheduledSelf);
     expect(decision.countsAgainstCap, isFalse);
   });

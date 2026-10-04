@@ -17,6 +17,21 @@
   wake_attempted / turn_started / wake_refused. A failed scheduler scan
   (transient `listDir` error) now re-arms at `failureBackoff` with an
   `onError` log instead of silently disarming the delivery heartbeat.
+- fix(messaging): gh-1180 review round — refusal receipts and the
+  visible refusal line are gated once per refusal EPISODE (the latch
+  lives in `InboxWakePolicy` next to the streak and re-arms on the same
+  resets), so a held gate no longer appends per-tick `wake_attempted`
+  rows (~43k duplicate lines/day) and a repeat episode after user input
+  is announced and receipted again. The app host receipts its wake path
+  (`wake_attempted` / `turn_started` / `wake_refused`) onto the same
+  trail — AC4 is no longer CLI-only. A self-reminder adopted across a
+  session-id change delivers FROM the live mailbox (from re-addressed
+  alongside to), so the resumed chain stays self-shaped and exempt
+  instead of falling back to the capped chatter lane. Plugin-only
+  pending batches are explicitly classified as chatter (the contract is
+  stated, not accidental), the wake cap is single-sourced from
+  `InboxWakePolicy.defaultMaxInboxWakeStreak`, and the policy file lost
+  a stale copy-pasted `ignore_for_file`.
 
 ## 1.0.485
 

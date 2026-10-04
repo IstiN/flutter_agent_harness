@@ -539,57 +539,54 @@ void main() {
     },
   );
 
-  test(
-    'gh-1180 review T7: an adopted self-record re-addressed to the LIVE '
-    'mailbox delivers FROM the live mailbox too — the resumed chain stays '
-    'self-shaped (from == to) and lands in the exempt wake lane across a '
-    'session-id change',
-    () async {
-      // The restart shape from the ticket: a session re-created under a
-      // new id adopts its reminders, and _deliveryTarget rewrites `to` to
-      // the live mailbox. If `from` keeps the pinned historical address,
-      // the delivery is from=old/to=new — foreign-chatter shaped — and
-      // the resumed night-watch dies again within <=10 wakes.
-      final env = MemoryExecutionEnv(cwd: '/work');
-      const root = '/sessions/--work--/messages';
-      final repo = FileMessagingRepository(
-        env: env,
-        root: root,
-        homeDir: '/home/user',
-        decodeSessionCwd: decodeSessionCwd,
-      );
-      var self = 'sid-1/main';
-      final queue = ScheduledMessageQueue(
-        env: env,
-        repo: () => repo,
-        root: () => root,
-        selfMailbox: () => self,
-      );
-      await queue.schedule(
-        text: 'night-watch sweep',
-        delay: const Duration(milliseconds: 500),
-      );
-      queue.dispose();
-      await Future<void>.delayed(const Duration(milliseconds: 60));
-      self = 'sid-2/main';
-      final restarted = ScheduledMessageQueue(
-        env: env,
-        repo: () => repo,
-        root: () => root,
-        selfMailbox: () => self,
-      );
-      await restarted.start();
-      await Future<void>.delayed(const Duration(milliseconds: 600));
-      final delivered = (await repo.peek('sid-2/main')).single;
-      expect(delivered.fromId, 'sid-2/main', reason: 're-addressed with `to`');
-      expect(delivered.toId, 'sid-2/main');
-      expect(
-        InboxWakePolicy.isScheduledSelfMail(delivered),
-        isTrue,
-        reason: 'the resumed chain must stay in the exempt lane, not chatter',
-      );
-    },
-  );
+  test('gh-1180 review T7: an adopted self-record re-addressed to the LIVE '
+      'mailbox delivers FROM the live mailbox too — the resumed chain stays '
+      'self-shaped (from == to) and lands in the exempt wake lane across a '
+      'session-id change', () async {
+    // The restart shape from the ticket: a session re-created under a
+    // new id adopts its reminders, and _deliveryTarget rewrites `to` to
+    // the live mailbox. If `from` keeps the pinned historical address,
+    // the delivery is from=old/to=new — foreign-chatter shaped — and
+    // the resumed night-watch dies again within <=10 wakes.
+    final env = MemoryExecutionEnv(cwd: '/work');
+    const root = '/sessions/--work--/messages';
+    final repo = FileMessagingRepository(
+      env: env,
+      root: root,
+      homeDir: '/home/user',
+      decodeSessionCwd: decodeSessionCwd,
+    );
+    var self = 'sid-1/main';
+    final queue = ScheduledMessageQueue(
+      env: env,
+      repo: () => repo,
+      root: () => root,
+      selfMailbox: () => self,
+    );
+    await queue.schedule(
+      text: 'night-watch sweep',
+      delay: const Duration(milliseconds: 500),
+    );
+    queue.dispose();
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    self = 'sid-2/main';
+    final restarted = ScheduledMessageQueue(
+      env: env,
+      repo: () => repo,
+      root: () => root,
+      selfMailbox: () => self,
+    );
+    await restarted.start();
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    final delivered = (await repo.peek('sid-2/main')).single;
+    expect(delivered.fromId, 'sid-2/main', reason: 're-addressed with `to`');
+    expect(delivered.toId, 'sid-2/main');
+    expect(
+      InboxWakePolicy.isScheduledSelfMail(delivered),
+      isTrue,
+      reason: 'the resumed chain must stay in the exempt lane, not chatter',
+    );
+  });
 
   test(
     'a sweeper never steals another instance\'s due record (owner prefix)',

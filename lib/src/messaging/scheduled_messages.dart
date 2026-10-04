@@ -461,8 +461,7 @@ final class ScheduledMessageQueue {
       // change) would break the `[scheduled] ` self shape (from == to)
       // and drop the resumed chain into the capped chatter lane — the
       // silent death across restarts this ticket set out to fix.
-      final from =
-          (recordedFrom != null && recordedFrom == recordedTo)
+      final from = (recordedFrom != null && recordedFrom == recordedTo)
           ? to
           : (recordedFrom ?? recordedTo ?? _self());
       try {
