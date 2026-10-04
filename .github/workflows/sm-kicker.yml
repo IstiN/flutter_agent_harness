@@ -11,6 +11,14 @@ on:
     branches-ignore: [main]
   schedule:
     - cron: '13,43 * * * *'
+  # Event-driven wake-up (2026-10-03, parity with dmtools-dart#338):
+  # GitHub starved both crons (machine-sm */10 + kicker 13,43) for 100
+  # minutes on dmtools-dart; a green validation verdict sat unlatched the
+  # whole window. CI conclusions are the verdict moments — react to them
+  # and latching/FIFO-arming happen within seconds, cron or no cron.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
