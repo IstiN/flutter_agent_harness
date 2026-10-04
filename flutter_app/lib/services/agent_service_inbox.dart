@@ -166,9 +166,17 @@ extension AgentServiceInbox on AgentService {
     ];
   }
 
+  /// Test seam: observe/reset the inbox-wake streak without driving ten
+  /// real runs — the same seam name the CLI keeps; the streak lives in
+  /// [_inboxWakePolicy] (one source of truth).
+  @visibleForTesting
   int get inboxWakeStreakForTest => _inboxWakePolicy.streak;
 
+  @visibleForTesting
   set inboxWakeStreakForTest(int value) => _inboxWakePolicy.streak = value;
 
+  /// Test seam: the persisted receipt trail (queue-side AND wake-path
+  /// events, gh-1180 AC4).
+  @visibleForTesting
   ScheduledReceiptLog get scheduledReceiptsForTest => _scheduledReceipts;
 }
