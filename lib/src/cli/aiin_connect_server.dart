@@ -38,10 +38,11 @@ final class AiinCallback {
   bool get succeeded => code != null && code!.isNotEmpty && error == null;
 
   /// Parses a redirect URL that never reached the loopback server — the
-  /// `ASWebAuthenticationSession` scheme interception hands the callback
-  /// URL straight back to the caller (gh-1044 AC9, the CodeMie contract),
-  /// so the same `code`/`state`/`error` query the server would see arrives
-  /// as a string instead of an HTTP request.
+  /// `ASWebAuthenticationSession` scheme interception
+  /// (`callbackScheme: 'http'`, gh-1044 AC9) hands the callback URL
+  /// straight back to the caller, so the same `code`/`state`/`error`
+  /// query the server would see arrives as a string instead of an HTTP
+  /// request.
   factory AiinCallback.fromRedirectUrl(String url) {
     final query =
         Uri.tryParse(url)?.queryParameters ?? const <String, String>{};
@@ -210,10 +211,11 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
   /// Called once the callback wait settles — when the callback lands OR
   /// the timeout/cancel path gives up — before the exchange/return. The
   /// mobile auth-session sheet dismisses itself here (a stale sheet
-  /// closes too): the session does not intercept the `http://localhost`
-  /// redirect (it loads the callback server for real), so the sheet must
-  /// be closed programmatically to hand the user back to the app.
-  /// Optional — desktop callers skip it.
+  /// closes too): the session intercepts the `http://` redirect
+  /// (`callbackScheme: 'http'`, gh-1044 AC9) and hands the callback URL
+  /// back through [interceptedCallback] instead of navigating it, so
+  /// the sheet must be closed programmatically to hand the user back to
+  /// the app. Optional — desktop callers skip it.
   void Function()? onCallback,
 
   /// Treats a successful open completion before any callback as a user
@@ -229,9 +231,10 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
   /// false).
   bool cancelWhenOpenSettles = false,
 
-  /// The host the callback URL advertises (gh-1044): `localhost` for the
-  /// iOS auth-session surface — CodeMie's proven redirect shape — the
-  /// default `127.0.0.1` everywhere else.
+  /// The host the callback URL advertises: the literal `127.0.0.1` on
+  /// every surface (scheme interception ignores the host; the fallback
+  /// leg needs an address that reaches the IPv4 bind without resolver
+  /// ambiguity) — other values only for tests.
   String callbackHost = '127.0.0.1',
 
   /// The auth-session surface's completion value (gh-1044 AC9): resolves

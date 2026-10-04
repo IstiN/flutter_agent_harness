@@ -2732,18 +2732,14 @@ class AgentService extends ChangeNotifier
   int _providerAddFlowDepth = 0;
 
   /// Whether a provider add/connect flow is latched (gh-1044 I1/AC6).
-  /// Subclasses overriding [reconfigure] (the extension relay) check this
-  /// for the same restore-refusal the base implements.
+  bool get providerAddFlowInProgress => _providerAddFlowDepth > 0;
+
   /// Whether a `reconfigure` from outside an add-provider flow is
   /// currently refused (the gh-1044 I1 latch): shared by the base
-  /// [reconfigure] and subclass overrides so the refusal rule exists in
-  /// exactly one shape.
+  /// [reconfigure] and subclass overrides (the extension relay) so the
+  /// refusal rule exists in exactly one shape.
   bool reconfigureRefusedByAddFlow(bool fromProviderAddFlow) =>
       _providerAddFlowDepth > 0 && !fromProviderAddFlow;
-
-  /// Marks an add-provider flow in progress: outside `reconfigure` calls
-  /// are refused until [endProviderAddFlow].
-  bool get providerAddFlowInProgress => _providerAddFlowDepth > 0;
 
   /// Marks a provider add/connect flow start (see [reconfigure]'s
   /// `fromProviderAddFlow`).

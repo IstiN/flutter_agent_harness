@@ -1,5 +1,6 @@
 // gh-1044: the iOS AIIN add-provider flow never completes — the
-// `fah/web_auth_session` sheet was opened without the CodeMie contract.
+// `fah/web_auth_session` sheet was opened without `callbackScheme` and
+// the intercepted callback URL was discarded.
 //
 // Coverage (the ticket's AC7/AC9/AC4/AC3/AC6 recipe): VM tests drive
 // `runAiinMobileConnect` with an iOS platform override and a mocked
@@ -141,7 +142,7 @@ void main() {
     resetAiinConnectFlightForTests();
   });
 
-  testWidgets('AC9: the sheet is invoked with the CodeMie contract and the '
+  testWidgets('AC9: the sheet is invoked with callbackScheme http and the '
       'returned callback URL completes the flow without a loopback hit', (
     tester,
   ) async {
