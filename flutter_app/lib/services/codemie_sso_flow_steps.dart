@@ -306,13 +306,15 @@ Future<CodeMieSsoCredentials?> desktopCodeMieSso(
 /// `ASWebAuthenticationSession` runs the page in a Safari-grade context, so
 /// the IdP can offer WebAuthn / passkey (Face ID) sign-in.
 ///
-/// The session's scheme interception does NOT fire for `http://` URLs, so
-/// the WebView's dummy-port trick cannot work here. Instead the app runs the
-/// REAL loopback callback server (same as the desktop flow — iOS allows
-/// loopback binds) and the session's final
-/// `http://localhost:<port>/?token=...` redirect loads it for real; the
-/// session sheet is then dismissed programmatically via the channel's
-/// `cancel`.
+/// The session's redirect completes through the LOCAL SERVER, not through
+/// scheme interception: the flow passes no `callbackScheme`, and the
+/// final `http://localhost:<port>/?token=...` redirect loads the REAL
+/// loopback callback server (same as the desktop flow — iOS allows
+/// loopback binds); the session sheet is then dismissed programmatically
+/// via the channel's `cancel`. (Platform note, reconciled with the AIIN
+/// flow: `ASWebAuthenticationSession` scheme interception DOES fire for
+/// `http` today — Apple-deprecated — which is the leg the AIIN mobile
+/// flow rides; CodeMie simply does not need it.)
 ///
 /// Returns the decoded credentials, or a record with [sessionUnavailable]
 /// set when the session could not even start (the caller falls back to the
@@ -330,8 +332,8 @@ systemAuthSessionCodeMieSso(String orgUrl) async {
   }
   final ssoUrl = buildCodeMieSsoUrl(orgUrl, port);
   var sessionFailed = false;
-  // No callbackScheme: nothing to intercept — the token arrives through the
-  // local server, the session future completes only on cancel/dismiss.
+  // No callbackScheme: the token arrives through the local server, the
+  // session future completes only on cancel/dismiss.
   unawaited(
     systemAuthSessionChannel
         .invokeMethod<String>('authenticate', {'url': ssoUrl})
