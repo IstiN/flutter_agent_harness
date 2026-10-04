@@ -235,10 +235,16 @@ jobs:
 
       - run: dart pub get
 
+      # gh-1232 AC2: `bin` was missing here — bin/fah.dart sailed past 2800
+      # unnoticed because this guard only scanned lib/test/example. The dir
+      # list and generated-file exclusions mirror scripts/ci_fast_gate.sh's
+      # stage_size (the canonical guard).
       - name: File size guard (no dart file over 2800 lines)
         run: |
-          violations=$(find lib test example -name '*.dart' \
+          violations=$(find lib test example bin -name '*.dart' \
             ! -name '*.g.dart' ! -name '*.freezed.dart' ! -name '*.mocks.dart' \
+            ! -name '*bridge_generated*.dart' ! -name '*app_localizations*.dart' \
+            ! -name '*localizations_*.dart' \
             -exec sh -c 'lines=$(wc -l < "$1"); if [ "$lines" -gt 2800 ]; then echo "$1: $lines lines"; fi' _ {} \;)
           if [ -n "$violations" ]; then echo "$violations"; exit 1; fi
 
@@ -1108,6 +1114,19 @@ jobs:
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
       - run: cd flutter_app && flutter pub get
+
+      # gh-1232 AC2: the core static-gates size guard only scans
+      # lib/test/example/bin — flutter_app/lib was never measured in CI
+      # (scripts/ci_fast_gate.sh measures it only when APP_IN_SCOPE). Same
+      # generated-file exclusions as the core guard.
+      - name: File size guard (flutter_app, no dart file over 2800 lines)
+        run: |
+          violations=$(find flutter_app/lib -name '*.dart' \
+            ! -name '*.g.dart' ! -name '*.freezed.dart' ! -name '*.mocks.dart' \
+            ! -name '*bridge_generated*.dart' ! -name '*app_localizations*.dart' \
+            ! -name '*localizations_*.dart' \
+            -exec sh -c 'lines=$(wc -l < "$1"); if [ "$lines" -gt 2800 ]; then echo "$1: $lines lines"; fi' _ {} \;)
+          if [ -n "$violations" ]; then echo "$violations"; exit 1; fi
 
       - name: flutter analyze
         run: cd flutter_app && flutter analyze --no-fatal-infos --no-fatal-warnings

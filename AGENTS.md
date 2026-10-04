@@ -7,6 +7,19 @@ factual: paths, commands, invariants — no essays.
 
 - `lib/` — the `flutter_agent_harness` package (pure Dart core). `test/`
   mirrors it. `prompts/` — all LLM prompts as Markdown (see rules below).
+- `lib/flutter_agent_harness.dart` (the barrel) — gh-1232 policy:
+  GROUPED APPEND-ONLY export sections, one `// ── <subsystem> ──` comment
+  header per group, exports sorted by path within a group, new exports
+  appended to their subsystem group (a new subsystem starts a new group).
+  No per-subsystem mini-barrels, no re-sorting of existing lines — append
+  only, so parallel edits almost never touch the same line.
+- God-file ceiling (gh-1232): no Dart file over 2800 lines anywhere
+  (`scripts/ci_fast_gate.sh` stage_size + ci.yml guard, both covering
+  `lib test example bin flutter_app/lib`). Target < 2000 for primary
+  files; when a file approaches it, split by concern into `part` files
+  (the established pattern: `agent_cli.dart`, `builtin_tools.dart`,
+  `bin/fah.dart` → `bin/fah_*.dart`, `agent_service.dart` →
+  `agent_service_*.dart` mixins) — never by extracting public API.
 - `lib/src/approval/` — tool approval gate: tiers (read/write/exec),
   session modes (always-ask/write/yolo/autopilot — the CLI label of the
   `unattended` enum), per-tool overrides,
