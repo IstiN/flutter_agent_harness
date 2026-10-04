@@ -22,13 +22,16 @@ FoldRequest reported({
   source: UsageSource.reported,
 );
 
-FoldRequest estimated({String model = 'model-a', int input = 0, int output = 0}) =>
-    FoldRequest(
-      model: model,
-      input: input,
-      output: output,
-      source: UsageSource.estimated,
-    );
+FoldRequest estimated({
+  String model = 'model-a',
+  int input = 0,
+  int output = 0,
+}) => FoldRequest(
+  model: model,
+  input: input,
+  output: output,
+  source: UsageSource.estimated,
+);
 
 void main() {
   const folder = UsageFolder();
@@ -41,19 +44,22 @@ void main() {
       expect(segment.totals.output, 50);
     });
 
-    test('sums MULTIPLE requests (a single-item case can pass with broken accumulation)', () {
-      final segment = folder.foldSegment(0, [
-        reported(input: 100, output: 50),
-        reported(input: 200, output: 70, cacheRead: 30, cacheWrite: 10),
-        reported(input: 0, output: 5, reasoning: 5),
-      ]);
-      expect(segment.totals.requests, 3);
-      expect(segment.totals.input, 300);
-      expect(segment.totals.output, 125);
-      expect(segment.totals.cacheRead, 30);
-      expect(segment.totals.cacheWrite, 10);
-      expect(segment.totals.reasoning, 5);
-    });
+    test(
+      'sums MULTIPLE requests (a single-item case can pass with broken accumulation)',
+      () {
+        final segment = folder.foldSegment(0, [
+          reported(input: 100, output: 50),
+          reported(input: 200, output: 70, cacheRead: 30, cacheWrite: 10),
+          reported(input: 0, output: 5, reasoning: 5),
+        ]);
+        expect(segment.totals.requests, 3);
+        expect(segment.totals.input, 300);
+        expect(segment.totals.output, 125);
+        expect(segment.totals.cacheRead, 30);
+        expect(segment.totals.cacheWrite, 10);
+        expect(segment.totals.reasoning, 5);
+      },
+    );
 
     test('splits usage per model inside the segment (I5)', () {
       final segment = folder.foldSegment(0, [
@@ -83,10 +89,9 @@ void main() {
     test('total always equals the sum of the segments', () {
       final segments = [
         folder.foldSegment(0, [reported(input: 100, output: 50)]),
-        folder.foldSegment(
-          1,
-          [reported(input: 300, output: 150, cacheRead: 40)],
-        ),
+        folder.foldSegment(1, [
+          reported(input: 300, output: 150, cacheRead: 40),
+        ]),
         folder.foldSegment(2, [reported(model: 'other', input: 10, output: 5)]),
       ];
       final total = folder.totalOf(segments);
@@ -131,9 +136,12 @@ void main() {
       expect(total.source, UsageSource.mixed);
     });
 
-    test('the total of ONE mixed segment is mixed (a mixed segment carries both kinds)', () {
-      final mixedSegment = folder.foldSegment(0, [reported(), estimated()]);
-      expect(folder.totalOf([mixedSegment]).source, UsageSource.mixed);
-    });
+    test(
+      'the total of ONE mixed segment is mixed (a mixed segment carries both kinds)',
+      () {
+        final mixedSegment = folder.foldSegment(0, [reported(), estimated()]);
+        expect(folder.totalOf([mixedSegment]).source, UsageSource.mixed);
+      },
+    );
   });
 }

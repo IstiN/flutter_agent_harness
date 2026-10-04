@@ -111,6 +111,7 @@ final class UsageChainScanner {
       if (segments.isEmpty) segments.add(_ScanSegment());
       return segments.last;
     }
+
     void closeSegment(DateTime? boundaryAt) {
       if (pending case final summary?) {
         // A summary whose request never produced an assistant message
@@ -144,7 +145,9 @@ final class UsageChainScanner {
         ..add(utf8.encode(line))
         ..add(const [10]);
       if (skippedDecode) continue;
-      final timestamp = DateTime.tryParse(decoded['timestamp'] as String? ?? '');
+      final timestamp = DateTime.tryParse(
+        decoded['timestamp'] as String? ?? '',
+      );
       if (type == 'custom') {
         final customType = decoded['customType'] as String? ?? '';
         if (customType == usageSegmentStartCustomType) {
@@ -174,10 +177,7 @@ final class UsageChainScanner {
       if (type != 'message') continue;
       final message = decoded['message'];
       if (message is! Map || message['role'] != 'assistant') continue;
-      final request = _foldAssistant(
-        message.cast<String, dynamic>(),
-        pending,
-      );
+      final request = _foldAssistant(message.cast<String, dynamic>(), pending);
       pending = null;
       current().requests.add(request);
     }

@@ -77,9 +77,7 @@ final class UsageFolder {
         reasoning: request.reasoning,
       );
       totals = totals + slice;
-      byModel = mergeUsageByModel(byModel, {
-        request.model: slice,
-      });
+      byModel = mergeUsageByModel(byModel, {request.model: slice});
       sawReported = sawReported || request.source == UsageSource.reported;
       sawEstimated = sawEstimated || request.source == UsageSource.estimated;
     }
@@ -87,10 +85,7 @@ final class UsageFolder {
       index: index,
       totals: totals,
       byModel: byModel,
-      source: scopeSource(
-        sawReported: sawReported,
-        sawEstimated: sawEstimated,
-      ),
+      source: scopeSource(sawReported: sawReported, sawEstimated: sawEstimated),
       openedAt: openedAt,
       closedAt: closedAt,
     );
@@ -121,10 +116,7 @@ final class UsageFolder {
     return UsageLedgerTotal(
       totals: totals,
       byModel: byModel,
-      source: scopeSource(
-        sawReported: sawReported,
-        sawEstimated: sawEstimated,
-      ),
+      source: scopeSource(sawReported: sawReported, sawEstimated: sawEstimated),
     );
   }
 

@@ -35,22 +35,29 @@ void main() {
       expect(tmp.isErr || tmp.valueOrNull?.kind != FileKind.file, isTrue);
     });
 
-    test('concurrent writers use unique tmp names (E2) and the last rename wins', () async {
-      final env = MemoryExecutionEnv();
-      final ledger = buildLedger(simpleChain());
-      await Future.wait([
-        UsageLedgerWriter(env).write('/sessions/sess-1', ledger, tmpSuffix: 'p1'),
-        UsageLedgerWriter(env).write('/sessions/sess-1', ledger, tmpSuffix: 'p2'),
-      ]);
-      final read = await env.readTextFile('/sessions/sess-1/usage.json');
-      expect(read.isOk, isTrue);
-      expect(
-        UsageLedger.fromJson(
-          jsonDecode(read.valueOrNull!) as Map<String, dynamic>,
-        ).chainHash,
-        ledger.chainHash,
-      );
-    });
+    test(
+      'concurrent writers use unique tmp names (E2) and the last rename wins',
+      () async {
+        final env = MemoryExecutionEnv();
+        final ledger = buildLedger(simpleChain());
+        await Future.wait([
+          UsageLedgerWriter(
+            env,
+          ).write('/sessions/sess-1', ledger, tmpSuffix: 'p1'),
+          UsageLedgerWriter(
+            env,
+          ).write('/sessions/sess-1', ledger, tmpSuffix: 'p2'),
+        ]);
+        final read = await env.readTextFile('/sessions/sess-1/usage.json');
+        expect(read.isOk, isTrue);
+        expect(
+          UsageLedger.fromJson(
+            jsonDecode(read.valueOrNull!) as Map<String, dynamic>,
+          ).chainHash,
+          ledger.chainHash,
+        );
+      },
+    );
 
     test('write is byte-deterministic for the same chain (I6)', () async {
       final env = MemoryExecutionEnv();
@@ -63,70 +70,72 @@ void main() {
       expect(ra.valueOrNull, rb.valueOrNull);
     });
 
-    test('a secret in the artifact fails the write and touches nothing (I4/UT-6)', () async {
-      final env = MemoryExecutionEnv();
-      final ledger = buildLedger(simpleChain());
-      expect(
-        () => UsageLedgerWriter(env).write(
-          '/sessions/sess-1',
-          ledger,
-          forbiddenSecrets: const ['sess-1'],
-        ),
-        throwsA(isA<UsageHygieneException>()),
-      );
-      final leaked = await env.readTextFile('/sessions/sess-1/usage.json');
-      expect(leaked.isErr, isTrue);
-    });
+    test(
+      'a secret in the artifact fails the write and touches nothing (I4/UT-6)',
+      () async {
+        final env = MemoryExecutionEnv();
+        final ledger = buildLedger(simpleChain());
+        expect(
+          () => UsageLedgerWriter(env).write(
+            '/sessions/sess-1',
+            ledger,
+            forbiddenSecrets: const ['sess-1'],
+          ),
+          throwsA(isA<UsageHygieneException>()),
+        );
+        final leaked = await env.readTextFile('/sessions/sess-1/usage.json');
+        expect(leaked.isErr, isTrue);
+      },
+    );
 
-    test('readIfValid returns the ledger only when the chain fingerprint matches (E3)', () async {
-      final env = MemoryExecutionEnv();
-      final ledger = buildLedger(simpleChain());
-      final dir = '/sessions/sess-1';
-      final writer = UsageLedgerWriter(env);
-      await writer.write(dir, ledger);
+    test(
+      'readIfValid returns the ledger only when the chain fingerprint matches (E3)',
+      () async {
+        final env = MemoryExecutionEnv();
+        final ledger = buildLedger(simpleChain());
+        final dir = '/sessions/sess-1';
+        final writer = UsageLedgerWriter(env);
+        await writer.write(dir, ledger);
 
-      final valid = await writer.readIfValid(
-        dir,
-        expectedRecords: ledger.chainRecords,
-        expectedHash: ledger.chainHash,
-      );
-      expect(valid?.chainHash, ledger.chainHash);
+        final valid = await writer.readIfValid(
+          dir,
+          expectedRecords: ledger.chainRecords,
+          expectedHash: ledger.chainHash,
+        );
+        expect(valid?.chainHash, ledger.chainHash);
 
-      // Chain grew (resume appended a segment): the artifact is stale.
-      final stale = await writer.readIfValid(
-        dir,
-        expectedRecords: ledger.chainRecords + 1,
-        expectedHash: ledger.chainHash,
-      );
-      expect(stale, isNull);
+        // Chain grew (resume appended a segment): the artifact is stale.
+        final stale = await writer.readIfValid(
+          dir,
+          expectedRecords: ledger.chainRecords + 1,
+          expectedHash: ledger.chainHash,
+        );
+        expect(stale, isNull);
 
-      // Hand-edited artifact (hash mismatch): never merged into garbage.
-      final tampered = await writer.readIfValid(
-        dir,
-        expectedRecords: ledger.chainRecords,
-        expectedHash: 'sha256:forged',
-      );
-      expect(tampered, isNull);
-    });
+        // Hand-edited artifact (hash mismatch): never merged into garbage.
+        final tampered = await writer.readIfValid(
+          dir,
+          expectedRecords: ledger.chainRecords,
+          expectedHash: 'sha256:forged',
+        );
+        expect(tampered, isNull);
+      },
+    );
 
     test('readIfValid returns null for a missing or corrupt file', () async {
       final env = MemoryExecutionEnv();
       expect(
-        await UsageLedgerWriter(env).readIfValid(
-          '/nope',
-          expectedRecords: 0,
-          expectedHash: '',
-        ),
+        await UsageLedgerWriter(
+          env,
+        ).readIfValid('/nope', expectedRecords: 0, expectedHash: ''),
         isNull,
       );
       await env.createDir('/sessions/sess-1', recursive: true);
       await env.writeFile('/sessions/sess-1/usage.json', '{not json');
       expect(
-        await UsageLedgerWriter(env).readIfValid(
-          '/sessions/sess-1',
-          expectedRecords: 0,
-          expectedHash: '',
-        ),
+        await UsageLedgerWriter(
+          env,
+        ).readIfValid('/sessions/sess-1', expectedRecords: 0, expectedHash: ''),
         isNull,
       );
     });

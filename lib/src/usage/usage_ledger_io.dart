@@ -31,8 +31,10 @@ final class UsageLedgerWriter {
   /// (gh-1241 surface 1 — the sessions root IS the `.fah/sessions` tree;
   /// session ids are uuidv7 and never collide with the `--cwd-slug--`
   /// workspace directories).
-  static String usageDirFor({required String sessionsRoot, required String sessionId}) =>
-      '$sessionsRoot/$sessionId';
+  static String usageDirFor({
+    required String sessionsRoot,
+    required String sessionId,
+  }) => '$sessionsRoot/$sessionId';
 
   /// Writes [ledger] to `<dir>/usage.json` atomically: full bytes to a
   /// unique tmp file, then rename over the target. A crash mid-write
@@ -56,14 +58,19 @@ final class UsageLedgerWriter {
       forbiddenContent: forbiddenContent,
     );
     final target = '$dir/$artifactFileName';
-    final tmp = '$dir/.$artifactFileName.tmp${tmpSuffix == null ? '' : '.$tmpSuffix'}';
+    final tmp =
+        '$dir/.$artifactFileName.tmp${tmpSuffix == null ? '' : '.$tmpSuffix'}';
     final created = await env.createDir(dir, recursive: true);
     if (created.isErr) {
-      throw StateError('usage ledger: cannot create $dir (${created.errorOrNull})');
+      throw StateError(
+        'usage ledger: cannot create $dir (${created.errorOrNull})',
+      );
     }
     final written = await env.writeFile(tmp, artifact);
     if (written.isErr) {
-      throw StateError('usage ledger: cannot write $tmp (${written.errorOrNull})');
+      throw StateError(
+        'usage ledger: cannot write $tmp (${written.errorOrNull})',
+      );
     }
     // Atomic publish when the host filesystem can rename (E3: a reader
     // never sees a partial artifact); stores without rename (pure web)
@@ -86,6 +93,21 @@ final class UsageLedgerWriter {
         );
       }
       await env.remove(tmp);
+    }
+  }
+
+  /// Reads and parses the artifact at `<dir>/usage.json` without the chain
+  /// fingerprint check — the display path (`/usage`) shows whatever is on
+  /// disk; [readIfValid] is the gate for write decisions (E3).
+  Future<UsageLedger?> read(String dir) async {
+    final read = await env.readTextFile('$dir/$artifactFileName');
+    if (read.isErr) return null;
+    try {
+      final parsed = jsonDecode(read.valueOrNull!);
+      if (parsed is! Map) return null;
+      return UsageLedger.fromJson(parsed.cast<String, dynamic>());
+    } on Object {
+      return null;
     }
   }
 

@@ -79,9 +79,7 @@ void main() {
       final ledger = sampleLedger();
       final once = jsonEncode(UsageLedger.fromJson(ledger.toJson()).toJson());
       final twice = jsonEncode(
-        UsageLedger.fromJson(
-          jsonDecode(once) as Map<String, dynamic>,
-        ).toJson(),
+        UsageLedger.fromJson(jsonDecode(once) as Map<String, dynamic>).toJson(),
       );
       expect(twice, once);
     });

@@ -31,12 +31,4 @@ String usageTokensLogLine({
   required String sessionId,
   required UsageSegment segment,
 }) =>
-    '$usageTokensLogPrefix${jsonEncode({
-      'sessionId': sessionId,
-      'segment': segment.index,
-      'input': segment.totals.input,
-      'output': segment.totals.output,
-      'cacheRead': segment.totals.cacheRead,
-      'requests': segment.totals.requests,
-      'source': segment.source.wire,
-    })}';
+    '$usageTokensLogPrefix${jsonEncode({'sessionId': sessionId, 'segment': segment.index, 'input': segment.totals.input, 'output': segment.totals.output, 'cacheRead': segment.totals.cacheRead, 'requests': segment.totals.requests, 'source': segment.source.wire})}';

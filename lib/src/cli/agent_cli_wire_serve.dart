@@ -88,6 +88,8 @@ extension WireServeBoot on AgentCli {
       pumpSub();
       return null;
     }
+    // gh-1241: the owner opens a usage segment (viewer never appends).
+    await _markUsageSegmentStart();
     await _subagentManager.rehydrate();
     unawaited(AgentCliTools(this).rebuildToolAvailability());
     await acquirePowerAssertions();

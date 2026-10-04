@@ -121,10 +121,9 @@ Map<String, UsageModelTotals> usageByModelFromJson(Object? raw) => {
   if (raw is Map)
     for (final entry in raw.entries)
       if (entry.value is Map)
-        entry.key as String:
-            UsageModelTotals.totalsFrom(
-              (entry.value as Map).cast<String, dynamic>(),
-            ),
+        entry.key as String: UsageModelTotals.totalsFrom(
+          (entry.value as Map).cast<String, dynamic>(),
+        ),
 };
 
 /// Merges [a] and [b] per model key (I5).
@@ -134,8 +133,8 @@ Map<String, UsageModelTotals> mergeUsageByModel(
 ) {
   final merged = Map<String, UsageModelTotals>.of(a);
   for (final entry in b.entries) {
-    merged[entry.key] = (merged[entry.key] ?? UsageModelTotals.zero) +
-        entry.value;
+    merged[entry.key] =
+        (merged[entry.key] ?? UsageModelTotals.zero) + entry.value;
   }
   return Map.unmodifiable(merged);
 }
@@ -183,8 +182,7 @@ final class UsageSegment {
     if (closedAt != null) 'closedAt': closedAt!.toIso8601String(),
     ...totals.totalsJson(),
     'byModel': {
-      for (final entry in byModel.entries)
-        entry.key: entry.value.totalsJson(),
+      for (final entry in byModel.entries) entry.key: entry.value.totalsJson(),
     },
     'source': source.wire,
   };
@@ -226,8 +224,7 @@ final class UsageLedgerTotal {
   Map<String, dynamic> toJson() => {
     ...totals.totalsJson(),
     'byModel': {
-      for (final entry in byModel.entries)
-        entry.key: entry.value.totalsJson(),
+      for (final entry in byModel.entries) entry.key: entry.value.totalsJson(),
     },
     'source': source.wire,
   };
@@ -310,11 +307,8 @@ final class UsageLedger {
               byModel: {},
               source: UsageSource.estimated,
             ),
-      chainRecords:
-          rawChain is Map ? rawChain['records'] as int? ?? 0 : 0,
-      chainHash: rawChain is Map
-          ? rawChain['hash'] as String? ?? ''
-          : '',
+      chainRecords: rawChain is Map ? rawChain['records'] as int? ?? 0 : 0,
+      chainHash: rawChain is Map ? rawChain['hash'] as String? ?? '' : '',
     );
   }
 }

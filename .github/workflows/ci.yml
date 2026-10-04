@@ -152,6 +152,14 @@ jobs:
               grep -qE '(^lib/src/trajectory/|^packages/fa_ui/lib/src/trajectory/|^lib/src/cli/trajectory_|^bin/fah\.dart$|^test/(integration/)?trajectory/|^flutter_app/lib/services/agent_service(_sessions)?\.dart$)'; then
             echo "perf=true" >> "$GITHUB_OUTPUT"
           fi
+          # gh-1241 REG-1: the usage fold consumes the trajectory ledger's
+          # model_request_summary records and the session chain's shape —
+          # a red usage-fold suite blocks the merge even when the regular
+          # legs are green.
+          if git diff --name-only "$BASE_REF" "$HEAD_REF" |
+              grep -qE '(^lib/src/trajectory/|^lib/src/session/|^lib/src/usage/|^test/usage/|^lib/src/cli/agent_cli_usage_ledger\.dart$)'; then
+            echo "usagefold=true" >> "$GITHUB_OUTPUT"
+          fi
 
   # ─────────────────────────────────────────────────────────────────────────
   # Issue #709: live kernel-mode cube legs. The ubuntu test-core shards can

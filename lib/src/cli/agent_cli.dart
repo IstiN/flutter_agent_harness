@@ -205,6 +205,9 @@ import '../redact/redaction_pipeline.dart';
 import '../spill/spill.dart';
 import '../ttsr/ttsr.dart';
 import '../types.dart';
+import '../usage/usage_chain.dart';
+import '../usage/usage_ledger_io.dart';
+import '../usage/usage_log_line.dart';
 import '../usage_summary.dart';
 import '../web_search/web_search.dart';
 // The interactive dart_tui REPL is VM-only (raw terminal + FFI); web builds
@@ -283,6 +286,7 @@ part 'agent_cli_lifecycle.dart';
 part 'agent_cli_input.dart';
 part 'agent_cli_pickers.dart';
 part 'agent_cli_run.dart';
+part 'agent_cli_usage_ledger.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -1505,6 +1509,9 @@ class AgentCli {
     // Ownership lease (#428): claim before anything can drive — a live
     // lease flips this boot into viewer mode (no takeover exists).
     await _claimSessionLease();
+    // gh-1241: the owner opens a usage segment (viewer never appends);
+    // after the lease gate so the marker lands on the owner's chain only.
+    await _markUsageSegmentStart();
     // Sleep prevention (#325/#326): only the EXPLICIT session hold
     // acquires here — the default per-run hold acquires at every run
     // start instead, so an idle agent never pins the machine awake.
@@ -1696,6 +1703,8 @@ class AgentCli {
       io.writeln(viewerBannerText(leaseBlocked, stale: false));
       return 3;
     }
+    // gh-1241: the owner opens a usage segment (viewer never appends).
+    await _markUsageSegmentStart();
     // HEP (issue #155) + stream-json (issue #695) headers: the FIRST
     // stdout line of each structured mode, written the moment the
     // session id exists — before any event can race them.
@@ -1819,6 +1828,10 @@ class AgentCli {
       await taskSub.cancel();
       hepSub?.call();
       streamJsonSub?.call();
+      // gh-1241: close the usage segment — fold the chain, write
+      // usage.json, log the `fa-tokens:` line (a kill mid-segment loses
+      // nothing: the fold rebuilds from the chain on the next close).
+      await _flushUsageLedger();
     }
     // The exit code describes the LAST completed turn's terminal outcome
     // (captured from the turn events above) — not the visible transcript,

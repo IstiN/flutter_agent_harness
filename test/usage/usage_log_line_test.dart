@@ -34,7 +34,11 @@ void main() {
           sessionId: 's-1',
           segment: segment(source: source),
         );
-        expect(usageTokensLogPattern.hasMatch(line), isTrue, reason: source.name);
+        expect(
+          usageTokensLogPattern.hasMatch(line),
+          isTrue,
+          reason: source.name,
+        );
       }
     });
 
