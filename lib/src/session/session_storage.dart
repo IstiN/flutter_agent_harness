@@ -602,6 +602,19 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     SessionTimingLogger? timingLog,
     int maxFullOpenBytes,
   ) async {
+    // Segment rotation (fa gh-1077): `<path>.part-NN` siblings hold older
+    // segments. List them (a null listing fails CLOSED — rotation stays
+    // suspended so a blind sequence can never overwrite an existing part)
+    // and heal the primary BEFORE the backstop stat below: the heal
+    // reseeds/prefixes a primary lost or header-less mid-rotation, which
+    // changes its size — statting first would measure the pre-heal file
+    // (the streamed scan would then read a stale byte count) and a
+    // missing primary would be refused before the heal could rescue it.
+    final listed = await _listSessionParts(fs, filePath);
+    final parts = listed?.parts ?? const <String>[];
+    if (parts.isNotEmpty) {
+      await _healPrimarySegmentLocked(fs, filePath, parts.last, ioRetry);
+    }
     // gh-1073 backstop: stat first, refuse the pathological full read.
     // The size also bounds the streamed scan below. A 12 GiB session used
     // to die inside readTextFile with `Exhausted heap space` — the refusal
@@ -636,10 +649,17 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
         timingLog,
         stat.size,
         maxFullOpenBytes,
+        listed,
       );
     }
-    return _openWholeFileLocked(fs, filePath, parseExecutor, ioRetry,
-        timingLog);
+    return _openWholeFileLocked(
+      fs,
+      filePath,
+      parseExecutor,
+      ioRetry,
+      timingLog,
+      listed,
+    );
   }
 
   /// Streamed full open (gh-1073): every segment of the JSONL (the
@@ -670,20 +690,15 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     SessionTimingLogger? timingLog,
     int primaryFileSize,
     int maxFullOpenBytes,
+    ({List<String> parts, int maxSeq})? listed,
   ) async {
     final totalSw = Stopwatch()..start();
     var phaseSw = Stopwatch()..start();
-    // Segment rotation (fa gh-1077): `<path>.part-NN` siblings hold older
-    // segments, the primary holds a header copy + the active tail. They
-    // load in order — a resumed session must see the whole record chain
-    // (parents of recent records live in older segments). A null listing
-    // (listDir failed) fails CLOSED: rotation stays suspended for this
-    // storage so a blind sequence can never overwrite an existing part.
-    final listed = await _listSessionParts(fs, filePath);
+    // The part listing and the primary heal already ran in [_openLocked]
+    // (before the backstop stat) — here the parts simply load oldest-first
+    // so a resumed session sees the whole record chain (parents of recent
+    // records live in older segments).
     final parts = listed?.parts ?? const <String>[];
-    if (parts.isNotEmpty) {
-      await _healPrimarySegmentLocked(fs, filePath, parts.last, ioRetry);
-    }
     final segmentPaths = [...parts, filePath];
     final entries = <SessionRecord>[];
     final seenRecordIds = <String>{};
@@ -986,21 +1001,14 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     SessionParseExecutor? parseExecutor,
     SessionIoRetryConfig ioRetry,
     SessionTimingLogger? timingLog,
+    ({List<String> parts, int maxSeq})? listed,
   ) async {
     final totalSw = Stopwatch()..start();
     var phaseSw = Stopwatch()..start();
-    // Segment rotation (fa gh-1077): `<path>.part-NN` siblings hold older
-    // segments, the primary holds a header copy + the active tail. They
-    // are loaded in order — a resumed session must see the whole record
-    // chain (parents of recent records live in older segments).
-    // A null listing (listDir failed) fails CLOSED: rotation stays
-    // suspended for this storage so a blind sequence can never
-    // overwrite an existing part.
-    final listed = await _listSessionParts(fs, filePath);
+    // The part listing and the primary heal already ran in [_openLocked];
+    // the segments load in order — a resumed session must see the whole
+    // record chain (parents of recent records live in older segments).
     final parts = listed?.parts ?? const <String>[];
-    if (parts.isNotEmpty) {
-      await _healPrimarySegmentLocked(fs, filePath, parts.last, ioRetry);
-    }
     final segmentPaths = [...parts, filePath];
     var primaryBytes = 0;
     var readMs = 0;
