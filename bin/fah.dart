@@ -2265,7 +2265,12 @@ Future<void> _runApp(List<String> args) async {
       // there corrupts the channel (same rule as [CliIO.writeln]'s
       // headless branch).
       customProviders: CustomProviderRegistry(saved.customProviders)
-        ..mergeNotes.forEach(stderr.writeln),
+        ..mergeNotes.forEach(stderr.writeln)
+        // gh-1226 AC3: key slots an older build doubled (an entry named
+        // `z.ai` on host `api.z.ai` persisted `FA_KEY_API_Z_AI_Z_AI`):
+        // resolution still probes the stored slot, so nothing breaks —
+        // the note names the canonical slot to move the value to.
+        ..keyNameMigrationNotes.forEach(stderr.writeln),
       freshInstallProviderFlow: freshInstallProviderFlow,
       sessionRoot: sessionRoot,
       // Backend agent mode (issue #155): a graceful SIGTERM/SIGINT

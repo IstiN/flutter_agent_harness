@@ -284,6 +284,39 @@ final class CustomProviderRegistry {
   /// [_mergeOnLoad]).
   final List<String> mergeNotes;
 
+  /// Non-destructive migration notes for key slots an older build
+  /// generated with the pre-gh-1226 doubling rule — an entry named
+  /// `z.ai` on host `api.z.ai` persisted `FA_KEY_API_Z_AI_Z_AI` where the
+  /// canonical slot is `FA_KEY_API_Z_AI` (gh-1226 AC3). Resolution still
+  /// probes each entry's OWN stored keyName first, so an existing doubled
+  /// slot keeps working; the note tells the user the canonical name to
+  /// move the value to (or that a same-value entry already exists there).
+  List<String> get keyNameMigrationNotes {
+    final notes = <String>[];
+    for (final entry in entries) {
+      final stored = entry.keyName;
+      if (stored == null) continue;
+      final canonical = keyNameFor(
+        entry.baseUrl,
+        providerName: entry.name,
+      );
+      if (stored == canonical) continue;
+      final twin = entries.any(
+        (other) =>
+            other != entry &&
+            other.baseUrl == entry.baseUrl &&
+            other.keyName == canonical,
+      );
+      notes.add(
+        'saved key slot for "${entry.name}" is "$stored"; the canonical '
+        'slot is "$canonical"'
+        '${twin ? ' — a same-endpoint entry already uses "$canonical"'
+            : ' — move the value with /key set $canonical <value>'}',
+      );
+    }
+    return notes;
+  }
+
   /// The load-time merge result: one record per canonical identity; a
   /// reserved-named ghost (e.g. `chatgpt`, which would shadow
   /// `/provider` routing) yields to a non-reserved twin of the same
@@ -414,9 +447,15 @@ final class CustomProviderRegistry {
     final sanitized = _sanitizeKeyHost(_hostWithPort(uri, baseUrl));
     final base = 'FA_KEY_${sanitized.isEmpty ? 'CUSTOM' : sanitized}';
     final name = providerName == null ? null : _sanitizeKeyHost(providerName);
-    // A provider named after its host (the default derived name) must not
-    // double the suffix: FA_KEY_API_AIIN_BY, not FA_KEY_API_AIIN_BY_API_AIIN_BY.
-    return name == null || name.isEmpty || name == sanitized
+    // A provider named after its host (the default derived name) — or
+    // already a suffix of the host slug, e.g. an entry named 'z.ai' on
+    // api.z.ai (gh-1226 AC3) — must not double the suffix:
+    // FA_KEY_API_AIIN_BY / FA_KEY_API_Z_AI, not ..._API_AIIN_BY /
+    // ..._Z_AI_Z_AI.
+    return name == null ||
+            name.isEmpty ||
+            name == sanitized ||
+            sanitized.endsWith('_$name')
         ? base
         : '${base}_$name';
   }

@@ -28,20 +28,69 @@ void main() {
   Future<KeyStatusRenderer> rendererOf({
     required Map<String, String> env,
     required FakeSecureKeyStore store,
+    String providerKind = 'openai-completions',
+    String? activeCustomName,
   }) async {
     final keys = SecureKeyCache(store);
     await keys.preload(store.map.keys.toList());
     return KeyStatusRenderer(
       rolesDriven: false,
-      providerKind: 'openai-completions',
+      providerKind: providerKind,
       explicitToken: false,
-      activeCustomName: null,
+      activeCustomName: activeCustomName,
       red: (message) => message,
       secureKeys: keys,
       envVarIsSet: (name) => env.containsKey(name),
       envVarValue: (name) => env[name],
     );
   }
+
+  group('errorLine attempted-provider diagnosis (gh-1226 AC2)', () {
+    const copilotExchangeFailure =
+        'Error: token exchange (github-copilot api) failed (401).';
+    const zaiFailure = '401 Unauthorized: invalid key for api.z.ai';
+
+    test(
+      'a copilot exchange failure on a z.ai-bound session names only '
+      'copilot — the entry key and endpoint are one provider’s diagnosis',
+      () async {
+        final renderer = await rendererOf(
+          env: const {},
+          store: FakeSecureKeyStore()..map[zaiKeyName] = 'sk-zai',
+          providerKind: 'zai',
+          activeCustomName: 'z_ai',
+        );
+
+        // The endpoint the turn actually dialed (z.ai): the z.ai slot
+        // still must not leak into a copilot diagnosis.
+        final line = renderer.errorLine(copilotExchangeFailure, zaiUrl);
+
+        expect(line, contains('copilot'));
+        expect(
+          line,
+          isNot(contains(zaiKeyName)),
+          reason: 'the z.ai key slot must not leak into a copilot '
+              'diagnosis (gh-1226 AC2)',
+        );
+        expect(line, isNot(contains('api.z.ai')));
+      },
+    );
+
+    test(
+      'a z.ai failure names the z.ai slot even when the binding believes '
+      'another provider — the hint follows the attempted provider',
+      () async {
+        final renderer = await rendererOf(
+          env: const {},
+          store: FakeSecureKeyStore()..map[zaiKeyName] = 'sk-zai',
+          providerKind: 'copilot',
+          activeCustomName: null,
+        );
+
+        expect(renderer.errorLine(zaiFailure, zaiUrl), contains(zaiKeyName));
+      },
+    );
+  });
 
   group('keyStatusLine (issue #40: env key must not hijack a custom '
       'endpoint)', () {

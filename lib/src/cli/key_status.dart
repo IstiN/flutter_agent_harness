@@ -216,7 +216,7 @@ final class KeyStatusRenderer {
   String errorLine(String message, String baseUrl) {
     final compact = compactProviderError(message);
     if (isAuthError(compact)) {
-      return red('error: $compact${authHint(baseUrl)}');
+      return red('error: $compact${authHintForAttempt(message, baseUrl)}');
     }
     if (!compact.toLowerCase().contains('connection refused')) {
       return red('error: $compact');
@@ -225,6 +225,40 @@ final class KeyStatusRenderer {
       'error: $compact — check the endpoint in ~/.fah/config.yaml '
       '(baseUrl: $baseUrl) or pass --base-url',
     );
+  }
+
+  /// The adapter that actually produced [message], when it is identifiable
+  /// from the message itself (gh-1226 AC2): `streamCopilot`'s token
+  /// exchange wraps failures as `(github-copilot api)`. The renderer's
+  /// believed binding (`providerKind` / `activeCustomName`) can lag the
+  /// serving adapter after a partial restore — the diagnosis must follow
+  /// the attempted provider, not the believed one.
+  String? _attemptedProviderFrom(String message) {
+    if (message.contains('(github-copilot api)')) return 'copilot';
+    return null;
+  }
+
+  /// The auth hint for the provider the failure came from. When the
+  /// message identifies an adapter different from the believed binding,
+  /// the hint is computed for THAT provider alone — mixing the copilot
+  /// verdict with the session's z.ai key slot and endpoint produced one
+  /// fused `copilot + z.ai + endpoint` instruction (gh-1226 AC2).
+  String authHintForAttempt(String message, String baseUrl) {
+    final attempted = _attemptedProviderFrom(message);
+    if (attempted != null && attempted != providerKind) {
+      // Diagnose the attempted provider against ITS OWN endpoint — the
+      // session's baseUrl belongs to the believed binding and would mix
+      // the other provider's key slot back in.
+      final attemptedSpec = resolveCliProviderSpec(
+        attempted,
+        honorBuildFilter: true,
+      );
+      return _authHintFor(
+        attempted,
+        attemptedSpec?.defaultBaseUrl ?? baseUrl,
+      );
+    }
+    return authHint(baseUrl);
   }
 
   /// 401-class detection across provider wordings (OpenAI/OpenRouter "401:
@@ -253,14 +287,16 @@ final class KeyStatusRenderer {
   /// the expected key slot, and the one-line fix (gh-1000 AC2): a restored
   /// session or pinned role re-resolved onto a custom provider whose key
   /// did not follow.
-  String authHint(String baseUrl) {
+  String authHint(String baseUrl) => _authHintFor(providerKind, baseUrl);
+
+  String _authHintFor(String kind, String baseUrl) {
     if (rolesDriven) {
       final customHint = customEndpointAuthHint(baseUrl);
       if (customHint != null) return customHint;
       return ' — roles mode reads keys from the environment only; check '
           'the chain env vars in ~/.fah/config.yaml';
     }
-    final spec = resolveCliProviderSpec(providerKind, honorBuildFilter: true);
+    final spec = resolveCliProviderSpec(kind, honorBuildFilter: true);
     if (spec == null || spec.apiKeyEnvNames.isEmpty) {
       return ' — check the credentials for $baseUrl';
     }

@@ -554,11 +554,17 @@ final class Session {
             customProvider: record.customProvider,
           );
         case MessageRecord(message: AssistantMessage record):
+          // gh-1226: a turn answers with the serving endpoint/entry the
+          // last model_change recorded — wiping the pin here made a
+          // session restored after several turns fall back to the
+          // launch-default provider on the mail-wake turn. The message
+          // carries provider/modelId only; baseUrl/customProvider carry
+          // forward from the pin in effect.
           model = (
             provider: record.provider,
             modelId: record.model,
-            baseUrl: null,
-            customProvider: null,
+            baseUrl: model?.baseUrl,
+            customProvider: model?.customProvider,
           );
         case ActiveToolsChangeRecord record:
           activeToolNames = [...record.activeToolNames];

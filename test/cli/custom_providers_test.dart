@@ -256,8 +256,7 @@ void main() {
       );
     });
 
-    test('keyNameFor scopes to the provider name when given', () {
-      expect(
+    test('keyNameFor scopes to the provider name when given', () {      expect(
         CustomProviderRegistry.keyNameFor(
           'https://api.acme.com/v1',
           providerName: 'work',
@@ -288,6 +287,69 @@ void main() {
         ),
         'FA_KEY_API_AIIN_BY',
       );
+    });
+
+    test(
+      'an entry name already a suffix of the host slug is not doubled '
+      '(gh-1226 AC3)',
+      () {
+        // An entry named 'z.ai' on host api.z.ai used to generate
+        // FA_KEY_API_Z_AI_Z_AI — the slug was appended even though the
+        // host slug already ended with it.
+        expect(
+          CustomProviderRegistry.keyNameFor(
+            'https://api.z.ai/api/coding/paas/v4',
+            providerName: 'z.ai',
+          ),
+          'FA_KEY_API_Z_AI',
+        );
+        // A name that is NOT a suffix still scopes the slot.
+        expect(
+          CustomProviderRegistry.keyNameFor(
+            'https://api.z.ai/api/coding/paas/v4',
+            providerName: 'work',
+          ),
+          'FA_KEY_API_Z_AI_WORK',
+        );
+      },
+    );
+
+    test(
+      'a registry loaded from an older doubled slot reports a migration '
+      'note (gh-1226 AC3)',
+      () {
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'z.ai',
+            apiType: 'zai',
+            baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+            modelId: 'glm-5.3-flash',
+            keyName: 'FA_KEY_API_Z_AI_Z_AI',
+          ),
+        ]);
+
+        expect(registry.keyNameMigrationNotes, isNotEmpty);
+        expect(registry.keyNameMigrationNotes.single, contains('z.ai'));
+        expect(
+          registry.keyNameMigrationNotes.single,
+          contains('FA_KEY_API_Z_AI'),
+        );
+        expect(registry.keyNameMigrationNotes.single, contains('canonical'));
+      },
+    );
+
+    test('a canonical registry reports no migration notes', () {
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'z.ai',
+          apiType: 'zai',
+          baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+          modelId: 'glm-5.3-flash',
+          keyName: 'FA_KEY_API_Z_AI',
+        ),
+      ]);
+
+      expect(registry.keyNameMigrationNotes, isEmpty);
     });
   });
 
