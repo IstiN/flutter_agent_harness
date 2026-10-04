@@ -59,6 +59,91 @@ class BudgetTest(unittest.TestCase):
             tmp.cleanup()
 
 
+class BudgetFloorTest(unittest.TestCase):
+    """gh-1206: shard sizing must see the padded (floored) test budgets."""
+
+    def test_floor_raises_test_side_of_budget(self):
+        tmp, root = make_dataset({
+            "t": "max_agent_timeout_sec: 360\nmax_test_timeout_sec: 60\n"
+        })
+        try:
+            self.assertEqual(task_budget(root, "t", test_floor=120.0), 480.0)
+        finally:
+            tmp.cleanup()
+
+    def test_task_at_or_above_floor_untouched(self):
+        tmp, root = make_dataset({
+            "t": "max_agent_timeout_sec: 360\nmax_test_timeout_sec: 240\n"
+        })
+        try:
+            self.assertEqual(task_budget(root, "t", test_floor=120.0), 600.0)
+        finally:
+            tmp.cleanup()
+
+    def test_no_floor_and_zero_floor_keep_declared(self):
+        body = "max_agent_timeout_sec: 360\nmax_test_timeout_sec: 60\n"
+        tmp, root = make_dataset({"t": body})
+        try:
+            self.assertEqual(task_budget(root, "t"), 420.0)
+            self.assertEqual(task_budget(root, "t", test_floor=0.0), 420.0)
+        finally:
+            tmp.cleanup()
+
+    def test_floor_applied_per_task_across_dataset(self):
+        tmp, root = make_dataset({
+            "a": "max_agent_timeout_sec: 360\nmax_test_timeout_sec: 60\n",
+            "b": "max_agent_timeout_sec: 360\nmax_test_timeout_sec: 600\n",
+        })
+        try:
+            self.assertEqual(
+                [task_budget(root, t, test_floor=120.0) for t in ("a", "b")],
+                [480.0, 960.0],
+            )
+        finally:
+            tmp.cleanup()
+
+    def test_main_wires_floor_into_budgets(self):
+        """Two tasks whose floored budgets tie must LPT tie-break by name.
+
+        a declares test=120, b declares test=60; floored at 120 both budget
+        480 -> name order puts a in shard 0. Without the floor wired, b
+        (480) outranks a (420) and lands in shard 0 — the placement flip is
+        the observable.
+        """
+        tmp, root = make_dataset({
+            "a": "max_agent_timeout_sec: 360\nmax_test_timeout_sec: 120\n",
+            "b": "max_agent_timeout_sec: 360\nmax_test_timeout_sec: 60\n",
+        })
+        try:
+            out = tempfile.NamedTemporaryFile("w", delete=False, suffix=".out")
+            out.close()
+            os.environ["GITHUB_OUTPUT"] = out.name
+            import runpy
+            import sys
+            sys.argv = [
+                "shard_tasks.py", "--dataset-dir", str(root), "--shards", "2",
+                "--test-timeout-floor", "120",
+            ]
+            try:
+                runpy.run_path(
+                    str(Path(__file__).parent / "shard_tasks.py"),
+                    run_name="__main__",
+                )
+            finally:
+                sys.argv = ["shard_tasks.py"]
+                del os.environ["GITHUB_OUTPUT"]
+            emitted = Path(out.name).read_text()
+            matrix = json.loads(
+                [l for l in emitted.splitlines() if l.startswith("matrix=")][0]
+                .split("=", 1)[1]
+            )
+            firsts = [entry["tasks"].split()[0] for entry in matrix["include"]]
+            self.assertEqual(firsts, ["a", "b"])
+            os.unlink(out.name)
+        finally:
+            tmp.cleanup()
+
+
 class SplitLptTest(unittest.TestCase):
     def test_all_tasks_placed_exactly_once(self):
         ids = [f"t{i}" for i in range(23)]

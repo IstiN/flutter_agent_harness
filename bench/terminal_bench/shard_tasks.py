@@ -3,6 +3,7 @@
 
 Usage:
     shard_tasks.py --dataset-dir DIR [--shards N] [--tasks 'PATTERN [PATTERN...]']
+                   [--test-timeout-floor SEC]
 
 Resolves task ids exactly like `tb run -t`: the union of Path.glob matches
 per pattern against the dataset dir (empty pattern list = all tasks).
@@ -12,6 +13,15 @@ timeout budget (max_agent_timeout_sec + max_test_timeout_sec, tb defaults
 is the sum of declared budgets, and LPT keeps every shard under the job
 timeout where the old alphabetical-contiguous split could blow past the
 GitHub Actions 6 h cap (issue #142).
+
+gh-1206: the test side honors the same floor the dataset patcher applies
+(patch_test_timeouts.py / FA_TEST_TIMEOUT_FLOOR_SEC) — the bench job pads
+declared max_test_timeout_sec values up to the floor, so the LPT budgets
+here must see the padded numbers or shard worst cases would be
+under-counted. --test-timeout-floor (default: $FA_TEST_TIMEOUT_FLOOR_SEC;
+absent/0 = no floor) raises the test-side share of each budget before
+balancing.
+
 Emits GitHub Actions outputs (matrix + count) on $GITHUB_OUTPUT: one
 matrix include entry per non-empty shard, tasks space-joined.
 """
@@ -21,6 +31,8 @@ import json
 import os
 import re
 from pathlib import Path
+
+from test_timeout_policy import FLOOR_ENV, TEST_TIMEOUT_RE, floored, resolve_floor
 
 
 def resolve_task_ids(dataset_dir, patterns):
@@ -35,8 +47,13 @@ def resolve_task_ids(dataset_dir, patterns):
     return sorted(ids)
 
 
-def task_budget(dataset_dir, task_id):
-    """Declared wall-clock budget (agent + test seconds) for one task."""
+def task_budget(dataset_dir, task_id, test_floor=None):
+    """Declared wall-clock budget (agent + test seconds) for one task.
+
+    test_floor (gh-1206) raises the test share to the same floor the
+    dataset patcher applies, so shard sizing matches the padded task.yaml
+    files the bench job actually runs.
+    """
     agent, test = 360.0, 60.0  # tb TrialHandler defaults
     cfg = dataset_dir / task_id / "task.yaml"
     if cfg.is_file():
@@ -44,10 +61,10 @@ def task_budget(dataset_dir, task_id):
         m = re.search(r"^\s*max_agent_timeout_sec:\s*([\d.]+)", text, re.M)
         if m:
             agent = float(m.group(1))
-        m = re.search(r"^\s*max_test_timeout_sec:\s*([\d.]+)", text, re.M)
+        m = TEST_TIMEOUT_RE.search(text)
         if m:
-            test = float(m.group(1))
-    return agent + test
+            test = float(m.group(2))
+    return agent + floored(test, test_floor)
 
 
 def split_lpt(ids, budgets, n):
@@ -72,6 +89,14 @@ def main():
     parser.add_argument("--dataset-dir", required=True)
     parser.add_argument("--shards", default="8")
     parser.add_argument("--tasks", default="")
+    parser.add_argument(
+        "--test-timeout-floor",
+        default="",
+        help=(
+            "minimum declared max_test_timeout_sec seconds to size for "
+            f"(default: ${FLOOR_ENV}; empty/0 = none)"
+        ),
+    )
     args = parser.parse_args()
 
     try:
@@ -79,9 +104,14 @@ def main():
     except ValueError:
         raise SystemExit(f"::error::shards input must be an integer, got: {args.shards!r}")
 
+    try:
+        test_floor = resolve_floor(args.test_timeout_floor)
+    except ValueError as exc:
+        raise SystemExit(f"::error::{exc}")
+
     ids = resolve_task_ids(Path(args.dataset_dir), args.tasks.split() or ["*"])
     dataset_dir = Path(args.dataset_dir)
-    budgets = {tid: task_budget(dataset_dir, tid) for tid in ids}
+    budgets = {tid: task_budget(dataset_dir, tid, test_floor) for tid in ids}
     shards = []
     for i, part in enumerate(s for s in split_lpt(ids, budgets, n) if s):
         shards.append({"i": i, "tasks": " ".join(part)})
