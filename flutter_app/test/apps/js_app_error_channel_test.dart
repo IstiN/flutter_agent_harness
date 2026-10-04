@@ -110,4 +110,22 @@ void main() {
     channel.disposeAndReset();
     expect(report(channel, _error())!.deliver, isTrue);
   });
+
+  test(
+    'capExcerpt bounds gate excerpts with the same cap as the notices '
+    '(gh-1164 review: pathological error text can never balloon the '
+    'open_app tool result)',
+    () {
+      final short = JsAppErrorChannel.capExcerpt('ok');
+      expect(short, 'ok');
+      final huge = JsAppErrorChannel.capExcerpt(
+        'x' * (JsAppErrorChannel.maxMessageChars * 20),
+      );
+      expect(huge, contains('[truncated]'));
+      expect(
+        huge.length,
+        lessThanOrEqualTo(JsAppErrorChannel.maxMessageChars + 16),
+      );
+    },
+  );
 }

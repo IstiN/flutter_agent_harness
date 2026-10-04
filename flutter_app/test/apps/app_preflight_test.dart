@@ -7,6 +7,7 @@
 library;
 
 import 'package:fa/apps/app_preflight.dart';
+import 'package:fa/apps/js_app_error_channel.dart';
 import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -109,6 +110,30 @@ void main() {
       expect(outcome, isA<AppPreflightPassed>());
       expect(outcome!.gate, 'flutter-test');
     });
+
+    test(
+      'a red flutter-test gate bounds the excerpt to the shared notice '
+      'cap (gh-1164 review: no unbounded text into the LLM tool result)',
+      () async {
+        final env = MemoryExecutionEnv();
+        await _seedDemoApp(env);
+        await env.writeFile('test/apps/demo_test.dart', 'void main() {}');
+        final huge = 'X' * (JsAppErrorChannel.maxMessageChars * 20);
+        final outcome = await runAppPreflight(
+          'demo',
+          env,
+          testRunner: _FakeRunner(FlutterTestResult(passed: false, output: huge)),
+        );
+        expect(outcome, isA<AppPreflightFailed>());
+        expect(outcome!.gate, 'flutter-test');
+        final excerpt = (outcome as AppPreflightFailed).excerpt;
+        expect(excerpt, contains('[truncated]'));
+        expect(
+          excerpt.length,
+          lessThanOrEqualTo(JsAppErrorChannel.maxMessageChars + 16),
+        );
+      },
+    );
 
     test('no toolchain: a non-bootable host installs NO gate instead of '
         'failing every healthy app', () async {

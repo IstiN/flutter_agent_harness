@@ -5,6 +5,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:fa/apps/app_preflight.dart' show smokeProbeEngineFactory;
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/services/asr_service.dart';
@@ -2634,6 +2635,115 @@ jsr.render({type: 'text', data: 'full-app'});
       expect(JsAppEngine.emitPayload('text'), isEmpty);
       expect(JsAppEngine.emitPayload(null), isEmpty);
       expect(JsAppEngine.emitPayload(['list']), isEmpty);
+    });
+  });
+
+  group('gh-1164 review hardening (host-side, no live engine)', () {
+    test('computeSourceRevision hashes the WHOLE source tree — a '
+        'helper-file edit re-arms the error gate (review thread 6)', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/demo/manifest.json',
+        '{"id":"demo","name":"Demo"}',
+      );
+      await env.writeFile('apps/demo/widget.js', "import './components/a.js';");
+      await env.writeFile('apps/demo/components/a.js', 'jsr.render({});');
+
+      final rev1 = await JsAppEngine.computeSourceRevision(
+        env,
+        'apps/demo',
+        'widget.js',
+      );
+      expect(rev1, isNotEmpty);
+      expect(rev1, hasLength(64), reason: 'sha256 hex');
+
+      // The entry is untouched — only a HELPER file changed.
+      await env.writeFile(
+        'apps/demo/components/a.js',
+        'jsr.render({type:"text",data:"v2"});',
+      );
+      final rev2 = await JsAppEngine.computeSourceRevision(
+        env,
+        'apps/demo',
+        'widget.js',
+      );
+      expect(rev2, isNot(rev1));
+
+      await env.writeFile(
+        'apps/demo/widget.js',
+        "import './components/a.js'; // v3",
+      );
+      final rev3 = await JsAppEngine.computeSourceRevision(
+        env,
+        'apps/demo',
+        'widget.js',
+      );
+      expect({rev1, rev2, rev3}, hasLength(3));
+    });
+
+    test('computeSourceRevision excludes runtime state (storage/session '
+        'json are not source)', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/manifest.json', '{"id":"demo"}');
+      await env.writeFile('apps/demo/widget.js', 'jsr.render({});');
+      final rev1 = await JsAppEngine.computeSourceRevision(
+        env,
+        'apps/demo',
+        'widget.js',
+      );
+      await env.writeFile('apps/demo/storage.json', '{"score":1}');
+      await env.writeFile('apps/demo/session.json', '{"sessionId":"s1"}');
+      final rev2 = await JsAppEngine.computeSourceRevision(
+        env,
+        'apps/demo',
+        'widget.js',
+      );
+      expect(rev2, rev1, reason: 'runtime state must not re-arm the gate');
+    });
+
+    test('the injected bootstrap emits a stable fingerprint per error '
+        '(review thread 7: dedup does not collapse to message equality)',
+        () {
+      final js = JsAppEngine.faBootstrapJsFor('en');
+      expect(
+        js,
+        contains('fingerprint: __faFingerprint(message, stack)'),
+        reason: 'every faAppError record must carry the fingerprint',
+      );
+      // The normalization strips per-occurrence noise (indices,
+      // timestamps, per-frame layout values) so noisy RAF-loop errors
+      // collapse to ONE dedup key and the circuit breaker can trip.
+      expect(js, contains("replace(/[0-9]+/g, '#')"));
+      expect(js, contains("replace(/0x[0-9a-fA-F]+/g, '#')"));
+    });
+
+    test('live engines join the sibling group; smoke-gate probes never '
+        'do (review thread 4)', () {
+      JsAppInfo app() => JsAppInfo.fromManifest(
+        const {'id': 'demo', 'name': 'Demo'},
+        bundled: false,
+        fallbackId: 'demo',
+      );
+
+      final live = JsAppEngine(
+        app: app(),
+        env: MemoryExecutionEnv(),
+        permissions: const AppPermissions(),
+      );
+      expect(live.joinSiblingGroup, isTrue);
+
+      final probe = smokeProbeEngineFactory(
+        app: app(),
+        env: MemoryExecutionEnv(),
+        permissions: const AppPermissions(),
+      );
+      expect(
+        probe.joinSiblingGroup,
+        isFalse,
+        reason: 'a scratch-env probe must stay out of the process-wide '
+            'live-engine group: its storage writes would otherwise '
+            'reach the real viewports (and vice versa)',
+      );
     });
   });
 }

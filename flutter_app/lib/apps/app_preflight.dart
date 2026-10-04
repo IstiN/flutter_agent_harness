@@ -31,6 +31,7 @@ library;
 import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:meta/meta.dart' show visibleForTesting;
 
 import 'package:fa/apps/app_preflight_probe_stub.dart'
     if (dart.library.io) 'package:fa/apps/app_preflight_probe_io.dart';
@@ -127,7 +128,7 @@ Future<AppPreflightOutcome> runSmokeRenderGate(
         excerpt: 'smoke setup failed: could not stage the app copy',
       );
     }
-    engine = (engineFactory ?? _defaultEngineFactory)(
+    engine = (engineFactory ?? smokeProbeEngineFactory)(
       app: app,
       env: scratch,
       permissions: app.declaredPermissions,
@@ -193,7 +194,12 @@ Future<bool> _copyAppTree(
   return copyDir(dir);
 }
 
-JsAppEngine _defaultEngineFactory({
+/// The engine factory the smoke gate uses when the caller injects none.
+/// EXPOSED FOR TESTS: asserts the probe wiring — a scratch-env probe
+/// engine stays OUT of the process-wide live-engine sibling group and
+/// forwards captured errors to the local sink (never the live channel).
+@visibleForTesting
+JsAppEngine smokeProbeEngineFactory({
   required JsAppInfo app,
   required ExecutionEnv env,
   required AppPermissions permissions,

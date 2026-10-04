@@ -160,4 +160,91 @@ void main() {
       expect(service.messages.length, greaterThan(baseline));
     },
   );
+
+  test(
+    'a notice for a BOUND app reaches only the bound session '
+    '(gh-1164 review thread 3)',
+    timeout: const Timeout(Duration(seconds: 60)),
+    () async {
+      JsAppErrorChannel.instance.disposeAndReset();
+      // Production shape: all sessions share ONE env.
+      final env = MemoryExecutionEnv(cwd: '/work');
+      AgentConfig config() => AgentConfig(
+        providerKind: 'test',
+        modelId: 'test-model',
+        baseUrl: 'https://example.com',
+        apiKey: '',
+      );
+      final bound = await AgentService.create(
+        config: config(),
+        env: env,
+        streamFunction: _always('bound session note'),
+      );
+      addTearDown(bound.dispose);
+      final other = await AgentService.create(
+        config: config(),
+        env: env,
+        streamFunction: _always('other session note'),
+      );
+      addTearDown(other.dispose);
+      await bound.initialize();
+      await other.initialize();
+      final boundId = bound.currentSessionId!;
+      expect(other.currentSessionId, isNot(boundId));
+
+      // The app-open path maintains this binding on disk.
+      await env.writeFile(
+        'apps/calc/session.json',
+        '{"sessionId":"$boundId"}',
+      );
+
+      JsAppErrorChannel.instance.publish(
+        JsAppErrorNotice(
+          event: const JsAppErrorEvent(
+            kind: JsAppErrorKind.showError,
+            message: 'routed boom',
+            stack: 'at widget.js:3:1',
+          ),
+          appId: 'calc',
+          surface: 'app',
+          sourceRevision: 'rev-1',
+          notice: "App 'calc' (app) reported a showError error:\nrouted boom",
+        ),
+      );
+
+      await _waitFor(
+        () => _hasUserText(bound.messages, 'routed boom'),
+        reason: 'the BOUND session turns the notice into a system notice',
+      );
+      // Let the OTHER service's async routing decision settle: it must
+      // drop the notice (not its app — not its turn).
+      await pumpEventQueue(const Duration(seconds: 2));
+      await other.waitForIdle();
+      expect(
+        _hasUserText(other.messages, 'routed boom'),
+        isFalse,
+        reason: 'an unbound session must never turn on another app error',
+      );
+      // The other session's own pipeline still works: an UNBOUND app's
+      // notice falls back to delivery (never a silent drop everywhere).
+      JsAppErrorChannel.instance.publish(
+        JsAppErrorNotice(
+          event: const JsAppErrorEvent(
+            kind: JsAppErrorKind.showError,
+            message: 'unbound boom',
+            stack: 'at widget.js:3:1',
+          ),
+          appId: 'other-app',
+          surface: 'app',
+          sourceRevision: 'rev-1',
+          notice:
+              "App 'other-app' (app) reported a showError error:\nunbound boom",
+        ),
+      );
+      await _waitFor(
+        () => _hasUserText(other.messages, 'unbound boom'),
+        reason: 'no binding → broadcast fallback still delivers',
+      );
+    },
+  );
 }
