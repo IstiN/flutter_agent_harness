@@ -489,6 +489,20 @@ jobs:
           APP_PATH="flutter_app/build/macos/Build/Products/Release/Fa.app"
           DMG_NAME="fa-macos-${ARCH}-${VERSION}.dmg"
 
+          # Size diet (#1096 AC4 + direction 3): drop what no macOS code path
+          # can load — before any codesign so the seal covers the shipped
+          # tree. Both cuts ride in flutter_assets inside App.framework:
+          # 1) assets/wasm (~47 MB) — WASI interpreter modules loaded
+          #    exclusively via WasiSandboxShell (env_factory_io.dart routes
+          #    desktops to the host Process shell; every rootBundle.load of
+          #    assets/wasm lives in the mobile-only shell).
+          # 2) packages/js_widget_runtime/test — the pub package's
+          #    own test fixture (coach_anny.glb, 5.6 MB); nothing in the app
+          #    references that path (the live model, when used, is fetched
+          #    by the JS-app catalog, not bundled).
+          ASSETS="$APP_PATH/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets"
+          rm -rf "$ASSETS/assets/wasm" "$ASSETS/packages/js_widget_runtime/test"
+
           rm -f fa-macos-*.dmg tmp-fa.dmg
           rm -rf dmg-staging
 
@@ -642,8 +656,11 @@ jobs:
 
       # AC1 (#1096): per-entry uncompressed size table + +5% budget gate on
       # the shipped mac zip (auto-update channel). arm64 baseline is
-      # committed (the cut is extension/web-only, so the release shape
-      # stays the floor); unknown archs FAIL — never self-seed green.
+      # committed, reseeded onto the post-cut shape (#1096 size diet: no
+      # wasm_run_flutter.framework, no flutter_assets/assets/wasm, no
+      # js_widget_runtime test assets — regrowth of any of those fails as
+      # a NEW line > 5% of TOTAL); unknown archs FAIL — never self-seed
+      # green.
       - name: Size manifest + budget gate (mac zip)
         run: |
           case "${{ steps.package.outputs.baseline_arch }}" in

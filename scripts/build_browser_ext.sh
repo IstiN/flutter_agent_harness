@@ -92,6 +92,10 @@ if [ "$with_app" -eq 1 ]; then
   # vendored pyodide in offscreen/ (interpreters.js), not python.wasm.
   # So this ~47MB never loads in the panel — drop it from the bundle.
   rm -rf browser_ext/panel/app/assets/assets/wasm
+  # The pub package's own test fixtures ride along as package assets
+  # (#1096): packages/js_widget_runtime/test/assets/coach_anny.glb alone is
+  # 5.6 MB and nothing in the panel references that path.
+  rm -rf browser_ext/panel/app/assets/packages/js_widget_runtime/test
   # CWS single-manifest rule (#291): the Flutter web build ships a PWA
   # manifest (panel/app/manifest.json, <link rel=manifest> in its
   # index.html) — the Chrome Web Store hard-rejects any package with more

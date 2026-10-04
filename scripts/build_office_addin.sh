@@ -64,6 +64,9 @@ cp -R flutter_app/build/web/. "$out/app/"
 # runs python/js/sqlite from cdn.jsdelivr.net (web_interpreters_web.dart).
 # ~47MB that never loads in the browser — drop from the bundle.
 rm -rf "$out/app/assets/assets/wasm"
+# The pub package's own test fixtures (coach_anny.glb, 5.6 MB) ride along
+# as package assets; nothing in the pane loads that path (#1096 size diet).
+rm -rf "$out/app/assets/packages/js_widget_runtime/test"
 
 # fa1.dev is a hosted page (no extension CSP): CDN scripts are allowed,
 # but the canvaskit copy still must mirror the layout the bootstrap

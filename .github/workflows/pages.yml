@@ -83,7 +83,12 @@ jobs:
       # untouched. The extension/office panel builds prune the same set
       # inside their packaging scripts.
       - name: Prune mobile-only wasm interpreter assets (#1096 AC3)
-        run: rm -rf build/pages/app/assets/assets/wasm
+        run: |
+          rm -rf build/pages/app/assets/assets/wasm
+          # The pub package's own test fixtures (coach_anny.glb, 5.6 MB)
+          # ride along as package assets; nothing on the web app loads
+          # that path (#1096 size diet).
+          rm -rf build/pages/app/assets/packages/js_widget_runtime/test
 
       # The Chrome extension ships on the site too (download + load
       # unpacked): dart2js the SW agent and zip it — flutter is already on

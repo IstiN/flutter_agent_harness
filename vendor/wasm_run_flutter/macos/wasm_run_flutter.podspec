@@ -36,7 +36,14 @@ Pod::Spec.new do |s|
   s.source              = { :path => '.' }
   s.source_files        = 'Classes/**/*'
   s.public_header_files = 'Classes/**/*.h'
-  s.vendored_frameworks = "Frameworks/#{framework_name}"
+  # No s.vendored_frameworks (#1096 AC4): the macOS app resolves the
+  # wasm_run FFI surface via dlsym on its OWN executable — Runner.xcodeproj
+  # force_loads WasmRun.xcframework/macos-arm64_x86_64/libwasm_run_dart.a
+  # and exports the _wire_* symbols (CI verifies them per build). The
+  # embedded dynamic wasm_run_flutter.framework (27 MB unpacked) was a
+  # never-loaded fallback; vendoring it here is what put it in
+  # Frameworks/. The XCFramework download block above STAYS — the static
+  # archive inside it feeds the force_load and the Podfile symbol check.
 
   s.ios.deployment_target = '11.0'
   s.osx.deployment_target = '10.13'
