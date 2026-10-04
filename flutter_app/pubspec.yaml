@@ -252,6 +252,15 @@ dependency_overrides:
     git:
       url: https://github.com/IstiN/flutter_js_widget_runtime.git
       ref: bd1e7c22fb4c4d217fdf5fbf73225dcb1f488bd0
+  # flutter_inappwebview_macos 1.2.0-beta.3 declares a macOS 10.14 floor in
+  # both its Package.swift and podspec, but its Swift marks
+  # presentationAnchor(for:) @available(macOS 10.15, *) — the plugin fails to
+  # compile at 10.14 on both the SwiftPM and CocoaPods paths (upstream bug,
+  # still on master). Vendored verbatim with ONLY the deployment floor raised
+  # to the app's 14.0 (vendor/flutter_inappwebview_macos/VENDORED.md). Drop
+  # the override once upstream fixes the minimum.
+  flutter_inappwebview_macos:
+    path: ../vendor/flutter_inappwebview_macos
 
 flutter:
   uses-material-design: true
