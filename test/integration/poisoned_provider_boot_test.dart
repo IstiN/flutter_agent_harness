@@ -12,9 +12,10 @@
 ///   completes a turn on the fallback provider (the mock LLM).
 /// - AC1: `provider: chatgpt-codex` exactly as the app writes it → the
 ///   boot crash signature (uncaught `ConfigException: unknown provider` +
-///   crash.log) is gone; the boot reaches the provider call. The pure
-///   resolution chain (UT-B1) is asserted in
-///   test/model_roles/provider_catalog_coverage_test.dart.
+///   crash.log) is gone (the pure key-gate + live-wire leg of this case
+///   moved to provider_codex_boot_live_test.dart, `llm`-tagged per the
+///   gh-1199 live boundary); the pure resolution chain (UT-B1) is
+///   asserted in test/model_roles/provider_catalog_coverage_test.dart.
 /// - E3: a `roles:` chain referencing the unknown provider degrades to
 ///   the legacy single-model path with a named warning — never a boot
 ///   throw.
@@ -151,40 +152,6 @@ approvalMode: yolo
       );
     });
 
-    test('AC1 pure: persisted chatgpt-codex with its default endpoint '
-        'passes the key gate and reaches the provider call', () async {
-      // baseUrl = the codex endpoint itself (what /provider chatgpt
-      // writes): the pair is servable, the env creds resolve — the boot
-      // gets PAST the key gate into the provider call (which fails on the
-      // real wire; CI has no valid OAuth account). The URL must be written
-      // explicitly: loadCliConfig defaults an absent baseUrl to the
-      // openrouter endpoint, which the pair guard would reject.
-      writeConfig('''
-provider: chatgpt-codex
-model: gpt-5-codex
-baseUrl: https://chatgpt.com/backend-api/codex
-mode: code
-approvalMode: yolo
-''');
-
-      final result = await runFa(
-        'say something',
-        extraEnv: const {'CHATGPT_OAUTH_CREDENTIALS': 'dummy-creds'},
-      );
-
-      // The key gate PASSED (the injected creds resolved): neither the
-      // missing-key refusal nor any degrade warning fired, and there is
-      // no construction-time crash.
-      expect(result.stderr, isNot(contains('missing API key')));
-      expect(result.stderr, isNot(contains('unknown provider')));
-      expect(result.stderr, isNot(contains('only works with its own')));
-      expect(
-        File('${tempHome.path}/.fah/crash.log').existsSync(),
-        isFalse,
-        reason: result.output,
-      );
-    });
-
     test('E3: a roles chain on the unknown provider degrades to the '
         'legacy model instead of failing the boot', () async {
       writeConfig('''
@@ -316,25 +283,4 @@ approvalMode: yolo
       );
     });
   });
-}
-
-/// [runFaHeadless] without the explicit `--provider/--base-url/--model`
-/// flags: the boot must resolve everything from the (poisoned) config.
-Future<FaResult> runFaHeadlessRaw({
-  required Directory workspace,
-  required String prompt,
-  Map<String, String> env = const {},
-  Map<String, String> extraEnv = const {},
-  Duration timeout = const Duration(minutes: 2),
-}) {
-  // The shared [spawnFa] owns the scrub + blank pins (see its doc): the
-  // boot must resolve ONLY from the poisoned config fixture — an inherited
-  // FA_PROVIDER_* declaration would legitimately override it and defeat
-  // the test.
-  return spawnFa(
-    fahArgs: ['--cwd', workspace.path, '-p', prompt],
-    env: env,
-    extraEnv: extraEnv,
-    timeout: timeout,
-  );
 }
