@@ -55,6 +55,7 @@ final class AgentCliConfig {
     this.alwaysAllowTools = const {},
     this.modelRolesResolver,
     this.providersQueueRuntime,
+    this.providerQueueEnv,
     this.ttsr,
     this.memoryConfig,
     this.redactionPipeline,
@@ -101,6 +102,7 @@ final class AgentCliConfig {
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
+    this.streamThinking = false,
     this.cubeSpec,
     this.cubeSource,
     this.cubeSettings,
@@ -379,6 +381,15 @@ final class AgentCliConfig {
   /// chain; auxiliary roles (smol/slow/plan) keep resolving independently.
   /// Mutable for the same live-override reasons as [modelRolesResolver].
   ProviderQueueRuntime? providersQueueRuntime;
+
+  /// The environment view the provider-queue scope resolves through
+  /// (issue #418 + #675): the queue editor re-resolves the winning scope
+  /// before a write, and it MUST see the same env the boot saw — an
+  /// ambient `FA_PROVIDERS_QUEUE` on the host process (the ai-teammate
+  /// runner exports one) must not decide test/embedder fate after the
+  /// host booted with its own view. Null = the process environment (the
+  /// production boot reads it directly, so behavior is unchanged).
+  final Map<String, String>? providerQueueEnv;
 
   /// Optional TTSR configuration (stream rules from the CLI config and the
   /// project rules file). When set and enabled, a [TtsrController] watches
@@ -781,6 +792,14 @@ final class AgentCliConfig {
   /// cross-run shell-job state (manifest age belt + log GC), plus the
   /// `maxLogBytes` per-log ceiling (issue #919).
   final JobsConfig jobs;
+
+  /// The effective gh-1198 thinking-stream setting for the run
+  /// (`--stream-thinking` flag OR the `output.streamThinking` config,
+  /// resolved by the host): line-mode/headless runs print thinking
+  /// deltas dimmed, live, like the TUI. False — the default — keeps the
+  /// byte-identical legacy output and enables the reasoning-phase
+  /// liveness line instead.
+  final bool streamThinking;
 
   /// This host's machine name for `name@machine` addressing (issue #27
   /// phase 2): a `@machine` suffix matching it is stripped before local

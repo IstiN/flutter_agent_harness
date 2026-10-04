@@ -171,6 +171,7 @@ const _nestedKeySources = <String, String>{
   'spills.tailChars': 'lib/src/spill/spill.dart',
   'subagents.heartbeatMinutes': 'lib/src/task/subagent_heartbeat.dart',
   'subagents.stallMinutes': 'lib/src/task/subagent_heartbeat.dart',
+  'output.streamThinking': 'lib/src/cli/cli_config.dart',
 };
 
 /// Resolves a walked key path against the pins (`*` = exactly one segment).

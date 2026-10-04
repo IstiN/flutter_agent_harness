@@ -34,6 +34,7 @@ import '../tools/load_modes.dart';
 import 'custom_providers.dart';
 import '../task/subagent_heartbeat.dart';
 import 'links_config.dart';
+import 'output_config.dart';
 import 'tui_status_line.dart';
 
 /// Parses the `providerTimeouts:` section: provider watchdog overrides
@@ -369,6 +370,7 @@ final class CliConfig {
     this.tuiClassic = false,
     this.statusLine,
     this.links = const LinksConfig(),
+    this.streamThinking = false,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -517,7 +519,18 @@ final class CliConfig {
           skillsSection['skillsDisableShellExecution'] as bool? ?? false,
       skillToggles:
           skillsSection['skillToggles'] as Map<String, bool>? ?? const {},
+      // The output section (gh-1198) is strict: `streamThinking` opts
+      // line-mode/headless runs into the live dimmed thinking stream;
+      // absent = false = the byte-identical legacy output.
+      streamThinking: _outputStreamThinking(map['output']),
     );
+  }
+
+  /// The `output.streamThinking` value: the strict parser validates the
+  /// section, the walk below reads the single key (defaults false).
+  static bool _outputStreamThinking(Object? node) {
+    parseOutputSection(node);
+    return outputStreamThinkingValue(node);
   }
 
   /// Parses the `skills:` section: `access` (ask/granted/denied — consent
@@ -777,6 +790,13 @@ final class CliConfig {
   /// links.…`) and the site generator all resolve the same values.
   final LinksConfig links;
 
+  /// The opt-in live thinking stream for line-mode/headless runs
+  /// (gh-1198, `output.streamThinking` yaml key, default false): when
+  /// true, thinking deltas print dimmed, live, like the TUI's progress
+  /// signal. `--stream-thinking` wins for the run. The default keeps the
+  /// byte-identical legacy output (machine consumers, AC3).
+  final bool streamThinking;
+
   /// Returns a copy with [entries] as the custom-providers list; every
   /// other field carries over. [saveCliConfig] uses it for its
   /// merge-before-write union (issue #221) — keep this field list in sync
@@ -904,8 +924,14 @@ final class CliConfig {
     buffer.write(_linksYaml());
     buffer.write(_powerYaml());
     buffer.write(_quotaYaml());
+    buffer.write(_outputYaml());
     return buffer.toString();
   }
+
+  /// The `output:` section (gh-1198), only when explicitly opted in;
+  /// defaults are never written so the file stays minimal.
+  String _outputYaml() =>
+      streamThinking ? 'output:\n  streamThinking: true\n' : '';
 
   /// The `agent:` section, only when a cap or a load mode is persisted;
   /// defaults are never written so the file stays minimal.
@@ -1466,6 +1492,10 @@ const _diskPreservedSections = {
   // omits a default-valued section — the raw block (future keys the
   // typed renderer does not know yet) survives untouched.
   'links',
+  // The output section (gh-1198): the emitter writes only the opt-in
+  // `streamThinking: true`; a hand-written block (the default-false
+  // form, comments, future keys) survives a save untouched.
+  'output',
 };
 
 /// Re-attaches the [_diskPreservedSections] blocks of [diskText] to
