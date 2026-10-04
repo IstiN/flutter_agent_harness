@@ -165,10 +165,15 @@ final class _GatedScanEnv implements ExecutionEnv {
 
   final MemoryExecutionEnv _delegate;
   int failNext = 0;
+  int calls = 0;
 
   @override
   Future<Result<List<FileInfo>, FileError>> listDir(String path) async {
-    if (failNext > 0) {
+    calls++;
+    // Path-scoped: the test's own repo.peek polls also listDir (the
+    // mailbox dirs) and must not burn the failure budget — only scans of
+    // the scheduler's `_scheduled` directory are gated.
+    if (failNext > 0 && path.endsWith('_scheduled')) {
       failNext--;
       return Err(
         FileError(
@@ -1565,6 +1570,12 @@ void main() {
           text: 'delayed reminder',
           delay: const Duration(milliseconds: 30),
         );
+        // The arming scan is fire-and-forget: flush microtasks so it has
+        // fully completed, then gate exactly the NEXT listDir — the
+        // timer tick's delivery-pass scan. The failure is transient: the
+        // re-arm scan right after succeeds, so the arming-path catch
+        // never runs.
+        await pumpEventQueue();
         env.failNext = 1;
         clock.jump(const Duration(milliseconds: 30));
         // The recovered heartbeat delivers the record once the re-armed
