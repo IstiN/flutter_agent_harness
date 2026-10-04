@@ -110,6 +110,7 @@ final class CliArgs extends CliArgsResult {
     this.ompMode = false,
     this.debugSecrets = false,
     this.noFormat = false,
+    this.streamThinking = false,
   }) : super._();
 
   /// `--model <id>`.
@@ -279,6 +280,13 @@ final class CliArgs extends CliArgsResult {
   /// `FA_NO_FORMAT` env var.
   final bool noFormat;
 
+  /// `--stream-thinking` (gh-1198): the opt-in live thinking stream for
+  /// this run — line-mode/headless runs print thinking deltas dimmed,
+  /// live, like the TUI. Wins over the `output.streamThinking` config
+  /// for the run; the config default keeps the byte-identical legacy
+  /// output.
+  final bool streamThinking;
+
   /// Whether this invocation runs a single headless prompt instead of the
   /// interactive REPL.
   bool get isHeadless =>
@@ -302,9 +310,9 @@ const Map<String, CliArgsResult Function(List<String>)> _cliSubcommands = {
 };
 
 /// Applies the no-value boolean flags (`--wait-for-jobs`, `--pi`,
-/// `--omp`, `--debug-secrets`, `--no-format`) to [values]; returns false
-/// when [arg] is none of them (the caller falls through to the value-flag
-/// table).
+/// `--omp`, `--debug-secrets`, `--no-format`, `--stream-thinking`) to
+/// [values]; returns false when [arg] is none of them (the caller falls
+/// through to the value-flag table).
 bool _applyBooleanFlag(_CliArgValues values, String arg) {
   if (arg == '--wait-for-jobs') {
     values.waitForJobs = true;
@@ -326,8 +334,20 @@ bool _applyBooleanFlag(_CliArgValues values, String arg) {
     values.noFormat = true;
     return true;
   }
+  if (arg == '--stream-thinking') {
+    values.streamThinking = true;
+    return true;
+  }
   return false;
 }
+
+/// The effective gh-1198 thinking-stream setting for a run: the
+/// `--stream-thinking` flag wins over the `output.streamThinking` config
+/// for the run; the config default (false) keeps the byte-identical
+/// legacy output. The flag is opt-in only, so "wins" is an inclusive OR —
+/// there is no `--no-stream-thinking` spelling.
+bool resolveStreamThinking({required bool flag, required bool configValue}) =>
+    flag || configValue;
 
 CliArgsResult parseCliArgs(List<String> args) {
   final subcommand = args.isEmpty ? null : _cliSubcommands[args.first];
@@ -1126,6 +1146,7 @@ final class _CliArgValues {
   bool ompMode = false;
   bool debugSecrets = false;
   bool noFormat = false;
+  bool streamThinking = false;
   final promptTemplateDirs = <String>[];
   String? mode;
   String? cwd;
@@ -1201,6 +1222,7 @@ final class _CliArgValues {
       ompMode: ompMode,
       debugSecrets: debugSecrets,
       noFormat: noFormat,
+      streamThinking: streamThinking,
       attachments: List.unmodifiable(attachments),
     );
   }

@@ -3,6 +3,11 @@
 /// documented config-file equivalent in the skill, and the skill must not
 /// document phantom commands.
 ///
+/// The guarded documentation is the LIVE skill source
+/// `prompts/skills/self-settings/SKILL.md` (issue #1151 retired the
+/// `.fah/skills/fa-self-config` seed copy — frozen last-seeded bytes,
+/// see `retired_seed_frozen_test.dart`).
+///
 /// The registry is walked from the actual sources: the async info-command
 /// table and the switch dispatch in `agent_cli_commands.dart` (parsed from
 /// source, so a new arm cannot hide) plus the `builtinSlashCommands` map the
@@ -21,7 +26,7 @@ import 'package:flutter_agent_harness/src/cli/slash_menu.dart';
 import 'package:test/test.dart';
 
 final _repoRoot = Directory.current.path;
-final _skillPath = '$_repoRoot/.fah/skills/fa-self-config/SKILL.md';
+final _skillPath = '$_repoRoot/prompts/skills/self-settings/SKILL.md';
 final _dispatchSource = File(
   '$_repoRoot/lib/src/cli/agent_cli_commands.dart',
 ).readAsStringSync();
@@ -96,7 +101,8 @@ const _nonSettingsCommands = <String, String>{
   '/queue': 'in-memory queued follow-ups (view/clear), nothing persisted',
   '/power': 'read-only sleep-prevention level/held state',
   '/termios': 'read-only stty -a dump (issue #735 steering-freeze triage)',
-  '/quota': 'read-only quota table/refresh (issue #823), changes no '
+  '/quota':
+      'read-only quota table/refresh (issue #823), changes no '
       'persisted setting',
   '/mouse':
       'session TUI mouse-capture toggle, nothing persisted (the '
@@ -133,7 +139,7 @@ void main() {
       reason:
           'new CLI command(s) $unclassified: if they change persisted '
           'settings, add them to _settingsCommands AND document them in '
-          'fa-self-config/SKILL.md; otherwise add them to '
+          'prompts/skills/self-settings/SKILL.md; otherwise add '
           '_nonSettingsCommands with a one-line reason',
     );
   });
@@ -147,7 +153,7 @@ void main() {
           reason:
               '"$command" is classified but no longer exists in the '
               'CLI registry — remove it from the parity test and check '
-              'fa-self-config/SKILL.md for stale references',
+              'self-settings/SKILL.md for stale references',
         );
       }
     }
@@ -162,9 +168,9 @@ void main() {
       missing,
       isEmpty,
       reason:
-          'fa-self-config/SKILL.md is missing config-file equivalents '
-          'for $missing — add a topic section and list the command(s) in '
-          'its <!-- parity: … --> marker',
+          'prompts/skills/self-settings/SKILL.md is missing config-file '
+          'equivalents for $missing — add a topic section and list the '
+          'command(s) in its <!-- parity: … --> marker',
     );
   });
 
@@ -176,7 +182,8 @@ void main() {
       phantom,
       isEmpty,
       reason:
-          'fa-self-config/SKILL.md documents $phantom which the CLI '
+          'prompts/skills/self-settings/SKILL.md documents '
+          '$phantom which the CLI '
           'registry does not have — a command was renamed or removed; '
           'update the skill section (docs/dap.md-style references to '
           'non-slash surfaces stay outside the markers)',
@@ -219,14 +226,14 @@ void main() {
         isEmpty,
         reason:
             'fa config gained verb(s) ${verbs.difference(documented)} — '
-            'document them in fa-self-config/SKILL.md (the config-tool section '
-            'lists each `fa config <verb>` wrapper)',
+            'document them in prompts/skills/self-settings/SKILL.md (the '
+            'config-tool section lists each `fa config <verb>` wrapper)',
       );
       expect(
         documented.difference(verbs),
         isEmpty,
         reason:
-            'fa-self-config/SKILL.md documents `fa config '
+            'prompts/skills/self-settings/SKILL.md documents `fa config '
             '${documented.difference(verbs)}` which cli_args.dart configVerbs '
             'does not have — a verb was renamed or removed; update the skill',
       );
