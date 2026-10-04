@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 1.0.508
+
 
 - chore(ci): document the sm-kicker head-completeness codeless-head crash
   (upstream awf#15) — the factory job's `gh api` calls put `--jq` before
