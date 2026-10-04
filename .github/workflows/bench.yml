@@ -30,6 +30,19 @@ name: Bench
 # REG-1). E3 shard math: with extension on, worst case per task is the
 # ceiling (4x agent-timeout) + test budget — the defaults fit the current
 # LPT sizing below; raise the ceiling and shrink shards accordingly.
+#
+# Issue gh-1206 (run 37144207185): the DECLARED test budgets (tb default
+# 60s = 120s effective at multiplier 2) classify slow-but-healthy verifier
+# phases as test_timeout — jupyter-notebook-server died with the agent's
+# pane DONE, the tests having burned their own budget on first-boot
+# server startup + in-container dep installs. The test-side analog of the
+# #1122 knobs: `test-timeout-floor` (default 120s declared = 240s
+# effective) pads every task's max_test_timeout_sec up to the floor in
+# the downloaded dataset (patch_test_timeouts.py — the same in-place
+# patch mechanism as the Debian apt fix), and shard_tasks.py sizes shards
+# on the padded budgets so LPT never under-counts. The cap is a cap, not
+# a wait: fast verifier phases are unaffected (a full-dataset worst case
+# grows < 10 min/shard); `0` restores the declared budgets.
 
 on:
   workflow_dispatch:
@@ -54,6 +67,10 @@ on:
         description: 'Extend the agent cap while the agent output grows (idle window 120s, hard ceiling 4x base)'
         required: false
         default: ''
+      test-timeout-floor:
+        description: 'Floor for declared task test timeouts, seconds (gh-1206; 0 = declared budgets)'
+        required: false
+        default: '120'
 
 permissions:
   contents: read
@@ -109,6 +126,9 @@ jobs:
       - name: Unit-test bench scripts
         run: python -m unittest discover -s bench/terminal_bench -v
 
+      # gh-1206: the shards must be sized on the SAME padded test budgets
+      # the bench job writes into its dataset cache — an under-count here
+      # could push a shard past the 355-min job cap.
       # Resolve the task-id list exactly like tb does (union of Path.glob
       # matches per -t pattern, against a dataset fetched via tb itself),
       # then balance shards longest-declared-budget-first (LPT, issue #142)
@@ -120,10 +140,12 @@ jobs:
           DATASET: ${{ inputs.dataset }}
           TASKS: ${{ inputs.tasks }}
           SHARDS: ${{ inputs.shards }}
+          TEST_TIMEOUT_FLOOR: ${{ inputs.test-timeout-floor }}
         run: |
           tb datasets download -d "$DATASET" --output-dir "$RUNNER_TEMP/ds"
           python bench/terminal_bench/shard_tasks.py \
-            --dataset-dir "$RUNNER_TEMP/ds" --shards "$SHARDS" --tasks "$TASKS"
+            --dataset-dir "$RUNNER_TEMP/ds" --shards "$SHARDS" --tasks "$TASKS" \
+            --test-timeout-floor "$TEST_TIMEOUT_FLOOR"
 
   bench:
     name: fa on terminal-bench, shard ${{ matrix.i }} (glm-5.3-flash)
@@ -159,10 +181,19 @@ jobs:
       - name: Download & patch dataset
         env:
           DATASET: ${{ inputs.dataset }}
+          TEST_TIMEOUT_FLOOR: ${{ inputs.test-timeout-floor }}
         run: |
           tb datasets download -d "$DATASET"
           python bench/terminal_bench/patch_dataset.py \
             "$HOME/.cache/terminal-bench/${DATASET%%==*}/${DATASET##*==}"
+          # gh-1206: pad declared test budgets up to the floor so
+          # slow-start verifier phases (jupyter, databases; judge phases
+          # apt/pip-installing their own deps) stop dying as test_timeout
+          # while the agent's work is already done. Empty/0 input = no
+          # floor (declared budgets byte-for-byte).
+          python bench/terminal_bench/patch_test_timeouts.py \
+            "$HOME/.cache/terminal-bench/${DATASET%%==*}/${DATASET##*==}" \
+            --floor "$TEST_TIMEOUT_FLOOR"
 
       - name: Run terminal-bench (fa agent)
         env:
