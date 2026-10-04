@@ -103,20 +103,22 @@ scenarios:
       expect(result.exitCode, isNot(0));
     });
 
-    test('scripted scenario serves then exhausts with a clean failure', () async {
-      // gh-1199 AC3/E4: the conversation is scenario-routed on a unique
-      // marker so INCIDENTAL mock traffic (background tag generation,
-      // title/summary calls) can never pop the scripted response the way
-      // it popped the one-entry top-level fallback queue in run
-      // 37131131303 (unmatched traffic degrades to a tolerated mock 500;
-      // the known auto-tag noise is pinned to a sticky wildcard, gh-1171).
-      // The top-level `responses:` fallback queue itself is exercised
-      // serve-then-exhaust at the unit level in
-      // packages/fa_llm_mock/test/mock_llm_server_test.dart — no CLI boot
-      // noise can reach it there.
-      final scriptFile = File('${workspace.path}/mock_script.yaml')
-        ..createSync(recursive: true)
-        ..writeAsStringSync('''
+    test(
+      'scripted scenario serves then exhausts with a clean failure',
+      () async {
+        // gh-1199 AC3/E4: the conversation is scenario-routed on a unique
+        // marker so INCIDENTAL mock traffic (background tag generation,
+        // title/summary calls) can never pop the scripted response the way
+        // it popped the one-entry top-level fallback queue in run
+        // 37131131303 (unmatched traffic degrades to a tolerated mock 500;
+        // the known auto-tag noise is pinned to a sticky wildcard, gh-1171).
+        // The top-level `responses:` fallback queue itself is exercised
+        // serve-then-exhaust at the unit level in
+        // packages/fa_llm_mock/test/mock_llm_server_test.dart — no CLI boot
+        // noise can reach it there.
+        final scriptFile = File('${workspace.path}/mock_script.yaml')
+          ..createSync(recursive: true)
+          ..writeAsStringSync('''
 scenarios:
   - match: "fa-fallback-probe"
     responses:
@@ -126,21 +128,22 @@ scenarios:
     responses:
       - text: ""
 ''');
-      final server = await MockLlmServer.start(
-        script: MockLlmScript.parseFile(scriptFile.path),
-      );
-      addTearDown(server.stop);
+        final server = await MockLlmServer.start(
+          script: MockLlmScript.parseFile(scriptFile.path),
+        );
+        addTearDown(server.stop);
 
-      final first = await runFa(server, 'fa-fallback-probe');
-      expect(first.stdout, contains('fallback reply'));
-      expect(first.exitCode, 0);
+        final first = await runFa(server, 'fa-fallback-probe');
+        expect(first.stdout, contains('fallback reply'));
+        expect(first.exitCode, 0);
 
-      // The marker matches again but the queue is dry: a matched-but-dry
-      // scenario answers the HTTP 500 `script exhausted` — surfaced as a
-      // clean run failure, never a silent empty turn.
-      final second = await runFa(server, 'fa-fallback-probe again');
-      expect(second.output, contains('script exhausted'));
-      expect(second.exitCode, isNot(0));
-    });
+        // The marker matches again but the queue is dry: a matched-but-dry
+        // scenario answers the HTTP 500 `script exhausted` — surfaced as a
+        // clean run failure, never a silent empty turn.
+        final second = await runFa(server, 'fa-fallback-probe again');
+        expect(second.output, contains('script exhausted'));
+        expect(second.exitCode, isNot(0));
+      },
+    );
   });
 }

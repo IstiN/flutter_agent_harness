@@ -18,14 +18,14 @@ import 'package:test/test.dart';
 
 void main() {
   test('llm tag boundary lint is clean (gh-1199 AC2/AC3 audit)', () async {
-    final proc = await Process.run(
-      'python3',
-      ['scripts/check_llm_tag_boundary.py'],
-    );
+    final proc = await Process.run('python3', [
+      'scripts/check_llm_tag_boundary.py',
+    ]);
     expect(
       proc.exitCode,
       0,
-      reason: 'live-provider I/O without the llm tag detected:\n'
+      reason:
+          'live-provider I/O without the llm tag detected:\n'
           '${proc.stdout}\n${proc.stderr}',
     );
     expect(proc.stdout as String, contains('0 violation(s)'));

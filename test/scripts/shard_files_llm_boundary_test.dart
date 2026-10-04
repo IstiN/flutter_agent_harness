@@ -38,10 +38,15 @@ const _liveFiles = [
 
 Future<Set<String>> selection(int shard) async {
   final proc = await Process.run('python3', [
-    _shardFiles, _manifest, '$shard',
-    '--tags', 'integration',
-    '--exclude', 'browser_ext',
-    '--exclude-tag', 'llm',
+    _shardFiles,
+    _manifest,
+    '$shard',
+    '--tags',
+    'integration',
+    '--exclude',
+    'browser_ext',
+    '--exclude-tag',
+    'llm',
   ]);
   expect(proc.exitCode, 0, reason: proc.stderr as String);
   return (proc.stdout as String)
@@ -66,7 +71,8 @@ void main() {
       expect(
         union,
         isNot(contains(live)),
-        reason: '$live is tagged llm but reached the deterministic-gate '
+        reason:
+            '$live is tagged llm but reached the deterministic-gate '
             'selection — the live boundary is leaking (gh-1199 AC1)',
       );
     }
@@ -78,9 +84,13 @@ void main() {
   test('without --exclude-tag the same invocation WOULD select a live '
       'file (red/green contrast)', () async {
     final proc = await Process.run('python3', [
-      _shardFiles, _manifest, '0',
-      '--tags', 'integration',
-      '--exclude', 'browser_ext',
+      _shardFiles,
+      _manifest,
+      '0',
+      '--tags',
+      'integration',
+      '--exclude',
+      'browser_ext',
     ]);
     expect(proc.exitCode, 0, reason: proc.stderr as String);
     final raw = (proc.stdout as String)
@@ -92,7 +102,8 @@ void main() {
     expect(
       wouldRun,
       isNotEmpty,
-      reason: 'no live file would be selected even WITHOUT --exclude-tag — '
+      reason:
+          'no live file would be selected even WITHOUT --exclude-tag — '
           'the manifest lost the live suite; re-balance or drop this '
           'contrast check',
     );

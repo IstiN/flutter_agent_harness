@@ -13,6 +13,12 @@ tags:
     # provider-smoke job (v* tags) and nightly — every per-PR suite excludes
     # them: dart test --exclude-tags llm
     #
+    # gh-1199: the boundary is now enforced at the gate's integration shard
+    # SELECTION too (shard_files.py --exclude-tag llm, asserted by
+    # test/scripts/shard_files_llm_boundary_test.dart) and by
+    # scripts/check_llm_tag_boundary.py — a live-looking integration file
+    # without this tag fails the static gate. See docs/live-llm-testing.md.
+    #
     # Rate limiting (issue #931 part 3.3): package:test forbids `concurrency`
     # in tag overrides (test_core _disallow('concurrency') for tag scopes, v1.32),
     # so the pin lives on the CI invocations: the per-PR integration shards run
