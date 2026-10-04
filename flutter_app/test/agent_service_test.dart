@@ -1767,6 +1767,102 @@ void main() {
       );
     });
 
+    test('gh-1180 review T10: an allowed wake whose turn FAILS still '
+        'leaves wake_attempted + turn_started in the trail — the app '
+        'host appends turn_started BEFORE starting the turn (CLI parity), '
+        'so a throwing turn never ends the trail at wake_attempted with '
+        'neither turn_started nor wake_refused', () async {
+      AgentService.enableInboxWatcher = true;
+      addTearDown(() => AgentService.enableInboxWatcher = false);
+      final env = MemoryExecutionEnv(cwd: '/');
+      // The turn fails at the provider layer: the stream errors out
+      // (providers-never-throw: the failure arrives as an ErrorEvent).
+      AssistantMessageEventStream failing(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        final stream = AssistantMessageEventStream();
+        stream.push(
+          ErrorEvent(
+            reason: StopReason.error,
+            error: AssistantMessage(
+              content: const [TextContent(text: '')],
+              api: model.api,
+              provider: model.provider,
+              model: model.id,
+              usage: Usage.zero,
+              stopReason: StopReason.error,
+              timestamp: DateTime.now(),
+              errorMessage: 'provider exploded',
+            ),
+          ),
+        );
+        stream.end();
+        return stream;
+      }
+
+      final service = await AgentService.create(
+        config: AgentConfig(
+          providerKind: 'openai-completions',
+          modelId: 'test-model',
+          baseUrl: 'https://example.test',
+          apiKey: '[REDACTED:Sensitive Value]',
+        ),
+        env: env,
+        streamFunction: failing,
+        sessionsRoot: '/sessions',
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+      final manager = service.subagentManager!;
+      final receiptsPath =
+          '/sessions/${encodeSessionCwd(env.sessionCwd)}'
+          '/messages/_scheduled/receipts.jsonl';
+      Future<List<Map<String, dynamic>>> receipts() async {
+        final text = (await env.readTextFile(receiptsPath)).valueOrNull;
+        if (text == null || text.isEmpty) return const [];
+        return [
+          for (final line in text.trim().split('\n'))
+            jsonDecode(line) as Map<String, dynamic>,
+        ];
+      }
+
+      await manager.enqueueMessage(
+        'main',
+        SubagentMessage(
+          fromId: 'a1',
+          text: 'wake up and fail',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      // Wait for the wake receipts to land.
+      for (var i = 0; i < 1500; i++) {
+        final trail = await receipts();
+        if (trail.any((event) => event['event'] == 'turn_started')) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      final trail = await receipts();
+      expect(
+        trail.where((event) => event['event'] == 'wake_attempted'),
+        hasLength(1),
+        reason: 'the wake itself was attempted',
+      );
+      expect(
+        trail.where((event) => event['event'] == 'turn_started'),
+        hasLength(1),
+        reason:
+            'the trail records that a turn BEGAN even when the turn then '
+            'fails — never the was-it-refused ambiguity AC4 exists to '
+            'resolve (CLI appends turn_started before starting the run)',
+      );
+      expect(
+        trail.where((event) => event['event'] == 'wake_refused'),
+        isEmpty,
+        reason: 'the wake was ALLOWED — no refusal receipt',
+      );
+    });
+
     test(
       'scheduled message survives a session recreate and lands in the live session (#59)',
       () async {

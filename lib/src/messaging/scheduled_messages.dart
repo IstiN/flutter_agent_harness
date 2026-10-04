@@ -431,7 +431,21 @@ final class ScheduledMessageQueue {
   }
 
   Future<int> _deliverDueInner() async {
-    final scanned = await _scanPending();
+    final List<({String path, Map<String, dynamic> record})> scanned;
+    try {
+      scanned = await _scanPending();
+    } on Object catch (e) {
+      // gh-1180 review (AC4): the SAME _scanPending throw on the ARMING
+      // path is receipted as scan_failed (_armAsync) — a transient read
+      // error breaking a timer tick's delivery pass must leave the
+      // identical receipt, otherwise the trail shows nothing between the
+      // last scheduled line and the eventual delivered one and the
+      // post-mortem cannot tell the pass ever failed. The throw still
+      // propagates: the _armAt callback logs 'delivery pass failed' and
+      // re-arms at failureBackoff exactly as before.
+      await receipts?.append('scan_failed', {'error': '$e'});
+      rethrow;
+    }
     final nowMs = _now().millisecondsSinceEpoch;
     final dueRecords =
         <({String path, Map<String, dynamic> record, String to})>[];

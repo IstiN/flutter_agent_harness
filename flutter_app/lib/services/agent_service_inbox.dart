@@ -123,6 +123,15 @@ extension AgentServiceInbox on AgentService {
         'lane': decision.lane.name,
         'ids': [for (final message in pending) message.id],
       });
+      // gh-1180 review T10 (CLI parity): turn_started is receipted
+      // BEFORE the turn starts, so a throwing turn (provider error,
+      // harness failure) never leaves the trail ending at
+      // wake_attempted with neither turn_started nor wake_refused — the
+      // "was the wake refused?" ambiguity AC4 exists to resolve.
+      await _scheduledReceipts.append('turn_started', {
+        'lane': decision.lane.name,
+        'ids': [for (final message in pending) message.id],
+      });
       await sendText(
         '<system-notice>New inter-agent mail arrived ($count message(s)) — '
         'the messages follow below as user messages. Read them and act: '
@@ -130,10 +139,6 @@ extension AgentServiceInbox on AgentService {
         'response is expected, or just incorporate the information.'
         '</system-notice>',
       );
-      await _scheduledReceipts.append('turn_started', {
-        'lane': decision.lane.name,
-        'ids': [for (final message in pending) message.id],
-      });
     } finally {
       _inboxWakeRunning = false;
     }
@@ -146,6 +151,15 @@ extension AgentServiceInbox on AgentService {
     final manager = _subagentManager;
     if (manager == null) return const [];
     final queued = await manager.drainMessages(manager.selfId);
+    // gh-1180 review T8 (CLI parity): a drained `user`-kind message IS
+    // the user talking — it resets the streak AND ends the refusal
+    // episode. sendText's own reset is a no-op while the wake flag is
+    // held, so without this the streak stayed at the cap and the episode
+    // latch stayed set: a repeat refusal after user mail was swallowed
+    // (silent AND unreceipted — the exact T2 shape on the second host).
+    if (queued.any((message) => message.isUserInput)) {
+      _inboxWakePolicy.resetStreak();
+    }
     return [
       for (final message in queued)
         UserMessage.text('from ${message.fromId}: ${message.text.trim()}'),

@@ -133,13 +133,18 @@ extension AgentCliMessagingFlow on AgentCli {
   /// Namespaces this instance's mailboxes with the active session id: two
   /// Fa instances sharing the messaging root never drain each other's
   /// inboxes. Called after every session init/switch.
+  /// The wake-receipt trail (gh-1180 AC4) built alongside the queue: the
+  /// non-nullable log the idle-wake path writes its wake_attempted /
+  /// turn_started / wake_refused events through. A `late final` so the
+  /// production wake path can never silently skip the trail because a
+  /// lazy initializer has not run yet (review T11).
+  ScheduledReceiptLog _newScheduledReceipts() => ScheduledReceiptLog(
+    env: _env,
+    path: () => '$_scheduledMessagesRoot/_scheduled/receipts.jsonl',
+    onError: (text) => io.writeln('[sched] $text'),
+  );
+
   ScheduledMessageQueue _newScheduledMessages() {
-    final receiptsLog = ScheduledReceiptLog(
-      env: _env,
-      path: () => '$_scheduledMessagesRoot/_scheduled/receipts.jsonl',
-      onError: (text) => io.writeln('[sched] $text'),
-    );
-    scheduledReceiptsForTest = receiptsLog;
     return ScheduledMessageQueue(
       env: _env,
       repo: () => _fabricRepository,
@@ -152,7 +157,9 @@ extension AgentCliMessagingFlow on AgentCli {
       // gh-1180 AC4: the persisted receipt trail — scheduled / delivered /
       // delivery_failed / scan_failed events keyed by record id, so a
       // post-mortem can tell "timer never fired" from "wake refused".
-      receipts: receiptsLog,
+      // Rides the non-nullable [_scheduledReceipts] the wake path also
+      // writes through (one log, one trail — review T11).
+      receipts: _scheduledReceipts,
       // Terminal visibility: a dim line when a scheduled message is created
       // and when it fires, so self-reminders are observable without /tasks.
       // Each transition also re-pushes the TUI indicator row (issue #115).
@@ -286,11 +293,11 @@ extension AgentCliMessagingFlow on AgentCli {
         io.writeln(
           _style.dim('[mail] wake refused — ${decision.refusalReason}'),
         );
-        await scheduledReceiptsForTest?.append('wake_attempted', {
+        await _scheduledReceipts.append('wake_attempted', {
           'lane': decision.lane.name,
           'ids': [for (final message in pending) message.id],
         });
-        await scheduledReceiptsForTest?.append('wake_refused', {
+        await _scheduledReceipts.append('wake_refused', {
           'lane': decision.lane.name,
           'reason': decision.refusalReason,
         });
@@ -308,11 +315,11 @@ extension AgentCliMessagingFlow on AgentCli {
             : '[mail] new hub message(s) — waking up to answer',
       ),
     );
-    await scheduledReceiptsForTest?.append('wake_attempted', {
+    await _scheduledReceipts.append('wake_attempted', {
       'lane': decision.lane.name,
       'ids': [for (final message in pending) message.id],
     });
-    await scheduledReceiptsForTest?.append('turn_started', {
+    await _scheduledReceipts.append('turn_started', {
       'lane': decision.lane.name,
       'ids': [for (final message in pending) message.id],
     });

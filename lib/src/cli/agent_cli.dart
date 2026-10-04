@@ -1113,6 +1113,17 @@ class AgentCli {
   /// cannot impersonate a dead owner because this differs.
   late final String _leaseBootId = FileSessionLeaseStore.newBootId();
 
+  /// The persisted wake receipts for scheduled mail (gh-1180 AC4): every
+  /// wake_attempted / turn_started / wake_refused lands here so a
+  /// post-mortem can tell "timer never fired" from "wake refused". A
+  /// non-nullable `late final` created alongside the queue (review: the
+  /// production wake path is load-bearing on this log — it must never be
+  /// null because a lazy initializer has not run yet); the
+  /// `@visibleForTesting` getter below is the seam, mirroring the app
+  /// host's shape.
+  late final ScheduledReceiptLog _scheduledReceipts =
+      _newScheduledReceipts();
+
   /// Persisted delayed messages (`schedule_message`): pending records live
   /// under `<messagesRoot>/_scheduled/` and are delivered into the
   /// agent's own inbox when due, where the idle-wake starts a turn.
@@ -2738,11 +2749,11 @@ class AgentCli {
     maxStreak: _maxInboxWakeStreak,
   );
 
-  /// The persisted wake receipts for scheduled mail (gh-1180 AC4): every
-  /// wake_attempted / turn_started / wake_refused lands here so a
-  /// post-mortem can tell "timer never fired" from "wake refused".
+  /// Test seam for the persisted wake-receipt trail (gh-1180 AC4): reads
+  /// the non-nullable [_scheduledReceipts] the production wake path
+  /// writes through. Mirrors the app host's `scheduledReceiptsForTest`.
   @visibleForTesting
-  ScheduledReceiptLog? scheduledReceiptsForTest;
+  ScheduledReceiptLog get scheduledReceiptsForTest => _scheduledReceipts;
 
   /// Compaction settings for the live model: the config override when the
   /// user pinned one, else pi's fixed defaults SCALED to the model window

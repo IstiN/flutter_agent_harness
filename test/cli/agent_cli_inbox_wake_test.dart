@@ -260,14 +260,25 @@ void main() {
         reason: 'and receipted too (AC4: every refusal accounted for)',
       );
 
+      io.sendLine('/exit');
+      await run;
+    },
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+
   test('gh-1180 review T11: the CLI receipt log is non-null from '
       'construction — the production wake path can never silently skip '
       'the trail because the queue was not built yet', () {
     final fake = FakeStreamFunction([textTurn('unused')]);
     final cli = buildCli(fake);
-    // Pre-fix the seam was a nullable field assigned as a side effect of
-    // the (lazy) queue construction: a wake tick firing before the first
-    // queue build wrote NO receipts through the nullable field, silently.
+    // Contract pin for the seam rework: the receipt log is a non-nullable
+    // late final created alongside the queue and exposed through this
+    // getter — NOT a nullable mutable field assigned as a side effect of
+    // the (lazy) queue construction, which the review flagged as
+    // load-bearing-but-droppable in production. (Behaviorally the old
+    // field was always set — the constructor's tool list forces the lazy
+    // queue initializer — so this pin guards the contract, it did not
+    // fail pre-fix.)
     expect(
       cli.scheduledReceiptsForTest,
       isNotNull,
