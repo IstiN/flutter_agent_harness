@@ -31,21 +31,23 @@ void main() {
 
   tearDown(() => io.close());
 
-  AgentCli cliFor(List<List<AssistantMessageEvent>> turns, {String? sessionName}) =>
-      AgentCli(
-        config: AgentCliConfig(
-          model: testModel,
-          apiKey: '[REDACTED:Sensitive Value]',
-          env: env,
-          sessionRoot: '/sessions',
-          homeDir: '/home',
-          sessionName: sessionName,
-          providerKind: 'openai-completions',
-        ),
-        io: io,
-        streamFunction: FakeStreamFunction(turns).call,
-        version: '0.0.0-test',
-      );
+  AgentCli cliFor(
+    List<List<AssistantMessageEvent>> turns, {
+    String? sessionName,
+  }) => AgentCli(
+    config: AgentCliConfig(
+      model: testModel,
+      apiKey: '[REDACTED:Sensitive Value]',
+      env: env,
+      sessionRoot: '/sessions',
+      homeDir: '/home',
+      sessionName: sessionName,
+      providerKind: 'openai-completions',
+    ),
+    io: io,
+    streamFunction: FakeStreamFunction(turns).call,
+    version: '0.0.0-test',
+  );
 
   Future<UsageLedger?> readLedger(String sessionId) async {
     final read = await env.readTextFile('/sessions/$sessionId/usage.json');
@@ -55,130 +57,147 @@ void main() {
     );
   }
 
-  test('a headless run leaves usage.json and one fa-tokens log line (AC1/AC7)', () async {
-    final cli = cliFor([textTurn('ok', usage: reportedUsage())]);
-    final exit = await cli.runHeadless('say hi');
-    expect(exit, 0);
+  test(
+    'a headless run leaves usage.json and one fa-tokens log line (AC1/AC7)',
+    () async {
+      final cli = cliFor([textTurn('ok', usage: reportedUsage())]);
+      final exit = await cli.runHeadless('say hi');
+      expect(exit, 0);
 
-    final sessions = await JsonlSessionRepo(
-      fs: env,
-      sessionsRoot: '/sessions',
-    ).list();
-    expect(sessions, hasLength(1));
-    final sessionId = sessions.single.id;
+      final sessions = await JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/sessions',
+      ).list();
+      expect(sessions, hasLength(1));
+      final sessionId = sessions.single.id;
 
-    final ledger = await readLedger(sessionId);
-    expect(ledger, isNotNull);
-    expect(ledger!.resumedCount, 0);
-    expect(ledger.segments.length, 1);
-    expect(ledger.segments.single.totals.requests, 1);
-    expect(ledger.segments.single.totals.input, 100);
-    expect(ledger.segments.single.totals.output, 50);
-    expect(ledger.segments.single.source, UsageSource.reported);
-    expect(ledger.total.totals.input, 100);
-    // I4: the artifact is schema-shaped only.
-    expect(
-      jsonEncode(ledger.toJson()),
-      isNot(contains('[REDACTED:Sensitive Value]')),
-    );
+      final ledger = await readLedger(sessionId);
+      expect(ledger, isNotNull);
+      expect(ledger!.resumedCount, 0);
+      expect(ledger.segments.length, 1);
+      expect(ledger.segments.single.totals.requests, 1);
+      expect(ledger.segments.single.totals.input, 100);
+      expect(ledger.segments.single.totals.output, 50);
+      expect(ledger.segments.single.source, UsageSource.reported);
+      expect(ledger.total.totals.input, 100);
+      // I4: the artifact is schema-shaped only.
+      expect(
+        jsonEncode(ledger.toJson()),
+        isNot(contains('[REDACTED:Sensitive Value]')),
+      );
 
-    final log = (await env.readTextFile('/home/.fah/logs/fa.log')).valueOrNull!;
-    final lines = log
-        .split('\n')
-        .where((line) => line.contains('fa-tokens: '))
-        .toList();
-    expect(lines, hasLength(1));
-    // The reporter's pinned regex parses the line (the log prefixes a
-    // timestamp, so re-join prefix + payload for the shape check).
-    final payload = 'fa-tokens: ${lines.single.split('fa-tokens: ').last}';
-    expect(usageTokensLogPattern.hasMatch(payload), isTrue);
-  });
+      final log = (await env.readTextFile(
+        '/home/.fah/logs/fa.log',
+      )).valueOrNull!;
+      final lines = log
+          .split('\n')
+          .where((line) => line.contains('fa-tokens: '))
+          .toList();
+      expect(lines, hasLength(1));
+      // The reporter's pinned regex parses the line (the log prefixes a
+      // timestamp, so re-join prefix + payload for the shape check).
+      final payload = 'fa-tokens: ${lines.single.split('fa-tokens: ').last}';
+      expect(usageTokensLogPattern.hasMatch(payload), isTrue);
+    },
+  );
 
-  test('resuming the session twice folds ONE record with three segments (AC2)', () async {
-    final first = cliFor([textTurn('one', usage: reportedUsage(input: 10, output: 5))]);
-    expect(await first.runHeadless('go'), 0);
-    final sessions = await JsonlSessionRepo(
-      fs: env,
-      sessionsRoot: '/sessions',
-    ).list();
-    final sessionId = sessions.single.id;
+  test(
+    'resuming the session twice folds ONE record with three segments (AC2)',
+    () async {
+      final first = cliFor([
+        textTurn('one', usage: reportedUsage(input: 10, output: 5)),
+      ]);
+      expect(await first.runHeadless('go'), 0);
+      final sessions = await JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/sessions',
+      ).list();
+      final sessionId = sessions.single.id;
 
-    // --continue once: two segments total.
-    final second = cliFor(
-      [textTurn('two', usage: reportedUsage(input: 20, output: 10))],
-      sessionName: sessionId,
-    );
-    expect(await second.runHeadless('again'), 0);
-    var ledger = await readLedger(sessionId);
-    expect(ledger!.segments.length, 2);
-    expect(ledger.resumedCount, 1);
-    expect(ledger.total.totals.input, 30);
+      // --continue once: two segments total.
+      final second = cliFor([
+        textTurn('two', usage: reportedUsage(input: 20, output: 10)),
+      ], sessionName: sessionId);
+      expect(await second.runHeadless('again'), 0);
+      var ledger = await readLedger(sessionId);
+      expect(ledger!.segments.length, 2);
+      expect(ledger.resumedCount, 1);
+      expect(ledger.total.totals.input, 30);
 
-    // --continue twice: three segments, total == Σ(segments) (I2).
-    final third = cliFor(
-      [textTurn('three', usage: reportedUsage(input: 7, output: 3))],
-      sessionName: sessionId,
-    );
-    expect(await third.runHeadless('more'), 0);
-    ledger = await readLedger(sessionId);
-    expect(ledger!.segments.length, 3);
-    expect(ledger.resumedCount, 2);
-    final sum = ledger.segments
-        .map((segment) => segment.totals.input)
-        .reduce((a, b) => a + b);
-    expect(ledger.total.totals.input, sum);
-    expect(ledger.total.totals.input, 37);
-  });
+      // --continue twice: three segments, total == Σ(segments) (I2).
+      final third = cliFor([
+        textTurn('three', usage: reportedUsage(input: 7, output: 3)),
+      ], sessionName: sessionId);
+      expect(await third.runHeadless('more'), 0);
+      ledger = await readLedger(sessionId);
+      expect(ledger!.segments.length, 3);
+      expect(ledger.resumedCount, 2);
+      final sum = ledger.segments
+          .map((segment) => segment.totals.input)
+          .reduce((a, b) => a + b);
+      expect(ledger.total.totals.input, sum);
+      expect(ledger.total.totals.input, 37);
+    },
+  );
 
-  test('a fake provider that omits usage marks the segment estimated (AC4)', () async {
-    final cli = cliFor([textTurn('ok')]); // textTurn default: Usage.zero
-    expect(await cli.runHeadless('say hi'), 0);
-    final sessions = await JsonlSessionRepo(
-      fs: env,
-      sessionsRoot: '/sessions',
-    ).list();
-    final ledger = await readLedger(sessions.single.id);
-    expect(ledger!.segments.single.source, UsageSource.estimated);
-    expect(ledger.total.source, UsageSource.estimated);
-  });
+  test(
+    'a fake provider that omits usage marks the segment estimated (AC4)',
+    () async {
+      final cli = cliFor([textTurn('ok')]); // textTurn default: Usage.zero
+      expect(await cli.runHeadless('say hi'), 0);
+      final sessions = await JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/sessions',
+      ).list();
+      final ledger = await readLedger(sessions.single.id);
+      expect(ledger!.segments.single.source, UsageSource.estimated);
+      expect(ledger.total.source, UsageSource.estimated);
+    },
+  );
 
-  test('/usage rebuild re-folds the chain onto disk (rebuild command path)', () async {
-    final cli = cliFor([textTurn('ok', usage: reportedUsage())]);
-    expect(await cli.runHeadless('say hi'), 0);
-    final sessions = await JsonlSessionRepo(
-      fs: env,
-      sessionsRoot: '/sessions',
-    ).list();
-    final sessionId = sessions.single.id;
+  test(
+    '/usage rebuild re-folds the chain onto disk (rebuild command path)',
+    () async {
+      final cli = cliFor([textTurn('ok', usage: reportedUsage())]);
+      expect(await cli.runHeadless('say hi'), 0);
+      final sessions = await JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/sessions',
+      ).list();
+      final sessionId = sessions.single.id;
 
-    // Wreck the artifact (E3: hand-edited garbage).
-    await env.writeFile('/sessions/$sessionId/usage.json', '{"garbage":true}');
+      // Wreck the artifact (E3: hand-edited garbage).
+      await env.writeFile(
+        '/sessions/$sessionId/usage.json',
+        '{"garbage":true}',
+      );
 
-    final io2 = FakeCliIO();
-    addTearDown(io2.close);
-    final cli2 = AgentCli(
-      config: AgentCliConfig(
-        model: testModel,
-        apiKey: '[REDACTED:Sensitive Value]',
-        env: env,
-        sessionRoot: '/sessions',
-        homeDir: '/home',
-        sessionName: sessionId,
-        providerKind: 'openai-completions',
-      ),
-      io: io2,
-      streamFunction: FakeStreamFunction(const []).call,
-      version: '0.0.0-test',
-    );
-    final run = cli2.run();
-    await waitForIt(() => !cli2.isBusy);
-    io2.sendLine('/usage rebuild');
-    await waitForIt(() => io2.out.toString().contains('usage: rebuilt'));
-    io2.sendLine('/exit');
-    await run;
+      final io2 = FakeCliIO();
+      addTearDown(io2.close);
+      final cli2 = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          homeDir: '/home',
+          sessionName: sessionId,
+          providerKind: 'openai-completions',
+        ),
+        io: io2,
+        streamFunction: FakeStreamFunction(const []).call,
+        version: '0.0.0-test',
+      );
+      final run = cli2.run();
+      await waitForIt(() => !cli2.isBusy);
+      io2.sendLine('/usage rebuild');
+      await waitForIt(() => io2.out.toString().contains('usage: rebuilt'));
+      io2.sendLine('/exit');
+      await run;
 
-    final ledger = await readLedger(sessionId);
-    expect(ledger, isNotNull);
-    expect(ledger!.total.totals.requests, 1);
-  });
+      final ledger = await readLedger(sessionId);
+      expect(ledger, isNotNull);
+      expect(ledger!.total.totals.requests, 1);
+    },
+  );
 }

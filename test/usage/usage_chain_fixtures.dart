@@ -61,7 +61,7 @@ Map<String, dynamic> reportedUsage({
   'output': output,
   'cacheRead': cacheRead,
   'cacheWrite': cacheWrite,
-  if (reasoning != null) 'reasoning': reasoning,
+  'reasoning': ?reasoning,
   'totalTokens': input + output + cacheRead + cacheWrite,
   'cost': const {
     'input': 0.0,

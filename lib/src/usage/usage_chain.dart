@@ -130,8 +130,8 @@ final class UsageChainScanner {
       // Cheap pre-check for the giant blob records: hashed, counted, never
       // decoded.
       var skippedDecode = false;
-      for (final type in _skipDecodeCustomTypes) {
-        if (line.contains('"customType":"$type"')) {
+      for (final blobType in _skipDecodeCustomTypes) {
+        if (line.contains('"customType":"$blobType"')) {
           skippedDecode = true;
           break;
         }
