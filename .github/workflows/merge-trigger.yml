@@ -20,7 +20,14 @@ permissions:
 
 jobs:
   merge-trigger:
-    uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-merge-trigger.yml@9bc5c9532f1be5abda5ccaf937367fd00183d212
+    # Tracks dmtools-agentic-workflows @main — always-latest policy (owner
+    # directive 2026-10-04), guarded by
+    # test/machine_kit/factory_stub_ref_test.dart. The callee declares NO
+    # secrets and documents `secrets: inherit` as the PAT passthrough
+    # (GH_TOKEN falls back to github.token inside) — unlike
+    # teammate/sm/merge, whose factories DECLARE SOURCE_GITHUB_TOKEN
+    # required and reject inherit at call time.
+    uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-merge-trigger.yml@main
     with:
       runner: ubuntu-latest
       remove_pr_label: false
