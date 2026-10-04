@@ -58,7 +58,7 @@ dependencies:
   # Flutter UI (QuickJS via flutter_js on VM, web worker on web).
   # Back on hosted pub: 0.4.79 ships the queued-callEvent-after-dispose guard
   # (5c3a733) and the restart-safe bridge channels the git pin carried.
-  js_widget_runtime: ^0.4.121
+  js_widget_runtime: ^0.4.154
 
   # The fa_widgets catalog validator — the SAME rule engine the catalog CI
   # runs (issue #1045): publish pre-flight imports it so a manifest that
@@ -150,6 +150,11 @@ dependencies:
   # In-app HTML file preview on mobile/desktop (web uses an iframe instead —
   # see lib/ui/widgets/html_preview_web.dart).
   webview_flutter: ^4.14.1
+
+  # Embedded web content for JS-app `webView` nodes (issue gh-1235): the
+  # FaWebViewHost implementation over flutter_inappwebview (iOS/Android/
+  # macOS; other platforms fall back to the renderer's placeholder).
+  flutter_inappwebview: ^6.1.5
 
   # Inline playback of sandbox-generated media in the chat (see
   # lib/ui/widgets/media_player.dart): audio plays from in-memory bytes,
