@@ -2,6 +2,11 @@
 /// config key and key path the skill documents must exist in the real
 /// parsers — no phantom keys, no stale names.
 ///
+/// The guarded documentation is the LIVE skill source
+/// `prompts/skills/self-settings/SKILL.md` (issue #1151 retired the
+/// `.fah/skills/fa-self-config` seed copy — frozen last-seeded bytes,
+/// see `retired_seed_frozen_test.dart`).
+///
 /// Method: the test parses every ```yaml fence in the SKILL.md, walks each
 /// parsed tree, and checks every key against a pinned key map. The pinned
 /// map itself is kept honest against the CODE: each entry names the parser
@@ -212,7 +217,10 @@ void main() {
   late String skill;
 
   setUpAll(() {
-    skill = _read('.fah/skills/fa-self-config/SKILL.md');
+    // The LIVE skill source (issue #1151 retired the
+    // .fah/skills/fa-self-config seed copy — frozen bytes, guarded by
+    // retired_seed_frozen_test.dart).
+    skill = _read('prompts/skills/self-settings/SKILL.md');
   });
 
   test('the skill description advertises theme management (issue #279)', () {
@@ -256,9 +264,9 @@ void main() {
       phantom,
       isEmpty,
       reason:
-          'fa-self-config/SKILL.md documents top-level config keys '
-          '$phantom that the config parsers never read — unknown keys are '
-          'silently ignored, so documenting them would be a lie',
+          'prompts/skills/self-settings/SKILL.md documents top-level config '
+          'keys $phantom that the config parsers never read — unknown keys '
+          'are silently ignored, so documenting them would be a lie',
     );
   });
 
@@ -289,9 +297,9 @@ void main() {
       unpinned,
       isEmpty,
       reason:
-          'fa-self-config/SKILL.md documents nested keys $unpinned '
-          'outside the pinned key map — extend _nestedKeySources and '
-          'verify the parser reads them',
+          'prompts/skills/self-settings/SKILL.md documents nested keys '
+          '$unpinned outside the pinned key map — extend _nestedKeySources '
+          'and verify the parser reads them',
     );
     expect(
       stalePins,
