@@ -40,7 +40,8 @@ def _tail(text):
     text = str(text)
     if len(text) <= _TAIL_CAP:
         return text
-    return "[...truncated...]\n" + text[-_TAIL_CAP:]
+    marker = "[...truncated...]\n"
+    return marker + text[-(_TAIL_CAP - len(marker)):]
 
 
 def _patch(module):
@@ -55,19 +56,25 @@ def _patch(module):
             file=sys.stderr,
         )
         return
-    original = original.__func__  # underlying plain function
+    original = getattr(original, "__func__", original)  # plain function either way
 
     def logged_run(self, command, *_args, **_kwargs):
         try:
             return original(self, command, *_args, **_kwargs)
         except subprocess.CalledProcessError as exc:
-            captured = _tail(exc.stdout) or _tail(exc.stderr)
-            if captured:
+            stdout_text = _tail(exc.stdout)
+            stderr_text = _tail(exc.stderr)
+            if stdout_text or stderr_text:
+                parts = []
+                if stdout_text:
+                    parts.append(f"--- stdout ---\n{stdout_text}")
+                if stderr_text:
+                    parts.append(f"--- stderr ---\n{stderr_text}")
                 self._logger.error(
                     "docker compose %s failed with exit code %s; captured output:\n%s",
                     " ".join(str(part) for part in command),
                     exc.returncode,
-                    captured,
+                    "\n".join(parts),
                 )
             raise
 
@@ -76,6 +83,10 @@ def _patch(module):
 
 class _ComposeLogHook(importlib.abc.MetaPathFinder):
     """Fire _patch exactly once, after the real module executes."""
+
+    # Marker for tests: fresh module loads mint distinct class objects, so
+    # hooks are identified by this attribute, not isinstance.
+    fa_bench_compose_hook = True
 
     def __init__(self):
         self._finding = False
