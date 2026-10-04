@@ -116,7 +116,6 @@ void main() {
       expect(result.stripped, isEmpty);
     });
 
-
     test('a partially stripped bullet keeps its marker', () {
       final result = sanitizeSummary(
         '- [x] Landed the fix. Your last tool call was dropped.\n',
