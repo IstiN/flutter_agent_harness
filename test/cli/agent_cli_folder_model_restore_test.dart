@@ -872,6 +872,182 @@ void main() {
       },
     );
   });
+
+  group('mail-wake credential binding (gh-1226 AC1)', () {
+    const zaiUrl = 'https://api.z.ai/api/coding/paas/v4';
+    // The persisted doubled slot from an older build (gh-1226 AC3): the
+    // entry name 'z.ai' on host api.z.ai doubled the slug. The pin must
+    // keep resolving it — generation is fixed separately.
+    const zaiKeyName = 'FA_KEY_API_Z_AI_Z_AI';
+
+    CustomProviderRegistry zaiRegistry() => CustomProviderRegistry([
+      CustomProviderEntry(
+        name: 'z_ai',
+        apiType: 'zai',
+        baseUrl: zaiUrl,
+        modelId: 'glm-5.3-flash',
+        keyName: zaiKeyName,
+      ),
+    ]);
+
+    Future<AgentCli> zaiBoot({
+      required String sessionName,
+      required FakeSecureKeyStore store,
+      Model? bootModel,
+      String? bootProviderKind,
+      StreamFunction Function(String kind, String key)? catalogOverride,
+      FakeStreamFunction? fake,
+    }) async {
+      final keyCache = SecureKeyCache(store);
+      await keyCache.preload(store.map.keys.toList());
+      return AgentCli(
+        config: AgentCliConfig(
+          model:
+              bootModel ??
+              Model(
+                id: 'start-model',
+                api: 'test-api',
+                provider: 'test-provider',
+                baseUrl: 'https://example.test',
+                contextWindow: 100000,
+                maxTokens: 4096,
+              ),
+          apiKey: '',
+          env: env,
+          sessionRoot: '/sessions',
+          sessionName: sessionName,
+          customProviders: zaiRegistry(),
+          secureKeys: keyCache,
+          providerKind: bootProviderKind ?? 'openai-completions',
+          catalogStreamOverride: catalogOverride,
+        ),
+        io: freshIo(),
+        streamFunction: fake?.call ?? _singleTextResponse('ok'),
+      );
+    }
+
+    test(
+      'the mail-wake turn serves the session’s own z.ai binding, not the '
+      'launch-default provider — restore → turn → wake boot with no '
+      'folder state (gh-1226 AC1)',
+      timeout: const Timeout(Duration(seconds: 90)),
+      () async {
+        // Boot 1: create the 'kb' session in /work.
+        final first = await zaiBoot(
+          sessionName: 'kb',
+          store: FakeSecureKeyStore(),
+        );
+        final run1 = first.run();
+        ios.last.sendLine('hi');
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        ios.last.sendLine('/exit');
+        await run1;
+
+        // The folder ran on z.ai via the saved entry (the gh-1000 flow
+        // records the pin into the session on restore).
+        await saveFolderModelState(
+          env,
+          sessionsRoot: '/sessions',
+          cwd: '/work',
+          providerKind: 'zai',
+          modelId: 'glm-5.3-flash',
+          baseUrl: zaiUrl,
+          customProvider: 'z_ai',
+        );
+
+        // Boot 2: resume — the restore binds z.ai and records the leaf
+        // pin; the answered turn then appends an ASSISTANT message after
+        // the model_change (the wipe gh-1226 is about).
+        final store = FakeSecureKeyStore()..map[zaiKeyName] = 'zai-key';
+        final second = await zaiBoot(sessionName: 'kb', store: store);
+        final run2 = second.run();
+        ios.last.sendLine('hi');
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        ios.last.sendLine('/exit');
+        await run2;
+        expect(second.agent.state.model.id, 'glm-5.3-flash');
+        expect(second.providerKind, 'zai');
+
+        // The wake boot finds NO folder state (the session's folder never
+        // persisted one — an older/explicit launch wrote none) and the
+        // launch default is a DIFFERENT provider entirely (the owner's
+        // other project ran copilot; the global config kept it).
+        await env.writeFile(
+          folderModelStatePath(sessionsRoot: '/sessions', cwd: '/work'),
+          'not json anymore',
+        );
+
+        // Boot 3 = the detached mail-wake run: `fa --session kb` with a
+        // copilot launch default. A fabric message arrives while idle and
+        // the inbox wake starts the turn.
+        final recorder = FakeStreamFunction([textTurn('ok')]);
+        final third = await zaiBoot(
+          sessionName: 'kb',
+          store: store,
+          fake: recorder,
+          bootModel: Model(
+            id: 'copilot-default',
+            api: 'openai-completions',
+            provider: 'copilot',
+            baseUrl: 'https://api.githubcopilot.com',
+            contextWindow: 100000,
+            maxTokens: 4096,
+          ),
+          bootProviderKind: 'copilot',
+          catalogOverride: (kind, key) => recorder.call,
+        );
+        final io3 = ios.last;
+        final run3 = third.run();
+
+        // Deliver user-kind mail into the session's main mailbox (what
+        // another fa agent's agent_message does).
+        final fabric = FileMessagingRepository(
+          env: env,
+          root: '/sessions/--work--/messages',
+        );
+        for (var i = 0; i < 5000; i++) {
+          final sessions = await JsonlSessionRepo(
+            fs: env,
+            sessionsRoot: '/sessions',
+          ).list(cwd: '/work');
+          if (sessions.isNotEmpty) {
+            await fabric.send(
+              AgentMessage(
+                id: newMessageId(),
+                fromId: 'peer-agent',
+                toId: '${sessions.first.id}/main',
+                text: 'ping from another agent',
+                sentAt: DateTime.now().toUtc().toIso8601String(),
+                kind: AgentMessageKind.user,
+              ),
+            );
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+
+        // The idle watcher (2s tick) wakes the agent; the turn must be
+        // served by the session's OWN z.ai binding — never the copilot
+        // launch default.
+        for (var i = 0; i < 5000; i++) {
+          if (recorder.calls >= 1 && !third.isBusy) break;
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        expect(recorder.calls, 1, reason: 'the wake turn must run once');
+        expect(
+          recorder.models.single.id,
+          'glm-5.3-flash',
+          reason: 'the mail-wake request must go to z.ai, not copilot '
+              '(gh-1226 AC1)',
+        );
+        expect(recorder.models.single.provider, 'zai');
+        expect(recorder.models.single.baseUrl, zaiUrl);
+
+        io3.sendLine('/exit');
+        await run3;
+      },
+    );
+  });
 }
 
 StreamFunction _singleTextResponse(String text) {
