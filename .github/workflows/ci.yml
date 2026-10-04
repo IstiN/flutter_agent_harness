@@ -295,6 +295,20 @@ jobs:
       - name: CRAP badge/config sync guard
         run: python3 scripts/check_crap_guards.py
 
+      # gh-1199 AC2: the deterministic-gate boundary is self-enforcing —
+      # an integration-tagged test that looks live (real provider URL, or
+      # a credential-key literal with no mock/loopback in sight) without
+      # the `llm` tag fails the gate. Runs on every PR: a PR adding a live
+      # test (E1) is exactly the diff this must catch.
+      - name: LLM tag boundary lint (gh-1199 AC2)
+        run: python3 scripts/check_llm_tag_boundary.py
+
+      # gh-1199 AC6/E3: the flake quarantine list itself must stay
+      # honest — every entry documented (issue, since, >=2 proving runs)
+      # and pointing at an existing integration-tagged file.
+      - name: Flake quarantine list guard (gh-1199 AC6)
+        run: python3 scripts/apply_quarantine.py --check
+
       # Full analyze needs the example app's package config (Flutter imports);
       # a docs-only PR skips the flutter setup entirely and analyzes the pure
       # Dart scopes only — it cannot have changed resolution anyway.
@@ -499,7 +513,12 @@ jobs:
           dart run bin/fah.dart --help > /dev/null
 
       - name: dart test test/integration (excluding llm, browser-ext, perf, pty)
-        run: dart test test/integration --exclude-tags llm,browser-ext,perf,pty
+        # gh-1199 AC6: explicit file list (not the bare directory) so the
+        # quarantine filter can drop flake-quarantined files here too.
+        run: |
+          targets=$(find test/integration -name '*_test.dart' | sort | python3 scripts/apply_quarantine.py)
+          echo "integration-mock targets: $targets"
+          dart test --exclude-tags llm,browser-ext,perf,pty $targets
 
   # Issue #675: the suite must be immune to a hostile ambient env — the
   # dmtools ai-teammate runner exports FA_PROVIDER_TYPE / FA_PROVIDER_CONFIG /
@@ -646,10 +665,19 @@ jobs:
           dart run bin/fah.dart --help > /dev/null
       - name: dart test --tags integration (linux, shard ${{ matrix.shard }}/3)
         run: |
-          targets=$(python3 scripts/shard_files.py scripts/test_integration_shards.json ${{ matrix.shard }} --tags integration --exclude browser_ext)
+          # gh-1199 AC1: --exclude-tag llm keeps every live-provider file
+          # out of the merge-blocking selection (manifest unit AND runtime
+          # bin-pack); --exclude-tags browser-ext,llm is the dart-test
+          # backstop. AC6: the quarantine filter drops flake-quarantined
+          # files (scripts/test_quarantine.json) pending their fix PRs.
+          targets=$(python3 scripts/shard_files.py scripts/test_integration_shards.json ${{ matrix.shard }} --tags integration --exclude browser_ext --exclude-tag llm | python3 scripts/apply_quarantine.py)
           echo "shard targets: $targets"
+          if [ -z "$targets" ]; then
+            echo "shard fully quarantined — nothing to run"
+            exit 0
+          fi
           mkdir -p test-results
-          dart test --tags integration --exclude-tags browser-ext \
+          dart test --tags integration --exclude-tags browser-ext,llm \
             --concurrency=4 \
             --coverage=coverage \
             --file-reporter="json:test-results/integration-shard-${{ matrix.shard }}.json" \
@@ -730,7 +758,7 @@ jobs:
       # (browser-ext excluded, it owns browser-ext.yml), pairwise disjoint,
       # every unit on disk. Fails loudly BEFORE the ratchet reads shard data.
       - name: Assert integration shard manifest (union/disjoint/exists)
-        run: python3 scripts/assert_shard_manifest.py scripts/test_integration_shards.json --shards 3 --tags integration --exclude browser_ext
+        run: python3 scripts/assert_shard_manifest.py scripts/test_integration_shards.json --shards 3 --tags integration --exclude browser_ext --exclude-tag llm
       # The leg's dart json reports for the #928 duration gate below.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:

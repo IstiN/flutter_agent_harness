@@ -165,6 +165,11 @@ jobs:
           python-version: '3.x'
       - run: dart pub get
       - name: dart test --tags integration (excluding browser-ext — it owns browser-ext.yml)
+        # gh-1199 AC5/AC6: this unsharded leg (with secrets) is the
+        # SUPERVISED home of the live (`llm`) suite — and it deliberately
+        # does NOT apply the flake quarantine: a quarantined file keeps
+        # running here nightly, producing the repeat-run proof its fix PR
+        # needs for un-quarantine.
         run: |
           mkdir -p test-results
           dart test --tags integration --exclude-tags browser-ext \

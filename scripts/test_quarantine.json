@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "comment": "gh-1199 AC6 flake quarantine. A file listed here is REMOVED from every deterministic Quality-gate integration leg (pty-integration-linux shards and the integration-mock leg) until its fix PR lands — nightly still runs it (supervised), producing the AC4 repeat-run proof for un-quarantine. Granularity is the FILE (dart test cannot exclude a single test inside a file): the `test` field records the offending test name so the issue and the fix PR review know exactly what flaked. Every entry MUST carry: issue (flake tracker issue with the failing runs), since (ISO date), runs (the gate run ids that proved the flake, >=2 distinct SHAs).",
+  "quarantined": []
+}

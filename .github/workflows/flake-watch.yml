@@ -1,0 +1,44 @@
+# gh-1199 AC6 — flake safety net. Hourly: scan the failed ci.yml gate runs
+# of the last 24h; a test red in >=2 DISTINCT-SHA runs is a proven flake
+# (the #1171 signature — one SHA flipping green/red is noise, one red run
+# is a regression). The watcher files/updates a `flake`-labelled issue
+# with the failing runs and opens a reviewable PR adding the file to
+# scripts/test_quarantine.json, which the gate legs apply via
+# scripts/apply_quarantine.py (the file leaves the deterministic gate
+# until the fix PR lands; nightly keeps running it supervised).
+name: Flake watch
+
+on:
+  schedule:
+    - cron: '41 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    name: Detect proven flakes, file/refresh issues + quarantine PRs
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    permissions:
+      contents: write # quarantine PR branch (gh auth setup-git)
+      issues: write # flake tracker issues
+      pull-requests: write # quarantine PRs
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410b181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # quarantine PR branches from origin/main
+
+      # The scheduled token reads GITHUB_TOKEN with the job permissions
+      # above; gh auth setup-git lets the script push the branch.
+      - name: Watch for proven flakes (gh-1199 AC6)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh auth setup-git
+          python3 scripts/flake_watch.py \
+            --repo "${{ github.repository }}" \
+            --window-hours 24 \
+            --push-quarantine \
+            --checkout .

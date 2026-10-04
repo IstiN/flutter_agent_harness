@@ -59,12 +59,6 @@ from shard_files import file_has_tag
 # Every entry is a deliberate classification decision reviewed in the PR;
 # keep the justification truthful and short.
 AUDIT_MOCK = {
-    # gh-760: names CHATGPT_OAUTH_CREDENTIALS to inject a DUMMY value and
-    # assert the key gate is passed — the live-wire leg was split into
-    # provider_codex_boot_live_test.dart (llm); the remaining legs all
-    # repoint baseUrl at the loopback MockLlmServer.
-    "test/integration/poisoned_provider_boot_test.dart":
-        "dummy creds only; live-wire leg lives in provider_codex_boot_live_test.dart",
     # gh-262/#300 trajectory gates: replay committed JSONL session fixtures
     # through the real CLI (mock_session.dart — offline, no provider call);
     # OPENAI_API_KEY 'mock' is boot-env filler so the key gate does not
