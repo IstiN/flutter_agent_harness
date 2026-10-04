@@ -168,4 +168,69 @@ void main() {
     expect(decision.wake, isTrue);
     expect(decision.lane, InboxWakeLane.userInput);
   });
+
+  test('plugin-only pending is its own lane — capped like chatter, named '
+      'for the receipts (the contract is code, not a folded accident)', () {
+    final policy = InboxWakePolicy();
+    for (var fire = 0; fire < 10; fire++) {
+      final decision = policy.wakeDecisionFor(const [], pluginPending: true);
+      expect(decision.wake, isTrue);
+      expect(decision.lane, InboxWakeLane.plugin);
+    }
+    final refused = policy.wakeDecisionFor(const [], pluginPending: true);
+    expect(refused.wake, isFalse, reason: 'plugin mail rides the same cap');
+    expect(refused.lane, InboxWakeLane.plugin);
+    // A mixed batch is decided by its fabric messages, never by the flag.
+    final mixed = policy.wakeDecisionFor([
+      mail('u1', kind: AgentMessageKind.user),
+    ], pluginPending: true);
+    expect(mixed.lane, InboxWakeLane.userInput);
+    expect(mixed.wake, isTrue);
+  });
+
+  test('refusal episodes: one announcement per episode, and a user-input '
+      'reset RE-OPENS the episode — the next refusal is visible again', () {
+    final policy = InboxWakePolicy();
+    for (var fire = 0; fire < 10; fire++) {
+      expect(policy.wakeDecisionFor([mail('f$fire')]).wake, isTrue);
+    }
+    final held = [mail('held')];
+    expect(policy.wakeDecisionFor(held).wake, isFalse);
+    // Episode 1 opens: the host announces + receipts once…
+    expect(policy.claimRefusalAnnouncement(held), isTrue);
+    // …the same batch re-firing on every watcher tick stays silent.
+    expect(policy.claimRefusalAnnouncement(held), isFalse);
+    // User input resets the streak AND closes the episode: the next
+    // refusal must announce + receipt again — the old standalone host
+    // flag never was reset, and swallowed the post-input refusal.
+    policy.resetStreak();
+    // The freshly reset cap must burn again before the gate refuses (in
+    // the reported case: a rapid scheduled-self spin did it).
+    for (var fire = 0; fire < 10; fire++) {
+      expect(policy.wakeDecisionFor([mail('g$fire')]).wake, isTrue);
+    }
+    expect(policy.wakeDecisionFor(held).wake, isFalse);
+    expect(
+      policy.claimRefusalAnnouncement(held),
+      isTrue,
+      reason: 'a new refusal episode must be visible AND receipted',
+    );
+  });
+
+  test('a NEW pending batch while the gate holds re-opens the announcement '
+      '(new mail is new information; a repeated tick is not)', () {
+    final policy = InboxWakePolicy();
+    for (var fire = 0; fire < 10; fire++) {
+      policy.wakeDecisionFor([mail('f$fire')]);
+    }
+    final held = [mail('held')];
+    policy.wakeDecisionFor(held);
+    expect(policy.claimRefusalAnnouncement(held), isTrue);
+    expect(policy.claimRefusalAnnouncement(held), isFalse);
+    expect(
+      policy.claimRefusalAnnouncement([mail('held'), mail('more')]),
+      isTrue,
+      reason: 'new mail arriving under the gate is worth a fresh row',
+    );
+  });
 }

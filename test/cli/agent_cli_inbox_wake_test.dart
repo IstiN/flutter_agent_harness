@@ -181,14 +181,66 @@ void main() {
         isTrue,
         reason: 'a refused wake is visible, not silent',
       );
-      final refused = (await receipts()).where(
-        (event) => event['event'] == 'wake_refused',
+      final trail = await receipts();
+      expect(
+        trail.where((event) => event['event'] == 'wake_refused'),
+        hasLength(1),
+        reason: 'one refusal receipt per refusal episode',
       );
-      expect(refused, hasLength(1), reason: 'one receipt per refusal episode');
+      // The gate holds the mail pending, so every 2s tick re-enters the
+      // wake path with the SAME batch: the wake_attempted receipt must be
+      // deduped to the episode too — a sustained refusal (~1800 ticks/hour)
+      // must not turn receipts.jsonl into a duplicate-line dump.
+      expect(
+        trail.where((event) => event['event'] == 'wake_attempted'),
+        hasLength(1),
+        reason: 'one wake_attempted per refusal episode, not per 2s tick',
+      );
 
       io.sendLine('/exit');
       await run;
     },
     timeout: const Timeout(Duration(seconds: 60)),
   );
+
+  test('gh-1180 review: a user-input reset RE-OPENS the refusal episode — the '
+      'next exhausted-cap refusal is dim-lined AND receipted again', () async {
+    final fake = FakeStreamFunction([
+      textTurn('unused'),
+      textTurn('answering the user'),
+    ]);
+    final cli = buildCli(fake);
+    final run = cli.run();
+    final (id, baseline) = await boot(fake, cli);
+    cli.inboxWakeStreakForTest = 10;
+
+    // Refusal episode 1: capped chatter is refused, announced, receipted.
+    await sendForeignMail(id, 'ping from a peer agent');
+    await Future<void>.delayed(const Duration(seconds: 5));
+    expect(io.out.toString().contains('wake refused'), isTrue);
+
+    // Real user input: the typed line resets the streak and (fixed)
+    // closes the episode; its run drains the held mail.
+    io.sendLine('status?');
+    await waitForTrue(() async => fake.calls == baseline + 1 && !cli.isBusy);
+
+    // The reviewer's silent case: the freshly reset cap burns again
+    // with no new user input (the seam models the spin's exhaustion) —
+    // the next refusal must NOT be swallowed by the episode-1 latch.
+    cli.inboxWakeStreakForTest = 10;
+    await sendForeignMail(id, 'ping again');
+    await Future<void>.delayed(const Duration(seconds: 5));
+    expect(
+      'wake refused'.allMatches(io.out.toString()).length,
+      2,
+      reason: 'episode 2 must be visible, not swallowed by the latch',
+    );
+    final refused = (await receipts()).where(
+      (event) => event['event'] == 'wake_refused',
+    );
+    expect(refused, hasLength(2), reason: 'every episode is receipted');
+
+    io.sendLine('/exit');
+    await run;
+  }, timeout: const Timeout(Duration(seconds: 60)));
 }

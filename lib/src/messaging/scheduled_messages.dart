@@ -452,8 +452,16 @@ final class ScheduledMessageQueue {
     var delivered = 0;
     _passHadFailure = false;
     for (final (:path, :record, :to) in dueRecords) {
-      final from =
-          record['from'] as String? ?? record['to'] as String? ?? _self();
+      final recordedTo = record['to'] as String? ?? _self();
+      final recordedFrom = record['from'] as String? ?? recordedTo;
+      // A self-addressed record (from == to at schedule time) that fires
+      // re-addressed to the LIVE mailbox is still FROM the session
+      // itself: rewrite the stale pinned sender alongside the target so
+      // the delivered mail keeps the scheduler's self shape (from == to)
+      // and the resumed chain stays on the wake policy's exempt lane
+      // across a session-id change (gh-1180 review — E3's restart case;
+      // the stale address silently re-entered the capped chatter lane).
+      final from = recordedTo == recordedFrom ? to : recordedFrom;
       try {
         await _repo().send(
           AgentMessage(

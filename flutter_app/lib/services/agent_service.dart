@@ -556,6 +556,7 @@ class AgentService extends ChangeNotifier
       path: () => '$messagesRoot/_scheduled/receipts.jsonl',
       onError: (text) => AppLog.i('sched', text),
     );
+    _scheduledReceipts = receiptsLog; // wake path appends here too (gh-1180)
     _scheduledMessages = ScheduledMessageQueue(
       env: env,
       repo: () => fabricRepo,
@@ -2359,6 +2360,17 @@ class AgentService extends ChangeNotifier
   /// [InboxWakePolicy.defaultMaxInboxWakeStreak] consecutive wakes
   /// without user input.
   final InboxWakePolicy _inboxWakePolicy = InboxWakePolicy();
+
+  /// The persisted wake receipts (gh-1180 AC4): the boot path wires the
+  /// same [ScheduledReceiptLog] the queue writes into the wake path, so
+  /// wake_attempted / turn_started / wake_refused land on both hosts.
+  ScheduledReceiptLog? _scheduledReceipts;
+
+  /// Test seam mirroring the CLI's `inboxWakeStreakForTest` (gh-1180).
+  @visibleForTesting
+  int get inboxWakeStreakForTest => _inboxWakePolicy.streak;
+  @visibleForTesting
+  set inboxWakeStreakForTest(int value) => _inboxWakePolicy.streak = value;
 
   var _fabricHeartbeatTick = 0;
 

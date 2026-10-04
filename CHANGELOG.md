@@ -17,6 +17,19 @@
   wake_attempted / turn_started / wake_refused. A failed scheduler scan
   (transient `listDir` error) now re-arms at `failureBackoff` with an
   `onError` log instead of silently disarming the delivery heartbeat.
+  Review follow-ups (same card): `wake_attempted`/`wake_refused`
+  receipts are deduped to one pair per refusal episode (or per new
+  pending batch) instead of one per watcher tick; the refusal-episode
+  latch lives in `InboxWakePolicy` next to the streak, so a user-input
+  reset re-opens the episode (a post-reset refusal is visible AND
+  receipted again); the app host receipts its wake path too
+  (`wake_attempted`/`turn_started`/`wake_refused` + an AppLog `mail`
+  line) — a refused wake is no longer a silent, unreceipted drop there;
+  plugin-only pending batches are an explicit `InboxWakeLane.plugin`
+  (still capped like chatter); a self-record re-addressed across a
+  session-id change is re-sent from the live mailbox so the resumed
+  chain stays on the exempt lane; the wake cap is single-sourced from
+  `InboxWakePolicy.defaultMaxInboxWakeStreak`.
 
 ## 1.0.485
 

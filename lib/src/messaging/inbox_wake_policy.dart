@@ -1,6 +1,6 @@
-// The constructor params keep their public names (env/path/clock) while
-// the fields stay private — same shape as scheduled_messages.dart.
-// ignore_for_file: prefer_initializing_formals
+/// The shared idle inbox-wake lane policy (gh-1180): user-kind mail
+/// always wakes; delivered scheduled self-reminders are exempt from the
+/// chatter cap; foreign chatter and plugin-inbox mail stay capped.
 library;
 
 import 'agent_message.dart';
@@ -37,7 +37,13 @@ enum InboxWakeLane {
   /// cadence-floored against a disguised busy-spin.
   scheduledSelf,
 
-  /// Foreign agent-to-agent chatter (or plugin-inbox mail): capped.
+  /// Plugin-inbox (hub) mail with no fabric message in the batch: neither
+  /// user input nor a scheduled cadence — capped exactly like [chatter].
+  /// A named lane (not chatter folded by accident) so the receipts name
+  /// what actually held the gate.
+  plugin,
+
+  /// Foreign agent-to-agent chatter: capped.
   chatter,
 }
 
@@ -67,8 +73,8 @@ final class InboxWakePolicy {
   InboxWakePolicy({
     this.maxStreak = defaultMaxInboxWakeStreak,
     this.scheduledSelfCadenceFloor = defaultScheduledSelfCadenceFloor,
-    DateTime Function()? clock,
-  }) : _clock = clock;
+    this._clock,
+  });
 
   /// The anti-storm cap for foreign agent-to-agent chatter (unchanged
   /// behavior — the old `_maxInboxWakeStreak`).
@@ -95,28 +101,75 @@ final class InboxWakePolicy {
   /// Consecutive inbox-triggered wakes without user input.
   int streak = 0;
 
+  /// One visible refusal per episode: the gate holds until user input
+  /// arrives or a wake succeeds, so a host announcing on every watcher
+  /// tick would spam the terminal AND the receipt trail (gh-1180 review:
+  /// ~43k duplicate lines/day for a weekend-long refusal). The latch
+  /// lives HERE, next to the streak it mirrors, so the two cannot drift:
+  /// [resetStreak] (every user-input path) closes the episode and the
+  /// next refusal is announced and receipted again — the old
+  /// standalone host flag never was, and a post-reset refusal could be
+  /// silent AND unreceipted.
+  bool _refusalAnnounced = false;
+
+  /// The pending-batch ids the open refusal episode was announced for:
+  /// the same batch re-firing on every tick stays silent, but new mail
+  /// arriving while the gate holds re-opens the announcement — a new
+  /// batch is new information for the post-mortem.
+  String _announcedBatchIds = '';
+
   DateTime? _lastScheduledSelfWakeAt;
 
   /// A delivered user-kind message (or a typed line) IS the user talking.
-  void resetStreak() => streak = 0;
+  /// Also closes any open refusal episode: the next refusal must be
+  /// announced (and receipted) again.
+  void resetStreak() {
+    streak = 0;
+    _refusalAnnounced = false;
+  }
+
+  /// Whether [pending] still needs its refusal announced and receipted:
+  /// true when no episode is open, or when the batch changed since the
+  /// last announcement. Claims the announcement — the host prints its
+  /// terminal line and appends the receipts right after.
+  bool claimRefusalAnnouncement(List<AgentMessage> pending) {
+    final ids = [for (final message in pending) message.id].join(',');
+    if (_refusalAnnounced && ids == _announcedBatchIds) return false;
+    _refusalAnnounced = true;
+    _announcedBatchIds = ids;
+    return true;
+  }
 
   /// Whether [message] is the delivery of a scheduled self-reminder: the
   /// scheduler's `[scheduled] ` prefix addressed from the recipient's own
   /// mailbox (from == to). Foreign chatter cannot produce the shape by
   /// accident — its `fromId` is the sender's mailbox, never mine.
+  ///
+  /// Strict equality on purpose: the policy never guesses ownership from
+  /// prefixes. A self-record re-addressed across a session-id change
+  /// keeps the shape because the queue rewrites the stale pinned sender
+  /// alongside the target (`_deliverDueInner`) — the reminder is FROM the
+  /// session itself, so the resumed chain stays on this exempt lane.
   static bool isScheduledSelfMail(AgentMessage message) =>
       message.fromId == message.toId && message.text.startsWith('[scheduled] ');
 
   /// Decides — and books — the wake for one pending batch. Call only when
   /// mail is pending and the host is idle; a refused decision leaves the
   /// counters untouched, so the next tick retries under the same rules.
+  ///
+  /// [pluginPending]: a plugin inbox (hub) reports pending mail — when
+  /// [pending] itself is empty the batch is classified into
+  /// [InboxWakeLane.plugin] (capped like chatter); with fabric mail
+  /// pending the lane is decided by the messages alone.
   InboxWakeDecision wakeDecisionFor(
     List<AgentMessage> pending, {
     bool pluginPending = false,
   }) {
     if (pending.any((message) => message.kind == AgentMessageKind.user)) {
       // The delivery resets the streak (_mainInboxMessages / sendText);
-      // the wake itself never blocks on it.
+      // the wake itself never blocks on it. A successful non-exempt wake
+      // also closes the refusal episode.
+      _refusalAnnounced = false;
       return const InboxWakeDecision(
         lane: InboxWakeLane.userInput,
         wake: true,
@@ -160,10 +213,14 @@ final class InboxWakePolicy {
         countsAgainstCap: true,
       );
     }
-    // Foreign agent-to-agent chatter (or plugin-inbox mail): the cap.
+    // Foreign agent-to-agent chatter, or plugin-inbox mail with no fabric
+    // message in the batch: the cap (anti-storm).
+    final lane = pending.isEmpty && pluginPending
+        ? InboxWakeLane.plugin
+        : InboxWakeLane.chatter;
     if (streak >= maxStreak) {
       return InboxWakeDecision(
-        lane: InboxWakeLane.chatter,
+        lane: lane,
         wake: false,
         countsAgainstCap: true,
         refusalReason:
@@ -173,10 +230,9 @@ final class InboxWakePolicy {
       );
     }
     streak++;
-    return InboxWakeDecision(
-      lane: InboxWakeLane.chatter,
-      wake: true,
-      countsAgainstCap: true,
-    );
+    // A successful non-exempt wake closes the refusal episode: the next
+    // refusal is announced and receipted again.
+    _refusalAnnounced = false;
+    return InboxWakeDecision(lane: lane, wake: true, countsAgainstCap: true);
   }
 }

@@ -426,10 +426,13 @@ factual: paths, commands, invariants — no essays.
  `<messagesRoot>/_scheduled/receipts.jsonl` (`ScheduledReceiptLog`,
  gh-1180): `scheduled` / `delivered` (with lag) / `delivery_failed` /
  `scan_failed` from the queue, plus host-side `wake_attempted` /
- `turn_started` / `wake_refused` (with reason) from the CLI wake path —
- a post-mortem can distinguish "timer never fired" (no `delivered`)
- from "wake refused" without reading source. The trail is best-effort:
- a failing write logs via `onError` and never breaks scheduling.
+ `turn_started` / `wake_refused` (with reason) from BOTH hosts' wake
+ paths — `wake_attempted`/`wake_refused` are deduped to one pair per
+ refusal episode (or per new pending batch), never one per 2-3s watcher
+ tick — a post-mortem can distinguish "timer never fired" (no
+ `delivered`) from "wake refused" without reading source. The trail is
+ best-effort: a failing write logs via `onError` and never breaks
+ scheduling.
  Records carry the scheduling instance's `owner` (mailbox prefix): a
  sweeper re-addresses a self-addressed record only when the stored owner
  matches its own prefix, and never deletes another instance's record -
@@ -459,9 +462,20 @@ factual: paths, commands, invariants — no essays.
   self-reminder (`[scheduled] ` prefix, from == to) is EXEMPT from the
   cap — a deliberate agent-chosen cadence (night watch, periodic sweep)
   wakes forever, with a 30s cadence floor so a zero-delay re-schedule
-  spin is still bounded like chatter; foreign agent chatter stays
-  capped. A refused wake is never silent: one dim `[mail] wake refused`
-  line per episode and a `wake_refused` receipt.
+  spin is still bounded like chatter; foreign agent chatter and
+  plugin-inbox mail stay capped (the plugin lane is named, not folded
+  into chatter). A refused wake is never silent: one dim `[mail] wake
+  refused` line per refusal EPISODE (the latch lives in the policy next
+  to the streak — a user-input reset re-opens the episode, new mail
+  under the gate re-announces, repeated ticks of the same batch do not)
+  and a `wake_refused` receipt. Both hosts receipt the wake path into
+  `<messagesRoot>/_scheduled/receipts.jsonl`: wake_attempted /
+  turn_started / wake_refused (CLI: `[mail]` dim lines; app: AppLog
+  `mail` tag) — a refused wake is receipted on the app too, never a
+  silent unreceipted drop. A self-record re-addressed across a session
+  id change is re-SENT from the live mailbox (`_deliverDueInner`
+  rewrites the stale `from` alongside `to`), so the resumed chain stays
+  on the exempt lane instead of falling back to capped chatter.
   UI: `/agents` rows show a `mail:N` pending marker (the CLI
   font has no ✉ glyph), the app's AgentsSection shows `✉N`; observe/detail
   views list the pending inbox.

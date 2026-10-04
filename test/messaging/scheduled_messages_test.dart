@@ -1491,4 +1491,66 @@ void main() {
       },
     );
   });
+
+  test('an adopted self-record survives a session-id change and stays on the '
+      'exempt lane: the re-addressed delivery keeps the from == to shape '
+      '(gh-1180 review, E3 restart case)', () async {
+    // /reset mints a new session id: the old session's dispose()
+    // releases its owned records (owner tag cleared, issue #59), the
+    // new session's queue adopts them, and the fire re-addresses `to`
+    // to the LIVE mailbox. If `from` keeps the pinned historical
+    // address, the delivered mail is fromId != toId and the wake policy
+    // classifies it as FOREIGN chatter — the resumed chain dies again
+    // within <=10 wakes, silently reproducing gh-1180 across restarts.
+    final env = MemoryExecutionEnv(cwd: '/work');
+    const root = '/sessions/--work--/messages';
+    final repo = FileMessagingRepository(
+      env: env,
+      root: root,
+      homeDir: '/home/user',
+      decodeSessionCwd: decodeSessionCwd,
+    );
+    // The on-disk record as the release left it: self-addressed by the
+    // OLD session's mailbox, owner tag cleared, already due.
+    const id = 'due-adopted-self';
+    (await env.writeFile(
+      '$root/_scheduled/$id.json',
+      jsonEncode({
+        'id': id,
+        'dueMs': DateTime.now().millisecondsSinceEpoch - 1000,
+        'to': 'sid-old/main',
+        'from': 'sid-old/main',
+        'text': 'night-watch sweep',
+        'owner': '',
+      }),
+    )).getOrThrow();
+    // The replacement session (new id) adopts and delivers.
+    final newSession = ScheduledMessageQueue(
+      env: env,
+      repo: () => repo,
+      root: () => root,
+      selfMailbox: () => 'sid-new/main',
+      ownerPrefix: () => 'sid-new',
+    );
+    await newSession.start();
+    final delivered = await repo.peek('sid-new/main');
+    expect(delivered, hasLength(1));
+    expect(
+      delivered.single.fromId,
+      'sid-new/main',
+      reason:
+          'the reminder is FROM the session itself, not the pinned '
+          'historical address',
+    );
+    expect(delivered.single.toId, 'sid-new/main');
+    expect(
+      InboxWakePolicy.isScheduledSelfMail(delivered.single),
+      isTrue,
+      reason: 'the resumed chain must ride the exempt lane, not chatter',
+    );
+    expect(
+      (await env.readTextFile('$root/_scheduled/$id.json')).valueOrNull,
+      isNull,
+    );
+  });
 }

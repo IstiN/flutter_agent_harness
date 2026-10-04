@@ -273,20 +273,22 @@ extension AgentCliMessagingFlow on AgentCli {
       pending,
       pluginPending: pluginPending,
     );
-    await scheduledReceiptsForTest?.append('wake_attempted', {
-      'lane': decision.lane.name,
-      'ids': [for (final message in pending) message.id],
-    });
     if (!decision.wake) {
       // gh-1180 AC4: the refusal is receipted AND visible — a silent
-      // drop here was exactly the 2h04m blind window. Print once per
-      // episode (the gate holds until user input arrives, so every
-      // 2s tick would otherwise spam).
-      if (!_inboxWakeRefusalAnnounced) {
-        _inboxWakeRefusalAnnounced = true;
+      // drop here was exactly the 2h04m blind window. One dim line and
+      // one receipt pair per EPISODE (or per NEW pending batch): the
+      // gate holds the mail, so every 2s tick would otherwise re-append
+      // the same rows (~43k lines/day) and drown the signal. The latch
+      // lives in the policy next to the streak, so a user-input reset
+      // re-opens the episode and the next refusal is announced again.
+      if (_inboxWakePolicy.claimRefusalAnnouncement(pending)) {
         io.writeln(
           _style.dim('[mail] wake refused — ${decision.refusalReason}'),
         );
+        await scheduledReceiptsForTest?.append('wake_attempted', {
+          'lane': decision.lane.name,
+          'ids': [for (final message in pending) message.id],
+        });
         await scheduledReceiptsForTest?.append('wake_refused', {
           'lane': decision.lane.name,
           'reason': decision.refusalReason,
@@ -294,9 +296,12 @@ extension AgentCliMessagingFlow on AgentCli {
       }
       return;
     }
-    if (decision.lane != InboxWakeLane.scheduledSelf) {
-      _inboxWakeRefusalAnnounced = false;
-    }
+    // Every real wake is receipted (attempt + turn): each is an event,
+    // not a repeated tick.
+    await scheduledReceiptsForTest?.append('wake_attempted', {
+      'lane': decision.lane.name,
+      'ids': [for (final message in pending) message.id],
+    });
     // The policy books cap-consuming wakes itself (its streak is the one
     // source of truth; the legacy seam proxies it).
     _inboxWakeRunning = true;

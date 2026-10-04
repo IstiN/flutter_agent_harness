@@ -95,10 +95,44 @@ extension AgentServiceInbox on AgentService {
     final pending = await manager.pendingInbox(manager.selfId);
     if (pending.isEmpty) return;
     final decision = _inboxWakePolicy.wakeDecisionFor(pending);
-    if (!decision.wake) return;
+    // gh-1180 AC4 on this host too: the wake path receipts into the same
+    // trail the queue writes, so a post-mortem can tell "timer never
+    // fired" from "wake refused" here as well (gh-1180 review: the app
+    // used to drop a refused wake fully silently).
+    final ids = [for (final message in pending) message.id];
+    if (!decision.wake) {
+      // One receipt pair per refusal EPISODE (or per NEW pending batch) —
+      // the latch lives in the policy next to the streak, so the held
+      // batch re-firing every 3s tick stays silent and a user-input
+      // reset re-opens the episode.
+      if (_inboxWakePolicy.claimRefusalAnnouncement(pending)) {
+        final receipts = _scheduledReceipts;
+        await receipts?.append('wake_attempted', {
+          'lane': decision.lane.name,
+          'ids': ids,
+        });
+        await receipts?.append('wake_refused', {
+          'lane': decision.lane.name,
+          'reason': decision.refusalReason,
+        });
+        // The app's never-silent surface (same rule as the image-drop and
+        // SLO notices): the user can see WHY mail is not waking.
+        AppLog.i('mail', '[mail] wake refused — ${decision.refusalReason}');
+      }
+      return;
+    }
+    final receipts = _scheduledReceipts;
+    await receipts?.append('wake_attempted', {
+      'lane': decision.lane.name,
+      'ids': ids,
+    });
     final count = pending.length;
     _inboxWakeRunning = true;
     try {
+      await receipts?.append('turn_started', {
+        'lane': decision.lane.name,
+        'ids': ids,
+      });
       await sendText(
         '<system-notice>New inter-agent mail arrived ($count message(s)) — '
         'the messages follow below as user messages. Read them and act: '
