@@ -438,16 +438,29 @@ class JsAppEngine {
 
   /// Forwards one captured error to this engine's sink. The surface is the
   /// live viewport: the full app (default entry) or the launcher tile.
+  /// With no local sink the app-wide channel gates first — only a
+  /// first-per-revision occurrence is published for delivery (AC4/AC6
+  /// anti-spam).
   void _forwardError(JsAppErrorEvent event) {
     if (errorSink != null) {
       errorSink!(event);
       return;
     }
-    JsAppErrorChannel.instance.reportAppError(
+    final feedback = JsAppErrorChannel.instance.reportAppError(
       event,
       appId: app.id,
-      surface: entryFile == defaultEntryFile ? 'app' : 'tile',
+      surface: entryFile == JsAppEngine.defaultEntryFile ? 'app' : 'tile',
       sourceRevision: sourceRevision,
+    );
+    if (feedback == null || !feedback.deliver) return; // dedup / breaker
+    JsAppErrorChannel.instance.publish(
+      JsAppErrorNotice(
+        event: event,
+        appId: app.id,
+        surface: entryFile == JsAppEngine.defaultEntryFile ? 'app' : 'tile',
+        sourceRevision: sourceRevision,
+        notice: feedback.notice,
+      ),
     );
   }
 
