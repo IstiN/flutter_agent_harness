@@ -94,7 +94,8 @@ void main() {
         expect(
           line,
           isNot(contains(doubledZaiKeyName)),
-          reason: 'the believed entry’s (doubled) z.ai key slot must not '
+          reason:
+              'the believed entry’s (doubled) z.ai key slot must not '
               'leak into a copilot diagnosis (gh-1226 AC2)',
         );
         expect(line, isNot(contains('api.z.ai')));
@@ -117,20 +118,17 @@ void main() {
       },
     );
 
-    test(
-      'a z.ai failure names the z.ai slot even when the binding believes '
-      'another provider — the hint follows the attempted provider',
-      () async {
-        final renderer = await rendererOf(
-          env: const {},
-          store: FakeSecureKeyStore()..map[zaiKeyName] = 'sk-zai',
-          providerKind: 'copilot',
-          activeCustomName: null,
-        );
+    test('a z.ai failure names the z.ai slot even when the binding believes '
+        'another provider — the hint follows the attempted provider', () async {
+      final renderer = await rendererOf(
+        env: const {},
+        store: FakeSecureKeyStore()..map[zaiKeyName] = 'sk-zai',
+        providerKind: 'copilot',
+        activeCustomName: null,
+      );
 
-        expect(renderer.errorLine(zaiFailure, zaiUrl), contains(zaiKeyName));
-      },
-    );
+      expect(renderer.errorLine(zaiFailure, zaiUrl), contains(zaiKeyName));
+    });
   });
 
   group('keyStatusLine (issue #40: env key must not hijack a custom '

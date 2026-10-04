@@ -618,8 +618,7 @@ final class AgentCliConfig {
   /// Test-only seam: builds the stream a restore re-bind or a live
   /// /provider switch would serve for [kind]/[key]; null (every
   /// production boot) keeps the real catalog adapter.
-  final StreamFunction Function(String kind, String key)?
-  catalogStreamOverride;
+  final StreamFunction Function(String kind, String key)? catalogStreamOverride;
 
   /// Live-session presence heartbeats: the running CLI registers its
   /// session here so the Fa app (sharing the sessions root) can mark the

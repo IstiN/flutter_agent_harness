@@ -239,24 +239,21 @@ void main() {
       },
     );
 
-    test(
-      'buildContext derives the custom provider pin from model_change '
-      '(gh-1000)',
-      () async {
-        final session = await newSession();
-        await session.appendModelChange(
-          provider: 'openai',
-          modelId: 'k3-256k',
-          baseUrl: 'https://api.kimi.com/coding/v1',
-          customProvider: 'kimi_me',
-        );
-        final context = await session.buildContext();
-        expect(context.model?.provider, 'openai');
-        expect(context.model?.modelId, 'k3-256k');
-        expect(context.model?.baseUrl, 'https://api.kimi.com/coding/v1');
-        expect(context.model?.customProvider, 'kimi_me');
-      },
-    );
+    test('buildContext derives the custom provider pin from model_change '
+        '(gh-1000)', () async {
+      final session = await newSession();
+      await session.appendModelChange(
+        provider: 'openai',
+        modelId: 'k3-256k',
+        baseUrl: 'https://api.kimi.com/coding/v1',
+        customProvider: 'kimi_me',
+      );
+      final context = await session.buildContext();
+      expect(context.model?.provider, 'openai');
+      expect(context.model?.modelId, 'k3-256k');
+      expect(context.model?.baseUrl, 'https://api.kimi.com/coding/v1');
+      expect(context.model?.customProvider, 'kimi_me');
+    });
 
     test(
       'an assistant-message-derived model carries no pin (migration-safe)',
@@ -269,86 +266,82 @@ void main() {
       },
     );
 
-    test(
-      'a turn after the model_change keeps the serving pin (gh-1226): '
-      'an assistant message updates provider/modelId but carries the '
-      'endpoint/entry pin forward',
-      () async {
-        final session = await newSession();
-        await session.appendModelChange(
+    test('a turn after the model_change keeps the serving pin (gh-1226): '
+        'an assistant message updates provider/modelId but carries the '
+        'endpoint/entry pin forward', () async {
+      final session = await newSession();
+      await session.appendModelChange(
+        provider: 'zai',
+        modelId: 'glm-5.3-flash',
+        baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+        customProvider: 'z_ai',
+      );
+      await session.appendMessage(UserMessage.text('hi'));
+      await session.appendMessage(
+        AssistantMessage(
+          content: [TextContent(text: 'hello')],
+          api: 'openai-completions',
           provider: 'zai',
-          modelId: 'glm-5.3-flash',
-          baseUrl: 'https://api.z.ai/api/coding/paas/v4',
-          customProvider: 'z_ai',
-        );
-        await session.appendMessage(UserMessage.text('hi'));
-        await session.appendMessage(
-          AssistantMessage(
-            content: [TextContent(text: 'hello')],
-            api: 'openai-completions',
-            provider: 'zai',
-            model: 'glm-5.3-flash',
-            usage: Usage.zero,
-            stopReason: StopReason.stop,
-            timestamp: DateTime.utc(2026),
-          ),
-        );
-        final context = await session.buildContext();
-        expect(context.model?.provider, 'zai');
-        expect(context.model?.modelId, 'glm-5.3-flash');
-        expect(
-          context.model?.baseUrl,
-          'https://api.z.ai/api/coding/paas/v4',
-          reason: 'the pin a gh-1000 restore recorded must survive the '
-              'turns that followed it — wiping it here is what sent the '
-              'mail-wake turn onto the launch-default provider (gh-1226)',
-        );
-        expect(context.model?.customProvider, 'z_ai');
-      },
-    );
+          model: 'glm-5.3-flash',
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        ),
+      );
+      final context = await session.buildContext();
+      expect(context.model?.provider, 'zai');
+      expect(context.model?.modelId, 'glm-5.3-flash');
+      expect(
+        context.model?.baseUrl,
+        'https://api.z.ai/api/coding/paas/v4',
+        reason:
+            'the pin a gh-1000 restore recorded must survive the '
+            'turns that followed it — wiping it here is what sent the '
+            'mail-wake turn onto the launch-default provider (gh-1226)',
+      );
+      expect(context.model?.customProvider, 'z_ai');
+    });
 
-    test(
-      'a turn served by a DIFFERENT provider than the pin does not '
-      'carry the pin forward (gh-1226 review): queue failover / roles '
-      'rotation swap the serving model with no model_change record — '
-      'fusing the z.ai endpoint onto the new provider would re-bind it '
-      'to the wrong endpoint and key slot on the next restore',
-      () async {
-        final session = await newSession();
-        await session.appendModelChange(
-          provider: 'zai',
-          modelId: 'glm-5.3-flash',
-          baseUrl: 'https://api.z.ai/api/coding/paas/v4',
-          customProvider: 'z_ai',
-        );
-        await session.appendMessage(UserMessage.text('hi'));
-        await session.appendMessage(
-          AssistantMessage(
-            content: [TextContent(text: 'hello from the queue')],
-            api: 'openai-completions',
-            // The provider queue's sticky-cursor failover / roles-mode
-            // per-turn rotation serve this turn on a catalog provider
-            // without appending a ModelChangeRecord.
-            provider: 'openai',
-            model: 'gpt-4o',
-            usage: Usage.zero,
-            stopReason: StopReason.stop,
-            timestamp: DateTime.utc(2026),
-          ),
-        );
-        final context = await session.buildContext();
-        expect(context.model?.provider, 'openai');
-        expect(context.model?.modelId, 'gpt-4o');
-        expect(
-          context.model?.baseUrl,
-          isNull,
-          reason: 'the z.ai endpoint belongs to the z.ai pin — carrying '
-              'it onto the openai turn fuses provider+endpoint across '
-              'providers (the same fusion class gh-1226 AC2 fixes)',
-        );
-        expect(context.model?.customProvider, isNull);
-      },
-    );
+    test('a turn served by a DIFFERENT provider than the pin does not '
+        'carry the pin forward (gh-1226 review): queue failover / roles '
+        'rotation swap the serving model with no model_change record — '
+        'fusing the z.ai endpoint onto the new provider would re-bind it '
+        'to the wrong endpoint and key slot on the next restore', () async {
+      final session = await newSession();
+      await session.appendModelChange(
+        provider: 'zai',
+        modelId: 'glm-5.3-flash',
+        baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+        customProvider: 'z_ai',
+      );
+      await session.appendMessage(UserMessage.text('hi'));
+      await session.appendMessage(
+        AssistantMessage(
+          content: [TextContent(text: 'hello from the queue')],
+          api: 'openai-completions',
+          // The provider queue's sticky-cursor failover / roles-mode
+          // per-turn rotation serve this turn on a catalog provider
+          // without appending a ModelChangeRecord.
+          provider: 'openai',
+          model: 'gpt-4o',
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        ),
+      );
+      final context = await session.buildContext();
+      expect(context.model?.provider, 'openai');
+      expect(context.model?.modelId, 'gpt-4o');
+      expect(
+        context.model?.baseUrl,
+        isNull,
+        reason:
+            'the z.ai endpoint belongs to the z.ai pin — carrying '
+            'it onto the openai turn fuses provider+endpoint across '
+            'providers (the same fusion class gh-1226 AC2 fixes)',
+      );
+      expect(context.model?.customProvider, isNull);
+    });
 
     test('buildContext defaults when nothing was recorded', () async {
       final session = await newSession();
@@ -386,27 +379,30 @@ void main() {
       },
     );
 
-    test('a compaction boundary within the cache pages to it, tail intact', () async {
-      final session = await newSession();
-      for (var i = 0; i < 250; i++) {
-        await session.appendMessage(UserMessage.text('m$i'));
-      }
-      final compactId = await session.appendCompaction(
-        summary: 'summarized',
-        firstKeptEntryId: 'kept',
-        tokensBefore: 100,
-      );
-      for (var i = 250; i < 300; i++) {
-        await session.appendMessage(UserMessage.text('m$i'));
-      }
-      final meta = await session.getMetadata();
-      final reopened = await repo.open(meta, windowed: true);
-      final intact = await reopened.ensureCompactionBoundaryResident();
-      expect(intact, isTrue);
-      final branch = await reopened.getBranch();
-      expect(branch.map((r) => r.id), contains(compactId));
-      expect(branch.last.id, await reopened.getLeafId());
-    });
+    test(
+      'a compaction boundary within the cache pages to it, tail intact',
+      () async {
+        final session = await newSession();
+        for (var i = 0; i < 250; i++) {
+          await session.appendMessage(UserMessage.text('m$i'));
+        }
+        final compactId = await session.appendCompaction(
+          summary: 'summarized',
+          firstKeptEntryId: 'kept',
+          tokensBefore: 100,
+        );
+        for (var i = 250; i < 300; i++) {
+          await session.appendMessage(UserMessage.text('m$i'));
+        }
+        final meta = await session.getMetadata();
+        final reopened = await repo.open(meta, windowed: true);
+        final intact = await reopened.ensureCompactionBoundaryResident();
+        expect(intact, isTrue);
+        final branch = await reopened.getBranch();
+        expect(branch.map((r) => r.id), contains(compactId));
+        expect(branch.last.id, await reopened.getLeafId());
+      },
+    );
 
     test('a fresh (empty) session is intact without paging', () async {
       final session = await newSession();

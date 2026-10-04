@@ -82,10 +82,7 @@ void main() {
             isA<ConfigException>().having(
               (e) => e.message,
               'message',
-              allOf(
-                contains('acme-gw'),
-                contains('invalid authHeader'),
-              ),
+              allOf(contains('acme-gw'), contains('invalid authHeader')),
             ),
           ),
         );
@@ -256,7 +253,8 @@ void main() {
       );
     });
 
-    test('keyNameFor scopes to the provider name when given', () {      expect(
+    test('keyNameFor scopes to the provider name when given', () {
+      expect(
         CustomProviderRegistry.keyNameFor(
           'https://api.acme.com/v1',
           providerName: 'work',
@@ -289,83 +287,74 @@ void main() {
       );
     });
 
-    test(
-      'an entry name already a suffix of the host slug is not doubled '
-      '(gh-1226 AC3)',
-      () {
-        // An entry named 'z.ai' on host api.z.ai used to generate
-        // FA_KEY_API_Z_AI_Z_AI — the slug was appended even though the
-        // host slug already ended with it.
-        expect(
-          CustomProviderRegistry.keyNameFor(
-            'https://api.z.ai/api/coding/paas/v4',
-            providerName: 'z.ai',
-          ),
-          'FA_KEY_API_Z_AI',
-        );
-        // A name that is NOT a suffix still scopes the slot.
-        expect(
-          CustomProviderRegistry.keyNameFor(
-            'https://api.z.ai/api/coding/paas/v4',
-            providerName: 'work',
-          ),
-          'FA_KEY_API_Z_AI_WORK',
-        );
-      },
-    );
+    test('an entry name already a suffix of the host slug is not doubled '
+        '(gh-1226 AC3)', () {
+      // An entry named 'z.ai' on host api.z.ai used to generate
+      // FA_KEY_API_Z_AI_Z_AI — the slug was appended even though the
+      // host slug already ended with it.
+      expect(
+        CustomProviderRegistry.keyNameFor(
+          'https://api.z.ai/api/coding/paas/v4',
+          providerName: 'z.ai',
+        ),
+        'FA_KEY_API_Z_AI',
+      );
+      // A name that is NOT a suffix still scopes the slot.
+      expect(
+        CustomProviderRegistry.keyNameFor(
+          'https://api.z.ai/api/coding/paas/v4',
+          providerName: 'work',
+        ),
+        'FA_KEY_API_Z_AI_WORK',
+      );
+    });
 
-    test(
-      'a registry loaded from an older doubled slot reports a migration '
-      'note (gh-1226 AC3)',
-      () {
-        final registry = CustomProviderRegistry([
-          CustomProviderEntry(
-            name: 'z.ai',
-            apiType: 'zai',
-            baseUrl: 'https://api.z.ai/api/coding/paas/v4',
-            modelId: 'glm-5.3-flash',
-            keyName: 'FA_KEY_API_Z_AI_Z_AI',
-          ),
-        ]);
+    test('a registry loaded from an older doubled slot reports a migration '
+        'note (gh-1226 AC3)', () {
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'z.ai',
+          apiType: 'zai',
+          baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+          modelId: 'glm-5.3-flash',
+          keyName: 'FA_KEY_API_Z_AI_Z_AI',
+        ),
+      ]);
 
-        expect(registry.keyNameMigrationNotes, isNotEmpty);
-        expect(registry.keyNameMigrationNotes.single, contains('z.ai'));
-        expect(
-          registry.keyNameMigrationNotes.single,
-          contains('FA_KEY_API_Z_AI'),
-        );
-        expect(registry.keyNameMigrationNotes.single, contains('canonical'));
-        // The remedy must actually take effect: /key set alone writes
-        // the canonical slot but the PINNED doubled slot keeps winning
-        // (resolution probes the entry's own keyName first) — the note
-        // must also tell the user to delete the doubled slot.
-        expect(
-          registry.keyNameMigrationNotes.single,
-          contains('/key delete FA_KEY_API_Z_AI_Z_AI'),
-        );
-      },
-    );
+      expect(registry.keyNameMigrationNotes, isNotEmpty);
+      expect(registry.keyNameMigrationNotes.single, contains('z.ai'));
+      expect(
+        registry.keyNameMigrationNotes.single,
+        contains('FA_KEY_API_Z_AI'),
+      );
+      expect(registry.keyNameMigrationNotes.single, contains('canonical'));
+      // The remedy must actually take effect: /key set alone writes
+      // the canonical slot but the PINNED doubled slot keeps winning
+      // (resolution probes the entry's own keyName first) — the note
+      // must also tell the user to delete the doubled slot.
+      expect(
+        registry.keyNameMigrationNotes.single,
+        contains('/key delete FA_KEY_API_Z_AI_Z_AI'),
+      );
+    });
 
-    test(
-      'an intentional non-canonical keyName (not the doubling class) '
-      'reports no migration note',
-      () {
-        // A user-chosen shared slot is a feature, not the gh-1226
-        // doubling defect — nagging with a "move the value" remedy that
-        // cannot take effect would be wrong (review thread).
-        final registry = CustomProviderRegistry([
-          CustomProviderEntry(
-            name: 'z.ai',
-            apiType: 'zai',
-            baseUrl: 'https://api.z.ai/api/coding/paas/v4',
-            modelId: 'glm-5.3-flash',
-            keyName: 'SHARED_ZAI_SLOT',
-          ),
-        ]);
+    test('an intentional non-canonical keyName (not the doubling class) '
+        'reports no migration note', () {
+      // A user-chosen shared slot is a feature, not the gh-1226
+      // doubling defect — nagging with a "move the value" remedy that
+      // cannot take effect would be wrong (review thread).
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'z.ai',
+          apiType: 'zai',
+          baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+          modelId: 'glm-5.3-flash',
+          keyName: 'SHARED_ZAI_SLOT',
+        ),
+      ]);
 
-        expect(registry.keyNameMigrationNotes, isEmpty);
-      },
-    );
+      expect(registry.keyNameMigrationNotes, isEmpty);
+    });
 
     test('a canonical registry reports no migration notes', () {
       final registry = CustomProviderRegistry([

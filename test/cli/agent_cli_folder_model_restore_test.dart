@@ -1037,7 +1037,8 @@ void main() {
         expect(
           recorder.models.single.id,
           'glm-5.3-flash',
-          reason: 'the mail-wake request must go to z.ai, not copilot '
+          reason:
+              'the mail-wake request must go to z.ai, not copilot '
               '(gh-1226 AC1)',
         );
         expect(recorder.models.single.provider, 'zai');

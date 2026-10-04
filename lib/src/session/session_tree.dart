@@ -559,12 +559,19 @@ final class Session {
           // session restored after several turns fall back to the
           // launch-default provider on the mail-wake turn. The message
           // carries provider/modelId only; baseUrl/customProvider carry
-          // forward from the pin in effect.
+          // forward from the pin in effect — but ONLY when this turn was
+          // actually served by the pinned provider: the provider queue's
+          // sticky-cursor failover and roles-mode per-turn rotation swap
+          // the serving model with NO model_change record in between,
+          // and carrying the pin then would fuse the old provider's
+          // endpoint/entry onto the new one (the same cross-provider
+          // fusion class gh-1226 AC2 fixes — review thread).
+          final carriesForward = record.provider == model?.provider;
           model = (
             provider: record.provider,
             modelId: record.model,
-            baseUrl: model?.baseUrl,
-            customProvider: model?.customProvider,
+            baseUrl: carriesForward ? model?.baseUrl : null,
+            customProvider: carriesForward ? model?.customProvider : null,
           );
         case ActiveToolsChangeRecord record:
           activeToolNames = [...record.activeToolNames];

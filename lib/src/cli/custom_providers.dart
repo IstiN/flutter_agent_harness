@@ -290,17 +290,19 @@ final class CustomProviderRegistry {
   /// canonical slot is `FA_KEY_API_Z_AI` (gh-1226 AC3). Resolution still
   /// probes each entry's OWN stored keyName first, so an existing doubled
   /// slot keeps working; the note tells the user the canonical name to
-  /// move the value to (or that a same-value entry already exists there).
+  /// move the value to AND to delete the doubled slot afterwards —
+  /// otherwise the pinned slot keeps winning and the note reprints on
+  /// every boot (review thread). Only the doubling class nags: an
+  /// intentional non-canonical keyName (e.g. a slot shared on purpose
+  /// across entries) is a user choice, not a defect.
   List<String> get keyNameMigrationNotes {
     final notes = <String>[];
     for (final entry in entries) {
       final stored = entry.keyName;
       if (stored == null) continue;
-      final canonical = keyNameFor(
-        entry.baseUrl,
-        providerName: entry.name,
-      );
+      final canonical = keyNameFor(entry.baseUrl, providerName: entry.name);
       if (stored == canonical) continue;
+      if (!stored.startsWith('${canonical}_')) continue;
       final twin = entries.any(
         (other) =>
             other != entry &&
@@ -310,8 +312,9 @@ final class CustomProviderRegistry {
       notes.add(
         'saved key slot for "${entry.name}" is "$stored"; the canonical '
         'slot is "$canonical"'
-        '${twin ? ' — a same-endpoint entry already uses "$canonical"'
-            : ' — move the value with /key set $canonical <value>'}',
+        '${twin ? ' — a same-endpoint entry already uses "$canonical"' : ' — move the value with /key set $canonical <value>'}'
+        '; then /key delete $stored (the pinned slot keeps winning '
+        'while it holds a value)',
       );
     }
     return notes;
