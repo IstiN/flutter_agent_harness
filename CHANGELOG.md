@@ -4551,4 +4551,8 @@
 - feat(#862): tool-misuse resilience (#1143)
 - fix(#858): Codex/Responses wire — no replayable history may ever brick a session (#1140)
 
+## 1.0.505
+
+- gh-1210 [BENCH] Pre-seed a system-level git identity in task containers (fa-setup.sh.j2) — stop burning agent turns on 'Author identity unknown' (#1214)
+
 ## Unreleased
