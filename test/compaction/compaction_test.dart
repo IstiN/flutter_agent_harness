@@ -731,25 +731,20 @@ void main() {
       expect(turnPrefixSummarizationPrompt, contains('PREFIX of a turn'));
       expect(turnPrefixSummarizationPrompt, contains('## Original Request'));
     });
-  });
-
     test('prompts pin the epistemic status of claims (gh-1219)', () {
-      // First-summary contract: hedges travel with their claims, provenance
-      // tags exist, and kept conclusions carry evidence or a re-verify
-      // marker.
-      expect(summarizationPrompt, contains('uncertainty qualifier'));
-      expect(summarizationPrompt, contains('[verified]'));
-      expect(summarizationPrompt, contains('[assumed]'));
-      expect(summarizationPrompt, contains('[hearsay'));
-      expect(summarizationPrompt, contains('unverified — re-verify'));
-    });
-
-    test('system prompt forbids detaching uncertainty qualifiers', () {
+      // The canonical contract rides the summarizer SYSTEM prompt, which
+      // the injected summarizer sends on every classic call path (first
+      // summary, update fold, turn prefix) and the structured engine's
+      // checkpoint pass reuses. The AC7 budget (<=500 net chars) leaves no
+      // room for it in the summary.md/summary_update.md bodies.
       expect(summarizationSystemPrompt, contains('uncertainty qualifier'));
+      expect(summarizationSystemPrompt, contains('[verified]'));
+      expect(summarizationSystemPrompt, contains('[assumed]'));
+      expect(summarizationSystemPrompt, contains('[hearsay'));
+      expect(summarizationSystemPrompt, contains('unverified — re-verify'));
     });
 
     test('update prompt never upgrades a hedged claim while folding', () {
-      expect(updateSummarizationPrompt, contains('uncertainty qualifier'));
       expect(updateSummarizationPrompt, contains('never upgrade'));
     });
 
@@ -769,4 +764,5 @@ void main() {
       expect(branchSummaryPrompt, contains('## Interpreted State'));
       expect(branchSummaryPrompt, contains('uncertainty qualifier'));
     });
+  });
 }
