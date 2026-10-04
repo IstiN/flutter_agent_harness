@@ -94,7 +94,13 @@ class JsAppErrorNotice {
 /// routes notices into the app-bound session.
 class JsAppErrorChannel {
   JsAppErrorChannel._();
+
+  /// The app-wide channel: engines report here; the bound AgentService
+  /// subscribes [onDeliver].
   static final JsAppErrorChannel instance = JsAppErrorChannel._();
+
+  /// A detached channel for tests (the [instance] gate state is global).
+  factory JsAppErrorChannel.test() => JsAppErrorChannel._();
 
   /// After this many unacted identical reports the per-app circuit
   /// breaker silences the key (the agent has the notice; spam adds

@@ -32,6 +32,7 @@ import 'relay/ext_runtime.dart';
 import 'session_names_store.dart';
 
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/app_preflight.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/js_app_error_channel.dart';
 import 'package:fa/apps/dynamic_messages.dart';
