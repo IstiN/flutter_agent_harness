@@ -38,6 +38,16 @@ import 'dart:convert';
 
 import '../cancel_token.dart';
 import '../compaction/token_estimation.dart' show estimateRequestTokens;
+// The supervisor's cancel marker + the soft-yield hand-back marker live in
+// the pure-data stuck_tool module (gh-1054 review) so the tool layer can
+// recognize a supervisor-driven yield; re-exported for the loop's
+// consumers.
+export 'stuck_tool.dart'
+    show
+        StuckCallFollowUp,
+        stuckBackgroundHandbackMarker,
+        stuckBackgroundHandbackSentence,
+        stuckBackgroundHandbackText;
 import '../context.dart';
 import '../event_stream.dart';
 import '../exceptions.dart';
@@ -49,7 +59,10 @@ import '../trajectory/trajectory_record.dart';
 import 'agent_tool.dart';
 import 'image_registry.dart';
 import 'misuse_breaker.dart';
+import 'stuck_tool.dart';
 import 'tool_pairing.dart';
+
+part 'agent_loop_stuck_supervision.dart';
 
 /// Marker embedded in the over-window guard's error message (see
 /// [_streamAssistantResponse]): hosts match it to recognize "the loop
@@ -397,6 +410,7 @@ final class AgentLoopConfig {
     this.contextWindowCap,
     this.wireDump = false,
     this.toolMisuseBreaker,
+    this.stuckTool,
   });
 
   /// The model to call each turn.
@@ -481,6 +495,11 @@ final class AgentLoopConfig {
   /// the pre-breaker loop (E5).
   final ToolMisuseBreaker? toolMisuseBreaker;
 
+  /// Stuck-call supervision (gh-1054): liveness heartbeats for long-running
+  /// tool calls plus the autonomous cancel/retry/convert follow-up.
+  /// `null` = unsupervised (byte-identical legacy behavior).
+  final StuckToolConfig? stuckTool;
+
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
   AgentLoopConfig copyWith({Model? model}) {
     return AgentLoopConfig(
@@ -500,6 +519,7 @@ final class AgentLoopConfig {
       contextWindowCap: contextWindowCap,
       wireDump: wireDump,
       toolMisuseBreaker: toolMisuseBreaker,
+      stuckTool: stuckTool,
     );
   }
 }
@@ -706,6 +726,111 @@ final class ToolExecutionEndEvent extends AgentEvent {
   /// Whether the result is an error (unknown tool, executor threw, blocked,
   /// aborted, or truncated arguments).
   final bool isError;
+}
+
+/// Liveness heartbeat for a long-outstanding tool call (gh-1054).
+///
+/// Emitted every [StuckToolConfig.heartbeatInterval] once the call has run
+/// past [StuckToolConfig.heartbeatStart] — cheap, append-only sideband
+/// records that let external watchers (and the owner) distinguish
+/// alive-busy from dead. Never provider traffic.
+final class ToolCallHeartbeatEvent extends AgentEvent {
+  const ToolCallHeartbeatEvent({
+    required this.toolCallId,
+    required this.toolName,
+    required this.args,
+    required this.elapsed,
+    required this.outputBytes,
+    required this.attempt,
+    required this.timestamp,
+  });
+
+  /// The [ToolCall.id] still executing.
+  final String toolCallId;
+
+  /// The tool's name.
+  final String toolName;
+
+  /// The parsed tool call arguments (the command/args of the call).
+  final Map<String, dynamic> args;
+
+  /// How long the call has been running.
+  final Duration elapsed;
+
+  /// Captured output so far — the size of the last partial result the tool
+  /// reported (0 when the tool reports no progress updates).
+  final int outputBytes;
+
+  /// 1-based execution attempt (the stuck-follow-up retry is attempt 2).
+  final int attempt;
+
+  /// When the heartbeat fired.
+  final DateTime timestamp;
+}
+
+/// What the stuck-call follow-up did (or decided) at the threshold.
+enum StuckFollowUpAction {
+  /// Advisory only (interactive mode): the threshold was hit, nothing was
+  /// cancelled.
+  advisory,
+
+  /// The stuck call was cancelled and is being retried once (marked).
+  cancelRetry,
+
+  /// The retry also exceeded the threshold and was converted to a
+  /// background job via its soft-yield path; the turn continues with the
+  /// job id + log path.
+  backgroundConvert,
+
+  /// Recovery failed: the session-visible escalation names the call, its
+  /// duration, and the partial output.
+  escalate;
+
+  /// The snake_case label used in session records and HEP frames
+  /// (`cancel_retry`, `background_convert`).
+  String get label => switch (this) {
+    advisory => 'advisory',
+    cancelRetry => 'cancel_retry',
+    backgroundConvert => 'background_convert',
+    escalate => 'escalate',
+  };
+}
+
+/// A stuck-call follow-up transition (gh-1054): the threshold fired and the
+/// supervisor acted — advised, cancelled+retried, background-converted, or
+/// escalated. Session-visible so a hung call never dies silently.
+final class ToolCallStuckEvent extends AgentEvent {
+  const ToolCallStuckEvent({
+    required this.toolCallId,
+    required this.toolName,
+    required this.args,
+    required this.elapsed,
+    required this.action,
+    this.detail = '',
+    required this.timestamp,
+  });
+
+  /// The [ToolCall.id] that was stuck.
+  final String toolCallId;
+
+  /// The tool's name.
+  final String toolName;
+
+  /// The parsed tool call arguments.
+  final Map<String, dynamic> args;
+
+  /// How long the call had run when the action fired.
+  final Duration elapsed;
+
+  /// The follow-up action taken.
+  final StuckFollowUpAction action;
+
+  /// Human-readable detail (the reason, or the partial-output pointer for
+  /// an escalation).
+  final String detail;
+
+  /// When the action fired.
+  final DateTime timestamp;
 }
 
 /// The event stream returned by [agentLoop] and [agentLoopContinue].
@@ -1549,10 +1674,7 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   if (misuseNote != null) {
     requestContext = Context(
       systemPrompt: requestContext.systemPrompt,
-      messages: [
-        ...requestContext.messages,
-        UserMessage.text(misuseNote),
-      ],
+      messages: [...requestContext.messages, UserMessage.text(misuseNote)],
       tools: requestContext.tools,
     );
   }
@@ -1950,6 +2072,7 @@ Future<_ExecutedToolCallBatch> _executeToolCallsSequential(
           toolExecutor,
           cancelToken,
           emit,
+          stuckTool: config.stuckTool,
         ),
         config,
         cancelToken,
@@ -2011,6 +2134,7 @@ Future<_ExecutedToolCallBatch> _executeToolCallsParallel(
             toolExecutor,
             cancelToken,
             emit,
+            stuckTool: config.stuckTool,
           );
           final finalized = await _finalizeExecutedToolCall(
             context,
@@ -2133,31 +2257,58 @@ Tool? _findTool(Context context, String name) {
 }
 
 /// Port of pi's `executePreparedToolCall`: run the executor, relay partial
-/// updates, convert a throw into an error result.
+/// updates, convert a throw into an error result. When a [StuckToolConfig]
+/// is configured (and the tool is not excluded) the execution runs under
+/// the stuck-call supervisor (gh-1054): liveness heartbeats past half the
+/// threshold, then the autonomous cancel/retry/convert follow-up.
 Future<_ExecutedToolCallOutcome> _executePreparedToolCall(
   ToolCall toolCall,
   ToolExecutor toolExecutor,
   CancelToken? cancelToken,
-  AgentEventSink emit,
-) async {
+  AgentEventSink emit, {
+  StuckToolConfig? stuckTool,
+}) async {
   final updateEvents = <Future<void>>[];
   var acceptingUpdates = true;
-  try {
-    final result = await toolExecutor(toolCall, cancelToken, (partialResult) {
-      if (!acceptingUpdates) return;
-      updateEvents.add(
-        Future<void>(
-          () => emit(
-            ToolExecutionUpdateEvent(
-              toolCallId: toolCall.id,
-              toolName: toolCall.name,
-              args: toolCall.arguments,
-              partialResult: partialResult,
-            ),
+  void onPartial(ToolExecutionResult partialResult) {
+    if (!acceptingUpdates) return;
+    updateEvents.add(
+      Future<void>(
+        () => emit(
+          ToolExecutionUpdateEvent(
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            args: toolCall.arguments,
+            partialResult: partialResult,
           ),
         ),
-      );
-    });
+      ),
+    );
+  }
+
+  Future<ToolExecutionResult> run(
+    CancelToken? token, [
+    void Function(ToolExecutionResult partialResult)? observe,
+  ]) => toolExecutor(toolCall, token, (partialResult) {
+    observe?.call(partialResult);
+    onPartial(partialResult);
+  });
+
+  final supervised =
+      stuckTool != null &&
+      stuckTool.enabled &&
+      !stuckTool.excludes(toolCall.name);
+  final execution = supervised
+      ? _superviseToolExecution(
+          toolCall: toolCall,
+          run: run,
+          runToken: cancelToken,
+          stuck: stuckTool,
+          emit: emit,
+        )
+      : run(cancelToken);
+  try {
+    final result = await execution;
     acceptingUpdates = false;
     await Future.wait(updateEvents);
     return _ExecutedToolCallOutcome(result, false);
@@ -2190,7 +2341,10 @@ Future<_FinalizedToolCall> _finalizeExecutedToolCall(
   // count toward the identical-call thresholds; a success clears the
   // tool's consecutive-failure state. Operational failures (bash exits,
   // refused writes) are invisible to the breaker — a deterministic failing
-  // command must stay runnable (issue #862 review).
+  // command must stay runnable (issue #862 review). The stuck-call
+  // supervisor's marked results (gh-1054) ride the same rule: an
+  // escalation throws a plain StateError (operational), so a hung call
+  // never poisons the breaker's counters.
   final breaker = config.toolMisuseBreaker;
   if (breaker != null) {
     if (isError && !executed.validationRejection) {
