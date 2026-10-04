@@ -81,7 +81,9 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     this.sandboxHostPath,
     http.Client? httpClient,
     this.moduleLoader,
+    Map<String, WasmModule>? lazyModuleCache,
   }) : _httpClient = httpClient ?? http.Client(),
+       _lazyModules = lazyModuleCache ?? <String, WasmModule>{},
        _currentDir = workingDirectory ?? '/' {
     _sweepStalePipeDirs();
   }
@@ -165,8 +167,12 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   final Future<WasmModule> Function(String assetName)? moduleLoader;
 
   /// Interpreter modules compiled so far, keyed by asset name. A failed
-  /// lazy compile is not cached: the next invocation retries.
-  final Map<String, WasmModule> _lazyModules = <String, WasmModule>{};
+  /// lazy compile is not cached: the next invocation retries. Job-local
+  /// clones ([_forJob]) SHARE this map with their parent — it memoizes
+  /// immutable compiled modules, not mutable interpreter state, so a
+  /// compile paid anywhere (foreground, job, sibling job) is reused
+  /// everywhere (gh-1224).
+  final Map<String, WasmModule> _lazyModules;
 
   final http.Client _httpClient;
 
@@ -657,7 +663,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// A job-local clone: shares the WASM modules, HTTP client, and sandbox
   /// host path, owns the mutable interpreter state (cwd, shell vars, output
   /// capture stack), so a detached job never clobbers the foreground shell
-  /// or a sibling job.
+  /// or a sibling job. The lazy loader and the compiled-module cache are
+  /// shared too (gh-1224): dropping them turned every interpreter on the
+  /// clone into a permanent `no lazy loader` stub; the cache memoizes
+  /// immutable modules, so sharing it keeps compile-once-per-app-run
+  /// semantics across foreground and jobs.
   WasiSandboxShell _forJob() {
     final clone = WasiSandboxShell(
       coreutils: coreutils,
@@ -675,6 +685,8 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       workingDirectory: _currentDir,
       sandboxHostPath: sandboxHostPath,
       httpClient: _httpClient,
+      moduleLoader: moduleLoader,
+      lazyModuleCache: _lazyModules,
     );
     clone._shellEnv.addAll(_shellEnv);
     return clone;
