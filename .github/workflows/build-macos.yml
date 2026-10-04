@@ -501,6 +501,10 @@ jobs:
           #    references that path (the live model, when used, is fetched
           #    by the JS-app catalog, not bundled).
           ASSETS="$APP_PATH/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets"
+          # Re-enable path (review, #1096): if a desktop WASI/sandbox mode
+          # ever ships (WasiSandboxShell on macOS), revert this rm and
+          # reseed assets/wasm — until then a desktop wasm load would fail
+          # as a missing asset, not a #1224-class "no lazy loader" stub.
           rm -rf "$ASSETS/assets/wasm" "$ASSETS/packages/js_widget_runtime/test"
 
           rm -f fa-macos-*.dmg tmp-fa.dmg
