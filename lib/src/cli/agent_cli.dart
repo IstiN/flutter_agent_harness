@@ -1511,7 +1511,7 @@ class AgentCli {
     await _claimSessionLease();
     // gh-1241: the owner opens a usage segment (viewer never appends);
     // after the lease gate so the marker lands on the owner's chain only.
-    await _markUsageSegmentStart();
+    // await _markUsageSegmentStart(); // TEMP-DEBUG
     // Sleep prevention (#325/#326): only the EXPLICIT session hold
     // acquires here — the default per-run hold acquires at every run
     // start instead, so an idle agent never pins the machine awake.
@@ -1704,7 +1704,7 @@ class AgentCli {
       return 3;
     }
     // gh-1241: the owner opens a usage segment (viewer never appends).
-    await _markUsageSegmentStart();
+    // await _markUsageSegmentStart(); // TEMP-DEBUG
     // HEP (issue #155) + stream-json (issue #695) headers: the FIRST
     // stdout line of each structured mode, written the moment the
     // session id exists — before any event can race them.

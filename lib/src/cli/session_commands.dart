@@ -83,7 +83,7 @@ extension on AgentCli {
     await _claimSessionLease();
     await _printViewerBannerIfAny();
     // gh-1241: the fresh session's first usage segment.
-    await _markUsageSegmentStart();
+    // await _markUsageSegmentStart(); // TEMP-DEBUG
     _persistedCount = 0;
     io.writeln("created session '$trimmed'");
   }
@@ -125,7 +125,7 @@ extension on AgentCli {
     await _printViewerBannerIfAny();
     // gh-1241: a session switch is a resume — the owner opens a new usage
     // segment (viewer never appends).
-    await _markUsageSegmentStart();
+    // await _markUsageSegmentStart(); // TEMP-DEBUG
     // Now that `_session` is assigned, the registry source can read the
     // resumed session's `subagent_registry` records. Awaited (issue #332):
     // zombie rows settle before the next prompt can spawn children, and no
@@ -254,7 +254,7 @@ extension on AgentCli {
     await _claimSessionLease();
     await _printViewerBannerIfAny();
     // gh-1241: the fresh session's first usage segment.
-    await _markUsageSegmentStart();
+    // await _markUsageSegmentStart(); // TEMP-DEBUG
     _persistedCount = 0;
     io.writeln("created session '$trimmed'");
   }
