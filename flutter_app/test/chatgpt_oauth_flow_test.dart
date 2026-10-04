@@ -51,7 +51,10 @@ final class _RecordingService extends AgentService {
   AgentConfig? reconfigured;
 
   @override
-  Future<void> reconfigure(AgentConfig config) async {
+  Future<void> reconfigure(
+    AgentConfig config, {
+    bool fromProviderAddFlow = false,
+  }) async {
     reconfigured = config;
   }
 }
