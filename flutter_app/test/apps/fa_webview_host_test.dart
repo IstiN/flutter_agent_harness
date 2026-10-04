@@ -9,6 +9,32 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 
+/// Test platform for `flutter_inappwebview` (the plugin ships no Linux
+/// implementation and its factory asserts an [InAppWebViewPlatform] —
+/// this fake exists exactly for that, per the plugin's own error message).
+/// Only the web-view-widget factory is backed; everything else throws
+/// UnimplementedError from the base class.
+final class _FakeInAppWebViewPlatform extends InAppWebViewPlatform {
+  @override
+  PlatformInAppWebViewWidget createPlatformInAppWebViewWidget(
+    PlatformInAppWebViewWidgetCreationParams params,
+  ) => _FakePlatformWebViewWidget(params);
+}
+
+final class _FakePlatformWebViewWidget extends PlatformInAppWebViewWidget {
+  _FakePlatformWebViewWidget(super.params) : super.implementation();
+
+  @override
+  Widget build(BuildContext context) => Container();
+
+  @override
+  T controllerFromPlatform<T>(PlatformInAppWebViewController controller) =>
+      throw UnimplementedError();
+
+  @override
+  void dispose() {}
+}
+
 /// Recording [JsWebViewHost] — renders a marker text and captures the
 /// arguments the renderer passed, so the widget tests stay off the native
 /// webview plugin.
@@ -35,6 +61,13 @@ final class _FakeWebViewHost extends JsWebViewHost {
 
 void main() {
   group('FaWebViewHost', () {
+    setUpAll(() {
+      // No real plugin registers on a Linux test host — the fake is the
+      // only platform implementation this isolate ever sees (test files
+      // run in their own isolate, so the registration leaks nowhere).
+      InAppWebViewPlatform.instance = _FakeInAppWebViewPlatform();
+    });
+
     test('builds an InAppWebView with the system default data store', () {
       const host = FaWebViewHost();
       final widget = host.buildWebView(
@@ -47,18 +80,19 @@ void main() {
       expect(widget.width, 200);
       expect(widget.height, 100);
       final webView = widget.child! as InAppWebView;
-      expect(webView.initialUrlRequest?.url, WebUri('https://example.com'));
+      final params = webView.platform.params;
+      expect(params.initialUrlRequest?.url, WebUri('https://example.com'));
       // JS bridge needs JavaScript; the system default data store keeps
       // cookies/localStorage/cache across openings (never incognito).
-      expect(webView.initialSettings?.javaScriptEnabled, isTrue);
-      expect(webView.initialSettings?.incognito, isFalse);
+      expect(params.initialSettings?.javaScriptEnabled, isTrue);
+      expect(params.initialSettings?.incognito, isFalse);
     });
 
     test('leaves JavaScript off without an onMessage handler', () {
       const host = FaWebViewHost();
       final widget = host.buildWebView(src: 'https://example.com') as SizedBox;
       final webView = widget.child! as InAppWebView;
-      expect(webView.initialSettings?.javaScriptEnabled, isFalse);
+      expect(webView.platform.params.initialSettings?.javaScriptEnabled, isFalse);
     });
 
     test('createFaWebViewHost is null on platforms the plugin does not serve', () {

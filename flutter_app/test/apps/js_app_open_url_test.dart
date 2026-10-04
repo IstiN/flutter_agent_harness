@@ -4,9 +4,9 @@
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
-import 'package:flutter/widgets.dart' show LinkDelegate;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:url_launcher_platform_interface/link.dart';
 import 'package:url_launcher_platform_interface/method_channel_url_launcher.dart';
 import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
 import '../native_test_guard.dart';
@@ -47,7 +47,7 @@ final class _FakeUrlLauncher extends UrlLauncherPlatform {
 }
 
 void main() {
-  group('jsr.openUrl (engine bridge)', () {
+  group('jsr.openUrl (engine bridge)', skip: _engineSkip, () {
     TestWidgetsFlutterBinding.ensureInitialized();
 
     late _FakeUrlLauncher launcher;
@@ -119,7 +119,7 @@ void main() {
           await engine.dispose();
         }
       });
-    }, skip: _engineSkip);
+    });
 
     testWidgets('rejects when the platform cannot launch the URL', (
       tester,
@@ -149,7 +149,7 @@ void main() {
           await engine.dispose();
         }
       });
-    }, skip: _engineSkip);
+    });
 
     testWidgets('rejects when the launch itself fails', (tester) async {
       await tester.runAsync(() async {
@@ -179,6 +179,6 @@ void main() {
           await engine.dispose();
         }
       });
-    }, skip: _engineSkip);
+    });
   });
 }
