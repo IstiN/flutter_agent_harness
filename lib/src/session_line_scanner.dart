@@ -89,7 +89,7 @@ final class SessionLineScanner {
     Future<void> Function(SessionScannedLine line) onLine, {
     int? fileSize,
   }) async {
-    final Object? maybeRanged = fs;
+    final Object maybeRanged = fs;
     if (maybeRanged is! RangedReadFileSystem) {
       throw SessionException(
         'Failed to read session $path: streaming scan needs byte-range '
