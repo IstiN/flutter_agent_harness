@@ -638,4 +638,47 @@ void main() {
       expect(args.noFormat, isFalse);
     });
   });
+
+  group('parseCliArgs --stream-thinking (gh-1198)', () {
+    test('parses the flag in a headless run', () {
+      final args =
+          parseCliArgs(const ['--stream-thinking', '-p', 'hi']) as CliArgs;
+      expect(args.streamThinking, isTrue);
+      expect(args.isHeadless, isTrue);
+    });
+
+    test('parses the flag in an interactive run', () {
+      final args = parseCliArgs(const ['--stream-thinking']) as CliArgs;
+      expect(args.streamThinking, isTrue);
+      expect(args.isHeadless, isFalse);
+    });
+
+    test('defaults to false', () {
+      final args = parseCliArgs(const ['-p', 'hi']) as CliArgs;
+      expect(args.streamThinking, isFalse);
+    });
+  });
+
+  group('resolveStreamThinking (gh-1198 AC6)', () {
+    test('the flag wins for the run', () {
+      expect(
+        resolveStreamThinking(flag: true, configValue: false),
+        isTrue,
+      );
+    });
+
+    test('the config default enables it without the flag', () {
+      expect(
+        resolveStreamThinking(flag: false, configValue: true),
+        isTrue,
+      );
+    });
+
+    test('both off stays off (the byte-identical legacy default)', () {
+      expect(
+        resolveStreamThinking(flag: false, configValue: false),
+        isFalse,
+      );
+    });
+  });
 }
