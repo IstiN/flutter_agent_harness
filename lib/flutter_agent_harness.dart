@@ -48,6 +48,7 @@ export 'src/cli/cli_config.dart'
         applyProviderTimeoutEnvOverride,
         loadCliConfig,
         loadProjectCompactionEngine,
+        loadProjectContextWindowCap,
         loadProjectMemoryConfig,
         loadProjectCubeSettings,
         parseProviderTimeouts,
@@ -115,6 +116,7 @@ export 'src/cli/key_event.dart';
 export 'src/cli/prompt_templates.dart';
 export 'src/cli/tui_mouse_mode.dart';
 export 'src/compaction/branch_summarization.dart';
+export 'src/compaction/host_wiring.dart';
 export 'src/compaction/compaction.dart';
 export 'src/compaction/summary_sanitizer.dart';
 export 'src/compaction/token_estimation.dart';

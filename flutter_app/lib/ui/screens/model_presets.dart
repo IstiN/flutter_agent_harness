@@ -253,7 +253,10 @@ Future<void> applyModelPreset({
     modelId: preset.chatModelId,
     baseUrl: baseUrl,
     apiKey: preset.target.resolveKey(keysStore: keysStore),
-    contextWindow: fallbackContextWindow,
+    // Catalog window for the endpoint kind (openai-completions → the
+    // openrouter catalog entry) instead of the bare fallback constant —
+    // the shared app window rule (gh-1077 AC3).
+    contextWindow: resolveAppContextWindow(providerKind: 'openai-completions'),
     maxTokens: fallbackMaxTokens,
     supportsImages: modelIdSuggestsVision(preset.chatModelId),
   );
