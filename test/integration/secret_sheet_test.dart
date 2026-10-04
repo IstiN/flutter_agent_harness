@@ -73,19 +73,49 @@ void main() {
       },
     );
 
-    test('IT-mask: the secret is masked from the first keystroke', () async {
-      await openSheet();
-      harness.sendText('s3cr3t-TOKEN-42');
-      await harness.waitForText('•••••', timeout: const Duration(seconds: 10));
+    /// Types [secret] into the sheet's value field and synchronizes on
+    /// STABLE markers only (gh-1244): quiescence after the full string,
+    /// then the masking property. Never waits on an exact transient bullet
+    /// count — under CI timing the PTY paints past the checkpoint before
+    /// the wait evaluates, and on the raw wire the focused row's cursor
+    /// cell is wrapped in inverse-video escapes, so N consecutive `•` need
+    /// never exist in the stream at all.
+    Future<void> typeSecret(String secret) async {
+      harness.sendText(secret);
       await harness.waitForOutput(settleMs: 300);
-      // The security pin: no rendered frame — raw or on-screen — may ever
-      // carry the secret's bytes.
+      // (a) The frame-closed value row carries exactly one bullet per
+      // typed char — masking held from the first keystroke through the
+      // last. The history's tool row (`• request_secret · …`) is not
+      // frame-closed, so the `│` guard pins this to the sheet's own row.
+      final valueRow = harness.screenLines.firstWhere(
+        (l) => l.contains('•') && l.trimRight().endsWith('│'),
+        orElse: () => throw StateError(
+          'the value row must render the masked secret; screen:\n'
+          '${harness.screenText}',
+        ),
+      );
       expect(
-        harness.rawOutput.contains('s3cr3t-TOKEN-42'),
+        valueRow.split('•').length - 1,
+        secret.length,
+        reason: 'every typed char must be masked (one bullet per char)',
+      );
+      // (b) The security pin: the plaintext bytes must never appear in ANY
+      // captured frame. rawOutput is the whole PTY transcript — every
+      // screen the emulator ever rendered derives from it — so scanning it
+      // covers raced intermediates a current-screen-only check would miss.
+      expect(
+        harness.rawOutput.contains(secret),
         isFalse,
         reason: 'the secret bytes appeared in the raw PTY output',
       );
-      expect(harness.screenText.contains('s3cr3t-TOKEN-42'), isFalse);
+      expect(harness.screenText.contains(secret), isFalse);
+    }
+
+    test('IT-mask: the secret is masked from the first keystroke', () async {
+      await openSheet();
+      // Asserts the masking property after quiescence (bullet count ==
+      // typed length, zero plaintext frames) — no raced transient anchor.
+      await typeSecret('s3cr3t-TOKEN-42');
     });
 
     test(
@@ -98,11 +128,7 @@ void main() {
           'Type the value first',
           timeout: const Duration(seconds: 10),
         );
-        harness.sendText('s3cr3t-TOKEN-42');
-        await harness.waitForText(
-          '•••••',
-          timeout: const Duration(seconds: 10),
-        );
+        await typeSecret('s3cr3t-TOKEN-42');
         harness.sendEnter();
         await harness.waitForText(
           'turn-complete',
@@ -117,11 +143,7 @@ void main() {
       'IT-regression: the trapped production sequence now submits',
       () async {
         await openSheet();
-        harness.sendText('s3cr3t-TOKEN-42');
-        await harness.waitForText(
-          '•••••',
-          timeout: const Duration(seconds: 10),
-        );
+        await typeSecret('s3cr3t-TOKEN-42');
         harness.sendEnter();
         await harness.waitForText(
           'turn-complete',
