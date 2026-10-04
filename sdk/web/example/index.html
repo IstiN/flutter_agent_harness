@@ -70,7 +70,9 @@ $('connect').onclick = () => {
   };
   ws.onmessage = (e) => {
     try {
-      handle(parseLine(e.data), offered.versions);
+      // parseLine yields null for blank lines (legal NDJSON) — skip, not throw.
+      const frame = parseLine(e.data);
+      if (frame) handle(frame, offered.versions);
     } catch (error) {
       // Loud: a version or protocol failure must never limp silently.
       setStatus(`${error.constructor.name}: ${error.message}`);

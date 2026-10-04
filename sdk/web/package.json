@@ -6,7 +6,7 @@
   "main": "src/wire-client.ts",
   "types": "src/wire-client.ts",
   "scripts": {
-    "test": "node --test",
+    "test": "node --test test/conformance.test.mjs",
     "build": "node build.mjs"
   },
   "engines": {

@@ -116,7 +116,19 @@ function handleFrame(client, opcode, payload) {
 const http = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/health') { res.end('ok'); return; }
-  let path = normalize(decodeURIComponent(url.pathname)).replace(/^([/\\])+/, '');
+  let decoded;
+  try {
+    decoded = decodeURIComponent(url.pathname);
+  } catch {
+    // Malformed percent-encoding must answer, not crash the handler.
+    res.writeHead(400); res.end('bad percent-encoding'); return;
+  }
+  let path = normalize(decoded).replace(/^([/\\])+/, '');
+  // Doc-root confinement: this mock serves example/ + dist/ only — a `..`
+  // segment must 403, never read outside the checkout.
+  if (path.split(/[\\/]/).includes('..')) {
+    res.writeHead(403); res.end('forbidden'); return;
+  }
   if (path === '' || path.endsWith('/')) path += 'index.html';
   try {
     const data = await readFile(path);

@@ -317,12 +317,11 @@ export function decodeEvent(frame: WireFrame): DecodedWireEvent {
       }
     }
     if (
-      kind.startsWith('tool_') &&
-      (kind === 'tool_execution_start' ||
-        kind === 'tool_execution_update' ||
-        kind === 'tool_execution_end' ||
-        kind === 'tool_call_heartbeat' ||
-        kind === 'tool_call_stuck')
+      kind === 'tool_execution_start' ||
+      kind === 'tool_execution_update' ||
+      kind === 'tool_execution_end' ||
+      kind === 'tool_call_heartbeat' ||
+      kind === 'tool_call_stuck'
     ) {
       requireString(frame, 'toolCallId');
       requireString(frame, 'toolName');

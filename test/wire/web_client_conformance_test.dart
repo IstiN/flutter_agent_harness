@@ -10,16 +10,25 @@ import 'dart:io';
 import 'package:test/test.dart';
 
 void main() {
-  test('sdk/web conformance runner passes', () {
+  test('sdk/web conformance runner passes', () async {
     final script = File('sdk/web/test/conformance.test.mjs');
     expect(
       script.existsSync(),
       isTrue,
       reason: 'run from the package root: ${script.path} not found',
     );
+    // Explicit file, never bare `--test`: node's default discovery also
+    // executes mock-serve.mjs (top-level http.listen) as a "test", and the
+    // open server handle keeps the run alive until the job timeout.
+    const conformanceEntry = 'test/conformance.test.mjs';
     final ProcessResult result;
     try {
-      result = Process.runSync('node', ['--test'], workingDirectory: 'sdk/web');
+      result = await Process.run(
+        'node',
+        ['--test', conformanceEntry],
+        workingDirectory: 'sdk/web',
+        // Belt-and-braces: a wedged suite must fail loudly, not hang CI.
+      ).timeout(const Duration(minutes: 2));
     } on ProcessException catch (error) {
       fail('node is required for the sdk/web conformance suite: $error');
     }
