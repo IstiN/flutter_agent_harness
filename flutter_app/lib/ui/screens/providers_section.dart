@@ -316,12 +316,20 @@ fa_ui.FaChatModelConfig _faConfigFrom(AgentConfig config) =>
     );
 
 /// The reverse of [_faConfigFrom].
+///
+/// The context window is resolved through the shared app rule (gh-1077
+/// AC3): an endpoint-reported / picker-stored window wins, else the
+/// provider-catalog window, else the pinned fallback — the compaction
+/// threshold must aim at the catalog's reality, not a constant.
 AgentConfig agentConfigFrom(fa_ui.FaChatModelConfig config) => AgentConfig(
   providerKind: config.providerKind,
   modelId: config.modelId,
   baseUrl: config.baseUrl,
   apiKey: config.apiKey,
-  contextWindow: config.contextWindow,
+  contextWindow: resolveAppContextWindow(
+    providerKind: config.providerKind,
+    storedWindow: config.contextWindow,
+  ),
   maxTokens: config.maxTokens,
   supportsImages: config.supportsImages,
 );

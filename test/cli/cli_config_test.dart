@@ -1230,6 +1230,83 @@ prompts:
     });
   });
 
+  group('project agent section (gh-1077)', () {
+    late Directory tmp;
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('fah-config-test-');
+    });
+
+    tearDown(() {
+      tmp.deleteSync(recursive: true);
+    });
+
+    void writeProjectConfig(String yaml) {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync(yaml);
+    }
+
+    test('missing project file loads as null', () {
+      expect(loadProjectContextWindowCap(tmp.path), isNull);
+    });
+
+    test('parses the project-level owner cap', () {
+      writeProjectConfig('agent:\n  contextWindowCap: 128000\n');
+      expect(loadProjectContextWindowCap(tmp.path), 128000);
+    });
+
+    test('absent agent section loads as null', () {
+      writeProjectConfig('provider: anthropic\n');
+      expect(loadProjectContextWindowCap(tmp.path), isNull);
+    });
+
+    test('empty agent section loads as null', () {
+      writeProjectConfig('agent: {}\n');
+      expect(loadProjectContextWindowCap(tmp.path), isNull);
+    });
+
+    test('malformed yaml loads as null', () {
+      writeProjectConfig('agent: [unclosed');
+      expect(loadProjectContextWindowCap(tmp.path), isNull);
+    });
+
+    test('non-map yaml doc loads as null', () {
+      writeProjectConfig('just-a-string\n');
+      expect(loadProjectContextWindowCap(tmp.path), isNull);
+    });
+
+    test('present-but-invalid cap throws ConfigException (strict)', () {
+      // Below the compaction-reserve floor — the same strict rule the
+      // user config applies.
+      writeProjectConfig('agent:\n  contextWindowCap: 100\n');
+      expect(
+        () => loadProjectContextWindowCap(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('contextWindowCap'),
+          ),
+        ),
+      );
+    });
+
+    test('unknown agent key throws ConfigException (strict)', () {
+      writeProjectConfig('agent:\n  bogus: 1\n');
+      expect(
+        () => loadProjectContextWindowCap(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('unknown "agent" key'),
+          ),
+        ),
+      );
+    });
+  });
+
   group('save preserves every parsed section (issue #288 drift)', () {
     late Directory tmp;
 
