@@ -90,6 +90,7 @@ import '../wire/wire_serve.dart';
 import '../approval/approval_hook.dart';
 import '../cancel_token.dart';
 import '../compaction/compaction.dart';
+import '../compaction/host_wiring.dart';
 import '../compaction/structured/continuation_notice.dart';
 import '../compaction/token_estimation.dart';
 import '../context.dart';
@@ -1955,10 +1956,19 @@ class AgentCli {
   /// an 8k-window model the compactor always "keeps" the whole transcript
   /// (nothing is older than the kept region), so an over-window guard can
   /// never be satisfied by compacting.
+  ///
+  /// Resolved through the shared host wiring (gh-1077): the CLI path and
+  /// the app path must agree on window/reserve semantics, and the parity
+  /// test pins that agreement — the window here is
+  /// [effectiveContextWindow] under the owner cap, no overhead subtracted
+  /// (the CLI carries no fixed request overhead).
   CompactionSettings get _effectiveCompactionSettings {
     final override = config.compactionSettings;
     if (override != null) return override;
-    return CompactionSettings.forWindow(_effectiveContextWindow);
+    return resolveCompactionHostWiring(
+      mainModel: _agent.state.model,
+      contextWindowCap: config.contextWindowCap,
+    ).settings;
   }
 
   /// Whether a guided flow is between prompts.
