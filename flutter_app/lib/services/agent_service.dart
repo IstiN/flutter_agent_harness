@@ -2632,7 +2632,24 @@ class AgentService extends ChangeNotifier
   /// on. For WebLLM the settings form has already run `loadModel` (the
   /// engine is a singleton), so the new stream function reuses the warm
   /// instance. The switch is recorded as a `model_change` session record.
-  Future<void> reconfigure(AgentConfig config) async {
+  ///
+  /// [fromProviderAddFlow] marks the switch an add-provider flow itself
+  /// performs (gh-1044 I1): it bypasses the [beginProviderAddFlow] latch
+  /// below. Every other call is refused while the latch is held — boot
+  /// and session restores never reconfigure the active connection in the
+  /// middle of a provider add (the F4 hijack: a codemie restore binding
+  /// the connection while the AIIN flow runs).
+  Future<void> reconfigure(
+    AgentConfig config, {
+    bool fromProviderAddFlow = false,
+  }) async {
+    if (reconfigureRefusedByAddFlow(fromProviderAddFlow)) {
+      debugPrint(
+        '[Fa] reconfigure refused: a provider add flow is in progress — '
+        'the active connection stays untouched until it finishes',
+      );
+      return;
+    }
     // Issue #327: refuse a connection whose model and auth resolve from
     // DIFFERENT registry rows, or a hosted/CodeMie endpoint with no
     // credential on this surface — before any state changes (fail fast,
@@ -2706,6 +2723,31 @@ class AgentService extends ChangeNotifier
       error = null;
       notifyListeners();
     }
+  }
+
+  /// Add-provider-flow latch (gh-1044 I1/AC6): > 0 while a provider
+  /// add/connect flow runs (AIIN sign-in and friends). While held,
+  /// [reconfigure] refuses restore-shaped calls — the active connection
+  /// is never hijacked mid-flow.
+  int _providerAddFlowDepth = 0;
+
+  /// Whether a provider add/connect flow is latched (gh-1044 I1/AC6).
+  bool get providerAddFlowInProgress => _providerAddFlowDepth > 0;
+
+  /// Whether a `reconfigure` from outside an add-provider flow is
+  /// currently refused (the gh-1044 I1 latch): shared by the base
+  /// [reconfigure] and subclass overrides (the extension relay) so the
+  /// refusal rule exists in exactly one shape.
+  bool reconfigureRefusedByAddFlow(bool fromProviderAddFlow) =>
+      _providerAddFlowDepth > 0 && !fromProviderAddFlow;
+
+  /// Marks a provider add/connect flow start (see [reconfigure]'s
+  /// `fromProviderAddFlow`).
+  void beginProviderAddFlow() => _providerAddFlowDepth++;
+
+  /// Marks a provider add/connect flow end.
+  void endProviderAddFlow() {
+    if (_providerAddFlowDepth > 0) _providerAddFlowDepth--;
   }
 
   /// Bridge for the part-file extension members ([AgentServiceAssistant],
