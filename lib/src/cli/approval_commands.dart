@@ -1161,34 +1161,7 @@ extension ApprovalCommands on AgentCli {
   /// End of an assistant message: flush the stream newline, then report the
   /// stop reason (errors, aborts, silent truncations, empty responses).
   void _onAssistantMessageEnd(AssistantMessage message) {
-    if (_useTui || !_buffersAnswer) {
-      if (_streamedText || _streamedThinking) {
-        // The trailing newline of the streamed text belongs to the
-        // primary channel (write), not to diagnostics (writeln) — a
-        // headless host routes only writeln to stderr.
-        io.write('\n');
-        _streamedText = false;
-        _streamedThinking = false;
-      }
-    } else if (_streamedText) {
-      // The rendered message lands on the primary channel (write), not
-      // diagnostics (writeln) — a headless host routes only writeln to
-      // stderr, keeping write the only stdout content. Raw mode streams
-      // deltas live above, so this branch only runs for ansi/plain.
-      io.write(_markdownSurface.render(_assistantText.toString()));
-      io.write('\n');
-      _assistantText.clear();
-      _streamedText = false;
-      // The thinking deltas streamed dimmed while the answer buffered
-      // (gh-1198): the stream line closed above the render — reset here,
-      // exactly like the streaming surfaces do.
-      _streamedThinking = false;
-    } else if (_streamedThinking) {
-      // A pure-thinking message (e.g. a tool-call turn) on a buffered
-      // surface: close the dimmed stream line and reset.
-      io.write('\n');
-      _streamedThinking = false;
-    }
+    _flushAssistantStreamAtEnd();
     switch (message.stopReason) {
       case StopReason.error:
         // The CLI auto-reauthorizes CodeMie sessions after expiry; skip the
@@ -1226,6 +1199,46 @@ extension ApprovalCommands on AgentCli {
         }
       default:
         _noteQuietMessageEnd(message);
+    }
+  }
+
+  /// Closes the streamed-delta presentation at message end: the TUI/raw
+  /// surfaces reset their streamed state after the trailing newline; the
+  /// styled surfaces render the buffered answer once (#774), then reset —
+  /// and a pure-thinking message (no answer deltas, e.g. a tool-call
+  /// turn) just closes the dimmed stream line. Split out of
+  /// [_onAssistantMessageEnd] so the stop-reason dispatch stays under the
+  /// CRAP ratchet (gh-1198: the thinking-reset branches tipped it over).
+  void _flushAssistantStreamAtEnd() {
+    if (_useTui || !_buffersAnswer) {
+      if (_streamedText || _streamedThinking) {
+        // The trailing newline of the streamed text belongs to the
+        // primary channel (write), not to diagnostics (writeln) — a
+        // headless host routes only writeln to stderr.
+        io.write('\n');
+        _streamedText = false;
+        _streamedThinking = false;
+      }
+      return;
+    }
+    if (_streamedText) {
+      // The rendered message lands on the primary channel (write), not
+      // diagnostics (writeln) — a headless host routes only writeln to
+      // stderr, keeping write the only stdout content. Raw mode streams
+      // deltas live above, so this branch only runs for ansi/plain.
+      io.write(_markdownSurface.render(_assistantText.toString()));
+      io.write('\n');
+      _assistantText.clear();
+      _streamedText = false;
+      // The thinking deltas streamed dimmed while the answer buffered
+      // (gh-1198): the stream line closed above the render — reset here,
+      // exactly like the streaming surfaces do.
+      _streamedThinking = false;
+    } else if (_streamedThinking) {
+      // A pure-thinking message (e.g. a tool-call turn) on a buffered
+      // surface: close the dimmed stream line and reset.
+      io.write('\n');
+      _streamedThinking = false;
     }
   }
 

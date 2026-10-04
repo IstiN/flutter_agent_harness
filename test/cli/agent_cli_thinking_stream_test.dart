@@ -71,6 +71,26 @@ class GatedSilentStreamFunction {
   }
 }
 
+/// A provider stream whose call THROWS before a single event lands —
+/// the dead-window terminal path (review thread, gh-1198): the agent
+/// loop synthesizes an error turn (`_providerErrorTurn` →
+/// `_finishWithoutStream`), whose MessageStart/End events must disarm
+/// the reasoning watch instead of leaving it printing `… reasoning Ns`
+/// forever over an idle session.
+class ThrowingStreamFunction {
+  int get calls => _calls;
+  int _calls = 0;
+
+  AssistantMessageEventStream call(
+    Model model,
+    Context context, {
+    CancelToken? cancelToken,
+  }) {
+    _calls++;
+    throw Exception('provider 500 — stream call exploded');
+  }
+}
+
 void main() {
   late MemoryExecutionEnv env;
   late FakeCliIO io;
@@ -201,6 +221,73 @@ void main() {
       // first burst (the E1 separation rule).
       expect(out, contains('$dimA\n'));
       expect('part one. part two'.allMatches(out), hasLength(1));
+    });
+
+    test('a PURE-THINKING message (no text delta) closes the dimmed '
+        'stream line at message end', () async {
+      // A tool-call turn that streams only thinking (models that reason
+      // before every tool call): the dimmed burst must be newline-closed
+      // at message end on the buffered surface, and the state reset so
+      // the NEXT turn's thinking/text interleave starts clean (the
+      // `_streamedThinking` reset path gh-1198 added).
+      final empty = testAssistant();
+      final withThinking = testAssistant(
+        content: [ThinkingContent(thinking: 'which file')],
+      );
+      const call = ToolCall(
+        id: 't1',
+        name: 'bash',
+        arguments: {'command': 'ls'},
+      );
+      final thinkingToolPartial = testAssistant(
+        content: [
+          ThinkingContent(thinking: 'which file'),
+          call,
+        ],
+        stopReason: StopReason.toolUse,
+      );
+      final pureThinkingTurn = <AssistantMessageEvent>[
+        StartEvent(partial: empty),
+        ThinkingDeltaEvent(
+          contentIndex: 0,
+          delta: 'which file',
+          partial: withThinking,
+        ),
+        ToolCallStartEvent(contentIndex: 1, partial: withThinking),
+        ToolCallEndEvent(
+          contentIndex: 1,
+          toolCall: call,
+          partial: thinkingToolPartial,
+        ),
+        DoneEvent(reason: StopReason.toolUse, message: thinkingToolPartial),
+      ];
+      final fake = FakeStreamFunction([
+        pureThinkingTurn,
+        thinkingTurn('done thinking', 'All done'),
+      ]);
+      final cli = cliFor(
+        fake.call,
+        streamThinking: true,
+        useColor: true,
+        markdownSurface: const MarkdownSurface(mode: MarkdownSurfaceMode.ansi),
+      );
+      final run = cli.run();
+      io.sendLine('hi');
+      await waitForIt(() => fake.calls == 2 && !cli.isBusy);
+      io.sendLine('/exit');
+      await run;
+
+      final out = io.out.toString();
+      final dim = '\x1B[2mwhich file\x1B[0m';
+      expect(out, contains(dim));
+      // The pure-thinking turn's dimmed stream line is closed by the
+      // end-of-message flush — the burst does not glue onto the next
+      // turn's output.
+      expect(out, contains('$dim\n'));
+      // The next turn streams and renders normally after the reset.
+      expect(out, contains('\x1B[2mdone thinking\x1B[0m'));
+      expect(out, contains('All done'));
+      expect('All done'.allMatches(out), hasLength(1));
     });
   });
 
@@ -394,6 +481,29 @@ void main() {
       ]);
       final cli = cliFor(fake.call);
       await cli.runHeadless('hi');
+      cli.reasoningLivenessTickForTest();
+      expect(io.out.toString(), isNot(contains('… reasoning')));
+    });
+
+    test('a provider request that FAILS before its first event disarms '
+        'the watch (the error turn is visible progress)', () async {
+      // The dead-window terminal path (review pin): the stream call
+      // throws before a single event lands, the agent loop synthesizes
+      // the error turn (`_providerErrorTurn` → `_finishWithoutStream`
+      // emits MessageStart/End), and those events disarm the watch —
+      // an idle-after-error session must never keep printing
+      // `… reasoning Ns` forever.
+      final fake = ThrowingStreamFunction();
+      final cli = cliFor(
+        fake.call,
+        waiting: const WaitingConfig(
+          toolLivenessSeconds: 60,
+          toolLivenessTickSeconds: 60,
+        ),
+      );
+      await cli.runHeadless('hi');
+      expect(fake.calls, 1);
+      expect(cli.reasoningLivenessActiveForTest, isFalse);
       cli.reasoningLivenessTickForTest();
       expect(io.out.toString(), isNot(contains('… reasoning')));
     });
