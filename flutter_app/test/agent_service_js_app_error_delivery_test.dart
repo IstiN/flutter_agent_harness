@@ -218,7 +218,9 @@ void main() {
       );
       // Let the OTHER service's async routing decision settle: it must
       // drop the notice (not its app — not its turn).
-      await pumpEventQueue(const Duration(seconds: 2));
+      for (var i = 0; i < 20; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
       await other.waitForIdle();
       expect(
         _hasUserText(other.messages, 'routed boom'),
