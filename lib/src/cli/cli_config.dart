@@ -212,6 +212,25 @@ bool? _parseAgentMisuseBreakerValue(Object? value) {
   return value;
 }
 
+/// The compaction reserve the cap floor mirrors (see [_parseAgentSection]).
+const _agentContextWindowCapMin = 16384;
+
+int _parseAgentContextWindowCapValue(Object? value) {
+  if (value is! int || value <= 0) {
+    throw ConfigException(
+      '"agent.contextWindowCap" must be a positive integer (tokens)',
+    );
+  }
+  if (value < _agentContextWindowCapMin) {
+    throw ConfigException(
+      '"agent.contextWindowCap" must be at least $_agentContextWindowCapMin'
+      ' — below the compaction reserve the compaction trigger threshold '
+      'would go negative',
+    );
+  }
+  return value;
+}
+
 /// Parses the `agent:` section (issues #273/#679/#680):
 /// `contextWindowCap` — the owner-side effective context override — and
 /// `mode` — the `default|pi|omp` preset label. The cap SETS the EFFECTIVE
@@ -251,20 +270,7 @@ _parseAgentSection(Object? node) {
   for (final key in node.keys) {
     switch (key) {
       case 'contextWindowCap':
-        final value = node[key];
-        if (value is! int || value <= 0) {
-          throw ConfigException(
-            '"agent.contextWindowCap" must be a positive integer (tokens)',
-          );
-        }
-        if (value < 16384) {
-          throw ConfigException(
-            '"agent.contextWindowCap" must be at least 16384 — below the '
-            'compaction reserve the compaction trigger threshold would go '
-            'negative',
-          );
-        }
-        cap = value;
+        cap = _parseAgentContextWindowCapValue(node[key]);
       case 'mode':
         mode = _parseAgentModeValue(node[key]);
       case 'misuseBreaker':

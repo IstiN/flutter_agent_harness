@@ -4,8 +4,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
-import 'agent_cli_steering_persistence_test.dart'
-    show waitForSessions, waitForItAsync;
+import 'agent_cli_steering_persistence_test.dart' show waitForSessions;
 
 /// A [Shell] whose exec never returns and honors nothing — the mock wedge
 /// behind the stuck-call scenarios (gh-1054 AC1/AC4).
@@ -161,9 +160,24 @@ void main() {
       final run = replCli.run();
       await waitForSessions(replEnv);
       replIo.sendLine('run the long thing');
-      await waitForItAsync(
-        () async =>
-            (await livenessRecords(replEnv)).length >= headlessRecords.length,
+      // Local (not the shared 25s/5ms helper): each poll parses the whole
+      // session JSONL, which the 60ms heartbeat cadence keeps growing —
+      // at shard-load the 5ms cadence turns into CPU starvation and the
+      // 25s budget ran dry while the REPL leg was healthy but slow
+      // (observed: first poll loop consumed the full budget with the
+      // records landing right after). 120s at a 50ms cadence keeps the
+      // same condition with headroom for the runner's worst shards.
+      var replLivenessWaited = false;
+      for (var i = 0; i < 1800 && !replLivenessWaited; i++) {
+        replLivenessWaited =
+            (await livenessRecords(replEnv)).length >= headlessRecords.length;
+        if (!replLivenessWaited) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+      }
+      expect(
+        replLivenessWaited,
+        isTrue,
         reason: 'the REPL run persists the same liveness records',
       );
       replIo.sendLine('/exit');

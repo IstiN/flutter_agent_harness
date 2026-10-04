@@ -2082,6 +2082,7 @@ Future<void> _runApp(List<String> args) async {
           toolArgs: parsed.output == 'events=full'
               ? HepToolArgs.full
               : HepToolArgs.summary,
+          redactionPipeline: redactionPipeline,
         )
       : null;
   final streamJson = streamJsonMode

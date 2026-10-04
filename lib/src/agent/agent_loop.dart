@@ -42,7 +42,11 @@ import '../compaction/token_estimation.dart' show estimateRequestTokens;
 // the pure-data stuck_tool module (gh-1054 review) so the tool layer can
 // recognize a supervisor-driven yield; re-exported for the loop's
 // consumers.
-export 'stuck_tool.dart' show StuckCallFollowUp, stuckBackgroundHandbackMarker;
+export 'stuck_tool.dart'
+    show
+        StuckCallFollowUp,
+        stuckBackgroundHandbackMarker,
+        stuckBackgroundHandbackSentence;
 import '../context.dart';
 import '../event_stream.dart';
 import '../exceptions.dart';
@@ -2384,14 +2388,17 @@ final class _SupervisedAttempt {
 /// legitimately long declared-timeout call is never pestered early.
 /// Whether a completed result is the bash soft-yield hand-back (the
 /// command moved to a background job) rather than a genuine completion —
-/// the tool-side contract marker shared via
-/// [stuckBackgroundHandbackMarker].
+/// anchored on the hand-back's deterministic opening sentence
+/// ([stuckBackgroundHandbackSentence]): the marker word alone shows up in
+/// ordinary output (an echo, a log tail, a grep over this repo), and a
+/// retry that merely QUOTES the hand-back text must not be audited as a
+/// conversion (gh-1054 review round 2).
 bool _isBackgroundHandback(ToolExecutionResult result) =>
     _resultOutputSize(result) > 0 &&
     _resultPartialText(
       result,
       max: 1 << 20,
-    ).contains(stuckBackgroundHandbackMarker);
+    ).startsWith(stuckBackgroundHandbackSentence);
 
 Duration? _declaredTimeoutOf(Map<String, dynamic> args, {String? toolName}) {
   // Only bash declares a seconds-based `timeout` arg. A stray `timeout`
@@ -2478,6 +2485,169 @@ ToolExecutionResult _prefixMarks(
 /// Advisory mode ([StuckFollowUpMode.advisory]) stops after the advisory
 /// stuck event: nothing is ever cancelled (interactive sessions with a
 /// human present).
+/// The follow-up stage an attempt is supervised under: attempt 1 is
+/// cancelled and retried once; from attempt 2 on a further hang converts
+/// to a background job before escalating.
+StuckFollowUpAction _stageForAttempt(int attempt) => attempt == 1
+    ? StuckFollowUpAction.cancelRetry
+    : StuckFollowUpAction.backgroundConvert;
+
+/// The mark a completed retry carries to disclose the supervision
+/// history — `null` when attempt 1 finished on its own (nothing to
+/// disclose). The mark must tell the truth about what happened: a
+/// soft-yield hand-back names the conversion; a retry that completed its
+/// own work (the yield token ignored, the finish inside the grace
+/// window) is still just the marked retry (gh-1054 review).
+String? _completedStuckMark({
+  required int attempt,
+  required _SupervisedAttempt outcome,
+  required ToolCall toolCall,
+  required Duration threshold,
+}) {
+  if (attempt <= 1) return null;
+  if (outcome.afterStuck && _isBackgroundHandback(outcome.result!)) {
+    return '[stuck-call] the retry of ${toolCall.name} also exceeded '
+        '${_formatElapsed(threshold)} and was converted to a background '
+        'job (the process was NOT killed); the turn continues.';
+  }
+  return '[stuck-call] ${toolCall.name} was cancelled after '
+      '${_formatElapsed(threshold)} with no completion and retried '
+      'once (this result is the marked retry).';
+}
+
+/// The escalation a hung retry that recovery could not save ends the turn
+/// with: a session-visible record, then a plain [StateError] (an
+/// operational failure — see the breaker note in
+/// [_finalizeExecutedToolCall]).
+Future<Never> _escalateStuckCall({
+  required AgentEventSink emit,
+  required ToolCall toolCall,
+  required Duration totalElapsed,
+  required _SupervisedAttempt outcome,
+  required int lastOutputBytes,
+  required String lastPartialText,
+}) async {
+  final partialPointer = lastOutputBytes > 0
+      ? ' Partial output (~$lastOutputBytes chars) captured: '
+            '"$lastPartialText"'
+      : ' No output was captured.';
+  final cause = outcome.error == null
+      ? ''
+      : ' The retry failed with: ${outcome.error}';
+  await emit(
+    ToolCallStuckEvent(
+      toolCallId: toolCall.id,
+      toolName: toolCall.name,
+      args: toolCall.arguments,
+      elapsed: totalElapsed,
+      action: StuckFollowUpAction.escalate,
+      detail:
+          '${toolCall.name} could not be recovered after '
+          '${_formatElapsed(totalElapsed)} '
+          '(cancel + retry + background conversion all failed).'
+          '$cause$partialPointer',
+      timestamp: DateTime.now(),
+    ),
+  );
+  throw StateError(
+    '[stuck-call escalation] ${toolCall.name} could not be recovered '
+    'after ${_formatElapsed(totalElapsed)} (cancel + retry + '
+    'background conversion all failed).'
+    '$cause$partialPointer',
+  );
+}
+
+/// Advance one stage of the hang follow-up for a confirmed-uncompleted
+/// attempt: cancelRetry gets its (now truthful) record — the stage has
+/// actually advanced, so a call that completes during the cancel grace
+/// never leaves a stale "cancelling and retrying once" record behind
+/// (gh-1054 review); backgroundConvert escalates. Advisory hangs are
+/// never abandoned and escalate is never consumed as a stage. Appends the
+/// stage's ledger mark for [marks].
+Future<void> _advanceStuckStage({
+  required StuckFollowUpAction stage,
+  required ToolCall toolCall,
+  required _SupervisedAttempt outcome,
+  required Duration totalElapsed,
+  required AgentEventSink emit,
+  required List<String> marks,
+}) async {
+  switch (stage) {
+    case StuckFollowUpAction.cancelRetry:
+      await emit(
+        ToolCallStuckEvent(
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          args: toolCall.arguments,
+          elapsed: totalElapsed,
+          action: StuckFollowUpAction.cancelRetry,
+          detail:
+              '${toolCall.name} was cancelled after '
+              '${_formatElapsed(outcome.elapsed)} with no completion and '
+              'is being retried once',
+          timestamp: DateTime.now(),
+        ),
+      );
+      marks.add(
+        '[stuck-call] ${toolCall.name} was cancelled after '
+        '${_formatElapsed(outcome.elapsed)} with no completion and is '
+        'being retried once.',
+      );
+    case StuckFollowUpAction.backgroundConvert:
+      // The yield cancel already fired inside the attempt and the
+      // executor did not answer within the cancel grace: recovery
+      // failed — escalate, session-visibly.
+      await _escalateStuckCall(
+        emit: emit,
+        toolCall: toolCall,
+        totalElapsed: totalElapsed,
+        outcome: outcome,
+        lastOutputBytes: outcome.outputBytes,
+        lastPartialText: outcome.partialText,
+      );
+    case StuckFollowUpAction.advisory:
+    case StuckFollowUpAction.escalate:
+      break;
+  }
+}
+
+/// Whether the background-convert initiation record must be emitted for a
+/// resolved attempt: only when the stage actually advances — the attempt
+/// was abandoned, or the executor answered the yield cancel by handing the
+/// job back. A retry that finished its own work inside the grace gets no
+/// record (nothing was converted) — mirroring the cancel_retry rationale
+/// (gh-1054 review round 2).
+bool _recordsBackgroundConvert({
+  required StuckFollowUpAction stage,
+  required _SupervisedAttempt outcome,
+}) {
+  if (stage != StuckFollowUpAction.backgroundConvert) return false;
+  if (outcome.hung) return true;
+  return outcome.afterStuck &&
+      outcome.result != null &&
+      _isBackgroundHandback(outcome.result!);
+}
+
+/// The deferred background-convert initiation record — emitted only once
+/// the stage actually advances (see [_recordsBackgroundConvert]).
+ToolCallStuckEvent _backgroundConvertRecord({
+  required ToolCall toolCall,
+  required _SupervisedAttempt outcome,
+  required Duration threshold,
+}) {
+  return ToolCallStuckEvent(
+    toolCallId: toolCall.id,
+    toolName: toolCall.name,
+    args: toolCall.arguments,
+    elapsed: outcome.elapsed,
+    action: StuckFollowUpAction.backgroundConvert,
+    detail:
+        '${toolCall.name} exceeded ${_formatElapsed(threshold)}; '
+        'moving the retry to a background job',
+    timestamp: DateTime.now(),
+  );
+}
+
 Future<ToolExecutionResult> _superviseToolExecution({
   required ToolCall toolCall,
   required _SupervisedRun run,
@@ -2494,14 +2664,10 @@ Future<ToolExecutionResult> _superviseToolExecution({
   final marks = <String>[];
   var attempt = 0;
   var totalElapsed = Duration.zero;
-  var lastOutputBytes = 0;
-  var lastPartialText = '';
 
   while (true) {
     attempt++;
-    final stage = attempt == 1
-        ? StuckFollowUpAction.cancelRetry
-        : StuckFollowUpAction.backgroundConvert;
+    final stage = _stageForAttempt(attempt);
     final outcome = await _supervisedAttempt(
       toolCall: toolCall,
       run: run,
@@ -2514,8 +2680,6 @@ Future<ToolExecutionResult> _superviseToolExecution({
       stageIfHung: stage,
     );
     totalElapsed += outcome.elapsed;
-    lastOutputBytes = outcome.outputBytes;
-    lastPartialText = outcome.partialText;
 
     // The run is over (user abort / host teardown) — no follow-up stages
     // may outlive it; the loop's abort handling owns the result.
@@ -2532,95 +2696,151 @@ Future<ToolExecutionResult> _superviseToolExecution({
       if (!outcome.cancelledBySupervisor) throw outcome.error!;
     }
     if (outcome.error == null && !outcome.hung) {
-      if (attempt > 1) {
-        // The mark must tell the truth about what happened: a soft-yield
-        // hand-back names the conversion; a retry that completed its own
-        // work (the yield token ignored, the finish inside the grace
-        // window) is still just the marked retry (gh-1054 review).
-        if (outcome.afterStuck && _isBackgroundHandback(outcome.result!)) {
-          marks.add(
-            '[stuck-call] the retry of ${toolCall.name} also exceeded '
-            '${_formatElapsed(threshold)} and was converted to a background '
-            'job (the process was NOT killed); the turn continues.',
-          );
-        } else {
-          marks.add(
-            '[stuck-call] ${toolCall.name} was cancelled after '
-            '${_formatElapsed(threshold)} with no completion and retried '
-            'once (this result is the marked retry).',
-          );
-        }
+      final mark = _completedStuckMark(
+        attempt: attempt,
+        outcome: outcome,
+        toolCall: toolCall,
+        threshold: threshold,
+      );
+      if (mark != null) marks.add(mark);
+      if (_recordsBackgroundConvert(stage: stage, outcome: outcome)) {
+        // The stage actually advanced (the executor handed the job back):
+        // the initiation record is only now truthful.
+        await emit(
+          _backgroundConvertRecord(
+            toolCall: toolCall,
+            outcome: outcome,
+            threshold: threshold,
+          ),
+        );
       }
       return _prefixMarks(marks, outcome.result!);
     }
 
-    switch (stage) {
-      case StuckFollowUpAction.cancelRetry:
-        // The stage actually advanced: attempt 1 is confirmed done with no
-        // completion, so the cancel_retry record is now truthful — emitted
-        // here instead of at the threshold (gh-1054 review).
-        await emit(
-          ToolCallStuckEvent(
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            args: toolCall.arguments,
-            elapsed: totalElapsed,
-            action: StuckFollowUpAction.cancelRetry,
-            detail:
-                '${toolCall.name} was cancelled after '
-                '${_formatElapsed(outcome.elapsed)} with no completion and '
-                'is being retried once',
-            timestamp: DateTime.now(),
-          ),
-        );
-        marks.add(
-          '[stuck-call] ${toolCall.name} was cancelled after '
-          '${_formatElapsed(outcome.elapsed)} with no completion and is '
-          'being retried once.',
-        );
-      case StuckFollowUpAction.backgroundConvert:
-        // The yield cancel already fired inside the attempt and the
-        // executor did not answer within the cancel grace: recovery
-        // failed — escalate, session-visibly.
-        final partialPointer = lastOutputBytes > 0
-            ? ' Partial output (~$lastOutputBytes chars) captured: '
-                  '"$lastPartialText"'
-            : ' No output was captured.';
-        final cause = outcome.error == null
-            ? ''
-            : ' The retry failed with: ${outcome.error}';
-        await emit(
-          ToolCallStuckEvent(
-            toolCallId: toolCall.id,
-            toolName: toolCall.name,
-            args: toolCall.arguments,
-            elapsed: totalElapsed,
-            action: StuckFollowUpAction.escalate,
-            detail:
-                '${toolCall.name} could not be recovered after '
-                '${_formatElapsed(totalElapsed)} '
-                '(cancel + retry + background conversion all failed).'
-                '$cause$partialPointer',
-            timestamp: DateTime.now(),
-          ),
-        );
-        throw StateError(
-          '[stuck-call escalation] ${toolCall.name} could not be recovered '
-          'after ${_formatElapsed(totalElapsed)} (cancel + retry + '
-          'background conversion all failed).'
-          '$cause$partialPointer',
-        );
-      case StuckFollowUpAction.advisory:
-      case StuckFollowUpAction.escalate:
-        // Advisory hangs are never abandoned (no cancel, no grace gate);
-        // escalate is produced below, never consumed as a stage.
-        break;
+    if (_recordsBackgroundConvert(stage: stage, outcome: outcome)) {
+      // The stage actually advanced (the attempt was abandoned): the
+      // initiation record is only now truthful.
+      await emit(
+        _backgroundConvertRecord(
+          toolCall: toolCall,
+          outcome: outcome,
+          threshold: threshold,
+        ),
+      );
     }
+
+    await _advanceStuckStage(
+      stage: stage,
+      toolCall: toolCall,
+      outcome: outcome,
+      totalElapsed: totalElapsed,
+      emit: emit,
+      marks: marks,
+    );
   }
 }
 
 /// One supervised attempt: run the executor under per-call cancel/yield
 /// tokens with the heartbeat + stuck timers. See [_superviseToolExecution].
+/// Mutable state one supervised attempt tracks across its timers and its
+/// final classification (gh-1054). Grouped into one object so the stuck
+/// timer's callback can be a top-level function under the CRAP ratchet
+/// (12.0) instead of a closure whose branches fold into
+/// [_supervisedAttempt].
+final class _AttemptClock {
+  _AttemptClock() : stopwatch = Stopwatch()..start();
+
+  final Stopwatch stopwatch;
+
+  /// Unblocks the attempt's wait once the abandoned call has had its
+  /// cancel grace; completed immediately at zero grace.
+  final Completer<void> graceGate = Completer<void>();
+  Timer? heartbeatTimer;
+  Timer? stuckTimer;
+  Timer? graceTimer;
+
+  /// Cleared when the attempt is over: the timers must then become
+  /// no-ops (no records may outlive the run).
+  bool alive = true;
+  bool stuckFired = false;
+
+  // Distinct from [stuckFired]: "the threshold fired" is not "we
+  // cancelled". In advisory mode nothing is ever cancelled, so an error
+  // landing after the advisory must propagate as the executor's own
+  // failure — never re-executed (gh-1054 review, blocking).
+  bool supervisorCancelled = false;
+  int outputBytes = 0;
+  String partialText = '';
+
+  void disarm() {
+    heartbeatTimer?.cancel();
+    stuckTimer?.cancel();
+    graceTimer?.cancel();
+  }
+}
+
+/// The stuck threshold's callback for one supervised attempt: emit the
+/// mode's record (advisory notice, or the background-convert initiation
+/// record), then act — cancel+retry, or yield the retry into a background
+/// job — and open the cancel grace window. The cancel_retry record waits
+/// until the stage actually advances (in [_superviseToolExecution]) so a
+/// call that completes during the grace never leaves a "cancelling and
+/// retrying once" record behind (gh-1054 review).
+void _fireStuckThreshold({
+  required _AttemptClock clock,
+  required ToolCall toolCall,
+  required StuckToolConfig stuck,
+  required StuckFollowUpAction stageIfHung,
+  required void Function(AgentEvent event) enqueue,
+  required CancelTokenSource callSource,
+  required CancelTokenSource yieldSource,
+}) {
+  if (!clock.alive) return;
+  clock.stuckFired = true;
+  if (stuck.followUp == StuckFollowUpMode.advisory) {
+    enqueue(
+      ToolCallStuckEvent(
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        args: toolCall.arguments,
+        elapsed: clock.stopwatch.elapsed,
+        action: StuckFollowUpAction.advisory,
+        detail:
+            '${toolCall.name} has been running for '
+            '${_formatElapsed(clock.stopwatch.elapsed)} (no action taken in '
+            'advisory mode)',
+        timestamp: DateTime.now(),
+      ),
+    );
+    return;
+  }
+  // The background-convert record no longer fires here: it waits until
+  // the stage actually advances — a retry that ignores the yield token
+  // and finishes its own work inside the grace must not leave an
+  // initiated-conversion record behind a plain marked result (gh-1054
+  // review round 2, mirroring the cancel_retry rationale).
+  switch (stageIfHung) {
+    case StuckFollowUpAction.cancelRetry:
+      clock.supervisorCancelled = true;
+      callSource.cancel(
+        StuckCallFollowUp('stuck call cancelled after exceeding threshold'),
+      );
+    case StuckFollowUpAction.backgroundConvert:
+      clock.supervisorCancelled = true;
+      yieldSource.cancel(
+        StuckCallFollowUp('stuck retry converted to a background job'),
+      );
+    case StuckFollowUpAction.advisory || StuckFollowUpAction.escalate:
+      break;
+  }
+  if (clock.graceGate.isCompleted) return;
+  if (stuck.cancelGrace > Duration.zero) {
+    clock.graceTimer = Timer(stuck.cancelGrace, clock.graceGate.complete);
+  } else {
+    clock.graceGate.complete();
+  }
+}
+
 Future<_SupervisedAttempt> _supervisedAttempt({
   required ToolCall toolCall,
   required _SupervisedRun run,
@@ -2648,16 +2868,7 @@ Future<_SupervisedAttempt> _supervisedAttempt({
     );
   }
 
-  var alive = true;
-  var outputBytes = 0;
-  var partialText = '';
-  var stuckFired = false;
-  // Distinct from [stuckFired]: "the threshold fired" is not "we
-  // cancelled". In advisory mode nothing is ever cancelled, so an error
-  // landing after the advisory must propagate as the executor's own
-  // failure — never re-executed (gh-1054 review, blocking).
-  var supervisorCancelled = false;
-  final stopwatch = Stopwatch()..start();
+  final clock = _AttemptClock();
 
   // Serialized event chain: heartbeats/stuck events never interleave with
   // each other, and the attempt drains the chain before reporting so the
@@ -2670,23 +2881,13 @@ Future<_SupervisedAttempt> _supervisedAttempt({
         .catchError((Object _) {});
   }
 
-  Timer? heartbeatTimer;
-  Timer? stuckTimer;
-  Timer? graceTimer;
-  final graceGate = Completer<void>();
-  void disarm() {
-    heartbeatTimer?.cancel();
-    stuckTimer?.cancel();
-    graceTimer?.cancel();
-  }
-
   // Observes partial results for the heartbeat's captured-output size and
   // the escalation's partial-output pointer. Forwarding to the loop's
   // update emitter stays inside `run` — this only reads.
   void observe(ToolExecutionResult partial) {
-    if (!alive) return;
-    outputBytes = _resultOutputSize(partial);
-    partialText = _resultPartialText(partial);
+    if (!clock.alive) return;
+    clock.outputBytes = _resultOutputSize(partial);
+    clock.partialText = _resultPartialText(partial);
   }
 
   final inner = runZoned<Future<ToolExecutionResult>>(
@@ -2694,74 +2895,20 @@ Future<_SupervisedAttempt> _supervisedAttempt({
     zoneValues: {yieldTokenZoneKey: yieldSource.token},
   );
 
-  stuckTimer = Timer(threshold, () {
-    if (!alive) return;
-    stuckFired = true;
-    if (stuck.followUp == StuckFollowUpMode.advisory) {
-      enqueue(
-        ToolCallStuckEvent(
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
-          args: toolCall.arguments,
-          elapsed: stopwatch.elapsed,
-          action: StuckFollowUpAction.advisory,
-          detail:
-              '${toolCall.name} has been running for '
-              '${_formatElapsed(stopwatch.elapsed)} (no action taken in '
-              'advisory mode)',
-          timestamp: DateTime.now(),
-        ),
-      );
-      return;
-    }
-    // The background-convert record fires here: the conversion INITIATES
-    // at this cancel (the tool's soft-yield hands the job back, or the
-    // grace expires into the escalation). The cancel_retry record instead
-    // waits for the stage to actually advance — see the switch below.
-    if (stageIfHung == StuckFollowUpAction.backgroundConvert) {
-      enqueue(
-        ToolCallStuckEvent(
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
-          args: toolCall.arguments,
-          elapsed: stopwatch.elapsed,
-          action: stageIfHung,
-          detail:
-              '${toolCall.name} exceeded ${_formatElapsed(threshold)}; '
-              'moving the retry to a background job',
-          timestamp: DateTime.now(),
-        ),
-      );
-    }
-    switch (stageIfHung) {
-      case StuckFollowUpAction.cancelRetry:
-        // The cancel_retry record is emitted when the stage actually
-        // advances (in _superviseToolExecution, once the hang is
-        // confirmed) — a call that completes during the cancel grace must
-        // not leave a "cancelling and retrying once" record behind
-        // (gh-1054 review).
-        supervisorCancelled = true;
-        callSource.cancel(
-          StuckCallFollowUp('stuck call cancelled after exceeding threshold'),
-        );
-      case StuckFollowUpAction.backgroundConvert:
-        supervisorCancelled = true;
-        yieldSource.cancel(
-          StuckCallFollowUp('stuck retry converted to a background job'),
-        );
-      case StuckFollowUpAction.advisory || StuckFollowUpAction.escalate:
-        break;
-    }
-    if (graceGate.isCompleted) return;
-    if (stuck.cancelGrace > Duration.zero) {
-      graceTimer = Timer(stuck.cancelGrace, graceGate.complete);
-    } else {
-      graceGate.complete();
-    }
+  clock.stuckTimer = Timer(threshold, () {
+    _fireStuckThreshold(
+      clock: clock,
+      toolCall: toolCall,
+      stuck: stuck,
+      stageIfHung: stageIfHung,
+      enqueue: enqueue,
+      callSource: callSource,
+      yieldSource: yieldSource,
+    );
   });
-  heartbeatTimer = Timer.periodic(stuck.heartbeatInterval, (_) {
-    if (!alive) return;
-    final elapsed = stopwatch.elapsed;
+  clock.heartbeatTimer = Timer.periodic(stuck.heartbeatInterval, (_) {
+    if (!clock.alive) return;
+    final elapsed = clock.stopwatch.elapsed;
     if (elapsed < heartbeatStart) return;
     enqueue(
       ToolCallHeartbeatEvent(
@@ -2769,7 +2916,7 @@ Future<_SupervisedAttempt> _supervisedAttempt({
         toolName: toolCall.name,
         args: toolCall.arguments,
         elapsed: elapsed,
-        outputBytes: outputBytes,
+        outputBytes: clock.outputBytes,
         attempt: attempt,
         timestamp: DateTime.now(),
       ),
@@ -2780,9 +2927,9 @@ Future<_SupervisedAttempt> _supervisedAttempt({
   if (runToken != null) {
     unawaited(
       runToken.onCancel.then((_) {
-        disarm();
+        clock.disarm();
         callSource.cancel(runToken.cancelReason);
-        if (!graceGate.isCompleted) graceGate.complete();
+        if (!clock.graceGate.isCompleted) clock.graceGate.complete();
       }),
     );
   }
@@ -2795,9 +2942,9 @@ Future<_SupervisedAttempt> _supervisedAttempt({
       completedError = error;
     },
   );
-  await Future.any<void>([waiter, graceGate.future]);
-  alive = false;
-  disarm();
+  await Future.any<void>([waiter, clock.graceGate.future]);
+  clock.alive = false;
+  clock.disarm();
   await chain;
   if (completedError != null) {
     return _SupervisedAttempt.failed(
@@ -2806,19 +2953,23 @@ Future<_SupervisedAttempt> _supervisedAttempt({
       // error as that cancel's consequence. An advisory-mode error (or any
       // error before the autonomous cancel fired) is the executor's own
       // failure and propagates (gh-1054 review, blocking).
-      cancelledBySupervisor: supervisorCancelled,
-      elapsed: stopwatch.elapsed,
-      outputBytes: outputBytes,
-      partialText: partialText,
+      cancelledBySupervisor: clock.supervisorCancelled,
+      elapsed: clock.stopwatch.elapsed,
+      outputBytes: clock.outputBytes,
+      partialText: clock.partialText,
     );
   }
   if (completedResult != null) {
     return _SupervisedAttempt.completed(
       completedResult!,
-      afterStuck: stuckFired,
+      afterStuck: clock.stuckFired,
     );
   }
-  return _SupervisedAttempt.hung(stopwatch.elapsed, outputBytes, partialText);
+  return _SupervisedAttempt.hung(
+    clock.stopwatch.elapsed,
+    clock.outputBytes,
+    clock.partialText,
+  );
 }
 
 /// Port of pi's `finalizeExecutedToolCall`: apply the `afterToolCall` hook's

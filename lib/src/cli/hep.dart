@@ -34,6 +34,7 @@ import 'dart:convert';
 import '../agent/agent_loop.dart';
 import '../cancel_token.dart';
 import '../context.dart';
+import '../redact/redaction_pipeline.dart';
 import '../types.dart';
 import 'text_format.dart';
 
@@ -216,10 +217,15 @@ String _bound(String text, int cap) => text.length <= cap
 /// host's CliIO decorator): every [emit] must land on its own line.
 class HepWriter {
   /// Creates a writer emitting to [emit] (hosts pass a stdout line sink).
+  /// [redactionPipeline] masks the stuck events' captured-output detail —
+  /// HEP frames land in supervisor/CI logs, the same surface the session
+  /// record's redaction targets (gh-1054 review round 2). Optional:
+  /// without it details pass through (test hosts).
   HepWriter({
     required this._emit,
     required this.fahVersion,
     this.toolArgs = HepToolArgs.summary,
+    this.redactionPipeline,
   });
 
   final void Function(String line) _emit;
@@ -229,6 +235,9 @@ class HepWriter {
 
   /// Tool-argument verbosity for `tool_start` frames.
   final HepToolArgs toolArgs;
+
+  /// Masks secret-bearing event detail before it reaches the frames.
+  final RedactionPipeline? redactionPipeline;
 
   var _nextTurnId = 1;
   int? _openTurnId;
@@ -354,7 +363,7 @@ class HepWriter {
             name: toolName,
             action: action.label,
             elapsedMs: elapsed.inMilliseconds,
-            detail: detail,
+            detail: redactionPipeline?.redact(detail) ?? detail,
           ),
         );
       default:

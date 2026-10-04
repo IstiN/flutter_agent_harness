@@ -775,6 +775,74 @@ void main() {
     );
 
     test(
+      'a retry whose output merely mentions the hand-back text is not '
+      'marked as a background conversion',
+      timeout: const Timeout(Duration(seconds: 30)),
+      () async {
+        // Review round 2: the hand-back recognition matched the marker
+        // anywhere in the output — a retry whose own output QUOTES the
+        // sentence (an echo, a log tail, a grep over this repo) was
+        // audited as "converted to a background job" although nothing was
+        // handed back. The hand-back has one deterministic opening
+        // sentence; recognition must anchor on it.
+        final outcome = await runSupervisedTurn(
+          executor: (attempt, onUpdate, cancelToken) async {
+            if (attempt == 1) {
+              await Completer<void>().future;
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 340));
+            return ToolExecutionResult.text(
+              'grep over the repo found "was moved to background job" '
+              'in docs',
+            );
+          },
+        );
+        expect(
+          outcome.resultText,
+          contains('retried once'),
+          reason: 'the truthful mark: attempt 1 was cancelled and retried',
+        );
+        expect(
+          outcome.resultText,
+          isNot(contains('converted to a background job')),
+          reason: 'quoting the hand-back text is not a hand-back',
+        );
+      },
+    );
+
+    test(
+      'a retry that self-completes inside the grace leaves no '
+      'background-convert record — the record waits for the conversion',
+      timeout: const Timeout(Duration(seconds: 30)),
+      () async {
+        // Review round 2: the background_convert record fired at the
+        // threshold, so a retry that ignored the yield token and finished
+        // its own work inside the grace left an initiated-conversion
+        // record behind a plain marked result. Like cancel_retry, the
+        // record must wait until the stage actually advances.
+        final outcome = await runSupervisedTurn(
+          executor: (attempt, onUpdate, cancelToken) async {
+            if (attempt == 1) {
+              await Completer<void>().future;
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 340));
+            return ToolExecutionResult.text('real work output');
+          },
+        );
+        expect(
+          outcome.stuckEvents.map((e) => e.action),
+          contains(StuckFollowUpAction.cancelRetry),
+          reason: 'attempt 1 really was cancelled and retried',
+        );
+        expect(
+          outcome.stuckEvents.map((e) => e.action),
+          isNot(contains(StuckFollowUpAction.backgroundConvert)),
+          reason: 'the retry finished its own work — no conversion happened',
+        );
+      },
+    );
+
+    test(
       'a declared timeout is honored for bash only — a stray timeout arg '
       'on another tool cannot suppress supervision',
       timeout: const Timeout(Duration(seconds: 30)),

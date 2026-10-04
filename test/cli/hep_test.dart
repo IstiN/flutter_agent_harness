@@ -184,6 +184,43 @@ void main() {
       },
     );
 
+    test('a stuck detail rides the frame redacted when the host passes the '
+        'pipeline', () async {
+      // Review round 2 (IMPORTANT): the escalation detail embeds up to
+      // 300 chars of raw captured output; HEP frames land in
+      // supervisor/CI logs — the same surface the session-record fix
+      // targets. The host-injected pipeline must mask the detail.
+      final lines = _Lines();
+      final writer = HepWriter(
+        emit: lines.emit,
+        fahVersion: '1.0.0',
+        redactionPipeline: RedactionPipeline(
+          registeredSecrets: ['sk-super-secret-token-value'],
+        ),
+      );
+      writer.handleEvent(
+        ToolCallStuckEvent(
+          toolCallId: 'c1',
+          toolName: 'bash',
+          args: const {'command': 'x'},
+          elapsed: const Duration(minutes: 5),
+          action: StuckFollowUpAction.escalate,
+          detail: 'partial tail: sk-super-secret-token-value',
+          timestamp: DateTime.utc(2026),
+        ),
+        CancelTokenSource().token,
+      );
+      final frame = lines.frames
+          .where((f) => f['type'] == 'tool_liveness')
+          .single;
+      expect(frame['detail'], contains('[REDACTED:'), reason: 'masked');
+      expect(
+        frame['detail'],
+        isNot(contains('sk-super-secret-token-value')),
+        reason: 'the secret never reaches the frame',
+      );
+    });
+
     test('turn_done carries message, tool_results, usage, stop_reason', () {
       expect(
         hepTurnDoneFrame(

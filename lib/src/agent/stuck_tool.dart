@@ -72,6 +72,15 @@ class StuckCallFollowUp {
 /// false "converted" marks).
 const stuckBackgroundHandbackMarker = 'moved to background job';
 
+/// The deterministic opening sentence of a soft-yield hand-back result —
+/// `stuckBackgroundHandbackMarker` alone appears in ordinary tool output
+/// too often (an echo, a log tail, a grep over this repo), so the
+/// supervisor anchors recognition on this full sentence prefix
+/// (gh-1054 review round 2). [builtin_tools.dart] composes its hand-back
+/// text to start with exactly this string.
+const stuckBackgroundHandbackSentence =
+    'The command is still running and was $stuckBackgroundHandbackMarker ';
+
 /// Session record type for a liveness heartbeat (`CustomRecord.customType`):
 /// cheap append-only proof that a long tool call is alive-busy.
 const toolHeartbeatRecordType = 'tool_heartbeat';

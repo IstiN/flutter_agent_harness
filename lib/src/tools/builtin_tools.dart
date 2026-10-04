@@ -2660,8 +2660,8 @@ Future<ToolExecutionResult> _awaitJobOutcome(
     final supervisorMoved = yieldToken.cancelReason is StuckCallFollowUp;
     final tail = await jobs.tail(entry.id, maxLines: 20);
     return ToolExecutionResult.text(
-      'The command is still running and was $stuckBackgroundHandbackMarker '
-      '${entry.id} (the process was NOT killed) because '
+      '$stuckBackgroundHandbackSentence${entry.id} '
+      '(the process was NOT killed) because '
       '${supervisorMoved ? 'the stuck-call supervisor converted it — no steering message '
                 'is pending' : 'a steering message arrived, which follows next'}.\n'
       'Log: ${entry.logPath}\n'
