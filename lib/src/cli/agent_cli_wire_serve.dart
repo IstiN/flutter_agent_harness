@@ -54,6 +54,7 @@ extension WireServeBoot on AgentCli {
         abort: _abortIfBusy,
         isBusy: () => isBusy,
         onLog: onDiagnostic,
+        redactionPipeline: config.redactionPipeline,
       );
 
   /// Host-interaction over the wire (E1): the same three surfaces the
