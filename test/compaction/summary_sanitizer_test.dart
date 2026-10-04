@@ -100,6 +100,23 @@ void main() {
       expect(result.stripped, isEmpty);
     });
 
+    test('uncertainty qualifiers survive sanitization (gh-1219)', () {
+      // The only mechanical strip point in the compaction pipeline must
+      // never eat a hedge: a summary that downgraded "may not auto-approve"
+      // to "does not auto-approve" (or dropped it) would launder an
+      // assumption into fact across every later turn.
+      const hedged =
+          '## Critical Context\n'
+          '- [assumed] machine review may not auto-approve dart #340; no '
+          'human gate exists in the design.\n'
+          '- [verified] 5 issues produced 0 PRs for 8h (merge queue empty).\n'
+          '- The flake is suspected to be timing-related; unconfirmed.\n';
+      final result = sanitizeSummary(hedged);
+      expect(result.text, hedged);
+      expect(result.stripped, isEmpty);
+    });
+
+
     test('a partially stripped bullet keeps its marker', () {
       final result = sanitizeSummary(
         '- [x] Landed the fix. Your last tool call was dropped.\n',

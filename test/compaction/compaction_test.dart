@@ -732,4 +732,41 @@ void main() {
       expect(turnPrefixSummarizationPrompt, contains('## Original Request'));
     });
   });
+
+    test('prompts pin the epistemic status of claims (gh-1219)', () {
+      // First-summary contract: hedges travel with their claims, provenance
+      // tags exist, and kept conclusions carry evidence or a re-verify
+      // marker.
+      expect(summarizationPrompt, contains('uncertainty qualifier'));
+      expect(summarizationPrompt, contains('[verified]'));
+      expect(summarizationPrompt, contains('[assumed]'));
+      expect(summarizationPrompt, contains('[hearsay'));
+      expect(summarizationPrompt, contains('unverified — re-verify'));
+    });
+
+    test('system prompt forbids detaching uncertainty qualifiers', () {
+      expect(summarizationSystemPrompt, contains('uncertainty qualifier'));
+    });
+
+    test('update prompt never upgrades a hedged claim while folding', () {
+      expect(updateSummarizationPrompt, contains('uncertainty qualifier'));
+      expect(updateSummarizationPrompt, contains('never upgrade'));
+    });
+
+    test('turn prefix prompt keeps hedges and evidence for the suffix', () {
+      expect(turnPrefixSummarizationPrompt, contains('uncertainty qualifier'));
+    });
+
+    test('structured checkpoint prompt demands evidence for conclusions', () {
+      expect(structuredCheckpointPrompt, contains('uncertainty qualifier'));
+      expect(structuredCheckpointPrompt, contains('unverified — re-verify'));
+    });
+
+    test('branch summary separates observed from interpreted state', () {
+      // The handover-digest surface (gh-1219 direction 4): interpretation
+      // must never masquerade as observation across a compact boundary.
+      expect(branchSummaryPrompt, contains('## Observed State'));
+      expect(branchSummaryPrompt, contains('## Interpreted State'));
+      expect(branchSummaryPrompt, contains('uncertainty qualifier'));
+    });
 }

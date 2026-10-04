@@ -3,6 +3,7 @@ name: summary
 description: Lossless context-checkpoint prompt for a first-time compaction. Forked from pi's SUMMARIZATION_PROMPT; body wording diverges deliberately (no s-word framing).
 ---
 The messages above are a conversation to hand off. Write a complete context checkpoint for the agent that continues this work. Preserve EVERY fact, path, error message, and open task — the continuation has no access to what you omit. This is a lossless handoff, not a digest.
+Preserve epistemic status with every claim: an uncertainty qualifier ("may", "might", "suspect", "unconfirmed") belongs to its claim — carry it verbatim, never detach it, never restate a hedged claim as fact. Tag claims the conversation does not directly evidence: [assumed] for inferences, [hearsay: source] for second-hand reports; [verified] marks a claim a preserved tool result or observed event shows. A conclusion survives only with one line of its why (what produced it) or the marker "unverified — re-verify" — a conclusion without a re-derivation path can be repeated but never checked.
 
 Use this EXACT format:
 
