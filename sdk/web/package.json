@@ -1,0 +1,16 @@
+{
+  "name": "fah-wire-client-web",
+  "version": "1.0.0",
+  "description": "Agent Wire Protocol v1 reference client for the web (TypeScript, zero dependencies)",
+  "type": "module",
+  "main": "src/wire-client.ts",
+  "types": "src/wire-client.ts",
+  "scripts": {
+    "test": "node --test",
+    "build": "node build.mjs"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "license": "MIT"
+}
