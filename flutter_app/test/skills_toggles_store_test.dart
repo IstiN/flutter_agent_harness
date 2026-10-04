@@ -173,12 +173,13 @@ void main() {
         )).valueOrNull,
         isNull,
       );
-      // The app-only skill is still seeded from assets.
+      // gh-1164 Part A: js-apps moved into the package builtins — the app
+      // seeds nothing anymore (the seeder only retires stale copies).
       expect(
         (await env.readTextFile(
           '${env.cwd}/.fah/skills/js-apps/SKILL.md',
         )).valueOrNull,
-        isNotNull,
+        isNull,
       );
 
       // The prompt lists both builtins from the package — exactly once
@@ -193,6 +194,10 @@ void main() {
         contains('<location>builtin://skills/create-goal/SKILL.md</location>'),
       );
       expect(prompt, contains('<name>js-apps</name>'));
+      expect(
+        prompt,
+        contains('<location>builtin://skills/js-apps/SKILL.md</location>'),
+      );
       expect(service.isSkillEnabled('create-goal'), isTrue);
     });
 
@@ -223,7 +228,7 @@ void main() {
         expect(prompt, isNot(contains('<name>create-goal</name>')));
         expect(prompt, isNot(contains('<name>self-settings</name>')));
         expect(service.isSkillEnabled('create-goal'), isFalse);
-        // The app-only seeded skill is unaffected by the builtin toggles.
+        // js-apps is a builtin too — unaffected by these two toggles.
         expect(prompt, contains('<name>js-apps</name>'));
       },
     );

@@ -22,6 +22,7 @@ export 'src/agent/auto_compactor.dart'
         AutoCompactorSources;
 export 'src/agent/param_validator.dart';
 export 'src/agent/tool_registry.dart';
+export 'src/apps/js_app_errors.dart';
 export 'src/approval/approval.dart';
 export 'src/approval/approval_hook.dart';
 export 'src/approval/bash_interceptor.dart';
