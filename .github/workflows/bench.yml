@@ -201,8 +201,14 @@ jobs:
           esac
           ladder_base=''
           if [ -n "$AGENT_TIMEOUT" ]; then
-            case "$AGENT_TIMEOUT" in *[!0-9]*)
-              echo '::error::agent-timeout must be integer seconds'; exit 1;; esac
+            # gh-1209 review: 0 passes the digit check but
+            # TimeoutKnobs.from_env → _number then raises ValueError inside
+            # EVERY trial's perform_task — reject it here so a bad input
+            # costs one step, not a whole multi-hour shard.
+            case "$AGENT_TIMEOUT" in
+              0) echo '::error::agent-timeout must be a positive integer number of seconds'; exit 1;;
+              *[!0-9]*) echo '::error::agent-timeout must be integer seconds'; exit 1;;
+            esac
             # Force base-10: $((...)) reads leading zeros as octal, so an
             # input like '010' would silently mean 8.
             ladder_base=$((10#$AGENT_TIMEOUT))

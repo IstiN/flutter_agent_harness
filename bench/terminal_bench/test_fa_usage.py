@@ -39,10 +39,13 @@ def _stub_terminal_bench():
     failure_mode.FailureMode = types.SimpleNamespace(
         NONE="none",
         AGENT_TIMEOUT="agent_timeout",
-        # gh-1209: the never-started modes fa_agent's fold-skip set names.
+        # gh-1209: the never-started modes fa_agent's fold-skip set names,
+        # plus a ran-outcome mode outside them (PARSE_ERROR) that pins the
+        # fold's default-on direction.
         UNKNOWN_AGENT_ERROR="unknown_agent_error",
         AGENT_INSTALLATION_FAILED="agent_installation_failed",
-    )  # AGENT_TIMEOUT: fa_agent.py:212 needs it (test_fa_agent_timeout LegacyWatcherTest loads fa_agent against this stub in the shared discover process)
+        PARSE_ERROR="parse_error",
+    )  # AGENT_TIMEOUT: fa_agent.py needs it (test_fa_agent_timeout LegacyWatcherTest loads fa_agent against this stub in the shared discover process)
 
     def installed_perform_task(self, instruction, session, logging_dir=None):
         # tb's AbstractInstalledAgent hardcodes zeros (the issue's bug).
@@ -163,6 +166,23 @@ def make_sessions(root: Path) -> Path:
     return sessions
 
 
+def no_exec_session(mode):
+    """A session double for never-started trials: exec_run must never be
+    reached, so reaching it names the outcome that should have skipped the
+    fold. Shared by the installation-failure and unknown-agent-error pins
+    (gh-1209 review nit — the two doubles differed only in that name)."""
+
+    class NoExecSession:
+        class Container:
+            def exec_run(self, cmd):  # pragma: no cover — must not be reached
+                raise AssertionError(f"exec_run called after {mode}")
+
+        def copy_to_container(self, *args, **kwargs):
+            pass
+
+    return NoExecSession()
+
+
 class FaAgentTest(unittest.TestCase):
     class AgentResult:
         def __init__(self, total_input_tokens=0, total_output_tokens=0, failure_mode="none"):
@@ -251,14 +271,6 @@ class FaAgentTest(unittest.TestCase):
         self.assertEqual(result.total_output_tokens, 0)
 
     def test_installation_failure_result_untouched(self):
-        class PreFailedSession:
-            class Container:
-                def exec_run(self, cmd):  # pragma: no cover — must not be reached
-                    raise AssertionError("exec_run called after installation failure")
-
-            def copy_to_container(self, *args, **kwargs):
-                pass
-
         original = self.AgentResult(failure_mode="agent_installation_failed")
         agent = self.legacy_agent()
         monkey = unittest.mock.patch.object(
@@ -267,7 +279,7 @@ class FaAgentTest(unittest.TestCase):
             return_value=original,
         )
         with monkey:
-            result = agent.perform_task("do it", PreFailedSession())
+            result = agent.perform_task("do it", no_exec_session("agent_installation_failed"))
         self.assertIs(result, original)
 
     def test_timeout_result_folds_session_usage(self):
@@ -294,14 +306,6 @@ class FaAgentTest(unittest.TestCase):
         # gh-1209: unknown_agent_error is a true never-started trial — the
         # harness never got the agent going, so there is nothing to fold
         # and the result passes through byte-for-byte.
-        class PreStartedSession:
-            class Container:
-                def exec_run(self, cmd):  # pragma: no cover — must not be reached
-                    raise AssertionError("exec_run called after unknown_agent_error")
-
-            def copy_to_container(self, *args, **kwargs):
-                pass
-
         original = self.AgentResult(failure_mode="unknown_agent_error")
         agent = self.legacy_agent()
         monkey = unittest.mock.patch.object(
@@ -310,8 +314,26 @@ class FaAgentTest(unittest.TestCase):
             return_value=original,
         )
         with monkey:
-            result = agent.perform_task("do it", PreStartedSession())
+            result = agent.perform_task("do it", no_exec_session("unknown_agent_error"))
         self.assertIs(result, original)
+
+    def test_other_ran_failure_mode_folds_session_usage(self):
+        # gh-1209 review: pins the DEFAULT-FOLD direction. agent_timeout
+        # alone cannot distinguish "fold for any ran outcome" from a future
+        # accidental fold-whitelist (mode in _FOLD_MODES); a ran-outcome
+        # mode outside the stub's named set must fold too.
+        original = self.AgentResult(failure_mode="parse_error")
+        agent = self.legacy_agent()
+        session = self.FakeSession(MAIN_SESSION + SUBAGENT_SESSION)
+        monkey = unittest.mock.patch.object(
+            legacy_fa_agent.AbstractInstalledAgent,
+            "perform_task",
+            return_value=original,
+        )
+        with monkey:
+            result = agent.perform_task("do it", session)
+        self.assertEqual(result.total_input_tokens, EXPECTED_IN)
+        self.assertEqual(result.total_output_tokens, EXPECTED_OUT)
 
 
 class ExtractorTest(unittest.TestCase):
