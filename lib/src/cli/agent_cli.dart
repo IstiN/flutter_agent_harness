@@ -192,9 +192,11 @@ import '../power_runner.dart';
 import '../messaging/agent_fabric.dart';
 import '../messaging/agent_message.dart';
 import '../messaging/file_messaging_repository.dart';
+import '../messaging/inbox_wake_policy.dart';
 import '../messaging/messaging_repository.dart';
 import '../messaging/schedule_message_tool.dart';
 import '../messaging/scheduled_messages.dart';
+import '../messaging/scheduled_receipts.dart';
 import '../memory/memory_tools.dart';
 import '../plugins/plugin.dart';
 import '../redact/redaction_cli.dart';
@@ -1110,6 +1112,17 @@ class AgentCli {
   /// Per-process lease identity (E3): pid recycling across restarts
   /// cannot impersonate a dead owner because this differs.
   late final String _leaseBootId = FileSessionLeaseStore.newBootId();
+
+  /// The persisted wake receipts for scheduled mail (gh-1180 AC4): every
+  /// wake_attempted / turn_started / wake_refused lands here so a
+  /// post-mortem can tell "timer never fired" from "wake refused". A
+  /// non-nullable `late final` created alongside the queue (review: the
+  /// production wake path is load-bearing on this log — it must never be
+  /// null because a lazy initializer has not run yet); the
+  /// `@visibleForTesting` getter below is the seam, mirroring the app
+  /// host's shape.
+  late final ScheduledReceiptLog _scheduledReceipts =
+      _newScheduledReceipts();
 
   /// Persisted delayed messages (`schedule_message`): pending records live
   /// under `<messagesRoot>/_scheduled/` and are delivered into the
@@ -2245,7 +2258,7 @@ class AgentCli {
     if (_routePendingInput(trimmed)) return;
     if (trimmed.isEmpty) return;
     // Real user input resets the inbox wake streak (the ping-pong guard).
-    _inboxWakeStreak = 0;
+    _inboxWakePolicy.resetStreak();
     // A tool call waiting on an approval decision owns the next input line;
     // it must not be steered into the agent as a user message.
     final pendingApproval = _pendingApprovalAnswer;
@@ -2708,20 +2721,39 @@ class AgentCli {
   /// Idle-wake guard: one inbox-triggered run at a time.
   var _inboxWakeRunning = false;
 
+  /// Test seam: observe/reset the inbox-wake streak without driving ten
+  /// real runs (the cap is exactly [InboxWakePolicy.defaultMaxInboxWakeStreak]).
+  /// The streak lives in [_inboxWakePolicy] — this proxy keeps the old
+  /// seam name working for REG tests.
+  @visibleForTesting
+  int get inboxWakeStreakForTest => _inboxWakePolicy.streak;
+  @visibleForTesting
+  set inboxWakeStreakForTest(int value) => _inboxWakePolicy.streak = value;
+
   /// Consecutive inbox-triggered runs without any user input — capped so
   /// two chatty instances cannot ping-pong forever (mail still accumulates
   /// and is delivered at the next real turn). User-kind messages reset the
   /// streak when delivered: they ARE the user talking, so an attach-driven
-  /// session never exhausts the cap.
-  var _inboxWakeStreak = 0;
-  static const _maxInboxWakeStreak = 10;
+  /// session never exhausts the cap. gh-1180: scheduled self-mail is
+  /// EXEMPT (see [_inboxWakePolicy]). Single-sourced from the policy
+  /// (review): one tuned threshold, one declaration.
+  static const _maxInboxWakeStreak = InboxWakePolicy.defaultMaxInboxWakeStreak;
 
-  /// Test seam: observe/reset the inbox-wake streak without driving ten
-  /// real runs (the cap is exactly [_maxInboxWakeStreak]).
+  /// The idle inbox-wake lane policy (gh-1180): user-kind mail always
+  /// wakes; delivered scheduled self-mail (`schedule_message` reminders)
+  /// is exempt from the chatter cap — a deliberate agent-chosen cadence
+  /// wakes forever, cadence-floored against a disguised busy-spin; and
+  /// foreign agent-to-agent chatter stays capped at
+  /// [_maxInboxWakeStreak] consecutive wakes without user input.
+  final InboxWakePolicy _inboxWakePolicy = InboxWakePolicy(
+    maxStreak: _maxInboxWakeStreak,
+  );
+
+  /// Test seam for the persisted wake-receipt trail (gh-1180 AC4): reads
+  /// the non-nullable [_scheduledReceipts] the production wake path
+  /// writes through. Mirrors the app host's `scheduledReceiptsForTest`.
   @visibleForTesting
-  int get inboxWakeStreakForTest => _inboxWakeStreak;
-  @visibleForTesting
-  set inboxWakeStreakForTest(int value) => _inboxWakeStreak = value;
+  ScheduledReceiptLog get scheduledReceiptsForTest => _scheduledReceipts;
 
   /// Compaction settings for the live model: the config override when the
   /// user pinned one, else pi's fixed defaults SCALED to the model window
