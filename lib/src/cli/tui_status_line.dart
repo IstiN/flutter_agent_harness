@@ -818,14 +818,7 @@ StatusLineConfig parseStatusLineConfig(Object? node) {
       '"tui.statusLine.segmentOptions" must be a map, got: $optionsNode',
     );
   }
-  final transparent = node['transparent'];
-  if (transparent != null && transparent is! bool) {
-    throw ConfigException('"tui.statusLine.transparent" must be a boolean');
-  }
-  final nerdSymbols = node['nerdSymbols'];
-  if (nerdSymbols != null && nerdSymbols is! bool) {
-    throw ConfigException('"tui.statusLine.nerdSymbols" must be a boolean');
-  }
+  final transparent = _statusLineBoolFlag(node, 'transparent');
   final separator = node['separator'];
   return StatusLineConfig(
     preset: preset,
@@ -838,8 +831,18 @@ StatusLineConfig parseStatusLineConfig(Object? node) {
         ? null
         : parseSegmentOptions(optionsNode),
     transparent: transparent ?? false,
-    nerdSymbols: nerdSymbols,
+    nerdSymbols: _statusLineBoolFlag(node, 'nerdSymbols'),
   );
+}
+
+/// Reads an optional strict-boolean `tui.statusLine` flag: absent → null,
+/// a bool → its value, anything else throws [ConfigException].
+bool? _statusLineBoolFlag(YamlMap node, String key) {
+  final value = node[key];
+  if (value != null && value is! bool) {
+    throw ConfigException('"tui.statusLine.$key" must be a boolean');
+  }
+  return value as bool?;
 }
 
 /// Strict-key guard for the `tui` section family: any key outside

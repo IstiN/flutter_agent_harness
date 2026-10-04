@@ -169,8 +169,8 @@ void main() {
     );
 
     final columns =
-        ((provenance?['geometry'] as Map<String, dynamic>)?['columns']
-            as int?) ??
+        (provenance?['geometry'] as Map<String, dynamic>?)?['columns']
+            as int? ??
         100;
     final faBar = renderFaDefaultBar(columns: columns);
     final ompSig = barSignature(ompBar!, glyph);
