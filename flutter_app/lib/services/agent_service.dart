@@ -26,7 +26,6 @@ import 'power_guard.dart';
 import 'app_log.dart';
 import 'app_config_loader.dart';
 import 'image_registry_loader.dart';
-import 'app_config_loader.dart';
 import 'memory_config_loader.dart';
 import 'compaction_engine_loader.dart';
 import 'agent_tool_availability.dart';

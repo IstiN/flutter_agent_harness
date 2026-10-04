@@ -32,8 +32,8 @@ import '../sandbox/env_factory_io.dart' show desktopHomeDir;
 /// behind the same conditional import as the config file, so the web stub
 /// keeps its "no environment on this platform" contract. Function-typed so
 /// tests can inject a value without mutating the process environment.
-String? Function() faProviderTimeoutSecondsEnv =
-    () => Platform.environment['FA_PROVIDER_TIMEOUT_SECONDS'];
+String? Function() faProviderTimeoutSecondsEnv = () =>
+    Platform.environment['FA_PROVIDER_TIMEOUT_SECONDS'];
 
 /// Reads and resolves the app-honored config sections; null when this
 /// platform has no readable home (web-like sandboxes). [homeDir] and

@@ -7,8 +7,7 @@ library;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Always null on the web: there is no config file to read.
-AppFahSections? loadAppFahConfig({String? projectDir, String? homeDir}) =>
-    null;
+AppFahSections? loadAppFahConfig({String? projectDir, String? homeDir}) => null;
 
 /// Always null on the web: there is no process environment to read
 /// (issue #1036) — the provider-timeout env override is desktop-only.
