@@ -6,7 +6,9 @@
 // Dispatch: prompt/steer/abort/approval/ask/secret + loud errors.
 import 'dart:async';
 
+import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
 import 'package:flutter_agent_harness/src/approval/approval.dart';
+import 'package:flutter_agent_harness/src/redact/redaction_pipeline.dart';
 import 'package:flutter_agent_harness/src/tools/ask_tool.dart';
 import 'package:flutter_agent_harness/src/tools/request_secret_tool.dart';
 import 'package:flutter_agent_harness/src/wire/wire_protocol.dart';
@@ -29,12 +31,14 @@ class _Harness {
   var aborts = 0;
   bool failPrompt = false;
   bool withApproval = true;
+  RedactionPipeline? pipeline;
   Completer<List<AskQuestion>?>? askGate;
   Completer<RequestSecretResult?>? secretGate;
 
   late final WireServeServer server;
 
-  _Harness() {
+  _Harness({RedactionPipeline? redactionPipeline}) {
+    pipeline = redactionPipeline;
     server = WireServeServer(
       runPrompt: (text) async {
         prompts.add(text);
@@ -72,6 +76,7 @@ class _Harness {
       abort: () => aborts++,
       isBusy: () => busy,
       onLog: logs.add,
+      redactionPipeline: pipeline,
     );
   }
 
@@ -147,6 +152,41 @@ void main() {
       await third;
     });
 
+    test('a stuck detail rides the frame redacted when the host passes '
+        'the pipeline', () async {
+      // Review round 2 (IMPORTANT): the escalation detail embeds raw
+      // captured output; tool_call_stuck frames go to external bridges.
+      // The host-injected pipeline must mask the detail.
+      final h = _Harness(
+        redactionPipeline: RedactionPipeline(
+          registeredSecrets: ['sk-super-secret-token-value'],
+        ),
+      );
+      final served = h.attach();
+      h.clientSends(hello());
+      await _untilAttached(h);
+      h.server.handleAgentEvent(
+        ToolCallStuckEvent(
+          toolCallId: 'c1',
+          toolName: 'bash',
+          args: const {'command': 'x'},
+          elapsed: const Duration(minutes: 5),
+          action: StuckFollowUpAction.escalate,
+          detail: 'partial tail: sk-super-secret-token-value',
+          timestamp: DateTime.utc(2026),
+        ),
+      );
+      final frame = h.kind('tool_call_stuck');
+      expect(frame, isNotEmpty);
+      expect(frame['detail'], contains('[REDACTED:'), reason: 'masked');
+      expect(
+        frame['detail'],
+        isNot(contains('sk-super-secret-token-value')),
+        reason: 'the secret never reaches the frame',
+      );
+      await h.close();
+      await served;
+    });
     test(
       'a transport FAULT detaches loudly and reattach still works',
       () async {

@@ -1,0 +1,1 @@
+{"kind":"tool_call_stuck","protocolVersion":1,"frame":{"v":1,"kind":"tool_call_stuck","toolCallId":"call_1","toolName":"bash","args":{"command":"sleep 600"},"elapsedMs":3000,"action":"cancel_retry","detail":"300s stuck threshold exceeded","timestamp":1727673600000}}

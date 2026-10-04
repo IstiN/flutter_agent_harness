@@ -27,6 +27,7 @@ import '../memory_config.dart';
 import '../messaging/fabric_config.dart';
 import '../redact/redaction_types.dart';
 import '../agent/image_registry.dart';
+import '../agent/stuck_tool.dart';
 import '../power_config.dart';
 import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
@@ -212,6 +213,25 @@ bool? _parseAgentMisuseBreakerValue(Object? value) {
   return value;
 }
 
+/// The compaction reserve the cap floor mirrors (see [_parseAgentSection]).
+const _agentContextWindowCapMin = 16384;
+
+int _parseAgentContextWindowCapValue(Object? value) {
+  if (value is! int || value <= 0) {
+    throw ConfigException(
+      '"agent.contextWindowCap" must be a positive integer (tokens)',
+    );
+  }
+  if (value < _agentContextWindowCapMin) {
+    throw ConfigException(
+      '"agent.contextWindowCap" must be at least $_agentContextWindowCapMin'
+      ' — below the compaction reserve the compaction trigger threshold '
+      'would go negative',
+    );
+  }
+  return value;
+}
+
 /// Parses the `agent:` section (issues #273/#679/#680):
 /// `contextWindowCap` — the owner-side effective context override — and
 /// `mode` — the `default|pi|omp` preset label. The cap SETS the EFFECTIVE
@@ -232,7 +252,13 @@ bool? _parseAgentMisuseBreakerValue(Object? value) {
 /// (issue #679: bare prompt, 4-tool sweep, boot print) the executable
 /// re-resolves through its flag > env > config ladder. `omp` carries no
 /// harness behavior, so it never reaches that ladder.
-({int? contextWindowCap, String? mode, String? agentMode, bool? misuseBreaker})?
+({
+  int? contextWindowCap,
+  String? mode,
+  String? agentMode,
+  bool? misuseBreaker,
+  StuckToolConfig? stuckTool,
+})?
 _parseAgentSection(Object? node) {
   if (node == null) return null;
   if (node is! YamlMap) {
@@ -241,27 +267,17 @@ _parseAgentSection(Object? node) {
   int? cap;
   String? mode;
   bool? misuseBreaker;
+  StuckToolConfig? stuckTool;
   for (final key in node.keys) {
     switch (key) {
       case 'contextWindowCap':
-        final value = node[key];
-        if (value is! int || value <= 0) {
-          throw ConfigException(
-            '"agent.contextWindowCap" must be a positive integer (tokens)',
-          );
-        }
-        if (value < 16384) {
-          throw ConfigException(
-            '"agent.contextWindowCap" must be at least 16384 — below the '
-            'compaction reserve the compaction trigger threshold would go '
-            'negative',
-          );
-        }
-        cap = value;
+        cap = _parseAgentContextWindowCapValue(node[key]);
       case 'mode':
         mode = _parseAgentModeValue(node[key]);
       case 'misuseBreaker':
         misuseBreaker = _parseAgentMisuseBreakerValue(node[key]);
+      case 'stuckTool':
+        stuckTool = StuckToolConfig.fromYaml(node[key]);
       default:
         throw ConfigException('unknown "agent" key: $key');
     }
@@ -271,6 +287,7 @@ _parseAgentSection(Object? node) {
     mode: mode,
     agentMode: mode == 'pi' ? 'pi' : null,
     misuseBreaker: misuseBreaker,
+    stuckTool: stuckTool,
   );
 }
 
@@ -339,6 +356,7 @@ final class CliConfig {
     this.modelRoles,
     this.ttsr,
     this.contextWindowCap,
+    this.stuckTool,
     this.agentLoadMode,
     this.customProviders = const [],
     this.models,
@@ -493,6 +511,7 @@ final class CliConfig {
       // The agent section (owner-side context cap + mode, issues
       // #273/#679/#680) is strict too.
       contextWindowCap: agentSection?.contextWindowCap,
+      stuckTool: agentSection?.stuckTool,
       agentMode: agentSection?.agentMode,
       agentLoadMode: agentSection?.mode,
       misuseBreaker: agentSection?.misuseBreaker ?? true,
@@ -714,6 +733,11 @@ final class CliConfig {
   /// raw model window).
   final int? contextWindowCap;
 
+  /// Stuck-call supervision config (`agent.stuckTool`, gh-1054): liveness
+  /// heartbeats for long-running tool calls plus the autonomous
+  /// cancel/retry/convert follow-up. `null` = unsupervised.
+  final StuckToolConfig? stuckTool;
+
   /// The parsed harness mode preset (`agent.mode`, issue #679): `'pi'` or
   /// null (absent or explicit `default`). Resolved against the flag/env
   /// tiers by the executable via `resolveHarnessMode`.
@@ -830,6 +854,7 @@ final class CliConfig {
       wireDump: wireDump,
       images: images,
       contextWindowCap: contextWindowCap,
+      stuckTool: stuckTool,
       agentLoadMode: agentLoadMode,
       powerSleepPrevention: powerSleepPrevention,
       powerHold: powerHold,
@@ -933,10 +958,16 @@ final class CliConfig {
   String _outputYaml() =>
       streamThinking ? 'output:\n  streamThinking: true\n' : '';
 
-  /// The `agent:` section, only when a cap or a load mode is persisted;
-  /// defaults are never written so the file stays minimal.
+  /// The `agent:` section, only when a cap, a load mode, or a stuck-tool
+  /// config is persisted; defaults are never written so the file stays
+  /// minimal.
   String _agentSectionYaml() {
-    if (contextWindowCap == null && agentLoadMode == null) return '';
+    final stuckYaml = _stuckToolYaml();
+    if (contextWindowCap == null &&
+        agentLoadMode == null &&
+        stuckYaml.isEmpty) {
+      return '';
+    }
     final section = StringBuffer('agent:\n');
     if (contextWindowCap != null) {
       section.write('  contextWindowCap: $contextWindowCap\n');
@@ -944,7 +975,27 @@ final class CliConfig {
     if (agentLoadMode != null) {
       section.write('  mode: $agentLoadMode\n');
     }
+    section.write(stuckYaml);
     return section.toString();
+  }
+
+  /// The `agent.stuckTool:` sub-map, only when explicitly configured
+  /// (defaults are never written so the file stays minimal).
+  String _stuckToolYaml() {
+    final stuck = stuckTool;
+    if (stuck == null) return '';
+    final map = stuck.toYamlMap();
+    if (map.isEmpty) return '';
+    final buffer = StringBuffer('  stuckTool:\n');
+    for (final entry in map.entries) {
+      final value = entry.value;
+      if (value is List) {
+        buffer.write('    ${entry.key}: [${value.join(', ')}]\n');
+      } else {
+        buffer.write('    ${entry.key}: $value\n');
+      }
+    }
+    return buffer.toString();
   }
 
   /// The `links:` section (issue #691), only when explicitly configured;

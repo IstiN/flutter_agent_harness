@@ -99,6 +99,8 @@ final class AgentCliConfig {
     this.compactionEngine,
     this.compactionJudgeBudgetSeconds,
     this.contextWindowCap,
+    this.stuckTool,
+    this.headlessRun = false,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
@@ -169,6 +171,18 @@ final class AgentCliConfig {
   /// it raises the effective window to the served truth. `null` =
   /// uncapped.
   final int? contextWindowCap;
+
+  /// Stuck-call supervision (`agent.stuckTool`, gh-1054): liveness
+  /// heartbeats for long-running tool calls plus the autonomous
+  /// cancel/retry/convert follow-up. `null` = unsupervised (the loop runs
+  /// byte-identically to before).
+  final StuckToolConfig? stuckTool;
+
+  /// Whether this process drives a headless run (`fah run "<prompt>"` and
+  /// friends) as opposed to an interactive REPL/TUI session. Set by the
+  /// executable's dispatch; decides the DEFAULT supervision mode only —
+  /// an explicit `agent.stuckTool:` wins in both (gh-1054 review).
+  final bool headlessRun;
 
   /// Per-call judge/summarizer budget seconds (`compaction.
   /// judgeBudgetSeconds`, issue #541), resolved by the host from the
@@ -806,4 +820,18 @@ final class AgentCliConfig {
   /// resolution; other machines are phase-3 A2A territory. Null when the
   /// hostname is unavailable.
   final String? machineName;
+
+  /// The effective stuck supervision for THIS host (gh-1054 review): an
+  /// explicit `agent.stuckTool:` wins everywhere; otherwise headless runs
+  /// keep the autonomous default (unattended — nobody to advise) while
+  /// interactive REPL/TUI sessions default to advisory (a human is
+  /// present; auto-cancelling under their cursor is the ticket's
+  /// non-goal).
+  StuckToolConfig effectiveStuckTool() {
+    final configured = stuckTool;
+    if (configured != null) return configured;
+    return headlessRun
+        ? const StuckToolConfig()
+        : const StuckToolConfig(followUp: StuckFollowUpMode.advisory);
+  }
 }

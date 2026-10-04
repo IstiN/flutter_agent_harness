@@ -959,6 +959,110 @@ prompts:
           contains('agent:\n  contextWindowCap: 256000\n  mode: omp\n'),
         );
       });
+
+      test('absent agent.stuckTool parses to null', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: omp\n');
+        expect(loadCliConfig(tmp.path).stuckTool, isNull);
+      });
+
+      test('parses agent.stuckTool and persists only non-defaults back', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync(
+          'agent:\n'
+          '  stuckTool:\n'
+          '    floorSeconds: 42\n'
+          '    heartbeatSeconds: 7\n'
+          '    followUp: advisory\n'
+          '    excludeTools: [task]\n',
+        );
+        final loaded = loadCliConfig(tmp.path);
+        final stuck = loaded.stuckTool;
+        expect(stuck, isNotNull);
+        expect(stuck!.floor, const Duration(seconds: 42));
+        expect(stuck.heartbeatInterval, const Duration(seconds: 7));
+        expect(stuck.followUp, StuckFollowUpMode.advisory);
+        expect(stuck.excludeTools, ['task']);
+        final yaml = loaded
+            .withCustomProviders(loaded.customProviders)
+            .toYaml();
+        expect(
+          yaml,
+          contains(
+            '  stuckTool:\n'
+            '    followUp: advisory\n'
+            '    floorSeconds: 42\n'
+            '    heartbeatSeconds: 7\n'
+            '    excludeTools: [task]\n',
+          ),
+        );
+      });
+
+      test('rejects an unknown agent.stuckTool key', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync(
+          'agent:\n  stuckTool:\n    floorSeconds: 10\n    turbo: true\n',
+        );
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('unknown "agent.stuckTool" key'),
+            ),
+          ),
+        );
+      });
+      test(
+        'the effective supervision is advisory for interactive hosts, '
+        'autonomous for headless — explicit config wins everywhere',
+        () {
+          // Issue review (gh-1054): the ticket's non-goal — auto-cancelling
+          // interactive sessions with a human present. The autonomous
+          // default is a headless-only policy; `agent.stuckTool:` in the
+          // yaml always wins.
+          AgentCliConfig cli({bool headless = false, StuckToolConfig? stuck}) =>
+              AgentCliConfig(
+                model: const Model(
+                  id: 'm',
+                  api: 'test-api',
+                  provider: 'test-provider',
+                  baseUrl: 'https://example.test',
+                  contextWindow: 100000,
+                  maxTokens: 4096,
+                ),
+                apiKey: 'k',
+                env: MemoryExecutionEnv(cwd: '/work'),
+                sessionRoot: '/sessions',
+                headlessRun: headless,
+                stuckTool: stuck,
+              );
+          expect(
+            cli().effectiveStuckTool().followUp,
+            StuckFollowUpMode.advisory,
+            reason: 'REPL/TUI: a human is present — advise only',
+          );
+          expect(
+            cli(headless: true).effectiveStuckTool().followUp,
+            StuckFollowUpMode.autonomous,
+            reason: 'fa run: unattended — the autonomous default',
+          );
+          const explicit = StuckToolConfig(followUp: StuckFollowUpMode.advisory);
+          expect(
+            cli(headless: true, stuck: explicit).effectiveStuckTool(),
+            same(explicit),
+            reason: 'an explicit agent.stuckTool wins in both modes',
+          );
+          expect(
+            cli(stuck: explicit).effectiveStuckTool(),
+            same(explicit),
+          );
+        },
+      );
     });
   });
 

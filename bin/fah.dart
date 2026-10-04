@@ -2082,6 +2082,7 @@ Future<void> _runApp(List<String> args) async {
           toolArgs: parsed.output == 'events=full'
               ? HepToolArgs.full
               : HepToolArgs.summary,
+          redactionPipeline: redactionPipeline,
         )
       : null;
   final streamJson = streamJsonMode
@@ -2210,6 +2211,10 @@ Future<void> _runApp(List<String> args) async {
     markdownSurface: markdownSurface,
     config: AgentCliConfig(
       wakeExecutable: wakeExecutable(),
+      // The dispatch below: a prompt argument is a headless run (autonomous
+      // supervision default); an interactive REPL/TUI session defaults to
+      // advisory — a human is present (gh-1054 review).
+      headlessRun: headlessPrompt != null,
       // Marathon-session resume parses its multi-hundred-MB tail off the
       // UI isolate (issue #503); the isolate executor is IO-only.
       parseExecutor: const IsolateSessionParseExecutor(),
@@ -2344,6 +2349,7 @@ Future<void> _runApp(List<String> args) async {
       compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
       wireDump: wireDump,
       contextWindowCap: saved.contextWindowCap,
+      stuckTool: saved.stuckTool,
       subagents: saved.subagents,
       jobs: saved.jobs,
       // The gh-1198 thinking stream: the `--stream-thinking` flag wins
