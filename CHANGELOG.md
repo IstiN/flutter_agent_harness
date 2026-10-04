@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- chore(ci): document the sm-kicker head-completeness codeless-head crash
+  (upstream awf#15) — the factory job's `gh api` calls put `--jq` before
+  `--arg`/`--argjson`, so a CODELESS branch head (2 parents, 0 changed
+  files: a routine branch-sync merge with no content diff) crashes the
+  job with `accepts 1 arg(s), received 4` — even when CI is fully green
+  on that head, and the job's own rescue dispatch can never heal exactly
+  those heads. Workaround until the upstream fix: keep the branch head
+  code-bearing. Live instance: run 37193754301 on head 1fe9b1232.
 - fix(messaging): gh-1180 — `schedule_message` self-chains no longer die
   silently at the agent-chatter wake cap. The idle inbox-wake gate
   (`InboxWakePolicy`, shared by the CLI and the app hosts) now exempts a
