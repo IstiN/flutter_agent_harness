@@ -30,6 +30,7 @@ void main() {
     required FakeSecureKeyStore store,
     String providerKind = 'openai-completions',
     String? activeCustomName,
+    CustomProviderRegistry? registry,
   }) async {
     final keys = SecureKeyCache(store);
     await keys.preload(store.map.keys.toList());
@@ -40,39 +41,79 @@ void main() {
       activeCustomName: activeCustomName,
       red: (message) => message,
       secureKeys: keys,
+      customProviders: registry,
       envVarIsSet: (name) => env.containsKey(name),
       envVarValue: (name) => env[name],
     );
   }
 
   group('errorLine attempted-provider diagnosis (gh-1226 AC2)', () {
+    // The ticket's verbatim failure — what CopilotAuthException's
+    // toString() returns from the copilot token exchange (lib/src/
+    // providers/copilot_oauth.dart). The old synthetic
+    // '(github-copilot api)' marker never occurs in production.
     const copilotExchangeFailure =
-        'Error: token exchange (github-copilot api) failed (401).';
+        'GitHub token rejected (401) by the Copilot token exchange — '
+        're-authorize Copilot (CLI: /provider copilot).';
     const zaiFailure = '401 Unauthorized: invalid key for api.z.ai';
+    const doubledZaiKeyName = 'FA_KEY_API_Z_AI_Z_AI';
+
+    // The production wiring (agent_cli_run.dart's _keyStatusView): the
+    // renderer holds BOTH the believed binding (a z.ai session) and the
+    // custom registry, with the gh-1226-doubled slot actually holding a
+    // value — the exact state that produced the fused guidance.
+    Future<KeyStatusRenderer> productionWiredZaiRenderer() async {
+      return rendererOf(
+        env: const {},
+        store: FakeSecureKeyStore()..map[doubledZaiKeyName] = 'sk-zai',
+        providerKind: 'zai',
+        activeCustomName: 'z.ai',
+        registry: CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'z.ai',
+            apiType: 'zai',
+            baseUrl: zaiUrl,
+            modelId: 'glm-5.3-flash',
+            keyName: doubledZaiKeyName,
+          ),
+        ]),
+      );
+    }
 
     test(
-      'a copilot exchange failure on a z.ai-bound session names only '
-      'copilot — the entry key and endpoint are one provider’s diagnosis',
+      'the ticket’s exact copilot exchange failure on a z.ai-bound '
+      'session names only copilot — no z.ai slot, no z.ai endpoint',
       () async {
-        final renderer = await rendererOf(
-          env: const {},
-          store: FakeSecureKeyStore()..map[zaiKeyName] = 'sk-zai',
-          providerKind: 'zai',
-          activeCustomName: 'z_ai',
-        );
+        final renderer = await productionWiredZaiRenderer();
 
-        // The endpoint the turn actually dialed (z.ai): the z.ai slot
-        // still must not leak into a copilot diagnosis.
+        // The endpoint the binding believes (z.ai): the diagnosis must
+        // follow the ATTEMPTED provider (copilot), not this binding.
         final line = renderer.errorLine(copilotExchangeFailure, zaiUrl);
 
         expect(line, contains('copilot'));
         expect(
           line,
-          isNot(contains(zaiKeyName)),
-          reason: 'the z.ai key slot must not leak into a copilot '
-              'diagnosis (gh-1226 AC2)',
+          isNot(contains(doubledZaiKeyName)),
+          reason: 'the believed entry’s (doubled) z.ai key slot must not '
+              'leak into a copilot diagnosis (gh-1226 AC2)',
         );
         expect(line, isNot(contains('api.z.ai')));
+      },
+    );
+
+    test(
+      'the doubled z.ai slot is never consulted even though it holds a '
+      'value — the attempted-provider path skips the believed entry',
+      () async {
+        final renderer = await productionWiredZaiRenderer();
+
+        final hint = renderer.authHintForAttempt(
+          copilotExchangeFailure,
+          zaiUrl,
+        );
+
+        expect(hint, isNot(contains(doubledZaiKeyName)));
+        expect(hint, isNot(contains(zaiKeyName)));
       },
     );
 

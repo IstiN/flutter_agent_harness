@@ -307,6 +307,49 @@ void main() {
       },
     );
 
+    test(
+      'a turn served by a DIFFERENT provider than the pin does not '
+      'carry the pin forward (gh-1226 review): queue failover / roles '
+      'rotation swap the serving model with no model_change record — '
+      'fusing the z.ai endpoint onto the new provider would re-bind it '
+      'to the wrong endpoint and key slot on the next restore',
+      () async {
+        final session = await newSession();
+        await session.appendModelChange(
+          provider: 'zai',
+          modelId: 'glm-5.3-flash',
+          baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+          customProvider: 'z_ai',
+        );
+        await session.appendMessage(UserMessage.text('hi'));
+        await session.appendMessage(
+          AssistantMessage(
+            content: [TextContent(text: 'hello from the queue')],
+            api: 'openai-completions',
+            // The provider queue's sticky-cursor failover / roles-mode
+            // per-turn rotation serve this turn on a catalog provider
+            // without appending a ModelChangeRecord.
+            provider: 'openai',
+            model: 'gpt-4o',
+            usage: Usage.zero,
+            stopReason: StopReason.stop,
+            timestamp: DateTime.utc(2026),
+          ),
+        );
+        final context = await session.buildContext();
+        expect(context.model?.provider, 'openai');
+        expect(context.model?.modelId, 'gpt-4o');
+        expect(
+          context.model?.baseUrl,
+          isNull,
+          reason: 'the z.ai endpoint belongs to the z.ai pin — carrying '
+              'it onto the openai turn fuses provider+endpoint across '
+              'providers (the same fusion class gh-1226 AC2 fixes)',
+        );
+        expect(context.model?.customProvider, isNull);
+      },
+    );
+
     test('buildContext defaults when nothing was recorded', () async {
       final session = await newSession();
       final context = await session.buildContext();

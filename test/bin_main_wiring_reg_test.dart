@@ -25,6 +25,11 @@ import 'package:test/test.dart';
 /// resume glue main-side boot mirrors). The comment names the feature so
 /// an intentional removal updates this list knowingly.
 const _requiredReferences = <String, List<String>>{
+  // gh-1232: the executable's library — `bin/fah.dart` plus the bin/
+  // part files it declares. The check concatenates them (see
+  // _executableSource), so a symbol is pinned no matter which of them
+  // it lives in; a symbol leaving the executable library entirely is
+  // still a violation.
   'bin/fah.dart': [
     // `fa wire-serve` interception (issue #1103).
     'splitWireServeArgs',
@@ -58,10 +63,36 @@ const _requiredReferences = <String, List<String>>{
   ],
 };
 
+/// gh-1232: `bin/fah.dart` was split into `part`/`part of` files under
+/// `bin/` (the executable library is the primary file PLUS its part
+/// files). The guard pins symbols to the whole executable library: the
+/// primary source and every `part '...';` it declares, concatenated.
+String _executableSource() {
+  final primary = File('bin/fah.dart').readAsStringSync();
+  final buffer = StringBuffer(primary);
+  for (final match in RegExp(
+    "^part '(fah_[^']+\\.dart)';",
+    multiLine: true,
+  ).allMatches(primary)) {
+    buffer.write('\n${File('bin/${match[1]}').readAsStringSync()}');
+  }
+  return buffer.toString();
+}
+
 void main() {
   test('bin main keeps every boot-wiring symbol (gh-1000 rework reg)', () {
     final violations = <String>[];
     _requiredReferences.forEach((path, symbols) {
+      if (path == 'bin/fah.dart') {
+        // The executable library: primary + its bin/ part files.
+        final source = _executableSource();
+        for (final symbol in symbols) {
+          if (!source.contains(symbol)) {
+            violations.add('$path: no reference to `$symbol`');
+          }
+        }
+        return;
+      }
       final file = File(path);
       if (!file.existsSync()) {
         violations.add('$path: FILE MISSING');

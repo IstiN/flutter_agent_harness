@@ -228,13 +228,18 @@ final class KeyStatusRenderer {
   }
 
   /// The adapter that actually produced [message], when it is identifiable
-  /// from the message itself (gh-1226 AC2): `streamCopilot`'s token
-  /// exchange wraps failures as `(github-copilot api)`. The renderer's
+  /// from the message itself (gh-1226 AC2): the copilot token exchange
+  /// throws `CopilotAuthException` (lib/src/providers/copilot_oauth.dart),
+  /// whose toString() carries "Copilot token exchange" / "GitHub token
+  /// rejected" — the exact wording of the owner's report. The renderer's
   /// believed binding (`providerKind` / `activeCustomName`) can lag the
   /// serving adapter after a partial restore — the diagnosis must follow
   /// the attempted provider, not the believed one.
   String? _attemptedProviderFrom(String message) {
-    if (message.contains('(github-copilot api)')) return 'copilot';
+    if (message.contains('Copilot token exchange') ||
+        message.contains('GitHub token rejected')) {
+      return 'copilot';
+    }
     return null;
   }
 
@@ -248,7 +253,10 @@ final class KeyStatusRenderer {
     if (attempted != null && attempted != providerKind) {
       // Diagnose the attempted provider against ITS OWN endpoint — the
       // session's baseUrl belongs to the believed binding and would mix
-      // the other provider's key slot back in.
+      // the other provider's key slot back in. The believed custom entry
+      // is excluded too (consultActiveEntry: false): a catalog adapter
+      // like copilot has no entry, and the session's z.ai entry slot
+      // must not leak into the copilot diagnosis (review thread).
       final attemptedSpec = resolveCliProviderSpec(
         attempted,
         honorBuildFilter: true,
@@ -256,6 +264,7 @@ final class KeyStatusRenderer {
       return _authHintFor(
         attempted,
         attemptedSpec?.defaultBaseUrl ?? baseUrl,
+        consultActiveEntry: false,
       );
     }
     return authHint(baseUrl);
@@ -289,7 +298,17 @@ final class KeyStatusRenderer {
   /// did not follow.
   String authHint(String baseUrl) => _authHintFor(providerKind, baseUrl);
 
-  String _authHintFor(String kind, String baseUrl) {
+  /// [consultActiveEntry] false is the attempted-provider path
+  /// ([authHintForAttempt]): the diagnosis belongs to the provider that
+  /// actually served the turn, so the believed binding's saved custom
+  /// entry — and its key slot — must not be consulted (a catalog adapter
+  /// like copilot has no entry; leaking the session's z.ai slot into a
+  /// copilot diagnosis is the gh-1226 AC2 fusion).
+  String _authHintFor(
+    String kind,
+    String baseUrl, {
+    bool consultActiveEntry = true,
+  }) {
     if (rolesDriven) {
       final customHint = customEndpointAuthHint(baseUrl);
       if (customHint != null) return customHint;
@@ -315,7 +334,7 @@ final class KeyStatusRenderer {
     // Endpoint-scoped store key (what /provider and the wizard write): the
     // active custom entry's name-scoped slot first, then the host-scoped
     // one.
-    final entryKey = activeCustomKeyName();
+    final entryKey = consultActiveEntry ? activeCustomKeyName() : null;
     final scoped = entryKey ?? scopedName;
     final storedHint = storedKeyHint(scoped, baseUrl);
     if (storedHint != null) return storedHint;

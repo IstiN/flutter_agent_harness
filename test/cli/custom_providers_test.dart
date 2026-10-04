@@ -335,6 +335,35 @@ void main() {
           contains('FA_KEY_API_Z_AI'),
         );
         expect(registry.keyNameMigrationNotes.single, contains('canonical'));
+        // The remedy must actually take effect: /key set alone writes
+        // the canonical slot but the PINNED doubled slot keeps winning
+        // (resolution probes the entry's own keyName first) — the note
+        // must also tell the user to delete the doubled slot.
+        expect(
+          registry.keyNameMigrationNotes.single,
+          contains('/key delete FA_KEY_API_Z_AI_Z_AI'),
+        );
+      },
+    );
+
+    test(
+      'an intentional non-canonical keyName (not the doubling class) '
+      'reports no migration note',
+      () {
+        // A user-chosen shared slot is a feature, not the gh-1226
+        // doubling defect — nagging with a "move the value" remedy that
+        // cannot take effect would be wrong (review thread).
+        final registry = CustomProviderRegistry([
+          CustomProviderEntry(
+            name: 'z.ai',
+            apiType: 'zai',
+            baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+            modelId: 'glm-5.3-flash',
+            keyName: 'SHARED_ZAI_SLOT',
+          ),
+        ]);
+
+        expect(registry.keyNameMigrationNotes, isEmpty);
       },
     );
 
