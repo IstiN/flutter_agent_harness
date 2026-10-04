@@ -3,7 +3,6 @@ import 'dart:collection';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/widgets.dart' show WidgetsBinding;
 import 'package:fa_ui/fa_ui.dart'
@@ -34,6 +33,7 @@ import 'session_names_store.dart';
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/apps/js_app_error_channel.dart';
 import 'package:fa/apps/dynamic_messages.dart';
 import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/l10n/l10n_ext.dart';
@@ -2365,6 +2365,10 @@ class AgentService extends ChangeNotifier
   /// conversation as an async-result notice (see `_onTaskJobCompleted`).
   StreamSubscription<TaskJob>? _taskCompletionsSub;
 
+  /// JS app error-channel deliveries (gh-1164 Part B): gated render/
+  /// runtime/load notices re-enter the conversation (see `_onJsAppError`).
+  StreamSubscription<JsAppErrorNotice>? _jsAppErrorSub;
+
   /// Opt-in for the real app bootstrap (main.dart): the periodic watcher
   /// never starts in tests (a pending periodic Timer fails flutter_test's
   /// invariants), so it is off by default.
@@ -2657,6 +2661,7 @@ class AgentService extends ChangeNotifier
     if (_subagentManager != null) _scheduledMessages.dispose();
     _inboxWatchTimer?.cancel();
     unawaited(_taskCompletionsSub?.cancel());
+    unawaited(_jsAppErrorSub?.cancel());
     _idleWatchdog?.cancel();
     _liveActivityEndTimer?.cancel();
     _sessionWatchTimer?.cancel();

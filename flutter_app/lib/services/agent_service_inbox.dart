@@ -84,6 +84,27 @@ extension AgentServiceInbox on AgentService {
     unawaited(sendText(taskAsyncResultNotice(job)));
   }
 
+  /// Called when the JS-app error channel (gh-1164 Part B) delivers a
+  /// gated render/runtime/load notice for an app of this session: the
+  /// notice re-enters the conversation as a system notice — sendText
+  /// steers mid-run (the authoring agent sees the failure inside its
+  /// live turn and reacts) and starts a fresh turn while idle (AC5: a
+  /// user-visible system note; app-bound sessions pick it up from the
+  /// session tree / inbox, never a silent drop).
+  void _onJsAppError(JsAppErrorNotice notice) {
+    if (_disposed) return;
+    unawaited(
+      sendText(
+        '<system-notice>\n'
+        '${notice.notice}\n'
+        'The app source changed since a previous identical report may have '
+        'been silenced — fix the error in the app source and re-render; the '
+        'user does not need to act as the error clipboard.\n'
+        '</system-notice>',
+      ),
+    );
+  }
+
   Future<void> _wakeOnInboxMail() async {
     final manager = _subagentManager;
     if (manager == null || _inboxWakeRunning || _disposed) return;
