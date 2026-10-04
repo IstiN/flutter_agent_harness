@@ -12,6 +12,17 @@
         37219125631,
         37211433024
       ]
+    },
+    {
+      "file": "test/integration/dap_wake_hang_test.dart",
+      "test": "mail-wake turns never wedge: 12 hub DMs each wake and answer; ESC recovers a stalled wake",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1248",
+      "since": "2026-10-04",
+      "runs": [
+        37225510196,
+        37214807813,
+        37214599192
+      ]
     }
   ]
 }
