@@ -2798,14 +2798,20 @@ void main() {
         env: env,
         sessionsRoot: '/sessions',
       );
+      // This test exercises the over-window guard, not approval: unattended
+      // run (write mode denies the unknown tool and the ~8500-token result
+      // never exists — the guard would never fire).
+      service.approval.mode = ApprovalMode.yolo;
       await service.initialize();
 
       await service.sendText('go');
       await service.waitForIdle();
 
-      // The turn continued to the final answer on its own.
+      // The turn continued to the final answer on its own. The relief's
+      // synchronous compaction consumes summarizer/judge calls on the same
+      // fake stream, so the count is the two answers plus those.
       expect(service.messages.last.content, 'continued');
-      expect(streamCalls, 2);
+      expect(streamCalls, greaterThanOrEqualTo(2));
       expect(service.error, isNull);
       // The transcript was compacted: the huge tool result is gone.
       expect(
