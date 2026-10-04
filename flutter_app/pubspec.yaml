@@ -243,6 +243,15 @@ dependency_overrides:
     git:
       url: https://github.com/IstiN/flutter_js_widget_runtime.git
       ref: bd1e7c22fb4c4d217fdf5fbf73225dcb1f488bd0
+  # flutter_inappwebview_android 1.1.3 (pinned transitively by
+  # flutter_inappwebview ^6.1.5) calls getDefaultProguardFile('proguard-
+  # android.txt') during its build-script evaluation, which AGP 9 removed
+  # ("no longer supported since it includes -dontoptimize") — the Android
+  # APK CI leg fails on it. 1.2.0-beta.3 carries the upstream fix
+  # (proguard-android-optimize.txt, androidx bumps, Java 17). Override ONLY
+  # the Android implementation (iOS/macOS/web/windows 1.1.x legs build
+  # clean); drop the override once stable 1.2.0 ships.
+  flutter_inappwebview_android: 1.2.0-beta.3
 
 flutter:
   uses-material-design: true
