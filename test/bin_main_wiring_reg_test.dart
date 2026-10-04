@@ -43,6 +43,9 @@ const _requiredReferences = <String, List<String>>{
     'attachProviderQueueQuotaFeed',
     // Global per-skill toggles (`skills:` section, issue #1151).
     'skillToggles',
+    // gh-1198: the --stream-thinking flag > output.streamThinking config
+    // resolution wired into the run config.
+    'resolveStreamThinking',
   ],
   'lib/src/cli/session_commands.dart': [
     // gh-968 (AC-R3): resume prices the FIRST request (parity budget).
