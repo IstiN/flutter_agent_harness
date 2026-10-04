@@ -26,6 +26,13 @@ final class AgentCliExtState {
 
 /// Bootstraps, sinks, and the `/ext` surface on [AgentCli].
 extension AgentCliExt on AgentCli {
+  Map<String, dynamic> _pluginConfig(String name) {
+    final raw = config.pluginConfig[name];
+    if (raw is Map<String, dynamic>) return raw;
+    if (raw is Map) return Map<String, dynamic>.from(raw);
+    return const {};
+  }
+
   /// Loads installed JS extensions in the background (fire-and-forget from
   /// the constructor, like MCP boot — never blocks the REPL): build the
   /// store + host, wire the sinks, `loadAll`, register the tool surface +

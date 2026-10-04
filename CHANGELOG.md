@@ -4575,7 +4575,8 @@
 - gh-1206 WIP auto-save 2026-10-04T05-52-28 (#1216)
 - gh-1209 [BENCH] usage fold skips failed trials — agent_timeout rows report 0/0 tokens though the session JSONL has full usage (#1123 follow-up) (#1215)
 
-## Unreleased
+## 1.0.509
+
 
 - chore(pin): awf workflows track @main — always-latest policy (owner
   directive 2026-10-04). All five machine-loop stubs (teammate, SM,
@@ -4596,3 +4597,5 @@
   secrets) and the kicker carries no secrets block. Stale
   immutable-SHA pin comments in ai-teammate.yml / machine-sm.yml
   rewritten to state the always-`main` policy (#1222).
+
+## Unreleased

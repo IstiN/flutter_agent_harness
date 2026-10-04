@@ -15,6 +15,12 @@ Rules:
 - Keep decisions, conclusions, final answers, error causes, and file paths
   the agent still needs. Preserve important tool outputs (test verdicts,
   command results, error traces) with what produced them.
+- Preserve epistemic status: uncertainty qualifiers ("may", "suspect",
+  "unconfirmed") stay verbatim with their claims — never detach or upgrade a
+  hedge. Tag unevidenced claims [assumed] or [hearsay: source]; [verified]
+  marks a claim a kept tool result shows. Every conclusion keeps one line of
+  its why, or the marker "unverified — re-verify" when the evidence is
+  dropped.
 - Timeless content only: never record ephemeral, second-person, or
   time-scoped statements ("your last tool call's result was dropped", "you
   just ran X") — harness notes about dropped or trimmed context are one-time

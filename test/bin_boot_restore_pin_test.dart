@@ -76,9 +76,22 @@ void main() {
 
   // Sanity: the helper's home compiles against the executable's own
   // imports (bin/fah.dart imports it).
+  //
+  // gh-1232: bin/fah.dart was split into bin/ part files; the pin
+  // resolution call moved into one of them (fah_runapp.dart). The
+  // import stays pinned to the primary file, the call site to the
+  // executable library as a whole (primary + its part files) — the
+  // same guard-update mechanism bin_main_wiring_reg_test documents.
   test('fah.dart still imports the helper (wiring guard companion)', () {
     final fah = File('bin/fah.dart').readAsStringSync();
     expect(fah, contains("import 'fah_boot_restore.dart';"));
-    expect(fah, contains('resolveBootFolderPin('));
+    final library = StringBuffer(fah);
+    for (final match in RegExp(
+      "^part '(fah_[^']+\\.dart)';",
+      multiLine: true,
+    ).allMatches(fah)) {
+      library.write('\n${File('bin/${match[1]}').readAsStringSync()}');
+    }
+    expect(library.toString(), contains('resolveBootFolderPin('));
   });
 }

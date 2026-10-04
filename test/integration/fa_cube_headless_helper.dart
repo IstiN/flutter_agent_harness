@@ -49,7 +49,7 @@ Map<String, String> scrubbedChildEnv() {
 }
 
 /// The one spawn site both IT families share (`runFaHeadless` here,
-/// `runFaHeadlessRaw` in poisoned_provider_boot_test.dart): the scrubbed
+/// `runFaHeadlessRaw` below): the scrubbed
 /// environment, the credential blank-pins and the `dart run bin/fah.dart`
 /// invocation live HERE so the two families cannot diverge on what
 /// "scrubbed" means (gh-760 review). [fahArgs] carries everything after
@@ -124,6 +124,30 @@ Future<FaResult> runFaHeadless({
       prompt,
     ],
     env: env,
+    timeout: timeout,
+  );
+}
+
+/// [runFaHeadless] without the explicit `--provider/--base-url/--model`
+/// flags: the boot must resolve everything from the on-disk config (e.g.
+/// gh-760's poisoned-config fixtures and gh-1199's live-wire boot leg).
+/// Lives in the shared helper so every config-resolution family drives
+/// the exact same spawn (gh-760: the scrub + blank pins are the test).
+Future<FaResult> runFaHeadlessRaw({
+  required Directory workspace,
+  required String prompt,
+  Map<String, String> env = const {},
+  Map<String, String> extraEnv = const {},
+  Duration timeout = const Duration(minutes: 2),
+}) {
+  // The shared [spawnFa] owns the scrub + blank pins (see its doc): the
+  // boot must resolve ONLY from the config fixture — an inherited
+  // FA_PROVIDER_* declaration would legitimately override it and defeat
+  // the test.
+  return spawnFa(
+    fahArgs: ['--cwd', workspace.path, '-p', prompt],
+    env: env,
+    extraEnv: extraEnv,
     timeout: timeout,
   );
 }

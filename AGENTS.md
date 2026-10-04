@@ -7,6 +7,19 @@ factual: paths, commands, invariants — no essays.
 
 - `lib/` — the `flutter_agent_harness` package (pure Dart core). `test/`
   mirrors it. `prompts/` — all LLM prompts as Markdown (see rules below).
+- `lib/flutter_agent_harness.dart` (the barrel) — gh-1232 policy:
+  GROUPED APPEND-ONLY export sections, one `// ── <subsystem> ──` comment
+  header per group, exports sorted by path within a group, new exports
+  appended to their subsystem group (a new subsystem starts a new group).
+  No per-subsystem mini-barrels, no re-sorting of existing lines — append
+  only, so parallel edits almost never touch the same line.
+- God-file ceiling (gh-1232): no Dart file over 2800 lines anywhere
+  (`scripts/ci_fast_gate.sh` stage_size + ci.yml guard, both covering
+  `lib test example bin flutter_app/lib`). Target < 2000 for primary
+  files; when a file approaches it, split by concern into `part` files
+  (the established pattern: `agent_cli.dart`, `builtin_tools.dart`,
+  `bin/fah.dart` → `bin/fah_*.dart`, `agent_service.dart` →
+  `agent_service_*.dart` mixins) — never by extracting public API.
 - `lib/src/approval/` — tool approval gate: tiers (read/write/exec),
   session modes (always-ask/write/yolo/autopilot — the CLI label of the
   `unattended` enum), per-tool overrides,
@@ -1580,11 +1593,28 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
 - `dart test` green (integration-tagged excluded from test-core — issue
   #551: `test/integration/**` changes also run the `integration-mock` leg
   per-PR: no-key legs via `MockLlmServer`, `--exclude-tags llm,browser-ext,
-  perf,pty`; real-provider files carry `@Tags(['integration', 'llm'])` and
-  run ONLY in the tag-only provider-smoke job and nightly with secrets;
-  child-agent-spawn PTY tests carry `pty` and stay in nightly (issue #553).
-  Tag-only CI = llm smoke + publish + binaries; nightly keeps the full
-  real-provider suite (pty-integration).
+  perf,pty`; child-agent-spawn PTY tests carry `pty` and stay in nightly
+  (issue #553). Tag-only CI = llm smoke + publish + binaries; nightly keeps
+  the full real-provider suite (pty-integration).
+  **The Quality gate is deterministic-only (gh-1199): mock LLM everywhere,
+  live models never.** Real-provider files carry
+  `@Tags(['integration', 'llm'])` and run ONLY in the tag-only
+  provider-smoke job and nightly with secrets — the per-PR integration
+  shards exclude them at selection (`shard_files.py --exclude-tag llm`) AND
+  at invocation (`--exclude-tags browser-ext,llm`), so a model's mood can
+  never block a merge. The boundary is self-enforcing:
+  `scripts/check_llm_tag_boundary.py` (static-gate step + pinned audit)
+  fails any integration-tagged file that looks live without the `llm` tag;
+  `test/scripts/shard_files_llm_boundary_test.dart` proves the shard
+  selection stays live-free. Real-model verification belongs to the bench
+  harnesses (terminal-bench / harbor / MLS-Bench) run under supervision,
+  plus manual `dart test --tags "integration && llm"` for debugging — NO
+  scheduled-or-gate live runs in the PR path. A proven flake (red in ≥2
+  distinct-SHA gate runs within 24h) is quarantined via
+  `scripts/test_quarantine.json` (checked in, reviewed in the fix PR;
+  `flake-watch.yml` files the issue and opens the PR) — the gate legs pipe
+  their targets through `scripts/apply_quarantine.py`, while nightly
+  KEEPS running the file to produce the un-quarantine repeat-run proof.
 - `cd flutter_app && flutter test --exclude-tags integration` green
   (includes golden suite; integration-tagged `test/cli_visual` runs in the
   nightly workflow + on demand).
