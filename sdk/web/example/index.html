@@ -140,11 +140,13 @@ function handleRequest(decoded) {
     send(approvalResponseCommand(id, ok ? 'approve_once' : 'deny'));
   } else if (decoded.kind === 'ask_request') {
     const answers = [];
-    for (const q of f.questions) {
-      const labels = q.options.map((o) => o.label).join(', ');
+      // options is optional in the ask schema — a malformed question must
+      // degrade to free-text, not tear the session down.
+      const options = Array.isArray(q.options) ? q.options : [];
+      const labels = options.map((o) => o.label).join(', ');
       const raw = prompt(`${q.question}${labels ? `\noptions: ${labels}` : ''}`);
       if (raw === null) { send(askResponseCommand(id, null)); return; } // cancelled
-      const option = q.options.find((o) => o.label === raw);
+      const option = options.find((o) => o.label === raw);
       answers.push(option ? { selected: [option.label] } : { freeText: raw });
     }
     send(askResponseCommand(id, answers));

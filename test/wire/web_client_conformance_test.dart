@@ -5,6 +5,8 @@
 //
 // Loud failure when node is missing — a silently skipped conformance run
 // would pin nothing.
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -21,21 +23,40 @@ void main() {
     // executes mock-serve.mjs (top-level http.listen) as a "test", and the
     // open server handle keeps the run alive until the job timeout.
     const conformanceEntry = 'test/conformance.test.mjs';
-    final ProcessResult result;
+    final Process process;
     try {
-      result = await Process.run(
+      process = await Process.start(
         'node',
         ['--test', conformanceEntry],
         workingDirectory: 'sdk/web',
-        // Belt-and-braces: a wedged suite must fail loudly, not hang CI.
-      ).timeout(const Duration(minutes: 2));
+      );
     } on ProcessException catch (error) {
       fail('node is required for the sdk/web conformance suite: $error');
     }
+    // Drain output while the suite runs so a chatty run cannot wedge pipes.
+    final stdoutFuture = process.stdout.transform(utf8.decoder).join();
+    final stderrFuture = process.stderr.transform(utf8.decoder).join();
+    // A wedged suite must fail loudly, not hang CI — and the orphaned node
+    // process has to be killed, not merely abandoned by the timed-out future.
+    const budget = Duration(minutes: 2);
+    final int exitCode;
+    try {
+      exitCode = await process.exitCode.timeout(budget);
+    } on TimeoutException {
+      process.kill();
+      final out = await stdoutFuture;
+      final err = await stderrFuture;
+      fail(
+        'sdk/web conformance exceeded $budget and was killed:\n'
+        '$out\n$err',
+      );
+    }
+    final out = await stdoutFuture;
+    final err = await stderrFuture;
     expect(
-      result.exitCode,
+      exitCode,
       0,
-      reason: 'sdk/web conformance failed:\n${result.stdout}\n${result.stderr}',
+      reason: 'sdk/web conformance failed:\n$out\n$err',
     );
   });
 }

@@ -52,7 +52,9 @@ function scriptRun(client) {
     send(frame('message_end', { message: msg('Привет мир — готово') }));
     send(frame('turn_end', { message: msg('Привет мир — готово'), toolResults: [] }));
     send(frame('agent_end', { messages: [msg('Привет мир — готово')] }));
-    console.log(`RUN decision=${approval.decision} ask=${JSON.stringify(ask)} secret=${JSON.stringify(secret)}`);
+    // E4: the granted value never reaches any log — name + persisted only.
+    const secretSafe = secret ? { name: secret.name, persisted: secret.persisted } : null;
+    console.log(`RUN decision=${approval.decision} ask=${JSON.stringify(ask)} secret=${JSON.stringify(secretSafe)}`);
   })();
 }
 
@@ -124,8 +126,9 @@ const http = createServer(async (req, res) => {
     res.writeHead(400); res.end('bad percent-encoding'); return;
   }
   let path = normalize(decoded).replace(/^([/\\])+/, '');
-  // Doc-root confinement: this mock serves example/ + dist/ only — a `..`
-  // segment must 403, never read outside the checkout.
+  // Traversal guard: reject any `..` segment (post-normalize) so the mock
+  // cannot be aimed above its serving root (the process cwd). A mock, not
+  // a hardened file server — doc root == cwd, nothing tighter is claimed.
   if (path.split(/[\\/]/).includes('..')) {
     res.writeHead(403); res.end('forbidden'); return;
   }
