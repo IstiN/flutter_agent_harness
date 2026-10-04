@@ -196,7 +196,6 @@ import '../messaging/inbox_wake_policy.dart';
 import '../messaging/messaging_repository.dart';
 import '../messaging/scheduled_messages.dart';
 import '../messaging/scheduled_receipts.dart';
-import '../memory/memory_tools.dart';
 import '../plugins/plugin.dart';
 import '../redact/redaction_cli.dart';
 import '../redact/redaction_hooks.dart';
