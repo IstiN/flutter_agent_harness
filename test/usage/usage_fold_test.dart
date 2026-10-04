@@ -130,5 +130,10 @@ void main() {
       final total = folder.totalOf([reportedSegment, estimatedSegment]);
       expect(total.source, UsageSource.mixed);
     });
+
+    test('the total of ONE mixed segment is mixed (a mixed segment carries both kinds)', () {
+      final mixedSegment = folder.foldSegment(0, [reported(), estimated()]);
+      expect(folder.totalOf([mixedSegment]).source, UsageSource.mixed);
+    });
   });
 }

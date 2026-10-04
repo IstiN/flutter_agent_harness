@@ -107,8 +107,16 @@ final class UsageFolder {
     for (final segment in segments) {
       totals = totals + segment.totals;
       byModel = mergeUsageByModel(byModel, segment.byModel);
-      sawReported = sawReported || segment.source == UsageSource.reported;
-      sawEstimated = sawEstimated || segment.source == UsageSource.estimated;
+      // A mixed segment carries BOTH kinds: it sets both flags (the total
+      // of one mixed segment is mixed, not "reported").
+      sawReported =
+          sawReported ||
+          segment.source == UsageSource.reported ||
+          segment.source == UsageSource.mixed;
+      sawEstimated =
+          sawEstimated ||
+          segment.source == UsageSource.estimated ||
+          segment.source == UsageSource.mixed;
     }
     return UsageLedgerTotal(
       totals: totals,

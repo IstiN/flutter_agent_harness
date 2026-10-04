@@ -103,8 +103,14 @@ final class UsageChainScanner {
   UsageChainScan scan(Iterable<String> lines) {
     final bytes = BytesBuilder(copy: false);
     var recordCount = 0;
-    final segments = <_ScanSegment>[_ScanSegment()];
+    final segments = <_ScanSegment>[];
     _PendingSummary? pending;
+    // The current segment, creating the first lazily so a chain with no
+    // markers still folds as ONE segment.
+    _ScanSegment current() {
+      if (segments.isEmpty) segments.add(_ScanSegment());
+      return segments.last;
+    }
     void closeSegment(DateTime? boundaryAt) {
       if (pending case final summary?) {
         // A summary whose request never produced an assistant message
@@ -114,7 +120,7 @@ final class UsageChainScanner {
         segments.last.requests.add(summary.fallback());
         pending = null;
       }
-      segments.add(_ScanSegment(openedAt: boundaryAt));
+      segments.add(_ScanSegment()..setOpenedAt(boundaryAt));
     }
 
     for (final raw in lines) {
@@ -139,13 +145,28 @@ final class UsageChainScanner {
         ..add(const [10]);
       if (skippedDecode) continue;
       final timestamp = DateTime.tryParse(decoded['timestamp'] as String? ?? '');
-      final current = segments.last;
-      current.noteRecordAt(timestamp);
       if (type == 'custom') {
         final customType = decoded['customType'] as String? ?? '';
         if (customType == usageSegmentStartCustomType) {
-          closeSegment(timestamp);
-        } else if (customType == modelRequestSummaryCustomType) {
+          // A marker OPENS the segment it introduces: the first marker on
+          // a chain claims the (lazy) first segment; a later marker closes
+          // the previous segment only when it carried anything (an empty
+          // trailing segment from a killed boot is not materialized, I1).
+          // The marker itself is not a "contributing" record: the previous
+          // segment's closedAt stays its last request's timestamp.
+          if (!segments.lastOrNull.hasContentOrNull) {
+            current().setOpenedAt(timestamp);
+          } else {
+            closeSegment(timestamp);
+          }
+          continue;
+        }
+      }
+      final segment = current();
+      segment.noteRecordAt(timestamp);
+      if (type == 'custom') {
+        final customType = decoded['customType'] as String? ?? '';
+        if (customType == modelRequestSummaryCustomType) {
           pending = _PendingSummary.fromData(decoded['data']);
         }
         continue;
@@ -158,13 +179,16 @@ final class UsageChainScanner {
         pending,
       );
       pending = null;
-      current.requests.add(request);
+      current().requests.add(request);
     }
-    // Close the trailing segment: a dangling summary still counts.
+    // Close the trailing segment: a dangling summary still counts. A
+    // header-only chain still yields ONE (empty) segment so the ledger
+    // schema stays stable.
     if (pending case final summary?) {
-      segments.last.requests.add(summary.fallback());
+      segments.lastOrNull?.requests.add(summary.fallback());
       pending = null;
     }
+    if (segments.isEmpty) segments.add(_ScanSegment());
     return UsageChainScan(
       segments: [
         for (final segment in segments)
@@ -248,17 +272,30 @@ final class UsageChainScanner {
 
 /// Mutable scan state for one segment.
 final class _ScanSegment {
-  _ScanSegment({this.openedAt});
+  _ScanSegment();
 
+  DateTime? openedAt;
   final List<FoldRequest> requests = [];
-  final DateTime? openedAt;
   DateTime? firstRecordAt;
   DateTime? closedAt;
+
+  /// Whether anything contributed to this segment (a marker claiming an
+  /// empty virgin segment does not count — killed boots leave nothing).
+  bool get hasContent => requests.isNotEmpty || firstRecordAt != null;
+
+  void setOpenedAt(DateTime? at) {
+    openedAt ??= at;
+  }
 
   void noteRecordAt(DateTime? at) {
     firstRecordAt ??= at;
     if (at != null) closedAt = at;
   }
+}
+
+/// Null-safe [ _ScanSegment.hasContent] probe for the boundary branch.
+extension on _ScanSegment? {
+  bool get hasContentOrNull => this?.hasContent ?? false;
 }
 
 /// A `model_request_summary` record waiting for the assistant message its
