@@ -10,6 +10,7 @@ Update the existing structured checkpoint with new information. RULES:
 - UPDATE Progress: move "In Progress" items to "Done" when completed; update "Next Steps"
 - ASSESS tool results: keep important outputs (verdicts, command results, errors); trivial banners may go
 - PRESERVE exact paths, names, and errors
+- PRESERVE provenance tags and hedges verbatim — never upgrade a hedge
 - If something is no longer relevant, you may remove it
 
 Use this EXACT format:
