@@ -29,7 +29,33 @@ permissions:
 
 jobs:
   kicker:
-    uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-sm-kicker.yml@6e8e40eae1cd0f64bedef166b7b6eb92c76c8485
+    # Pinned to 39ead0453b982010f8b00b605183ed8ded189bca (2026-10-04):
+    # per-head-SHA concurrency. The previous pin (6e8e40eae1cd) used a
+    # GLOBAL concurrency group, so any other branch's push SUPERSEDED this
+    # branch's pending kicker (GitHub docs: a queued run in a shared
+    # group replaces the pending one; cancel-in-progress only shields the
+    # running run) — head-completeness landed FAILED mid-API-fetch on
+    # this branch's head at 06:56Z (run 37184258269), inside the exact
+    # dev-wave window the upstream fix cites. Re-pinned per the fix's
+    # consumer instruction; the stub adds no caller-level concurrency of
+    # its own, so the reusable group carries the scoping.
+    #
+    # KNOWN UPSTREAM DEFECT (awf#15, live on this pin AND on awf@main as
+    # of 2026-10-04): the head-completeness job's `gh api` calls put
+    # `--jq` BEFORE `--arg`/`--argjson`, so gh eats the flag as the --jq
+    # value and the rest become positional args — `accepts 1 arg(s),
+    # received 4`, exit 1. Trigger shape: a CODELESS branch head (2
+    # parents, 0 changed files — a routine branch-sync merge with no
+    # content diff). Code-bearing heads skip before the broken lines, so
+    # only zero-diff merge heads crash the job — and they crash it even
+    # when CI is fully green on them (the crash precedes the
+    # required-contexts check), so the job's own rescue dispatch can
+    # never heal the exact heads it exists for. Resolution until the
+    # upstream fix lands: keep the branch head CODE-BEARING — the next
+    # real commit re-enables the healthy `code-bearing head — SM owns
+    # validation, skip` path. Diagnosed 2026-10-04 on run 37193754301
+    # (head 1fe9b1232, a zero-diff sync merge).
+    uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-sm-kicker.yml@39ead0453b982010f8b00b605183ed8ded189bca
     with:
       sm_workflow: machine-sm.yml
       ci_workflow: ci.yml
