@@ -84,10 +84,7 @@ FahChatMessage _toChatMessage(Message message) {
     case ToolResultMessage(:final content, :final toolName, :final isError):
       return FahChatMessage(
         role: 'tool',
-        content: content
-            .whereType<TextContent>()
-            .map((b) => b.text)
-            .join('\n'),
+        content: content.whereType<TextContent>().map((b) => b.text).join('\n'),
         toolName: toolName,
         isError: isError,
       );
@@ -125,7 +122,8 @@ extension AgentServiceTranscript on AgentService {
       noteAt.clamp(0, messages.length),
       FaChatMessage(
         role: 'system',
-        content: 'Authorization successful — the $providerId session was '
+        content:
+            'Authorization successful — the $providerId session was '
             'refreshed. Try sending your message again.',
       ),
     );

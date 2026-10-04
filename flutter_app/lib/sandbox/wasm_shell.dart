@@ -28,6 +28,8 @@ import 'package:fa/sandbox/wasm_shell_builtins.dart';
 import 'package:fa/sandbox/wasm_shell_git.dart';
 import 'package:fa/sandbox/wasm_shell_ssh.dart';
 
+part 'wasm_shell_stages.dart';
+
 /// A [Shell] backed by a sandbox of permissive WASI binaries.
 ///
 /// This avoids the GPL licensing and portability problems of BusyBox by using
@@ -714,7 +716,8 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     // `.fah_pipe_N` files at the sandbox root cross-contaminated jobs and
     // polluted iOS's root — every invocation now owns a unique dir, so
     // pipe state dies with it.
-    final pipeDir = '/.fah/tmp/pipe-'
+    final pipeDir =
+        '/.fah/tmp/pipe-'
         '${DateTime.now().microsecondsSinceEpoch}-${_pipeSeq++}';
     final tempFiles = <io.File>[];
     String? previousOutputFile;
@@ -856,7 +859,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         options: options,
       );
       return Ok(
-        StageResult(stdout: outBytes, stderr: errBytes, exitCode: data.exitCode),
+        StageResult(
+          stdout: outBytes,
+          stderr: errBytes,
+          exitCode: data.exitCode,
+        ),
       );
     } on _RedirectWriteError catch (error) {
       // Issue #1156 E2: an unwritable redirect target is a normal failed
@@ -864,7 +871,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       _lastStageExitCode = 1;
       _lastStderr = (_lastStderr ?? '') + error.message;
       return Ok(
-        StageResult(stdout: const [], stderr: utf8.encode(error.message), exitCode: 1),
+        StageResult(
+          stdout: const [],
+          stderr: utf8.encode(error.message),
+          exitCode: 1,
+        ),
       );
     }
   }
@@ -884,8 +895,15 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   }) async {
     final stdoutFile = redirects.stdoutFile;
     if (stdoutFile != null) {
-      final target = _resolveSandboxPath(stdoutFile, options?.cwd ?? _currentDir);
-      await _writeRedirectBytes(stdoutBytes, target, append: redirects.appendStdout);
+      final target = _resolveSandboxPath(
+        stdoutFile,
+        options?.cwd ?? _currentDir,
+      );
+      await _writeRedirectBytes(
+        stdoutBytes,
+        target,
+        append: redirects.appendStdout,
+      );
       if (redirects.dupStderrIntoStdout && stderrBytes.isNotEmpty) {
         await _writeRedirectBytes(stderrBytes, target, append: true);
       }
@@ -916,8 +934,15 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   }) async {
     final stderrFile = redirects.stderrFile;
     if (stderrFile != null) {
-      final target = _resolveSandboxPath(stderrFile, options?.cwd ?? _currentDir);
-      await _writeRedirectBytes(stderrBytes, target, append: redirects.appendStderr);
+      final target = _resolveSandboxPath(
+        stderrFile,
+        options?.cwd ?? _currentDir,
+      );
+      await _writeRedirectBytes(
+        stderrBytes,
+        target,
+        append: redirects.appendStderr,
+      );
       if (redirects.dupStdoutIntoStderr && stdoutBytes.isNotEmpty) {
         await _writeRedirectBytes(stdoutBytes, target, append: true);
       }
@@ -1413,16 +1438,23 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     bool captureStdout,
   ) {
     return captureStdout
-        ? instance.stdout.listen((chunk) {
-            debugPrint('[wasm_shell] stdout chunk: ${chunk.length} bytes');
-            final clean = bridge?.filter(chunk) ?? chunk;
-            if (clean.isNotEmpty) {
-              io.collect(io.stdoutBuffer, Uint8List.fromList(clean), onStdout);
-            }
-          }, onDone: () {
-            io.stdoutDone = true;
-            debugPrint('[wasm_shell] stdout done');
-          })
+        ? instance.stdout.listen(
+            (chunk) {
+              debugPrint('[wasm_shell] stdout chunk: ${chunk.length} bytes');
+              final clean = bridge?.filter(chunk) ?? chunk;
+              if (clean.isNotEmpty) {
+                io.collect(
+                  io.stdoutBuffer,
+                  Uint8List.fromList(clean),
+                  onStdout,
+                );
+              }
+            },
+            onDone: () {
+              io.stdoutDone = true;
+              debugPrint('[wasm_shell] stdout done');
+            },
+          )
         : null;
   }
 
@@ -1433,13 +1465,16 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     bool captureStderr,
   ) {
     return captureStderr
-        ? instance.stderr.listen((chunk) {
-            debugPrint('[wasm_shell] stderr chunk: ${chunk.length} bytes');
-            io.collect(io.stderrBuffer, chunk, onStderr);
-          }, onDone: () {
-            io.stderrDone = true;
-            debugPrint('[wasm_shell] stderr done');
-          })
+        ? instance.stderr.listen(
+            (chunk) {
+              debugPrint('[wasm_shell] stderr chunk: ${chunk.length} bytes');
+              io.collect(io.stderrBuffer, chunk, onStderr);
+            },
+            onDone: () {
+              io.stderrDone = true;
+              debugPrint('[wasm_shell] stderr done');
+            },
+          )
         : null;
   }
 
@@ -2690,146 +2725,4 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     }
     return Ok(StageResult(stdout: stdout, stderr: stderr, exitCode: exitCode));
   }
-}
-
-/// Precedence-climbing evaluator for `expr` integer arithmetic:
-/// `*`/`/`/`%` bind tighter than `+`/`-`, comparisons loosest. Throws
-/// [FormatException] with GNU-expr-shaped messages on malformed input.
-final class _ExprEvaluator {
-  _ExprEvaluator(this._args);
-
-  final List<String> _args;
-  var _pos = 0;
-
-  String evaluate() {
-    final left = _parseSum();
-    if (_pos >= _args.length) return '$left';
-    return _compare(left);
-  }
-
-  /// At most one trailing comparison; anything after the right operand is
-  /// a syntax error.
-  String _compare(int left) {
-    const comparisons = {'=', '!=', '<', '<=', '>', '>='};
-    final op = _args[_pos++];
-    if (!comparisons.contains(op)) {
-      throw FormatException('syntax error: $op');
-    }
-    final right = _parseSum();
-    if (_pos != _args.length) throw const FormatException('syntax error');
-    final result = switch (op) {
-      '=' => left == right,
-      '!=' => left != right,
-      '<' => left < right,
-      '<=' => left <= right,
-      '>' => left > right,
-      '>=' => left >= right,
-      _ => false,
-    };
-    return result ? '1' : '0';
-  }
-
-  int _parseValue() {
-    if (_pos >= _args.length) throw const FormatException('syntax error');
-    final value = int.tryParse(_args[_pos]);
-    if (value == null) {
-      throw FormatException('non-integer argument: ${_args[_pos]}');
-    }
-    _pos++;
-    return value;
-  }
-
-  int _parseTerm() {
-    var value = _parseValue();
-    while (_pos < _args.length && _isMulOp(_args[_pos])) {
-      value = _applyMul(value, _args[_pos++], _parseValue());
-    }
-    return value;
-  }
-
-  int _parseSum() {
-    var value = _parseTerm();
-    while (_pos < _args.length && _isAddOp(_args[_pos])) {
-      final op = _args[_pos++];
-      value = op == '+' ? value + _parseTerm() : value - _parseTerm();
-    }
-    return value;
-  }
-
-  static bool _isMulOp(String op) => op == '*' || op == '/' || op == '%';
-
-  static bool _isAddOp(String op) => op == '+' || op == '-';
-
-  /// `*` never divides; `/` and `%` reject a zero right operand like GNU
-  /// expr.
-  int _applyMul(int value, String op, int rhs) {
-    if (op == '*') return value * rhs;
-    if (rhs == 0) throw const FormatException('division by zero');
-    return op == '/' ? value ~/ rhs : value % rhs;
-  }
-}
-
-/// Mutable stdio state for one running WASM stage: captured bytes, the
-/// first callback failure, and derived flags for outcome resolution.
-final class _StageIo {
-  final stdoutBuffer = <int>[];
-  final stderrBuffer = <int>[];
-  ExecutionError? callbackError;
-
-  /// Stream-closed markers (issue #1156 review): the drain can skip its
-  /// quiet window entirely once both stdio streams are done — the common
-  /// fast-exit-guest case.
-  bool stdoutDone = false;
-  bool stderrDone = false;
-
-  bool get hasOutput => stdoutBuffer.isNotEmpty || stderrBuffer.isNotEmpty;
-
-  /// Appends a raw chunk and mirrors it to the caller callback; callback
-  /// failures are recorded (first one wins) instead of breaking the pump.
-  void collect(
-    List<int> target,
-    Uint8List chunk,
-    void Function(String)? callback,
-  ) {
-    target.addAll(chunk);
-    if (callback == null) return;
-    try {
-      callback(utf8.decode(chunk, allowMalformed: true));
-    } on Object catch (error) {
-      callbackError ??= ExecutionError(
-        ExecutionErrorCode.callbackError,
-        error.toString(),
-        cause: error,
-      );
-    }
-  }
-}
-
-final class StageResult {
-  const StageResult({
-    required this.stdout,
-    required this.stderr,
-    required this.exitCode,
-  });
-  final List<int> stdout;
-  final List<int> stderr;
-  final int exitCode;
-}
-
-/// A redirect-target write failure, already sanitized to sandbox terms:
-/// [message] is the full stderr line in sh's shape (`sh: /ro_dir/f.txt:
-/// Permission denied`) and never contains a host path.
-final class _RedirectWriteError implements Exception {
-  _RedirectWriteError(this.sandboxPath, String sanitized) {
-    // The OS short phrase (`Permission denied`) when present, else the
-    // whole sanitized message.
-    final phrase = RegExp('OS Error: ([^,]+)').firstMatch(sanitized)?.group(1);
-    message = 'sh: $sandboxPath: ${(phrase ?? sanitized).trim()}\n';
-  }
-
-  final String sandboxPath;
-  late final String message;
-
-  @override
-  String toString() => message;
 }
