@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fa — Agent Wire Protocol example</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+  header { display: flex; gap: 8px; padding: 8px; border-bottom: 1px solid #ddd; align-items: center; }
+  header input { flex: 1; min-width: 0; }
+  #status { font-size: 12px; color: #666; white-space: nowrap; }
+  #log { flex: 1; overflow-y: auto; padding: 8px 12px; }
+  #log .assistant { white-space: pre-wrap; margin: 8px 0; }
+  #log .tool, #log .system { color: #666; font-size: 13px; font-family: ui-monospace, monospace; }
+  #log .tool.error { color: #b00; }
+  #log .unknown { color: #999; font-style: italic; }
+  #log .error { color: #b00; }
+  footer { display: flex; gap: 8px; padding: 8px; border-top: 1px solid #ddd; }
+  footer input { flex: 1; min-width: 0; }
+  button:disabled { opacity: 0.4; }
+</style>
+</head>
+<body>
+<header>
+  <input id="url" size="34" placeholder="ws://127.0.0.1:PORT/?token=…" aria-label="wire-serve WebSocket URL">
+  <button id="connect">Connect</button>
+  <span id="status">disconnected</span>
+</header>
+<div id="log" aria-live="polite"></div>
+<footer>
+  <input id="text" placeholder="Type a prompt…" aria-label="prompt">
+  <button id="send" disabled>Send</button>
+  <button id="abort" disabled>Abort</button>
+</footer>
+<script type="module">
+import {
+  acceptWelcome, helloFrame, frameLine, parseLine, decodeEvent, messageText,
+  promptCommand, steerCommand, abortCommand,
+  approvalResponseCommand, askResponseCommand, secretResponseCommand,
+} from '../dist/wire-client.js';
+
+const $ = (id) => document.getElementById(id);
+const log = $('log'), status = $('status'), sendBtn = $('send'), abortBtn = $('abort');
+let ws = null, running = false;
+
+const setStatus = (s) => { status.textContent = s; };
+const add = (cls, text) => {
+  const el = document.createElement('div');
+  el.className = cls; el.textContent = text; log.append(el);
+  log.scrollTop = log.scrollHeight;
+  return el;
+};
+let live = null; // the streaming assistant text element (partial-first: replace, never append)
+const setLive = (text) => {
+  if (!live) live = add('assistant', '');
+  live.textContent = text;
+};
+const send = (frame) => ws?.readyState === 1 && ws.send(frameLine(frame));
+
+$('connect').onclick = () => {
+  if (ws) { ws.close(); return; }
+  const url = $('url').value.trim();
+  if (!url) { setStatus('enter a ws:// URL'); return; }
+  let offered;
+  ws = new WebSocket(url);
+  ws.onopen = () => {
+    offered = helloFrame();
+    ws.send(frameLine(offered));
+    setStatus('handshaking…'); $('connect').textContent = 'Disconnect';
+  };
+  ws.onmessage = (e) => {
+    try {
+      // parseLine yields null for blank lines (legal NDJSON) — skip, not throw.
+      const frame = parseLine(e.data);
+      if (frame) handle(frame, offered.versions);
+    } catch (error) {
+      // Loud: a version or protocol failure must never limp silently.
+      setStatus(`${error.constructor.name}: ${error.message}`);
+      add('error', String(error));
+      ws.close();
+    }
+  };
+  ws.onerror = () => setStatus('socket error');
+  ws.onclose = () => {
+    ws = null; running = false;
+    sendBtn.disabled = abortBtn.disabled = true;
+    $('connect').textContent = 'Connect'; setStatus('disconnected');
+  };
+};
+
+function handle(frame, offered) {
+  if (frame.kind === 'welcome') {
+    const v = acceptWelcome(frame, offered); // loud on a bad handshake
+    setStatus(`connected (protocol v${v})`);
+    sendBtn.disabled = false;
+    return;
+  }
+  const decoded = decodeEvent(frame);
+  const f = decoded.frame;
+  switch (decoded.type) {
+    case 'known': return handleKnown(decoded.kind, f);
+    case 'request': return handleRequest(decoded);
+    case 'unknown': // E3: render nothing, keep the run alive.
+      add('unknown', `unknown_event: ${decoded.kind} (ignored, run continues)`);
+  }
+}
+
+function handleKnown(kind, f) {
+  switch (kind) {
+    case 'agent_start': case 'turn_start':
+      running = true; live = null; abortBtn.disabled = false;
+      if (kind === 'agent_start') add('system', '— agent run started —');
+      return;
+    case 'agent_end': case 'agent_settled':
+      running = false; abortBtn.disabled = true;
+      if (kind === 'agent_end') add('system', '— agent run ended —');
+      return;
+    case 'message_update': // partial-first: the frame's message IS the live snapshot.
+      return setLive(messageText(f.message));
+    case 'message_end':
+      if (f.message?.role === 'assistant') { setLive(messageText(f.message)); live = null; }
+      return;
+    case 'tool_execution_start':
+      add('tool', `⚙ ${f.toolName} ${JSON.stringify(f.args)}`);
+      return;
+    case 'tool_execution_end':
+      add(f.isError ? 'tool error' : 'tool', `${f.isError ? '✗' : '✓'} ${f.toolName}`);
+      return;
+    case 'tool_call_stuck':
+      add('error', `tool stuck: ${f.toolName} (${f.action})`);
+      return;
+    default: return; // model_request, heartbeats, repair: diagnostics, not UI.
+  }
+}
+
+function handleRequest(decoded) {
+  const f = decoded.frame, id = decoded.requestId;
+  if (decoded.kind === 'approval_request') {
+    const ok = confirm(`Approve ${f.toolName}?\n${JSON.stringify(f.arguments)}\n\n${f.reason} [tier: ${f.tier}]`);
+    send(approvalResponseCommand(id, ok ? 'approve_once' : 'deny'));
+  } else if (decoded.kind === 'ask_request') {
+    const answers = [];
+      // options is optional in the ask schema — a malformed question must
+      // degrade to free-text, not tear the session down.
+      const options = Array.isArray(q.options) ? q.options : [];
+      const labels = options.map((o) => o.label).join(', ');
+      const raw = prompt(`${q.question}${labels ? `\noptions: ${labels}` : ''}`);
+      if (raw === null) { send(askResponseCommand(id, null)); return; } // cancelled
+      const option = options.find((o) => o.label === raw);
+      answers.push(option ? { selected: [option.label] } : { freeText: raw });
+    }
+    send(askResponseCommand(id, answers));
+  } else if (decoded.kind === 'secret_request') {
+    const value = prompt(`Secret "${f.name}" requested\n${f.reason}\n\n(empty = decline)`);
+    // E4: the value rides the wire but is never rendered or logged here.
+    send(secretResponseCommand(id, value ? { name: f.name, value, persisted: false } : null));
+  }
+}
+
+$('send').onclick = submit;
+$('text').addEventListener('keydown', (e) => e.key === 'Enter' && submit());
+function submit() {
+  const text = $('text').value.trim();
+  if (!text || !ws) return;
+  send(running ? steerCommand(text) : promptCommand(text)); // mid-run: steering
+  add('system', `> ${text}`);
+  $('text').value = '';
+}
+$('abort').onclick = () => send(abortCommand());
+</script>
+</body>
+</html>
