@@ -4522,4 +4522,9 @@
 
 - gh-1210 [BENCH] Pre-seed a system-level git identity in task containers (fa-setup.sh.j2) — stop burning agent turns on 'Author identity unknown' (#1214)
 
+## 1.0.506
+
+- fix(#1044): AIIN mobile/macOS add-provider — sign-in completes but the provider is never added (#1194)
+- fix(ci): pass flutter-version explicitly — awf no longer defaults a toolchain (#1205)
+
 ## Unreleased
