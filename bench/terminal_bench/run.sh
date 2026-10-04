@@ -15,6 +15,12 @@
 #   fast model and a warm container network. The 0.1.1 baseline run
 #   (issue #142) lost trials to agents killed mid-progress and to test
 #   phases still apt-installing their own deps when the 60s cap hit.
+#   TEST_TIMEOUT_FLOOR (default 120) — pads the dataset's declared
+#   max_test_timeout_sec up to this floor before the run (gh-1206:
+#   slow-start server tasks and judge phases installing their own deps
+#   burn the 60s tb default and die as test_timeout with the agent DONE;
+#   240s effective at multiplier 2; a cap is a cap, not a wait, so fast
+#   verifier phases are unaffected). 0 = declared budgets unchanged.
 #
 # tb needs the docker socket; run via sudo with the user env preserved:
 #   sudo -n env HOME=$HOME PATH=$PATH bench/terminal_bench/run.sh -t hello-world
@@ -25,6 +31,7 @@ DATASET=${DATASET:-terminal-bench-core==0.1.1}
 case "$DATASET" in *==*) ;; *) echo "DATASET must be name==version, got: $DATASET" >&2; exit 1;; esac
 OUT=${OUT:-/tmp/tb-runs}
 TIMEOUT_MULTIPLIER=${TIMEOUT_MULTIPLIER:-2}
+TEST_TIMEOUT_FLOOR=${TEST_TIMEOUT_FLOOR:-120}
 BUNDLE=$(mktemp -d)/fa-bundle
 
 echo "==> building fa bundle"
@@ -37,6 +44,8 @@ echo "==> fetching dataset into tb cache (skipped when present)"
 tb datasets download -d "$DATASET"
 DS_CACHE="$HOME/.cache/terminal-bench/${DATASET%%==*}/${DATASET##*==}"
 python3 "$REPO/bench/terminal_bench/patch_dataset.py" "$DS_CACHE"
+python3 "$REPO/bench/terminal_bench/patch_test_timeouts.py" "$DS_CACHE" \
+    --floor "$TEST_TIMEOUT_FLOOR"
 
 echo "==> running terminal-bench"
 export FA_BUNDLE_TARBALL=/tmp/fa-bundle.tar.gz
