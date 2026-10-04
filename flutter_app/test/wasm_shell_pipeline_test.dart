@@ -816,4 +816,79 @@ void main() {
       expect(r.valueOrNull!.stderr, contains('no lazy loader'));
     });
   });
+
+  group('lazy interpreter loading in background jobs (gh-1224)', () {
+    /// A lazily-loaded shell (as `WasiSandboxShell.load` builds it: eight
+    /// eager modules + a counting loader, interpreters null) wired for
+    /// background jobs. The [loads] recorder doubles as the shared-cache
+    /// assertion input across job/foreground mixes.
+    WasiSandboxShell jobShell(List<String> loads) => WasiSandboxShell(
+      coreutils: _SlotModule(rec),
+      rg: _SlotModule(rec),
+      find: _SlotModule(rec),
+      sed: _SlotModule(rec),
+      awk: _SlotModule(rec),
+      tar: _SlotModule(rec),
+      gzip: _SlotModule(rec),
+      zip: _SlotModule(rec),
+      sandboxHostPath: sandbox.path,
+      moduleLoader: (asset) async {
+        loads.add(asset);
+        return _SlotModule(rec);
+      },
+    );
+
+    Future<ShellJob> startJob(WasiSandboxShell sh, String command) async {
+      io.Directory('${sandbox.path}/bash_jobs').createSync(recursive: true);
+      final started = await sh.startShellJob(
+        command,
+        id: 'gh-1224',
+        logPath: '${sandbox.path}/bash_jobs/gh-1224.log',
+      );
+      expect(started.isOk, isTrue, reason: command);
+      return started.valueOrNull!;
+    }
+
+    test('job-local clone executes python3 via the lazy loader', () async {
+      final loads = <String>[];
+      final sh = jobShell(loads);
+      rec.next = _ScriptedInstance();
+      final job = await startJob(sh, 'python3 -c "print(1)"');
+      await job.settled;
+      expect(job.exitCode, 0, reason: 'job log: ${io.File(job.logPath).readAsStringSync()}');
+      expect(loads, ['python.wasm']);
+      expect(rec.configs.single.args, ['python', '-c', 'print(1)']);
+    });
+
+    test('a module compiled by a job is reused by the foreground shell', () async {
+      final loads = <String>[];
+      final sh = jobShell(loads);
+      rec.next = _ScriptedInstance();
+      final job = await startJob(sh, 'python3 -c "print(1)"');
+      await job.settled;
+      expect(job.exitCode, 0);
+      // Foreground on the SAME shell: the compile from the job clone must
+      // be visible — no second 29 MB compile.
+      rec.next = _ScriptedInstance();
+      final r = await sh.exec('python -c "print(2)"');
+      expect(r.isOk, isTrue);
+      expect(r.valueOrNull!.exitCode, 0);
+      expect(loads, ['python.wasm'], reason: 'cache must be shared, not copied');
+      expect(rec.configs, hasLength(2));
+    });
+
+    test('sibling jobs reuse the module compiled by the first job', () async {
+      final loads = <String>[];
+      final sh = jobShell(loads);
+      rec.next = _ScriptedInstance();
+      final first = await startJob(sh, 'python3 -c "print(1)"');
+      await first.settled;
+      rec.next = _ScriptedInstance();
+      final second = await startJob(sh, 'python3 -c "print(2)"');
+      await second.settled;
+      expect(second.exitCode, 0);
+      expect(loads, ['python.wasm']);
+      expect(rec.configs, hasLength(2));
+    });
+  });
 }
