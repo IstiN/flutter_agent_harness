@@ -84,6 +84,11 @@ customProviders:
     apiType: openai
     baseUrl: ${server!.baseUrl}
     modelId: $kRegModelId
+tui:
+  statusLine:
+    # The omp reference capture pins symbolPreset: nerd; mirror the same
+    # E0B1 powerline-thin glyph table on the fa side (issue #918).
+    nerdSymbols: true
 ''');
   });
 
@@ -113,7 +118,7 @@ customProviders:
 
   /// Structural boot-screen diff against the committed omp twin.
   List<String> bootDiff(String name) => structuralDiff(
-    File('${faShots!}/$name.txt').readAsLinesSync(),
+    File('${faShots!.path}/$name.txt').readAsLinesSync(),
     File(
       '$repoRoot/test/integration/screenshots/omp_ref/$name.txt',
     ).readAsLinesSync(),
@@ -149,6 +154,20 @@ customProviders:
     (tester) async {
       final harness = await bootFa(tester);
       addTearDown(() => harness.close());
+
+      // Mirror the omp capture session exactly (issue #918): the reference
+      // twin drives the code-block turn first — omp's first turn of a
+      // session dispatches with an empty toolset at the pinned commit, so
+      // the text-only turn must go first there — and captures the tool
+      // turn with the snippet residue above it. fa replays the same
+      // sequence so the whole-screen chrome row inventory compares
+      // like-for-like.
+      harness.sendText(kRegPrompts['code_block']!);
+      harness.sendEnter();
+      await harness.liveWaitForScreen(
+        "print('hello omp parity')",
+        timeout: const Duration(minutes: 3),
+      );
 
       harness.sendText(kRegPrompts['tool_call']!);
       harness.sendEnter();

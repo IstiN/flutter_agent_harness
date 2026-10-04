@@ -91,7 +91,19 @@ void main() {
     ompCheckout = ompCheckoutEnv!;
     bunBin = bun0!;
     server = await MockLlmServer.start(
-      script: MockLlmScript.parse(kRegMockScriptYaml),
+      // omp at this pin fires background LLM requests (session titling,
+      // today-reminders) that match no scenario; an unmatched request is a
+      // 500 and omp retries it in a storm that wedges the UI before the
+      // first prompt dispatches (issue #918 capture debugging). A sticky
+      // catch-all absorbs them: empty match matches everything, placed
+      // LAST so the real prompts still match their scenarios first.
+      script: MockLlmScript.parse(
+        '$kRegMockScriptYaml\n'
+        '  - match: ""\n'
+        '    sticky: true\n'
+        '    responses:\n'
+        "      - text: 'ok'\n",
+      ),
     );
     // Hermetic omp agent dir: HOME for the child, carrying
     // .omp/agent/models.yml — omp's custom-provider table (docs/models.md)
@@ -101,6 +113,29 @@ void main() {
     modelsYml
       ..createSync(recursive: true)
       ..writeAsStringSync(_modelsYaml(server!.baseUrl));
+    // Suppress omp's first-run setup wizard (issue #918): a fresh agent dir
+    // otherwise drops the CLI into "Setup step 1 of 5 — Set up your
+    // providers" right after boot and the tool-call prompt gets typed into
+    // the wizard's provider search box. pi-tui setup/wizard.ts
+    // selectSetupScenes returns no scenes when startup.setupWizard is false
+    // (packages/coding-agent/src/main.ts reads it from agent config.yml).
+    File('${agentDir!.path}/.omp/agent/config.yml')
+      ..createSync(recursive: true)
+      ..writeAsStringSync(
+        'startup:\n'
+        '  setupWizard: false\n'
+        // omp's default symbolPreset is "unicode", which downgrades the
+        // powerline-thin status-bar separators to fallback chevrons
+        // (U+25B6); the REG parity detector counts U+E0B1 runs (the glyph
+        // fa renders natively). Pin the nerd preset so both sides emit the
+        // same separator band (issue #918 capture debugging).
+        'symbolPreset: nerd\n'
+        // omp auto-picks a theme whose statusLineBg (#070a10 for the
+        // auto-dark default) differs from fa's #121212; the built-in
+        // "dark" theme carries exactly #121212 (dark.json statusLineBg).
+        'theme:\n'
+        '  dark: dark\n',
+      );
     // Git-clean capture cwd: the git status segment must be hidden on BOTH
     // sides of the parity diff (the fa REG renders git: null too), and a
     // worktree branch name would leak path shapes into the bar.
@@ -160,7 +195,22 @@ void main() {
     //    fixture.
     await harness.screenshot(outDir, '02_status_bar_default');
 
-    // 3. Streaming turn with one tool call: the mock returns a `read` call
+    // 3 (captured second in file order but driven FIRST): fenced code
+    // block — a pure-text turn. omp at the pinned commit dispatches the
+    // FIRST turn of a session with an EMPTY toolset (async native tool
+    // registry, issue #918): a scripted tool call in turn 1 is dropped and
+    // the turn degrades to plain text. The text-only snippet turn completes
+    // cleanly and the toolset is attached for every later request, so the
+    // tool-call turn below sees its `read` offered and executes it.
+    harness.sendText(kRegPrompts['code_block']!);
+    harness.sendEnter();
+    await harness.liveWaitForScreen(
+      "print('hello omp parity')",
+      timeout: const Duration(minutes: 3),
+    );
+    await harness.screenshot(outDir, '04_code_block');
+
+    // 4. Streaming turn with one tool call: the mock returns a `read` call
     //    for note.md, then echoes the real tool result — the unique note
     //    marker lands on screen only after the read actually ran.
     harness.sendText(kRegPrompts['tool_call']!);
@@ -170,15 +220,6 @@ void main() {
       timeout: const Duration(minutes: 5),
     );
     await harness.screenshot(outDir, '03_tool_call');
-
-    // 4. Fenced code block.
-    harness.sendText(kRegPrompts['code_block']!);
-    harness.sendEnter();
-    await harness.liveWaitForScreen(
-      "print('hello omp parity')",
-      timeout: const Duration(minutes: 3),
-    );
-    await harness.screenshot(outDir, '04_code_block');
 
     final bunVersion = (await tester.runAsync(() async {
       final result = await Process.run(bunBin, ['--version']);

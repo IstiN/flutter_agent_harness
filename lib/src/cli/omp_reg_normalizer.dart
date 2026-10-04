@@ -22,7 +22,10 @@ library;
 /// Separator glyphs the status bar may use, by preset separator style
 /// (omp `separators.ts`; fa `StatusLineSeparatorStyle`).
 const Map<String, String> kRegSeparatorGlyphs = {
-  'powerline-thin': '\u{E0B2}',
+  // powerline-thin is the thin chevron U+E0B1 — omp's statusLine.separator
+  // "powerline-thin" and fa's sep.powerlineThin both render E0B1 (verified
+  // against captured twins, issue #918); E0B2 is the SOLID powerline cap.
+  'powerline-thin': '\u{E0B1}',
   'powerline-thick': '\u{E0B0}',
   'plain': ' ',
 };

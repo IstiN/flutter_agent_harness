@@ -685,7 +685,7 @@ StatusLineSpec resolveStatusLineSpec(
     left: kept(config?.left, preset.left),
     right: kept(config?.right, preset.right),
     separator: config?.separator ?? preset.separator,
-    nerdSymbols: preset.nerd,
+    nerdSymbols: config?.nerdSymbols ?? preset.nerd,
     transparent: config?.transparent ?? false,
     options:
         config?.segmentOptions?.mergedOver(preset.options) ?? preset.options,
@@ -761,6 +761,10 @@ final class StatusLineConfig {
   final StatusLineSegmentOptions? segmentOptions;
   final bool transparent;
 
+  /// Nerd-font glyph table override for the band (mirrors omp's
+  /// `symbolPreset: nerd`): the preset's `nerd` flag otherwise decides.
+  final bool? nerdSymbols;
+
   const StatusLineConfig({
     this.preset,
     this.left,
@@ -768,6 +772,7 @@ final class StatusLineConfig {
     this.separator,
     this.segmentOptions,
     this.transparent = false,
+    this.nerdSymbols,
   });
 
   /// The `tui.statusLine:` yaml block for the config round-trip; empty
@@ -777,6 +782,7 @@ final class StatusLineConfig {
       if (preset != null) '    preset: $preset',
       if (separator != null) '    separator: ${separator!.name}',
       if (transparent) '    transparent: true',
+      if (nerdSymbols != null) '    nerdSymbols: $nerdSymbols',
       if (left != null) '    left: [${left!.join(', ')}]',
       if (right != null) '    right: [${right!.join(', ')}]',
     ];
@@ -803,6 +809,7 @@ StatusLineConfig parseStatusLineConfig(Object? node) {
     'separator',
     'segmentOptions',
     'transparent',
+    'nerdSymbols',
   });
   final preset = _statusLinePreset(node['preset']);
   final optionsNode = node['segmentOptions'];
@@ -814,6 +821,10 @@ StatusLineConfig parseStatusLineConfig(Object? node) {
   final transparent = node['transparent'];
   if (transparent != null && transparent is! bool) {
     throw ConfigException('"tui.statusLine.transparent" must be a boolean');
+  }
+  final nerdSymbols = node['nerdSymbols'];
+  if (nerdSymbols != null && nerdSymbols is! bool) {
+    throw ConfigException('"tui.statusLine.nerdSymbols" must be a boolean');
   }
   final separator = node['separator'];
   return StatusLineConfig(
@@ -827,6 +838,7 @@ StatusLineConfig parseStatusLineConfig(Object? node) {
         ? null
         : parseSegmentOptions(optionsNode),
     transparent: transparent ?? false,
+    nerdSymbols: nerdSymbols,
   );
 }
 
