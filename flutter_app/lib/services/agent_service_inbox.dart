@@ -165,4 +165,10 @@ extension AgentServiceInbox on AgentService {
         UserMessage.text('from ${message.fromId}: ${message.text.trim()}'),
     ];
   }
+
+  int get inboxWakeStreakForTest => _inboxWakePolicy.streak;
+
+  set inboxWakeStreakForTest(int value) => _inboxWakePolicy.streak = value;
+
+  ScheduledReceiptLog get scheduledReceiptsForTest => _scheduledReceipts;
 }
