@@ -4598,4 +4598,11 @@
   immutable-SHA pin comments in ai-teammate.yml / machine-sm.yml
   rewritten to state the always-`main` policy (#1222).
 
+## 1.0.510
+
+- gh-1226 [BUG] 1.0.505 (with #1190 aboard): mail-wake turn after /sessions restore still loses the provider/key binding — copilot-401 error on a z.ai session + fused guidance text (#1237)
+- gh-1199 [GOAL] Deterministic-only Quality gate: mock LLM everywhere, live models move to supervised benches (#1229)
+- feat(1101): Agent Wire Protocol v1 — web reference client (sdk/web), conformance runner, browser example (#1228)
+- gh-1224 [BUG] iOS 1.0.504: all wasm interpreters (python/qjs/lua/sqlite3) dead — 'no lazy loader' in FOREGROUND bash _forJob() clone drops moduleLoader (regression suspect #1163) (#1225)
+
 ## Unreleased
