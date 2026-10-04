@@ -141,12 +141,15 @@ hostCapabilityCatalog = Map.unmodifiable({
   HostCapability.messagingFabric: CapabilitySpec(
     capability: HostCapability.messagingFabric,
     title: 'Messaging fabric',
-    note: 'Transports: file + hub (FallbackMessagingRepository) + a2a.',
+    note: 'Transports: file + hub (FallbackMessagingRepository) + a2a. The '
+        'file transport needs no host service; hub rides the hub plugin '
+        '(slice-2 run-narrowing drops the hub transport when the plugin is '
+        'absent — the file fabric keeps working).',
     cliWiringSites: [
       'lib/src/messaging/agent_fabric.dart (buildAgentFabric)',
       'bin/fah.dart (a2aConfig, hubFabric)',
     ],
-    requiredServices: {'hubFabric'},
+    requiredServicesByTransport: {'hub': {'hubFabric'}},
     surface: CapabilitySurface(
       tokens: {'schedule_message', 'agent_message', 'a2a'},
     ),
@@ -203,13 +206,16 @@ hostCapabilityCatalog = Map.unmodifiable({
   HostCapability.sqliteLspDap: CapabilitySpec(
     capability: HostCapability.sqliteLspDap,
     title: 'sqlite / lsp / dap',
-    note: 'FFI sqlite reader, process lsp transport, dap_* via the hub plugin.',
+    note: 'FFI sqlite reader, process lsp transport, dap_* via the hub plugin. '
+        'Per-transport services: the sqlite reader rides the ffi transport, '
+        'the lsp tool the process transport — a host without one keeps the '
+        'other (the base file tools never depend on this row).',
     cliWiringSites: [
       'bin/fah.dart (sqliteEngine, lspConfig, dapHubState)',
       'bin/fah_hub_plugin.dart (registerTool)',
     ],
-    requiredServices: {'sqliteEngine'},
     requiredServicesByTransport: {
+      'ffi': {'sqliteEngine'},
       'process': {'lspTransportFactory'},
     },
     surface: CapabilitySurface(tokens: {'sqlite', 'lsp', 'dap'}),
@@ -277,12 +283,15 @@ hostCapabilityCatalog = Map.unmodifiable({
     title: 'Vision + transcribe',
     note:
         'Inventory-driven (AC10): inspect_image/transcribe_audio/image '
-        'generation over the host vision/transcribe configs.',
+        'generation over the host vision/transcribe configs. No REQUIRED '
+        'services: the CLI registers generate_image/generate_video '
+        'unconditionally (config-gated models), and inspect/transcribe '
+        'ride per-tool config presence inside the assembly — the row '
+        'narrows only when a host profile declares it off.',
     cliWiringSites: [
       'bin/fah.dart (visionConfig, transcribeConfig)',
       'lib/src/cli/agent_cli.dart',
     ],
-    requiredServices: {'visionConfig', 'transcribeConfig'},
     surface: CapabilitySurface(
       tokens: {'inspect_image', 'transcribe_audio', 'generate_image'},
     ),

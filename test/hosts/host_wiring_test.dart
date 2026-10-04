@@ -14,7 +14,9 @@ import 'package:test/test.dart';
 import 'host_hiding.dart';
 
 /// Platform services the CLI-wired capabilities need (E1 seam; the names
-/// are the builder contract, the values are host-side in slice 2).
+/// are the builder contract, the values are host-side in slice 2). The
+/// vision/transcribe row requires no services — its per-tool config
+/// gating lives inside the slice-2 assembly.
 final cliPlatformServices = {
   'mcpTransportFactory': Object(),
   'hubFabric': Object(),
@@ -25,8 +27,6 @@ final cliPlatformServices = {
   'webSearchSecrets': Object(),
   'browserBridgeHandle': Object(),
   'extRuntimeFactory': Object(),
-  'visionConfig': Object(),
-  'transcribeConfig': Object(),
   'sessionRoot': Object(),
 };
 

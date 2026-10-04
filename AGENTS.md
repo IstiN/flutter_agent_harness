@@ -1653,6 +1653,20 @@ NARROW what the platform floor allows: force-enabling a floored
 capability throws `HostProfileViolation` at construction, never a runtime
 surprise.
 
+**Host shells wire through the builder (issue #1079 slice 2):** a host
+constructs its agent stack via `wireAgentCore` (lib/src/hosts/
+host_agent_wiring.dart) — typed `AgentCoreServices` in, `WiredAgentCore`
+(env chain + core tools + plan) and `buildAgentStack` (registry + agent)
+out. The CLI (`AgentCli`) is the reference shell. Per-run narrowing:
+a wired capability whose services the host did not provide turns
+`off(reason)` for that run (a null config section is a declared state,
+not a silent hand-rolled `if`), and wired transports with absent
+per-transport services are dropped. When adding a capability: declare
+every host's cell, add its `requiredServices` to the catalog, wire its
+tools inside `wireAgentCore`'s canonical order, and extend the
+hosts test — never gate tool registration with a bare `if` outside the
+builder.
+
 ## Commits and releases
 
 - Commit identity: human/AI contributors commit as `ai.teammate
