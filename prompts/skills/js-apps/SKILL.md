@@ -15,6 +15,30 @@ description: Create JS apps (jsr.render UI) that run inside Fa's Apps section �
 2. **ALL model calls go through the host bridges** — LLM via `jsr.fa.llm` / `jsr.fa.llm.chat` / `jsr.fa.llm.stream`, media via `jsr.fa.media.*`. NEVER fetch a model provider's API directly (no `api.openai.com` etc. in `jsr.fetchJson`): the user's configured models and media slots are the ones to reuse, and their keys never belong in app code.
 3. **Build JS apps on THIS platform** — `manifest.json` + `widget.js` in `apps/<id>/`. Do NOT scaffold Python/Node/web servers or separate Flutter projects: they cannot run here. Everything an app needs is a `jsr.*` bridge, `jsr.fetchJson`, or `jsr.exec` (allow-listed).
 
+## 🎯 Apps vs dynamic_message widgets — the routing decision (decisive)
+
+**The FIRST decision for any user request that smells like "make me an app":
+pick the surface by this table, no improvisation.**
+
+| User asks for… | Build | Why |
+|---|---|---|
+| an app, a tool, an experience, "something I can open again" | `apps/<id>/` + `manifest.json` + `widget.js` | installs into Fa's Apps section, has a manifest, permissions, storage, a standing test, launcher tile |
+| a one-off inline answer / a small interactive blip inside the current chat turn | a `dynamic_message` widget | ephemeral, rendered inline in the transcript, gone when the turn scrolls away |
+
+**The calculator anti-pattern (real incident, 2026-09-30):** the owner asked
+for a calculator; the agent built it as a `dynamic_message` widget. On screen
+it had render errors the agent could not see (see the error channel below),
+and the fix it eventually reasoned out was "rewrite as an installed app
+(`apps/<id>` + manifest.json) instead of a dynamic_message widget" — the
+hard part was wasted on the wrong surface. **Any standalone tool the user
+will open more than once or that has state belongs in `apps/<id>` — NOT in
+a `dynamic_message`.** When in doubt: `apps/<id>`.
+
+*Worked app examples to study — video player, app-state persistence,
+session binding:* see `test/apps/js_app_view_test.dart` (full calculator
+render), the storage recipe under `jsr.storage`, and the app-bound session
+flow (`jsr.exportState` + the user talking to you from inside the app).
+
 ## 📱 Platform (what this environment IS and IS NOT)
 
 The current Fa host platform is **`{{FA_PLATFORM}}`**. App manifests can use
@@ -1330,6 +1354,30 @@ Rules of thumb:
 - Assert both the exported state AND the tree (`engine.tree.value`) — a render that never fires is a bug even when logic is right.
 - Reference implementations to copy: `test/apps/js_app_engine_test.dart` (recipe 1), `test/apps/js_app_tap_test.dart` (recipe 2), `test/apps/js_app_view_test.dart` (full render of the calculator demo).
 - Pure render-tree checks (no engine needed) can build a hand-written tree through `JsonWidgetRenderer` directly — handy for layout tweaks.
+
+### Pre-flight gate: no fake success (owner ruling 2026-09-30)
+
+The app create/update/open flow is **tool-enforced**: before a tool call
+that creates, updates, or opens your app reports success, the app's
+standing test runs — or, on hosts without a Dart toolchain, an in-engine
+headless smoke render. A red test means the tool call FAILS with the
+failure excerpt; it never returns success for a broken app. The tool
+result states which gate ran (`flutter-test` or the degraded smoke gate) —
+it never silently skips the gate.
+
+**Tests are reusable artifacts, not one-shot scaffolding:** the app's
+`test/apps/<id>_test.dart` lives with the app. On every iteration, READ
+and EXTEND the existing test file — assert the new behavior on top of the
+old. NEVER regenerate it from scratch (that throws away the standing
+acceptance check). When you fix a bug, add the regression case to the
+same file.
+
+**The error channel:** when your app's JS throws at load/render/runtime,
+the host reports it back INTO the authoring session as a failed
+tool-result-style record (message + stack head + app id + source
+revision) — you do not have to ask the user "what does the screen say?".
+Identical errors dedup until the source changes; per-frame animation
+errors collapse to the first occurrence.
 
 ---
 
