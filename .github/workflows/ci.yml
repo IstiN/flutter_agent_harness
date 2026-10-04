@@ -1892,27 +1892,36 @@ jobs:
         run: |
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
-          mkdir -p "$tmp/bad" "$tmp/bad-hex" "$tmp/bad-composite/.github/actions/probe/deep" "$tmp/good" "$tmp/good-composite/.github/actions/probe/deep" "$tmp/string-safe"
+          mkdir -p "$tmp/bad" "$tmp/bad-hex" "$tmp/bad-composite/.github/actions/probe/deep" "$tmp/bad-awf-ref" "$tmp/bad-other-main" "$tmp/good" "$tmp/good-awf-main" "$tmp/good-composite/.github/actions/probe/deep" "$tmp/string-safe"
           printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@v4\n' > "$tmp/bad/bad.yml"
           printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@gggggggggggggggggggggggggggggggggggggggg\n' > "$tmp/bad-hex/bad.yml"
+          printf 'jobs:\n  probe:\n    steps:\n      - uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-sm.yml@master\n' > "$tmp/bad-awf-ref/wf.yml"
+          printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@main\n' > "$tmp/bad-other-main/wf.yml"
           printf 'name: probe\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@v4\n' > "$tmp/bad-composite/.github/actions/probe/deep/action.yaml"
           printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4\n' > "$tmp/good/good.yml"
+          # owner directive 2026-10-04: awf@main is the ONE accepted mutable
+          # ref (always-latest, review-gated; per-stub-enforced by
+          # test/machine_kit/factory_stub_ref_test.dart). Every other
+          # mutable ref — awf at a non-main ref, another repo at main —
+          # stays a violation (fixtures above).
+          printf 'jobs:\n  probe:\n    uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-sm.yml@main\n' > "$tmp/good-awf-main/wf.yml"
           printf 'name: probe\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4\n' > "$tmp/good-composite/.github/actions/probe/deep/action.yaml"
           # String-safety: a uses-shaped string INSIDE a run: scalar is not a
           # step ref — the checker is line-anchored (^[[:space:]]*(- )?uses:)
           # and must not flag it. (Regression: a reviewer suspected the
           # fixture printf lines in this very workflow would trip AC1.)
           printf "jobs:\n  probe:\n    steps:\n      - name: write fixture\n        run: |\n          printf 'jobs:\\\\n  probe:\\\\n    steps:\\\\n      - uses: actions/checkout@v4\\\\n' > out.yml\n          bash scripts/check_action_pins.sh --path . >/dev/null 2>&1 || true\n" > "$tmp/string-safe/wf.yml"
-          for bad in bad bad-hex bad-composite; do
+          for bad in bad bad-hex bad-composite bad-awf-ref bad-other-main; do
             if bash scripts/check_action_pins.sh --path "$tmp/$bad" >/dev/null 2>&1; then
               echo "::error::pin checker FAILED to flag the $bad fixture"
               exit 1
             fi
           done
           bash scripts/check_action_pins.sh --path "$tmp/good" >/dev/null
+          bash scripts/check_action_pins.sh --path "$tmp/good-awf-main" >/dev/null
           bash scripts/check_action_pins.sh --path "$tmp/good-composite" >/dev/null
           bash scripts/check_action_pins.sh --path "$tmp/string-safe" >/dev/null
-          echo "fixture regression OK: @v4 / 40-char non-hex / unpinned nested composite rejected; SHA-pinned accepted; uses-shaped run-scalar strings ignored"
+          echo "fixture regression OK: @v4 / 40-char non-hex / unpinned nested composite / awf@master / other-repo@main rejected; SHA-pinned + awf@main accepted; uses-shaped run-scalar strings ignored"
 
   # SEC-08 (#796): audit BOTH dependency graphs. pubspec_overrides.yaml
   # redirects dart_tui to the vendored fork (vendor/dart_tui) for local/CI/
