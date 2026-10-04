@@ -6,7 +6,6 @@
 
 part of 'wasm_shell.dart';
 
-
 /// Precedence-climbing evaluator for `expr` integer arithmetic:
 /// `*`/`/`/`%` bind tighter than `+`/`-`, comparisons loosest. Throws
 /// [FormatException] with GNU-expr-shaped messages on malformed input.

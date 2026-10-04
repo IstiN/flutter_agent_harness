@@ -28,6 +28,8 @@ import 'package:fa/sandbox/wasm_shell_builtins.dart';
 import 'package:fa/sandbox/wasm_shell_git.dart';
 import 'package:fa/sandbox/wasm_shell_ssh.dart';
 
+part 'wasm_shell_stages.dart';
+
 /// A [Shell] backed by a sandbox of permissive WASI binaries.
 ///
 /// This avoids the GPL licensing and portability problems of BusyBox by using
@@ -714,7 +716,8 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     // `.fah_pipe_N` files at the sandbox root cross-contaminated jobs and
     // polluted iOS's root — every invocation now owns a unique dir, so
     // pipe state dies with it.
-    final pipeDir = '/.fah/tmp/pipe-'
+    final pipeDir =
+        '/.fah/tmp/pipe-'
         '${DateTime.now().microsecondsSinceEpoch}-${_pipeSeq++}';
     final tempFiles = <io.File>[];
     String? previousOutputFile;
@@ -856,7 +859,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         options: options,
       );
       return Ok(
-        StageResult(stdout: outBytes, stderr: errBytes, exitCode: data.exitCode),
+        StageResult(
+          stdout: outBytes,
+          stderr: errBytes,
+          exitCode: data.exitCode,
+        ),
       );
     } on _RedirectWriteError catch (error) {
       // Issue #1156 E2: an unwritable redirect target is a normal failed
@@ -864,7 +871,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       _lastStageExitCode = 1;
       _lastStderr = (_lastStderr ?? '') + error.message;
       return Ok(
-        StageResult(stdout: const [], stderr: utf8.encode(error.message), exitCode: 1),
+        StageResult(
+          stdout: const [],
+          stderr: utf8.encode(error.message),
+          exitCode: 1,
+        ),
       );
     }
   }
@@ -884,8 +895,15 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   }) async {
     final stdoutFile = redirects.stdoutFile;
     if (stdoutFile != null) {
-      final target = _resolveSandboxPath(stdoutFile, options?.cwd ?? _currentDir);
-      await _writeRedirectBytes(stdoutBytes, target, append: redirects.appendStdout);
+      final target = _resolveSandboxPath(
+        stdoutFile,
+        options?.cwd ?? _currentDir,
+      );
+      await _writeRedirectBytes(
+        stdoutBytes,
+        target,
+        append: redirects.appendStdout,
+      );
       if (redirects.dupStderrIntoStdout && stderrBytes.isNotEmpty) {
         await _writeRedirectBytes(stderrBytes, target, append: true);
       }
@@ -916,8 +934,15 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   }) async {
     final stderrFile = redirects.stderrFile;
     if (stderrFile != null) {
-      final target = _resolveSandboxPath(stderrFile, options?.cwd ?? _currentDir);
-      await _writeRedirectBytes(stderrBytes, target, append: redirects.appendStderr);
+      final target = _resolveSandboxPath(
+        stderrFile,
+        options?.cwd ?? _currentDir,
+      );
+      await _writeRedirectBytes(
+        stderrBytes,
+        target,
+        append: redirects.appendStderr,
+      );
       if (redirects.dupStdoutIntoStderr && stdoutBytes.isNotEmpty) {
         await _writeRedirectBytes(stdoutBytes, target, append: true);
       }
@@ -1413,16 +1438,23 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     bool captureStdout,
   ) {
     return captureStdout
-        ? instance.stdout.listen((chunk) {
-            debugPrint('[wasm_shell] stdout chunk: ${chunk.length} bytes');
-            final clean = bridge?.filter(chunk) ?? chunk;
-            if (clean.isNotEmpty) {
-              io.collect(io.stdoutBuffer, Uint8List.fromList(clean), onStdout);
-            }
-          }, onDone: () {
-            io.stdoutDone = true;
-            debugPrint('[wasm_shell] stdout done');
-          })
+        ? instance.stdout.listen(
+            (chunk) {
+              debugPrint('[wasm_shell] stdout chunk: ${chunk.length} bytes');
+              final clean = bridge?.filter(chunk) ?? chunk;
+              if (clean.isNotEmpty) {
+                io.collect(
+                  io.stdoutBuffer,
+                  Uint8List.fromList(clean),
+                  onStdout,
+                );
+              }
+            },
+            onDone: () {
+              io.stdoutDone = true;
+              debugPrint('[wasm_shell] stdout done');
+            },
+          )
         : null;
   }
 
@@ -1433,13 +1465,16 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     bool captureStderr,
   ) {
     return captureStderr
-        ? instance.stderr.listen((chunk) {
-            debugPrint('[wasm_shell] stderr chunk: ${chunk.length} bytes');
-            io.collect(io.stderrBuffer, chunk, onStderr);
-          }, onDone: () {
-            io.stderrDone = true;
-            debugPrint('[wasm_shell] stderr done');
-          })
+        ? instance.stderr.listen(
+            (chunk) {
+              debugPrint('[wasm_shell] stderr chunk: ${chunk.length} bytes');
+              io.collect(io.stderrBuffer, chunk, onStderr);
+            },
+            onDone: () {
+              io.stderrDone = true;
+              debugPrint('[wasm_shell] stderr done');
+            },
+          )
         : null;
   }
 
