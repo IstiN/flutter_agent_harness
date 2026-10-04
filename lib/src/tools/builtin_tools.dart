@@ -2653,21 +2653,15 @@ Future<ToolExecutionResult> _awaitJobOutcome(
   ]);
 
   if (!finished) {
-    // The command keeps running as a background job; the wording names WHO
-    // moved it: a steering message (delivered right after this result) or
-    // the stuck-call supervisor's conversion (no steering is pending) —
-    // gh-1054 review: the hand-back must not misattribute the cause.
     final supervisorMoved = yieldToken.cancelReason is StuckCallFollowUp;
     final tail = await jobs.tail(entry.id, maxLines: 20);
     return ToolExecutionResult.text(
-      '$stuckBackgroundHandbackSentence${entry.id} '
-      '(the process was NOT killed) because '
-      '${supervisorMoved ? 'the stuck-call supervisor converted it — no steering message '
-                'is pending' : 'a steering message arrived, which follows next'}.\n'
-      'Log: ${entry.logPath}\n'
-      'You will be notified when the job finishes; check progress with '
-      'bash_job.'
-      '${tail.isEmpty ? '' : '\n\nPartial output so far:\n$tail'}',
+      stuckBackgroundHandbackText(
+        jobId: entry.id,
+        logPath: entry.logPath,
+        supervisorMoved: supervisorMoved,
+        partialOutput: tail,
+      ),
     );
   }
 

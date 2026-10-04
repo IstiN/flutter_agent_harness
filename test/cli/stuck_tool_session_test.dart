@@ -85,6 +85,35 @@ Map<String, Object?> normalized(CustomRecord record) {
   return {'type': record.customType, 'data': data};
 }
 
+/// Collapses runs of consecutive same-attempt heartbeats to their first
+/// record: heartbeat emission is wall-clock driven, so the exact count per
+/// supervised window legitimately jitters with load; the record SEQUENCE
+/// (which stages fired, in which order, for which attempt) is what AC5
+/// parity asserts.
+List<CustomRecord> collapseHeartbeatRuns(List<CustomRecord> records) {
+  final out = <CustomRecord>[];
+  for (final r in records) {
+    if (r.customType == toolHeartbeatRecordType &&
+        out.isNotEmpty &&
+        out.last.customType == toolHeartbeatRecordType &&
+        (out.last.data as Map)['attempt'] == (r.data as Map)['attempt']) {
+      continue;
+    }
+    out.add(r);
+  }
+  return out;
+}
+
+/// The raw JSONL text of the newest /work session — a direct env read, no
+/// repo open: a poll loop that re-opens the session takes the same lock
+/// the live REPL appends under, and that contention starved the very leg
+/// it watched under CI shard load (core shard 0, 2026-10-04).
+Future<String> sessionText(MemoryExecutionEnv env) async {
+  final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+  final sessions = await repo.list(cwd: '/work');
+  return (await env.readTextFile(sessions.first.path)).getOrThrow();
+}
+
 void main() {
   test(
     'AC1+AC4: headless run persists heartbeats and the escalation into the '
@@ -160,33 +189,37 @@ void main() {
       final run = replCli.run();
       await waitForSessions(replEnv);
       replIo.sendLine('run the long thing');
-      // Local (not the shared 25s/5ms helper): each poll parses the whole
-      // session JSONL, which the 60ms heartbeat cadence keeps growing —
-      // at shard-load the 5ms cadence turns into CPU starvation and the
-      // 25s budget ran dry while the REPL leg was healthy but slow
-      // (observed: first poll loop consumed the full budget with the
-      // records landing right after). 120s at a 50ms cadence keeps the
-      // same condition with headroom for the runner's worst shards.
-      var replLivenessWaited = false;
-      for (var i = 0; i < 1800 && !replLivenessWaited; i++) {
-        replLivenessWaited =
-            (await livenessRecords(replEnv)).length >= headlessRecords.length;
-        if (!replLivenessWaited) {
-          await Future<void>.delayed(const Duration(milliseconds: 50));
+      // Wait for the scenario's TERMINAL liveness record — the escalate
+      // stuck record — instead of a record-count parity. Heartbeat counts
+      // are wall-clock driven and the old poll re-opened the growing
+      // session JSONL every 50ms, contending with the live REPL's own
+      // 60ms appends: under CI shard load that out-ran even a 90s budget
+      // (core shard 0, 2026-10-04). The escalation is by construction the
+      // LAST liveness record of the scenario — after it the marked error
+      // feeds the model, whose scripted answer is a plain text turn. A
+      // raw-text scan takes no session lock; the 250ms cadence leaves the
+      // REPL the CPU it needs. 240s budget for the runner's worst shards.
+      var replEscalated = false;
+      for (var i = 0; i < 960 && !replEscalated; i++) {
+        replEscalated = (await sessionText(
+          replEnv,
+        )).contains('"action":"escalate"');
+        if (!replEscalated) {
+          await Future<void>.delayed(const Duration(milliseconds: 250));
         }
       }
       expect(
-        replLivenessWaited,
+        replEscalated,
         isTrue,
-        reason: 'the REPL run persists the same liveness records',
+        reason: 'the REPL run persisted its escalation (AC5 terminal record)',
       );
       replIo.sendLine('/exit');
       await run;
 
       final replRecords = await livenessRecords(replEnv);
       expect(
-        [for (final r in replRecords) normalized(r)],
-        [for (final r in headlessRecords) normalized(r)],
+        [for (final r in collapseHeartbeatRuns(replRecords)) normalized(r)],
+        [for (final r in collapseHeartbeatRuns(headlessRecords)) normalized(r)],
         reason:
             'AC5: headless and the TUI produce the same session records '
             '(timing aside)',

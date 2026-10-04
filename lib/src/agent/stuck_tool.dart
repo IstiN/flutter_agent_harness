@@ -298,3 +298,24 @@ final class StuckToolConfig {
     return true;
   }
 }
+
+/// Composes the full soft-yield hand-back result text for a bash call the
+/// supervisor (or a steering message) moved to a background job — the
+/// wording names WHO moved it (gh-1054 review: the hand-back must not
+/// misattribute the cause). Anchored on [stuckBackgroundHandbackSentence]
+/// so the loop's `_isBackgroundHandback` recognition keeps matching.
+/// Lives here so the wording and its anchor marker stay together.
+String stuckBackgroundHandbackText({
+  required String jobId,
+  required String logPath,
+  required bool supervisorMoved,
+  String? partialOutput,
+}) =>
+    '$stuckBackgroundHandbackSentence$jobId '
+    '(the process was NOT killed) because '
+    '${supervisorMoved ? 'the stuck-call supervisor converted it — no steering message '
+              'is pending' : 'a steering message arrived, which follows next'}.\n'
+    'Log: $logPath\n'
+    'You will be notified when the job finishes; check progress with '
+    'bash_job.'
+    '${partialOutput == null || partialOutput.isEmpty ? '' : '\n\nPartial output so far:\n$partialOutput'}';
