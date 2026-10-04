@@ -38,6 +38,21 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_macos_build_settings(target)
+
+    # flutter_inappwebview_macos (the 6.2.0-beta line, gh-1235): its
+    # podspec declares `s.platform = :osx, '10.14'` but
+    # WebAuthenticationSession.swift marks `presentationAnchor(for:)`
+    # `@available(macOS 10.15, *)`, so the
+    # ASWebAuthenticationPresentationContextProviding conformance fails to
+    # compile at the pod's 10.14 target ("requires 'presentationAnchor(for:)'
+    # to be available in macOS 10.14 and newer"). The app targets macOS 14.0
+    # already (platform :osx above); align just this pod target. Drop the
+    # patch once upstream fixes the podspec minimum.
+    if target.name == 'flutter_inappwebview_macos'
+      target.build_configurations.each do |config|
+        config.build_settings['MACOSX_DEPLOYMENT_TARGET'] = '14.0'
+      end
+    end
   end
 
   # flutter_gemma / LiteRT-LM: copy the Apple companion dylibs into the app

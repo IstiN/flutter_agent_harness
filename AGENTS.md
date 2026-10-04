@@ -1154,7 +1154,9 @@ factual: paths, commands, invariants — no essays.
   the JsRuntimeConfig and the JsonWidgetRenderer in js_app_view.dart —
   flutter_inappwebview rides the coherent 6.2.0-beta.3 set because 6.1.x's
   android impl evaluates getDefaultProguardFile('proguard-android.txt'),
-  which AGP 9 removed (APK CI leg); return to ^6.1.x once 6.2.0 stable
+  which AGP 9 removed (APK CI leg); the beta macos podspec pins 10.14 while
+  its Swift needs 10.15, so macos/Podfile's post_install aligns that one pod
+  target to the app's 14.0 floor; return to ^6.1.x once 6.2.0 stable
   ships —
   earlier hosted line shipped the queued-callEvent-after-dispose guard +
   restart-safe bridge channels that the old git pin carried, plus the M3
