@@ -84,7 +84,7 @@ extension AgentServiceAppConfig on AgentService {
       onTriggered: (rules) => AppLog.i(
         'ttsr',
         'rule violation: '
-        '${rules.map((rule) => rule.name).join(', ')} — retrying',
+            '${rules.map((rule) => rule.name).join(', ')} — retrying',
       ),
       onWarning: (message) => AppLog.i('ttsr', message),
     );

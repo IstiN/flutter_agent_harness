@@ -135,6 +135,7 @@ const _noProcessPlatforms = {'web', 'android', 'ios'};
 /// Persists sessions to [sessionsRoot] via [JsonlSessionRepo] and translates
 /// agent lifecycle events into a list of [FahChatMessage].
 class AgentService extends ChangeNotifier
+    with AgentServiceHistory
     implements FaChatConnection, FaApprovalModeController, FaChatService {
   /// The app's live service, when one exists (cleared on dispose).
   /// Settings surfaces that need agent-scoped state (the DAP page's
@@ -146,11 +147,6 @@ class AgentService extends ChangeNotifier
   /// store whose renames round-trip through the hosting backend so every
   /// surface sees them; `null` keeps the env-file store.
   SessionNamesStore? get namesStoreOverride => null;
-
-  /// The agent's opt-in hub membership (issue #402) — surfaces read the
-  /// live state and toggle the join from here.
-  AgentNetworkController get agentNetwork =>
-      _agentNetwork ?? (throw StateError('agentNetwork before initialize()'));
 
   /// The sleep-prevention guard (issue #325): acquired on `initialize`,
   /// released on `dispose`. Null (tests, web, `off` config) runs the
@@ -963,33 +959,6 @@ class AgentService extends ChangeNotifier
     SandboxPlatform? platformOverride,
   ]) => _effectiveAgentSystemPrompt(config, redactor, platformOverride);
 
-  /// The composed registry's tool names, in registration order (issue
-  /// #692 AC1 tests): pins the per-host availability floor — surfaces the
-  /// sandbox cannot run (LSP, MCP servers, DAP, checkpoints, the sqlite
-  /// engine) must be ABSENT from the app registry, not merely error at
-  /// call time.
-  @visibleForTesting
-
-  ]) {
-    // Seed for the live re-enable ([AgentServiceAppConfig]).
-    if (bootSecrets.isNotEmpty) _bootSecrets = bootSecrets;
-    if (redactor == null) return;
-    attachSecretRedactor(_agent, redactor);
-    // The layered pipeline (issue #24), now config-driven (AC4); a
-    // yaml-disabled one stays null, exactly like the CLI.
-    if (_yamlRedactConfig is RedactionConfig && !_yamlRedactConfig!.enabled) {
-      return;
-    }
-    _redactionPipeline ??= RedactionPipeline(
-      registeredSecrets: [
-        for (final value in bootSecrets.values)
-          if (value.length >= SecretRedactor.minValueLength) value,
-      ],
-      config: _yamlRedactConfig ?? const RedactionConfig(),
-    );
-    attachRedactionPipeline(_agent, _redactionPipeline!);
-  }
-
   /// The approval gate attached to the agent. Default mode is
   /// [ApprovalMode.write] — read-only tools run freely, mutating and shell
   /// tools prompt — switchable at runtime via [setApprovalMode] (settings
@@ -1111,7 +1080,6 @@ class AgentService extends ChangeNotifier
   /// never builds the messaging fabric, so widget tests that exercise
   /// subagent surfaces (badge, task list) install a bare manager here.
   @visibleForTesting
-
   /// Task tool config (child surface set after registry is built).
   TaskToolConfig? _taskConfig;
 
@@ -1134,16 +1102,12 @@ class AgentService extends ChangeNotifier
 
   /// Exposes the agent's registered tools to tests (ask-tool wiring checks).
   @visibleForTesting
-
   /// Exposes the live system prompt to tests (memory-section checks).
   @visibleForTesting
-
   /// Exposes the live secrets env to tests (`request_secret` grant checks).
   @visibleForTesting
-
   /// Exposes the redactor to tests (runtime secret registration checks).
   @visibleForTesting
-
   /// Switches the approval mode (settings dialog's mode selector) and
   /// persists the choice when a store is wired (fire-and-forget — the UI
   /// never blocks on the write).
@@ -1429,113 +1393,35 @@ class AgentService extends ChangeNotifier
   /// it reports the contract's complete-transcript `0`, so the banner
   /// never renders on it (issue #974: the first-message sticker).
   @override
-  int? get historyAboveCount => _windowed == null ? 0 : _historyAboveCount;
-  int? _historyAboveCount;
-
   /// Hidden-range drill-in (issue #385 F4): resolves a compacted row's
   /// covered records straight from the session file via the windowed
   /// chunk reader — bounded previews, missing ids render as explicit
   /// "not captured" placeholders. Full-open sessions have no hidden
   /// range, so they expose no resolver (the tab stays hidden).
   @override
-  Future<List<TrajectoryHiddenRecordPreview>> Function(
-    TrajectoryCompactedRecord record,
-  )?
-  get resolveHiddenRecords {
-    final reader = _windowed?.reader;
-    if (reader == null) return null;
-    return (record) async {
-      final ids = record.hiddenRecordIds ?? const <String>[];
-      if (ids.isEmpty) return const [];
-      try {
-        final resolved = await reader.readRecordsByIds(ids.toSet());
-        return projectHiddenRecordPreviews(recordIds: ids, resolved: resolved);
-      } on Object {
-        return [
-          for (final id in ids)
-            TrajectoryHiddenRecordPreview(
-              id: id,
-              type: 'missing',
-              preview: '[hidden: not captured for this session]',
-            ),
-        ];
-      }
-    };
-  }
-
-  bool _loadingHistory = false;
-
   /// Whether a history page ([FaChatService.loadOlderHistory] or
   /// [loadNewerHistory]) is in flight — the banners' spinner state.
   @override
-  bool get historyLoading => _loadingHistory;
-
   /// The exact total record count once the background count landed —
   /// the N of the terminal "Beginning of session (1 of N)" banner
   /// (issue #135 E6); `null` until then and for full-open sessions.
   @override
-  int? get historyTotalCount => _windowed?.cachedTotalRecords;
-
   /// Transcript records BELOW the loaded window (deep paging evicted
   /// the newest side): what the "Load newer" banner shows. `0` for
   /// full-open sessions and at the live tail.
   @override
-  bool get historyHasNewer => _windowed?.hasNewer ?? false;
-
   /// Transcript records below the loaded window; `null` while unknown
   /// (the UI keys banner visibility on [historyHasNewer]).
   @override
-  int? get historyBelowCount => _windowed?.countBelow;
-
   /// The last history-page failure, shown by the history banner
   /// ([FaChatService.historyLoadError]); cleared by a successful retry.
   /// Kept separate from [error] so a failed history page never touches
   /// the live transcript's error line.
   @override
-  String? get historyLoadError => _historyLoadError;
-  String? _historyLoadError;
-
-  /// The VIEW branch (issue #135 round 2): every loaded branch record,
-  /// root-first — what the transcript renders. Paging in either
-  /// direction only grows/sets this list; the provider context
-  /// ([_agent.state.messages]) is NEVER touched by paging (windowing
-  /// is a view concern, not a context concern). `null` for full-open
-  /// sessions (rows come straight from the loaded context).
-  List<SessionRecord>? _viewBranch;
-
   /// Pages one chunk of records above the window into the transcript
   /// ([FaChatService.loadOlderHistory]). Re-entrant taps are ignored, as
   /// is any tap mid-run.
   @override
-  Future<void> loadOlderHistory() async {
-    if (_loadingHistory || isStreaming) return;
-    final windowed = _windowed;
-    if (windowed == null) return;
-    final gen = _loadGeneration;
-    _loadingHistory = true;
-    notifyListeners();
-    try {
-      final joined = await windowed.loadOlder();
-      if (gen != _loadGeneration) return;
-      if (joined.isNotEmpty) {
-        await _syncViewToWindow(windowed);
-        await _applyViewBranch();
-      }
-      await _refreshHistoryAbove();
-      if (gen != _loadGeneration) return;
-      if (_historyLoadError != null) {
-        _historyLoadError = null;
-        notifyListeners();
-      }
-    } on Object catch (e) {
-      _historyLoadError = e is StateError ? e.message : e.toString();
-      notifyListeners();
-    } finally {
-      _loadingHistory = false;
-      notifyListeners();
-    }
-  }
-
   /// Pages the transcript back to the live tail
   /// ([FaChatService.loadNewerHistory]) — the page-down path after deep
   /// paging slid the newest side out. NEVER gated on [isStreaming]: the
@@ -1545,66 +1431,6 @@ class AgentService extends ChangeNotifier
   /// the window (jump-to-tail, no chunk crawl); the only guards are a
   /// concurrent page load and a stale load generation.
   @override
-  Future<void> loadNewerHistory() async {
-    if (_loadingHistory) return;
-    final windowed = _windowed;
-    if (windowed == null) return;
-    // At-tail tap: nothing sits below — skip the rebuild and the
-    // whole-file count re-scan entirely.
-    if (!windowed.hasNewer) return;
-    final gen = _loadGeneration;
-    _loadingHistory = true;
-    notifyListeners();
-    try {
-      await windowed.jumpToTail();
-      if (gen != _loadGeneration) return;
-      // Let an in-flight persist pass flush first so the branch read
-      // below observes just-finalized records: a turn boundary landing
-      // mid-jump must not leave its row stranded out of view until the
-      // next reprojection (review -FbK vanish variant). Best effort —
-      // a failed persist must not break the jump.
-      if (_persistPass case final pass?) {
-        try {
-          await pass;
-        } on Object {
-          // Ignored: the next persist pass retries.
-        }
-        if (gen != _loadGeneration) return;
-      }
-      await _syncViewToWindow(windowed);
-      if (gen != _loadGeneration) return;
-      await _applyViewBranch();
-      if (gen != _loadGeneration) return;
-      // Live rows the projection cannot know — in-flight tool activity
-      // tiles and the streaming assistant/thinking bubbles are plain
-      // rows in [messages], not records yet. Re-read AFTER the rebuild
-      // settles: capturing earlier races a mid-jump turn boundary into
-      // re-appending a bubble the finalize already landed as a record —
-      // a duplicate (review -FbK). There is no await between the rebuild
-      // and this capture, so the fields are read atomically with the
-      // projection snapshot. The contains-check and the empty-bubble
-      // guard mirror _finalizeAssistant's own invariants.
-      final liveRows = [
-        ..._inFlightToolRows.map((e) => e.row),
-        if (_currentThinkingMessage case final t?) t,
-        if (_currentAssistantMessage case final a?
-            when a.content.trim().isNotEmpty)
-          a,
-      ].where((row) => !messages.contains(row)).toList();
-      messages.addAll(liveRows);
-      await _refreshHistoryAbove();
-      if (gen != _loadGeneration) return;
-      _historyLoadError = null;
-      notifyListeners();
-    } on Object catch (e) {
-      _historyLoadError = e is StateError ? e.message : e.toString();
-      notifyListeners();
-    } finally {
-      _loadingHistory = false;
-      notifyListeners();
-    }
-  }
-
   /// Jump-to-message (issue #135 AC6,
   /// [FaChatService.jumpToMessage]). Two mechanisms:
   ///
@@ -1615,40 +1441,6 @@ class AgentService extends ChangeNotifier
   ///   history in until the target row is loaded. Bounded — a miss
   ///   resolves as `false`, never a full read.
   @override
-  Future<bool> jumpToMessage(String messageId) async {
-    final windowed = _windowed;
-    if (windowed == null) {
-      final index = _positionalRow(messageId);
-      if (index == null) return _jumpLoadedRecord(messageId);
-      return index >= 0 && index < messages.length;
-    }
-    if (!messageId.startsWith('msg-')) {
-      return _jumpToRecord(windowed, messageId);
-    }
-    final index = _positionalRow(messageId);
-    if (index == null) return false;
-    if (_loadingHistory || isStreaming) return index < messages.length;
-    final gen = _loadGeneration;
-    _loadingHistory = true;
-    notifyListeners();
-    var reached = index < messages.length;
-    try {
-      for (var pass = 0; !reached && pass < 100 && windowed.hasOlder; pass++) {
-        final joined = await windowed.loadOlder();
-        if (joined.isEmpty || gen != _loadGeneration) break;
-        await _syncViewToWindow(windowed);
-        await _applyViewBranch();
-        reached = index < messages.length;
-      }
-    } on Object catch (e) {
-      _historyLoadError = e is StateError ? e.message : e.toString();
-    } finally {
-      _loadingHistory = false;
-      notifyListeners();
-    }
-    return reached;
-  }
-
   Session? _session;
   String? _sessionId;
   String? _sessionFile;
@@ -1712,11 +1504,9 @@ class AgentService extends ChangeNotifier
   /// [_inboxWakePolicy] (one source of truth).
   @visibleForTesting
   @visibleForTesting
-
   /// Test seam: the persisted receipt trail (queue-side AND wake-path
   /// events, gh-1180 AC4).
   @visibleForTesting
-
   var _fabricHeartbeatTick = 0;
 
   /// Whether the over-window guard's one-shot auto-continuation was used

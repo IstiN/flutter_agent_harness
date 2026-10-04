@@ -51,6 +51,25 @@ extension AgentServiceWiring on AgentService {
   void _attachRedactor(
     SecretRedactor? redactor, [
     Map<String, String> bootSecrets = const {},
+  ]) {
+    // Seed for the live re-enable ([AgentServiceAppConfig]).
+    if (bootSecrets.isNotEmpty) _bootSecrets = bootSecrets;
+    if (redactor == null) return;
+    attachSecretRedactor(_agent, redactor);
+    // The layered pipeline (issue #24), now config-driven (AC4); a
+    // yaml-disabled one stays null, exactly like the CLI.
+    if (_yamlRedactConfig is RedactionConfig && !_yamlRedactConfig!.enabled) {
+      return;
+    }
+    _redactionPipeline ??= RedactionPipeline(
+      registeredSecrets: [
+        for (final value in bootSecrets.values)
+          if (value.length >= SecretRedactor.minValueLength) value,
+      ],
+      config: _yamlRedactConfig ?? const RedactionConfig(),
+    );
+    attachRedactionPipeline(_agent, _redactionPipeline!);
+  }
 
   /// Registers a secret into both masking systems (legacy exact redactor
   /// + the layered pipeline's registered layer).
@@ -279,4 +298,9 @@ extension AgentServiceWiring on AgentService {
   /// Model id of the active backend, read live from the agent's model state;
   /// the settings Task models section uses it as the editor's placeholder.
   String get agentModelId => _agent.state.model.id;
+
+  /// The agent's opt-in hub membership (issue #402) — surfaces read the
+  /// live state and toggle the join from here.
+  AgentNetworkController get agentNetwork =>
+      _agentNetwork ?? (throw StateError('agentNetwork before initialize()'));
 }
