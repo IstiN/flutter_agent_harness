@@ -44,6 +44,7 @@ import '../model_roles/model_roles.dart';
 import '../redact/redaction_types.dart';
 import '../spill/spill.dart';
 import '../cli/links_config.dart';
+import '../cli/output_config.dart';
 import '../tools/availability.dart';
 import '../tools/load_modes.dart';
 import '../task/subagent_heartbeat.dart';
@@ -92,6 +93,10 @@ const configTopLevelKeys = <String>{
   // project/user yaml (and the FA_PROVIDERS_QUEUE env) parsed by the
   // queue resolver (lib/src/model_roles/providers_queue.dart).
   'providersQueue',
+
+  // Console-output behavior flags (gh-1198): the opt-in live thinking
+  // stream (`output.streamThinking`).
+  'output',
 };
 
 /// Top-level keys that carry a plain string value.
@@ -1139,6 +1144,9 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   // resolves at boot, where the user-theme set is known; unknown names
   // warn and keep the default).
   'tui': (value, label) => _validateTuiSection(value, label),
+  // The output section (gh-1198) delegates to the SAME pure strict
+  // parser CliConfig.fromYaml uses — no mirror to keep in sync.
+  'output': (value, _) => parseOutputSection(value),
 };
 
 void _validateTuiSection(Object? node, String label) {
