@@ -164,9 +164,7 @@ class JsAppErrorChannel {
     required String surface,
   }) {
     final buf = StringBuffer()
-      ..writeln(
-        "App '$appId' ($surface) reported a ${event.kind.name} error:",
-      )
+      ..writeln("App '$appId' ($surface) reported a ${event.kind.name} error:")
       ..writeln(_cap(event.message, maxMessageChars));
     if (event.stack.isNotEmpty) {
       final frames = event.stack

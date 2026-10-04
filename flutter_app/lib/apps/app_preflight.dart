@@ -149,7 +149,7 @@ Future<AppPreflightOutcome> runSmokeRenderGate(
           ? 'no first render within ${renderBudget.inSeconds}s; captured '
                 'error: ${errors.first.event.message}'
           : 'no first render within ${renderBudget.inSeconds}s (a syntax '
-              'error in the entry usually produces no render at all)';
+                'error in the entry usually produces no render at all)';
       return AppPreflightFailed(gate: 'smoke-render', excerpt: excerpt);
     }
     if (errors.isNotEmpty) {
@@ -236,10 +236,7 @@ Future<AppPreflightOutcome?> runAppPreflight(
   String appId,
   ExecutionEnv env, {
   FlutterTestRunner? testRunner,
-  Future<AppPreflightOutcome> Function(
-    JsAppInfo app,
-    ExecutionEnv env,
-  )?
+  Future<AppPreflightOutcome> Function(JsAppInfo app, ExecutionEnv env)?
   smokeProbe,
   bool? jsEngineBootableOverride,
 }) async {
@@ -262,17 +259,15 @@ Future<AppPreflightOutcome?> runAppPreflight(
     return AppPreflightFailed(gate: 'none', excerpt: manifestError);
   }
   final foundId = found.id;
-  final hasTest = (await env.listDir('test/apps')).valueOrNull?.any(
-        (entry) => entry.name == '${foundId}_test.dart',
-      ) ??
+  final hasTest =
+      (await env.listDir(
+        'test/apps',
+      )).valueOrNull?.any((entry) => entry.name == '${foundId}_test.dart') ??
       false;
   if (testRunner != null && hasTest) {
     final result = await testRunner.runAppTest(foundId);
     if (!result.passed) {
-      return AppPreflightFailed(
-        gate: 'flutter-test',
-        excerpt: result.output,
-      );
+      return AppPreflightFailed(gate: 'flutter-test', excerpt: result.output);
     }
     return const AppPreflightPassed(gate: 'flutter-test');
   }

@@ -467,7 +467,11 @@ class JsAppEngine {
   /// Host-side error capture (gh-1164): Flutter render-host exceptions and
   /// any other surface failure the view wants on the agent's channel —
   /// same gate + delivery as JS-reported errors.
-  void reportHostError(String message, {String kind = 'render', String? stack}) {
+  void reportHostError(
+    String message, {
+    String kind = 'render',
+    String? stack,
+  }) {
     final parsed = JsAppErrorKind.values.asNameMap()[kind];
     _forwardError(
       JsAppErrorEvent(

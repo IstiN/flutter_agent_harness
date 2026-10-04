@@ -69,9 +69,7 @@ void main() {
         final captured = <JsAppErrorEvent>[];
         await tester.runAsync(() async {
           final env = MemoryExecutionEnv();
-          await env.writeFile(
-            'apps/demo/widget.js',
-            '''
+          await env.writeFile('apps/demo/widget.js', '''
 (function() {
   jsr.render({type: 'text', data: 'hi'});
   var n = 0;
@@ -80,8 +78,7 @@ void main() {
     throw new Error('frame error ' + n);
   }, 30);
 })();
-''',
-          );
+''');
           final engine = JsAppEngine(
             app: _app(),
             env: env,
@@ -103,39 +100,38 @@ void main() {
       },
     );
 
-    testWidgets(
-      'sourceRevision re-arms when the app source changes (AC4)',
-      (tester) async {
-        await tester.runAsync(() async {
-          final env = MemoryExecutionEnv();
-          await env.writeFile(
-            'apps/demo/widget.js',
-            '(function(){jsr.render({type:"text",data:"v1"});})();',
-          );
-          final engine = JsAppEngine(
-            app: _app(),
-            env: env,
-            permissions: const AppPermissions(),
-          );
-          await engine.start();
-          final first = engine.sourceRevision;
-          expect(first, isNotEmpty);
-          await engine.dispose();
+    testWidgets('sourceRevision re-arms when the app source changes (AC4)', (
+      tester,
+    ) async {
+      await tester.runAsync(() async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile(
+          'apps/demo/widget.js',
+          '(function(){jsr.render({type:"text",data:"v1"});})();',
+        );
+        final engine = JsAppEngine(
+          app: _app(),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        await engine.start();
+        final first = engine.sourceRevision;
+        expect(first, isNotEmpty);
+        await engine.dispose();
 
-          await env.writeFile(
-            'apps/demo/widget.js',
-            '(function(){jsr.render({type:"text",data:"v2"});})();',
-          );
-          final second = JsAppEngine(
-            app: _app(),
-            env: env,
-            permissions: const AppPermissions(),
-          );
-          await second.start();
-          expect(second.sourceRevision, isNot(first));
-          await second.dispose();
-        });
-      },
-    );
+        await env.writeFile(
+          'apps/demo/widget.js',
+          '(function(){jsr.render({type:"text",data:"v2"});})();',
+        );
+        final second = JsAppEngine(
+          app: _app(),
+          env: env,
+          permissions: const AppPermissions(),
+        );
+        await second.start();
+        expect(second.sourceRevision, isNot(first));
+        await second.dispose();
+      });
+    });
   });
 }

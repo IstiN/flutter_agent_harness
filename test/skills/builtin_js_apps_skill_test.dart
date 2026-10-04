@@ -38,7 +38,8 @@ void main() {
     expect(
       text,
       contains('belongs in `apps/<id>`'),
-      reason: 'routing rule must be unambiguous (incident: the agent '
+      reason:
+          'routing rule must be unambiguous (incident: the agent '
           'guessed its way to apps/<id> only after building the wrong '
           'surface)',
     );

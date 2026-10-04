@@ -84,22 +84,25 @@ void main() {
     );
   });
 
-  test('publish routes to subscribers; without a listener it is inert (E3)', () async {
-    final notice = JsAppErrorNotice(
-      event: _error(),
-      appId: 'calc',
-      surface: 'app',
-      sourceRevision: 'r1',
-      notice: 'n',
-    );
-    expect(channel.publish(notice), isFalse);
-    final received = <JsAppErrorNotice>[];
-    final sub = channel.onDeliver.listen(received.add);
-    expect(channel.publish(notice), isTrue);
-    await pumpEventQueue();
-    expect(received, hasLength(1));
-    await sub.cancel();
-  });
+  test(
+    'publish routes to subscribers; without a listener it is inert (E3)',
+    () async {
+      final notice = JsAppErrorNotice(
+        event: _error(),
+        appId: 'calc',
+        surface: 'app',
+        sourceRevision: 'r1',
+        notice: 'n',
+      );
+      expect(channel.publish(notice), isFalse);
+      final received = <JsAppErrorNotice>[];
+      final sub = channel.onDeliver.listen(received.add);
+      expect(channel.publish(notice), isTrue);
+      await pumpEventQueue();
+      expect(received, hasLength(1));
+      await sub.cancel();
+    },
+  );
 
   test('disposeAndReset re-arms the gate', () {
     expect(report(channel, _error())!.deliver, isTrue);

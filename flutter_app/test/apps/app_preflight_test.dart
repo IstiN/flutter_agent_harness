@@ -88,17 +88,10 @@ void main() {
       final runner = _FakeRunner(
         const FlutterTestResult(passed: false, output: 'EXCERPT: expected 2'),
       );
-      final outcome = await runAppPreflight(
-        'demo',
-        env,
-        testRunner: runner,
-      );
+      final outcome = await runAppPreflight('demo', env, testRunner: runner);
       expect(outcome, isA<AppPreflightFailed>());
       expect(outcome!.gate, 'flutter-test');
-      expect(
-        (outcome as AppPreflightFailed).excerpt,
-        contains('EXCERPT'),
-      );
+      expect((outcome as AppPreflightFailed).excerpt, contains('EXCERPT'));
       expect(runner.ranFor, ['demo']);
     });
 
@@ -144,13 +137,16 @@ void main() {
       expect(outcome!.gate, 'smoke-render');
     });
 
-    test('a broken manifest fails fast, gate named none (issue #866)', () async {
-      final env = MemoryExecutionEnv();
-      await env.writeFile('apps/broken/manifest.json', '{not json');
-      final outcome = await runAppPreflight('broken', env);
-      expect(outcome, isA<AppPreflightFailed>());
-      expect(outcome!.gate, 'none');
-    });
+    test(
+      'a broken manifest fails fast, gate named none (issue #866)',
+      () async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('apps/broken/manifest.json', '{not json');
+        final outcome = await runAppPreflight('broken', env);
+        expect(outcome, isA<AppPreflightFailed>());
+        expect(outcome!.gate, 'none');
+      },
+    );
   });
 
   group('open_app no-fake-success contract (AC7)', () {

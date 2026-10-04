@@ -130,54 +130,50 @@ void main() {
     },
   );
 
-  test(
-    'every retired-BUNDLED-seed fingerprint matches a per-platform variant '
-    'of the frozen raw bytes (gh-1164 js-apps)',
-    () {
+  test('every retired-BUNDLED-seed fingerprint matches a per-platform variant '
+      'of the frozen raw bytes (gh-1164 js-apps)', () {
+    expect(
+      _bundledMap,
+      isNotNull,
+      reason:
+          'the _staleBundledSeedFingerprints literal moved in the app '
+          'source — update this parser',
+    );
+    expect(
+      _bundledEntries,
+      isNotEmpty,
+      reason: 'no bundled fingerprints parsed from the app source',
+    );
+    const platforms = ['macos', 'ios', 'android', 'windows', 'linux', 'web'];
+    for (final match in _bundledEntries) {
+      final name = match.group(1)!;
+      final hashes = RegExp(
+        r"'([0-9a-f]{64})'",
+      ).allMatches(match.group(2)!).map((m) => m.group(1)!).toSet();
+      final fixture = File(
+        '$_repoRoot/flutter_app/test/fixtures/retired_${name.replaceAll('-', '_')}_skill.md',
+      );
       expect(
-        _bundledMap,
-        isNotNull,
+        fixture.existsSync(),
+        isTrue,
+        reason: 'frozen raw bytes of the retired bundled skill missing',
+      );
+      final raw = fixture.readAsStringSync();
+      final expected = {
+        for (final platform in platforms)
+          sha256
+              .convert(utf8.encode(_filterPlatformInstructions(raw, platform)))
+              .toString(),
+      };
+      expect(
+        hashes,
+        expected,
         reason:
-            'the _staleBundledSeedFingerprints literal moved in the app '
-            'source — update this parser',
+            'the _staleBundledSeedFingerprints[$name] map must pin exactly '
+            'per-platform variants of the frozen raw bytes — the old '
+            'seeder wrote filterPlatformInstructions(raw, platform: P) '
+            'per platform, so the cleanup accepts any of them.',
       );
-      expect(
-        _bundledEntries,
-        isNotEmpty,
-        reason: 'no bundled fingerprints parsed from the app source',
-      );
-      const platforms = ['macos', 'ios', 'android', 'windows', 'linux', 'web'];
-      for (final match in _bundledEntries) {
-        final name = match.group(1)!;
-        final hashes = RegExp(r"'([0-9a-f]{64})'")
-            .allMatches(match.group(2)!)
-            .map((m) => m.group(1)!)
-            .toSet();
-        final fixture = File(
-          '$_repoRoot/flutter_app/test/fixtures/retired_${name.replaceAll('-', '_')}_skill.md',
-        );
-        expect(
-          fixture.existsSync(),
-          isTrue,
-          reason: 'frozen raw bytes of the retired bundled skill missing',
-        );
-        final raw = fixture.readAsStringSync();
-        final expected = {
-          for (final platform in platforms)
-            sha256
-                .convert(utf8.encode(_filterPlatformInstructions(raw, platform)))
-                .toString(),
-        };
-        expect(
-          hashes,
-          expected,
-          reason:
-              'the _staleBundledSeedFingerprints[$name] map must pin exactly '
-              'per-platform variants of the frozen raw bytes — the old '
-              'seeder wrote filterPlatformInstructions(raw, platform: P) '
-              'per platform, so the cleanup accepts any of them.',
-        );
-      }
-    },
-  );
+    }
+  });
 }

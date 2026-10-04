@@ -150,9 +150,7 @@ void main() {
 
       await service.waitForIdle();
       final notices = service.messages
-          .where(
-            (m) => m.role == 'user' && m.content.contains('frame blew up'),
-          )
+          .where((m) => m.role == 'user' && m.content.contains('frame blew up'))
           .length;
       expect(
         notices,

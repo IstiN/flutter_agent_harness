@@ -52,19 +52,22 @@ void main() {
       );
     });
 
-    test('unknown kinds fall back to onerror; fingerprint wins the dedup key', () {
-      final event = JsAppErrorEvent.fromLogJson({
-        'kind': 'something-new',
-        'message': 'm',
-        'stack': 's',
-      });
-      expect(event?.kind, JsAppErrorKind.onerror);
-      const bare = JsAppErrorEvent(
-        kind: JsAppErrorKind.callback,
-        message: 'boom',
-        stack: 'at a\nat b',
-      );
-      expect(bare.dedupKey, 'boom\nat a');
-    });
+    test(
+      'unknown kinds fall back to onerror; fingerprint wins the dedup key',
+      () {
+        final event = JsAppErrorEvent.fromLogJson({
+          'kind': 'something-new',
+          'message': 'm',
+          'stack': 's',
+        });
+        expect(event?.kind, JsAppErrorKind.onerror);
+        const bare = JsAppErrorEvent(
+          kind: JsAppErrorKind.callback,
+          message: 'boom',
+          stack: 'at a\nat b',
+        );
+        expect(bare.dedupKey, 'boom\nat a');
+      },
+    );
   });
 }
