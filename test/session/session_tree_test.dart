@@ -269,6 +269,44 @@ void main() {
       },
     );
 
+    test(
+      'a turn after the model_change keeps the serving pin (gh-1226): '
+      'an assistant message updates provider/modelId but carries the '
+      'endpoint/entry pin forward',
+      () async {
+        final session = await newSession();
+        await session.appendModelChange(
+          provider: 'zai',
+          modelId: 'glm-5.3-flash',
+          baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+          customProvider: 'z_ai',
+        );
+        await session.appendMessage(UserMessage.text('hi'));
+        await session.appendMessage(
+          AssistantMessage(
+            content: [TextContent(text: 'hello')],
+            api: 'openai-completions',
+            provider: 'zai',
+            model: 'glm-5.3-flash',
+            usage: Usage.zero,
+            stopReason: StopReason.stop,
+            timestamp: DateTime.utc(2026),
+          ),
+        );
+        final context = await session.buildContext();
+        expect(context.model?.provider, 'zai');
+        expect(context.model?.modelId, 'glm-5.3-flash');
+        expect(
+          context.model?.baseUrl,
+          'https://api.z.ai/api/coding/paas/v4',
+          reason: 'the pin a gh-1000 restore recorded must survive the '
+              'turns that followed it — wiping it here is what sent the '
+              'mail-wake turn onto the launch-default provider (gh-1226)',
+        );
+        expect(context.model?.customProvider, 'z_ai');
+      },
+    );
+
     test('buildContext defaults when nothing was recorded', () async {
       final session = await newSession();
       final context = await session.buildContext();

@@ -23,6 +23,12 @@ final class AgentCliConfig {
     this.wakeExecutable,
     this.folderModelStateApplies = true,
     this.activeCustomName,
+    // Test-only seam (never set by bin/fah.dart): a restore re-bind or a
+    // live /provider switch rebuilds the stream through
+    // [_catalogStreamFunction]; hosts that injected a scripted stream for
+    // hermetic tests set this so the rebuilt stream stays scripted and
+    // records the model a restored turn would serve (gh-1226 AC1).
+    this.catalogStreamOverride,
     this.presenceStore,
     this.leaseStore,
     this.parseExecutor,
@@ -608,6 +614,12 @@ final class AgentCliConfig {
   /// active — its key slot and its name in the status bar. Null when the
   /// boot restored no named entry.
   final String? activeCustomName;
+
+  /// Test-only seam: builds the stream a restore re-bind or a live
+  /// /provider switch would serve for [kind]/[key]; null (every
+  /// production boot) keeps the real catalog adapter.
+  final StreamFunction Function(String kind, String key)?
+  catalogStreamOverride;
 
   /// Live-session presence heartbeats: the running CLI registers its
   /// session here so the Fa app (sharing the sessions root) can mark the
