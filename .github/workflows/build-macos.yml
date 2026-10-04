@@ -501,11 +501,16 @@ jobs:
           #    references that path (the live model, when used, is fetched
           #    by the JS-app catalog, not bundled).
           ASSETS="$APP_PATH/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets"
-          # Re-enable path (review, #1096): if a desktop WASI/sandbox mode
-          # ever ships (WasiSandboxShell on macOS), revert this rm and
-          # reseed assets/wasm — until then a desktop wasm load would fail
-          # as a missing asset, not a #1224-class "no lazy loader" stub.
-          rm -rf "$ASSETS/assets/wasm" "$ASSETS/packages/js_widget_runtime/test"
+          # Shared prune (scripts/prune_flutter_assets.sh — the same call
+          # runs on the no-sandbox build and every web packaging surface):
+          # fails loudly if the flutter_assets layout drifts instead of
+          # silently shipping the fat bundle. Re-enable path (review,
+          # #1096): if a desktop WASI/sandbox mode ever ships
+          # (WasiSandboxShell on macOS), reseed assets/wasm — until then a
+          # desktop wasm load would fail as a missing asset, not a
+          # #1224-class "no lazy loader" stub.
+          bash scripts/prune_flutter_assets.sh "$ASSETS" \
+            assets/wasm packages/js_widget_runtime/test
 
           rm -f fa-macos-*.dmg tmp-fa.dmg
           rm -rf dmg-staging
@@ -810,6 +815,12 @@ jobs:
           APP_PATH="build/macos/Build/Products/Release/Fa.app"
           NO_DMG="fa-macos-nosandbox-${ARCH}-${VERSION}.dmg"
           NO_DMGTMP="tmp-fa-nosandbox.dmg"
+          # Same size diet as the sandboxed DMG above (review, #1096): the
+          # fresh no-sandbox build carries the full flutter_assets — prune
+          # before any packaging so DMG and ZIP both ship lean.
+          bash ../scripts/prune_flutter_assets.sh \
+            "build/macos/Build/Products/Release/Fa.app/Contents/Frameworks/App.framework/Versions/A/Resources/flutter_assets" \
+            assets/wasm packages/js_widget_runtime/test
           rm -rf dmg-staging-nosandbox
           mkdir dmg-staging-nosandbox
           cp -R "$APP_PATH" dmg-staging-nosandbox/

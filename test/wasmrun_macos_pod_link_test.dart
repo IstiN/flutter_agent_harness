@@ -105,24 +105,45 @@ void main() {
       test('Podfile still force_loads + exports the static archive', () {
         // Guard the provider side of the invariant: if the pod compiles no
         // code, the ONLY source of the FFI symbols is the Runner link.
+        // Assertions match the EXACT flag templates the post_install hook
+        // emits — a bare `contains('-force_load')` would pass on any
+        // unrelated mention and guard nothing.
         final podfile = File(podfilePath).readAsStringSync();
+        // ldflags << "-Wl,-force_load,#{macos_slice}" where macos_slice
+        // resolves into the vendored libwasm_run_dart.a slice.
         expect(
-          podfile.contains('-force_load'),
+          RegExp(r'-Wl,-force_load,#\{macos_slice\}').hasMatch(podfile),
           isTrue,
           reason:
-              '$podfilePath must force_load '
-              'WasmRun.xcframework/macos-arm64_x86_64/libwasm_run_dart.a — '
-              'otherwise the wire_* symbols never make it into the '
-              'executable and DynamicLibrary.executable() lookups fail at '
-              'runtime (the PR #1227 build would link but boot broken).',
+              '$podfilePath must force_load the WasmRun static archive via '
+              'an explicit -Wl,-force_load,#{macos_slice} flag — otherwise '
+              'the wire_* symbols never make it into the executable and '
+              'DynamicLibrary.executable() lookups fail at runtime (the '
+              'PR #1227 build would link but boot broken).',
         );
         expect(
-          podfile.contains('exported_symbol'),
+          RegExp(r"macos_slice = '.*libwasm_run_dart\.a'").hasMatch(podfile),
           isTrue,
           reason:
-              '$podfilePath must export the FFI symbols in non-Debug '
-              'configs (Debug exports all globals by default); dlsym only '
-              'sees exported symbols.',
+              '$podfilePath must resolve macos_slice to the vendored '
+              'WasmRun.xcframework libwasm_run_dart.a archive.',
+        );
+        // export_flags = ffi_symbols.map { |s| "-Wl,-exported_symbol,#{s}" }
+        expect(
+          RegExp(r'-Wl,-exported_symbol,#\{s\}').hasMatch(podfile),
+          isTrue,
+          reason:
+              '$podfilePath must generate per-symbol '
+              '-Wl,-exported_symbol,<symbol> flags from the archive '
+              '(dlsym only sees exported symbols).',
+        );
+        expect(
+          podfile.contains("unless config.name == 'Debug'"),
+          isTrue,
+          reason:
+              '$podfilePath must keep -exported_symbol flags out of the '
+              'Debug config (export-only mode hides the JIT entry point — '
+              'abort_could_not_find_entry_point at launch).',
         );
       });
     },

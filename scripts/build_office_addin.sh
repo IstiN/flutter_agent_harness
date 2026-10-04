@@ -58,15 +58,12 @@ echo "building fa web app (flutter build web --release)…"
 rm -rf "$out/app"
 mkdir -p "$out/app"
 cp -R flutter_app/build/web/. "$out/app/"
-# Vendored WASI interpreter assets are mobile-only (#1096 AC3): loaded
-# exclusively through WasiSandboxShell (env_factory_io.dart — Android/iOS);
-# the web pane compiles env_factory_stub (wasm_run needs dart:ffi) and
-# runs python/js/sqlite from cdn.jsdelivr.net (web_interpreters_web.dart).
-# ~47MB that never loads in the browser — drop from the bundle.
-rm -rf "$out/app/assets/assets/wasm"
-# The pub package's own test fixtures (coach_anny.glb, 5.6 MB) ride along
-# as package assets; nothing in the pane loads that path (#1096 size diet).
-rm -rf "$out/app/assets/packages/js_widget_runtime/test"
+# Shared prune (scripts/prune_flutter_assets.sh — same rulebook as every
+# packaging surface): assets/wasm is mobile-only (the pane compiles
+# env_factory_stub, interpreters from cdn.jsdelivr.net), plus the pub
+# package's test fixtures (coach_anny.glb, 5.6 MB) — dead weight here.
+bash scripts/prune_flutter_assets.sh "$out/app/assets" \
+  assets/wasm packages/js_widget_runtime/test
 
 # fa1.dev is a hosted page (no extension CSP): CDN scripts are allowed,
 # but the canvaskit copy still must mirror the layout the bootstrap
