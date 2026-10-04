@@ -273,29 +273,29 @@ extension AgentCliMessagingFlow on AgentCli {
       pending,
       pluginPending: pluginPending,
     );
-    await scheduledReceiptsForTest?.append('wake_attempted', {
-      'lane': decision.lane.name,
-      'ids': [for (final message in pending) message.id],
-    });
     if (!decision.wake) {
       // gh-1180 AC4: the refusal is receipted AND visible — a silent
-      // drop here was exactly the 2h04m blind window. Print once per
-      // episode (the gate holds until user input arrives, so every
-      // 2s tick would otherwise spam).
-      if (!_inboxWakeRefusalAnnounced) {
-        _inboxWakeRefusalAnnounced = true;
+      // drop here was exactly the 2h04m blind window. Both receipts ride
+      // the policy's once-per-EPISODE gate (review T1): the gate holds
+      // until user input arrives, so per-tick appends would grow
+      // receipts.jsonl by ~43k duplicate lines/day. The episode latch
+      // lives in the policy next to the streak (review T2) and re-arms
+      // on the same resets — a user input or an allowed non-exempt
+      // wake — so a repeat episode is announced and receipted again.
+      if (_inboxWakePolicy.announceRefusal()) {
         io.writeln(
           _style.dim('[mail] wake refused — ${decision.refusalReason}'),
         );
+        await scheduledReceiptsForTest?.append('wake_attempted', {
+          'lane': decision.lane.name,
+          'ids': [for (final message in pending) message.id],
+        });
         await scheduledReceiptsForTest?.append('wake_refused', {
           'lane': decision.lane.name,
           'reason': decision.refusalReason,
         });
       }
       return;
-    }
-    if (decision.lane != InboxWakeLane.scheduledSelf) {
-      _inboxWakeRefusalAnnounced = false;
     }
     // The policy books cap-consuming wakes itself (its streak is the one
     // source of truth; the legacy seam proxies it).
@@ -308,6 +308,10 @@ extension AgentCliMessagingFlow on AgentCli {
             : '[mail] new hub message(s) — waking up to answer',
       ),
     );
+    await scheduledReceiptsForTest?.append('wake_attempted', {
+      'lane': decision.lane.name,
+      'ids': [for (final message in pending) message.id],
+    });
     await scheduledReceiptsForTest?.append('turn_started', {
       'lane': decision.lane.name,
       'ids': [for (final message in pending) message.id],

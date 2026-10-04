@@ -191,4 +191,89 @@ void main() {
     },
     timeout: const Timeout(Duration(seconds: 60)),
   );
+
+  test(
+    'gh-1180 review T1: a HELD refusal gate receipts one wake_attempted '
+    'per episode — not one per 2 s watcher tick (~43k duplicate '
+    'lines/day in receipts.jsonl)',
+    () async {
+      final fake = FakeStreamFunction([textTurn('unused')]);
+      final cli = buildCli(fake);
+      final run = cli.run();
+      final (id, baseline) = await boot(fake, cli);
+      cli.inboxWakeStreakForTest = 10;
+
+      await sendForeignMail(id, 'ping from a peer agent');
+      await waitForTrue(
+        () async => io.out.toString().contains('wake refused'),
+      );
+      // Hold the gate across three more watcher ticks.
+      await Future<void>.delayed(const Duration(seconds: 6));
+      final attempted = (await receipts()).where(
+        (event) => event['event'] == 'wake_attempted',
+      );
+      expect(
+        attempted,
+        hasLength(1),
+        reason:
+            'the pending batch is unchanged — re-attempting it every tick '
+            'is noise, not information',
+      );
+      expect(fake.calls, baseline, reason: 'still capped, still silent');
+
+      io.sendLine('/exit');
+      await run;
+    },
+    timeout: const Timeout(Duration(seconds: 60)),
+  );
+
+  test(
+    'gh-1180 review T2: a SECOND refusal episode after user input '
+    'announces and receipts again — the episode latch resets with the '
+    'streak, so a repeat refusal is never silent AND never unreceipted',
+    () async {
+      final fake = FakeStreamFunction([
+        textTurn('ack'),
+        textTurn('ack again'),
+      ]);
+      final cli = buildCli(fake);
+      final run = cli.run();
+      final (id, baseline) = await boot(fake, cli);
+      cli.inboxWakeStreakForTest = 10;
+
+      // Episode #1: capped foreign chatter refuses (visible + receipted).
+      await sendForeignMail(id, 'ping 1');
+      await waitForTrue(
+        () async => io.out.toString().contains('wake refused'),
+      );
+      expect(
+        (await receipts()).where((event) => event['event'] == 'wake_refused'),
+        hasLength(1),
+      );
+
+      // User input: resets the streak AND ends the refusal episode.
+      io.sendLine('hello there');
+      await waitForTrue(() async => fake.calls == baseline + 1 && !cli.isBusy);
+      expect(cli.inboxWakeStreakForTest, 0);
+
+      // Episode #2: burn the freshly reset cap with chatter again.
+      cli.inboxWakeStreakForTest = 10;
+      await sendForeignMail(id, 'ping 2');
+      await Future<void>.delayed(const Duration(seconds: 6));
+      expect(
+        'wake refused'.allMatches(io.out.toString()).length,
+        2,
+        reason: 'the second episode is announced too',
+      );
+      expect(
+        (await receipts()).where((event) => event['event'] == 'wake_refused'),
+        hasLength(2),
+        reason: 'and receipted too (AC4: every refusal accounted for)',
+      );
+
+      io.sendLine('/exit');
+      await run;
+    },
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
 }

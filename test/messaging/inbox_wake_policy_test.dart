@@ -154,6 +154,94 @@ void main() {
     );
   });
 
+  test('a refusal announcement is once per EPISODE: announceRefusal() fires '
+      'once, then stays quiet while the gate keeps refusing (review: the '
+      'host gates its visible line AND its refusal receipts on this)', () {
+    final policy = InboxWakePolicy();
+    for (var fire = 0; fire < 10; fire++) {
+      expect(policy.wakeDecisionFor([mail('f$fire')]).wake, isTrue);
+    }
+    // Cap exhausted: every subsequent decision refuses, but only the
+    // FIRST is announced.
+    expect(policy.announceRefusal(), isTrue, reason: 'first refusal');
+    expect(
+      policy.announceRefusal(),
+      isFalse,
+      reason: 'a held gate must not re-announce within the episode',
+    );
+    expect(policy.announceRefusal(), isFalse);
+  });
+
+  test('the refusal episode re-arms after a user-input reset — a SECOND '
+      'capped episode announces (and receipts) again, so a repeat refusal '
+      'can never be silent (review thread 2: the documented reset path '
+      'must exist next to the streak)', () {
+    final policy = InboxWakePolicy();
+    for (var fire = 0; fire < 10; fire++) {
+      policy.wakeDecisionFor([mail('f$fire')]);
+    }
+    expect(policy.announceRefusal(), isTrue); // episode #1 announced
+    // User input: resets the streak AND ends the refusal episode.
+    policy.resetStreak();
+    // A rapid self-spin burns the freshly reset cap (allowed self wakes
+    // do not clear the episode themselves — see the next test).
+    final spin = InboxWakePolicy(scheduledSelfCadenceFloor: Duration.zero);
+    expect(policy.announceRefusal(), isTrue, reason: 'episode #2 announced');
+    expect(spin.announceRefusal(), isTrue);
+  });
+
+  test('an allowed cap-consuming wake ends the refusal episode (the '
+      'successful non-exempt wake reset lives in the policy now)', () {
+    final policy = InboxWakePolicy();
+    for (var fire = 0; fire < 10; fire++) {
+      policy.wakeDecisionFor([mail('f$fire')]);
+    }
+    expect(policy.announceRefusal(), isTrue); // refusal episode opens
+    policy.resetStreak();
+    // An allowed chatter wake (cap-consuming, i.e. non-exempt) closes it.
+    expect(policy.wakeDecisionFor([mail('after')]).wake, isTrue);
+    for (var fire = 0; fire < 9; fire++) {
+      policy.wakeDecisionFor([mail('f2-$fire')]);
+    }
+    // New refusal after the episode was closed by the allowed wake: it
+    // must announce again.
+    expect(
+      policy.announceRefusal(),
+      isTrue,
+      reason: 'the allowed non-exempt wake ended the previous episode',
+    );
+  });
+
+  test('a plugin-only batch (empty pending, pluginPending: true) is '
+      'classified EXPLICITLY as chatter: it consumes the anti-storm cap '
+      '(review thread 4: the contract is stated, not an accident)', () {
+    final policy = InboxWakePolicy();
+    for (var fire = 0; fire < 10; fire++) {
+      final decision = policy.wakeDecisionFor(
+        const [],
+        pluginPending: true,
+      );
+      expect(decision.wake, isTrue);
+      expect(decision.lane, InboxWakeLane.chatter);
+      expect(decision.countsAgainstCap, isTrue);
+    }
+    final refused = policy.wakeDecisionFor(const [], pluginPending: true);
+    expect(refused.wake, isFalse, reason: 'the 11th plugin wake is capped');
+    expect(refused.lane, InboxWakeLane.chatter);
+  });
+
+  test('pluginPending is ignored when fabric mail is pending — the fabric '
+      'lanes own that classification (a non-empty batch is never silently '
+      're-laned by the flag)', () {
+    final policy = InboxWakePolicy();
+    final decision = policy.wakeDecisionFor(
+      [scheduledSelf('self-1')],
+      pluginPending: true,
+    );
+    expect(decision.lane, InboxWakeLane.scheduledSelf);
+    expect(decision.countsAgainstCap, isFalse);
+  });
+
   test('mixed batches: a user message anywhere in the pending batch wins '
       '(user lane, always wakes)', () async {
     final policy = InboxWakePolicy();

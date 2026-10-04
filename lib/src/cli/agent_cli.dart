@@ -2723,8 +2723,9 @@ class AgentCli {
   /// and is delivered at the next real turn). User-kind messages reset the
   /// streak when delivered: they ARE the user talking, so an attach-driven
   /// session never exhausts the cap. gh-1180: scheduled self-mail is
-  /// EXEMPT (see [_inboxWakePolicy]).
-  static const _maxInboxWakeStreak = 10;
+  /// EXEMPT (see [_inboxWakePolicy]). Single-sourced from the policy
+  /// (review): one tuned threshold, one declaration.
+  static const _maxInboxWakeStreak = InboxWakePolicy.defaultMaxInboxWakeStreak;
 
   /// The idle inbox-wake lane policy (gh-1180): user-kind mail always
   /// wakes; delivered scheduled self-mail (`schedule_message` reminders)
@@ -2741,12 +2742,6 @@ class AgentCli {
   /// post-mortem can tell "timer never fired" from "wake refused".
   @visibleForTesting
   ScheduledReceiptLog? scheduledReceiptsForTest;
-
-  /// One visible `[mail] wake refused` line per refusal episode: the gate
-  /// holds until user input arrives, so announcing on every 2 s watcher
-  /// tick would spam the terminal (gh-1180). Cleared by a user-input
-  /// delivery reset and by any successful non-exempt wake.
-  bool _inboxWakeRefusalAnnounced = false;
 
   /// Compaction settings for the live model: the config override when the
   /// user pinned one, else pi's fixed defaults SCALED to the model window

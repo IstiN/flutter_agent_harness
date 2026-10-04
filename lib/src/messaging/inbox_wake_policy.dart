@@ -1,6 +1,3 @@
-// The constructor params keep their public names (env/path/clock) while
-// the fields stay private — same shape as scheduled_messages.dart.
-// ignore_for_file: prefer_initializing_formals
 library;
 
 import 'agent_message.dart';
@@ -37,7 +34,8 @@ enum InboxWakeLane {
   /// cadence-floored against a disguised busy-spin.
   scheduledSelf,
 
-  /// Foreign agent-to-agent chatter (or plugin-inbox mail): capped.
+  /// Foreign agent-to-agent chatter, and a plugin-only pending batch (no
+  /// fabric mail): capped by the same anti-storm budget.
   chatter,
 }
 
@@ -67,8 +65,8 @@ final class InboxWakePolicy {
   InboxWakePolicy({
     this.maxStreak = defaultMaxInboxWakeStreak,
     this.scheduledSelfCadenceFloor = defaultScheduledSelfCadenceFloor,
-    DateTime Function()? clock,
-  }) : _clock = clock;
+    this.clock,
+  });
 
   /// The anti-storm cap for foreign agent-to-agent chatter (unchanged
   /// behavior — the old `_maxInboxWakeStreak`).
@@ -88,17 +86,39 @@ final class InboxWakePolicy {
   /// it (zero: every self wake exempt) or exercise the spin guard.
   Duration scheduledSelfCadenceFloor;
 
-  final DateTime Function()? _clock;
+  /// Injectable clock (tests); null uses [DateTime.now].
+  final DateTime Function()? clock;
 
-  DateTime _now() => _clock?.call() ?? DateTime.now();
+  DateTime _now() => clock?.call() ?? DateTime.now();
 
   /// Consecutive inbox-triggered wakes without user input.
   int streak = 0;
 
+  bool _refusalAnnounced = false;
+
   DateTime? _lastScheduledSelfWakeAt;
 
   /// A delivered user-kind message (or a typed line) IS the user talking.
-  void resetStreak() => streak = 0;
+  /// Ends the refusal episode too (see [announceRefusal]): the two pieces
+  /// of episode state live side by side so they cannot drift apart.
+  void resetStreak() {
+    streak = 0;
+    _refusalAnnounced = false;
+  }
+
+  /// Whether THIS call may announce the current refusal: true exactly
+  /// once per refusal episode. An episode opens on the first refusal and
+  /// closes when the gate reopens — a user-input reset ([resetStreak])
+  /// or any allowed cap-consuming (non-exempt) wake. Hosts gate their
+  /// visible refusal line AND their refusal receipts on this: the gate
+  /// holds until user input arrives, so per-tick announcements would
+  /// append ~43k duplicate lines/day to the receipt trail (review: the
+  /// wake_attempted spam) and spam the terminal.
+  bool announceRefusal() {
+    if (_refusalAnnounced) return false;
+    _refusalAnnounced = true;
+    return true;
+  }
 
   /// Whether [message] is the delivery of a scheduled self-reminder: the
   /// scheduler's `[scheduled] ` prefix addressed from the recipient's own
@@ -110,6 +130,12 @@ final class InboxWakePolicy {
   /// Decides — and books — the wake for one pending batch. Call only when
   /// mail is pending and the host is idle; a refused decision leaves the
   /// counters untouched, so the next tick retries under the same rules.
+  ///
+  /// [pluginPending] classifies a PLUGIN-ONLY batch (an empty [pending]
+  /// with a pending plugin-inbox item) as [InboxWakeLane.chatter]: plugin
+  /// mail rides the same anti-storm budget as fabric chatter. The flag is
+  /// IGNORED when [pending] is non-empty — the fabric lanes own that
+  /// classification — so passing it alongside real mail changes nothing.
   InboxWakeDecision wakeDecisionFor(
     List<AgentMessage> pending, {
     bool pluginPending = false,
@@ -154,13 +180,15 @@ final class InboxWakePolicy {
         );
       }
       streak++;
+      _refusalAnnounced = false;
       return InboxWakeDecision(
         lane: InboxWakeLane.scheduledSelf,
         wake: true,
         countsAgainstCap: true,
       );
     }
-    // Foreign agent-to-agent chatter (or plugin-inbox mail): the cap.
+    // Foreign agent-to-agent chatter — and a PLUGIN-ONLY batch (no
+    // fabric mail pending, see [pluginPending]): the cap.
     if (streak >= maxStreak) {
       return InboxWakeDecision(
         lane: InboxWakeLane.chatter,
@@ -173,6 +201,7 @@ final class InboxWakePolicy {
       );
     }
     streak++;
+    _refusalAnnounced = false;
     return InboxWakeDecision(
       lane: InboxWakeLane.chatter,
       wake: true,
