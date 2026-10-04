@@ -9,7 +9,9 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
 import 'package:fa/apps/fa_js3d_host.dart';
+import 'package:fa/apps/fa_webview_host.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/services/asr_service.dart';
@@ -148,6 +150,7 @@ class JsAppEngine {
     this.keysSource,
     this.keyRequestHandler,
     this.themeBridge,
+    this.webViewHost,
     this.onEmit,
     this.hostLocale = 'en',
     this.initialTheme = const {},
@@ -232,6 +235,12 @@ class JsAppEngine {
   /// implementation owns the consent dialog; there is no install/uninstall
   /// bridge call by design (issue #169).
   final FaThemeBridge? themeBridge;
+
+  /// Host for `webView` nodes; `null` (the default) uses the platform
+  /// default (see [createFaWebViewHost] — a real `flutter_inappwebview`
+  /// surface on iOS/Android/macOS, the renderer's placeholder elsewhere).
+  /// Tests inject fakes to stay off the native plugin.
+  final JsWebViewHost? webViewHost;
 
   /// Host sink for the shared `emit` fa bridge — dynamic messages wire it to
   /// the agent back-channel (each emit surfaces as a user message); installed
@@ -354,6 +363,13 @@ class JsAppEngine {
       // GLB/GLTF) — shared with the renderer's `js3dHost`, which resolves
       // the same per-sceneId controllers the bridge mutates.
       js3dHost: createFaJs3dHost(env),
+      // External links leave the app: jsr.openUrl(url) opens the host
+      // browser (rejects with {'__error': ...} when the URL cannot be
+      // launched).
+      openUrlHandler: _openUrl,
+      // Embedded web content for `webView` nodes; null → the renderer's
+      // placeholder on platforms without a webview plugin.
+      webViewHost: webViewHost ?? createFaWebViewHost(),
     );
     final engine = JsWidgetEngine(config: config);
     _engine = engine;
@@ -597,6 +613,21 @@ class JsAppEngine {
     } on Object catch (error) {
       _resolve?.call(id, {'__error': error.toString()});
     }
+  }
+
+  // --- jsr.openUrl -----------------------------------------------------------
+
+  /// `jsr.openUrl(url)` → `true` opened in the host's external browser; an
+  /// unparseable URL or one the platform cannot launch (and a failed
+  /// launch) reject the JS promise with `{'__error': ...}`.
+  Future<void> _openUrl(String id, String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !await canLaunchUrl(uri)) {
+      _resolve?.call(id, {'__error': 'cannot launch $url'});
+      return;
+    }
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    _resolve?.call(id, ok ? true : {'__error': 'launch failed'});
   }
 
   // --- jsr.exec + the jsr.fa bridge ------------------------------------------

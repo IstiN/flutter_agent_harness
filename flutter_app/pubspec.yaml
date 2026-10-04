@@ -235,6 +235,14 @@ dependency_overrides:
       # with the wrong JSContext — SIGSEGV in JSC::JSLock::lock once one of
       # them is disposed (TestFlight feedback-7).
       ref: 74a11bf6e7ab2721146cdc4a80e225115a8ccfe3
+  # js_widget_runtime 0.4.154 (jsr.openUrl + the JsRuntimeConfig.webViewHost
+  # seam, commit bd1e7c2) was still in publishing when this landed — pin the
+  # exact upstream commit until the hosted 0.4.154+ is out, then drop the
+  # override and let the ^0.4.154 constraint resolve hosted.
+  js_widget_runtime:
+    git:
+      url: https://github.com/IstiN/flutter_js_widget_runtime.git
+      ref: bd1e7c22fb4c4d217fdf5fbf73225dcb1f488bd0
 
 flutter:
   uses-material-design: true
