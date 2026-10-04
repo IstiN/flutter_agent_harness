@@ -77,10 +77,12 @@ ProviderAuthSurface resolveProviderAuthSurface({
 }
 
 /// The method channel driving `ASWebAuthenticationSession` on iOS
-/// (implemented in `ios/Runner/AppDelegate.swift`): `authenticate {url}`
-/// presents the session (no `callbackScheme` — the loopback redirect loads
-/// the app's real callback server, the session future completes only on
-/// cancel/dismiss), `cancel` dismisses it.
+/// (implemented in `ios/Runner/AppDelegate.swift`): `authenticate {url,
+/// callbackScheme?}` presents the session. With `callbackScheme` the
+/// native scheme interception returns the callback URL to Dart (the AIIN
+/// mobile flow — gh-1044 AC9); without it the session future completes
+/// only on cancel/dismiss and the redirect loads the app's real callback
+/// server (the CodeMie SSO flow). `cancel` dismisses the sheet.
 const MethodChannel systemAuthSessionChannel = MethodChannel(
   'fah/web_auth_session',
 );
