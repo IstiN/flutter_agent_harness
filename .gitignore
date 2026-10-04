@@ -189,3 +189,6 @@ factory-agents/
 !test/integration/screenshots/omp_ref/**
 .fm-drill-cache/
 node_modules
+
+# sdk/web type-stripped build output (node build.mjs regenerates it).
+sdk/web/dist/
