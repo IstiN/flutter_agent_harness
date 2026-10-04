@@ -1,6 +1,7 @@
-// Guard: the machine-loop stubs pin the FACTORY HOME
-// (dmtools-agentic-workflows) at an immutable SHA, and all THREE stubs
-// pin the SAME ref (teammate, SM and merge must never skew apart — the
+// Guard: the machine-loop stubs track the FACTORY HOME
+// (dmtools-agentic-workflows) at main — always-latest policy (owner
+// directive 2026-10-04: awf fixes go live on merge; pushes are
+// review-gated) — and all THREE stubs carry the SAME ref (teammate, SM and merge must never skew apart — the
 // SM dispatches the teammate workflow, the event-driven merge fast path
 // runs mergeBot.js from the pinned pack; a stale merge stub silently
 // misses pack fixes). The ENGINE (dmtools-agents: packs + factory code)
@@ -42,39 +43,43 @@ void main() {
         );
     if (!usesLine.contains('@')) return null;
     final ref = usesLine.trim().split('@').last;
-    // Immutable SHA-1, not a moving branch/tag ref.
+    // Exactly 'main' (always-latest) — never a stale SHA, never a
+    // random branch/tag ref.
     return ref;
   }
 
-  test('ai-teammate.yml pins factory-teammate.yml at an immutable SHA', () {
+  test('ai-teammate.yml tracks factory-teammate.yml at main '
+      '(always-latest policy)', () {
     final ref = pinnedRef(teammate, 'factory-teammate.yml');
-    expect(ref, isNotNull, reason: 'uses: line with @<sha> not found');
+    expect(ref, isNotNull, reason: 'uses: line with @main not found');
     expect(
-      RegExp(r'^[0-9a-f]{40}$').hasMatch(ref!),
+      ref == 'main',
       isTrue,
       reason:
-          'ref "$ref" is not a 40-hex SHA — branch heads move and '
-          'would execute unreviewed factory code',
+          'ref "$ref" is not main — a re-pinned SHA would freeze the '
+          'loop off awf fixes (policy: review-gated always-latest)',
     );
   });
 
-  test('machine-sm.yml pins factory-sm.yml at an immutable SHA', () {
+  test('machine-sm.yml tracks factory-sm.yml at main '
+      '(always-latest policy)', () {
     final ref = pinnedRef(sm, 'factory-sm.yml');
-    expect(ref, isNotNull, reason: 'uses: line with @<sha> not found');
+    expect(ref, isNotNull, reason: 'uses: line with @main not found');
     expect(
-      RegExp(r'^[0-9a-f]{40}$').hasMatch(ref!),
+      ref == 'main',
       isTrue,
-      reason: 'ref "$ref" is not a 40-hex SHA',
+      reason: 'ref "$ref" is not main — always-latest policy',
     );
   });
 
-  test('machine-merge.yml pins factory-merge.yml at an immutable SHA', () {
+  test('machine-merge.yml tracks factory-merge.yml at main '
+      '(always-latest policy)', () {
     final ref = pinnedRef(merge, 'factory-merge.yml');
-    expect(ref, isNotNull, reason: 'uses: line with @<sha> not found');
+    expect(ref, isNotNull, reason: 'uses: line with @main not found');
     expect(
-      RegExp(r'^[0-9a-f]{40}$').hasMatch(ref!),
+      ref == 'main',
       isTrue,
-      reason: 'ref "$ref" is not a 40-hex SHA',
+      reason: 'ref "$ref" is not main — always-latest policy',
     );
   });
 
