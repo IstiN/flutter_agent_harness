@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.0.508
+
+
+- chore(ci): document the sm-kicker head-completeness codeless-head crash
+  (upstream awf#15) — the factory job's `gh api` calls put `--jq` before
+  `--arg`/`--argjson`, so a CODELESS branch head (2 parents, 0 changed
+  files: a routine branch-sync merge with no content diff) crashes the
+  job with `accepts 1 arg(s), received 4` — even when CI is fully green
+  on that head, and the job's own rescue dispatch can never heal exactly
+  those heads. Workaround until the upstream fix: keep the branch head
+  code-bearing. Live instance: run 37193754301 on head 1fe9b1232.
+- fix(messaging): gh-1180 — `schedule_message` self-chains no longer die
+  silently at the agent-chatter wake cap. The idle inbox-wake gate
+  (`InboxWakePolicy`, shared by the CLI and the app hosts) now exempts a
+  delivered scheduled self-reminder (`[scheduled] ` prefix, from == to)
+  from the 10-consecutive-wake streak: a deliberate agent-chosen cadence
+  (night watch, periodic sweep) wakes forever, while foreign
+  agent-to-agent chatter stays capped (anti-storm REG) and user-kind
+  mail always wakes. A 30s cadence floor bounds a zero-delay
+  re-schedule spin (E5). Refused wakes are visible (`[mail] wake
+  refused`, once per episode) and every lifecycle step is receipted to
+  `<messagesRoot>/_scheduled/receipts.jsonl` (`ScheduledReceiptLog`):
+  scheduled / delivered / delivery_failed / scan_failed /
+  wake_attempted / turn_started / wake_refused. A failed scheduler scan
+  (transient `listDir` error) now re-arms at `failureBackoff` with an
+  `onError` log instead of silently disarming the delivery heartbeat.
+- fix(messaging): gh-1180 review round — refusal receipts and the
+  visible refusal line are gated once per refusal EPISODE (the latch
+  lives in `InboxWakePolicy` next to the streak and re-arms on the same
+  resets), so a held gate no longer appends per-tick `wake_attempted`
+  rows (~43k duplicate lines/day) and a repeat episode after user input
+  is announced and receipted again. The app host receipts its wake path
+  (`wake_attempted` / `turn_started` / `wake_refused`) onto the same
+  trail — AC4 is no longer CLI-only. A self-reminder adopted across a
+  session-id change delivers FROM the live mailbox (from re-addressed
+  alongside to), so the resumed chain stays self-shaped and exempt
+  instead of falling back to the capped chatter lane. Plugin-only
+  pending batches are explicitly classified as chatter (the contract is
+  stated, not accidental), the wake cap is single-sourced from
+  `InboxWakePolicy.defaultMaxInboxWakeStreak`, and the policy file lost
+  a stale copy-pasted `ignore_for_file`.
+
 ## 1.0.485
 
 

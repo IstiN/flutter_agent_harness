@@ -29,6 +29,26 @@ permissions:
 
 jobs:
   kicker:
+    # Tracks dmtools-agentic-workflows @main — always-latest policy (owner
+    # directive 2026-10-04): kicker fixes (real ticks awf#13, per-head-SHA
+    # concurrency awf#14) go live on merge, no re-pin ceremony; the
+    # concurrency scoping lives in the reusable workflow. Guarded by
+    # test/machine_kit/factory_stub_ref_test.dart.
+    #
+    # KNOWN UPSTREAM DEFECT (awf#15, live on awf@main as of 2026-10-04):
+    # the head-completeness job's `gh api` calls put `--jq` BEFORE
+    # `--arg`/`--argjson`, so gh eats the flag as the --jq value and the
+    # rest become positional args — `accepts 1 arg(s), received 4`, exit 1.
+    # Trigger shape: a CODELESS branch head (2 parents, 0 changed files —
+    # a routine branch-sync merge with no content diff). Code-bearing
+    # heads skip before the broken lines, so only zero-diff merge heads
+    # crash the job — and they crash it even when CI is fully green (the
+    # crash precedes the required-contexts check), so the job's own
+    # rescue dispatch can never heal the exact heads it exists for.
+    # Resolution until the upstream fix lands: keep the branch head
+    # CODE-BEARING — the next real commit re-enables the healthy
+    # code-bearing-head skip. Diagnosed 2026-10-04 on run 37193754301
+    # (head 1fe9b1232, a zero-diff sync merge).
     uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-sm-kicker.yml@main
     with:
       sm_workflow: machine-sm.yml
