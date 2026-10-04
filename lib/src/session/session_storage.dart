@@ -635,16 +635,23 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
         ioRetry,
         timingLog,
         stat.size,
+        maxFullOpenBytes,
       );
     }
     return _openWholeFileLocked(fs, filePath, parseExecutor, ioRetry,
         timingLog);
   }
 
-  /// Streamed full open (gh-1073): the JSONL is scanned line by line in
-  /// bounded byte chunks ([SessionLineScanner] over [RangedReadFileSystem])
-  /// and parsed in bounded batches — the file is NEVER materialized as one
-  /// `String`.
+  /// Streamed full open (gh-1073): every segment of the JSONL (the
+  /// `.part-NN` rotation siblings, then the primary) is scanned line by
+  /// line in bounded byte chunks ([SessionLineScanner] over
+  /// [RangedReadFileSystem]) and parsed in bounded batches — no segment
+  /// is EVER materialized as one `String`. The segment merge itself
+  /// matches [_openWholeFileLocked] exactly: the parts load oldest-first
+  /// so a resumed session sees the whole record chain, a failed part
+  /// listing fails CLOSED (rotation suspended, never a blind sequence
+  /// reset that could overwrite a part), and a primary lost or
+  /// header-less mid-rotation is healed from the newest part.
   ///
   /// Giant `custom` ledger records (the ~0.5 MB `model_request_summary` /
   /// `shell_job_registry` payloads that grew the ticket's session to
@@ -661,20 +668,175 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     SessionParseExecutor? parseExecutor,
     SessionIoRetryConfig ioRetry,
     SessionTimingLogger? timingLog,
-    int fileSize,
+    int primaryFileSize,
+    int maxFullOpenBytes,
   ) async {
     final totalSw = Stopwatch()..start();
     var phaseSw = Stopwatch()..start();
+    // Segment rotation (fa gh-1077): `<path>.part-NN` siblings hold older
+    // segments, the primary holds a header copy + the active tail. They
+    // load in order — a resumed session must see the whole record chain
+    // (parents of recent records live in older segments). A null listing
+    // (listDir failed) fails CLOSED: rotation stays suspended for this
+    // storage so a blind sequence can never overwrite an existing part.
+    final listed = await _listSessionParts(fs, filePath);
+    final parts = listed?.parts ?? const <String>[];
+    if (parts.isNotEmpty) {
+      await _healPrimarySegmentLocked(fs, filePath, parts.last, ioRetry);
+    }
+    final segmentPaths = [...parts, filePath];
     final entries = <SessionRecord>[];
+    final seenRecordIds = <String>{};
+    // customType → raw line of the LATEST giant custom ledger across all
+    // segments (segments scan oldest-first, so later ones win). Fully
+    // parsed after the scan (see the method doc).
+    final latestGiantCustoms = <String, String>{};
+    SessionHeader? header;
+    String? headerLine;
+    var primaryBytes = 0;
+    var readMs = 0;
+    var parseMs = 0;
+    var rewriteMs = 0;
+    var quarantined = 0;
+    var duplicates = 0;
+    for (final segmentPath in segmentPaths) {
+      final isPrimary = segmentPath == filePath;
+      // gh-1073 backstop per segment: the primary was already stat'd by
+      // [_openLocked] (its refusal names the rescue paths); the parts
+      // stat here behind the same transient-ENOENT retry.
+      final int fileSize;
+      if (isPrimary) {
+        fileSize = primaryFileSize;
+      } else {
+        final stat = _fsOrThrow(
+          await retryTransientSessionFileIo(
+            () => fs.fileInfo(segmentPath),
+            op: 'open',
+            path: segmentPath,
+            config: ioRetry,
+          ),
+          'Failed to read session $segmentPath',
+        );
+        fileSize = stat.size;
+      }
+      if (fileSize > maxFullOpenBytes) {
+        throw SessionException(
+          'Refusing to open session $segmentPath: '
+          '${_formatBytes(fileSize)} exceeds the '
+          '${_formatBytes(maxFullOpenBytes)} full-open bound. Resume it '
+          'windowed (`fa --session ${filePath.split('/').last}`) or shrink '
+          'the ledger with `fa session repair` — the full open would '
+          'exhaust the heap (gh-1073).',
+          code: SessionErrorCode.tooLarge,
+        );
+      }
+      final load = await _scanSegmentStreamed(
+        fs,
+        ranged,
+        segmentPath,
+        fileSize,
+        parseExecutor,
+        entries,
+        seenRecordIds,
+        latestGiantCustoms,
+      );
+      readMs += load.readMs;
+      rewriteMs += load.rewriteMs;
+      quarantined += load.torn;
+      duplicates += load.duplicates;
+      // Every segment carries a copy of the same header; the primary's
+      // is the one the storage exposes (rotation seeds all segments from
+      // the same header line, so today they are identical — pin the
+      // primary's explicitly so a drifted archived header can never win;
+      // the loop visits the oldest segment first).
+      if (isPrimary) {
+        header = load.header;
+        headerLine = load.headerLine;
+        primaryBytes = fileSize;
+      }
+      header ??= load.header;
+      headerLine ??= load.headerLine;
+    }
+    if (header == null) _invalidSession(filePath, 'missing session header');
+    phaseSw
+      ..reset()
+      ..start();
+    // Rehydrate the LATEST giant custom per ledger type at full fidelity.
+    for (final rawLine in latestGiantCustoms.values) {
+      final full = parseSessionEntryLine(rawLine, filePath, 0);
+      final index = entries.indexWhere((e) => e.id == full.id);
+      if (index >= 0) entries[index] = full;
+    }
+    parseMs += phaseSw.elapsedMilliseconds;
+    phaseSw
+      ..reset()
+      ..start();
+    final (:leafId, healed: healedLeafEntries) = _resolveTrackedLeaf(entries);
+    final storage = JsonlSessionStorage._(
+      fs,
+      filePath,
+      header,
+      entries,
+      leafId,
+      quarantined: quarantined,
+      healedLeafEntries: healedLeafEntries,
+      ioRetry: ioRetry,
+      headerLine: headerLine,
+      nextPartSeq: (listed?.maxSeq ?? 0) + 1,
+      rotationSuspended: listed == null,
+    );
+    final buildMs = phaseSw.elapsedMilliseconds;
+    storage._openInnerMs = totalSw.elapsedMilliseconds;
+    timingLog?.call(
+      'resume_timing open-detail file=${filePath.split('/').last} '
+      'mode=full-stream segments=${segmentPaths.length} bytes=$primaryBytes '
+      'read_ms=$readMs parse_ms=$parseMs '
+      'records=${entries.length} torn=$quarantined dup=$duplicates '
+      'rewrite_ms=$rewriteMs build_ms=$buildMs '
+      'inner_ms=${storage._openInnerMs}',
+    );
+    return storage;
+  }
+
+  /// Scans ONE session segment line by line (bounded chunks, batched
+  /// parse, giant `custom` ledgers stubbed header-only) and folds its
+  /// records into [entries] with cross-segment record-id dedupe: a repeat
+  /// is always a failed-rotation restore leftover (ids are
+  /// storage-unique) — the FIRST copy wins, the later copy is scrubbed
+  /// from the segment on rewrite. Torn lines are quarantined to the
+  /// `<segment>.corrupt` sidecar and the segment is rewritten from the
+  /// surviving byte spans (temp file + atomic rename) so the NEXT open is
+  /// clean; read-only stores skip the writes and still load fine.
+  static Future<
+    ({
+      SessionHeader header,
+      String headerLine,
+      int torn,
+      int duplicates,
+      int readMs,
+      int rewriteMs,
+    })
+  >
+  _scanSegmentStreamed(
+    FileSystem fs,
+    RangedReadFileSystem ranged,
+    String segmentPath,
+    int fileSize,
+    SessionParseExecutor? parseExecutor,
+    List<SessionRecord> entries,
+    Set<String> seenRecordIds,
+    Map<String, String> latestGiantCustoms,
+  ) async {
+    final phaseSw = Stopwatch()..start();
     // Merged byte spans of the surviving (good) lines, in file order.
     final goodSpans = <(int, int)>[];
-    // Byte spans of torn lines (unmerged — they are rare and disjoint).
+    // Byte spans of torn lines and duplicate-id lines (unmerged — they
+    // are rare and disjoint); both are excluded from the rewrite, but
+    // only the torn ones are quarantined to the sidecar.
     final tornSpans = <(int, int)>[];
-    // customType → (index into entries, raw line): the LATEST giant custom
-    // per type, fully parsed after the scan (see the method doc).
-    final latestGiantCustoms = <String, (int, String)>{};
+    final duplicateSpans = <(int, int)>[];
     SessionHeader? header;
-    String? leafId;
+    String? headerLine;
     var first = true;
     var batchLines = <String>[];
     var batchSpans = <(int, int)>[];
@@ -684,7 +846,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       if (batchLines.isEmpty) return;
       final parsed = await parseSessionLines(
         batchLines,
-        filePath: filePath,
+        filePath: segmentPath,
         firstLineNumber: batchFirstLineNumber,
         executor: parseExecutor,
         // The ledger payloads are exactly what must not materialize: the
@@ -701,16 +863,19 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
           tornSpans.add(span);
           continue;
         }
+        if (!seenRecordIds.add(entry.id)) {
+          duplicateSpans.add(span);
+          continue;
+        }
         if (entry is CustomRecord &&
             entry.data == null &&
             rawLine.length >= shallowCustomRecordThreshold &&
             rawLine.startsWith('{"type":"custom"')) {
           // Stubbed giant: remember the latest per customType.
-          latestGiantCustoms[entry.customType] = (entries.length, rawLine);
+          latestGiantCustoms[entry.customType] = rawLine;
         }
         entries.add(entry);
         _appendSpan(goodSpans, span);
-        leafId = leafIdAfterSessionRecord(entry);
       }
       batchFirstLineNumber += batchLines.length;
       batchLines = <String>[];
@@ -719,11 +884,12 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
 
     await SessionLineScanner(
       fs: fs,
-      path: filePath,
+      path: segmentPath,
     ).scan((line) async {
       if (first) {
         first = false;
-        header = parseSessionHeaderLine(line.text, filePath);
+        headerLine = line.text;
+        header = parseSessionHeaderLine(line.text, segmentPath);
         goodSpans.add((line.start, line.end));
         return;
       }
@@ -736,36 +902,30 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
         await flushBatch();
       }
     }, fileSize: fileSize);
-    if (header == null) _invalidSession(filePath, 'missing session header');
+    if (header == null) {
+      _invalidSession(segmentPath, 'missing session header');
+    }
     await flushBatch();
     final readMs = phaseSw.elapsedMilliseconds;
-    phaseSw
-      ..reset()
-      ..start();
-    // Rehydrate the LATEST giant custom per ledger type at full fidelity.
-    for (final (_, rawLine) in latestGiantCustoms.values) {
-      final full = parseSessionEntryLine(rawLine, filePath, 0);
-      final index = entries.indexWhere((e) => e.id == full.id);
-      if (index >= 0) entries[index] = full;
-    }
-    final parseMs = phaseSw.elapsedMilliseconds;
-    phaseSw
-      ..reset()
-      ..start();
-    var quarantined = 0;
     var rewriteMs = 0;
-    if (tornSpans.isNotEmpty) {
-      quarantined = tornSpans.length;
+    if (tornSpans.isNotEmpty || duplicateSpans.isNotEmpty) {
+      if (duplicateSpans.isNotEmpty) {
+        JsonlSessionStorage.onRotationWarning?.call(
+          'session open: dropped ${duplicateSpans.length} duplicated '
+          'record(s) from ${segmentPath.split('/').last} (a '
+          'failed-rotation restore left a segment copy behind)',
+        );
+      }
       // Forensics sidecar first; read-only storage skips both writes and
-      // still loads fine with the torn records simply absent from memory.
+      // still loads fine with the dropped records simply absent in memory.
       try {
         for (final (start, end) in tornSpans) {
-          final raw = await ranged.readRange(filePath, start, end);
+          final raw = await ranged.readRange(segmentPath, start, end);
           final text = raw.isErr
               ? null
               : utf8.decode(raw.valueOrNull!, allowMalformed: true);
           if (text != null) {
-            await fs.appendFile('$filePath.corrupt', '$text\n');
+            await fs.appendFile('$segmentPath.corrupt', '$text\n');
           }
         }
         // Rewrite whole via a streamed span copy into a temp file + atomic
@@ -775,10 +935,10 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
         // would re-encode as U+FFFD.
         final Object maybeRenamable = fs;
         if (maybeRenamable is RenamableFileSystem) {
-          final tempPath = '$filePath.repaired';
+          final tempPath = '$segmentPath.repaired';
           var wrote = await fs.writeFile(tempPath, '');
           for (final (start, end) in goodSpans) {
-            final raw = await ranged.readRange(filePath, start, end);
+            final raw = await ranged.readRange(segmentPath, start, end);
             if (raw.isErr) break;
             wrote = await fs.appendFile(
               tempPath,
@@ -791,12 +951,12 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
           } else {
             final renamed = await maybeRenamable.renamePath(
               tempPath,
-              filePath,
+              segmentPath,
             );
             if (renamed.isErr) {
               // Non-renameable after all (or the rename failed): leave the
               // file untouched — the in-memory state is still consistent
-              // and the next open re-quarantines the torn lines.
+              // and the next open re-applies the same heal.
               await fs.remove(tempPath, force: true);
             } else {
               rewriteMs = phaseSw.elapsedMilliseconds;
@@ -807,27 +967,14 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
         // Read-only storage: the in-memory state is still consistent.
       }
     }
-    phaseSw
-      ..reset()
-      ..start();
-    final storage = JsonlSessionStorage._(
-      fs,
-      filePath,
-      header!,
-      entries,
-      leafId,
-      quarantined: quarantined,
-      ioRetry: ioRetry,
+    return (
+      header: header!,
+      headerLine: headerLine!,
+      torn: tornSpans.length,
+      duplicates: duplicateSpans.length,
+      readMs: readMs,
+      rewriteMs: rewriteMs,
     );
-    final buildMs = phaseSw.elapsedMilliseconds;
-    storage._openInnerMs = totalSw.elapsedMilliseconds;
-    timingLog?.call(
-      'resume_timing open-detail file=${filePath.split('/').last} '
-      'mode=full-stream bytes=$fileSize read_ms=$readMs parse_ms=$parseMs '
-      'records=${entries.length} torn=$quarantined rewrite_ms=$rewriteMs '
-      'build_ms=$buildMs inner_ms=${storage._openInnerMs}',
-    );
-    return storage;
   }
 
   /// Legacy whole-file open — the fallback for filesystems without byte

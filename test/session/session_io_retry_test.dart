@@ -141,6 +141,10 @@ void main() {
           message: UserMessage.text('hello'),
         ),
       );
+      // The append above already stat'd the file for its rotation size
+      // check — capture the baseline so the assertion isolates the open's
+      // own stat surface.
+      final statBaseline = fs.statCalls;
       fs.failNextReads = 1;
 
       final reopened = await JsonlSessionStorage.open(
@@ -152,7 +156,7 @@ void main() {
       expect(await reopened.getEntry('e1'), isNotNull);
       // gh-1073: the open stats first and streams — the transient ENOENT
       // lands on the stat and rides the same retry helper.
-      expect(fs.statCalls, 2);
+      expect(fs.statCalls - statBaseline, 2);
       expect(fs.rangeCalls, greaterThan(0));
       expect(fs.readCalls, 0);
       expect(retry.logs, hasLength(1));
