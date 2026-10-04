@@ -1157,7 +1157,22 @@ factual: paths, commands, invariants — no essays.
   (`~/Library/Group Containers/group.dev.fa1.shared/fa/sessions`) so the Fa
   CLI and the sandboxed Fa macOS app see the same workspace-scoped sessions.
 - `flutter_app/lib/apps/` — JS apps platform on `package:js_widget_runtime`
-  (hosted `^0.4.79` — ships the queued-callEvent-after-dispose guard +
+  (`^0.4.154`, git-pinned to IstiN/flutter_js_widget_runtime@bd1e7c2 until the
+  hosted 0.4.154+ lands — ships `jsr.openUrl` + the `webView` node;
+  `js_app_engine.dart` wires `openUrlHandler` over `url_launcher`
+  (LaunchMode.externalApplication, {'__error': ...} rejections) and passes a
+  `JsWebViewHost` (fa_webview_host.dart, `flutter_inappwebview` over the
+  system default data store — never incognito; iOS/Android/macOS only, other
+  platforms get the renderer placeholder via `createFaWebViewHost`) to BOTH
+  the JsRuntimeConfig and the JsonWidgetRenderer in js_app_view.dart —
+  flutter_inappwebview rides the coherent 6.2.0-beta.3 set because 6.1.x's
+  android impl evaluates getDefaultProguardFile('proguard-android.txt'),
+  which AGP 9 removed (APK CI leg); the beta macos impl declares a 10.14
+  floor while its Swift needs 10.15 (fails on both the SwiftPM and
+  CocoaPods paths), so it is vendored with only the floor raised to the
+  app's 14.0 (vendor/flutter_inappwebview_macos, pubspec override); return
+  to ^6.1.x once 6.2.0 stable ships —
+  earlier hosted line shipped the queued-callEvent-after-dispose guard +
   restart-safe bridge channels that the old git pin carried, plus the M3
   nodes/overlays/flChart/pickers/drawer catalog and M3 motion tokens; the
   use-after-free SIGSEGV is owned by `js_app_engine.dart`'s process-wide
