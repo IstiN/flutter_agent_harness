@@ -4576,3 +4576,23 @@
 - gh-1209 [BENCH] usage fold skips failed trials — agent_timeout rows report 0/0 tokens though the session JSONL has full usage (#1123 follow-up) (#1215)
 
 ## Unreleased
+
+- chore(pin): awf workflows track @main — always-latest policy (owner
+  directive 2026-10-04). All five machine-loop stubs (teammate, SM,
+  merge, sm-kicker, merge-trigger) flip from immutable SHA pins to
+  `dmtools-agentic-workflows@main`, so awf fixes (kicker real ticks
+  awf#13, per-SHA concurrency awf#14, teammate defaults awf#12) go live
+  on merge with no re-pin ceremony. Security trade-off (owner-accepted):
+  a mutable ref executes whatever sits at the awf main head — mitigated
+  by awf main being review-gated, by
+  `test/machine_kit/factory_stub_ref_test.dart` now guarding ALL FIVE
+  `uses:` refs resolve to exactly `main` (never a stale SHA, never a
+  random ref) in lockstep, and by the agents ENGINE pin staying an
+  immutable 40-hex SHA via `factory_ref`. The `secrets:` policy is
+  settled per-callee in the same guard: teammate/sm/merge map
+  `SOURCE_GITHUB_TOKEN` explicitly (their factories declare it
+  required), while merge-trigger keeps the factory-documented
+  `secrets: inherit` PAT passthrough (factory-merge-trigger declares no
+  secrets) and the kicker carries no secrets block. Stale
+  immutable-SHA pin comments in ai-teammate.yml / machine-sm.yml
+  rewritten to state the always-`main` policy (#1222).
