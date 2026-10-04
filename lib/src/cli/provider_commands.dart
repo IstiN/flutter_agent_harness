@@ -1512,6 +1512,7 @@ extension on AgentCli {
   /// manual cache markers on the endpoint-reported `features.cache` set
   /// (unknown models keep the optimistic marker + fallback).
   StreamFunction _catalogStreamFunction(String kind, String key) =>
+      config.catalogStreamOverride?.call(kind, key) ??
       providerStreamFunction(
         kind,
         key,
