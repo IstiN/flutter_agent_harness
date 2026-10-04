@@ -4520,4 +4520,20 @@
 - feat(#862): tool-misuse resilience (#1143)
 - fix(#858): Codex/Responses wire — no replayable history may ever brick a session (#1140)
 
+## 1.0.503
+
+- gh-1054 [GOAL] Headless/unattended runs must detect long-stuck tool calls mid-run and follow up — liveness heartbeats + cancel/retry/convert, not a silent 10-min wait for the external watchdog (#1200)
+- chore(ci): bump sm-kicker pin — real-dispatch fix (awf#13) (#1213)
+- fix(kicker): wake machine-sm on CI conclusions (workflow_run) (#1203)
+- gh-1171 flake: subagent_integration_test 'memory_add and memory_search tools are available' — mock script exhausted by memory auto-tag LLM call (#1202)
+- gh-1014 Flaky: ctrl_c_double_press_test ACX.3 SIGINT timing-window flake under runner load — quarantined, fix + re-enable (#1196)
+- test(#1172): pin the CHANGELOG '## Unreleased' dedupe + deflake sandbox authorship under git hooks (#1195)
+- gh-1000 Key resolution loses the provider/key binding: 401 after /sessions restore and on pinned roles (smol/subagents) — duplicate modelId, env-only roles path (#1190)
+- gh-1192 [GOAL] Release-flow race hardening: daily verify must skip 'release in flight', version tag must pin the bump commit (#1193)
+- fix(#1175): one Fa, one session — FAB continues the app-bound session, never re-mints (#1173)
+- WASI sandbox fidelity: dup-merge, per-exec pipe dirs, drain-before-cancel, clean errors (#1156) (#1163)
+- fix(chat): Load-newer banner works mid-run, auto-clears at the live tail (#1159) (#1165)
+- feat(#862): tool-misuse resilience (#1143)
+- fix(#858): Codex/Responses wire — no replayable history may ever brick a session (#1140)
+
 ## Unreleased
