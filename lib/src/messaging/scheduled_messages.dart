@@ -452,8 +452,19 @@ final class ScheduledMessageQueue {
     var delivered = 0;
     _passHadFailure = false;
     for (final (:path, :record, :to) in dueRecords) {
+      final recordedFrom = record['from'] as String?;
+      final recordedTo = record['to'] as String?;
+      // gh-1180 review T7: a self-reminder re-addressed to the LIVE
+      // mailbox delivers FROM the live mailbox too — the reminder is
+      // conceptually from the session itself, not its pinned historical
+      // address. Keeping the old `from` after an adoption (session-id
+      // change) would break the `[scheduled] ` self shape (from == to)
+      // and drop the resumed chain into the capped chatter lane — the
+      // silent death across restarts this ticket set out to fix.
       final from =
-          record['from'] as String? ?? record['to'] as String? ?? _self();
+          (recordedFrom != null && recordedFrom == recordedTo)
+          ? to
+          : (recordedFrom ?? recordedTo ?? _self());
       try {
         await _repo().send(
           AgentMessage(

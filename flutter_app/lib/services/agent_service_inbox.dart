@@ -95,10 +95,37 @@ extension AgentServiceInbox on AgentService {
     final pending = await manager.pendingInbox(manager.selfId);
     if (pending.isEmpty) return;
     final decision = _inboxWakePolicy.wakeDecisionFor(pending);
-    if (!decision.wake) return;
+    // gh-1180 AC4 on the app host (review T3): a refused wake is
+    // receipted, not a silent drop. Both events ride the policy's
+    // once-per-EPISODE gate — the 3 s tick would otherwise duplicate the
+    // same rows for as long as the gate holds. The refusal surfaces
+    // through the trail (+ the platform log); the [error] banner would
+    // misreport a healthy-but-held gate as a failed run.
+    if (!decision.wake) {
+      if (_inboxWakePolicy.announceRefusal()) {
+        AppLog.i(
+          'inbox',
+          'wake refused — ${decision.refusalReason}',
+        );
+        final ids = [for (final message in pending) message.id];
+        await _scheduledReceipts.append('wake_attempted', {
+          'lane': decision.lane.name,
+          'ids': ids,
+        });
+        await _scheduledReceipts.append('wake_refused', {
+          'lane': decision.lane.name,
+          'reason': decision.refusalReason,
+        });
+      }
+      return;
+    }
     final count = pending.length;
     _inboxWakeRunning = true;
     try {
+      await _scheduledReceipts.append('wake_attempted', {
+        'lane': decision.lane.name,
+        'ids': [for (final message in pending) message.id],
+      });
       await sendText(
         '<system-notice>New inter-agent mail arrived ($count message(s)) — '
         'the messages follow below as user messages. Read them and act: '
@@ -106,6 +133,10 @@ extension AgentServiceInbox on AgentService {
         'response is expected, or just incorporate the information.'
         '</system-notice>',
       );
+      await _scheduledReceipts.append('turn_started', {
+        'lane': decision.lane.name,
+        'ids': [for (final message in pending) message.id],
+      });
     } finally {
       _inboxWakeRunning = false;
     }
