@@ -190,9 +190,11 @@ import '../power_runner.dart';
 import '../messaging/agent_fabric.dart';
 import '../messaging/agent_message.dart';
 import '../messaging/file_messaging_repository.dart';
+import '../messaging/inbox_wake_policy.dart';
 import '../messaging/messaging_repository.dart';
 import '../messaging/schedule_message_tool.dart';
 import '../messaging/scheduled_messages.dart';
+import '../messaging/scheduled_receipts.dart';
 import '../memory/memory_tools.dart';
 import '../plugins/plugin.dart';
 import '../redact/redaction_cli.dart';
@@ -625,15 +627,14 @@ class AgentCli {
     // status gates) lives on the manager; this host supplies the resume.
     _subagentManager.wakeChild = (id) =>
         _taskConfig.executor.resumeChild(id, childInboxWakePrompt);
-    _toolRegistry = ToolRegistry([
-      ...coreTools,
-      ...monitoringTools,
-      taskTool(config: _taskConfig),
-    ], (note) {
-      // Issue #862 review: a duplicate registration (e.g. a host passing
-      // child-injected tools through the parent surface) must be loud.
-      io.writeln(_style.dim('[fah] warning: $note'));
-    });
+    _toolRegistry = ToolRegistry(
+      [...coreTools, ...monitoringTools, taskTool(config: _taskConfig)],
+      (note) {
+        // Issue #862 review: a duplicate registration (e.g. a host passing
+        // child-injected tools through the parent surface) must be loud.
+        io.writeln(_style.dim('[fah] warning: $note'));
+      },
+    );
     _agent = Agent(
       model: config.model,
       systemPrompt: config.systemPrompt ?? _currentMode.systemPrompt,
@@ -2243,7 +2244,7 @@ class AgentCli {
     if (_routePendingInput(trimmed)) return;
     if (trimmed.isEmpty) return;
     // Real user input resets the inbox wake streak (the ping-pong guard).
-    _inboxWakeStreak = 0;
+    _inboxWakePolicy.resetStreak();
     // A tool call waiting on an approval decision owns the next input line;
     // it must not be steered into the agent as a user message.
     final pendingApproval = _pendingApprovalAnswer;
@@ -2706,20 +2707,44 @@ class AgentCli {
   /// Idle-wake guard: one inbox-triggered run at a time.
   var _inboxWakeRunning = false;
 
+  /// Test seam: observe/reset the inbox-wake streak without driving ten
+  /// real runs (the cap is exactly [InboxWakePolicy.defaultMaxInboxWakeStreak]).
+  /// The streak lives in [_inboxWakePolicy] — this proxy keeps the old
+  /// seam name working for REG tests.
+  @visibleForTesting
+  int get inboxWakeStreakForTest => _inboxWakePolicy.streak;
+  @visibleForTesting
+  set inboxWakeStreakForTest(int value) => _inboxWakePolicy.streak = value;
+
   /// Consecutive inbox-triggered runs without any user input — capped so
   /// two chatty instances cannot ping-pong forever (mail still accumulates
   /// and is delivered at the next real turn). User-kind messages reset the
   /// streak when delivered: they ARE the user talking, so an attach-driven
-  /// session never exhausts the cap.
-  var _inboxWakeStreak = 0;
+  /// session never exhausts the cap. gh-1180: scheduled self-mail is
+  /// EXEMPT (see [_inboxWakePolicy]).
   static const _maxInboxWakeStreak = 10;
 
-  /// Test seam: observe/reset the inbox-wake streak without driving ten
-  /// real runs (the cap is exactly [_maxInboxWakeStreak]).
+  /// The idle inbox-wake lane policy (gh-1180): user-kind mail always
+  /// wakes; delivered scheduled self-mail (`schedule_message` reminders)
+  /// is exempt from the chatter cap — a deliberate agent-chosen cadence
+  /// wakes forever, cadence-floored against a disguised busy-spin; and
+  /// foreign agent-to-agent chatter stays capped at
+  /// [_maxInboxWakeStreak] consecutive wakes without user input.
+  final InboxWakePolicy _inboxWakePolicy = InboxWakePolicy(
+    maxStreak: _maxInboxWakeStreak,
+  );
+
+  /// The persisted wake receipts for scheduled mail (gh-1180 AC4): every
+  /// wake_attempted / turn_started / wake_refused lands here so a
+  /// post-mortem can tell "timer never fired" from "wake refused".
   @visibleForTesting
-  int get inboxWakeStreakForTest => _inboxWakeStreak;
-  @visibleForTesting
-  set inboxWakeStreakForTest(int value) => _inboxWakeStreak = value;
+  ScheduledReceiptLog? scheduledReceiptsForTest;
+
+  /// One visible `[mail] wake refused` line per refusal episode: the gate
+  /// holds until user input arrives, so announcing on every 2 s watcher
+  /// tick would spam the terminal (gh-1180). Cleared by a user-input
+  /// delivery reset and by any successful non-exempt wake.
+  bool _inboxWakeRefusalAnnounced = false;
 
   /// Compaction settings for the live model: the config override when the
   /// user pinned one, else pi's fixed defaults SCALED to the model window

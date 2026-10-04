@@ -416,6 +416,20 @@ factual: paths, commands, invariants — no essays.
  leg at `failureBackoff` (60s) so a poison record cannot spin a
  zero-delay timer; sweeps deliver in due-time order, and the app's
  turn-start sweep is awaited so the fresh turn sees the fired reminder.
+ A failed SCAN (transient `listDir`/read error on a leg, gh-1180) is
+ equally loud: `onError` + a `scan_failed` receipt, then a re-arm at
+ `failureBackoff` — the arming heartbeat never silently disarms
+ ("scan failed" used to be treated as "nothing pending", permanently
+ disarming the scheduler with zero log). Corrupt record CONTENT is
+ still skipped, not fatal (issue #59). Every lifecycle step is
+ receipted to an append-only JSONL trail at
+ `<messagesRoot>/_scheduled/receipts.jsonl` (`ScheduledReceiptLog`,
+ gh-1180): `scheduled` / `delivered` (with lag) / `delivery_failed` /
+ `scan_failed` from the queue, plus host-side `wake_attempted` /
+ `turn_started` / `wake_refused` (with reason) from the CLI wake path —
+ a post-mortem can distinguish "timer never fired" (no `delivered`)
+ from "wake refused" without reading source. The trail is best-effort:
+ a failing write logs via `onError` and never breaks scheduling.
  Records carry the scheduling instance's `owner` (mailbox prefix): a
  sweeper re-addresses a self-addressed record only when the stored owner
  matches its own prefix, and never deletes another instance's record -
@@ -438,7 +452,16 @@ factual: paths, commands, invariants — no essays.
   sender-attributed user messages, so they persist in the session and read
   like a chat. Idle wake: an inbox watcher (2s CLI / 3s app) starts a turn
   when mail arrives while idle — two Fa instances chat live; a 10-run
-  streak cap without user input breaks ping-pong loops.
+  streak cap without user input breaks agent-to-agent ping-pong loops.
+  The lanes live in `InboxWakePolicy` (gh-1180): user-kind mail always
+  wakes and resets the streak (gating it would deadlock:
+  no run → no reset → no run); a delivered `schedule_message`
+  self-reminder (`[scheduled] ` prefix, from == to) is EXEMPT from the
+  cap — a deliberate agent-chosen cadence (night watch, periodic sweep)
+  wakes forever, with a 30s cadence floor so a zero-delay re-schedule
+  spin is still bounded like chatter; foreign agent chatter stays
+  capped. A refused wake is never silent: one dim `[mail] wake refused`
+  line per episode and a `wake_refused` receipt.
   UI: `/agents` rows show a `mail:N` pending marker (the CLI
   font has no ✉ glyph), the app's AgentsSection shows `✉N`; observe/detail
   views list the pending inbox.

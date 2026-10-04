@@ -88,10 +88,15 @@ extension AgentServiceInbox on AgentService {
     final manager = _subagentManager;
     if (manager == null || _inboxWakeRunning || _disposed) return;
     if (isStreaming || _agent.state.isStreaming) return;
-    if (_inboxWakeStreak >= AgentService._maxInboxWakeStreak) return;
-    final count = await manager.pendingInboxCount(manager.selfId);
-    if (count == 0) return;
-    _inboxWakeStreak++;
+    // The lane decision (gh-1180): user-kind mail always wakes; delivered
+    // scheduled self-mail is EXEMPT from the cap (deliberate agent-chosen
+    // cadence — the night-watch lane); foreign agent-to-agent chatter
+    // stays capped (anti-storm).
+    final pending = await manager.pendingInbox(manager.selfId);
+    if (pending.isEmpty) return;
+    final decision = _inboxWakePolicy.wakeDecisionFor(pending);
+    if (!decision.wake) return;
+    final count = pending.length;
     _inboxWakeRunning = true;
     try {
       await sendText(

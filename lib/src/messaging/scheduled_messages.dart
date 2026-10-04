@@ -16,6 +16,7 @@ import 'dart:convert';
 import '../env/execution_env.dart';
 import 'agent_message.dart';
 import 'messaging_repository.dart';
+import 'scheduled_receipts.dart';
 
 final class ScheduledMessageQueue {
   ScheduledMessageQueue({
@@ -29,6 +30,7 @@ final class ScheduledMessageQueue {
     this.onFired,
     this.onError,
     this.failureBackoff = maxTimerLeg,
+    this.receipts,
   }) : _env = env,
        _repo = repo,
        _selfMailbox = selfMailbox,
@@ -73,6 +75,11 @@ final class ScheduledMessageQueue {
 
   /// Wait before retrying a pass that just failed (issue #270).
   final Duration failureBackoff;
+
+  /// The persisted receipt trail (gh-1180 AC4), when the host wires one:
+  /// scheduled / delivered / delivery_failed / scan_failed events keyed
+  /// by record id. Best-effort — a failing trail never breaks scheduling.
+  final ScheduledReceiptLog? receipts;
 
   String _self() => _selfMailbox?.call() ?? 'self';
 
@@ -158,6 +165,12 @@ final class ScheduledMessageQueue {
     (await _env.createDir(_dir)).getOrThrow();
     (await _env.writeFile('$_dir/$id.json', jsonEncode(record))).getOrThrow();
     _arm();
+    await receipts?.append('scheduled', {
+      'id': id,
+      'dueMs': record['dueMs'],
+      'to': record['to'],
+      'text': text.length > 200 ? text.substring(0, 200) : text,
+    });
     onScheduled?.call('in ${formatDelay(delay)}: $text');
     return id;
   }
@@ -293,23 +306,57 @@ final class ScheduledMessageQueue {
   /// when unknown) and text preview — the raw view behind [pendingSummary]
   /// and the CLI's visible-waiting row (issue #450). Same deliverability
   /// rule as the timer: foreign-owned self-addressed records are not ours
-  /// to fire, so they are not ours to show either. Corrupt records arm no
-  /// timer and light no indicator.
+  /// to fire, so they are not ours to show either. Tolerant by contract
+  /// (indicator-only consumers): a scan failure reads as "nothing
+  /// pending" here — the ARMING path uses the throwing [_scanPending]
+  /// instead, so a scan failure re-arms loudly instead of disarming
+  /// (gh-1180 AC5). Corrupt records arm no timer and light no indicator.
   Future<List<({int? dueMs, String text})>> pendingRecords() async {
-    final dir = await _pendingDir();
-    final entries = (await _env.listDir(dir)).valueOrNull ?? const [];
+    final List<({String path, Map<String, dynamic> record})> scanned;
+    try {
+      scanned = await _scanPending();
+    } on Object {
+      return const [];
+    }
     final records = <({int? dueMs, String text})>[];
-    for (final entry in entries) {
-      if (!entry.path.endsWith('.json')) continue;
-      final path = entry.path.contains('/') ? entry.path : '$dir/${entry.path}';
-      final record = await _readRecord(path);
-      if (record == null || _deliveryTarget(record) == null) continue;
+    for (final scannedRecord in scanned) {
+      final record = scannedRecord.record;
+      if (_deliveryTarget(record) == null) continue;
       records.add((
         dueMs: record['dueMs'] as int?,
         text: record['text'] as String? ?? '',
       ));
     }
     return records;
+  }
+
+  /// Scans `_scheduled/` for every pending record. THROWS on a directory
+  /// or read failure (gh-1180 AC5) so the arming heartbeat can re-arm at
+  /// [failureBackoff] with an [onError] log instead of silently
+  /// disarming; corrupt/torn record CONTENT is skipped (issue #59
+  /// contract — one bad file never disarms the others). The
+  /// `receipts.jsonl` trail and any non-`.json` entry are ignored.
+  Future<List<({String path, Map<String, dynamic> record})>>
+  _scanPending() async {
+    final dir = await _pendingDir();
+    if ((await _env.exists(dir)).valueOrNull == false) return const [];
+    final entries = (await _env.listDir(dir)).getOrThrow();
+    final scanned = <({String path, Map<String, dynamic> record})>[];
+    for (final entry in entries) {
+      if (entry.kind == FileKind.directory || !entry.path.endsWith('.json')) {
+        continue;
+      }
+      final path = entry.path.contains('/') ? entry.path : '$dir/${entry.path}';
+      // A failed READ is a scan failure (rethrown); a failed PARSE is a
+      // corrupt record (skipped below).
+      final text = (await _env.readTextFile(path)).getOrThrow();
+      final record = _parseRecord(text);
+      if (record == null) {
+        continue; // torn/corrupt content — leave for inspection
+      }
+      scanned.add((path: path, record: record));
+    }
+    return scanned;
   }
 
   /// In-flight delivery guard: a timer tick landing while [deliverDue] is
@@ -384,20 +431,13 @@ final class ScheduledMessageQueue {
   }
 
   Future<int> _deliverDueInner() async {
-    final dir = await _pendingDir();
-    final entries = (await _env.listDir(dir)).valueOrNull ?? const [];
+    final scanned = await _scanPending();
+    final nowMs = _now().millisecondsSinceEpoch;
     final dueRecords =
         <({String path, Map<String, dynamic> record, String to})>[];
-    for (final entry in entries) {
-      if (entry.kind == FileKind.directory || !entry.path.endsWith('.json')) {
-        continue;
-      }
-      // listDir implementations differ on absolute vs bare names.
-      final path = entry.path.contains('/') ? entry.path : '$dir/${entry.path}';
-      final record = await _readRecord(path);
-      if (record == null) continue;
+    for (final (:path, :record) in scanned) {
       final dueMs = record['dueMs'] as int?;
-      if (dueMs == null || dueMs > _now().millisecondsSinceEpoch) {
+      if (dueMs == null || dueMs > nowMs) {
         continue; // not a schedule record, or not due yet
       }
       final to = _deliveryTarget(record);
@@ -427,6 +467,13 @@ final class ScheduledMessageQueue {
         );
         await _env.remove(path, force: true);
         delivered++;
+        final dueMs = record['dueMs'] as int?;
+        await receipts?.append('delivered', {
+          'id': record['id'],
+          'to': to,
+          'dueMs': ?dueMs,
+          if (dueMs != null) 'lagMs': _now().millisecondsSinceEpoch - dueMs,
+        });
         onFired?.call('fired: ${record['text'] ?? ''}');
       } on Object catch (e) {
         // Failure isolation (issue #270): one throwing send must not kill
@@ -434,6 +481,10 @@ final class ScheduledMessageQueue {
         // keep the record on disk (remove only ever runs after a
         // successful send); the next sweep/tick retries it.
         _passHadFailure = true;
+        await receipts?.append('delivery_failed', {
+          'id': record['id'],
+          'error': '$e',
+        });
         onError?.call(
           'delivery failed (${record['id'] ?? '?'}): $e — '
           'record kept for the next sweep',
@@ -450,8 +501,20 @@ final class ScheduledMessageQueue {
     _armAsync();
   }
 
-  /// Scans the pending records for the earliest due time (null: none).
-  Future<int?> _nearestDueMs() async => (await pendingSummary()).nextDueMs;
+  /// The earliest deliverable due time (null: nothing pending). THROWS on
+  /// a scan failure (gh-1180 AC5) — the arming heartbeat must re-arm
+  /// loudly instead of silently disarming.
+  Future<int?> _nearestDueOrThrow() async {
+    final scanned = await _scanPending();
+    int? nearest;
+    for (final scannedRecord in scanned) {
+      final record = scannedRecord.record;
+      if (_deliveryTarget(record) == null) continue;
+      final due = record['dueMs'] as int?;
+      if (due != null && (nearest == null || due < nearest)) nearest = due;
+    }
+    return nearest;
+  }
 
   /// The longest single timer leg (issue #259). A one-shot timer armed for
   /// the full wait freezes with OS sleep (monotonic clocks pause while the
@@ -464,7 +527,26 @@ final class ScheduledMessageQueue {
 
   Future<void> _armAsync() async {
     if (_disposed) return;
-    final nearest = await _nearestDueMs();
+    final int? nearest;
+    try {
+      nearest = await _nearestDueOrThrow();
+    } on Object catch (e) {
+      // gh-1180 AC5: a scan failure must not silently disarm the
+      // heartbeat (the old shape treated "scan failed" and "nothing
+      // pending" identically — one transient IO error on any leg killed
+      // the scheduler with zero log). Log it, receipt it, and re-arm at
+      // the failure backoff: the next leg retries the scan and, once it
+      // recovers, delivers everything overdue.
+      if (_disposed) return;
+      _passHadFailure = true;
+      onError?.call(
+        'scheduled-record scan failed — re-arming in '
+        '${formatDelay(failureBackoff)}: $e',
+      );
+      await receipts?.append('scan_failed', {'error': '$e'});
+      _armAt(failureBackoff);
+      return;
+    }
     // The scan awaited above; the host may have torn the queue down meanwhile.
     if (_disposed || nearest == null) return;
     final wait = nearest - _now().millisecondsSinceEpoch;
@@ -474,7 +556,14 @@ final class ScheduledMessageQueue {
     if (leg > maxTimerLeg.inMilliseconds) leg = maxTimerLeg.inMilliseconds;
     final floor = _passHadFailure ? failureBackoff.inMilliseconds : 0;
     if (leg < floor) leg = floor;
-    _timer = Timer(Duration(milliseconds: leg), () async {
+    _armAt(Duration(milliseconds: leg));
+  }
+
+  /// Arms one delivery timer leg; the callback contains a delivery-pass
+  /// throw and always re-arms.
+  void _armAt(Duration leg) {
+    if (_disposed) return;
+    _timer = Timer(leg, () async {
       try {
         await _deliverDue();
       } on Object catch (e) {
