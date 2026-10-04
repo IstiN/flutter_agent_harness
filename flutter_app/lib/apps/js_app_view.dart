@@ -33,6 +33,7 @@ import 'package:fa/ui/widgets/secret_request_sheet.dart';
 import 'package:fa/ui/widgets/wide_layout_shell.dart' show faAppBar;
 import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/fa_media_host.dart';
+import 'package:fa/apps/fa_webview_host.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/fa_chat_overlay.dart';
 import 'package:fa/apps/fa_work_bar.dart';
@@ -92,6 +93,7 @@ class JsAppView extends StatefulWidget {
     this.videoReader,
     this.mapTileProvider,
     this.mediaHost,
+    this.webViewHost,
     this.embeddedInPanel = false,
   });
 
@@ -124,6 +126,13 @@ class JsAppView extends StatefulWidget {
   /// the real [FaMediaHost] (video_player/audioplayers). Tests inject
   /// fakes to stay off native plugins.
   final JsMediaHost? mediaHost;
+
+  /// Web-view host for the engine config AND the renderer's `webView`
+  /// nodes; `null` uses the platform default (see [createFaWebViewHost] —
+  /// a real `flutter_inappwebview` surface on iOS/Android/macOS, the
+  /// renderer's placeholder elsewhere). Tests inject fakes to stay off
+  /// the native plugin.
+  final JsWebViewHost? webViewHost;
 
   /// Called with the composed Fa message; typically forwards to
   /// `AgentService.sendImage`/`sendText` of the app-bound session. Returns
@@ -324,6 +333,7 @@ class _JsAppViewState extends State<JsAppView> {
         keysSource: widget.agentService?.hostSecrets,
         keyRequestHandler: _requestHostSecret,
         themeBridge: _themeBridge(),
+        webViewHost: widget.webViewHost,
         // ignore: use_build_context_synchronously
         hostLocale: Localizations.localeOf(context).languageCode,
         initialTheme: initialTheme,
@@ -803,6 +813,10 @@ class _JsAppViewState extends State<JsAppView> {
           ),
           mapTileProvider: widget.mapTileProvider,
           mediaHost: widget.mediaHost ?? const FaMediaHost(),
+          // Embedded web content: the SAME host the engine's JsRuntimeConfig
+          // got (see JsAppEngine.start), so a `webView` node renders
+          // identically wherever the tree is drawn.
+          webViewHost: widget.webViewHost ?? createFaWebViewHost(),
           // 3D scenes: the dispatcher singleton shared with the engine's
           // JsRuntimeConfig (see JsAppEngine.start); taps raycast into
           // `jsr.scene3d.onTap` handlers in the app.

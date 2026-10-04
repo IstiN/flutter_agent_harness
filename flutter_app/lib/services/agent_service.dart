@@ -103,6 +103,12 @@ part 'agent_service_connection_guard.dart';
 part 'agent_service_persistence.dart';
 part 'agent_service_transcript.dart';
 part 'agent_service_inbox.dart';
+part 'agent_service_history.dart';
+part 'agent_service_wiring.dart';
+part 'agent_service_media.dart';
+part 'agent_service_background.dart';
+part 'agent_service_subagents.dart';
+part 'agent_service_lifecycle.dart';
 
 /// A UI-facing chat message.
 
