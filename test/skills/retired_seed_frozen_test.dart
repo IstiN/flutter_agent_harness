@@ -55,8 +55,7 @@ final _bundledEntries = RegExp(
 /// the exact bytes the old seeder wrote per platform.
 String _filterPlatformInstructions(String source, String platform) {
   final block = RegExp(
-    'r<!-- fa-platforms:\\s*([^>]+?)\\s*-->(.*?)<!-- /fa-platforms -->'
-        .replaceFirst('r', ''),
+    r'<!-- fa-platforms:\s*([^>]+?)\s*-->(.*?)<!-- /fa-platforms -->',
     dotAll: true,
   );
   var filtered = source.replaceAllMapped(block, (match) {
@@ -65,14 +64,14 @@ String _filterPlatformInstructions(String source, String platform) {
         : '';
   });
   final taggedLine = RegExp(
-    '^.*<!-- fa-platforms:\\s*([^>]+?)\\s*-->.*\$',
+    r'^.*<!-- fa-platforms:\s*([^>]+?)\s*-->.*$',
     multiLine: true,
   );
   filtered = filtered.replaceAllMapped(taggedLine, (match) {
     if (!_platformList(match.group(1)).contains(platform)) return '';
     return match
         .group(0)!
-        .replaceFirst(RegExp('\\s*<!-- fa-platforms:\\s*[^>]+?\\s*-->'), '');
+        .replaceFirst(RegExp(r'\s*<!-- fa-platforms:\s*[^>]+?\s*-->'), '');
   });
   return filtered.replaceAll('{{FA_PLATFORM}}', platform);
 }
@@ -126,6 +125,57 @@ void main() {
               'longer recognize (and clean up) stale seeds on user machines. '
               'The retired seed is FROZEN; document changes go to the live '
               'skill (prompts/skills/<live-name>/SKILL.md) instead.',
+        );
+      }
+    },
+  );
+
+  test(
+    'every retired-BUNDLED-seed fingerprint matches a per-platform variant '
+    'of the frozen raw bytes (gh-1164 js-apps)',
+    () {
+      expect(
+        _bundledMap,
+        isNotNull,
+        reason:
+            'the _staleBundledSeedFingerprints literal moved in the app '
+            'source — update this parser',
+      );
+      expect(
+        _bundledEntries,
+        isNotEmpty,
+        reason: 'no bundled fingerprints parsed from the app source',
+      );
+      const platforms = ['macos', 'ios', 'android', 'windows', 'linux', 'web'];
+      for (final match in _bundledEntries) {
+        final name = match.group(1)!;
+        final hashes = RegExp(r"'([0-9a-f]{64})'")
+            .allMatches(match.group(2)!)
+            .map((m) => m.group(1)!)
+            .toSet();
+        final fixture = File(
+          '$_repoRoot/flutter_app/test/fixtures/retired_${name.replaceAll('-', '_')}_skill.md',
+        );
+        expect(
+          fixture.existsSync(),
+          isTrue,
+          reason: 'frozen raw bytes of the retired bundled skill missing',
+        );
+        final raw = fixture.readAsStringSync();
+        final expected = {
+          for (final platform in platforms)
+            sha256
+                .convert(utf8.encode(_filterPlatformInstructions(raw, platform)))
+                .toString(),
+        };
+        expect(
+          hashes,
+          expected,
+          reason:
+              'the _staleBundledSeedFingerprints[$name] map must pin exactly '
+              'per-platform variants of the frozen raw bytes — the old '
+              'seeder wrote filterPlatformInstructions(raw, platform: P) '
+              'per platform, so the cleanup accepts any of them.',
         );
       }
     },

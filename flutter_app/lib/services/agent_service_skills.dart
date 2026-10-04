@@ -57,7 +57,6 @@ const _staleBundledSeedFingerprints = <String, Set<String>>{
     'c73012910a772db79dc19c7e2ad75b285cea24a25aecd77d1ca68d2dfa6f26ed', // web
   },
 };
-};
 
 Future<void> _seedBundledSkills(ExecutionEnv env) async {
   for (final entry in _staleBundledSeedFingerprints.entries) {
