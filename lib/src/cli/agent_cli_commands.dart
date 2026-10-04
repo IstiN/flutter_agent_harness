@@ -741,9 +741,12 @@ extension ProviderQueueEditor on AgentCli {
       io.writeln('not applied: $error');
       return;
     }
+    // Same env view the boot resolved through (issue #675): the config's
+    // queue env when the host injected one, else the process environment.
     final scope = resolveProviderQueueAtBoot(
       projectDir: config.env.cwd,
       homeDir: config.homeDir ?? config.env.cwd,
+      env: config.providerQueueEnv,
     );
     if (scope.scope == ProviderQueueScope.env) {
       io.writeln(
@@ -803,6 +806,7 @@ extension ProviderQueueEditor on AgentCli {
       final queue = resolveProviderQueueAtBoot(
         projectDir: config.env.cwd,
         homeDir: config.homeDir ?? config.env.cwd,
+        env: config.providerQueueEnv,
       );
       config.providersQueueRuntime = queue.entries.isEmpty
           ? null

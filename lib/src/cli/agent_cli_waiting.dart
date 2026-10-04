@@ -144,6 +144,36 @@ final class _WaitingCoordinator {
     escalateSeconds: () => _cli.config.waiting.toolEscalateSeconds,
   );
 
+  /// Reasoning-phase liveness (gh-1198 tier 2): the fourth waiting
+  /// horizon — a provider request with NO events yet (the model is
+  /// reasoning server-side before the first streamed byte). Headless/
+  /// line mode prints the grep-friendly `… reasoning Ns` line on the
+  /// waiting cadence; the watch disarms the moment the first event lands.
+  /// Active only while the thinking stream is OFF — with `--stream-
+  /// thinking`/`output.streamThinking` the deltas print live (tier 1 owns
+  /// visibility), and the TUI streams thinking regardless (its paint
+  /// freeze is #1197's).
+  late final ReasoningLivenessTracker reasoning = ReasoningLivenessTracker(
+    onRemind: (elapsed) => _printLiveness(reasoningLivenessLine(elapsed)),
+    clock: _clock,
+    livenessSeconds: () => _cli.config.waiting.toolLivenessSeconds,
+    tickSeconds: () => _cli.config.waiting.toolLivenessTickSeconds,
+  );
+
+  /// A provider request went out (gh-1198): arm the reasoning watch when
+  /// this surface watches it — line mode/headless with the thinking
+  /// stream off. TUI and streaming runs stay out (the deltas are visible
+  /// there).
+  void reasoningRequestStarted() {
+    if (_cli._useTui || _cli.config.streamThinking) return;
+    reasoning.requestStarted();
+  }
+
+  /// Any agent event after the request (gh-1198): the run is visibly
+  /// moving — disarm. A no-op while nothing is watched (the tracker stays
+  /// out of TUI/streaming runs entirely).
+  void reasoningProgress() => reasoning.progress();
+
   /// Nudges left this turn (issue #1185 E2, the storm guard): reset at
   /// every real turn start (see [_beginUserPrompt]), spent by
   /// [_nudgeStuckCall].
@@ -967,4 +997,14 @@ extension AgentCliWaitingSeams on AgentCli {
   /// the same reset a fresh turn performs, without driving a new prompt.
   @visibleForTesting
   void resetToolNudgesForTest() => _waiting.resetToolNudges();
+
+  /// Test seam: fires one reasoning-liveness evaluation now (gh-1198),
+  /// the analog of [toolLivenessTickForTest].
+  @visibleForTesting
+  void reasoningLivenessTickForTest() => _waiting.reasoning.tick();
+
+  /// Test seam: whether the reasoning watch is armed right now (gh-1198)
+  /// — the request-out/first-event observable.
+  @visibleForTesting
+  bool get reasoningLivenessActiveForTest => _waiting.reasoning.armed;
 }
