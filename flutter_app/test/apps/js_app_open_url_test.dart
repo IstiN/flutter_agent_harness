@@ -91,9 +91,7 @@ void main() {
       await tester.runAsync(() async {
         launcher.canLaunchUrls['https://example.com'] = true;
         launcher.canLaunchUrls['https://example.org'] = true;
-        final engine = await boot(
-          tester,
-          '''
+        final engine = await boot(tester, '''
 (function() {
   Promise.all([
     jsr.openUrl('https://example.com'),
@@ -104,8 +102,7 @@ void main() {
     jsr.exportState({openError: String(err)});
   });
 })();
-''',
-        );
+''');
         try {
           expect(engine.exportedState, isNotNull);
           expect(engine.exportedState!['opened'], [true, true]);
@@ -125,9 +122,7 @@ void main() {
       tester,
     ) async {
       await tester.runAsync(() async {
-        final engine = await boot(
-          tester,
-          '''
+        final engine = await boot(tester, '''
 (function() {
   jsr.openUrl('bad-scheme://nowhere').then(function(ok) {
     jsr.exportState({opened: ok});
@@ -135,8 +130,7 @@ void main() {
     jsr.exportState({openError: String(err)});
   });
 })();
-''',
-        );
+''');
         try {
           expect(engine.exportedState, isNotNull);
           expect(engine.exportedState!['opened'], isNull);
@@ -155,9 +149,7 @@ void main() {
       await tester.runAsync(() async {
         launcher.canLaunchUrls['https://example.com'] = true;
         launcher.launchResult = false;
-        final engine = await boot(
-          tester,
-          '''
+        final engine = await boot(tester, '''
 (function() {
   jsr.openUrl('https://example.com').then(function(ok) {
     jsr.exportState({opened: ok});
@@ -165,15 +157,11 @@ void main() {
     jsr.exportState({openError: String(err)});
   });
 })();
-''',
-        );
+''');
         try {
           expect(engine.exportedState, isNotNull);
           expect(engine.exportedState!['opened'], isNull);
-          expect(
-            engine.exportedState!['openError'],
-            'Error: launch failed',
-          );
+          expect(engine.exportedState!['openError'], 'Error: launch failed');
           expect(launcher.launched, ['https://example.com']);
         } finally {
           await engine.dispose();

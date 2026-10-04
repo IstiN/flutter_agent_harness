@@ -70,12 +70,14 @@ void main() {
 
     test('builds an InAppWebView with the system default data store', () {
       const host = FaWebViewHost();
-      final widget = host.buildWebView(
-        src: 'https://example.com',
-        onMessage: (_) {},
-        width: 200,
-        height: 100,
-      ) as SizedBox;
+      final widget =
+          host.buildWebView(
+                src: 'https://example.com',
+                onMessage: (_) {},
+                width: 200,
+                height: 100,
+              )
+              as SizedBox;
 
       expect(widget.width, 200);
       expect(widget.height, 100);
@@ -92,18 +94,24 @@ void main() {
       const host = FaWebViewHost();
       final widget = host.buildWebView(src: 'https://example.com') as SizedBox;
       final webView = widget.child! as InAppWebView;
-      expect(webView.platform.params.initialSettings?.javaScriptEnabled, isFalse);
+      expect(
+        webView.platform.params.initialSettings?.javaScriptEnabled,
+        isFalse,
+      );
     });
 
-    test('createFaWebViewHost is null on platforms the plugin does not serve', () {
-      final previous = debugDefaultTargetPlatformOverride;
-      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
-      try {
-        expect(createFaWebViewHost(), isNull);
-      } finally {
-        debugDefaultTargetPlatformOverride = previous;
-      }
-    });
+    test(
+      'createFaWebViewHost is null on platforms the plugin does not serve',
+      () {
+        final previous = debugDefaultTargetPlatformOverride;
+        debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+        try {
+          expect(createFaWebViewHost(), isNull);
+        } finally {
+          debugDefaultTargetPlatformOverride = previous;
+        }
+      },
+    );
   });
 
   group('webView node rendering (JsonWidgetRenderer)', () {
@@ -119,9 +127,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
-            body: Builder(
-              builder: (context) => renderer.build(node, context),
-            ),
+            body: Builder(builder: (context) => renderer.build(node, context)),
           ),
         ),
       );
@@ -180,10 +186,10 @@ void main() {
       expect(payload, {'value': 'hello from page'});
     });
 
-    testWidgets('renders the placeholder when no host is wired', (tester) async {
-      final renderer = JsonWidgetRenderer(
-        onEvent: (actionId, payload) {},
-      );
+    testWidgets('renders the placeholder when no host is wired', (
+      tester,
+    ) async {
+      final renderer = JsonWidgetRenderer(onEvent: (actionId, payload) {});
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
