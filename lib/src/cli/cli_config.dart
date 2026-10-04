@@ -1401,6 +1401,28 @@ bool? loadProjectWireDump(String projectDir) {
   }
 }
 
+/// Loads the PROJECT-level `agent.contextWindowCap` from
+/// `<projectDir>/.fah/config.yaml` (gh-1077) — the owner-side effective
+/// window cap travels with the repo the same way it does for the CLI.
+/// Null when the file or the section is absent/unreadable; a
+/// present-but-invalid section throws [ConfigException] (strict, like the
+/// user config — same [agent-section rules](_parseAgentSection)).
+int? loadProjectContextWindowCap(String projectDir) {
+  final file = File('$projectDir/.fah/config.yaml');
+  if (!file.existsSync()) return null;
+  try {
+    final doc = loadYaml(file.readAsStringSync());
+    if (doc is! YamlMap) return null;
+    final node = doc['agent'];
+    if (node == null) return null;
+    return _parseAgentSection(node)?.contextWindowCap;
+  } on ConfigException {
+    rethrow;
+  } on Object {
+    return null;
+  }
+}
+
 /// Loads the PROJECT-level `tools:` section from
 /// `<projectDir>/.fah/config.yaml` — the git-backed availability policy
 /// travels with the repo. The PROJECT scope is consumed live (separate

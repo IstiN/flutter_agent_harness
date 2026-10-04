@@ -743,8 +743,9 @@ class _AgentSettingsFormState extends State<AgentSettingsForm> {
           baseUrl: baseUrl,
           apiKey: key,
           // Endpoint-reported limits (the /models quick-select fetch) win
-          // over the shared fallbacks — same correction as the CLI.
-          contextWindow: _models.contextWindows[model] ?? fallbackContextWindow,
+          // over the catalog, the pinned fallback last (gh-1077 AC3).
+          contextWindow: _models.contextWindows[model] ??
+              resolveAppContextWindow(providerKind: 'openai-completions'),
           maxTokens: _models.maxTokens[model] ?? fallbackMaxTokens,
           supportsImages: _vision,
         ),
