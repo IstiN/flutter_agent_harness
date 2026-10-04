@@ -21,32 +21,32 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 http.Response _json(Object body, [int status = 200]) => http.Response(
-      jsonEncode(body),
-      status,
-      headers: {'content-type': 'application/json'},
-    );
+  jsonEncode(body),
+  status,
+  headers: {'content-type': 'application/json'},
+);
 
 /// Mock AIIN backend serving the OAuth exchange + key registration (same
 /// contract the aiin_web_auth_test coordinator suite runs against).
 MockClient _mockBackend() => MockClient((request) async {
-      final path = request.url.path;
-      if (path == '/api/oauth-proxy/exchange') {
-        return _json(const {
-          'access_token': 'jwt-a.jwt-b.jwt-c',
-          'refresh_token': 'refresh-1',
-          'token_type': 'Bearer',
-          'expires_in': 3600,
-        });
-      }
-      if (path == '/v1/keys') {
-        return _json({
-          'id': 'key-1',
-          'prefix': 'sk-aiin-abc12345',
-          'key': 'sk-aiin-${'a' * 32}',
-        }, 201);
-      }
-      return http.Response('not found', 404);
+  final path = request.url.path;
+  if (path == '/api/oauth-proxy/exchange') {
+    return _json(const {
+      'access_token': 'jwt-a.jwt-b.jwt-c',
+      'refresh_token': 'refresh-1',
+      'token_type': 'Bearer',
+      'expires_in': 3600,
     });
+  }
+  if (path == '/v1/keys') {
+    return _json({
+      'id': 'key-1',
+      'prefix': 'sk-aiin-abc12345',
+      'key': 'sk-aiin-${'a' * 32}',
+    }, 201);
+  }
+  return http.Response('not found', 404);
+});
 
 Future<BuildContext> _pumpHost(WidgetTester tester) async {
   BuildContext? flowContext;
@@ -71,14 +71,18 @@ void main() {
   // session keys store.
   setUp(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(const MethodChannel('fah/keychain'), (
-      call,
-    ) async => null);
+        .setMockMethodCallHandler(
+          const MethodChannel('fah/keychain'),
+          (call) async => null,
+        );
   });
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(const MethodChannel('fah/keychain'), null);
     debugDefaultTargetPlatformOverride = null;
+    // A test that abandons a running flow (a pending model picker at
+    // teardown) must not poison the next test's single-flight guard.
+    resetAiinConnectFlightForTests();
   });
 
   group('runAiinWebConnect (the kIsWeb hop)', () {
@@ -103,8 +107,10 @@ void main() {
             ),
           );
         },
-        aiinModelsFetcher: (baseUrl, {required apiKey}) async =>
-            ['moonshotai/kimi-k2', 'deepseek-ai/deepseek-v3'],
+        aiinModelsFetcher: (baseUrl, {required apiKey}) async => [
+          'moonshotai/kimi-k2',
+          'deepseek-ai/deepseek-v3',
+        ],
       );
 
       // The model picker opens with the fetched list; pick one.
@@ -139,10 +145,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
       await tester.pump(); // one frame for the fallback dialog
       expect(find.text('AIIN API key'), findsOneWidget);
-      await tester.enterText(
-        find.byType(TextField),
-        'sk-aiin-test-1234567890',
-      );
+      await tester.enterText(find.byType(TextField), 'sk-aiin-test-1234567890');
       await tester.pump(); // rebuild: the Connect button enables
       await tester.tap(find.text('Connect'));
       await tester.pumpAndSettle();
@@ -155,8 +158,9 @@ void main() {
       expect(registry.providers.single.modelId, 'kimi-k2');
       await tester.pump(const Duration(seconds: 5)); // expire status snackbars
     });
-    testWidgets('a blocked popup reports false without any dialog',
-        (tester) async {
+    testWidgets('a blocked popup reports false without any dialog', (
+      tester,
+    ) async {
       final registry = ProviderRegistry.inMemory();
       final context = await _pumpHost(tester);
       final done = runAiinWebConnect(
@@ -185,9 +189,7 @@ void main() {
         aiinHttpClient: _mockBackend(),
         aiinOpenPopupFn: () => true,
         aiinNavigatePopupFn: (url) {
-          scheduleMicrotask(
-            () => AiinWebAuthCoordinator.instance.complete(),
-          );
+          scheduleMicrotask(() => AiinWebAuthCoordinator.instance.complete());
         },
       );
       await tester.pumpAndSettle();
@@ -200,8 +202,9 @@ void main() {
   });
 
   group('desktop hop end-to-end (linux override)', () {
-    testWidgets('a successful sign-in picks a model and saves the provider',
-        (tester) async {
+    testWidgets('a successful sign-in picks a model and saves the provider', (
+      tester,
+    ) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.linux;
       final registry = ProviderRegistry.inMemory();
       final context = await _pumpHost(tester);
@@ -226,8 +229,9 @@ void main() {
           ),
           email: 'user@aiin.by',
         ),
-        aiinModelsFetcher: (baseUrl, {required apiKey}) async =>
-            ['moonshotai/kimi-k2'],
+        aiinModelsFetcher: (baseUrl, {required apiKey}) async => [
+          'moonshotai/kimi-k2',
+        ],
       );
 
       // The opening snackbar names the browser hop; then the picker.
@@ -245,8 +249,8 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
     });
 
-    testWidgets('a null sign-in result falls back to the paste dialog and '
-        'a cancel aborts', (tester) async {
+    testWidgets('a null sign-in result is a visible error — never a paste '
+        'sheet (gh-1044 I4/AC4)', (tester) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.linux;
       final registry = ProviderRegistry.inMemory();
       final context = await _pumpHost(tester);
@@ -258,11 +262,16 @@ void main() {
         aiinConnectFn: () async => null,
       );
       await tester.pumpAndSettle();
-      expect(find.text('AIIN API key'), findsOneWidget);
-      await tester.tap(find.text('Cancel'));
+      // SSO is the only path: what happened plus the diagnostic bundle —
+      // and NO key-paste sheet.
+      expect(
+        find.textContaining('AIIN sign-in did not complete'),
+        findsOneWidget,
+      );
+      expect(find.text('AIIN API key'), findsNothing);
       expect(await done, isFalse);
       expect(registry.providers, isEmpty);
-      await tester.pump(const Duration(seconds: 4)); // expire the snackbar
+      await tester.pump(const Duration(seconds: 8)); // expire the snacks
       debugDefaultTargetPlatformOverride = null;
     });
   });
@@ -270,55 +279,66 @@ void main() {
   /// Mocks the iOS `fah/web_auth_session` channel: [behavior] answers the
   /// `authenticate` call — a non-null return completes the session with
   /// it (the native complete-with-callback-url path); throwing makes the
-  /// session fail to start. `cancel` completes the pending session with
-  /// null (the real sheet's canceledLogin path). Returns the mutable
-  /// harness.
+  /// session fail to start; null leaves the sheet OPEN (its resolution
+  /// rides the callback landing → the flow's own dismiss). `cancel`
+  /// completes the pending session with null (the real sheet's
+  /// canceledLogin path). [settle] closes the sheet with no callback URL
+  /// from the test (the AC9 sheet-settles-without-callback scenario).
+  /// Returns the mutable harness.
   ({
     String? Function() openedUrl,
     int Function() cancelCount,
-  }) mockAuthSessionChannel(
-    Object? Function(String url) behavior,
-  ) {
+    void Function() settle,
+  })
+  mockAuthSessionChannel(Object? Function(String url) behavior) {
     final opened = <String>[];
     Completer<Object?>? session;
     var cancels = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(const MethodChannel('fah/web_auth_session'), (
-      call,
-    ) async {
-      if (call.method == 'authenticate') {
-        final url = (call.arguments as Map)['url'] as String;
-        opened.add(url);
-        session = Completer<Object?>();
-        // The sheet answers only when it CLOSES (cancel below, or the
-        // behavior completing it with a callback URL).
-        final answer = behavior(url);
-        if (answer != null && !session!.isCompleted) {
-          session!.complete(answer);
-        }
-        return session!.future;
-      }
-      if (call.method == 'cancel') {
-        cancels++;
-        session?.complete(null);
-        return null;
-      }
-      return null;
-    });
-    return (openedUrl: () => opened.isEmpty ? null : opened.single,
-        cancelCount: () => cancels);
+          call,
+        ) async {
+          if (call.method == 'authenticate') {
+            final url = (call.arguments as Map)['url'] as String;
+            opened.add(url);
+            session = Completer<Object?>();
+            // The sheet answers only when it CLOSES (cancel below, or the
+            // behavior completing it with a callback URL).
+            final answer = behavior(url);
+            if (answer != null && !session!.isCompleted) {
+              session!.complete(answer);
+            }
+            return session!.future;
+          }
+          if (call.method == 'cancel') {
+            cancels++;
+            session?.complete(null);
+            return null;
+          }
+          return null;
+        });
+    return (
+      openedUrl: () => opened.isEmpty ? null : opened.single,
+      cancelCount: () => cancels,
+      settle: () {
+        if (session != null && !session!.isCompleted) session!.complete(null);
+      },
+    );
   }
 
   group('mobile hop end-to-end (iOS auth-session override)', () {
     tearDown(() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(const MethodChannel('fah/web_auth_session'),
-              null);
+          .setMockMethodCallHandler(
+            const MethodChannel('fah/web_auth_session'),
+            null,
+          );
     });
 
     testWidgets('the sheet opens the hosted page, the loopback callback '
-        'lands and the sheet dismisses itself into the model picker',
-        (tester) async {
+        'lands and the sheet dismisses itself into the model picker', (
+      tester,
+    ) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
       final harness = mockAuthSessionChannel((url) => null);
       final registry = ProviderRegistry.inMemory();
@@ -334,12 +354,10 @@ void main() {
             service: null,
             lastConnectionStore: LastConnectionStore.inMemory(),
             aiinHttpClient: _mockBackend(),
-            aiinModelsFetcher: (baseUrl, {required apiKey}) async =>
-                ['moonshotai/kimi-k2'],
-          ).then(
-            (_) {},
-            onError: (Object _) {},
-          ),
+            aiinModelsFetcher: (baseUrl, {required apiKey}) async => [
+              'moonshotai/kimi-k2',
+            ],
+          ).then((_) {}, onError: (Object _) {}),
         );
 
         // The flow binds its loopback server and opens the auth session.
@@ -349,14 +367,20 @@ void main() {
         expect(
           harness.openedUrl(),
           isNotNull,
-          reason: 'the auth session never opened (cancels='
+          reason:
+              'the auth session never opened (cancels='
               '${harness.cancelCount()})',
         );
         final login = Uri.parse(harness.openedUrl()!);
         expect(login.host, 'auth.aiin.by');
         expect(login.path, '/login');
-        final redirect =
-            Uri.parse(login.queryParameters['client_redirect_uri']!);
+        final redirect = Uri.parse(
+          login.queryParameters['client_redirect_uri']!,
+        );
+        // The CodeMie redirect shape: the sheet's `http` interception and
+        // scheme interception ignores the host; the literal loopback
+        // address always reaches the server's IPv4 bind (no `localhost`
+        // label that could resolve to `::1`).
         expect(redirect.host, '127.0.0.1');
 
         // The AIIN proxy redirects the sheet to the loopback server with
@@ -387,7 +411,11 @@ void main() {
       // tail is platform-independent — covered by the desktop/android
       // widget tests; driving it here would await a real-zone future past
       // the test binding's teardown (it never completes the test cleanly).
-      for (var i = 0; i < 40 && find.text('AIIN model').evaluate().isEmpty; i++) {
+      for (
+        var i = 0;
+        i < 40 && find.text('AIIN model').evaluate().isEmpty;
+        i++
+      ) {
         await tester.pump(const Duration(milliseconds: 100));
       }
       expect(find.text('AIIN model'), findsOneWidget);
@@ -395,59 +423,76 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
     });
 
-    testWidgets('an auth session that cannot start falls back to the paste '
-        'dialog and a cancel aborts', (tester) async {
+    testWidgets('an auth session that cannot start is a visible error — '
+        'never a paste sheet (gh-1044 I4/AC4)', (tester) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
       mockAuthSessionChannel(
         (url) => throw PlatformException(code: 'auth_session_unavailable'),
       );
       final registry = ProviderRegistry.inMemory();
       final context = await _pumpHost(tester);
-      final done = runAiinConnectFlow(
-        context: context,
-        registry: registry,
-        service: null,
-        lastConnectionStore: LastConnectionStore.inMemory(),
+      bool? value;
+      // The loopback bind, the failed session start and the server's real
+      // socket teardown all need the real-async zone — the whole attempt
+      // runs inside one runAsync scope (runAsync is not reentrant).
+      await tester.runAsync(() async {
+        final done = runAiinConnectFlow(
+          context: context,
+          registry: registry,
+          service: null,
+          lastConnectionStore: LastConnectionStore.inMemory(),
+        );
+        value = await done;
+      });
+      await tester.pump(); // the error-snack frame
+      expect(value, isFalse);
+      expect(
+        find.textContaining('AIIN sign-in did not complete'),
+        findsOneWidget,
       );
-      // Let the loopback bind + the failing session start settle.
-      await tester.runAsync(
-        () async => Future<void>.delayed(const Duration(milliseconds: 50)),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('AIIN API key'), findsOneWidget);
-      await tester.tap(find.text('Cancel'));
-      expect(await done, isFalse);
+      expect(find.text('AIIN API key'), findsNothing);
       expect(registry.providers, isEmpty);
-      await tester.pump(const Duration(seconds: 4)); // expire the snackbar
+      await tester.pump(const Duration(seconds: 8)); // expire the snacks
       debugDefaultTargetPlatformOverride = null;
     });
 
-    testWidgets('a sheet that closes without a callback falls back to paste '
-        'immediately', (tester) async {
+    testWidgets('a sheet that closes without a callback is a visible user '
+        'cancel — never a paste sheet (gh-1044 AC4)', (tester) async {
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-      // A non-null behavior return completes the session (the native
-      // complete path) — the sheet CLOSES with no callback ever landing:
-      // the cancelWhenOpenSettles path. The paste dialog must appear
-      // without waiting out any timeout.
-      mockAuthSessionChannel((url) => 'done');
+      // The sheet stays open (behavior null), then CLOSES with no
+      // callback URL returned — the intercepted channel's null resolution,
+      // the single cancel signal (gh-1044 AC9). The failure must be
+      // visible immediately, without waiting out any timeout.
+      final harness = mockAuthSessionChannel((url) => null);
       final registry = ProviderRegistry.inMemory();
       final context = await _pumpHost(tester);
-      final done = runAiinConnectFlow(
-        context: context,
-        registry: registry,
-        service: null,
-        lastConnectionStore: LastConnectionStore.inMemory(),
+      bool? value;
+      // The loopback bind and the sheet's real resolution need the
+      // real-async zone — the whole attempt runs inside one runAsync
+      // scope (runAsync is not reentrant).
+      await tester.runAsync(() async {
+        final done = runAiinConnectFlow(
+          context: context,
+          registry: registry,
+          service: null,
+          lastConnectionStore: LastConnectionStore.inMemory(),
+        );
+        // Let the loopback bind, then the user swipes the sheet away.
+        for (var i = 0; i < 100 && harness.openedUrl() == null; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+        harness.settle();
+        value = await done;
+      });
+      await tester.pump(); // the error-snack frame
+      expect(value, isFalse);
+      expect(
+        find.textContaining('AIIN sign-in did not complete'),
+        findsOneWidget,
       );
-      // Let the loopback bind + the surface close settle.
-      await tester.runAsync(
-        () async => Future<void>.delayed(const Duration(milliseconds: 50)),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('AIIN API key'), findsOneWidget);
-      await tester.tap(find.text('Cancel'));
-      expect(await done, isFalse);
+      expect(find.text('AIIN API key'), findsNothing);
       expect(registry.providers, isEmpty);
-      await tester.pump(const Duration(seconds: 4)); // expire the snackbar
+      await tester.pump(const Duration(seconds: 8)); // expire the snacks
       debugDefaultTargetPlatformOverride = null;
     });
 
@@ -477,8 +522,9 @@ void main() {
           ),
           email: 'user@aiin.by',
         ),
-        aiinModelsFetcher: (baseUrl, {required apiKey}) async =>
-            ['moonshotai/kimi-k2'],
+        aiinModelsFetcher: (baseUrl, {required apiKey}) async => [
+          'moonshotai/kimi-k2',
+        ],
       );
       await tester.pumpAndSettle();
       expect(find.text('AIIN model'), findsOneWidget);
