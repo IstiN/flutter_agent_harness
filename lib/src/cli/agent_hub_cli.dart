@@ -432,12 +432,23 @@ extension AgentCliHubDriver on AgentCli {
     if (session == null) return Future.value();
     _persistChain = _persistChain
         .then((_) async {
-          final json = jsonEncode(_jobBoard.toRecords());
+          // Serialize ONCE — the dedupe key must be the exact payload
+          // that gets appended, not a second encoding of the same board.
+          final records = _jobBoard.toRecords();
+          final json = jsonEncode(records);
           if (!_jobBoardPersistDeduper.shouldPersist(json)) return;
-          await session.appendCustomEntry(
-            customType: 'shell_job_registry',
-            data: _jobBoard.toRecords(),
-          );
+          try {
+            await session.appendCustomEntry(
+              customType: 'shell_job_registry',
+              data: records,
+            );
+            _jobBoardPersistDeduper.confirmPersisted();
+          } on Object {
+            // The chain swallows below by design; roll the deduper back
+            // first so the retried identical snapshot is NOT skipped.
+            _jobBoardPersistDeduper.revertFailedPersist();
+            rethrow;
+          }
         })
         // One failed append must not poison the chain (every later persist
         // would be skipped) nor escape as an unhandled zone error — the

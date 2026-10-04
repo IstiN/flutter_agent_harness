@@ -145,6 +145,13 @@ void main() {
         // The raw bytes survive in a sidecar for forensics…
         final sidecar = (await fs.readTextFile('$path.corrupt')).getOrThrow();
         expect(sidecar.trim(), '{"id":"torn","parentId":"e1"');
+        // …and the sidecar itself stays clean one-record-per-line JSONL —
+        // the quarantined span already carries its trailing newline, so
+        // no stray blank line may separate records.
+        expect(
+          sidecar.split('\n'),
+          ['{"id":"torn","parentId":"e1"', ''],
+        );
 
         // …and the main file was rewritten without the tear: every line
         // past the header is valid JSON again.

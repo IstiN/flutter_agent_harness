@@ -940,7 +940,15 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
               ? null
               : utf8.decode(raw.valueOrNull!, allowMalformed: true);
           if (text != null) {
-            await fs.appendFile('$segmentPath.corrupt', '$text\n');
+            // The span already carries the line's trailing newline
+            // (SessionScannedLine.byteLength — "trailing newline
+            // included"); appending '$text\n' would leave a stray blank
+            // line per record and the sidecar would stop round-tripping
+            // as one-record-per-line JSONL.
+            await fs.appendFile(
+              '$segmentPath.corrupt',
+              text.endsWith('\n') ? text : '$text\n',
+            );
           }
         }
         // Rewrite whole via a streamed span copy into a temp file + atomic

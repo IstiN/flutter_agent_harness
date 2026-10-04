@@ -280,7 +280,29 @@ Future<SessionRepairReport> repairSessionLedgers(
       );
     }
   }
+  // An existing backup is rotated to `.bak1` first: repair is exactly the
+  // operation users run twice (dry-run, then real, then again after a
+  // mistake) — silently replacing the previous `.bak` would destroy the
+  // first repair's pristine original.
   final backupPath = '$path.bak';
+  final backupExists = await fs.exists(backupPath);
+  if (backupExists.isErr) {
+    throw SessionRepairException(
+      'cannot check for an existing backup at $backupPath: '
+      '${backupExists.errorOrNull!.message}',
+      code: SessionRepairErrorCode.unknown,
+    );
+  }
+  if (backupExists.valueOrNull!) {
+    final rotated = await renamable.renamePath(backupPath, '$path.bak1');
+    if (rotated.isErr) {
+      throw SessionRepairException(
+        'cannot rotate the previous backup $backupPath to $path.bak1: '
+        '${rotated.errorOrNull!.message}',
+        code: SessionRepairErrorCode.unknown,
+      );
+    }
+  }
   final backup = await renamable.renamePath(path, backupPath);
   if (backup.isErr) {
     throw SessionRepairException(

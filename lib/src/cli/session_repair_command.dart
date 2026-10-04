@@ -13,9 +13,13 @@ import 'package:flutter_agent_harness/src/session_repair.dart';
 /// — is copied verbatim; the original is preserved at `<file>.bak`.
 ///
 /// A session owned by a LIVE process (fresh presence heartbeat) is
-/// refused — repairing under a writer loses appends. [write]/[writeln]
-/// are the host's output channel (a [CliIO] tear-off pair) so this file
-/// stays a standalone library.
+/// refused — repairing under a writer loses appends. The guard covers
+/// both target shapes: by-id lookups check the id directly; a direct
+/// `.jsonl` path resolves to its session id through the listing under
+/// [sessionRoot] (presence is keyed by id, so a file that is not a
+/// session under that root has no heartbeat to check and is repaired
+/// as an offline file). [write]/[writeln] are the host's output channel
+/// (a [CliIO] tear-off pair) so this file stays a standalone library.
 Future<int> runSessionRepairCliCommand({
   required void Function(String text) write,
   required void Function(String text) writeln,
@@ -38,6 +42,26 @@ Future<int> runSessionRepairCliCommand({
       return 1;
     }
     path = target;
+    // Live guard for the path branch too: resolve the file to its
+    // session id through the repo listing (ids are the presence key)
+    // and refuse a fresh heartbeat, exactly like the by-id branch —
+    // repairing under a writer loses appends. A file that is not a
+    // session under [sessionRoot] matches no presence row; there is no
+    // writer heartbeat to check against (see the doc comment).
+    final liveRow = await _liveRowForPath(
+      env,
+      sessionRoot,
+      path,
+      presenceStore,
+    );
+    if (liveRow != null) {
+      writeln(
+        'session repair: session ${liveRow.sessionId} is live (pid '
+        '${liveRow.pid ?? 'unknown'}, heartbeat ${liveRow.touchedAt}) — '
+        'stop the owning process first.',
+      );
+      return 1;
+    }
   } else {
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionRoot);
     final metadata = await resolveRepairableSession(repo, target);
@@ -92,6 +116,30 @@ Future<SessionMetadata?> resolveRepairableSession(
   for (final metadata in sessions) {
     final name = await repo.sessionNameQuick(metadata);
     if (name != null && name.trim() == wanted) return metadata;
+  }
+  return null;
+}
+
+/// The fresh presence row (if any) that names [path]: the file is
+/// resolved to its session id via the repo listing, then the id is
+/// looked up in [presenceStore]. Null when the file is not a listed
+/// session under [sessionRoot] or no live process owns it — presence is
+/// keyed by session id, and only sessions under the root can be mapped
+/// back to one.
+Future<SessionPresence?> _liveRowForPath(
+  FileSystem env,
+  String sessionRoot,
+  String path,
+  SessionPresenceStore? presenceStore,
+) async {
+  if (presenceStore == null) return null;
+  final repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionRoot);
+  final sessions = await repo.list();
+  final absolute = (await env.absolutePath(path)).valueOrNull ?? path;
+  for (final metadata in sessions) {
+    if (metadata.path == path || metadata.path == absolute) {
+      return (await presenceStore.list())[metadata.id];
+    }
   }
   return null;
 }

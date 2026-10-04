@@ -47,7 +47,7 @@ void main() {
     });
 
     test('record label and detail strings are truncated', () {
-      final huge = 'h' * (ledgetTextCapChars * 10);
+      final huge = 'h' * (ledgerTextCapChars * 10);
       final board = ShellJobBoard()
         ..start(_card('sh-1', command: huge))
         ..settle(
@@ -58,9 +58,9 @@ void main() {
         );
       final records = board.toRecords();
       expect((records.single['label'] as String).length,
-          ledgetTextCapChars);
+          ledgerTextCapChars);
       expect((records.single['detail'] as String).length,
-          lessThanOrEqualTo(ledgetTextCapChars));
+          lessThanOrEqualTo(ledgerTextCapChars));
       // The LIVE board keeps the full label for rendering — the cap is
       // the persisted record's alone.
       expect(board.allCards.single.label.length, huge.length);
@@ -71,13 +71,30 @@ void main() {
     test('skips a byte-identical snapshot, persists changes', () {
       final deduper = LedgerSnapshotDeduper();
       expect(deduper.shouldPersist('{"a":1}'), isTrue);
+      deduper.confirmPersisted();
       expect(deduper.shouldPersist('{"a":1}'), isFalse);
       expect(deduper.shouldPersist('{"a":2}'), isTrue);
+      deduper.confirmPersisted();
+      expect(deduper.shouldPersist('{"a":2}'), isFalse);
+    });
+
+    test('a failed write does not mark the snapshot persisted', () {
+      final deduper = LedgerSnapshotDeduper();
+      expect(deduper.shouldPersist('{"a":1}'), isTrue);
+      // The append failed (and the persist chain swallows the error by
+      // design): the retried IDENTICAL snapshot must not be skipped —
+      // otherwise the ledger silently misses a state until the next
+      // mutation.
+      deduper.revertFailedPersist();
+      expect(deduper.shouldPersist('{"a":1}'), isTrue);
+      deduper.confirmPersisted();
+      expect(deduper.shouldPersist('{"a":1}'), isFalse);
     });
 
     test('reset re-persists the same payload (fresh session)', () {
       final deduper = LedgerSnapshotDeduper();
       deduper.shouldPersist('snap');
+      deduper.confirmPersisted();
       deduper.reset();
       expect(deduper.shouldPersist('snap'), isTrue);
     });

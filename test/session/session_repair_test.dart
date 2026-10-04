@@ -88,6 +88,36 @@ void main() {
       expect(backup, contains('"customType":"model_request_summary"'));
     });
 
+    test('a second repair rotates the previous backup instead of '
+        'overwriting it', () async {
+      await writeSession([
+        header(),
+        message('m1'),
+        custom('c1', customType: 'model_request_summary'),
+      ]);
+      await repairSessionLedgers(fs, path);
+      final firstRepair = (await fs.readTextFile(path)).getOrThrow();
+      // A new ledger record lands; the user repairs again (exactly the
+      // twice-run shape: dry-run, then real, then again after a mistake).
+      await fs.appendFile(
+        path,
+        '${custom('c2', customType: 'model_request_summary')}\n',
+      );
+      final beforeSecondRepair = (await fs.readTextFile(path)).getOrThrow();
+      await repairSessionLedgers(fs, path);
+      // The newest backup is the pre-second-repair file…
+      expect(
+        (await fs.readTextFile('$path.bak')).getOrThrow(),
+        beforeSecondRepair,
+      );
+      // …and the first repair's input — the pristine original — survives
+      // at .bak1 instead of being silently replaced.
+      final pristine = (await fs.readTextFile('$path.bak1')).getOrThrow();
+      expect(pristine, contains('"id":"c1"'));
+      expect(pristine, isNot(contains('"id":"c2"')));
+      expect(firstRepair, isNot(contains('"id":"c1"')));
+    });
+
     test('dry-run counts without touching the file', () async {
       await writeSession([
         header(),

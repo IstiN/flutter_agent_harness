@@ -88,6 +88,47 @@ void main() {
       expect((await fs.exists('${metadata.path}.bak')).getOrThrow(), isFalse);
     });
 
+    test('a live session given by direct path is refused too', () async {
+      await seedSession('live-by-path');
+      final repo = JsonlSessionRepo(fs: fs, sessionsRoot: '/sessions');
+      final metadata = await resolveRepairableSession(repo, 'live-by-path');
+      final io = _RepairIo();
+      final code = await runSessionRepairCliCommand(
+        write: io.write,
+        writeln: io.writeln,
+        env: fs,
+        sessionRoot: '/sessions',
+        sessionId: metadata!.path,
+        presenceStore: _LivePresence('live-by-path'),
+      );
+      expect(code, 1);
+      expect(io.buffer.toString(), contains('is live'));
+      // The file is untouched — nothing was rewritten under the writer.
+      final content =
+          (await fs.readTextFile(metadata.path)).getOrThrow();
+      expect(content, contains('model_request_summary'));
+    });
+
+    test('repairing a non-live session by direct path works', () async {
+      await seedSession('path-target');
+      final repo = JsonlSessionRepo(fs: fs, sessionsRoot: '/sessions');
+      final metadata = await resolveRepairableSession(repo, 'path-target');
+      final io = _RepairIo();
+      final code = await runSessionRepairCliCommand(
+        write: io.write,
+        writeln: io.writeln,
+        env: fs,
+        sessionRoot: '/sessions',
+        sessionId: metadata!.path,
+      );
+      expect(code, 0);
+      expect(io.buffer.toString(), contains('repaired'));
+      expect(
+        (await fs.exists('${metadata.path}.bak')).getOrThrow(),
+        isTrue,
+      );
+    });
+
     test('a live session is refused', () async {
       await seedSession('live-one');
       final io = _RepairIo();
