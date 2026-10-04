@@ -36,28 +36,82 @@ final class AiinCallback {
 
   /// Whether the redirect carries a usable authorization code.
   bool get succeeded => code != null && code!.isNotEmpty && error == null;
+
+  /// Parses a redirect URL that never reached the loopback server — the
+  /// `ASWebAuthenticationSession` scheme interception hands the callback
+  /// URL straight back to the caller (gh-1044 AC9, the CodeMie contract),
+  /// so the same `code`/`state`/`error` query the server would see arrives
+  /// as a string instead of an HTTP request.
+  factory AiinCallback.fromRedirectUrl(String url) {
+    final query =
+        Uri.tryParse(url)?.queryParameters ?? const <String, String>{};
+    return AiinCallback(
+      code: query['code'],
+      state: query['state'],
+      error: query['error'],
+      errorDescription: query['error_description'],
+    );
+  }
 }
 
-/// Loopback HTTP server catching the AIIN OAuth proxy redirect.
+/// Loopback HTTP server catching the AIIN OAuth redirect.
+///
+/// Dual-stack on the loopback interface (gh-1044 review): the primary
+/// IPv4 listener plus a best-effort IPv6 listener on the same port, so
+/// the fallback leg (an in-sheet redirect that loads the server for
+/// real) is reachable no matter how the client resolves the host — a
+/// `localhost` label may answer `::1`, and the literal `127.0.0.1` needs
+/// the IPv4 listener. The IPv6 listener is optional: hosts without IPv6
+/// loopback skip it (debugPrint) and the flow keeps working over IPv4.
 final class AiinCallbackServer {
   HttpServer? _server;
+  HttpServer? _server6;
   Completer<AiinCallback?>? _result;
   Timer? _timer;
 
+  /// The host the callback URL advertises. The flow advertises the
+  /// literal `127.0.0.1` on every surface (scheme interception ignores
+  /// the host; the fallback leg needs an address that reaches the IPv4
+  /// bind without resolver ambiguity); other values only for tests.
+  String callbackHost = '127.0.0.1';
+
   /// The redirect URI to register with [initiateAiinOAuth]
-  /// (`http://127.0.0.1:<ephemeral-port>/callback`).
+  /// (`http://<host>:<ephemeral-port>/callback`).
   String? get callbackUrl {
     final server = _server;
-    return server == null ? null : 'http://127.0.0.1:${server.port}/callback';
+    return server == null
+        ? null
+        : 'http://$callbackHost:${server.port}/callback';
   }
 
   /// Binds the loopback server and returns the redirect URI.
-  Future<String> start({Duration timeout = const Duration(minutes: 5)}) async {
+  Future<String> start({
+    Duration timeout = const Duration(minutes: 5),
+    String callbackHost = '127.0.0.1',
+  }) async {
+    this.callbackHost = callbackHost;
     await close();
     _result = Completer<AiinCallback?>();
     _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     _timer = Timer(timeout, () => _complete(null));
     _server!.listen(_handle, onDone: () => _complete(null));
+    // Best-effort IPv6 loopback on the same port: a redirect addressed
+    // `localhost` can resolve to `::1` (gh-1044 review) — the fallback
+    // leg must answer there too. Optional: no IPv6, no problem.
+    try {
+      _server6 = await HttpServer.bind(
+        InternetAddress.loopbackIPv6,
+        _server!.port,
+        v6Only: true,
+      );
+      _server6!.listen(_handle, onDone: () => _complete(null));
+    } on IOException catch (error) {
+      _server6 = null;
+      stderr.writeln(
+        '[AIIN] no IPv6 loopback listener (the fallback leg stays '
+        'IPv4-only): $error',
+      );
+    }
     return callbackUrl!;
   }
 
@@ -96,8 +150,11 @@ final class AiinCallbackServer {
     _timer?.cancel();
     _timer = null;
     final server = _server;
+    final server6 = _server6;
     _server = null;
+    _server6 = null;
     if (server != null) await server.close(force: true);
+    if (server6 != null) await server6.close(force: true);
   }
 }
 
@@ -119,8 +176,9 @@ String _callbackPage(AiinCallback callback) {
 
 /// The mobile auth-session surface closed WITHOUT a callback — a user
 /// cancel (iOS swipe-dismissal). Thrown by [runAiinConnectCliFlow] under
-/// `cancelWhenOpenSettles`; the app's mobile branch catches it and falls
-/// straight to the paste-key fallback.
+/// `cancelWhenOpenSettles`; the app's mobile branch catches it and
+/// surfaces the visible failure state (gh-1044 I4 — SSO is the only
+/// path, never a paste sheet).
 final class AiinSurfaceClosedException implements Exception {
   const AiinSurfaceClosedException();
 
@@ -160,15 +218,40 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
 
   /// Treats a successful open completion before any callback as a user
   /// cancel — throws [AiinSurfaceClosedException] — instead of waiting
-  /// out [timeout]. For auth-session surfaces that resolve only when the
-  /// sheet CLOSES (iOS `ASWebAuthenticationSession`): a user
-  /// swipe-dismissal must short-circuit to the caller's fallback, not
-  /// leave dead air. Desktop browser launches resolve immediately, so
-  /// they must leave this off (default false).
+  /// out [timeout]. For surfaces that resolve without a completion value
+  /// (an external browser launch): when the launch future settles with no
+  /// callback and no [interceptedCallback] channel, a user abandonment
+  /// must short-circuit, not leave dead air. When [interceptedCallback]
+  /// IS present the sheet's resolution rides it alone (its null IS the
+  /// cancel) and this flag is ignored — the two signals come from the
+  /// same resolution, and the open-settle path would only race the
+  /// callback URL's delivery. Desktop callers leave this off (default
+  /// false).
   bool cancelWhenOpenSettles = false,
+
+  /// The host the callback URL advertises (gh-1044): `localhost` for the
+  /// iOS auth-session surface — CodeMie's proven redirect shape — the
+  /// default `127.0.0.1` everywhere else.
+  String callbackHost = '127.0.0.1',
+
+  /// The auth-session surface's completion value (gh-1044 AC9): resolves
+  /// with the callback URL the native scheme interception caught
+  /// (`callbackScheme: 'http'`), or null when the sheet closed without
+  /// one (user cancel). When it delivers a URL the flow settles from it
+  /// directly — completion no longer depends on the redirect loading the
+  /// loopback server inside the sheet. The loopback server stays armed as
+  /// the fallback leg (older surfaces still navigate the redirect for
+  /// real); whichever leg lands first wins the race. This future is the
+  /// sheet's single completion channel — the
+  /// [cancelWhenOpenSettles] open-settle cancel does not apply while it
+  /// exists.
+  Future<String?> Function()? interceptedCallback,
 }) async {
   final server = AiinCallbackServer();
-  final redirectUri = await server.start(timeout: timeout);
+  final redirectUri = await server.start(
+    timeout: timeout,
+    callbackHost: callbackHost,
+  );
   try {
     // The hosted sign-in page: AIIN lists every provider, runs the whole
     // round-trip (silent for an existing session) and redirects back with
@@ -192,12 +275,41 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
     // session cannot start) surface promptly through the race instead of
     // stalling until the callback timeout.
     final callbackFuture = server.waitForCallback();
-    final opened = _openAiinBrowser(loginUrl.toString(), openBrowserFn, onStatus);
-    final callback = await _firstCallbackOrOpenError(
-      callbackFuture,
-      opened,
-      cancelWhenOpenSettles: cancelWhenOpenSettles,
+    final opened = _openAiinBrowser(
+      loginUrl.toString(),
+      openBrowserFn,
+      onStatus,
     );
+    final intercepted = interceptedCallback?.call();
+    AiinCallback? callback;
+    try {
+      final (won, source) = await _firstCallbackOrOpenError(
+        callbackFuture,
+        opened,
+        cancelWhenOpenSettles: cancelWhenOpenSettles,
+        intercepted: intercepted,
+      );
+      callback = won;
+      // gh-1044 AC2: the winning leg is answerable from the log alone —
+      // interception (the fixed path) vs a real loopback hit (the
+      // fallback leg) discriminates F2 from F1 without a device debugger.
+      // A null callback (timeout) keeps _settleAiinCallback's message.
+      if (callback != null) {
+        onStatus(switch (source) {
+          _AiinCallbackSource.interceptedRedirect =>
+            'AIIN redirect intercepted by the sign-in sheet (callback URL '
+                'returned to the flow)',
+          _AiinCallbackSource.loopbackServer =>
+            'AIIN callback landed on the loopback server',
+        });
+      }
+    } on AiinSurfaceClosedException {
+      onStatus(
+        'the sign-in sheet closed without completing the sign-in '
+        '(no callback returned — user cancel)',
+      );
+      rethrow;
+    }
     onCallback?.call();
     try {
       await opened;
@@ -222,24 +334,79 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
   }
 }
 
+/// Where the winning callback came from — the gh-1044 AC2 discriminator
+/// (interception vs a real loopback hit).
+enum _AiinCallbackSource { loopbackServer, interceptedRedirect }
+
 /// Resolves with the first of [callbackFuture] (a landed callback or the
-/// timeout), an [opened] failure, or — when [cancelWhenOpenSettles] — a
-/// successful [opened] completion ([AiinSurfaceClosedException]): an
-/// auth-session sheet that closed WITHOUT a callback is a user cancel,
-/// not a reason to wait out the callback timeout. A late open error after
-/// the callback won is dropped from the race here and swallowed by the
-/// caller's `await opened` — the landed callback always settles the flow.
-Future<AiinCallback?> _firstCallbackOrOpenError(
+/// timeout), an [intercepted] callback URL (gh-1044 AC9), an [opened]
+/// failure, or — when [cancelWhenOpenSettles] — a successful [opened]
+/// completion, or an [intercepted] null ([AiinSurfaceClosedException]): an
+/// auth-session sheet that closed WITHOUT returning a callback URL is a
+/// user cancel, not a reason to wait out the callback timeout. A late
+/// open error after the callback won is dropped from the race here and
+/// swallowed by the caller's `await opened` — the landed callback always
+/// settles the flow.
+///
+/// When [intercepted] is present it is the sheet's SINGLE completion
+/// channel — both the callback URL and the cancel (null) ride it — so the
+/// [opened] settle never duplicates the cancel (gh-1044): the mobile
+/// wrapper resolves `opened` and [intercepted] from the SAME sheet
+/// resolution, and a Dart async function's `return` completes its future
+/// SYNCHRONOUSLY (VM `_returnAsyncNotFuture` → `_completeWithValue`) while
+/// `Completer.complete` defers its listeners to a LATER microtask — an
+/// `opened`-settle cancel evaluated in that cascade would always judge
+/// the pending [interceptedCallback] incomplete and steal the race from a
+/// callback URL sitting in the very next microtask. With no [intercepted]
+/// channel (an external browser that gives no completion value),
+/// [cancelWhenOpenSettles] keeps its original meaning.
+Future<(AiinCallback?, _AiinCallbackSource)> _firstCallbackOrOpenError(
   Future<AiinCallback?> callbackFuture,
   Future<void> opened, {
   required bool cancelWhenOpenSettles,
+  Future<String?>? intercepted,
 }) {
   final openError = Completer<Never>();
   final surfaceClosed = Completer<Never>();
+  final interceptedCallback = Completer<(AiinCallback?, _AiinCallbackSource)>();
+  if (intercepted != null) {
+    unawaited(
+      intercepted.then(
+        (url) {
+          if (url != null) {
+            if (!interceptedCallback.isCompleted) {
+              interceptedCallback.complete((
+                AiinCallback.fromRedirectUrl(url),
+                _AiinCallbackSource.interceptedRedirect,
+              ));
+            }
+            return;
+          }
+          // The sheet closed without returning a callback URL — a user
+          // cancel (the same semantics as cancelWhenOpenSettles).
+          if (!surfaceClosed.isCompleted && !interceptedCallback.isCompleted) {
+            surfaceClosed.completeError(const AiinSurfaceClosedException());
+          }
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          if (!openError.isCompleted) {
+            openError.completeError(error, stackTrace);
+          }
+        },
+      ),
+    );
+  }
   unawaited(
     opened.then(
       (_) {
-        if (cancelWhenOpenSettles && !surfaceClosed.isCompleted) {
+        // With an intercepted channel the sheet's resolution is reported
+        // through it alone (null = user cancel) — never duplicated here.
+        // See the doc comment for the scheduling asymmetry that makes the
+        // duplication a lost race for the intercepted URL.
+        if (cancelWhenOpenSettles &&
+            intercepted == null &&
+            !surfaceClosed.isCompleted &&
+            !interceptedCallback.isCompleted) {
           surfaceClosed.completeError(const AiinSurfaceClosedException());
         }
       },
@@ -250,7 +417,14 @@ Future<AiinCallback?> _firstCallbackOrOpenError(
   );
   openError.future.ignore();
   surfaceClosed.future.ignore();
-  return Future.any([callbackFuture, openError.future, surfaceClosed.future]);
+  return Future.any([
+    callbackFuture.then(
+      (callback) => (callback, _AiinCallbackSource.loopbackServer),
+    ),
+    openError.future,
+    surfaceClosed.future,
+    interceptedCallback.future,
+  ]);
 }
 
 /// Opens the system browser, falling back to printing the URL when no
