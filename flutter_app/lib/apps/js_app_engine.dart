@@ -128,6 +128,37 @@ abstract interface class FaThemeBridge {
 /// storage key (protocol: docs in `fa_widgets/docs/state-sync.md`) —
 /// durable fields plus a `rev`/`writer` guard so sibling engines adopt
 /// external changes instead of fighting over them.
+
+/// [WidgetFileReader] over the app's [ExecutionEnv] behind
+/// [JsAppEngine._assembleEntryJs]: every assembler path is env-relative
+/// under the app dir. The manifest namespace always names the entry
+/// `widget.js` ([WidgetManifest.mainJsPath]) while the engine may boot a
+/// different entry ([JsAppEngine.entryFile] — a live-tile entry), so that
+/// one path is redirected to the real entry file; every other path
+/// (manifest.json, a `files` entry, a relative import target) maps 1:1.
+class _AppWidgetFileReader implements WidgetFileReader {
+  _AppWidgetFileReader(this._env, {required this.dir, required this.entryFile});
+
+  final ExecutionEnv _env;
+
+  /// Env-relative app directory (`apps/<id>` or a session override).
+  final String dir;
+
+  /// The entry file inside [dir] the engine boots.
+  final String entryFile;
+
+  String _map(String path) =>
+      path == '$dir/widget.js' ? '$dir/$entryFile' : path;
+
+  @override
+  Future<String?> readString(String path) async =>
+      (await _env.readTextFile(_map(path))).valueOrNull;
+
+  @override
+  Future<bool> exists(String path) async =>
+      (await _env.readTextFile(_map(path))).valueOrNull != null;
+}
+
 class JsAppEngine {
   JsAppEngine({
     required this.app,
@@ -327,7 +358,7 @@ class JsAppEngine {
     // Log WHICH app boots — engine-start lines in the debug log used to
     // be indistinguishable between apps (and tiles vs full apps).
     AppLog.i('apps', 'engine start: ${app.id}/$entryFile');
-    final js = (await env.readTextFile('${app.dir}/$entryFile')).getOrThrow();
+    final js = await _assembleEntryJs();
     final storage = await _readStorage();
     final config = JsRuntimeConfig(
       widgetId: app.id,
@@ -373,6 +404,38 @@ class JsAppEngine {
     final engine = _engine;
     if (engine == null) return Future.value();
     return engine.callEvent(actionId, payload);
+  }
+
+  /// Reads and assembles the entry JS for [start] through the runtime's
+  /// own [WidgetManifest] assembler: relative `import './x.js'` statements
+  /// and `jsr.include('…')` calls are inlined (depth-capped, each file
+  /// once, `export` stripped) and a manifest `files` list defines the load
+  /// order. The install side (`catalog_service.dart`) unpacks whole
+  /// multi-file apps — booting the raw entry text made any app whose
+  /// entry is a bare `import './game/main.js';` die as a script syntax
+  /// error: no `jsr.render`, the view stuck on its spinner (gh-1207).
+  ///
+  /// The manifest namespace always names the entry `widget.js`
+  /// ([WidgetManifest.mainJsPath]) while [entryFile] may name a live-tile
+  /// entry, so the reader redirects that one path (see
+  /// [_AppWidgetFileReader]). The entry file itself stays the contract:
+  /// a missing one fails the start with a clear [StateError] (the view
+  /// renders its error card instead of spinning forever).
+  Future<String> _assembleEntryJs() async {
+    final reader = _AppWidgetFileReader(
+      env,
+      dir: app.dir,
+      entryFile: entryFile,
+    );
+    final manifest = await WidgetManifest.fromStorage(app.dir, reader: reader);
+    if (manifest == null) {
+      throw StateError('app entry not found: ${app.dir}/$entryFile');
+    }
+    final js = await manifest.readJs(reader: reader);
+    if (js == null) {
+      throw StateError('app entry not found: ${app.dir}/$entryFile');
+    }
+    return js;
   }
 
   /// Delivers a fire-and-forget host event to the app's bootstrap listeners
