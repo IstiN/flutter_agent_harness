@@ -731,5 +731,38 @@ void main() {
       expect(turnPrefixSummarizationPrompt, contains('PREFIX of a turn'));
       expect(turnPrefixSummarizationPrompt, contains('## Original Request'));
     });
+    test('prompts pin the epistemic status of claims (gh-1219)', () {
+      // The canonical contract rides the summarizer SYSTEM prompt, which
+      // the injected summarizer sends on every classic call path (first
+      // summary, update fold, turn prefix) and the structured engine's
+      // checkpoint pass reuses. The AC7 budget (<=500 net chars) leaves no
+      // room for it in the summary.md/summary_update.md bodies.
+      expect(summarizationSystemPrompt, contains('uncertainty qualifier'));
+      expect(summarizationSystemPrompt, contains('[verified]'));
+      expect(summarizationSystemPrompt, contains('[assumed]'));
+      expect(summarizationSystemPrompt, contains('[hearsay'));
+      expect(summarizationSystemPrompt, contains('unverified — re-verify'));
+    });
+
+    test('update prompt never upgrades a hedged claim while folding', () {
+      expect(updateSummarizationPrompt, contains('never upgrade'));
+    });
+
+    test('turn prefix prompt keeps hedges and evidence for the suffix', () {
+      expect(turnPrefixSummarizationPrompt, contains('uncertainty qualifier'));
+    });
+
+    test('structured checkpoint prompt demands evidence for conclusions', () {
+      expect(structuredCheckpointPrompt, contains('uncertainty qualifier'));
+      expect(structuredCheckpointPrompt, contains('unverified — re-verify'));
+    });
+
+    test('branch summary separates observed from interpreted state', () {
+      // The handover-digest surface (gh-1219 direction 4): interpretation
+      // must never masquerade as observation across a compact boundary.
+      expect(branchSummaryPrompt, contains('## Observed State'));
+      expect(branchSummaryPrompt, contains('## Interpreted State'));
+      expect(branchSummaryPrompt, contains('uncertainty qualifier'));
+    });
   });
 }
