@@ -18,6 +18,7 @@
 library;
 
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:fa/services/task_models_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -333,6 +334,140 @@ void main() {
         reason: 'no trim→continue loop',
       );
       expect(streamCalls, greaterThanOrEqualTo(2));
+    });
+  });
+
+  group('IT-4 — the legacy smol slot (gh-1077 fix contract 1, on-device '
+      'parity)', () {
+    // These tests exist for the flutter_app CRAP ratchet as much as for
+    // the behavior: _legacySmolSlotFromStore is the fallback every
+    // resolver-miss takes, and it must stay covered.
+    test('a store override the roles chain cannot serve falls back to the '
+        'legacy build and the session still compacts', () async {
+      final env = MemoryExecutionEnv();
+      // The chain has NO usable entry on purpose: the named key is absent
+      // from bootSecrets, so resolveRole('smol') throws and the legacy
+      // direct-store build serves the slot (main connection's key, the
+      // store's endpoint/model).
+      final store = TaskModelsStore.inMemory({
+        TaskRole.smol: TaskRoleConfig(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://smol.invalid/v1',
+          modelId: 'smol-legacy',
+          apiKeyName: 'SMOL_KEY',
+        ),
+      });
+      final service = AgentService(
+        agent: _agent(_recordingText(<String>[], 'main summary'), contextWindow: 512),
+        env: env,
+        sessionsRoot: '/sessions',
+        taskModelsStore: store,
+        bootSecrets: const {}, // SMOL_KEY missing on purpose
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+
+      // AppLog is a process-wide ring buffer: assert on the delta this
+      // test appends, not the whole dump (other tests log here too).
+      final logBefore = AppLog.dump().length;
+      await service.sendText('x' * 600);
+      await service.waitForIdle();
+      await service.sendText('y' * 600);
+      await service.waitForIdle();
+      await service.sendText('z' * 600);
+      await service.waitForIdle();
+
+      // The legacy path executed: the resolver miss is logged, then the
+      // legacy slot's summarizer call fails (https://smol.invalid) and the
+      // main stream's fallback summary lands.
+      final logDelta = AppLog.dump().substring(logBefore);
+      expect(
+        logDelta,
+        contains('smol role unresolved'),
+        reason: 'the roles chain threw; the legacy store build took over',
+      );
+      expect(
+        service.messages.first.content,
+        contains('compacted into the following summary'),
+        reason: 'the main-stream fallback summarized the transcript',
+      );
+      expect(service.error, isNull);
+      expect(
+        service.messages.any(
+          (m) => m.role == 'system' && m.content.contains('Context compaction failed'),
+        ),
+        isFalse,
+        reason: 'the main-stream fallback saved the run — no failure notice',
+      );
+    });
+
+    test('a store without a smol override summarizes on the main stream '
+        '(resolver miss, empty legacy slot)', () async {
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _agent(_recordingText(<String>[], 'main summary'), contextWindow: 512),
+        env: env,
+        sessionsRoot: '/sessions',
+        taskModelsStore: TaskModelsStore.inMemory(const {}),
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+
+      // AppLog is a process-wide ring buffer: assert on this test's delta.
+      final logBefore = AppLog.dump().length;
+      await service.sendText('x' * 600);
+      await service.waitForIdle();
+      await service.sendText('y' * 600);
+      await service.waitForIdle();
+      await service.sendText('z' * 600);
+      await service.waitForIdle();
+
+      // No smol anywhere: the resolver finds no 'smol' role, the legacy
+      // store build is empty, the main stream summarizes.
+      expect(
+        AppLog.dump().substring(logBefore),
+        isNot(contains('smol role unresolved')),
+      );
+      expect(service.messages.first.content, contains('ckpt·'));
+      expect(service.error, isNull);
+    });
+
+    test('an empty smol model id is ignored and the main stream '
+        'summarizes', () async {
+      final env = MemoryExecutionEnv();
+      final store = TaskModelsStore.inMemory({
+        TaskRole.smol: TaskRoleConfig(
+          providerKind: 'openai-completions',
+          baseUrl: 'https://smol.invalid/v1',
+          modelId: '',
+        ),
+      });
+      final service = AgentService(
+        agent: _agent(_recordingText(<String>[], 'main summary'), contextWindow: 512),
+        env: env,
+        sessionsRoot: '/sessions',
+        taskModelsStore: store,
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+
+      await service.sendText('x' * 600);
+      await service.waitForIdle();
+      await service.sendText('y' * 600);
+      await service.waitForIdle();
+      await service.sendText('z' * 600);
+      await service.waitForIdle();
+
+      // The resolver cannot serve an empty model id either way, and the
+      // legacy build's isEmpty guard rejects the slot — main summarizes.
+      expect(service.messages.first.content, contains('ckpt·'));
+      expect(service.error, isNull);
+      expect(
+        service.messages.any(
+          (m) => m.role == 'system' && m.content.contains('Context compaction failed'),
+        ),
+        isFalse,
+      );
     });
   });
 }
