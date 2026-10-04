@@ -6,6 +6,7 @@ The real-module test skips when terminal_bench is not installed; the rest
 run anywhere (pure stdlib).
 """
 import contextlib
+import importlib.machinery
 import importlib.util
 import io
 import logging
@@ -38,15 +39,35 @@ TARGET = "terminal_bench.terminal.docker_compose_manager"
 LOG_NAME = "sitecustomize-test"
 
 
-def _importable(name):
-    # importlib.import_module, not find_spec: with bench/terminal_bench on
-    # sys.path (unittest discover), the bench directory itself matches as a
-    # namespace package and false-positives (see test_fa_agent_timeout.py).
-    try:
-        __import__(name)
-        return True
-    except ImportError:
-        return False
+def _tb_installed():
+    """Is the REAL terminal_bench (with the compose manager) on disk?
+
+    sys.modules probing is unreliable here: test_fa_usage.py installs bare
+    terminal_bench.* stub modules at collection time and leaves them in
+    sys.modules for the whole discover run, so a dotted import of TARGET can
+    hit the stubs ('... is not a package'). Ask a fresh PathFinder instead —
+    it scans sys.path and ignores module-cache stubs.
+    """
+    spec = importlib.machinery.PathFinder().find_spec("terminal_bench", None)
+    if spec and spec.submodule_search_locations:
+        base = Path(list(spec.submodule_search_locations)[0])
+        return (base / "terminal" / "docker_compose_manager.py").is_file()
+    return False
+
+
+def _evict_terminal_bench_modules():
+    """Drop every cached terminal_bench.* module (real or stubbed).
+
+    The hook fires on FIRST import, exactly like the production tb process —
+    so the test imports the real chain fresh. Other tests hold direct
+    references to their stub objects, so evicting the cache entries cannot
+    disturb them.
+    """
+    for name in [
+        n for n in sys.modules
+        if n == "terminal_bench" or n.startswith("terminal_bench.")
+    ]:
+        sys.modules.pop(name, None)
 
 
 class FakeSelf:
@@ -169,7 +190,7 @@ class PatchTest(unittest.TestCase):
         self.assertIn("compose failure logging disabled", buf.getvalue())
 
 
-@unittest.skipUnless(_importable(TARGET), "terminal_bench not installed")
+@unittest.skipUnless(_tb_installed(), "terminal_bench not installed")
 class RealModuleTest(unittest.TestCase):
     """The hook must patch tb's real DockerComposeManager on first import."""
 
@@ -181,9 +202,10 @@ class RealModuleTest(unittest.TestCase):
         ]
         sitecustomize._installed = False
         self.assertTrue(sitecustomize.install())
-        # drop a possibly-cached import so the hook actually fires, exactly
-        # like the production flow (hook installed before the first import)
-        sys.modules.pop(TARGET, None)
+        # drop any cached terminal_bench.* modules (test_fa_usage leaves
+        # stubs there) so the hook fires on a genuinely fresh import,
+        # exactly like the production tb process
+        _evict_terminal_bench_modules()
 
     def tearDown(self):
         sys.meta_path[:] = [

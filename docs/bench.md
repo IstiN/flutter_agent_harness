@@ -229,3 +229,33 @@ discipline above, with cost from `bench/pricing.json` (#1123).
 the 0.1.1 baseline (32.5% with fa + glm-5.3-flash; harness-side failure
 clusters tracked in issue #142). See `bench/terminal_bench/run.sh` for the
 local path. Not valid for leaderboard submissions.
+
+### Dataset rot repairs (patch_dataset.py)
+
+`tb datasets download` is re-fetched fresh per run and then patched in
+place by `bench/terminal_bench/patch_dataset.py` before `tb run` (both in
+the workflow and in run.sh):
+
+- debian:-based task Dockerfiles get the archive.debian.org /
+  snapshot.debian.org repoint + `Acquire::Check-Valid-Until "false"` conf
+  (Debian archived bullseye; issue #142).
+- `fix-git` gets its `setup.sh` replaced: the original clones
+  `TheMikeMerrill/personal-site`, which was deleted (404 → `docker compose
+  build` exit 128, no trial ever starts — gh-1208). The replacement
+  rebuilds the identical task state locally, network-free: master one
+  commit past a detached-HEAD "Move to Stanford" commit holding the
+  shipped `resources/patch_files` payloads, with the HEAD reflog keeping
+  that commit on line 4 — where the upstream `solution.sh` reads it.
+  Marker for idempotency: the dead repo URL's presence in setup.sh.
+
+### Compose failure visibility (sitecustomize.py)
+
+tb logs captured `docker compose` stdout/stderr at DEBUG only, so a build
+failure on CI surfaces as a bare `CalledProcessError` (gh-1208 cost two
+full runs before anyone saw the real error). `bench/terminal_bench/`
+is already on `PYTHONPATH` for every `tb run` (run.sh + the workflow), and
+python auto-imports `sitecustomize` from it at startup: a post-import hook
+patches `DockerComposeManager._run_docker_compose_command` to re-log the
+captured output at ERROR (tail-capped to 32 KiB per stream) before the
+exception propagates — no invocation changes, no eager tb import.
+Opt-out: `FA_TB_LOG_COMPOSE_FAILURES=0`.
