@@ -4527,4 +4527,10 @@
 - fix(#1044): AIIN mobile/macOS add-provider — sign-in completes but the provider is never added (#1194)
 - fix(ci): pass flutter-version explicitly — awf no longer defaults a toolchain (#1205)
 
+## 1.0.507
+
+- gh-1208 [BENCH] fix-git task image broken on CI runners — docker compose build fails in BOTH TBench-1 runs (unknown_agent_error, trial never starts) (#1218)
+- gh-1206 WIP auto-save 2026-10-04T05-52-28 (#1216)
+- gh-1209 [BENCH] usage fold skips failed trials — agent_timeout rows report 0/0 tokens though the session JSONL has full usage (#1123 follow-up) (#1215)
+
 ## Unreleased
