@@ -95,6 +95,13 @@ jobs:
       - name: dart test --coverage (excluding integration)
         run: dart test --coverage=coverage --exclude-tags integration
 
+      # gh-1033 (review thread 7 + gate wiring): integration-tagged jsr
+      # delegate suites feed the PTY leg's CLI coverage ratchet AND must
+      # reach this unit-side lcov (the 80% ratchet + CRAP below read it) —
+      # same rationale as scripts/ci_fast_gate.sh stage_test_core.
+      - name: dart test --tags integration (jsr delegate trio → unit lcov)
+        run: dart test --tags integration --coverage=coverage test/cli/jsr_cli_test.dart test/cli/cli_args_jsr_test.dart test/cli/agent_cli_jsr_test.dart
+
       - name: Format coverage to lcov
         run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
 
@@ -103,7 +110,11 @@ jobs:
 
       - name: CRAP ratchet (threshold pinned in crap4dart.yaml)
         run: |
-          dart pub global activate crap4dart ">=0.9.5"
+          # gh-1061: >=0.10.0 — analyzer 7.3→14.4 refresh. Bounded: a
+          # floating >= would auto-adopt 0.11.0+ with no repo change.
+          # gh-1106: ceiling bumped to 0.12.0 — the root crap4dart.yaml
+          # duplication block now uses 0.11.0-only keys.
+          dart pub global activate crap4dart ">=0.11.0 <0.12.0"
           dart pub global run crap4dart analyze
 
       - name: Duplication guard (lib/ < 1%)

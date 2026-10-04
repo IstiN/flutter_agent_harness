@@ -7,13 +7,16 @@
 #
 #   testflight  build-mobile.yml   ios_content=all (the iOS half of the
 #                                 mobile build)
-#   play        build-mobile.yml   android_content=app_only,
+#   play        build-mobile.yml   android_content=all,
 #                                 android_track=beta (Android external
 #                                 beta / open testing — issue #289 lifts
 #                                 the standing "Android excluded" owner
-#                                 decision for the release track; the leg
-#                                 green-skips while the Play secrets are
-#                                 absent)
+#                                 decision for the release track; #947
+#                                 adds the listing deploy — texts +
+#                                 whole-set image replace + verify — so
+#                                 the listing never trails the goldens;
+#                                 the leg green-skips while the Play
+#                                 secrets are absent)
 #   pubdev      in-job OIDC publish, only when pubspec > pub.dev; otherwise
 #               a green up-to-date check. The tag-time OIDC publish job
 #               (ci.yml) stays the primary path; this leg is the catch-up +
@@ -29,7 +32,11 @@
 #                                 leg (pages.yml assembles /outlook)
 #
 # Legs run only when main moved since the last GREEN daily run — skip-no-
-# change is green-neutral, never red (#159 lesson). Versioning stays the
+# change is green-neutral, never red (#159 lesson). One exception (gh-1192):
+# while main's pubspec version is not yet served by pub.dev the plan gate
+# (scripts/daily_plan.sh) forces the legs anyway — a release-in-flight
+# green must not become a skip baseline that stalls re-verification and
+# rerun-recovery on a quiet main. Versioning stays the
 # existing scheme: auto_release.sh patch-bumps + tags every main push
 # (2h coalesce); the daily attaches mobile/desktop artifacts to the next
 # tag and verifies/republishes pub.dev. See docs/ci.md.
@@ -105,39 +112,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           FORCE: ${{ inputs.force }}
-        run: |
-          set -euo pipefail
-          repo="${GITHUB_REPOSITORY}"
-
-          # Baseline = last green run that exercised ALL legs. A single-leg
-          # green dispatch (legs=pubdev inject smoke etc.) must NOT advance
-          # the baseline — otherwise the next scheduled run would skip the
-          # legs that never ran for that sha.
-          last_green=$(gh run list --repo "$repo" --workflow daily-publish.yml \
-            --branch main --status success --limit 15 \
-            --json headSha,event,displayTitle \
-            --jq '[.[] | select(.event == "schedule" or (.event == "workflow_dispatch" and (.displayTitle | contains("(all)"))))][0].headSha // empty')
-          head=$(git rev-parse origin/main)
-          echo "last green daily: ${last_green:-<none>} — main: $head"
-
-          changed=true
-          if [ "$last_green" = "$head" ] && [ "$FORCE" != "true" ]; then
-            changed=false
-            echo "::notice::main has not moved since the last green daily — all legs skip (green-neutral, #159)"
-          fi
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
-
-          latest_tag=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
-          next_tag=v0.1.0
-          if [ -n "$latest_tag" ]; then
-            IFS='.' read -r major minor patch <<< "${latest_tag#v}"
-            next_tag="v${major}.${minor}.$((patch + 1))"
-          fi
-          {
-            echo "latest_tag=${latest_tag:-none}"
-            echo "next_tag=$next_tag"
-            echo "pubspec_version=$(grep '^version:' pubspec.yaml | awk '{print $2}')"
-          } >> "$GITHUB_OUTPUT"
+        # gh-1192: the gate (baseline + the release-unresolved re-arm that
+        # keeps AC1's «the next daily re-verifies» true on a quiet main)
+        # lives in the extracted script — shell-harness tested by
+        # test/release_flow_race_test.dart.
+        run: bash scripts/daily_plan.sh
 
   # ── Dispatch legs ────────────────────────────────────────────────────────
   # Shape per leg: dispatch the child workflow pinned to main, capture the
@@ -236,7 +215,7 @@ jobs:
     # Independent of the testflight leg (#359). The #348 serialization was
     # a mitigation for the #343 sibling-dispatch race; #351 eliminated that
     # race structurally — exact displayTitle correlation (this leg's child
-    # runs as "build-mobile (app_only/none)", the testflight leg's as
+    # runs as "build-mobile (all/none)", the testflight leg's as
     # "(none/all)"), NEWEST match, a tight 30s window, and build-mobile's
     # per-run_id concurrency group (no dispatch can cancel another). With
     # the race gone the needs-edge only bought harm: a cancelled testflight
@@ -311,26 +290,29 @@ jobs:
         id: dispatch
         run: |
           set -euo pipefail
-          # app_only: build + Play upload, no store metadata/screenshots
-          # (Android store CONTENT is a follow-up — reuse iOS texts later).
+          # all: build + Play upload + LISTING deploy (issue #947) — the
+          # listing lane replaces the whole image set per locale + device
+          # type and verifies it via edits.images.list, so the listing can
+          # never trail the committed goldens by more than one train.
           # beta = the external/open testing track, mirroring the iOS leg's
           # external TestFlight group (#239 pattern).
           # Shared watcher (issues #343/#344). Since #359 the TestFlight
           # sibling leg fires CONCURRENTLY with this one (both needs: plan)
           # and dispatches the SAME workflow in the same minute —
           # correlation is by the child's run-name ("build-mobile
-          # (app_only/none)" vs the sibling's "(none/all)", pinned by
+          # (all/none)" vs the sibling's "(none/all)", pinned by
           # test), never by "first run in the window", with newest-match +
           # the 30s window; a wedged run is cancelled and re-dispatched
           # once (with the same distinct inputs → same distinct title).
-          # Budget 100m = child worst-case 85m (#351: version 10 +
-          # build-android 45 + submit-android 30) + 15m margin.
+          # Budget 110m = child worst-case 85m (#351: version 10 +
+          # build-android 45 + submit-android 30; the #947 listing
+          # deploy rides the submit-android job's slack) + 25m margin.
           rc=0
           bash scripts/dispatch_and_watch.sh build-mobile.yml \
             --repo "${GITHUB_REPOSITORY}" --ref main \
-            --title 'build-mobile (app_only/none)' \
-            --budget-seconds 6000 \
-            -f android_content=app_only -f android_track=beta -f ios_content=none \
+            --title 'build-mobile (all/none)' \
+            --budget-seconds 6600 \
+            -f android_content=all -f android_track=beta -f ios_content=none \
             --out-run-id run_id.txt || rc=$?
           if [ -s run_id.txt ]; then
             echo "run_url=https://github.com/${GITHUB_REPOSITORY}/actions/runs/$(cat run_id.txt)" >> "$GITHUB_OUTPUT"
@@ -499,6 +481,13 @@ jobs:
   # a rerun keeps the original push-tag event and OIDC claims, so the real
   # publish path retries. Unrecoverable states fail loudly and self-file an
   # issue with a manual-publish instruction instead of silently hanging.
+  # gh-1192: a tag-publish still EXECUTING (tag pushed, ci run not visible
+  # yet or queued/in_progress, tag younger than the grace window; or the
+  # release-tag job has not cut the tag off a fresh bump yet) is classified
+  # «release in flight» by scripts/verify_pubdev_release.sh — a neutral skip
+  # (no error, no auto-filed issue); the next scheduled daily re-verifies.
+  # The 2026-10-03 collision fired the old «no ci.yml run» error one minute
+  # before the healthy run completed (#1189, false alarm).
 
   pubdev:
     name: 'Leg: pub.dev'
@@ -529,95 +518,10 @@ jobs:
 
       - name: Verify pub.dev serves the pubspec version
         id: check
-        run: |
-          set -euo pipefail
-          repo="${GITHUB_REPOSITORY}"
-          pubspec=$(grep '^version:' pubspec.yaml | awk '{print $2}')
-          echo "pubspec=$pubspec" >> "$GITHUB_OUTPUT"
-          echo "published=" >> "$GITHUB_OUTPUT" # re-exported below after query
-
-          if grep -q '^publish_to: *none' pubspec.yaml; then
-            echo "status=private" >> "$GITHUB_OUTPUT"
-            echo "::notice::pubspec declares publish_to: none — package is private, nothing to verify on pub.dev"
-            exit 0
-          fi
-
-          # pub.dev API reads lag minutes behind a fresh publish (CDN
-          # replicas) — a single stale read must not send us into recovery.
-          # Three spaced reads, take the newest by version.
-          published=""
-          for attempt in 1 2 3; do
-            v=$(curl -fsS --retry 3 \
-              https://pub.dev/api/packages/flutter_agent_harness | jq -r '.latest.version')
-            published=$(printf '%s\n%s\n' "$published" "$v" | sed '/^$/d' | sort -V | tail -1)
-            [ "$attempt" = 3 ] || sleep 10
-          done
-          echo "published=$published" >> "$GITHUB_OUTPUT"
-          echo "pubspec=$pubspec published=$published"
-          newest=$(printf '%s\n%s\n' "$pubspec" "$published" | sort -V | tail -1)
-          if [ "$newest" = "$published" ]; then
-            echo "status=up-to-date" >> "$GITHUB_OUTPUT"
-            echo "::notice::pub.dev already serves $published"
-            exit 0
-          fi
-
-          # Behind: recover via the real publish path. auto_release tags the
-          # commit whose pubspec it bumps, so the tag for $pubspec should
-          # exist and its ci.yml run carries the OIDC tag-push publish.
-          tag="v$pubspec"
-          tag_run=$(gh run list --repo "$repo" --workflow ci.yml \
-            --branch "$tag" --limit 1 \
-            --json databaseId,status,conclusion --jq '.[0] // empty')
-          if [ -z "$tag_run" ]; then
-            echo "::error::$tag has no ci.yml run — the tag-publish never triggered. Manual fix: re-push the tag (git push origin $tag --force) or run ci.yml on the tag ref."
-            exit 1
-          fi
-          run_id=$(jq -r '.databaseId' <<<"$tag_run")
-          echo "run_url=https://github.com/$repo/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
-
-          status=$(jq -r '.status' <<<"$tag_run")
-          if [ "$status" != "completed" ]; then
-            echo "tag run $run_id still in progress — waiting for it to finish first"
-            gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 >/dev/null 2>&1 || true
-          fi
-          conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
-
-          if [ "$conclusion" = "success" ]; then
-            # Publish job went green but pub.dev still serves $published —
-            # not recoverable by rerunning (e.g. publish skipped by a gate).
-            echo "::error::tag run for $tag succeeded but pub.dev still serves $published — publish did not upload. Manual publish needed (see issue)."
-            exit 1
-          fi
-
-          echo "tag run $run_id concluded $conclusion — re-running its failed jobs (keeps the original tag-push event/OIDC claims)"
-          gh run rerun "$run_id" --repo "$repo" --failed
-          sleep 20
-          gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 >/dev/null 2>&1 || true
-          conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
-          if [ "$conclusion" != "success" ]; then
-            echo "::error::rerun of the $tag publish run failed again ($conclusion) — see https://github.com/$repo/actions/runs/$run_id"
-          fi
-
-          # Poll until the API catches up. The rerun's publish job already
-          # verified 'pub.dev verified: flutter_agent_harness <v>' itself;
-          # a single read 52s later hit a stale replica and false-errored
-          # the whole leg (2026-09-28 daily run) — match the publish job's
-          # poll approach: up to 10 min.
-          published2=""
-          for attempt in $(seq 1 30); do
-            published2=$(curl -fsS --retry 3 \
-              https://pub.dev/api/packages/flutter_agent_harness | jq -r '.latest.version')
-            [ "$published2" = "$pubspec" ] && break
-            echo "pub.dev API still serves '$published2' (want $pubspec, attempt $attempt/30)"
-            sleep 20
-          done
-          echo "published=$published2" >> "$GITHUB_OUTPUT"
-          if [ "$published2" != "$pubspec" ]; then
-            echo "::error::rerun went green but the pub.dev API keeps serving $published2 after 10 min, not $pubspec — publish did not upload; manual publish needed"
-            exit 1
-          fi
-          echo "status=recovered" >> "$GITHUB_OUTPUT"
-          echo "::notice::recovered — re-ran the $tag publish run, pub.dev now serves $pubspec"
+        # gh-1192: the classification (up-to-date / release-in-flight /
+        # recovered + the unchanged alarms) lives in the extracted script so
+        # it is shell-harness testable (test/release_flow_race_test.dart).
+        run: bash scripts/verify_pubdev_release.sh
 
   # ── Release-draft sweeper (issue #282) ────────────────────────────────────
   # Hygiene leg: no pipeline step may leave a draft release behind (the

@@ -17,17 +17,17 @@ extension AgentServicePersistence on AgentService {
       error =
           'The model stopped responding for '
           '${_responseTimeout.inSeconds} seconds.';
-      notifyListeners();
+      _notify();
     });
   }
 
   /// Crash-safe persistence: append finished messages/tool results to the
-  /// session file AS THEY LAND (serialized through [_persistChain]), so a
-  /// crash mid-run loses nothing the agent already produced — persisting
-  /// only on AgentEnd (the old behavior) lost the whole turn, tool calls
-  /// included, when the app died mid-run. Torn trailing writes from a crash
-  /// mid-append self-heal on the next load (the JSONL storage truncates
-  /// them).
+  /// session file AS THEY LAND (serialized through the single-flight
+  /// [_persist] guard), so a crash mid-run loses nothing the agent already
+  /// produced — persisting only on AgentEnd (the old behavior) lost the
+  /// whole turn, tool calls included, when the app died mid-run. Torn
+  /// trailing writes from a crash mid-append self-heal on the next load
+  /// (the JSONL storage truncates them).
   void _persistSoon() {
     // Our own appends grow the file — re-arm the external watcher's
     // baseline so our writes don't trigger an external reload.
@@ -37,21 +37,47 @@ extension AgentServicePersistence on AgentService {
       final info = (await env.fileInfo(file)).valueOrNull;
       if (info != null) _sessionWatchBytes = info.size;
     }());
-    _persistChain = _persistChain.then((_) => _persist()).catchError((
-      Object _,
-    ) {
-      // Best effort: the transcript stays in memory; the next trigger
-      // retries the missed appends (see _persistedCount).
-    });
+    unawaited(
+      _persist().catchError((Object _) {
+        // Best effort: the transcript stays in memory; the next trigger
+        // retries the missed appends (see _persistedCount).
+      }),
+    );
   }
 
-  Future<void> _persist() async {
-    if (_persistRunning) return;
-    _persistRunning = true;
+  /// Persists everything not yet on disk, single-flight: while one pass
+  /// iterates the transcript, concurrent triggers (a `_persistSoon` pass
+  /// racing the run finalizer's direct call) don't drop their payload —
+  /// they mark the state dirty and join the in-flight drain, which re-runs
+  /// [_persistUnchecked] once more after the current sweep. The snapshot
+  /// is diffed against `_persistedCount`, so the re-run lands the full
+  /// state (last-writer-wins). The old in-flight early-return silently
+  /// dropped the skipped pass's payload and let `waitForIdle` resolve
+  /// with the assistant append still pending (issue #1102). Awaiting this
+  /// returns only when every pass queued so far has drained, so the run
+  /// finalizer's `await _persist()` keeps the idle boundary complete.
+  ///
+  /// Deliberately NOT a future chain: a chain head created at construction
+  /// captures that zone, and under a widget test's fake-async zone split
+  /// the chained listeners never drain inside `tester.runAsync` (a stale
+  /// single-flight guard has no stored futures to capture).
+  Future<void> _persist() {
+    final inFlight = _persistPass;
+    if (inFlight != null) {
+      _persistDirty = true;
+      return inFlight;
+    }
+    return _persistPass = _persistLoop();
+  }
+
+  Future<void> _persistLoop() async {
     try {
-      await _persistUnchecked();
+      do {
+        _persistDirty = false;
+        await _persistUnchecked();
+      } while (_persistDirty);
     } finally {
-      _persistRunning = false;
+      _persistPass = null;
     }
   }
 

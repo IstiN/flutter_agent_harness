@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show MethodChannel;
@@ -6,6 +7,7 @@ import 'package:fa/prompts.g.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/app_log.dart';
+import 'package:fa/services/project_mount_env.dart' show SessionCwd;
 import 'package:fa/sandbox/memory_shell.dart';
 import 'package:fa/webllm/webllm_types.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -27,6 +29,129 @@ StreamFunction _singleTextResponse(String text) {
     stream.end();
     return stream;
   };
+}
+
+/// Issue #1102 repro: one event-loop turn between the model-request-summary
+/// persist window (ModelRequestEvent) and the assistant MessageEnd persist —
+/// the interleave under which the old `_persistRunning` early-return dropped
+/// the assistant record.
+StreamFunction _yieldBeforeText(String text) {
+  return (model, context, {cancelToken}) {
+    final stream = AssistantMessageEventStream();
+    unawaited(
+      Future<void>(() async {
+        await Future<void>.delayed(Duration.zero);
+        final message = AssistantMessage(
+          content: [TextContent(text: text)],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.now(),
+        );
+        stream.push(DoneEvent(reason: StopReason.stop, message: message));
+        stream.end();
+      }),
+    );
+    return stream;
+  };
+}
+
+/// Pass-through base for test envs that decorate an inner [ExecutionEnv]:
+/// every member routes to [_inner]; subclasses override only the member
+/// they change (append behavior, timing).
+mixin _DelegatingEnv implements ExecutionEnv {
+  ExecutionEnv get _inner;
+
+  @override
+  String get cwd => _inner.cwd;
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _inner.absolutePath(path);
+
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _inner.joinPath(parts);
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _inner.readTextFile(path);
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _inner.readBinaryFile(path);
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _inner.readTextLines(path, maxLines: maxLines);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _inner.writeBinaryFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _inner.writeFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _inner.appendFile(path, content);
+
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _inner.fileInfo(path);
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _inner.listDir(path);
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _inner.exists(path);
+
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _inner.createDir(path, recursive: recursive);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _inner.remove(path, recursive: recursive, force: force);
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) => _inner.exec(command, options: options);
+}
+
+/// Session appends resolve on a later event-loop turn (macrotask), like
+/// real file I/O: a persist pass suspended mid-append is provably still
+/// pending at the idle boundary (issue #1102). Decorates a memory env,
+/// deferring only appends.
+class _DeferredAppendEnv with _DelegatingEnv implements ExecutionEnv {
+  final MemoryExecutionEnv _delegate = MemoryExecutionEnv();
+
+  @override
+  ExecutionEnv get _inner => _delegate;
+
+  @override
+  Future<Result<void, FileError>> appendFile(
+    String path,
+    String content,
+  ) async {
+    await Future<void>.delayed(Duration.zero);
+    return _delegate.appendFile(path, content);
+  }
 }
 
 StreamFunction _hungResponse() {
@@ -331,6 +456,75 @@ void main() {
             .single;
         expect(assistant.requestDetail, isNotNull);
         expect(assistant.requestDetail!.systemPromptChars, greaterThan(0));
+      },
+    );
+
+    test(
+      'a persist pass skipped by the run finalizer still lands by idle (#1102)',
+      () async {
+        final env = _DeferredAppendEnv();
+        final service = AgentService(
+          agent: _createAgent(_yieldBeforeText('hello back')),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        await service.initialize();
+
+        await service.sendText('hello');
+        await service.waitForIdle();
+
+        // Appends resolve on a later event-loop turn, so at the idle
+        // boundary any still-pending pass is provably unfinished. The
+        // finalizer's persist must join the queue (not early-return),
+        // or idle resolves while the assistant append is still pending.
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final session = await repo.open((await repo.list()).single);
+        final entries = await session.getEntries();
+        expect(
+          entries.whereType<MessageRecord>().any(
+            (r) => r.message is AssistantMessage,
+          ),
+          isTrue,
+          reason:
+              'assistant record missing at the idle boundary: '
+              '${entries.map((e) => e.runtimeType).toList()}',
+        );
+      },
+    );
+
+    test(
+      'coalesced persist passes land the full final state by idle (#1102)',
+      () async {
+        final env = _DeferredAppendEnv();
+        final service = AgentService(
+          agent: _createAgent(_yieldBeforeText('hello back')),
+          env: env,
+          sessionsRoot: '/sessions',
+        );
+        await service.initialize();
+
+        await service.sendText('hello');
+        await service.waitForIdle();
+
+        // Every pass re-runs the snapshot diff, so the final on-disk state
+        // matches the in-memory transcript — user, summary, prompt blob and
+        // assistant record, in replay order.
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final session = await repo.open((await repo.list()).single);
+        final entries = await session.getEntries();
+        final summaryIndex = entries.indexWhere(
+          (e) => e is CustomRecord && e.customType == 'model_request_summary',
+        );
+        final assistantIndex = entries.indexWhere(
+          (e) => e is MessageRecord && e.message is AssistantMessage,
+        );
+        expect(
+          entries.whereType<MessageRecord>().map((r) => r.message.role),
+          ['user', 'assistant'],
+          reason:
+              'transcript rows missing at idle: ${entries.map((e) => e.runtimeType).toList()}',
+        );
+        expect(summaryIndex, lessThan(assistantIndex));
       },
     );
 
@@ -1271,6 +1465,403 @@ void main() {
         expect(seen, contains('wake up, app'));
       },
     );
+
+    test('gh-1180 review T3: a refused wake on the app host is receipted '
+        '(wake_attempted + wake_refused, once per episode) — not a silent, '
+        'unreceipted drop', () async {
+      AgentService.enableInboxWatcher = true;
+      addTearDown(() => AgentService.enableInboxWatcher = false);
+      final env = MemoryExecutionEnv(cwd: '/');
+      AssistantMessageEventStream recording(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        final stream = AssistantMessageEventStream();
+        final message = AssistantMessage(
+          content: [TextContent(text: 'ok')],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.now(),
+        );
+        stream.push(DoneEvent(reason: StopReason.stop, message: message));
+        stream.end();
+        return stream;
+      }
+
+      final service = await AgentService.create(
+        config: AgentConfig(
+          providerKind: 'openai-completions',
+          modelId: 'test-model',
+          baseUrl: 'https://example.test',
+          apiKey: '[REDACTED:Sensitive Value]',
+        ),
+        env: env,
+        streamFunction: recording,
+        sessionsRoot: '/sessions',
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+      final manager = service.subagentManager!;
+      // The cap is burned: foreign chatter must refuse.
+      service.inboxWakeStreakForTest = 10;
+      final receiptsPath =
+          '/sessions/${encodeSessionCwd(env.sessionCwd)}'
+          '/messages/_scheduled/receipts.jsonl';
+      Future<List<Map<String, dynamic>>> receipts() async {
+        final text = (await env.readTextFile(receiptsPath)).valueOrNull;
+        if (text == null || text.isEmpty) return const [];
+        return [
+          for (final line in text.trim().split('\n'))
+            jsonDecode(line) as Map<String, dynamic>,
+        ];
+      }
+
+      await manager.enqueueMessage(
+        'main',
+        SubagentMessage(
+          fromId: 'peer-session/main',
+          text: 'capped chatter ping',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      // The watcher ticks every 3 s; wait for the first refusal.
+      for (var i = 0; i < 1500; i++) {
+        final trail = await receipts();
+        if (trail.any((event) => event['event'] == 'wake_refused')) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      var trail = await receipts();
+      expect(
+        trail.where((event) => event['event'] == 'wake_refused'),
+        hasLength(1),
+        reason: 'the refusal is receipted on the app host too (AC4)',
+      );
+      expect(
+        trail.where((event) => event['event'] == 'wake_attempted'),
+        hasLength(1),
+      );
+      expect(
+        service.error,
+        isNull,
+        reason:
+            'a held gate is not a run '
+            'failure — it must not raise the error banner',
+      );
+      // The gate holds across further ticks: still one receipt per
+      // episode, not one per tick.
+      await Future<void>.delayed(const Duration(seconds: 4));
+      trail = await receipts();
+      expect(
+        trail.where((event) => event['event'] == 'wake_refused'),
+        hasLength(1),
+        reason: 'one receipt per refusal episode',
+      );
+      expect(
+        trail.where((event) => event['event'] == 'wake_attempted'),
+        hasLength(1),
+      );
+    });
+
+    test('gh-1180 review T3: an allowed wake on the app host receipts '
+        'turn_started on the same trail', () async {
+      AgentService.enableInboxWatcher = true;
+      addTearDown(() => AgentService.enableInboxWatcher = false);
+      final env = MemoryExecutionEnv(cwd: '/');
+      final contexts = <Context>[];
+      AssistantMessageEventStream recording(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        contexts.add(context);
+        final stream = AssistantMessageEventStream();
+        final message = AssistantMessage(
+          content: [TextContent(text: 'ok')],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.now(),
+        );
+        stream.push(DoneEvent(reason: StopReason.stop, message: message));
+        stream.end();
+        return stream;
+      }
+
+      final service = await AgentService.create(
+        config: AgentConfig(
+          providerKind: 'openai-completions',
+          modelId: 'test-model',
+          baseUrl: 'https://example.test',
+          apiKey: '[REDACTED:Sensitive Value]',
+        ),
+        env: env,
+        streamFunction: recording,
+        sessionsRoot: '/sessions',
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+      final manager = service.subagentManager!;
+      final receiptsPath =
+          '/sessions/${encodeSessionCwd(env.sessionCwd)}'
+          '/messages/_scheduled/receipts.jsonl';
+      Future<List<Map<String, dynamic>>> receipts() async {
+        final text = (await env.readTextFile(receiptsPath)).valueOrNull;
+        if (text == null || text.isEmpty) return const [];
+        return [
+          for (final line in text.trim().split('\n'))
+            jsonDecode(line) as Map<String, dynamic>,
+        ];
+      }
+
+      await manager.enqueueMessage(
+        'main',
+        SubagentMessage(
+          fromId: 'a1',
+          text: 'wake up, app (receipted)',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      for (var i = 0; i < 1500; i++) {
+        if (contexts.isNotEmpty) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(contexts, isNotEmpty);
+      final trail = await receipts();
+      expect(
+        trail.where((event) => event['event'] == 'turn_started'),
+        hasLength(1),
+      );
+      expect(
+        trail.where((event) => event['event'] == 'wake_attempted'),
+        hasLength(1),
+      );
+    });
+
+    test('gh-1180 review T8: user-kind mail drained on the app host ends '
+        'the refusal episode — a SECOND refusal episode after user input '
+        'is announced and receipted again (CLI parity)', () async {
+      AgentService.enableInboxWatcher = true;
+      addTearDown(() => AgentService.enableInboxWatcher = false);
+      final env = MemoryExecutionEnv(cwd: '/');
+      AssistantMessageEventStream recording(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        final stream = AssistantMessageEventStream();
+        final message = AssistantMessage(
+          content: [TextContent(text: 'ok')],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.now(),
+        );
+        stream.push(DoneEvent(reason: StopReason.stop, message: message));
+        stream.end();
+        return stream;
+      }
+
+      final service = await AgentService.create(
+        config: AgentConfig(
+          providerKind: 'openai-completions',
+          modelId: 'test-model',
+          baseUrl: 'https://example.test',
+          apiKey: '[REDACTED:Sensitive Value]',
+        ),
+        env: env,
+        streamFunction: recording,
+        sessionsRoot: '/sessions',
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+      final manager = service.subagentManager!;
+      final receiptsPath =
+          '/sessions/${encodeSessionCwd(env.sessionCwd)}'
+          '/messages/_scheduled/receipts.jsonl';
+      Future<List<Map<String, dynamic>>> receipts() async {
+        final text = (await env.readTextFile(receiptsPath)).valueOrNull;
+        if (text == null || text.isEmpty) return const [];
+        return [
+          for (final line in text.trim().split('\n'))
+            jsonDecode(line) as Map<String, dynamic>,
+        ];
+      }
+
+      // Episode #1: capped foreign chatter refuses (receipted, once).
+      service.inboxWakeStreakForTest = 10;
+      await manager.enqueueMessage(
+        'main',
+        SubagentMessage(
+          fromId: 'peer-session/main',
+          text: 'capped chatter ping 1',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      for (var i = 0; i < 1500; i++) {
+        final trail = await receipts();
+        if (trail.any((event) => event['event'] == 'wake_refused')) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(
+        (await receipts()).where((event) => event['event'] == 'wake_refused'),
+        hasLength(1),
+      );
+
+      // User-kind mail (an attached client handing over user input) wakes
+      // the idle agent and is drained by _mainInboxMessages: THAT drain
+      // is the user talking — it must end the refusal episode exactly
+      // like the CLI's drain (sendText's own reset is a no-op while the
+      // wake flag is held).
+      await manager.enqueueMessage(
+        'main',
+        SubagentMessage(
+          fromId: 'attached-client',
+          text: 'hello, are you there?',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+          isUserInput: true,
+        ),
+      );
+      for (var i = 0; i < 1500; i++) {
+        if (service.inboxWakeStreakForTest == 0) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(
+        service.inboxWakeStreakForTest,
+        0,
+        reason: 'the user-kind drain resets the streak (CLI parity)',
+      );
+
+      // Episode #2: burn the freshly reset cap again — the repeat refusal
+      // must be receipted, not swallowed by the stale episode latch.
+      service.inboxWakeStreakForTest = 10;
+      await manager.enqueueMessage(
+        'main',
+        SubagentMessage(
+          fromId: 'peer-session/main',
+          text: 'capped chatter ping 2',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      for (var i = 0; i < 1500; i++) {
+        final trail = await receipts();
+        if (trail.where((event) => event['event'] == 'wake_refused').length >=
+            2) {
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(
+        (await receipts()).where((event) => event['event'] == 'wake_refused'),
+        hasLength(2),
+        reason:
+            'the second refusal episode is receipted too — never silent '
+            'AND unreceipted (AC4)',
+      );
+    });
+
+    test('gh-1180 review T10: an allowed wake whose turn FAILS still '
+        'leaves wake_attempted + turn_started in the trail — the app '
+        'host appends turn_started BEFORE starting the turn (CLI parity), '
+        'so a throwing turn never ends the trail at wake_attempted with '
+        'neither turn_started nor wake_refused', () async {
+      AgentService.enableInboxWatcher = true;
+      addTearDown(() => AgentService.enableInboxWatcher = false);
+      final env = MemoryExecutionEnv(cwd: '/');
+      // The turn fails at the provider layer: the stream errors out
+      // (providers-never-throw: the failure arrives as an ErrorEvent).
+      AssistantMessageEventStream failing(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        final stream = AssistantMessageEventStream();
+        stream.push(
+          ErrorEvent(
+            reason: StopReason.error,
+            error: AssistantMessage(
+              content: const [TextContent(text: '')],
+              api: model.api,
+              provider: model.provider,
+              model: model.id,
+              usage: Usage.zero,
+              stopReason: StopReason.error,
+              timestamp: DateTime.now(),
+              errorMessage: 'provider exploded',
+            ),
+          ),
+        );
+        stream.end();
+        return stream;
+      }
+
+      final service = await AgentService.create(
+        config: AgentConfig(
+          providerKind: 'openai-completions',
+          modelId: 'test-model',
+          baseUrl: 'https://example.test',
+          apiKey: '[REDACTED:Sensitive Value]',
+        ),
+        env: env,
+        streamFunction: failing,
+        sessionsRoot: '/sessions',
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+      final manager = service.subagentManager!;
+      final receiptsPath =
+          '/sessions/${encodeSessionCwd(env.sessionCwd)}'
+          '/messages/_scheduled/receipts.jsonl';
+      Future<List<Map<String, dynamic>>> receipts() async {
+        final text = (await env.readTextFile(receiptsPath)).valueOrNull;
+        if (text == null || text.isEmpty) return const [];
+        return [
+          for (final line in text.trim().split('\n'))
+            jsonDecode(line) as Map<String, dynamic>,
+        ];
+      }
+
+      await manager.enqueueMessage(
+        'main',
+        SubagentMessage(
+          fromId: 'a1',
+          text: 'wake up and fail',
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      // Wait for the wake receipts to land.
+      for (var i = 0; i < 1500; i++) {
+        final trail = await receipts();
+        if (trail.any((event) => event['event'] == 'turn_started')) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      final trail = await receipts();
+      expect(
+        trail.where((event) => event['event'] == 'wake_attempted'),
+        hasLength(1),
+        reason: 'the wake itself was attempted',
+      );
+      expect(
+        trail.where((event) => event['event'] == 'turn_started'),
+        hasLength(1),
+        reason:
+            'the trail records that a turn BEGAN even when the turn then '
+            'fails — never the was-it-refused ambiguity AC4 exists to '
+            'resolve (CLI appends turn_started before starting the run)',
+      );
+      expect(
+        trail.where((event) => event['event'] == 'wake_refused'),
+        isEmpty,
+        reason: 'the wake was ALLOWED — no refusal receipt',
+      );
+    });
 
     test(
       'scheduled message survives a session recreate and lands in the live session (#59)',
@@ -2390,45 +2981,11 @@ Future<String> _readAllFiles(ExecutionEnv env, String path) async {
 /// session store (disk full, quota exceeded) so the run-state tests can
 /// prove a persistence failure never cascades into the agent's failure
 /// path.
-final class _FailingSessionAppendEnv implements ExecutionEnv {
+class _FailingSessionAppendEnv with _DelegatingEnv implements ExecutionEnv {
   _FailingSessionAppendEnv(this._inner);
 
+  @override
   final ExecutionEnv _inner;
-
-  @override
-  String get cwd => _inner.cwd;
-
-  @override
-  Future<Result<String, FileError>> absolutePath(String path) =>
-      _inner.absolutePath(path);
-
-  @override
-  Future<Result<String, FileError>> joinPath(List<String> parts) =>
-      _inner.joinPath(parts);
-
-  @override
-  Future<Result<String, FileError>> readTextFile(String path) =>
-      _inner.readTextFile(path);
-
-  @override
-  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
-      _inner.readBinaryFile(path);
-
-  @override
-  Future<Result<List<String>, FileError>> readTextLines(
-    String path, {
-    int? maxLines,
-  }) => _inner.readTextLines(path, maxLines: maxLines);
-
-  @override
-  Future<Result<void, FileError>> writeBinaryFile(
-    String path,
-    Uint8List content,
-  ) => _inner.writeBinaryFile(path, content);
-
-  @override
-  Future<Result<void, FileError>> writeFile(String path, String content) =>
-      _inner.writeFile(path, content);
 
   @override
   Future<Result<void, FileError>> appendFile(String path, String content) {
@@ -2445,36 +3002,6 @@ final class _FailingSessionAppendEnv implements ExecutionEnv {
     }
     return _inner.appendFile(path, content);
   }
-
-  @override
-  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
-      _inner.fileInfo(path);
-
-  @override
-  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
-      _inner.listDir(path);
-
-  @override
-  Future<Result<bool, FileError>> exists(String path) => _inner.exists(path);
-
-  @override
-  Future<Result<void, FileError>> createDir(
-    String path, {
-    bool recursive = true,
-  }) => _inner.createDir(path, recursive: recursive);
-
-  @override
-  Future<Result<void, FileError>> remove(
-    String path, {
-    bool recursive = false,
-    bool force = false,
-  }) => _inner.remove(path, recursive: recursive, force: force);
-
-  @override
-  Future<Result<ShellExecResult, ExecutionError>> exec(
-    String command, {
-    ShellExecOptions? options,
-  }) => _inner.exec(command, options: options);
 }
 
 /// A [Shell] that records its last options and returns an empty success.

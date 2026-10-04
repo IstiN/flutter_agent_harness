@@ -14,14 +14,19 @@ import 'dart:convert';
 
 import '../env/execution_env.dart';
 import '../session/session_repo.dart';
+import 'custom_providers.dart';
 
 /// The model/provider triple saved for one project folder.
 final class FolderModelState {
-  /// Creates a [FolderModelState].
+  /// Creates a [FolderModelState]. [customProvider] is the saved custom
+  /// provider ENTRY NAME the triple came from (gh-1000): a restore pins
+  /// that entry instead of re-matching by endpoint, so two entries
+  /// sharing one endpoint+modelId restore onto the right account's key.
   const FolderModelState({
     required this.providerKind,
     required this.modelId,
     required this.baseUrl,
+    this.customProvider,
   });
 
   /// The provider kind (e.g. `openai-completions`, `anthropic`).
@@ -33,15 +38,21 @@ final class FolderModelState {
   /// The endpoint base URL (`null` for catalog-default endpoints).
   final String? baseUrl;
 
+  /// The saved custom-provider entry name this triple came from, or null
+  /// when the state predates name pinning (gh-1000 AC4 — restored with
+  /// today's endpoint-keyed behavior).
+  final String? customProvider;
+
   @override
   bool operator ==(Object other) =>
       other is FolderModelState &&
       other.providerKind == providerKind &&
       other.modelId == modelId &&
-      other.baseUrl == baseUrl;
+      other.baseUrl == baseUrl &&
+      other.customProvider == customProvider;
 
   @override
-  int get hashCode => Object.hash(providerKind, modelId, baseUrl);
+  int get hashCode => Object.hash(providerKind, modelId, baseUrl, customProvider);
 }
 
 /// Path of the per-folder model state file for [cwd].
@@ -76,6 +87,7 @@ Future<void> saveFolderModelState(
   required String providerKind,
   required String modelId,
   required String? baseUrl,
+  String? customProvider,
 }) async {
   try {
     final dir = '$sessionsRoot/${encodeSessionCwd(cwd)}';
@@ -86,6 +98,7 @@ Future<void> saveFolderModelState(
         'providerKind': providerKind,
         'modelId': modelId,
         'baseUrl': ?baseUrl,
+        'customProvider': ?customProvider,
       }),
     );
     write.getOrThrow();
@@ -118,12 +131,42 @@ Future<FolderModelState?> loadFolderModelState(
       return null;
     }
     if (baseUrl != null && baseUrl is! String) return null;
+    // A non-string pin (a hand-edited state file) degrades to NO pin — the
+    // state itself stays servable and restores endpoint-keyed (AC4
+    // tolerance; the pin is an optimization over the endpoint match).
+    final customProvider = decoded['customProvider'];
     return FolderModelState(
       providerKind: providerKind,
       modelId: modelId,
       baseUrl: baseUrl as String?,
+      customProvider: customProvider is String ? customProvider : null,
     );
   } on FormatException {
     return null;
   }
+}
+
+/// The saved custom-provider entry a folder state's [FolderModelState
+/// .customProvider] name pins, resolved against the live [registry].
+///
+/// The pin is what makes a restore land on the SAME account the session
+/// ran on when several entries share one endpoint+modelId (gh-1000 AC1 —
+/// name-pinned, never modelId-matched). A name that no longer resolves
+/// (the entry was renamed or deleted between runs) degrades to
+/// endpoint-keyed resolution with a one-line note (gh-1000 E1 — the model
+/// is kept); a state without a pin (written before gh-1000) resolves
+/// exactly as before (AC4).
+({CustomProviderEntry? entry, String? note}) folderStateProviderEntry(
+  FolderModelState? state,
+  CustomProviderRegistry? registry,
+) {
+  final name = state?.customProvider;
+  if (name == null || name.isEmpty) return (entry: null, note: null);
+  final entry = registry?.find(name);
+  if (entry != null) return (entry: entry, note: null);
+  return (
+    entry: null,
+    note: 'saved provider "$name" is no longer configured — resolved by '
+        'endpoint (model kept)',
+  );
 }

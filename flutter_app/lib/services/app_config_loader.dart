@@ -1,12 +1,10 @@
-// Copyright (c) 2026, the Flutter Agent Harness authors.
-// Use of this source code is governed by a MIT license that can be found
-// in the LICENSE file.
-
-/// Resolves the app's owner context-window cap (`agent.contextWindowCap`,
-/// gh-1077) — the same global < project chain the CLI honors: project
-/// `.fah/config.yaml` wins over `~/.fah/config.yaml`, null when neither
-/// states one (uncapped). IO platforms read the real config; the stub
-/// (web) always answers null.
+/// Resolves the `~/.fah/config.yaml` sections the app honors (issue
+/// #1078): `roles:`, `tools:`, `ttsr:`, `redact:`, `providerTimeouts:`,
+/// and `agent.mode` — the SAME parsers the CLI boots with — plus the app's
+/// owner context-window cap (`agent.contextWindowCap`, gh-1077), through
+/// the same global < project chain the CLI honors. IO platforms read the
+/// real files; the stub (web) returns null (the app stores own everything
+/// there, as before).
 library;
 
 export 'app_config_loader_stub.dart'

@@ -189,13 +189,21 @@ void main() {
       );
       io.sendLine('7');
       await waitForIt(
+        () => io.out.toString().contains('maxWaitForLastEntryMs (empty keeps'),
+      );
+      io.sendLine('450000');
+      await waitForIt(
+        () => io.out.toString().contains('retry.maxWaitForLastEntryMs = 450000'),
+      );
+      io.sendLine('8');
+      await waitForIt(
         () => io.out.toString().contains('keyBackoffMs (empty keeps'),
       );
       io.sendLine('45000');
       await waitForIt(
         () => io.out.toString().contains('retry.keyBackoffMs = 45000'),
       );
-      io.sendLine('8'); // done
+      io.sendLine('9'); // done
       await flow;
       io.sendLine('/exit');
       await run;
@@ -219,6 +227,7 @@ void main() {
       expect(retry.baseDelay, const Duration(milliseconds: 250));
       expect(retry.maxBackoff, const Duration(milliseconds: 9000));
       expect(retry.maxWait, const Duration(milliseconds: 30000));
+      expect(retry.maxWaitForLastEntry, const Duration(milliseconds: 450000));
       expect(retry.keyBackoff, const Duration(milliseconds: 45000));
       // Surgical write: the other sections survive byte-for-byte.
       expect(written, contains('# machine policy\nprovider: openrouter\n'));
@@ -253,7 +262,7 @@ void main() {
         await waitForIt(
           () => io.out.toString().contains('(applies to new requests'),
         );
-        io.sendLine('8'); // done
+        io.sendLine('9'); // done
         await flow;
         io.sendLine('/exit');
         await run;
@@ -290,7 +299,7 @@ void main() {
         await waitForIt(
           () => io.out.toString().contains('applies to new failures'),
         );
-        io.sendLine('8'); // done
+        io.sendLine('9'); // done
         await flow;
         io.sendLine('/exit');
         await run;
@@ -320,7 +329,7 @@ void main() {
         await waitForIt(
           () => io.out.toString().contains('(applies at next boot)'),
         );
-        io.sendLine('8'); // done
+        io.sendLine('9'); // done
         await flow;
         io.sendLine('/exit');
         await run;
@@ -367,7 +376,7 @@ void main() {
           '"retry.retriesPerEntry" must be a non-negative integer',
         ),
       );
-      io.sendLine('8'); // done
+      io.sendLine('9'); // done
       await flow;
       io.sendLine('/exit');
       await run;
@@ -402,7 +411,7 @@ void main() {
         () => io.out.toString().contains('not saved'),
         reason: 'refusal',
       ).timeout(const Duration(seconds: 15), onTimeout: () => fail('refusal'));
-      io.sendLine('8'); // done
+      io.sendLine('9'); // done
       await flow;
       io.sendLine('/exit');
       await run;
@@ -432,7 +441,7 @@ void main() {
           'providerTimeouts.connectTimeoutMs = 25000',
         ),
       );
-      io.sendLine('8'); // done
+      io.sendLine('9'); // done
       await flow;
       io.sendLine('/exit');
       await run;
@@ -466,7 +475,7 @@ void main() {
         () =>
             io.out.toString().contains('cannot read /home/u/.fah/config.yaml'),
       );
-      io.sendLine('8'); // done
+      io.sendLine('9'); // done
       await flow;
       io.sendLine('/exit');
       await run;
@@ -510,7 +519,7 @@ void main() {
       await waitForIt(
         () => io.out.toString().contains('retry.baseDelayMs = 250'),
       );
-      io.sendLine('8'); // done
+      io.sendLine('9'); // done
       await flow;
       io.sendLine('/exit');
       await run;

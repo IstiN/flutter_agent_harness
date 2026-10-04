@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased
+
+- chore(ci): document the sm-kicker head-completeness codeless-head crash
+  (upstream awf#15) — the factory job's `gh api` calls put `--jq` before
+  `--arg`/`--argjson`, so a CODELESS branch head (2 parents, 0 changed
+  files: a routine branch-sync merge with no content diff) crashes the
+  job with `accepts 1 arg(s), received 4` — even when CI is fully green
+  on that head, and the job's own rescue dispatch can never heal exactly
+  those heads. Workaround until the upstream fix: keep the branch head
+  code-bearing. Live instance: run 37193754301 on head 1fe9b1232.
+- fix(messaging): gh-1180 — `schedule_message` self-chains no longer die
+  silently at the agent-chatter wake cap. The idle inbox-wake gate
+  (`InboxWakePolicy`, shared by the CLI and the app hosts) now exempts a
+  delivered scheduled self-reminder (`[scheduled] ` prefix, from == to)
+  from the 10-consecutive-wake streak: a deliberate agent-chosen cadence
+  (night watch, periodic sweep) wakes forever, while foreign
+  agent-to-agent chatter stays capped (anti-storm REG) and user-kind
+  mail always wakes. A 30s cadence floor bounds a zero-delay
+  re-schedule spin (E5). Refused wakes are visible (`[mail] wake
+  refused`, once per episode) and every lifecycle step is receipted to
+  `<messagesRoot>/_scheduled/receipts.jsonl` (`ScheduledReceiptLog`):
+  scheduled / delivered / delivery_failed / scan_failed /
+  wake_attempted / turn_started / wake_refused. A failed scheduler scan
+  (transient `listDir` error) now re-arms at `failureBackoff` with an
+  `onError` log instead of silently disarming the delivery heartbeat.
+- fix(messaging): gh-1180 review round — refusal receipts and the
+  visible refusal line are gated once per refusal EPISODE (the latch
+  lives in `InboxWakePolicy` next to the streak and re-arms on the same
+  resets), so a held gate no longer appends per-tick `wake_attempted`
+  rows (~43k duplicate lines/day) and a repeat episode after user input
+  is announced and receipted again. The app host receipts its wake path
+  (`wake_attempted` / `turn_started` / `wake_refused`) onto the same
+  trail — AC4 is no longer CLI-only. A self-reminder adopted across a
+  session-id change delivers FROM the live mailbox (from re-addressed
+  alongside to), so the resumed chain stays self-shaped and exempt
+  instead of falling back to the capped chatter lane. Plugin-only
+  pending batches are explicitly classified as chatter (the contract is
+  stated, not accidental), the wake cap is single-sourced from
+  `InboxWakePolicy.defaultMaxInboxWakeStreak`, and the policy file lost
+  a stale copy-pasted `ignore_for_file`.
+
 ## 1.0.485
 
 
@@ -4389,6 +4430,16 @@
 - fix(926): CodeMie budget/spending exhaustion is terminal — no retry loops, immediate fallback (#929)
 - chore: pin factory 1fdb4c6 (git-guard double-shim exec-loop fix) (#1043)
 
+## 1.0.487
+
+- Fix #947: store goldens render real text; Play listing images ship via whole-set replace + verify (#962)
+- fix(920): optimal space usage in the CLI TUI status band (#923)
+
+## 1.0.488
+
+- fix(#973): Enter sends, Shift+Enter inserts newline in chat composer (#978)
+- site: add /oauth/callback page — the web app's OAuth popup receiver target (#1048)
+
 ## 1.0.489
 
 - fix(web): conditionally export FFI-backed io.dart members
@@ -4404,14 +4455,123 @@
 
 - chore(deps): bump ruby/setup-ruby in the github-actions group (#1056)
 
-## Unreleased
+## 1.0.494
 
-## Unreleased
+- fix(release): land the version bump as a PR — protected main rejects direct bot pushes (#1093)
+- fix(sm-kicker): rescue ticks must pass -f dryRun=false (machine-sm defaults dry) (#1092)
+- fix(#964): configurable auth header (x-api-key) + reasoning-aware stream retry boundary (#1088)
+- revert: undo the stale-tree mass revert in 80a5ebeeb, keep the FFI web fix (#1071)
+- fix(web): restore /oauth/callback page + open the OAuth popup eagerly on user gesture (#1068)
+- fix(#1083): per-path mutation lock for same-file concurrent tool edits (#1084)
+- feat(#1078): flutter_app honors ~/.fah/config.yaml (parity v1) (#1087)
 
-## Unreleased
+## 1.0.495
 
-## Unreleased
+- feat(1086): sandbox shell heredocs, here-strings, fail-fast guards (#1094)
+- chore(factory): pin dmtools-agents @cee5996 — mutexExcludeSelf + conflict-rework + release-bump authorship + teammate dev-leg timeout (#1111)
 
-## Unreleased
+## 1.0.496
+
+- gh-1149 [daily-publish] cli leg failed (#1154)
+- fix(#916): replayed tool rows paint the settled band card — #807 chrome migration completed (#1136)
+- feat(#864): one-Fa-one-session tap (#1144)
+- fix(#1131): compaction summaries must not re-render time-scoped claims as current facts (#1133)
+- feat(#1124): Terminal-Bench family coverage 2.0/2.1/3.0/4.0 from one dispatch surface (#1128)
+- fix(#1126): resume mid-stream provider aborts with partial content via TransientRetryStream (#1132)
+- feat(#1123): real token/cost accounting in bench results (#1129)
+- fix(app): flutter_agent_memory override 0.2.1 -> ^0.2.3 — track the lib floor (#1158)
+- chore(factory): runners parent agent packs from the registry, not the git checkout (#1155)
+- feat(#1122): configurable + progress-aware bench agent timeout (#1127)
+- feat(#827): TUI viewport never loses shown content (#1097)
+- pin: factory workflows -> dmtools-agentic-workflows@b93dc51 (#1146)
+- fix(#1036): bound provider HTTP calls with client-side timeouts (#1108)
+- fix(#1045): per-widget publish status with verbatim validator errors (#1141)
+- fix(#1121): transparent bounded retry on zero-byte connect-stall watchdog timeout (#1125)
+- feat(#1106): enable Type-2 duplication gate (crap4dart 0.11.0) + 13-file triage (#1116)
+- feat(#1103): fa wire-serve - headless AWP server over WS + NDJSON-stdio (#1113)
+- feat(#1096): release size manifest gate + unambiguous extension/web cuts (slice 1) (#1110)
+- fix(#1117): close web network-auth popup after grant + handle post-auth redirect (#1119)
+- fix(#1102): persist chain re-runs skipped passes (lost assistant record) (#1112)
+- feat(#1101): Agent Wire Protocol v1 schema, versioning, fixtures, in-process adapter (slice 1) (#1109)
+- feat(#1100): ship rehostable web SPA bundle (fa-web-spa.zip) on releases (#1107)
+- feat(#823): provider quota & budget monitoring — CORE tier (model, OpenRouter adapter, TTL service, CLI /quota + badge, app meters, resolver feed) (#1099)
+- feat(#1079): SDK slice 1 — HostCapabilityProfile + HostWiringBuilder foundation (#1091)
+- fix(#1085): post-compaction run continuation — watchdog suspension + loud failure (#1090)
+- chore(factory): sm-kicker -> shared factory-sm-kicker stub (#1118)
+
+## 1.0.497
+
+- feat(#1172): release pipeline pushes bump directly to main via fa-release-bot App (#1174)
+- fix(#864): gesture-entry mint failures surface a snack, not a zone error (#1144 follow-up) (#1170)
+- fix(session): segment rotation — cap JSONL traces under the git 100MB limit (#1114)
+- ci: re-pin factory-teammate @9bcec53 — kit/ (guard+creds) at invocation ref (#1183)
+- feat(#881): App Store CTA header badge (#1138)
+- ci: re-pin factory-teammate @9bcec53 — kit/ (guard+creds) at invocation ref (#1177)
+- fix(#917): deterministic wrap-turn dedupe in TUI composer (no double-paint on slow PTY) (#1137)
+- ci: re-pin factory-teammate @9bcec53 — kit/ (guard+creds) at invocation ref (#1176)
+- fix(#1134): auto_release.sh pins chore:pin label on release PRs (#1135)
+
+## 1.0.498
+
+- feat(#866): apps panel reflects reality (#1139)
+- fix(#1152): path-guard fires only on bare single-token input (#1153)
+- feat(#861): one passkey-capable auth surface for provider sign-in (#1142)
+
+## 1.0.499
+
+- feat(cli): stuck foreground tool calls nudge the model via steering (#1185) (#1187)
+- fix(#1122): restore bench timeout-ladder helpers lost in the #1127×#1129 merge (#1184)
+- feat(#1151): built-in skills shipped with fa — /skill-name on every surface, toggleable like tools (#1157)
+
+## 1.0.500
+
+- chore: repin factory workflows to f47d52b (kit in RUNNER_TEMP) (#1191)
+
+## 1.0.501
+
+- fix(#1121): replay zero-byte watchdog-killed requests on the shared ladder (#1188)
+- fix(#1168): resume mid-stream connection failures from the completed prefix (#1169)
+- test: deflake memory round-trip PTY waits (kill taggen 500-storm, re-anchor on terminal marker) (#1166)
+- bench-mls.yml: run fa on MLS-Bench via the existing Harbor adapter (staged nop→oracle→agent, GPU cost discipline) (#1161)
+- chore: repin factory workflows to f47d52b (kit in RUNNER_TEMP) (#1191)
+
+## 1.0.502
+
+- fix(#1175): one Fa, one session — FAB continues the app-bound session, never re-mints (#1173)
+- WASI sandbox fidelity: dup-merge, per-exec pipe dirs, drain-before-cancel, clean errors (#1156) (#1163)
+- fix(chat): Load-newer banner works mid-run, auto-clears at the live tail (#1159) (#1165)
+- feat(#862): tool-misuse resilience (#1143)
+- fix(#858): Codex/Responses wire — no replayable history may ever brick a session (#1140)
+
+## 1.0.503
+
+- gh-1054 [GOAL] Headless/unattended runs must detect long-stuck tool calls mid-run and follow up — liveness heartbeats + cancel/retry/convert, not a silent 10-min wait for the external watchdog (#1200)
+- chore(ci): bump sm-kicker pin — real-dispatch fix (awf#13) (#1213)
+- fix(kicker): wake machine-sm on CI conclusions (workflow_run) (#1203)
+- gh-1171 flake: subagent_integration_test 'memory_add and memory_search tools are available' — mock script exhausted by memory auto-tag LLM call (#1202)
+- gh-1014 Flaky: ctrl_c_double_press_test ACX.3 SIGINT timing-window flake under runner load — quarantined, fix + re-enable (#1196)
+- test(#1172): pin the CHANGELOG '## Unreleased' dedupe + deflake sandbox authorship under git hooks (#1195)
+- gh-1000 Key resolution loses the provider/key binding: 401 after /sessions restore and on pinned roles (smol/subagents) — duplicate modelId, env-only roles path (#1190)
+- gh-1192 [GOAL] Release-flow race hardening: daily verify must skip 'release in flight', version tag must pin the bump commit (#1193)
+- fix(#1175): one Fa, one session — FAB continues the app-bound session, never re-mints (#1173)
+- WASI sandbox fidelity: dup-merge, per-exec pipe dirs, drain-before-cancel, clean errors (#1156) (#1163)
+- fix(chat): Load-newer banner works mid-run, auto-clears at the live tail (#1159) (#1165)
+- feat(#862): tool-misuse resilience (#1143)
+- fix(#858): Codex/Responses wire — no replayable history may ever brick a session (#1140)
+
+## 1.0.505
+
+- gh-1210 [BENCH] Pre-seed a system-level git identity in task containers (fa-setup.sh.j2) — stop burning agent turns on 'Author identity unknown' (#1214)
+
+## 1.0.506
+
+- fix(#1044): AIIN mobile/macOS add-provider — sign-in completes but the provider is never added (#1194)
+- fix(ci): pass flutter-version explicitly — awf no longer defaults a toolchain (#1205)
+
+## 1.0.507
+
+- gh-1208 [BENCH] fix-git task image broken on CI runners — docker compose build fails in BOTH TBench-1 runs (unknown_agent_error, trial never starts) (#1218)
+- gh-1206 WIP auto-save 2026-10-04T05-52-28 (#1216)
+- gh-1209 [BENCH] usage fold skips failed trials — agent_timeout rows report 0/0 tokens though the session JSONL has full usage (#1123 follow-up) (#1215)
 
 ## Unreleased

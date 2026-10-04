@@ -651,7 +651,9 @@ void main() {
         await env.writeFile(_globalConfig, 'skills:\n  bogus: 1\n');
         expect(
           (await service.check()).errors.single.message,
-          contains('unknown "skills" key: bogus'),
+          // Per-skill keys are legal since issue #1151; only a bad value
+          // shape is rejected now.
+          contains('skills.bogus must be on/off'),
         );
       },
     );
@@ -757,9 +759,36 @@ void main() {
       final report = await checkOrThrow(service);
       expect(report.warnings, isEmpty);
     });
+
+    test('a valid output section passes clean (gh-1198)', () async {
+      await env.writeFile(
+        _globalConfig,
+        '$_validGlobal\noutput:\n  streamThinking: true\n',
+      );
+      final report = await checkOrThrow(service);
+      expect(report.warnings, isEmpty);
+    });
+
+    test('an unknown output key is a check error (gh-1198)', () async {
+      await env.writeFile(
+        _globalConfig,
+        '$_validGlobal\noutput:\n  bogus: 1\n',
+      );
+      final report = await service.check();
+      expect(report.errors, isNotEmpty);
+      expect(report.ok, isFalse);
+    });
   });
 
   group('pins against cli_config.dart', () {
+    test('the output section validates identically (gh-1198)', () {
+      final bad = loadYaml('output:\n  bogus: 1\n') as YamlMap;
+      expect(() => CliConfig.fromYaml(bad), throwsConfigException);
+      final good = loadYaml('output:\n  streamThinking: true\n') as YamlMap;
+      expect(() => CliConfig.fromYaml(good), returnsNormally);
+      expect(CliConfig.fromYaml(good).streamThinking, isTrue);
+    });
+
     test('the top-level key set matches what the CLI config reads', () {
       final bodies = [
         'lib/src/cli/cli_config.dart',
@@ -813,8 +842,8 @@ void main() {
     test('agent validation agrees on the #729 raise path too', () {
       // A cap above the catalog window is the raise override: both the
       // shared validator and the boot parser accept it identically.
-      final raised = loadYaml('agent:\n  contextWindowCap: 1000000\n')
-          as YamlMap;
+      final raised =
+          loadYaml('agent:\n  contextWindowCap: 1000000\n') as YamlMap;
       final agentNode = raised['agent'] as YamlMap;
       expect(() => validateAgentSection(agentNode), returnsNormally);
       expect(() => CliConfig.fromYaml(raised), returnsNormally);

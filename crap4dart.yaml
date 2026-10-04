@@ -54,7 +54,35 @@ gates:
   unused_code: {enabled: false}
   unused_files: {enabled: false}
   banned_imports: {enabled: false}
-  duplication: {enabled: false} # own jscpd <1% guard
+  # Type-2 duplication gate (issue #1106, crap4dart 0.11.0). Renamed-clone
+  # detection on top of the Type-1 default; the union with the raw pass can
+  # only ADD findings, never lose exact copies. severity: warning starts
+  # soft — escalate to error once the 13-file triage debt is paid
+  # (follow-up, owner-side). The global jscpd <1% guards stay as-is.
+  #
+  # Two suppression channels with different contracts:
+  # - `// crap:ignore` (needs ignorable: true) = a JUSTIFIED structural
+  #   twin, suppressed forever, with a one-line reason in the comment.
+  # - `.crap-baseline.json` (via `check --baseline`) = LEGACY debt; the
+  #   committed snapshot must only SHRINK: after each triage batch re-run
+  #   `dart pub global run crap4dart check --save-baseline` and commit the
+  #   only-down diff, or the snapshot rots and starts masking shifts.
+  #
+  # WINDOW (until severity flips to error): the gate never fails a build —
+  # new (not-baselined) duplication only surfaces as a `[WARN]` line in
+  # `check` output. Enforcement becomes hard exactly when the owner-side
+  # escalation lands; from then on any finding outside the two channels
+  # fails CI/pre-commit.
+  duplication:
+    enabled: true
+    severity: warning
+    ignorable: true # enables `// crap:ignore` for justified structural twins
+    ignore_locals: true # Type-2: rename locals before hashing (API names stay)
+    ignore_literals: false # keeps l10n/theme/symbol tables out
+    sources: # cross-module scope from #487
+      - flutter_app/lib
+      - packages/fa_ui/lib
+      - packages/fa_llm/lib
   file_naming: {enabled: false}
   magic_constants: {enabled: false}
   test_assertions: {enabled: false}

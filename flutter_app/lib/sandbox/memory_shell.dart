@@ -147,11 +147,23 @@ final class MemoryShell implements Shell, BackgroundShell {
     if (token != null && token.isCancelled) {
       return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
     }
+    // Issue #919: bound the job log — size ceiling with head+marker+rolling
+    // tail. Web has no disk probe (null), so the low-disk guard stays
+    // inactive; the warning channel matches the local shell's prefix.
+    final warn = options?.onJobLogWarning;
+    final ceiling = JobLogCeiling(
+      maxBytes: options?.jobLogMaxBytes ?? defaultJobLogMaxBytes,
+      onWarn: warn == null
+          ? null
+          : (message) => warn('background job $id: $message'),
+    );
     final job = SandboxShellJob(
       id: id,
       command: command,
       logPath: logPath,
       logWriter: (chunk) async => _fs.appendFile(logPath, chunk),
+      ceiling: ceiling,
+      applyLogOp: (op) => _applyJobLogOp(logPath, op),
     );
     // An outer abort stops the job too (same contract as the local shell).
     token?.onCancel.then((_) => job.stop());
@@ -171,6 +183,33 @@ final class MemoryShell implements Shell, BackgroundShell {
           .then(job.completeWith),
     );
     return Ok(job);
+  }
+
+  /// Executes one ceiling op against the memory FS (issue #919): an append,
+  /// or a read-modify-write of the marker+tail region (the memory FS has no
+  /// positioned writes). FS errors throw so the job's catchError marks the
+  /// log broken — mirroring the RAF hosts.
+  Future<void> _applyJobLogOp(String logPath, JobLogWrite op) async {
+    if (op.offset == null) {
+      final appended = await _fs.appendFile(logPath, op.text);
+      if (appended.isErr) {
+        throw StateError('job log append failed: ${appended.errorOrNull}');
+      }
+      return;
+    }
+    final read = await _fs.readTextFile(logPath);
+    if (read.isErr) {
+      throw StateError('job log read failed: ${read.errorOrNull}');
+    }
+    final head = utf8.encode(read.valueOrNull!).sublist(0, op.offset!);
+    final region = utf8.encode(op.text);
+    final written = await _fs.writeFile(
+      logPath,
+      utf8.decode([...head, ...region]),
+    );
+    if (written.isErr) {
+      throw StateError('job log write failed: ${written.errorOrNull}');
+    }
   }
 
   /// A job-local clone: shares the filesystem and HTTP client, owns the
@@ -232,9 +271,12 @@ final class MemoryShell implements Shell, BackgroundShell {
       final appendStdout = redirects.appendStdout;
       final appendStderr = redirects.appendStderr;
       final stdinFile = redirects.stdinFile;
+      final stdinBody = redirects.stdinBody;
 
       String? stdinText;
-      if (stdinFile != null) {
+      if (stdinBody != null) {
+        stdinText = stdinBody;
+      } else if (stdinFile != null) {
         final read = await _fs.readTextFile(resolveSandboxPath(stdinFile, cwd));
         if (read.isErr) {
           stageResult = _StageResult(

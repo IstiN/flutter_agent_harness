@@ -1,0 +1,1 @@
+{"kind":"ask_request","protocolVersion":1,"frame":{"v":1,"kind":"ask_request","id":"ask_1","questions":[{"question":"Which database?","options":[{"label":"Postgres","description":"relational"},{"label":"SQLite"}],"multiSelect":false,"recommended":0},{"question":"Notes?","options":[],"multiSelect":false}]}}

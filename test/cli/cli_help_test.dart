@@ -16,6 +16,7 @@ void main() {
       '-h',
       '--version',
       '--pi',
+      '--debug-secrets',
       '--model',
       '--provider',
       '--base-url',
@@ -42,6 +43,7 @@ void main() {
       '-p',
       '--prompt-file',
       '-f',
+      '--stream-thinking',
     ];
     for (final flag in flags) {
       test('mentions flag $flag', () {
@@ -77,6 +79,15 @@ void main() {
       '.fa/bootstrap.yaml',
       'FA_EXT_BOOTSTRAP_',
       '/ext',
+      // jsr widget pass-through (fa jsr + REPL /jsr, gh-1033).
+      'fa jsr',
+      'widget:test',
+      'widget:screenshot',
+      '--expect-state JSON',
+      '--freeze-clock',
+      'js_widget_runtime',
+      '.dart_tool/package_config.json',
+      '/jsr',
       // Providers and keys.
       'openai-completions',
       'kimi',

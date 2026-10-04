@@ -48,7 +48,9 @@ enum CustomProviderAuthMethod {
 final class CustomProviderEntry {
   /// Creates an entry. [keyName] is the secure-store/env name holding the
   /// API key (null = keyless); [modelId] is the last-used model.
-  /// [authMethod] selects the auth path for SSO/JWT providers.
+  /// [authMethod] selects the auth path for SSO/JWT providers. [authHeader]
+  /// names the auth header (issue #964): `x-api-key` sends
+  /// `x-api-key: <key>` instead of `Authorization: Bearer <key>`.
   CustomProviderEntry({
     required this.name,
     required this.apiType,
@@ -56,6 +58,7 @@ final class CustomProviderEntry {
     required this.modelId,
     this.keyName,
     this.authMethod = CustomProviderAuthMethod.apiKey,
+    this.authHeader,
   });
 
   /// Parses one yaml map from the `customProviders:` list. Throws
@@ -84,13 +87,26 @@ final class CustomProviderEntry {
     }
     final keyName = node['keyName'];
     final authMethod = _parseAuthMethod(node['authMethod']);
+    final name = requireString('name');
+    final authHeader = parseAuthHeaderName(
+      node['authHeader'],
+      'customProviders entry "$name"',
+    );
+    validateAuthHeaderDialect(
+      authHeader,
+      catalogProvider(apiType),
+      'customProviders entry "$name"',
+    );
     return CustomProviderEntry(
-      name: requireString('name'),
+      name: name,
       apiType: apiType,
       baseUrl: requireString('baseUrl'),
       modelId: requireString('modelId'),
       keyName: keyName is String && keyName.isNotEmpty ? keyName : null,
       authMethod: authMethod,
+      // Named error (issue #964 AC5): the entry owns the bad value, so the
+      // message names the entry.
+      authHeader: authHeader,
     );
   }
 
@@ -123,6 +139,11 @@ final class CustomProviderEntry {
   /// to saved SSO/JWT providers.
   CustomProviderAuthMethod authMethod;
 
+  /// Auth header name (issue #964): `x-api-key` sends `x-api-key: <key>`
+  /// instead of `Authorization: Bearer <key>` when this entry is active.
+  /// Null keeps the Bearer default.
+  String? authHeader;
+
   /// The last-used model id (rewritten on `/model` switches while active).
   String modelId;
 
@@ -134,6 +155,7 @@ final class CustomProviderEntry {
       'baseUrl': baseUrl,
       'keyName': ?keyName,
       'authMethod': authMethod.name,
+      'authHeader': ?authHeader,
       'modelId': modelId,
     };
   }
@@ -204,6 +226,34 @@ List<CustomProviderEntry> mergeCustomProviderEntries(
           !isReservedCustomProviderName(e.name))
         e,
   ];
+}
+
+/// Endpoint equality ignoring ONE trailing slash (saved entries, resolved
+/// endpoints, and catalog defaults disagree on it routinely) — the ONE
+/// rule for "is this endpoint that endpoint": saved-entry matches
+/// (key_status), catalog-default classification (key_status, the roles
+/// resolver's endpoint-slot probe, startup's preload set) share it, so a
+/// trailing-slash spelling can never be custom in one helper and default
+/// in another (round-3 review).
+bool sameEndpoint(String a, String b) {
+  String norm(String u) => u.endsWith('/') ? u.substring(0, u.length - 1) : u;
+  return norm(a) == norm(b);
+}
+
+/// The `authHeader` of the saved entry serving [baseUrl], for the
+/// folder-model-state restores (boot in `bin/fah.dart` and session
+/// re-apply in `agent_cli.dart` — issue #964 review): a restored gateway
+/// endpoint without its header 401s. Null when [baseUrl] is null (catalog
+/// default) or no saved entry matches it.
+String? authHeaderForBaseUrl(
+  List<CustomProviderEntry> entries,
+  String? baseUrl,
+) {
+  if (baseUrl == null) return null;
+  for (final entry in entries) {
+    if (sameEndpoint(entry.baseUrl, baseUrl)) return entry.authHeader;
+  }
+  return null;
 }
 
 /// The live list of saved custom providers (shared by the CLI, which
@@ -281,6 +331,9 @@ final class CustomProviderRegistry {
   ) {
     if (survivor.keyName == null && twin.keyName != null) {
       survivor.keyName = twin.keyName;
+    }
+    if (survivor.authHeader == null && twin.authHeader != null) {
+      survivor.authHeader = twin.authHeader;
     }
     return survivor;
   }

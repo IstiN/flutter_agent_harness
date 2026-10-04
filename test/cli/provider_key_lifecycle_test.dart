@@ -30,7 +30,8 @@ void main() {
     SecureKeyCache? secureKeys,
     ModelRolesResolver? modelRolesResolver,
     String? Function(String name)? envVarValue,
-    Future<void> Function(String providerKind, String apiKey)? onProviderChanged,
+    Future<void> Function(String providerKind, String apiKey)?
+    onProviderChanged,
     String apiKey = 'test-key',
   }) {
     return AgentCli(
@@ -378,6 +379,39 @@ void main() {
       expect(io.out.toString(), isNot(contains('sk-via-key-set')));
     });
 
+    test(
+      '/key status surfaces save degradations (gh-1059 review: saves '
+      'happen after boot — the status print is where they are live)',
+      () async {
+        final store = FakeSecureKeyStore()..failWrites = true;
+        final cache = SecureKeyCache(store);
+        await cache.probe();
+        final cli = cliFor(secureKeys: cache);
+        final run = cli.run();
+
+        io.sendLine('/key set FA_KEY_DEGRADED_GH1059 sk-v1');
+        await waitForIt(
+          () => io.out.toString().contains('could not save'),
+          reason: 'the loud per-save print still fires',
+        );
+        io.sendLine('/key');
+        await waitForIt(
+          () => io.out.toString().contains('secure storage: fake store'),
+        );
+        io.sendLine('/exit');
+        await run;
+
+        // The degraded save is visible where it happened: a cumulative count
+        // plus the last diagnostic, on the status surface the user already
+        // checks — not only in a boot summary that predates every save.
+        expect(
+          io.out.toString(),
+          contains('1 secure-store save(s) degraded to session-only'),
+        );
+        expect(io.out.toString(), contains('keychain write failed (exit 45)'));
+      },
+    );
+
     test('copilot entry: env FA_KEY_COPILOT_<NAME> wins over the empty '
         'store slot (legacy mode)', () async {
       final registry = CustomProviderRegistry([
@@ -398,7 +432,9 @@ void main() {
         secureKeys: cache,
         envVarValue: (name) =>
             name == 'FA_KEY_COPILOT_COPILOT_X' ? 'env-tok-1' : null,
-        onProviderChanged: (kind, key) async { changes.add((kind, key)); },
+        onProviderChanged: (kind, key) async {
+          changes.add((kind, key));
+        },
       );
       final run = cli.run();
 

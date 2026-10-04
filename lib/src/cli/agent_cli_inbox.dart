@@ -26,7 +26,9 @@ extension AgentCliMessagingFlow on AgentCli {
     // attach-driven workflow (terminal open, every message sent from the
     // app) burns the 10-run agent-chat cap and the CLI goes permanently
     // silent on further app mail until restart.
-    if (queued.any((message) => message.isUserInput)) _inboxWakeStreak = 0;
+    if (queued.any((message) => message.isUserInput)) {
+      _inboxWakePolicy.resetStreak();
+    }
     // The btw panels: each drained fabric message lands as a bordered
     // panel block at delivery time (issue #277).
     _hubPanelsForInbox(queued);
@@ -60,7 +62,7 @@ extension AgentCliMessagingFlow on AgentCli {
         continue;
       }
       if (drained.any((message) => message.kind == AgentMessageKind.user)) {
-        _inboxWakeStreak = 0;
+        _inboxWakePolicy.resetStreak();
       }
       messages.addAll([
         for (final message in drained)
@@ -131,6 +133,17 @@ extension AgentCliMessagingFlow on AgentCli {
   /// Namespaces this instance's mailboxes with the active session id: two
   /// Fa instances sharing the messaging root never drain each other's
   /// inboxes. Called after every session init/switch.
+  /// The wake-receipt trail (gh-1180 AC4) built alongside the queue: the
+  /// non-nullable log the idle-wake path writes its wake_attempted /
+  /// turn_started / wake_refused events through. A `late final` so the
+  /// production wake path can never silently skip the trail because a
+  /// lazy initializer has not run yet (review T11).
+  ScheduledReceiptLog _newScheduledReceipts() => ScheduledReceiptLog(
+    env: _env,
+    path: () => '$_scheduledMessagesRoot/_scheduled/receipts.jsonl',
+    onError: (text) => io.writeln('[sched] $text'),
+  );
+
   ScheduledMessageQueue _newScheduledMessages() {
     return ScheduledMessageQueue(
       env: _env,
@@ -141,6 +154,12 @@ extension AgentCliMessagingFlow on AgentCli {
       // self-addressed record only when the stored prefix matches this
       // session — another instance's record stays with its owner (#59).
       ownerPrefix: () => _subagentManager.mailboxPrefix,
+      // gh-1180 AC4: the persisted receipt trail — scheduled / delivered /
+      // delivery_failed / scan_failed events keyed by record id, so a
+      // post-mortem can tell "timer never fired" from "wake refused".
+      // Rides the non-nullable [_scheduledReceipts] the wake path also
+      // writes through (one log, one trail — review T11).
+      receipts: _scheduledReceipts,
       // Terminal visibility: a dim line when a scheduled message is created
       // and when it fires, so self-reminders are observable without /tasks.
       // Each transition also re-pushes the TUI indicator row (issue #115).
@@ -167,16 +186,24 @@ extension AgentCliMessagingFlow on AgentCli {
     );
   }
 
+  /// The prompt-affecting half of [_syncMailboxPrefix]: assigns the
+  /// mailbox prefix and recomposes (the messaging section rides the
+  /// prompt). Split out so the resume budget can project the section
+  /// BEFORE the gh-968 parity walk (`_loadSession`, issue #1151 review)
+  /// without the prefix assignment drifting between the two sites.
+  void _assignMailboxPrefix(String id) {
+    _subagentManager.mailboxPrefix = id;
+    _applyPromptComposition();
+  }
+
   void _syncMailboxPrefix() {
-    _subagentManager.mailboxPrefix = _session?.cachedId ?? '';
+    _assignMailboxPrefix(_session?.cachedId ?? '');
     // Issue #426: child session headers carry `metadata.parent` from the
     // manager's parentSessionId — pinned empty at construction because
     // the session id does not exist yet. Assign it here (the moment the
     // id materializes) so children of THIS session link back to it
     // instead of being written with `parent: ""`.
     _subagentManager.parentSessionId = _subagentManager.mailboxPrefix;
-    // The prompt's messaging section carries the live mailbox address.
-    _applyPromptComposition();
     // Re-arm scheduled-message delivery: pending records that came due
     // while another session was active surface in the now-active mailbox
     // (start() is an idempotent re-arm + drain).
@@ -239,21 +266,46 @@ extension AgentCliMessagingFlow on AgentCli {
   /// mail needs no wake — the per-turn steering poll already delivers it.
   Future<void> _wakeOnInboxMail() async {
     if (_exited || isBusy || _inboxWakeRunning) return;
-    // The cap throttles AGENT-to-agent chatter only. Mail from the USER
-    // (an attached app) must always wake — gating on a counter that the
-    // delivery itself resets would deadlock: no run → no reset → no run.
+    // The lane decision (gh-1180): user-kind mail always wakes (gating it
+    // on the streak would deadlock: no run → no reset → no run);
+    // delivered scheduled self-mail is EXEMPT from the cap (a deliberate
+    // agent-chosen cadence — the night-watch lane); foreign agent-to-agent
+    // chatter stays capped (anti-storm).
     final pending = await _subagentManager.pendingInbox(
       _subagentManager.selfId,
     );
     final pluginPending = await _anyPluginInboxPending();
     if (pending.isEmpty && !pluginPending) return;
-    final hasUserInput = pending.any(
-      (message) => message.kind == AgentMessageKind.user,
+    final decision = _inboxWakePolicy.wakeDecisionFor(
+      pending,
+      pluginPending: pluginPending,
     );
-    if (!hasUserInput && _inboxWakeStreak >= AgentCli._maxInboxWakeStreak) {
+    if (!decision.wake) {
+      // gh-1180 AC4: the refusal is receipted AND visible — a silent
+      // drop here was exactly the 2h04m blind window. Both receipts ride
+      // the policy's once-per-EPISODE gate (review T1): the gate holds
+      // until user input arrives, so per-tick appends would grow
+      // receipts.jsonl by ~43k duplicate lines/day. The episode latch
+      // lives in the policy next to the streak (review T2) and re-arms
+      // on the same resets — a user input or an allowed non-exempt
+      // wake — so a repeat episode is announced and receipted again.
+      if (_inboxWakePolicy.announceRefusal()) {
+        io.writeln(
+          _style.dim('[mail] wake refused — ${decision.refusalReason}'),
+        );
+        await _scheduledReceipts.append('wake_attempted', {
+          'lane': decision.lane.name,
+          'ids': [for (final message in pending) message.id],
+        });
+        await _scheduledReceipts.append('wake_refused', {
+          'lane': decision.lane.name,
+          'reason': decision.refusalReason,
+        });
+      }
       return;
     }
-    _inboxWakeStreak++;
+    // The policy books cap-consuming wakes itself (its streak is the one
+    // source of truth; the legacy seam proxies it).
     _inboxWakeRunning = true;
     final count = pending.length;
     io.writeln(
@@ -263,6 +315,14 @@ extension AgentCliMessagingFlow on AgentCli {
             : '[mail] new hub message(s) — waking up to answer',
       ),
     );
+    await _scheduledReceipts.append('wake_attempted', {
+      'lane': decision.lane.name,
+      'ids': [for (final message in pending) message.id],
+    });
+    await _scheduledReceipts.append('turn_started', {
+      'lane': decision.lane.name,
+      'ids': [for (final message in pending) message.id],
+    });
     _startRun(
       '<system-notice>New inter-agent mail arrived '
       '${count > 0 ? '($count message(s))' : '(hub mail)'} — the messages '

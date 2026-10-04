@@ -21,7 +21,7 @@ watches the run.
 | Leg | Runs | Publishes |
 | --- | --- | --- |
 | TestFlight | `build-mobile.yml` (`ios_content=all`, `android_content=none`) | iOS IPA → TestFlight, distributed straight to the EXTERNAL group (`TESTFLIGHT_EXTERNAL_GROUP` repo variable + Beta App Review contact variables — lanes fail loudly without them). Android stays excluded (standing owner decision). |
-| pub.dev | in-job | **Verifier + recovery**, never publishes directly: pub.dev trusted publishing only accepts OIDC from tag-push runs, which a schedule/dispatch run can never be. When behind, it re-runs the failed ci.yml tag-publish run (a rerun keeps the original tag-push event/OIDC claims); unrecoverable states fail loudly → issue with a manual-publish instruction. |
+| pub.dev | in-job | **Verifier + recovery**, never publishes directly: pub.dev trusted publishing only accepts OIDC from tag-push runs, which a schedule/dispatch run can never be. When behind, it classifies first (gh-1192): a tag-publish still **executing** (tag-run queued/in-progress at any age, or not visible yet / tag not cut while the bump is fresh) is a neutral **skipped: release in flight** — no error, no issue; the next daily re-verifies. Past the grace windows the recovery path applies: re-run the failed ci.yml tag-publish run (a rerun keeps the original tag-push event/OIDC claims); unrecoverable states fail loudly → issue with a manual-publish instruction. |
 | CLI + desktop | `build-macos.yml` (`create_release=true`) | macOS DMG/ZIP (signed + notarized), macOS CLI bundles, `fa-extension.zip` → GitHub Release. |
 | Website | `pages.yml` | fa1.dev: landing + web demo + `/extension/` + `/outlook/` slice. |
 | Outlook add-in | `office-addin.yml` | Acceptance suite (manifest validation, dart2js taskpane, Node + Playwright e2e). The fa1.dev `/outlook` deploy itself rides the Website leg — `pages.yml` assembles the same add-in into the Pages artifact. |
@@ -38,9 +38,15 @@ the safe way to smoke one channel.
 
 ## Versioning
 
-The existing scheme is unchanged: `scripts/auto_release.sh` patch-bumps
-`pubspec.yaml`, tags and pushes on every push to `main` (2h coalesce), and
-the tag drives the ci.yml `publish`/`binaries` jobs. The daily:
+The scheme: `scripts/auto_release.sh` patch-bumps
+`pubspec.yaml` and pushes the bump commit straight to protected `main` as the
+fa-release-bot GitHub App (the ruleset's only bypass actor, gh-1172 — the
+2026-09-29 release-PR stopgap is retired); the push fires the ci.yml
+`release-tag` job, and the tag drives the `publish`/`binaries` jobs. Manual
+`workflow_dispatch` runs are input-gated: `releaseDryRun: true` exercises the
+whole pipeline without the push/tag (AC1), and `releaseDispatch: true` on
+`refs/heads/main` is the real push — bare validation dispatches (the SM's
+per-PR `gh workflow run ci.yml --ref <branch>`) arm nothing. The daily:
 
 - lets `build-mobile.yml` / `build-macos.yml` derive their version
   themselves (`latest tag + 1` at the child's own dispatch moment). A tag
@@ -57,7 +63,12 @@ the tag drives the ci.yml `publish`/`binaries` jobs. The daily:
 daily **that ran all legs** (schedule runs, or `legs=all` dispatches). A
 single-leg green dispatch never advances the baseline, so a partial smoke
 can't make the next scheduled run skip the legs it never exercised.
-A failing `plan` job (not just legs) files its own
+One exception (gh-1192): a release-in-flight pubdev leg exits 0, so that
+green daily becomes the baseline at the bump's sha — the plan gate
+(`scripts/daily_plan.sh`) therefore still forces the legs while main's
+pubspec version is not yet served by pub.dev, keeping the re-verification
+and the failed-run recovery alive on a quiet main. A failing `plan` job
+(not just legs) files its own
 `[daily-publish] plan leg failed` issue — nothing escapes the loop.
 
 ## Self-healing issues

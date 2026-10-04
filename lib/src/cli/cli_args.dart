@@ -99,6 +99,7 @@ final class CliArgs extends CliArgsResult {
     this.trajectory,
     this.config,
     this.ext,
+    this.jsr,
     this.sessionList,
     this.positionals = const [],
     this.output,
@@ -107,7 +108,9 @@ final class CliArgs extends CliArgsResult {
     this.waitForJobs = false,
     this.piMode = false,
     this.ompMode = false,
+    this.debugSecrets = false,
     this.noFormat = false,
+    this.streamThinking = false,
   }) : super._();
 
   /// `--model <id>`.
@@ -227,6 +230,10 @@ final class CliArgs extends CliArgsResult {
   /// extension manager instead of a prompt run.
   final ExtCliCommand? ext;
 
+  /// The `fa jsr <verb>` subcommand (gh-1033), when the invocation routed
+  /// to the jsr widget CLI pass-through instead of a prompt run.
+  final JsrCliCommand? jsr;
+
   /// The `fa session <verb>` subcommand (issue #198), when the invocation
   /// routed to the session lister instead of a prompt run.
   final SessionCliCommand? sessionList;
@@ -262,10 +269,23 @@ final class CliArgs extends CliArgsResult {
   /// (flag > env > config).
   final bool ompMode;
 
+  /// `--debug-secrets` (gh-1059): log every secure-store preload read —
+  /// `found` / `absent` / `error: <diagnostic>` — so a degraded keychain
+  /// boot is diagnosable instead of silently keyless. Same effect as the
+  /// truthy `FA_DEBUG_KEYS` env var.
+  final bool debugSecrets;
+
   /// `--no-format`: render assistant markdown raw (byte-identical
   /// passthrough) even on a color TTY (issue #774). Same effect as the
   /// `FA_NO_FORMAT` env var.
   final bool noFormat;
+
+  /// `--stream-thinking` (gh-1198): the opt-in live thinking stream for
+  /// this run — line-mode/headless runs print thinking deltas dimmed,
+  /// live, like the TUI. Wins over the `output.streamThinking` config
+  /// for the run; the config default keeps the byte-identical legacy
+  /// output.
+  final bool streamThinking;
 
   /// Whether this invocation runs a single headless prompt instead of the
   /// interactive REPL.
@@ -285,12 +305,14 @@ const Map<String, CliArgsResult Function(List<String>)> _cliSubcommands = {
   'trajectory': _parseTrajectoryArgs,
   'config': _parseConfigArgs,
   'ext': _parseExtArgs,
+  'jsr': _parseJsrArgs,
   'session': _parseSessionArgs,
 };
 
 /// Applies the no-value boolean flags (`--wait-for-jobs`, `--pi`,
-/// `--omp`) to [values]; returns false when [arg] is none of them (the
-/// caller falls through to the value-flag table).
+/// `--omp`, `--debug-secrets`, `--no-format`, `--stream-thinking`) to
+/// [values]; returns false when [arg] is none of them (the caller falls
+/// through to the value-flag table).
 bool _applyBooleanFlag(_CliArgValues values, String arg) {
   if (arg == '--wait-for-jobs') {
     values.waitForJobs = true;
@@ -304,12 +326,28 @@ bool _applyBooleanFlag(_CliArgValues values, String arg) {
     values.ompMode = true;
     return true;
   }
+  if (arg == '--debug-secrets') {
+    values.debugSecrets = true;
+    return true;
+  }
   if (arg == '--no-format') {
     values.noFormat = true;
     return true;
   }
+  if (arg == '--stream-thinking') {
+    values.streamThinking = true;
+    return true;
+  }
   return false;
 }
+
+/// The effective gh-1198 thinking-stream setting for a run: the
+/// `--stream-thinking` flag wins over the `output.streamThinking` config
+/// for the run; the config default (false) keeps the byte-identical
+/// legacy output. The flag is opt-in only, so "wins" is an inclusive OR —
+/// there is no `--no-stream-thinking` spelling.
+bool resolveStreamThinking({required bool flag, required bool configValue}) =>
+    flag || configValue;
 
 CliArgsResult parseCliArgs(List<String> args) {
   final subcommand = args.isEmpty ? null : _cliSubcommands[args.first];
@@ -889,6 +927,66 @@ void _validateExtVerb(String verb, _ExtOperands operands) {
   }
 }
 
+/// The `fa jsr <verb>` subcommand (gh-1033): a pass-through to the
+/// `js_widget_runtime` package's own agent CLI (`bin/jsr_widget.dart`).
+/// The harness only resolves the package root and execs the child — zero
+/// widget logic lives here (invariant I1), and everything after the verb
+/// rides [args] VERBATIM (invariant I2): the flag surface is owned by the
+/// jsr CLI and may drift without a fah release.
+final class JsrCliCommand {
+  /// Creates a [JsrCliCommand].
+  const JsrCliCommand({required this.verb, this.args = const []});
+
+  /// One of [jsrVerbs], forwarded as the child's first argument.
+  final String verb;
+
+  /// Everything after the verb, forwarded untouched.
+  final List<String> args;
+}
+
+/// The verbs accepted by `fa jsr`.
+const jsrVerbs = {'widget:test', 'widget:screenshot'};
+
+/// The jsr flag matrix — the single source of truth for the flag surface
+/// documentation: `fa jsr` usage errors, the REPL `/jsr` usage, and the
+/// `fa --help` docs reference this. The surface itself is owned by the
+/// jsr CLI and may drift without a fah release; when it does, this line
+/// is the only one to update (invariant I1).
+const String jsrUsage =
+    'usage: fa jsr <widget:test|widget:screenshot> <path> [flags...]\n'
+    '       fa jsr widget:test <path> [--event ID]... '
+    '[--expect-state JSON] [--seed-storage JSON] [--json]\n'
+    '       fa jsr widget:screenshot <path> [--out png] [--width N] '
+    '[--height N] [--theme name] [--scale S] [--freeze-clock]';
+
+/// Parses the `jsr` subcommand operands (everything after the `jsr` word).
+/// Unknown verbs are usage errors so a typo never becomes a prompt sent to
+/// a model; unknown FLAGS are deliberately NOT validated — they belong to
+/// the jsr CLI's surface and are forwarded verbatim.
+CliArgsResult _parseJsrArgs(List<String> args) {
+  if (args.contains('--help') || args.contains('-h')) {
+    return const CliArgsHelp();
+  }
+  if (args.isEmpty) {
+    throw const CliArgsException(jsrUsage);
+  }
+  final verb = args.first;
+  if (!jsrVerbs.contains(verb)) {
+    throw CliArgsException(
+      'unknown jsr verb: $verb '
+      '(expected one of ${jsrVerbs.join('|')})\n$jsrUsage',
+    );
+  }
+  final rest = args.sublist(1);
+  final hasPathOperand = rest.any((arg) => !arg.startsWith('-'));
+  if (!hasPathOperand) {
+    throw CliArgsException('fa jsr $verb requires a widget path\n$jsrUsage');
+  }
+  return CliArgs(
+    jsr: JsrCliCommand(verb: verb, args: List.unmodifiable(rest)),
+  );
+}
+
 /// A value-taking CLI flag: its canonical name (for error messages, so
 /// `-p` reports as `--prompt`) and the setter applying it to [_CliArgValues].
 typedef _ValueFlag = (String, void Function(_CliArgValues, String));
@@ -1046,7 +1144,9 @@ final class _CliArgValues {
   bool waitForJobs = false;
   bool piMode = false;
   bool ompMode = false;
+  bool debugSecrets = false;
   bool noFormat = false;
+  bool streamThinking = false;
   final promptTemplateDirs = <String>[];
   String? mode;
   String? cwd;
@@ -1120,7 +1220,9 @@ final class _CliArgValues {
       waitForJobs: waitForJobs,
       piMode: piMode,
       ompMode: ompMode,
+      debugSecrets: debugSecrets,
       noFormat: noFormat,
+      streamThinking: streamThinking,
       attachments: List.unmodifiable(attachments),
     );
   }

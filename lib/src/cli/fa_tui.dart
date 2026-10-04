@@ -55,6 +55,7 @@ part 'fa_tui_theme_swap.dart';
 part 'fa_tui_controller_io.dart';
 part 'fa_tui_picker.dart';
 part 'fa_tui_composer.dart';
+part 'fa_tui_viewport.dart';
 
 /// Translates the (web-safe) headless test hooks into dart_tui program
 /// options: a scripted key byte stream replaces stdin, the rendered frames
@@ -204,7 +205,7 @@ const _spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', 
 
 /// Memoized markdown+wrap pass over [FaTuiModel.outputLines]. Formatting is
 /// O(transcript) (regex-heavy markdown plus ANSI-safe wrapping) and used to
-/// run two to four times PER event (update handler, `_stickyActive`, view),
+/// run two to four times PER event (update handler, `_echoEndRow`, view),
 /// which made wheel scrolling and streaming visibly stutter. The result is
 /// shared across model copies and recomputed only when the source list
 /// (identity — every mutation path builds a new list) or the width changes,
@@ -282,6 +283,8 @@ final class FaTuiModel extends Model {
     this.stickyLines = const [],
     this.stickyIndex = -1,
     this.stickyEchoLineCount = 0,
+    this.turnStartLine = -1,
+    this.bootAnchorLine = 0,
     this.queue = const [],
     this.attachments = const [],
     this.inputHistory = const [],
@@ -315,6 +318,10 @@ final class FaTuiModel extends Model {
   /// Completer for the active prompt zone, filled when it resolves so the
   /// host's [FaTuiController.openPrompt] future can complete.
   Completer<TuiPromptAnswer?>? _promptCompleter;
+
+  /// Issue #1067: when the last pasteboard probe fired — one probe per
+  /// paste gesture (window in `_pasteboardGestureWindowMs`).
+  int _pasteboardProbeFiredAtMs = -1;
 
   final List<String> outputLines;
 
@@ -470,6 +477,20 @@ final class FaTuiModel extends Model {
   /// scrolled out of view.
   final int stickyEchoLineCount;
 
+  /// Output-lines index where the CURRENT turn starts — the last submitted
+  /// prompt's echo (or the first steered/drained echo); -1 until then
+  /// (issue #827). Drives the follow anchor [_turnAnchor]: a fresh
+  /// prompt's window starts at its own echo instead of showing turn N-1
+  /// above the prompt line.
+  final int turnStartLine;
+
+  /// The resumed boot's replay anchor (issue #446 wave-14): the LOGICAL
+  /// line index of the restored session's first row. While following and
+  /// the glass overflows, the window anchors here — the banner rides the
+  /// fold under the #827 indicator. 0 = no boot anchor (plain bottom
+  /// follow). Cleared by the first live submit and by any user scroll.
+  final int bootAnchorLine;
+
   /// Messages typed while a run streams (kimi-cli's queue): Enter enqueues
   /// a follow-up, ↑ pops the last one back into the input, ctrl+x deletes
   /// it, ctrl+s steers everything into the running agent, and the host
@@ -551,26 +572,29 @@ final class FaTuiModel extends Model {
     return rows;
   }
 
-  /// Whether the sticky user echo is pinned right now: a run is streaming
-  /// and the echo has FULLY scrolled above the visible window. Rows are
-  /// counted wrapped (earlier lines may wrap), and the echo counts as out
-  /// only once its last row is gone — comparing the offset to the raw
-  /// [stickyIndex] line pinned a duplicate while the message was still
-  /// visible in the chat.
-  bool get _stickyActive {
-    if (!busy || stickyLines.isEmpty || stickyIndex < 0) return false;
-    // Served from the shared wrap cache (refreshed here when stale): the
-    // start row of the line just past the echo IS its end row.
+  /// Whether a turn echo is ARMED to pin: a run streams and an echo
+  /// exists; whether it pins is the frame plan's call — [_framePlanFor]
+  /// dedupes the pin against the painted window (#917). No scroll math.
+  bool get _stickyArmed => busy && stickyLines.isNotEmpty && stickyIndex >= 0;
+
+  /// The first wrapped row just past the pinned echo (rows are counted
+  /// wrapped — earlier lines may wrap — and the echo counts as out of a
+  /// window iff the window top is at or past this row). Served from the
+  /// shared wrap cache, refreshed here when stale. Comparing against the
+  /// RAW [stickyIndex] line instead once pinned a duplicate while the
+  /// message was still visible in the chat.
+  ///
+  /// Returns -1 when the cache holds no row starts (no geometry to dedupe
+  /// against) — callers keep the echo with the transcript then.
+  int _echoEndRow() {
     _wrappedLines();
     final starts = _wrapCache.lineStartRows;
+    if (starts.isEmpty) return -1;
     final echoEndLine = (stickyIndex + stickyEchoLineCount).clamp(
       0,
       starts.length - 1,
     );
-    // NOTE: deliberately the RAW scroll offset — the effective (tail-riding)
-    // offset lives in view(); routing _scrollBottom through here would
-    // recurse (the plan needs sticky, sticky would need the plan's viewport).
-    return scrollOffset >= starts[echoEndLine];
+    return starts[echoEndLine];
   }
 
   /// The visible window of menu items (start inclusive, end exclusive).
@@ -648,49 +672,6 @@ final class FaTuiModel extends Model {
     return count;
   }
 
-  /// Applies a user scroll: moves the offset (clamped) and re-evaluates the
-  /// follow latch — scrolling up detaches, landing back on the exact bottom
-  /// re-attaches.
-  FaTuiModel _scrolledTo(int offset) {
-    final wrapped = _wrappedLines();
-    final next = _clampScroll(offset, wrapped);
-    return copyWith(
-      scrollOffset: next,
-      followTail: next >= _scrollBottom(wrapped),
-    );
-  }
-
-  /// The output history formatted and wrapped to physical rows at [width]
-  /// (default: the current terminal width). All scroll math happens in
-  /// these rows — raw line counts lie once long lines wrap. Memoized in the
-  /// shared [_WrapCache]: the O(transcript) markdown+wrap pass re-runs only
-  /// when the source list or the width actually changes.
-  List<String> _wrappedLines([int? width]) {
-    final w = width ?? termWidth;
-    final cache = _wrapCache;
-    if (identical(cache.source, outputLines) && cache.width == w) {
-      return cache.rows; // pure hit: scroll math / key presses pay nothing
-    }
-    var tx = w == cache.width ? cache._tx : null;
-    tx ??= TranscriptMarkdown(width: w);
-    cache._tx = tx;
-    tx.sync(outputLines); // O(delta) on appends; legacy pass only after a
-    // resize/front-trim, where it is byte-identical to formatAll.
-    cache
-      ..source = outputLines
-      ..width = w
-      ..rows = tx.wrappedRows
-      ..lineStartRows = tx.lineStartRows;
-    return tx.wrappedRows;
-  }
-
-  /// The scroll offset that puts the last wrapped row at the bottom.
-  int _scrollBottom(List<String> wrapped) =>
-      (wrapped.length - _viewportHeight).clamp(0, wrapped.length);
-
-  int _clampScroll(int offset, List<String> wrapped) =>
-      offset.clamp(0, _scrollBottom(wrapped));
-
   FaTuiModel copyWith({
     TuiPromptState? prompt,
     bool clearPrompt = false,
@@ -722,6 +703,8 @@ final class FaTuiModel extends Model {
     List<String>? stickyLines,
     int? stickyIndex,
     int? stickyEchoLineCount,
+    int? turnStartLine,
+    int? bootAnchorLine,
     List<QueuedMessage>? queue,
     List<TuiImageAttachment>? attachments,
     List<String>? inputHistory,
@@ -780,6 +763,8 @@ final class FaTuiModel extends Model {
       stickyLines: stickyLines ?? this.stickyLines,
       stickyIndex: stickyIndex ?? this.stickyIndex,
       stickyEchoLineCount: stickyEchoLineCount ?? this.stickyEchoLineCount,
+      turnStartLine: turnStartLine ?? this.turnStartLine,
+      bootAnchorLine: bootAnchorLine ?? this.bootAnchorLine,
       queue: queue ?? this.queue,
       attachments: attachments ?? this.attachments,
       inputHistory: inputHistory ?? this.inputHistory,
@@ -808,6 +793,7 @@ final class FaTuiModel extends Model {
     copy._stickyFmtSource = _stickyFmtSource;
     copy._stickyFmtWidth = _stickyFmtWidth;
     copy._promptCompleter = _promptCompleter;
+    copy._pasteboardProbeFiredAtMs = _pasteboardProbeFiredAtMs;
     copy._hitRegions = _hitRegions;
     copy._mouseRouter = _mouseRouter;
     copy._mouseHintShown = _mouseHintShown;
@@ -919,14 +905,21 @@ final class FaTuiModel extends Model {
     final displayText = needsSystemNoticeRewrite(msg.text)
         ? renderSystemNoticeLines(msg.text).join('\n')
         : msg.text;
-    final newLines = _appendOutput(outputLines, displayText, msg.newline);
-    final next = copyWith(outputLines: newLines);
+    final (newLines, cut) = _appendOutput(outputLines, displayText, msg.newline);
+    final next = copyWith(
+      outputLines: newLines,
+      // A head trim shifts every transcript index — anchor and pin (#827).
+      turnStartLine: _turnStartShiftedBy(cut),
+      bootAnchorLine: _bootAnchorShiftedBy(cut),
+      stickyIndex: _stickyShiftedBy(cut),
+    );
     final nextWrapped = next._wrappedLines();
     // Auto-follow the stream while the latch holds; preserve the scroll
-    // position (clamped) when the user scrolled up.
+    // position (clamped) when the user scrolled up. Following re-anchors
+    // at the turn boundary (issue #827) — the stream owns the window.
     final nextOffset = followTail
-        ? _scrollBottom(nextWrapped)
-        : _clampScroll(scrollOffset, nextWrapped);
+        ? next._turnAnchor(nextWrapped)
+        : next._clampScroll(scrollOffset, nextWrapped);
     return (next.copyWith(scrollOffset: nextOffset), null);
   }
 
@@ -1040,12 +1033,23 @@ final class FaTuiModel extends Model {
     msg.completer.complete([for (final m in queued) m.text]);
     if (queued.isEmpty) return (this, null);
     var lines = outputLines;
+    var echoCut = 0;
     for (final message in queued) {
-      lines = _echoAppend(lines, message.text);
+      final (appended, cut) = _echoAppend(lines, message.text);
+      lines = appended;
+      echoCut += cut;
     }
-    final cleared = copyWith(queue: const [], outputLines: lines);
+    final cleared = copyWith(
+      queue: const [],
+      outputLines: lines,
+      // The first drained echo opens the next turn's window (issue #827);
+      // echo-time head-trims shift it by the accumulated cut. A live
+      // submit also dissolves the boot anchor — the boundary re-arms.
+      turnStartLine: outputLines.length - echoCut,
+      bootAnchorLine: 0,
+    );
     final next = cleared.copyWith(
-      scrollOffset: cleared._scrollBottom(cleared._wrappedLines()),
+      scrollOffset: cleared._turnAnchor(cleared._wrappedLines()),
       followTail: true,
     );
     return (next, null);
@@ -1076,30 +1080,7 @@ final class FaTuiModel extends Model {
     if (msg is _ThemeChangedMsg) return _handleThemeChanged();
     if (msg is _OpenModelMenuMsg) return _handleOpenModelMenu();
     if (_handlePickerMsg(msg) case final picker?) return picker;
-    if (msg is HubStateMsg) return _handleHubStateMsg(msg);
-    if (msg is _CloseHubMsg) return (copyWith(clearHub: true), null);
-
-    if (msg is _SetInputTextMsg) {
-      return (
-        copyWith(
-          inputText: msg.text,
-          cursor: msg.text.length,
-          menuOpen: false,
-          menuTokenStart: -1,
-        ),
-        null,
-      );
-    }
-    if (msg is SetInputHistoryMsg) {
-      return (
-        copyWith(
-          inputHistory: msg.history,
-          historyIndex: -1,
-          historyDraft: null,
-        ),
-        null,
-      );
-    }
+    if (_handleHostStateMsg(msg) case final host?) return host;
     if (msg is _QuitRequestedMsg) return (this, () => quit());
     if (msg is ThemeSwappedMsg) return _handleThemeSwapped();
     if (msg is PasteboardResultMsg) return _handlePasteboardResult(msg);
@@ -1351,37 +1332,6 @@ final class FaTuiModel extends Model {
       return (_scrolledTo(scrollOffset + delta), null);
     }
     return (this, null);
-  }
-
-  /// dart_tui 2.0.0's bracketed-paste decoder maps every pasted BYTE to a
-  /// char code (Latin-1), so pasted non-ASCII text arrives as mojibake
-  /// ("ÐÑÐ¸Ð²ÐµÑ" instead of "Привет"). The mis-decode is lossless —
-  /// re-encoding as Latin-1 recovers the original bytes — so decode them as
-  /// UTF-8 here. ASCII and already-correct input pass through unchanged.
-  static String _fixPasteMojibake(String text) {
-    try {
-      return utf8.decode(latin1.encode(text));
-    } on Object {
-      return text; // never worse than the input
-    }
-  }
-
-  (Model, Cmd?) _handlePaste(PasteMsg msg) {
-    final content = _fixPasteMojibake(msg.content);
-    // Prompt mode: pastes go into the open prompt's buffer (e.g. an API key
-    // pasted into the dial/secret prompts), like typed characters do.
-    if (prompt != null) {
-      final key = PromptPaste(content);
-      final (state: next, resolved: answer) = handleTuiPromptKey(prompt!, key);
-      if (answer != null) {
-        _promptCompleter?.complete(answer);
-        _promptCompleter = null;
-        return (copyWith(clearPrompt: true), null);
-      }
-      return (copyWith(prompt: next), null);
-    }
-    // One insert call = one undo group: a paste undoes as a whole.
-    return (copyWith(editor: editor.insert(content)), null);
   }
 
   (Model, Cmd?) _handleMultiCharRunes(KeyPressMsg msg) {
@@ -1860,19 +1810,34 @@ final class FaTuiModel extends Model {
   /// turn separator — and wraps the input in [tuiUserBubble] (blank band
   /// rows above/below, one leading space per row). The pre-styled contract
   /// is shared: rows carry the bg SGR marker and the view re-pads/repaints.
-  List<String> _echoAppend(List<String> lines, String text) {
+  (List<String>, int) _echoAppend(List<String> lines, String text) {
     if (tuiChromeEnabled) {
-      final appended = _appendOutput(
+      final (appended, cut) = _appendOutput(
         lines,
         tuiUserBubble(text.split('\n')).join('\n'),
         true,
       );
-      return _appendOutput(appended, '', true);
+      final (rest, tailCut) = _appendOutput(appended, '', true);
+      return (rest, cut + tailCut);
     }
     final rule = _dim('─' * termWidth);
     final styledInput = text.split('\n').map(tuiUserMessageLine).join('\n');
-    final appended = _appendOutput(lines, '$rule\n$styledInput', true);
-    return _appendOutput(appended, '', true);
+    final (appended, cut) = _appendOutput(lines, '$rule\n$styledInput', true);
+    final (rest, tailCut) = _appendOutput(appended, '', true);
+    return (rest, cut + tailCut);
+  }
+
+  /// Appends [text] as a service line (dim hint/error) and keeps the
+  /// turn-start index accurate across a head-trim the append may fire
+  /// (issue #827).
+  FaTuiModel _appendServiceLine(String text) {
+    final (lines, cut) = _appendOutput(outputLines, text, true);
+    return copyWith(
+      outputLines: lines,
+      turnStartLine: _turnStartShiftedBy(cut),
+      bootAnchorLine: _bootAnchorShiftedBy(cut),
+      stickyIndex: _stickyShiftedBy(cut),
+    );
   }
 
   /// Submits [text]: echoes the input into the history immediately (no rule
@@ -1905,7 +1870,7 @@ final class FaTuiModel extends Model {
         _submitCmd(text, images),
       );
     }
-    final echoed = _echoAppend(outputLines, inputText);
+    final (echoed, echoCut) = _echoAppend(outputLines, inputText);
     // Shell-style input history: plain messages only (no slash/bang
     // commands), consecutive duplicates collapsed, capped at 100.
     final history = _recordInputHistory(inputHistory, text);
@@ -1920,16 +1885,25 @@ final class FaTuiModel extends Model {
       menuOpen: false,
       menuTokenStart: -1,
       stickyLines: sticky,
-      stickyIndex: outputLines.length,
+      // The echo lands at the old length minus the cut the append may
+      // have fired — the new turn's first line (issue #827); the sticky
+      // math shares the exact same index.
+      stickyIndex: outputLines.length - echoCut,
       stickyEchoLineCount: stickyEchoLineCount,
+      turnStartLine: outputLines.length - echoCut,
+      // A live submit dissolves the boot anchor: the turn boundary re-arms
+      // at this echo (issue #446 wave-14).
+      bootAnchorLine: 0,
       attachments: keepAttachments ? null : const [],
     );
     return (
       // A fresh submit always jumps to the bottom AND re-attaches follow:
       // without it, a latch detached by an earlier scroll-up froze the
-      // stream off-screen (and the sticky echo never activated).
+      // stream off-screen (and the sticky echo never activated). #827: the
+      // landing spot is the turn anchor — this turn's echo — not a window
+      // over turn N-1's tail.
       cleared.copyWith(
-        scrollOffset: cleared._scrollBottom(cleared._wrappedLines()),
+        scrollOffset: cleared._turnAnchor(cleared._wrappedLines()),
         followTail: true,
       ),
       _submitCmd(text, images),
@@ -2012,17 +1986,22 @@ final class FaTuiModel extends Model {
     ];
     if (messages.isEmpty) return (this, null);
     var lines = outputLines;
+    var echoCut = 0;
     for (final message in messages) {
-      lines = _echoAppend(lines, message);
+      final (appended, cut) = _echoAppend(lines, message);
+      lines = appended;
+      echoCut += cut;
     }
     // A visible receipt: an echoed-but-unanswered message otherwise reads
     // as "sent into the void" while the turn runs (or wedges on a dead
     // endpoint).
-    lines = _appendOutput(
+    final (receipted, receiptCut) = _appendOutput(
       lines,
       _dim('⤷ steered into the running turn — esc aborts'),
       true,
     );
+    lines = receipted;
+    echoCut += receiptCut;
     // Steered messages are sent for real — they join the input history.
     var history = inputHistory;
     for (final message in messages) {
@@ -2042,10 +2021,14 @@ final class FaTuiModel extends Model {
       historyIndex: -1,
       historyDraft: null,
       outputLines: lines,
+      // The first steered echo starts the interrupted turn's window
+      // (issue #827 — each steered message is a separate user turn);
+      // echo-time head-trims shift it by the accumulated cut.
+      turnStartLine: outputLines.length - echoCut,
     );
     return (
       cleared.copyWith(
-        scrollOffset: cleared._scrollBottom(cleared._wrappedLines()),
+        scrollOffset: cleared._turnAnchor(cleared._wrappedLines()),
         followTail: true,
       ),
       () async {
@@ -2116,9 +2099,11 @@ final class FaTuiModel extends Model {
     // A following tail rides the CURRENT bottom (issue #496): when the
     // frame squeezes, the viewport shrinks without any history append —
     // only re-clamping here keeps the live edge (the sent echo) on screen
-    // instead of stranding the window at a stale offset.
+    // instead of stranding the window at a stale offset. Issue #827: the
+    // ride floors at the current turn's first row, so a fresh prompt's
+    // window starts at its echo (fold indicator explains the rest).
     final offset = followTail
-        ? _scrollBottom(wrapped)
+        ? _followOffset(wrapped)
         : _clampScroll(scrollOffset, wrapped);
     final historyRows = _writeHistoryRows(b, height, wrapped, offset);
     _writeScrollIndicator(b, wrapped, offset);
@@ -2281,12 +2266,19 @@ final class FaTuiModel extends Model {
   /// retained history must agree with what the renderer will compute.
   static final RegExp _fenceLineStart = RegExp(r'^\s*```');
 
-  static List<String> _appendOutput(
+  /// Appends [text] (split on `\n`; the first part merges into the last
+  /// line) to [lines], and returns `(result, headCut)` — [headCut] is the
+  /// number of lines every stored transcript index must shift by after
+  /// the bounded-history trim dropped lines from the head (one less when
+  /// the synthetic fence-repair line was prepended, since it occupies the
+  /// first retained slot), 0 when no trim fired. Issue #827's turn start
+  /// is the one such index today.
+  static (List<String>, int) _appendOutput(
     List<String> lines,
     String text,
     bool newline,
   ) {
-    if (text.isEmpty && !newline) return lines;
+    if (text.isEmpty && !newline) return (lines, 0);
     final result = List.of(lines);
     final parts = text.split('\n');
     if (result.isEmpty) result.add('');
@@ -2339,9 +2331,12 @@ final class FaTuiModel extends Model {
       }
       final trimmed = result.sublist(cut);
       if (open) trimmed.insert(0, '```');
-      return trimmed;
+      // The synthetic fence line occupies index 0, so every RETAINED line
+      // sits one slot lower than after a plain cut — the head shift for
+      // stored transcript indices is cut - 1 when the repair fires.
+      return (trimmed, open ? cut - 1 : cut);
     }
-    return result;
+    return (result, 0);
   }
 }
 
@@ -2591,6 +2586,11 @@ final class FaTuiController {
   /// the whole output history — PER DELTA, saturating the event loop so
   /// keystrokes queued up behind them (typing lag while a run streamed).
   final _outputBuffer = StringBuffer();
+
+  /// Newlines handed to [sendOutput] so far — the transcript index the
+  /// next write lands on. The boot replay anchor captures this at its
+  /// call site; a model-side count would race the boot backlog drain.
+  int _sentNewlines = 0;
   Timer? _outputFlushTimer;
   // 16ms (~60 fps): frames are micro-cheap (traced p50 build 37µs on a
   // huge session), so flushing thrice as often just makes streamed text

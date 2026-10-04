@@ -10,6 +10,9 @@ import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+// dart:io side (host VMs only; the web build never imports this file —
+// wasm_run pulls dart:ffi): the low-disk probe for the job log ceiling.
+import 'package:flutter_agent_harness/io.dart' show diskFreeBytes;
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:wasm_run/wasm_run.dart';
@@ -79,10 +82,40 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     http.Client? httpClient,
     this.moduleLoader,
   }) : _httpClient = httpClient ?? http.Client(),
-       _currentDir = workingDirectory ?? '/';
+       _currentDir = workingDirectory ?? '/' {
+    _sweepStalePipeDirs();
+  }
 
   /// `coreutils` multicall module.
   final WasmModule coreutils;
+
+  /// Best-effort sweep of pipe dirs leaked by a previous crash (issue
+  /// #1156 review): the `finally` cleanup cannot run when the app is
+  /// killed mid-command, so dirs older than an hour are removed at shell
+  /// construction — no live job can own them yet. Never throws.
+  static const Duration _stalePipeDirAge = Duration(hours: 1);
+
+  void _sweepStalePipeDirs() {
+    final root = sandboxHostPath;
+    if (root == null || root.isEmpty) return;
+    try {
+      final tmp = io.Directory('$root/.fah/tmp');
+      if (!tmp.existsSync()) return;
+      final cutoff = DateTime.now().subtract(_stalePipeDirAge);
+      for (final entry in tmp.listSync()) {
+        if (entry is! io.Directory) continue;
+        if (!entry.uri.pathSegments.any((s) => s.startsWith('pipe-'))) {
+          continue;
+        }
+        final modified = entry.statSync().modified;
+        if (modified.isBefore(cutoff)) {
+          entry.deleteSync(recursive: true);
+        }
+      }
+    } on Object {
+      // Sweep is opportunistic; a failure must never block the shell.
+    }
+  }
 
   /// ripgrep module.
   final WasmModule rg;
@@ -426,6 +459,18 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         inputSource: inputSource,
       );
     }
+    // tar_util.wasm has no `--version` — it exits 1 with a usage error on
+    // the version probe (issue #1156 row 9); answer directly instead.
+    // Only the long flag: GNU tar's `-V` is `--label`, not a version flag.
+    if (command == 'tar' && args.contains('--version')) {
+      return Ok(
+        StageResult(
+          stdout: utf8.encode('tar 1.35 (Fa sandbox)\n'),
+          stderr: const [],
+          exitCode: 0,
+        ),
+      );
+    }
     final cwd = options?.cwd ?? _currentDir;
     final cwdArgs = _rewriteRelativeArgs(command, args, cwd);
     final effectiveArgs = inputSource != null && command != 'rg'
@@ -452,7 +497,9 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
 
     late final ShellScript script;
     try {
-      script = parseShellScript(command);
+      // The WASI shell honors `2>&1`/`>&2` (issue #1156 AC2/AC2b); shells
+      // that never did keep the parse-rejection default.
+      script = parseShellScript(command, allowFdDuplication: true);
     } on ShellParseException catch (e) {
       return Err(ExecutionError(ExecutionErrorCode.unknown, 'parse error: $e'));
     }
@@ -487,6 +534,29 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (token != null && token.isCancelled) {
       return const Err(ExecutionError(ExecutionErrorCode.aborted, 'aborted'));
     }
+    // Issue #919 (review round 3): build the ceiling BEFORE the eager log
+    // open — a bad ceiling used to throw out of _wireJob after the open
+    // succeeded, leaking the RAF fd (no job existed to run closeLog).
+    // Here it degrades to a plain Err.
+    final warn = options?.onJobLogWarning;
+    final JobLogCeiling ceiling;
+    try {
+      ceiling = JobLogCeiling(
+        maxBytes: options?.jobLogMaxBytes ?? defaultJobLogMaxBytes,
+        probe: () => diskFreeBytes(io.File(logPath).parent.path),
+        onWarn: warn == null
+            ? null
+            : (message) => warn('background job $id: $message'),
+      );
+    } on ArgumentError catch (error) {
+      return Err(
+        ExecutionError(
+          ExecutionErrorCode.spawnError,
+          'invalid jobLogMaxBytes: ${error.message}',
+          cause: error,
+        ),
+      );
+    }
     final logOpen = await _openJobLog(logPath);
     if (logOpen.isErr) return Err(logOpen.errorOrNull!);
     return Ok(
@@ -495,8 +565,9 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         id: id,
         logPath: logPath,
         logFile: logOpen.valueOrNull!,
-        token: token,
+        ceiling: ceiling,
         options: options,
+        token: token,
       ),
     );
   }
@@ -524,19 +595,35 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// Builds the job over the opened log, wires the cancel token, and
   /// detaches the script run. SandboxShellJob serializes writers
   /// (RandomAccessFile allows one op at a time) and consumes write errors.
+  /// [ceiling] is built by the caller before the log opens; [options] still
+  /// carries the exec side (cwd/env/timeout) into the job-local run.
   SandboxShellJob _wireJob(
     String command, {
     required String id,
     required String logPath,
     required io.RandomAccessFile logFile,
-    required CancelToken? token,
+    required JobLogCeiling ceiling,
     required ShellExecOptions? options,
+    required CancelToken? token,
   }) {
     final job = SandboxShellJob(
       id: id,
       command: command,
       logPath: logPath,
       logWriter: logFile.writeString,
+      ceiling: ceiling,
+      applyLogOp: (op) async {
+        if (op.offset == null) {
+          await logFile.writeString(op.text);
+          return;
+        }
+        // In-place overwrite of the marker+tail region at the advancing
+        // offset, truncated to the new region end — the file stays exactly
+        // bounded (append-mode RAF honors setPosition/truncate).
+        await logFile.setPosition(op.offset!);
+        await logFile.writeString(op.text);
+        await logFile.truncate(op.offset! + utf8.encode(op.text).length);
+      },
       closeLog: () async {
         // Issue #925: a broken log sink must not break the settle path.
         try {
@@ -610,6 +697,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       _lastStdout = snapshot.stdout;
       _lastStderr = snapshot.stderr;
     },
+    allowFdDuplication: true,
   );
 
   final ShellOutputCapture _capture = ShellOutputCapture();
@@ -622,30 +710,40 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options, [
     int depth = 0,
   ]) async {
+    // Per-execution pipe dir (issue #1156 E3/AC3): stale or concurrent
+    // `.fah_pipe_N` files at the sandbox root cross-contaminated jobs and
+    // polluted iOS's root — every invocation now owns a unique dir, so
+    // pipe state dies with it.
+    final pipeDir = '/.fah/tmp/pipe-'
+        '${DateTime.now().microsecondsSinceEpoch}-${_pipeSeq++}';
     final tempFiles = <io.File>[];
     String? previousOutputFile;
-
-    for (var i = 0; i < pipeline.stages.length; i++) {
-      final outcome = await _runPipelineStage(
-        pipeline.stages[i],
-        index: i,
-        isLast: i == pipeline.stages.length - 1,
-        options: options,
-        depth: depth,
-        inputSource: previousOutputFile,
-        tempFiles: tempFiles,
-      );
-      if (outcome.isErr) {
-        await _cleanup(tempFiles);
-        return Err(outcome.errorOrNull!);
+    try {
+      for (var i = 0; i < pipeline.stages.length; i++) {
+        final outcome = await _runPipelineStage(
+          pipeline.stages[i],
+          index: i,
+          isLast: i == pipeline.stages.length - 1,
+          options: options,
+          depth: depth,
+          inputSource: previousOutputFile,
+          tempFiles: tempFiles,
+          pipeDir: pipeDir,
+        );
+        if (outcome.isErr) {
+          return Err(outcome.errorOrNull!);
+        }
+        previousOutputFile = '$pipeDir/pipe_$i';
       }
-      final pipeFile = outcome.valueOrNull;
-      previousOutputFile = pipeFile == null
-          ? null
-          : '/${pipeFile.path.split('/').last}';
+    } finally {
+      await _cleanup(tempFiles);
+      try {
+        final dir = io.Directory(_hostPath(pipeDir));
+        if (await dir.exists()) await dir.delete(recursive: true);
+      } on Object {
+        // ignore cleanup failures
+      }
     }
-
-    await _cleanup(tempFiles);
 
     return Ok(
       ShellExecResult(
@@ -656,10 +754,12 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     );
   }
 
-  /// Expands and runs one pipeline stage, then stores its output. Returns
-  /// the temp pipe file carrying stdout to the next stage (null for the
-  /// last stage).
-  Future<Result<io.File?, ExecutionError>> _runPipelineStage(
+  /// Monotonic discriminator for per-execution pipe dirs (see _runPipeline).
+  int _pipeSeq = 0;
+
+  /// Expands and runs one pipeline stage, then stores its output into its
+  /// redirect target, the accumulator, or the execution's pipe file.
+  Future<Result<StageResult, ExecutionError>> _runPipelineStage(
     Stage stage, {
     required int index,
     required bool isLast,
@@ -667,6 +767,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     required int depth,
     required String? inputSource,
     required List<io.File> tempFiles,
+    required String pipeDir,
   }) async {
     // Expand `$VAR`/`$(...)` references at execution time so earlier
     // statements in the same command line (e.g. `export A=1 && echo $A`)
@@ -683,10 +784,25 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     final expandedStage = expansion.valueOrNull!;
 
     final redirects = collectStageRedirects(expandedStage.redirects);
-    // Resolve input source for this stage.
-    final input = redirects.stdinFile != null
-        ? _resolveSandboxPath(redirects.stdinFile!, options?.cwd ?? _currentDir)
-        : inputSource;
+    // Resolve input source for this stage. A heredoc/here-string body
+    // (gh-1086) lands in a temp file — stdin flows by sandbox path here —
+    // and outranks a `< file` redirect / pipe input by POSIX last-wins
+    // (the collector already cleared [StageRedirects.stdinFile]).
+    String? input = inputSource;
+    if (redirects.stdinBody != null) {
+      await _writePipeFile(
+        utf8.encode(redirects.stdinBody!),
+        'heredoc_$index',
+        tempFiles,
+        pipeDir,
+      );
+      input = '$pipeDir/pipe_heredoc_$index';
+    } else if (redirects.stdinFile != null) {
+      input = _resolveSandboxPath(
+        redirects.stdinFile!,
+        options?.cwd ?? _currentDir,
+      );
+    }
 
     final result = await _runCommand(
       command: expandedStage.command,
@@ -702,50 +818,82 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     final data = result.valueOrNull!;
     _lastStageExitCode = data.exitCode;
 
-    final pipeFile = await _writeStageStdout(
-      data,
-      redirects,
-      index: index,
-      isLast: isLast,
-      options: options,
-      tempFiles: tempFiles,
-    );
-    // WASI guests surface SIGPIPE as stderr noise (issue #337 AC5); it
-    // carries no information the caller can act on, so translate it out.
-    // Only the bare `<tool>: stdout: Broken pipe` shape is stripped - a
-    // python `BrokenPipeError: [Errno 32] Broken pipe` traceback stays.
-    await _storeStageStderr(
-      stripSigpipeNoise(data.stderr),
-      redirects,
-      isLast: isLast,
-      options: options,
-    );
-    return Ok(pipeFile);
+    // fd duplication (issue #1156 AC2/AC2b): `2>&1` folds stderr into
+    // stdout's destination, `>&2`/`1>&2` the reverse. When the destination
+    // is the pipe/capture the bytes merge here; a file destination is
+    // handled by the writers below (POSIX append — one shared open file
+    // description).
+    var outBytes = data.stdout;
+    var errBytes = stripSigpipeNoise(data.stderr);
+    if (redirects.dupStderrIntoStdout && redirects.stdoutFile == null) {
+      outBytes = [...outBytes, ...errBytes];
+      errBytes = const <int>[];
+    } else if (redirects.dupStdoutIntoStderr && redirects.stderrFile == null) {
+      errBytes = [...errBytes, ...outBytes];
+      outBytes = const <int>[];
+    }
+
+    try {
+      await _writeStageStdout(
+        outBytes,
+        errBytes,
+        redirects,
+        index: index,
+        isLast: isLast,
+        options: options,
+        tempFiles: tempFiles,
+        pipeDir: pipeDir,
+      );
+      // WASI guests surface SIGPIPE as stderr noise (issue #337 AC5); it
+      // carries no information the caller can act on, so translate it out.
+      // Only the bare `<tool>: stdout: Broken pipe` shape is stripped - a
+      // python `BrokenPipeError: [Errno 32] Broken pipe` traceback stays.
+      await _storeStageStderr(
+        errBytes,
+        outBytes,
+        redirects,
+        isLast: isLast,
+        options: options,
+      );
+      return Ok(
+        StageResult(stdout: outBytes, stderr: errBytes, exitCode: data.exitCode),
+      );
+    } on _RedirectWriteError catch (error) {
+      // Issue #1156 E2: an unwritable redirect target is a normal failed
+      // command (clean sandbox-path stderr + exit 1), never a raw throw.
+      _lastStageExitCode = 1;
+      _lastStderr = (_lastStderr ?? '') + error.message;
+      return Ok(
+        StageResult(stdout: const [], stderr: utf8.encode(error.message), exitCode: 1),
+      );
+    }
   }
 
   /// Writes a stage's stdout to its `>`/`>>` redirect target, the output
-  /// accumulator (last stage), or a temp pipe file feeding the next stage.
-  Future<io.File?> _writeStageStdout(
-    StageResult data,
+  /// accumulator (last stage), or the execution's pipe file. `2>&1` with a
+  /// file target appends [stderrBytes] to the same file.
+  Future<void> _writeStageStdout(
+    List<int> stdoutBytes,
+    List<int> stderrBytes,
     StageRedirects redirects, {
     required int index,
     required bool isLast,
     required ShellExecOptions? options,
     required List<io.File> tempFiles,
+    required String pipeDir,
   }) async {
     final stdoutFile = redirects.stdoutFile;
     if (stdoutFile != null) {
-      await _writeRedirectBytes(
-        data.stdout,
-        stdoutFile,
-        append: redirects.appendStdout,
-        options: options,
-      );
+      final target = _resolveSandboxPath(stdoutFile, options?.cwd ?? _currentDir);
+      await _writeRedirectBytes(stdoutBytes, target, append: redirects.appendStdout);
+      if (redirects.dupStderrIntoStdout && stderrBytes.isNotEmpty) {
+        await _writeRedirectBytes(stderrBytes, target, append: true);
+      }
     } else if (isLast) {
-      _captureStageStdout(data.stdout);
+      _captureStageStdout(stdoutBytes);
     }
-    if (isLast) return null;
-    return _writePipeFile(data.stdout, index, tempFiles);
+    if (isLast) return;
+    await _writePipeFile(stdoutBytes, '$index', tempFiles, pipeDir);
   }
 
   /// Appends the final stage's stdout text to the exec accumulator and the
@@ -758,54 +906,65 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   }
 
   /// Writes a stage's stderr to its redirect target or the accumulator.
+  /// `>&2`/`1>&2` with a file target appends [stdoutBytes] to the same file.
   Future<void> _storeStageStderr(
-    List<int> bytes,
+    List<int> stderrBytes,
+    List<int> stdoutBytes,
     StageRedirects redirects, {
     required bool isLast,
     required ShellExecOptions? options,
   }) async {
     final stderrFile = redirects.stderrFile;
     if (stderrFile != null) {
-      await _writeRedirectBytes(
-        bytes,
-        stderrFile,
-        append: redirects.appendStderr,
-        options: options,
-      );
+      final target = _resolveSandboxPath(stderrFile, options?.cwd ?? _currentDir);
+      await _writeRedirectBytes(stderrBytes, target, append: redirects.appendStderr);
+      if (redirects.dupStdoutIntoStderr && stdoutBytes.isNotEmpty) {
+        await _writeRedirectBytes(stdoutBytes, target, append: true);
+      }
       return;
     }
-    final text = utf8.decode(bytes, allowMalformed: true);
+    final text = utf8.decode(stderrBytes, allowMalformed: true);
     if (isLast && text.isNotEmpty) {
       _lastStderr = (_lastStderr ?? '') + text;
     }
   }
 
-  /// Writes [bytes] to a redirect target inside the sandbox.
+  /// Writes [bytes] to a redirect target inside the sandbox. I/O failures
+  /// surface as [_RedirectWriteError] carrying a clean, sandbox-path-only
+  /// message (issue #1156 E2/E4).
   Future<void> _writeRedirectBytes(
     List<int> bytes,
     String sandboxFile, {
     required bool append,
-    required ShellExecOptions? options,
   }) async {
-    final file = _hostFile(
-      _resolveSandboxPath(sandboxFile, options?.cwd ?? _currentDir),
-    );
-    await file.parent.create(recursive: true);
-    if (append) {
-      await file.writeAsBytes(bytes, mode: io.FileMode.append);
-    } else {
-      await file.writeAsBytes(bytes);
+    final file = _hostFile(sandboxFile);
+    try {
+      await file.parent.create(recursive: true);
+      if (append) {
+        await file.writeAsBytes(bytes, mode: io.FileMode.append);
+      } else {
+        await file.writeAsBytes(bytes);
+      }
+    } on io.FileSystemException catch (error) {
+      // toString() carries the OS phrase (`Permission denied`) — message
+      // alone is just `Cannot open file`.
+      throw _RedirectWriteError(
+        sandboxFile,
+        _sanitizeSandboxText(error.toString()),
+      );
     }
   }
 
-  /// Persists a non-final stage's stdout into a temp pipe file; the caller
-  /// derives the next stage's sandbox input path from it.
+  /// Persists a non-final stage's stdout into the execution's unique pipe
+  /// dir (see [_runPipeline]); the caller feeds the sandbox path to the
+  /// next stage.
   Future<io.File> _writePipeFile(
     List<int> bytes,
-    int index,
+    String name,
     List<io.File> tempFiles,
+    String pipeDir,
   ) async {
-    final temp = _hostFile('.fah_pipe_$index');
+    final temp = _hostFile('$pipeDir/pipe_$name');
     await temp.parent.create(recursive: true);
     await temp.writeAsBytes(bytes);
     tempFiles.add(temp);
@@ -820,6 +979,14 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         // ignore cleanup failures
       }
     }
+  }
+
+  /// Strips the host sandbox root from error text so messages speak the
+  /// sandbox paths the agent used (issue #1156 E4).
+  String _sanitizeSandboxText(String text) {
+    final host = sandboxHostPath;
+    if (host == null || host.isEmpty) return text;
+    return text.replaceAll(host, '');
   }
 
   int? _lastStageExitCode;
@@ -859,18 +1026,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
 
   /// Normalizes a sandbox path: collapses `.` and `..` segments and always
   /// returns an absolute path starting at the sandbox root `/`.
-  String _normalizeSandboxPath(String path) {
-    final segments = <String>[];
-    for (final part in path.split('/')) {
-      if (part.isEmpty || part == '.') continue;
-      if (part == '..') {
-        if (segments.isNotEmpty) segments.removeLast();
-        continue;
-      }
-      segments.add(part);
-    }
-    return '/${segments.join('/')}';
-  }
+  String _normalizeSandboxPath(String path) => normalizeLexicalPath(path);
 
   /// Resolves [path] against [cwd] inside the sandbox, returning an absolute
   /// sandbox path.
@@ -1068,7 +1224,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       return Ok(
         StageResult(
           stdout: const [],
-          stderr: utf8.encode('$message\n'),
+          stderr: utf8.encode('${_sanitizeSandboxText(message)}\n'),
           exitCode: 1,
         ),
       );
@@ -1086,7 +1242,17 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       captureStdout: captureStdout,
       captureStderr: captureStderr,
     );
-    if (built.isErr) return Err(built.errorOrNull!);
+    if (built.isErr) {
+      final error = built.errorOrNull!;
+      // Errors speak sandbox paths, never the host root (issue #1156 E4).
+      return Err(
+        ExecutionError(
+          error.code,
+          _sanitizeSandboxText(error.message),
+          cause: error.cause,
+        ),
+      );
+    }
     final instance = built.valueOrNull!;
 
     final bridge = _stageBridge(command, captureStdout);
@@ -1104,6 +1270,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       options?.onStderr,
       captureStderr,
     );
+    // Not captured = not subscribed = nothing can arrive: done up front so
+    // the drain's quiet window only covers streams that can still emit.
+    if (stdoutSub == null) io.stdoutDone = true;
+    if (stderrSub == null) io.stderrDone = true;
     final run = await _runWasiStart(
       instance,
       io,
@@ -1121,7 +1291,17 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       cancelled: options?.cancelToken?.isCancelled ?? false,
       hasOutput: io.hasOutput,
     );
-    if (outcome.isErr) return Err(outcome.errorOrNull!);
+    if (outcome.isErr) {
+      final error = outcome.errorOrNull!;
+      // Errors speak sandbox paths, never the host root (issue #1156 E4).
+      return Err(
+        ExecutionError(
+          error.code,
+          _sanitizeSandboxText(error.message),
+          cause: error.cause,
+        ),
+      );
+    }
     _lastStageExitCode = outcome.valueOrNull!;
 
     return Ok(
@@ -1239,7 +1419,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
             if (clean.isNotEmpty) {
               io.collect(io.stdoutBuffer, Uint8List.fromList(clean), onStdout);
             }
-          }, onDone: () => debugPrint('[wasm_shell] stdout done'))
+          }, onDone: () {
+            io.stdoutDone = true;
+            debugPrint('[wasm_shell] stdout done');
+          })
         : null;
   }
 
@@ -1253,12 +1436,16 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         ? instance.stderr.listen((chunk) {
             debugPrint('[wasm_shell] stderr chunk: ${chunk.length} bytes');
             io.collect(io.stderrBuffer, chunk, onStderr);
-          }, onDone: () => debugPrint('[wasm_shell] stderr done'))
+          }, onDone: () {
+            io.stderrDone = true;
+            debugPrint('[wasm_shell] stderr done');
+          })
         : null;
   }
 
-  /// Races the WASI start against the timeout, then cancels the stdio
-  /// subscriptions, disposes the instance and flushes the bridge tail.
+  /// Races the WASI start against the timeout, then drains the stdio
+  /// streams (bounded), cancels the subscriptions, disposes the instance
+  /// and flushes the bridge tail.
   Future<({Object? runError, bool timedOut, Duration timeout})> _runWasiStart(
     WasmInstance instance,
     _StageIo io,
@@ -1288,6 +1475,12 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       });
       await Future.any<void>([runCompleter.future, timeoutFuture]);
     } finally {
+      // Issue #1156 (the iOS silent-dead mechanism): `_start` completing
+      // does not mean the stdio streams have delivered their buffered
+      // chunks — cancelling immediately swallows fast-exit output (jq/qjs/
+      // echo rows came up empty). Give the streams a bounded quiet window
+      // to land their bytes; never wait on a stream that never closes.
+      await _drainStageStdio(io);
       debugPrint('[wasm_shell] cancelling stdio subscriptions...');
       await stdoutSub?.cancel();
       await stderrSub?.cancel();
@@ -1298,6 +1491,33 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
 
     debugPrint('[wasm_shell] run finished timedOut=$timedOut error=$runError');
     return (runError: runError, timedOut: timedOut, timeout: timeout);
+  }
+
+  /// Quiet-window stdio drain: waits until no new bytes have arrived for
+  /// [_drainQuiet] (or [_drainBudget] elapses — WASM streams may simply
+  /// never close), so buffered output of fast-exiting guests is captured
+  /// before the subscriptions are cancelled. Skipped entirely once both
+  /// streams report done — no window can be swallowed after close.
+  static const Duration _drainTick = Duration(milliseconds: 20);
+  static const Duration _drainQuiet = Duration(milliseconds: 40);
+  static const Duration _drainBudget = Duration(seconds: 2);
+
+  Future<void> _drainStageStdio(_StageIo io) async {
+    if (io.stdoutDone && io.stderrDone) return;
+    final sw = Stopwatch()..start();
+    var stableFor = Duration.zero;
+    var last = io.stdoutBuffer.length + io.stderrBuffer.length;
+    while (stableFor < _drainQuiet && sw.elapsed < _drainBudget) {
+      await Future<void>.delayed(_drainTick);
+      if (io.stdoutDone && io.stderrDone) return;
+      final now = io.stdoutBuffer.length + io.stderrBuffer.length;
+      if (now == last) {
+        stableFor += _drainTick;
+      } else {
+        last = now;
+        stableFor = Duration.zero;
+      }
+    }
   }
 
   /// Parses the exit code from a wasmtime I32Exit trap.
@@ -2556,6 +2776,12 @@ final class _StageIo {
   final stderrBuffer = <int>[];
   ExecutionError? callbackError;
 
+  /// Stream-closed markers (issue #1156 review): the drain can skip its
+  /// quiet window entirely once both stdio streams are done — the common
+  /// fast-exit-guest case.
+  bool stdoutDone = false;
+  bool stderrDone = false;
+
   bool get hasOutput => stdoutBuffer.isNotEmpty || stderrBuffer.isNotEmpty;
 
   /// Appends a raw chunk and mirrors it to the caller callback; callback
@@ -2588,4 +2814,22 @@ final class StageResult {
   final List<int> stdout;
   final List<int> stderr;
   final int exitCode;
+}
+
+/// A redirect-target write failure, already sanitized to sandbox terms:
+/// [message] is the full stderr line in sh's shape (`sh: /ro_dir/f.txt:
+/// Permission denied`) and never contains a host path.
+final class _RedirectWriteError implements Exception {
+  _RedirectWriteError(this.sandboxPath, String sanitized) {
+    // The OS short phrase (`Permission denied`) when present, else the
+    // whole sanitized message.
+    final phrase = RegExp('OS Error: ([^,]+)').firstMatch(sanitized)?.group(1);
+    message = 'sh: $sandboxPath: ${(phrase ?? sanitized).trim()}\n';
+  }
+
+  final String sandboxPath;
+  late final String message;
+
+  @override
+  String toString() => message;
 }

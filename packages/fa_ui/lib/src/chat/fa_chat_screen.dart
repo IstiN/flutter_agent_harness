@@ -524,12 +524,28 @@ class _FaChatScreenState extends State<FaChatScreen>
     }
     if (!_chatScrollController.hasClients) return;
     final pixels = _chatScrollController.position.pixels;
+    final wasAway = _userScrolledAway;
     if (notification is ScrollUpdateNotification &&
         notification.dragDetails != null) {
       _userScrolledAway = pixels >= 150;
     } else if (pixels < 150) {
       _userScrolledAway = false;
     }
+    if (wasAway && !_userScrolledAway) {
+      // Landing back at the bottom with a deep-paged window rejoins the
+      // live tail on its own — no stuck banner post-run (issue #1159
+      // AC4).
+      _followTailIfPinned();
+    }
+  }
+
+  /// User-at-bottom follow (issue #1159 AC2/AC4): a deep-paged window
+  /// never strands a "Load newer" banner under a user parked at the
+  /// bottom — the view rejoins the live tail on its own, mid-run
+  /// included. A deliberately scrolled-away user is never auto-paged.
+  void _followTailIfPinned() {
+    if (!_historyHasNewer || _userScrolledAway || _historyLoading) return;
+    widget.service.loadNewerHistory();
   }
 
   /// Pins the chat to the tail after a sync when the user hasn't scrolled
@@ -880,6 +896,10 @@ class _FaChatScreenState extends State<FaChatScreen>
         if (target != null) _releasedClamps.add(target.$1);
       }
       if (mounted) setState(() {});
+      // A "newer" state arriving while the user is parked at the bottom
+      // is followed immediately — the tail rejoin clears it (issue #1159
+      // AC2).
+      _followTailIfPinned();
     }
   }
 
@@ -1305,21 +1325,22 @@ class _FaChatScreenState extends State<FaChatScreen>
                               _suppressInsertAnimations
                               ? const Duration(milliseconds: 1)
                               : const Duration(milliseconds: 250),
-                          // The typing indicator lives IN the list (issue #459):
-                          // in a reversed scroll view the bottom sliver renders
-                          // visually LAST — below the newest message, right
-                          // above the composer — scrolling away with the
-                          // content instead of pinning above the input bar.
-                          bottomSliver: _isStreaming
-                              ? const SliverToBoxAdapter(
-                                  key: ValueKey('faChatTypingFooter'),
-                                  child: FaTypingFooter(),
-                                )
-                              : null,
+                          // The single transient status row lives IN the list
+                          // (issues #459, #1042): in a reversed scroll view
+                          // the bottom sliver renders visually LAST — below
+                          // the newest message, right above the composer —
+                          // and on completion it is replaced by the assistant
+                          // message (it self-hides when the run ends; never a
+                          // composer-docked second row).
+                          bottomSliver: SliverToBoxAdapter(
+                            key: const ValueKey('faChatRunStatusRow'),
+                            child: FaRunStatusRow(service: widget.service),
+                          ),
                         ),
-                    // While streaming with an empty transcript the footer is the
-                    // only item (E1) — the package's default "No messages yet"
-                    // overlay would stack under it; idle keeps the default.
+                    // While streaming with an empty transcript the status row
+                    // is the only item (E1) — the package's default
+                    // "No messages yet" overlay would stack under it; idle
+                    // keeps the default (the row renders nothing then).
                     emptyChatListBuilder: (context) => _isStreaming
                         ? const SizedBox.shrink()
                         : const EmptyChatList(),
@@ -1347,14 +1368,6 @@ class _FaChatScreenState extends State<FaChatScreen>
                   : strings.chatLoadNewerCount('$historyBelow'),
               tappable: !_historyLoading,
             ),
-          // The live phase/tool status row (issue #865): sits directly
-          // above the composer, subscribes to the service itself (message
-          // changes alone must flip it, the screen rebuilds only on flag
-          // changes) and hides itself the frame the run ends.
-          FaRunStatusRow(
-            key: const ValueKey('faChatRunStatusRow'),
-            service: widget.service,
-          ),
           composerBuilder != null
               ? composerBuilder(context, widget.service, _dropBridge)
               : ChatComposer(
@@ -1459,7 +1472,17 @@ class _FaChatScreenState extends State<FaChatScreen>
         onTap: tappable
             ? (top
                   ? widget.service.loadOlderHistory
-                  : widget.service.loadNewerHistory)
+                  : () async {
+                      await widget.service.loadNewerHistory();
+                      if (!mounted) return;
+                      // The tap's promise is the live tail (issue #1159
+                      // AC1): relatch follow and land on the newest row
+                      // of the rejoined window.
+                      _userScrolledAway = false;
+                      if (_chatScrollController.hasClients) {
+                        _chatScrollController.jumpTo(0);
+                      }
+                    })
             : null,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
@@ -1670,8 +1693,16 @@ class _FaChatScreenState extends State<FaChatScreen>
           (states) =>
               states.contains(WidgetState.selected) ? colors.text : colors.dim,
         ),
-        textStyle: const WidgetStatePropertyAll(
-          TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        // fontFamily is required: a widget-level textStyle replaces
+        // labelLarge outright, so a family-less style falls back to the
+        // platform font (issue #947 — Ahem placeholder bars in the store
+        // goldens). Same contract as the button themes in app_theme.dart.
+        textStyle: WidgetStatePropertyAll(
+          TextStyle(
+            fontFamily: FaUiThemeProvider.of(context).fontFamily ?? 'Inter',
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
         ),
       ),
     );

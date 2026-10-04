@@ -108,10 +108,22 @@ OPTIONS
                                surface (read/write/edit/bash), bare
                                prompt; wins over FA_PI_MODE=1 and the
                                config agent.mode setting
+  --debug-secrets               Log every secure-store key read at boot
+                               (found / absent / error: diagnostic) and
+                               warn when config-referenced keys resolve
+                               nothing — diagnose a keyless-after-launch
+                               boot. Same effect as FA_DEBUG_KEYS=1
   --no-format                   Render assistant markdown raw, even on a
                                color TTY (issue #774). Same effect as
                                the FA_NO_FORMAT env var; piped or
                                redirected output is always raw
+  --stream-thinking             Stream the model's thinking deltas live,
+                               dimmed, in line mode and headless runs
+                               (gh-1198) — the TUI always streams them.
+                               Wins over the output.streamThinking
+                               config for the run; without it, a
+                               reasoning phase with no events prints a
+                               periodic `… reasoning Ns` liveness line
   --log-file <path>            Tee every printed line (assistant text,
                                tool trace, diagnostics) to <path> as it
                                is produced — a live, `tail -f`-able
@@ -190,6 +202,23 @@ QUICK COMMANDS
                                failures are named on stderr; E16 name
                                conflicts: project wins. FA_EXT_BOOTSTRAP_
                                STRICT=1 makes bootstrap failures fatal.
+  jsr                          fa jsr widget:test <path> [--event ID]...
+                               [--expect-state JSON] [--seed-storage JSON]
+                               [--json] | fa jsr widget:screenshot <path>
+                               [--out png] [--width N] [--height N]
+                               [--theme name] [--scale S] [--freeze-clock]:
+                               pass-through to the js_widget_runtime
+                               package's own agent CLI (bin/jsr_widget.dart,
+                               jsr >= 0.4.128) — run real widget tests and
+                               render PNG screenshots from any consumer
+                               project. The package resolves from THIS
+                               project's .dart_tool/package_config.json and
+                               flutter must be on PATH (missing either =
+                               a named one-line error); stdout/stderr pass
+                               through verbatim and the exit code propagates
+                               (CI-usable). /jsr … is the REPL alias.
+                               Unknown flags are forwarded untouched — the
+                               flag surface is owned by the jsr CLI.
 
 PROVIDERS AND API KEYS${_providerSectionSuffix()}
   openai-completions (default)
@@ -304,7 +333,8 @@ MODEL ROLES (~/.fah/config.yaml)
             - anthropic/claude-opus-4-5
     retry:
       retriesPerEntry: 2               # + baseDelayMs, maxBackoffMs,
-                                       #   maxWaitMs, keyBackoffMs
+                                       #   maxWaitMs, keyBackoffMs,
+                                       #   maxWaitForLastEntryMs
 
   With no roles: section the CLI runs the single --provider/--model pair.
   /model lists the resolved roles and chains.
@@ -462,6 +492,9 @@ REPL COMMANDS
   /trajectory [view|cost|tail|inspect <n>]
                      read-only views over the active session's trajectory
                      ledger (same verbs as `fa trajectory`)
+  /jsr [widget:test|widget:screenshot] <path> [flags...]
+                     jsr widget pass-through (same delegate as `fa jsr`):
+                     run jsr widget tests / screenshots from the REPL
   /skills            skills menu (TUI): pick a skill to prefill /skill:<name>
                      in the input, manage third-party access, or import; in
                      line mode lists skills. /skill:<name> [args] invokes one
@@ -608,9 +641,10 @@ TERMINAL
 CONFIGURATION FILES
   ~/.fah/config.yaml   user preferences: provider, model, baseUrl, mode,
                        approvalMode, allowedTools, plus the prompts:, roles:,
-                       modelOverrides:, retry:, ttsr:, models:, cube:, and
-                       tools: sections. Invalid roles/ttsr/prompts/models/
-                       cube/tools sections fail loudly at startup.
+                       modelOverrides:, retry:, ttsr:, models:, cube:,
+                       output:, and tools: sections. Invalid roles/ttsr/
+                       prompts/models/cube/tools sections fail loudly at
+                       startup.
   .fah/cubes/          cube sandbox manifests (--cube <name> and /cube use
                        resolve <name>.yaml here); the project .fah/
                        config.yaml cube: section picks the startup default

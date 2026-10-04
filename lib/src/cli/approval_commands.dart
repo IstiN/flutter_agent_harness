@@ -531,28 +531,69 @@ extension ApprovalCommands on AgentCli {
         ? ''
         : '[auto-compacted${_autoFoldCount > 1 ? ' ×$_autoFoldCount' : ''}'
               ' · continuing] · ';
-    return '$foldBadge$cwd · ctx $pct% '
+    var line =
+        '$foldBadge$cwd · ctx $pct% '
         '(${_formatTokenCount(contextTokens)}/${_formatTokenCount(window)}) · '
         '${_formatTokenCount(totalTokens)}tok'
         '$costPart · turn ${_usage.turns}$badge · '
-        '${_statusProviderLabel(model)}/${model.id}';
+        '${_statusProviderLabel(model)}/${model.id}'
+        '${_quotaBadgeSuffix(model.provider)}';
+    return line;
   }
+
+  /// The status-line quota badge (issue #823 AC5): `' [OR $48/$150 · 11d]'`
+  /// when fresh, `' [OR …]'` while cold, and empty when the config opts
+  /// out (default OFF, OQ2), the provider has no quota source, the state
+  /// is unmetered (silent), or the cached state is a terminal unknown —
+  /// failure reasons live in `/quota`, not the chrome (review round 1).
+  /// Cache-only peek: cold kicks a background fetch without blocking (E1).
+  String _quotaBadgeSuffix(String providerId) {
+    if (!config.quotaBadge ||
+        providerId.isEmpty ||
+        !quotaService.hasSource(providerId)) {
+      return '';
+    }
+    final result = quotaService.peek(providerId);
+    if (result != null && result.quota == null) return '';
+    final badgeText = formatQuotaBadge(
+      shortName: _quotaBadgeTag(providerId),
+      quota: result?.quota,
+      now: DateTime.now().toUtc(),
+    );
+    return badgeText.isEmpty ? '' : ' $badgeText';
+  }
+
+  /// The 2-letter quota badge tag for a provider id. `openrouter` brands
+  /// as `OR` (the contract's example tag), `codemie` as `CM`; anything
+  /// unmapped falls back to its first two letters uppercased.
+  static const _quotaBadgeTags = {'openrouter': 'OR', 'codemie': 'CM'};
+
+  String _quotaBadgeTag(String providerId) =>
+      _quotaBadgeTags[providerId] ??
+      (providerId.length < 2
+          ? providerId.toUpperCase()
+          : providerId.substring(0, 2).toUpperCase());
 
   /// The host-built status-bar snapshot (issue #806, the S3 band
   /// attachment): everything the TUI's status band renders from,
   /// resolved per frame tick host-side — the TUI layer stays fetch-free
-  /// and subprocess-free (the #802 invariant). Segments with no data yet
-  /// (git/pr — the watcher seam is a later story, session name) stay
-  /// null and hide.
+  /// and subprocess-free (the #802 invariant). Segments with no host
+  /// data (pr — the watcher seam is a later story — and session name)
+  /// stay null and hide; git arrives through the #920 TTL probe below.
   StatusLineSnapshot _statusLineSnapshot() {
     final total = _usage.total;
     final cost = total.cost.total;
+    final model = _agent.state.model;
     return StatusLineSnapshot(
       cwd: _env.cwd,
       homeDir: config.homeDir,
-      modelName: _agent.state.model.id,
+      modelName: model.id,
+      // `provider / model` in the band (issue #920) — the same label the
+      // legacy footer renders.
+      providerName: _statusProviderLabel(model),
       approvalMode: _approval.mode.label,
       agentLoadMode: config.agentLoadMode,
+      git: _statusGitProbe.current(_env.cwd),
       contextTokens: _liveContextTokens(),
       contextWindow: _effectiveContextWindow,
       tokensIn: total.input,
@@ -742,7 +783,7 @@ extension ApprovalCommands on AgentCli {
   /// choice resolves to `/skill:<name>` (line mode has no input field to
   /// pre-fill, so the skill runs immediately, without args).
   Future<String?> _showLineModeMenu(StreamIterator<String> lineIterator) async {
-    for (final line in lineModeMenuLines(_style, skills: _skills)) {
+    for (final line in lineModeMenuLines(_style, skills: _enabledSkills)) {
       io.writeln(line);
     }
     io.write('Pick a command (number or name), or press Enter to cancel: ');
@@ -755,7 +796,7 @@ extension ApprovalCommands on AgentCli {
   }
 
   String? _resolveMenuChoice(String trimmed) =>
-      resolveLineModeMenuChoice(trimmed, _skills);
+      resolveLineModeMenuChoice(trimmed, _enabledSkills);
 
   /// The numbered command list of the line-mode menu.
   void _printHelp({String filter = ''}) {
@@ -765,8 +806,10 @@ extension ApprovalCommands on AgentCli {
     // stays plain ASCII; existing `/help` output is byte-unchanged.
     final lower = filter.trim().toLowerCase();
     if (lower == 'hotkeys' || lower == 'keys' || lower == 'keybindings') {
-      for (final line
-          in tuiHotkeyTableLines(markdown: _useTui, darwin: tuiKeyHintDarwin)) {
+      for (final line in tuiHotkeyTableLines(
+        markdown: _useTui,
+        darwin: tuiKeyHintDarwin,
+      )) {
         io.writeln(line);
       }
       return;
@@ -776,7 +819,7 @@ extension ApprovalCommands on AgentCli {
       pluginSlashCommands: _pluginSlashCommands,
       templates: _templates,
       style: _style,
-      skills: _skills,
+      skills: _enabledSkills,
     )) {
       io.writeln(line);
     }
@@ -979,9 +1022,66 @@ extension ApprovalCommands on AgentCli {
         _logDiagnostic('turn end sid=$_logSid stop=${message.stopReason.name}');
       case AgentEndEvent():
         _logDiagnostic('run end sid=$_logSid');
+      case ToolCallHeartbeatEvent(
+        :final toolCallId,
+        :final toolName,
+        :final args,
+        :final elapsed,
+        :final outputBytes,
+        :final attempt,
+      ):
+        // Liveness heartbeat (gh-1054): the session record keeps the trace
+        // fresh for external watchers; the terminal stays quiet (the busy
+        // row already names the running tool).
+        _logDiagnostic(
+          'tool heartbeat sid=$_logSid name=$toolName '
+          'elapsed=${elapsed.inSeconds}s out=${outputBytes}B '
+          'attempt=$attempt',
+        );
+        await _persistToolLivenessRecord(toolHeartbeatRecordType, {
+          'tool': toolName,
+          'toolCallId': toolCallId,
+          'elapsedMs': elapsed.inMilliseconds,
+          'outputBytes': outputBytes,
+          'attempt': attempt,
+          'args': _stuckArgsSummary(args),
+        });
+      case ToolCallStuckEvent(
+        :final toolCallId,
+        :final toolName,
+        :final elapsed,
+        :final action,
+        :final detail,
+      ):
+        _logDiagnostic(
+          'tool stuck sid=$_logSid name=$toolName action=${action.name} '
+          'elapsed=${elapsed.inSeconds}s',
+        );
+        await _persistToolLivenessRecord(toolStuckRecordType, {
+          'tool': toolName,
+          'toolCallId': toolCallId,
+          'elapsedMs': elapsed.inMilliseconds,
+          'action': action.label,
+          'detail': detail,
+        });
+        // The terminal line shows the same detail the record carries —
+        // redacted the same way (the detail embeds captured output).
+        final shownDetail = config.redactionPipeline?.redact(detail) ?? detail;
+        io.writeln(
+          '[stuck-call] $toolName: ${action.label} after '
+          '${elapsed.inSeconds}s${shownDetail.isEmpty ? '' : ' — $shownDetail'}',
+        );
       default:
     }
     await _persistIncremental(event);
+    // Reasoning-phase liveness (gh-1198 tier 2): a request going out arms
+    // the silent-window watch (line mode/headless with the thinking
+    // stream off); ANY other event is visible progress and disarms it.
+    if (event is ModelRequestEvent) {
+      _waiting.reasoningRequestStarted();
+    } else {
+      _waiting.reasoningProgress();
+    }
     await handleAgentEvent(
       event,
       onMessageLifecycle: _onMessageLifecycle,
@@ -1059,15 +1159,21 @@ extension ApprovalCommands on AgentCli {
   /// #638 AC3); only the real viewport clips.
   int get _rowWidth => _tuiController?.termWidth ?? 0;
 
-  /// Streaming deltas: answer text and — TUI only — dimmed thinking as the
-  /// progress signal. Where the answer goes depends on the surface: the
-  /// TUI streams raw into its history (rendered at view time); raw-mode
-  /// passthrough streams deltas live (byte-identical output AND live);
-  /// the styled modes (ansi/plain) buffer the answer and render it through
-  /// the markdown policy at message end (issue #774) — line mode and
-  /// headless cannot repaint, so a half-streamed table or fence would
-  /// print raw mid-flight; the whole message renders once, correctly.
+  /// Streaming deltas: answer text and — when the surface streams it —
+  /// dimmed thinking as the progress signal. Where the answer goes
+  /// depends on the surface: the TUI streams raw into its history
+  /// (rendered at view time); raw-mode passthrough streams deltas live
+  /// (byte-identical output AND live); the styled modes (ansi/plain)
+  /// buffer the answer and render it through the markdown policy at
+  /// message end (issue #774) — line mode and headless cannot repaint, so
+  /// a half-streamed table or fence would print raw mid-flight; the whole
+  /// message renders once, correctly.
   bool get _buffersAnswer => _markdownSurface.mode != MarkdownSurfaceMode.raw;
+
+  /// Whether this surface streams thinking deltas live (gh-1198): the TUI
+  /// always has; line mode and headless opt in through the effective run
+  /// setting (`--stream-thinking` flag or `output.streamThinking`).
+  bool get _streamsThinking => _useTui || config.streamThinking;
 
   void _onMessageUpdate(AssistantMessageEvent assistantMessageEvent) {
     if (assistantMessageEvent is TextDeltaEvent) {
@@ -1078,17 +1184,23 @@ extension ApprovalCommands on AgentCli {
         _writeAssistantPrefix();
         io.write(assistantMessageEvent.delta);
       } else {
+        // The buffered surfaces keep the same separation rule (E1): a
+        // `\n` lands the moment the first answer delta follows streamed
+        // thinking, so the end-of-message render starts on a fresh line.
+        if (_streamedThinking && !_streamedText) io.write('\n');
         _assistantText.write(assistantMessageEvent.delta);
       }
       _streamedText = true;
-    } else if (assistantMessageEvent is ThinkingDeltaEvent && _useTui) {
+    } else if (assistantMessageEvent is ThinkingDeltaEvent &&
+        _streamsThinking) {
       // Reasoning models stream long thinking before any text; showing
-      // it dimmed under the user message is the TUI's progress signal.
-      // The delta is dimmed VERBATIM — no per-delta inline markdown: a
-      // markdown span split across deltas can never pair anyway (each
-      // fragment opens+closes its own SGR pair), and the per-delta escape
-      // density used to be the TUI's worst quadratic input (a long
-      // thinking burst froze the whole UI — see
+      // it dimmed under the user message is the TUI's progress signal —
+      // and, since gh-1198, the opt-in progress signal of line mode and
+      // headless too. The delta is dimmed VERBATIM — no per-delta inline
+      // markdown: a markdown span split across deltas can never pair
+      // anyway (each fragment opens+closes its own SGR pair), and the
+      // per-delta escape density used to be the TUI's worst quadratic
+      // input (a long thinking burst froze the whole UI — see
       // AnsiMarkdown.inlineFormatMaxChars).
       io.write(_style.dim(assistantMessageEvent.delta));
       _streamedThinking = true;
@@ -1098,25 +1210,7 @@ extension ApprovalCommands on AgentCli {
   /// End of an assistant message: flush the stream newline, then report the
   /// stop reason (errors, aborts, silent truncations, empty responses).
   void _onAssistantMessageEnd(AssistantMessage message) {
-    if (_useTui || !_buffersAnswer) {
-      if (_streamedText || _streamedThinking) {
-        // The trailing newline of the streamed text belongs to the
-        // primary channel (write), not to diagnostics (writeln) — a
-        // headless host routes only writeln to stderr.
-        io.write('\n');
-        _streamedText = false;
-        _streamedThinking = false;
-      }
-    } else if (_streamedText) {
-      // The rendered message lands on the primary channel (write), not
-      // diagnostics (writeln) — a headless host routes only writeln to
-      // stderr, keeping write the only stdout content. Raw mode streams
-      // deltas live above, so this branch only runs for ansi/plain.
-      io.write(_markdownSurface.render(_assistantText.toString()));
-      io.write('\n');
-      _assistantText.clear();
-      _streamedText = false;
-    }
+    _flushAssistantStreamAtEnd();
     switch (message.stopReason) {
       case StopReason.error:
         // The CLI auto-reauthorizes CodeMie sessions after expiry; skip the
@@ -1154,6 +1248,46 @@ extension ApprovalCommands on AgentCli {
         }
       default:
         _noteQuietMessageEnd(message);
+    }
+  }
+
+  /// Closes the streamed-delta presentation at message end: the TUI/raw
+  /// surfaces reset their streamed state after the trailing newline; the
+  /// styled surfaces render the buffered answer once (#774), then reset —
+  /// and a pure-thinking message (no answer deltas, e.g. a tool-call
+  /// turn) just closes the dimmed stream line. Split out of
+  /// [_onAssistantMessageEnd] so the stop-reason dispatch stays under the
+  /// CRAP ratchet (gh-1198: the thinking-reset branches tipped it over).
+  void _flushAssistantStreamAtEnd() {
+    if (_useTui || !_buffersAnswer) {
+      if (_streamedText || _streamedThinking) {
+        // The trailing newline of the streamed text belongs to the
+        // primary channel (write), not to diagnostics (writeln) — a
+        // headless host routes only writeln to stderr.
+        io.write('\n');
+        _streamedText = false;
+        _streamedThinking = false;
+      }
+      return;
+    }
+    if (_streamedText) {
+      // The rendered message lands on the primary channel (write), not
+      // diagnostics (writeln) — a headless host routes only writeln to
+      // stderr, keeping write the only stdout content. Raw mode streams
+      // deltas live above, so this branch only runs for ansi/plain.
+      io.write(_markdownSurface.render(_assistantText.toString()));
+      io.write('\n');
+      _assistantText.clear();
+      _streamedText = false;
+      // The thinking deltas streamed dimmed while the answer buffered
+      // (gh-1198): the stream line closed above the render — reset here,
+      // exactly like the streaming surfaces do.
+      _streamedThinking = false;
+    } else if (_streamedThinking) {
+      // A pure-thinking message (e.g. a tool-call turn) on a buffered
+      // surface: close the dimmed stream line and reset.
+      io.write('\n');
+      _streamedThinking = false;
     }
   }
 
@@ -1198,33 +1332,30 @@ extension ApprovalCommands on AgentCli {
     final elapsed = started == null
         ? ''
         : '${DateTime.now().difference(started).inSeconds}s';
-    var detail = startDetail;
     final state = isError ? ToolRowState.failed : ToolRowState.done;
-    if (isError) {
-      // The failure text is the news: keep it bright, not muted.
-      final text = result.content
-          .whereType<TextContent>()
-          .map((block) => block.text)
-          .join();
-      detail = text.split('\n').first;
-    }
     // TUI chrome (issue #807): the settled card carries the phase tint
     // (success/error), the elapsed meta, and — on failure — the bright
-    // first line of the failure text as the news. Line mode and headless
-    // keep the legacy row byte-identically.
+    // first line of the failure text as the news. The SAME builder the
+    // replay paints ([settledToolCardRows], issue #916) — parity by
+    // construction. Line mode and headless keep the legacy row
+    // byte-identically.
     if (_useTui && tuiChromeEnabled) {
       io.writeln(
-        tuiToolCard(
-          ToolCardSegments(
-            title: toolName,
-            description: detail,
-            meta: elapsed.isEmpty ? const [] : [elapsed],
-          ),
-          isError ? TuiCardPhase.error : TuiCardPhase.success,
-          _rowWidth,
+        settledToolCardRows(
+          toolName: toolName,
+          successDetail: startDetail,
+          isError: isError,
+          width: _rowWidth,
+          resultContent: result.content,
+          meta: [elapsed],
         ).join('\n'),
       );
       return;
+    }
+    var detail = startDetail;
+    if (isError) {
+      // The failure text is the news: keep it bright, not muted.
+      detail = failureFirstLine(result.content);
     }
     io.writeln(
       tuiToolRow(
@@ -1251,3 +1382,8 @@ extension ApprovalCommands on AgentCli {
     _assistantPrefixPrinted = true;
   }
 }
+
+/// The status bar's git probe (issue #920). A process-wide instance is
+/// right — one CLI process serves one band, and the probe is a read-only
+/// refresher (outside the shell stream, never a recorded command).
+final StatusLineGitProbe _statusGitProbe = StatusLineGitProbe();

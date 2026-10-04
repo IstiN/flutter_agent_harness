@@ -49,8 +49,9 @@ import 'package:xterm/xterm.dart';
 /// equality despite byte-identical counts. Raw [FaCliHarness.viewportLines]
 /// equality is only valid for genuinely full-width rows (the composer
 /// rule); compare content frames for everything else.
-List<String> frameContentLines(List<String> viewport) =>
-    [for (final line in viewport) line.trimRight()];
+List<String> frameContentLines(List<String> viewport) => [
+  for (final line in viewport) line.trimRight(),
+];
 
 /// Spawns the Fa CLI as a subprocess with a PTY, feeds output to an xterm
 /// terminal emulator, and provides keystroke sending + output capture.
@@ -98,7 +99,9 @@ final class FaCliHarness {
     // runner instead of one.
     final git = Process.runSync('git', ['init', '-q', dir.path]);
     if (git.exitCode != 0) {
-      throw StateError('git init failed for harness cwd ${dir.path}: ${git.stderr}');
+      throw StateError(
+        'git init failed for harness cwd ${dir.path}: ${git.stderr}',
+      );
     }
     return dir;
   }
@@ -176,13 +179,7 @@ final class FaCliHarness {
     pty.resize(columns, rows);
     final terminal = Terminal(maxLines: rows * 4);
     if (columns != 80 || rows != 24) terminal.resize(columns, rows);
-    final harness = FaCliHarness._(
-      pty,
-      terminal,
-      columns,
-      rows,
-      ownedCwd,
-    );
+    final harness = FaCliHarness._(pty, terminal, columns, rows, ownedCwd);
     harness.startListening();
     // Answer the CLI's terminal queries (device attributes etc.) so it
     // does not wait out a response timeout on every boot.

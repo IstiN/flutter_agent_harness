@@ -1018,4 +1018,30 @@ void main() {
       expect(find.text('Remove widget'), findsOneWidget);
     });
   });
+
+  group('Fa entry (issue #864: tap continues, long-press mints)', () {
+    testWidgets('ten taps on the Fa brand mint NOTHING and keep the active '
+        'session (AC1)', (tester) async {
+      final harness = await _pumpLauncher(tester);
+      final brand = find.byKey(const ValueKey('launcherFaBrand'));
+      expect(brand, findsOneWidget);
+      for (var i = 0; i < 10; i++) {
+        await tester.tap(brand);
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+      await tester.pumpAndSettle();
+      expect(harness.manager.sessions, hasLength(1));
+      expect(harness.manager.activeId, 'fake-session');
+    });
+
+    testWidgets('a long-press on the Fa brand mints exactly one session, '
+        'activates it and opens the panel (AC2)', (tester) async {
+      final harness = await _pumpLauncher(tester);
+      await tester.longPress(find.byKey(const ValueKey('launcherFaBrand')));
+      await tester.pumpAndSettle();
+      expect(harness.manager.sessions, hasLength(2));
+      expect(harness.manager.activeId, isNot('fake-session'));
+      expect(find.byKey(const ValueKey('sessionChatPanel')), findsOneWidget);
+    });
+  });
 }

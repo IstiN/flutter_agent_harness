@@ -1,0 +1,354 @@
+name: Bench Harbor
+
+# Runs the fa coding agent against the Terminal-Bench dataset family on
+# the Harbor framework: 2.0 / 2.1 / 3.0 / 4.0 from ONE dispatch surface
+# (issue #1124; the 4.0 path is issue #147). The `dataset` input takes a
+# family label (2.0/2.1/3.0/4.0) or a full Harbor dataset id — resolved
+# and validated by bench/harbor_fa/families.py (unknown or version-less
+# specs fail fast; never a silent fallback to 4.0). Shards run via Modal
+# sandboxes by default (the self-hosted runner mac has no docker), with
+# cpu-env=docker available once the runner gains docker. Results upload
+# to Harbor Hub — the current leaderboard source (tbench.ai; 4.0 is the
+# leaderboard dataset). The legacy terminal-bench-core 0.1.1 path lives
+# in bench.yml.
+#
+# Same bundle/env contract as the legacy bench: `dart build cli` Linux
+# bundle + FA_PROVIDER_TYPE=zai env-provider-preconfig (glm-5.3-flash),
+# secrets env-only and never echoed (keys pass base64-encoded into the
+# task container; CI masks both raw and base64 forms).
+#
+# Smoke first: dispatch with tasks=<family smoke>, attempts=1 (smoke task
+# per family in docs/bench.md). Full (tasks-less) runs of the
+# intermediate families (2.0/2.1/3.0) additionally require
+# confirm-full-run: true — a full family sweep is hours of GPU + LLM
+# spend. Full 4.0 dispatches keep their historical no-confirmation
+# behaviour (issue #1124 AC4).
+#
+# Secrets (owner-provisioned; the workflow never hardcodes them):
+#   FA_BENCH_ZAI_KEY       — z.ai key for glm-5.3-flash (shared with bench.yml)
+#   MODAL_TOKEN_ID/SECRET  — Modal token for the GPU shard (verified live)
+#   HARBOR_API_KEY         — Harbor Hub upload key; upload step skips (with a
+#                            warning) when absent, run artifacts keep results.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tasks:
+        description: 'Comma fnmatch globs narrowing the dataset (empty = full dataset; use the family smoke task first — docs/bench.md)'
+        required: false
+        default: ''
+      dataset:
+        description: 'Terminal-Bench family: label (2.0/2.1/3.0/4.0) or full Harbor id (see bench/harbor_fa/families.py)'
+        required: false
+        default: 'terminal-bench/terminal-bench@4.0.0'
+      confirm-full-run:
+        description: 'Required true for full (tasks-less) runs of 2.0/2.1/3.0 — smoke first (docs/bench.md)'
+        required: false
+        type: boolean
+        default: false
+      model:
+        description: 'Model id recorded with the run (provider preconfig is authoritative for fa)'
+        required: false
+        default: 'glm-5.3-flash'
+      attempts:
+        description: 'harbor --n-attempts per trial (-k)'
+        required: false
+        default: '5'
+      n-concurrent:
+        description: 'harbor --n-concurrent trials (1 = z.ai rate-limit safe)'
+        required: false
+        default: '1'
+      shards:
+        description: 'Shard count for CPU tasks (~4 tasks/shard keeps each job under the 6h window)'
+        required: false
+        default: '16'
+      cpu-env:
+        description: 'Harbor env for CPU shards (modal default; docker once the self-hosted runner has it)'
+        required: false
+        default: 'modal'
+      cpu-runner:
+        description: 'Runner label hosting the harbor CLI (it orchestrates Modal sandboxes; needs docker only with cpu-env=docker)'
+        required: false
+        default: 'self-hosted'
+      agent-timeout:
+        description: 'Base agent cap seconds (issue #1122; absent = dataset-declared task caps)'
+        required: false
+        default: ''
+      progress-extension:
+        description: 'Extend the agent cap while the agent output grows (idle window 120s, hard ceiling 4x base)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+# A full-dataset run holds the runner for hours; queue a second dispatch
+# instead of stacking them. One group across the whole family: harbor
+# runs serialize even when different dataset versions are dispatched
+# back-to-back.
+concurrency:
+  group: bench-harbor
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    name: Build bundle & shard dataset
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      matrix: ${{ steps.shards.outputs.matrix }}
+      count: ${{ steps.shards.outputs.count }}
+      cpu_count: ${{ steps.shards.outputs.cpu_count }}
+      gpu_count: ${{ steps.shards.outputs.gpu_count }}
+      family: ${{ steps.family.outputs.family }}
+      dataset: ${{ steps.family.outputs.dataset }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # stable satisfies the repo SDK constraint (>=3.12.0 <4.0.0).
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        with:
+          sdk: stable
+
+      - run: dart pub get
+
+      # Resolve the dispatch input (family label, bare version, or full
+      # Harbor id) to the canonical dataset id; unknown or version-less
+      # specs fail fast here, before any download.
+      - name: Resolve Terminal-Bench family
+        id: family
+        env:
+          DATASET: ${{ inputs.dataset }}
+        run: python bench/harbor_fa/families.py resolve "$DATASET"
+
+      # Cost guard (issue #1124 E3): full runs of the intermediate
+      # families are hours of GPU + LLM spend — require explicit
+      # confirmation. Smoke runs (non-empty tasks) and 4.0 (the
+      # historical default, AC4) are unaffected.
+      - name: Confirm full intermediate-family run
+        if: steps.family.outputs.family != '4.0' && inputs.confirm-full-run != true
+        env:
+          TASKS: ${{ inputs.tasks }}
+          ATTEMPTS: ${{ inputs.attempts }}
+        run: |
+          # split_tasks.py strips each comma-glob before use, so " ", ",",
+          # " , " all normalize to zero globs = a FULL dataset run. Judge
+          # emptiness on that same normalization, not the raw input.
+          if [ -z "$(printf %s "$TASKS" | tr -d '[:space:],')" ]; then
+            echo "::error::Full run of Terminal-Bench ${{ steps.family.outputs.family }} (${{ steps.family.outputs.dataset }}, ~${{ steps.family.outputs.tasks }} tasks x $ATTEMPTS attempts) requires confirm-full-run: true. Smoke first: tasks=${{ steps.family.outputs.smoke }}, attempts=1 (docs/bench.md)."
+            exit 1
+          fi
+
+      # Same bundle as bench/terminal_bench/run.sh: tar the bundle/ dir so
+      # the adapter extracts bin/fah at the top level of /opt/fa.
+      - name: Build fa CLI bundle (Linux)
+        run: |
+          bundle_dir="$(mktemp -d)/fa-bundle"
+          dart build cli --target=bin/fah.dart --output="$bundle_dir"
+          tar -czf fa-bundle.tar.gz -C "$bundle_dir/bundle" .
+
+      - name: Upload fa bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fa-bundle
+          path: fa-bundle.tar.gz
+
+      # terminal-bench-era note: harbor is fine on 3.13; typer-based CLIs
+      # break on 3.14.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      # Pinned: the adapter targets the 0.23.0 BaseInstalledAgent contract.
+      - run: pip install 'harbor[modal]==0.23.0'
+
+      # Same gate as bench.yml: stdlib-only bench script tests. Two
+      # discovery roots: bench/terminal_bench (legacy scripts + the
+      # harbor parity suite from #1122 — terminal-bench is installed
+      # just for the legacy-adapter import surface) and bench/harbor_fa
+      # (the #1124 family/summary suites + the #1123 token/cost summary
+      # tests). Discovering bench/ itself would need __init__.py
+      # plumbing the bench dirs don't have.
+      - name: Unit-test bench scripts
+        run: |
+          pip install 'terminal-bench==0.2.18'
+          python -m unittest discover -s bench/terminal_bench -v
+          python -m unittest discover -s bench/harbor_fa -v
+
+      # Download the dataset once for classification; harbor re-fetches
+      # into its own cache during the run. DATASET is the canonical id
+      # resolved by the family step (the raw input may be a bare label).
+      - name: Shard dataset into CPU / GPU shards
+        id: shards
+        env:
+          DATASET: ${{ steps.family.outputs.dataset }}
+          TASKS: ${{ inputs.tasks }}
+          SHARDS: ${{ inputs.shards }}
+          CPU_ENV: ${{ inputs.cpu-env }}
+        run: |
+          harbor datasets download "$DATASET" --output-dir "$RUNNER_TEMP/ds" --overwrite
+          # Dataset name at version: dir name is the dataset slug.
+          ds_dir="$RUNNER_TEMP/ds/$(basename "${DATASET%%@*}")"
+          [ -d "$ds_dir" ] || ds_dir="$RUNNER_TEMP/ds"
+          # split_tasks.py writes the matrix/counts into GITHUB_OUTPUT itself.
+          # harbor -i matches qualified ids (<org>/<name>): prefix with the
+          # org part of the dataset spec.
+          python bench/harbor_fa/split_tasks.py "$ds_dir" \
+            --filter "$TASKS" --shards "$SHARDS" --cpu-env "$CPU_ENV" \
+            --task-prefix "${DATASET%%/*}/"
+
+  bench:
+    name: fa on tbench ${{ needs.setup.outputs.family }}, shard ${{ matrix.i }} (${{ matrix.env }}, ${{ inputs.model }})
+    needs: setup
+    runs-on: ${{ inputs.cpu-runner }}
+    # ~4 tasks/shard x --n-attempts x task runtime (tbench agent caps
+    # reach 8h but typical runs are far shorter) with headroom; the
+    # self-hosted runner has no 6h hosted-runner cap to trip over.
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    env:
+      FAMILY: ${{ needs.setup.outputs.family }}
+      DATASET: ${{ needs.setup.outputs.dataset }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download fa bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: fa-bundle
+
+      # The self-hosted runner is a macOS box: setup-python cannot write the
+      # hosted tool cache there (mkdir /Users/runner denied) and the runner's
+      # own python3 is 3.14 — typer-based CLIs (harbor) break on 3.14. Get a
+      # uv-managed CPython 3.13 in user space instead (no admin, no tool
+      # cache); uv is also the canonical harbor install per the 4.0 docs.
+      - name: Install harbor (uv-managed python 3.13)
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          uv venv --python 3.13 .bench-venv
+          uv pip install --python .bench-venv/bin/python 'harbor[modal]==0.23.0'
+          .bench-venv/bin/python -c 'import sys; print("venv python:", sys.version.split()[0])'
+
+      - name: Run harbor (fa agent, ${{ matrix.env }} env)
+        env:
+          FA_BUNDLE_TARBALL: ${{ github.workspace }}/fa-bundle.tar.gz
+          PYTHONPATH: ${{ github.workspace }}/bench/harbor_fa
+          FA_PROVIDER_TYPE: zai
+          FA_PROVIDER_CONFIG: '{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"glm-5.3-flash","apiKeyEnvVar":"FA_KEY_API_Z_AI_Z_AI"}'
+          FA_KEY_API_Z_AI_Z_AI: ${{ secrets.FA_BENCH_ZAI_KEY }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          HARBOR_API_KEY: ${{ secrets.HARBOR_API_KEY }}
+          MODEL: ${{ inputs.model }}
+          ATTEMPTS: ${{ inputs.attempts }}
+          NCONC: ${{ inputs.n-concurrent }}
+          ENV_TYPE: ${{ matrix.env }}
+          DATASET: ${{ steps.family.outputs.dataset }}
+          AGENT_TIMEOUT: ${{ inputs.agent-timeout }}
+          PROGRESS_EXTENSION: ${{ inputs.progress-extension }}
+          # shard task names: dataset dir names, no whitespace — safe to word-split.
+          SHARD_TASKS: ${{ matrix.tasks }}
+        run: |
+          set -euo pipefail
+          [ -n "$FA_KEY_API_Z_AI_Z_AI" ] || { echo '::error::FA_BENCH_ZAI_KEY secret is not set'; exit 1; }
+          if [ "$ENV_TYPE" = modal ]; then
+            [ -n "$MODAL_TOKEN_ID" ] && [ -n "$MODAL_TOKEN_SECRET" ] || { echo '::error::Modal secrets are not set'; exit 1; }
+          fi
+          # fa_agent.py ships the key into the container base64-encoded; GitHub
+          # auto-masks only the raw value, so mask the base64 form too.
+          echo "::add-mask::$(printf %s "$FA_KEY_API_Z_AI_Z_AI" | base64 -w0)"
+          args=()
+          for t in $SHARD_TASKS; do args+=(-i "$t"); done
+          # Issue #1122 knobs, same env contract as bench.yml (shared
+          # bench/fa_agent_timeout.py); absent inputs stay byte-for-byte
+          # today's run (REG-1). A ceiling beyond a task's declared cap is
+          # clipped by harbor's own per-task timeout (min of the two wins).
+          if [ -n "$AGENT_TIMEOUT" ]; then
+            case "$AGENT_TIMEOUT" in *[!0-9]*)
+              echo '::error::agent-timeout must be integer seconds'; exit 1;; esac
+            export FA_AGENT_TIMEOUT_SEC="$AGENT_TIMEOUT"
+          fi
+          case "$PROGRESS_EXTENSION" in
+            ''|0|1|true|TRUE|True|yes|on|false|FALSE|False|no|off) ;;
+            *) echo "::error::progress-extension must be boolean (true/false), got '$PROGRESS_EXTENSION'"; exit 1 ;;
+          esac
+          case "$PROGRESS_EXTENSION" in
+            1|true|TRUE|True|yes|on) export FA_PROGRESS_EXTENSION=1;;
+          esac
+          # Pinned --job-name: one jobs/<name>/ dir per shard, so the summary
+          # job's downloads cannot collide on harbor's timestamped default.
+          # The family label keys results per dataset version (fa-4.0-*
+          # matches the historical 4.0 names exactly).
+          .bench-venv/bin/harbor run -d "$DATASET" -a fa_agent:FaAgent \
+            -e "$ENV_TYPE" -m "$MODEL" -k "$ATTEMPTS" -n "$NCONC" \
+            --job-name "fa-${FAMILY}-${ENV_TYPE}-${{ matrix.kind }}-${{ matrix.i }}" -o jobs \
+            "${args[@]}"
+
+      - name: Upload harbor job (shard ${{ matrix.i }})
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: harbor-job-shard-${{ matrix.i }}
+          path: jobs/
+
+      - name: Upload to Harbor Hub
+        if: always() && env.HARBOR_API_KEY != ''
+        env:
+          HARBOR_API_KEY: ${{ secrets.HARBOR_API_KEY }}
+        run: |
+          shopt -s nullglob
+          for job_dir in jobs/fa-${FAMILY}-*; do
+            .bench-venv/bin/harbor upload "$job_dir" --public
+          done
+
+  summary:
+    name: Aggregate resolution rate
+    needs: [setup, bench]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download shard results
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: harbor-job-shard-*
+          merge-multiple: true
+          path: jobs
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      # harbor exits 0 even with unresolved trials; the verdict here covers
+      # run completeness — every expected trial attempted — after the merged
+      # artifact below is uploaded.
+      - name: Upload merged harbor jobs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: harbor-jobs-merged
+          path: jobs/
+
+      - name: Resolution summary & verdict
+        if: always()
+        env:
+          EXPECTED_TASKS: ${{ needs.setup.outputs.count }}
+          ATTEMPTS: ${{ inputs.attempts }}
+          FAMILY: ${{ needs.setup.outputs.family }}
+          MODEL: ${{ inputs.model }}
+          FA_REF: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          expected_trials=$((EXPECTED_TASKS * ATTEMPTS))
+          python bench/harbor_fa/summary.py --family "$FAMILY" \
+            --model "$MODEL" --fa-ref "$FA_REF" --run-url "$RUN_URL" \
+            --expected-trials "$expected_trials" jobs

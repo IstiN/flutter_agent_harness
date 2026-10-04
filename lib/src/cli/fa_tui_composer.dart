@@ -68,7 +68,7 @@ extension _TuiComposerLayout on FaTuiModel {
     final scheduledWanted = scheduledCount > 0 ? 1 : 0;
     final chipsWanted = attachments.isEmpty ? 0 : attachments.length + 1;
     final queueWanted = queue.isEmpty ? 0 : queue.length + 2;
-    final stickyWanted = _stickyActive ? _formattedStickyRows(width).length : 0;
+    final stickyWanted = _stickyArmed ? _formattedStickyRows(width).length : 0;
     return (
       boardWanted,
       waitingWanted,
@@ -157,7 +157,49 @@ extension _TuiComposerLayout on FaTuiModel {
     // #502 CI failure: sticky painted but history kept its unsqueezed
     // height, the 14-row frame overran a 12-row terminal and the guard
     // dropped rows from the TOP — the echo first).
-    final sticky = stickyWanted <= consumable ? stickyWanted : 0;
+    final historyNoSticky = consumable + reserve;
+    var sticky = stickyWanted <= consumable ? stickyWanted : 0;
+    // The wrap-turn dedupe (issue #917): pin only when the echo is above
+    // the window THIS frame paints — the follow bottom, or the stored
+    // offset detached — computed with the pin's own rows taken. The old
+    // raw-[scrollOffset] check raced the painter: keystrokes re-wrap the
+    // input zone between output events, the painted window moved while
+    // the stored offset stood still, and the echo painted twice (pinned
+    // AND re-scrolled into the window) or vanished unpinned. Deciding on
+    // the painted geometry makes the dedupe exact — one paint wins under
+    // any event interleaving — and needs no recursion: both candidate
+    // heights are already in scope here.
+    if (sticky > 0) {
+      final endRow = _echoEndRow();
+      // An empty wrap cache carries no geometry to dedupe against — the
+      // transcript keeps the echo.
+      if (endRow < 0) {
+        sticky = 0;
+      } else {
+        final wrapped = _wrappedLines();
+        final history = historyNoSticky - sticky;
+        // The window top view() will paint, mirrored with THIS plan's
+        // history — the real _scrollBottom reads _viewportHeight, which
+        // is this very plan, so calling it here would recurse. Issue
+        // #827 moved the follow anchor to the current turn's first row
+        // and left a park zone above the bottom; the old bottom-only
+        // model raced both — after a burst the parked window hid the
+        // echo while the pin was denied (0 paints, CI core shard at the
+        // #827 merge), and a turn-fitting window can start AT the echo,
+        // where pinning would double-paint. Deliberately not mirrored:
+        // the boot-anchor branch of _turnAnchor — it only ever parks
+        // the window top EARLIER than the turn floor (the boot region
+        // precedes the run's echo), and an under-estimated top just
+        // leaves the echo with the transcript: the safe side.
+        final bottom = history.clamp(0, wrapped.length);
+        final paintedTop = followTail
+            ? (scrollOffset > bottom
+                  ? scrollOffset
+                  : math.max(bottom, _turnStartRow()))
+            : scrollOffset.clamp(0, bottom);
+        if (paintedTop < endRow) sticky = 0;
+      }
+    }
     consumable -= sticky;
     return _FramePlan(
       board: board,
@@ -222,7 +264,10 @@ extension _TuiComposerLayout on FaTuiModel {
   /// echo itself has scrolled out of view (Copilot-style, issue #496:
   /// paints only the plan's visible rows — yields whole when squeezed).
   int _writeStickyEcho(StringBuffer b, int visible) {
-    if (!_stickyActive || visible <= 0) return 0;
+    // The pin-vs-transcript decision is the frame plan's ([_framePlanFor]):
+    // [visible] (plan.sticky) is already zero when the transcript window
+    // owns the echo.
+    if (visible <= 0) return 0;
     final rows = _formattedStickyRows(termWidth);
     final count = visible < rows.length ? visible : rows.length;
     for (var i = 0; i < count; i++) {

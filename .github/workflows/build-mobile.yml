@@ -316,6 +316,29 @@ jobs:
           echo "Uploading $AAB_PATH to the Play '$PLAY_TRACK' track..."
           ANDROID_AAB_PATH="$AAB_PATH" bundle exec fastlane android upload_only
 
+      # Issue #947: android_content=all means the LISTING ships too. The
+      # listing lane replaces the whole image set per locale + device type
+      # (supply appends, which is how a stale rejected screenshot survived
+      # on the live listing) and verifies the committed state via
+      # edits.images.list. Runs after the AAB upload so a release train
+      # never ships a binary against a stale listing.
+      - name: Deploy Play listing (metadata + images)
+        if: inputs.android_content == 'all'
+        working-directory: flutter_app
+        env:
+          PLAY_STORE_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_STORE_SERVICE_ACCOUNT_JSON }}
+          PLAY_TRACK: ${{ inputs.android_track }}
+          PLAY_DEPLOY_METADATA: 'true'
+          PLAY_DEPLOY_IMAGES: 'true'
+        run: |
+          set -euo pipefail
+          if [ -z "${PLAY_STORE_SERVICE_ACCOUNT_JSON:-}" ]; then
+            echo "::notice::Play service account not configured — skipping the listing deploy."
+            exit 0
+          fi
+          echo "Deploying the Play listing (texts + images)..."
+          bundle exec fastlane android play_store
+
   build-android-apks:
     # Issue #622: the flavor matrix. The AAB job above stays the Play
     # pipeline (store, unchanged); this job builds BOTH release APKs from

@@ -21,11 +21,13 @@ import '../cube/config/cube_settings.dart';
 import 'waiting_heartbeat.dart';
 import '../providers/provider_common.dart';
 import '../spill/spill.dart';
+import '../skills/skill_availability.dart';
 import '../skills/skills_access.dart';
 import '../memory_config.dart';
 import '../messaging/fabric_config.dart';
 import '../redact/redaction_types.dart';
 import '../agent/image_registry.dart';
+import '../agent/stuck_tool.dart';
 import '../power_config.dart';
 import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
@@ -33,6 +35,7 @@ import '../tools/load_modes.dart';
 import 'custom_providers.dart';
 import '../task/subagent_heartbeat.dart';
 import 'links_config.dart';
+import 'output_config.dart';
 import 'tui_status_line.dart';
 
 /// Parses the `providerTimeouts:` section: provider watchdog overrides
@@ -67,6 +70,35 @@ ProviderTimeoutsOverride? parseProviderTimeouts(Object? node) {
   return ProviderTimeoutsOverride(connect: connect, streamIdle: streamIdle);
 }
 
+/// Folds the `FA_PROVIDER_TIMEOUT_SECONDS` env override (issue #1036) into
+/// [base]: a positive integer number of seconds bounding every
+/// NON-streaming provider fetch (model lists, OAuth/token endpoints, quota
+/// probes) — [ProviderTimeoutsOverride.fetchRead].
+///
+/// Resolution order (one, documented): **env wins over the yaml section,
+/// both over the defaults** — a CI runner (the issue's leg 36353318722)
+/// tightens the bound at boot without editing `~/.fah/config.yaml`. Blank /
+/// unset keeps [base] as-is; any other invalid value throws
+/// [ConfigException] naming the env var, like every other `FA_*` input.
+ProviderTimeoutsOverride? applyProviderTimeoutEnvOverride(
+  ProviderTimeoutsOverride? base,
+  String? raw,
+) {
+  if (raw == null || raw.trim().isEmpty) return base;
+  final seconds = int.tryParse(raw.trim());
+  if (seconds == null || seconds <= 0) {
+    throw ConfigException(
+      'FA_PROVIDER_TIMEOUT_SECONDS must be a positive integer of seconds, '
+      'got: "$raw"',
+    );
+  }
+  return ProviderTimeoutsOverride(
+    connect: base?.connect,
+    streamIdle: base?.streamIdle,
+    fetchRead: Duration(seconds: seconds),
+  );
+}
+
 /// Parses the `trajectory:` section (issue #385): today only the
 /// `wireDump` boolean. Unknown keys are strict errors (a typo must never
 /// silently skip the opt-in).
@@ -89,6 +121,76 @@ bool _parseTrajectorySection(Object? node) {
   return wireDump;
 }
 
+/// The parsed `quota:` section (issue #823): the status-line badge opt-in
+/// and the quota-cache TTL. Strict like every section: unknown keys and
+/// bad scalars throw [ConfigException] at boot; defaults are never written
+/// so the file stays minimal.
+final class QuotaSection {
+  const QuotaSection({
+    this.badge = false,
+    this.ttlMinutes = defaultQuotaTtlMinutes,
+  });
+
+  /// Render the provider-quota badge on the status line (OQ2 lean: OFF by
+  /// default — the status line stays quiet until the user asks for it).
+  final bool badge;
+
+  /// The quota-cache TTL in minutes (fed to [ProviderQuotaService]).
+  final int ttlMinutes;
+
+  @override
+  bool operator ==(Object other) =>
+      other is QuotaSection &&
+      other.badge == badge &&
+      other.ttlMinutes == ttlMinutes;
+
+  @override
+  int get hashCode => Object.hash(badge, ttlMinutes);
+
+  @override
+  String toString() => 'QuotaSection(badge: $badge, ttlMinutes: $ttlMinutes)';
+}
+
+/// The `quota.badge` default (issue #823 OQ2): off.
+const defaultQuotaBadge = false;
+
+/// The `quota.ttl_minutes` default: the service's own 15-minute TTL.
+const defaultQuotaTtlMinutes = 15;
+
+/// Parses the `quota:` yaml section (issue #823). A null [node] means the
+/// section is absent — the caller applies the defaults. Any present-but-
+/// invalid shape, value or key throws [ConfigException], consistent with
+/// the other strict config sections.
+QuotaSection parseQuotaSection(Object? node) {
+  if (node == null) return const QuotaSection();
+  if (node is! YamlMap) {
+    throw ConfigException('quota must be a map, got: $node');
+  }
+  var badge = defaultQuotaBadge;
+  var ttlMinutes = defaultQuotaTtlMinutes;
+  for (final key in node.keys) {
+    switch (key) {
+      case 'badge':
+        final value = node[key];
+        if (value is! bool) {
+          throw ConfigException('"quota.badge" must be a boolean');
+        }
+        badge = value;
+      case 'ttl_minutes':
+        final value = node[key];
+        if (value is! int || value <= 0) {
+          throw ConfigException(
+            '"quota.ttl_minutes" must be a positive integer (minutes)',
+          );
+        }
+        ttlMinutes = value;
+      default:
+        throw ConfigException('unknown "quota" key: $key');
+    }
+  }
+  return QuotaSection(badge: badge, ttlMinutes: ttlMinutes);
+}
+
 /// Validates one `agent.mode` value (issues #679/#680): the shared rule
 /// lives in [agentLoadModeValidationError] (load_modes.dart) — this
 /// parser and the settings validator (config_service.dart) throw its
@@ -102,6 +204,32 @@ String? _parseAgentModeValue(Object? value) {
   // The default needs no storage: absent == default keeps the written
   // file minimal (the file's "defaults never written" rule).
   return value == 'default' ? null : value as String;
+}
+
+bool? _parseAgentMisuseBreakerValue(Object? value) {
+  if (value is! bool) {
+    throw ConfigException('"agent.misuseBreaker" must be a boolean');
+  }
+  return value;
+}
+
+/// The compaction reserve the cap floor mirrors (see [_parseAgentSection]).
+const _agentContextWindowCapMin = 16384;
+
+int _parseAgentContextWindowCapValue(Object? value) {
+  if (value is! int || value <= 0) {
+    throw ConfigException(
+      '"agent.contextWindowCap" must be a positive integer (tokens)',
+    );
+  }
+  if (value < _agentContextWindowCapMin) {
+    throw ConfigException(
+      '"agent.contextWindowCap" must be at least $_agentContextWindowCapMin'
+      ' — below the compaction reserve the compaction trigger threshold '
+      'would go negative',
+    );
+  }
+  return value;
 }
 
 /// Parses the `agent:` section (issues #273/#679/#680):
@@ -124,34 +252,32 @@ String? _parseAgentModeValue(Object? value) {
 /// (issue #679: bare prompt, 4-tool sweep, boot print) the executable
 /// re-resolves through its flag > env > config ladder. `omp` carries no
 /// harness behavior, so it never reaches that ladder.
-({int? contextWindowCap, String? mode, String? agentMode})? _parseAgentSection(
-  Object? node,
-) {
+({
+  int? contextWindowCap,
+  String? mode,
+  String? agentMode,
+  bool? misuseBreaker,
+  StuckToolConfig? stuckTool,
+})?
+_parseAgentSection(Object? node) {
   if (node == null) return null;
   if (node is! YamlMap) {
     throw ConfigException('agent must be a map, got: $node');
   }
   int? cap;
   String? mode;
+  bool? misuseBreaker;
+  StuckToolConfig? stuckTool;
   for (final key in node.keys) {
     switch (key) {
       case 'contextWindowCap':
-        final value = node[key];
-        if (value is! int || value <= 0) {
-          throw ConfigException(
-            '"agent.contextWindowCap" must be a positive integer (tokens)',
-          );
-        }
-        if (value < 16384) {
-          throw ConfigException(
-            '"agent.contextWindowCap" must be at least 16384 — below the '
-            'compaction reserve the compaction trigger threshold would go '
-            'negative',
-          );
-        }
-        cap = value;
+        cap = _parseAgentContextWindowCapValue(node[key]);
       case 'mode':
         mode = _parseAgentModeValue(node[key]);
+      case 'misuseBreaker':
+        misuseBreaker = _parseAgentMisuseBreakerValue(node[key]);
+      case 'stuckTool':
+        stuckTool = StuckToolConfig.fromYaml(node[key]);
       default:
         throw ConfigException('unknown "agent" key: $key');
     }
@@ -160,6 +286,8 @@ String? _parseAgentModeValue(Object? value) {
     contextWindowCap: cap,
     mode: mode,
     agentMode: mode == 'pi' ? 'pi' : null,
+    misuseBreaker: misuseBreaker,
+    stuckTool: stuckTool,
   );
 }
 
@@ -228,6 +356,7 @@ final class CliConfig {
     this.modelRoles,
     this.ttsr,
     this.contextWindowCap,
+    this.stuckTool,
     this.agentLoadMode,
     this.customProviders = const [],
     this.models,
@@ -236,6 +365,7 @@ final class CliConfig {
     this.providerTimeouts,
     this.skillsAccess = SkillsAccess.granted,
     this.skillsDisableShellExecution = false,
+    this.skillToggles = const {},
     this.memory,
     this.fabric,
     this.cube,
@@ -247,15 +377,18 @@ final class CliConfig {
     this.wireDump = false,
     this.images,
     this.agentMode,
+    this.misuseBreaker = true,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
     this.powerSleepPrevention,
     this.powerHold,
+    this.quota = const QuotaSection(),
     this.tuiTheme,
     this.tuiClassic = false,
     this.statusLine,
     this.links = const LinksConfig(),
+    this.streamThinking = false,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -263,6 +396,8 @@ final class CliConfig {
     // The power section (sleep-prevention level + hold lifecycle) is
     // parsed once, strictly (issues #325/#326).
     final powerSection = parsePowerSection(map['power']);
+    // The quota section (issue #823) is parsed once, strictly too.
+    final quotaSection = parseQuotaSection(map['quota']);
     final agentSection = _parseAgentSection(map['agent']);
     // The tui section (issue #805) is strict: theme, classic kill
     // switch and statusLine parsed once, schema errors throw.
@@ -371,11 +506,15 @@ final class CliConfig {
       images: parseImagesSection(map['images']),
       powerSleepPrevention: powerSection.sleepPrevention,
       powerHold: powerSection.hold,
+      // The quota section (issue #823): badge opt-in + cache TTL, strict.
+      quota: quotaSection,
       // The agent section (owner-side context cap + mode, issues
       // #273/#679/#680) is strict too.
       contextWindowCap: agentSection?.contextWindowCap,
+      stuckTool: agentSection?.stuckTool,
       agentMode: agentSection?.agentMode,
       agentLoadMode: agentSection?.mode,
+      misuseBreaker: agentSection?.misuseBreaker ?? true,
       // The subagents section (background-subagent heartbeat, issue #383)
       subagents: SubagentsConfig.fromYaml(map['subagents']),
       waiting: WaitingConfig.fromYaml(map['waiting']),
@@ -391,18 +530,32 @@ final class CliConfig {
           ? const LinksConfig()
           : LinksConfig.fromYaml(map['links']),
       // The skills section (third-party skills access consent + shell
-      // execution toggle) is strict too.
+      // execution toggle + per-skill on/off entries) is strict too.
       skillsAccess:
           skillsSection['skillsAccess'] as SkillsAccess? ??
           SkillsAccess.granted,
       skillsDisableShellExecution:
           skillsSection['skillsDisableShellExecution'] as bool? ?? false,
+      skillToggles:
+          skillsSection['skillToggles'] as Map<String, bool>? ?? const {},
+      // The output section (gh-1198) is strict: `streamThinking` opts
+      // line-mode/headless runs into the live dimmed thinking stream;
+      // absent = false = the byte-identical legacy output.
+      streamThinking: _outputStreamThinking(map['output']),
     );
   }
 
+  /// The `output.streamThinking` value: the strict parser validates the
+  /// section, the walk below reads the single key (defaults false).
+  static bool _outputStreamThinking(Object? node) {
+    parseOutputSection(node);
+    return outputStreamThinkingValue(node);
+  }
+
   /// Parses the `skills:` section: `access` (ask/granted/denied — consent
-  /// to read third-party `.claude`/`.github`/`.codex` skill directories)
-  /// and `disableShellExecution` (Claude-style `!`cmd`` skill injections).
+  /// to read third-party `.claude`/`.github`/`.codex` skill directories),
+  /// `disableShellExecution` (Claude-style `!`cmd`` skill injections), and
+  /// per-skill `<name>: on|off` toggles (issue #1151).
   static Map<String, Object?> _parseSkillsSection(Object? node) {
     if (node == null) return const {};
     if (node is! YamlMap) {
@@ -428,7 +581,11 @@ final class CliConfig {
           }
           result['skillsDisableShellExecution'] = value;
         default:
-          throw ConfigException('unknown "skills" key: $key');
+          final name = '$key';
+          result['skillToggles'] = {
+            ...(result['skillToggles'] as Map<String, bool>? ?? const {}),
+            name: skillToggleValue(name, node[key]),
+          };
       }
     }
     return result;
@@ -501,6 +658,13 @@ final class CliConfig {
   /// (the `skills.disableShellExecution` yaml key).
   final bool skillsDisableShellExecution;
 
+  /// Per-skill on/off toggles from the GLOBAL scope (`skills:` section,
+  /// `skillName: on|off` entries in `~/.fah/config.yaml`, issue #1151). The
+  /// project scope loads live via [loadProjectSkillsConfig] and wins per
+  /// key — the same deepest-wins rule as the `tools:` stack. Skills not
+  /// named here are enabled.
+  final Map<String, bool> skillToggles;
+
   /// Optional `fabric:` section — the host's discovery announcements for
   /// the agent messaging fabric (issue #27 phase 2): capabilities peers
   /// see in `agent_directory`. Parsed strictly.
@@ -569,10 +733,22 @@ final class CliConfig {
   /// raw model window).
   final int? contextWindowCap;
 
+  /// Stuck-call supervision config (`agent.stuckTool`, gh-1054): liveness
+  /// heartbeats for long-running tool calls plus the autonomous
+  /// cancel/retry/convert follow-up. `null` = unsupervised.
+  final StuckToolConfig? stuckTool;
+
   /// The parsed harness mode preset (`agent.mode`, issue #679): `'pi'` or
   /// null (absent or explicit `default`). Resolved against the flag/env
   /// tiers by the executable via `resolveHarnessMode`.
   final String? agentMode;
+
+  /// The tool-misuse circuit breaker switch (`agent.misuseBreaker`,
+  /// issue #862, default true): 3 consecutive identical tool-call
+  /// rejections arm a corrective note in the next request; 6 stop executing
+  /// that identical call for the run. `false` preserves the pre-breaker
+  /// behavior byte-identically (E5).
+  final bool misuseBreaker;
 
   /// Tool-load preset from `agent.mode` (`default|pi|omp`, issue #680):
   /// the curated essential set that boots into the schema; everything
@@ -584,12 +760,14 @@ final class CliConfig {
   /// cadence (`waitHeartbeatMinutes`, 0 = off), the `--wait-for-jobs`
   /// ceiling (`waitCeilingMinutes`, default 30), and the per-call
   /// foreground liveness knobs (gh-1055: `toolLivenessSeconds`,
-  /// `toolLivenessTickSeconds`, `toolEscalateSeconds`).
+  /// `toolLivenessTickSeconds`, `toolEscalateSeconds`) plus the #1185
+  /// stuck-call nudge kill switch (`toolNudge`, default on).
   final WaitingConfig waiting;
 
   /// The `jobs:` section (issue #478): boot-maintenance knobs for the
   /// cross-run shell-job state — `staleHours` (manifest age belt,
-  /// default 24) and `logRetentionDays` (log GC, default 3; 0 keeps all).
+  /// default 24), `logRetentionDays` (log GC, default 3; 0 keeps all),
+  /// and `maxLogBytes` (per-log ceiling, issue #919, default 50 MB).
   final JobsConfig jobs;
 
   /// The `subagents:` section (issue #383): heartbeat cadence
@@ -609,6 +787,11 @@ final class CliConfig {
   /// start, release at settle); `session` is the explicit hold-the-whole-
   /// session opt-in.
   final PowerAssertionHold? powerHold;
+
+  /// The `quota:` section (issue #823): status-line badge opt-in and the
+  /// quota-cache TTL. Defaults (`badge: false`, `ttl_minutes: 15`) are
+  /// never written so the file stays minimal.
+  final QuotaSection quota;
 
   /// Persisted TUI theme name (`tui.theme`): a built-in key or a user
   /// theme file stem from `~/.fah/themes/<name>.json`. `null` = default
@@ -630,6 +813,13 @@ final class CliConfig {
   /// product/store links — the app banners, the CLI (`fa config get
   /// links.…`) and the site generator all resolve the same values.
   final LinksConfig links;
+
+  /// The opt-in live thinking stream for line-mode/headless runs
+  /// (gh-1198, `output.streamThinking` yaml key, default false): when
+  /// true, thinking deltas print dimmed, live, like the TUI's progress
+  /// signal. `--stream-thinking` wins for the run. The default keeps the
+  /// byte-identical legacy output (machine consumers, AC3).
+  final bool streamThinking;
 
   /// Returns a copy with [entries] as the custom-providers list; every
   /// other field carries over. [saveCliConfig] uses it for its
@@ -653,6 +843,7 @@ final class CliConfig {
       providerTimeouts: providerTimeouts,
       skillsAccess: skillsAccess,
       skillsDisableShellExecution: skillsDisableShellExecution,
+      skillToggles: skillToggles,
       memory: memory,
       fabric: fabric,
       cube: cube,
@@ -663,9 +854,11 @@ final class CliConfig {
       wireDump: wireDump,
       images: images,
       contextWindowCap: contextWindowCap,
+      stuckTool: stuckTool,
       agentLoadMode: agentLoadMode,
       powerSleepPrevention: powerSleepPrevention,
       powerHold: powerHold,
+      quota: quota,
       tuiTheme: tuiTheme,
       tuiClassic: tuiClassic,
       statusLine: statusLine,
@@ -755,13 +948,26 @@ final class CliConfig {
     buffer.write(_jobsYaml());
     buffer.write(_linksYaml());
     buffer.write(_powerYaml());
+    buffer.write(_quotaYaml());
+    buffer.write(_outputYaml());
     return buffer.toString();
   }
 
-  /// The `agent:` section, only when a cap or a load mode is persisted;
+  /// The `output:` section (gh-1198), only when explicitly opted in;
   /// defaults are never written so the file stays minimal.
+  String _outputYaml() =>
+      streamThinking ? 'output:\n  streamThinking: true\n' : '';
+
+  /// The `agent:` section, only when a cap, a load mode, or a stuck-tool
+  /// config is persisted; defaults are never written so the file stays
+  /// minimal.
   String _agentSectionYaml() {
-    if (contextWindowCap == null && agentLoadMode == null) return '';
+    final stuckYaml = _stuckToolYaml();
+    if (contextWindowCap == null &&
+        agentLoadMode == null &&
+        stuckYaml.isEmpty) {
+      return '';
+    }
     final section = StringBuffer('agent:\n');
     if (contextWindowCap != null) {
       section.write('  contextWindowCap: $contextWindowCap\n');
@@ -769,7 +975,27 @@ final class CliConfig {
     if (agentLoadMode != null) {
       section.write('  mode: $agentLoadMode\n');
     }
+    section.write(stuckYaml);
     return section.toString();
+  }
+
+  /// The `agent.stuckTool:` sub-map, only when explicitly configured
+  /// (defaults are never written so the file stays minimal).
+  String _stuckToolYaml() {
+    final stuck = stuckTool;
+    if (stuck == null) return '';
+    final map = stuck.toYamlMap();
+    if (map.isEmpty) return '';
+    final buffer = StringBuffer('  stuckTool:\n');
+    for (final entry in map.entries) {
+      final value = entry.value;
+      if (value is List) {
+        buffer.write('    ${entry.key}: [${value.join(', ')}]\n');
+      } else {
+        buffer.write('    ${entry.key}: $value\n');
+      }
+    }
+    return buffer.toString();
   }
 
   /// The `links:` section (issue #691), only when explicitly configured;
@@ -819,6 +1045,18 @@ final class CliConfig {
     }
     if (hold != null) {
       buffer.write('  hold: ${hold.value}\n');
+    }
+    return buffer.toString();
+  }
+
+  /// The `quota:` section (issue #823), only when explicitly configured;
+  /// defaults are never written so the file stays minimal.
+  String _quotaYaml() {
+    if (quota == const QuotaSection()) return '';
+    final buffer = StringBuffer('quota:\n');
+    if (quota.badge) buffer.write('  badge: true\n');
+    if (quota.ttlMinutes != defaultQuotaTtlMinutes) {
+      buffer.write('  ttl_minutes: ${quota.ttlMinutes}\n');
     }
     return buffer.toString();
   }
@@ -878,11 +1116,16 @@ final class CliConfig {
     final buffer = StringBuffer('skills:\n');
     _writeSkillsAccess(buffer);
     _writeSkillsDisableShellExecution(buffer);
+    for (final entry in skillToggles.entries) {
+      buffer.write('  ${entry.key}: ${entry.value}\n');
+    }
     return buffer.toString();
   }
 
   bool get _skillsSectionNeeded =>
-      skillsAccess != SkillsAccess.granted || skillsDisableShellExecution;
+      skillsAccess != SkillsAccess.granted ||
+      skillsDisableShellExecution ||
+      skillToggles.isNotEmpty;
 
   void _writeSkillsAccess(StringBuffer buffer) {
     if (skillsAccess != SkillsAccess.granted) {
@@ -938,6 +1181,10 @@ final class CliConfig {
       );
       if (entry.keyName != null) {
         buffer.write('    keyName: ${_yamlScalar(entry.keyName!)}\n');
+      }
+      final authHeader = entry.authHeader;
+      if (authHeader != null) {
+        buffer.write('    authHeader: ${_yamlScalar(authHeader)}\n');
       }
       buffer.write('    modelId: ${_yamlScalar(entry.modelId)}\n');
     }
@@ -1318,6 +1565,10 @@ const _diskPreservedSections = {
   // omits a default-valued section — the raw block (future keys the
   // typed renderer does not know yet) survives untouched.
   'links',
+  // The output section (gh-1198): the emitter writes only the opt-in
+  // `streamThinking: true`; a hand-written block (the default-false
+  // form, comments, future keys) survives a save untouched.
+  'output',
 };
 
 /// Re-attaches the [_diskPreservedSections] blocks of [diskText] to

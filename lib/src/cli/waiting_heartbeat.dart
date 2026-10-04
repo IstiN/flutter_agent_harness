@@ -14,6 +14,7 @@ library;
 import 'dart:async';
 
 import '../exceptions.dart';
+import '../env/job_log_ceiling.dart';
 import 'tool_liveness.dart';
 
 /// Default waiting-heartbeat cadence in minutes (`waiting:
@@ -35,6 +36,7 @@ final class WaitingConfig {
     this.toolLivenessSeconds = defaultToolLivenessSeconds,
     this.toolLivenessTickSeconds = defaultToolLivenessTickSeconds,
     this.toolEscalateSeconds = defaultToolEscalateSeconds,
+    this.toolNudge = true,
   });
 
   /// Waiting-heartbeat cadence in minutes; `0` disables the heartbeat.
@@ -54,6 +56,12 @@ final class WaitingConfig {
   /// The one-time background escape-hatch hint fires once a stuck call
   /// runs this many seconds; `0` disables the hint.
   final int toolEscalateSeconds;
+
+  /// The #1185 stuck-call nudge (issue #1185): an escalation ALSO steers
+  /// one model-facing notice into the live run (the model decides:
+  /// wait / background / kill). `false` is the kill switch — the console
+  /// liveness lines stay, only the injection goes away.
+  final bool toolNudge;
 
   factory WaitingConfig.fromYaml(Object? node) {
     if (node == null) return const WaitingConfig();
@@ -79,9 +87,14 @@ final class WaitingConfig {
         'toolLivenessSeconds',
         'toolLivenessTickSeconds',
         'toolEscalateSeconds',
+        'toolNudge',
       }.contains('$key')) {
         throw ConfigException('unknown "waiting" key: $key');
       }
+    }
+    final toolNudge = node['toolNudge'];
+    if (toolNudge != null && toolNudge is! bool) {
+      throw ConfigException('"waiting.toolNudge" must be a boolean');
     }
     final parsed = WaitingConfig(
       waitHeartbeatMinutes: parse(
@@ -104,6 +117,7 @@ final class WaitingConfig {
         'toolEscalateSeconds',
         defaultToolEscalateSeconds,
       ),
+      toolNudge: toolNudge is bool ? toolNudge : true,
     );
     // Ordering (gh-1055 review): the hint fires at a LONGER threshold than
     // the reminders — AC1 starts the reminders at the configured threshold,
@@ -129,7 +143,8 @@ final class WaitingConfig {
       '  waitCeilingMinutes: $waitCeilingMinutes\n'
       '  toolLivenessSeconds: $toolLivenessSeconds\n'
       '  toolLivenessTickSeconds: $toolLivenessTickSeconds\n'
-      '  toolEscalateSeconds: $toolEscalateSeconds\n';
+      '  toolEscalateSeconds: $toolEscalateSeconds\n'
+      '  toolNudge: $toolNudge\n';
 }
 
 /// Default age belt for cross-run job manifest entries (`jobs:
@@ -142,6 +157,11 @@ const defaultJobsStaleHours = 24;
 /// log forever.
 const defaultJobsLogRetentionDays = 3;
 
+/// Per-log size ceiling for background jobs (`jobs: maxLogBytes`,
+/// issue #919, default 50 MB). Re-exports the policy constant — one source
+/// of truth for the config default and the writer default.
+const defaultJobsMaxLogBytes = defaultJobLogMaxBytes;
+
 /// The `jobs:` yaml section (issue #478): boot-maintenance knobs for the
 /// cross-run shell-job state under `.fah/bash_jobs/`. Parsed strictly
 /// like `waiting:` — a bad schema throws at boot; negative values are
@@ -150,6 +170,7 @@ final class JobsConfig {
   const JobsConfig({
     this.staleHours = defaultJobsStaleHours,
     this.logRetentionDays = defaultJobsLogRetentionDays,
+    this.maxLogBytes = defaultJobsMaxLogBytes,
   });
 
   /// Manifest entries older than this many hours are dropped at boot
@@ -159,6 +180,12 @@ final class JobsConfig {
   /// Job logs older than this many days are deleted at boot; `0` keeps
   /// every log (the 24k-files leak lives here when raised).
   final int logRetentionDays;
+
+  /// Per-log size ceiling in bytes (issue #919): when a background job's
+  /// log crosses it, capture switches to head + truncation marker + rolling
+  /// tail while the job keeps running. Unlike the other `jobs:` knobs, `0`
+  /// is invalid — an unbounded log is exactly the bug being fixed.
+  final int maxLogBytes;
 
   factory JobsConfig.fromYaml(Object? node) {
     if (node == null) return const JobsConfig();
@@ -177,21 +204,35 @@ final class JobsConfig {
       return value;
     }
 
+    final maxLogBytesValue = node['maxLogBytes'];
+    if (maxLogBytesValue != null) {
+      if (maxLogBytesValue is! int) {
+        throw ConfigException('"jobs.maxLogBytes" must be an integer');
+      }
+      if (maxLogBytesValue <= 0) {
+        throw ConfigException(
+          '"jobs.maxLogBytes" must be > 0 (a log '
+          'ceiling cannot be disabled — that is the disk-exhaustion bug)',
+        );
+      }
+    }
     for (final key in node.keys) {
-      if (!{'staleHours', 'logRetentionDays'}.contains('$key')) {
+      if (!{'staleHours', 'logRetentionDays', 'maxLogBytes'}.contains('$key')) {
         throw ConfigException('unknown "jobs" key: $key');
       }
     }
     return JobsConfig(
       staleHours: parse('staleHours', defaultJobsStaleHours),
       logRetentionDays: parse('logRetentionDays', defaultJobsLogRetentionDays),
+      maxLogBytes: maxLogBytesValue as int? ?? defaultJobsMaxLogBytes,
     );
   }
 
   String toYaml() =>
       'jobs:\n'
       '  staleHours: $staleHours\n'
-      '  logRetentionDays: $logRetentionDays\n';
+      '  logRetentionDays: $logRetentionDays\n'
+      '  maxLogBytes: $maxLogBytes\n';
 }
 
 /// Periodic waiting-heartbeat pings while waiters exist (issue #450).

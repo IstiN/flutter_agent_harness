@@ -2,9 +2,29 @@ import 'llm_config_env.dart' if (dart.library.html) 'llm_config_env_stub.dart';
 
 /// Configuration values for LLM providers.
 ///
-/// Reads from environment variables, a project-root `.env` file, and optional
-/// explicit overrides. Override values take precedence, then environment
-/// variables, then `.env`, then defaults.
+/// Each value resolves in order: the matching explicit argument of
+/// [LlmConfig.fromEnvironment], then the `{PROVIDER}_…` environment variable,
+/// then the same name in a project-root `.env` file, then the built-in
+/// default. `PROVIDER` is `OPENAI` (the default provider), `OPENROUTER`, or
+/// `OLLAMA`; the variables are `{PROVIDER}_API_KEY`, `{PROVIDER}_MODEL`,
+/// `{PROVIDER}_BASE_PATH`, `{PROVIDER}_BASE_URL`, `{PROVIDER}_MAX_TOKENS`,
+/// `{PROVIDER}_CONTEXT_WINDOW`, `{PROVIDER}_TEMPERATURE`, and
+/// `{PROVIDER}_MAX_TOKENS_PARAM_NAME`. `{PROVIDER}_BASE_PATH` wins over
+/// `{PROVIDER}_BASE_URL` when both are set.
+///
+/// For the OpenAI-compatible providers (`openai`, `openrouter`, `ollama`) a
+/// base URL — an explicit `baseUrl` argument or a `{PROVIDER}_BASE_PATH` /
+/// `{PROVIDER}_BASE_URL` value — may be a bare origin
+/// (`http://127.0.0.1:8931`) or a versioned base
+/// (`http://127.0.0.1:8931/v1`); it is normalized to the full
+/// chat-completions endpoint the providers POST to
+/// (`…/v1/chat/completions`), so a local proxy can be pointed at with its
+/// origin alone — a superset of the `OPENAI_BASE_URL` versioned-base
+/// convention in the OpenAI SDKs. Anything else passes through verbatim: a
+/// full endpoint, a custom gateway path, a URL carrying a query string. An
+/// empty value is left empty (the provider factory then applies its
+/// per-provider default endpoint), and the `copilot` provider speaks its own
+/// dialect — its base URL is an API origin and is never rewritten.
 class LlmConfig {
   final String providerName;
   final String apiKey;
@@ -53,9 +73,11 @@ class LlmConfig {
     int? maxTokens,
     double? temperature,
     String? maxTokensParamName,
+    Map<String, String>? environmentOverride,
+    Map<String, String>? dotEnvOverride,
   }) {
-    final env = systemEnvironment;
-    final dotEnv = loadDotEnvValues();
+    final env = environmentOverride ?? systemEnvironment;
+    final dotEnv = dotEnvOverride ?? loadDotEnvValues();
     final resolvedProvider = provider.toLowerCase();
 
     String providerPrefix(String key) {
@@ -95,15 +117,32 @@ class LlmConfig {
       }
     }
 
+    // For the OpenAI-compatible dialects a bare origin or versioned base is
+    // an alias for the full endpoint; anything else — a full endpoint, a
+    // custom gateway path, a URL with a query string — passes through
+    // verbatim. copilot's base is an API origin in its own dialect and is
+    // never rewritten.
+    String fullEndpoint(String url) {
+      final uri = Uri.tryParse(url);
+      if (uri == null || uri.hasQuery || uri.hasFragment) return url;
+      final base = url.replaceAll(RegExp(r'/+$'), '');
+      if (base.endsWith('/chat/completions')) return base;
+      if (base.endsWith('/v1')) return '$base/chat/completions';
+      if (uri.path.isEmpty || uri.path == '/') {
+        return '$base/v1/chat/completions';
+      }
+      return url;
+    }
+
     var resolvedBaseUrl =
         baseUrl ??
         envKey('BASE_PATH') ??
         envKey('BASE_URL') ??
         defaultBaseUrl();
-    if (resolvedProvider == 'ollama' &&
-        !resolvedBaseUrl.endsWith('/v1/chat/completions')) {
-      resolvedBaseUrl =
-          '${resolvedBaseUrl.replaceAll(RegExp(r'/+$'), '')}/v1/chat/completions';
+    // Empty is left empty: the provider factory maps it to the provider's
+    // default endpoint.
+    if (resolvedProvider != 'copilot' && resolvedBaseUrl.isNotEmpty) {
+      resolvedBaseUrl = fullEndpoint(resolvedBaseUrl);
     }
 
     return LlmConfig(
@@ -137,6 +176,7 @@ class LlmConfig {
     String? accountType,
     String? entryName,
   }) {
+    // crap:ignore: hand-rolled copyWith boilerplate (the idiomatic Dart shape every immutable config type here shares); codegen is the real fix — gh-1106.
     return LlmConfig(
       providerName: providerName ?? this.providerName,
       apiKey: apiKey ?? this.apiKey,

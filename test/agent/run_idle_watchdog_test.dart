@@ -207,5 +207,223 @@ void main() {
       await agent.waitForIdle();
       expect(fires, 0);
     });
+
+    test(
+      'issue #1126: a watchdog fire resumes through the retry wrapper and '
+      'the tool phase runs on the re-armed run token',
+      () async {
+        var fires = 0;
+        var innerCalls = 0;
+        final contexts = <Context>[];
+        final executorTokens = <CancelToken?>[];
+        final agent = Agent(
+          model: _model,
+          tools: [_tool('bash')],
+          // The production shape: the provider function wrapped by the
+          // transient-retry wrapper (provider_catalog does the same).
+          streamFunction: transientRetryStreamFunction((
+            model,
+            context, {cancelToken}) {
+            innerCalls++;
+            contexts.add(context);
+            final stream = AssistantMessageEventStream();
+            if (innerCalls == 1) {
+              // Attempt 1: content streams, then the run goes silent past
+              // the watchdog. The fire cancels the run token; the fake
+              // mirrors the real adapters and ends with the abort.
+              final empty = _assistant();
+              final partial = _assistant(
+                content: [const TextContent(text: 'watchdog cut')],
+              );
+              stream
+                ..push(StartEvent(partial: empty))
+                ..push(TextStartEvent(contentIndex: 0, partial: empty))
+                ..push(
+                  TextDeltaEvent(
+                    contentIndex: 0,
+                    delta: 'watchdog cut',
+                    partial: partial,
+                  ),
+                )
+                ..push(
+                  TextEndEvent(
+                    contentIndex: 0,
+                    content: 'watchdog cut',
+                    partial: partial,
+                  ),
+                );
+              unawaited(
+                cancelToken!.onCancel.then((_) {
+                  stream
+                    ..push(
+                      ErrorEvent(
+                        reason: StopReason.aborted,
+                        error: _assistant(
+                          content: [
+                            const TextContent(text: 'watchdog cut'),
+                          ],
+                          stopReason: StopReason.aborted,
+                          errorMessage: 'Request was aborted',
+                        ),
+                      ),
+                    )
+                    ..end();
+                }),
+              );
+            } else if (innerCalls == 2) {
+              for (final event in _toolTurn([
+                ToolCall(id: 'c1', name: 'bash', arguments: const {}),
+              ])) {
+                stream.push(event);
+              }
+              stream.end();
+            } else {
+              for (final event in _textTurn('done')) {
+                stream.push(event);
+              }
+              stream.end();
+            }
+            return stream;
+          }),
+          toolExecutor: (call, cancelToken, _) async {
+            executorTokens.add(cancelToken);
+            return ToolExecutionResult.text('ok');
+          },
+          runIdleTimeout: const Duration(milliseconds: 100),
+          onRunIdleTimeout: (_) => fires++,
+        );
+        await agent.prompt('go');
+        await agent.waitForIdle();
+
+        expect(fires, 1);
+        // The wrapper resumed: the tail request carries the anchor (prefix
+        // text only — no dangling tool call for strict providers).
+        expect(innerCalls, greaterThanOrEqualTo(2));
+        final anchor = contexts[1].messages.last as AssistantMessage;
+        expect(
+          anchor.content.whereType<TextContent>().map((b) => b.text),
+          ['watchdog cut'],
+        );
+        expect(anchor.content.whereType<ToolCall>(), isEmpty);
+        // The tool phase ran on the SAME run token, re-armed in place by
+        // the resume — `throwIfCancelled` in real tools must pass.
+        expect(executorTokens, hasLength(1));
+        expect(executorTokens.single!.isCancelled, isFalse);
+        // The run completed: the resumed tool call executed, then the text
+        // turn ended the loop cleanly (not aborted).
+        final last = agent.state.messages.last as AssistantMessage;
+        expect(last.stopReason, StopReason.stop);
+      },
+    );
+
+    test(
+      'issue #1132 r2: a completed dead tool call is dropped on resume — '
+      'the regenerated call is the only one the tool phase executes',
+      () async {
+        var fires = 0;
+        var innerCalls = 0;
+        var executorCalls = 0;
+        final agent = Agent(
+          model: _model,
+          tools: [_tool('sed')],
+          streamFunction: transientRetryStreamFunction((
+            model,
+            context, {cancelToken}) {
+          innerCalls++;
+          final stream = AssistantMessageEventStream();
+          if (innerCalls == 1) {
+            // Attempt 1: a text block AND a completed tool call stream,
+            // then the run goes silent past the watchdog — the tool phase
+            // never runs for this attempt (the message never finished).
+            final empty = _assistant();
+            const call = ToolCall(
+              id: 'dead-1',
+              name: 'sed',
+              arguments: {'i': 'orig'},
+            );
+            final withCall = _assistant(
+              content: [const TextContent(text: 'working'), call],
+            );
+            stream
+              ..push(StartEvent(partial: empty))
+              ..push(TextStartEvent(contentIndex: 0, partial: empty))
+              ..push(
+                TextEndEvent(
+                  contentIndex: 0,
+                  content: 'working',
+                  partial: _assistant(
+                    content: [const TextContent(text: 'working')],
+                  ),
+                ),
+              )
+              ..push(ToolCallStartEvent(contentIndex: 1, partial: empty))
+              ..push(
+                ToolCallEndEvent(
+                  contentIndex: 1,
+                  toolCall: call,
+                  partial: withCall,
+                ),
+              );
+            unawaited(
+              cancelToken!.onCancel.then((_) {
+                stream
+                  ..push(
+                    ErrorEvent(
+                      reason: StopReason.aborted,
+                      error: _assistant(
+                        content: [
+                          const TextContent(text: 'working'),
+                          call,
+                        ],
+                        stopReason: StopReason.aborted,
+                        errorMessage: 'Request was aborted',
+                      ),
+                    ),
+                  )
+                  ..end();
+              }),
+            );
+          } else if (innerCalls == 2) {
+            // The tail regenerates the same action under a fresh id.
+            for (final event in _toolTurn([
+              ToolCall(id: 'live-2', name: 'sed', arguments: {'i': 'new'}),
+            ])) {
+              stream.push(event);
+            }
+            stream.end();
+          } else {
+            for (final event in _textTurn('done')) {
+              stream.push(event);
+            }
+            stream.end();
+          }
+          return stream;
+        }),
+          toolExecutor: (call, cancelToken, _) async {
+            executorCalls++;
+            expect(cancelToken!.isCancelled, isFalse);
+            return ToolExecutionResult.text('ok');
+          },
+          runIdleTimeout: const Duration(milliseconds: 100),
+          onRunIdleTimeout: (_) => fires++,
+        );
+        await agent.prompt('go');
+        await agent.waitForIdle();
+
+        expect(fires, 1);
+        // The action ran EXACTLY ONCE: the dead call (id dead-1) never
+        // reached any tool phase — neither live (its attempt aborted) nor
+        // as a passenger in the resumed transcript next to its twin.
+        expect(executorCalls, 1);
+        final calls = agent.state.messages
+            .whereType<AssistantMessage>()
+            .expand((m) => m.content.whereType<ToolCall>())
+            .toList();
+        expect(calls, hasLength(1));
+        expect(calls.single.id, 'live-2');
+        final last = agent.state.messages.last as AssistantMessage;
+        expect(last.stopReason, StopReason.stop);
+      },
+    );
   });
 }

@@ -1,0 +1,1 @@
+{"kind":"error","protocolVersion":1,"frame":{"v":1,"kind":"error","code":"already_attached","message":"another client is attached to this session; retry after it disconnects"}}

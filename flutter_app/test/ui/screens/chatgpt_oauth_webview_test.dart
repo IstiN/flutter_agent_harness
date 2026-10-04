@@ -10,6 +10,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 
 import 'package:fa/ui/screens/chatgpt_oauth_webview.dart';
+import 'package:fa/ui/screens/oauth_webview_scaffold.dart';
 
 import '../../fake_webview_platform.dart';
 
@@ -375,6 +376,17 @@ void main() {
         ),
       );
       await tester.pump();
+    });
+  });
+
+  group('the no-passkey notice (issue #861 AC2)', () {
+    testWidgets('visible from the first build — before the page renders', (
+      tester,
+    ) async {
+      await pumpPage(tester);
+      // No onPageFinished has fired: the page has not rendered, yet the
+      // degradation is already stated.
+      expect(find.text(oauthWebViewPasskeyNotice), findsOneWidget);
     });
   });
 }

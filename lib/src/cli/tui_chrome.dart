@@ -25,6 +25,7 @@
 library;
 
 import 'package:dart_tui/src/bubbles/style.dart' show Style;
+import '../types.dart' show ContentBlock, TextContent;
 import 'ansi_markdown.dart' show AnsiMarkdown;
 import 'tui_text_width.dart';
 import 'tui_theme.dart';
@@ -235,6 +236,51 @@ List<String> tuiToolCard(
       (line) => paintRow(line),
     ),
   ];
+}
+
+/// A failed result's first text line — the news the error card (and the
+/// legacy error row) leads with, kept bright (#366).
+String failureFirstLine(List<ContentBlock> content) => content
+    .whereType<TextContent>()
+    .map((block) => block.text)
+    .join()
+    .split('\n')
+    .first;
+
+/// The settled tool end-row BOTH edges paint (issue #807 live, #916 replay
+/// parity): the phase-tinted band card for [toolName] with [successDetail]
+/// as the description — or, on error, [failureFirstLine] of
+/// [resultContent] (the failure text is the news). [meta] carries the
+/// trailing dim fragments: the live elapsed cell (`0s`) or the replay's
+/// honest `—` (the one permitted live/replay difference, issue #446
+/// contract point 2). Empty fragments drop (the live path passes its
+/// unpainted elapsed verbatim).
+///
+/// [interrupted] is the replay-only state — the call's result never landed
+/// (crash mid-turn): error phase over the plain args preview, never a bare
+/// `[name]` marker.
+///
+/// ONE source for live (`_onToolExecutionEnd`) and replay
+/// ([replayToolRow]) — the parity drift class that was #916 is closed by
+/// construction, not by test-mirrored hope.
+List<String> settledToolCardRows({
+  required String toolName,
+  required String successDetail,
+  required bool isError,
+  required int width,
+  List<ContentBlock> resultContent = const [],
+  List<String> meta = const [],
+  bool interrupted = false,
+}) {
+  return tuiToolCard(
+    ToolCardSegments(
+      title: toolName,
+      description: isError ? failureFirstLine(resultContent) : successDetail,
+      meta: [for (final m in meta) if (m.trim().isNotEmpty) m],
+    ),
+    isError || interrupted ? TuiCardPhase.error : TuiCardPhase.success,
+    width,
+  );
 }
 
 /// Collapses [lines] to at most [maxLines] rows, appending omp's

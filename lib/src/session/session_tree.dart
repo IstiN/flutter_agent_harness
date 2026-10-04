@@ -10,6 +10,7 @@
 library;
 
 import '../compaction/structured/projection.dart';
+import '../compaction/summary_sanitizer.dart';
 import '../context.dart';
 import '../exceptions.dart';
 import '../types.dart';
@@ -37,6 +38,19 @@ const branchSummaryPrefix =
 /// `BRANCH_SUMMARY_SUFFIX`.
 const branchSummarySuffix = '\n</summary>';
 
+/// The model binding a session's active branch was recorded with: the
+/// provider kind and model id, plus — when the leaf record was a
+/// gh-1000 `model_change` — the serving endpoint and the saved
+/// custom-provider ENTRY NAME that pinned the key. Public so consumers
+/// of [SessionContext.model] (the CLI restore, the Flutter app) share
+/// one shape instead of re-spelling the record type.
+typedef SessionModelPin = ({
+  String provider,
+  String modelId,
+  String? baseUrl,
+  String? customProvider,
+});
+
 /// The model-derived state of a session along the active branch.
 ///
 /// Ported from pi's `SessionContext`.
@@ -56,8 +70,11 @@ final class SessionContext {
   final String thinkingLevel;
 
   /// The model in effect at the leaf, from the last `model_change` record
-  /// or assistant message.
-  final ({String provider, String modelId})? model;
+  /// or assistant message. [baseUrl]/[customProvider] carry the serving
+  /// endpoint and saved custom-provider entry when the last record was a
+  /// gh-1000 model_change (a restore re-resolves onto that entry);
+  /// assistant-message-derived models carry neither.
+  final SessionModelPin? model;
 
   /// The active tool names in effect at the leaf, if ever set.
   final List<String>? activeToolNames;
@@ -269,10 +286,15 @@ final class Session {
     );
   }
 
-  /// Appends a model change. Returns the new record id.
+  /// Appends a model change. Returns the new record id. [baseUrl] and
+  /// [customProvider] pin the serving endpoint and the saved custom
+  /// provider entry (gh-1000) so a restore re-resolves onto the same
+  /// provider+key binding; leave both null for catalog-default switches.
   Future<String> appendModelChange({
     required String provider,
     required String modelId,
+    String? baseUrl,
+    String? customProvider,
   }) {
     return _append(
       (id, parentId) => ModelChangeRecord(
@@ -281,6 +303,8 @@ final class Session {
         timestamp: DateTime.now(),
         provider: provider,
         modelId: modelId,
+        baseUrl: baseUrl,
+        customProvider: customProvider,
       ),
     );
   }
@@ -511,21 +535,31 @@ final class Session {
 
   ({
     String thinkingLevel,
-    ({String provider, String modelId})? model,
+    SessionModelPin? model,
     List<String>? activeToolNames,
   })
   _deriveState(List<SessionRecord> path) {
     var thinkingLevel = 'off';
-    ({String provider, String modelId})? model;
+    SessionModelPin? model;
     List<String>? activeToolNames;
     for (final entry in path) {
       switch (entry) {
         case ThinkingLevelChangeRecord record:
           thinkingLevel = record.thinkingLevel;
         case ModelChangeRecord record:
-          model = (provider: record.provider, modelId: record.modelId);
+          model = (
+            provider: record.provider,
+            modelId: record.modelId,
+            baseUrl: record.baseUrl,
+            customProvider: record.customProvider,
+          );
         case MessageRecord(message: AssistantMessage record):
-          model = (provider: record.provider, modelId: record.model);
+          model = (
+            provider: record.provider,
+            modelId: record.model,
+            baseUrl: null,
+            customProvider: null,
+          );
         case ActiveToolsChangeRecord record:
           activeToolNames = [...record.activeToolNames];
         default:
@@ -584,7 +618,9 @@ final class Session {
       ],
       CompactionRecord(:final summary, :final timestamp) => [
         UserMessage.text(
-          '$compactionSummaryPrefix$summary$compactionSummarySuffix'
+          '$compactionSummaryPrefix'
+          '${sanitizeSummary(summary).text}'
+          '$compactionSummarySuffix'
           '${_classicHiddenIndex(classicHidden, seqs)}',
           timestamp: timestamp,
         ),
@@ -594,7 +630,9 @@ final class Session {
             ? const []
             : [
                 UserMessage.text(
-                  '$branchSummaryPrefix$summary$branchSummarySuffix',
+                  '$branchSummaryPrefix'
+                  '${sanitizeSummary(summary).text}'
+                  '$branchSummarySuffix',
                   timestamp: timestamp,
                 ),
               ],

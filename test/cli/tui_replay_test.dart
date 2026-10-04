@@ -4,7 +4,7 @@ import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/system_notice_render.dart';
 import 'package:flutter_agent_harness/src/cli/tool_rows.dart';
 import 'package:flutter_agent_harness/src/cli/tui_chrome.dart'
-    show tuiChromeEnabled;
+    show settledToolCardRows, tuiChromeEnabled;
 import 'package:flutter_agent_harness/src/cli/tui_replay.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/context.dart';
@@ -38,9 +38,10 @@ void main() {
     timestamp: DateTime.utc(2026),
   );
 
-  /// The live end row for [call] — the exact builder the streaming path
-  /// paints in `_onToolExecutionEnd`, minus the live duration (replay shows
-  /// the honest `—`). The replay row must equal this byte for byte.
+  /// The live end row for [call] — the legacy `_onToolExecutionEnd` paint
+  /// (the [tuiChromeEnabled] kill-switch path and line mode), minus the live
+  /// duration (replay shows the honest `—`). The replay row must equal this
+  /// byte for byte in those modes.
   String liveEndRow(
     ToolCall call,
     ToolResultMessage? result, {
@@ -71,15 +72,37 @@ void main() {
     ).style(glyph: glyphPaint, label: tuiAccent2, dim: detailPaint);
   }
 
-  group('replay tool rows (issue #446 AC2)', () {
+  /// The live SETTLED CARD for [call] — the SAME [settledToolCardRows]
+  /// builder `_onToolExecutionEnd` and [replayToolRow] render through
+  /// (issue #807 chrome, #916 parity by construction), minus the live
+  /// duration (the meta zone carries the honest `—`). The replayed TUI
+  /// tool row must equal this byte for byte.
+  String liveEndCard(
+    ToolCall call,
+    ToolResultMessage? result, {
+    int width = 80,
+  }) {
+    final hasError = result != null && result.isError;
+    return settledToolCardRows(
+      toolName: call.name,
+      successDetail: toolRowDetail(call.name, call.arguments),
+      isError: hasError,
+      width: width,
+      resultContent: result?.content ?? const [],
+      meta: const ['—'],
+      interrupted: result == null,
+    ).join('\n');
+  }
+
+  group('replay tool rows (issue #446 AC2, #916 chrome parity)', () {
     final call = ToolCall(
       id: 'c1',
       name: 'bash',
       arguments: {'command': 'git status --short'},
     );
 
-    test('a persisted call with its result renders through the live tool-row '
-        'builder — never an [name] marker', () {
+    test('a persisted call with its result renders the live SETTLED CARD '
+        'grammar (issue #916) — never an [name] marker', () {
       final result = okResult('c1', 'M lib/a.dart\n');
       final lines = replayLinesTui(
         assistant([call]),
@@ -87,12 +110,51 @@ void main() {
         dim: dim,
         results: {'c1': result},
       );
-      expect(lines, [liveEndRow(call, result)]);
+      // Byte-parity with the live `_onToolExecutionEnd` card paint: the
+      // replayed transcript shows what the user saw live, not the pre-#807
+      // row grammar.
+      expect(lines, [liveEndCard(call, result)]);
       expect(lines.join(), isNot(contains('[bash]')));
-      expect(lines.single, contains('✓'));
+      expect(lines.single, contains('✔'));
       expect(lines.single, contains('bash'));
-      // Honest lossy bit: the settled replay row shows no live duration.
+      // Honest lossy bit: the meta zone shows no live duration.
       expect(lines.single, contains('—'));
+      // The legacy row grammar never leaks through chrome mode.
+      expect(lines.join(), isNot(contains('✓ bash')));
+    });
+
+    test('chrome kill switch keeps the legacy painted row, byte-pinned — '
+        'success, error, and interrupted', () {
+      addTearDown(() => tuiChromeEnabled = true);
+      tuiChromeEnabled = false;
+      final result = okResult('c1', 'M lib/a.dart\n');
+      final error = ToolResultMessage(
+        toolCallId: 'c1',
+        toolName: 'bash',
+        content: [TextContent(text: 'fatal: not a repo\nstack')],
+        isError: true,
+        timestamp: DateTime.utc(2026),
+      );
+      final success = replayLinesTui(
+        assistant([call]),
+        width: 80,
+        dim: dim,
+        results: {'c1': result},
+      );
+      expect(success, [liveEndRow(call, result)]);
+      expect(success.single, contains('✓'));
+      final failed = replayLinesTui(
+        assistant([call]),
+        width: 80,
+        dim: dim,
+        results: {'c1': error},
+      );
+      expect(failed, [liveEndRow(call, error)]);
+      expect(failed.single, contains('✗'));
+      expect(failed.single, contains('fatal: not a repo'));
+      final interrupted = replayLinesTui(assistant([call]), width: 80, dim: dim);
+      expect(interrupted, [liveEndRow(call, null)]);
+      expect(interrupted.single, contains('✗'));
     });
 
     test('the args preview is the human detail (command text), not JSON', () {
@@ -106,7 +168,7 @@ void main() {
       expect(lines.single, isNot(contains('{')));
     });
 
-    test('an error result renders the ✗ row with the failure first line', () {
+    test('an error result renders the ✘ card with the failure first line', () {
       final result = ToolResultMessage(
         toolCallId: 'c1',
         toolName: 'bash',
@@ -120,15 +182,15 @@ void main() {
         dim: dim,
         results: {'c1': result},
       );
-      expect(lines, [liveEndRow(call, result)]);
-      expect(lines.single, contains('✗'));
+      expect(lines, [liveEndCard(call, result)]);
+      expect(lines.single, contains('✘'));
       expect(lines.single, contains('fatal: not a repo'));
     });
 
     test('E1: a call missing its result renders interrupted — never bare', () {
       final lines = replayLinesTui(assistant([call]), width: 80, dim: dim);
-      expect(lines, [liveEndRow(call, null)]);
-      expect(lines.single, contains('✗'));
+      expect(lines, [liveEndCard(call, null)]);
+      expect(lines.single, contains('✘'));
       expect(lines.join(), isNot(contains('[bash]')));
     });
 
@@ -375,7 +437,7 @@ void main() {
         dim: dim,
         results: {'c1': okResult('c1', 'ok')},
       );
-      expect(lines, [liveEndRow(call, okResult('c1', 'ok'))]);
+      expect(lines, [liveEndCard(call, okResult('c1', 'ok'))]);
     });
 
     test('tool results never render standalone', () {
@@ -570,8 +632,8 @@ void main() {
         for (final entry in entries) ...[for (final line in entry) strip(line)],
       ];
       // The live builder produces the very same rows for the same records.
-      expect(transcript, contains(strip(liveEndRow(call, results['g1']!))));
-      expect(transcript, contains(strip(liveEndRow(read, results['g2']!))));
+      expect(transcript, contains(strip(liveEndCard(call, results['g1']!))));
+      expect(transcript, contains(strip(liveEndCard(read, results['g2']!))));
       expect(
         transcript,
         containsAll(renderSystemNoticeLines(notice).map(strip)),
@@ -588,4 +650,6 @@ void main() {
       expect(rendered, file.readAsStringSync());
     });
   });
+
+
 }

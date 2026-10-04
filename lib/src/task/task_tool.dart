@@ -213,6 +213,7 @@ final class TaskToolConfig {
     this.childSessionOpener,
     this.a2aManager,
     this.compactionEngine,
+    this.misuseBreaker = true,
   }) : semaphore = Semaphore(normalizeConcurrencyLimit(maxConcurrent)),
        outputs = outputs ?? AgentOutputStore(),
        jobManager = jobManager ?? TaskJobManager();
@@ -285,6 +286,10 @@ final class TaskToolConfig {
   /// host's config choice rides to children — null resolves to structured.
   final CompactionEngine? compactionEngine;
 
+  /// The tool-misuse circuit breaker switch (issue #862, default true):
+  /// every spawned child agent gets a breaker wired into its loop.
+  final bool misuseBreaker;
+
   /// The session-shared executor (issue #222): the `task` tool runs
   /// through it, and hosts pass [TaskExecutor.resumeChild] to
   /// `subagentMonitoringTools` so `task_resume`/`task_send` continue
@@ -303,6 +308,7 @@ final class TaskToolConfig {
     childSessionFactory: childSessionFactory,
     childSessionOpener: childSessionOpener,
     compactionEngine: compactionEngine,
+    misuseBreaker: misuseBreaker,
   );
 }
 
@@ -579,7 +585,7 @@ Future<ToolExecutionResult> _runBlocking(
   final buffer = StringBuffer(
     'Moved ${moved.length} still-running '
     '${moved.length == 1 ? 'agent' : 'agents'} to background jobs (they were '
-    'NOT aborted) because the user sent a message, which follows next:\n',
+    'NOT aborted) because a steering message arrived, which follows next:\n',
   );
   for (final id in moved) {
     buffer.writeln('- `$id` (result arrives as agent://$id)');
