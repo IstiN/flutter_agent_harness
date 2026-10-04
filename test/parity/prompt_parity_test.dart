@@ -44,6 +44,12 @@ void main() {
         'lib/src/cli/provider_commands.dart',
         'lib/src/cli/agent_commands.dart',
         'lib/src/cli/settings_flow.dart',
+        // Issue #1079 slice 2: the CLI constructs its stack through
+        // wireAgentCore — the interactive tool factories register there
+        // (host_agent_wiring.dart), not in the shell anymore. The parity
+        // guard follows the wiring, so the builder file is CLI source
+        // for this test's purpose.
+        'lib/src/hosts/host_agent_wiring.dart',
       ]) {
         try {
           cliSource += await File(part).readAsString();
