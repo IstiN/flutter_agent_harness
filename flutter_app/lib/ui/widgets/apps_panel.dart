@@ -2,6 +2,7 @@
 import 'dart:async';
 
 import 'package:fa/apps/app_icon.dart';
+import 'package:fa/apps/app_load_error.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/widgets_catalog_sheet.dart';
 import 'package:fa/apps/js_app_navigation.dart';
@@ -146,7 +147,11 @@ class _AppsPanelState extends State<AppsPanel> {
         .toList();
   }
 
-  void _openApp(JsAppInfo app) {
+  Future<void> _openApp(JsAppInfo app) async {
+    // Broken-app guard — the panel is the surface #866 is named after; a
+    // broken app shows the copyable dialog, never a silent launch.
+    if (await guardBrokenApp(context, app)) return;
+    if (!mounted) return;
     final manager = widget.manager;
     // The post-onboarding empty-manager home always has a placeholder
     // session (see _buildHomeWithEmptyManager), so an active service
@@ -221,7 +226,7 @@ class _AppsPanelState extends State<AppsPanel> {
       ],
     );
     if (selected == 'open') {
-      _openApp(app);
+      unawaited(_openApp(app));
       return;
     }
     if (selected == 'publish') {

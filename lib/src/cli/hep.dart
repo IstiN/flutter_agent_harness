@@ -34,6 +34,7 @@ import 'dart:convert';
 import '../agent/agent_loop.dart';
 import '../cancel_token.dart';
 import '../context.dart';
+import '../redact/redaction_pipeline.dart';
 import '../types.dart';
 import 'text_format.dart';
 
@@ -97,7 +98,36 @@ String hepToolDeltaFrame({
   required int turnId,
   required String id,
   required String update,
-}) => jsonEncode({'type': 'tool_delta', 'turn_id': turnId, 'id': id, 'update': update});
+}) => jsonEncode({
+  'type': 'tool_delta',
+  'turn_id': turnId,
+  'id': id,
+  'update': update,
+});
+
+/// Builds `tool_liveness` (gh-1054): a liveness heartbeat for a
+/// long-outstanding tool call (`action: "heartbeat"`) or a stuck-call
+/// follow-up transition (`cancel_retry`/`background_convert`/`escalate`/
+/// `advisory`). Additive v1 frame — supervisors read it to distinguish
+/// alive-busy from dead without waiting out their own watchdogs.
+String hepToolLivenessFrame({
+  required int turnId,
+  required String id,
+  required String name,
+  required String action,
+  required int elapsedMs,
+  int? outputBytes,
+  String detail = '',
+}) => jsonEncode({
+  'type': 'tool_liveness',
+  'turn_id': turnId,
+  'id': id,
+  'name': name,
+  'action': action,
+  'elapsed_ms': elapsedMs,
+  'output_bytes': ?outputBytes,
+  if (detail.isNotEmpty) 'detail': detail,
+});
 
 /// Builds `turn_done` for [turnId].
 String hepTurnDoneFrame({
@@ -140,8 +170,11 @@ String hepCompactionStartFrame(int turnId) =>
     jsonEncode({'type': 'compaction_start', 'turn_id': turnId});
 
 /// Builds `compaction_end` for [turnId].
-String hepCompactionEndFrame(int turnId, int tokensFreed) =>
-    jsonEncode({'type': 'compaction_end', 'turn_id': turnId, 'tokens_freed': tokensFreed});
+String hepCompactionEndFrame(int turnId, int tokensFreed) => jsonEncode({
+  'type': 'compaction_end',
+  'turn_id': turnId,
+  'tokens_freed': tokensFreed,
+});
 
 /// Renders tool-call arguments for a `tool_start` frame.
 String hepArgsSummary(Map<String, dynamic> args, HepToolArgs mode) {
@@ -173,8 +206,9 @@ Map<String, Object> hepToolResultEntry(ToolResultMessage result) {
   };
 }
 
-String _bound(String text, int cap) =>
-    text.length <= cap ? text : '${text.substring(0, cap)}…(+${text.length - cap} chars)';
+String _bound(String text, int cap) => text.length <= cap
+    ? text
+    : '${text.substring(0, cap)}…(+${text.length - cap} chars)';
 
 /// Streams [AgentEvent]s as HEP v1 JSONL frames — one [emit] per line.
 ///
@@ -183,10 +217,15 @@ String _bound(String text, int cap) =>
 /// host's CliIO decorator): every [emit] must land on its own line.
 class HepWriter {
   /// Creates a writer emitting to [emit] (hosts pass a stdout line sink).
+  /// [redactionPipeline] masks the stuck events' captured-output detail —
+  /// HEP frames land in supervisor/CI logs, the same surface the session
+  /// record's redaction targets (gh-1054 review round 2). Optional:
+  /// without it details pass through (test hosts).
   HepWriter({
     required this._emit,
     required this.fahVersion,
     this.toolArgs = HepToolArgs.summary,
+    this.redactionPipeline,
   });
 
   final void Function(String line) _emit;
@@ -196,6 +235,9 @@ class HepWriter {
 
   /// Tool-argument verbosity for `tool_start` frames.
   final HepToolArgs toolArgs;
+
+  /// Masks secret-bearing event detail before it reaches the frames.
+  final RedactionPipeline? redactionPipeline;
 
   var _nextTurnId = 1;
   int? _openTurnId;
@@ -241,9 +283,7 @@ class HepWriter {
         _openTurnId ??= _nextTurnId++;
       case MessageStartEvent(:final message):
         if (message is AssistantMessage) {
-          _emit(
-            hepMessageStartFrame(turnId: _turnId(), role: 'assistant'),
-          );
+          _emit(hepMessageStartFrame(turnId: _turnId(), role: 'assistant'));
         }
       case MessageUpdateEvent(:final assistantMessageEvent):
         if (assistantMessageEvent is TextDeltaEvent) {
@@ -264,7 +304,11 @@ class HepWriter {
   /// The tool-execution streaming arms of [handleEvent].
   void _handleStreamEvent(AgentEvent event) {
     switch (event) {
-      case ToolExecutionStartEvent(:final toolCallId, :final toolName, :final args):
+      case ToolExecutionStartEvent(
+        :final toolCallId,
+        :final toolName,
+        :final args,
+      ):
         _emit(
           hepToolStartFrame(
             turnId: _turnId(),
@@ -273,19 +317,55 @@ class HepWriter {
             argsSummary: hepArgsSummary(args, toolArgs),
           ),
         );
-      case ToolExecutionUpdateEvent(
-        :final toolCallId,
-        :final partialResult,
-      ):
+      case ToolExecutionUpdateEvent(:final toolCallId, :final partialResult):
         final update = [
           for (final block in partialResult.content)
             if (block is TextContent) block.text,
         ].join('\n');
         if (update.isNotEmpty) {
           _emit(
-            hepToolDeltaFrame(turnId: _turnId(), id: toolCallId, update: update),
+            hepToolDeltaFrame(
+              turnId: _turnId(),
+              id: toolCallId,
+              update: update,
+            ),
           );
         }
+      case ToolCallHeartbeatEvent(
+        :final toolCallId,
+        :final toolName,
+        :final elapsed,
+        :final outputBytes,
+        :final attempt,
+      ):
+        _emit(
+          hepToolLivenessFrame(
+            turnId: _turnId(),
+            id: toolCallId,
+            name: toolName,
+            action: 'heartbeat',
+            elapsedMs: elapsed.inMilliseconds,
+            outputBytes: outputBytes,
+            detail: 'attempt $attempt',
+          ),
+        );
+      case ToolCallStuckEvent(
+        :final toolCallId,
+        :final toolName,
+        :final elapsed,
+        :final action,
+        :final detail,
+      ):
+        _emit(
+          hepToolLivenessFrame(
+            turnId: _turnId(),
+            id: toolCallId,
+            name: toolName,
+            action: action.label,
+            elapsedMs: elapsed.inMilliseconds,
+            detail: redactionPipeline?.redact(detail) ?? detail,
+          ),
+        );
       default:
         break;
     }
@@ -293,7 +373,10 @@ class HepWriter {
 
   int _turnId() => _openTurnId ??= _nextTurnId++;
 
-  void _emitTerminal(AssistantMessage message, List<ToolResultMessage> toolResults) {
+  void _emitTerminal(
+    AssistantMessage message,
+    List<ToolResultMessage> toolResults,
+  ) {
     final turnId = _turnId();
     switch (message.stopReason) {
       case StopReason.aborted:

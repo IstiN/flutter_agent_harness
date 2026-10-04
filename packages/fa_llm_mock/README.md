@@ -48,6 +48,10 @@ scenarios:
       - error:               # error simulation: HTTP status + JSON body
           status: 503
           message: "mock outage"
+  - match: "Existing tags:"  # background noise (memory auto-tagging):
+    sticky: true             # re-serve the LAST response forever instead
+    responses:               # of exhausting into HTTP 500
+      - text: ""
 ```
 
 ### Response kinds
@@ -66,6 +70,15 @@ substring of the last user message pops the front of its queue; no match
 pops the top-level `responses` queue; an empty queue (matched-but-exhausted
 or no fallback) answers HTTP 500 `script exhausted`, which provider
 adapters surface as an error turn (headless CLI exit code 1).
+
+Scenario key `sticky: true` opts that scenario out of exhaustion: once its
+queue runs dry, every further matching request re-serves the LAST response
+(a wildcard). Use it for background-noise traffic whose call count is
+schedule-dependent — memory auto-tag generation, session title/summary
+calls — so one extra call cannot trigger the 500 → retry-storm
+(`[net] retrying` with multi-second sleeps) that buries PTY assertions
+(gh-1171). The scripted conversation itself stays strict: a missing
+response still fails loudly.
 
 The parser is strict: unknown keys, unknown response kinds, and wrong
 value types throw `MockLlmConfigException` at startup — a typo in a test

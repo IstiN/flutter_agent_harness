@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
+import 'package:flutter_agent_harness/src/cli/paste_image.dart';
+
 import 'agent_cli_test_support.dart';
 
 /// A stream function that blocks one chosen call on a gate (copied from
@@ -70,16 +72,6 @@ List<AssistantMessageEvent> _abortedTurn() {
     StartEvent(partial: empty),
     DoneEvent(reason: StopReason.aborted, message: partial),
   ];
-}
-
-/// The text of a user message (string or content-block content).
-String _messageText(UserMessage message) {
-  final content = message.content;
-  if (content is String) return content;
-  return [
-    for (final block in content as List<ContentBlock>)
-      if (block is TextContent) block.text,
-  ].join();
 }
 
 /// Waits for the CLI to persist its session (boot complete).
@@ -181,9 +173,7 @@ void main() {
       // RESOLVED attachment marker — not the raw path, not a dropped line.
       await waitForIt(() => stream.calls >= 2);
       await waitForIt(() => !cli.isBusy);
-      final text = _messageText(
-        stream.contexts[1].messages.last as UserMessage,
-      );
+      final text = messageText(stream.contexts[1].messages.last as UserMessage);
       expect(text, contains('[attached file:'));
       expect(text, contains('summarize this please'));
       expect(
@@ -224,11 +214,137 @@ void main() {
       await waitForIt(() => !cli.isBusy);
       await waitForIt(() => stream.calls >= 2);
       await waitForIt(() => !cli.isBusy);
-      final text = _messageText(
-        stream.contexts[1].messages.last as UserMessage,
-      );
+      final text = messageText(stream.contexts[1].messages.last as UserMessage);
       expect(text, contains('[attached file:'));
       expect(text, contains('check this'));
+
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test(
+    'a path-led message typed mid-run steers verbatim — a folder or '
+    'nonexistent leading path is never refused nor bounced by the busy '
+    'guard (issue #1152)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final dir = await Directory.systemTemp.createTemp('fah_busy_dir_1152');
+      addTearDown(() => dir.delete(recursive: true));
+      final stream = _GatedStream([
+        textTurn('first answer'),
+        textTurn('steered answer'),
+      ], gateOnCall: 1);
+      final cli = buildCli(stream);
+      final run = cli.run();
+      await waitForSessions(env);
+
+      io.sendLine('start');
+      await waitForIt(() => stream.calls >= 1 && cli.isBusy);
+      final message = '${dir.path} найди в fa create goal скилл';
+      io.sendLine(message);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      stream.gate.complete();
+      await waitForIt(() => !cli.isBusy, reason: 'first run settles');
+
+      // The steered message becomes a follow-up run carrying the full
+      // sentence verbatim — a directory attaches nothing, refuses nothing.
+      await waitForIt(() => stream.calls >= 2);
+      await waitForIt(() => !cli.isBusy);
+      final text = messageText(stream.contexts[1].messages.last as UserMessage);
+      expect(text, contains(message));
+      final out = io.out.toString();
+      expect(out, isNot(contains('looks like a filesystem path')));
+      expect(
+        out,
+        isNot(contains('a run is already streaming')),
+        reason: 'the busy guard must not bounce path-led chat',
+      );
+
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test(
+    'a known slash command with args typed mid-run still dispatches — '
+    'not mistaken for path-led chat (issue #1152 strictness)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final stream = _GatedStream([textTurn('first answer')], gateOnCall: 1);
+      final cli = buildCli(stream);
+      final run = cli.run();
+      await waitForSessions(env);
+
+      io.sendLine('start');
+      await waitForIt(() => stream.calls >= 1 && cli.isBusy);
+      io.sendLine('/help exit');
+      await waitForIt(
+        () => io.out.toString().contains('/exit'),
+        reason: 'the slash command executes immediately, mid-run',
+      );
+      expect(cli.isBusy, isTrue, reason: 'the run keeps streaming');
+
+      // No steering side channel: a known command never becomes a
+      // follow-up run.
+      stream.gate.complete();
+      await waitForIt(() => !cli.isBusy);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(stream.calls, 1, reason: 'a known command must not steer');
+      expect(io.out.toString(), isNot(contains('a run is already streaming')));
+
+      io.sendLine('/exit');
+      await run;
+    },
+  );
+
+  test(
+    'a path-led TUI submit with chips mid-run steers the images too '
+    '(issue #1152 round-2)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final dir = await Directory.systemTemp.createTemp('fah_busy_chips_1152');
+      addTearDown(() => dir.delete(recursive: true));
+      const chip = TuiImageAttachment(
+        name: 'clipboard-1.png',
+        mimeType: 'image/png',
+        bytes: [0x89, 0x50, 0x4E, 0x47, 1, 2, 3],
+      );
+      final stream = _GatedStream([
+        textTurn('first answer'),
+        textTurn('steered answer'),
+      ], gateOnCall: 1);
+      final cli = buildCli(stream);
+      final run = cli.run();
+      await waitForSessions(env);
+
+      io.sendLine('start');
+      await waitForIt(() => stream.calls >= 1 && cli.isBusy);
+      // tuiSubmitForTest awaits _settled (the in-flight gated run) after
+      // handling the line — awaiting it here would deadlock against the
+      // gate below. Fire it, open the gate, THEN await it.
+      final submit = cli.tuiSubmitForTest('${dir.path} summarize this please', [
+        chip,
+      ]);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      stream.gate.complete();
+      await submit;
+      await waitForIt(() => !cli.isBusy, reason: 'first run settles');
+      await waitForIt(() => stream.calls >= 2);
+      await waitForIt(() => !cli.isBusy);
+
+      // The steered turn carries the image next to the path-led text.
+      final blocks =
+          (stream.contexts[1].messages.last as UserMessage).content
+              as List<ContentBlock>;
+      expect(
+        blocks.whereType<TextContent>().map((b) => b.text).join(' '),
+        contains('summarize this please'),
+      );
+      expect(
+        blocks.whereType<ImageContent>().map((b) => b.mimeType),
+        contains('image/png'),
+      );
 
       io.sendLine('/exit');
       await run;
@@ -255,9 +371,7 @@ void main() {
       await waitForIt(() => !cli.isBusy);
       await waitForIt(() => stream.calls >= 2);
       await waitForIt(() => !cli.isBusy);
-      final text = _messageText(
-        stream.contexts[1].messages.last as UserMessage,
-      );
+      final text = messageText(stream.contexts[1].messages.last as UserMessage);
       expect(text, contains('late user question'));
 
       io.sendLine('/exit');
@@ -290,7 +404,7 @@ void main() {
       await waitForIt(() => stream.calls >= 2);
       final delivered = [
         for (final message in stream.contexts[1].messages)
-          if (message is UserMessage) _messageText(message),
+          if (message is UserMessage) messageText(message),
       ].join('\n');
       expect(delivered, contains('<system-notice>'));
       expect(delivered, contains('echo bang-ran-now'));
@@ -324,7 +438,7 @@ void main() {
       await waitForIt(() => stream.calls >= 1);
       final delivered = [
         for (final message in stream.contexts[0].messages)
-          if (message is UserMessage) _messageText(message),
+          if (message is UserMessage) messageText(message),
       ].join('\n');
       expect(delivered, contains('echo idle-ran'));
       expect(delivered, contains('what happened?'));

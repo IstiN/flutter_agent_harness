@@ -57,19 +57,32 @@ void main() {
           timeout: const Duration(seconds: 20),
         );
         harness.sendEnter();
-        // The provider picker lists saved providers first.
+        // The provider picker lists saved providers first. The anchor is
+        // the picker ROW (`label + description`), not the bare name: the
+        // composer status row and the status band both render the ACTIVE
+        // provider label (`test-provider/test-model`) from boot, so a bare
+        // name gate fires before the picker opens and the next Enter is
+        // eaten by the still-open settings hub (#920 PTY legs).
         await harness.waitForText(
-          'test-provider',
+          'test-provider http://',
           timeout: const Duration(seconds: 20),
         );
         harness.sendEnter();
 
-        // Selecting the saved provider opens its Edit/Delete picker.
-        await harness.waitForText(
+        // Selecting the saved provider opens its Edit/Delete picker. The
+        // contract is the PAINTED screen — a raw-stream wait races frame
+        // painting on loaded runners (#550/#557 family), so anchor on the
+        // picker itself. gh-1049: wait for EACH asserted row and assert on
+        // the captured screen — a header-wait + fresh screenText read
+        // sampled the picker mid-render (rows land across frames).
+        var screen = await harness.waitForScreen(
           'Edit provider',
           timeout: const Duration(seconds: 20),
         );
-        final screen = harness.screenText;
+        screen = await harness.waitForScreen(
+          'Delete provider',
+          timeout: const Duration(seconds: 20),
+        );
         expect(screen, contains('Edit provider'));
         expect(screen, contains('Delete provider'));
 
@@ -98,8 +111,11 @@ void main() {
           timeout: const Duration(seconds: 20),
         );
         harness.sendEnter();
+        // Same picker-row anchor as above: the bare name already rides the
+        // composer status row / band from boot, so it cannot prove the
+        // picker is open.
         await harness.waitForText(
-          'test-provider',
+          'test-provider http://',
           timeout: const Duration(seconds: 20),
         );
         harness.sendEnter();

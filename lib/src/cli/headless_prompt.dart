@@ -117,7 +117,7 @@ String resolveInteractiveFileReference(
   String text, {
   InputPromptFileFactory fileOf = _defaultFileOf,
 }) {
-  final token = _leadingPathLikeToken(text);
+  final token = leadingPathLikeToken(text);
   if (token == null) return text;
   final file = fileOf(token);
   try {
@@ -148,7 +148,13 @@ String resolveInteractiveFileReference(
 /// The first whitespace-delimited token of [text] after leading blanks,
 /// or null when there is none or it lacks a path-like prefix (`/…`, `~/`,
 /// `./`, `../`) — plain sentences and bare words stay untouched.
-String? _leadingPathLikeToken(String text) {
+///
+/// Broad by design: any `/`-leading token qualifies (a root-level file
+/// like `/note.md` is a real paste). Route classification that must keep
+/// single-segment `/word` command-shaped (e.g. `/model gpt`) narrows the
+/// returned token itself — callers re-check the token for a second `/`
+/// and treat a hit as a command, not a path.
+String? leadingPathLikeToken(String text) {
   final trimmedStart = text.trimLeft();
   final match = RegExp(r'^\S+').firstMatch(trimmedStart);
   if (match == null) return null;

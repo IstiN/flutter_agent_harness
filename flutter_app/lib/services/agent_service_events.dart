@@ -63,6 +63,7 @@ extension AgentServiceEvents on AgentService {
   void _onAgentStart() {
     isStreaming = true;
     _currentAssistantMessage = null;
+    _inFlightToolRows.clear();
     _turnStartCount = 0;
     pendingSteerTexts.clear();
     dynamicMessages.onRunStart();
@@ -108,12 +109,15 @@ extension AgentServiceEvents on AgentService {
   /// events — the idle watchdog must not fire during them.
   void _onToolExecutionStart(String toolName, Map<String, dynamic> args) {
     _activeToolCalls++;
-    messages.add(
-      FahChatMessage(
-        role: 'system',
-        content: '[$toolName] ${_shortArgs(args)}',
-      ),
+    // The activity tile is an unpersisted live row: tracked so a mid-run
+    // view rebuild (jump-to-tail) can re-append it instead of dropping
+    // the in-flight tool from the transcript (review -Fl1).
+    final row = FahChatMessage(
+      role: 'system',
+      content: '[$toolName] ${_shortArgs(args)}',
     );
+    _inFlightToolRows.add((toolName: toolName, row: row));
+    messages.add(row);
     _pushLiveActivityStatus();
     _notify();
   }
@@ -125,6 +129,12 @@ extension AgentServiceEvents on AgentService {
   }) {
     _activeToolCalls--;
     _armIdleWatchdog();
+    // The activity tile landed (its result tile follows); stop tracking
+    // it as in-flight. First match = call order per tool name.
+    final inFlight = _inFlightToolRows.indexWhere(
+      (e) => e.toolName == toolName,
+    );
+    if (inFlight >= 0) _inFlightToolRows.removeAt(inFlight);
     if (AgentService._kMutatingToolNames.contains(toolName)) {
       // "Hook" for file-watching UI: the agent may have changed files.
       fsRevision.value++;
@@ -175,10 +185,12 @@ extension AgentServiceEvents on AgentService {
     // listener re-enters the loop's failure path, duplicates the
     // failure events, and escapes the run as an unhandled error).
     //
-    // Through the SAME `_persistChain` as `_persistSoon` — a direct
-    // call races the queued passes: both read `_persistedCount == 0`
-    // before either finishes, and every message is appended twice
-    // (duplicate JSONL records, duplicated transcripts on reload).
+    // `_persist()` is single-flight: the finalizer either runs the pass
+    // itself or joins the in-flight drain (which re-runs any state that
+    // landed mid-sweep). It resolves only when every persist-worthy
+    // change so far is on disk, so when this returns the transcript is
+    // fully written and the idle boundary (`waitForIdle`) can't overtake
+    // a pending append (issue #1102).
     try {
       await _persist();
     } on Object {

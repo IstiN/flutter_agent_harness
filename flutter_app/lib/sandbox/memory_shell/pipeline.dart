@@ -7,25 +7,37 @@ import 'package:fa/sandbox/shell_parser.dart';
 /// The file redirects of one pipeline stage.
 typedef StageRedirects = ({
   String? stdinFile,
+  String? stdinBody,
   String? stdoutFile,
   String? stderrFile,
   bool appendStdout,
   bool appendStderr,
 });
 
-/// Classifies a stage's redirects (pure): `<` stdin, `>`/`>>`/`&>` stdout,
-/// `2>`/`2>>` stderr. An fd of `-1` routes to stdout first, exactly as the
-/// original if-chain did.
+/// Classifies a stage's redirects (pure): `<` stdin, `<<`/`<<<` inline stdin
+/// body (gh-1086), `>`/`>>`/`&>` stdout, `2>`/`2>>` stderr. An fd of `-1`
+/// routes to stdout first, exactly as the original if-chain did. stdin
+/// follows POSIX last-wins: a later `< file` overrides an earlier heredoc
+/// and vice versa.
 StageRedirects parseStageRedirects(List<Redirect> redirects) {
   String? stdoutFile;
   String? stderrFile;
   var appendStdout = false;
   var appendStderr = false;
   String? stdinFile;
+  String? stdinBody;
 
   for (final redirect in redirects) {
     if (redirect.fd == 0 && redirect.kind == RedirectKind.read) {
       stdinFile = redirect.target;
+      stdinBody = null;
+    } else if (redirect.fd == 0 && redirect.kind == RedirectKind.heredoc) {
+      stdinBody = redirect.body ?? '';
+      stdinFile = null;
+    } else if (redirect.fd == 0 && redirect.kind == RedirectKind.hereString) {
+      // POSIX here-strings append a trailing newline after expansion.
+      stdinBody = '${redirect.target}\n';
+      stdinFile = null;
     } else if (redirect.fd == 1 || redirect.fd == -1) {
       stdoutFile = redirect.target;
       appendStdout = redirect.kind == RedirectKind.append;
@@ -36,6 +48,7 @@ StageRedirects parseStageRedirects(List<Redirect> redirects) {
   }
   return (
     stdinFile: stdinFile,
+    stdinBody: stdinBody,
     stdoutFile: stdoutFile,
     stderrFile: stderrFile,
     appendStdout: appendStdout,

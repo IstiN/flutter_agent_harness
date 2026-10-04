@@ -209,6 +209,7 @@ extension SettingsFlow on AgentCli {
             choice.modelId,
             token: token,
             tokenKeyName: keyName,
+            authHeader: entry.authHeader,
           );
           // Keep the entry's last-used model in sync (the flow bypasses
           // _switchModel, which normally records it).
@@ -2147,6 +2148,7 @@ extension SettingsFlow on AgentCli {
       case 'baseDelayMs':
       case 'maxBackoffMs':
       case 'maxWaitMs':
+      case 'maxWaitForLastEntryMs':
       case 'keyBackoffMs':
         await _askRetryScalar(picked);
     }
@@ -2154,7 +2156,7 @@ extension SettingsFlow on AgentCli {
 
   /// The main menu of [startResilienceFlow]: the two watchdog knobs (the
   /// built-in defaults shown, so an override reads as an override) and
-  /// the five retry knobs (each marked `default` when it equals the
+  /// the six retry knobs (each marked `default` when it equals the
   /// parser default). Pure builder.
   List<FlowOption> _resilienceMenuOptions() {
     final retry = _effectiveRetryPolicy;
@@ -2196,6 +2198,11 @@ extension SettingsFlow on AgentCli {
         '${retry.maxWait.inMilliseconds}ms (${inherit(retry.maxWait.inMilliseconds, defaults.maxWait.inMilliseconds)})',
       ),
       (
+        'maxWaitForLastEntryMs',
+        'Sole-entry wait-out ceiling',
+        '${retry.maxWaitForLastEntry.inMilliseconds}ms (${inherit(retry.maxWaitForLastEntry.inMilliseconds, defaults.maxWaitForLastEntry.inMilliseconds)})',
+      ),
+      (
         'keyBackoffMs',
         'Key cooldown',
         '${retry.keyBackoff.inMilliseconds}ms (${inherit(retry.keyBackoff.inMilliseconds, defaults.keyBackoff.inMilliseconds)})',
@@ -2227,6 +2234,7 @@ extension SettingsFlow on AgentCli {
       'baseDelayMs' => '${retry.baseDelay.inMilliseconds}',
       'maxBackoffMs' => '${retry.maxBackoff.inMilliseconds}',
       'maxWaitMs' => '${retry.maxWait.inMilliseconds}',
+      'maxWaitForLastEntryMs' => '${retry.maxWaitForLastEntry.inMilliseconds}',
       _ => '${retry.keyBackoff.inMilliseconds}',
     };
     final answer = await _askLine('$key (empty keeps $current): ');
@@ -2552,6 +2560,11 @@ extension SettingsFlow on AgentCli {
       ),
       MenuItem(key: 'tools', label: 'Tools', description: _toolsStatusLabel()),
       MenuItem(
+        key: 'skills',
+        label: 'Skills',
+        description: _skillsStatusLabel(),
+      ),
+      MenuItem(
         key: 'compaction',
         label: 'Compaction',
         description: 'engine: ${_compactionStatusLabel()}',
@@ -2646,6 +2659,7 @@ extension SettingsFlow on AgentCli {
     'media': startMediaSlotFlow,
     'agent-models': startAgentModelFlow,
     'tools': _toolsSettingsFlow,
+    'skills': _skillsSettingsFlow,
     'compaction': startCompactionEngineFlow,
     'ttsr': startTtsrRulesFlow,
     'keys': () => _handleKeyCommand(''),
@@ -2674,6 +2688,7 @@ extension SettingsFlow on AgentCli {
     io.writeln('resilience: ${_resilienceStatusLabel()}');
     io.writeln('dap: ${_dapHubStatusLabel()}');
     io.writeln('tools: ${_toolsStatusLabel()}');
+    io.writeln('skills: ${_skillsStatusLabel()}');
     io.writeln('compaction: ${_compactionStatusLabel()}');
     io.writeln('ttsr: ${_ttsrStatusLabel()}');
     io.writeln('redact: ${_redactionStatusLabel()}');
@@ -2686,7 +2701,7 @@ extension SettingsFlow on AgentCli {
     io.writeln('mcp: ${_mcpStatusLabel()}');
     io.writeln(
       'change via /provider, /model, /approval, /mode, /key, /mcp, /cube, '
-      '/tools (agent models: the /settings hub)',
+      '/tools, /skills (agent models: the /settings hub)',
     );
   }
 

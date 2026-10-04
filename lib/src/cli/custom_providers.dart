@@ -48,7 +48,9 @@ enum CustomProviderAuthMethod {
 final class CustomProviderEntry {
   /// Creates an entry. [keyName] is the secure-store/env name holding the
   /// API key (null = keyless); [modelId] is the last-used model.
-  /// [authMethod] selects the auth path for SSO/JWT providers.
+  /// [authMethod] selects the auth path for SSO/JWT providers. [authHeader]
+  /// names the auth header (issue #964): `x-api-key` sends
+  /// `x-api-key: <key>` instead of `Authorization: Bearer <key>`.
   CustomProviderEntry({
     required this.name,
     required this.apiType,
@@ -56,6 +58,7 @@ final class CustomProviderEntry {
     required this.modelId,
     this.keyName,
     this.authMethod = CustomProviderAuthMethod.apiKey,
+    this.authHeader,
   });
 
   /// Parses one yaml map from the `customProviders:` list. Throws
@@ -84,13 +87,26 @@ final class CustomProviderEntry {
     }
     final keyName = node['keyName'];
     final authMethod = _parseAuthMethod(node['authMethod']);
+    final name = requireString('name');
+    final authHeader = parseAuthHeaderName(
+      node['authHeader'],
+      'customProviders entry "$name"',
+    );
+    validateAuthHeaderDialect(
+      authHeader,
+      catalogProvider(apiType),
+      'customProviders entry "$name"',
+    );
     return CustomProviderEntry(
-      name: requireString('name'),
+      name: name,
       apiType: apiType,
       baseUrl: requireString('baseUrl'),
       modelId: requireString('modelId'),
       keyName: keyName is String && keyName.isNotEmpty ? keyName : null,
       authMethod: authMethod,
+      // Named error (issue #964 AC5): the entry owns the bad value, so the
+      // message names the entry.
+      authHeader: authHeader,
     );
   }
 
@@ -123,6 +139,11 @@ final class CustomProviderEntry {
   /// to saved SSO/JWT providers.
   CustomProviderAuthMethod authMethod;
 
+  /// Auth header name (issue #964): `x-api-key` sends `x-api-key: <key>`
+  /// instead of `Authorization: Bearer <key>` when this entry is active.
+  /// Null keeps the Bearer default.
+  String? authHeader;
+
   /// The last-used model id (rewritten on `/model` switches while active).
   String modelId;
 
@@ -134,6 +155,7 @@ final class CustomProviderEntry {
       'baseUrl': baseUrl,
       'keyName': ?keyName,
       'authMethod': authMethod.name,
+      'authHeader': ?authHeader,
       'modelId': modelId,
     };
   }
@@ -206,6 +228,34 @@ List<CustomProviderEntry> mergeCustomProviderEntries(
   ];
 }
 
+/// Endpoint equality ignoring ONE trailing slash (saved entries, resolved
+/// endpoints, and catalog defaults disagree on it routinely) — the ONE
+/// rule for "is this endpoint that endpoint": saved-entry matches
+/// (key_status), catalog-default classification (key_status, the roles
+/// resolver's endpoint-slot probe, startup's preload set) share it, so a
+/// trailing-slash spelling can never be custom in one helper and default
+/// in another (round-3 review).
+bool sameEndpoint(String a, String b) {
+  String norm(String u) => u.endsWith('/') ? u.substring(0, u.length - 1) : u;
+  return norm(a) == norm(b);
+}
+
+/// The `authHeader` of the saved entry serving [baseUrl], for the
+/// folder-model-state restores (boot in `bin/fah.dart` and session
+/// re-apply in `agent_cli.dart` — issue #964 review): a restored gateway
+/// endpoint without its header 401s. Null when [baseUrl] is null (catalog
+/// default) or no saved entry matches it.
+String? authHeaderForBaseUrl(
+  List<CustomProviderEntry> entries,
+  String? baseUrl,
+) {
+  if (baseUrl == null) return null;
+  for (final entry in entries) {
+    if (sameEndpoint(entry.baseUrl, baseUrl)) return entry.authHeader;
+  }
+  return null;
+}
+
 /// The live list of saved custom providers (shared by the CLI, which
 /// mutates it, and the executable, which persists it).
 final class CustomProviderRegistry {
@@ -233,6 +283,42 @@ final class CustomProviderRegistry {
   /// actually survived (a ghost-first load swaps both — see
   /// [_mergeOnLoad]).
   final List<String> mergeNotes;
+
+  /// Non-destructive migration notes for key slots an older build
+  /// generated with the pre-gh-1226 doubling rule — an entry named
+  /// `z.ai` on host `api.z.ai` persisted `FA_KEY_API_Z_AI_Z_AI` where the
+  /// canonical slot is `FA_KEY_API_Z_AI` (gh-1226 AC3). Resolution still
+  /// probes each entry's OWN stored keyName first, so an existing doubled
+  /// slot keeps working; the note tells the user the canonical name to
+  /// move the value to AND to delete the doubled slot afterwards —
+  /// otherwise the pinned slot keeps winning and the note reprints on
+  /// every boot (review thread). Only the doubling class nags: an
+  /// intentional non-canonical keyName (e.g. a slot shared on purpose
+  /// across entries) is a user choice, not a defect.
+  List<String> get keyNameMigrationNotes {
+    final notes = <String>[];
+    for (final entry in entries) {
+      final stored = entry.keyName;
+      if (stored == null) continue;
+      final canonical = keyNameFor(entry.baseUrl, providerName: entry.name);
+      if (stored == canonical) continue;
+      if (!stored.startsWith('${canonical}_')) continue;
+      final twin = entries.any(
+        (other) =>
+            other != entry &&
+            other.baseUrl == entry.baseUrl &&
+            other.keyName == canonical,
+      );
+      notes.add(
+        'saved key slot for "${entry.name}" is "$stored"; the canonical '
+        'slot is "$canonical"'
+        '${twin ? ' — a same-endpoint entry already uses "$canonical"' : ' — move the value with /key set $canonical <value>'}'
+        '; then /key delete $stored (the pinned slot keeps winning '
+        'while it holds a value)',
+      );
+    }
+    return notes;
+  }
 
   /// The load-time merge result: one record per canonical identity; a
   /// reserved-named ghost (e.g. `chatgpt`, which would shadow
@@ -281,6 +367,9 @@ final class CustomProviderRegistry {
   ) {
     if (survivor.keyName == null && twin.keyName != null) {
       survivor.keyName = twin.keyName;
+    }
+    if (survivor.authHeader == null && twin.authHeader != null) {
+      survivor.authHeader = twin.authHeader;
     }
     return survivor;
   }
@@ -361,9 +450,15 @@ final class CustomProviderRegistry {
     final sanitized = _sanitizeKeyHost(_hostWithPort(uri, baseUrl));
     final base = 'FA_KEY_${sanitized.isEmpty ? 'CUSTOM' : sanitized}';
     final name = providerName == null ? null : _sanitizeKeyHost(providerName);
-    // A provider named after its host (the default derived name) must not
-    // double the suffix: FA_KEY_API_AIIN_BY, not FA_KEY_API_AIIN_BY_API_AIIN_BY.
-    return name == null || name.isEmpty || name == sanitized
+    // A provider named after its host (the default derived name) — or
+    // already a suffix of the host slug, e.g. an entry named 'z.ai' on
+    // api.z.ai (gh-1226 AC3) — must not double the suffix:
+    // FA_KEY_API_AIIN_BY / FA_KEY_API_Z_AI, not ..._API_AIIN_BY /
+    // ..._Z_AI_Z_AI.
+    return name == null ||
+            name.isEmpty ||
+            name == sanitized ||
+            sanitized.endsWith('_$name')
         ? base
         : '${base}_$name';
   }

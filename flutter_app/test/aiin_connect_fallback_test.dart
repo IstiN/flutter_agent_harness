@@ -1,9 +1,13 @@
-// The AIIN connect flow's paste-key fallback: when the automatic sign-in
-// does not complete (the mobile sign-in cancelled or failed to start), the
-// flow must still complete — cabinet key paste → model pick → provider
-// saved. Android is the default test target and runs the mobile branch
-// (issue #976); a null `aiinConnectFn` result triggers the fallback.
+// The AIIN connect flow's failure state and re-auth contract (gh-1044:
+// the owner ruled SSO is the only path — no key-paste fallback). Android
+// is the default test target and runs the mobile branch (issue #976).
+//
+// - a null `aiinConnectFn` result is a VISIBLE error — never the paste
+//   sheet (gh-1044 AC4);
+// - re-auth mode refreshes the existing entry through a SUCCESSFUL SSO
+//   round-trip (same id/name/model, fresh key).
 import 'package:fa/services/aiin_connect_flow.dart';
+import 'package:flutter/foundation.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/provider_registry.dart';
 import 'package:flutter/material.dart';
@@ -94,9 +98,10 @@ void main() {
     expect(registry.providers.single.modelId, 'moonshotai/kimi-k2');
   });
 
-  testWidgets('AIIN connect falls back to the paste-key dialog when the '
-      'automatic sign-in does not complete, and completes the connect',
-      (tester) async {
+  testWidgets('a sign-in that does not complete is a visible error — '
+      'never the paste sheet (gh-1044 AC4, the owner SSO-only ruling)', (
+    tester,
+  ) async {
     final registry = ProviderRegistry.inMemory();
     BuildContext? flowContext;
     Future<bool>? done;
@@ -121,55 +126,28 @@ void main() {
       registry: registry,
       service: null,
       lastConnectionStore: LastConnectionStore.inMemory(),
-      // The sign-in did not complete (cancelled/failed) → paste-key path.
+      // The sign-in did not complete (cancelled/failed to start).
       aiinConnectFn: () async => null,
     );
 
-    // The paste-key dialog appears (initiate was rejected).
+    // The visible failure state — and NO key-paste dialog (SSO only).
     await tester.pumpAndSettle();
-    expect(find.text('AIIN API key'), findsOneWidget);
-    expect(find.text('Open the AIIN cabinet'), findsOneWidget);
-
-    // An invalid key keeps Connect disabled.
-    await tester.enterText(find.byType(TextField), 'not-a-key');
-    await tester.pump();
     expect(
-      tester
-          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Connect'))
-          .onPressed,
-      isNull,
+      find.textContaining('AIIN sign-in did not complete'),
+      findsOneWidget,
     );
+    expect(find.text('AIIN API key'), findsNothing);
+    expect(find.text('Open the AIIN cabinet'), findsNothing);
+    expect(done, completion(false));
 
-    // A valid key enables Connect.
-    await tester.enterText(find.byType(TextField), 'sk-aiin-test-1234567890');
-    await tester.pump();
-    expect(
-      tester
-          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Connect'))
-          .onPressed,
-      isNotNull,
-    );
-    await tester.tap(find.text('Connect'));
-    await tester.pumpAndSettle();
-
-    // The model picker opens (no models fetched) — use the manual entry.
-    expect(find.text('AIIN model'), findsOneWidget);
-    await tester.enterText(find.byType(TextField), 'kimi-k2');
-    await tester.tap(find.text('Use'));
-    final completed = await done;
-    expect(completed, isTrue);
-
-    // The provider was saved under the AIIN endpoint with the pasted key.
-    expect(registry.providers, hasLength(1));
-    final provider = registry.providers.single;
-    expect(provider.baseUrl, 'https://api.aiin.by/v1');
-    expect(provider.modelId, 'kimi-k2');
-    expect(provider.name, startsWith('AIIN'));
-    expect(registry.keyFor(provider.id), 'sk-aiin-test-1234567890');
+    // Nothing was saved.
+    expect(registry.providers, isEmpty);
+    await tester.pump(const Duration(seconds: 8)); // expire the snacks
+    debugDefaultTargetPlatformOverride = null;
   });
 
-  testWidgets('re-auth mode refreshes the existing entry instead of adding '
-      'one', (tester) async {
+  testWidgets('re-auth mode refreshes the existing entry through a '
+      'successful SSO round-trip — instead of adding one', (tester) async {
     final registry = ProviderRegistry.inMemory();
     final existing = await registry.add(
       name: 'user@aiin.by',
@@ -199,42 +177,38 @@ void main() {
       registry: registry,
       service: null,
       lastConnectionStore: LastConnectionStore.inMemory(),
-      // Sign-in failed → paste-key dialog → paste the fresh key.
-      aiinConnectFn: () async => null,
+      // An honest SSO round-trip completes and hands back the fresh key.
+      aiinConnectFn: () async => _fakeConnectResult(),
       reauthenticateFor: existing,
     );
 
-    // Timeout → paste-key dialog → paste the fresh key.
+    // Re-auth keeps the entry's name and model — no model picker, no
+    // sheet: the fresh key lands straight on the existing entry.
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'sk-aiin-new-9999999999');
-    await tester.pump();
-    await tester.tap(find.text('Connect'));
-    await tester.pumpAndSettle();
+    expect(find.text('AIIN model'), findsNothing);
 
     expect(done, completion(true));
     // Still exactly one entry, same id/name/model; the key is refreshed.
     expect(registry.providers.length, 1);
     expect(registry.providers.first.id, existing.id);
     expect(registry.providers.first.modelId, 'moonshotai/kimi-k2');
-    expect(registry.keyFor(existing.id), 'sk-aiin-new-9999999999');
+    expect(registry.keyFor(existing.id), 'sk-aiin-fake-key-0000000001');
   });
 }
 
-/// A fake automatic sign-in result driving the model-pick tail without the
-/// network (the same contract `aiin_web_auth_test` runs against).
 AiinConnectResult _fakeConnectResult() => AiinConnectResult(
-      apiKey: const AiinApiKey(
-        raw: 'sk-aiin-fake-key-0000000001',
-        id: 'key-1',
-        prefix: 'sk-aiin-fake',
-        createdAt: '2026-09-26T00:00:00Z',
-      ),
-      tokens: const AiinOAuthTokens(
-        accessToken: 'jwt-a',
-        refreshToken: 'jwt-b',
-        tokenType: 'Bearer',
-        expiresIn: 3600,
-        refreshExpiresIn: 86400,
-      ),
-      email: null,
-    );
+  apiKey: const AiinApiKey(
+    raw: 'sk-aiin-fake-key-0000000001',
+    id: 'key-1',
+    prefix: 'sk-aiin-fake',
+    createdAt: '2026-09-26T00:00:00Z',
+  ),
+  tokens: const AiinOAuthTokens(
+    accessToken: 'jwt-a',
+    refreshToken: 'jwt-b',
+    tokenType: 'Bearer',
+    expiresIn: 3600,
+    refreshExpiresIn: 86400,
+  ),
+  email: null,
+);

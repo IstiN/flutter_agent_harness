@@ -1,0 +1,1 @@
+{"kind":"tool_execution_end","protocolVersion":1,"frame":{"v":1,"kind":"tool_execution_end","toolCallId":"call_1","toolName":"bash","result":{"content":[{"type":"text","text":"done"}],"terminate":false},"isError":false}}

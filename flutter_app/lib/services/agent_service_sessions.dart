@@ -192,6 +192,10 @@ extension AgentServiceSessions on AgentService {
       // Same for the skills-access consent: the live choice + shared store.
       initialSkillsAccess: _skillsAccess,
       skillsAccessStore: _skillsAccessStore,
+      // Same for the per-skill toggles (issue #1151): the live wishes +
+      // shared store.
+      initialSkillToggles: Map.of(_skillToggles),
+      skillTogglesStore: _skillTogglesStore,
       // Same for the per-tool availability: the live config + shared store.
       initialToolsConfig: _toolsAvailability.config,
       toolsAvailabilityStore: _toolsAvailabilityStore,
@@ -339,7 +343,12 @@ extension AgentServiceSessions on AgentService {
   /// must never hard-fail on this. Works with a config-less service
   /// too (pre-constructed agents): the kind check then compares against
   /// the agent's live model.
-  void _restoreSessionModel(({String provider, String modelId})? sessionModel) {
+  ///
+  /// The pin's [SessionModelPin.baseUrl]/[SessionModelPin.customProvider]
+  /// fields are deliberately not consumed here: the app's restore stays
+  /// the conservative kind-checked modelId override (the CLI honors the
+  /// entry-name pin; the app keeps the configured Keychain connection).
+  void _restoreSessionModel(SessionModelPin? sessionModel) {
     final config = _config;
     if (sessionModel == null ||
         sessionModel.modelId.isEmpty ||
@@ -374,10 +383,7 @@ extension AgentServiceSessions on AgentService {
   /// Whether [sessionModel] is a same-kind model id worth restoring
   /// (compared against the configured provider kind, falling back to the
   /// agent's live wire kind when no config owns the service).
-  bool _sessionModelApplies(
-    AgentConfig? config,
-    ({String provider, String modelId}) sessionModel,
-  ) {
+  bool _sessionModelApplies(AgentConfig? config, SessionModelPin sessionModel) {
     if (sessionModel.modelId == _agent.state.model.id) return false;
     final activeApi = _agent.state.model.api;
     return config == null
@@ -401,4 +407,119 @@ extension AgentServiceSessions on AgentService {
     await _repo.delete(metadata);
     if (isActive) await reset();
   }
+
+  void _startSessionWatch() {
+    _stopSessionWatch();
+    if (!_watchExternalSessions) return;
+    final file = _sessionFile;
+    if (file == null) return;
+    _sessionWatchBytes = -1;
+    _sessionWatchTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      unawaited(_checkSessionFileGrew());
+    });
+  }
+
+  Future<void> _checkSessionFileGrew() async {
+    final file = _sessionFile;
+    if (file == null || _disposed) return;
+    final info = (await env.fileInfo(file)).valueOrNull;
+    if (info == null) return;
+    if (_sessionWatchBytes < 0) {
+      _sessionWatchBytes = info.size;
+      return;
+    }
+    if (info.size > _sessionWatchBytes) {
+      _sessionWatchBytes = info.size;
+      await _reloadExternalMessages();
+      externalSessionRevision.value++;
+    }
+  }
+
+  /// Pulls externally-appended rows into the visible transcript. Only
+  /// while IDLE: mid-run the agent owns the state machine (streaming,
+  /// tool calls) and a concurrent reload would corrupt it. A windowed
+  /// session ingests just the appended tail (any history the user paged
+  /// in stays put); a full-open session is re-opened fresh (cheap:
+  /// header + tree index).
+  Future<void> _reloadExternalMessages() async {
+    final session = _session;
+    if (session == null || isStreaming) return;
+    final gen = _loadGeneration;
+    try {
+      if (session.getStorage() case final WindowedSessionStorage windowed) {
+        final ingest = await windowed.ingestAppended();
+        if (gen != _loadGeneration) return;
+        if (ingest.reanchored) {
+          // Truncation/rotation: the view (and the provider context)
+          // reset to the new tail — stale anything is never kept.
+          _viewBranch = ingest.delta;
+          await _applyViewBranch();
+          if (gen != _loadGeneration) return;
+          final context = await session.buildContext();
+          if (gen != _loadGeneration) return;
+          _agent.state.messages = context.messages;
+          _persistedCount = context.messages.length;
+        } else if (ingest.delta.isNotEmpty) {
+          _viewBranch?.addAll(ingest.delta);
+          await _applyViewBranch();
+          if (gen != _loadGeneration) return;
+          await _growProviderContext(session, ingest.delta);
+          if (gen != _loadGeneration) return;
+        }
+        unawaited(_refreshHistoryAbove());
+        return;
+      }
+      final metadata = await session.getMetadata();
+      if (gen != _loadGeneration) return;
+      final fresh = await _repo.open(metadata);
+      if (gen != _loadGeneration) return;
+      _session = fresh;
+      await _reprojectLoadedWindow(fresh);
+    } on Object {
+      // A torn read (the CLI mid-append): the next poll retries.
+    }
+  }
+
+  /// Grows the provider context append-only by the ingested delta
+  /// (issue #135 round 2, provider-context full-fidelity: paging never
+  /// touches the context; external appends only ever ADD). A compaction
+  /// record inside the delta invalidates append-only growth — the
+  /// context is rebuilt from the full view branch instead.
+  Future<void> _growProviderContext(
+    Session session,
+    List<SessionRecord> delta,
+  ) async {
+    final hasCompaction = delta.any((r) => r is CompactionRecord);
+    final branch = _viewBranch;
+    if (hasCompaction || branch == null) {
+      final full = session.projectPath(branch ?? delta);
+      _agent.state.messages
+        ..clear()
+        ..addAll(full);
+      _persistedCount = full.length;
+      return;
+    }
+    final projected = session.projectPath(delta);
+    _agent.state.messages.addAll(projected);
+    _persistedCount += projected.length;
+  }
+
+  void _stopSessionWatch() {
+    _sessionWatchTimer?.cancel();
+    _sessionWatchTimer = null;
+  }
+
+  /// Id of the session new messages persist to (`null` until [initialize]).
+  String? get currentSessionId => _sessionId;
+
+  /// The cwd of the OPEN session (from its on-disk metadata): the folder
+  /// that conversation belongs to, regardless of the app's current mount
+  /// (the env is shared across sessions; the session's own folder is not).
+  /// Null until a session materializes.
+  String? get currentSessionCwd => _sessionCwd;
+
+  /// The config this service was created with, kept so a new session can be
+  /// cloned from it (see [clone]). `null` when the service was built from a
+  /// pre-constructed [Agent] (tests).
+  AgentConfig? get configForClone => _config;
 }

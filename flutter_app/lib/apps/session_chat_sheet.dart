@@ -15,8 +15,9 @@ import 'package:fa_ui/fa_ui.dart'
         FaAdaptiveHeader,
         FaAuthRecoveryCallback,
         FaChatSurfaceHandlers,
+        FaChatService,
         FaHeaderAction,
-        FaTypingFooter,
+        FaRunStatusRow,
         TrajectoryController,
         TrajectoryScreen,
         showFahErrorSnack,
@@ -28,6 +29,7 @@ import 'package:fa/apps/dynamic_widget_tile.dart';
 import 'package:fa/apps/dynamic_widget_graduation.dart';
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:fa/services/chat_text_store.dart';
 import 'package:fa/services/apps_mode_store.dart';
 import 'package:fa/services/analytics.dart';
@@ -39,6 +41,7 @@ import 'package:fa/services/flutter_session_manager.dart';
 import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/project_mount_env.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/quota_store.dart';
 import 'package:fa/services/session_names_store.dart';
 import 'package:fa/services/upload.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -775,6 +778,41 @@ class SessionChatSheetState extends State<SessionChatSheet>
     if (mounted) unawaited(_openPanel());
   }
 
+  /// Single-flight over [mintAndOpenNewSession]: a rapid second trigger
+  /// while the clone is in flight must never double-mint (issue #864 E3).
+  bool _mintingNew = false;
+
+  /// The Fa entry's long-press (issue #864): mint exactly ONE new session,
+  /// make it active, and open the panel on it. Haptic marks the mint (the
+  /// tap keeps its silent continue-the-active-session meaning).
+  ///
+  /// Deliberately NOT [_newSessionFromDrawer]: the entry gesture fires from
+  /// the collapsed sheet where the drawer is CLOSED — routing through the
+  /// drawer tile's helper would flash the drawer open (its first act is
+  /// [_toggleDrawer]) while the clone is in flight (review #1144).
+  Future<void> mintAndOpenNewSession() async {
+    if (_mintingNew) return;
+    _mintingNew = true;
+    try {
+      // Fire-and-forget: the ack is flow control for nobody, and awaiting
+      // a platform channel here deadlocks fake-async widget tests.
+      unawaited(HapticFeedback.mediumImpact());
+      await _newSession();
+      if (mounted) unawaited(_openPanel());
+    } on Object catch (error) {
+      // The entry gesture fires through unawaited(...) — a raw failure
+      // would surface as an unhandled zone error with zero user feedback
+      // (review #1144 follow-up). Mirror the app-bound forward's remedy:
+      // one log line + a snack; the active session stays untouched.
+      AppLog.i('sessions', 'Fa-entry mint failed: $error');
+      if (mounted) {
+        showFahErrorSnack(context, context.l10n.sessionMintFailed);
+      }
+    } finally {
+      _mintingNew = false;
+    }
+  }
+
   Future<void> _openFullChat() async {
     final service = widget.manager.active?.service;
     await Navigator.of(context).push(
@@ -808,6 +846,16 @@ class SessionChatSheetState extends State<SessionChatSheet>
       openPicker = () => unawaited(_openModelPicker(active));
       openSettings = () => unawaited(_openModelSettings(active));
     }
+    final modelChip = QuickModelChip(
+      key: const ValueKey('fullChatModelChip'),
+      modelId: service?.modelId ?? '',
+      tooltip: context.l10n.chatModelSwitchTooltip,
+      maxWidth: 132,
+      // The chip's tap is non-null by contract; without an active
+      // service the full chat is unreachable and the tap is a no-op.
+      onTap: openPicker ?? () {},
+      onLongPress: openSettings,
+    );
     return ChatScreen(
       manager: widget.manager,
       registry: widget.registry,
@@ -824,16 +872,9 @@ class SessionChatSheetState extends State<SessionChatSheet>
           ? Theme.of(context).colorScheme.primary
           : Theme.of(context).colorScheme.onSurfaceVariant,
       projectLabel: _projectLabel(service),
-      modelChip: QuickModelChip(
-        key: const ValueKey('fullChatModelChip'),
-        modelId: service?.modelId ?? '',
-        tooltip: context.l10n.chatModelSwitchTooltip,
-        maxWidth: 132,
-        // The chip's tap is non-null by contract; without an active
-        // service the full chat is unreachable and the tap is a no-op.
-        onTap: openPicker ?? () {},
-        onLongPress: openSettings,
-      ),
+      modelChip: active == null
+          ? modelChip
+          : _withQuotaBadge(active, modelChip),
       onModelChipTap: openPicker,
       chipMenuLabel: service?.modelId,
       // The full chat's Apps button (issue #224) pops back here AND
@@ -1486,6 +1527,35 @@ class SessionChatSheetState extends State<SessionChatSheet>
     );
   }
 
+  /// Prepends the ACTIVE provider's quota badge to a header chip (issue
+  /// #823 AC6): `[OR $48/$150 · 11d]` metered, `[OR …]` cold, and nothing
+  /// at all for unmetered or non-quota providers — the chip passes
+  /// through unchanged. Repaints through the store's change bridge.
+  Widget _withQuotaBadge(AgentService service, Widget modelChip) {
+    return ListenableBuilder(
+      listenable: QuotaStore.instance,
+      builder: (context, _) {
+        final badge = QuotaStore.instance.badgeForBaseUrl(
+          service.activeBaseUrl,
+        );
+        if (badge == null) return modelChip;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              badge,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(width: 8),
+            modelChip,
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildHeader(FahColors colors, AgentService service) {
     final activeId = widget.manager.activeId ?? '';
     final title =
@@ -1512,13 +1582,16 @@ class SessionChatSheetState extends State<SessionChatSheet>
         ),
         title: title,
         titleStyle: Theme.of(context).textTheme.titleSmall,
-        chip: QuickModelChip(
-          key: const ValueKey('sessionChatModelChip'),
-          modelId: service.modelId,
-          tooltip: context.l10n.chatModelSwitchTooltip,
-          maxWidth: 132,
-          onTap: () => unawaited(_openModelPicker(service)),
-          onLongPress: () => unawaited(_openModelSettings(service)),
+        chip: _withQuotaBadge(
+          service,
+          QuickModelChip(
+            key: const ValueKey('sessionChatModelChip'),
+            modelId: service.modelId,
+            tooltip: context.l10n.chatModelSwitchTooltip,
+            maxWidth: 132,
+            onTap: () => unawaited(_openModelPicker(service)),
+            onLongPress: () => unawaited(_openModelSettings(service)),
+          ),
         ),
         onChipTap: () => unawaited(_openModelPicker(service)),
         chipMenuLabel: service.modelId,
@@ -1684,11 +1757,11 @@ class _SessionTranscriptState extends State<_SessionTranscript>
       listenable: widget.service,
       builder: (context, _) {
         final messages = widget.service.messages;
-        // The typing indicator lives IN the list (issue #459): the footer
-        // is the visually-LAST item — the reversed list renders it right
-        // above the input bar — and scrolls away with the content (no
-        // sticky pinning). Empty transcript + streaming: it is the only
-        // item (E1).
+        // The single transient status row lives IN the list (issues #459,
+        // #1042): the visually-LAST item — the reversed list renders it
+        // right above the input bar — replaced by the assistant message on
+        // completion. Empty transcript + streaming: it is the only item
+        // (E1).
         final streaming = widget.service.isStreaming;
         if (messages.isEmpty && !streaming) {
           return Center(
@@ -1708,6 +1781,9 @@ class _SessionTranscriptState extends State<_SessionTranscript>
           );
         }
         return ListView.builder(
+          // Tests target the transcript's scrollable through this key (the
+          // fa_chat_screen 'faChatTranscriptList' pattern).
+          key: const ValueKey('sessionTranscriptList'),
           controller: _scrollController,
           // reverse: content stays pinned to the BOTTOM (the input bar) — a
           // short transcript no longer flies up and out of view when the
@@ -1716,10 +1792,22 @@ class _SessionTranscriptState extends State<_SessionTranscript>
           padding: EdgeInsets.fromLTRB(12, 12, 12, 8 + widget.bottomPadding),
           itemCount: messages.length + (streaming ? 1 : 0),
           itemBuilder: (context, index) {
-            if (index == messages.length) {
-              return const FaTypingFooter(key: ValueKey('faChatTypingFooter'));
+            // The status row is the visually-LAST entry (issue #1042): in
+            // this reversed list index 0 is the bottom edge — right above
+            // the input bar. The keep-alive wrapper preserves the row's
+            // State (phase ticker + elapsed clock) while the item is
+            // scrolled out of the list's cache extent: scrolling back must
+            // not reset the elapsed seconds (PR #1082 review). The item
+            // only exists while the run streams, so the keep-alive is
+            // bounded by the run.
+            if (streaming && index == 0) {
+              return _KeepAliveStatusRow(service: widget.service);
             }
-            final message = messages[messages.length - 1 - index];
+            // Slot 0 is the newest message; while streaming the status row
+            // occupies slot 0 and the messages shift down by one.
+            final messageIndex =
+                messages.length - 1 - (streaming ? index - 1 : index);
+            final message = messages[messageIndex];
             return ChatMessageTile(
               message: message,
               images: _images,
@@ -1743,6 +1831,35 @@ class _SessionTranscriptState extends State<_SessionTranscript>
           },
         );
       },
+    );
+  }
+}
+
+/// The sheet's transcript status row wrapped in a keep-alive: the
+/// `ListView.builder` disposes items scrolled out of the cache extent,
+/// which would drop the row's ticker State and reset the elapsed clock on
+/// scroll-back. The item only exists while the run streams (the list's
+/// +1 slot), so the keep-alive never outlives the run.
+class _KeepAliveStatusRow extends StatefulWidget {
+  const _KeepAliveStatusRow({required this.service});
+
+  final FaChatService service;
+
+  @override
+  State<_KeepAliveStatusRow> createState() => _KeepAliveStatusRowState();
+}
+
+class _KeepAliveStatusRowState extends State<_KeepAliveStatusRow>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return FaRunStatusRow(
+      key: const ValueKey('faChatRunStatusRow'),
+      service: widget.service,
     );
   }
 }

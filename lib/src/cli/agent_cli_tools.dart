@@ -93,6 +93,15 @@ String _dirname(String path) {
 
 /// The `/tools` command, capability mapping, and live scope resolution.
 extension AgentCliTools on AgentCli {
+  /// Re-registers the MCP tool surface and rebuilds the prompt whenever a
+  /// server connects, fails, or drops.
+  void _onMcpChanged() {
+    _mcp.reRegister(_toolRegistry, _agent, _applyPromptComposition);
+    // Re-apply the availability decision to the fresh MCP surface (a
+    // no-op until the first rebuild produced a resolution).
+    AgentCliTools(this).resyncMcpAvailability();
+  }
+
   /// Host-specific tool name → availability id, layered over
   /// [coreToolFamilies] (whose mappings come through
   /// [toolAvailabilityIdOf]): the lsp tool carries its own id here
@@ -471,11 +480,7 @@ extension AgentCliTools on AgentCli {
   /// Dispatch only — each branch body lives in its own CC≤2 helper (the
   /// `/skills` pattern).
   Future<void> _toolsSlash(String rest) async {
-    final parts = rest
-        .split(RegExp(r'\s+'))
-        .where((part) => part.isNotEmpty)
-        .toList();
-    final sub = parts.isEmpty ? '' : parts.first;
+    final (:sub, :args) = splitSlashArgs(rest);
     switch (sub) {
       case '':
         _toolsList();
@@ -483,7 +488,7 @@ extension AgentCliTools on AgentCli {
         await rebuildToolAvailability();
         io.writeln('tools: availability reloaded');
       case 'enable' || 'disable':
-        await _toolsToggleSlash(sub == 'enable', parts);
+        await _toolsToggleSlash(sub == 'enable', args);
       default:
         io.writeln(
           'unknown /tools subcommand: $sub (try enable, disable, reload)',
@@ -514,8 +519,8 @@ extension AgentCliTools on AgentCli {
         .trimRight();
   }
 
-  Future<void> _toolsToggleSlash(bool enable, List<String> parts) async {
-    if (parts.length < 2) {
+  Future<void> _toolsToggleSlash(bool enable, List<String> args) async {
+    if (args.isEmpty) {
       io.writeln(
         'usage: /tools ${enable ? 'enable' : 'disable'} <id> '
         '[global|project|session]',
@@ -524,8 +529,8 @@ extension AgentCliTools on AgentCli {
     }
     await _applyToolsToggle(
       enable,
-      parts[1],
-      parts.length > 2 ? parts[2] : 'project',
+      args.first,
+      args.length > 1 ? args[1] : 'project',
     );
   }
 

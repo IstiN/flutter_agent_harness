@@ -472,13 +472,36 @@ void main() {
         ),
         const ModelRequestEvent(detail: detail),
         const ToolPairingRepairEvent(report: ToolPairingRepairReport()),
+        ToolCallHeartbeatEvent(
+          toolCallId: 't1',
+          toolName: 'bash',
+          args: const {},
+          elapsed: const Duration(seconds: 61),
+          outputBytes: 12,
+          attempt: 1,
+          timestamp: DateTime.utc(2026),
+        ),
+        ToolCallStuckEvent(
+          toolCallId: 't1',
+          toolName: 'bash',
+          args: const {},
+          elapsed: const Duration(seconds: 300),
+          action: StuckFollowUpAction.cancelRetry,
+          timestamp: DateTime.utc(2026),
+        ),
       ];
       // Tripwire: exactly the sealed hierarchy's current size. A new
       // AgentEvent subtype must be added above (and classified in
       // `filtered` or mapped) — this count is what makes the omission
       // visible.
-      expect(samples, hasLength(13));
-      const filtered = {'ModelRequestEvent', 'ToolPairingRepairEvent'};
+      expect(samples, hasLength(15));
+      const filtered = {
+        'ModelRequestEvent',
+        'ToolPairingRepairEvent',
+        // gh-1054 liveness records ride the session ledger only.
+        'ToolCallHeartbeatEvent',
+        'ToolCallStuckEvent',
+      };
       for (final event in samples) {
         final line = streamJsonEventLine(event);
         final name = event.runtimeType.toString();

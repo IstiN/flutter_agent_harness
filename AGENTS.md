@@ -7,6 +7,19 @@ factual: paths, commands, invariants — no essays.
 
 - `lib/` — the `flutter_agent_harness` package (pure Dart core). `test/`
   mirrors it. `prompts/` — all LLM prompts as Markdown (see rules below).
+- `lib/flutter_agent_harness.dart` (the barrel) — gh-1232 policy:
+  GROUPED APPEND-ONLY export sections, one `// ── <subsystem> ──` comment
+  header per group, exports sorted by path within a group, new exports
+  appended to their subsystem group (a new subsystem starts a new group).
+  No per-subsystem mini-barrels, no re-sorting of existing lines — append
+  only, so parallel edits almost never touch the same line.
+- God-file ceiling (gh-1232): no Dart file over 2800 lines anywhere
+  (`scripts/ci_fast_gate.sh` stage_size + ci.yml guard, both covering
+  `lib test example bin flutter_app/lib`). Target < 2000 for primary
+  files; when a file approaches it, split by concern into `part` files
+  (the established pattern: `agent_cli.dart`, `builtin_tools.dart`,
+  `bin/fah.dart` → `bin/fah_*.dart`, `agent_service.dart` →
+  `agent_service_*.dart` mixins) — never by extracting public API.
 - `lib/src/approval/` — tool approval gate: tiers (read/write/exec),
   session modes (always-ask/write/yolo/autopilot — the CLI label of the
   `unattended` enum), per-tool overrides,
@@ -41,6 +54,24 @@ factual: paths, commands, invariants — no essays.
   `builtinTools` in the CLI (`AgentCli`) and the app (`AgentService`).
   `LocalShell` merges `ShellExecOptions.env` OVER `Platform.environment`
   (never replaces), so injected vars keep the inherited environment.
+- `lib/src/env/io_execution_env.dart` — `LocalShell`: foreground `exec`
+  runs under `setsid` when the host has it (probe
+  `ownProcessGroupAvailable`, seam `ownProcessGroupOverride`) and the
+  timeout/cancel paths reap the whole tree (`killTree` + direct-kill
+  backstop) with a capped pipe-drain (`_drainGrace`) — timeout/cancel'd
+  calls complete in ≤ timeout + kill grace + drain grace; a no-timeout
+  call within `_drainGrace` of the direct child's exit (the drain is
+  capped unconditionally: after the child is reaped every remaining pipe
+  byte comes from an orphan). Killed calls are marked `timeout`/`aborted`
+  and carry the captured partial output on `ExecutionError.stdout`/
+  `stderr` — tail-capped at the source to the last 64 KiB (`_captureTail`)
+  — rendered by the bash tool and the skill renderer's `!cmd` failure
+  branch (every string that branch embeds is tail-capped to ~2 KB)
+  (gh-1053; the timeout timer stays
+  armed after the child exits because an orphaned descendant can hold
+  the pipes — a drain that outlives the deadline marks the call
+  `timedOut` even when the child exited 0). Background jobs (issue #517)
+  keep their own group + `stop()` semantics.
 - `lib/src/tools/checkpoint_tool.dart` — `checkpoint`/`rewind` tools:
   context hygiene for detours. `CheckpointRewindController` wraps
   `Agent.prepareNextTurn`, persists via host `CheckpointSessionSink`.
@@ -256,7 +287,18 @@ factual: paths, commands, invariants — no essays.
   Claude/Copilot/Codex layouts (`.claude/skills` + `.claude/commands`,
   `.github/skills`, `.codex/skills`, user-level equivalents incl.
   `~/.copilot/skills`), each root tagged with a `SkillSource`; project >
-  user, first-name-wins. Third-party roots are discovered BY DEFAULT
+  user, first-name-wins. The package also ships first-party built-ins
+  (`create-goal`, `self-settings`) compiled from
+  `prompts/skills/<name>/SKILL.md` by `scripts/gen_prompts.dart` into
+  `builtin_skills.dart` — merged into discovery LAST (a same-named
+  project/user/granted skill shadows the built-in), never gated by the
+  skills-access consent, served to `read` from virtual
+  `builtin://skills/<name>/SKILL.md` paths. Per-skill on/off toggles
+  (`skill_availability.dart`: `skills: {<name>: on|off}`, global
+  `~/.fah/config.yaml` < project `.fah/config.yaml`, deepest mention
+  wins) gate the prompt/completion/invocation surfaces live via
+  `/skills on|off <name> [global|project]` and the `/settings` Skills
+  row. Third-party roots are discovered BY DEFAULT
   (opt-out): `skills_access.dart` `SkillsAccess` ask/granted/denied with
   `granted` as the zero-config default — `allowedSources` on
   `discoverSkills`/`discoverTaskAgents`; CLI `skills:` config section,
@@ -367,6 +409,18 @@ factual: paths, commands, invariants — no essays.
   main's — hosts re-arm on every mailbox change
   (CLI `_syncMailboxPrefix`, app `_setMailboxPrefix`) and sweep due records
   on their inbox ticks; `dispose()` cancels only the timer, the files stay.
+  gh-1180: a re-addressed SELF record also delivers FROM the live mailbox
+  (`from` rewritten alongside `to` in `_deliverDueInner`) — an adopted
+  reminder keeps the self shape (from == to) the wake policy needs to
+  classify it exempt, so a chain survives a session-id change. Every
+  lifecycle step lands in the receipt trail
+  (`<messagesRoot>/_scheduled/receipts.jsonl`, `ScheduledReceiptLog`,
+  best-effort): scheduled / delivered / delivery_failed / scan_failed
+  (queue) and wake_attempted / turn_started / wake_refused (both hosts'
+  wake paths; refusal receipts are once per refusal EPISODE — the latch
+  lives in `InboxWakePolicy` next to the streak, so a held gate cannot
+  spam the trail and a repeat episode after user input is receipted
+  again).
   Sleep resilience (issue #259): all due math rides an injectable wall
   clock (`ScheduledMessageQueue(clock:)`), long waits are split into ≤60s
   timer legs (`maxTimerLeg`) that recompute the remaining delay from the
@@ -387,6 +441,20 @@ factual: paths, commands, invariants — no essays.
  leg at `failureBackoff` (60s) so a poison record cannot spin a
  zero-delay timer; sweeps deliver in due-time order, and the app's
  turn-start sweep is awaited so the fresh turn sees the fired reminder.
+ A failed SCAN (transient `listDir`/read error on a leg, gh-1180) is
+ equally loud: `onError` + a `scan_failed` receipt, then a re-arm at
+ `failureBackoff` — the arming heartbeat never silently disarms
+ ("scan failed" used to be treated as "nothing pending", permanently
+ disarming the scheduler with zero log). Corrupt record CONTENT is
+ still skipped, not fatal (issue #59). Every lifecycle step is
+ receipted to an append-only JSONL trail at
+ `<messagesRoot>/_scheduled/receipts.jsonl` (`ScheduledReceiptLog`,
+ gh-1180): `scheduled` / `delivered` (with lag) / `delivery_failed` /
+ `scan_failed` from the queue, plus host-side `wake_attempted` /
+ `turn_started` / `wake_refused` (with reason) from the CLI wake path —
+ a post-mortem can distinguish "timer never fired" (no `delivered`)
+ from "wake refused" without reading source. The trail is best-effort:
+ a failing write logs via `onError` and never breaks scheduling.
  Records carry the scheduling instance's `owner` (mailbox prefix): a
  sweeper re-addresses a self-addressed record only when the stored owner
  matches its own prefix, and never deletes another instance's record -
@@ -409,7 +477,16 @@ factual: paths, commands, invariants — no essays.
   sender-attributed user messages, so they persist in the session and read
   like a chat. Idle wake: an inbox watcher (2s CLI / 3s app) starts a turn
   when mail arrives while idle — two Fa instances chat live; a 10-run
-  streak cap without user input breaks ping-pong loops.
+  streak cap without user input breaks agent-to-agent ping-pong loops.
+  The lanes live in `InboxWakePolicy` (gh-1180): user-kind mail always
+  wakes and resets the streak (gating it would deadlock:
+  no run → no reset → no run); a delivered `schedule_message`
+  self-reminder (`[scheduled] ` prefix, from == to) is EXEMPT from the
+  cap — a deliberate agent-chosen cadence (night watch, periodic sweep)
+  wakes forever, with a 30s cadence floor so a zero-delay re-schedule
+  spin is still bounded like chatter; foreign agent chatter stays
+  capped. A refused wake is never silent: one dim `[mail] wake refused`
+  line per episode and a `wake_refused` receipt.
   UI: `/agents` rows show a `mail:N` pending marker (the CLI
   font has no ✉ glyph), the app's AgentsSection shows `✉N`; observe/detail
   views list the pending inbox.
@@ -806,9 +883,10 @@ factual: paths, commands, invariants — no essays.
   transcript message tile (`chat_message_tile.dart`), the composer
   (`chat_composer.dart` — file/gallery/camera picking through the
   `FaChatHost.uploadPicker`/`galleryPicker`/`cameraPicker` hooks, voice
-  input through `FaChatHost.voiceInput`; desktop keys: Shift+Enter inserts
-  a newline (a Focus ancestor swallows the key before the text-input plugin
-  turns it into `send`), Cmd/Ctrl+V is smart paste — a clipboard image
+  input through `FaChatHost.voiceInput`; desktop keys: Enter sends and
+  Shift+Enter inserts a newline (issue #973 — the Focus ancestor swallows
+  plain Enter before the IME turns it into a break; the touch return key
+  keeps its IME newline path), Cmd/Ctrl+V is smart paste — a clipboard image
   (via the `FaChatHost.clipboardImageReader` hook) or long/multi-line text
   is staged as an `uploads/` attachment chip, short single-line text pastes
   inline), and the single-service chat
@@ -1515,11 +1593,28 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
 - `dart test` green (integration-tagged excluded from test-core — issue
   #551: `test/integration/**` changes also run the `integration-mock` leg
   per-PR: no-key legs via `MockLlmServer`, `--exclude-tags llm,browser-ext,
-  perf,pty`; real-provider files carry `@Tags(['integration', 'llm'])` and
-  run ONLY in the tag-only provider-smoke job and nightly with secrets;
-  child-agent-spawn PTY tests carry `pty` and stay in nightly (issue #553).
-  Tag-only CI = llm smoke + publish + binaries; nightly keeps the full
-  real-provider suite (pty-integration).
+  perf,pty`; child-agent-spawn PTY tests carry `pty` and stay in nightly
+  (issue #553). Tag-only CI = llm smoke + publish + binaries; nightly keeps
+  the full real-provider suite (pty-integration).
+  **The Quality gate is deterministic-only (gh-1199): mock LLM everywhere,
+  live models never.** Real-provider files carry
+  `@Tags(['integration', 'llm'])` and run ONLY in the tag-only
+  provider-smoke job and nightly with secrets — the per-PR integration
+  shards exclude them at selection (`shard_files.py --exclude-tag llm`) AND
+  at invocation (`--exclude-tags browser-ext,llm`), so a model's mood can
+  never block a merge. The boundary is self-enforcing:
+  `scripts/check_llm_tag_boundary.py` (static-gate step + pinned audit)
+  fails any integration-tagged file that looks live without the `llm` tag;
+  `test/scripts/shard_files_llm_boundary_test.dart` proves the shard
+  selection stays live-free. Real-model verification belongs to the bench
+  harnesses (terminal-bench / harbor / MLS-Bench) run under supervision,
+  plus manual `dart test --tags "integration && llm"` for debugging — NO
+  scheduled-or-gate live runs in the PR path. A proven flake (red in ≥2
+  distinct-SHA gate runs within 24h) is quarantined via
+  `scripts/test_quarantine.json` (checked in, reviewed in the fix PR;
+  `flake-watch.yml` files the issue and opens the PR) — the gate legs pipe
+  their targets through `scripts/apply_quarantine.py`, while nightly
+  KEEPS running the file to produce the un-quarantine repeat-run proof.
 - `cd flutter_app && flutter test --exclude-tags integration` green
   (includes golden suite; integration-tagged `test/cli_visual` runs in the
   nightly workflow + on demand).
@@ -1535,8 +1630,10 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   `ci_fast_gate.sh` (ratchet — only tighten; the per-package gates above
   cannot see across module boundaries).
 - CRAP ratchet (`crap4dart analyze`, tool pinned as
-  `dart pub global activate crap4dart 0.2.1`), one config per package,
-  thresholds are the current per-package max — only down from here:
+  `dart pub global activate crap4dart ">=0.10.0 <0.11.0"` — gh-1061;
+  bounded so a future 0.11.0+ is adopted deliberately, never
+  auto-floating), one config per package, thresholds are the current
+  per-package max — only down from here:
   - core (`crap4dart.yaml`, sources `[lib, bin]`): **12.0** — three
     TUI-only dispatchers at CC 3 / 0% cov pending PTY tests (documented
     exception).
@@ -1602,13 +1699,35 @@ in `lib/src/parity/settings_registry.dart` with a comment explaining WHY.
    with a one-line reason comment
 4. Run `dart test test/parity/` — the parity guard must pass
 
+**Capability rules (issue #1079, host-wiring SDK layer):** every NEW
+host-wiring capability declares its matrix state AT BIRTH — for all seven
+hosts (`cli`, `macos`, `ios`, `android`, `web`, `extension`, `outlook`) a
+state: `on`, `off(reason)`, or `transport(choice, reason)` for a
+partial/different transport. The record types, validation and transport
+vocabularies live in `lib/src/hosts/host_capability_profile.dart`; the
+seven built-in profiles — where those per-host cells are actually
+declared — live in `lib/src/hosts/host_wiring_builder.dart`. The
+matrix-completeness test rejects undeclared capabilities, so "CLI got X,
+app didn't" cannot happen silently. A capability that is
+`off` is INVISIBLE: hidden from the host's UI (menus, settings, slash
+commands, tool palettes) AND from everything model-facing (tool schemas,
+system-prompt sections, skills listings, help) — the agent never sees
+what it cannot use and the user never sees a button that errors; on a
+`transport` cell only the available transports surface. Profiles can only
+NARROW what the platform floor allows: force-enabling a floored
+capability throws `HostProfileViolation` at construction, never a runtime
+surprise.
+
 ## Commits and releases
 
 - Commit identity: human/AI contributors commit as `ai.teammate
   <agent.ai.native@gmail.com>` (history was rewritten to it — set
   `git config user.name ai.teammate` + `git config user.email
   agent.ai.native@gmail.com` repo-locally). Release commits from
-  `scripts/auto_release.sh` stay `github-actions[bot]`.
+  `scripts/auto_release.sh` are authored `fa-release-bot[bot]
+  <fa-release-bot[bot]@users.noreply.github.com>` — the gh-1172 ruleset-
+  bypass App pushes the bump straight to protected main, so the App identity
+  is what auditability hangs on.
 - Commit subjects: `type(scope): ...` (`feat:`, `fix:`, `fix(example):`,
   `ci:`, `test(providers):`, `refactor(prompts):`).
 - Every push to `main` auto-releases a patch to pub.dev
@@ -1683,4 +1802,10 @@ in `lib/src/parity/settings_registry.dart` with a comment explaining WHY.
   play_store` in `flutter_app` (env gates `PLAY_DEPLOY_METADATA`/
   `PLAY_DEPLOY_IMAGES`, `PLAY_VALIDATE_ONLY=1` dry-run; Play service-account
   secret `PLAY_STORE_SERVICE_ACCOUNT_JSON`) or the `store-metadata.yml`
-  android leg (`android_content`: none/metadata_only/images_only/all).
+  android leg (`android_content`: none/metadata_only/images_only/all). Images
+  never ride supply (it only APPENDS uploads — issue #947): the `play_store`
+  lane pushes them through `play_listing_sync.rb`, which replaces the whole
+  image set per locale + device type (dropped sets are cleared) and verifies
+  the committed goldens against `edits.images.list`. The daily
+  `daily-publish.yml` play leg dispatches `build-mobile.yml` with
+  `android_content=all`, so every release train redeploys the listing.

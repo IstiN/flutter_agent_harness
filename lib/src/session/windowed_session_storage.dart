@@ -33,6 +33,14 @@ import 'session_storage.dart';
 
 /// Append-only session storage over a byte-scanned window of the file.
 ///
+/// Segment boundary (gh-1077): this view is bound to the ACTIVE segment
+/// (the primary file). Records archived into `<path>.part-NN` siblings
+/// by segment rotation are NOT reachable through [loadOlder] — paging
+/// stops at the primary's header copy and [hasOlder] goes false there,
+/// by design: the chat path only ever renders recent history. Full-chain
+/// reads go through [JsonlSessionStorage.open] (which loads parts +
+/// primary as one chain) or `JsonlSessionRepo.readCustomRecordsOfType`.
+///
 /// The in-memory index holds the LOADED records only; every structure
 /// (`_entries`, `_byId`, `_labelsById`, offsets) is pruned in the same
 /// pass when eviction drops records, so no strong reference outlives
@@ -490,7 +498,9 @@ final class WindowedSessionStorage
     _indexChunk(chunk);
     _knownFileBytes = chunk.endOffset;
     if (_belowCount != null) {
-      _belowCount = (_belowCount! - chunk.entries.length).clamp(0, 1 << 31);
+      // 0x80000000 == the VM value of `1 << 31`; the shift form is negative
+      // on dart2js and would throw inside clamp (issue #1074).
+      _belowCount = (_belowCount! - chunk.entries.length).clamp(0, 0x80000000);
     }
     if (chunk.endOffset >= _fileSize) _belowCount = 0;
     final joined = _joinBranchDownward(chunk);
@@ -635,14 +645,46 @@ final class WindowedSessionStorage
     _fileMtimeMs = chunk.fileMtimeMs;
     _totalRecords = null;
     _aboveCount = null;
-    _belowCount = 0;
     _offsetById.clear(); // offsets into the truncated file are garbage
     _replaceWindowWithChunk(chunk);
+    // The re-anchored window IS the tail: nothing sits below it. (Set
+    // after [_replaceWindowWithChunk], which resets the count to
+    // unknown.)
+    _belowCount = 0;
     _hasOlder = chunk.hasOlder;
     _currentLeafId = chunk.entries.isEmpty
         ? null
         : leafIdAfterSessionRecord(chunk.entries.last.record);
     _branchBottomId = _currentLeafId;
+  }
+
+  /// Re-centers the window on the live tail (issue #1159 E2): a
+  /// deep-paged view rejoins the newest records in a bounded number of
+  /// reads — one tail re-anchor plus at most two chunk fills back up to
+  /// the resident cap (never the chunk-by-chunk page-down crawl) — and
+  /// [hasNewer] clears. Returns the re-centered branch (root-first) —
+  /// the transcript delta the caller re-projects. A window already at
+  /// the tail re-reads the same range (idempotent).
+  Future<List<SessionRecord>> jumpToTail() async {
+    await _reAnchorToTail();
+    // The fill pages up to the resident cap WITHOUT loadOlder's
+    // deep-paging eviction running — that eviction drops the NEWEST side
+    // and would un-anchor the tail just landed, re-lighting hasNewer into
+    // an auto-follow loop (review -Ffw). Overshoot instead trims from
+    // the OLD side only, keeping the tail extent pinned.
+    _suspendEviction = true;
+    try {
+      while (_hasOlder &&
+          _entries.length < _residentRecordCap &&
+          _residentWindowBytes < _residentByteCap) {
+        final joined = await loadOlder();
+        if (joined.isEmpty) break;
+      }
+    } finally {
+      _suspendEviction = false;
+    }
+    _evictToBound(newestSide: false);
+    return _windowBranch();
   }
 
   /// The parent id of the oldest branch record in the window — the

@@ -56,7 +56,10 @@ typedef SubstitutionRunner =
 /// so `WasiSandboxShell` and `MemoryShell` wire their private machinery
 /// without a bespoke adapter class.
 final class ShellScriptRunner {
-  /// Creates a runner from shell callbacks.
+  /// Creates a runner from shell callbacks. [allowFdDuplication] opts the
+  /// owning shell into `2>&1`/`>&2` support for command substitutions —
+  /// the WASI sandbox shell sets it; shells that never supported fd
+  /// duplication keep the historical rejection (byte-identical parse).
   const ShellScriptRunner({
     required this.runPipeline,
     required this.environment,
@@ -64,6 +67,7 @@ final class ShellScriptRunner {
     required this.capture,
     required this.saveOutputs,
     required this.restoreOutputs,
+    this.allowFdDuplication = false,
   });
 
   /// Runs one pipeline; stdout/stderr flow through the shell's normal
@@ -89,6 +93,9 @@ final class ShellScriptRunner {
 
   /// Restores the shell's last-output state after a substitution.
   final void Function(ShellOutputSnapshot snapshot) restoreOutputs;
+
+  /// Whether command substitutions parse `2>&1`/`>&2` (see the ctor).
+  final bool allowFdDuplication;
 
   /// Runs a nested command substitution (public surface for shells).
   Future<Result<String, ExecutionError>> substitute(
@@ -199,7 +206,10 @@ Future<Result<String, ExecutionError>> runSubstitutionScript(
   }
   late final ShellScript script;
   try {
-    script = parseShellScript(source);
+    script = parseShellScript(
+      source,
+      allowFdDuplication: runner.allowFdDuplication,
+    );
   } on ShellParseException catch (e) {
     return Err(
       ExecutionError(
@@ -522,8 +532,21 @@ Future<Result<Stage, ExecutionError>> expandShellStage(
       if (expanded.isErr) return Err(expanded.errorOrNull!);
       target = expanded.valueOrNull!.text;
     }
+    // Here-document bodies expand `$VAR`/`$(...)` when the delimiter was
+    // unquoted (POSIX); the result is never word-split (gh-1086).
+    var body = redirect.body;
+    if (body != null && redirect.expandable) {
+      final expanded = await expandShellWord(body, env, substitute);
+      if (expanded.isErr) return Err(expanded.errorOrNull!);
+      body = expanded.valueOrNull!.text;
+    }
     redirects.add(
-      Redirect(kind: redirect.kind, fd: redirect.fd, target: target),
+      Redirect(
+        kind: redirect.kind,
+        fd: redirect.fd,
+        target: target,
+        body: body,
+      ),
     );
   }
   return Ok(

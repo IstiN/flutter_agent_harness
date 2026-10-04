@@ -331,12 +331,19 @@ void main() {
       expect(tile.valueOrNull, isNull);
     });
 
-    test('skips malformed app folders', () async {
-      final env = MemoryExecutionEnv();
-      await env.writeFile('apps/broken/manifest.json', '{not json');
-      final apps = await AppsStore(env, readAsset: _fakeAssets).listApps();
-      expect(apps, isEmpty);
-    });
+    test(
+      'flags malformed app folders instead of skipping them (#866)',
+      () async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('apps/broken/manifest.json', '{not json');
+        final apps = await AppsStore(env, readAsset: _fakeAssets).listApps();
+        // Issue #866 honesty: the broken app stays discoverable as a visible
+        // error entry — never a silently missing (stale) row.
+        expect(apps, hasLength(1));
+        expect(apps.single.id, 'broken');
+        expect(apps.single.error, contains('does not parse'));
+      },
+    );
 
     test('readWidgetSource returns the JS source', () async {
       final env = MemoryExecutionEnv();
@@ -617,4 +624,251 @@ iOS row <!-- fa-platforms: ios -->
       expect(store.forApp(app).llm, isTrue);
     });
   });
+
+  // Issue #866 — the apps panel reflects reality: agent-side manifest
+  // writes are visible without reinstall or restart, unchanged apps cost
+  // zero rescans, broken manifests surface, deleted apps leave no zombies.
+  group('AppsStore reflects reality (#866)', () {
+    Future<AppsStore> storeWithApp(MemoryExecutionEnv env, String name) async {
+      await env.writeFile(
+        'apps/2048/manifest.json',
+        '{"id": "2048", "name": "$name"}',
+      );
+      await env.writeFile('apps/2048/widget.js', '(function(){});');
+      return AppsStore(env, readAsset: _fakeAssets);
+    }
+
+    test('AC1 — an agent rename shows up on the next scan', () async {
+      final env = MemoryExecutionEnv();
+      final store = await storeWithApp(env, '2048');
+      expect((await store.listApps()).single.name, '2048');
+      // The agent edits the manifest in place — no reinstall, no restart.
+      await env.writeFile(
+        'apps/2048/manifest.json',
+        '{"id": "2048", "name": "2048 Renamed"}',
+      );
+      final apps = await store.listApps();
+      expect(apps.single.name, '2048 Renamed');
+      expect(apps.single.error, isNull);
+    });
+
+    test(
+      'AC3 — unchanged manifests reuse the parsed model (zero rescans)',
+      () async {
+        final env = MemoryExecutionEnv();
+        final store = await storeWithApp(env, '2048');
+        final first = (await store.listApps()).single;
+        final second = (await store.listApps()).single;
+        // SAME instance: the hash gate skipped the re-parse entirely.
+        expect(identical(first, second), isTrue);
+      },
+    );
+
+    test(
+      'E2 — same-content rewrite (hash equal, mtime newer) skips rescan',
+      () async {
+        final env = MemoryExecutionEnv();
+        final store = await storeWithApp(env, '2048');
+        final first = (await store.listApps()).single;
+        await env.writeFile(
+          'apps/2048/manifest.json',
+          '{"id": "2048", "name": "2048"}',
+        );
+        final second = (await store.listApps()).single;
+        // Content is the name source: an identical rewrite re-parses nothing.
+        expect(identical(first, second), isTrue);
+      },
+    );
+
+    test('E3 — nameI18n rename resolves per locale after rescan', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/2048/manifest.json',
+        '{"id": "2048", "name": "2048", '
+            '"nameI18n": {"pt-BR": "Vinte e Quarenta e Oito"}}',
+      );
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      expect(
+        (await store.listApps()).single.displayName('pt-BR'),
+        'Vinte e Quarenta e Oito',
+      );
+      await env.writeFile(
+        'apps/2048/manifest.json',
+        '{"id": "2048", "name": "2048", '
+            '"nameI18n": {"pt-BR": "2048 Brasileiro"}}',
+      );
+      expect(
+        (await store.listApps()).single.displayName('pt-BR'),
+        '2048 Brasileiro',
+      );
+    });
+
+    test(
+      'AC4 — a manifest broken by an edit yields a flagged error entry',
+      () async {
+        final env = MemoryExecutionEnv();
+        final store = await storeWithApp(env, '2048');
+        expect((await store.listApps()).single.error, isNull);
+        await env.writeFile('apps/2048/manifest.json', '{"name": ');
+        final broken = (await store.listApps()).single;
+        expect(broken.id, '2048');
+        expect(broken.error, isNotNull);
+        // Repairing the manifest heals the entry — no restart.
+        await env.writeFile(
+          'apps/2048/manifest.json',
+          '{"id": "2048", "name": "Healed"}',
+        );
+        final healed = (await store.listApps()).single;
+        expect(healed.name, 'Healed');
+        expect(healed.error, isNull);
+      },
+    );
+
+    test('E4 — an agent-deleted app dir drops the row and prunes '
+        '.installed.json', () async {
+      final env = MemoryExecutionEnv();
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      await store.installWidget(
+        id: '2048',
+        version: '1.0.0',
+        files: {
+          'manifest.json': utf8.encode('{"id": "2048", "name": "2048"}'),
+          'widget.js': utf8.encode('(function(){});'),
+        },
+      );
+      expect(await store.isCatalogInstalled('2048'), isTrue);
+      expect((await store.listApps()).single.id, '2048');
+      // The agent removes the whole dir behind the store's back.
+      await env.remove('apps/2048', recursive: true);
+      expect(await store.listApps(), isEmpty);
+      // No zombie install record.
+      expect(await store.isCatalogInstalled('2048'), isFalse);
+    });
+
+    test('installed.json is NOT rewritten when nothing was pruned', () async {
+      final env = MemoryExecutionEnv();
+      final store = await storeWithApp(env, '2048');
+      await store.listApps();
+      expect(
+        (await env.readTextFile('apps/.installed.json')).valueOrNull,
+        isNull,
+      );
+    });
+
+    test('R1 — cache hits re-apply the platform filter', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/android_only/manifest.json',
+        '{"id": "android_only", "name": "Android Only", '
+            '"platforms": ["android"]}',
+      );
+      final store = AppsStore(env, platform: 'macos', readAsset: _fakeAssets);
+      // Scan 1 (parse path) filters it out...
+      expect(await store.listApps(), isEmpty);
+      // ...scan 2 (cache-hit path) must not resurface it.
+      expect(await store.listApps(), isEmpty);
+    });
+
+    test(
+      'R2 — a failed apps/ listing keeps cache and install records',
+      () async {
+        final env = _FailingListDirEnv(MemoryExecutionEnv());
+        await env.writeFile(
+          'apps/2048/manifest.json',
+          '{"id": "2048", "name": "2048"}',
+        );
+        await env.writeFile(
+          AppsStore.installedMetaFile,
+          '{"2048": {"version": "1.2.3"}}',
+        );
+        final store = AppsStore(env, readAsset: _fakeAssets);
+        expect((await store.listApps()).single.id, '2048');
+        // Transient IO error on the NEXT scan: neither the cached models nor
+        // the install bookkeeping may be destroyed.
+        env.failListDir = true;
+        final degraded = await store.listApps();
+        expect(degraded.single.id, '2048');
+        expect(
+          (await env.readTextFile(AppsStore.installedMetaFile)).valueOrNull,
+          '{"2048": {"version": "1.2.3"}}',
+        );
+      },
+    );
+
+    test('R3 — a type-garbage manifest is flagged, not fatal', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/bad_types/manifest.json',
+        '{"id": "bad_types", "name": "Bad", "allowedCommands": 5}',
+      );
+      await env.writeFile(
+        'apps/ok/manifest.json',
+        '{"id": "ok", "name": "Ok"}',
+      );
+      final apps = await AppsStore(env, readAsset: _fakeAssets).listApps();
+      // One flagged tile — the listing (and the healthy neighbor) survives.
+      expect(apps, hasLength(2));
+      final bad = apps.where((a) => a.id == 'bad_types').single;
+      expect(bad.error, contains('manifest.json is invalid'));
+      expect(apps.where((a) => a.id == 'ok').single.error, isNull);
+    });
+
+    test('R4 — editing an i18n ref file invalidates the cache', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/2048/manifest.json',
+        '{"id": "2048", "name": "2048", '
+            '"nameI18n": {"pt-BR": {"file": "i18n/pt-BR.json"}}}',
+      );
+      await env.writeFile('apps/2048/i18n/pt-BR.json', 'Vinte e Quarenta');
+      final store = AppsStore(env, readAsset: _fakeAssets);
+      expect(
+        (await store.listApps()).single.displayName('pt-BR'),
+        'Vinte e Quarenta',
+      );
+      // The agent edits ONLY the ref file — the manifest hash never moves.
+      await env.writeFile('apps/2048/i18n/pt-BR.json', '2048 Brasileiro');
+      expect(
+        (await store.listApps()).single.displayName('pt-BR'),
+        '2048 Brasileiro',
+      );
+    });
+  });
+}
+
+/// [ExecutionEnv] whose `apps/` listing can be made to fail — the issue
+/// #866 review regression for the transient-IO-error path. Delegates
+/// everything else to an in-memory env ([MemoryExecutionEnv] is final).
+class _FailingListDirEnv implements ExecutionEnv {
+  _FailingListDirEnv(this._inner);
+
+  final MemoryExecutionEnv _inner;
+  bool failListDir = false;
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) async {
+    if (failListDir) {
+      return Err(
+        FileError(FileErrorCode.permissionDenied, 'injected IO failure'),
+      );
+    }
+    return _inner.listDir(path);
+  }
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _inner.exists(path);
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _inner.readTextFile(path);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _inner.writeFile(path, content);
+
+  // listApps touches only the members above; any other call is a loud
+  // test failure, not a silent no-op.
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnsupportedError('unexpected env call: $invocation');
 }

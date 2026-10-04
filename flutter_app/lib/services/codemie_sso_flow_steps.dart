@@ -2,12 +2,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/codemie_extension_signin.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/provider_auth_surface.dart';
 import 'package:fa/services/relay/ext_runtime.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/io.dart'
@@ -30,6 +30,122 @@ String codeMieHostFromUrl(String url) {
     return port != 0 && port != defaultPort ? '${uri.host}:$port' : uri.host;
   }
   return 'codemie';
+}
+
+/// The CLI-parity provider-name step (issue #977, `_askConnectProviderName`):
+/// a dialog prefilled with [initial] — the existing entry's name on a
+/// re-login, the org host otherwise — asking what to call this CodeMie
+/// connection. A name already used by an entry on a DIFFERENT endpoint is
+/// rejected inline (two providers cannot share a name); a name free, or
+/// belonging to an entry on this very endpoint (the re-login / second
+/// account shape), is returned.
+///
+/// Returns the resolved name, or null on cancel — the caller substitutes
+/// [initial] (SSO credentials are already minted at this point, so a cancel
+/// must not abort the connect; the CLI does the same for OAuth/SSO flows).
+Future<String?> showCodeMieNamePrompt(
+  BuildContext context, {
+  required ProviderRegistry registry,
+  required String baseUrl,
+  required String initial,
+}) {
+  return showDialog<String>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => _CodeMieNamePromptDialog(
+      registry: registry,
+      baseUrl: baseUrl,
+      initial: initial,
+    ),
+  );
+}
+
+/// The name-prompt dialog body: a [StatefulWidget] owning its text
+/// controller (created in [initState], disposed with the dialog — the
+/// [CodeMieModelPickerPage] precedent) so a route rebuild never mints a
+/// fresh controller under a half-typed name.
+class _CodeMieNamePromptDialog extends StatefulWidget {
+  const _CodeMieNamePromptDialog({
+    required this.registry,
+    required this.baseUrl,
+    required this.initial,
+  });
+
+  final ProviderRegistry registry;
+  final String baseUrl;
+  final String initial;
+
+  @override
+  State<_CodeMieNamePromptDialog> createState() =>
+      _CodeMieNamePromptDialogState();
+}
+
+class _CodeMieNamePromptDialogState extends State<_CodeMieNamePromptDialog> {
+  late final TextEditingController _nameController;
+  var _error = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.initial);
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      // Empty = keep the suggested name (the CLI's bare Enter).
+      Navigator.of(context).pop(widget.initial);
+      return;
+    }
+    final clash = widget.registry.byName(name);
+    if (clash != null && clash.baseUrl != widget.baseUrl) {
+      setState(
+        () => _error =
+            'Name "$name" is already used by ${clash.baseUrl} — '
+            'pick another name',
+      );
+      return;
+    }
+    Navigator.of(context).pop(name);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Name this CodeMie connection'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _nameController,
+            autofocus: true,
+            onSubmitted: (_) => _submit(),
+            decoration: const InputDecoration(labelText: 'Provider name'),
+          ),
+          if (_error.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              _error,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Continue')),
+      ],
+    );
+  }
 }
 
 /// Nulls out an empty string — an empty pick means "cancel", not ''.
@@ -91,9 +207,15 @@ Future<List<String>> fetchCodeMieModelsLenient(
   }
 }
 
-/// Saves the org as a [CustomProvider] (or updates the existing one —
-/// a re-login keeps id and name) and reconfigures [service], then persists
-/// the last connection.
+/// Saves the org as a [CustomProvider] (or updates the existing one) and
+/// reconfigures [service], then persists the last connection.
+///
+/// [name] is the CLI-parity display name (issue #977): the name step's
+/// resolved value — the existing entry's name on a re-login, a fresh name
+/// for a second account on the same org, the org host otherwise. It is
+/// honored on BOTH branches: the update branch keeps [existing]'s id but
+/// takes [name] (the caller's explicit resolution wins over the
+/// pre-resolved entry), the add branch mints an entry under it.
 ///
 /// The credential-assembly contract: [key] is the session cookie string for
 /// the SSO surfaces and the EMPTY string for the extension branch (cookie
@@ -106,13 +228,13 @@ Future<void> saveCodemieConnection({
   required String baseUrl,
   required String modelId,
   required String key,
+  required String name,
   CustomProvider? existing,
 }) async {
-  final name = codeMieHostFromUrl(orgUrl);
   if (existing != null) {
     final updated = CustomProvider(
       id: existing.id,
-      name: existing.name,
+      name: name,
       baseUrl: baseUrl,
       modelId: modelId,
     );
@@ -180,21 +302,19 @@ Future<CodeMieSsoCredentials?> desktopCodeMieSso(
   );
 }
 
-/// The method channel driving `ASWebAuthenticationSession` on iOS (implemented
-/// in `ios/Runner/AppDelegate.swift`).
-const _webAuthSessionChannel = MethodChannel('fah/web_auth_session');
-
 /// iOS SSO via a system-browser auth session. Unlike the embedded WKWebView,
 /// `ASWebAuthenticationSession` runs the page in a Safari-grade context, so
 /// the IdP can offer WebAuthn / passkey (Face ID) sign-in.
 ///
-/// The session's scheme interception does NOT fire for `http://` URLs, so
-/// the WebView's dummy-port trick cannot work here. Instead the app runs the
-/// REAL loopback callback server (same as the desktop flow — iOS allows
-/// loopback binds) and the session's final
-/// `http://localhost:<port>/?token=...` redirect loads it for real; the
-/// session sheet is then dismissed programmatically via the channel's
-/// `cancel`.
+/// The session's redirect completes through the LOCAL SERVER, not through
+/// scheme interception: the flow passes no `callbackScheme`, and the
+/// final `http://localhost:<port>/?token=...` redirect loads the REAL
+/// loopback callback server (same as the desktop flow — iOS allows
+/// loopback binds); the session sheet is then dismissed programmatically
+/// via the channel's `cancel`. (Platform note, reconciled with the AIIN
+/// flow: `ASWebAuthenticationSession` scheme interception DOES fire for
+/// `http` today — Apple-deprecated — which is the leg the AIIN mobile
+/// flow rides; CodeMie simply does not need it.)
 ///
 /// Returns the decoded credentials, or a record with [sessionUnavailable]
 /// set when the session could not even start (the caller falls back to the
@@ -206,18 +326,20 @@ systemAuthSessionCodeMieSso(String orgUrl) async {
   final int port;
   try {
     port = await server.start();
-  } on Object {
+  } on Object catch (error) {
+    debugPrint('[CodeMie SSO] loopback callback server failed: $error');
     return (credentials: null, sessionUnavailable: true);
   }
   final ssoUrl = buildCodeMieSsoUrl(orgUrl, port);
   var sessionFailed = false;
-  // No callbackScheme: nothing to intercept — the token arrives through the
-  // local server, the session future completes only on cancel/dismiss.
+  // No callbackScheme: the token arrives through the local server, the
+  // session future completes only on cancel/dismiss.
   unawaited(
-    _webAuthSessionChannel
+    systemAuthSessionChannel
         .invokeMethod<String>('authenticate', {'url': ssoUrl})
         .then((_) => server.close()) // user cancelled the sheet
-        .onError((_, _) {
+        .onError((Object error, _) {
+          debugPrint('[CodeMie SSO] auth session failed: $error');
           sessionFailed = true;
           return server.close();
         }),
@@ -225,7 +347,9 @@ systemAuthSessionCodeMieSso(String orgUrl) async {
   final token = await server.waitForToken();
   // Dismiss the sheet (shows the "Authorized" page only for a split second).
   unawaited(
-    _webAuthSessionChannel.invokeMethod<void>('cancel').onError((_, _) => null),
+    systemAuthSessionChannel
+        .invokeMethod<void>('cancel')
+        .onError((_, _) => null),
   );
   if (sessionFailed) {
     return (credentials: null, sessionUnavailable: true);
@@ -316,6 +440,13 @@ Future<bool> extensionCookieCodeMieSignin({
 /// The post-poll half of the extension branch: the model pick (a re-login
 /// keeps the same model pre-selected; either way the flow REQUIRES a
 /// confirmed pick — unlike the SSO surfaces) and the keyless save+connect.
+///
+/// The update target is resolved by NAME (the entry the save will carry —
+/// the org host), never first-by-URL: after the SSO name step (issue #977)
+/// several accounts may share one CodeMie endpoint, and a first-by-URL
+/// pick would refresh an arbitrary account. A host-named entry on a
+/// DIFFERENT endpoint is a genuine clash — the branch aborts with a clean
+/// error instead of minting a duplicate name.
 Future<bool> _completeExtensionSignin({
   required BuildContext context,
   required ProviderRegistry registry,
@@ -326,10 +457,21 @@ Future<bool> _completeExtensionSignin({
   required List<String> models,
   CodeMieModelPick? pickModel,
 }) async {
-  // Re-login keeps the same model (pre-selected in the picker).
-  final existing = registry.providers
-      .where((p) => p.baseUrl == baseUrl)
-      .firstOrNull;
+  // The entry this re-login lands on: the one carrying the save's display
+  // name on this endpoint (deterministic — names are unique post-#977).
+  final suggestedName = codeMieHostFromUrl(orgUrl);
+  final byName = registry.byName(suggestedName);
+  if (byName != null && byName.baseUrl != baseUrl) {
+    if (context.mounted) {
+      showFahErrorSnack(
+        context,
+        'Provider name "$suggestedName" is already used by '
+        '${byName.baseUrl} — rename that provider in Settings first',
+      );
+    }
+    return false;
+  }
+  final existing = byName;
   final chosenModel = await (pickModel ?? _uiModelPick(context))(
     models,
     preselected: existing?.modelId,
@@ -345,6 +487,7 @@ Future<bool> _completeExtensionSignin({
     baseUrl: baseUrl,
     modelId: modelId,
     key: '', // cookie-jar auth — a bearer key never exists here
+    name: existing?.name ?? suggestedName,
     existing: existing,
   );
   return true;

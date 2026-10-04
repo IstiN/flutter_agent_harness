@@ -45,6 +45,105 @@ void main() {
         throwsConfigException,
       );
     });
+
+    test('round-trips authHeader (issue #964)', () {
+      final gateway = CustomProviderEntry(
+        name: 'acme-gw',
+        apiType: 'openai',
+        baseUrl: 'https://gateway.acme.com/v1',
+        modelId: 'bedrock-model',
+        authHeader: 'x-api-key',
+      );
+      final parsed = CustomProviderEntry.fromYaml(gateway.toYaml());
+      expect(parsed.authHeader, 'x-api-key');
+      // Unset keeps the Bearer default and stays out of the yaml.
+      final plain = CustomProviderEntry(
+        name: 'a',
+        apiType: 'openai',
+        baseUrl: 'https://a.example.com',
+        modelId: 'm',
+      );
+      expect(plain.authHeader, isNull);
+      expect(plain.toYaml().containsKey('authHeader'), isFalse);
+    });
+
+    test('rejects invalid authHeader values naming the entry '
+        '(issue #964 AC5)', () {
+      void expectBadAuth(Object? authHeader) {
+        expect(
+          () => CustomProviderEntry.fromYaml({
+            'name': 'acme-gw',
+            'apiType': 'openai',
+            'baseUrl': 'https://gateway.acme.com/v1',
+            'modelId': 'bedrock-model',
+            'authHeader': authHeader,
+          }),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              allOf(contains('acme-gw'), contains('invalid authHeader')),
+            ),
+          ),
+        );
+      }
+
+      expectBadAuth('');
+      expectBadAuth('  ');
+      expectBadAuth('x-api-key\r\nX-Evil: 1');
+      expectBadAuth('x api key');
+      expectBadAuth(7);
+    });
+
+    test('rejects authHeader on a non-openai-completions api type '
+        '(issue #964 review)', () {
+      expect(
+        () => CustomProviderEntry.fromYaml(const {
+          'name': 'acme-gw',
+          'apiType': 'anthropic',
+          'baseUrl': 'https://gateway.acme.com/v1',
+          'modelId': 'claude-x',
+          'authHeader': 'x-api-key',
+        }),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('customProviders entry "acme-gw"'),
+              contains('provider "anthropic"'),
+              contains('anthropic adapter'),
+            ),
+          ),
+        ),
+      );
+    });
+
+    test('rejects authHeader on dial and copilot — openai-completions-'
+        'shaped apis whose adapters ignore it (issue #964 round-2)', () {
+      for (final apiType in const ['dial', 'copilot']) {
+        expect(
+          () => CustomProviderEntry.fromYaml({
+            'name': 'acme-gw',
+            'apiType': apiType,
+            'baseUrl': 'https://gateway.acme.com/v1',
+            'modelId': 'm',
+            'authHeader': 'x-api-key',
+          }),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              allOf(
+                contains('customProviders entry "acme-gw"'),
+                contains('routes to the $apiType adapter, which ignores it'),
+              ),
+            ),
+          ),
+          reason: apiType,
+        );
+      }
+    });
   });
 
   group('CustomProviderRegistry', () {
@@ -186,6 +285,89 @@ void main() {
         ),
         'FA_KEY_API_AIIN_BY',
       );
+    });
+
+    test('an entry name already a suffix of the host slug is not doubled '
+        '(gh-1226 AC3)', () {
+      // An entry named 'z.ai' on host api.z.ai used to generate
+      // FA_KEY_API_Z_AI_Z_AI — the slug was appended even though the
+      // host slug already ended with it.
+      expect(
+        CustomProviderRegistry.keyNameFor(
+          'https://api.z.ai/api/coding/paas/v4',
+          providerName: 'z.ai',
+        ),
+        'FA_KEY_API_Z_AI',
+      );
+      // A name that is NOT a suffix still scopes the slot.
+      expect(
+        CustomProviderRegistry.keyNameFor(
+          'https://api.z.ai/api/coding/paas/v4',
+          providerName: 'work',
+        ),
+        'FA_KEY_API_Z_AI_WORK',
+      );
+    });
+
+    test('a registry loaded from an older doubled slot reports a migration '
+        'note (gh-1226 AC3)', () {
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'z.ai',
+          apiType: 'zai',
+          baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+          modelId: 'glm-5.3-flash',
+          keyName: 'FA_KEY_API_Z_AI_Z_AI',
+        ),
+      ]);
+
+      expect(registry.keyNameMigrationNotes, isNotEmpty);
+      expect(registry.keyNameMigrationNotes.single, contains('z.ai'));
+      expect(
+        registry.keyNameMigrationNotes.single,
+        contains('FA_KEY_API_Z_AI'),
+      );
+      expect(registry.keyNameMigrationNotes.single, contains('canonical'));
+      // The remedy must actually take effect: /key set alone writes
+      // the canonical slot but the PINNED doubled slot keeps winning
+      // (resolution probes the entry's own keyName first) — the note
+      // must also tell the user to delete the doubled slot.
+      expect(
+        registry.keyNameMigrationNotes.single,
+        contains('/key delete FA_KEY_API_Z_AI_Z_AI'),
+      );
+    });
+
+    test('an intentional non-canonical keyName (not the doubling class) '
+        'reports no migration note', () {
+      // A user-chosen shared slot is a feature, not the gh-1226
+      // doubling defect — nagging with a "move the value" remedy that
+      // cannot take effect would be wrong (review thread).
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'z.ai',
+          apiType: 'zai',
+          baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+          modelId: 'glm-5.3-flash',
+          keyName: 'SHARED_ZAI_SLOT',
+        ),
+      ]);
+
+      expect(registry.keyNameMigrationNotes, isEmpty);
+    });
+
+    test('a canonical registry reports no migration notes', () {
+      final registry = CustomProviderRegistry([
+        CustomProviderEntry(
+          name: 'z.ai',
+          apiType: 'zai',
+          baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+          modelId: 'glm-5.3-flash',
+          keyName: 'FA_KEY_API_Z_AI',
+        ),
+      ]);
+
+      expect(registry.keyNameMigrationNotes, isEmpty);
     });
   });
 

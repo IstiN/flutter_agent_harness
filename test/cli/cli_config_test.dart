@@ -621,7 +621,7 @@ prompts:
         );
       });
 
-      test('rejects unknown skills keys', () {
+      test('rejects malformed per-skill skills keys', () {
         final file = File('${tmp.path}/.fah/config.yaml');
         file.createSync(recursive: true);
         file.writeAsStringSync('skills:\n  bogus: 1\n');
@@ -631,7 +631,9 @@ prompts:
             isA<ConfigException>().having(
               (e) => e.message,
               'message',
-              contains('unknown "skills" key'),
+              // Per-skill keys are legal since issue #1151; only a bad
+              // value shape is rejected now.
+              contains('skills.bogus must be on/off'),
             ),
           ),
         );
@@ -826,6 +828,40 @@ prompts:
         expect(loaded.agentMode, isNull);
       });
 
+      test('parses agent.misuseBreaker = false (issue #862)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  misuseBreaker: false\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.misuseBreaker, isFalse);
+      });
+
+      test('misuseBreaker defaults to true when the key is absent '
+          '(issue #862)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: pi\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.misuseBreaker, isTrue);
+      });
+
+      test('rejects a non-boolean misuseBreaker with the exact message '
+          '(issue #862)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  misuseBreaker: "off"\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              '"agent.misuseBreaker" must be a boolean',
+            ),
+          ),
+        );
+      });
+
       test('rejects an unknown agent.mode value', () {
         final file = File('${tmp.path}/.fah/config.yaml');
         file.createSync(recursive: true);
@@ -923,6 +959,110 @@ prompts:
           contains('agent:\n  contextWindowCap: 256000\n  mode: omp\n'),
         );
       });
+
+      test('absent agent.stuckTool parses to null', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: omp\n');
+        expect(loadCliConfig(tmp.path).stuckTool, isNull);
+      });
+
+      test('parses agent.stuckTool and persists only non-defaults back', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync(
+          'agent:\n'
+          '  stuckTool:\n'
+          '    floorSeconds: 42\n'
+          '    heartbeatSeconds: 7\n'
+          '    followUp: advisory\n'
+          '    excludeTools: [task]\n',
+        );
+        final loaded = loadCliConfig(tmp.path);
+        final stuck = loaded.stuckTool;
+        expect(stuck, isNotNull);
+        expect(stuck!.floor, const Duration(seconds: 42));
+        expect(stuck.heartbeatInterval, const Duration(seconds: 7));
+        expect(stuck.followUp, StuckFollowUpMode.advisory);
+        expect(stuck.excludeTools, ['task']);
+        final yaml = loaded
+            .withCustomProviders(loaded.customProviders)
+            .toYaml();
+        expect(
+          yaml,
+          contains(
+            '  stuckTool:\n'
+            '    followUp: advisory\n'
+            '    floorSeconds: 42\n'
+            '    heartbeatSeconds: 7\n'
+            '    excludeTools: [task]\n',
+          ),
+        );
+      });
+
+      test('rejects an unknown agent.stuckTool key', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync(
+          'agent:\n  stuckTool:\n    floorSeconds: 10\n    turbo: true\n',
+        );
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('unknown "agent.stuckTool" key'),
+            ),
+          ),
+        );
+      });
+      test(
+        'the effective supervision is advisory for interactive hosts, '
+        'autonomous for headless — explicit config wins everywhere',
+        () {
+          // Issue review (gh-1054): the ticket's non-goal — auto-cancelling
+          // interactive sessions with a human present. The autonomous
+          // default is a headless-only policy; `agent.stuckTool:` in the
+          // yaml always wins.
+          AgentCliConfig cli({bool headless = false, StuckToolConfig? stuck}) =>
+              AgentCliConfig(
+                model: const Model(
+                  id: 'm',
+                  api: 'test-api',
+                  provider: 'test-provider',
+                  baseUrl: 'https://example.test',
+                  contextWindow: 100000,
+                  maxTokens: 4096,
+                ),
+                apiKey: 'k',
+                env: MemoryExecutionEnv(cwd: '/work'),
+                sessionRoot: '/sessions',
+                headlessRun: headless,
+                stuckTool: stuck,
+              );
+          expect(
+            cli().effectiveStuckTool().followUp,
+            StuckFollowUpMode.advisory,
+            reason: 'REPL/TUI: a human is present — advise only',
+          );
+          expect(
+            cli(headless: true).effectiveStuckTool().followUp,
+            StuckFollowUpMode.autonomous,
+            reason: 'fa run: unattended — the autonomous default',
+          );
+          const explicit = StuckToolConfig(followUp: StuckFollowUpMode.advisory);
+          expect(
+            cli(headless: true, stuck: explicit).effectiveStuckTool(),
+            same(explicit),
+            reason: 'an explicit agent.stuckTool wins in both modes',
+          );
+          expect(
+            cli(stuck: explicit).effectiveStuckTool(),
+            same(explicit),
+          );
+        },
+      );
     });
   });
 
@@ -941,6 +1081,50 @@ prompts:
       expect(effectiveProviderConnectTimeout, const Duration(seconds: 7));
       // Untouched field keeps the default.
       expect(effectiveProviderStreamIdleTimeout, providerStreamIdleTimeout);
+    });
+  });
+
+  group('FA_PROVIDER_TIMEOUT_SECONDS env fold (issue #1036)', () {
+    test('blank/unset keeps the parsed section untouched', () {
+      final base = ProviderTimeoutsOverride(connect: Duration(seconds: 9));
+      expect(applyProviderTimeoutEnvOverride(base, null), same(base));
+      expect(applyProviderTimeoutEnvOverride(base, ''), same(base));
+      expect(applyProviderTimeoutEnvOverride(base, '  '), same(base));
+      expect(applyProviderTimeoutEnvOverride(null, null), isNull);
+    });
+
+    test('a valid seconds value sets fetchRead, keeping the section', () {
+      final base = ProviderTimeoutsOverride(
+        connect: Duration(seconds: 9),
+        streamIdle: Duration(seconds: 11),
+      );
+      final folded = applyProviderTimeoutEnvOverride(base, '45');
+      expect(folded!.connect, const Duration(seconds: 9));
+      expect(folded.streamIdle, const Duration(seconds: 11));
+      expect(folded.fetchRead, const Duration(seconds: 45));
+    });
+
+    test('a valid seconds value works without a parsed section', () {
+      final folded = applyProviderTimeoutEnvOverride(null, '60');
+      expect(folded!.fetchRead, const Duration(seconds: 60));
+      expect(folded.connect, isNull);
+      expect(folded.streamIdle, isNull);
+    });
+
+    test('a bad value fails loud naming the env var', () {
+      for (final raw in ['abc', '0', '-5', '1.5']) {
+        expect(
+          () => applyProviderTimeoutEnvOverride(null, raw),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('FA_PROVIDER_TIMEOUT_SECONDS'),
+            ),
+          ),
+          reason: 'raw: $raw',
+        );
+      }
     });
   });
 
@@ -1434,9 +1618,8 @@ memory:
   });
 
   group('saved provider canonicalization (issue #772)', () {
-    CliConfig configOf(String yaml) => CliConfig.fromYaml(
-          loadYaml(yaml) as YamlMap,
-        );
+    CliConfig configOf(String yaml) =>
+        CliConfig.fromYaml(loadYaml(yaml) as YamlMap);
 
     test('the CLI-written name-shape loads as the kind (AC1)', () {
       expect(
@@ -1466,21 +1649,20 @@ memory:
     });
 
     test('shared-kind names stay — the baseUrl carries that identity', () {
-      expect(
-        configOf('provider: openrouter\n').providerKind,
-        'openrouter',
-      );
+      expect(configOf('provider: openrouter\n').providerKind, 'openrouter');
       expect(configOf('provider: openai\n').providerKind, 'openai');
       expect(configOf('provider: kimi\n').providerKind, 'kimi');
     });
 
-    test('a kind-id no version knows stays verbatim (E2, warn-dont-mutate)',
-        () {
-      expect(
-        configOf('provider: from-the-future\n').providerKind,
-        'from-the-future',
-      );
-    });
+    test(
+      'a kind-id no version knows stays verbatim (E2, warn-dont-mutate)',
+      () {
+        expect(
+          configOf('provider: from-the-future\n').providerKind,
+          'from-the-future',
+        );
+      },
+    );
 
     test('an absent provider keeps the default', () {
       expect(configOf('mode: code\n').providerKind, 'openai-completions');
@@ -1493,8 +1675,7 @@ memory:
       expect(config.providerKind, 'openai-completions');
     });
 
-    test('the next save persists the kind (write-back on save only)',
-        () async {
+    test('the next save persists the kind (write-back on save only)', () async {
       final tmp = Directory.systemTemp.createTempSync('fah-canonical-');
       addTearDown(() => tmp.deleteSync(recursive: true));
       final file = File('${tmp.path}/.fah/config.yaml')
@@ -1505,6 +1686,48 @@ memory:
       expect(file.readAsStringSync(), contains('provider: chatgpt'));
       await saveCliConfig(tmp.path, loaded);
       expect(file.readAsStringSync(), contains('provider: chatgpt-codex'));
+    });
+  });
+
+  group('output.streamThinking (gh-1198)', () {
+    bool streamThinkingOf(String yaml) =>
+        CliConfig.fromYaml(loadYaml(yaml) as YamlMap).streamThinking;
+
+    test('defaults to false when the section is absent (byte-identical '
+        'legacy)', () {
+      expect(streamThinkingOf('mode: code\n'), isFalse);
+      final tmp = Directory.systemTemp.createTempSync('fah-output-');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      expect(loadCliConfig(tmp.path).streamThinking, isFalse);
+    });
+
+    test('parses the section', () {
+      expect(streamThinkingOf('output:\n  streamThinking: true\n'), isTrue);
+      expect(streamThinkingOf('output:\n  streamThinking: false\n'), isFalse);
+    });
+
+    test('rejects unknown output keys', () {
+      expect(
+        () => streamThinkingOf('output:\n  bogus: true\n'),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('bogus'),
+          ),
+        ),
+      );
+    });
+
+    test('rejects a non-boolean streamThinking', () {
+      expect(
+        () => streamThinkingOf('output:\n  streamThinking: "yes"\n'),
+        throwsA(isA<ConfigException>()),
+      );
+      expect(
+        () => streamThinkingOf('output: true\n'),
+        throwsA(isA<ConfigException>()),
+      );
     });
   });
 }

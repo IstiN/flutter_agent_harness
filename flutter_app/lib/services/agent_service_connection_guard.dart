@@ -143,7 +143,10 @@ StreamFunction decorateAuthErrors(
   StreamFunction inner,
   String? Function() label,
 ) {
-  final authFailure = RegExp(r'^40[13]:|^[45]\d\d:?.*(unauthorized|api key|credentials|sign in)', caseSensitive: false);
+  final authFailure = RegExp(
+    r'^40[13]:|^[45]\d\d:?.*(unauthorized|api key|credentials|sign in)',
+    caseSensitive: false,
+  );
   return (model, context, {cancelToken}) {
     final owner = label();
     final stream = inner(model, context, cancelToken: cancelToken);
@@ -159,10 +162,7 @@ StreamFunction decorateAuthErrors(
               final patched = event.error.copyWith(
                 errorMessage: '[$owner] $text',
               );
-              outgoing = ErrorEvent(
-                reason: event.reason,
-                error: patched,
-              );
+              outgoing = ErrorEvent(reason: event.reason, error: patched);
             }
           }
           controller.push(outgoing);
@@ -186,6 +186,7 @@ StreamFunction decorateAuthErrors(
       }
       controller.end();
     }
+
     unawaited(pump());
     return controller;
   };
@@ -221,10 +222,6 @@ extension _AgentServiceSendGuard on AgentService {
     // CodeMie endpoint without a key on THIS surface is a guaranteed 401,
     // so the request is refused here with the row-naming message.
     return _modelRowMismatch(registry, config) ??
-        _missingCredential(
-          registry,
-          config,
-          extensionHost: isExtensionHost(),
-        );
+        _missingCredential(registry, config, extensionHost: isExtensionHost());
   }
 }

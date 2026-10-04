@@ -12,8 +12,6 @@
 // tests) so the assertions see what a real terminal would show.
 library;
 
-import 'dart:convert';
-import 'dart:io';
 
 import 'package:dart_tui/dart_tui.dart';
 import 'package:dart_tui/src/renderer.dart';
@@ -21,6 +19,8 @@ import 'package:dart_tui/src/renderer.dart';
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
 import 'package:flutter_agent_harness/src/cli/tui_chrome.dart' show tuiChromeEnabled;
 import 'package:test/test.dart';
+
+import 'tui_render_harness.dart';
 
 void main() {
   FaTuiCallbacks callbacks() => FaTuiCallbacks(
@@ -82,7 +82,7 @@ void main() {
     // Feed eleven consecutive streaming frames through the real renderer.
     final buf = StringBuffer();
     final renderer = CellRenderer(
-      output: _BufSink(buf),
+      output: StringSinkIOSink(buf),
       logSink: null,
       defaultAltScreen: false,
       defaultHideCursor: false,
@@ -109,6 +109,123 @@ void main() {
     expect(replay.scrollback, isNot(contains('explain the scrollback bug')),
         reason: 'the sticky echo must stay pinned, never scroll off');
   });
+  }
+
+  // Wrap-turn dedupe (issue #917): the pin-vs-transcript decision used the
+  // RAW stored scroll offset while the frame paints at the freshly computed
+  // follow bottom. Keystrokes re-wrap the input zone between output events
+  // (the painted window moves, the stored offset does not), so a slow-PTY
+  // backspace burst landing after the last streamed line dropped the window
+  // top back below the echo while the pin stayed on: the same turn row
+  // painted twice (pinned AND in the transcript).
+  //
+  // Geometry (termHeight 24, classic chrome: 6 fixed rows → 18 history
+  // rows): prior turns + echo put the echo TEXT at window row 3 and its
+  // end past row 6 (chrome) / 5 (legacy, the dim rule merges nothing here
+  // — both counts land the text at 3). A draft of D wrapped rows shrinks
+  // history to 18-(D-1); the streamed sync then stores offset ≥ echo end
+  // while D-1 ≥ echo rows above the text, and deleting the draft drops the
+  // painted window top back ONTO the text row — pre-fix: pin still on.
+  for (final chrome in [true, false]) {
+    // A draft of 8 wrapped rows steals 7 history rows: the streamed sync
+    // (draft present) stores an offset past the echo end; deleting the
+    // draft grows the window back but the pin reclaims 2 of the rows, so
+    // the painted top lands exactly on the echo text while the stored
+    // offset still says the echo is above the window.
+    const draftRows = 8;
+    // chrome's bubble echo block is one line taller than the legacy rule
+    // echo - the same dup geometry lands one streamed line earlier.
+    final answers = chrome ? 11 : 12;
+
+    // Shared #917 fixture (review round 2): builds the synced state both
+    // scenarios branch from - submitted echo, streamed answers, an
+    // 8-row wrapped draft typed mid-run, one streamed line landing with
+    // the draft present (the stored offset syncs past the echo end).
+    (FaTuiModel, String) syncedFixture() {
+      var model = FaTuiModel(
+        callbacks: callbacks(),
+        isExited: () => false,
+        termWidth: 80,
+        termHeight: 24,
+        outputLines: const ['older line one', 'older line two', ''],
+      );
+      model = model.copyWith(inputText: 'the racy prompt row');
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.enter)));
+      model = send(model, const BusyMsg(true, source: 'run'));
+      expect(model.busy, isTrue, reason: 'submit must start a run');
+      for (var i = 0; i < answers; i++) {
+        model = send(model, OutputMsg('answer line $i', newline: true));
+      }
+      final draft = ('loremipsum ' * (7 * draftRows)).trim();
+      for (final ch in draft.split('')) {
+        model = send(model, KeyPressMsg(TeaKey(code: KeyCode.rune, text: ch)));
+      }
+      model = send(model, OutputMsg('answer line $answers', newline: true));
+      return (model, draft);
+    }
+
+    List<String> rowsOf(FaTuiModel model) => model.view().content
+        .split('\n')
+        .map((l) => l.replaceAll(ansi, ''))
+        .toList();
+
+    int paintsOf(FaTuiModel model) =>
+        rowsOf(model).where((l) => l.contains('the racy prompt row')).length;
+
+    test('deleting a wrapped draft mid-run never duplicates the pinned '
+        'echo (chrome=$chrome, #917)', () {
+      addTearDown(() => tuiChromeEnabled = true);
+      tuiChromeEnabled = chrome;
+      var (model, draft) = syncedFixture();
+
+      // Fixture guard: never a duplicate through every state so far (the
+      // pre-fix lost-echo transient - echo neither pinned nor painted -
+      // is the sibling raw-offset artifact; the dup is what #917 pins).
+      expect(paintsOf(model), lessThanOrEqualTo(1),
+          reason: 'fixture: no duplicate while composing');
+
+      // The draft goes away (a backspace burst lands after the last output
+      // event - the slow-PTY interleave): the input zone shrinks, the
+      // window top drops back onto the echo text, while the stored offset
+      // - and with it the pre-fix pin decision - still says the echo is
+      // above the window. One paint must win, deterministically.
+      for (var i = 0; i < draft.length; i++) {
+        model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.backspace)));
+      }
+      expect(paintsOf(model), 1, reason: 'the turn row paints exactly once - '
+          'pinned OR in the transcript window, never both');
+    });
+
+    // The DETACHED branch of the same dedupe (review round 1): after a
+    // PageUp the stored offset IS the painted anchor, and the clamp must
+    // stay valid when the window outgrows the transcript — the pre-fix
+    // raw negative anchor (wrapped - history + pin < 0) threw
+    // ArgumentError inside the plan and killed the frame mid-run.
+    test('detached follow never double-paints the echo nor crashes on '
+        'a tall window (chrome=$chrome, #917)', () {
+      addTearDown(() => tuiChromeEnabled = true);
+      tuiChromeEnabled = chrome;
+      var (model, draft) = syncedFixture();
+
+      // PageUp mid-run: follow detaches, the stored offset (now the
+      // painted anchor) sits above the echo end — the transcript owns
+      // the echo, the pin stays off, exactly one paint.
+      model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageUp)));
+      expect(model.followTail, isFalse, reason: 'pageUp detaches follow');
+      expect(paintsOf(model), 1, reason: 'detached: transcript owns the echo');
+
+      // The same slow-PTY backspace burst, detached.
+      for (var i = 0; i < draft.length; i++) {
+        model = send(model, KeyPressMsg(const TeaKey(code: KeyCode.backspace)));
+      }
+      expect(paintsOf(model), 1, reason: 'detached: still exactly one paint');
+
+      // Then the terminal grows mid-run: the transcript is now SHORTER
+      // than the painted window — pre-fix the anchor went negative and
+      // the detached clamp threw ArgumentError, killing the frame.
+      model = send(model, WindowSizeMsg(80, 80));
+      expect(paintsOf(model), 1, reason: 'tall window: one paint, no crash');
+    });
   }
 }
 
@@ -181,37 +298,4 @@ _Replay _replay(String bytes, {required int rows, required int cols}) {
   }
   return _Replay(screen.map((row) => row.join().trimRight()).join('\n'),
       scrollback.join('\n'));
-}
-
-/// Minimal [IOSink] over a [StringBuffer] capturing what the renderer would
-/// write to the tty.
-final class _BufSink implements IOSink {
-  _BufSink(this._buf);
-  final StringBuffer _buf;
-
-  @override
-  void write(Object? obj) => _buf.write(obj);
-  @override
-  void writeln([Object? obj = '']) => _buf.writeln(obj);
-  @override
-  void writeAll(Iterable<Object?> objects, [String separator = '']) =>
-      _buf.writeAll(objects, separator);
-  @override
-  void writeCharCode(int charCode) => _buf.writeCharCode(charCode);
-  @override
-  Future<void> flush() async {}
-  @override
-  Future<void> close() async {}
-  @override
-  Future<void> get done async {}
-  @override
-  void add(List<int> data) {}
-  @override
-  void addError(Object error, [StackTrace? stackTrace]) {}
-  @override
-  Future<void> addStream(Stream<List<int>> stream) async {}
-  @override
-  Encoding get encoding => utf8;
-  @override
-  set encoding(Encoding value) {}
 }

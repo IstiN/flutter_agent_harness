@@ -226,6 +226,16 @@ Future<MemoryExecutionEnv> _seededEnv() async {
   return env;
 }
 
+/// Issue #866: a workspace where one agent edit broke a manifest — the
+/// broken app renders a visible error state on its card, never a silent
+/// stale/missing row.
+Future<MemoryExecutionEnv> _seededEnvWithBrokenManifest() async {
+  final env = await _seededEnv();
+  await env.writeFile('apps/2048/manifest.json', '{"name": ');
+  await env.writeFile('apps/2048/widget.js', '(function(){});');
+  return env;
+}
+
 JsAppInfo _app(Map<String, Object?> manifest, {String fallbackId = 'demo'}) {
   return JsAppInfo.fromManifest(
     manifest,
@@ -660,6 +670,34 @@ void main() {
       wrap: (child) => child,
     );
     await expectGolden(tester, 'apps_grid');
+  });
+
+  testWidgets('apps grid flags a manifest an agent broke (#866)', (
+    tester,
+  ) async {
+    final env = (await tester.runAsync(_seededEnvWithBrokenManifest))!;
+    final permissions = await AppPermissionsStore.load(env);
+    await pumpGolden(
+      tester,
+      AppsGridView(
+        env: env,
+        permissionsStore: permissions,
+        appsStore: AppsStore(
+          env,
+          platform: 'macos',
+          readAsset: (path) async =>
+              throw StateError('no bundled assets in this test'),
+          seedDemoIds: const [],
+        ),
+      ),
+      size: goldenSizeDesktop,
+      wrap: (child) => child,
+    );
+    expect(find.text('2048'), findsWidgets);
+    // The card carries the localized short label; the raw parser output
+    // surfaces in the tap's copyable dialog (widget ITs pin that path).
+    expect(find.text('Manifest error'), findsWidgets);
+    await expectGolden(tester, 'apps_grid_broken_manifest');
   });
 
   testWidgets('app icon showcase', (tester) async {

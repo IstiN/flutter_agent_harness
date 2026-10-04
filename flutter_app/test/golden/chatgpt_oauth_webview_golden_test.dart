@@ -77,4 +77,15 @@ void main() {
 
     await expectGolden(tester, 'chatgpt_oauth_webview_google_block');
   });
+
+  testWidgets('degraded-surface state — the no-passkey notice above the '
+      'page (issue #861)', (tester) async {
+    await pumpPage(tester);
+    // Settle the loading spinner: the notice, not the progress state, is
+    // the pin here.
+    platform.events.onPageFinished?.call('https://auth.openai.com/log-in');
+    await tester.pump();
+
+    await expectGolden(tester, 'chatgpt_oauth_webview_passkey_notice');
+  });
 }

@@ -142,6 +142,10 @@ class _ChatGptOAuthWebViewPageState extends State<ChatGptOAuthWebViewPage> {
       title: 'ChatGPT Sign In', // l10n:ignore — proper noun
       initialUrl: widget.authorizeUrl,
       timeout: widget.timeout,
+      // Post-#861 this page is the iOS FALLBACK only (the system auth
+      // session is primary) — say the passkeys are gone before the page
+      // renders.
+      degradedNotice: oauthWebViewPasskeyNotice,
       onNavigationRequest: (request, ops) => chatGptNavigationDecision(
         request.url,
         expectedState: widget.expectedState,

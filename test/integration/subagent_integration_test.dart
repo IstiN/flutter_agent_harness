@@ -4,6 +4,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
@@ -49,9 +50,9 @@ tui:
     final config = File('${tempHome.path}/.fah/config.yaml');
     config.writeAsStringSync(
       config.readAsStringSync().replaceFirst(
-            'baseUrl: http://localhost:9999/v1',
-            'baseUrl: ${server.baseUrl}',
-          ),
+        'baseUrl: http://localhost:9999/v1',
+        'baseUrl: ${server.baseUrl}',
+      ),
     );
   }
 
@@ -75,7 +76,8 @@ tui:
       // Content-routed script (substring match on the LAST user message):
       // each request is answered by its own content, so background LLM
       // noise (memory tag generation, title/summary calls) can never steal
-      // a slot — unmatched traffic degrades to a tolerated mock 500.
+      // a slot — the taggen scenario is a sticky wildcard (gh-1171), and
+      // any other unmatched traffic degrades to a tolerated mock 500.
       final script = MockLlmScript.parse('''
 scenarios:
   - match: "Use the task tool"
@@ -91,6 +93,7 @@ scenarios:
     responses:
       - text: "subagent-done: 3 files listed"
   - match: "Existing tags:"
+    sticky: true
     responses:
       - text: ""
 ''');
@@ -118,11 +121,21 @@ scenarios:
         'agent://',
         timeout: const Duration(seconds: 60),
       );
-      await harness.waitForText(
-        'subagent finished',
+      // The contract is the PAINTED screen: the streamed sentence can hit
+      // the raw stream (and paint prefix-first on a delta split) before the
+      // frame carrying the whole row lands — an immediate screenText read
+      // raced that window on loaded runners and saw a truncated row
+      // (#920 PTY legs). gh-1049: anchor BOTH asserted rows on the screen
+      // — the tool row and the finish line land a frame apart — and assert
+      // on the captured screen instead of a fresh mid-render read.
+      await harness.waitForScreen(
+        '✔ task: Prove the task loop',
         timeout: const Duration(seconds: 30),
       );
-      final screen = harness.screenText;
+      final screen = await harness.waitForScreen(
+        'subagent finished: agent://explorer1',
+        timeout: const Duration(seconds: 30),
+      );
       expect(screen, contains('✔ task: Prove the task loop'));
       expect(screen, contains('subagent finished: agent://explorer1'));
       // >= 3 chat round-trips: parent tool-call turn, subagent turn, parent
@@ -170,10 +183,18 @@ scenarios:
   });
 
   test('memory_add and memory_search tools are available', () async {
-    // Content-routed script: the parent prompt drives add → search → reply;
-    // the memory package's background tag generator (its prompt carries
-    // "Existing tags:") gets an empty response or a tolerated 500 instead
-    // of stealing a slot.
+    // Content-routed script: the parent prompt drives add → search → reply.
+    // The memory package's background tag generator (its prompt carries
+    // "Existing tags:") fires once per LLM-backed memory op — the add's
+    // enrichment, then one per search scope (project, then user: the KB
+    // holds fewer records than the limit) — but the count is emergent from
+    // flutter_agent_memory internals and shifts with scheduling (gh-1171:
+    // a 4th call exhausted an exact-count script into the 500-retry storm
+    // — 3 adapter retries at 5s sleeps — that buried the tool rows and
+    // timed out the PTY wait). The scenario is therefore STICKY: a
+    // wildcard that answers every taggen call with the scripted empty
+    // response forever, while the parent-conversation scenario stays
+    // strict so a real loop regression still fails loudly.
     final script = MockLlmScript.parse('''
 scenarios:
   - match: "Use the memory_add tool"
@@ -186,6 +207,7 @@ scenarios:
           arguments: '{"query": "Dart"}'
       - text: "memory round-trip complete"
   - match: "Existing tags:"
+    sticky: true
     responses:
       - text: ""
 ''');
@@ -203,16 +225,60 @@ scenarios:
     );
     harness.sendEnter();
 
-    // The add row and the search row prove both tool turns executed; the
-    // scripted reply proves the result flowed back into a final turn — the
-    // full loop, not just boot (issue #551 AC).
-    await harness.waitForText(
-      '✔ memory_add',
-      timeout: const Duration(seconds: 30),
-    );
-    await harness.waitForText(
+    // gh-1049 flake family, two stacked burial mechanisms: the TUI
+    // diff-renders only changed cells (the raw stream never holds a
+    // contiguous tool row), and the tag generator unconditionally print()s
+    // its full prompt (~25-30 PTY lines per call, once per search scope)
+    // between the add row and the final reply — the add row scrolls out of
+    // the sampled viewport before the marker paints. waitForScreen samples
+    // the visible viewport ONLY, so the surviving screen anchors are the
+    // persistent terminal marker and the search row (it paints after the
+    // last print burst). The add leg is proven at the wire level instead:
+    // a parent turn must carry the memory_add tool call and the follow-up
+    // turn its role:tool result (same chatBodies convention as the
+    // task-tool leg; issue #551 AC: the full loop, not just boot).
+    final screen = await harness.waitForScreen(
       'memory round-trip complete',
       timeout: const Duration(seconds: 30),
     );
+    expect(screen, contains('✔ memory_search'));
+
+    var sawAddCall = false;
+    var addResultFedBack = false;
+    for (final body in server.chatBodies) {
+      final messages =
+          (jsonDecode(body) as Map<String, dynamic>)['messages']
+              as List<dynamic>;
+      for (var i = 0; i < messages.length; i++) {
+        final calls =
+            (messages[i] as Map<String, dynamic>)['tool_calls']
+                as List<dynamic>?;
+        if (calls == null) continue;
+        final isAdd = calls.any(
+          (c) =>
+              ((c as Map<String, dynamic>)['function']
+                  as Map<String, dynamic>)['name'] ==
+              'memory_add',
+        );
+        if (!isAdd) continue;
+        sawAddCall = true;
+        if (i + 1 < messages.length &&
+            (messages[i + 1] as Map<String, dynamic>)['role'] == 'tool') {
+          addResultFedBack = true;
+        }
+      }
+    }
+    expect(
+      sawAddCall,
+      isTrue,
+      reason: 'a parent turn carries the memory_add tool call',
+    );
+    expect(
+      addResultFedBack,
+      isTrue,
+      reason: 'the memory_add result flows back as a role:tool message',
+    );
+    // >= 3 chat round-trips: add turn, search turn, reply turn.
+    expect(server.chatBodies.length, greaterThanOrEqualTo(3));
   });
 }

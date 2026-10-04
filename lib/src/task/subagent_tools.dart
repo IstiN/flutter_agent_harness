@@ -47,8 +47,9 @@ typedef CurrentSubagentIdProvider = String? Function();
 /// Tool names the executor injects into every child registry per spawn
 /// (`_childToolRegistry`). `subagentMonitoringTools` carries the same pair
 /// for the PARENT surface, so a host building a child surface from its
-/// registry must exclude these — passing them through registers `reply`
-/// twice and every child dies with "Duplicate tool name".
+/// registry should exclude these — passing them through registers `reply`
+/// twice; since issue #862 that degrades into a recorded duplicate note
+/// (child-specific tool wins) instead of killing the spawn.
 const childInjectedToolNames = <String>{'reply', 'agent_message'};
 
 /// Returns the subagent monitoring tools backed by [manager].

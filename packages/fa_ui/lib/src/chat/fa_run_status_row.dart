@@ -10,11 +10,15 @@ import 'chat_strings.dart';
 import 'fa_chat_service.dart';
 import 'run_phase.dart';
 
-/// The composer-adjacent live status row (issue #865): names the run phase
-/// (provider wait / streaming / current tool) with the elapsed seconds on a
-/// 1 s tick, driven purely by the service's event sequence via [faRunPhase]
-/// — the UI is never silent while the agent works, and the row disappears
-/// the frame the run ends.
+/// The single transient run-status row (issues #865, #1042): the
+/// visually-LAST transcript entry while the run is active, naming the run
+/// phase (provider wait / streaming / current tool) with the elapsed
+/// seconds on a 1 s tick, driven purely by the service's event sequence
+/// via [faRunPhase] — the UI is never silent while the agent works, and
+/// on completion the row disappears the same frame the assistant message
+/// lands (the ChatGPT-style «last message» pattern: never a
+/// composer-docked badge, never a second row — hosts mount exactly this
+/// one widget, and it hides itself when the run ends).
 ///
 /// Elapsed time counts the CURRENT phase (the clock resets when the phase
 /// or the named tool changes) and is derived from the ticker's frame clock
@@ -101,7 +105,9 @@ class _FaRunStatusRowState extends State<FaRunStatusRow>
         if (!_ticker.isActive) _ticker.start();
         final strings = FaChatStrings.of(context);
         final label = switch (phase.kind) {
-          FaRunPhaseKind.writing => strings.chatStatusWriting,
+          // Token emission reads «Fa is typing...» (issue #1042 fix
+          // contract) — the old standalone typing row's string, reused.
+          FaRunPhaseKind.writing => strings.chatTyping,
           FaRunPhaseKind.tool =>
             strings.chatStatusRunningTool(phase.toolName!) +
                 (phase.toolCount > 1 ? ' ×${phase.toolCount}' : ''),

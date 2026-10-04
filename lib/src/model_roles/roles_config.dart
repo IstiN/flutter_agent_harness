@@ -22,10 +22,15 @@
 /// parsing, validation, serialization, and chain selection.
 library;
 
+import 'dart:convert';
+
 import 'package:yaml/yaml.dart';
 
 import '../exceptions.dart';
 import '../providers/thinking.dart';
+import '../utils/path_text.dart';
+import 'provider_catalog.dart'
+    show catalogProvider, parseAuthHeaderName, validateAuthHeaderDialect;
 
 /// The model roles supported by [ModelRolesConfig], in declaration order.
 ///
@@ -62,6 +67,7 @@ final class ModelRef {
     this.maxTokens,
     this.input,
     this.thinkingLevel,
+    this.authHeader,
   });
 
   /// Parses the string shorthand `provider/modelId`.
@@ -88,9 +94,13 @@ final class ModelRef {
     switch (node) {
       case String value:
         return ModelRef.parse(value, role: role);
-      case YamlMap map:
-        final provider = map['provider'];
-        final model = map['model'];
+      case YamlMap entry:
+        // Leaf reads bind to `entry` (not `map`/`doc`): the settings
+        // completeness gate counts literal `map['…']` reads in parser
+        // sources as TOP-LEVEL keys, and these are section leaves
+        // (issue #964 review — `authHeader` tripped the ratchet).
+        final provider = entry['provider'];
+        final model = entry['model'];
         if (provider is! String || provider.trim().isEmpty) {
           throw ConfigException(
             'model chain entry${role == null ? '' : ' in role "$role"'} '
@@ -103,15 +113,20 @@ final class ModelRef {
             'is missing a "model" string',
           );
         }
+        final where =
+            'model chain entry${role == null ? '' : ' in role "$role"'}';
+        final authHeader = parseAuthHeaderName(entry['authHeader'], where);
+        validateAuthHeaderDialect(authHeader, catalogProvider(provider), where);
         return ModelRef(
           provider: provider.trim(),
           modelId: model.trim(),
-          apiKeyName: _optionalString(map, 'apiKeyName', role),
-          baseUrl: _optionalString(map, 'baseUrl', role),
-          contextWindow: _optionalInt(map, 'contextWindow', role),
-          maxTokens: _optionalInt(map, 'maxTokens', role),
-          input: _optionalInput(map, role),
-          thinkingLevel: _optionalThinkingLevel(map, role),
+          apiKeyName: _optionalString(entry, 'apiKeyName', role),
+          baseUrl: _optionalString(entry, 'baseUrl', role),
+          contextWindow: _optionalInt(entry, 'contextWindow', role),
+          maxTokens: _optionalInt(entry, 'maxTokens', role),
+          input: _optionalInput(entry, role),
+          thinkingLevel: _optionalThinkingLevel(entry, role),
+          authHeader: authHeader,
         );
       default:
         throw ConfigException(
@@ -223,6 +238,11 @@ final class ModelRef {
   /// (issue #734).
   final String? thinkingLevel;
 
+  /// Auth header name override (`authHeader:`, issue #964): the built model
+  /// sends `<authHeader>: <key>` instead of `Authorization: Bearer <key>`.
+  /// Null keeps the Bearer default.
+  final String? authHeader;
+
   /// The `provider/modelId` display form.
   String get label => '$provider/$modelId';
 
@@ -241,6 +261,12 @@ final class ModelRef {
     if (input != null) {
       buffer.write('input: [${input!.join(', ')}]\n');
     }
+    if (authHeader != null) {
+      // RFC 7230 tokens may lead with yaml specials (`#`, `*`, `!`): a raw
+      // scalar would round-trip as a comment/alias. JSON quoting keeps the
+      // round-trip lossless (issue #964 review).
+      buffer.write('authHeader: ${jsonEncode(authHeader)}\n');
+    }
     return buffer.toString();
   }
 }
@@ -254,6 +280,7 @@ final class ModelRolesRetryPolicy {
     this.baseDelay = const Duration(milliseconds: 500),
     this.maxBackoff = const Duration(seconds: 8),
     this.maxWait = const Duration(minutes: 5),
+    this.maxWaitForLastEntry = const Duration(minutes: 5),
     this.keyBackoff = const Duration(minutes: 1),
   });
 
@@ -279,6 +306,8 @@ final class ModelRolesRetryPolicy {
       baseDelay: ms('baseDelayMs') ?? const Duration(milliseconds: 500),
       maxBackoff: ms('maxBackoffMs') ?? const Duration(seconds: 8),
       maxWait: ms('maxWaitMs') ?? const Duration(minutes: 5),
+      maxWaitForLastEntry:
+          ms('maxWaitForLastEntryMs') ?? const Duration(minutes: 5),
       keyBackoff: ms('keyBackoffMs') ?? const Duration(minutes: 1),
     );
   }
@@ -297,6 +326,13 @@ final class ModelRolesRetryPolicy {
   /// Give-up threshold: a required sleep longer than this fails over to the
   /// next chain entry instead of sleeping (omp `retry.maxDelayMs`).
   final Duration maxWait;
+
+  /// Sole-entry wait-out ceiling (issue #1066): when a required retry wait
+  /// exceeds [maxWait] and no other chain entry is available to fail over
+  /// to, the chain waits out the rate limit anyway — bounded to
+  /// `min(delay, maxWaitForLastEntry)` so a pathological `Retry-After`
+  /// (hours) still ends the chain.
+  final Duration maxWaitForLastEntry;
 
   /// How long a key (or chain entry) stays in backoff after a rate-limit
   /// failure that carried no `Retry-After` hint.
@@ -318,6 +354,7 @@ final class ModelRolesRetryPolicy {
         'baseDelayMs: ${baseDelay.inMilliseconds}\n'
         'maxBackoffMs: ${maxBackoff.inMilliseconds}\n'
         'maxWaitMs: ${maxWait.inMilliseconds}\n'
+        'maxWaitForLastEntryMs: ${maxWaitForLastEntry.inMilliseconds}\n'
         'keyBackoffMs: ${keyBackoff.inMilliseconds}\n';
   }
 }
@@ -446,7 +483,7 @@ String _chainsToYaml(Map<String, List<ModelRef>> roles, {int indent = 0}) {
 bool pathPatternMatches(String pattern, String cwd, {String? homeDir}) {
   final pat = _normalizePattern(pattern, homeDir);
   if (pat == null) return false;
-  final dir = _stripTrailingSlashes(cwd.trim());
+  final dir = stripTrailingSlashes(cwd.trim());
   if (pat.isEmpty || dir.isEmpty) return false;
 
   if (pat.contains('*')) {
@@ -466,17 +503,7 @@ String? _normalizePattern(String pattern, String? homeDir) {
     if (homeDir == null) return null;
     pat = pat.length == 1 ? homeDir : '$homeDir${pat.substring(1)}';
   }
-  return _stripTrailingSlashes(pat);
-}
-
-/// Strips redundant trailing slashes (matching is lexical; no filesystem
-/// access). A lone `/` root is kept.
-String _stripTrailingSlashes(String path) {
-  var result = path;
-  while (result.length > 1 && result.endsWith('/')) {
-    result = result.substring(0, result.length - 1);
-  }
-  return result;
+  return stripTrailingSlashes(pat);
 }
 
 /// Whether the glob [pattern] (`*` matches any run of non-`/` characters,

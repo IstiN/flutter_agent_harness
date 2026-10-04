@@ -11,7 +11,6 @@ import 'dart:convert';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
-
 AssistantMessage _assistant({
   List<ContentBlock> content = const [],
   StopReason stopReason = StopReason.stop,
@@ -37,8 +36,9 @@ class _Lines {
   void emit(String line) => lines.add(line);
 
   /// Every line decoded as a JSON map — throws on any non-object line.
-  List<Map<String, dynamic>> get frames =>
-      [for (final line in lines) jsonDecode(line) as Map<String, dynamic>];
+  List<Map<String, dynamic>> get frames => [
+    for (final line in lines) jsonDecode(line) as Map<String, dynamic>,
+  ];
 }
 
 void main() {
@@ -91,6 +91,136 @@ void main() {
       );
     });
 
+    test('tool_liveness carries heartbeat and stuck actions (gh-1054)', () {
+      expect(
+        hepToolLivenessFrame(
+          turnId: 2,
+          id: 'c1',
+          name: 'bash',
+          action: 'heartbeat',
+          elapsedMs: 61000,
+          detail: 'attempt 1',
+        ),
+        '{"type":"tool_liveness","turn_id":2,"id":"c1","name":"bash",'
+        '"action":"heartbeat","elapsed_ms":61000,"detail":"attempt 1"}',
+      );
+      expect(
+        hepToolLivenessFrame(
+          turnId: 2,
+          id: 'c1',
+          name: 'bash',
+          action: 'escalate',
+          elapsedMs: 620000,
+        ),
+        '{"type":"tool_liveness","turn_id":2,"id":"c1","name":"bash",'
+        '"action":"escalate","elapsed_ms":620000}',
+      );
+    });
+    test('heartbeat frames carry the captured-output size (issue review)', () {
+      expect(
+        hepToolLivenessFrame(
+          turnId: 3,
+          id: 'c1',
+          name: 'bash',
+          action: 'heartbeat',
+          elapsedMs: 61000,
+          outputBytes: 512,
+          detail: 'attempt 1',
+        ),
+        '{"type":"tool_liveness","turn_id":3,"id":"c1","name":"bash",'
+        '"action":"heartbeat","elapsed_ms":61000,"output_bytes":512,'
+        '"detail":"attempt 1"}',
+      );
+      // Absent stays absent (additive, back-compat).
+      expect(
+        hepToolLivenessFrame(
+          turnId: 3,
+          id: 'c1',
+          name: 'bash',
+          action: 'escalate',
+          elapsedMs: 620000,
+        ),
+        isNot(contains('output_bytes')),
+      );
+    });
+
+    test(
+      'a heartbeat and a stuck event ride the writer as tool_liveness',
+      () async {
+        final lines = _Lines();
+        final writer = HepWriter(emit: lines.emit, fahVersion: '1.0.0');
+        writer.handleEvent(
+          ToolCallHeartbeatEvent(
+            toolCallId: 'c1',
+            toolName: 'bash',
+            args: const {'command': 'x'},
+            elapsed: const Duration(seconds: 61),
+            outputBytes: 5,
+            attempt: 1,
+            timestamp: DateTime.utc(2026),
+          ),
+          CancelTokenSource().token,
+        );
+        writer.handleEvent(
+          ToolCallStuckEvent(
+            toolCallId: 'c1',
+            toolName: 'bash',
+            args: const {'command': 'x'},
+            elapsed: const Duration(minutes: 5),
+            action: StuckFollowUpAction.escalate,
+            detail: 'could not be recovered',
+            timestamp: DateTime.utc(2026),
+          ),
+          CancelTokenSource().token,
+        );
+        final frames = lines.frames
+            .where((f) => f['type'] == 'tool_liveness')
+            .toList();
+        expect(frames, hasLength(2));
+        expect(frames[0]['action'], 'heartbeat');
+        expect(frames[0]['elapsed_ms'], 61000);
+        expect(frames[1]['action'], 'escalate');
+        expect(frames[1]['detail'], 'could not be recovered');
+      },
+    );
+
+    test('a stuck detail rides the frame redacted when the host passes the '
+        'pipeline', () async {
+      // Review round 2 (IMPORTANT): the escalation detail embeds up to
+      // 300 chars of raw captured output; HEP frames land in
+      // supervisor/CI logs — the same surface the session-record fix
+      // targets. The host-injected pipeline must mask the detail.
+      final lines = _Lines();
+      final writer = HepWriter(
+        emit: lines.emit,
+        fahVersion: '1.0.0',
+        redactionPipeline: RedactionPipeline(
+          registeredSecrets: ['sk-super-secret-token-value'],
+        ),
+      );
+      writer.handleEvent(
+        ToolCallStuckEvent(
+          toolCallId: 'c1',
+          toolName: 'bash',
+          args: const {'command': 'x'},
+          elapsed: const Duration(minutes: 5),
+          action: StuckFollowUpAction.escalate,
+          detail: 'partial tail: sk-super-secret-token-value',
+          timestamp: DateTime.utc(2026),
+        ),
+        CancelTokenSource().token,
+      );
+      final frame = lines.frames
+          .where((f) => f['type'] == 'tool_liveness')
+          .single;
+      expect(frame['detail'], contains('[REDACTED:'), reason: 'masked');
+      expect(
+        frame['detail'],
+        isNot(contains('sk-super-secret-token-value')),
+        reason: 'the secret never reaches the frame',
+      );
+    });
+
     test('turn_done carries message, tool_results, usage, stop_reason', () {
       expect(
         hepTurnDoneFrame(
@@ -123,10 +253,7 @@ void main() {
     });
 
     test('cancelled carries the turn id', () {
-      expect(
-        hepCancelledFrame(turnId: 1),
-        '{"type":"cancelled","turn_id":1}',
-      );
+      expect(hepCancelledFrame(turnId: 1), '{"type":"cancelled","turn_id":1}');
     });
 
     test('compaction frames bracket a compaction run', () {
@@ -241,9 +368,7 @@ void main() {
       await hep.handleEvent(
         TurnEndEvent(
           message: _assistant(
-            content: [
-              ToolCall(id: 'c1', name: 'read', arguments: const {}),
-            ],
+            content: [ToolCall(id: 'c1', name: 'read', arguments: const {})],
             stopReason: StopReason.toolUse,
           ),
           toolResults: [
@@ -342,10 +467,7 @@ void main() {
         CancelTokenSource().token,
       );
       expect(out.lines.last, '{"type":"cancelled","turn_id":1}');
-      expect(
-        out.lines.where((l) => l.contains('turn_done')),
-        isEmpty,
-      );
+      expect(out.lines.where((l) => l.contains('turn_done')), isEmpty);
     });
 
     test('error turn emits turn_error with fatal=true', () async {

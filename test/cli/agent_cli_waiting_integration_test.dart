@@ -38,7 +38,7 @@ void main() {
   test(
     'boot sweep reaps a previous-run orphan group and warns '
     '(issue #517)',
-    skip: LocalShell.jobsGetOwnProcessGroup
+    skip: LocalShell.ownProcessGroupAvailable
         ? null
         : 'needs setsid (group leadership)',
     () async {
@@ -445,26 +445,23 @@ void main() {
     return (await lockCli(localEnv, localIo), logs);
   }
 
-  test(
-    'a freshly held lock times out and the mutation degrades to an '
-    'unlocked write (issue #478)',
-    () async {
-      final (cli, logs) = await lockFixture();
+  test('a freshly held lock times out and the mutation degrades to an '
+      'unlocked write (issue #478)', () async {
+    final (cli, logs) = await lockFixture();
 
-      await cli.waitingCaptureLostJobsForTest();
+    await cli.waitingCaptureLostJobsForTest();
 
-      expect(
-        cli.waitingLostJobsForTest,
-        1,
-        reason: 'the bounded wait gives up and the write proceeds unlocked',
-      );
-      expect(
-        File('$logs/running.json.lock').existsSync(),
-        isTrue,
-        reason: "a timed-out contender never removes someone else's lock",
-      );
-    },
-  );
+    expect(
+      cli.waitingLostJobsForTest,
+      1,
+      reason: 'the bounded wait gives up and the write proceeds unlocked',
+    );
+    expect(
+      File('$logs/running.json.lock').existsSync(),
+      isTrue,
+      reason: "a timed-out contender never removes someone else's lock",
+    );
+  });
 
   test(
     'a stale lock is stolen and released after the mutation (issue #478)',
@@ -488,29 +485,26 @@ void main() {
     },
   );
 
-  test(
-    'a lock released during the wait is acquired on retry and released '
-    '(issue #478)',
-    () async {
-      final (cli, logs) = await lockFixture();
-      final lock = File('$logs/running.json.lock');
-      // The holder finishes 50ms in — well inside the 300ms wait bound.
-      Timer(const Duration(milliseconds: 50), () {
-        if (lock.existsSync()) lock.deleteSync();
-      });
+  test('a lock released during the wait is acquired on retry and released '
+      '(issue #478)', () async {
+    final (cli, logs) = await lockFixture();
+    final lock = File('$logs/running.json.lock');
+    // The holder finishes 50ms in — well inside the 300ms wait bound.
+    Timer(const Duration(milliseconds: 50), () {
+      if (lock.existsSync()) lock.deleteSync();
+    });
 
-      await cli.waitingCaptureLostJobsForTest();
+    await cli.waitingCaptureLostJobsForTest();
 
-      expect(
-        cli.waitingLostJobsForTest,
-        1,
-        reason: 'acquired on a retry inside the bound — not degraded',
-      );
-      expect(
-        lock.existsSync(),
-        isFalse,
-        reason: 'the winner releases in the finally',
-      );
-    },
-  );
+    expect(
+      cli.waitingLostJobsForTest,
+      1,
+      reason: 'acquired on a retry inside the bound — not degraded',
+    );
+    expect(
+      lock.existsSync(),
+      isFalse,
+      reason: 'the winner releases in the finally',
+    );
+  });
 }

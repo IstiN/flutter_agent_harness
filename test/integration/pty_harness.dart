@@ -49,8 +49,9 @@ import 'package:xterm/xterm.dart';
 /// equality despite byte-identical counts. Raw [FaCliHarness.viewportLines]
 /// equality is only valid for genuinely full-width rows (the composer
 /// rule); compare content frames for everything else.
-List<String> frameContentLines(List<String> viewport) =>
-    [for (final line in viewport) line.trimRight()];
+List<String> frameContentLines(List<String> viewport) => [
+  for (final line in viewport) line.trimRight(),
+];
 
 /// Spawns the Fa CLI as a subprocess with a PTY, feeds output to an xterm
 /// terminal emulator, and provides keystroke sending + output capture.
@@ -98,7 +99,9 @@ final class FaCliHarness {
     // runner instead of one.
     final git = Process.runSync('git', ['init', '-q', dir.path]);
     if (git.exitCode != 0) {
-      throw StateError('git init failed for harness cwd ${dir.path}: ${git.stderr}');
+      throw StateError(
+        'git init failed for harness cwd ${dir.path}: ${git.stderr}',
+      );
     }
     return dir;
   }
@@ -176,13 +179,7 @@ final class FaCliHarness {
     pty.resize(columns, rows);
     final terminal = Terminal(maxLines: rows * 4);
     if (columns != 80 || rows != 24) terminal.resize(columns, rows);
-    final harness = FaCliHarness._(
-      pty,
-      terminal,
-      columns,
-      rows,
-      ownedCwd,
-    );
+    final harness = FaCliHarness._(pty, terminal, columns, rows, ownedCwd);
     harness.startListening();
     // Answer the CLI's terminal queries (device attributes etc.) so it
     // does not wait out a response timeout on every boot.
@@ -356,6 +353,17 @@ final class FaCliHarness {
   /// the raw buffer first and an immediate `expect(screenText, …)` still
   /// sees the previous frame (#550/#557 flake family). Use this when the
   /// assertion contract is the SCREEN.
+  ///
+  /// CAPTURE THE RESULT and assert on it: `final screen = await
+  /// harness.waitForScreen(marker)` — the returned string IS the anchored
+  /// screen. A bare `await waitForScreen(header)` followed by a fresh
+  /// `harness.screenText` read re-samples the screen mid-render: the wait
+  /// returns the first frame containing the header (no settle) while
+  /// pickers/cards paint their remaining rows a frame later, and the read
+  /// loses that race on loaded hosts (gh-1049 flake family). Screens may
+  /// only be re-read after a `waitForOutput(settleMs:)` settle.
+  /// `test/integration/pty_screen_wait_reg_test.dart` greps for the
+  /// anti-pattern and fails the default suite when it regrows.
   Future<String> waitForScreen(
     Pattern pattern, {
     Duration timeout = const Duration(seconds: 10),

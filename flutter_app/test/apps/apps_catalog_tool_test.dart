@@ -109,10 +109,9 @@ void main() {
       'id': 'focus-timer',
     });
     expect(textOf(result), contains('$widgetSourcesDir/focus-timer/'));
-    final source =
-        (await env.readTextFile(
-          '$widgetSourcesDir/focus-timer/widget.js',
-        )).valueOrNull;
+    final source = (await env.readTextFile(
+      '$widgetSourcesDir/focus-timer/widget.js',
+    )).valueOrNull;
     expect(source, contains('focus-timer'));
     // The live apps/ copy is NOT touched by get-source.
     expect(
@@ -149,5 +148,118 @@ void main() {
   test('unknown id points to list', () async {
     final result = await call(tool, {'action': 'install', 'id': 'nope'});
     expect(textOf(result), contains('not in the catalog'));
+  });
+
+  // Issue #866 AC2 — a freshly agent-written app is visible to the very
+  // agent that wrote it: the next apps_catalog call lists it, even with
+  // the remote catalog unaware (or unreachable).
+  test('AC2 — a write under apps/ shows up on the next list', () async {
+    expect(await store.listApps(), isEmpty);
+    await env.writeFile(
+      'apps/2048/manifest.json',
+      '{"id": "2048", "name": "2048", "description": "Tile game"}',
+    );
+    await env.writeFile('apps/2048/widget.js', '(function(){});');
+    final result = await call(tool, {'action': 'list'});
+    expect(textOf(result), contains('2048 v1.0.0 — Tile game'));
+    expect(textOf(result), contains('(installed in apps/)'));
+  });
+
+  test('AC2 — search matches freshly written apps too', () async {
+    await env.writeFile(
+      'apps/2048/manifest.json',
+      '{"id": "2048", "name": "2048", "description": "Tile game"}',
+    );
+    final result = await call(tool, {'action': 'search', 'query': '2048'});
+    expect(textOf(result), contains('2048'));
+    expect(textOf(result), isNot(contains('focus-timer')));
+  });
+
+  test('AC2 — broken agent manifests surface as BROKEN lines', () async {
+    await env.writeFile('apps/2048/manifest.json', '{oops');
+    final result = await call(tool, {'action': 'list'});
+    expect(textOf(result), contains('2048 — BROKEN:'));
+  });
+
+  test('AC2 — remote outage still lists the local workspace', () async {
+    await env.writeFile(
+      'apps/2048/manifest.json',
+      '{"id": "2048", "name": "2048"}',
+    );
+    final offline = appsCatalogTool(
+      env: env,
+      catalog: CatalogService(
+        env,
+        httpClient: MockClient(
+          (request) async => throw Exception('network down'),
+        ),
+      ),
+      apps: store,
+    );
+    final result = await call(offline, {'action': 'list'});
+    expect(textOf(result), contains('2048'));
+    expect(textOf(result), isNot(contains('Catalog unavailable')));
+  });
+
+  test('R5 — an installed catalog widget is listed once, not twice', () async {
+    await call(tool, {'action': 'install', 'id': 'focus-timer'});
+    final result = await call(tool, {'action': 'list'});
+    final text = textOf(result);
+    // Same id locally and remotely is ONE widget: the local line wins.
+    expect('focus-timer v1.0.0'.allMatches(text), hasLength(1));
+    expect(text, contains('focus-timer v1.0.0 (installed in apps/)'));
+    // Remote-only widgets still appear.
+    expect(text, contains('weather v2.0.0'));
+  });
+
+  test('R5 — a newer remote version annotates the local line', () async {
+    await env.writeFile(
+      'apps/focus-timer/manifest.json',
+      '{"id": "focus-timer", "name": "Focus timer", "version": "0.9.0"}',
+    );
+    await env.writeFile('apps/focus-timer/widget.js', '(function(){});');
+    final result = await call(tool, {'action': 'list'});
+    final text = textOf(result);
+    expect(text, contains('focus-timer v0.9.0'));
+    expect(text, contains('(update available: v1.0.0)'));
+    // No bare remote duplicate of the installed widget.
+    expect(text, isNot(contains('focus-timer v1.0.0 — Pomodoro')));
+  });
+
+  test('R5 — a duplicate remote id annotates at most once', () async {
+    await env.writeFile(
+      'apps/focus-timer/manifest.json',
+      '{"id": "focus-timer", "name": "Focus timer", "version": "0.9.0"}',
+    );
+    await env.writeFile('apps/focus-timer/widget.js', '(function(){});');
+    // Bad catalog data: the same id listed twice with the same version.
+    final dupCatalog = {
+      'widgets': [
+        {
+          'id': 'focus-timer',
+          'version': '1.0.0',
+          'description': 'Pomodoro',
+          'tags': ['timer'],
+          'zip': {'file': 'focus-timer-1.0.0.zip'},
+        },
+        {
+          'id': 'focus-timer',
+          'version': '1.0.0',
+          'description': 'Pomodoro',
+          'tags': ['timer'],
+          'zip': {'file': 'focus-timer-1.0.0.zip'},
+        },
+      ],
+    };
+    final dup = appsCatalogTool(
+      env: env,
+      catalog: CatalogService(env, httpClient: server(dupCatalog)),
+      apps: store,
+    );
+    final result = await call(dup, {'action': 'list'});
+    expect(
+      '(update available: v1.0.0)'.allMatches(textOf(result)),
+      hasLength(1),
+    );
   });
 }

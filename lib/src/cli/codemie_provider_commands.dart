@@ -268,7 +268,13 @@ extension on AgentCli {
     _modelMaxTokens = const {};
     _lastModelList = null;
     unawaited(_refreshModelCache());
-    await _session?.appendModelChange(provider: spec.name, modelId: modelId);
+    await _session?.appendModelChange(
+      provider: spec.name,
+      modelId: modelId,
+      // A LIVE switch records the pin too (gh-1000 AC1, round-3 review).
+      baseUrl: baseUrl,
+      customProvider: _activeCustomName,
+    );
     io.writeln('switched provider to ${spec.name} (${spec.api})');
     io.writeln('  endpoint: $baseUrl');
     io.writeln('  key: JWT Bearer token (saved as $keyName)');

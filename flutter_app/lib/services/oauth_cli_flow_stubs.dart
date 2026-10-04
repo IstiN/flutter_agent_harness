@@ -32,6 +32,39 @@ class CodeMieSsoCallbackServer {
   Future<void> close() async {}
 }
 
+/// Web stub of the OAuth callback record — never constructed on the web
+/// (the ChatGPT flows are gated behind non-web platform checks).
+class ChatGptOAuthCallback {
+  const ChatGptOAuthCallback({
+    this.code,
+    this.state,
+    this.error,
+    this.errorDescription,
+  });
+
+  final String? code;
+  final String? state;
+  final String? error;
+  final String? errorDescription;
+}
+
+/// Web stub of the loopback OAuth callback server (dart:io only). The
+/// issue #861 system-auth-session hop references this type from the
+/// shared flow file; the web build never reaches it (the matrix refuses
+/// the web surface before any hop runs).
+class ChatGptOAuthLocalCallbackServer {
+  /// Always throws on the web.
+  Future<String> start({Duration timeout = const Duration(minutes: 5)}) =>
+      throw UnsupportedError('Local servers are not supported on the web.');
+
+  /// Always throws on the web.
+  Future<ChatGptOAuthCallback?> waitForCallback() =>
+      throw UnsupportedError('Local servers are not supported on the web.');
+
+  /// No-op on the web.
+  Future<void> close() async {}
+}
+
 /// Always throws on the web — the desktop CLI flow needs a local server.
 Never runChatGptOAuthCliFlow({
   required void Function(String) onStatus,
@@ -52,6 +85,9 @@ Never runChatGptOAuthCliFlow({
 final class AiinSurfaceClosedException implements Exception {}
 
 /// Always throws on the web — the AIIN connect flow needs a local server.
+/// The signature mirrors the IO implementation parameter-for-parameter
+/// (dart2js compiles the mobile branch even on web, so a missing named
+/// parameter is a web-only BUILD break the VM tests never see).
 Never runAiinConnectCliFlow({
   required void Function(String) onStatus,
   http.Client? client,
@@ -59,6 +95,8 @@ Never runAiinConnectCliFlow({
   void Function()? onCallback,
   bool cancelWhenOpenSettles = false,
   Duration? timeout,
+  String callbackHost = '127.0.0.1',
+  Future<String?> Function()? interceptedCallback,
 }) => throw UnsupportedError(
   'AIIN sign-in is not supported on the web platform.',
 );

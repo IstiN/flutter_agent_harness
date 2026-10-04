@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/last_connection.dart';
+import 'package:fa/services/provider_auth_surface.dart';
 import 'package:fa/ui/screens/chatgpt_oauth_webview.dart';
 import 'package:fa_ui/fa_ui.dart';
 
@@ -22,13 +23,18 @@ import 'package:fa_ui/fa_ui.dart';
 /// ChatGPT account, and the redirect to `http://127.0.0.1:<port>/auth/callback`
 /// is caught by the server. This mirrors the CLI flow.
 ///
-/// **iOS** — no server is ever bound. The flow assembles the PKCE authorize
-/// URL from the harness functions (`buildChatGptAuthorizeUrl`, loopback-shaped
-/// redirect) and pushes [ChatGptOAuthWebViewPage], whose `NavigationDelegate`
-/// intercepts the `http://localhost:<port>/auth/callback` redirect and hands
-/// back the state-validated `code`; the flow then completes the
-/// `exchangeChatGptAuthorizationCode` token exchange in Dart. This mirrors
-/// the CodeMie SSO WebView hop.
+/// **iOS** — the system auth session first (`ASWebAuthenticationSession`
+/// via the shared surface's `fah/web_auth_session` channel, issue #861):
+/// the flow binds the REAL loopback callback server (the CLI shape), the
+/// session sheet opens the authorize URL, and the final
+/// `http://localhost:<port>/auth/callback` redirect loads the server for
+/// real — Safari-grade context, so passkey prompts raised by the page
+/// (including the "Continue with Google" hop) reach Face ID. When the
+/// session cannot start (`sessionUnavailable`), the flow falls back to
+/// [ChatGptOAuthWebViewPage] (an embedded WebView — passkeys unavailable,
+/// stated up front by the page's notice) which intercepts the
+/// `http://localhost:1455/auth/callback` redirect and hands back the
+/// state-validated `code`; the token exchange runs in Dart either way.
 ///
 /// Both hops funnel into the same shared tail: the credentials are saved as a
 /// custom provider with `providerKind: 'chatgpt-codex'` and the encoded
@@ -52,6 +58,7 @@ Future<bool> runChatGptOAuthFlow({
   bool Function()? iosFn,
   ChatGptCodeExchange? exchangeFn,
   Future<String?> Function(BuildContext, Uri, String)? pushWebView,
+  ChatGptSystemAuthSession? systemSessionFn,
 }) async {
   // Issue #586 (CodeMie): the caller's context can be disposed by a
   // transcript rebuild mid-flow — anchor the flow on the ROOT navigator.
@@ -67,6 +74,7 @@ Future<bool> runChatGptOAuthFlow({
     iosFn: iosFn,
     exchangeFn: exchangeFn,
     pushWebView: pushWebView,
+    systemSessionFn: systemSessionFn,
   );
   if (credentials == null || !flowContext.mounted) return false;
 
@@ -121,23 +129,56 @@ bool _refuse(BuildContext context, String message) {
   return false;
 }
 
-/// Runs the injected flow (tests) or the real per-surface hop: iOS the
-/// in-app WebView interception, everything else the CLI flow (local
-/// callback server + system browser).
+/// Runs the injected flow (tests) or the real per-surface hop — resolved
+/// through the shared platform matrix (`resolveProviderAuthSurface`,
+/// issue #861): iOS the system auth session with the in-app WebView as
+/// the fallback, everything else the CLI flow (local callback server +
+/// system browser).
 Future<ChatGptOAuthCredentials?> _acquireCredentials(
   BuildContext context, {
   Future<ChatGptOAuthCredentials?> Function()? chatGptOAuthFlowFn,
   bool Function()? iosFn,
   ChatGptCodeExchange? exchangeFn,
   Future<String?> Function(BuildContext, Uri, String)? pushWebView,
+  ChatGptSystemAuthSession? systemSessionFn,
 }) async {
   if (chatGptOAuthFlowFn != null) return chatGptOAuthFlowFn();
-  if (iosFn?.call() ?? Platform.isIOS) {
-    return _acquireIosCredentials(
-      context,
-      pushWebView: pushWebView ?? _pushChatGptOAuthWebView,
-      exchangeFn: exchangeFn,
-    );
+  // iosFn overrides the platform wholesale (the test seam runs iOS hops on
+  // a macOS host) — the two must stay mutually exclusive.
+  final isIos = iosFn?.call() ?? Platform.isIOS;
+  final surface = resolveProviderAuthSurface(
+    provider: ProviderAuthId.chatgpt,
+    isMacOS: !isIos && Platform.isMacOS,
+    isIOS: isIos,
+    isWeb: kIsWeb,
+  );
+  switch (surface.primary) {
+    case ProviderAuthSurfaceKind.systemAuthSession:
+      final session = await (systemSessionFn ?? systemAuthSessionChatGptSignIn)(
+        exchangeFn: exchangeFn,
+        onExchangeError: (message) => _refuse(context, message),
+      );
+      if (!session.sessionUnavailable) return session.credentials;
+      if (!context.mounted) return null;
+      // The session could not start — degrade to the in-app WebView (no
+      // passkeys; the page's notice says so before the page renders).
+      return _acquireIosCredentials(
+        context,
+        pushWebView: pushWebView ?? _pushChatGptOAuthWebView,
+        exchangeFn: exchangeFn,
+      );
+    case ProviderAuthSurfaceKind.embeddedWebView:
+      // Unreachable today (the web build is refused before the matrix is
+      // consulted). Should a surface ever resolve here, run the same
+      // WebView hop — its notice keeps the degradation honest.
+      if (!context.mounted) return null;
+      return _acquireIosCredentials(
+        context,
+        pushWebView: pushWebView ?? _pushChatGptOAuthWebView,
+        exchangeFn: exchangeFn,
+      );
+    case ProviderAuthSurfaceKind.systemBrowserLoopback:
+      break;
   }
   showFahSnack(
     context,
@@ -170,12 +211,103 @@ typedef ChatGptCodeExchange =
       required String codeVerifier,
     });
 
-/// The iOS acquisition hop (issue #773): assemble the PKCE authorize URL
-/// from the harness functions only, let [ChatGptOAuthWebViewPage] intercept
-/// the loopback redirect (no port bound), then exchange the code in Dart.
-/// A cancellation returns null with no partial state; an exchange failure
-/// surfaces a named error and the flow re-arms on the next run (every run
-/// generates a fresh state + verifier).
+/// The iOS system-auth-session hop (issue #861, the CodeMie pattern): the
+/// REAL loopback callback server is bound (the CLI redirect shape, AC4),
+/// the `fah/web_auth_session` sheet opens the authorize URL in a
+/// Safari-grade context (passkey prompts — including the Google hop —
+/// reach Face ID), and the final `http://localhost:<port>/auth/callback`
+/// redirect loads the server for real; the sheet is then dismissed via the
+/// channel's `cancel`. No `callbackScheme` interception — the code
+/// arrives through the local server, exactly like the desktop flow.
+///
+/// [onExchangeError] surfaces a failed token exchange (the caller shows
+/// the named snackbar). Returns the exchanged credentials, or a record
+/// with [sessionUnavailable] set when the session could not even start
+/// (the caller falls back to the in-app WebView). Null credentials with
+/// `sessionUnavailable == false` means the user cancelled, the callback
+/// was invalid, or the exchange failed.
+Future<({ChatGptOAuthCredentials? credentials, bool sessionUnavailable})>
+systemAuthSessionChatGptSignIn({
+  ChatGptCodeExchange? exchangeFn,
+  void Function(String message)? onExchangeError,
+}) async {
+  final server = ChatGptOAuthLocalCallbackServer();
+  final String redirectUri;
+  try {
+    redirectUri = await server.start();
+  } on Object catch (error) {
+    debugPrint('[ChatGPT OAuth] loopback callback server failed: $error');
+    return (credentials: null, sessionUnavailable: true);
+  }
+  final verifier = generateChatGptPkceVerifier();
+  final state = generateChatGptState();
+  final authorizeUrl = buildChatGptAuthorizeUrl(
+    redirectUri: redirectUri,
+    codeChallenge: generateChatGptPkceChallenge(verifier),
+    state: state,
+  );
+  var sessionFailed = false;
+  unawaited(
+    systemAuthSessionChannel
+        .invokeMethod<String>('authenticate', {'url': authorizeUrl.toString()})
+        .then((_) => server.close()) // user dismissed the sheet
+        .onError((Object error, _) {
+          debugPrint('[ChatGPT OAuth] auth session failed: $error');
+          sessionFailed = true;
+          return server.close();
+        }),
+  );
+  final callback = await server.waitForCallback();
+  // Dismiss the sheet (it stays up — the http redirect cannot close it).
+  unawaited(
+    systemAuthSessionChannel
+        .invokeMethod<void>('cancel')
+        .onError((_, _) => null),
+  );
+  if (sessionFailed) {
+    return (credentials: null, sessionUnavailable: true);
+  }
+  if (callback == null || callback.error != null) {
+    return (credentials: null, sessionUnavailable: false); // cancelled/failed
+  }
+  if (callback.state != state ||
+      callback.code == null ||
+      callback.code!.isEmpty) {
+    return (credentials: null, sessionUnavailable: false);
+  }
+  try {
+    return (
+      credentials: await (exchangeFn ?? exchangeChatGptAuthorizationCode)(
+        code: callback.code!,
+        redirectUri: redirectUri,
+        codeVerifier: verifier,
+      ),
+      sessionUnavailable: false,
+    );
+  } on Object catch (error) {
+    onExchangeError?.call(
+      'ChatGPT sign-in failed at the token exchange: $error',
+    );
+    return (credentials: null, sessionUnavailable: false);
+  }
+}
+
+/// The shape of [systemAuthSessionChatGptSignIn] — the flow's injectable
+/// seam for it (tests; production passes the default).
+typedef ChatGptSystemAuthSession =
+    Future<({ChatGptOAuthCredentials? credentials, bool sessionUnavailable})>
+    Function({
+      ChatGptCodeExchange? exchangeFn,
+      void Function(String message)? onExchangeError,
+    });
+
+/// The iOS WebView fallback acquisition hop (issue #773): assemble the
+/// PKCE authorize URL from the harness functions only, let
+/// [ChatGptOAuthWebViewPage] intercept the loopback redirect (no port
+/// bound), then exchange the code in Dart. A cancellation returns null
+/// with no partial state; an exchange failure surfaces a named error and
+/// the flow re-arms on the next run (every run generates a fresh state +
+/// verifier).
 Future<ChatGptOAuthCredentials?> _acquireIosCredentials(
   BuildContext context, {
   required Future<String?> Function(BuildContext, Uri, String) pushWebView,

@@ -80,18 +80,40 @@ void main() {
       );
     });
 
-    test('rejects offset/limit combined with a selector', () async {
-      await env.writeFile('f.txt', 'a\nb');
-      expect(
-        tool.execute({'path': 'f.txt:1-2', 'offset': 1}, null, null),
-        throwsA(
-          isA<StateError>().having(
-            (e) => e.message,
-            'message',
-            contains('offset/limit cannot be combined with a path selector'),
-          ),
-        ),
+    test('coerces offset/limit combined with a selector: the selector wins '
+        'with an ignore notice (issue #862 AC4)', () async {
+      await env.writeFile('f.txt', 'a\nb\nc\nd');
+      final result = await tool.execute(
+        {'path': 'f.txt:2-3', 'offset': 1, 'limit': 50},
+        null,
+        null,
       );
+      final text = _text(result);
+      // The window is EXACTLY lines 2-3: honoring offset/limit instead
+      // would render line 1 ('a') and/or extend past line 3 ('d') — both
+      // must stay absent from the BODY so this test fails on a window
+      // regression (the trailing notice is exempt: it names the args).
+      final body = text.split('\nNote: offset/limit').first;
+      expect(body, contains('b\nc'));
+      expect(body.contains('a'), isFalse,
+          reason: 'offset: 1 must be ignored — line 1 is out of :2-3');
+      expect(body.contains('d'), isFalse,
+          reason: 'limit: 50 must be ignored — line 4 is out of :2-3');
+      expect(text, contains('IGNORED'));
+      expect(text, contains('offset'));
+      expect(text, contains('limit'));
+    });
+
+    test('selector + limit only still reads the full selector range '
+        '(issue #862)', () async {
+      await env.writeFile('f.txt', 'a\nb\nc');
+      final result = await tool.execute({'path': 'f.txt:1', 'limit': 2}, null, null);
+      final text = _text(result);
+      // :1 is open-ended: the selector window runs to EOF, so honoring
+      // limit: 2 (which would drop line 3) must NOT happen.
+      expect(text, contains('a\nb\nc'),
+          reason: 'limit must not truncate the open-ended :1 selector');
+      expect(text, contains('limit'));
     });
 
     group('multi-range', () {

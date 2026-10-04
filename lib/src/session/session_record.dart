@@ -28,6 +28,16 @@ final class SessionHeader {
   /// On-disk format version. Only version 3 is supported.
   static const version = 3;
 
+  /// Format marker written into every segment header once a session has
+  /// been rotated (gh-1077): a rotated session is a new on-disk format
+  /// for pre-rotation builds — they read only the primary and either
+  /// crash on the severed parent chain or silently miss the archived
+  /// records. The marker (identical record format, higher version) makes
+  /// an older build fail at header parse with a clear "unsupported
+  /// session version" instead. This build accepts both [version] and
+  /// [rotatedVersion].
+  static const rotatedVersion = 4;
+
   /// Unique session id.
   final String id;
 
@@ -64,7 +74,8 @@ final class SessionHeader {
     if (json['type'] != 'session') {
       throw invalid('first line is not a valid session header');
     }
-    if (json['version'] != version) {
+    final headerVersion = json['version'];
+    if (headerVersion != version && headerVersion != rotatedVersion) {
       throw invalid('unsupported session version');
     }
     if (json['id'] is! String || (json['id'] as String).isEmpty) {
@@ -174,6 +185,8 @@ sealed class SessionRecord {
         timestamp: timestamp,
         provider: json['provider'] as String? ?? '',
         modelId: json['modelId'] as String? ?? '',
+        baseUrl: json['baseUrl'] as String?,
+        customProvider: json['customProvider'] as String?,
       ),
       'active_tools_change' => ActiveToolsChangeRecord(
         id: id,
@@ -330,7 +343,11 @@ final class ThinkingLevelChangeRecord extends SessionRecord {
 
 /// Records a change of the active model.
 ///
-/// Ported from pi's `ModelChangeEntry`.
+/// Ported from pi's `ModelChangeEntry`. [baseUrl]/[customProvider] pin
+/// the serving endpoint and saved custom-provider entry (gh-1000): a
+/// session restore re-resolves onto THAT entry instead of re-matching by
+/// model id. Both are optional — records written before gh-1000 restore
+/// with today's endpoint-keyed behavior.
 final class ModelChangeRecord extends SessionRecord {
   /// Creates a [ModelChangeRecord].
   const ModelChangeRecord({
@@ -339,6 +356,8 @@ final class ModelChangeRecord extends SessionRecord {
     required super.timestamp,
     required this.provider,
     required this.modelId,
+    this.baseUrl,
+    this.customProvider,
   });
 
   /// The provider id (e.g. `anthropic`).
@@ -347,6 +366,14 @@ final class ModelChangeRecord extends SessionRecord {
   /// The model id.
   final String modelId;
 
+  /// The endpoint base URL the model was served from (null = catalog
+  /// default).
+  final String? baseUrl;
+
+  /// The saved custom-provider entry name that supplied the key (null =
+  /// none or a pre-gh-1000 record).
+  final String? customProvider;
+
   @override
   String get type => 'model_change';
 
@@ -354,6 +381,8 @@ final class ModelChangeRecord extends SessionRecord {
   Map<String, dynamic> payloadJson() => {
     'provider': provider,
     'modelId': modelId,
+    'baseUrl': ?baseUrl,
+    'customProvider': ?customProvider,
   };
 }
 

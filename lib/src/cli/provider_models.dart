@@ -146,7 +146,8 @@ extension on AgentCli {
     if (spec != null) return spec.kind;
     final registry = config.customProviders;
     for (final entry in registry?.entries ?? const <CustomProviderEntry>[]) {
-      if (entry.name == name) return resolveCliProviderSpec(entry.apiType)?.kind;
+      if (entry.name == name)
+        return resolveCliProviderSpec(entry.apiType)?.kind;
     }
     return null;
   }
@@ -1069,6 +1070,7 @@ extension on AgentCli {
           apiKeyName:
               _rolesKeyNameFor(spec.name, def.baseUrl) ??
               _scopedKeyNameForNonDefault(spec.name, def.baseUrl),
+          authHeader: def.authHeader,
         ),
       ]);
       rolesResolver.applyToAgent(_agent);
@@ -1091,6 +1093,7 @@ extension on AgentCli {
         contextWindow: def.contextWindow,
         maxTokens: def.maxTokens,
         input: def.input,
+        authHeader: def.authHeader,
       );
       _agent.state.model = built;
     }
@@ -1101,7 +1104,15 @@ extension on AgentCli {
     _modelMaxTokens = const {};
     _lastModelList = null;
     unawaited(_refreshModelCache());
-    await _session?.appendModelChange(provider: spec.name, modelId: def.model);
+    await _session?.appendModelChange(
+      provider: spec.name,
+      modelId: def.model,
+      // A LIVE switch records the pin too — a catalog pick unpins (the
+      // active name is null here) but keeps the serving endpoint
+      // (gh-1000 AC1, round-3 review).
+      baseUrl: def.baseUrl,
+      customProvider: _activeCustomName,
+    );
     io.writeln('switched model to $name (${def.model} @ ${def.baseUrl})');
     if (rolesResolver == null) {
       io.writeln('  ${_providerKeyLine(spec, def.baseUrl, explicit: false)}');
@@ -1189,6 +1200,9 @@ extension on AgentCli {
           contextWindow: window,
           maxTokens: cap,
           apiKeyName: pinnedKeyName,
+          // A saved entry's authHeader must survive /model switches
+          // (issue #964) — the pin rebuilds the model.
+          authHeader: current.authHeader,
         ),
       ]);
       rolesResolver.applyToAgent(_agent);
@@ -1196,6 +1210,11 @@ extension on AgentCli {
       await _session?.appendModelChange(
         provider: current.provider,
         modelId: modelId,
+        // A LIVE /model switch records the pin too: the restore must
+        // re-bind to THIS endpoint and entry, not the (shared, drifting)
+        // per-folder state (gh-1000 AC1, round-3 review).
+        baseUrl: current.baseUrl,
+        customProvider: _activeCustomName,
       );
       io.writeln('switched model to $modelId');
       _printRoleModelsNote();
@@ -1222,10 +1241,15 @@ extension on AgentCli {
       maxTokens: cap,
       headers: current.headers,
       compat: current.compat,
+      authHeader: current.authHeader,
     );
     await _session?.appendModelChange(
       provider: current.provider,
       modelId: modelId,
+      // A LIVE /model switch records the pin too (gh-1000 AC1, round-3
+      // review).
+      baseUrl: current.baseUrl,
+      customProvider: _activeCustomName,
     );
     io.writeln('switched model to $modelId');
     _printRoleModelsNote();
@@ -1340,6 +1364,7 @@ extension on AgentCli {
       maxTokens: maxTokens ?? current.maxTokens,
       headers: current.headers,
       compat: current.compat,
+      authHeader: current.authHeader,
     );
     unawaited(config.onModelChanged?.call(_agent.state.model));
   }

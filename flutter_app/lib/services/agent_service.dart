@@ -4,6 +4,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/widgets.dart' show WidgetsBinding;
 import 'package:fa_ui/fa_ui.dart'
     show
@@ -24,6 +25,7 @@ import 'power_guard.dart';
 
 import 'app_log.dart';
 import 'image_registry_loader.dart';
+import 'app_config_loader.dart';
 import 'memory_config_loader.dart';
 import 'compaction_engine_loader.dart';
 import 'agent_tool_availability.dart';
@@ -74,6 +76,7 @@ import 'package:fa/services/session_listing.dart';
 import 'package:fa/services/sessions_root.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/services/skills_access_store.dart';
+import 'package:fa/services/skills_toggles_store.dart';
 import 'package:fa/prompts.g.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/services/secrets_store.dart';
@@ -88,15 +91,23 @@ import 'package:fa_office_agent/fa_office_agent.dart'
 import 'package:fa/webllm/webllm_types.dart';
 
 part 'agent_service_compaction.dart';
+part 'agent_service_config.dart';
 part 'agent_service_prompt.dart';
 part 'agent_service_assistant.dart';
 part 'agent_service_events.dart';
 part 'agent_service_sessions.dart';
+part 'agent_service_skills.dart';
 part 'agent_service_runs.dart';
 part 'agent_service_connection_guard.dart';
 part 'agent_service_persistence.dart';
 part 'agent_service_transcript.dart';
 part 'agent_service_inbox.dart';
+part 'agent_service_history.dart';
+part 'agent_service_wiring.dart';
+part 'agent_service_media.dart';
+part 'agent_service_background.dart';
+part 'agent_service_subagents.dart';
+part 'agent_service_lifecycle.dart';
 
 /// A UI-facing chat message.
 
@@ -136,11 +147,6 @@ class AgentService extends ChangeNotifier
   /// surface sees them; `null` keeps the env-file store.
   SessionNamesStore? get namesStoreOverride => null;
 
-  /// The agent's opt-in hub membership (issue #402) — surfaces read the
-  /// live state and toggle the join from here.
-  AgentNetworkController get agentNetwork =>
-      _agentNetwork ?? (throw StateError('agentNetwork before initialize()'));
-
   /// The sleep-prevention guard (issue #325): acquired on `initialize`,
   /// released on `dispose`. Null (tests, web, `off` config) runs the
   /// session unguarded; failures only log.
@@ -172,6 +178,7 @@ class AgentService extends ChangeNotifier
        _skillsAccessStore = null,
        _skillsHomeDir = null,
        _skillsAccess = SkillsAccess.granted,
+       _skillTogglesStore = null,
        _toolsAvailabilityStore = null,
        approval = ApprovalManager(
          mode: initialApprovalMode ?? ApprovalMode.write,
@@ -303,6 +310,9 @@ class AgentService extends ChangeNotifier
     /// inject a fake to keep parsing deterministic; production passes
     /// `createSessionParseExecutor()` (null on web → inline parsing).
     @visibleForTesting SessionParseExecutor? parseExecutor,
+
+    /// Overrides the `~/.fah` home the yaml loader reads (issue #1078).
+    String? configHomeDir,
   }) async {
     final resolvedEnv =
         env ?? await createPlatformEnv(httpClient: createPlatformHttpClient());
@@ -314,6 +324,8 @@ class AgentService extends ChangeNotifier
     final savedSkillsAccess = await skillsAccessStore.load();
     final toolsAvailabilityStore = ToolsAvailabilityStore(resolvedEnv);
     final savedToolsConfig = await toolsAvailabilityStore.load();
+    final skillTogglesStore = SkillsTogglesStore(resolvedEnv);
+    final savedSkillToggles = await skillTogglesStore.load();
     final redactor = SecretRedactor.fromSecrets(secrets);
     // Agent skills + project context files (AGENTS.md & friends) ride the
     // same ExecutionEnv, so they work on every platform (web sandbox too):
@@ -331,6 +343,7 @@ class AgentService extends ChangeNotifier
       resolvedEnv,
       savedSkillsAccess ?? SkillsAccess.granted,
       homeDir: desktopHomeDir(),
+      skillToggles: savedSkillToggles,
     );
     // Always wrap: the `request_secret` tool injects user-granted keys into
     // the LIVE env at runtime (see [_handleSecretRequest]), so the wrapper
@@ -357,6 +370,8 @@ class AgentService extends ChangeNotifier
       approvalModeStore: approvalModeStore,
       initialSkillsAccess: savedSkillsAccess ?? SkillsAccess.granted,
       skillsAccessStore: skillsAccessStore,
+      initialSkillToggles: savedSkillToggles,
+      skillTogglesStore: skillTogglesStore,
       initialToolsConfig: savedToolsConfig,
       toolsAvailabilityStore: toolsAvailabilityStore,
       // Sleep prevention (issue #325): one assertion for the app
@@ -373,6 +388,7 @@ class AgentService extends ChangeNotifier
           sessionKeys?.valueOf(name) ??
           secrets[name],
       promptSuffix: promptSuffix,
+      configHomeDir: configHomeDir,
     );
   }
 
@@ -395,69 +411,6 @@ class AgentService extends ChangeNotifier
       }
     }
     return merged;
-  }
-
-  /// Writes bundled agent skills (see `assets/skills/`) into the env's
-  /// project skill root so [discoverSkills] picks them up. Files are
-  /// refreshed when the bundled content changed (the skills are ours, not
-  /// user data). Best-effort: a missing asset or unwritable env must not
-  /// block session creation.
-  static Future<void> _seedBundledSkills(ExecutionEnv env) async {
-    const bundled = {
-      'js-apps': 'assets/skills/js-apps/SKILL.md',
-      'create-goal': 'assets/skills/create-goal/SKILL.md',
-      'fa-self-config': 'assets/skills/fa-self-config/SKILL.md',
-    };
-    for (final entry in bundled.entries) {
-      try {
-        final target = '.fah/skills/${entry.key}/SKILL.md';
-        final bundledBody = await rootBundle.loadString(entry.value);
-        final body = filterPlatformInstructions(
-          bundledBody,
-          platform: currentFaPlatform,
-        );
-        final existing = await env.readTextFile(target);
-        if (existing.valueOrNull == body) continue;
-        await env.writeFile(target, body);
-      } on Object {
-        // skip this skill
-      }
-    }
-  }
-
-  /// Discovers agent skills + project context files (AGENTS.md & friends)
-  /// and renders the system-prompt suffix. Third-party skill roots
-  /// (`.claude`, `.github/skills`, `.codex`) are read unless [access] is
-  /// [SkillsAccess.denied] (or an explicit `ask` still awaiting its startup
-  /// prompt) — discovery is on by default; only those restrict discovery to
-  /// the first-party roots (`.fah/skills`, `.agents/skills`).
-  static Future<String> _discoverPromptSuffix(
-    ExecutionEnv env,
-    SkillsAccess access, {
-    String? homeDir,
-  }) async {
-    // User-level roots (~/.claude/skills, ~/.copilot/skills, ...) need the
-    // real home directory - without it the desktop app only ever saw
-    // project-local skills no matter what the consent said.
-    final roots = defaultSkillRoots(
-      cwd: env.cwd,
-      homeDir: homeDir ?? desktopHomeDir(),
-    );
-    final skills = await discoverSkills(
-      env,
-      projectRoots: roots.projectRoots,
-      userRoots: roots.userRoots,
-      allowedSources: skillsAccessAllowsDiscovery(access, interactive: false)
-          ? null
-          : const {SkillSource.fah, SkillSource.agents},
-    );
-    final contextFiles = await loadProjectContextFiles(env);
-    return [
-      if (formatProjectContext(contextFiles).isNotEmpty)
-        formatProjectContext(contextFiles),
-      if (formatSkillsForPrompt(skills).isNotEmpty)
-        formatSkillsForPrompt(skills),
-    ].join('\n\n');
   }
 
   AgentService._withEnv({
@@ -485,10 +438,15 @@ class AgentService extends ChangeNotifier
     this._approvalModeStore,
     SkillsAccess? initialSkillsAccess,
     this._skillsAccessStore,
+    Map<String, bool> initialSkillToggles = const {},
+    this._skillTogglesStore,
     ToolsConfig? initialToolsConfig,
     this._toolsAvailabilityStore,
     String? skillsHomeDir,
     this.powerAssertion,
+
+    /// The `~/.fah` home the yaml loader reads (issue #1078).
+    String? configHomeDir,
   }) // ignore: prefer_initializing_formals — private fields, public params
     // ignore: prefer_initializing_formals
     : _skillsHomeDir = skillsHomeDir,
@@ -498,6 +456,7 @@ class AgentService extends ChangeNotifier
        _includeSharedSessionRoots = includeSharedSessionRoots,
        _config = config,
        _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
+       _skillToggles = initialSkillToggles,
        _resolveSecretName = resolveSecretName,
        // ignore: prefer_initializing_formals
        _providerRegistry = providerRegistry,
@@ -589,6 +548,17 @@ class AgentService extends ChangeNotifier
     // network (issue #402) swaps the hub-primary composite in without
     // touching any holder of the reference.
     final fabricRepo = SwappableMessagingRepository(fileFabricRepo);
+    // gh-1180 AC4: the persisted receipt trail for scheduled mail —
+    // scheduled / delivered / delivery_failed / scan_failed — so a
+    // post-mortem can tell "timer never fired" from "wake refused"
+    // without reading source. Best-effort: a failing trail logs only.
+    // Held on the service (see [_scheduledReceipts]): the app host's
+    // wake path appends its events to the same trail.
+    _scheduledReceipts = ScheduledReceiptLog(
+      env: env,
+      path: () => '$messagesRoot/_scheduled/receipts.jsonl',
+      onError: (text) => AppLog.i('sched', text),
+    );
     _scheduledMessages = ScheduledMessageQueue(
       env: env,
       repo: () => fabricRepo,
@@ -606,6 +576,7 @@ class AgentService extends ChangeNotifier
       // app log, never kills the delivery heartbeat — the record stays
       // for the next sweep.
       onError: (text) => AppLog.i('sched', text),
+      receipts: _scheduledReceipts,
     );
     // Arm the delivery timer; best-effort (an unwritable root keeps the
     // app booting, the tools just report unavailable).
@@ -644,6 +615,32 @@ class AgentService extends ChangeNotifier
     _childSessionFactory = childSessionFactory;
     // Project-level .fah/config.yaml memory: wins over the user one.
     final memoryConfig = loadAppMemoryConfig(env.sessionCwd);
+    // The yaml sections the app honors (issue #1078): the CLI's own
+    // parsers; warnings surface once here, boot never blocks (E2/AC7).
+    final appConfig = loadAppFahConfig(
+      projectDir: env.sessionCwd,
+      homeDir: configHomeDir,
+    );
+    for (final warning in appConfig?.warnings ?? const <String>[]) {
+      AppLog.i('config', warning);
+    }
+    // AC5: the SAME global the CLI publishes — re-set every creation so
+    // a config edit applies to the next session; AC4's pipeline config.
+    // FA_PROVIDER_TIMEOUT_SECONDS folds in over the yaml section (issue
+    // #1036, review round 1): the same env-wins precedence the CLI boot
+    // applies, so both hosts resolve identical watchdog budgets.
+    try {
+      providerTimeoutsOverride = applyProviderTimeoutEnvOverride(
+        appConfig?.providerTimeouts,
+        faProviderTimeoutSecondsEnv(),
+      );
+    } on ConfigException catch (error) {
+      // Degrade like every other config problem here (E2): warn and keep
+      // the yaml section — boot never blocks on a malformed env override.
+      AppLog.i('config', error.message);
+      providerTimeoutsOverride = appConfig?.providerTimeouts;
+    }
+    _yamlRedactConfig = appConfig?.redact;
     // Session image registry (`images:` section, issue #171): process-wide
     // like in the CLI; core default is on, user config honored where the
     // config is readable.
@@ -663,13 +660,27 @@ class AgentService extends ChangeNotifier
     // Model-roles resolver backed by the TaskModelsStore: `smol` (compaction
     // + explore) and `subagent` (delegation) overrides resolve through it;
     // the Map reads the store lazily, so settings changes apply on the next
-    // spawn without rebuilding the agent.
+    // spawn without rebuilding the agent. yaml `roles:` fills the gaps
+    // (AC1, E1: store wins per role); the MAIN model is never re-pointed
+    // from config — unlike the CLI, it stays the explicit UI choice.
     final taskModelsStore = _taskModelsStore;
-    if (taskModelsStore != null) {
+    final yamlRoles = appConfig?.roles;
+    if (taskModelsStore != null || yamlRoles != null) {
       _taskRolesResolver = ModelRolesResolver(
-        config: ModelRolesConfig(roles: _StoreBackedRolesMap(taskModelsStore)),
+        config: ModelRolesConfig(
+          roles: _StoreBackedRolesMap(
+            taskModelsStore,
+            fallback: yamlRoles?.roles,
+          ),
+          pathOverrides: yamlRoles?.pathOverrides ?? const [],
+          retry: yamlRoles?.retry ?? const ModelRolesRetryPolicy(),
+        ),
         secrets: _secretsEnv?.secretsSnapshot() ?? const {},
       );
+      // 429 rotation notices surface in the log (CLI parity).
+      _taskRolesResolver!.onNotice = (notice) =>
+          AppLog.i('roles', notice.describe());
+      _taskRolesResolver!.sessionId = () => _session?.cachedId;
     }
     // Task tool config: childTools is set after the full registry is built
     // (children inherit the core surface minus `task` itself). ONE shared
@@ -887,6 +898,8 @@ class AgentService extends ChangeNotifier
     };
     _attachRedactor(redactor, bootSecrets);
     _attachApproval();
+    // ttsr: rules (AC3) — the CLI's controller/manager pair.
+    attachAppConfigTtsr(appConfig);
     // Structured compaction recall (issue #148 D3): `compact_expand`
     // resolves numeric marker ids against the LIVE session; the per-turn
     // expand budget resets on every new user message through the agent
@@ -909,6 +922,12 @@ class AgentService extends ChangeNotifier
       onDevice: isOnDevice,
       registry: registry,
       initialConfig: initialToolsConfig ?? const ToolsConfig(),
+      // yaml `tools:` scopes under the runtime store (AC2/E1).
+      configScopes: [
+        if (appConfig case final s?) (ToolScope.global, s.userTools),
+        if (appConfig case final s?) (ToolScope.project, s.projectTools),
+      ],
+      loadMode: appConfig?.loadMode ?? AgentLoadMode.defaultMode,
       rebuildPrompt: () {
         _agent.state.systemPrompt = _composeSystemPrompt(config);
       },
@@ -925,39 +944,6 @@ class AgentService extends ChangeNotifier
       providerKind == gemmaProviderKind ||
       providerKind == transformersJsProviderKind;
 
-  /// Picks the stream function for [config]'s backend: the on-device
-  /// bridges for `webllm`/`gemma`/`transformers_js`, the HTTP adapters
-  /// otherwise. HTTP adapters get the live session id as the prompt-cache
-  /// affinity key (resolved lazily — the session is created after this).
-  StreamFunction _streamFunctionFor(AgentConfig config) {
-    if (config.providerKind == webLlmProviderKind) {
-      return webLlmStreamFunction(createWebLlmService());
-    }
-    if (config.providerKind == gemmaProviderKind) {
-      return gemmaStreamFunction(createGemmaService());
-    }
-    if (config.providerKind == transformersJsProviderKind) {
-      return transformersJsStreamFunction(createTransformersJsService());
-    }
-    // CodeMie: the cookie rides in model.headers (set by toModel); pass an
-    // empty key so the adapter skips `Authorization: Bearer`.
-    final apiKey = isCodeMieProvider(config.baseUrl) ? '' : config.apiKey;
-    // Issue #327: provider auth failures surface the owning row's name —
-    // a bare `401: No cookie auth credentials found` gives the user no
-    // idea WHICH provider row to fix. On-device bridges keep raw errors.
-    return decorateAuthErrors(
-      providerStreamFunction(
-        config.providerKind,
-        apiKey,
-        sessionId: () => _session?.cachedId,
-      ),
-      () => _connectionDisplayName(
-        _providerRegistry,
-        config.baseUrl,
-      ), // null = pass-through, no registry row to name.
-    );
-  }
-
   /// The system prompt composition lives in the
   /// `agent_service_prompt.dart` part (issue #692 B): `{{commands}}` is
   /// filled from the central sandbox registry for the current platform,
@@ -971,60 +957,6 @@ class AgentService extends ChangeNotifier
     SecretRedactor? redactor, [
     SandboxPlatform? platformOverride,
   ]) => _effectiveAgentSystemPrompt(config, redactor, platformOverride);
-
-  /// The composed registry's tool names, in registration order (issue
-  /// #692 AC1 tests): pins the per-host availability floor — surfaces the
-  /// sandbox cannot run (LSP, MCP servers, DAP, checkpoints, the sqlite
-  /// engine) must be ABSENT from the app registry, not merely error at
-  /// call time.
-  @visibleForTesting
-  List<String> get registeredToolNamesForTest => [
-    for (final tool in _agent.state.tools) tool.name,
-  ];
-
-  /// Composes redaction hooks onto the agent so secret values never reach
-  /// the model, the transcript, or the session files. Attached even for an
-  /// empty redactor: `request_secret` grants register values at runtime and
-  /// must be masked from that point on (an empty redactor's hooks are a
-  /// cheap pass-through).
-  void _attachRedactor(
-    SecretRedactor? redactor, [
-    Map<String, String> bootSecrets = const {},
-  ]) {
-    if (redactor == null) return;
-    attachSecretRedactor(_agent, redactor);
-    // The layered pipeline (issue #24) rides the same lifecycle: default
-    // config (mask mode) — the app has no `redact:` yaml section yet. Its
-    // registered layer starts from the boot secret values and grows with
-    // every `request_secret` grant via [_registerRedactionSecret].
-    _redactionPipeline ??= RedactionPipeline(
-      registeredSecrets: [
-        for (final value in bootSecrets.values)
-          if (value.length >= SecretRedactor.minValueLength) value,
-      ],
-    );
-    attachRedactionPipeline(_agent, _redactionPipeline!);
-  }
-
-  /// Registers a secret into both masking systems (legacy exact redactor
-  /// + the layered pipeline's registered layer).
-  void _registerRedactionSecret(String name, String value) {
-    _redactor?.register(name, value);
-    _redactionPipeline?.registerSecret(value);
-  }
-
-  /// Attaches the approval gate. The prompt surface is [approvalPromptHandler]
-  /// — installed by the chat screen, which owns a [BuildContext]; until then
-  /// (and whenever it is unset) prompt-policy calls are denied, the safe
-  /// default for a sandbox.
-  void _attachApproval() {
-    approval.prompt = (request) {
-      final handler = approvalPromptHandler;
-      if (handler == null) return ApprovalDecision.deny;
-      return handler(request);
-    };
-    attachApproval(_agent, approval);
-  }
 
   /// The approval gate attached to the agent. Default mode is
   /// [ApprovalMode.write] — read-only tools run freely, mutating and shell
@@ -1046,6 +978,19 @@ class AgentService extends ChangeNotifier
   /// The persisted skills-access store ([AgentService.create] path only);
   /// [setSkillsAccess] writes through fire-and-forget.
   final SkillsAccessStore? _skillsAccessStore;
+
+  /// The user's per-skill on/off wishes (issue #1151 — the app twin of the
+  /// CLI `skills:` entries; persisted via [SkillsTogglesStore]). Names
+  /// absent from the map are default-on.
+  Map<String, bool> _skillToggles = const {};
+
+  /// Generation guard for [setSkillToggle]'s async re-discovery: a newer
+  /// toggle change wins over a stale suffix.
+  int _skillTogglesGeneration = 0;
+
+  /// The persisted per-skill toggles store ([AgentService.create] path
+  /// only); [setSkillToggle] writes through fire-and-forget.
+  final SkillsTogglesStore? _skillTogglesStore;
 
   /// The tool-availability wiring (issue #19): capability floor + gate +
   /// live config, extracted to [AgentToolAvailability]. Built in both
@@ -1130,26 +1075,8 @@ class AgentService extends ChangeNotifier
   /// (tests) has nothing to tear down.
   AgentNetworkController? _agentNetwork;
 
-  /// The session's retained-subagent registry (null before the agent is
-  /// built). The settings Agents section renders the live tree from it.
-  SubagentManager? get subagentManager => _subagentManager;
-
-  /// Test-only injection: the lightweight constructor (pre-built agent)
-  /// never builds the messaging fabric, so widget tests that exercise
-  /// subagent surfaces (badge, task list) install a bare manager here.
-  @visibleForTesting
-  set subagentManager(SubagentManager? manager) => _subagentManager = manager;
-
   /// Task tool config (child surface set after registry is built).
   TaskToolConfig? _taskConfig;
-
-  /// The memory LLM slot, resolved per call: the `smol` task-model override
-  /// when one is set (settings change mid-session), else the main model.
-  HarnessLlmSlot? _resolveMemoryLlmSlot() {
-    final role = _taskRolesResolver?.resolveRole(smolModelRole);
-    if (role != null) return role;
-    return (model: _agent.state.model, stream: _agent.streamFunction);
-  }
 
   /// The session's background shell jobs (bash background / steer-yield);
   /// null before the agent is built.
@@ -1166,106 +1093,7 @@ class AgentService extends ChangeNotifier
   /// Memory controller (Phase 1): durable cross-session memory.
   MemoryController? _memoryController;
 
-  /// UI hook that opens a JS app for the user — the chat screen installs it
-  /// and pushes the app's `JsAppView`. Setting a non-null launcher registers
-  /// the `open_app` tool (see `open_app_tool.dart`); setting `null`
-  /// unregisters it, the safe headless default.
-  AppLauncher? get appLauncher => _appLauncher;
   AppLauncher? _appLauncher;
-
-  set appLauncher(AppLauncher? launcher) {
-    if (launcher == _appLauncher) return;
-    _appLauncher = launcher;
-    final registry = _toolRegistry;
-    if (registry != null) {
-      if (launcher == null) {
-        registry.unregister(openAppToolName);
-      } else {
-        registry.register(openAppTool(env, launcher: launcher));
-      }
-      _agent.state.tools = registry.tools;
-    } else {
-      // Pre-constructed agent (tests): mirror the registration on the
-      // advertised tool list — the tool's execute callback is self-contained.
-      final tools = _agent.state.tools
-          .where((tool) => tool.name != openAppToolName)
-          .toList();
-      if (launcher != null) {
-        tools.add(openAppTool(env, launcher: launcher));
-      }
-      _agent.state.tools = tools;
-    }
-  }
-
-  /// Routes the ask tool's questions to the installed [askHandler].
-  Future<List<AskAnswer>?> _answerAskQuestions(
-    List<AskQuestion> questions,
-  ) async {
-    final handler = askHandler;
-    if (handler == null) return null;
-    return handler(questions);
-  }
-
-  /// Routes the `request_secret` tool to the installed
-  /// [secretRequestHandler] and makes a grant live: persisted into the Keys
-  /// store, injected into the running shell environment, and registered with
-  /// the redactor — so the next run's system-prompt name list, bash `$NAME`
-  /// expansion, and transcript redaction all pick it up.
-  Future<RequestSecretResult?> _handleSecretRequest(
-    String name,
-    String reason,
-  ) async {
-    final handler = secretRequestHandler;
-    if (handler == null) return null;
-    final result = await handler(name, reason);
-    if (result == null) return null;
-    return acceptSecretGrant(result);
-  }
-
-  /// The merged host secrets the agent runs with (dotenv + saved keys +
-  /// `request_secret` grants) — the read surface behind the JS apps'
-  /// `jsr.fa.keys.list/get` bridge. Empty for services built around a
-  /// pre-constructed [Agent].
-  Map<String, String> hostSecrets() =>
-      _secretsEnv?.secretsSnapshot() ?? const {};
-
-  /// Persists and activates a credential the user granted through a
-  /// host-rendered prompt: saved into the Keys store, injected into the
-  /// running shell environment, and registered with the redactor — the
-  /// post-grant half of the `request_secret` flow, reused by the JS apps'
-  /// `jsr.fa.keys.request` bridge (the app view renders the same prompt
-  /// sheet itself).
-  Future<RequestSecretResult> acceptSecretGrant(
-    RequestSecretResult result,
-  ) async {
-    // Services built around a pre-constructed Agent (tests) may have none of
-    // these; the grant still applies for the caller, it just is not
-    // persisted or injected — [RequestSecretResult.persisted] reflects that.
-    await _sessionKeys?.set(result.name, result.value);
-    _secretsEnv?.addSecrets({result.name: result.value});
-    _registerRedactionSecret(result.name, result.value);
-    return RequestSecretResult(
-      name: result.name,
-      value: result.value,
-      persisted: _sessionKeys != null,
-    );
-  }
-
-  /// Exposes the agent's registered tools to tests (ask-tool wiring checks).
-  @visibleForTesting
-  List<Tool> get toolsForTest => _agent.state.tools;
-
-  /// Exposes the live system prompt to tests (memory-section checks).
-  @visibleForTesting
-  String get systemPromptForTest => _agent.state.systemPrompt;
-
-  /// Exposes the live secrets env to tests (`request_secret` grant checks).
-  @visibleForTesting
-  SecretsExecutionEnv? get secretsEnvForTest => _secretsEnv;
-
-  /// Exposes the redactor to tests (runtime secret registration checks).
-  @visibleForTesting
-  SecretRedactor? get redactorForTest => _redactor;
 
   /// Switches the approval mode (settings dialog's mode selector) and
   /// persists the choice when a store is wired (fire-and-forget — the UI
@@ -1278,40 +1106,6 @@ class AgentService extends ChangeNotifier
     final store = _approvalModeStore;
     if (store != null) unawaited(store.save(mode));
   }
-
-  /// The current consent for third-party skill discovery (`.claude`,
-  /// `.github/skills`, `.codex`). Default: [SkillsAccess.granted].
-  SkillsAccess get skillsAccess => _skillsAccess;
-
-  /// Switches the third-party skills consent (the settings "Skills access"
-  /// section, the boot dialog), persists it when a
-  /// store is wired (fire-and-forget), then re-discovers skills under the
-  /// new consent and recomposes the system prompt — like
-  /// [_refreshMemorySection], no [reconfigure] needed. Services built from
-  /// a pre-constructed [Agent] (tests) have no config: they record the
-  /// choice but skip the re-discovery.
-  Future<void> setSkillsAccess(SkillsAccess access) async {
-    if (access == _skillsAccess) return;
-    _skillsAccess = access;
-    notifyListeners();
-    final store = _skillsAccessStore;
-    if (store != null) unawaited(store.save(access));
-    final config = _config;
-    if (config == null) return;
-    final suffix = await _discoverPromptSuffix(
-      env,
-      access,
-      homeDir: _skillsHomeDir ?? desktopHomeDir(),
-    );
-    // A newer choice made while discovery ran wins — don't clobber it.
-    if (access != _skillsAccess) return;
-    _promptSuffix = suffix;
-    _agent.state.systemPrompt = _composeSystemPrompt(config);
-  }
-
-  /// The user's per-tool availability choices (the app twin of the CLI
-  /// `tools:` section; persisted via [ToolsAvailabilityStore]).
-  ToolsConfig get toolsConfig => _toolsAvailability.config;
 
   /// The availability decision per known tool id (capabilities + config).
   Map<String, ResolvedToolAvailability> get toolAvailability =>
@@ -1335,6 +1129,17 @@ class AgentService extends ChangeNotifier
   /// root). Started best-effort after the service wires up.
   late final ScheduledMessageQueue _scheduledMessages;
 
+  /// The receipt trail behind [_scheduledMessages] — and, since the
+  /// review round, the app host's wake path (gh-1180 AC4): refused wake
+  /// attempts are receipted here too, so a post-mortem on the app host
+  /// can tell "timer never fired" from "wake refused" (a silent,
+  /// unreceipted drop was the ticket's blind-window shape on the second
+  /// host). The trail is the app's surfacing for a refusal: the only
+  /// user-visible channels (the [error] banner, the Live Activity
+  /// failure state) would misreport a healthy-but-held gate as a failed
+  /// run. Test seam below.
+  late final ScheduledReceiptLog _scheduledReceipts;
+
   /// Response deadline for one agent run; 10 minutes for the on-device
   /// providers (WebLLM's and transformers.js's first run compiles WebGPU
   /// shaders; Gemma loads multi-GB weights), 90 s otherwise.
@@ -1355,67 +1160,6 @@ class AgentService extends ChangeNotifier
   /// placeholder/default.
   @override
   String get activeBaseUrl => _activeBaseUrl;
-
-  /// Model id of the active backend, read live from the agent's model state;
-  /// the settings Task models section uses it as the editor's placeholder.
-  String get agentModelId => _agent.state.model.id;
-
-  /// Reads the last [tail] messages of subagent [id]'s session as
-  /// `(role, text)` pairs (settings Agents section → observe). Empty when
-  /// the child session is unavailable or the id is unknown.
-  Future<List<(String, String)>> observeSubagent(
-    String id, {
-    int tail = 20,
-  }) async {
-    final handle = _subagentManager?[id];
-    if (handle == null) return const [];
-    try {
-      final exists = await env.fileInfo(handle.sessionId);
-      if (exists.valueOrNull == null) return const [];
-      final session = await _repo.open(_subagentSessionMetadata(handle));
-      return tailMessagePairs(await session.buildContextMessages(), tail);
-    } on Object {
-      return const [];
-    }
-  }
-
-  /// Sends a follow-up message to subagent [id] (settings Agents section →
-  /// send): appends to the child session and marks it resumed. Falls back to
-  /// the sibling pending-queue when the session is unavailable.
-  Future<void> sendToSubagent(String id, String message) async {
-    final handle = _subagentManager?[id];
-    if (handle == null) {
-      throw StateError('no subagent "$id"');
-    }
-    ensureSendableSubagent(handle, id);
-    try {
-      final session = await _repo.open(_subagentSessionMetadata(handle));
-      await session.appendMessage(UserMessage.text(message));
-    } on Object {
-      // Fall back to the sibling pending queue when the session is gone.
-      await _subagentManager!.enqueueMessage(
-        id,
-        SubagentMessage(
-          fromId: 'parent',
-          text: message,
-          sentAt: DateTime.now().toUtc().toIso8601String(),
-        ),
-      );
-      return;
-    }
-    await _subagentManager!.update(id, status: SubagentStatus.running);
-  }
-
-  /// The child-transcript metadata both observe and send open the session
-  /// with (epoch creation time; the path IS the session id).
-  SessionMetadata _subagentSessionMetadata(SubagentHandle handle) {
-    return SessionMetadata(
-      id: handle.sessionId,
-      createdAt: DateTime.fromMillisecondsSinceEpoch(0),
-      cwd: env.sessionCwd,
-      path: handle.sessionId,
-    );
-  }
 
   /// A follow-up message needs a live-or-idle child; failed/aborted
   /// children have no session to append to.
@@ -1465,35 +1209,9 @@ class AgentService extends ChangeNotifier
   /// saved-keys store, and the provider registry's session keys.
   final MediaKeyResolver? _resolveSecretName;
 
-  /// Media generation gateway shared by the `generate_image` / `speak` /
-  /// `generate_music` / `generate_video` tools and exposed for the
-  /// `jsr.fa.media.*` bridge.
-  /// `null` for services constructed around a pre-constructed [Agent]
-  /// (tests).
-  MediaGateway? get mediaGateway => _mediaGateway;
   MediaGateway? _mediaGateway;
 
-  /// Video reader behind the `read_video` tool, exposed for the
-  /// `jsr.fa.media.readVideo` bridge. `null` for services constructed
-  /// around a pre-constructed [Agent] (tests).
-  VideoReader? get videoReader => _videoReader;
   VideoReader? _videoReader;
-
-  /// Derives the ASR transcriber for jsr bridges (the media_models.json
-  /// `transcription` slot, falling back to the active provider); null when
-  /// no ASR-capable (OpenAI-compatible) endpoint is configured — the bridge
-  /// then answers with an actionable error. Shared by the app view and the
-  /// dynamic-message widgets (issue #102 AC6).
-  Future<AsrTranscriber?> resolveAsrTranscriber() async {
-    final gateway = _mediaGateway;
-    if (gateway != null) return whisperTranscriberForGateway(gateway);
-    final config = _config;
-    return whisperTranscriberFor(
-      providerKind: _providerKind,
-      baseUrl: config?.baseUrl ?? '',
-      apiKey: config?.apiKey ?? '',
-    );
-  }
 
   /// Model id of the active backend (shorthand for the agent's current
   /// model; updated by [reconfigure]).
@@ -1508,86 +1226,21 @@ class AgentService extends ChangeNotifier
   /// lazily on first attach from the redactor's registered values.
   RedactionPipeline? _redactionPipeline;
 
+  /// The yaml `redact:` section (AC4); null = the mask-mode default.
+  RedactionConfig? _yamlRedactConfig;
+
+  /// Boot secrets snapshot ([_attachRedactor]): the live re-enable seed.
+  Map<String, String> _bootSecrets = const {};
+
   /// Rendered skills + project-context sections appended to the composed
   /// system prompt (discovered in [AgentService.create]; re-discovered by
   /// [setSkillsAccess] when the third-party consent changes).
   String _promptSuffix;
 
-  /// The base system prompt plus the skills/context suffix (kept as one
-  /// place so model/provider switches preserve the sections).
-  String _composeSystemPrompt(AgentConfig config) {
-    final base = _effectiveAgentSystemPrompt(config, _redactor);
-    final parts = [
-      base,
-      ?_projectMountNote(),
-      if (_promptSuffix.isNotEmpty) _promptSuffix,
-      if (_memorySection.isNotEmpty) _memorySection,
-      if (_messagingSection().isNotEmpty) _messagingSection(),
-    ];
-    return parts.join('\n\n');
-  }
-
-  /// The `## Agent messaging` prompt section: the agent's own mailbox in
-  /// the fabric + how discovery/addressing work. Empty until the session
-  /// (and thus the mailbox prefix) exists.
-  String _messagingSection() {
-    final manager = _subagentManager;
-    if (manager == null ||
-        manager.messaging == null ||
-        manager.mailboxPrefix.isEmpty) {
-      return '';
-    }
-    return appMessagingSectionPrompt.replaceAll(
-      '{{mailbox}}',
-      manager.mailboxOf(manager.selfId),
-    );
-  }
-
   /// The cached `<memory>` prompt section (durable facts from past
   /// sessions), refreshed asynchronously after create and on every
   /// `memory_add` — the prompt composition itself stays synchronous.
   String _memorySection = '';
-
-  /// Re-reads the `<memory>` section from the memory stores and recomposes
-  /// the prompt when it changed.
-  Future<void> _refreshMemorySection() async {
-    final controller = _memoryController;
-    final config = _config;
-    if (controller == null || config == null) return;
-    final section = await controller.formatPromptSection();
-    if (section == _memorySection) return;
-    _memorySection = section;
-    _agent.state.systemPrompt = _composeSystemPrompt(config);
-  }
-
-  /// The project-folder mount note for the system prompt (macOS): tells the
-  /// model where the mounted project lives for file tools and the shell.
-  String? _projectMountNote() {
-    // [AgentService.create] always wraps the shared env in
-    // [SecretsExecutionEnv]; look through it for the mount env.
-    var env = this.env;
-    if (env is SecretsExecutionEnv) env = env.delegate;
-    if (env is! ProjectMountEnv) return null;
-    final root = env.mountedRoot;
-    if (root == null) return null;
-    return 'A project folder is mounted at $projectMountSegment '
-        '(host: $root). File tools take $projectMountSegment/... paths; '
-        'shell commands work on the host path directly (cd $root).';
-  }
-
-  /// Recomposes the system prompt after the project-folder mount changes
-  /// (the file browser's open/unmount flow).
-  void refreshProjectMountPrompt() {
-    final config = _config;
-    if (config != null) {
-      _agent.state.systemPrompt = _composeSystemPrompt(config);
-    }
-  }
-
-  /// The config this service was created with, kept so a new session can be
-  /// cloned from it (see [clone]). `null` when the service was built from a
-  /// pre-constructed [Agent] (tests).
-  AgentConfig? get configForClone => _config;
 
   /// New-session support for services whose session does NOT live in this
   /// process (the relay's session is owned by the extension SW; cloning a
@@ -1672,35 +1325,6 @@ class AgentService extends ChangeNotifier
   int? _backgroundTaskId;
   Timer? _liveActivityEndTimer;
 
-  Future<void> _beginBackgroundTask() async {
-    _backgroundTaskId = await BackgroundExecution.begin('agent-run');
-  }
-
-  /// Shows the final run state on the Live Activity briefly, then ends it.
-  /// The microtask hop (NOT a zero-delay timer — it would linger as a
-  /// pending FakeTimer in tests) lets the error paths assign [error]
-  /// first — they flip [isStreaming] and set the message right after,
-  /// synchronously. The end timer is tracked so [dispose] can cancel it
-  /// (and skipped entirely under widget tests, where a pending 4 s timer
-  /// fails the binding).
-  Future<void> _finishLiveActivity() async {
-    await Future<void>.microtask(() {});
-    final failed = error != null;
-    await LiveActivity.update(
-      statusText: failed ? 'run failed' : 'done',
-      isError: failed,
-      isDone: true,
-    );
-    if (_inWidgetTest) {
-      await LiveActivity.end();
-      return;
-    }
-    _liveActivityEndTimer?.cancel();
-    _liveActivityEndTimer = Timer(const Duration(seconds: 4), () {
-      unawaited(LiveActivity.end());
-    });
-  }
-
   /// True under `flutter test` (binding class name; web-safe). False when
   /// no binding exists (plain dart tests — there the real event loop just
   /// runs the end timer out).
@@ -1712,31 +1336,6 @@ class AgentService extends ChangeNotifier
     } on Object {
       return false;
     }
-  }
-
-  /// The Live Activity status line — mirrors the FaWorkBar derivation
-  /// (current tool call, thinking, writing) so both surfaces agree.
-  String _liveActivityStatusText() {
-    for (final message in messages.reversed) {
-      switch (message.role) {
-        case 'system':
-          return message.content.split('\n').first;
-        case 'tool':
-          return '[${message.toolName}] ✓';
-        case 'thinking':
-          return 'thinking…';
-        case 'assistant':
-          return 'writing…';
-      }
-    }
-    return 'working…';
-  }
-
-  /// Pushes the current status line to the Live Activity; cheap no-op when
-  /// no activity is live (and always off iOS).
-  void _pushLiveActivityStatus() {
-    if (!_isStreaming) return;
-    unawaited(LiveActivity.update(statusText: _liveActivityStatusText()));
   }
 
   @override
@@ -1773,121 +1372,15 @@ class AgentService extends ChangeNotifier
   /// hermetic tests); tests pass `includeSharedSessionRoots: false`.
   final bool _includeSharedSessionRoots;
 
-  void _startSessionWatch() {
-    _stopSessionWatch();
-    if (!_watchExternalSessions) return;
-    final file = _sessionFile;
-    if (file == null) return;
-    _sessionWatchBytes = -1;
-    _sessionWatchTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      unawaited(_checkSessionFileGrew());
-    });
-  }
-
-  Future<void> _checkSessionFileGrew() async {
-    final file = _sessionFile;
-    if (file == null || _disposed) return;
-    final info = (await env.fileInfo(file)).valueOrNull;
-    if (info == null) return;
-    if (_sessionWatchBytes < 0) {
-      _sessionWatchBytes = info.size;
-      return;
-    }
-    if (info.size > _sessionWatchBytes) {
-      _sessionWatchBytes = info.size;
-      await _reloadExternalMessages();
-      externalSessionRevision.value++;
-    }
-  }
-
-  /// Pulls externally-appended rows into the visible transcript. Only
-  /// while IDLE: mid-run the agent owns the state machine (streaming,
-  /// tool calls) and a concurrent reload would corrupt it. A windowed
-  /// session ingests just the appended tail (any history the user paged
-  /// in stays put); a full-open session is re-opened fresh (cheap:
-  /// header + tree index).
-  Future<void> _reloadExternalMessages() async {
-    final session = _session;
-    if (session == null || isStreaming) return;
-    final gen = _loadGeneration;
-    try {
-      if (session.getStorage() case final WindowedSessionStorage windowed) {
-        final ingest = await windowed.ingestAppended();
-        if (gen != _loadGeneration) return;
-        if (ingest.reanchored) {
-          // Truncation/rotation: the view (and the provider context)
-          // reset to the new tail — stale anything is never kept.
-          _viewBranch = ingest.delta;
-          await _applyViewBranch();
-          if (gen != _loadGeneration) return;
-          final context = await session.buildContext();
-          if (gen != _loadGeneration) return;
-          _agent.state.messages = context.messages;
-          _persistedCount = context.messages.length;
-        } else if (ingest.delta.isNotEmpty) {
-          _viewBranch?.addAll(ingest.delta);
-          await _applyViewBranch();
-          if (gen != _loadGeneration) return;
-          await _growProviderContext(session, ingest.delta);
-          if (gen != _loadGeneration) return;
-        }
-        unawaited(_refreshHistoryAbove());
-        return;
-      }
-      final metadata = await session.getMetadata();
-      if (gen != _loadGeneration) return;
-      final fresh = await _repo.open(metadata);
-      if (gen != _loadGeneration) return;
-      _session = fresh;
-      await _reprojectLoadedWindow(fresh);
-    } on Object {
-      // A torn read (the CLI mid-append): the next poll retries.
-    }
-  }
-
-  /// Grows the provider context append-only by the ingested delta
-  /// (issue #135 round 2, provider-context full-fidelity: paging never
-  /// touches the context; external appends only ever ADD). A compaction
-  /// record inside the delta invalidates append-only growth — the
-  /// context is rebuilt from the full view branch instead.
-  Future<void> _growProviderContext(
-    Session session,
-    List<SessionRecord> delta,
-  ) async {
-    final hasCompaction = delta.any((r) => r is CompactionRecord);
-    final branch = _viewBranch;
-    if (hasCompaction || branch == null) {
-      final full = session.projectPath(branch ?? delta);
-      _agent.state.messages
-        ..clear()
-        ..addAll(full);
-      _persistedCount = full.length;
-      return;
-    }
-    final projected = session.projectPath(delta);
-    _agent.state.messages.addAll(projected);
-    _persistedCount += projected.length;
-  }
-
-  void _stopSessionWatch() {
-    _sessionWatchTimer?.cancel();
-    _sessionWatchTimer = null;
-  }
-
-  /// The windowed storage when the open session was opened windowed
-  /// (issue #135); null for full-open sessions — no paging surface.
-  WindowedSessionStorage? get _windowed {
-    final storage = _session?.getStorage();
-    return storage is WindowedSessionStorage ? storage : null;
-  }
-
   /// Transcript records sitting above the loaded window
   /// ([FaChatService.historyAboveCount]): `null` while the background
   /// count is still running or unknown (right after a jump), `0` once
   /// the whole transcript is loaded, `N` — what the "Load earlier"
-  /// banner shows.
+  /// banner shows. A full-open session has no pages above anything —
+  /// it reports the contract's complete-transcript `0`, so the banner
+  /// never renders on it (issue #974: the first-message sticker).
   @override
-  int? get historyAboveCount => _historyAboveCount;
+  int? get historyAboveCount => _windowed == null ? 0 : _historyAboveCount;
   int? _historyAboveCount;
 
   /// Hidden-range drill-in (issue #385 F4): resolves a compacted row's
@@ -1961,16 +1454,6 @@ class AgentService extends ChangeNotifier
   /// sessions (rows come straight from the loaded context).
   List<SessionRecord>? _viewBranch;
 
-  /// Re-syncs the VIEW branch to the storage's CURRENT resident branch
-  /// (issue #135 round 4, end-to-end memory bound): the view never
-  /// re-accumulates records the residency cap evicted — transcript and
-  /// ledger stay bounded by the same cache the storage enforces. The
-  /// banners re-derive "more above/below" from the storage counts.
-  Future<void> _syncViewToWindow(WindowedSessionStorage windowed) async {
-    final branch = await windowed.currentBranch();
-    if (branch.isNotEmpty) _viewBranch = branch;
-  }
-
   /// Pages one chunk of records above the window into the transcript
   /// ([FaChatService.loadOlderHistory]). Re-entrant taps are ignored, as
   /// is any tap mid-run.
@@ -2004,24 +1487,62 @@ class AgentService extends ChangeNotifier
     }
   }
 
-  /// Pages one chunk of records back in BELOW the window
+  /// Pages the transcript back to the live tail
   /// ([FaChatService.loadNewerHistory]) — the page-down path after deep
-  /// paging slid the newest side out. Same guards as [loadOlderHistory].
+  /// paging slid the newest side out. NEVER gated on [isStreaming]: the
+  /// page-down is a VIEW operation, and mid-run is exactly when the banner
+  /// must work — the run keeps appending below a deep-paged window while
+  /// the tap was a no-op (issue #1159). One bounded tail read re-centers
+  /// the window (jump-to-tail, no chunk crawl); the only guards are a
+  /// concurrent page load and a stale load generation.
   @override
   Future<void> loadNewerHistory() async {
-    if (_loadingHistory || isStreaming) return;
+    if (_loadingHistory) return;
     final windowed = _windowed;
     if (windowed == null) return;
+    // At-tail tap: nothing sits below — skip the rebuild and the
+    // whole-file count re-scan entirely.
+    if (!windowed.hasNewer) return;
     final gen = _loadGeneration;
     _loadingHistory = true;
     notifyListeners();
     try {
-      final joined = await windowed.loadNewer();
+      await windowed.jumpToTail();
       if (gen != _loadGeneration) return;
-      if (joined.isNotEmpty) {
-        await _syncViewToWindow(windowed);
-        await _applyViewBranch();
+      // Let an in-flight persist pass flush first so the branch read
+      // below observes just-finalized records: a turn boundary landing
+      // mid-jump must not leave its row stranded out of view until the
+      // next reprojection (review -FbK vanish variant). Best effort —
+      // a failed persist must not break the jump.
+      if (_persistPass case final pass?) {
+        try {
+          await pass;
+        } on Object {
+          // Ignored: the next persist pass retries.
+        }
+        if (gen != _loadGeneration) return;
       }
+      await _syncViewToWindow(windowed);
+      if (gen != _loadGeneration) return;
+      await _applyViewBranch();
+      if (gen != _loadGeneration) return;
+      // Live rows the projection cannot know — in-flight tool activity
+      // tiles and the streaming assistant/thinking bubbles are plain
+      // rows in [messages], not records yet. Re-read AFTER the rebuild
+      // settles: capturing earlier races a mid-jump turn boundary into
+      // re-appending a bubble the finalize already landed as a record —
+      // a duplicate (review -FbK). There is no await between the rebuild
+      // and this capture, so the fields are read atomically with the
+      // projection snapshot. The contains-check and the empty-bubble
+      // guard mirror _finalizeAssistant's own invariants.
+      final liveRows = [
+        ..._inFlightToolRows.map((e) => e.row),
+        if (_currentThinkingMessage case final t?) t,
+        if (_currentAssistantMessage case final a?
+            when a.content.trim().isNotEmpty)
+          a,
+      ].where((row) => !messages.contains(row)).toList();
+      messages.addAll(liveRows);
       await _refreshHistoryAbove();
       if (gen != _loadGeneration) return;
       _historyLoadError = null;
@@ -2079,118 +1600,10 @@ class AgentService extends ChangeNotifier
     return reached;
   }
 
-  int? _positionalRow(String messageId) {
-    final index = int.tryParse(messageId.replaceFirst('msg-', ''));
-    return index == null || index < 0 ? null : index;
-  }
-
-  /// A record-id jump on a FULL-OPEN session (the windowed-open
-  /// fallback, issue #197 defect 4): everything is already loaded, so
-  /// the jump is a scroll — resolve the record's transcript row and
-  /// hand it to the scroll surface. `false` on an unknown record or one
-  /// that projects no row. Fallback-open sessions are small by
-  /// definition (that is why the full open won), so the prefix
-  /// projection that finds the row costs nothing.
-  Future<bool> _jumpLoadedRecord(String recordId) async {
-    final session = _session;
-    if (session == null) return false;
-    try {
-      final branch = await session.getBranch();
-      final pos = branch.indexWhere((record) => record.id == recordId);
-      if (pos < 0) return false;
-      final index =
-          session.projectPath(branch.take(pos + 1).toList()).length - 1;
-      if (index < 0) return false;
-      scrollToMessageHandler?.call('msg-$index');
-      return true;
-    } on Object {
-      return false;
-    }
-  }
-
-  /// The AC6 byte-offset seek: hit id → window re-center → view sync.
-  Future<bool> _jumpToRecord(
-    WindowedSessionStorage windowed,
-    String recordId,
-  ) async {
-    if (_loadingHistory || isStreaming) return false;
-    final gen = _loadGeneration;
-    _loadingHistory = true;
-    notifyListeners();
-    try {
-      final branch = await windowed.jumpToRecord(recordId);
-      if (branch.isEmpty || gen != _loadGeneration) return false;
-      await _syncViewToWindow(windowed);
-      await _applyViewBranch();
-      if (gen != _loadGeneration) return false;
-      await _refreshHistoryAbove();
-      if (gen != _loadGeneration) return false;
-      _historyLoadError = null;
-      return true;
-    } on Object catch (e) {
-      _historyLoadError = e is StateError ? e.message : e.toString();
-      return false;
-    } finally {
-      _loadingHistory = false;
-      notifyListeners();
-    }
-  }
-
-  /// Recomputes [historyAboveCount] from the window's own above-count
-  /// (maintained incrementally by the storage; `null` = unknown — right
-  /// after a jump until an edge is walked). Also lands the total record
-  /// count (the terminal banner's N) through the same lazy memo.
-  Future<void> _refreshHistoryAbove() async {
-    final windowed = _windowed;
-    if (windowed == null) return;
-    final gen = _loadGeneration;
-    // Best-effort: this runs unawaited (background banner count), so a
-    // read failure here would escape as an unhandled zone error. A
-    // failed count just leaves the count null - the banner renders
-    // without the number.
-    final int? count;
-    try {
-      count = await windowed.countAbove();
-    } on Object {
-      return;
-    }
-    if (gen != _loadGeneration) return;
-    if (_historyAboveCount != count || windowed.cachedTotalRecords != null) {
-      _historyAboveCount = count;
-      notifyListeners();
-    }
-  }
-
-  /// Rebuilds the visible transcript rows and the trajectory ledger
-  /// from the VIEW branch (paging changes the view, never the provider
-  /// context). Dynamic-message markers splice at [loadSession] only —
-  /// widget records deep in paged history are rare enough that
-  /// re-adopting the branch per page-in costs more than it buys.
-  Future<void> _applyViewBranch() async {
-    final session = _session;
-    final branch = _viewBranch;
-    if (session == null || branch == null) return;
-    final projected = session.projectPath(branch);
-    messages
-      ..clear()
-      ..addAll(projected.map(_toChatMessage));
-    await _rebuildTrajectory(records: branch);
-    notifyListeners();
-  }
-
-  /// Rebuilds the agent context, the visible transcript, and the ledger
-  /// from [session]'s active branch as currently loaded. Everything
-  /// loaded is by definition already on disk, so the persist cursor rides
-  /// to the full length (nothing re-appends on the next persist).
-  Future<void> _reprojectLoadedWindow(Session session) async {
-    final context = await session.buildContext();
-    _agent.state.messages = context.messages;
-    _persistedCount = context.messages.length;
-    messages
-      ..clear()
-      ..addAll(context.messages.map(_toChatMessage));
-    await _rebuildTrajectory();
-    notifyListeners();
+  @override
+  void dispose() {
+    _disposeService();
+    super.dispose();
   }
 
   Session? _session;
@@ -2217,28 +1630,6 @@ class AgentService extends ChangeNotifier
   TrajectoryBlobPersister? _trajectoryBlobPersister;
   Session? _trajectoryBlobPersisterSession;
 
-  TrajectoryBlobPersister _trajectoryBlobPersisterFor() {
-    final session = _session;
-    final existing = _trajectoryBlobPersister;
-    // Same session (or the session materialised after the first capture
-    // — the null→real transition must ADOPT, not reset: the seen-hash
-    // state implements the #385 blob dedup and the #440 model-change
-    // dedup, and wiping it once per session re-persisted known blobs and
-    // appended a second model_change for an unchanged version).
-    if (existing != null &&
-        (_trajectoryBlobPersisterSession == null ||
-            identical(_trajectoryBlobPersisterSession, session))) {
-      _trajectoryBlobPersisterSession = session;
-      return existing;
-    }
-    final persister = TrajectoryBlobPersister(
-      redactText: _redactionPipeline?.redact,
-    );
-    _trajectoryBlobPersister = persister;
-    _trajectoryBlobPersisterSession = session;
-    return persister;
-  }
-
   /// The producer behind [trajectory]: rebuilt from the active branch on
   /// session open/switch, mirrored live from agent events, and fed the
   /// finalized records on every persist.
@@ -2246,14 +1637,6 @@ class AgentService extends ChangeNotifier
   FahChatMessage? _currentAssistantMessage;
   FahChatMessage? _currentThinkingMessage;
 
-  /// Id of the session new messages persist to (`null` until [initialize]).
-  String? get currentSessionId => _sessionId;
-
-  /// The cwd of the OPEN session (from its on-disk metadata): the folder
-  /// that conversation belongs to, regardless of the app's current mount
-  /// (the env is shared across sessions; the session's own folder is not).
-  /// Null until a session materializes.
-  String? get currentSessionCwd => _sessionCwd;
   String? _sessionCwd;
 
   /// The inbox watcher: incoming inter-agent mail while IDLE wakes the
@@ -2272,11 +1655,14 @@ class AgentService extends ChangeNotifier
   /// invariants), so it is off by default.
   static bool enableInboxWatcher = false;
 
-  /// Consecutive inbox-triggered runs without any user input — capped so
-  /// two chatty instances cannot ping-pong forever (mail still accumulates
-  /// and is delivered at the next real turn).
-  var _inboxWakeStreak = 0;
-  static const _maxInboxWakeStreak = 10;
+  /// The idle inbox-wake lane policy (gh-1180): user-kind mail always
+  /// wakes; delivered scheduled self-mail (`schedule_message` reminders)
+  /// is exempt from the chatter cap — a deliberate agent-chosen cadence
+  /// wakes forever, cadence-floored against a disguised busy-spin; and
+  /// foreign agent-to-agent chatter stays capped at
+  /// [InboxWakePolicy.defaultMaxInboxWakeStreak] consecutive wakes
+  /// without user input.
+  final InboxWakePolicy _inboxWakePolicy = InboxWakePolicy();
 
   var _fabricHeartbeatTick = 0;
 
@@ -2303,32 +1689,6 @@ class AgentService extends ChangeNotifier
   /// ✦ list, the inline widget tiles, and save-as-app.
   late final DynamicMessagesService dynamicMessages;
 
-  DynamicMessagesService _buildDynamicMessages() => DynamicMessagesService(
-    env: env,
-    sendText: sendText,
-    sessionIdOf: () => _sessionId,
-    sessionFileOf: () => _sessionFile,
-    mediaGatewayOf: () => _mediaGateway,
-    videoReaderOf: () => _videoReader,
-    hostSecretsOf: hostSecrets,
-    llmHandlerOf: () => completeOnce,
-    asrTranscriberOf: resolveAsrTranscriber,
-    resolveHostSecretDefault: _requestSecretForWidget,
-  );
-
-  /// The `jsr.fa.keys.request` backend for widget engines without a tile-
-  /// supplied requester: the same secret sheet the `request_secret` tool
-  /// drives, with grants routed through the session's persist+activate
-  /// flow (JsAppView parity).
-  Future<RequestSecretResult?> _requestSecretForWidget(
-    String name,
-    String reason,
-  ) async {
-    final result = await secretRequestHandler?.call(name, reason);
-    if (result == null) return null;
-    return acceptSecretGrant(result);
-  }
-
   /// Sends a plain-text user message. While the agent is already running the
   /// message is queued as a steering message and the UI shows it as pending
   /// until the next turn picks it up.
@@ -2338,7 +1698,7 @@ class AgentService extends ChangeNotifier
     if (trimmed.isEmpty) return;
     // Real user input resets the inbox wake streak (the ping-pong guard);
     // the watcher itself calls sendText with the flag set.
-    if (!_inboxWakeRunning) _inboxWakeStreak = 0;
+    if (!_inboxWakeRunning) _inboxWakePolicy.resetStreak();
     // A fresh user text gets a fresh over-window auto-continuation budget.
     _overWindowAutoResumed = false;
     _clearError();
@@ -2373,11 +1733,6 @@ class AgentService extends ChangeNotifier
   /// Directory (relative to [env]'s working directory) where chat
   /// attachments are staged before the outgoing message references them.
   static const String uploadsDir = uploadsDirName;
-
-  /// Whether the active provider accepts inline image content: hosted
-  /// providers do; the on-device text-only backends (WebLLM, Gemma,
-  /// transformers.js) get file paths only, never [ImageContent].
-  bool get inlinesImageAttachments => !_isOnDeviceKind(providerKind);
 
   /// Stages a chat attachment into [uploadsDir] inside the sandbox,
   /// creating the directory and de-duplicating the file name on collision
@@ -2471,33 +1826,6 @@ class AgentService extends ChangeNotifier
     _runWithTimeout(() => _agent.promptMessage(message));
   }
 
-  /// Sends a user message with an attached image.
-  Future<void> sendImage({
-    required Uint8List bytes,
-    required String mimeType,
-    String text = '',
-  }) async {
-    _clearError();
-    final rowProblem = _liveConnectionRowProblem();
-    if (rowProblem != null) {
-      error = rowProblem;
-      notifyListeners();
-      return;
-    }
-    final content = <ContentBlock>[
-      if (text.isNotEmpty) TextContent(text: text),
-      ImageContent(data: base64Encode(bytes), mimeType: mimeType),
-    ];
-    final message = UserMessage(content: content, timestamp: DateTime.now());
-    if (_agent.state.isStreaming) {
-      _agent.steer(message);
-      pendingSteerTexts.add(text.isEmpty ? '[image]' : text);
-      notifyListeners();
-      return;
-    }
-    _runWithTimeout(() => _agent.promptMessage(message));
-  }
-
   /// Idle watchdog: the run aborts only when NOTHING comes back for
   /// [_responseTimeout] — any event (tokens, tool calls) proves the model is
   /// alive and rearms it. Replaces the previous whole-run timeout, which
@@ -2506,39 +1834,26 @@ class AgentService extends ChangeNotifier
   Timer? _idleWatchdog;
   int _activeToolCalls = 0;
 
+  /// In-flight tool activity tiles (unpersisted live rows): start adds,
+  /// end untracks, agent start clears. A mid-run view rebuild re-appends
+  /// them so the jump-to-tail never drops a running tool from the
+  /// transcript (issue #1159 review -Fl1).
+  final List<({String toolName, FahChatMessage row})> _inFlightToolRows = [];
+
   /// Aborts the current run, if any.
   @override
   void abort() => _agent.abort();
 
-  /// Serializes `_persist` runs so concurrent triggers never double-append
-  /// the same message.
-  Future<void> _persistChain = Future<void>.value();
+  /// The in-flight `_persist` drain, or `null` when idle. While one pass
+  /// sweeps the transcript, late triggers mark `_persistDirty` and await
+  /// this drain instead of dropping their payload (issue #1102) — and a
+  /// stored future from another zone can't stall a stored-null guard, so
+  /// no cross-zone future capture is possible here.
+  Future<void>? _persistPass;
 
-  @override
-  void dispose() {
-    if (identical(maybeCurrent, this)) maybeCurrent = null;
-    _disposed = true;
-    // Drop the sleep-prevention assertion (issue #325): best-effort and
-    // fire-and-forget — dispose stays synchronous.
-    unawaited(powerAssertion?.release());
-    // Disposing the service cancels an in-flight run: the agent's idle
-    // watchdog would otherwise outlive the host by minutes (and wedge
-    // widget tests' fake_async invariants on a pending timer).
-    _agent.abort();
-    _agentNetwork?.dispose();
-    _compactExpand?.dispose();
-    if (_subagentManager != null) _scheduledMessages.dispose();
-    _inboxWatchTimer?.cancel();
-    unawaited(_taskCompletionsSub?.cancel());
-    _idleWatchdog?.cancel();
-    _liveActivityEndTimer?.cancel();
-    _sessionWatchTimer?.cancel();
-    fsRevision.dispose();
-    externalSessionRevision.dispose();
-    _trajectory.dispose();
-    dynamicMessages.dispose();
-    super.dispose();
-  }
+  /// Set when a `_persist` trigger landed while a pass was in flight; the
+  /// running drain re-runs the full-state sweep once more before it ends.
+  bool _persistDirty = false;
 
   /// Switches the backend (provider/model/key) for subsequent messages while
   /// keeping the visible transcript and the current session.
@@ -2550,7 +1865,24 @@ class AgentService extends ChangeNotifier
   /// on. For WebLLM the settings form has already run `loadModel` (the
   /// engine is a singleton), so the new stream function reuses the warm
   /// instance. The switch is recorded as a `model_change` session record.
-  Future<void> reconfigure(AgentConfig config) async {
+  ///
+  /// [fromProviderAddFlow] marks the switch an add-provider flow itself
+  /// performs (gh-1044 I1): it bypasses the [beginProviderAddFlow] latch
+  /// below. Every other call is refused while the latch is held — boot
+  /// and session restores never reconfigure the active connection in the
+  /// middle of a provider add (the F4 hijack: a codemie restore binding
+  /// the connection while the AIIN flow runs).
+  Future<void> reconfigure(
+    AgentConfig config, {
+    bool fromProviderAddFlow = false,
+  }) async {
+    if (reconfigureRefusedByAddFlow(fromProviderAddFlow)) {
+      debugPrint(
+        '[Fa] reconfigure refused: a provider add flow is in progress — '
+        'the active connection stays untouched until it finishes',
+      );
+      return;
+    }
     // Issue #327: refuse a connection whose model and auth resolve from
     // DIFFERENT registry rows, or a hosted/CodeMie endpoint with no
     // credential on this surface — before any state changes (fail fast,
@@ -2619,12 +1951,11 @@ class AgentService extends ChangeNotifier
     }
   }
 
-  void _clearError() {
-    if (error != null) {
-      error = null;
-      notifyListeners();
-    }
-  }
+  /// Add-provider-flow latch (gh-1044 I1/AC6): > 0 while a provider
+  /// add/connect flow runs (AIIN sign-in and friends). While held,
+  /// [reconfigure] refuses restore-shaped calls — the active connection
+  /// is never hijacked mid-flow.
+  int _providerAddFlowDepth = 0;
 
   /// Bridge for the part-file extension members ([AgentServiceAssistant],
   /// [AgentServiceEvents]): `notifyListeners` is `@protected`, callable
@@ -2656,86 +1987,6 @@ class AgentService extends ChangeNotifier
       buffer.writeln();
     }
     return buffer.toString();
-  }
-
-  String _shortArgs(Map<String, dynamic> args) {
-    final encoded = jsonEncode(args);
-    if (encoded.length <= 80) return encoded;
-    return '${encoded.substring(0, 80)}...';
-  }
-
-  /// Whether a [_persist] pass is currently draining the transcript.
-  /// Concurrent triggers (a `_persistSoon` pass racing the run
-  /// finalizer's direct call) must not both iterate
-  /// `_agent.state.messages`: both would read the same
-  /// `_persistedCount == 0` before either finishes and append every
-  /// message twice (duplicate JSONL rows, duplicated chat on reload).
-  /// The skip is safe — the live pass iterates the live list and
-  /// advances `_persistedCount` for everything it saw.
-  bool _persistRunning = false;
-
-  /// Persists presented dynamic messages as `dynamic_widget` custom
-  /// records (the replay source; see [DynamicMessagesService.adoptBranch]).
-  Future<void> _flushDynamicWidgets(Session session) async {
-    for (final data in dynamicMessages.drainRecordPayloads()) {
-      await session.appendCustomEntry(
-        customType: DynamicMessagesService.recordType,
-        data: data,
-      );
-    }
-  }
-
-  /// Writes every buffered request-capture record as context-omitted
-  /// CustomRecords, in chain order (blobs first, summary last — the replay
-  /// walk expects the summary as the step's predecessor). // ponytail: N
-  /// buffered requests flush as one batch — the replay walk keys by chain
-  /// position, so a throttled multi-request burst can coalesce onto one
-  /// step; per-request keys if that matters.
-  Future<void> _flushRequestSummaries(Session session) async {
-    if (_pendingRequestRecords.isEmpty) return;
-    final pending = List.of(_pendingRequestRecords);
-    _pendingRequestRecords.clear();
-    for (final (:customType, :data) in pending) {
-      if (customType == _pendingModelChangeMarker) {
-        // Issue #440: the System row for this request-context version —
-        // a real ModelChangeRecord through the same session API the
-        // model-switch flow uses, so replay projects the row the
-        // following summary stamps (F7a). Never a custom record.
-        await session.appendModelChange(
-          provider: _agent.state.model.provider,
-          modelId: _agent.state.model.id,
-        );
-        continue;
-      }
-      await session.appendCustomEntry(customType: customType, data: data);
-    }
-  }
-
-  /// Rebuilds the trajectory ledger from the active session branch
-  /// (session open/switch/external reload); windowed callers pass the
-  /// VIEW branch so paged-in history feeds the ledger without a storage
-  /// walk.
-  Future<void> _rebuildTrajectory({List<SessionRecord>? records}) async {
-    final session = _session;
-    if (session == null) return;
-    final gen = _loadGeneration;
-    _trajectory.reset();
-    final sw = Stopwatch()..start();
-    final branch = records ?? await session.getBranch();
-    if (gen != _loadGeneration || !identical(session, _session)) return;
-    // One bulk snapshot (issue #262): the whole backfill is synchronous
-    // O(n) work — no intermediate snapshots exist to render, and the old
-    // per-append materialization was the O(n²) open stall. With no awaits
-    // inside, the fold is atomic for the event loop: a generation bump or
-    // session swap lands either fully before or fully after it (the #199
-    // E1 guard, now checked around the single synchronous block).
-    _trajectory.appendAll(branch);
-    AppLog.i(
-      'trajectory',
-      'backfill: ${branch.length} records, '
-          '${_trajectory.latest.records.length} rows in '
-          '${sw.elapsedMilliseconds}ms',
-    );
   }
 
   @override

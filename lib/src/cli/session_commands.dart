@@ -3,6 +3,18 @@
 /// extension sees the class's private members.
 part of 'agent_cli.dart';
 
+/// The CLI wiring fields a restore mutates, captured before the first
+/// mutation: a FAILED roles re-pin rolls them all back so the status bar,
+/// the key state and the stream keep describing the model that actually
+/// serves (gh-1000 T3).
+typedef _RestoreWiring = ({
+  String? customName,
+  String providerKind,
+  String apiKey,
+  bool explicitToken,
+  StreamFunction streamFunction,
+});
+
 /// Implementation members of [AgentCli] for named sessions: switching, initializing,
 /// creating, loading, renaming, listing, and the empty-session cleanup.
 extension on AgentCli {
@@ -140,7 +152,11 @@ extension on AgentCli {
         io.writeln(line);
       }
     }
-    io.writeln(_style.dim('─' * 20));
+    // The trailing rule is line-mode chrome only: in the TUI it costs a
+    // glass row on resume, and the resumed window anchors at the
+    // transcript region — the spare row is tail parity (issue #446
+    // wave-14).
+    if (!_useTui) io.writeln(_style.dim('─' * 20));
   }
 
   /// `/resume`: switches to the most recently created session across every
@@ -516,6 +532,15 @@ extension on AgentCli {
 
   Future<Session> _loadSession(SessionMetadata metadata) async {
     final bootSw = Stopwatch()..start();
+    // gh-968 parity: the budget must price the prompt the FIRST REQUEST
+    // will carry. The messaging section joins at mailbox-prefix sync,
+    // which runs after this walk in boot order — project the prefix
+    // here so a resume cannot materialize one section more than the
+    // live loop carried before exit (issue #1151: builtin-skills
+    // metadata exhausted the record-bucket slack this race left).
+    if (_subagentManager.messaging != null && metadata.id.isNotEmpty) {
+      _assignMailboxPrefix(metadata.id);
+    }
     void stage(String name) => _logDiagnostic(
       'boot_stage $name ms=${bootSw.elapsedMilliseconds} sid=${metadata.id}',
     );
@@ -557,7 +582,8 @@ extension on AgentCli {
       session = await _repo.open(metadata);
     }
     stage('walk');
-    final messages = await session.buildContextMessages();
+    final context = await session.buildContext();
+    final messages = context.messages;
     stage('context');
     // Loaded usage anchors are generation-time: post-compaction they
     // phantom-report the pre-compaction size (183k on a 27k branch) and
@@ -589,67 +615,347 @@ extension on AgentCli {
     // across folders landed on the wrong provider (user report: a z.ai
     // session reopened as copilot). Re-apply the session folder's saved
     // triple.
-    await _applySessionFolderModelState(session);
+    await _applySessionFolderModelState(session, leafModel: context.model);
     return session;
   }
 
-  /// Re-applies the model/provider triple saved for the CURRENT folder
-  /// ([loadFolderModelState]) — the runtime twin of the boot restore in
-  /// bin/fah.dart. Best-effort: a stale or broken state file keeps the
-  /// current model.
-  Future<void> _applySessionFolderModelState(Session session) async {
+  /// Re-applies the model/provider binding the restored session ran on —
+  /// the runtime twin of the boot restore in bin/fah.dart.
+  ///
+  /// Binding precedence (gh-1000):
+  /// 1. the session's OWN leaf `model_change` when it pins an endpoint or
+  ///    a saved custom-provider entry (name-pinned, never modelId-matched
+  ///    — two entries can share one endpoint+modelId, AC1);
+  /// 2. the per-folder model state ([loadFolderModelState]), whose
+  ///    `customProvider` name pins the entry the same way;
+  /// 3. nothing (a pre-gh-1000 session) — today's behavior, no binding.
+  ///
+  /// A pinned name that no longer resolves degrades to endpoint-keyed
+  /// resolution with a one-line note (E1 — the model is kept); a pinned
+  /// key that no longer resolves degrades to a named re-auth note instead
+  /// of a raw 401 mid-chat (AC3/E3).
+  Future<void> _applySessionFolderModelState(
+    Session session, {
+    ({
+      String provider,
+      String modelId,
+      String? baseUrl,
+      String? customProvider,
+    })?
+    leafModel,
+  }) async {
     if (!config.folderModelStateApplies) return;
+    // 1. The session's own name-bound leaf binding wins.
+    if (leafModel != null &&
+        (leafModel.baseUrl != null || leafModel.customProvider != null)) {
+      final spec = resolveCliProviderSpec(leafModel.provider);
+      if (spec != null) {
+        await _applyRestoredModelBinding(
+          session,
+          providerKind: spec.kind,
+          modelId: leafModel.modelId,
+          baseUrl: leafModel.baseUrl,
+          customProviderName: leafModel.customProvider,
+        );
+        return;
+      }
+      // An unresolvable leaf provider falls through to the folder state.
+    }
+    // 2. The folder state.
     final state = await loadFolderModelState(
       _env,
       sessionsRoot: config.sessionRoot,
       cwd: _env.cwd,
     );
     if (state == null) return;
-    final current = _agent.state.model;
-    if (current.id == state.modelId && current.baseUrl == state.baseUrl) {
-      return; // already on this triple (the boot applied this folder)
+    final pin = folderStateProviderEntry(state, config.customProviders);
+    if (pin.note != null) io.writeln(_style.dim('note: ${pin.note}'));
+    await _applyRestoredModelBinding(
+      session,
+      providerKind: state.providerKind,
+      modelId: state.modelId,
+      baseUrl: state.baseUrl,
+      customProviderName: pin.entry?.name,
+    );
+  }
+
+  /// Applies one resolved restore binding: builds the model, re-pins the
+  /// active custom entry (its key slot then serves the model), re-points
+  /// the stream wiring (roles mode re-pins the default chain — the same
+  /// wiring a live provider switch builds; the legacy path rebuilds the
+  /// direct stream function), and records the binding back into the
+  /// session. Best-effort: an unresolvable provider keeps the current
+  /// model with a note.
+  Future<void> _applyRestoredModelBinding(
+    Session session, {
+    required String providerKind,
+    required String modelId,
+    required String? baseUrl,
+    required String? customProviderName,
+  }) async {
+    if (_restoreBindingSatisfied(modelId, baseUrl, customProviderName)) {
+      return; // already on this binding (the boot applied it)
     }
-    final Model built;
-    try {
-      built = buildCliDefaultModel(
-        state.providerKind,
-        modelId: state.modelId,
-        baseUrl: state.baseUrl,
-      );
-    } on ConfigException {
-      io.writeln(
-        _style.dim(
-          'note: saved folder model state is stale '
-          '(${state.providerKind}) — keeping ${current.id}',
-        ),
-      );
-      return;
-    }
+    // The restore mutates CLI fields before the roles re-pin runs — a
+    // FAILED re-pin rolls them all back (T3), so capture the originals
+    // FIRST.
+    final previous = _captureRestoreWiring();
+    final entry = _pinnedRestoreEntry(customProviderName);
+    final built = _buildRestoredModel(
+      providerKind: providerKind,
+      modelId: modelId,
+      baseUrl: baseUrl,
+      entry: entry,
+    );
+    if (built == null) return;
     final spec = resolveCliProviderSpec(built.provider)!;
-    final key = _providerKeyFor(spec, built.baseUrl) ?? '';
     // The resolved KIND feeds the session state and the stream factory —
     // a raw name-shaped id here would throw at providerStreamFunction
     // (the crash this PR removes at boot) and persist itself back into
     // the state file via onProviderChanged (issue #772 review).
+    _activeCustomName = entry?.name;
     _providerKind = spec.kind;
+    final key = _providerKeyFor(spec, built.baseUrl) ?? '';
     _apiKey = key;
     _explicitToken = false;
-    _streamFunction = _catalogStreamFunction(spec.kind, key);
-    _agent.streamFunction = _streamFunction;
-    _agent.state.model = built;
+    if (_restoreUsesRolesChain(entry, key)) {
+      final applied = _repinRolesChain(
+        resolver: config.modelRolesResolver!,
+        spec: spec,
+        built: built,
+        entry: entry,
+        key: key,
+        previous: previous,
+      );
+      if (!applied) return;
+    } else {
+      _streamFunction = _catalogStreamFunction(spec.kind, key);
+      _agent.streamFunction = _streamFunction;
+    }
+    if (key.isEmpty) {
+      io.writeln(_style.dim(_restoreKeyHint(entry, built.baseUrl)));
+    } else {
+      _noteKeyShadowing(entry, built.baseUrl);
+    }
+    await _finishRestoreBinding(session, built: built, entry: entry);
+  }
+
+  /// Whether the CLI is already on the binding the restore would apply —
+  /// the boot applied this folder's state, and a re-apply must not
+  /// restart the model cache or append a duplicate `model_change`.
+  bool _restoreBindingSatisfied(
+    String modelId,
+    String? baseUrl,
+    String? customProviderName,
+  ) {
+    final current = _agent.state.model;
+    return current.id == modelId &&
+        current.baseUrl == baseUrl &&
+        (customProviderName == null || _activeCustomName == customProviderName);
+  }
+
+  /// Whether the restore re-points the stream through the roles resolver:
+  /// roles-driven boots with a resolver. A genuinely keyless endpoint (no
+  /// entry key slot and nothing resolved) is excluded — roles chains
+  /// cannot form there by design, so the restore keeps the legacy direct
+  /// wiring, exactly as before gh-1000.
+  bool _restoreUsesRolesChain(CustomProviderEntry? entry, String key) {
+    if (!_rolesDriven) return false;
+    if (config.modelRolesResolver == null) return false;
+    return !(key.isEmpty && entry?.keyName == null);
+  }
+
+  /// The saved entry a pinned NAME resolves to. A name that no longer
+  /// resolves must not unpin silently (E1, leaf-pin variant) — say so,
+  /// exactly like the folder-state branch, before the endpoint-keyed
+  /// fallback can bind a twin account's key.
+  CustomProviderEntry? _pinnedRestoreEntry(String? customProviderName) {
+    if (customProviderName == null) return null;
+    final entry = config.customProviders?.find(customProviderName);
+    if (entry != null) return entry;
+    io.writeln(
+      _style.dim(
+        'note: saved provider "$customProviderName" is no longer '
+        'configured — resolved by endpoint (model kept)',
+      ),
+    );
+    return null;
+  }
+
+  /// Builds the restored model with the issue-#964 authHeader precedence:
+  /// the PINNED entry's own header wins — two entries can share one
+  /// endpoint (the gh-1000 twin fixture), and the endpoint-first scan
+  /// would otherwise bind the twin's (missing) header. Returns null (the
+  /// stale note is printed) when the saved kind no longer resolves.
+  Model? _buildRestoredModel({
+    required String providerKind,
+    required String modelId,
+    required String? baseUrl,
+    required CustomProviderEntry? entry,
+  }) {
+    try {
+      return buildCliDefaultModel(
+        providerKind,
+        modelId: modelId,
+        baseUrl: baseUrl,
+        authHeader:
+            entry?.authHeader ??
+            authHeaderForBaseUrl(
+              config.customProviders?.entries ?? const [],
+              baseUrl,
+            ),
+      );
+    } on ConfigException {
+      io.writeln(
+        _style.dim(
+          'note: saved model state is stale ($providerKind) — '
+          'keeping ${_agent.state.model.id}',
+        ),
+      );
+      return null;
+    }
+  }
+
+  /// Captures the CLI wiring fields the restore is about to mutate, so a
+  /// FAILED roles re-pin can roll every one of them back (T3).
+  _RestoreWiring _captureRestoreWiring() => (
+    customName: _activeCustomName,
+    providerKind: _providerKind,
+    apiKey: _apiKey,
+    explicitToken: _explicitToken,
+    streamFunction: _streamFunction,
+  );
+
+  /// Rolls every captured wiring field back onto the CLI (and the agent's
+  /// live stream) — the model that serves keeps describing itself
+  /// consistently in the status bar and the transcript.
+  void _rollbackRestoreWiring(_RestoreWiring previous) {
+    _activeCustomName = previous.customName;
+    _providerKind = previous.providerKind;
+    _apiKey = previous.apiKey;
+    _explicitToken = previous.explicitToken;
+    _streamFunction = previous.streamFunction;
+    _agent.streamFunction = previous.streamFunction;
+  }
+
+  /// Roles mode: re-pin the default chain onto the restored provider —
+  /// the same wiring a live `/provider` switch builds. The resolved key
+  /// material is seeded under the pinned key name FIRST: a store-backed
+  /// key never reaches the resolver's startup snapshot. Returns true on
+  /// success; on a FAILED re-pin (`setRoleChain` mutates before
+  /// `applyToAgent` throws) rolls the chain AND the captured CLI fields
+  /// back and prints the named notes — never a raw 401 on the next turn
+  /// (AC3/E3).
+  bool _repinRolesChain({
+    required ModelRolesResolver resolver,
+    required ProviderSpec spec,
+    required Model built,
+    required CustomProviderEntry? entry,
+    required String key,
+    required _RestoreWiring previous,
+  }) {
+    final pinnedKeyName =
+        entry?.keyName ??
+        _rolesKeyNameFor(spec.name, built.baseUrl) ??
+        _scopedKeyNameForNonDefault(spec.name, built.baseUrl);
+    if (pinnedKeyName != null && key.isNotEmpty) {
+      resolver.addSecret(pinnedKeyName, key);
+    }
+    // The resolver's default chain is captured too: a FAILED re-pin must
+    // restore it (setRoleChain mutates before applyToAgent throws).
+    final previousChain =
+        resolver.config.roles[defaultModelRole] ?? const <ModelRef>[];
+    try {
+      resolver.setDefaultChain([
+        ModelRef(
+          provider: spec.name,
+          modelId: built.id,
+          baseUrl: built.baseUrl,
+          contextWindow: built.contextWindow,
+          maxTokens: built.maxTokens,
+          apiKeyName: pinnedKeyName,
+          // A saved entry carrying this endpoint's authHeader (issue
+          // #964) must survive the restore — the roles stream serves
+          // from the CHAIN entry, so a header-less ModelRef 401s even
+          // though the agent state's model carries the header.
+          authHeader: built.authHeader,
+        ),
+      ]);
+      resolver.applyToAgent(_agent);
+      _streamFunction = _agent.streamFunction;
+      return true;
+    } on ConfigException catch (error) {
+      if (previousChain.isNotEmpty) {
+        resolver.setRoleChain(defaultModelRole, previousChain);
+      }
+      _rollbackRestoreWiring(previous);
+      io.writeln(_style.dim('note: ${error.message}'));
+      io.writeln(
+        _style.dim(
+          'keeping ${_agent.state.model.id} (${_agent.state.model.provider})'
+          ' — set the key, then restart this session to retry the restore',
+        ),
+      );
+      return false;
+    }
+  }
+
+  /// Completes an applied restore: invalidates the previous provider's
+  /// cached model list, moves the agent onto the built model, records the
+  /// binding into the session (the next restore's leaf pin) and says so.
+  Future<void> _finishRestoreBinding(
+    Session session, {
+    required Model built,
+    required CustomProviderEntry? entry,
+  }) async {
     // The cached model list belongs to the previous provider/endpoint.
     _modelCache = const [];
     _modelContextWindows = const {};
     _modelMaxTokens = const {};
     _lastModelList = null;
     unawaited(_refreshModelCache());
+    _agent.state.model = built;
     await session.appendModelChange(
       provider: built.provider,
       modelId: built.id,
+      baseUrl: built.baseUrl,
+      customProvider: entry?.name,
     );
     io.writeln(
       _style.dim('restored ${built.id} (${built.provider}) from this folder'),
     );
+  }
+
+  /// The re-auth note for a restore whose key did not resolve: names the
+  /// provider entry (or endpoint), the expected key slot, and the fix —
+  /// keys and values are never printed (AC2/E3).
+  String _restoreKeyHint(CustomProviderEntry? entry, String? baseUrl) {
+    final keyName =
+        entry?.keyName ??
+        (baseUrl == null ? null : CustomProviderRegistry.keyNameFor(baseUrl));
+    if (keyName == null) {
+      return 'no key resolved — run /provider to re-authenticate';
+    }
+    final target = entry != null ? 'provider "${entry.name}"' : baseUrl;
+    return 'no key for $target — set it with /key set $keyName <value>'
+        '${entry != null ? ' (or /provider ${entry.name})' : ''}';
+  }
+
+  /// E2: when the restored key slot exists in BOTH the environment and the
+  /// store with DIFFERENT values, note the provenance order (the env value
+  /// is the one sent). The detection and wording are the shared
+  /// [envShadowingNote] rule — the boot (bin/fah.dart) and the banner hint
+  /// (key_status) use the same one.
+  void _noteKeyShadowing(CustomProviderEntry? entry, String? baseUrl) {
+    final keyName = entry?.keyName;
+    if (keyName == null) return;
+    final note = envShadowingNote(
+      keyName,
+      config.envVarValue?.call(keyName),
+      config.secureKeys?.read(keyName),
+    );
+    if (note == null) return;
+    io.writeln(_style.dim('note: $note'));
   }
 
   /// The label for a startup-resumed session's replay header, or null when

@@ -6,6 +6,7 @@ import 'dart:convert';
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/catalog_service.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Name of the agent tool wrapping the widgets catalog.
@@ -42,7 +43,7 @@ AgentTool appsCatalogTool({
     switch (action) {
       case 'list':
       case 'search':
-        return _list(arguments, action == 'search', service);
+        return _list(arguments, action == 'search', service, store);
       case 'get-source':
       case 'install':
       case 'remove':
@@ -110,35 +111,79 @@ Future<ToolExecutionResult> _list(
   Map<String, dynamic> arguments,
   bool isSearch,
   CatalogService service,
+  AppsStore store,
 ) async {
+  final query = (arguments['query'] ?? '').toString().trim().toLowerCase();
+  if (isSearch && query.isEmpty) {
+    return ToolExecutionResult.text('Provide a "query" for search.');
+  }
+  bool matches(String id, String name, String description) =>
+      !isSearch ||
+      id.contains(query) ||
+      name.toLowerCase().contains(query) ||
+      description.toLowerCase().contains(query);
+  final lines = <String>[];
+  final localAppById = <String, JsAppInfo>{};
+  final localLineByAppId = <String, int>{};
+  // The local workspace FIRST (issue #866): apps the agent just wrote
+  // under apps/ exist before the remote catalog ever hears of them — a
+  // fresh creation must be visible to the agent that wrote it.
+  try {
+    for (final app in await store.listApps()) {
+      if (!matches(app.id, app.name, app.description)) continue;
+      localLineByAppId[app.id] = lines.length;
+      localAppById[app.id] = app;
+      lines.add(
+        app.error != null
+            ? '${app.id} — BROKEN: ${app.error}'
+            : '${app.id} v${app.version}'
+                  '${app.description.isEmpty ? '' : ' — ${app.description}'}'
+                  ' (installed in apps/)',
+      );
+    }
+  } on Object catch (e) {
+    // A store scan failure must not hide the remote catalog — but stay
+    // diagnosable (issue #866 review).
+    AppLog.i('apps', 'apps_catalog local scan failed: $e');
+  }
+  final annotated = <String>{};
   try {
     final result = await service.fetchCatalog();
-    var entries = result.entries;
-    if (isSearch) {
-      final query = (arguments['query'] ?? '').toString().trim().toLowerCase();
-      if (query.isEmpty) {
-        return ToolExecutionResult.text('Provide a "query" for search.');
+    final entries = result.entries.where((e) {
+      if (!matches(e.id, e.name, e.description)) {
+        if (!isSearch) return false;
+        // Remote search also matches tags (pre-#866 behavior, kept).
+        return e.tags.any((tag) => tag.contains(query));
       }
-      bool matches(CatalogEntry e) =>
-          e.id.contains(query) ||
-          e.name.toLowerCase().contains(query) ||
-          e.description.toLowerCase().contains(query) ||
-          e.tags.any((tag) => tag.contains(query));
-      entries = entries.where(matches).toList();
+      return true;
+    }).toList();
+    for (final e in entries) {
+      // Same id locally and remotely is ONE widget, not two (issue #866
+      // review): the local line wins; a newer remote version is surfaced
+      // as an update annotation on it — at most once per id, even if a
+      // bad catalog lists the same id twice (issue #866 review r2).
+      final localLine = localLineByAppId[e.id];
+      if (localLine != null) {
+        final local = localAppById[e.id];
+        if (local != null &&
+            semverNewer(local.version, e.version) &&
+            annotated.add(e.id)) {
+          lines[localLine] =
+              '${lines[localLine]} (update available: v${e.version})';
+        }
+        continue;
+      }
+      lines.add(
+        '${e.id} v${e.version}'
+        '${e.description.isEmpty ? '' : ' — ${e.description}'}',
+      );
     }
-    if (entries.isEmpty) return ToolExecutionResult.text('No widgets found.');
+    if (lines.isEmpty) return ToolExecutionResult.text('No widgets found.');
     final suffix = result.stale ? '\n(offline — cached catalog)' : '';
-    return ToolExecutionResult.text(
-      entries
-              .map(
-                (e) =>
-                    '${e.id} v${e.version}'
-                    '${e.description.isEmpty ? '' : ' — ${e.description}'}',
-              )
-              .join('\n') +
-          suffix,
-    );
+    return ToolExecutionResult.text(lines.join('\n') + suffix);
   } on CatalogError catch (error) {
+    // Remote unavailable: the local listing still answers.
+    if (lines.isNotEmpty) return ToolExecutionResult.text(lines.join('\n'));
     return ToolExecutionResult.text('Catalog unavailable: $error');
   }
 }

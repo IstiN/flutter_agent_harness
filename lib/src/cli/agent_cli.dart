@@ -24,10 +24,13 @@ import 'package:yaml/yaml.dart';
 import '../hashline/hashline.dart';
 
 import '../agent/agent.dart';
+import '../agent/misuse_breaker.dart';
 import '../dap/dap_hub_snapshot.dart';
 import 'agent_event_handler.dart';
 import 'ansi_markdown.dart';
 import 'path_candidates.dart';
+import 'slash_args.dart';
+import 'status_line_git_probe.dart';
 import 'tui_status_line.dart'
     show
         StatusLineConfig,
@@ -51,6 +54,7 @@ import '../trajectory/trajectory_record.dart' show TrajectoryCompactedRecord;
 import '../trajectory/trajectory_blobs.dart';
 import '../agent/agent_tool.dart';
 import '../agent/auto_compactor.dart';
+import '../agent/stuck_tool.dart';
 import '../providers/models_for_endpoint.dart';
 import '../agent/tool_registry.dart';
 import '../a2a/a2a_config.dart';
@@ -63,6 +67,8 @@ import 'shell_job_board.dart';
 import 'agent_hub_projection.dart';
 import 'agent_hub_tui.dart';
 import 'waiting_heartbeat.dart';
+import 'tool_liveness.dart';
+import 'reasoning_liveness.dart';
 import 'agent_hub_view.dart';
 import '../task/agent_discovery.dart';
 import '../task/child_session_io.dart';
@@ -72,12 +78,15 @@ import '../task/subagent_scope.dart';
 import '../task/subagent_heartbeat.dart';
 import '../task/subagent_tools.dart';
 import '../task/delivery_slo.dart';
+import '../skills/builtin_skills.dart';
+import '../skills/skill_availability.dart';
 import '../skills/skills.dart';
 import '../skills/skill_renderer.dart';
 import '../prompts/prompts.g.dart'
     show cliMessagingSectionPrompt, readSqliteSectionPrompt, cliPiModePrompt;
 import '../prompts/project_context.dart';
 import '../approval/approval.dart';
+import '../wire/wire_serve.dart';
 import '../approval/approval_hook.dart';
 import '../cancel_token.dart';
 import '../compaction/compaction.dart';
@@ -124,11 +133,16 @@ import '../providers/provider_common.dart'
         providerConnectTimeout,
         providerStreamIdleTimeout,
         providerTimeoutsOverride,
+        sharedProviderHttpClient,
         stripAuthExpiredMarker,
         textOnlyImageDropNotice;
 import '../providers/transient_retry_stream.dart';
 import '../prompts/prompt_overrides.dart';
 import '../providers/aiin_auth.dart';
+import '../providers/quota.dart';
+import '../providers/quota_codemie.dart';
+import '../providers/quota_openrouter.dart';
+import '../providers/quota_service.dart';
 import 'aiin_connect_server.dart';
 import 'chatgpt_oauth_server.dart';
 import 'codemie_sso_server.dart';
@@ -179,9 +193,11 @@ import '../power_runner.dart';
 import '../messaging/agent_fabric.dart';
 import '../messaging/agent_message.dart';
 import '../messaging/file_messaging_repository.dart';
+import '../messaging/inbox_wake_policy.dart';
 import '../messaging/messaging_repository.dart';
 import '../messaging/schedule_message_tool.dart';
 import '../messaging/scheduled_messages.dart';
+import '../messaging/scheduled_receipts.dart';
 import '../memory/memory_tools.dart';
 import '../plugins/plugin.dart';
 import '../redact/redaction_cli.dart';
@@ -205,6 +221,7 @@ import '../env/process_probe_stub.dart'
     if (dart.library.io) '../env/process_probe_io.dart';
 
 import 'fa_tui_stub.dart' if (dart.library.io) 'fa_tui.dart';
+import 'jsr_cli.dart';
 import 'prompt_templates.dart';
 import 'ask_menu.dart';
 import 'slash_menu.dart';
@@ -255,11 +272,18 @@ part 'agent_cli_waiting.dart';
 part 'agent_cli_mcp_print.dart';
 part 'agent_cli_commands.dart';
 part 'agent_cli_ext.dart';
+part 'agent_cli_jsr.dart';
 part 'agent_cli_theme.dart';
 part 'agent_cli_composer.dart';
 part 'agent_cli_spill.dart';
 part 'agent_cli_prompt.dart';
+part 'agent_cli_repl_boot.dart';
+part 'agent_cli_wire_serve.dart';
 part 'agent_cli_diag_log.dart';
+part 'agent_cli_lifecycle.dart';
+part 'agent_cli_input.dart';
+part 'agent_cli_pickers.dart';
+part 'agent_cli_run.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -279,13 +303,15 @@ class AgentCli {
     MarkdownSurface? markdownSurface,
     DateTime Function()? waitingClock,
     Future<void> Function(Duration)? waitingSleep,
+    SigintPolicy? sigintPolicy,
   }) : io = useTui && io.supportsRawMode ? _TuiCliIO(io) : io,
        _style = _Style(enabled: useColor),
        _markdownSurface = markdownSurface ?? const MarkdownSurface(),
        _waitingClock = waitingClock ?? DateTime.now,
        _waitingSleep =
            waitingSleep ?? ((Duration d) => Future<void>.delayed(d)),
-       _useTui = useTui && io.supportsRawMode {
+       _useTui = useTui && io.supportsRawMode,
+       sigintPolicy = sigintPolicy ?? SigintPolicy() {
     // Sleep prevention (issue #325): null runner (tests, web) → none.
     _powerAssertions = sessionPowerAssertions(config, this.io.writeln);
     _env = CwdOverrideEnv(config.env);
@@ -294,6 +320,10 @@ class AgentCli {
     _providerKind = config.providerKind;
     _apiKey = config.apiKey;
     _liveLoadMode = config.loadMode;
+    // The boot-restored saved provider entry (the folder state's name pin,
+    // gh-1000): the CLI starts with that entry active — its key slot
+    // serves the restored model and its name shows in the status bar.
+    _activeCustomName = config.activeCustomName;
     // The theme emitters' color profile: the surface's pinned palette
     // (the host's single resolution, issue #774) wins; otherwise styled
     // iff this session styles at all (TUI or colored line mode), with
@@ -386,6 +416,8 @@ class AgentCli {
       onSettled: AgentCliShellJobSettle(this)._onShellJobSettled,
       onStart: _onShellJobStarted,
       onStaleJobLog: _onStaleJobLog,
+      jobLogMaxBytes: config.jobs.maxLogBytes,
+      onJobLogWarning: _onJobLogWarning,
     );
     final coreTools = <AgentTool>[
       ...builtinTools(
@@ -555,6 +587,8 @@ class AgentCli {
       // Issue #439: children compact on the host's engine choice (live
       // settings override, else config, else structured default).
       compactionEngine: config.liveCompactionEngine ?? config.compactionEngine,
+      // Issue #862: the `agent.misuseBreaker` switch covers children too.
+      misuseBreaker: config.misuseBreaker,
       // Real JSONL child sessions, created at child completion (fast
       // register keeps the steering race away; the transcript lands when
       // the child finishes).
@@ -600,11 +634,14 @@ class AgentCli {
     // status gates) lives on the manager; this host supplies the resume.
     _subagentManager.wakeChild = (id) =>
         _taskConfig.executor.resumeChild(id, childInboxWakePrompt);
-    _toolRegistry = ToolRegistry([
-      ...coreTools,
-      ...monitoringTools,
-      taskTool(config: _taskConfig),
-    ]);
+    _toolRegistry = ToolRegistry(
+      [...coreTools, ...monitoringTools, taskTool(config: _taskConfig)],
+      (note) {
+        // Issue #862 review: a duplicate registration (e.g. a host passing
+        // child-injected tools through the parent surface) must be loud.
+        io.writeln(_style.dim('[fah] warning: $note'));
+      },
+    );
     _agent = Agent(
       model: config.model,
       systemPrompt: config.systemPrompt ?? _currentMode.systemPrompt,
@@ -617,11 +654,21 @@ class AgentCli {
       // lands in fa.log with the session id.
       onRunIdleTimeout: (error) =>
           _logDiagnostic('RUN IDLE WATCHDOG fired sid=$_logSid error=$error'),
+      // Issue #1085 M3: the watchdog PAUSE (mid-run relief compaction) is
+      // a visible dim note, not only a fa.log line — a quiet stretch the
+      // user can now attribute.
+      onRunWatchdogPaused: () => io.writeln(
+        _style.dim('watchdog paused — over-window compaction in progress'),
+      ),
       contextWindowCap: config.contextWindowCap,
+      stuckTool: config.effectiveStuckTool(),
       wireDump: config.wireDump,
       // Issue #387: the loop's over-window guard hands the transcript to
       // this relief before refusing — one synchronous compaction pass.
       overWindowRelief: (overWindow) => _relieveOverWindow(overWindow),
+      // Issue #862: tool-misuse circuit breaker (off switch:
+      // `agent.misuseBreaker: false`).
+      toolMisuseBreaker: config.misuseBreaker ? ToolMisuseBreaker() : null,
     );
     // The main agent's inbox in the messaging fabric: messages from
     // children (agent_message to "main") and from other Fa instances
@@ -830,6 +877,12 @@ class AgentCli {
   /// The live provider adapter kind (see [_providerKind]).
   String get providerKind => _providerKind;
 
+  /// The active saved custom provider entry's name, or null when the
+  /// session runs on a catalog provider or an explicit token. Hosts
+  /// persist it with the model triple so a restore can re-pin the same
+  /// account (gh-1000).
+  String? get activeCustomProviderName => _activeCustomName;
+
   /// Removes a saved custom provider from the registry (the `/provider`
   /// picker's Delete action). Clears the active-entry marker when needed and
   /// notifies [AgentCliConfig.onProviderChanged] so the host persists the
@@ -932,6 +985,11 @@ class AgentCli {
   /// TUI; the built items land in [sessionPickerItemsForTest].
   @visibleForTesting
   Future<void> openSessionsPickerForTest() => _openSessionsPicker();
+
+  /// Test seam: builds the real slash-menu completion items for [prefix]
+  /// (commands, templates, skills) without a TUI.
+  @visibleForTesting
+  List<MenuItem> slashMenuForTest(String prefix) => _buildSlashMenu(prefix);
 
   /// The items the most recent sessions picker opened with (see
   /// [openSessionsPickerForTest]).
@@ -1059,6 +1117,16 @@ class AgentCli {
   /// Per-process lease identity (E3): pid recycling across restarts
   /// cannot impersonate a dead owner because this differs.
   late final String _leaseBootId = FileSessionLeaseStore.newBootId();
+
+  /// The persisted wake receipts for scheduled mail (gh-1180 AC4): every
+  /// wake_attempted / turn_started / wake_refused lands here so a
+  /// post-mortem can tell "timer never fired" from "wake refused". A
+  /// non-nullable `late final` created alongside the queue (review: the
+  /// production wake path is load-bearing on this log — it must never be
+  /// null because a lazy initializer has not run yet); the
+  /// `@visibleForTesting` getter below is the seam, mirroring the app
+  /// host's shape.
+  late final ScheduledReceiptLog _scheduledReceipts = _newScheduledReceipts();
 
   /// Persisted delayed messages (`schedule_message`): pending records live
   /// under `<messagesRoot>/_scheduled/` and are delivered into the
@@ -1272,6 +1340,10 @@ class AgentCli {
 
   /// Session sleep-prevention (#325): held on [run], freed on teardown.
   PowerAssertionController? _powerAssertions;
+
+  /// The provider-quota service (issue #823): built lazily on first peek —
+  /// no IO at rest. See `quotaFor`/`_quotaSlash` in agent_cli_commands.dart.
+  ProviderQuotaService? _quotaService;
   final Map<String, String> _pluginSlashDescriptions = {};
   final List<ExternalInbox> _pluginInboxes = [];
 
@@ -1285,6 +1357,34 @@ class AgentCli {
   /// Discovered agent skills (progressive disclosure into the system
   /// prompt) and project context files, loaded once per CLI run.
   List<Skill> _skills = const [];
+
+  /// The [_skills] subset that survived the `skills:` toggle scopes
+  /// (issue #1151: global `~/.fah/config.yaml` < project
+  /// `.fah/config.yaml`) — the invocation, completion, and prompt
+  /// surface. `/skills` keeps listing the full [_skills] so a disabled
+  /// entry can render its off-state.
+  List<Skill> _enabledSkills = const [];
+
+  /// The availability resolution behind [_enabledSkills] (decisions per
+  /// skill name + the unknown toggle ids, warned once per reload).
+  SkillAvailabilityResolution _skillResolution =
+      const SkillAvailabilityResolution(byName: {}, unknownIds: {});
+
+  /// Toggle ids already warned about — one dim line per distinct id, not
+  /// one per reload.
+  Set<String> _warnedSkillToggleIds = const {};
+
+  /// The live GLOBAL per-skill toggles (issue #1151): seeded from the
+  /// loaded config at first resolution, then owned by
+  /// `/skills <name> global` (the host persists them through
+  /// [AgentCliConfig.onSkillTogglesChanged]).
+  Map<String, bool> _globalSkillToggles = const {};
+  bool _globalSkillTogglesLoaded = false;
+
+  /// The last successfully parsed project `skills:` toggles — what
+  /// "keeping last good" serves when the project section turns broken
+  /// (issue #1151 review; mirrors the tools scope cache).
+  Map<String, bool>? _lastGoodProjectSkillToggles;
   List<ProjectContextFile> _contextFiles = const [];
 
   /// Consent for third-party (Claude/Copilot/Codex) skill & agent roots.
@@ -1309,15 +1409,6 @@ class AgentCli {
   /// The MCP wiring (manager + re-registration) — see agent_cli_mcp.dart.
   late AgentCliMcpWiring _mcp;
 
-  /// Re-registers the MCP tool surface and rebuilds the prompt whenever a
-  /// server connects, fails, or drops.
-  void _onMcpChanged() {
-    _mcp.reRegister(_toolRegistry, _agent, _applyPromptComposition);
-    // Re-apply the availability decision to the fresh MCP surface (a
-    // no-op until the first rebuild produced a resolution).
-    AgentCliTools(this).resyncMcpAvailability();
-  }
-
   /// The cached `<memory>` prompt section (durable facts from past
   /// sessions). Loaded asynchronously after startup and refreshed on
   /// every `memory_add` — the prompt composition itself stays
@@ -1335,8 +1426,10 @@ class AgentCli {
 
   /// The process-wide double-press Ctrl+C window (issue #830): the SIGINT
   /// handler and the TUI's ctrl+c KeyMsg path resolve THIS instance, so
-  /// the two input paths can never disagree (ACX.5).
-  final SigintPolicy sigintPolicy = SigintPolicy();
+  /// the two input paths can never disagree (ACX.5). Injectable (gh-1014):
+  /// `bin/fah.dart` passes the policy resolved from the
+  /// [kSigintWindowEnvVar] test seam; null builds the contract default.
+  final SigintPolicy sigintPolicy;
 
   /// The SIGINT-parity exit the TUI's ctrl+c press 2 triggers
   /// (issue #830): abort-if-running bounded, session resume hint,
@@ -1392,13 +1485,6 @@ class AgentCli {
   /// (same source as [_modelContextWindows]); drives automatic `maxTokens`
   /// correction so the conservative catalog floor stops truncating answers.
   Map<String, int> _modelMaxTokens = const {};
-
-  Map<String, dynamic> _pluginConfig(String name) {
-    final raw = config.pluginConfig[name];
-    if (raw is Map<String, dynamic>) return raw;
-    if (raw is Map) return Map<String, dynamic>.from(raw);
-    return const {};
-  }
 
   /// Whether a run is currently in flight. True from the moment a run is
   /// STARTED (pre-flight compaction runs before the first streamed byte) —
@@ -1468,7 +1554,14 @@ class AgentCli {
         // the same flag in its onInterrupt and resets it in its submit
         // finally).
         _abortRequested = true;
-        _agent.abort();
+        _abortRunOrCompaction();
+      } else if (_activeCompactionAbort != null) {
+        // Compaction-ONLY interrupt (issue #1085 round-2 review): a bare
+        // /compact or post-run compaction runs outside the run bracket —
+        // Ctrl+C stops the compaction while the SESSION stays alive. No
+        // run-abort markers here: the sticky abort belt would otherwise
+        // insta-abort the next prompt and kill the REPL.
+        _activeCompactionAbort?.cancel('interrupted by user');
       }
     });
     final taskSub = _taskConfig.jobManager.completions.listen(
@@ -1490,191 +1583,8 @@ class AgentCli {
     await printSessionResumeHint();
   }
 
-  /// Live-session presence: this process now owns the session — the Fa
-  /// app (sharing the sessions root) marks it live and can attach. The
-  /// heartbeat refreshes on the inbox timer; unregistering happens in
-  /// [_teardownAfterRepl] (crash coverage is the staleness window).
-  Future<({SessionPresenceStore store, String sessionId})?>
-  _registerLivePresence() async {
-    final store = config.presenceStore;
-    final sessionId = _session?.cachedId;
-    if (store != null && sessionId != null && _viewer == null) {
-      await store.register(sessionId, pid: config.processId);
-      return (store: store, sessionId: sessionId);
-    }
-    return null;
-  }
-
-  /// The inbox watcher: incoming inter-agent mail while IDLE wakes the
-  /// agent into a turn (mid-run mail is delivered by the steering poll).
-  /// The same tick refreshes the presence heartbeat (every other tick ≈
-  /// 4s, well inside the 15s staleness window).
-  Timer _startInboxWatcher() {
-    var heartbeatTick = 0;
-    return Timer.periodic(const Duration(seconds: 2), (_) {
-      // Viewer mode: follow the lease only — the owner's mail, presence,
-      // and orphan reclaims are the OWNER's job, never a viewer's.
-      if (_viewer != null) {
-        unawaited(_viewerTick());
-        return;
-      }
-      unawaited(_reclaimOrphanFabricMail());
-      unawaited(_wakeOnInboxMail());
-      // gh-970: reminders/sibling mail that fired into a FINISHED child's
-      // inbox resume that child in its own session (no-op without the
-      // child-resume wiring).
-      unawaited(_subagentManager.wakeChildrenWithPendingMail());
-      // #437: wedge watchdog for mid-run steering + the idle wake for
-      // steering recovered from the previous session.
-      _checkPendingSteeringHealth();
-      _wakeOnRecoveredSteering();
-      if (heartbeatTick++ % 2 == 0) {
-        // Touches the CURRENT session's row and re-registers after a
-        // /session switch (a viewer keeps no row at all).
-        unawaited(_touchPresenceForCurrentSession());
-        // The messaging-fabric heartbeat: agent_directory reports this
-        // instance as live even when no mail is pending.
-        _touchFabricHeartbeat();
-      } else {
-        // Our lease heartbeat (≈4s, inside the 15s window): a false
-        // return means the lease was lost — demote to viewer.
-        unawaited(_leaseHeartbeat());
-      }
-    });
-  }
-
-  /// Input ended (EOF) or the REPL is shutting down: never leave a tool
-  /// call waiting on an answer that cannot arrive.
-  Future<void> _teardownAfterRepl(
-    StreamSubscription<dynamic> interruptSub,
-    StreamSubscription<dynamic> taskSub,
-    Timer inboxTimer,
-  ) async {
-    _cancelPendingAnswers();
-    _hubTeardown();
-    await releasePowerAssertions();
-    final exitSpec = _cubeEnv.activeSpec;
-    if (exitSpec != null) {
-      try {
-        await CubeCacheManager(_cubeEnv, exitSpec).save();
-      } on Object catch (error) {
-        io.writeln('cube: cache save failed: $error');
-      }
-    }
-    await interruptSub.cancel();
-    await taskSub.cancel();
-    inboxTimer.cancel();
-    await _settled;
-    // Live-session presence off: the session stops being "running in
-    // the CLI" for app viewers.
-    await _extSessionEndBounded();
-    if (_livePresence != null) {
-      await _livePresence!.store.unregister(_livePresence!.sessionId);
-      _livePresence = null;
-    }
-    // Lease bookkeeping: release OUR lease (graceful exit, #428); a
-    // viewer never touches the owner's lease.
-    await _releaseSessionLease();
-    // A session nobody wrote to leaves no file behind (never a viewer's
-    // call — the owner's file is not ours to delete).
-    if (_viewer == null) await deleteSessionIfEmpty();
-  }
-
-  /// Warm the endpoint metadata (model list, dial features, reported
-  /// limits) BEFORE the first turn; failures are silent — the catalog
-  /// defaults keep applying.
-  Future<void> _warmModelCacheQuietly() async {
-    try {
-      await _refreshModelCache();
-    } on Object {
-      // Swallowed: see _refreshModelCache.
-    }
-  }
-
-  /// Background jobs (kimi's print-mode): don't exit while agents are in
-  /// flight. Settled jobs inject async-result messages through the
-  /// listener (re-wake runs), so loop until every job is terminal and
-  /// those reaction runs settle too (capped like kimi's drain limit).
-  Future<void> _awaitHeadlessBackgroundJobs() async {
-    for (var round = 0; round < 10; round++) {
-      final hasActive = _taskConfig.jobManager.jobs.any(
-        (job) =>
-            job.status == TaskJobStatus.queued ||
-            job.status == TaskJobStatus.running,
-      );
-      if (!hasActive) break;
-      await _taskConfig.jobManager.settled;
-      await _settled;
-      await _afterRun();
-    }
-  }
-
-  /// Loads prompt templates, skills, and project context files, then applies
-  /// the prompt composition. Third-party (Claude/Copilot/Codex) roots are
-  /// gated behind the user's consent ([AgentCliConfig.skillsAccess]); while
-  /// access is not granted their presence is still detected (directory
-  /// metadata only) to drive the startup consent dialog / hint.
-  Future<void> _loadAgentContext() async {
-    _templates = await loadPromptTemplates(_env, config.promptTemplateDirs);
-    final roots = defaultSkillRoots(cwd: _env.cwd, homeDir: config.homeDir);
-    _skills = await discoverSkills(
-      _env,
-      projectRoots: roots.projectRoots,
-      userRoots: roots.userRoots,
-      allowedSources: _skillsAllowedSources,
-    );
-    _thirdPartySkillDirsPresent = await _detectThirdPartySkillDirs();
-    // Line mode / headless: this print is visible as-is. TUI: the terminal
-    // is not ours yet — the alternate screen would wipe this line, so
-    // `_runTuiRepl` re-prints the hint right after the banner.
-    _printThirdPartySkillsDisabledHint();
-    _contextFiles = await loadProjectContextFiles(
-      _env,
-      userFile: config.homeDir == null
-          ? null
-          : '${config.homeDir}/.fah/AGENTS.md',
-    );
-    _applyPromptComposition();
-    // Durable facts from past sessions join the prompt asynchronously
-    // (memory stores initialize lazily; recompose on arrival).
-    unawaited(_refreshMemorySection());
-  }
-
   /// The line-mode REPL: banner, restored-session replay, then the
   /// read-dispatch loop.
-  Future<void> _runLineRepl() async {
-    await _printBanner();
-    await _printViewerBannerIfAny();
-    // Warm the model cache here too (the TUI path does): the endpoint-
-    // reported context window lands on the active model only through this
-    // refresh, and line-mode `/model <id>` switches read the same map.
-    unawaited(_refreshModelCache());
-    final resumedLabel = await _resumedSessionLabel();
-    if (resumedLabel != null) {
-      _replayRestoredHistory(_agent.state.messages, resumedLabel);
-    }
-    // One-time consent question for third-party skill roots: reads answers
-    // straight from the line stream (the dispatch loop is not running yet).
-    final lineIterator = StreamIterator<String>(io.lines);
-    await _maybePromptSkillsAccess(lineIterator: lineIterator);
-    _writeIdlePrompt();
-    while (await lineIterator.moveNext()) {
-      var line = lineIterator.current;
-      // A fresh user line clears the abort marker: the settle path already
-      // dropped (or ran) the interrupted run's leftover steering.
-      _abortRequested = false;
-      if (line.trim() == '/') {
-        final choice = await _showLineModeMenu(lineIterator);
-        if (choice != null) line = choice;
-      }
-      await _handleLine(line);
-      if (_exited) break;
-      // No idle prompt while a guided flow owns input: its questions
-      // would interleave with the status bar, and each answered prompt
-      // would print a redundant one.
-      if (!isBusy && !_providerFlowActive) _writeIdlePrompt();
-    }
-  }
 
   /// The `fa --session …` resume line, or null when nothing was persisted.
   /// Separate from [printSessionResumeHint] so non-REPL callers (the SIGINT
@@ -1724,154 +1634,20 @@ class AgentCli {
     await _deleteEmptySessionFile();
   }
 
-  Future<void> _runTuiRepl() async {
-    // Busy-row forensics: every arm/release/drop/watchdog-fire lands in
-    // fa.log with its source — a wedged "Working…" names its owner.
-    faTuiBusyDiagnostics = _logDiagnostic;
-    final controller = _createTuiController();
-    _tuiController = controller;
-    _setTuiIo(controller);
-    // Pending scheduled follow-ups light the indicator row on boot (#115).
-    unawaited(_pushScheduledStatus());
+  /// The rows shown by the most recent `/sessions` picker (issue #198), so
+  /// a picker selection resolves to metadata without a second round trip.
+  List<SessionListRow>? _lastSessionRows;
 
-    // The banner is part of the TUI output history so it stays visible above
-    // the input line inside the alternate screen.
-    await _printBanner();
-    await _printViewerBannerIfAny();
-    // The first _loadAgentContext() ran before the TUI owned the terminal —
-    // its "found but disabled" hint never reached the transcript. Re-print.
-    _printThirdPartySkillsDisabledHint();
-    // Issue #503: the reconciliation notices paint BEFORE the history
-    // replay — the replay is the final paint, so the resumed session's
-    // tail (the last assistant message) stays on the first glass.
-    await _rehydrateJobBoard();
-
-    await _replayRestoredSession();
-    // One-time consent question for third-party skill roots: a TUI picker
-    // over the first frame (Esc = "Not now", asked again next launch).
-    // The visible-waiting row lights up on boot too (issue #450): armed
-    // timers from previous runs + the restart-honesty note.
-    unawaited(_waiting.push());
-    unawaited(_maybePromptSkillsAccess());
-
-    // An ambiguous `--session <name>` (same name in several folders or
-    // several in one): the scoped choice picker over the first frame —
-    // the auto-resolved session stays when dismissed.
-    unawaited(_offerStartupSessionChoice());
-
-    await controller.run();
-    _setTuiIo(null);
-    _tuiController = null;
-  }
-
-  /// Routes [io]'s output through the TUI controller while it runs (null
-  /// detaches after the run).
-  void _setTuiIo(FaTuiController? controller) {
-    final tuiIo = io;
-    if (tuiIo is _TuiCliIO) tuiIo._tui = controller;
-  }
-
-  /// Wires the TUI controller's callbacks to the line handler, pickers, and
-  /// interrupt/steer paths.
-  FaTuiController _createTuiController() {
-    late final FaTuiController controller;
-    controller = FaTuiController(
-      mouseCapture: config.tuiMouseCapture,
-      syncOutput: config.tuiSyncOutput,
-      sttyRunner: config.sttyRunner,
-      sigintPolicy: sigintPolicy,
-      callbacks: FaTuiCallbacks(
-        onSubmit: (line, {images = const []}) =>
-            _handleTuiSubmit(controller, line, images),
-        onModelSelected: _tuiSelectModel,
-        buildSlashMenu: _buildSlashMenu,
-        buildModelMenu: _buildModelMenu,
-        statusLine: _statusLine,
-        // The band composer (#806): the omp status line attaches as the
-        // composer's top band unless the `tui.classic` kill switch pins
-        // the legacy chrome (byte-identical rule + dim footer).
-        statusSnapshot: config.tuiClassic ? null : _statusLineSnapshot,
-        statusLineEngine: config.tuiClassic
-            ? null
-            : TuiStatusLine(spec: resolveStatusLineSpec(config.statusLine)),
-        prompt: prompt,
-        onInterrupt: () {
-          // Marks the drain loop to discard queued messages (kimi-cli drops
-          // the queue on cancel instead of starting new turns).
-          _abortRequested = true;
-          if (isBusy) _agent.abort();
-        },
-        // Double-press Ctrl+C press 2 (issue #830): the same SIGINT-parity
-        // exit the host's SIGINT handler runs — abort-if-running bounded,
-        // session resume hint, exit 130.
-        onCtrlCExit: onCtrlCExitRequest,
-        isShiftPressed: config.isShiftPressed,
-        opensPicker: (key) => const {
-          '/sessions',
-          '/mode',
-          '/approval',
-          '/provider',
-          '/settings',
-        }.contains(key),
-        onPickerSelected: _tuiPickerSelected,
-        onPickerCancelled: _tuiPickerCancelled,
-        onSteer: _steerTuiMessages,
-        pathCandidates: pathCandidatesFor,
-        onHubAction: (action, key) => _onHubAction(action, key),
-        readClipboardImage: () => readPasteboardImage(),
-      ),
-      isExited: () => _exited,
-      programHooks: config.tuiProgramHooks,
-    );
-    return controller;
-  }
-
-  /// Whether [trimmed] names an existing file with its first token
-  /// (`/abs/path`, `~/…`, `./…`, `../…` + more path segments): such a
-  /// line is an attachment message, never a slash command.
-  bool _isAttachableFileInput(String trimmed) {
-    final pathLike =
-        _leadingPathLike.hasMatch(trimmed) ||
-        trimmed.startsWith('~/') ||
-        trimmed.startsWith('./') ||
-        trimmed.startsWith('../');
-    if (!pathLike) return false;
-    return resolveInteractiveFileReference(trimmed) != trimmed;
-  }
-
-  /// Replays the transcript when the TUI opens on a restored session.
-  Future<void> _replayRestoredSession() async {
-    final resumedLabel = await _resumedSessionLabel();
-    if (resumedLabel != null) {
-      _replayRestoredHistory(_agent.state.messages, resumedLabel);
-    }
-  }
-
-  List<MenuItem> _buildSlashMenu(String prefix) => buildSlashMenuItems(
-    prefix,
-    slashCommands: builtinSlashCommands,
-    pluginSlashCommands: _pluginSlashCommands,
-    pluginSlashDescriptions: _pluginSlashDescriptions,
-    extSlashCommands: _ext.slashCommands,
-    templates: _templates,
-    skills: _skills,
-  );
-
-  /// Routes a generic TUI picker selection (sessions/mode/approval) to the
-  /// same handlers the typed slash command would use.
-  Future<void> _tuiPickerSelected(String pickerId, String key) async {
-    // Wizard pickers (a guided flow's multiple-choice questions) complete
-    // their pending answer instead of the command handlers.
-    if (_completeWizardPicker(pickerId, key)) return;
-    await _tuiPickerHandlers[pickerId]?.call(key);
-  }
+  /// Whether the sessions picker shows the flat single-level list instead
+  /// of the tree (toggled from the picker's first item).
+  bool _sessionPickerFlat = false;
 
   /// Picker id → the handler the typed slash command would have used.
   late final Map<String, Future<void> Function(String)> _tuiPickerHandlers = {
     'sessions': _tuiPickSession,
     'mode': _switchMode,
     'approval': (key) async => _handleApprovalMode(key),
-    'theme': (key) => _applyThemeChoice(key, persist: true),
+    'theme': (key) async => _applyThemeChoice(key, persist: true),
     'provider': _tuiPickProvider,
     'addProvider': _tuiPickAddProvider,
     'settings': _tuiPickSetting,
@@ -1881,206 +1657,6 @@ class AgentCli {
     // the same shape the flat model menu selects.
     'modelProvider': _tuiSelectModel,
   };
-
-  /// Completes the pending wizard-picker answer for [pickerId] (null [key]
-  /// = dismissed with Esc); returns whether a wizard was waiting.
-  bool _completeWizardPicker(String pickerId, String? key) {
-    final wizard = _wizardPickerAnswer;
-    if (wizard == null) return false;
-    return _finishWizardPicker(pickerId, key, wizard);
-  }
-
-  /// Resolves a waiting wizard picker and clears the pending answer;
-  /// returns whether [pickerId] is a wizard picker.
-  bool _finishWizardPicker(
-    String pickerId,
-    String? key,
-    Completer<String?> wizard,
-  ) {
-    if (!pickerId.startsWith('wizard:')) return false;
-    _resolveWizard(wizard, key);
-    return true;
-  }
-
-  /// Completes [wizard] (defensively no-op when already completed) and
-  /// clears the pending answer.
-  void _resolveWizard(Completer<String?> wizard, String? key) {
-    if (!wizard.isCompleted) wizard.complete(key);
-    _wizardPickerAnswer = null;
-  }
-
-  /// A sessions-picker selection (issue #198): `flat`/`tree` flips the
-  /// view and reopens; `r<index>` resolves through the most recent
-  /// picker's row list.
-  Future<void> _tuiPickSession(String key) async {
-    if (key == 'flat' || key == 'tree') {
-      _sessionPickerFlat = key == 'flat';
-      return _openSessionsPicker();
-    }
-    if (!key.startsWith('r')) return;
-    final rows = _lastSessionRows;
-    final row = rows == null
-        ? null
-        : listItemAt(rows, int.tryParse(key.substring(1)) ?? -1);
-    if (row == null) return;
-    final metadata = row.metadata;
-    try {
-      final session = await _repo.open(metadata);
-      final label = await session.getSessionName() ?? metadata.id;
-      await _switchToMetadata(metadata, label);
-    } on Object catch (error) {
-      // Never let a broken session file kill the TUI through the picker's
-      // Cmd — report inline instead.
-      io.writeln(
-        _keyStatusView.errorLine(
-          'failed to open session ${metadata.id}: $error',
-          _agent.state.model.baseUrl,
-        ),
-      );
-    }
-  }
-
-  /// A provider-picker selection: `custom` starts the guided flow,
-  /// `saved:<name>` opens a saved provider's edit/delete picker,
-  /// `ext:<name>:<id>` runs that extension's provider flow (AC5; namespaced
-  /// keys can never shadow the bare core ids), anything else is a catalog
-  /// provider name.
-  Future<void> _tuiPickProvider(String key) async {
-    if (key == 'add') return _openAddProviderPicker();
-    if (key.startsWith('saved:')) return _tuiPickSavedProviderEdit(key);
-    await _tuiPickExtOrCatalog(key);
-  }
-
-  /// An `ext:<name>:<id>` key runs that extension's provider flow (AC5;
-  /// namespaced keys can never shadow the bare core ids).
-  Future<void> _tuiPickExtOrCatalog(String key) async {
-    if (key.startsWith('ext:')) return _startExtProviderFlow(key);
-    await _tuiPickCatalogOrSaved(key);
-  }
-
-  /// A `saved:<name>` selection from the provider picker opens the edit/delete
-  /// sub-picker for the matching saved provider.
-  Future<void> _tuiPickSavedProviderEdit(String key) async {
-    final name = key.substring('saved:'.length);
-    final entry = config.customProviders?.find(name);
-    if (entry != null) _providerEditOrDelete(entry);
-  }
-
-  /// A non-`custom` provider-picker selection: a saved entry or a catalog
-  /// provider name.
-  Future<void> _tuiPickCatalogOrSaved(String key) async {
-    if (key.startsWith('saved:')) {
-      await _tuiPickSavedProvider(key.substring('saved:'.length));
-      return;
-    }
-    await _handleProviderCommand(key);
-  }
-
-  /// A `saved:<name>` provider-picker selection restores the saved custom
-  /// provider when it still exists.
-  Future<void> _tuiPickSavedProvider(String name) async {
-    final entry = config.customProviders?.find(name);
-    if (entry != null) await _switchToSavedProvider(entry);
-  }
-
-  /// A generic picker dismissed with Esc: wizard pickers resolve their
-  /// pending answer as cancelled (the flow then aborts cleanly).
-  void _tuiPickerCancelled(String pickerId) {
-    _completeWizardPicker(pickerId, null);
-  }
-
-  /// The rows shown by the most recent `/sessions` picker (issue #198), so
-  /// a picker selection resolves to metadata without a second round trip.
-  List<SessionListRow>? _lastSessionRows;
-
-  /// Whether the sessions picker shows the flat single-level list instead
-  /// of the tree (toggled from the picker's first item).
-  bool _sessionPickerFlat = false;
-
-  Future<void> _openSessionsPicker() async {
-    final List<SessionMetadata> sessions;
-    try {
-      // List every session in the shared root, across all workspaces, so a
-      // session created in the Fa app or in another `fa` run is reachable.
-      // The current folder's sessions lead the list (issue #83).
-      sessions = sortSessionsCurrentFolderFirst(await _repo.list(), _env.cwd);
-    } on Object catch (error) {
-      // A failing store must surface as an inline error, never kill the TUI
-      // (a Cmd exception in dart_tui terminates the whole program silently).
-      io.writeln(
-        _keyStatusView.errorLine(
-          'failed to list sessions: $error',
-          _agent.state.model.baseUrl,
-        ),
-      );
-      return;
-    }
-    _lastSessionRows = await _sessionPickerRows(sessions);
-    _tuiController?.openPicker(
-      'sessions',
-      'Sessions',
-      // The view toggle rides the first item (issue #198 open question:
-      // remembered per run, not persisted).
-      sessionPickerItems(_lastSessionRows!, flat: _sessionPickerFlat),
-    );
-    // For the picker tests: the items the picker opened with.
-    sessionPickerItemsForTest = sessionPickerItems(
-      _lastSessionRows!,
-      flat: _sessionPickerFlat,
-    );
-  }
-
-  /// Tree-grouped picker rows (children nested under their parent, issue
-  /// #198), or the flat single-level rows while toggled.
-  Future<List<SessionListRow>> _sessionPickerRows(
-    List<SessionMetadata> sessions,
-  ) async {
-    return buildSessionListRows(
-      sessions: sessions,
-      flat: _sessionPickerFlat,
-      names: await sessionDisplayNames(_repo, sessions),
-      currentSessionPath: (await _session?.getMetadata())?.path,
-    );
-  }
-
-  /// Last non-empty path segment, with a fallback for the filesystem root.
-  String _pathBasename(String path) {
-    final parts = path.split('/').where((s) => s.isNotEmpty).toList();
-    return parts.isEmpty ? path : parts.last;
-  }
-
-  void _openModePicker() {
-    final items = [
-      for (final name in _modes.keys.toList()..sort())
-        MenuItem(
-          key: name,
-          label: name,
-          description: name == _currentMode.name ? '(current)' : '',
-        ),
-    ];
-    _tuiController?.openPicker('mode', 'Select mode', items);
-  }
-
-  void _openApprovalPicker() {
-    const descriptions = {
-      'always-ask': 'prompt before every write/exec tool call',
-      'write': 'auto-approve writes, prompt for exec',
-      'yolo': 'auto-approve everything (critical bash still prompts)',
-      'autopilot':
-          'auto-approve everything, never asks — for runs without a user',
-    };
-    final items = [
-      for (final mode in ApprovalMode.values)
-        MenuItem(
-          key: mode.label,
-          label: mode.label,
-          description:
-              '${descriptions[mode.label] ?? ''}'
-              '${mode == _approval.mode ? ' (current)' : ''}',
-        ),
-    ];
-    _tuiController?.openPicker('approval', 'Approval mode', items);
-  }
 
   /// Same-named matches pending a startup choice: set when `--session X`
   /// resolved ambiguously, consumed by [_runTuiRepl] to offer the sessions
@@ -2107,6 +1683,11 @@ class AgentCli {
     StreamJsonWriter? streamJson,
   }) async {
     _hep = hep;
+    // The [net] retry voice reaches headless too (issue #1121): the bench
+    // runs `fa -p`, and retries that stayed silent there made a
+    // connect-stall death indistinguishable from a no-retry one in the
+    // trial artifacts.
+    _wireTransientRetryNotice();
     // Cube cache restore, mirroring [run]'s boot (the headless run sees the
     // same cached trees a REPL session would).
     await _cubeBootRestore();
@@ -2135,6 +1716,11 @@ class AgentCli {
     await _subagentManager.rehydrate();
     // Session scope (tools.yaml next to the session file) is live now.
     unawaited(AgentCliTools(this).rebuildToolAvailability());
+    // Transient retry voice (issue #1168 review): the interactive boot
+    // wires it in [run]; headless - wake runs, `fa -p`, restarts - needs
+    // the same `[net]` line, or a multi-second retry pause is silent
+    // exactly where nobody watches a TUI.
+    _wireTransientRetryNotice();
     // Sleep prevention (#325/#326) — headless wraps exactly ONE run, so
     // both holds bracket it the same way: session-held acquires on the
     // session open, per-run on the run start (the prompt below).
@@ -2143,12 +1729,21 @@ class AgentCli {
     // Warm the endpoint metadata (model list, dial features, reported
     // limits) BEFORE the first turn; failures are silent.
     await _warmModelCacheQuietly();
-    // The same pre-flight compaction guard as the REPL's [_runPrompt]:
-    // a resumed session already over the threshold must compact BEFORE
-    // the first request, or it goes out over-window and gets rejected.
-    await _maybeAutoCompact();
+    // The interrupt listener MUST be registered BEFORE the pre-flight
+    // compaction (issue #1085 round-4 review): that window runs with no
+    // run bracket, and a listener registered after it made Ctrl+C there
+    // uncancellable for the whole 15-30 min pass.
     final interruptSub = io.interrupts.listen((_) {
-      if (isBusy) _agent.abort();
+      // Headless has no run bracket for pre-flight (`_runStarting` stays
+      // false): a live run aborts; a bare compaction window (pre-flight,
+      // post-run) is cancelled ALONE (issue #1085 round-2 review) — the
+      // turn then proceeds and fails loudly over-window if it must,
+      // instead of the session dying on a fake abort.
+      if (isBusy) {
+        _abortRunOrCompaction();
+      } else if (_activeCompactionAbort != null) {
+        _activeCompactionAbort?.cancel('interrupted by user');
+      }
     });
     final taskSub = _taskConfig.jobManager.completions.listen(
       _onTaskJobCompleted,
@@ -2174,6 +1769,13 @@ class AgentCli {
     });
     _headlessMode = true;
     try {
+      // The same pre-flight compaction guard as the REPL's [_runPrompt]:
+      // a resumed session already over the threshold must compact BEFORE
+      // the first request, or it goes out over-window and gets rejected.
+      // Inside the guarded section (issue #1085 round-4): a cancel here
+      // surfaces through the same loud error line as any run failure —
+      // the listener above is already live for it.
+      await _maybeAutoCompact();
       if (images.isEmpty) {
         await _agent.prompt(_redactUserText(prompt));
       } else {
@@ -2237,228 +1839,42 @@ class AgentCli {
     };
   }
 
-  /// Key-status and error-line rendering over the live config values; built
-  /// per render so `/provider` switches and the active-entry marker stay
-  /// current.
-  KeyStatusRenderer get _keyStatusView => KeyStatusRenderer(
-    rolesDriven: _rolesDriven,
-    providerKind: _providerKind,
-    explicitToken: _explicitToken,
-    activeCustomName: _activeCustomName,
-    red: tuiError,
-    secureKeys: config.secureKeys,
-    customProviders: config.customProviders,
-    envVarIsSet: config.envVarIsSet,
-    envVarValue: config.envVarValue,
-  );
-
-  Future<void> _handleLine(
-    String line, {
-    List<TuiImageAttachment> images = const [],
-  }) async {
-    final trimmed = line.trim();
-    if (_routePendingInput(trimmed)) return;
-    if (trimmed.isEmpty) return;
-    // Real user input resets the inbox wake streak (the ping-pong guard).
-    _inboxWakeStreak = 0;
-    // A tool call waiting on an approval decision owns the next input line;
-    // it must not be steered into the agent as a user message.
-    final pendingApproval = _pendingApprovalAnswer;
-    if (pendingApproval != null && !pendingApproval.isCompleted) {
-      pendingApproval.complete(trimmed);
-      return;
-    }
-    if (isBusy) {
-      // While a run streams, plain input steers the agent (pi semantics) —
-      // but slash and bang commands still execute: /settings, /approval or
-      // a quick !shell check must not wait out the stream (user report:
-      // settings were unreachable mid-run; the line was steered as chat
-      // text instead). Run-starting commands are refused by _startRun's
-      // busy guard below.
-      if (trimmed.startsWith('/') || trimmed.startsWith('!')) {
-        // EXCEPT a leading file path: a message that begins with an
-        // existing file is chat with an attachment, not a command. It used
-        // to reach the command dispatcher, fall through to _startRun, and
-        // die on the busy guard — silently dropped (user report:
-        // "messages that start with a file go straight into the session
-        // or vanish"). Steer it with the attachment marker instead.
-        if (!trimmed.startsWith('!') && _isAttachableFileInput(trimmed)) {
-          _steerResolved(trimmed);
-          return;
-        }
-        await _dispatchInput(line, trimmed, images);
-        return;
-      }
-      _steerResolved(trimmed, images: images);
-      return;
-    }
-    await _settled;
-    await _dispatchInput(line, trimmed, images);
-  }
-
-  /// Routes input owned by a pending prompt (ask question, guided provider
-  /// flow, or a prompted slash command like `/key set NAME` — including
-  /// empty lines, which buffer or complete the pending answer). Returns
-  /// whether the line was consumed.
-  bool _routePendingInput(String trimmed) {
-    final pendingAsk = _pendingAskAnswer;
-    if (pendingAsk != null && !pendingAsk.isCompleted) {
-      pendingAsk.complete(trimmed);
-      return true;
-    }
-    // A pending prompt answer can come from the guided provider flow OR
-    // from a prompted slash command (e.g. `/key set NAME` in line mode).
-    final pendingPrompt = _pendingPromptAnswer;
-    if (pendingPrompt != null && !pendingPrompt.isCompleted) {
-      pendingPrompt.complete(trimmed);
-      return true;
-    }
-    // While a guided provider flow is active but between prompts, buffer
-    // the lines so the flow's next _promptLine call drains them.
-    if (_providerFlowActive) {
-      _promptLineBuffer.add(trimmed);
-      return true;
-    }
-    return false;
-  }
-
-  /// Settled, non-empty input: a shell command, a skill invocation, a slash
-  /// command, or a prompt for the agent.
-  Future<void> _dispatchInput(
-    String line,
-    String trimmed,
-    List<TuiImageAttachment> images,
-  ) async {
-    if (trimmed.startsWith('!')) {
-      await _runShellCommand(trimmed.substring(1));
-      return;
-    }
-    if (trimmed.startsWith('/skill:')) {
-      await _runSkillCommand(trimmed.substring('/skill:'.length));
-      return;
-    }
-    if (trimmed.startsWith('/')) {
-      await _handleCommand(trimmed);
-      return;
-    }
-    // Viewer mode (#428): plain input is composer mail to the driving
-    // agent — never a second writer, never a takeover.
-    if (_viewer != null) {
-      await _viewerSend(line);
-      return;
-    }
-    // A new user message ends the previous turn: per-turn skill tool grants
-    // (`allowed-tools`) do not leak into it. The skill path re-grants after
-    // this clear (it goes through `/skill:` / the slash alias above).
-    _approval.clearTurnGrants();
-    _startRun(line, images: images);
-  }
-
-  void _startRun(String text, {List<TuiImageAttachment> images = const []}) {
-    // One streaming run at a time: a run-starting command typed mid-stream
-    // (/skill:, a command alias) lands here while isBusy — refuse it with
-    // a visible note instead of interleaving a second run into the same
-    // session.
-    if (isBusy) {
-      io.writeln(
-        _style.dim(
-          'a run is already streaming — wait for it to settle (or Ctrl+C '
-          'to stop it), then retry',
-        ),
-      );
-      return;
-    }
-    // Mark the run in flight SYNCHRONOUSLY: pre-flight compaction awaits
-    // before the first streamed byte, and isBusy readers (inbox watcher,
-    // shell-job settle, steer-vs-start) must not start a parallel run here.
-    _runStarting = true;
-    // Issue #429: a new agent turn opens a fresh board bucket — jobs from
-    // this turn collapse/count together and older buckets age out.
-    _jobBoard.newTurn();
-    // Issue #514: a fresh run starts unstalled — the previous run's stall
-    // episode must never leak into the new bracket.
-    _setRunStalled(false);
-    // Per-run sleep prevention (#326): the default hold acquires with the
-    // run going in flight — fire-and-forget, never a reason to delay the
-    // turn.
-    runPowerAssertionsStarted();
-    // Busy bracket HERE, not in the TUI submit handler: every run trigger
-    // (submit, inbox wake, shell-job settle, scheduled message) must spin,
-    // and an unbracketed trigger leaves the spinner on after the run
-    // settles (the "Working… forever with an idle agent" wedge). The
-    // counter is reference-counted, so the submit handler's own bracket
-    // nests safely.
-    _tuiController?.sendBusy(true, source: 'run');
-    // Path-gated skills (`paths:` frontmatter) join the prompt once the
-    // agent has touched a matching file; recomposing here is idempotent.
-    _applyPromptComposition();
-    // A pasted file path becomes an explicit [attached file: …] reference —
-    // the model is told there is a file and decides itself whether and how
-    // much to read (content is never inlined: paste size is unknown).
-    final resolved = resolveInteractiveFileReference(text);
-    if (resolved != text) {
-      io.writeln(_style.dim('[file] pasted path attached for the agent'));
-    }
-    final settled = _runPrompt(resolved, images: images);
-    _settled = settled;
-    unawaited(
-      settled.whenComplete(() {
-        _tuiController?.sendBusy(false, source: 'run');
-        _runStarting = false;
-        // Per-run sleep prevention (#326): the run has fully settled —
-        // drop the assertion so an idle agent lets the machine sleep.
-        unawaited(runPowerAssertionsSettled());
-        _setRunStalled(false);
-        // The fold badge clears at settle whatever the outcome (issue
-        // #438 AC3 «until the turn settles»; #653 — error settles too).
-        _autoFoldCount = 0;
-        _settleLeftoverSteering();
-        // Waiting-row refresh (issue #450): the busy→idle edge is where
-        // the waiting row takes over from the busy row (E3/E4).
-        unawaited(_waiting.push());
-        if (!_exited) _writeIdlePrompt();
-      }),
-    );
-  }
-
   /// Runs one user prompt to completion. On a CodeMie auth-session expiry,
   /// opens the browser SSO flow to refresh the token automatically. Other
   /// provider errors are printed through [KeyStatusRenderer.errorLine]. An empty assistant
   /// message (no text, no tool calls) is retried once with 'continue'.
-  /// Delivered to the model when the over-window guard stopped a run and
-  /// the post-run compaction freed the window: names what happened and
-  /// how to avoid re-filling the context.
-  static const String _overWindowContinuationNotice =
-      '<system-notice>\n'
-      'The previous run was stopped by the context-window guard: the '
-      'outgoing request exceeded the model window and was NOT sent. The '
-      'transcript was auto-compacted just now (most of it is preserved as '
-      'a summary; the session file keeps the full history). Continue the '
-      'interrupted task from where it stopped. Avoid re-reading whatever '
-      'filled the window (huge tool outputs, whole files) — use targeted '
-      'reads (offset/limit or :A-B selectors) instead.\n'
-      '</system-notice>';
-
-  /// The continuation prompt for an over-window resume, naming what the
-  /// compaction hid — record kinds + turn spans — and how to recover it
-  /// via `compact_expand` (issue #438 AC4). Nothing hidden (classic
-  /// compaction) keeps the fixed notice.
-  Future<String> _overWindowContinuationPrompt() async {
-    final session = _session;
-    final recoverables = session == null
-        ? ''
-        : hiddenRecoverablesSummary(await session.getEntries());
-    if (recoverables.isEmpty) return _overWindowContinuationNotice;
-    return _overWindowContinuationNotice.replaceFirst(
-      '</system-notice>',
-      '$recoverables\n</system-notice>',
-    );
-  }
-
   /// Whether the over-window guard's one-shot auto-continuation was used
   /// for the current user prompt (reset at every non-auto-continue
   /// [_runPrompt] entry).
   bool _overWindowAutoResumed = false;
+
+  /// The user-wired cancellation for the in-flight compaction, if any
+  /// (issue #1085 M3): Ctrl+C during a 15-30 min pre-flight / relief /
+  /// post-run compaction must stop the compaction, not wait it out. Set
+  /// in [_runAutoCompact], cancelled by [_abortRunOrCompaction].
+  CancelTokenSource? _activeCompactionAbort;
+
+  /// Sticky user-abort marker for the compaction windows (issue #1085
+  /// round-1): the compaction engines convert a cancelled summarizer
+  /// into a failed pass (`ok: false`) instead of throwing, so the
+  /// over-window funnel cannot tell "compaction failed" from "the user
+  /// just stopped the task" off the return value alone.
+  /// [_abortRunOrCompaction] sets this; the funnel checks it before every
+  /// attempt and before the exhaustion verdict; [_beginUserPrompt] resets
+  /// it with the fresh turn.
+  bool _runAbortRequested = false;
+
+  /// Every compaction pass that actually STARTED (issue #1085 round-1):
+  /// the over-window funnel's exhaustion verdict names how many passes
+  /// ran — zero is possible (compaction disabled or nothing to
+  /// summarize) and must not read as "N attempts failed".
+  int _compactionPassesStarted = 0;
+
+  /// Empty-reply "continue" nudge budget per LOGICAL turn
+  /// (issue #1085 M2b): auto-continued runs get the nudge like any run,
+  /// but the nudged run cannot nudge again — a degenerate model that
+  /// answers empty settles instead of nudging itself forever.
+  int _emptyReplyNudgesLeft = 1;
 
   /// Auto-compaction folds this run (issue #438 AC3): the status badge
   /// «[auto-compacted · continuing]» shows while the run continues after
@@ -2477,278 +1893,42 @@ class AgentCli {
   /// (issue #413) stays shared with the REPL.
   bool _headlessMode = false;
 
-  /// Runs one prompt turn: pre-flight ([_beginUserPrompt]) → the agent
-  /// stream → outcome settle ([_settleAfterPrompt], `true` = turn finished
-  /// normally) → finalize ([_afterRun]); thrown errors land in
-  /// [_handleRunError]. Auto-continuations recurse with [isAutoContinue]
-  /// set, which skips the pre-flight phases.
-  /// Masks secrets in user prompt text before it reaches the agent (and
-  /// therefore the session JSONL) — issue #24 AC8. No-op without a
-  /// pipeline (hosts without the redact wiring).
-  String _redactUserText(String text) {
-    final pipeline = config.redactionPipeline;
-    if (pipeline == null) return text;
-    return redactPrompt(pipeline, text);
-  }
-
-  Future<void> _runPrompt(
-    String text, {
-    bool isAutoContinue = false,
-    List<TuiImageAttachment> images = const [],
-  }) async {
-    await _beginUserPrompt(isAutoContinue: isAutoContinue);
-    try {
-      if (images.isEmpty) {
-        await _agent.prompt(_redactUserText(text));
-      } else {
-        // Clipboard chips (issue #276): the images ride the user message
-        // as ImageContent blocks next to the text — same shape as --attach.
-        await _agent.promptMessage(
-          UserMessage(
-            content: [
-              TextContent(text: _redactUserText(text)),
-              for (final image in images)
-                ImageContent(
-                  data: base64Encode(image.bytes),
-                  mimeType: image.mimeType,
-                ),
-            ],
-            timestamp: DateTime.now(),
-          ),
-        );
-      }
-      final lastMessage = _agent.state.messages.lastOrNull;
-      final finished = await _settleAfterPrompt(
-        lastMessage,
-        isAutoContinue: isAutoContinue,
-      );
-      if (finished) await _afterRun();
-    } catch (error) {
-      await _handleRunError(error);
-    }
-  }
-
-  /// [_runPrompt] pre-flight, real user prompts only: fresh over-window
-  /// resume budget (see [_overWindowAutoResumed]) plus pre-flight
-  /// compaction of an already-over-window transcript.
-  Future<void> _beginUserPrompt({required bool isAutoContinue}) async {
-    // Wall-clock catch-up (issue #259): records that came due while the
-    // host slept (or while no tick ran) are delivered HERE, at turn start —
-    // awaited before the prompt so this turn's first steering poll already
-    // sees the fired reminder, instead of waiting for the next timer tick.
-    try {
-      if (await _scheduledMessages.deliverDue() > 0) {
-        unawaited(_pushScheduledStatus());
-      }
-    } on Object {
-      // Best-effort: a broken sweep must never block a turn.
-    }
-    if (isAutoContinue) return;
-    _overWindowAutoResumed = false;
-    // A fresh user text clears the over-window badge: the new run starts
-    // clean, and only THIS run's folds may badge it (issue #438 E1).
-    _autoFoldCount = 0;
-    // Pre-flight context guard: when the LIVE context already exceeds the
-    // compaction threshold, compact BEFORE sending the request — a failed
-    // post-run compaction (quota-limited smol role, provider outage) used to
-    // leave every request carrying an over-window payload (ctx 240% gauge).
-    await _maybeAutoCompact();
-  }
-
-  /// Settles a finished agent stream: error-stop handling and the
-  /// auto-continuations. Returns `true` when the turn completed and the
-  /// caller should finalize with [_afterRun].
-  Future<bool> _settleAfterPrompt(
-    Message? lastMessage, {
-    required bool isAutoContinue,
-  }) async {
-    if (lastMessage is AssistantMessage &&
-        lastMessage.stopReason == StopReason.error) {
-      if (await _maybeHandleCodeMieError(lastMessage.errorMessage ?? '')) {
-        return false;
-      }
-      // The loop's over-window guard refused to send: compact and continue.
-      if (await _maybeOverWindowContinue(
-        lastMessage,
-        isAutoContinue: isAutoContinue,
-      )) {
-        return false;
-      }
-    }
-
-    // An assistant turn that produced nothing actionable (no text, no tool
-    // calls) reads as a hang; nudge the model once with "continue".
-    if (_shouldContinueAfterEmptyReply(lastMessage, isAutoContinue)) {
-      await _runPrompt('continue', isAutoContinue: true);
-      return false;
-    }
-    return true;
-  }
-
-  /// One-shot over-window auto-continuation: on a context-window-exhausted
-  /// stop, persist, auto-compact and — when the window was actually freed —
-  /// resume the interrupted task on its own (ending the run there left
-  /// live agents idle mid-task, a harness hang). `true` = turn consumed.
-  Future<bool> _maybeOverWindowContinue(
-    AssistantMessage lastMessage, {
-    required bool isAutoContinue,
-  }) async {
-    if (isAutoContinue ||
-        _overWindowAutoResumed ||
-        !isContextWindowExhaustedError(lastMessage.errorMessage)) {
-      return false;
-    }
-    _overWindowAutoResumed = true;
-    await _ttsr?.settled;
-    await _persistMessages();
-    if (!await _maybeAutoCompact()) {
-      // Compaction freed nothing droppable: keep the resume budget for the
-      // next user prompt and tell the user the way out (the guard message
-      // itself rendered as a calm note already).
-      _overWindowAutoResumed = false;
-      io.writeln(
-        tuiWarning(
-          'note: could not free the context window — run /compact or '
-          'start a fresh session',
-        ),
-      );
-      return false;
-    }
-    io.writeln(
-      tuiWarning('[context overflowed — auto-compacted; continuing the turn]'),
-    );
-    // Issue #673 AC4: ANY failure inside the continuation machinery (the
-    // recoverables scan over the resident set, the notice build, the
-    // resumed prompt's pre-flight) surfaces as a NAMED error and leaves
-    // the session resumable — never a bare "Null check operator used on a
-    // null value" line killing the turn.
-    try {
-      final prompt = await _overWindowContinuationPrompt();
-      await _runPrompt(prompt, isAutoContinue: true);
-    } on Object catch (error) {
-      _logDiagnostic('over-window continuation failed sid=$_logSid: $error');
-      io.writeln(tuiError('error: compaction continuation failed: $error'));
-    }
-    return true;
-  }
-
-  /// Whether an empty assistant reply should get the one-shot "continue"
-  /// nudge: real prompt, clean stop, nothing actionable.
-  bool _shouldContinueAfterEmptyReply(
-    Message? lastMessage,
-    bool isAutoContinue,
-  ) {
-    return !isAutoContinue &&
-        lastMessage is AssistantMessage &&
-        lastMessage.stopReason != StopReason.error &&
-        lastMessage.stopReason != StopReason.aborted &&
-        _assistantMessageIsEmpty(lastMessage);
-  }
-
-  /// Handles a CodeMie auth-session expiry if [message] matches one. Returns
-  /// `true` when the expiry was handled and the turn is finished.
-  Future<bool> _maybeHandleCodeMieError(String message) async {
-    // Headless: the browser SSO re-auth awaits a human that is not there —
-    // surface the error instead and let the exit code carry the failure.
-    if (_headlessMode) return false;
-    if (authExpiredProvider(message) != 'codemie') return false;
-    await _handleCodeMieAuthExpired(message);
-    return true;
-  }
-
-  /// Handles provider/runtime errors thrown outside the assistant stream.
-  Future<void> _handleRunError(Object error) async {
-    final message = '$error';
-    if (await _maybeHandleCodeMieError(message)) return;
-    io.writeln(_keyStatusView.errorLine(message, _agent.state.model.baseUrl));
-  }
-
-  /// Whether the assistant message produced nothing actionable: no non-empty
-  /// text content and no tool calls.
-  bool _assistantMessageIsEmpty(AssistantMessage message) {
-    final hasText = message.content.any(
-      (c) => c is TextContent && c.text.trim().isNotEmpty,
-    );
-    final hasToolCalls = message.content.any((c) => c is ToolCall);
-    return !hasText && !hasToolCalls;
-  }
-
-  /// Shared handler for a detected CodeMie auth-session expiry: strips the
-  /// machine marker, prints a short error, launches the browser SSO flow, and
-  /// tells the user to repeat the message.
-  Future<void> _handleCodeMieAuthExpired(String rawMessage) async {
-    final stripped = stripAuthExpiredMarker(compactProviderError(rawMessage));
-    io.writeln(tuiError('error: $stripped'));
-    io.writeln(
-      tuiWarning(
-        'CodeMie session expired — opening browser to re-authorize...',
-      ),
-    );
-    final orgUrl = codeMieOrgUrl(_agent.state.model.baseUrl);
-    await _handleCodeMieSsoCommand(orgUrl);
-    if (!_exited) {
-      io.writeln(tuiSuccess('Re-authorized. Repeat your message to continue.'));
-    }
-  }
-
-  /// Delivers a background-subagent heartbeat digest (issue #383) through
-  /// the SAME channel as completion notices: busy → the steering queue
-  /// (delivered at the next step boundary, the turn is never aborted);
-  /// idle → a fresh run (the parent wakes). Text-only — the digest never
-  /// spawns or cancels anything.
-  void _deliverHeartbeatDigest(String digest) {
-    if (_exited) return;
-    if (isBusy) {
-      _agent.steer(UserMessage.text(digest));
-    } else {
-      _startRun(digest);
-    }
-  }
-
-  /// Called at most once per session when a background-job log with the old
-  /// pre-unique-id name (`sh-<n>.log`) is written after this process booted
-  /// (see [ShellJobRegistry.onStaleJobLog]): another fa on an OLDER build is
-  /// running in this directory and can interleave output into shared files.
-  /// Surfaced loudly — this exact skew silently poisoned tool output for a
-  /// whole day before anyone found it.
-  void _onStaleJobLog(String path) {
-    final name = path.split('/').last;
-    io.writeln(
-      tuiWarning(
-        'warning: $name was just written by an older fa build also running '
-        'in this directory — its output can interleave with stale job logs. '
-        'Restart that fa instance on this binary to fix.',
-      ),
-    );
-    _logDiagnostic('stale old-format job log detected: $path');
-  }
-
-  Future<void> _afterRun() async {
-    // A TTSR abort/inject/retry chain may still be in flight when the
-    // aborted run settles; persist only once the whole chain completed.
-    await _ttsr?.settled;
-    _hubCompletePanels();
-    await _persistMessages();
-    await _maybeAutoCompact();
-  }
-
   /// Idle-wake guard: one inbox-triggered run at a time.
   var _inboxWakeRunning = false;
+
+  /// Test seam: observe/reset the inbox-wake streak without driving ten
+  /// real runs (the cap is exactly [InboxWakePolicy.defaultMaxInboxWakeStreak]).
+  /// The streak lives in [_inboxWakePolicy] — this proxy keeps the old
+  /// seam name working for REG tests.
+  @visibleForTesting
+  int get inboxWakeStreakForTest => _inboxWakePolicy.streak;
+  @visibleForTesting
+  set inboxWakeStreakForTest(int value) => _inboxWakePolicy.streak = value;
 
   /// Consecutive inbox-triggered runs without any user input — capped so
   /// two chatty instances cannot ping-pong forever (mail still accumulates
   /// and is delivered at the next real turn). User-kind messages reset the
   /// streak when delivered: they ARE the user talking, so an attach-driven
-  /// session never exhausts the cap.
-  var _inboxWakeStreak = 0;
-  static const _maxInboxWakeStreak = 10;
+  /// session never exhausts the cap. gh-1180: scheduled self-mail is
+  /// EXEMPT (see [_inboxWakePolicy]). Single-sourced from the policy
+  /// (review): one tuned threshold, one declaration.
+  static const _maxInboxWakeStreak = InboxWakePolicy.defaultMaxInboxWakeStreak;
 
-  /// Test seam: observe/reset the inbox-wake streak without driving ten
-  /// real runs (the cap is exactly [_maxInboxWakeStreak]).
+  /// The idle inbox-wake lane policy (gh-1180): user-kind mail always
+  /// wakes; delivered scheduled self-mail (`schedule_message` reminders)
+  /// is exempt from the chatter cap — a deliberate agent-chosen cadence
+  /// wakes forever, cadence-floored against a disguised busy-spin; and
+  /// foreign agent-to-agent chatter stays capped at
+  /// [_maxInboxWakeStreak] consecutive wakes without user input.
+  final InboxWakePolicy _inboxWakePolicy = InboxWakePolicy(
+    maxStreak: _maxInboxWakeStreak,
+  );
+
+  /// Test seam for the persisted wake-receipt trail (gh-1180 AC4): reads
+  /// the non-nullable [_scheduledReceipts] the production wake path
+  /// writes through. Mirrors the app host's `scheduledReceiptsForTest`.
   @visibleForTesting
-  int get inboxWakeStreakForTest => _inboxWakeStreak;
-  @visibleForTesting
-  set inboxWakeStreakForTest(int value) => _inboxWakeStreak = value;
+  ScheduledReceiptLog get scheduledReceiptsForTest => _scheduledReceipts;
 
   /// Compaction settings for the live model: the config override when the
   /// user pinned one, else pi's fixed defaults SCALED to the model window

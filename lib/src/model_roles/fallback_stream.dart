@@ -39,6 +39,13 @@ import '../context.dart';
 import '../event_stream.dart';
 import '../model.dart';
 import '../overflow.dart';
+import '../providers/quota.dart';
+// Issue #1168: the resumed-exhaustion terminal signature - a transport
+// chain that spent its budget mid-answer must not be re-classified as
+// retryable (the ladder would rewrap it as "not retried", false after
+// the chain's own attempts) nor retried again.
+import '../providers/transient_retry_stream.dart'
+    show isTransientExhaustionStory;
 import '../types.dart';
 import 'key_rotation.dart';
 import 'roles_config.dart';
@@ -122,6 +129,7 @@ bool isTransientTransportError(AssistantMessage message) {
   final text = message.errorMessage;
   if (text == null || text.isEmpty) return false;
   if (isContextOverflow(message)) return false;
+  if (isTransientExhaustionStory(text)) return false;
   if (_rateLimitPatterns.any((pattern) => pattern.hasMatch(text))) {
     return false;
   }
@@ -377,6 +385,7 @@ final class _Retryable extends _AttemptOutcome {
     this.retryAfter,
     this.error, {
     this.isTransport = false,
+    this.isRateLimit = false,
     this.deathKind,
     this.deathCooldown,
     this.immediate = false,
@@ -393,6 +402,12 @@ final class _Retryable extends _AttemptOutcome {
   /// 502/503/504): retried in place — key rotation is pointless when the
   /// endpoint, not the credential, failed.
   final bool isTransport;
+
+  /// Whether the failure is the rate-limit/quota family — the class the
+  /// waited-total accounting follows (issue #1066). Roles mode: the
+  /// complement of [isTransport]. Queue mode: a quota death (there
+  /// [isTransport] only means "skip key rotation", whatever the class).
+  final bool isRateLimit;
 
   /// Issue #418: the queue death kind (null in roles mode).
   final QueueDeathKind? deathKind;
@@ -432,6 +447,13 @@ final class _DriveState {
 
   /// When the call started (the exhaustion story reports the elapsed time).
   final DateTime startedAt;
+
+  /// Total time slept waiting out RATE-LIMIT waits in this call (the
+  /// exhaustion story reports it, issue #1066). Keyed on the failure
+  /// class ([_Retryable.isRateLimit]), not the rotation flag: transport
+  /// outages don't count (the label must not call an outage a rate
+  /// limit), queue-mode quota waits do.
+  var rateLimitWaitTotal = Duration.zero;
 
   /// One bounded line per failed attempt (the exhaustion story's
   /// per-attempt outcomes, issue #290 AC2).
@@ -570,6 +592,7 @@ final class _AttemptBuffer {
         event.retryAfter,
         event.error,
         isTransport: true,
+        isRateLimit: death.kind == QueueDeathKind.quota,
         deathKind: death.kind,
         deathCooldown: death.cooldown,
         immediate: death.immediate,
@@ -584,7 +607,7 @@ final class _AttemptBuffer {
     if (event.reason == StopReason.error &&
         isRateLimitOrQuota(event.error, retryAfter: event.retryAfter)) {
       // Not forwarded: the buffer is discarded and the chain retries.
-      return _Retryable(event.retryAfter, event.error);
+      return _Retryable(event.retryAfter, event.error, isRateLimit: true);
     }
     final retryClass = finishReasonRetryClass(event.error);
     if (event.reason == StopReason.error &&
@@ -608,8 +631,10 @@ final class _AttemptBuffer {
 
 /// A [StreamFunction] over an ordered [ChainEntry] list with omp's
 /// rate-limit policy: rotate keys for free, retry the entry with capped
-/// exponential backoff, then fail over to the next entry — every step
-/// announced through [onNotice].
+/// exponential backoff, then fail over to the next entry — or, when no
+/// other entry is available, wait out a transient rate limit (bounded by
+/// `maxWaitForLastEntry`, issue #1066) — every step announced through
+/// [onNotice].
 ///
 /// One instance is stateful and long-lived (a session): entry cooldowns and
 /// the [activeIndex] persist across calls, and a later call starts at the
@@ -635,6 +660,13 @@ final class FallbackStreamFunction {
     /// Issue #418: the sticky-cursor/health state the queue editor reads.
     /// Null in roles mode.
     this.queueState,
+
+    /// Issue #823 (AC8): the quota depletion hint. A depleted provider is
+    /// SOFT-BENCHED — selection prefers non-depleted entries, but a fully
+    /// depleted chain still serves (order-based pick), never dead-ends a
+    /// run. The feed is consulted fresh at every decision and a throwing
+    /// feed counts as "not depleted". Null keeps routing byte-identical.
+    this.quotaFeed,
   }) : _entries = List.unmodifiable(entries),
        _now = now ?? DateTime.now,
        _jitterFraction = jitterFraction ?? Random().nextDouble,
@@ -653,6 +685,10 @@ final class FallbackStreamFunction {
 
   /// The queue's sticky cursor + per-entry health; null in roles mode.
   final ProviderQueueState? queueState;
+
+  /// The quota depletion hint (issue #823 AC8); null keeps routing
+  /// byte-identical.
+  final QuotaFeed? quotaFeed;
 
   final List<ChainEntry> _entries;
   final DateTime Function() _now;
@@ -691,6 +727,20 @@ final class FallbackStreamFunction {
   Duration? cooldownRemaining(int index) {
     if (!isInCooldown(index)) return null;
     return _cooldownUntil[index]!.difference(_now());
+  }
+
+  /// Whether entry [index]'s provider is depleted per the quota feed
+  /// (issue #823). A steering hint only: a null feed and a throwing feed
+  /// both degrade to "not depleted" — a broken feed must never break
+  /// streaming. Consulted fresh at every decision, never cached.
+  bool _isDepleted(int index) {
+    final feed = quotaFeed;
+    if (feed == null) return false;
+    try {
+      return feed.isDepleted(_entries[index].model.provider);
+    } catch (_) {
+      return false;
+    }
   }
 
   /// The [StreamFunction] entry point. The passed [model] is ignored — the
@@ -876,6 +926,10 @@ final class FallbackStreamFunction {
 
   /// Paid same-entry retry: sleeps once, then forces the next iteration to
   /// run an attempt. Returns false on abort or when control moved on.
+  /// [isTransport] selects the notice kind (the rotation-policy flag);
+  /// [isRateLimitWait] is the failure class the waited-total accounting
+  /// follows (issue #1066, review round 2: never infer one from the
+  /// other — queue mode runs transport-flagged quota deaths).
   Future<bool> _sleepAndRetry(
     AssistantMessageEventStream out,
     _DriveState state,
@@ -883,6 +937,7 @@ final class FallbackStreamFunction {
     String reason,
     CancelToken? cancelToken, {
     bool isTransport = false,
+    bool isRateLimitWait = false,
   }) async {
     state.attemptsOnEntry++;
     state.failures++;
@@ -901,6 +956,7 @@ final class FallbackStreamFunction {
       _pushAborted(out, _entries[state.entryIndex].model);
       return false;
     }
+    if (isRateLimitWait) state.rateLimitWaitTotal += delay;
     // After the wait: a single-key ring reuses its (benched) key — omp
     // retries the current credential after local backoff; our own bench
     // must not deadlock the retry. Multi-key rings re-select, picking up
@@ -936,18 +992,80 @@ final class FallbackStreamFunction {
         state.lastFailure?.retryAfter,
       );
     }
-    if (wait > policy.maxWait) {
-      return _failOver(out, state);
-    }
     final lastFailure = state.lastFailure;
+    final reason = lastFailure == null
+        ? 'all API keys in backoff'
+        : _shortReasonText(lastFailure.error);
+    if (wait > policy.maxWait) {
+      return _onExcessiveWait(
+        out,
+        state,
+        wait,
+        reason,
+        cancelToken,
+        isRateLimit: true,
+      );
+    }
     return _sleepAndRetry(
       out,
       state,
       wait,
-      lastFailure == null
-          ? 'all API keys in backoff'
-          : _shortReasonText(lastFailure.error),
+      reason,
       cancelToken,
+      isRateLimitWait: true,
+    );
+  }
+
+  /// The first entry outside [tried] that is not cooling down, or null —
+  /// the single source of truth for failover target selection, shared
+  /// with the sole-entry wait-out check (issue #1066). Issue #823 (AC8):
+  /// depleted entries are soft-benched — the scan prefers non-depleted
+  /// candidates; when every candidate is depleted the first order pick
+  /// still wins (a depleted provider serves rather than dead-ends the
+  /// run).
+  int? _failoverTarget(Set<int> tried) {
+    int? depleted;
+    for (var index = 0; index < _entries.length; index++) {
+      if (tried.contains(index) || isInCooldown(index)) continue;
+      if (!_isDepleted(index)) return index;
+      depleted ??= index;
+    }
+    return depleted;
+  }
+
+  /// Issue #1066: the required retry wait exceeds the failover threshold
+  /// ([ModelRolesRetryPolicy.maxWait]). With a fallback entry available
+  /// this fails over immediately (unchanged); on the sole/last eligible
+  /// entry failover is impossible, so the chain waits out the rate limit
+  /// instead of dying in <1s — bounded by
+  /// [ModelRolesRetryPolicy.maxWaitForLastEntry] so a pathological
+  /// `Retry-After` (hours) still ends the chain. The wait-out consumes
+  /// attempts like any paid retry ([_sleepAndRetry]); [isRateLimit] (the
+  /// failure class) keys the waited-total accounting and, for queue-mode
+  /// quota wait-outs, corrects the notice kind that the rotation flag
+  /// alone would mislabel as a transport retry.
+  Future<bool> _onExcessiveWait(
+    AssistantMessageEventStream out,
+    _DriveState state,
+    Duration delay,
+    String reason,
+    CancelToken? cancelToken, {
+    bool isTransport = false,
+    bool isRateLimit = false,
+  }) async {
+    if (_failoverTarget(state.tried) != null) {
+      return _failOver(out, state);
+    }
+    final bounded =
+        delay < policy.maxWaitForLastEntry ? delay : policy.maxWaitForLastEntry;
+    return _sleepAndRetry(
+      out,
+      state,
+      bounded,
+      reason,
+      cancelToken,
+      isTransport: isTransport && !isRateLimit,
+      isRateLimitWait: isRateLimit,
     );
   }
 
@@ -999,7 +1117,15 @@ final class FallbackStreamFunction {
     }
     final delay = _retryDelay(state.attemptsOnEntry + 1, outcome.retryAfter);
     if (delay > policy.maxWait) {
-      return _failOver(out, state);
+      return _onExcessiveWait(
+        out,
+        state,
+        delay,
+        _shortReasonText(outcome.error),
+        cancelToken,
+        isTransport: outcome.isTransport,
+        isRateLimit: outcome.isRateLimit,
+      );
     }
     return _sleepAndRetry(
       out,
@@ -1008,6 +1134,7 @@ final class FallbackStreamFunction {
       _shortReasonText(outcome.error),
       cancelToken,
       isTransport: outcome.isTransport,
+      isRateLimitWait: outcome.isRateLimit,
     );
   }
 
@@ -1059,23 +1186,19 @@ final class FallbackStreamFunction {
       _cooldownUntil[from] = until;
       queueState?.recordCooldown(from, until);
     }
-    for (var index = 0; index < _entries.length; index++) {
-      if (tried.contains(index)) continue;
-      if (isInCooldown(index)) continue;
-      final entry = _entries[index];
-      onNotice?.call(
-        FallbackNotice(
-          kind: FallbackNoticeKind.modelFallback,
-          fromModel: _entries[from].label,
-          toModel: entry.label,
-          delay: Duration.zero,
-          attempt: failures,
-          reason: reason,
-        ),
-      );
-      return index;
-    }
-    return null;
+    final next = _failoverTarget(tried);
+    if (next == null) return null;
+    onNotice?.call(
+      FallbackNotice(
+        kind: FallbackNoticeKind.modelFallback,
+        fromModel: _entries[from].label,
+        toModel: _entries[next].label,
+        delay: Duration.zero,
+        attempt: failures,
+        reason: reason,
+      ),
+    );
+    return next;
   }
 
   /// Per-entry health for the exhausted-chain terminal (UT-24): every
@@ -1097,12 +1220,18 @@ final class FallbackStreamFunction {
   }
 
   /// First entry not in cooldown (omp's cooldown-expiry revert policy);
-  /// falls back to entry 0 when every entry is cooling down.
+  /// falls back to entry 0 when every entry is cooling down. Issue #823
+  /// (AC8): depleted entries are soft-benched — the scan prefers
+  /// non-depleted entries; when every entry is depleted the first order
+  /// pick still serves.
   int _firstAvailableIndex() {
+    int? depleted;
     for (var index = 0; index < _entries.length; index++) {
-      if (!isInCooldown(index)) return index;
+      if (isInCooldown(index)) continue;
+      if (!_isDepleted(index)) return index;
+      depleted ??= index;
     }
-    return 0;
+    return depleted ?? 0;
   }
 
   /// Streams one attempt, buffering events until the first observable output
@@ -1156,6 +1285,12 @@ final class FallbackStreamFunction {
     }
     final elapsed = _now().difference(state.startedAt);
     final elapsedText = elapsed.inSeconds < 1 ? '<1s' : '${elapsed.inSeconds}s';
+    // Issue #1066: say how long the chain already waited out rate limits
+    // before giving up.
+    final waited = state.rateLimitWaitTotal;
+    final waitedText = waited.inSeconds < 1
+        ? ''
+        : ' (waited ${_etaText(waited)} on rate limits)';
     final log = state.attemptLog
         .map(
           (line) =>
@@ -1168,7 +1303,7 @@ final class FallbackStreamFunction {
     final story =
         'Provider chain exhausted: ${state.tried.length} of '
         '${_entries.length} chain model(s) failed after '
-        '${state.attemptLog.length} attempt(s) over $elapsedText. '
+        '${state.attemptLog.length} attempt(s) over $elapsedText$waitedText. '
         'Attempts: $log.$queueLines '
         'All available models failed with provider-side errors — likely an '
         'outage or quota exhaustion, not a key problem. '

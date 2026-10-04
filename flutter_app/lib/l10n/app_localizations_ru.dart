@@ -427,9 +427,6 @@ class AppLocalizationsRu extends AppLocalizations {
   }
 
   @override
-  String get chatTyping => 'Fa печатает...';
-
-  @override
   String chatUploadFailed(Object error) {
     return 'Ошибка загрузки: $error';
   }
@@ -678,6 +675,10 @@ class AppLocalizationsRu extends AppLocalizations {
   String get launcherChatActionsTooltip => 'Действия чата';
 
   @override
+  String get faEntryHintTooltip =>
+      'Касание: продолжить активный чат · Долгое нажатие: новый чат';
+
+  @override
   String get launcherChatEmptyHint => 'Пока пусто — спросите Fa о чём угодно.';
 
   @override
@@ -766,6 +767,12 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get launcherSeedErrorTitle => 'Приложение не установилось';
+
+  @override
+  String get launcherManifestErrorTitle => 'Не удалось загрузить приложение';
+
+  @override
+  String get appsManifestErrorLabel => 'Ошибка манифеста';
 
   @override
   String get launcherTileSizeIcon => 'Иконка (1×1)';
@@ -1455,6 +1462,13 @@ class AppLocalizationsRu extends AppLocalizations {
       'Использовать навыки Claude, Copilot или Codex из папки проекта (.claude, .github, .codex)';
 
   @override
+  String get settingsSkillsToggles => 'Встроенные навыки';
+
+  @override
+  String get settingsSkillsTogglesHint =>
+      'Включайте и отключайте навыки, встроенные в Fa';
+
+  @override
   String get skillsAccessAsk => 'Спрашивать';
 
   @override
@@ -1780,6 +1794,13 @@ class AppLocalizationsRu extends AppLocalizations {
       'Включайте и отключайте инструменты Fa — применяется сразу, без перезапуска.';
 
   @override
+  String get settingsRedaction => 'Скрытие секретов';
+
+  @override
+  String get settingsRedactionHint =>
+      'Маскирует API-ключи и секреты во всём, что Fa отправляет или сохраняет. Применяется сразу, без перезапуска.';
+
+  @override
   String toolsAvailabilityUnavailable(Object reason) {
     return 'Недоступно: $reason';
   }
@@ -1847,6 +1868,30 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get publicationStateUnknown => 'Неизвестно';
+
+  @override
+  String get widgetStatusNotPublished => 'Не опубликован';
+
+  @override
+  String get widgetStatusValidating => 'Проверка…';
+
+  @override
+  String get widgetStatusInvalid => 'Ошибка валидации';
+
+  @override
+  String get widgetStatusFailed => 'Не удалось опубликовать';
+
+  @override
+  String get widgetStatusErrors => 'Ошибки валидатора:';
+
+  @override
+  String get widgetStatusOpenRun => 'Открыть CI-запуск';
+
+  @override
+  String get widgetDetailVersion => 'Версия';
+
+  @override
+  String get widgetDetailAuthor => 'Автор';
 
   @override
   String publicationSubmittedAt(Object date) {
@@ -1922,6 +1967,9 @@ class AppLocalizationsRu extends AppLocalizations {
   String sessionTooLargeTitle(String size) {
     return 'Сессия ($size МБ) превышает бюджет мгновенного открытия — открыть её безопасно не удалось.';
   }
+
+  @override
+  String get sessionMintFailed => 'Не удалось создать новую сессию.';
 
   @override
   String sessionBootSkippedOversize(String name, String size) {
