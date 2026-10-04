@@ -256,6 +256,33 @@ void main() {
     },
   );
 
+  test('gh-1044 AC9: a failing intercepted channel surfaces its error ahead '
+      'of the callback timeout (same contract as an open failure)', () async {
+    // The intercepted completer is the sheet's single completion
+    // channel — when the CHANNEL itself fails (the native call throws,
+    // e.g. a PlatformException), the flow must rethrow promptly instead
+    // of waiting out the (deliberately huge) callback timeout. The
+    // mobile wrapper maps the rethrown error onto its visible-failure
+    // contract (AC4).
+    final intercepted = Completer<String?>();
+    await expectLater(
+      runAiinConnectCliFlow(
+        onStatus: (_) {},
+        openBrowserFn: (url) async {
+          intercepted.completeError(StateError('auth channel failed'));
+          return true;
+        },
+        interceptedCallback: () => intercepted.future,
+        client: mockAiinBackend(),
+        timeout: const Duration(minutes: 5), // must NOT be waited out
+      ).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => fail('the intercepted-channel error stalled the flow'),
+      ),
+      throwsA(isA<StateError>()),
+    );
+  });
+
   test('gh-1044 AC9: callbackHost localhost advertises the redirect the '
       'sheet can intercept', () async {
     var loginUrl = '';

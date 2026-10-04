@@ -373,30 +373,11 @@ Future<(AiinCallback?, _AiinCallbackSource)> _firstCallbackOrOpenError(
   final surfaceClosed = Completer<Never>();
   final interceptedCallback = Completer<(AiinCallback?, _AiinCallbackSource)>();
   if (intercepted != null) {
-    unawaited(
-      intercepted.then(
-        (url) {
-          if (url != null) {
-            if (!interceptedCallback.isCompleted) {
-              interceptedCallback.complete((
-                AiinCallback.fromRedirectUrl(url),
-                _AiinCallbackSource.interceptedRedirect,
-              ));
-            }
-            return;
-          }
-          // The sheet closed without returning a callback URL — a user
-          // cancel (the same semantics as cancelWhenOpenSettles).
-          if (!surfaceClosed.isCompleted && !interceptedCallback.isCompleted) {
-            surfaceClosed.completeError(const AiinSurfaceClosedException());
-          }
-        },
-        onError: (Object error, StackTrace stackTrace) {
-          if (!openError.isCompleted) {
-            openError.completeError(error, stackTrace);
-          }
-        },
-      ),
+    _wireInterceptedChannel(
+      intercepted: intercepted,
+      openError: openError,
+      surfaceClosed: surfaceClosed,
+      interceptedCallback: interceptedCallback,
     );
   }
   unawaited(
@@ -428,6 +409,46 @@ Future<(AiinCallback?, _AiinCallbackSource)> _firstCallbackOrOpenError(
     surfaceClosed.future,
     interceptedCallback.future,
   ]);
+}
+
+/// Arms the intercepted-callback channel's listeners (gh-1044 AC9) on the
+/// shared completers of [_firstCallbackOrOpenError]: a callback URL wins
+/// the race as [_AiinCallbackSource.interceptedRedirect]; a null is the
+/// user cancel — [AiinSurfaceClosedException] on [surfaceClosed] — and a
+/// channel error surfaces on [openError] ahead of the callback timeout
+/// (the same prompt-failure contract as an open failure). Only the first
+/// settle wins: every completion checks its completer first.
+void _wireInterceptedChannel({
+  required Future<String?> intercepted,
+  required Completer<Never> openError,
+  required Completer<Never> surfaceClosed,
+  required Completer<(AiinCallback?, _AiinCallbackSource)> interceptedCallback,
+}) {
+  unawaited(
+    intercepted.then(
+      (url) {
+        if (url != null) {
+          if (!interceptedCallback.isCompleted) {
+            interceptedCallback.complete((
+              AiinCallback.fromRedirectUrl(url),
+              _AiinCallbackSource.interceptedRedirect,
+            ));
+          }
+          return;
+        }
+        // The sheet closed without returning a callback URL — a user
+        // cancel (the same semantics as cancelWhenOpenSettles).
+        if (!surfaceClosed.isCompleted && !interceptedCallback.isCompleted) {
+          surfaceClosed.completeError(const AiinSurfaceClosedException());
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        if (!openError.isCompleted) {
+          openError.completeError(error, stackTrace);
+        }
+      },
+    ),
+  );
 }
 
 /// Opens the system browser, falling back to printing the URL when no
