@@ -17,8 +17,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
+SEED_SENTINEL = "__SETUP_STILL_ALIVE__"
+
 try:
-    from jinja2 import Template
+    from jinja2 import StrictUndefined, Template
 except ImportError:  # the template has no placeholders; raw text suffices
     Template = None
 
@@ -27,8 +29,9 @@ def render_setup_script() -> str:
     """Render the install template the way AbstractInstalledAgent does."""
     text = (HERE / "fa-setup.sh.j2").read_text()
     if Template is not None:
-        # The script uses no variables, so an empty context is faithful.
-        return Template(text).render({})
+        # The script uses no variables; StrictUndefined keeps that enforced
+        # (a future placeholder fails loudly instead of rendering empty).
+        return Template(text, undefined=StrictUndefined).render({})
     return text
 
 
@@ -36,10 +39,12 @@ def git_identity_block(script: str) -> str:
     """The AND-OR list pre-seeding the identity (may span physical lines)."""
     lines = script.splitlines()
     start = next(
-        i for i, l in enumerate(lines) if l.startswith("command -v git")
+        (i for i, l in enumerate(lines) if l.startswith("command -v git")), None
     )
+    if start is None:
+        raise AssertionError("git identity seed block not found in fa-setup.sh.j2")
     block = [lines[start]]
-    while block[-1].rstrip().endswith("&&"):
+    while block[-1].rstrip().endswith("&&") and start + len(block) < len(lines):
         block.append(lines[start + len(block)])
     return "\n".join(block)
 
@@ -115,13 +120,57 @@ class IdentityBehaviorTest(unittest.TestCase):
     def test_missing_git_is_a_noop_under_set_e(self):
         # A bare failing `git config` under `set -e` would abort the whole
         # install on git-less images; the guard must keep the script alive.
-        sentinel = "__SETUP_STILL_ALIVE__"
         proc = subprocess.run(
-            ["sh", "-ec", f"PATH=/nonexistent; {self.block}\necho {sentinel}"],
+            ["sh", "-ec", f"PATH=/nonexistent; {self.block}\necho {SEED_SENTINEL}"],
             capture_output=True, text=True,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn(sentinel, proc.stdout)
+        self.assertIn(SEED_SENTINEL, proc.stdout)
+
+
+class SeedFailureGuardTest(unittest.TestCase):
+    """Every failure path of the seed list must keep the install alive.
+
+    `set -e` exempts the non-final commands of an && list but NOT the final
+    one — so a failed `user.email` write aborts the whole install unless the
+    list ends in `|| true`. A fake `git` shim pinpoints each write path; no
+    real git is needed for these.
+    """
+
+    def setUp(self):
+        self.block = git_identity_block(render_setup_script())
+
+    def _run_with_git_shim(self, fail_on: str) -> subprocess.CompletedProcess:
+        # The shim dir is PREPENDED to PATH inside the child shell, so the
+        # outer `sh` still resolves while `git` resolves to the shim.
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = Path(tmp) / "bin"
+            bindir.mkdir()
+            git_sh = bindir / "git"
+            git_sh.write_text(
+                f'#!/bin/sh\ncase "$*" in *{fail_on}*) exit 128;; *) exit 0;; esac\n'
+            )
+            git_sh.chmod(0o755)
+            return subprocess.run(
+                ["sh", "-ec",
+                 f"PATH={bindir}:$PATH; {self.block}\necho {SEED_SENTINEL}"],
+                capture_output=True, text=True,
+            )
+
+    def test_failing_user_name_write_is_a_noop_under_set_e(self):
+        # A failed `user.name` write is a NON-final command of the && list,
+        # so `set -e` exempts it — the install must continue.
+        proc = self._run_with_git_shim("user.name")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(SEED_SENTINEL, proc.stdout)
+
+    def test_failing_user_email_write_is_a_noop_under_set_e(self):
+        # The `user.email` write is the FINAL command of the && list, so it
+        # is NOT exempt: without the trailing `|| true` the whole install
+        # aborts right here (gh-1210 review). The guard must keep it alive.
+        proc = self._run_with_git_shim("user.email")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(SEED_SENTINEL, proc.stdout)
 
 
 if __name__ == "__main__":
