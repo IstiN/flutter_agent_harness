@@ -1,7 +1,6 @@
 import 'package:flutter_agent_harness/src/cli/agent_hub_panel.dart';
 import 'package:flutter_agent_harness/src/cli/shell_job_board.dart';
 import 'package:flutter_agent_harness/src/session/ledger_caps.dart';
-import 'package:flutter_agent_harness/src/session/session_record.dart';
 import 'package:test/test.dart';
 
 TaskBlock _card(

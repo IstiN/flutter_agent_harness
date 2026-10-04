@@ -25,6 +25,19 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
   /// How many more [appendFile] calls fail before appends succeed.
   int failNextAppends = 0;
 
+  /// How many more [listDir] calls fail before listings succeed.
+  int failNextListings = 0;
+
+  /// How many more [fileInfo] calls fail before stats succeed. On top of
+  /// [failNextReads], which also covers stats (the open path's read
+  /// surface since gh-1073), for tests that target the stat specifically.
+  int failNextFileInfos = 0;
+
+  /// When set, [writeFile] calls whose (path, content) match fail with
+  /// the same ENOENT-shaped error — stands in for hosts where only one
+  /// write shape fails (e.g. a rotation seed that never lands).
+  bool Function(String path, String content)? failWritesWhere;
+
   /// Total calls seen per op, successes and simulated ENOENTs alike —
   /// the retry-cap assertions read these.
   int readCalls = 0;
@@ -54,6 +67,9 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
     writeCalls++;
     if (failNextWrites > 0) {
       failNextWrites--;
+      return Err(_enoent(path));
+    }
+    if (failWritesWhere?.call(path, content) ?? false) {
       return Err(_enoent(path));
     }
     return _delegate.writeFile(path, content);
@@ -99,6 +115,10 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
   @override
   Future<Result<FileInfo, FileError>> fileInfo(String path) async {
     statCalls++;
+    if (failNextFileInfos > 0) {
+      failNextFileInfos--;
+      return Err(_enoent(path));
+    }
     if (failNextReads > 0) {
       failNextReads--;
       return Err(_enoent(path));
@@ -107,8 +127,13 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
   }
 
   @override
-  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
-      _delegate.listDir(path);
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) {
+    if (failNextListings > 0) {
+      failNextListings--;
+      return Future.value(Err(_enoent(path)));
+    }
+    return _delegate.listDir(path);
+  }
 
   @override
   Future<Result<bool, FileError>> exists(String path) =>
