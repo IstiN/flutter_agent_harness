@@ -136,14 +136,21 @@ final class AgentCoreServices {
 
   final PasswordPromptCallback? onPasswordPrompt;
 
-  // Host-side tool families (the CLI's memory/fabric/ask surface). They
-  // move INTO the builder's gated set in later slices; the builder
-  // already places them in the canonical order.
+  /// Host-side tool families (the CLI's memory/fabric/ask surface). They
+  /// move INTO the builder's gated set in later slices; the builder
+  /// already places them in the canonical order.
   final MemoryController? memory;
   final void Function()? onMemoryChanged;
   final ScheduledMessageQueue? scheduledMessages;
   final String? Function()? scheduleSenderMailbox;
+
+  /// The `ask` host prompt. Null = headless host: the tool still
+  /// registers and fails gracefully in-tool (its documented null mode) —
+  /// it is never dropped from the registry.
   final AskCallback? onAsk;
+
+  /// The `request_secret` host prompt. Null = headless host: same
+  /// always-registered graceful-failure contract as [onAsk].
   final RequestSecretCallback? onRequestSecret;
   final InspectImageConfig? vision;
   final TranscribeAudioConfig? transcribe;
@@ -344,10 +351,14 @@ final class WiredAgentCore {
                 senderMailbox: services.scheduleSenderMailbox,
               ),
             ],
-      ...?services.onAsk == null ? null : [askTool(callback: services.onAsk)],
-      ...?services.onRequestSecret == null
-          ? null
-          : [requestSecretTool(callback: services.onRequestSecret)],
+      // ask / request_secret register UNCONDITIONALLY: a null callback is
+      // the tools' documented headless mode (executing throws a StateError
+      // the agent loop converts into a graceful "cannot answer questions" /
+      // "cannot request secrets" result) — byte-identical to the
+      // pre-conversion CLI, which always registered them. Dropping them
+      // would surface a bare "Tool ask not found" instead.
+      askTool(callback: services.onAsk),
+      requestSecretTool(callback: services.onRequestSecret),
       ...?services.vision == null
           ? null
           : [inspectImageTool(env, services.vision!)],

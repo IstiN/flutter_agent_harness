@@ -205,6 +205,46 @@ void main() {
     });
   });
 
+  group('headless host-callback tools (ask / request_secret)', () {
+    test('null callbacks still register the tools (graceful in-tool failure)', () {
+      // CLI parity: the pre-conversion shell registered ask and
+      // request_secret UNCONDITIONALLY — a null callback is the tools'
+      // documented headless mode (executing throws a StateError the loop
+      // converts into "cannot answer questions" / "cannot request
+      // secrets"). Dropping the tools instead surfaces a bare
+      // "Tool ask not found", which is the regression this pins.
+      final services = AgentCoreServices(
+        baseEnv: MemoryExecutionEnv(cwd: '/w'),
+        sandbox: const SandboxServices(),
+        media: MediaToolServices(mainApiKey: () => 'k'),
+        sessionRoot: '/tmp/fah-test',
+      );
+      final wired = wireAgentCore(profile: cliProfile, services: services);
+      final names = wired.tools.map((t) => t.name);
+      expect(names, contains('ask'));
+      expect(names, contains('request_secret'));
+      // And the headless mode still resolves gracefully per tool.
+      final ask = wired.tools.firstWhere((t) => t.name == 'ask');
+      expect(
+        () => ask.execute(const {
+          'questions': [
+            {'question': 'q'},
+          ],
+        }, null, null),
+        throwsA(isA<StateError>()),
+      );
+      final secret = wired.tools.firstWhere((t) => t.name == 'request_secret');
+      expect(
+        () => secret.execute(
+          const {'name': 'GITHUB_TOKEN', 'reason': 'needed'},
+          null,
+          null,
+        ),
+        throwsA(isA<StateError>()),
+      );
+    });
+  });
+
   group('media facility', () {
     test('hosts without MediaToolServices surface no media tools', () {
       final services = AgentCoreServices(
