@@ -154,6 +154,97 @@ final class _FlakyScanEnv implements ExecutionEnv {
       throw UnimplementedError('${invocation.memberName}');
 }
 
+/// An env whose `listDir` fails exactly the next [failNext] calls
+/// (review follow-up): the AC5 pin covers a failure on the ARMING scan,
+/// but the same `_scanPending` throw inside a timer tick's DELIVERY pass
+/// must ALSO leave a `scan_failed` receipt when the failure is transient
+/// (the re-arm scan after it succeeds — so the arming-path catch never
+/// runs and, pre-fix, the failed pass left no trail at all).
+final class _GatedScanEnv implements ExecutionEnv {
+  _GatedScanEnv(this._delegate);
+
+  final MemoryExecutionEnv _delegate;
+  int failNext = 0;
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) async {
+    if (failNext > 0) {
+      failNext--;
+      return Err(
+        FileError(
+          FileErrorCode.unknown,
+          'injected listDir failure',
+          path: path,
+        ),
+      );
+    }
+    return _delegate.listDir(path);
+  }
+
+  @override
+  String get cwd => _delegate.cwd;
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _delegate.absolutePath(path);
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _delegate.readBinaryFile(path);
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _delegate.readTextFile(path);
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _delegate.readTextLines(path, maxLines: maxLines);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _delegate.writeBinaryFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _delegate.writeFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _delegate.appendFile(path, content);
+
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _delegate.fileInfo(path);
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
+
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _delegate.createDir(path, recursive: recursive);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _delegate.remove(path, recursive: recursive, force: force);
+
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _delegate.joinPath(parts);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('${invocation.memberName}');
+}
+
 void main() {
   test('parseDelay handles units and combinations', () {
     expect(parseDelay('90s'), const Duration(seconds: 90));
@@ -1432,6 +1523,66 @@ void main() {
           () async => (await repo.peek(
             'sid-1/main',
           )).any((m) => m.text.contains('survivor')),
+        );
+        queue.dispose();
+      },
+    );
+
+    test(
+      'gh-1180 review: a scan failure inside a DELIVERY pass is receipted '
+      'too — the arming path and the delivery pass leave the identical '
+      'scan_failed trail (AC4)',
+      () async {
+        const root = '/sessions/--work--/messages';
+        final env = _GatedScanEnv(MemoryExecutionEnv(cwd: '/work'));
+        final repo = FileMessagingRepository(
+          env: env,
+          root: root,
+          homeDir: '/home/user',
+          decodeSessionCwd: decodeSessionCwd,
+        );
+        final clock = _FakeClock();
+        final errors = <String>[];
+        final queue = ScheduledMessageQueue(
+          env: env,
+          repo: () => repo,
+          root: () => root,
+          selfMailbox: () => 'sid-1/main',
+          clock: () => clock.now,
+          failureBackoff: const Duration(milliseconds: 40),
+          onError: errors.add,
+          receipts: ScheduledReceiptLog(
+            env: env,
+            path: () => '$root/_scheduled/receipts.jsonl',
+          ),
+        );
+        await repo.register('sid-1/main');
+        // The arming scan runs first (it succeeds, the timer arms for the
+        // due time); gate ONLY the next listDir — the timer tick's
+        // delivery-pass scan. The failure is transient: the re-arm scan
+        // right after succeeds, so the arming-path catch never runs.
+        await queue.schedule(
+          text: 'delayed reminder',
+          delay: const Duration(milliseconds: 30),
+        );
+        env.failNext = 1;
+        clock.jump(const Duration(milliseconds: 30));
+        // The recovered heartbeat delivers the record once the re-armed
+        // leg fires.
+        await waitForTrue(
+          () async => (await repo.peek(
+            'sid-1/main',
+          )).any((m) => m.text.contains('delayed reminder')),
+        );
+        final events = await receiptEvents(env, root);
+        expect(
+          events.any((e) => e['event'] == 'scan_failed'),
+          isTrue,
+          reason:
+              'a TRANSIENT delivery-pass scan failure must still leave a '
+              'scan_failed receipt — pre-fix the re-arm scan recovered '
+              'silently and the post-mortem saw nothing between the last '
+              'scheduled line and the delivered one (AC4)',
         );
         queue.dispose();
       },

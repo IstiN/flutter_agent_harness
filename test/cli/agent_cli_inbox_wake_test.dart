@@ -260,9 +260,21 @@ void main() {
         reason: 'and receipted too (AC4: every refusal accounted for)',
       );
 
-      io.sendLine('/exit');
-      await run;
-    },
-    timeout: const Timeout(Duration(seconds: 90)),
-  );
+  test('gh-1180 review T11: the CLI receipt log is non-null from '
+      'construction — the production wake path can never silently skip '
+      'the trail because the queue was not built yet', () {
+    final fake = FakeStreamFunction([textTurn('unused')]);
+    final cli = buildCli(fake);
+    // Pre-fix the seam was a nullable field assigned as a side effect of
+    // the (lazy) queue construction: a wake tick firing before the first
+    // queue build wrote NO receipts through the nullable field, silently.
+    expect(
+      cli.scheduledReceiptsForTest,
+      isNotNull,
+      reason:
+          'the receipt log is load-bearing in production (wake_attempted '
+          '/ turn_started / wake_refused) — it must not depend on the '
+          'lazy ScheduledMessageQueue initializer having run',
+    );
+  });
 }
