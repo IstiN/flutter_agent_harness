@@ -161,11 +161,16 @@ jobs:
       issues: write           # labels, comments, close-issue safety net
       pull-requests: write    # PR creation, review threads, update-branch
       actions: write          # actions/cache save phase + workflow_dispatch
-    # Pinned to an immutable SHA of IstiN/dmtools-agents (branch heads move;
-    # a branch ref executes whatever is at the head at run start). Flip in
-    # lockstep with the machine-sm.yml pin — guarded by
+    # Tracks dmtools-agentic-workflows @main — always-latest policy (owner
+    # directive 2026-10-04): awf main is load-bearing and review-gated, so
+    # awf fixes (teammate defaults awf#12, kicker real ticks awf#13,
+    # per-SHA concurrency awf#14) go live on merge, no re-pin ceremony.
+    # Accepted trade-off: a mutable ref executes whatever sits at the awf
+    # main head at run start. The ENGINE (dmtools-agents) stays pinned
+    # separately via factory_ref below. Flip in lockstep with the other
+    # machine-loop stubs — guarded by
     # test/machine_kit/factory_stub_ref_test.dart.
-    uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-teammate.yml@e611e5f4240e9c8a5cdbf10721562eb04513d006
+    uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-teammate.yml@main
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
