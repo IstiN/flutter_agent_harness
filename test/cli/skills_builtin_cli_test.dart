@@ -442,8 +442,9 @@ void main() {
         () => out().contains('skills: enabled create-goal (scope: project)'),
       );
       // The loop returns to the skill pick; disable the other builtin in
-      // the global scope.
-      io.sendLine('2'); // self-settings
+      // the global scope. (Name-ordered builtins: create-goal, js-apps,
+      // self-settings — gh-1164 added the third.)
+      io.sendLine('3'); // self-settings
       await waitForIt(() => out().contains('skills — self-settings'));
       io.sendLine('2'); // Disable
       await waitForIt(
