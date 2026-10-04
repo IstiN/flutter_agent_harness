@@ -36,6 +36,7 @@ import 'package:fa/apps/app_preflight_probe_stub.dart'
     if (dart.library.io) 'package:fa/apps/app_preflight_probe_io.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/apps/js_app_error_channel.dart';
 
 export 'package:fa/apps/app_preflight_probe_stub.dart'
     if (dart.library.io) 'package:fa/apps/app_preflight_probe_io.dart';
@@ -140,14 +141,14 @@ Future<AppPreflightOutcome> runSmokeRenderGate(
     } on Object catch (error) {
       return AppPreflightFailed(
         gate: 'smoke-render',
-        excerpt: 'engine boot failed: $error',
+        excerpt: 'engine boot failed: ${JsAppErrorChannel.capExcerpt('$error')}',
       );
     }
     final rendered = await _awaitFirstRender(engine, renderBudget);
     if (!rendered) {
       final excerpt = errors.isNotEmpty
           ? 'no first render within ${renderBudget.inSeconds}s; captured '
-                'error: ${errors.first.event.message}'
+                'error: ${JsAppErrorChannel.capExcerpt(errors.first.event.message)}'
           : 'no first render within ${renderBudget.inSeconds}s (a syntax '
                 'error in the entry usually produces no render at all)';
       return AppPreflightFailed(gate: 'smoke-render', excerpt: excerpt);
@@ -156,7 +157,8 @@ Future<AppPreflightOutcome> runSmokeRenderGate(
       return AppPreflightFailed(
         gate: 'smoke-render',
         excerpt:
-            'rendered with a captured error: ${errors.first.event.message}',
+            'rendered with a captured error: '
+            '${JsAppErrorChannel.capExcerpt(errors.first.event.message)}',
       );
     }
     return const AppPreflightPassed(gate: 'smoke-render');
@@ -203,6 +205,11 @@ JsAppEngine _defaultEngineFactory({
   permissions: permissions,
   entryFile: entryFile,
   errorSink: errorSink,
+  // gh-1164 review: the probe boots on a SCRATCH env copy — it must
+  // never join the process-wide live-engine sibling group, or its
+  // storage writes would reach the app's real live viewports (and a
+  // live write landing mid-probe would replay into the gate).
+  joinSiblingGroup: false,
 );
 
 Future<bool> _awaitFirstRender(JsAppEngine engine, Duration budget) {
@@ -232,6 +239,12 @@ Future<bool> _awaitFirstRender(JsAppEngine engine, Duration budget) {
 /// all: no test file AND a host where no JS engine can boot (bare CI
 /// runners) — installing a gate there would report every healthy app
 /// broken (a host-capability error masquerading as an app error).
+///
+/// Note (gh-1164 review): the flutter-test gate is test-host-only today —
+/// no production [FlutterTestRunner] implementation exists (a sandboxed
+/// app host cannot spawn the toolchain), so in the shipped app every real
+/// gate decision is the smoke render. The seam stays for hosts that gain
+/// a runner later.
 Future<AppPreflightOutcome?> runAppPreflight(
   String appId,
   ExecutionEnv env, {
@@ -267,7 +280,15 @@ Future<AppPreflightOutcome?> runAppPreflight(
   if (testRunner != null && hasTest) {
     final result = await testRunner.runAppTest(foundId);
     if (!result.passed) {
-      return AppPreflightFailed(gate: 'flutter-test', excerpt: result.output);
+      return AppPreflightFailed(
+        gate: 'flutter-test',
+        // Bounded even though the runner contract promises a capped
+        // output: no production runner exists yet (see
+        // [FlutterTestRunner]), so the gate enforces the bound itself
+        // rather than trusting an unbounded excerpt into the LLM-facing
+        // tool result.
+        excerpt: JsAppErrorChannel.capExcerpt(result.output),
+      );
     }
     return const AppPreflightPassed(gate: 'flutter-test');
   }

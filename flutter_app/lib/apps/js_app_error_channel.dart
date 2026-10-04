@@ -179,6 +179,13 @@ class JsAppErrorChannel {
 
   static String _cap(String text, int max) =>
       text.length <= max ? text : '${text.substring(0, max)}… [truncated]';
+
+  /// Shared excerpt cap for LLM-facing failure text (gh-1164 review): the
+  /// `open_app` pre-flight gate bounds its excerpts with the SAME cap the
+  /// notices use, so a pathological JS error (huge payload, generated
+  /// string) can never balloon the tool result the agent reads.
+  static String capExcerpt(String text, [int max = maxMessageChars]) =>
+      _cap(text, max);
 }
 
 class _AppGate {

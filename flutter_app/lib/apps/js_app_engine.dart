@@ -157,6 +157,7 @@ class JsAppEngine {
     this.hostLocale = 'en',
     this.initialTheme = const {},
     this.errorSink,
+    this.joinSiblingGroup = true,
     this._onLog,
   });
 
@@ -263,6 +264,15 @@ class JsAppEngine {
   String get sourceRevision => _sourceRevision ?? '';
   String? _sourceRevision;
 
+  /// Whether this engine joins the process-wide per-app live-engine
+  /// sibling group (gh-1164 review): live view engines (board tile +
+  /// fullscreen) sync `jsr.storage` state across viewports through the
+  /// group. Throwaway probes — the `open_app` smoke gate, which boots a
+  /// SCRATCH env copy — must stay out: their storage writes would
+  /// otherwise reach the app's real live engines (and live writes would
+  /// replay into the probe). Live views leave the default `true`.
+  final bool joinSiblingGroup;
+
   final void Function(String line)? _onLog;
 
   /// The latest rendered UI tree; the view listens and rebuilds.
@@ -352,10 +362,12 @@ class JsAppEngine {
     // Log WHICH app boots — engine-start lines in the debug log used to
     // be indistinguishable between apps (and tiles vs full apps).
     AppLog.i('apps', 'engine start: ${app.id}/$entryFile');
-    final js = (await env.readTextFile('${app.dir}/$entryFile')).getOrThrow();
-    // gh-1164: the error gate dedups per source revision — hash the entry
-    // the run boots from, so an edit re-arms reporting.
-    _sourceRevision = sha256.convert(utf8.encode('$entryFile\n$js')).toString();
+    final js = await _assembleEntryJs();
+    // gh-1164: the error gate dedups per source revision — hash the WHOLE
+    // app source tree (entry + sibling source files), so an edit to any
+    // app source file re-arms reporting (a helper-only fix used to leave
+    // the old revision's silenced keys silenced, gh-1164 review).
+    _sourceRevision = await computeSourceRevision(env, app.dir, entryFile);
     final storage = await _readStorage();
     final config = JsRuntimeConfig(
       widgetId: app.id,
@@ -395,7 +407,11 @@ class JsAppEngine {
     await engine.run(js);
     // Live now: join the app's sibling group so later storage writes from
     // OTHER engines of the same app reach this one (and vice versa).
-    _liveByApp.putIfAbsent(app.id, () => <JsAppEngine>{}).add(this);
+    // Smoke-gate probes (joinSiblingGroup: false) stay out — they boot on
+    // a scratch env and must never see or send live storage state.
+    if (joinSiblingGroup) {
+      _liveByApp.putIfAbsent(app.id, () => <JsAppEngine>{}).add(this);
+    }
     // Boot-race healing: a sibling write landing between the storage read
     // above and this point was persisted but never delivered (we were not
     // in the group yet / the JS engine was not ready). Re-read the file and
@@ -408,6 +424,120 @@ class JsAppEngine {
     final engine = _engine;
     if (engine == null) return Future.value();
     return engine.callEvent(actionId, payload);
+  }
+
+  /// Reads and assembles the entry JS for [start] through the runtime's
+  /// own [WidgetManifest] assembler: relative `import './x.js'` statements
+  /// and `jsr.include('…')` calls are inlined (depth-capped, each file
+  /// once, `export` stripped) and a manifest `files` list defines the load
+  /// order. The install side (`catalog_service.dart`) unpacks whole
+  /// multi-file apps — booting the raw entry text made any app whose
+  /// entry is a bare `import './game/main.js';` die as a script syntax
+  /// error: no `jsr.render`, the view stuck on its spinner (gh-1207).
+  ///
+  /// The manifest namespace always names the entry `widget.js`
+  /// ([WidgetManifest.mainJsPath]) while [entryFile] may name a live-tile
+  /// entry, so the reader redirects that one path (see
+  /// [_AppWidgetFileReader]). The entry file itself stays the contract:
+  /// a missing one fails the start with a clear [StateError] (the view
+  /// renders its error card instead of spinning forever).
+  Future<String> _assembleEntryJs() =>
+      assembleEntryJsForTest(env: env, dir: app.dir, entryFile: entryFile);
+
+  /// Test seam over the entry assembly [start] runs: host-side only —
+  /// env reads plus the manifest assembler, no [JsWidgetEngine] — so the
+  /// gh-1207 boot contract (bare-import entries assemble, missing entries
+  /// fail with a clear [StateError]) is directly unit-testable on hosts
+  /// without the native JS bridge (issue #184; the engine-boot tests stay
+  /// bridge-gated).
+  @visibleForTesting
+  static Future<String> assembleEntryJsForTest({
+    required ExecutionEnv env,
+    required String dir,
+    required String entryFile,
+  }) async {
+    final reader = _AppWidgetFileReader(env, dir: dir, entryFile: entryFile);
+    final manifest = await WidgetManifest.fromStorage(dir, reader: reader);
+    if (manifest == null) {
+      throw StateError('app entry not found: $dir/$entryFile');
+    }
+    // A manifest `files` list makes readJs concatenate the full-app bundle
+    // and never read the (redirected) entry path — for a live-tile entry
+    // that would render the whole app inside the tile. Upstream
+    // WidgetManifest has no copyWith, so rebuild it with `files: null`
+    // when booting a non-default entry (gh-1207 review).
+    final effective = entryFile == defaultEntryFile
+        ? manifest
+        : WidgetManifest(
+            id: manifest.id,
+            name: manifest.name,
+            description: manifest.description,
+            version: manifest.version,
+            icon: manifest.icon,
+            allowedCommands: manifest.allowedCommands,
+            networkEnabled: manifest.networkEnabled,
+            widgetPath: manifest.widgetPath,
+            isSingleFile: manifest.isSingleFile,
+            cli: manifest.cli,
+          );
+    final js = await effective.readJs(reader: reader);
+    if (js == null) {
+      throw StateError('app entry not found: $dir/$entryFile');
+    }
+    return js;
+  }
+
+  /// Test seam over the [WidgetFileReader] the entry assembler runs over
+  /// [env]: the manifest-namespace reader ([_AppWidgetFileReader]) with
+  /// its entry-path redirect — host-only, no JS engine needed.
+  @visibleForTesting
+  static WidgetFileReader appWidgetFileReaderForTest({
+    required ExecutionEnv env,
+    required String dir,
+    required String entryFile,
+  }) => _AppWidgetFileReader(env, dir: dir, entryFile: entryFile);
+
+  /// Content revision of the app's whole source tree — the entry file
+  /// plus every sibling source file under [dir], hashed in sorted path
+  /// order (gh-1164 review): the error gate's dedup boundary keys on
+  /// this, so an edit to ANY app source file (including helper modules
+  /// the entry only reaches transitively) re-arms reporting. Runtime
+  /// state (`storage.json`, `session.json`) is NOT source and stays out
+  /// of the hash.
+  @visibleForTesting
+  static Future<String> computeSourceRevision(
+    ExecutionEnv env,
+    String dir,
+    String entryFile,
+  ) async {
+    final files = <(String, String)>[];
+    Future<void> walk(String path) async {
+      final entries = (await env.listDir(path)).valueOrNull;
+      if (entries == null) return;
+      for (final entry in entries) {
+        if (entry.kind == FileKind.directory) {
+          await walk(entry.path);
+          continue;
+        }
+        if (entry.name == 'storage.json' || entry.name == 'session.json') {
+          continue; // runtime state, not source
+        }
+        final text = (await env.readTextFile(entry.path)).valueOrNull;
+        if (text == null) continue; // binary asset — not app source
+        files.add((entry.path, text));
+      }
+    }
+
+    await walk(dir);
+    files.sort((a, b) => a.$1.compareTo(b.$1));
+    final output = AccumulatorSink<Digest>();
+    final input = sha256.startChunkedConversion(output);
+    input.add(utf8.encode('$dir/$entryFile\n'));
+    for (final (path, text) in files) {
+      input.add(utf8.encode('$path\n$text\n'));
+    }
+    input.close();
+    return output.events.single.toString();
   }
 
   /// Delivers a fire-and-forget host event to the app's bootstrap listeners
@@ -885,12 +1015,44 @@ Object.defineProperty(jsr, 'onBack', {
 // ('[E] ') and the engine parses the JSON payload into the session's
 // error gate (dedup + delivery). Never remove or reword the marker.
 (function() {
+  // Stable fingerprint for the dedup gate (gh-1164 review): normalize
+  // per-occurrence noise (numbers, hex ids, whitespace) out of the
+  // message and keep only the first app frame's location shape, so
+  // "Failed to load chunk 14" vs "chunk 15" or per-frame layout values
+  // collapse to ONE key — the circuit breaker can actually trip on the
+  // noisy failure class (RAF/animation loops) instead of seeing a new
+  // key every occurrence.
+  var __faFingerprint = function(message, stack) {
+    try {
+      var norm = String(message)
+        .replace(/0x[0-9a-fA-F]+/g, '#')
+        .replace(/\b\d+\b/g, '#')
+        .replace(/\s+/g, ')
+        .trim();
+      var frame = '';
+      var lines = String(stack || '').split('\n');
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line && line.indexOf('__faReport') < 0 &&
+            line.indexOf('__wrapCb') < 0 &&
+            line.indexOf('__faFingerprint') < 0) {
+          frame = line;
+          break;
+        }
+      }
+      frame = frame.replace(/:\d+:\d+/g, '').replace(/\s+/g, ').trim();
+      return norm + '\n' + frame;
+    } catch (e) {
+      return '';
+    }
+  };
   var __faReport = function(kind, message, stack) {
     try {
       console.error('faAppError:' + JSON.stringify({
         kind: kind,
         message: String(message),
-        stack: String(stack || '')
+        stack: String(stack || ''),
+        fingerprint: __faFingerprint(message, stack)
       }));
     } catch (e) {}
   };
@@ -2173,4 +2335,34 @@ Object.defineProperty(jsr, 'onBack', {
   String _denied(String what) =>
       '$what permission is disabled for "${app.name}" '
       '(enable it in the app permissions)';
+}
+
+/// [WidgetFileReader] over the app's [ExecutionEnv] behind
+/// [JsAppEngine._assembleEntryJs]: every assembler path is env-relative
+/// under the app dir. The manifest namespace always names the entry
+/// `widget.js` ([WidgetManifest.mainJsPath]) while the engine may boot a
+/// different entry ([JsAppEngine.entryFile] — a live-tile entry), so that
+/// one path is redirected to the real entry file; every other path
+/// (manifest.json, a `files` entry, a relative import target) maps 1:1.
+class _AppWidgetFileReader implements WidgetFileReader {
+  _AppWidgetFileReader(this._env, {required this.dir, required this.entryFile});
+
+  final ExecutionEnv _env;
+
+  /// Env-relative app directory (`apps/<id>` or a session override).
+  final String dir;
+
+  /// The entry file inside [dir] the engine boots.
+  final String entryFile;
+
+  String _map(String path) =>
+      path == '$dir/widget.js' ? '$dir/$entryFile' : path;
+
+  @override
+  Future<String?> readString(String path) async =>
+      (await _env.readTextFile(_map(path))).valueOrNull;
+
+  @override
+  Future<bool> exists(String path) async =>
+      (await _env.exists(_map(path))).valueOrNull ?? false;
 }
