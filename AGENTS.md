@@ -1152,6 +1152,10 @@ factual: paths, commands, invariants — no essays.
   system default data store — never incognito; iOS/Android/macOS only, other
   platforms get the renderer placeholder via `createFaWebViewHost`) to BOTH
   the JsRuntimeConfig and the JsonWidgetRenderer in js_app_view.dart —
+  flutter_inappwebview rides the coherent 6.2.0-beta.3 set because 6.1.x's
+  android impl evaluates getDefaultProguardFile('proguard-android.txt'),
+  which AGP 9 removed (APK CI leg); return to ^6.1.x once 6.2.0 stable
+  ships —
   earlier hosted line shipped the queued-callEvent-after-dispose guard +
   restart-safe bridge channels that the old git pin carried, plus the M3
   nodes/overlays/flChart/pickers/drawer catalog and M3 motion tokens; the
