@@ -8,6 +8,8 @@
 /// guarantees exactly one notice per error per source revision.
 library;
 
+import 'dart:io' show File;
+
 import 'package:fa/apps/js_app_error_channel.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa_ui/fa_ui.dart' show FaChatMessage;
@@ -249,4 +251,109 @@ void main() {
       );
     },
   );
+
+  test(
+    'a disposed service unsubscribes the JS-app error channel '
+    '(gh-1164 review: dispose teardown stays single-source in the '
+    'lifecycle part)',
+    timeout: const Timeout(Duration(seconds: 60)),
+    () async {
+      JsAppErrorChannel.instance.disposeAndReset();
+      final service = await AgentService.create(
+        config: AgentConfig(
+          providerKind: 'test',
+          modelId: 'test-model',
+          baseUrl: 'https://example.com',
+          apiKey: '',
+        ),
+        env: MemoryExecutionEnv(cwd: '/work'),
+        streamFunction: _always('disposed session note'),
+      );
+      await service.initialize();
+      final sessionId = service.currentSessionId!;
+      service.dispose();
+
+      // Unbound app → routing fallback would deliver HERE if the
+      // disposed service were still subscribed. It must be silent.
+      JsAppErrorChannel.instance.publish(
+        JsAppErrorNotice(
+          event: const JsAppErrorEvent(
+            kind: JsAppErrorKind.showError,
+            message: 'post-dispose boom',
+            stack: 'at widget.js:3:1',
+          ),
+          appId: 'post-dispose-app',
+          surface: 'app',
+          sourceRevision: 'rev-1',
+          notice:
+              "App 'post-dispose-app' (app) reported a showError error:\n"
+              'post-dispose boom',
+        ),
+      );
+      for (var i = 0; i < 20; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      expect(
+        _hasUserText(service.messages, 'post-dispose boom'),
+        isFalse,
+        reason:
+            'dispose() must cancel the channel subscription '
+            '($sessionId is gone)',
+      );
+    },
+  );
+
+  group('gh-1164 review: dispose teardown stays single-source', () {
+    // The bad merge of origin/main (687d0bce) inlined the lifecycle
+    // teardown into AgentService.dispose() and left the part-file
+    // _disposeService() dead code (flutter analyze: unused_element).
+    // These guards pin main's structure so the two copies can never
+    // silently diverge again (repo convention: source-structure tests,
+    // cf. retired_seed_frozen_test.dart).
+    String source(String path) =>
+        File('lib/services/$path').readAsStringSync();
+
+    String disposeBody() {
+      final text = source('agent_service.dart');
+      final start = text.indexOf('  void dispose() {');
+      expect(start, isNonNegative, reason: 'AgentService.dispose not found');
+      final end = text.indexOf('\n  }', start);
+      return text.substring(start, end);
+    }
+
+    test('dispose() delegates to the lifecycle part, not an inline copy', () {
+      final body = disposeBody();
+      expect(
+        body,
+        contains('_disposeService();'),
+        reason:
+            'the bad-merge cleanup must not inline the teardown body — '
+            'main has dispose() delegate to _disposeService() so the '
+            'part file stays the single source',
+      );
+      expect(
+        body,
+        isNot(contains('_agent.abort()')),
+        reason: 'teardown members must live in agent_service_lifecycle.dart',
+      );
+      expect(
+        body,
+        isNot(contains('_jsAppErrorSub')),
+        reason:
+            'the jsAppError subscription cancel belongs to the shared '
+            'teardown, not a second copy in agent_service.dart',
+      );
+    });
+
+    test('_disposeService() owns the full teardown incl. the channel sub', () {
+      final lifecycle = source('agent_service_lifecycle.dart');
+      final start = lifecycle.indexOf('  void _disposeService() {');
+      expect(start, isNonNegative, reason: '_disposeService not found');
+      final end = lifecycle.indexOf('\n  }', start);
+      final body = lifecycle.substring(start, end);
+      expect(body, contains('unawaited(_jsAppErrorSub?.cancel());'));
+      expect(body, contains('_agent.abort();'));
+      expect(body, contains('dynamicMessages.dispose();'));
+    });
+  });
 }
