@@ -530,14 +530,11 @@ class JsAppEngine {
 
     await walk(dir);
     files.sort((a, b) => a.$1.compareTo(b.$1));
-    final output = AccumulatorSink<Digest>();
-    final input = sha256.startChunkedConversion(output);
-    input.add(utf8.encode('$dir/$entryFile\n'));
+    final buffer = StringBuffer('$dir/$entryFile\n');
     for (final (path, text) in files) {
-      input.add(utf8.encode('$path\n$text\n'));
+      buffer.write('$path\n$text\n');
     }
-    input.close();
-    return output.events.single.toString();
+    return sha256.convert(utf8.encode(buffer.toString())).toString();
   }
 
   /// Delivers a fire-and-forget host event to the app's bootstrap listeners
@@ -1026,8 +1023,8 @@ Object.defineProperty(jsr, 'onBack', {
     try {
       var norm = String(message)
         .replace(/0x[0-9a-fA-F]+/g, '#')
-        .replace(/\b\d+\b/g, '#')
-        .replace(/\s+/g, ')
+        .replace(/[0-9]+/g, '#')
+        .replace(/[ \t\r\n]+/g, ')
         .trim();
       var frame = '';
       var lines = String(stack || '').split('\n');
@@ -1040,7 +1037,7 @@ Object.defineProperty(jsr, 'onBack', {
           break;
         }
       }
-      frame = frame.replace(/:\d+:\d+/g, '').replace(/\s+/g, ').trim();
+      frame = frame.replace(/:[0-9]+:[0-9]+/g, '').replace(/[ \t\r\n]+/g, ').trim();
       return norm + '\n' + frame;
     } catch (e) {
       return '';

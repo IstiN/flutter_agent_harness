@@ -9,27 +9,19 @@
 
 part of 'agent_service.dart';
 
-/// Writes the bundled app-only agent skill (`assets/skills/js-apps/`)
-/// into the env's project skill root so [discoverSkills] picks it up.
-/// The file is refreshed when the bundled content changed (the skill is
-/// ours, not user data). Best-effort: a missing asset or unwritable env
-/// must not block session creation.
-///
-/// Issue #1151 review (CQE1): copies the pre-#1151 seeder wrote for
-/// skills that since moved INTO the package (`create-goal`) or retired
-/// (`fa-self-config`) are retired with the same ownership rule — the old
-/// seeder force-refreshed these files on every launch, so they are ours,
-/// not user data. The cleanup is fingerprint-scoped: a copy is removed
-/// ONLY when its SKILL.md is byte-identical to the last seeded bytes
-/// (neither source carries `fa-platforms` markers or `{{FA_PLATFORM}}`,
-/// so the seeder wrote these bytes verbatim on every platform). Only
-/// SKILL.md goes — the seeder never wrote anything else into those
-/// dirs, so a user-dropped supporting file (script, prompt) survives
-/// (review -HUjo); an empty leftover dir is invisible to discovery.
-/// Anything else is a deliberate project override and stays — a
-/// customized create-goal keeps shadowing the builtin (issue non-goal:
-/// migrating existing overrides), an orphaned fa-self-config stops
-/// haunting every session prompt.
+/// Fingerprints of the pre-#1151 seeded skill copies this cleanup
+/// retires: the old seeder wrote these files on every launch, so they
+/// are ours, not user data, and a copy is removed ONLY when its SKILL.md
+/// is byte-identical to the last seeded bytes (neither source carries
+/// `fa-platforms` markers or `{{FA_PLATFORM}}`, so the seeder wrote
+/// these bytes verbatim on every platform). Only SKILL.md goes — the
+/// seeder never wrote anything else into those dirs, so a user-dropped
+/// supporting file (script, prompt) survives (review -HUjo); an empty
+/// leftover dir is invisible to discovery. Anything else is a deliberate
+/// project override and stays — a customized create-goal keeps
+/// shadowing the builtin (issue non-goal: migrating existing
+/// overrides), an orphaned fa-self-config stops haunting every session
+/// prompt.
 const _staleSeedFingerprints = <String, String>{
   'create-goal':
       '427d831fa7c41b44a225f216a6e1961bf54b2821a538971e972dcee2c9383f72',
