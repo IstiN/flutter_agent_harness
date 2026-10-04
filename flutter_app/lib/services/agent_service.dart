@@ -1217,12 +1217,16 @@ class AgentService extends ChangeNotifier
   set appLauncher(AppLauncher? launcher) {
     if (launcher == _appLauncher) return;
     _appLauncher = launcher;
+    Future<AppPreflightOutcome?> gate(String appId) =>
+        runAppPreflight(appId, env);
     final registry = _toolRegistry;
     if (registry != null) {
       if (launcher == null) {
         registry.unregister(openAppToolName);
       } else {
-        registry.register(openAppTool(env, launcher: launcher));
+        registry.register(
+          openAppTool(env, launcher: launcher, preflight: gate),
+        );
       }
       _agent.state.tools = registry.tools;
     } else {
@@ -1232,7 +1236,7 @@ class AgentService extends ChangeNotifier
           .where((tool) => tool.name != openAppToolName)
           .toList();
       if (launcher != null) {
-        tools.add(openAppTool(env, launcher: launcher));
+        tools.add(openAppTool(env, launcher: launcher, preflight: gate));
       }
       _agent.state.tools = tools;
     }

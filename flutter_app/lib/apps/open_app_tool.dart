@@ -6,6 +6,7 @@ import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'package:fa/apps/app_preflight.dart';
 import 'package:fa/apps/apps_store.dart';
 
 /// Name of the agent tool that opens a JS app in the Fa UI.
@@ -23,7 +24,18 @@ typedef AppLauncher = FutureOr<void> Function(JsAppInfo app);
 /// and the host navigates to it. Unknown ids fail with the list of available
 /// ids so the model can recover. The description/result texts are LLM-facing
 /// and stay literal English (not UI copy).
-AgentTool openAppTool(ExecutionEnv env, {required AppLauncher launcher}) {
+///
+/// gh-1164 Part C: the pre-flight gate ([runAppPreflight]) runs BEFORE the
+/// launcher — the tool NEVER returns success for an app whose standing
+/// test is red or whose JS fails to load/render (the no-fake-success
+/// contract, AC7). The default gate uses the real wiring; tests inject
+/// their own. `null` disables the gate (hosts with no JS engine at all —
+/// installing a gate there would fail every healthy app).
+AgentTool openAppTool(
+  ExecutionEnv env, {
+  required AppLauncher launcher,
+  Future<AppPreflightOutcome?> Function(String appId)? preflight,
+}) {
   return AgentTool(
     name: openAppToolName,
     label: 'open_app',
@@ -67,6 +79,16 @@ AgentTool openAppTool(ExecutionEnv env, {required AppLauncher launcher}) {
       final error = app.error;
       if (error != null) {
         throw StateError('app "$id" is broken: $error');
+      }
+      // gh-1164 Part C (AC7): the pre-flight gate runs BEFORE the handover
+      // — a red standing test or a broken smoke render fails the tool
+      // call with the excerpt; only a passed (or absent) gate launches.
+      final gate = preflight;
+      if (gate != null) {
+        final outcome = await gate(id);
+        if (outcome is AppPreflightFailed) {
+          throw StateError(outcome.toString());
+        }
       }
       await launcher(app);
       return ToolExecutionResult.text("Opened app '${app.name}'");

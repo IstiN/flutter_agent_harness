@@ -118,31 +118,19 @@ Future<AppPreflightOutcome> runSmokeRenderGate(
   JsAppEngine? engine;
   final scratch = MemoryExecutionEnv();
   try {
-    // Copy ONLY the app folder — the smoke run must never touch the
-    // app's real storage or files.
-    final result = await scratch.copyTreeFrom(env, app.dir);
-    if (result.isErr) {
+    // Copy ONLY the app folder (text files — the JS/manifest source) — the
+    // smoke run must never touch the app's real storage or files.
+    if (!(await _copyAppTree(env, scratch, app.dir))) {
       return const AppPreflightFailed(
         gate: 'smoke-render',
         excerpt: 'smoke setup failed: could not stage the app copy',
       );
     }
     engine = (engineFactory ?? _defaultEngineFactory)(
-      app: JsAppInfo(
-        id: app.id,
-        dir: app.dir,
-        name: app.name,
-        description: app.description,
-        version: app.version,
-        icon: app.icon,
-        accent: app.accent,
-        permissions: app.permissions,
-        entryPoints: app.entryPoints,
-        sourceUrl: app.sourceUrl,
-      ),
+      app: app,
       env: scratch,
-      permissions: app.permissions,
-      entryFile: app.entryFileFor(defaultEntryFile),
+      permissions: app.declaredPermissions,
+      entryFile: JsAppEngine.defaultEntryFile,
       errorSink: (event) => errors.add(
         SmokeProbeError(event: event, revision: engine?.sourceRevision ?? ''),
       ),
@@ -156,7 +144,7 @@ Future<AppPreflightOutcome> runSmokeRenderGate(
       );
     }
     final rendered = await _awaitFirstRender(engine, renderBudget);
-    if (rendered == null) {
+    if (!rendered) {
       final excerpt = errors.isNotEmpty
           ? 'no first render within ${renderBudget.inSeconds}s; captured '
                 'error: ${errors.first.event.message}'
@@ -174,15 +162,40 @@ Future<AppPreflightOutcome> runSmokeRenderGate(
     return const AppPreflightPassed(gate: 'smoke-render');
   } finally {
     await engine?.dispose();
-    scratch.dispose();
   }
+}
+
+/// Copies the app source tree (text files only) from [env] into [target]
+/// under the same env-relative path — the smoke engine boots from the copy
+/// so a probe can never mutate the app's real files or storage.
+Future<bool> _copyAppTree(
+  ExecutionEnv env,
+  ExecutionEnv target,
+  String dir,
+) async {
+  Future<bool> copyDir(String path) async {
+    final entries = (await env.listDir(path)).valueOrNull;
+    if (entries == null) return false;
+    for (final entry in entries) {
+      if (entry.kind == FileKind.directory) {
+        if (!await copyDir(entry.path)) return false;
+        continue;
+      }
+      final text = (await env.readTextFile(entry.path)).valueOrNull;
+      if (text == null) continue; // binary asset — not app source
+      if ((await target.writeFile(entry.path, text)).isErr) return false;
+    }
+    return true;
+  }
+
+  return copyDir(dir);
 }
 
 JsAppEngine _defaultEngineFactory({
   required JsAppInfo app,
   required ExecutionEnv env,
   required AppPermissions permissions,
-  String entryFile = defaultEntryFile,
+  String entryFile = JsAppEngine.defaultEntryFile,
   void Function(JsAppErrorEvent event)? errorSink,
 }) => JsAppEngine(
   app: app,
@@ -208,7 +221,7 @@ Future<bool> _awaitFirstRender(JsAppEngine engine, Duration budget) {
     if (!completer.isCompleted) completer.complete(false);
   });
   return completer.future.whenComplete(() {
-    timeout.cancel();
+    timeout?.cancel();
     engine.tree.removeListener(listener);
   });
 }
@@ -230,20 +243,31 @@ Future<AppPreflightOutcome?> runAppPreflight(
   smokeProbe,
   bool? jsEngineBootableOverride,
 }) async {
-  final lookup = await JsAppsStore(env).byId(appId);
-  final app = lookup.getOrNull;
-  if (app == null) {
-    return const AppPreflightFailed(
-      gate: 'none',
-      excerpt: 'app not found',
-    );
+  final apps = await AppsStore(env).listApps();
+  JsAppInfo? app;
+  for (final candidate in apps) {
+    if (candidate.id == appId) {
+      app = candidate;
+      break;
+    }
   }
-  final hasTest = (await env.listDir('test/apps')).getOrNull?.any(
-        (entry) => entry.name == '${app.id}_test.dart',
+  if (app == null) {
+    return const AppPreflightFailed(gate: 'none', excerpt: 'app not found');
+  }
+  final found = app;
+  // gh-866 affordance: the manifest itself does not parse — the launcher
+  // would show a broken-app error instead of launching; fail fast with it.
+  final manifestError = found.error;
+  if (manifestError != null) {
+    return AppPreflightFailed(gate: 'none', excerpt: manifestError);
+  }
+  final foundId = found.id;
+  final hasTest = (await env.listDir('test/apps')).valueOrNull?.any(
+        (entry) => entry.name == '${foundId}_test.dart',
       ) ??
       false;
   if (testRunner != null && hasTest) {
-    final result = await testRunner.runAppTest(app.id);
+    final result = await testRunner.runAppTest(foundId);
     if (!result.passed) {
       return AppPreflightFailed(
         gate: 'flutter-test',
@@ -253,5 +277,5 @@ Future<AppPreflightOutcome?> runAppPreflight(
     return const AppPreflightPassed(gate: 'flutter-test');
   }
   if (!(jsEngineBootableOverride ?? jsEngineBootable)) return null;
-  return (smokeProbe ?? runSmokeRenderGate)(app, env);
+  return (smokeProbe ?? runSmokeRenderGate)(found, env);
 }
