@@ -375,8 +375,15 @@ final class CliVisualHarness {
   Future<bool> waitForRawSettle({
     int settleMs = 200,
     Duration grace = const Duration(seconds: 2),
-  }) async {
-    final deadline = DateTime.now().add(grace);
+  }) =>
+      _rawQuiet(settleMs, DateTime.now().add(grace));
+
+  /// True when no new raw bytes arrived for [settleMs] twice in a row
+  /// before [deadline] (bounded by it). The ONE stability loop behind
+  /// [waitForOutput] and [waitForRawSettle] — a tweak to the settle rule
+  /// lands here, never in a copy (gh-1204 review: duplicated loops drift,
+  /// and a drifted settle rule silently reintroduces the torn-frame race).
+  Future<bool> _rawQuiet(int settleMs, DateTime deadline) async {
     var lastLength = -1;
     var stableTurns = 0;
     while (DateTime.now().isBefore(deadline)) {
@@ -405,18 +412,7 @@ final class CliVisualHarness {
     int settleMs = 200,
     Duration timeout = const Duration(seconds: 10),
   }) async {
-    final deadline = DateTime.now().add(timeout);
-    var lastLength = -1;
-    var stableTurns = 0;
-    while (DateTime.now().isBefore(deadline)) {
-      await Future<void>.delayed(Duration(milliseconds: settleMs));
-      if (_rawBuffer.length == lastLength) {
-        if (++stableTurns >= 2) break;
-      } else {
-        stableTurns = 0;
-        lastLength = _rawBuffer.length;
-      }
-    }
+    await _rawQuiet(settleMs, DateTime.now().add(timeout));
     return _rawBuffer.toString();
   }
 

@@ -439,6 +439,7 @@ void main() {
           .approvalPickerItemsForTest()
           .where((i) => i.description.contains('(current)'))
           .toList(growable: false);
+      expect(marked, hasLength(1), reason: 'exactly one row is current');
       expect(marked.single.label, 'yolo');
       io.sendLine('/exit');
       await run;

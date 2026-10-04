@@ -399,14 +399,16 @@ void main() {
       // settle: true additionally holds until the frame is fully applied —
       // the cell-diff renderer paints the title row before the item rows,
       // and a load-descheduled CLI left a matching title with the
-      // '(current)' rows still streaming (gh-1204 CI red).
-      await harness.liveWaitForScreen(
+      // '(current)' rows still streaming (gh-1204 CI red). The asserts pin
+      // the SETTLED frame the wait returns — fresh screenText reads would
+      // re-read the live buffer and could straddle a repaint.
+      final settled = await harness.liveWaitForScreen(
         '[Approval mode]',
         timeout: const Duration(seconds: 15),
         settle: true,
       );
-      expect(harness.screenText, contains('always-ask'));
-      expect(harness.screenText, contains('(current)'));
+      expect(settled, contains('always-ask'));
+      expect(settled, contains('(current)'));
       await harness.screenshot(shotsDir, '42_approval_mode_shown');
 
       // Close the picker.
