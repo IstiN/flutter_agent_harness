@@ -2006,141 +2006,153 @@ void main() {
     });
   }, skip: _engineSkip);
 
-  group('multi-file app boot (entry assembled via WidgetManifest, gh-1207)', () {
-    TestWidgetsFlutterBinding.ensureInitialized();
+  group(
+    'multi-file app boot (entry assembled via WidgetManifest, gh-1207)',
+    () {
+      TestWidgetsFlutterBinding.ensureInitialized();
 
-    const settle = Duration(milliseconds: 300);
+      const settle = Duration(milliseconds: 300);
 
-    JsAppInfo appOf([Map<String, Object?> manifest = const {
-      'id': 'demo',
-      'name': 'Demo',
-    }]) => JsAppInfo.fromManifest(manifest, bundled: false, fallbackId: 'demo');
+      JsAppInfo appOf([
+        Map<String, Object?> manifest = const {'id': 'demo', 'name': 'Demo'},
+      ]) =>
+          JsAppInfo.fromManifest(manifest, bundled: false, fallbackId: 'demo');
 
-    testWidgets('a bare-import entry boots and renders (fa-craft shape)', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        final env = MemoryExecutionEnv();
-        // The fa-craft shape: a one-line multi-file entry. A bare `import`
-        // is a syntax error in the script-eval path — without the
-        // assembler the engine never renders and the view spins forever.
-        await env.writeFile('apps/demo/widget.js', "import './game/main.js';\n");
-        await env.writeFile('apps/demo/game/main.js', '''
+      testWidgets('a bare-import entry boots and renders (fa-craft shape)', (
+        tester,
+      ) async {
+        await tester.runAsync(() async {
+          final env = MemoryExecutionEnv();
+          // The fa-craft shape: a one-line multi-file entry. A bare `import`
+          // is a syntax error in the script-eval path — without the
+          // assembler the engine never renders and the view spins forever.
+          await env.writeFile(
+            'apps/demo/widget.js',
+            "import './game/main.js';\n",
+          );
+          await env.writeFile('apps/demo/game/main.js', '''
 import { tag } from './parts.js';
 jsr.render({type: 'text', data: 'assembled:' + tag});
 jsr.exportState({booted: true});
 ''');
-        await env.writeFile(
-          'apps/demo/game/parts.js',
-          "export const tag = 'mf';\n",
-        );
+          await env.writeFile(
+            'apps/demo/game/parts.js',
+            "export const tag = 'mf';\n",
+          );
 
-        final engine = JsAppEngine(
-          app: appOf(),
-          env: env,
-          permissions: const AppPermissions(),
-        );
-        try {
-          await engine.start();
-          await Future<void>.delayed(settle);
-          expect(jsonEncode(engine.tree.value), contains('assembled:mf'));
-          expect(engine.exportedState?['booted'], isTrue);
-        } finally {
-          await engine.dispose();
-        }
+          final engine = JsAppEngine(
+            app: appOf(),
+            env: env,
+            permissions: const AppPermissions(),
+          );
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
+            expect(jsonEncode(engine.tree.value), contains('assembled:mf'));
+            expect(engine.exportedState?['booted'], isTrue);
+          } finally {
+            await engine.dispose();
+          }
+        });
       });
-    });
 
-    testWidgets('a manifest files list concatenates the declared order', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        final env = MemoryExecutionEnv();
-        await env.writeFile(
-          'apps/demo/manifest.json',
-          jsonEncode({
-            'id': 'demo',
-            'name': 'Demo',
-            'files': ['game/first.js', 'game/second.js'],
-          }),
-        );
-        await env.writeFile('apps/demo/widget.js', '/* unused: files win */');
-        await env.writeFile('apps/demo/game/first.js', "var bootOrder = '1';");
-        await env.writeFile(
-          'apps/demo/game/second.js',
-          "jsr.render({type: 'text', data: 'order-' + bootOrder});",
-        );
+      testWidgets('a manifest files list concatenates the declared order', (
+        tester,
+      ) async {
+        await tester.runAsync(() async {
+          final env = MemoryExecutionEnv();
+          await env.writeFile(
+            'apps/demo/manifest.json',
+            jsonEncode({
+              'id': 'demo',
+              'name': 'Demo',
+              'files': ['game/first.js', 'game/second.js'],
+            }),
+          );
+          await env.writeFile('apps/demo/widget.js', '/* unused: files win */');
+          await env.writeFile(
+            'apps/demo/game/first.js',
+            "var bootOrder = '1';",
+          );
+          await env.writeFile(
+            'apps/demo/game/second.js',
+            "jsr.render({type: 'text', data: 'order-' + bootOrder});",
+          );
 
-        final engine = JsAppEngine(
-          app: appOf(),
-          env: env,
-          permissions: const AppPermissions(),
-        );
-        try {
-          await engine.start();
-          await Future<void>.delayed(settle);
-          expect(jsonEncode(engine.tree.value), contains('order-1'));
-        } finally {
-          await engine.dispose();
-        }
+          final engine = JsAppEngine(
+            app: appOf(),
+            env: env,
+            permissions: const AppPermissions(),
+          );
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
+            expect(jsonEncode(engine.tree.value), contains('order-1'));
+          } finally {
+            await engine.dispose();
+          }
+        });
       });
-    });
 
-    testWidgets('a live-tile entry assembles its own imports', (tester) async {
-      await tester.runAsync(() async {
-        final env = MemoryExecutionEnv();
-        await env.writeFile('apps/demo/widget.js', '''
+      testWidgets('a live-tile entry assembles its own imports', (
+        tester,
+      ) async {
+        await tester.runAsync(() async {
+          final env = MemoryExecutionEnv();
+          await env.writeFile('apps/demo/widget.js', '''
 jsr.render({type: 'text', data: 'full-app'});
 ''');
-        await env.writeFile(
-          'apps/demo/widget_tile.js',
-          "import './game/tile.js';\n",
-        );
-        await env.writeFile(
-          'apps/demo/game/tile.js',
-          "jsr.render({type: 'text', data: 'tile-boot'});",
-        );
+          await env.writeFile(
+            'apps/demo/widget_tile.js',
+            "import './game/tile.js';\n",
+          );
+          await env.writeFile(
+            'apps/demo/game/tile.js',
+            "jsr.render({type: 'text', data: 'tile-boot'});",
+          );
 
-        final engine = JsAppEngine(
-          app: appOf(const {
-            'id': 'demo',
-            'name': 'Demo',
-            'widget': {'entry': 'widget_tile.js'},
-          }),
-          env: env,
-          permissions: const AppPermissions(),
-          entryFile: 'widget_tile.js',
-        );
-        try {
-          await engine.start();
-          await Future<void>.delayed(settle);
-          // The tile entry runs — not the app's own widget.js.
-          expect(jsonEncode(engine.tree.value), contains('tile-boot'));
-          expect(jsonEncode(engine.tree.value), isNot(contains('full-app')));
-        } finally {
-          await engine.dispose();
-        }
+          final engine = JsAppEngine(
+            app: appOf(const {
+              'id': 'demo',
+              'name': 'Demo',
+              'widget': {'entry': 'widget_tile.js'},
+            }),
+            env: env,
+            permissions: const AppPermissions(),
+            entryFile: 'widget_tile.js',
+          );
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
+            // The tile entry runs — not the app's own widget.js.
+            expect(jsonEncode(engine.tree.value), contains('tile-boot'));
+            expect(jsonEncode(engine.tree.value), isNot(contains('full-app')));
+          } finally {
+            await engine.dispose();
+          }
+        });
       });
-    });
 
-    testWidgets('a missing entry file fails the start with a clear error', (
-      tester,
-    ) async {
-      await tester.runAsync(() async {
-        final env = MemoryExecutionEnv();
-        final engine = JsAppEngine(
-          app: appOf(),
-          env: env,
-          permissions: const AppPermissions(),
-        );
-        try {
-          await expectLater(engine.start(), throwsA(isA<StateError>()));
-        } finally {
-          await engine.dispose();
-        }
+      testWidgets('a missing entry file fails the start with a clear error', (
+        tester,
+      ) async {
+        await tester.runAsync(() async {
+          final env = MemoryExecutionEnv();
+          final engine = JsAppEngine(
+            app: appOf(),
+            env: env,
+            permissions: const AppPermissions(),
+          );
+          try {
+            await expectLater(engine.start(), throwsA(isA<StateError>()));
+          } finally {
+            await engine.dispose();
+          }
+        });
       });
-    });
-  }, skip: _engineSkip);
+    },
+    skip: _engineSkip,
+  );
 
   group('host-side home dispatcher (no live engine)', () {
     JsAppInfo app() => JsAppInfo.fromManifest(
