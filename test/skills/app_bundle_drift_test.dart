@@ -71,6 +71,7 @@ void main() {
   });
 
   test('bundled SKILL.md copies are byte-identical to the source skill', () {
+    if (!bundled.existsSync()) return; // gh-1164: no bundled skills left
     for (final dir in bundled.listSync().whereType<Directory>()) {
       final name = dir.uri.pathSegments.reversed.toList()[1];
       final source = File('.fah/skills/$name/SKILL.md');
@@ -87,36 +88,35 @@ void main() {
     }
   });
 
-  test('AgentService._seedBundledSkills registers every bundled skill', () {
-    // The audit (issue #29 AC10): the drift guard must pin the SEEDER,
-    // not just the files — a skill added to assets + pubspec but not to
-    // the seeder map would never reach a session. The map lives in the
-    // app source (the skills part file since #1151's size gate); parse
-    // it (a string-literal map, VM-only guard).
+  test('AgentService._seedBundledSkills no longer seeds any bundled skill', () {
+    // gh-1164 Part A: the last bundled skill (js-apps) moved into the
+    // package builtins, so the seeder has nothing left to seed — it only
+    // retires the stale seeded copies. Guard the retirement: the source
+    // must not grow a bundled-seeding map again (rootBundle.loadString
+    // of an assets/skills path), and any skill re-added under
+    // flutter_app/assets/skills/ must come back through the drift rules
+    // in the tests above.
     final source = File(
       'flutter_app/lib/services/agent_service_skills.dart',
     ).readAsStringSync();
     final decl = source.indexOf('Future<void> _seedBundledSkills');
     expect(decl, greaterThanOrEqualTo(0), reason: 'seeder missing');
-    final brace = source.indexOf('= {', decl);
-    final mapEnd = source.indexOf('};', brace);
-    expect(brace, greaterThan(decl), reason: 'seeder map open missing');
-    expect(mapEnd, greaterThan(brace), reason: 'seeder map close missing');
-    final seeded = RegExp(r"'([a-zA-Z0-9-]+)':")
-        .allMatches(source.substring(brace, mapEnd))
-        .map((m) => m.group(1)!)
-        .toSet();
-    final bundledNames = bundled
-        .listSync()
-        .whereType<Directory>()
-        .map((d) => d.uri.pathSegments.reversed.toList()[1])
-        .toSet();
+    final bodyEnd = source.indexOf('\n}\n', decl);
+    expect(bodyEnd, greaterThan(decl), reason: 'seeder body missing');
+    final body = source.substring(decl, bodyEnd);
     expect(
-      seeded,
-      containsAll(bundledNames),
+      body,
+      isNot(contains('rootBundle.loadString')),
       reason:
-          'bundled skill(s) not registered in AgentService._seedBundledSkills '
-          '- a session would never see them',
+          '_seedBundledSkills seeds from the asset bundle again - the '
+          'bundled-skill machinery was retired by gh-1164 Part A',
+    );
+    expect(
+      body,
+      isNot(contains('assets/skills')),
+      reason:
+          '_seedBundledSkills references assets/skills again - bundled '
+          'skills were retired by gh-1164 Part A',
     );
   });
 }

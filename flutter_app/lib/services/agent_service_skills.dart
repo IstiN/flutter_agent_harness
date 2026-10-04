@@ -35,6 +35,14 @@ const _staleSeedFingerprints = <String, String>{
       '427d831fa7c41b44a225f216a6e1961bf54b2821a538971e972dcee2c9383f72',
   'fa-self-config':
       '88c3301a46f5298255dc3f0e3f2b65bca3c5c97ade17e616ce5ad257c28f8dea',
+  // gh-1164 Part A: js-apps promoted to a package builtin (source of truth
+  // `prompts/skills/js-apps/SKILL.md`). The seeder used to write the
+  // asset bytes verbatim (filterPlatformInstructions passes platforms:
+  // all sources through unchanged), so seeded copies are removed only
+  // when byte-identical to the LAST bundled asset (git parent of the
+  // promotion) — a user-customized copy keeps shadowing the builtin.
+  'js-apps':
+      '8e5cbeb3a8ba1fc4bd7d520a47fdda9d55267f5c4ed75a0455c64ed5ed8d8bcd',
 };
 
 Future<void> _seedBundledSkills(ExecutionEnv env) async {
@@ -52,22 +60,9 @@ Future<void> _seedBundledSkills(ExecutionEnv env) async {
       // best-effort cleanup
     }
   }
-  const bundled = {'js-apps': 'assets/skills/js-apps/SKILL.md'};
-  for (final entry in bundled.entries) {
-    try {
-      final target = '.fah/skills/${entry.key}/SKILL.md';
-      final bundledBody = await rootBundle.loadString(entry.value);
-      final body = filterPlatformInstructions(
-        bundledBody,
-        platform: currentFaPlatform,
-      );
-      final existing = await env.readTextFile(target);
-      if (existing.valueOrNull == body) continue;
-      await env.writeFile(target, body);
-    } on Object {
-      // skip this skill
-    }
-  }
+  // gh-1164 Part A: the bundled asset is gone — js-apps is a package
+  // builtin now (builtinSkills(), merged by discoverSkills), so there is
+  // nothing left to seed, only the retired copies above to clean up.
 }
 
 /// Discovers agent skills + project context files (AGENTS.md & friends)
