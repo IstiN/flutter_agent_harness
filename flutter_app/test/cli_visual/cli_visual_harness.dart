@@ -325,15 +325,39 @@ final class CliVisualHarness {
   /// assertions here when raw-match racing bit a test (load-flake family:
   /// the raw buffer streams picker bytes before the widget paints/focuses,
   /// so an Enter keyed on a raw match can fall into the void).
+  ///
+  /// With [settle], the wait additionally holds until the match has survived
+  /// the CLI's raw output going quiet (or a bounded grace expired) and
+  /// returns the SETTLED screen. The renderer paints frames as incremental
+  /// cell diffs and the harness terminal does not answer the DEC 2026
+  /// DECRQM probe, so a matching screen can be a PARTIALLY applied frame
+  /// under load (gh-1204: the `[Approval mode]` title row was painted while
+  /// the item rows carrying `(current)` were still streaming in — the
+  /// assertion then read a torn frame and flagged main red). Settle on any
+  /// wait whose match is a persistent screen state the test asserts on;
+  /// keep it off for mid-run streaming states (the busy spinner emits bytes
+  /// every ~100ms, so the quiet gate would wait out the whole run).
   Future<String> liveWaitForScreen(
     Pattern pattern, {
     Duration timeout = const Duration(seconds: 10),
+    bool settle = false,
   }) => _live(() async {
     final deadline = DateTime.now().add(timeout);
     while (DateTime.now().isBefore(deadline)) {
       final screen = screenText;
       if (screen.contains(pattern)) {
-        return screen;
+        if (!settle) return screen;
+        // Frame-completion gate: hold until the byte stream has been quiet
+        // for two settle turns (the frame is fully applied) — bounded by a
+        // grace so a still-streaming screen (spinner ticks) cannot hang the
+        // wait past legacy semantics. If the pattern vanished while
+        // settling (a transient state), keep polling for a stable match.
+        await waitForRawSettle(
+          settleMs: 200,
+          grace: const Duration(seconds: 2),
+        );
+        final settled = screenText;
+        if (settled.contains(pattern)) return settled;
       }
       await Future<void>.delayed(const Duration(milliseconds: 50));
     }
@@ -343,6 +367,29 @@ final class CliVisualHarness {
       timeout,
     );
   });
+
+  /// Waits until the accumulated raw output has seen no new bytes for
+  /// [settleMs] twice in a row, or [grace] expires (returns false then —
+  /// the caller falls back to the last matched screen). Same stability rule
+  /// as [waitForOutput], bounded, for frame-completion gates.
+  Future<bool> waitForRawSettle({
+    int settleMs = 200,
+    Duration grace = const Duration(seconds: 2),
+  }) async {
+    final deadline = DateTime.now().add(grace);
+    var lastLength = -1;
+    var stableTurns = 0;
+    while (DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(Duration(milliseconds: settleMs));
+      if (_rawBuffer.length == lastLength) {
+        if (++stableTurns >= 2) return true;
+      } else {
+        stableTurns = 0;
+        lastLength = _rawBuffer.length;
+      }
+    }
+    return false;
+  }
 
   /// Lets pending output settle (real-async wrapped) — the variant test
   /// bodies must use; plain [waitForOutput] would freeze in the fake zone.
