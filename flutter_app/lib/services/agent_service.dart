@@ -547,6 +547,17 @@ class AgentService extends ChangeNotifier
     // network (issue #402) swaps the hub-primary composite in without
     // touching any holder of the reference.
     final fabricRepo = SwappableMessagingRepository(fileFabricRepo);
+    // gh-1180 AC4: the persisted receipt trail for scheduled mail —
+    // scheduled / delivered / delivery_failed / scan_failed — so a
+    // post-mortem can tell "timer never fired" from "wake refused"
+    // without reading source. Best-effort: a failing trail logs only.
+    // Held on the service (see [_scheduledReceipts]): the app host's
+    // wake path appends its events to the same trail.
+    _scheduledReceipts = ScheduledReceiptLog(
+      env: env,
+      path: () => '$messagesRoot/_scheduled/receipts.jsonl',
+      onError: (text) => AppLog.i('sched', text),
+    );
     _scheduledMessages = ScheduledMessageQueue(
       env: env,
       repo: () => fabricRepo,
@@ -564,6 +575,7 @@ class AgentService extends ChangeNotifier
       // app log, never kills the delivery heartbeat — the record stays
       // for the next sweep.
       onError: (text) => AppLog.i('sched', text),
+      receipts: _scheduledReceipts,
     );
     // Arm the delivery timer; best-effort (an unwritable root keeps the
     // app booting, the tools just report unavailable).
@@ -1357,6 +1369,17 @@ class AgentService extends ChangeNotifier
   /// idle mail by a timer; survives restarts (JSON under the messages
   /// root). Started best-effort after the service wires up.
   late final ScheduledMessageQueue _scheduledMessages;
+
+  /// The receipt trail behind [_scheduledMessages] — and, since the
+  /// review round, the app host's wake path (gh-1180 AC4): refused wake
+  /// attempts are receipted here too, so a post-mortem on the app host
+  /// can tell "timer never fired" from "wake refused" (a silent,
+  /// unreceipted drop was the ticket's blind-window shape on the second
+  /// host). The trail is the app's surfacing for a refusal: the only
+  /// user-visible channels (the [error] banner, the Live Activity
+  /// failure state) would misreport a healthy-but-held gate as a failed
+  /// run. Test seam below.
+  late final ScheduledReceiptLog _scheduledReceipts;
 
   /// Response deadline for one agent run; 10 minutes for the on-device
   /// providers (WebLLM's and transformers.js's first run compiles WebGPU
@@ -2341,11 +2364,27 @@ class AgentService extends ChangeNotifier
   /// invariants), so it is off by default.
   static bool enableInboxWatcher = false;
 
-  /// Consecutive inbox-triggered runs without any user input — capped so
-  /// two chatty instances cannot ping-pong forever (mail still accumulates
-  /// and is delivered at the next real turn).
-  var _inboxWakeStreak = 0;
-  static const _maxInboxWakeStreak = 10;
+  /// The idle inbox-wake lane policy (gh-1180): user-kind mail always
+  /// wakes; delivered scheduled self-mail (`schedule_message` reminders)
+  /// is exempt from the chatter cap — a deliberate agent-chosen cadence
+  /// wakes forever, cadence-floored against a disguised busy-spin; and
+  /// foreign agent-to-agent chatter stays capped at
+  /// [InboxWakePolicy.defaultMaxInboxWakeStreak] consecutive wakes
+  /// without user input.
+  final InboxWakePolicy _inboxWakePolicy = InboxWakePolicy();
+
+  /// Test seam: observe/reset the inbox-wake streak without driving ten
+  /// real runs — the same seam name the CLI keeps; the streak lives in
+  /// [_inboxWakePolicy] (one source of truth).
+  @visibleForTesting
+  int get inboxWakeStreakForTest => _inboxWakePolicy.streak;
+  @visibleForTesting
+  set inboxWakeStreakForTest(int value) => _inboxWakePolicy.streak = value;
+
+  /// Test seam: the persisted receipt trail (queue-side AND wake-path
+  /// events, gh-1180 AC4).
+  @visibleForTesting
+  ScheduledReceiptLog get scheduledReceiptsForTest => _scheduledReceipts;
 
   var _fabricHeartbeatTick = 0;
 
@@ -2407,7 +2446,7 @@ class AgentService extends ChangeNotifier
     if (trimmed.isEmpty) return;
     // Real user input resets the inbox wake streak (the ping-pong guard);
     // the watcher itself calls sendText with the flag set.
-    if (!_inboxWakeRunning) _inboxWakeStreak = 0;
+    if (!_inboxWakeRunning) _inboxWakePolicy.resetStreak();
     // A fresh user text gets a fresh over-window auto-continuation budget.
     _overWindowAutoResumed = false;
     _clearError();
