@@ -75,6 +75,22 @@ String scrubVolatile(String text) {
   return out;
 }
 
+/// Volatile CHROME ROWS dropped from both twins before any structural
+/// comparison: omp's network update notice ("Update Available / New
+/// version N.N.N is available. Run: omp update") is present only when the
+/// registry answers — a re-capture with no pending update must produce
+/// the SAME signature as one with it, and fa never renders the notice at
+/// all (issue #810 review).
+final List<RegExp> kVolatileRowPatterns = [
+  RegExp(r'\bUpdate Available\b'),
+  RegExp(r'\bNew version \S+ is available\b'),
+];
+
+/// Drops every row matching a [kVolatileRowPatterns] pattern.
+List<String> dropVolatileRows(List<String> screenLines) => screenLines
+    .where((l) => !kVolatileRowPatterns.any((p) => p.hasMatch(l)))
+    .toList(growable: false);
+
 /// Finds the status-bar row inside [screenLines] (a rendered `.txt` twin,
 /// ANSI-stripped): the non-empty line with the most separator-glyph runs.
 /// The bar is the densest separator row by construction — transcript text
@@ -208,24 +224,27 @@ List<String> _segmentFindings(
 /// Structural diff of two rendered twin screens for one shared surface.
 ///
 /// Returns human-readable findings; empty list = structurally equal.
+/// Volatile chrome rows (network update notices) are dropped from both
+/// sides before any comparison — see [dropVolatileRows].
 /// Compared per surface:
 /// - row count of the chrome region (non-empty trimmed lines);
 /// - status-bar segment signature ([barSignature]) when a bar row exists
-///   on both sides;
-/// - separator glyph runs per line (the band's glyph inventory).
+///   on both sides.
 List<String> structuralDiff(
   List<String> faScreen,
   List<String> ompScreen, {
   required String surfaceName,
   required String separatorGlyph,
 }) {
+  final fa = dropVolatileRows(faScreen);
+  final omp = dropVolatileRows(ompScreen);
   final findings = <String>[];
-  final rowFinding = _chromeRowCountFinding(faScreen, ompScreen, surfaceName);
+  final rowFinding = _chromeRowCountFinding(fa, omp, surfaceName);
   if (rowFinding != null) findings.add(rowFinding);
   findings.addAll(
     _statusBarFindings(
-      faScreen,
-      ompScreen,
+      fa,
+      omp,
       surfaceName: surfaceName,
       separatorGlyph: separatorGlyph,
     ),

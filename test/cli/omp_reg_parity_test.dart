@@ -64,6 +64,14 @@ void main() {
       isNotNull,
       reason: 'capture date is part of the provenance',
     );
+    expect(
+      provenance['omp_version'],
+      isNotNull,
+      reason:
+          'provenance must pin the captured omp build version — the '
+          'capture snapshots it off the boot frame before the banner '
+          'scrolls away (issue #810 review)',
+    );
     final scenarios = (provenance['scenarios'] as List).cast<String>();
     expect(scenarios, contains('welcome/idle boot screen'));
     expect(scenarios, contains('status bar (default preset, boot)'));

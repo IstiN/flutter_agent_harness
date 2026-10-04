@@ -185,16 +185,40 @@ void main() {
     // frame a generous settle instead of a fa-specific banner marker.
     await harness.settle(settleMs: 1500, timeout: const Duration(seconds: 120));
 
+    // Snapshot the omp version OFF THE BOOT FRAME (issue #810 review):
+    // the "omp vN.N.N" banner renders at boot and scrolls away with the
+    // first turn — reading it at the END (as the first capture did)
+    // yielded provenance.omp_version = null. Asserted non-null HERE so a
+    // future capture fails loudly instead of committing a null version.
+    final bootVersion = _ompVersion(harness.screenText);
+    expect(
+      bootVersion,
+      isNotNull,
+      reason:
+          'omp version banner not on the boot frame — capture it during '
+          'boot (before the first turn scrolls it away), issue #810 review',
+    );
+
     final outDir = '$repoRoot/test/integration/screenshots/omp_ref';
     Directory(outDir).createSync(recursive: true);
 
     // 1. Welcome/idle boot screen.
     await harness.screenshot(outDir, '01_welcome_idle');
-    // 2. Status bar, default preset: the same boot frame — the bar is part
-    //    of every screen; the twin exists so the bar diff has a dedicated
-    //    fixture.
+    // 2. Status bar, default preset: DELIBERATELY the same boot frame —
+    //    the bar is part of every screen; this twin exists so the bar
+    //    diff has a dedicated fixture. The twin-ness is ASSERTED below
+    //    (issue #810 review): a capture that (wrongly) drives a
+    //    different screen for 02 must fail loudly, not silently commit
+    //    a second unrelated fixture.
     await harness.screenshot(outDir, '02_status_bar_default');
-
+    expect(
+      File('$outDir/02_status_bar_default.txt').readAsStringSync(),
+      File('$outDir/01_welcome_idle.txt').readAsStringSync(),
+      reason:
+          '02_status_bar_default must stay the boot-frame twin of '
+          '01_welcome_idle (the dedicated bar fixture) — capture drove a '
+          'different screen for 02 (issue #810 review)',
+    );
     // 3 (captured second in file order but driven FIRST): fenced code
     // block — a pure-text turn. omp at the pinned commit dispatches the
     // FIRST turn of a session with an EMPTY toolset (async native tool
@@ -279,7 +303,7 @@ void main() {
       const JsonEncoder.withIndent('  ').convert({
         'omp_commit': ompCommit,
         'captured_at': DateTime.now().toUtc().toIso8601String(),
-        'omp_version': _ompVersion(harness.screenText),
+        'omp_version': bootVersion,
         'bun_version': bunVersion,
         'mock_model': 'mockcap/$kRegModelId',
         'scenarios': [

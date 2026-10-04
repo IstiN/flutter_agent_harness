@@ -97,6 +97,39 @@ void main() {
       expect(splitBarSegments('  a $glyph $glyph  b ', glyph), ['a', 'b']);
     });
 
+    test('dropVolatileRows scrubs the network update notice', () {
+      // omp paints "Update Available / New version N.N.N is available"
+      // only when the registry answers — a re-capture with no pending
+      // update must produce the SAME signature (issue #810 review).
+      final withNotice = [
+        '──────────',
+        ' Update Available',
+        ' New version 18.6.0 is available. Run: omp update',
+        '──────────',
+        ' pi $glyph Test Model $glyph 23% ',
+      ];
+      final withoutNotice = [
+        '──────────',
+        '──────────',
+        ' pi $glyph Test Model $glyph 23% ',
+      ];
+      expect(dropVolatileRows(withNotice), [
+        '──────────',
+        '──────────',
+        ' pi $glyph Test Model $glyph 23% ',
+      ]);
+      expect(
+        structuralDiff(
+          withoutNotice,
+          withNotice,
+          surfaceName: 'boot',
+          separatorGlyph: glyph,
+        ),
+        isEmpty,
+        reason: 'the notice must not count as chrome drift',
+      );
+    });
+
     test('structuralDiff reports chrome and bar drift, silent on parity', () {
       final ompScreen = [
         'banner',
