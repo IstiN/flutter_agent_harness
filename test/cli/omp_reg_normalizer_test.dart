@@ -102,22 +102,20 @@ void main() {
       // only when the registry answers — a re-capture with no pending
       // update must produce the SAME signature (issue #810 review).
       final withNotice = [
-        '──────────',
+        '╰──────┴─────', // layout rule w/ corner glyphs — STAYS counted
+        ' Tip: You can /btw to ask a side question',
+        '──────────────────',
         ' Update Available',
         ' New version 18.6.0 is available. Run: omp update',
-        '──────────',
+        '──────────────────',
         ' pi $glyph Test Model $glyph 23% ',
       ];
       final withoutNotice = [
-        '──────────',
-        '──────────',
+        '╰──────┴─────',
+        ' Tip: You can /btw to ask a side question',
         ' pi $glyph Test Model $glyph 23% ',
       ];
-      expect(dropVolatileRows(withNotice), [
-        '──────────',
-        '──────────',
-        ' pi $glyph Test Model $glyph 23% ',
-      ]);
+      expect(dropVolatileRows(withNotice), withoutNotice);
       expect(
         structuralDiff(
           withoutNotice,

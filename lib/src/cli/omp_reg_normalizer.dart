@@ -86,10 +86,31 @@ final List<RegExp> kVolatileRowPatterns = [
   RegExp(r'\bNew version \S+ is available\b'),
 ];
 
-/// Drops every row matching a [kVolatileRowPatterns] pattern.
-List<String> dropVolatileRows(List<String> screenLines) => screenLines
-    .where((l) => !kVolatileRowPatterns.any((p) => p.hasMatch(l)))
-    .toList(growable: false);
+/// A notice-wrapping horizontal rule: ONLY `─` box glyphs and whitespace,
+/// full-width-ish (issue #810 review, re-review). Distinct from layout
+/// rules that carry corner glyphs (`╰`, `┴`, …) — those stay counted.
+final RegExp _fullWidthRule = RegExp(r'^[\s─]{8,}$');
+
+/// Drops notice rows AND their wrapping rules: the whole notice block
+/// goes, so a re-capture cannot leak rule-count churn into the signature
+/// if omp redraws the notice's framing (issue #810 re-review).
+List<String> dropVolatileRows(List<String> screenLines) {
+  final dropped = <bool>[
+    for (final l in screenLines) kVolatileRowPatterns.any((p) => p.hasMatch(l)),
+  ];
+  for (var i = 0; i < screenLines.length; i++) {
+    if (!dropped[i]) continue;
+    for (final j in [i - 1, i + 1]) {
+      if (j >= 0 && j < screenLines.length && !dropped[j]) {
+        if (_fullWidthRule.hasMatch(screenLines[j])) dropped[j] = true;
+      }
+    }
+  }
+  return [
+    for (var i = 0; i < screenLines.length; i++)
+      if (!dropped[i]) screenLines[i],
+  ];
+}
 
 /// Finds the status-bar row inside [screenLines] (a rendered `.txt` twin,
 /// ANSI-stripped): the non-empty line with the most separator-glyph runs.

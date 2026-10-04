@@ -32,30 +32,33 @@ import 'package:flutter_agent_harness/src/cli/omp_reg_scenarios.dart';
 /// Documented fa↔omp REG drift baseline (issue #810 review): the two CLIs
 /// render genuinely DIFFERENT chrome on the shared surfaces — fa's boot
 /// screen is a compact composer frame (13 chrome rows) where omp paints a
-/// boxed welcome pane + tip banner (25 rows after the normalizer drops
-/// the network update notice); fa's status bar carries 5 segments where
-/// omp fuses cwd+gauge into 3; fa renders turn chrome as 1–2 fence/border
-/// rows where omp paints full tool-card borders (11/21). The parity leg
-/// pins this EXACT set: any NEW finding — or a baseline number moving on
-/// either side — fails loudly, so real chrome drift surfaces instead of
-/// silently shipping (issue #810 review).
-const kRegKnownBootFindings = <String, List<String>>{
-  '01_welcome_idle': [
-    '01_welcome_idle: chrome row count differs — fa 13, omp 25',
-    '01_welcome_idle: segment count differs — fa 5 '
-        '[<word:1>, <path>, <word:1>, <path>, <pct>], '
+/// boxed welcome pane + tip banner (23 rows after the normalizer drops
+/// the whole network update notice block); fa's status bar carries 5
+/// segments where omp fuses cwd+gauge into 3; fa renders turn chrome as
+/// 1–2 fence/border rows where omp paints full tool-card borders (11/21).
+///
+/// The parity leg pins these as FACTS, not prose (issue #810 re-review):
+/// the finding COUNT (a new kind of drift = fail) plus the numbers and
+/// segment signatures each finding must carry. Wording of the normalizer's
+/// finding strings stays free — the flutter leg must not couple to it.
+const kRegKnownBootDrift = <String, (int, String, String)>{
+  // (finding count, chrome-count fragment, segment-count fragment)
+  '01_welcome_idle': (
+    2,
+    'fa 13, omp 23',
+    'fa 5 [<word:1>, <path>, <word:1>, <path>, <pct>], '
         'omp 3 [<word:0>, <word:2>, <word:4>]',
-  ],
-  '02_status_bar_default': [
-    '02_status_bar_default: chrome row count differs — fa 13, omp 25',
-    '02_status_bar_default: segment count differs — fa 5 '
-        '[<word:1>, <path>, <word:1>, <path>, <pct>], '
+  ),
+  '02_status_bar_default': (
+    2,
+    'fa 13, omp 23',
+    'fa 5 [<word:1>, <path>, <word:1>, <path>, <pct>], '
         'omp 3 [<word:0>, <word:2>, <word:4>]',
-  ],
+  ),
 };
 
 /// Documented turn-chrome inventory drift per surface:
-/// (fa rows, omp rows). Same policy as [kRegKnownBootFindings].
+/// (fa rows, omp rows). Same policy as [kRegKnownBootDrift].
 const kRegKnownTurnChrome = <String, (int, int)>{
   '03_tool_call': (1, 11),
   '04_code_block': (2, 21),
@@ -157,6 +160,37 @@ tui:
     separatorGlyph: glyph,
   );
 
+  /// Asserts the boot surface shows EXACTLY the documented drift and
+  /// nothing new: finding count, then the numbers + segment signatures
+  /// each finding must carry. Facts, not prose — the normalizer's
+  /// wording stays free to change (issue #810 re-review).
+  void expectDocumentedBootDrift(String name) {
+    final findings = bootDiff(name);
+    final (count, chromeFrag, segFrag) = kRegKnownBootDrift[name]!;
+    expect(
+      findings,
+      hasLength(count),
+      reason:
+          '$name: NEW chrome drift vs the documented REG baseline '
+          '(expected $count findings) — reconcile fa/omp rendering or '
+          're-baseline the documented set (issue #810 review): $findings',
+    );
+    expect(
+      findings.join('\n'),
+      contains(chromeFrag),
+      reason:
+          '$name: the chrome-row count fragment drifted from the '
+          'documented baseline (issue #810 review)',
+    );
+    expect(
+      findings.join('\n'),
+      contains(segFrag),
+      reason:
+          '$name: the bar segment signature drifted from the documented '
+          'baseline (issue #810 review)',
+    );
+  }
+
   testWidgets(
     nameFor('welcome/idle + status bar: fa screen matches omp reference'),
     (tester) async {
@@ -165,22 +199,8 @@ tui:
       await harness.screenshot(faShots!.path, '01_welcome_idle');
       await harness.screenshot(faShots!.path, '02_status_bar_default');
 
-      expect(
-        bootDiff('01_welcome_idle'),
-        equals(kRegKnownBootFindings['01_welcome_idle']),
-        reason:
-            'NEW welcome/idle chrome drift vs the documented REG '
-            'baseline — reconcile fa/omp rendering or re-baseline the '
-            'documented set (issue #810 review)',
-      );
-      expect(
-        bootDiff('02_status_bar_default'),
-        equals(kRegKnownBootFindings['02_status_bar_default']),
-        reason:
-            'NEW status-bar chrome drift vs the documented REG '
-            'baseline — reconcile fa/omp rendering or re-baseline the '
-            'documented set (issue #810 review)',
-      );
+      expectDocumentedBootDrift('01_welcome_idle');
+      expectDocumentedBootDrift('02_status_bar_default');
       _pixelCompareBand(faShots!.path, '02_status_bar_default', repoRoot);
 
       // Mirror the omp capture session exactly (issue #918): the reference
