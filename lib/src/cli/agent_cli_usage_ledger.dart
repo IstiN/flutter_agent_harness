@@ -11,12 +11,13 @@ part of 'agent_cli.dart';
 extension AgentCliUsageLedger on AgentCli {
   /// Appends the segment-start marker: ONE per owner process per session
   /// (I1: the fold derives segment boundaries and `resumedCount` from
-  /// these markers). The REPL marks lazily at the first drive
-  /// ([_runPrompt]) so an idle boot/switch adds zero session bytes
-  /// (issue #428 invariant); the headless/serve boots mark eagerly right
-  /// after the lease gate (they always drive). A VIEWER must never append
-  /// to the owner's chain. Failures are swallowed — the ledger is a
-  /// best-effort artifact, never a boot blocker.
+  /// these markers). Every drive path lands here lazily at the FIRST drive
+  /// of a session ([_runPrompt] — REPL lines, wire-serve frames) so an
+  /// idle boot/switch adds zero session bytes (issue #428 invariant); the
+  /// headless boot marks eagerly right after the lease gate (it always
+  /// drives, and its drive bypasses [_runPrompt]). A VIEWER must never
+  /// append to the owner's chain. Failures are swallowed — the ledger is
+  /// a best-effort artifact, never a boot blocker.
   Future<void> _markUsageSegmentStart() async {
     if (_viewer != null) return;
     final session = _session;

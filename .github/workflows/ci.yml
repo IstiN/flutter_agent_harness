@@ -2240,7 +2240,14 @@ jobs:
   # `model_request_summary` records and the session chain's record shape —
   # a shape change there breaks the fold even when every regular leg is
   # green, so this suite is a merge gate for trajectory/session/usage
-  # diffs (path-gated like perf-gate; PR-only).
+  # diffs. Gate model (2026-09 dispatch-only CI): this workflow has NO
+  # pull_request trigger — the SM dispatches it on the PR head, so
+  # `github.event_name` is never 'pull_request' and a PR-only `if` would
+  # leave this leg permanently skipped (REG-1 gating nothing). On real PR
+  # events the path classifier narrows it to usage-relevant diffs; on every
+  # other event (main/tags/schedule/release + SM validation dispatches)
+  # the full gate runs, so the suite runs there too. Same latent bug still
+  # pending for perf-gate (issue #303) — flagged in the gh-1243 rework.
   usage-fold:
     name: Usage fold (ledger chain)
     runs-on: ubuntu-latest
@@ -2248,7 +2255,9 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-    if: github.event_name == 'pull_request' && needs.changes.outputs.usagefold == 'true'
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.changes.outputs.usagefold == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1

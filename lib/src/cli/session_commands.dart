@@ -125,9 +125,9 @@ extension on AgentCli {
     await _releaseSessionLease();
     await _claimSessionLease();
     await _printViewerBannerIfAny();
-    // gh-1241: a session switch is a resume — the owner opens a new usage
-    // segment (viewer never appends).
-    await _markUsageSegmentStart();
+    // gh-1241: NO eager marker — a switch that never drives must leave the
+    // resumed chain byte-untouched; the segment opens lazily at the first
+    // drive ([_runPrompt]).
     // Now that `_session` is assigned, the registry source can read the
     // resumed session's `subagent_registry` records. Awaited (issue #332):
     // zombie rows settle before the next prompt can spawn children, and no
@@ -255,8 +255,8 @@ extension on AgentCli {
     await _releaseSessionLease();
     await _claimSessionLease();
     await _printViewerBannerIfAny();
-    // gh-1241: the fresh session's first usage segment.
-    await _markUsageSegmentStart();
+    // gh-1241: NO eager marker — the fresh session's segment opens lazily
+    // at its first drive ([_runPrompt]), keeping an idle boot byte-silent.
     _persistedCount = 0;
     io.writeln("created session '$trimmed'");
   }
