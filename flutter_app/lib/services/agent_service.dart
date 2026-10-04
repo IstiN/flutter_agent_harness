@@ -2175,28 +2175,7 @@ class AgentService extends ChangeNotifier
 
   @override
   void dispose() {
-    if (identical(maybeCurrent, this)) maybeCurrent = null;
-    _disposed = true;
-    // Drop the sleep-prevention assertion (issue #325): best-effort and
-    // fire-and-forget — dispose stays synchronous.
-    unawaited(powerAssertion?.release());
-    // Disposing the service cancels an in-flight run: the agent's idle
-    // watchdog would otherwise outlive the host by minutes (and wedge
-    // widget tests' fake_async invariants on a pending timer).
-    _agent.abort();
-    _agentNetwork?.dispose();
-    _compactExpand?.dispose();
-    if (_subagentManager != null) _scheduledMessages.dispose();
-    _inboxWatchTimer?.cancel();
-    unawaited(_taskCompletionsSub?.cancel());
-    unawaited(_jsAppErrorSub?.cancel());
-    _idleWatchdog?.cancel();
-    _liveActivityEndTimer?.cancel();
-    _sessionWatchTimer?.cancel();
-    fsRevision.dispose();
-    externalSessionRevision.dispose();
-    _trajectory.dispose();
-    dynamicMessages.dispose();
+    _disposeService();
     super.dispose();
   }
 
