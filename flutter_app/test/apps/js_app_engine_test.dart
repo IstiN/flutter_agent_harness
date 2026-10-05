@@ -5,8 +5,10 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:fa/apps/app_preflight.dart' show smokeProbeEngineFactory;
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/apps/js_app_error_channel.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/contact_service.dart';
@@ -2634,6 +2636,189 @@ jsr.render({type: 'text', data: 'full-app'});
       expect(JsAppEngine.emitPayload('text'), isEmpty);
       expect(JsAppEngine.emitPayload(null), isEmpty);
       expect(JsAppEngine.emitPayload(['list']), isEmpty);
+    });
+  });
+
+  group('gh-1164 review hardening (host-side, no live engine)', () {
+    test('computeSourceRevision hashes the WHOLE source tree — a '
+        'helper-file edit re-arms the error gate (review thread 6)', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/demo/manifest.json',
+        '{"id":"demo","name":"Demo"}',
+      );
+      await env.writeFile('apps/demo/widget.js', "import './components/a.js';");
+      await env.writeFile('apps/demo/components/a.js', 'jsr.render({});');
+
+      final rev1 = await JsAppEngine.computeSourceRevision(
+        env,
+        'apps/demo',
+        'widget.js',
+      );
+      expect(rev1, isNotEmpty);
+      expect(rev1, hasLength(64), reason: 'sha256 hex');
+
+      // The entry is untouched — only a HELPER file changed.
+      await env.writeFile(
+        'apps/demo/components/a.js',
+        'jsr.render({type:"text",data:"v2"});',
+      );
+      final rev2 = await JsAppEngine.computeSourceRevision(
+        env,
+        'apps/demo',
+        'widget.js',
+      );
+      expect(rev2, isNot(rev1));
+
+      await env.writeFile(
+        'apps/demo/widget.js',
+        "import './components/a.js'; // v3",
+      );
+      final rev3 = await JsAppEngine.computeSourceRevision(
+        env,
+        'apps/demo',
+        'widget.js',
+      );
+      expect({rev1, rev2, rev3}, hasLength(3));
+    });
+
+    test('computeSourceRevision excludes runtime state (storage/session '
+        'json are not source)', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/manifest.json', '{"id":"demo"}');
+      await env.writeFile('apps/demo/widget.js', 'jsr.render({});');
+      final rev1 = await JsAppEngine.computeSourceRevision(
+        env,
+        'apps/demo',
+        'widget.js',
+      );
+      await env.writeFile('apps/demo/storage.json', '{"score":1}');
+      await env.writeFile('apps/demo/session.json', '{"sessionId":"s1"}');
+      final rev2 = await JsAppEngine.computeSourceRevision(
+        env,
+        'apps/demo',
+        'widget.js',
+      );
+      expect(rev2, rev1, reason: 'runtime state must not re-arm the gate');
+    });
+
+    test('the injected bootstrap emits a stable fingerprint per error '
+        '(review thread 7: dedup does not collapse to message equality)',
+        () {
+      final js = JsAppEngine.faBootstrapJsFor('en');
+      expect(
+        js,
+        contains('fingerprint: __faFingerprint(message, stack)'),
+        reason: 'every faAppError record must carry the fingerprint',
+      );
+      // The normalization strips per-occurrence noise (indices,
+      // timestamps, per-frame layout values) so noisy RAF-loop errors
+      // collapse to ONE dedup key and the circuit breaker can trip.
+      expect(js, contains("replace(/[0-9]+/g, '#')"));
+      expect(js, contains("replace(/0x[0-9a-fA-F]+/g, '#')"));
+    });
+
+    test('live engines join the sibling group; smoke-gate probes never '
+        'do (review thread 4)', () {
+      JsAppInfo app() => JsAppInfo.fromManifest(
+        const {'id': 'demo', 'name': 'Demo'},
+        bundled: false,
+        fallbackId: 'demo',
+      );
+
+      final live = JsAppEngine(
+        app: app(),
+        env: MemoryExecutionEnv(),
+        permissions: const AppPermissions(),
+      );
+      expect(live.joinSiblingGroup, isTrue);
+
+      final probe = smokeProbeEngineFactory(
+        app: app(),
+        env: MemoryExecutionEnv(),
+        permissions: const AppPermissions(),
+      );
+      expect(
+        probe.joinSiblingGroup,
+        isFalse,
+        reason: 'a scratch-env probe must stay out of the process-wide '
+            'live-engine group: its storage writes would otherwise '
+            'reach the real viewports (and vice versa)',
+      );
+    });
+
+    test('reportHostError forwards render-host errors: a local sink owns '
+        'them; otherwise the channel gates + publishes (host-side, feeds '
+        'the CRAP-covered _forwardError path)', () async {
+      JsAppErrorChannel.instance.disposeAndReset();
+      addTearDown(JsAppErrorChannel.instance.disposeAndReset);
+      final notices = <JsAppErrorNotice>[];
+      final sub = JsAppErrorChannel.instance.onDeliver.listen(notices.add);
+      addTearDown(sub.cancel);
+
+      JsAppInfo app() => JsAppInfo.fromManifest(
+        const {'id': 'demo', 'name': 'Demo'},
+        bundled: false,
+        fallbackId: 'demo',
+      );
+      final env = MemoryExecutionEnv();
+
+      // 1. Local sink (the pre-flight probe shape): the event goes to
+      // the sink ONLY — never the app-wide channel.
+      final sunk = <JsAppErrorEvent>[];
+      final probe = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+        errorSink: sunk.add,
+      );
+      addTearDown(() => probe.dispose());
+      probe.reportHostError('tile blew up');
+      expect(sunk, hasLength(1));
+      expect(sunk.single.kind, JsAppErrorKind.render);
+      expect(sunk.single.message, 'tile blew up');
+      expect(notices, isEmpty, reason: 'a local sink owns the error');
+
+      // 2. No sink (the live viewport shape): the channel gates — the
+      // first occurrence publishes; an identical repeat is deduped; past
+      // the breaker threshold the gate silences the key entirely.
+      final live = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+        entryFile: 'tile.js', // non-default entry → the launcher tile
+      );
+      addTearDown(() => live.dispose());
+      live.reportHostError('render blew up');
+      // The channel's broadcast delivery lands on the next event-loop
+      // turns — flush before asserting.
+      for (var i = 0; i < 3; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(notices, hasLength(1));
+      expect(notices.single.appId, 'demo');
+      expect(
+        notices.single.surface,
+        'tile',
+        reason: 'a non-default entry powers the launcher tile surface',
+      );
+      live.reportHostError('render blew up');
+      for (var i = 0; i < 3; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(
+        notices,
+        hasLength(1),
+        reason: 'one report per (app, fingerprint) per source revision',
+      );
+      for (var i = 0; i < JsAppErrorChannel.breakerThreshold + 2; i++) {
+        live.reportHostError('render blew up');
+      }
+      expect(
+        notices,
+        hasLength(1),
+        reason: 'the per-app circuit breaker silences the loop',
+      );
     });
   });
 }

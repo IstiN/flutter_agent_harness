@@ -150,6 +150,9 @@ extension AgentServiceLifecycle on AgentService {
     if (_subagentManager != null) _scheduledMessages.dispose();
     _inboxWatchTimer?.cancel();
     unawaited(_taskCompletionsSub?.cancel());
+    // gh-1164 Part B: the JS-app error channel subscription dies with
+    // the service — a disposed session must never turn a notice.
+    unawaited(_jsAppErrorSub?.cancel());
     _idleWatchdog?.cancel();
     _liveActivityEndTimer?.cancel();
     _sessionWatchTimer?.cancel();
