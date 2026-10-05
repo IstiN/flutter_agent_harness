@@ -65,6 +65,49 @@ List<String> frameContentLines(List<String> viewport) => [
   for (final line in viewport) line.trimRight(),
 ];
 
+/// The shared deadline-poll engine behind [FaCliHarness.waitForText] and
+/// [FaCliHarness.waitForScreen]: polls [matched] every [pollInterval] until
+/// it turns true or [timeout] expires, then returns [onHit]() — waitForText
+/// returns the raw buffer, waitForScreen returns the anchored screen
+/// snapshot it matched on (capture, don't re-read — gh-1049). The
+/// TimeoutException diagnostics carry the current [screenText] and
+/// [rawTail].
+///
+/// Top-level with injectable `now`/`delay` so the timing semantics are
+/// unit-provable without a PTY (same convention as [maskedValueRow]).
+Future<String> pollUntil({
+  required bool Function() matched,
+  required String Function() onHit,
+  required String Function() screenText,
+  required String Function() rawTail,
+  required String what,
+  Duration timeout = const Duration(seconds: 10),
+  Duration pollInterval = const Duration(milliseconds: 50),
+  DateTime Function()? now,
+  Future<void> Function(Duration)? delay,
+}) async {
+  final clock = now ?? DateTime.now;
+  final sleep =
+      delay ?? (Future<void>.delayed as Future<void> Function(Duration));
+  final deadline = clock().add(timeout);
+  while (clock().isBefore(deadline)) {
+    if (matched()) return onHit();
+    await sleep(pollInterval);
+  }
+  // A match landing during the FINAL poll sleep must not time out: the
+  // last in-loop check ran up to one interval before the deadline expired.
+  // CI 2026-10-05 (PTY shard 2/3, pr-1255): the fa_cli boot's `[Model]`
+  // banner painted inside the last 50 ms of the 90 s budget and the
+  // TimeoutException's own screen dump contained it — a false negative.
+  // Re-check once before giving up.
+  if (matched()) return onHit();
+  throw TimeoutException(
+    'Timed out waiting for $what.\n--- screen ---\n'
+    '${screenText()}\n--- raw tail ---\n${rawTail()}',
+    timeout,
+  );
+}
+
 /// Spawns the Fa CLI as a subprocess with a PTY, feeds output to an xterm
 /// terminal emulator, and provides keystroke sending + output capture.
 final class FaCliHarness {
@@ -343,19 +386,17 @@ final class FaCliHarness {
   Future<String> waitForText(
     Pattern pattern, {
     Duration timeout = const Duration(seconds: 10),
-  }) async {
-    final deadline = DateTime.now().add(timeout);
-    while (DateTime.now().isBefore(deadline)) {
-      final output = _rawBuffer.toString();
-      if (output.contains(pattern) || screenText.contains(pattern)) {
-        return output;
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-    }
-    throw TimeoutException(
-      'Timed out waiting for "$pattern" in output.\n--- screen ---\n'
-      '$screenText\n--- raw tail ---\n${_rawTail()}',
-      timeout,
+  }) {
+    return pollUntil(
+      matched: () {
+        final output = _rawBuffer.toString();
+        return output.contains(pattern) || screenText.contains(pattern);
+      },
+      onHit: _rawBuffer.toString,
+      screenText: () => screenText,
+      rawTail: _rawTail,
+      what: '"$pattern" in output',
+      timeout: timeout,
     );
   }
 
@@ -379,17 +420,20 @@ final class FaCliHarness {
   Future<String> waitForScreen(
     Pattern pattern, {
     Duration timeout = const Duration(seconds: 10),
-  }) async {
-    final deadline = DateTime.now().add(timeout);
-    while (DateTime.now().isBefore(deadline)) {
-      final screen = screenText;
-      if (screen.contains(pattern)) return screen;
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-    }
-    throw TimeoutException(
-      'Timed out waiting for "$pattern" on screen.\n--- screen ---\n'
-      '$screenText\n--- raw tail ---\n${_rawTail()}',
-      timeout,
+  }) {
+    // `hit` anchors the EXACT snapshot [matched] accepted — re-reading
+    // screenText in [onHit] would re-sample mid-render (gh-1049).
+    var hit = '';
+    return pollUntil(
+      matched: () {
+        hit = screenText;
+        return hit.contains(pattern);
+      },
+      onHit: () => hit,
+      screenText: () => screenText,
+      rawTail: _rawTail,
+      what: '"$pattern" on screen',
+      timeout: timeout,
     );
   }
 
