@@ -86,16 +86,14 @@ if [ "$with_app" -eq 1 ]; then
   rm -rf browser_ext/panel/app
   mkdir -p browser_ext/panel/app
   cp -R flutter_app/build/web/. browser_ext/panel/app/
-  # Vendored WASI interpreter assets are mobile-only (#1096 AC2): the
-  # assets/wasm/* modules are loaded exclusively through WasiSandboxShell
-  # (env_factory_io.dart — Android/iOS only; every rootBundle.load of
-  # assets/wasm lives there). The web panel compiles env_factory_stub
-  # instead (package:wasm_run needs dart:ffi, uncompilable for browsers)
-  # and runs python/js/sqlite from cdn.jsdelivr.net
-  # (web_interpreters_web.dart); the extension's live interpreter is the
-  # vendored pyodide in offscreen/ (interpreters.js), not python.wasm.
-  # So this ~47MB never loads in the panel — drop it from the bundle.
-  rm -rf browser_ext/panel/app/assets/assets/wasm
+  # Shared prune (scripts/prune_flutter_assets.sh — same rulebook as every
+  # packaging surface): assets/wasm is mobile-only (WasiSandboxShell via
+  # env_factory_io.dart; the panel compiles env_factory_stub and runs
+  # python/js/sqlite from cdn.jsdelivr.net, live interpreter = vendored
+  # pyodide in offscreen/), plus the pub package's test fixtures
+  # (coach_anny.glb, 5.6 MB) — dead weight here.
+  bash scripts/prune_flutter_assets.sh browser_ext/panel/app/assets \
+    assets/wasm packages/js_widget_runtime/test
   # CWS single-manifest rule (#291): the Flutter web build ships a PWA
   # manifest (panel/app/manifest.json, <link rel=manifest> in its
   # index.html) — the Chrome Web Store hard-rejects any package with more
