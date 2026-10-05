@@ -88,9 +88,14 @@ tui:
       harness.sendText('seed the job board');
       await Future<void>.delayed(const Duration(milliseconds: 150));
       harness.sendEnter();
+      // gh-1164 rework: 40s fired on a loaded shard-2 runner (run
+      // 37248253893 — the screen showed the seed jobs still landing;
+      // fa#1205/gh-671 loaded-runner family). waitForBoot already allows
+      // 90s for the same reason; the file's 5-minute ceiling absorbs the
+      // seed turn without weakening the actual grid assertions below.
       await harness.waitForText(
         'seeds done',
-        timeout: const Duration(seconds: 40),
+        timeout: const Duration(seconds: 90),
       );
       // Let turn 1 fully settle: the probe submit must go through the IDLE
       // submit path (echo into the history), not the busy queue.
