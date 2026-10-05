@@ -83,9 +83,6 @@ vendor/wasm_run_flutter/macos/Frameworks/wasm_run-*.zip
 # Same for the Linux prebuilt runtime: downloaded by the plugin's CMake on
 # first linux build (pulled into the tree by gh-1265 local verification).
 vendor/wasm_run_flutter/linux/wasm_run-*/
-# Same for the Linux prebuilt runtime: downloaded by the plugin's CMake on
-# first linux build (pulled into the tree by gh-1265 local verification).
-vendor/wasm_run_flutter/linux/wasm_run-*/
 
 # Environment secrets
 .env
