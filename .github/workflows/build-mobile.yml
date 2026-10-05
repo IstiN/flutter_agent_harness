@@ -143,6 +143,10 @@ jobs:
           channel: 'stable'
           cache: true
 
+      # gh-1275 AC3: fail fast before any build minute is spent — the full
+      # gate rationale lives in .github/actions/assert-builtin-skills.
+      - uses: ./.github/actions/assert-builtin-skills
+
       # .env is gitignored but declared as a Flutter asset (flutter_dotenv);
       # newer flutter validates assets at build time, so the placeholder must
       # exist BEFORE flutter pub get (issue #368: aot_android_asset_bundle
@@ -380,6 +384,10 @@ jobs:
         with:
           channel: 'stable'
           cache: true
+
+      # gh-1275 AC3: fail fast before any build minute is spent — the full
+      # gate rationale lives in .github/actions/assert-builtin-skills.
+      - uses: ./.github/actions/assert-builtin-skills
 
       # Same placeholder-.env incantation as build-android (issue #368):
       # .env is a declared Flutter asset and newer flutter validates
@@ -626,6 +634,10 @@ jobs:
         run: |
           echo "/opt/homebrew/opt/ruby/bin" >> $GITHUB_PATH
           echo "/opt/homebrew/bin" >> $GITHUB_PATH
+
+      # gh-1275 AC3: fail fast before any build minute is spent — the full
+      # gate rationale lives in .github/actions/assert-builtin-skills.
+      - uses: ./.github/actions/assert-builtin-skills
 
       # gh-798 AC1/AC2: fail FAST before any build minute is spent when the
       # version about to be stamped is not above ASC's approved floor

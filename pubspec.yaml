@@ -68,6 +68,9 @@ dev_dependencies:
   fa_llm_mock:
     path: packages/fa_llm_mock
   lints: ^6.1.0
+  # scripts/ (verify_builtin_skills, gen_prompts) and test/ resolve skill
+  # dir names via p.basename — declare the transitive dep directly.
+  path: ^1.9.0
   pty2: ^0.5.3
   test: ^1.31.2
   xterm:
