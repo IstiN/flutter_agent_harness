@@ -10,6 +10,11 @@ cov-*/
 site/app/
 # library package: lockfile is not committed
 pubspec.lock
+# ...except the app: flutter_app is publish_to: none, so its lockfile IS
+# committed and enforced in CI (flutter pub get --enforce-lockfile) —
+# gh-1265. Must stay after the `pubspec.lock` rule above (last match wins
+# in a single .gitignore).
+!flutter_app/pubspec.lock
 *.iml
 .idea/
 .vscode/
@@ -27,6 +32,9 @@ vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/
 # files that are both checked in and ignored, and its parser skips `!` rules.)
 vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework/
 vendor/wasm_run_flutter/macos/Frameworks/wasm_run-*.zip
+# Same for the Linux prebuilt runtime: downloaded by the plugin's CMake on
+# first linux build (pulled into the tree by gh-1265 local verification).
+vendor/wasm_run_flutter/linux/wasm_run-*/
 
 # Environment secrets
 .env
@@ -46,47 +54,6 @@ GoogleService-Info.plist
 install_local.sh
 test_tool_call.sh
 /tool/
-
-# Visual-test screen-text twins (contain timestamps, regenerated each run).
-test/integration/screenshots/*.txt
-# Dart / Flutter
-.dart_tool/
-build/
-coverage/
-# The Pages workflow assembles the Flutter web demo here; never commit it.
-site/app/
-# library package: lockfile is not committed
-pubspec.lock
-*.iml
-.idea/
-.vscode/
-.DS_Store
-.repro/
-
-# Vendor dependencies (local wasm_run fork) - keep source, ignore build artifacts
-vendor/**/target/
-vendor/**/build/
-vendor/**/.dart_tool/
-# The prebuilt iOS framework is downloaded from pub cache by scripts/setup_vendor_ios.sh
-vendor/wasm_run_flutter/ios/Frameworks/WasmRun.xcframework/
-# The prebuilt macOS framework is downloaded on first build by wasm_run_flutter.
-# (Ignore the downloaded artifacts only, not the whole dir: pub.dev rejects
-# files that are both checked in and ignored, and its parser skips `!` rules.)
-vendor/wasm_run_flutter/macos/Frameworks/WasmRun.xcframework/
-vendor/wasm_run_flutter/macos/Frameworks/wasm_run-*.zip
-
-# Environment secrets
-.env
-.env.*
-!.env.example
-!.env.sample
-
-# Firebase configuration files (contain API keys and project IDs).
-# Populate from your own Firebase project download; never commit.
-google-services.json
-GoogleService-Info.plist
-# firebase_options.dart is checked in for CI builds (public API keys only).
-
 
 # Visual-test screen-text twins (contain timestamps, regenerated each run).
 test/integration/screenshots/*.txt

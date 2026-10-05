@@ -341,7 +341,7 @@ jobs:
           printf 'OPENROUTER_API_KEY=\nMODEL_ID=\nBASE_URL=\nHUGGINGFACE_TOKEN=\n' > flutter_app/.env
           cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
           dart pub get --directory=office_addin/dart
-          cd flutter_app && flutter pub get
+          cd flutter_app && flutter pub get --enforce-lockfile
 
       - name: dart analyze (full)
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
@@ -849,7 +849,7 @@ jobs:
         working-directory: flutter_app
         run: touch .env
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
-      - run: cd flutter_app && flutter pub get
+      - run: cd flutter_app && flutter pub get --enforce-lockfile
       # The harness spawns `dart bin/fah.dart` FROM THE REPO ROOT; without
       # a root package config it resolves the package to the pub-cache copy
       # (an old published build) and the CLI dies before the first frame.
@@ -1124,7 +1124,7 @@ jobs:
       # compile (Firebase init is skipped for YOUR_* values at runtime).
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
-      - run: cd flutter_app && flutter pub get
+      - run: cd flutter_app && flutter pub get --enforce-lockfile
 
       # gh-1232 AC2: the core static-gates size guard only scans
       # lib/test/example/bin — flutter_app/lib was never measured in CI
@@ -1196,7 +1196,7 @@ jobs:
 
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
-      - run: cd flutter_app && flutter pub get
+      - run: cd flutter_app && flutter pub get --enforce-lockfile
 
       # Golden suite is intentionally NOT here: goldens are host-locked
       # (same macOS host renders them differently across minor SDKs — see the
@@ -1492,7 +1492,7 @@ jobs:
 
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
-      - run: cd flutter_app && flutter pub get
+      - run: cd flutter_app && flutter pub get --enforce-lockfile
 
       # The harness spawns `dart bin/fah.dart` FROM THE REPO ROOT; without
       # a root package config that resolves package:flutter_agent_harness
@@ -1566,7 +1566,7 @@ jobs:
 
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
-      - run: cd flutter_app && flutter pub get
+      - run: cd flutter_app && flutter pub get --enforce-lockfile
 
       - name: flutter build web
         # E3: warnings (including the Wasm dry-run diagnostics) are allowed;
@@ -1660,7 +1660,7 @@ jobs:
 
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
-      - run: cd flutter_app && flutter pub get
+      - run: cd flutter_app && flutter pub get --enforce-lockfile
 
       - name: flutter build apk (debug)
         run: cd flutter_app && flutter build apk --debug --flavor store
@@ -1764,7 +1764,7 @@ jobs:
           unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
           ls -la "$DEST/WasmRun.xcframework"
 
-      - run: cd flutter_app && flutter pub get
+      - run: cd flutter_app && flutter pub get --enforce-lockfile
 
       - name: flutter build ios (debug, unsigned)
         # E2: when the failure is in the CocoaPods layer, name the fix
@@ -1869,7 +1869,7 @@ jobs:
           unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
           ls -la "$DEST/WasmRun.xcframework"
 
-      - run: cd flutter_app && flutter pub get
+      - run: cd flutter_app && flutter pub get --enforce-lockfile
 
       # The macOS Podfile bundles the LiteRT-LM companion dylibs via a
       # Runner script phase that fails on a fresh runner ("Could not find
@@ -2782,7 +2782,9 @@ jobs:
 
       - name: Example app pub get
         working-directory: flutter_app
-        run: flutter pub get
+        # gh-1265 AC2: resolve against the committed lockfile; a
+        # pubspec/lockfile skew must fail the PR, not float.
+        run: flutter pub get --enforce-lockfile
 
       # Same placeholders as the Pages job (both files are gitignored).
       - name: Placeholder .env for the example app

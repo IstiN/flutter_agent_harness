@@ -1,0 +1,20 @@
+# Stub override for gh-1265 — see VENDORED.md.
+name: flutter_inappwebview_windows
+description: >-
+  Stub that replaces the published flutter_inappwebview_windows federated
+  implementation in this app. Declares NO flutter plugin section, so the
+  plugin tooling registers no native Windows code. The app never uses
+  flutter_inappwebview on Windows (fa_webview_host.dart's
+  createFaWebViewHost() returns null there — the renderer shows a
+  placeholder instead), and the real implementation's C++17 sources
+  (compiled without /await) drag in <experimental/coroutine>, which MSVC
+  14.51 (VS 18, the windows-latest runner image) rejects with C2338
+  STL1011 — it red-lit the nightly windows release leg alongside linux.
+publish_to: none
+version: 0.7.0-beta.3
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+# Intentionally NO `flutter:` section — a `plugin:` entry here would put the
+# native implementation back into every windows build.
