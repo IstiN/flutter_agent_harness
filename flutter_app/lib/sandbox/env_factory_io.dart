@@ -14,6 +14,7 @@ import 'package:fa/sandbox/fs_persistence_stub.dart'
     if (dart.library.html) 'fs_persistence_web.dart';
 import 'package:fa/sandbox/memory_shell.dart';
 import 'package:fa/sandbox/persistent_web_env.dart';
+import 'package:fa/sandbox/sandbox_host_paths.dart';
 import 'package:fa/sandbox/wasm_shell.dart';
 
 /// Creates the execution environment for the current platform.
@@ -171,11 +172,17 @@ final class SandboxedExecutionEnv
   final ExecutionEnv _delegate;
   final String _sandboxRoot;
 
+  /// Lazily-built matcher sharing the "inside the sandbox host dir"
+  /// convention with the WASM shell (gh-1274 review) so the two mappings
+  /// cannot drift apart.
+  SandboxHostRoot? _hostRoot;
+
   String _map(String path) {
-    if (path == _sandboxRoot || path.startsWith('$_sandboxRoot/')) {
-      return path;
-    }
-    if (path.startsWith('/')) return '$_sandboxRoot$path';
+    final root = _sandboxRoot;
+    if (root.isEmpty) return path;
+    final hostRoot = _hostRoot ??= SandboxHostRoot(root);
+    if (hostRoot.contains(path)) return path;
+    if (path.startsWith('/')) return '$root$path';
     return path;
   }
 

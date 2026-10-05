@@ -26,6 +26,13 @@ const _exempt = <String, String>{
   // 'lib/services/foo.dart': 'behind the fah/foo MethodChannel stub pair —
   //   the web stub is selected by conditional import, this file never
   //   compiles for web.',
+  'lib/sandbox/sandbox_host_paths.dart':
+      'io-only — every importer is in the dart:io sandbox cluster '
+      '(env_factory_io.dart, selected by the dart.library.io conditional '
+      'in env_factory.dart; wasm_shell.dart, which is itself dart:io-only '
+      'and unreachable from the web env_factory_stub.dart/memory_shell). '
+      'The Platform.isLinux read only picks the default for case '
+      'folding; tests override it via caseInsensitive.',
 };
 
 void main() {
