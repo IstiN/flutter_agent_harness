@@ -239,7 +239,7 @@ module PlayListingSync
   def clear_images!(http, package_name, edit_id, locale, type, auth)
     res = http.request(:Delete,
                        "#{API_ROOT}/#{package_name}/edits/#{edit_id}/listings/" \
-                       "#{locale}/images/#{type}", headers: auth)
+                       "#{locale}/#{type}", headers: auth)
     return if [200, 204, 404].include?(res[:status])
 
     raise "edits.images.delete failed for #{locale}/#{type} " \
@@ -250,7 +250,7 @@ module PlayListingSync
     res = http.request(
       :Post,
       "#{API_ROOT}/#{package_name}/edits/#{edit_id}/listings/#{locale}/" \
-      "images/#{type}?uploadType=media",
+      "#{type}?uploadType=media",
       headers: auth, body: File.binread(path), content_type: "image/png"
     )
     unless res[:status] == 200
@@ -264,7 +264,7 @@ module PlayListingSync
   def list_images!(http, package_name, edit_id, locale, type, auth)
     res = http.request(:Get,
                        "#{API_ROOT}/#{package_name}/edits/#{edit_id}/listings/" \
-                       "#{locale}/images/#{type}", headers: auth)
+                       "#{locale}/#{type}", headers: auth)
     unless res[:status] == 200
       raise "edits.images.list failed for #{locale}/#{type} " \
             "(HTTP #{res[:status]}): #{res[:body][0, 300]}"

@@ -57,14 +57,14 @@ if $PROGRAM_NAME == __FILE__
         { status: 200, body: { id: "edit1" }.to_json }
       when method == :Get && url.end_with?("/listings")
         { status: 200, body: { listings: @remote_languages.map { |l| { language: l } } }.to_json }
-      when method == :Delete && (m = url.match(%r{/listings/([^/]+)/images/([^/]+)\z}))
+      when method == :Delete && (m = url.match(%r{/listings/([^/]+)/([^/?]+)\z}))
         @store.delete([m[1], m[2]])
         { status: 204, body: "" }
-      when method == :Post && (m = url.match(%r{/listings/([^/]+)/images/([^/]+)\?uploadType=media\z}))
+      when method == :Post && (m = url.match(%r{/listings/([^/]+)/([^/?]+)\?uploadType=media\z}))
         sha = @upload_sha_override || Digest::SHA256.hexdigest(body.to_s)
         @store[[m[1], m[2]]] << sha
         { status: 200, body: { sha256: sha }.to_json }
-      when method == :Get && (m = url.match(%r{/listings/([^/]+)/images/([^/]+)\z}))
+      when method == :Get && (m = url.match(%r{/listings/([^/]+)/([^/?]+)\z}))
         images = @store[[m[1], m[2]]].map { |s| { sha256: s } }
         # Post-commit drift injection: the committed listing keeps an image
         # the sync never uploaded (the stale-state failure mode #947 gates).
@@ -193,7 +193,7 @@ if $PROGRAM_NAME == __FILE__
     [%w[en-US phoneScreenshots], %w[ru-RU phoneScreenshots],
      %w[en-US tenInchScreenshots], %w[ru-RU tenInchScreenshots],
      %w[en-US sevenInchScreenshots], %w[ru-RU sevenInchScreenshots]].each do |locale, type|
-      raise "FAIL: #{locale}/#{type} not cleared" unless deletes.any? { |u| u.include?("/listings/#{locale}/images/#{type}") }
+      raise "FAIL: #{locale}/#{type} not cleared" unless deletes.any? { |u| u.include?("/listings/#{locale}/#{type}") }
     end
     ok("stale sets cleared for every locale × multi-slot type (ru-RU tenInch, sevenInch, stale en shot)")
 
@@ -265,13 +265,13 @@ if $PROGRAM_NAME == __FILE__
     summary = PlayListingSync.sync_and_verify!(metadata_dir: metadata_dir, json_key: service_account_json,
                                                package_name: "dev.fa1.app", http: http)
     raise "FAIL: stale de-DE phone screenshot must be cleared" unless
-      http.calls.any? { |m, u| m == :Delete && u.include?("/listings/de-DE/images/phoneScreenshots") }
+      http.calls.any? { |m, u| m == :Delete && u.include?("/listings/de-DE/phoneScreenshots") }
     raise "FAIL: de-DE icon must not be deleted or uploaded" unless
-      http.calls.none? { |m, u| m != :Get && u.include?("/listings/de-DE/images/icon") }
+      http.calls.none? { |m, u| m != :Get && u.include?("/listings/de-DE/icon") }
     raise "FAIL: de-DE featureGraphic must not be deleted or uploaded" unless
-      http.calls.none? { |m, u| m != :Get && u.include?("/listings/de-DE/images/featureGraphic") }
+      http.calls.none? { |m, u| m != :Get && u.include?("/listings/de-DE/featureGraphic") }
     raise "FAIL: verify must not read de-DE single-image slots" unless
-      http.calls.none? { |m, u| m == :Get && u =~ %r{/listings/de-DE/images/(icon|featureGraphic)\z} }
+      http.calls.none? { |m, u| m == :Get && u =~ %r{/listings/de-DE/(icon|featureGraphic)\z} }
     ok("console-only locale: screenshot slots cleared, single images untouched")
   end
 
