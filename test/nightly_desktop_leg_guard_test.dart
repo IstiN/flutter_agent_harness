@@ -159,6 +159,106 @@ void main() {
       );
     });
 
+    test('packaging scripts resolve flutter_app with --enforce-lockfile', () {
+      // AC2 drift hole (PR #1268 review thread 1): the workflow YAML steps
+      // are all converted, but the packaging scripts they invoke resolve
+      // flutter_app deps themselves — this guard only parses workflow `run`
+      // steps, so a plain `flutter pub get` inside a script floats silently
+      // (worst case: build-macos.yml's release job, where the script's
+      // resolve is the ONLY flutter_app resolution → green release build
+      // with floated deps).
+      for (final script in [
+        'scripts/build_browser_ext.sh',
+        'scripts/build_office_addin.sh',
+      ]) {
+        final body = read(script);
+        final invocations = RegExp(r'flutter pub get[^&|\n\\]*')
+            .allMatches(body)
+            .map((m) => m.group(0)!)
+            .toList();
+        expect(
+          invocations,
+          isNotEmpty,
+          reason: '$script must resolve flutter_app dependencies via '
+              '`flutter pub get` before building the web app.',
+        );
+        for (final invocation in invocations) {
+          expect(
+            invocation,
+            contains('--enforce-lockfile'),
+            reason: '$script resolves flutter_app deps outside the '
+                'workflow guard — on a pubspec/lockfile skew it would '
+                'silently regenerate the lockfile instead of failing '
+                '(gh-1265 AC2).',
+          );
+        }
+      }
+    });
+
+    test('root .gitignore has no duplicated rule blocks', () {
+      // PR #1268 review thread 2: the root .gitignore carried its first
+      // block twice; the `!flutter_app/pubspec.lock` negation only worked
+      // by accident of that duplication (last match wins). After the
+      // dedupe it must be the single copy, with the negation after the
+      // one remaining `pubspec.lock` rule.
+      final lines = read('.gitignore')
+          .split('\n')
+          .map((l) => l.trim())
+          .where((l) => l.isNotEmpty && !l.startsWith('#'))
+          .toList();
+      final seen = <String>{};
+      final duplicates = <String>[];
+      for (final line in lines) {
+        if (!seen.add(line)) duplicates.add(line);
+      }
+      expect(
+        duplicates,
+        isEmpty,
+        reason: 'root .gitignore contains duplicated rules: $duplicates — '
+            'collapse the doubled block (pure deletion) so the '
+            '!flutter_app/pubspec.lock negation cannot be silently '
+            're-broken by a future dedupe.',
+      );
+      // The negation must follow EVERY bare `pubspec.lock` ignore rule.
+      final raw = read('.gitignore').split('\n');
+      final negationIndex = raw.lastIndexWhere(
+        (l) => l.trim() == '!flutter_app/pubspec.lock',
+      );
+      expect(negationIndex, greaterThanOrEqualTo(0));
+      for (var i = 0; i < raw.length; i++) {
+        final line = raw[i].trim();
+        if (line == 'pubspec.lock' ||
+            (line.startsWith('/') && line.substring(1) == 'pubspec.lock')) {
+          expect(
+            i,
+            lessThan(negationIndex),
+            reason: 'a `pubspec.lock` ignore rule at line ${i + 1} sits '
+                'AFTER the !flutter_app/pubspec.lock negation — last '
+                'match wins, so the app lockfile would be ignored again.',
+          );
+        }
+      }
+    });
+
+    test('build-mobile.yml fails fast on deterministic lockfile skew', () {
+      // PR #1268 review thread 3: the iOS leg's bounded retry loop exists
+      // for transient runner/network failures — but a pubspec/lockfile
+      // skew fails identically on every attempt, costing ~30s per red leg
+      // and blaming the network. The loop must detect the skew signature
+      // in the failed resolve's output and exit immediately.
+      final body = read('.github/workflows/build-mobile.yml');
+      expect(body, contains('for attempt in 1 2 3'));
+      expect(body, contains('flutter pub get --enforce-lockfile'));
+      expect(
+        body,
+        contains(RegExp(r'Unable to satisfy .+pubspec')),
+        reason: 'the retry loop must match the deterministic '
+            'lockfile-skew signature ("Unable to satisfy ... using ... '
+            'pubspec.lock") in the failed output and fail fast instead '
+            'of retrying (gh-1265 AC2).',
+      );
+    });
+
     for (final workflow in enforcedWorkflows) {
       test('$workflow resolves flutter_app with --enforce-lockfile', () {
         final offending = stepsOf(workflow)
