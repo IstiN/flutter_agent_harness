@@ -31,6 +31,8 @@
 #
 # Self-test (synthetic fixtures, no flutter needed):
 #   scripts/check_lockfiles_selftest.sh   — wired into ci.yml Static gates
+#                                           AND re-run in the dart legs via
+#                                           test/scripts/check_lockfiles_gate_test.dart
 #
 # Environment overrides (used by the selftest; normal runs need nothing):
 #   FAH_REPO_ROOT       repo root (default: script's grandparent)
