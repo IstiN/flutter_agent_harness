@@ -14,6 +14,7 @@
 /// the full suite this PR must keep green.
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:test/test.dart';
