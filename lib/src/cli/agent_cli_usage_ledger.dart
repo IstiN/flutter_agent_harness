@@ -71,12 +71,21 @@ extension AgentCliUsageLedger on AgentCli {
         expectedHash: ledger.chainHash,
       );
       if (existing == null) {
-        await writer.write(
-          dir,
-          ledger,
-          tmpSuffix: config.processId?.toString(),
-          forbiddenSecrets: _usageLedgerForbiddenSecrets(),
-        );
+        // E2: a fingerprint mismatch can also mean the on-disk artifact
+        // is a NEWER fold than our chain view (a concurrent writer got
+        // further along the chain before we flushed). Never clobber a
+        // fold that consumed more chain records than ours — the slowest
+        // writer must not win; the next close over the full chain
+        // rebuilds the complete ledger (E3/I6).
+        final onDisk = await writer.read(dir);
+        if (onDisk == null || onDisk.chainRecords <= ledger.chainRecords) {
+          await writer.write(
+            dir,
+            ledger,
+            tmpSuffix: config.processId?.toString(),
+            forbiddenSecrets: _usageLedgerForbiddenSecrets(),
+          );
+        }
       }
       final closed = ledger.segments.lastOrNull;
       if (closed != null) {
@@ -99,6 +108,12 @@ extension AgentCliUsageLedger on AgentCli {
       return;
     }
     final metadata = await session.getMetadata();
+    // Same guard the flush path has: with no chain location there is
+    // nothing to fold — say so instead of failing on readTextLines('').
+    if (metadata.id.isEmpty || metadata.path.isEmpty) {
+      io.writeln('usage: no session chain');
+      return;
+    }
     final dir = UsageLedgerWriter.usageDirFor(
       sessionsRoot: config.sessionRoot,
       sessionId: metadata.id,

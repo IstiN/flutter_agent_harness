@@ -183,12 +183,20 @@ final class UsageChainScanner {
     }
     // Close the trailing segment: a dangling summary still counts. A
     // header-only chain still yields ONE (empty) segment so the ledger
-    // schema stays stable.
+    // schema stays stable. A marker that closed a contentful segment
+    // opens a new one — when nothing followed it (the first drive after
+    // a resume errored before any request record landed), the empty
+    // trailing segment is trimmed, not materialized: otherwise
+    // resumedCount inflates (I1 noise) and the flush's fa-tokens line
+    // reports a zero-count segment labeled "reported".
     if (pending case final summary?) {
       segments.lastOrNull?.requests.add(summary.fallback());
       pending = null;
     }
     if (segments.isEmpty) segments.add(_ScanSegment());
+    while (segments.length > 1 && !segments.last.hasContent) {
+      segments.removeLast();
+    }
     return UsageChainScan(
       segments: [
         for (final segment in segments)

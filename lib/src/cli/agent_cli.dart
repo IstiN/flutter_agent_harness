@@ -1004,6 +1004,12 @@ class AgentCli {
   @visibleForTesting
   Future<void> tuiPickSessionForTest(String key) => _tuiPickSession(key);
 
+  /// Test seam: swaps the active session so command paths can be driven
+  /// over a session shape the real repo never produces (e.g. empty
+  /// metadata path — the usage-ledger command guards).
+  @visibleForTesting
+  set sessionForTest(Session? session) => _session = session;
+
   /// Session-correlation env vars injected into bash tool executions (see
   /// [SessionVarsExecutionEnv]). Read live per exec: the session is created
   /// after tool wiring, and `/provider`/`/model` switches must show up in

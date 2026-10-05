@@ -37,11 +37,14 @@ enum UsageSource {
 
   /// Parses a wire name; tolerates unknown values by treating them as
   /// [UsageSource.estimated] — forward-compat: an older reader must not
-  /// mislabel unseen future sources as provider-reported.
+  /// mislabel unseen future sources as provider-reported, so the
+  /// conservative fallback is `estimated`, never `mixed` (which would
+  /// overstate provenance as partly reported).
   factory UsageSource.parse(String? wire) => switch (wire) {
     'reported' => UsageSource.reported,
     'estimated' || null => UsageSource.estimated,
-    _ => UsageSource.mixed,
+    'mixed' => UsageSource.mixed,
+    _ => UsageSource.estimated,
   };
 }
 

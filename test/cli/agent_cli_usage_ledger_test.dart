@@ -156,6 +156,51 @@ void main() {
   );
 
   test(
+    'a stale writer never clobbers a concurrent writer\'s newer fold (E2)',
+    () async {
+      final first = cliFor([
+        textTurn('one', usage: reportedUsage(input: 10, output: 5)),
+      ]);
+      expect(await first.runHeadless('go'), 0);
+      final sessions = await JsonlSessionRepo(
+        fs: env,
+        sessionsRoot: '/sessions',
+      ).list();
+      final sessionId = sessions.single.id;
+
+      // Simulate a concurrent writer that already folded a LONGER chain
+      // (a later resume got further along): the artifact's fingerprint
+      // no longer matches any short-chain fold, and its record count
+      // claims a fold over more records than the stale process saw.
+      final onDisk = (await readLedger(sessionId))!;
+      final concurrent = UsageLedger(
+        sessionId: onDisk.sessionId,
+        segments: onDisk.segments,
+        total: onDisk.total,
+        chainRecords: onDisk.chainRecords + 10,
+        chainHash: 'sha256:concurrent-writer',
+      );
+      await env.writeFile(
+        '/sessions/$sessionId/usage.json',
+        '${jsonEncode(concurrent.toJson())}\n',
+      );
+
+      // The stale process resumes and flushes its fold over the shorter
+      // chain it saw: it must SKIP the write, not clobber the newer
+      // artifact (last writer wins, never slowest writer wins).
+      final second = cliFor([
+        textTurn('two', usage: reportedUsage(input: 20, output: 10)),
+      ], sessionName: sessionId);
+      expect(await second.runHeadless('again'), 0);
+
+      final after = await readLedger(sessionId);
+      expect(after, isNotNull);
+      expect(after!.chainRecords, concurrent.chainRecords);
+      expect(after.chainHash, 'sha256:concurrent-writer');
+    },
+  );
+
+  test(
     '/usage rebuild re-folds the chain onto disk (rebuild command path)',
     () async {
       final cli = cliFor([textTurn('ok', usage: reportedUsage())]);
@@ -200,4 +245,61 @@ void main() {
       expect(ledger!.total.totals.requests, 1);
     },
   );
+
+  test(
+    '/usage rebuild with an empty chain path says so instead of failing '
+    'the read (flush-path guard parity)',
+    () async {
+      // A session whose metadata carries no chain path is unreachable
+      // through the real repo — the test seam swaps one in after boot.
+      final cli = cliFor(const []);
+      final run = cli.run();
+      await waitForIt(() => !cli.isBusy);
+      cli.sessionForTest = Session(_EmptyChainPathStorage());
+      io.sendLine('/usage rebuild');
+      await waitForIt(() => io.out.toString().contains('usage: no session chain'));
+      io.sendLine('/exit');
+      await run;
+      expect(io.out.toString(), contains('usage: no session chain'));
+    },
+  );
+}
+
+/// A storage whose metadata has no chain path: the shape the usage-ledger
+/// guards defend against (unreachable through JsonlSessionRepo).
+final class _EmptyChainPathStorage implements SessionStorage {
+  @override
+  Future<SessionMetadata> getMetadata() async => SessionMetadata(
+    id: '',
+    createdAt: DateTime.utc(2024),
+    cwd: '/work',
+    path: '',
+  );
+
+  @override
+  Future<String?> getLeafId() async => null;
+
+  @override
+  Future<void> setLeafId(String? leafId) async {}
+
+  @override
+  Future<String> createEntryId() async => 'fake-id';
+
+  @override
+  Future<void> appendEntry(SessionRecord record) async {}
+
+  @override
+  Future<SessionRecord?> getEntry(String id) async => null;
+
+  @override
+  Future<List<SessionRecord>> findEntries(String type) async => const [];
+
+  @override
+  Future<String?> getLabel(String id) async => null;
+
+  @override
+  Future<List<SessionRecord>> getPathToRoot(String? leafId) async => const [];
+
+  @override
+  Future<List<SessionRecord>> getEntries() async => const [];
 }

@@ -130,4 +130,25 @@ void main() {
       expect(fresh.resumedCount, 0);
     });
   });
+
+  group('UsageSource.parse', () {
+    test('maps known wire names', () {
+      expect(UsageSource.parse('reported'), UsageSource.reported);
+      expect(UsageSource.parse('estimated'), UsageSource.estimated);
+      expect(UsageSource.parse('mixed'), UsageSource.mixed);
+      expect(UsageSource.parse(null), UsageSource.estimated);
+    });
+
+    test(
+      'unknown future wire names degrade to estimated, never mixed (doc/code parity)',
+      () {
+        // Forward-compat: a future writer adding e.g. "source":"metered"
+        // must NOT make an older reader overstate provenance as mixed
+        // (reported+estimated) — the conservative fallback is estimated.
+        expect(UsageSource.parse('metered'), UsageSource.estimated);
+        expect(UsageSource.parse(''), UsageSource.estimated);
+        expect(UsageSource.parse('Reported'), UsageSource.estimated);
+      },
+    );
+  });
 }
