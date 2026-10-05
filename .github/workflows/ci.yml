@@ -2698,7 +2698,8 @@ jobs:
 
       # gh-1280 NG2: «compiles» is not «works» — every release arch boots its
       # binary before the asset is archived/uploaded (same smoke as
-      # binaries-pr).
+      # binaries-pr). The usage marker (cli_help.dart "USAGE") discriminates
+      # the real CLI help from a binary that merely prints something.
       - name: Smoke — the binary runs (fa --help)
         shell: bash
         run: |
@@ -2706,7 +2707,7 @@ jobs:
           [ "${{ matrix.os }}" = "windows" ] && bin="build/out/bundle/bin/fa.exe"
           out=$("$bin" --help)
           echo "$out"
-          [ -n "$out" ] || { echo "fa --help produced no output"; exit 1; }
+          grep -qi "usage" <<<"$out" || { echo "fa --help did not print usage"; exit 1; }
 
       - name: Archive bundle
         shell: bash

@@ -42,10 +42,8 @@ Set<String> matrixLegs(YamlMap job) {
       .toSet();
 }
 
-int _stepIndex(YamlMap job, String stepName) =>
-    (job['steps'] as YamlList).indexWhere(
-      (s) => (s as YamlMap)['name'] == stepName,
-    );
+int _stepIndex(YamlMap job, String stepName) => (job['steps'] as YamlList)
+    .indexWhere((s) => (s as YamlMap)['name'] == stepName);
 
 void main() {
   final ci = jobsOf('.github/workflows/ci.yml');
@@ -118,9 +116,10 @@ void main() {
           lessThan(upload),
           reason: 'a dead binary fails before upload',
         );
-        final run =
-            ((job['steps'] as YamlList)[smoke] as YamlMap)['run'].toString();
+        final run = ((job['steps'] as YamlList)[smoke] as YamlMap)['run']
+            .toString();
         expect(run, contains('--help'));
+        expect(run, contains('-qi "usage"'));
         expect(run, contains('exit 1'));
       },
     );
