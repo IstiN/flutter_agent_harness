@@ -2749,7 +2749,7 @@ jsr.render({type: 'text', data: 'full-app'});
 
     test('reportHostError forwards render-host errors: a local sink owns '
         'them; otherwise the channel gates + publishes (host-side, feeds '
-        'the CRAP-covered _forwardError path)', () {
+        'the CRAP-covered _forwardError path)', () async {
       JsAppErrorChannel.instance.disposeAndReset();
       addTearDown(JsAppErrorChannel.instance.disposeAndReset);
       final notices = <JsAppErrorNotice>[];
