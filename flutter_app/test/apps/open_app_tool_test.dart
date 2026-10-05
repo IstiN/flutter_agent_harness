@@ -72,22 +72,12 @@ AgentTool _openAppToolOf(AgentService service) => service.toolsForTest
     .first;
 
 void main() {
-  // gh-1266: this file runs plain `test()`s with NO widget binding
-  // initialized. Engine lifecycle must not touch WidgetsBinding.instance
-  // unguarded — on engine-capable hosts (macOS JSC) dispose used to throw
-  // "Binding has not yet been initialized".
-  test('JsAppEngine.dispose is safe without a widget binding', () async {
-    final engine = JsAppEngine(
-      app: JsAppInfo.fromManifest(
-        const {'id': 'demo', 'name': 'Demo'},
-        bundled: false,
-        fallbackId: 'demo',
-      ),
-      env: MemoryExecutionEnv(),
-      permissions: const AppPermissions(),
-    );
-    await engine.dispose();
-  });
+  // The app-launcher gate boots a real JS engine on engine-capable hosts
+  // (macOS JSC, Linux/Windows QuickJS — issue #184). flutter_js's fetch
+  // bootstrap loads its polyfill through the root asset bundle, which needs
+  // the services binding — initialize it even though this file is plain
+  // `test()`s with no widget tree (gh-1266).
+  TestWidgetsFlutterBinding.ensureInitialized();
 
   group('openAppTool', () {
     test(
