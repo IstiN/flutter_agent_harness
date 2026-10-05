@@ -23,7 +23,7 @@ void main() {
   // awaiting the boot FIRST (the suite-wide pattern) so every window below
   // starts from a booted TUI — plus screen polling for the painted-row
   // contract (#550/#557) and longer wait windows that cost nothing while
-  // green. gh-1250 re-hardened: even post-boot, the full pre-check path
+  // green. gh-1252 re-hardened: even post-boot, the full pre-check path
   // (turn tail + settles) measured ~44s on a loaded CI runner, so the
   // scripted reminder delay must dominate it — now 90s (see below).
   test('a scheduled follow-up shows on top of the working row, persists '
@@ -43,7 +43,7 @@ void main() {
     // Turn 1: the scripted answer schedules a follow-up 90s out. The boot
     // is paid first, but the whole pre-check path — boot frame, the
     // scheduling turn's tail, and the settle waits — still ran ~44 s on a
-    // loaded CI runner (3 distinct-SHA reds, gh-1250 window): the old 20s
+    // loaded CI runner (3 distinct-SHA reds, gh-1252 window): the old 20s
     // reminder fired and delivered BEFORE the `· next in` check began
     // sampling. 90s dwarfs that path so the pending-window asserts below
     // always sample a live record; the fire wait's own 90s budget still
