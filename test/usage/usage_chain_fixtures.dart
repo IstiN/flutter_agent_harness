@@ -115,10 +115,8 @@ String userLine(int n, {String text = 'do the thing'}) => jsonEncode({
 /// A non-message, non-custom record (checkpoint/label/...): the scanner
 /// ignores it for token sums but its timestamp still stamps the current
 /// segment's `closedAt` (chain "last contributing record").
-String otherRecordLine(int n, {String type = 'checkpoint'}) => jsonEncode({
-  ..._recordBase(n),
-  'type': type,
-});
+String otherRecordLine(int n, {String type = 'checkpoint'}) =>
+    jsonEncode({..._recordBase(n), 'type': type});
 
 /// A giant blob record the scanner must skip WITHOUT decoding
 /// (base64-shaped payload, like a wire dump).
