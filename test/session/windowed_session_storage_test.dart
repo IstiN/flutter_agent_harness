@@ -475,8 +475,11 @@ void main() {
           chunkRecords: 5,
         );
         // Jump mid-file: the tail (e5..e9) now sits BELOW the window and
-        // the below-count is unknown until an edge is walked.
-        await windowed.jumpToRecord('e2');
+        // the below-count is unknown until an edge is walked. The jump
+        // chunk is bounded (defaultChunkRecords=200 would readAround the
+        // whole 10-record file, swallow the tail into the window, and the
+        // ingest would rightly take the tail path instead).
+        await windowed.jumpToRecord('e2', maxRecords: 5);
         expect(windowed.countBelow, isNull);
 
         // An external writer appends BELOW the window.
@@ -498,7 +501,7 @@ void main() {
         expect(ingest.delta, isEmpty);
 
         // The remembered offset makes the appended record jumpable.
-        final branch = await windowed.jumpToRecord('e10');
+        final branch = await windowed.jumpToRecord('e10', maxRecords: 5);
         expect(idsOf(branch), contains('e10'));
       },
     );
