@@ -44,6 +44,16 @@
         37236232271,
         37211438713
       ]
+    },
+    {
+      "file": "test/integration/secret_sheet_test.dart",
+      "test": "TUI secret sheet (issue #97) IT-placeholder: a typed name char replaces the suggestion; Esc cancels",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1283",
+      "since": "2026-10-05",
+      "runs": [
+        37297674933,
+        37268915954
+      ]
     }
   ]
 }
