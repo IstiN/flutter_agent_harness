@@ -68,6 +68,7 @@ final class FaChatModelConfig {
     this.maxTokens = fallbackMaxTokens,
     this.supportsImages,
     this.providerId,
+    this.contextWindowExplicit = false,
   });
 
   /// Provider adapter kind (fa_ui's endpoint pickers always produce
@@ -86,6 +87,15 @@ final class FaChatModelConfig {
   /// Context window reported to the agent loop (drives overflow/compaction
   /// heuristics).
   final int contextWindow;
+
+  /// Whether [contextWindow] was RECORDED (an endpoint `/models` report
+  /// or a host-resolved concrete value) rather than riding the fallback
+  /// default: hosts resolving the window through
+  /// `resolveAppContextWindow` treat a stored value equal to the fallback
+  /// constant as "unknown" unless this vouches it was explicit (gh-1077
+  /// review thread 3 — a genuine 200000 report must not be upgraded past
+  /// the provider's real window).
+  final bool contextWindowExplicit;
 
   /// Output-token cap reported to the agent loop.
   final int maxTokens;

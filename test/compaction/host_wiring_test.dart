@@ -252,11 +252,61 @@ void main() {
     });
 
     test('a stored value equal to the fallback means "unknown" — catalog '
-        'wins', () {
+        'wins (the picker-default heuristic)', () {
       expect(
         resolveAppContextWindow(providerKind: 'google', storedWindow: 200000),
         1000000,
       );
+    });
+
+    test('an EXPLICIT stored value equal to the fallback still wins over '
+        'a larger catalog window (review thread 3)', () {
+      // A genuine endpoint /models report of exactly 200000 for a
+      // provider whose catalog entry is larger must NOT be upgraded —
+      // that window overestimate is the original gh-1077 failure mode.
+      // The caller vouches the value was recorded (not a constructor
+      // default), so the fallback-equality heuristic steps aside.
+      expect(
+        resolveAppContextWindow(
+          providerKind: 'google',
+          storedWindow: 200000,
+          storedWindowExplicit: true,
+        ),
+        200000,
+      );
+    });
+
+    test('an explicit stored value wins for unknown providers too', () {
+      expect(
+        resolveAppContextWindow(
+          providerKind: 'totally-custom',
+          storedWindow: 200000,
+          storedWindowExplicit: true,
+        ),
+        200000,
+      );
+      expect(
+        resolveAppContextWindow(
+          providerKind: 'totally-custom',
+          storedWindow: 5000,
+          storedWindowExplicit: true,
+        ),
+        5000,
+      );
+    });
+
+    test('a non-positive stored window never wins, explicit or not', () {
+      for (final stored in [0, -100]) {
+        expect(
+          resolveAppContextWindow(
+            providerKind: 'google',
+            storedWindow: stored,
+            storedWindowExplicit: true,
+          ),
+          1000000,
+          reason: 'stored: $stored',
+        );
+      }
     });
 
     test('a null stored window falls through to the catalog', () {

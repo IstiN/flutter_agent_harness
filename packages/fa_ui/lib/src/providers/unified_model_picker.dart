@@ -28,6 +28,7 @@ final class _ModelEntry {
     required this.contextWindow,
     required this.maxTokens,
     this.kind,
+    this.contextWindowExplicit = false,
   });
 
   final String provider;
@@ -37,6 +38,14 @@ final class _ModelEntry {
   final String modelId;
   final int contextWindow;
   final int maxTokens;
+
+  /// Whether [contextWindow] was RECORDED (an endpoint `/models` report)
+  /// rather than riding the fallback default: hosts resolve the window
+  /// through `resolveAppContextWindow`, which treats a stored value equal
+  /// to the fallback constant as "unknown" unless the caller vouches it
+  /// was explicit (gh-1077 review thread 3 — a genuine 200000 report must
+  /// not be upgraded past the provider's real window).
+  final bool contextWindowExplicit;
 
   /// The source entry's persisted identity ([CustomProvider.kind]) — wins
   /// over URL matching in the save path, mirroring the fetch hint.
@@ -322,6 +331,11 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
             apiKey: key,
             modelId: id,
             contextWindow: windows[id] ?? fallbackContextWindow,
+            // An endpoint-reported window is a RECORDED value even when
+            // it equals the fallback constant — it must survive the
+            // host's resolveAppContextWindow round trip without a
+            // catalog upgrade (gh-1077 review thread 3).
+            contextWindowExplicit: windows[id] != null,
             maxTokens: caps[id] ?? fallbackMaxTokens,
             kind: provider.kind,
           ),
@@ -414,6 +428,7 @@ class _UnifiedModelPickerPageState extends State<UnifiedModelPickerPage> {
           baseUrl: entry.baseUrl,
           apiKey: entry.apiKey,
           contextWindow: entry.contextWindow,
+          contextWindowExplicit: entry.contextWindowExplicit,
           maxTokens: entry.maxTokens,
           supportsImages: modelIdSuggestsVision(entry.modelId),
           providerId: entry.providerId,

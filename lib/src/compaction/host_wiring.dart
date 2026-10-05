@@ -68,8 +68,12 @@ final class CompactionHostWiring {
 
   /// What is left of [window] after the host's fixed request overhead
   /// (system prompt / tool instructions). The CLI carries none (0); the
-  /// app subtracts its measured on-device overhead. This — not [window] —
-  /// is what the compaction thresholds are scaled to and gated on.
+  /// app subtracts its measured on-device overhead. The compaction
+  /// thresholds are scaled to this; the compaction GATE, however,
+  /// compares the full-request estimate (which already prices the
+  /// overhead in) against [window] — everything is charged exactly once
+  /// (review thread 1: gating the request estimate on this shrunk window
+  /// would subtract the system prompt twice).
   final int conversationWindow;
 
   /// Compaction thresholds ([CompactionSettings.forWindow] of
@@ -188,13 +192,23 @@ CompactionHostWiring resolveCliCompactionWiring({
 /// value; E1: this is the documented answer for unknown/custom providers
 /// with no catalog entry).
 ///
-/// A stored value equal to the fallback constant means "nothing was
-/// known" (both the pickers and the persisted configs use the constant as
-/// their default), so it does not suppress the catalog lookup.
-int resolveAppContextWindow({String? providerKind, int? storedWindow}) {
+/// A stored value equal to the fallback constant usually means "nothing
+/// was known" (both the pickers and the persisted configs use the
+/// constant as their default), so it does not suppress the catalog
+/// lookup. [storedWindowExplicit] lifts that ambiguity: the caller vouches
+/// the value was RECORDED (an endpoint `/models` report persisted through
+/// the connection record), so it wins even when it equals the constant —
+/// a genuine 200000 report must not be upgraded past the provider's real
+/// window (review thread 3: the overestimate is the original gh-1077
+/// failure mode).
+int resolveAppContextWindow({
+  String? providerKind,
+  int? storedWindow,
+  bool storedWindowExplicit = false,
+}) {
   if (storedWindow != null &&
       storedWindow > 0 &&
-      storedWindow != fallbackContextWindow) {
+      (storedWindowExplicit || storedWindow != fallbackContextWindow)) {
     return storedWindow;
   }
   final catalog = providerKind == null

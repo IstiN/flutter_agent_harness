@@ -273,15 +273,19 @@ extension CompactionWindowSizing on AgentService {
     if (conversationWindow <= 0) return false;
     final settings = wiring.settings;
     // The same request-size basis as the loop's over-window guard and the
-    // CLI's compaction gate: transcript estimate PLUS the system-prompt /
-    // tool-schema overhead when no provider-usage anchor prices them in —
-    // the threshold must trip on what the next request actually carries.
+    // CLI's compaction gate: estimateRequestTokens prices the system
+    // prompt and tool schemas INTO the numerator, so the denominator is
+    // the FULL effective window — everything is charged exactly once.
+    // Gating this numerator on conversationWindow (window − overhead)
+    // would subtract the system overhead a second time (review thread 1).
+    // conversationWindow still sizes the AutoCompactor's planning window:
+    // the transcript must fit the space the overhead leaves.
     final transcriptTokens = estimateRequestTokens(
       _agent.state.messages,
       systemPrompt: _agent.state.systemPrompt,
       tools: _agent.state.tools,
     );
-    if (!shouldCompact(transcriptTokens, conversationWindow, settings)) {
+    if (!shouldCompact(transcriptTokens, wiring.window, settings)) {
       return false;
     }
     // The whole transcript fits in the kept region: compaction could not
