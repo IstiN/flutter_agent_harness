@@ -104,10 +104,16 @@ Future<List<String>> builtinSkillSourceViolations(
       continue;
     }
     final bytes = file.lengthSync();
-    if (bytes < minBytes) {
+    if (bytes == 0 || (await file.readAsString()).trim().isEmpty) {
+      violations.add(
+        'built-in skill "$name": prompts/skills/$name/SKILL.md ships '
+        'EMPTY — directory structure without content (gh-1275)',
+      );
+    } else if (bytes < minBytes) {
       violations.add(
         'built-in skill "$name": prompts/skills/$name/SKILL.md is '
-        '$bytes bytes, below the $minBytes-byte floor',
+        '$bytes bytes, below the $minBytes-byte floor — a '
+        'frontmatter-only stub is not a usable skill',
       );
     }
   }

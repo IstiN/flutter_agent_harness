@@ -143,6 +143,18 @@ jobs:
           channel: 'stable'
           cache: true
 
+      # gh-1275 AC3: fail fast before any build minute is spent if a
+      # built-in skill would ship without a non-empty SKILL.md — the
+      # 1.0.512 empty-skill-dirs incident (structure packaged, content
+      # lost). The SAME gate runs on every PR via
+      # test/skills/builtin_skill_packaging_guard_test.dart, so it
+      # cannot rot silently between releases.
+      - name: Assert built-in skills packaged (gh-1275 AC3)
+        run: |
+          set -euo pipefail
+          dart pub get
+          dart run scripts/verify_builtin_skills.dart
+
       # .env is gitignored but declared as a Flutter asset (flutter_dotenv);
       # newer flutter validates assets at build time, so the placeholder must
       # exist BEFORE flutter pub get (issue #368: aot_android_asset_bundle
@@ -379,6 +391,16 @@ jobs:
         with:
           channel: 'stable'
           cache: true
+
+      # gh-1275 AC3: fail fast before any build minute is spent if a
+      # built-in skill would ship without a non-empty SKILL.md (the
+      # 1.0.512 empty-skill-dirs incident). Same gate on every PR via
+      # test/skills/builtin_skill_packaging_guard_test.dart.
+      - name: Assert built-in skills packaged (gh-1275 AC3)
+        run: |
+          set -euo pipefail
+          dart pub get
+          dart run scripts/verify_builtin_skills.dart
 
       # Same placeholder-.env incantation as build-android (issue #368):
       # .env is a declared Flutter asset and newer flutter validates
@@ -623,6 +645,17 @@ jobs:
         run: |
           echo "/opt/homebrew/opt/ruby/bin" >> $GITHUB_PATH
           echo "/opt/homebrew/bin" >> $GITHUB_PATH
+
+      # gh-1275 AC3: fail fast before any build minute is spent if a
+      # built-in skill would ship without a non-empty SKILL.md — the
+      # 1.0.512 empty-skill-dirs incident this platform reported. Same
+      # gate on every PR via
+      # test/skills/builtin_skill_packaging_guard_test.dart.
+      - name: Assert built-in skills packaged (gh-1275 AC3)
+        run: |
+          set -euo pipefail
+          dart pub get
+          dart run scripts/verify_builtin_skills.dart
 
       # gh-798 AC1/AC2: fail FAST before any build minute is spent when the
       # version about to be stamped is not above ASC's approved floor
