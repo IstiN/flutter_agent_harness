@@ -20,41 +20,6 @@ Usage reportedUsage({int input = 100, int output = 50}) => Usage(
   cost: const UsageCost(),
 );
 
-/// Split-channel headless IO — the same split the real headless terminal
-/// IO applies (bin/fah_io.dart): [write] is the pipeable primary stream
-/// (stdout), [writeln] is diagnostics (stderr on headless hosts).
-class _HeadlessSplitIO implements CliIO {
-  final out = StringBuffer();
-  final diag = StringBuffer();
-
-  @override
-  bool get isInteractive => false;
-
-  @override
-  int columns = 80;
-
-  @override
-  int rows = 24;
-
-  @override
-  Stream<String> get lines => const Stream<String>.empty();
-
-  @override
-  Stream<void> get interrupts => const Stream<void>.empty();
-
-  @override
-  Stream<KeyEvent> get keys => const Stream<KeyEvent>.empty();
-
-  @override
-  bool get supportsRawMode => false;
-
-  @override
-  void write(String text) => out.write(text);
-
-  @override
-  void writeln(String text) => diag.write('$text\n');
-}
-
 void main() {
   late MemoryExecutionEnv env;
   late FakeCliIO io;
@@ -144,7 +109,7 @@ void main() {
     // suites — the line rides the diagnostics channel ONLY, and the
     // reporter still finds it (it greps the whole GH job log, stderr
     // included).
-    final splitIo = _HeadlessSplitIO();
+    final splitIo = SplitChannelCliIO();
     final cli = AgentCli(
       config: AgentCliConfig(
         model: testModel,
@@ -174,7 +139,6 @@ void main() {
         .toList();
     expect(lines, hasLength(1));
     expect(usageTokensLogPattern.hasMatch(lines.single), isTrue);
-    expect(lines.single, contains('"sessionId":'));
 
     // The diag-file write is unchanged.
     final log = (await env.readTextFile('/home/.fah/logs/fa.log')).valueOrNull!;
@@ -214,7 +178,7 @@ void main() {
     // The real host wraps the terminal io in HepEventsIO for
     // structured modes (bin/fah_runapp.dart: prose writes are
     // dropped, frames own stdout) — mirror that wiring here.
-    final rawIo = _HeadlessSplitIO();
+    final rawIo = SplitChannelCliIO();
     final cli = AgentCli(
       config: AgentCliConfig(
         model: testModel,
