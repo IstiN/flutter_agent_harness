@@ -1264,21 +1264,26 @@ final class _CliArgValues {
   }
 }
 
-/// The `fa session` subcommand (issue #198): tree-grouped session listing.
+/// The `fa session` subcommand (issue #198): tree-grouped session listing;
+/// gh-1073 adds the `repair` verb for bloated ledger surgery.
 ///
 /// `list` prints every session in the shared root — the tree view (children
 /// nested under their parent) by default, the legacy flat list under
 /// `--flat`; `--json` emits one NDJSON row per session with the additive
-/// `agent`/`parent` fields for scripts.
+/// `agent`/`parent` fields for scripts. `repair <sessionId|path>` rewrites
+/// a bloated session file dropping the append-only custom ledgers
+/// (`--dry-run` counts only).
 final class SessionCliCommand {
   /// Creates a [SessionCliCommand].
   const SessionCliCommand({
     required this.verb,
     this.json = false,
     this.flat = false,
+    this.repairTarget,
+    this.dryRun = false,
   });
 
-  /// The subcommand verb. Only `list` exists today.
+  /// The subcommand verb (`list` or `repair`).
   final String verb;
 
   /// `--json`: NDJSON rows instead of the rendered tree.
@@ -1286,11 +1291,20 @@ final class SessionCliCommand {
 
   /// `--flat`: the legacy flat listing, no nesting.
   final bool flat;
+
+  /// `repair <sessionId|path>`: the session id, session name, or a direct
+  /// `.jsonl` path to repair.
+  final String? repairTarget;
+
+  /// `repair --dry-run`: count what would be dropped, write nothing.
+  final bool dryRun;
 }
 
-const String _sessionUsage = 'usage: fa session list [--json] [--flat]';
+const String _sessionUsage =
+    'usage: fa session list [--json] [--flat]\n'
+    '       fa session repair <sessionId|path> [--dry-run]';
 
-const Set<String> sessionVerbs = {'list'};
+const Set<String> sessionVerbs = {'list', 'repair'};
 
 CliArgsResult _parseSessionArgs(List<String> args) {
   if (args.contains('--help') || args.contains('-h')) {
@@ -1306,19 +1320,57 @@ CliArgsResult _parseSessionArgs(List<String> args) {
       '(expected ${sessionVerbs.join('|')})\n$_sessionUsage',
     );
   }
+  final (:json, :flat, :dryRun, :repairTarget) = _parseSessionVerbArgs(
+    verb,
+    args,
+  );
+  if (verb == 'repair' && repairTarget == null) {
+    throw CliArgsException(
+      'session repair needs a session id or a .jsonl path\n$_sessionUsage',
+    );
+  }
+  return CliArgs(
+    sessionList: SessionCliCommand(
+      verb: verb,
+      json: json,
+      flat: flat,
+      repairTarget: repairTarget,
+      dryRun: dryRun,
+    ),
+  );
+}
+
+/// The flags and operands after `fa session <verb>`: `--json`/`--flat`
+/// for `list`, `--dry-run` and the single repair target for `repair`.
+/// Anything else is a usage error. Split out of [_parseSessionArgs] so
+/// each piece stays under the CRAP ratchet.
+({
+  bool json,
+  bool flat,
+  bool dryRun,
+  String? repairTarget,
+}) _parseSessionVerbArgs(String verb, List<String> args) {
   var json = false;
   var flat = false;
+  var dryRun = false;
+  String? repairTarget;
   for (var i = 1; i < args.length; i++) {
     switch (args[i]) {
-      case '--json':
+      case '--json' when verb == 'list':
         json = true;
-      case '--flat':
+      case '--flat' when verb == 'list':
         flat = true;
+      case '--dry-run' when verb == 'repair':
+        dryRun = true;
       default:
+        if (verb == 'repair' &&
+            repairTarget == null &&
+            !args[i].startsWith('-')) {
+          repairTarget = args[i];
+          continue;
+        }
         throw CliArgsException('unknown argument: ${args[i]}\n$_sessionUsage');
     }
   }
-  return CliArgs(
-    sessionList: SessionCliCommand(verb: verb, json: json, flat: flat),
-  );
+  return (json: json, flat: flat, dryRun: dryRun, repairTarget: repairTarget);
 }
