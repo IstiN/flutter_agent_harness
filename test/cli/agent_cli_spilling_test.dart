@@ -418,6 +418,10 @@ String _normalize(String jsonl) => jsonl
     )
     .replaceAllMapped(RegExp(r'"timestamp":"[^"]*"'), (_) => '"timestamp":"T"')
     .replaceAllMapped(RegExp(r'"timestamp":\d+'), (_) => '"timestamp":0')
+    // gh-1241: the usage segment-start marker's informational `at` stamp
+    // (like `timestamp`, it is wall-clock per run; the record itself is
+    // identical across the three legacy configs and stays compared).
+    .replaceAllMapped(RegExp(r'"at":"[^"]*"'), (_) => '"at":"T"')
     // Content hashes computed over uuid-carrying text differ per run.
     .replaceAllMapped(
       RegExp(r'"([a-zA-Z]*[hH]ash)":"[0-9a-f]{8,}"'),

@@ -57,6 +57,12 @@ extension AgentCliRun on AgentCli {
     bool isAutoContinue = false,
     List<TuiImageAttachment> images = const [],
   }) async {
+    // gh-1241: the owner opens the usage segment lazily at the FIRST
+    // drive — an idle boot or a `/sessions` switch that never drives must
+    // leave the chain byte-untouched (issue #428 invariant), and the
+    // marker must precede this segment's request records. Per-session
+    // idempotent (auto-continuations and later turns skip).
+    await _markUsageSegmentStart();
     await _beginUserPrompt(isAutoContinue: isAutoContinue);
     try {
       if (images.isEmpty) {
