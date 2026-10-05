@@ -126,11 +126,7 @@ final class UsageChainScanner {
       // current segment (its closedAt, or firstRecordAt fallback).
       state.current().noteRecordAt(timestamp);
       if (type == 'custom') {
-        // A model_request_summary becomes the pending pair for the
-        // assistant message its request produces.
-        if (decoded['customType'] == modelRequestSummaryCustomType) {
-          state.pending = _PendingSummary.fromData(decoded['data']);
-        }
+        _handleSummary(decoded, state);
         continue;
       }
       if (type != 'message') continue;
@@ -160,6 +156,15 @@ final class UsageChainScanner {
       state.current().setOpenedAt(timestamp);
     } else {
       state.closeSegment(timestamp);
+    }
+  }
+
+  /// Handles a `custom` record that is not a segment marker: a
+  /// `model_request_summary` becomes the pending pair for the assistant
+  /// message its request produces.
+  void _handleSummary(Map<String, dynamic> decoded, _ScanState state) {
+    if (decoded['customType'] == modelRequestSummaryCustomType) {
+      state.pending = _PendingSummary.fromData(decoded['data']);
     }
   }
 
