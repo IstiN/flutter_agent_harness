@@ -57,13 +57,16 @@ coverage/
 site/app/
 # library package: lockfile is not committed
 pubspec.lock
+# ...except the app: flutter_app is publish_to: none, so its lockfile IS
+# committed and enforced in CI (flutter pub get --enforce-lockfile) —
+# gh-1265. Must stay after EVERY `pubspec.lock` rule above (last match
+# wins in a single .gitignore).
+!flutter_app/pubspec.lock
 *.iml
 .idea/
 .vscode/
 .DS_Store
 .repro/
-
-# Vendor dependencies (local wasm_run fork) - keep source, ignore build artifacts
 vendor/**/target/
 vendor/**/build/
 vendor/**/.dart_tool/

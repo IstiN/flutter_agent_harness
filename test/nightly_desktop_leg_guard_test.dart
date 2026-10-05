@@ -37,6 +37,7 @@ const enforcedWorkflows = [
   '.github/workflows/build-macos.yml',
   '.github/workflows/browser-ext.yml',
   '.github/workflows/office-addin.yml',
+  '.github/workflows/pages.yml',
 ];
 
 /// Minimal gitignore rule evaluation for the single path we care about:
@@ -54,10 +55,11 @@ bool gitIgnored(String path, String gitignore) {
       negate = true;
       line = line.substring(1);
     }
-    // Directory-only and ** subtleties don't occur for this path; bare and
-    // anchored-name rules cover the repo's lockfile entries.
-    final anchored = line.startsWith('/');
-    final pattern = anchored ? line.substring(1) : line;
+    // Directory-only and ** subtleties don't occur for this path. A pattern
+    // containing a slash (with or without a leading one) is anchored to the
+    // .gitignore's directory; a bare name matches any path segment.
+    final anchored = line.startsWith('/') || line.contains('/');
+    final pattern = line.startsWith('/') ? line.substring(1) : line;
     final matches = anchored
         ? path == pattern || path.startsWith('$pattern/')
         : path.split('/').contains(pattern);

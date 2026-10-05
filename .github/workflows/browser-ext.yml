@@ -143,7 +143,7 @@ jobs:
 
       - name: Build extension with the fa web app
         run: |
-          (cd flutter_app && flutter pub get)
+          (cd flutter_app && flutter pub get --enforce-lockfile)
           bash scripts/build_browser_ext.sh --with-app
 
       - name: Playwright e2e (app branch)

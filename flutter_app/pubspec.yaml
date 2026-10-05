@@ -172,7 +172,8 @@ dependencies:
   video_player: ^2.13.0
 
   # Firebase: analytics across iOS, Android, macOS, and web. EXACT pins:
-  # pubspec.lock is gitignored so CI resolves fresh on every build, and a
+  # pubspec.lock IS now committed (gh-1265) and CI resolves with
+  # --enforce-lockfile, but the exact pins stay as defense in depth — a
   # same-day pub release once pulled firebase_crashlytics 5.2.7 whose
   # firebase-ios-sdk 12.17.0 did not exist on SPM yet — the build died in
   # 'Could not resolve package dependencies' (build 80). Bump deliberately.
@@ -261,6 +262,21 @@ dependency_overrides:
   # the override once upstream fixes the minimum.
   flutter_inappwebview_macos:
     path: ../vendor/flutter_inappwebview_macos
+  # gh-1265: the umbrella's desktop implementations are pulled into every
+  # native desktop build, but the app never uses the plugin on Linux or
+  # Windows (createFaWebViewHost() in lib/apps/fa_webview_host.dart returns
+  # null there — the renderer shows a placeholder). The real impls broke the
+  # nightly desktop release legs: linux hard-requires the WPE WebKit system
+  # library (absent from Ubuntu 24.04 entirely — libwpewebkit-1.0-dev is
+  # jammy-only) and windows C++17-without-/await sources trip MSVC 14.51's
+  # STL1011 on <experimental/coroutine>. Same-name stub overrides with NO
+  # flutter: plugin: section (vendor/*_stub/VENDORED.md) register no native
+  # code, returning both legs to the native surface they had when last
+  # green. Guarded by test/nightly_desktop_leg_guard_test.dart.
+  flutter_inappwebview_linux:
+    path: ../vendor/flutter_inappwebview_linux_stub
+  flutter_inappwebview_windows:
+    path: ../vendor/flutter_inappwebview_windows_stub
 
 flutter:
   uses-material-design: true
