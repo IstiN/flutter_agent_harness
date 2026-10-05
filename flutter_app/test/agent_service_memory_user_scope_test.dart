@@ -11,10 +11,13 @@
 /// session that fell back to `memory_delete` by exact text.
 library;
 
+import 'package:fa/sandbox/fs_persistence.dart';
+import 'package:fa/sandbox/persistent_web_env.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_memory/flutter_agent_memory.dart'
-    show PromptLoader;
+// ignore: implementation_imports — PromptLoader is not exported by the
+// package barrel; setLoader is its documented host-injection hook.
+import 'package:flutter_agent_memory/src/agents/prompts/prompt_loader.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 StreamFunction _singleTextResponse(String text) {
@@ -135,6 +138,53 @@ void main() {
           appMemoryUserRoot(
               configHomeDir: null, desktopHome: null, envCwd: '/cwd'),
           '/cwd/home',
+        );
+      },
+    );
+
+    test(
+      'AC3 backend sweep: the add→flush→reboot→list→search round-trip '
+      'survives the persistent-web store (web / iOS WASM-fallback backend)',
+      () async {
+        final store = InMemoryFsSnapshotStore();
+        final env = await PersistentWebExecutionEnv.restore(
+          MemoryExecutionEnv(cwd: '/'),
+          store,
+        );
+        // Same user-root resolution the service uses on sandboxed
+        // platforms (no OS home → envCwd/home).
+        final controller = MemoryController(
+          env: env,
+          userRoot: appMemoryUserRoot(
+            configHomeDir: null,
+            desktopHome: null,
+            envCwd: env.cwd,
+          ),
+        );
+        const note = 'web backend note about sqlite migration steps';
+        await controller.add(text: note, scope: 'user');
+        await env.flush();
+        env.dispose();
+
+        // Simulate a page reload: a fresh delegate replays the snapshot.
+        final restored = await PersistentWebExecutionEnv.restore(
+          MemoryExecutionEnv(cwd: '/'),
+          store,
+        );
+        addTearDown(restored.dispose);
+        final afterReboot = MemoryController(env: restored, userRoot: '/home');
+
+        final listed = await afterReboot.list(limit: 10);
+        expect(
+          listed.map((e) => e.text),
+          contains(note),
+          reason: 'the note must survive persistence + restore',
+        );
+        final found = await afterReboot.search('sqlite migration');
+        expect(
+          found.map((e) => e.text),
+          contains(note),
+          reason: 'search must rank the restored note for its keywords',
         );
       },
     );
