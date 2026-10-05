@@ -1038,6 +1038,16 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
 
   String _hostPath(String sandboxPath) {
     final host = sandboxHostPath ?? '';
+    // Idempotent for paths already inside the sandbox host directory: the
+    // harness layer hands git/ssh its own *host* cwd (gh-1274), and mapping
+    // it again would produce a nested `<sandbox>/<host-path>` mirror. Like
+    // SandboxedExecutionEnv._map, a sandbox-virtual path that textually
+    // begins with the host root is treated as already mapped; both
+    // readings stay inside the sandbox.
+    if (host.isNotEmpty &&
+        (sandboxPath == host || sandboxPath.startsWith('$host/'))) {
+      return sandboxPath;
+    }
     final stripped = sandboxPath.startsWith('/')
         ? sandboxPath.substring(1)
         : sandboxPath;

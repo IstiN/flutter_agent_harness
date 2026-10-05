@@ -200,6 +200,21 @@ void main() {
       expect(rec.configs.single.args, ['cat', '/work/notes.txt']);
     });
 
+    test('git with host cwd touches the sandbox root, not a mirror', () async {
+      // `git init` is a repo-free command resolved against the call's cwd;
+      // with the host cwd it must land at the real sandbox root (the view
+      // the file tools and guest-side commands share), not a nested mirror
+      // of the host path.
+      final init = await shell().exec(
+        'git init',
+        options: ShellExecOptions(cwd: hostCwd.single),
+      );
+      expect(init.isOk, isTrue, reason: init.errorOrNull?.message);
+      expect(init.valueOrNull!.exitCode, 0, reason: init.valueOrNull!.stderr);
+      expect(io.Directory('${sandbox.path}/.git').existsSync(), isTrue);
+      expect(io.Directory('${sandbox.path}/var').existsSync(), isFalse);
+    });
+
     test('write then read round trip lands one visible file', () async {
       // `pwd`/`tac` are Dart builtins, so the whole round trip goes through
       // the same host FS with no scripted WASM guest; on device
