@@ -2748,8 +2748,7 @@ jsr.render({type: 'text', data: 'full-app'});
     });
 
     test('the injected bootstrap emits a stable fingerprint per error '
-        '(review thread 7: dedup does not collapse to message equality)',
-        () {
+        '(review thread 7: dedup does not collapse to message equality)', () {
       final js = JsAppEngine.faBootstrapJsFor('en');
       expect(
         js,
@@ -2820,7 +2819,8 @@ jsr.render({type: 'text', data: 'full-app'});
       expect(
         probe.joinSiblingGroup,
         isFalse,
-        reason: 'a scratch-env probe must stay out of the process-wide '
+        reason:
+            'a scratch-env probe must stay out of the process-wide '
             'live-engine group: its storage writes would otherwise '
             'reach the real viewports (and vice versa)',
       );
