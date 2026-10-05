@@ -51,7 +51,8 @@ export 'src/cli/cli_config.dart'
         loadProjectMemoryConfig,
         loadProjectCubeSettings,
         parseProviderTimeouts,
-        resolveStartupCubeSource;
+        resolveStartupCubeSource,
+        resolveContextWindowCap;
 export 'src/config/app_config_sections.dart';
 export 'src/cli/pi_mode.dart';
 export 'src/cli/links_config.dart'

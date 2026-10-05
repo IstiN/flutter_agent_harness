@@ -1307,6 +1307,68 @@ prompts:
     });
   });
 
+  group('resolveContextWindowCap (gh-1077 CLI/app parity)', () {
+    late Directory tmp;
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('fah-config-test-');
+    });
+
+    tearDown(() {
+      tmp.deleteSync(recursive: true);
+    });
+
+    void writeProjectConfig(String yaml) {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync(yaml);
+    }
+
+    test('the project cap wins over the saved user cap', () {
+      writeProjectConfig('agent:\n  contextWindowCap: 128000\n');
+      final saved = CliConfig(contextWindowCap: 200000);
+      expect(
+        resolveContextWindowCap(projectDir: tmp.path, saved: saved),
+        128000,
+      );
+    });
+
+    test('an absent project file falls back to the saved user cap', () {
+      final saved = CliConfig(contextWindowCap: 200000);
+      expect(
+        resolveContextWindowCap(projectDir: tmp.path, saved: saved),
+        200000,
+      );
+    });
+
+    test('a project without an agent section falls back to the saved cap',
+        () {
+      writeProjectConfig('provider: anthropic\n');
+      final saved = CliConfig(contextWindowCap: 200000);
+      expect(
+        resolveContextWindowCap(projectDir: tmp.path, saved: saved),
+        200000,
+      );
+    });
+
+    test('no cap anywhere resolves to null (uncapped)', () {
+      expect(
+        resolveContextWindowCap(projectDir: tmp.path, saved: CliConfig()),
+        isNull,
+      );
+    });
+
+    test('a present-but-invalid project section throws ConfigException '
+        '(the boot boundary fails loudly, like the user config)', () {
+      writeProjectConfig('agent:\n  contextWindowCap: 100\n');
+      final saved = CliConfig(contextWindowCap: 200000);
+      expect(
+        () => resolveContextWindowCap(projectDir: tmp.path, saved: saved),
+        throwsA(isA<ConfigException>()),
+      );
+    });
+  });
+
   group('save preserves every parsed section (issue #288 drift)', () {
     late Directory tmp;
 

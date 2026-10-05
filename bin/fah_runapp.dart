@@ -418,6 +418,18 @@ Future<void> _runApp(List<String> args) async {
     global: saved.compactionEngine,
   );
 
+  // Owner context-window cap (issues #273/#729, gh-1077 review thread
+  // 2a): the project `.fah/config.yaml` `agent:` section wins over the
+  // saved user one — the same project < user chain the app honors, so a
+  // repo-pinned cap caps both hosts. A present-but-invalid project
+  // section is a hard startup error, like the user config.
+  int? contextWindowCap;
+  try {
+    contextWindowCap = resolveContextWindowCap(projectDir: cwd, saved: saved);
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
+
   // Judge budget knob (issue #541): user-level `compaction.
   // judgeBudgetSeconds`; `null` keeps the 90s default.
   final compactionJudgeBudgetSeconds = saved.compactionJudgeBudgetSeconds;
@@ -1188,7 +1200,12 @@ Future<void> _runApp(List<String> args) async {
       compactionEngine: compactionEngine,
       compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
       wireDump: wireDump,
-      contextWindowCap: saved.contextWindowCap,
+      // Owner context-window cap (issues #273/#729, gh-1077 review thread
+      // 2a): the project `.fah/config.yaml` `agent:` section wins over the
+      // saved user one — the same project < user chain the app honors, so
+      // a repo-pinned cap caps both hosts. A present-but-invalid project
+      // section is a hard startup error, like the user config.
+      contextWindowCap: contextWindowCap,
       stuckTool: saved.stuckTool,
       subagents: saved.subagents,
       jobs: saved.jobs,

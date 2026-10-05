@@ -1423,6 +1423,23 @@ int? loadProjectContextWindowCap(String projectDir) {
   }
 }
 
+/// The owner context-window cap the CLI boot honors (gh-1077 review
+/// thread 2a): the PROJECT `.fah/config.yaml` `agent:` section wins over
+/// the saved user cap — the same project < user chain the app resolves
+/// through `loadAppContextWindowCap`, so a repo-pinned cap caps BOTH
+/// hosts instead of silently capping the app alone. Null when neither
+/// states one (uncapped).
+///
+/// Throws [ConfigException] for a present-but-invalid project section —
+/// strict like the user config (`loadCliConfig` rethrows at boot), so a
+/// malformed `agent:` section fails loudly instead of degrading to
+/// "uncapped".
+int? resolveContextWindowCap({
+  required String projectDir,
+  required CliConfig saved,
+}) =>
+    loadProjectContextWindowCap(projectDir) ?? saved.contextWindowCap;
+
 /// Loads the PROJECT-level `tools:` section from
 /// `<projectDir>/.fah/config.yaml` — the git-backed availability policy
 /// travels with the repo. The PROJECT scope is consumed live (separate

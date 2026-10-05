@@ -311,6 +311,12 @@ fa_ui.FaChatModelConfig _faConfigFrom(AgentConfig config) =>
       baseUrl: config.baseUrl,
       apiKey: config.apiKey,
       contextWindow: config.contextWindow,
+      // An AgentConfig's window is ALWAYS a resolved concrete value
+      // (connect resolves endpoint report > catalog > fallback), so the
+      // round trip must treat it as recorded — never re-upgrade a genuine
+      // fallback-equal report past the provider's real window (gh-1077
+      // review thread 3).
+      contextWindowExplicit: true,
       maxTokens: config.maxTokens,
       supportsImages: config.supportsImages,
     );
@@ -320,7 +326,11 @@ fa_ui.FaChatModelConfig _faConfigFrom(AgentConfig config) =>
 /// The context window is resolved through the shared app rule (gh-1077
 /// AC3): an endpoint-reported / picker-stored window wins, else the
 /// provider-catalog window, else the pinned fallback — the compaction
-/// threshold must aim at the catalog's reality, not a constant.
+/// threshold must aim at the catalog's reality, not a constant. A stored
+/// value equal to the fallback only wins when it was RECORDED
+/// ([fa_ui.FaChatModelConfig.contextWindowExplicit]) — the constant is
+/// also the pickers' "unknown" default, and an unvouched default must
+/// keep the catalog-upgrade behavior.
 AgentConfig agentConfigFrom(fa_ui.FaChatModelConfig config) => AgentConfig(
   providerKind: config.providerKind,
   modelId: config.modelId,
@@ -329,6 +339,7 @@ AgentConfig agentConfigFrom(fa_ui.FaChatModelConfig config) => AgentConfig(
   contextWindow: resolveAppContextWindow(
     providerKind: config.providerKind,
     storedWindow: config.contextWindow,
+    storedWindowExplicit: config.contextWindowExplicit,
   ),
   maxTokens: config.maxTokens,
   supportsImages: config.supportsImages,

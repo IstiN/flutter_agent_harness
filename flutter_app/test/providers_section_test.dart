@@ -5,7 +5,8 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/ui/screens/provider_editor_page.dart';
 import 'package:fa/ui/screens/providers_section.dart';
 import 'package:fa/ui/screens/settings.dart';
-import 'package:fa_ui/fa_ui.dart' show AddProviderPresetPickerPage;
+import 'package:fa_ui/fa_ui.dart'
+    show AddProviderPresetPickerPage, FaChatModelConfig;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -448,6 +449,47 @@ void main() {
 
       expect(find.text('acme-img · Acme'), findsOneWidget);
       expect(find.textContaining('acme.example'), findsNothing);
+    });
+  });
+
+  group('agentConfigFrom — the stored-window round trip (gh-1077)', () {
+    FaChatModelConfig config({bool explicit = false}) => FaChatModelConfig(
+      providerKind: 'google',
+      modelId: 'gemini-test',
+      baseUrl: 'https://example.com',
+      apiKey: 'test-key',
+      contextWindow: fallbackContextWindow,
+      contextWindowExplicit: explicit,
+    );
+
+    test('a RECORDED window equal to the fallback survives the catalog '
+        'round trip (review thread 3)', () {
+      // The endpoint /models report said 200000 for a provider whose
+      // catalog entry is larger — upgrading it would be a window
+      // OVERestimate (the original gh-1077 failure mode).
+      expect(
+        agentConfigFrom(config(explicit: true)).contextWindow,
+        fallbackContextWindow,
+      );
+    });
+
+    test('an unvouched default window still upgrades to the catalog', () {
+      // The pickers use the fallback constant for "unknown": without an
+      // explicit record the catalog keeps winning (the existing
+      // picker-default behavior).
+      expect(agentConfigFrom(config()).contextWindow, 1000000);
+    });
+
+    test('a recorded window different from the fallback wins as before', () {
+      final custom = FaChatModelConfig(
+        providerKind: 'google',
+        modelId: 'gemini-test',
+        baseUrl: 'https://example.com',
+        apiKey: 'test-key',
+        contextWindow: 264000,
+        contextWindowExplicit: true,
+      );
+      expect(agentConfigFrom(custom).contextWindow, 264000);
     });
   });
 }
