@@ -1,0 +1,20 @@
+# Stub override for gh-1265 — see VENDORED.md.
+name: flutter_inappwebview_linux
+description: >-
+  Stub that replaces the published flutter_inappwebview_linux federated
+  implementation in this app. Declares NO flutter plugin section, so the
+  plugin tooling registers no native Linux code. The app never uses
+  flutter_inappwebview on Linux (fa_webview_host.dart's
+  createFaWebViewHost() returns null there — the renderer shows a
+  placeholder instead), and the real implementation hard-requires the WPE
+  WebKit system library, which does not exist on Ubuntu 24.04 (noble) at
+  all (libwpewebkit-1.0-dev is jammy-only) — it red-lit the nightly linux
+  release leg 5 nights running.
+publish_to: none
+version: 0.1.0-beta.1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+# Intentionally NO `flutter:` section — a `plugin:` entry here would put the
+# native implementation back into every linux build.
