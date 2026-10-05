@@ -1029,7 +1029,7 @@ Object.defineProperty(jsr, 'onBack', {
       var norm = String(message)
         .replace(/0x[0-9a-fA-F]+/g, '#')
         .replace(/[0-9]+/g, '#')
-        .replace(/[ \t\r\n]+/g, ')
+        .replace(/[ \t\r\n]+/g, ' ')
         .trim();
       var frame = '';
       var lines = String(stack || '').split('\n');
@@ -1042,7 +1042,7 @@ Object.defineProperty(jsr, 'onBack', {
           break;
         }
       }
-      frame = frame.replace(/:[0-9]+:[0-9]+/g, '').replace(/[ \t\r\n]+/g, ').trim();
+      frame = frame.replace(/:[0-9]+:[0-9]+/g, '').replace(/[ \t\r\n]+/g, ' ').trim();
       return norm + '\n' + frame;
     } catch (e) {
       return '';

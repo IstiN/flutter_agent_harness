@@ -2744,6 +2744,12 @@ jsr.render({type: 'text', data: 'full-app'});
         contains(r'/[ \t\r\n]+/g'),
         reason: 'whitespace normalization regex must keep its escapes',
       );
+      expect(
+        js,
+        contains(r".replace(/[ \t\r\n]+/g, ' ')"),
+        reason: 'whitespace runs must collapse to a single quoted space — '
+            'an unterminated replacement string kills the whole eval',
+      );
       expect(js.contains('\r'), isFalse, reason: 'no raw CR in the JS');
       expect(js.contains('\t'), isFalse, reason: 'no raw TAB in the JS');
     });
