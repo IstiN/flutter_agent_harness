@@ -84,6 +84,63 @@ extension AgentServiceInbox on AgentService {
     unawaited(sendText(taskAsyncResultNotice(job)));
   }
 
+  /// Called when the JS-app error channel (gh-1164 Part B) delivers a
+  /// gated render/runtime/load notice for an app of this session: the
+  /// notice re-enters the conversation as a system notice — sendText
+  /// steers mid-run (the authoring agent sees the failure inside its
+  /// live turn and reacts) and starts a fresh turn while idle (AC5: a
+  /// user-visible system note; app-bound sessions pick it up from the
+  /// session tree / inbox, never a silent drop).
+  ///
+  /// gh-1164 review (thread 3): delivery is ROUTED, not broadcast — the
+  /// notice reaches only the session bound to the app
+  /// (`apps/<appId>/session.json`, maintained by the app-open path).
+  /// Every live AgentService subscribes the channel, but a service that
+  /// is not the bound session drops the notice silently: one JS app
+  /// error must never spawn a system-notice turn in unrelated sessions.
+  /// With no (readable, well-formed) binding the notice falls back to
+  /// delivery here — never a silent drop.
+  void _onJsAppError(JsAppErrorNotice notice) {
+    if (_disposed) return;
+    unawaited(_deliverJsAppErrorNotice(notice));
+  }
+
+  Future<void> _deliverJsAppErrorNotice(JsAppErrorNotice notice) async {
+    final boundId = await _appBoundSessionId(notice.appId);
+    if (boundId != null && boundId != currentSessionId) {
+      return; // another session owns the app — its service delivers
+    }
+    if (_disposed) return;
+    await sendText(
+      '<system-notice>\n'
+      '${notice.notice}\n'
+      'The app source changed since a previous identical report may have '
+      'been silenced — fix the error in the app source and re-render; the '
+      'user does not need to act as the error clipboard.\n'
+      '</system-notice>',
+    );
+  }
+
+  /// Reads the app→session binding (`apps/<appId>/session.json`;
+  /// [js_app_navigation.dart] writes it when a session binds to an app).
+  /// Returns null when the binding is absent, unreadable, or malformed —
+  /// the routing fallback then keeps the notice (delivery, not drop).
+  Future<String?> _appBoundSessionId(String appId) async {
+    try {
+      final raw = await env.readTextFile('apps/$appId/session.json');
+      final text = raw.valueOrNull;
+      if (text == null) return null;
+      final decoded = jsonDecode(text);
+      if (decoded is Map<String, dynamic>) {
+        final id = decoded['sessionId']?.toString();
+        if (id != null && id.isNotEmpty) return id;
+      }
+    } on Object {
+      // Unusable binding = no binding: fall back to delivery here.
+    }
+    return null;
+  }
+
   Future<void> _wakeOnInboxMail() async {
     final manager = _subagentManager;
     if (manager == null || _inboxWakeRunning || _disposed) return;

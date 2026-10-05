@@ -9,27 +9,19 @@
 
 part of 'agent_service.dart';
 
-/// Writes the bundled app-only agent skill (`assets/skills/js-apps/`)
-/// into the env's project skill root so [discoverSkills] picks it up.
-/// The file is refreshed when the bundled content changed (the skill is
-/// ours, not user data). Best-effort: a missing asset or unwritable env
-/// must not block session creation.
-///
-/// Issue #1151 review (CQE1): copies the pre-#1151 seeder wrote for
-/// skills that since moved INTO the package (`create-goal`) or retired
-/// (`fa-self-config`) are retired with the same ownership rule — the old
-/// seeder force-refreshed these files on every launch, so they are ours,
-/// not user data. The cleanup is fingerprint-scoped: a copy is removed
-/// ONLY when its SKILL.md is byte-identical to the last seeded bytes
-/// (neither source carries `fa-platforms` markers or `{{FA_PLATFORM}}`,
-/// so the seeder wrote these bytes verbatim on every platform). Only
-/// SKILL.md goes — the seeder never wrote anything else into those
-/// dirs, so a user-dropped supporting file (script, prompt) survives
-/// (review -HUjo); an empty leftover dir is invisible to discovery.
-/// Anything else is a deliberate project override and stays — a
-/// customized create-goal keeps shadowing the builtin (issue non-goal:
-/// migrating existing overrides), an orphaned fa-self-config stops
-/// haunting every session prompt.
+/// Fingerprints of the pre-#1151 seeded skill copies this cleanup
+/// retires: the old seeder wrote these files on every launch, so they
+/// are ours, not user data, and a copy is removed ONLY when its SKILL.md
+/// is byte-identical to the last seeded bytes (neither source carries
+/// `fa-platforms` markers or `{{FA_PLATFORM}}`, so the seeder wrote
+/// these bytes verbatim on every platform). Only SKILL.md goes — the
+/// seeder never wrote anything else into those dirs, so a user-dropped
+/// supporting file (script, prompt) survives (review -HUjo); an empty
+/// leftover dir is invisible to discovery. Anything else is a deliberate
+/// project override and stays — a customized create-goal keeps
+/// shadowing the builtin (issue non-goal: migrating existing
+/// overrides), an orphaned fa-self-config stops haunting every session
+/// prompt.
 const _staleSeedFingerprints = <String, String>{
   'create-goal':
       '427d831fa7c41b44a225f216a6e1961bf54b2821a538971e972dcee2c9383f72',
@@ -37,7 +29,42 @@ const _staleSeedFingerprints = <String, String>{
       '88c3301a46f5298255dc3f0e3f2b65bca3c5c97ade17e616ce5ad257c28f8dea',
 };
 
+/// gh-1164 Part A: js-apps promoted to a package builtin (source of truth
+/// `prompts/skills/js-apps/SKILL.md`), retiring its bundled seed. Unlike
+/// the skills above, the old seeder wrote
+/// `filterPlatformInstructions(rawAsset, platform: currentFaPlatform)` —
+/// the bytes it left on user machines VARY BY PLATFORM — so the cleanup
+/// pins every historical per-platform variant and removes a copy when it
+/// matches ANY of them. A user-customized copy keeps shadowing the
+/// builtin. The raw pre-filter bytes are frozen at
+/// `flutter_app/test/fixtures/retired_js_apps_skill.md`, pinned by
+/// test/skills/retired_seed_frozen_test.dart.
+const _staleBundledSeedFingerprints = <String, Set<String>>{
+  'js-apps': {
+    '83e0f64009b35bc96c0674fa3ec9d39a192a2cacce1ec942b32c026ff510375b', // macos
+    '7ecb248a65728393d362a8a092f2d5a19d16e623b16d1776bab7ac339178a8b6', // ios
+    '7ba90952131e1204e5240ca6e2e1c669fd55293b8e2b5cc69a19dadd1936dbce', // android
+    '76cd5171a6e04ad52e2f772378a93a11e12b83b773bdde3685a3d1149e219c58', // windows
+    '9336adfa3be78e0b890c520762aafe76c92ccf4913fc833e9c82f742b4a8e8de', // linux
+    'c73012910a772db79dc19c7e2ad75b285cea24a25aecd77d1ca68d2dfa6f26ed', // web
+  },
+};
+
 Future<void> _seedBundledSkills(ExecutionEnv env) async {
+  for (final entry in _staleBundledSeedFingerprints.entries) {
+    try {
+      final body = (await env.readTextFile(
+        '${env.cwd}/.fah/skills/${entry.key}/SKILL.md',
+      )).valueOrNull;
+      if (body == null) continue;
+      if (!entry.value.contains(sha256.convert(utf8.encode(body)).toString())) {
+        continue;
+      }
+      await env.remove('${env.cwd}/.fah/skills/${entry.key}/SKILL.md');
+    } on Object {
+      // best-effort cleanup
+    }
+  }
   for (final entry in _staleSeedFingerprints.entries) {
     try {
       final body = (await env.readTextFile(
@@ -52,22 +79,9 @@ Future<void> _seedBundledSkills(ExecutionEnv env) async {
       // best-effort cleanup
     }
   }
-  const bundled = {'js-apps': 'assets/skills/js-apps/SKILL.md'};
-  for (final entry in bundled.entries) {
-    try {
-      final target = '.fah/skills/${entry.key}/SKILL.md';
-      final bundledBody = await rootBundle.loadString(entry.value);
-      final body = filterPlatformInstructions(
-        bundledBody,
-        platform: currentFaPlatform,
-      );
-      final existing = await env.readTextFile(target);
-      if (existing.valueOrNull == body) continue;
-      await env.writeFile(target, body);
-    } on Object {
-      // skip this skill
-    }
-  }
+  // gh-1164 Part A: the bundled asset is gone — js-apps is a package
+  // builtin now (builtinSkills(), merged by discoverSkills), so there is
+  // nothing left to seed, only the retired copies above to clean up.
 }
 
 /// Discovers agent skills + project context files (AGENTS.md & friends)

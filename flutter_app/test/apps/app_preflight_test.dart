@@ -1,0 +1,345 @@
+// Copyright (c) 2026, the Flutter Agent Harness authors.
+// Use of this source code is governed by a MIT license that can be found
+// in the LICENSE file.
+
+/// gh-1164 Part C: the `open_app` pre-flight gate (AC7/AC8/AC10) — gate
+/// selection, named outcomes, and the no-fake-success tool contract.
+library;
+
+import 'package:fa/apps/app_preflight.dart';
+import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/apps/js_app_error_channel.dart';
+import 'package:fa/apps/open_app_tool.dart';
+import 'package:fa/services/agent_service.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+StreamFunction _singleTextResponse(String text) {
+  return (model, context, {cancelToken}) {
+    final stream = AssistantMessageEventStream();
+    final message = AssistantMessage(
+      content: [TextContent(text: text)],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: Usage.zero,
+      stopReason: StopReason.stop,
+      timestamp: DateTime.now(),
+    );
+    stream.push(DoneEvent(reason: StopReason.stop, message: message));
+    stream.end();
+    return stream;
+  };
+}
+
+AgentService _fakeService(ExecutionEnv env) {
+  return AgentService(
+    agent: Agent(
+      model: Model(
+        id: 'test-model',
+        api: 'test-api',
+        provider: 'test',
+        baseUrl: 'https://example.com',
+        contextWindow: 100000,
+        maxTokens: 4096,
+      ),
+      systemPrompt: 'You are Fa.',
+      streamFunction: _singleTextResponse('ok'),
+      toolRegistry: ToolRegistry(const []),
+    ),
+    env: env,
+    sessionsRoot: '/sessions',
+    config: AgentConfig(
+      providerKind: 'test',
+      modelId: 'test-model',
+      baseUrl: 'https://example.com',
+      apiKey: '',
+    ),
+  );
+}
+
+Future<void> _seedDemoApp(ExecutionEnv env) async {
+  await env.writeFile(
+    'apps/demo/manifest.json',
+    '{"id":"demo","name":"Demo App"}',
+  );
+  await env.writeFile(
+    'apps/demo/widget.js',
+    '(function(){jsr.render({type:"text",data:"hi"});})();',
+  );
+}
+
+void main() {
+  group('runAppPreflight gate selection', () {
+    test('app not found fails with a named outcome', () async {
+      final env = MemoryExecutionEnv();
+      final outcome = await runAppPreflight('missing', env);
+      expect(outcome, isA<AppPreflightFailed>());
+      expect(outcome!.gate, 'none');
+      expect((outcome as AppPreflightFailed).excerpt, contains('not found'));
+    });
+
+    test('a red standing test fails the flutter-test gate with the '
+        'excerpt (AC8)', () async {
+      final env = MemoryExecutionEnv();
+      await _seedDemoApp(env);
+      await env.writeFile(
+        'test/apps/demo_test.dart',
+        'void main() { expect(1, 2); }',
+      );
+      final runner = _FakeRunner(
+        const FlutterTestResult(passed: false, output: 'EXCERPT: expected 2'),
+      );
+      final outcome = await runAppPreflight('demo', env, testRunner: runner);
+      expect(outcome, isA<AppPreflightFailed>());
+      expect(outcome!.gate, 'flutter-test');
+      expect((outcome as AppPreflightFailed).excerpt, contains('EXCERPT'));
+      expect(runner.ranFor, ['demo']);
+    });
+
+    test('a green standing test passes the flutter-test gate', () async {
+      final env = MemoryExecutionEnv();
+      await _seedDemoApp(env);
+      await env.writeFile('test/apps/demo_test.dart', 'void main() {}');
+      final outcome = await runAppPreflight(
+        'demo',
+        env,
+        testRunner: _FakeRunner(
+          const FlutterTestResult(passed: true, output: 'ok'),
+        ),
+      );
+      expect(outcome, isA<AppPreflightPassed>());
+      expect(outcome!.gate, 'flutter-test');
+    });
+
+    test(
+      'a red flutter-test gate bounds the excerpt to the shared notice '
+      'cap (gh-1164 review: no unbounded text into the LLM tool result)',
+      () async {
+        final env = MemoryExecutionEnv();
+        await _seedDemoApp(env);
+        await env.writeFile('test/apps/demo_test.dart', 'void main() {}');
+        final huge = 'X' * (JsAppErrorChannel.maxMessageChars * 20);
+        final outcome = await runAppPreflight(
+          'demo',
+          env,
+          testRunner: _FakeRunner(FlutterTestResult(passed: false, output: huge)),
+        );
+        expect(outcome, isA<AppPreflightFailed>());
+        expect(outcome!.gate, 'flutter-test');
+        final excerpt = (outcome as AppPreflightFailed).excerpt;
+        expect(excerpt, contains('[truncated]'));
+        expect(
+          excerpt.length,
+          lessThanOrEqualTo(JsAppErrorChannel.maxMessageChars + 16),
+        );
+      },
+    );
+
+    test('no toolchain: a non-bootable host installs NO gate instead of '
+        'failing every healthy app', () async {
+      final env = MemoryExecutionEnv();
+      await _seedDemoApp(env);
+      final outcome = await runAppPreflight(
+        'demo',
+        env,
+        jsEngineBootableOverride: false,
+      );
+      expect(outcome, isNull);
+    });
+
+    test('a bootable host without a runner degrades to the named '
+        'smoke-render gate (AC10)', () async {
+      final env = MemoryExecutionEnv();
+      await _seedDemoApp(env);
+      final outcome = await runAppPreflight(
+        'demo',
+        env,
+        jsEngineBootableOverride: true,
+        smokeProbe: (app, env) async =>
+            const AppPreflightPassed(gate: 'smoke-render'),
+      );
+      expect(outcome, isA<AppPreflightPassed>());
+      expect(outcome!.gate, 'smoke-render');
+    });
+
+    test(
+      'a broken manifest fails fast, gate named none (issue #866)',
+      () async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('apps/broken/manifest.json', '{not json');
+        final outcome = await runAppPreflight('broken', env);
+        expect(outcome, isA<AppPreflightFailed>());
+        expect(outcome!.gate, 'none');
+      },
+    );
+  });
+
+  group('open_app no-fake-success contract (AC7)', () {
+    test('a failed gate fails the tool call and never launches', () async {
+      final env = MemoryExecutionEnv();
+      await _seedDemoApp(env);
+      final launched = <String>[];
+      final tool = openAppTool(
+        env,
+        launcher: (app) => launched.add(app.id),
+        preflight: (id) async =>
+            const AppPreflightFailed(gate: 'flutter-test', excerpt: 'RED'),
+      );
+      expect(
+        () => tool.execute({'id': 'demo'}, null, null),
+        throwsA(
+          predicate(
+            (e) => '$e'.contains('flutter-test') && '$e'.contains('RED'),
+          ),
+        ),
+      );
+      expect(launched, isEmpty, reason: 'a red gate must never launch');
+    });
+
+    test('a passed gate launches', () async {
+      final env = MemoryExecutionEnv();
+      await _seedDemoApp(env);
+      final launched = <String>[];
+      final tool = openAppTool(
+        env,
+        launcher: (app) => launched.add(app.id),
+        preflight: (id) async => const AppPreflightPassed(gate: 'smoke'),
+      );
+      await tool.execute({'id': 'demo'}, null, null);
+      expect(launched, ['demo']);
+    });
+
+    test('the AgentService default wiring installs the gate on the '
+        'registered open_app tool', () async {
+      final env = MemoryExecutionEnv();
+      await _seedDemoApp(env);
+      final service = _fakeService(env);
+      addTearDown(service.dispose);
+      service.appLauncher = (app) {};
+      final tool = service.toolsForTest
+          .where((t) => t.name == openAppToolName)
+          .cast<AgentTool>()
+          .first;
+      // No JS engine on this host + no standing test → the gate is
+      // absent (a host-capability skip, never a fake failure).
+      final result = await tool.execute({'id': 'demo'}, null, null);
+      expect(
+        result.content.whereType<TextContent>().map((b) => b.text).join(),
+        "Opened app 'Demo App'",
+      );
+    });
+  });
+
+  group('runSmokeRenderGate (host-side, no live engine)', () {
+    // The smoke gate is the production fallback gate (AC10) — it must be
+    // exercised on hosts WITHOUT the JS bridge too (CI): the Flutter app
+    // CRAP ratchet flagged runSmokeRenderGate at zero coverage (CRAP 42 >
+    // 30). A boot-throwing double stands in for the engine the bridge
+    // would provide; staging and boot-failure paths are host-agnostic.
+    JsAppInfo demoApp() => JsAppInfo.fromManifest(
+      const {'id': 'demo', 'name': 'Demo App'},
+      bundled: false,
+      fallbackId: 'demo',
+    );
+
+    JsAppEngine Function({
+      required JsAppInfo app,
+      required ExecutionEnv env,
+      required AppPermissions permissions,
+      String entryFile,
+      void Function(JsAppErrorEvent event)? errorSink,
+    })
+    bootFailFactory({void Function()? onCall}) =>
+        ({
+          required app,
+          required env,
+          required permissions,
+          entryFile = JsAppEngine.defaultEntryFile,
+          errorSink,
+        }) {
+          onCall?.call();
+          return _BootFailEngine(
+            app: app,
+            env: env,
+            permissions: permissions,
+            entryFile: entryFile,
+            errorSink: errorSink,
+          );
+        };
+
+    testWidgets(
+        'an app whose engine cannot boot fails the smoke gate with a '
+        'named, bounded excerpt (never a silent pass)', (tester) async {
+      final env = MemoryExecutionEnv();
+      await _seedDemoApp(env);
+      // engine.dispose() touches the widget binding — run on real time.
+      final outcome = (await tester.runAsync(
+        () => runSmokeRenderGate(
+          demoApp(),
+          env,
+          renderBudget: const Duration(milliseconds: 100),
+          engineFactory: bootFailFactory(),
+        ),
+      ))!;
+      expect(outcome, isA<AppPreflightFailed>());
+      expect(outcome.gate, 'smoke-render');
+      expect(
+        (outcome as AppPreflightFailed).excerpt,
+        contains('engine boot failed'),
+      );
+    });
+
+    testWidgets(
+        'an unstageable app folder fails at staging — the engine factory '
+        'is never reached', (tester) async {
+      final env = MemoryExecutionEnv(); // no apps/demo at all
+      var factoryCalls = 0;
+      final outcome = (await tester.runAsync(
+        () => runSmokeRenderGate(
+          demoApp(),
+          env,
+          renderBudget: const Duration(milliseconds: 100),
+          engineFactory: bootFailFactory(onCall: () => factoryCalls++),
+        ),
+      ))!;
+      expect(outcome, isA<AppPreflightFailed>());
+      expect(outcome.gate, 'smoke-render');
+      expect(
+        (outcome as AppPreflightFailed).excerpt,
+        contains('could not stage the app copy'),
+      );
+      expect(factoryCalls, 0, reason: 'staging failure stops before boot');
+    });
+  });
+}
+
+/// Engine double whose boot throws — on a host without the native JS
+/// bridge the real engine cannot boot either; the gate must turn that
+/// into a named failure, never a silent pass or an uncaught async error.
+final class _BootFailEngine extends JsAppEngine {
+  _BootFailEngine({
+    required super.app,
+    required super.env,
+    required super.permissions,
+    super.entryFile,
+    super.errorSink,
+  });
+
+  @override
+  Future<void> start() async => throw StateError('no js runtime on host');
+}
+
+class _FakeRunner implements FlutterTestRunner {
+  _FakeRunner(this.result);
+
+  final FlutterTestResult result;
+  final ranFor = <String>[];
+
+  @override
+  Future<FlutterTestResult> runAppTest(String appId) async {
+    ranFor.add(appId);
+    return result;
+  }
+}
