@@ -2696,6 +2696,19 @@ jobs:
         shell: bash
         run: codesign --force --sign - build/out/bundle/bin/fa
 
+      # gh-1280 NG2: «compiles» is not «works» — every release arch boots its
+      # binary before the asset is archived/uploaded (same smoke as
+      # binaries-pr). The usage marker (cli_help.dart "USAGE") discriminates
+      # the real CLI help from a binary that merely prints something.
+      - name: Smoke — the binary runs (fa --help)
+        shell: bash
+        run: |
+          bin="build/out/bundle/bin/fa"
+          [ "${{ matrix.os }}" = "windows" ] && bin="build/out/bundle/bin/fa.exe"
+          out=$("$bin" --help)
+          echo "$out"
+          grep -qi "usage" <<<"$out" || { echo "fa --help did not print usage"; exit 1; }
+
       - name: Archive bundle
         shell: bash
         run: |
@@ -3150,13 +3163,25 @@ jobs:
   # on every supported platform and actually run (`fa --help`) BEFORE a PR
   # can merge — but only when the CLI surface could have changed (issue
   # #177: a docs/app PR must not pay for five platform builds).
+  #
+  # gh-1280: merge-blocking validations ride `workflow_dispatch` (Machine SM
+  # dispatches this workflow on the PR head; the dispatched run registers its
+  # check runs on the head SHA), while this gate fired only on `pull_request`
+  # events. Every real validation run therefore skipped the matrix and the
+  # required "Binaries smoke gate" context went green-by-skip — a broken arch
+  # build (the v1.0.512 linux/arm64 class) could never block a merge. On a
+  # dispatched run the classifier treats everything as affected (non-PR
+  # filter arm), so the full matrix runs exactly when validation is due;
+  # docs-only pull_request runs keep the #177 path skip.
 
   binaries-pr:
     name: Binaries (PR)
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     needs: changes
-    if: github.event_name == 'pull_request' && (needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true')
+    if: >-
+      (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
+      (needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true')
     strategy:
       fail-fast: false
       matrix:
@@ -3231,7 +3256,10 @@ jobs:
   binaries-smoke-gate:
     name: Binaries smoke gate
     needs: binaries-pr
-    if: always() && github.event_name == 'pull_request'
+    # gh-1280: same event fix as binaries-pr — on the SM validation
+    # dispatches this aggregate must RUN (and carry a real conclusion),
+    # never satisfy the required context by skipping.
+    if: always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     steps:
       - name: All platforms built and smoked
