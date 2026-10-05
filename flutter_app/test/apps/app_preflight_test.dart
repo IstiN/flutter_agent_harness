@@ -7,6 +7,8 @@
 library;
 
 import 'package:fa/apps/app_preflight.dart';
+import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/js_app_error_channel.dart';
 import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/services/agent_service.dart';
@@ -229,6 +231,104 @@ void main() {
       );
     });
   });
+
+  group('runSmokeRenderGate (host-side, no live engine)', () {
+    // The smoke gate is the production fallback gate (AC10) — it must be
+    // exercised on hosts WITHOUT the JS bridge too (CI): the Flutter app
+    // CRAP ratchet flagged runSmokeRenderGate at zero coverage (CRAP 42 >
+    // 30). A boot-throwing double stands in for the engine the bridge
+    // would provide; staging and boot-failure paths are host-agnostic.
+    JsAppInfo demoApp() => JsAppInfo.fromManifest(
+      const {'id': 'demo', 'name': 'Demo App'},
+      bundled: false,
+      fallbackId: 'demo',
+    );
+
+    JsAppEngine Function({
+      required JsAppInfo app,
+      required ExecutionEnv env,
+      required AppPermissions permissions,
+      String entryFile,
+      void Function(JsAppErrorEvent event)? errorSink,
+    })
+    bootFailFactory({void Function()? onCall}) =>
+        ({
+          required app,
+          required env,
+          required permissions,
+          entryFile = JsAppEngine.defaultEntryFile,
+          errorSink,
+        }) {
+          onCall?.call();
+          return _BootFailEngine(
+            app: app,
+            env: env,
+            permissions: permissions,
+            entryFile: entryFile,
+            errorSink: errorSink,
+          );
+        };
+
+    testWidgets(
+        'an app whose engine cannot boot fails the smoke gate with a '
+        'named, bounded excerpt (never a silent pass)', (tester) async {
+      final env = MemoryExecutionEnv();
+      await _seedDemoApp(env);
+      // engine.dispose() touches the widget binding — run on real time.
+      final outcome = (await tester.runAsync(
+        () => runSmokeRenderGate(
+          demoApp(),
+          env,
+          renderBudget: const Duration(milliseconds: 100),
+          engineFactory: bootFailFactory(),
+        ),
+      ))!;
+      expect(outcome, isA<AppPreflightFailed>());
+      expect(outcome.gate, 'smoke-render');
+      expect(
+        (outcome as AppPreflightFailed).excerpt,
+        contains('engine boot failed'),
+      );
+    });
+
+    testWidgets(
+        'an unstageable app folder fails at staging — the engine factory '
+        'is never reached', (tester) async {
+      final env = MemoryExecutionEnv(); // no apps/demo at all
+      var factoryCalls = 0;
+      final outcome = (await tester.runAsync(
+        () => runSmokeRenderGate(
+          demoApp(),
+          env,
+          renderBudget: const Duration(milliseconds: 100),
+          engineFactory: bootFailFactory(onCall: () => factoryCalls++),
+        ),
+      ))!;
+      expect(outcome, isA<AppPreflightFailed>());
+      expect(outcome.gate, 'smoke-render');
+      expect(
+        (outcome as AppPreflightFailed).excerpt,
+        contains('could not stage the app copy'),
+      );
+      expect(factoryCalls, 0, reason: 'staging failure stops before boot');
+    });
+  });
+}
+
+/// Engine double whose boot throws — on a host without the native JS
+/// bridge the real engine cannot boot either; the gate must turn that
+/// into a named failure, never a silent pass or an uncaught async error.
+final class _BootFailEngine extends JsAppEngine {
+  _BootFailEngine({
+    required super.app,
+    required super.env,
+    required super.permissions,
+    super.entryFile,
+    super.errorSink,
+  });
+
+  @override
+  Future<void> start() async => throw StateError('no js runtime on host');
 }
 
 class _FakeRunner implements FlutterTestRunner {

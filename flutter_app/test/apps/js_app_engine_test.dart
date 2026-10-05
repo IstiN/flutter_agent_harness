@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:fa/apps/app_preflight.dart' show smokeProbeEngineFactory;
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/apps/js_app_error_channel.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/contact_service.dart';
@@ -2743,6 +2744,80 @@ jsr.render({type: 'text', data: 'full-app'});
         reason: 'a scratch-env probe must stay out of the process-wide '
             'live-engine group: its storage writes would otherwise '
             'reach the real viewports (and vice versa)',
+      );
+    });
+
+    test('reportHostError forwards render-host errors: a local sink owns '
+        'them; otherwise the channel gates + publishes (host-side, feeds '
+        'the CRAP-covered _forwardError path)', () {
+      JsAppErrorChannel.instance.disposeAndReset();
+      addTearDown(JsAppErrorChannel.instance.disposeAndReset);
+      final notices = <JsAppErrorNotice>[];
+      final sub = JsAppErrorChannel.instance.onDeliver.listen(notices.add);
+      addTearDown(sub.cancel);
+
+      JsAppInfo app() => JsAppInfo.fromManifest(
+        const {'id': 'demo', 'name': 'Demo'},
+        bundled: false,
+        fallbackId: 'demo',
+      );
+      final env = MemoryExecutionEnv();
+
+      // 1. Local sink (the pre-flight probe shape): the event goes to
+      // the sink ONLY — never the app-wide channel.
+      final sunk = <JsAppErrorEvent>[];
+      final probe = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+        errorSink: sunk.add,
+      );
+      addTearDown(() => probe.dispose());
+      probe.reportHostError('tile blew up');
+      expect(sunk, hasLength(1));
+      expect(sunk.single.kind, JsAppErrorKind.render);
+      expect(sunk.single.message, 'tile blew up');
+      expect(notices, isEmpty, reason: 'a local sink owns the error');
+
+      // 2. No sink (the live viewport shape): the channel gates — the
+      // first occurrence publishes; an identical repeat is deduped; past
+      // the breaker threshold the gate silences the key entirely.
+      final live = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+        entryFile: 'tile.js', // non-default entry → the launcher tile
+      );
+      addTearDown(() => live.dispose());
+      live.reportHostError('render blew up');
+      // The channel's broadcast delivery lands on the next event-loop
+      // turns — flush before asserting.
+      for (var i = 0; i < 3; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(notices, hasLength(1));
+      expect(notices.single.appId, 'demo');
+      expect(
+        notices.single.surface,
+        'tile',
+        reason: 'a non-default entry powers the launcher tile surface',
+      );
+      live.reportHostError('render blew up');
+      for (var i = 0; i < 3; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(
+        notices,
+        hasLength(1),
+        reason: 'one report per (app, fingerprint) per source revision',
+      );
+      for (var i = 0; i < JsAppErrorChannel.breakerThreshold + 2; i++) {
+        live.reportHostError('render blew up');
+      }
+      expect(
+        notices,
+        hasLength(1),
+        reason: 'the per-app circuit breaker silences the loop',
       );
     });
   });
