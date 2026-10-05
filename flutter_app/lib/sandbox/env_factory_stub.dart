@@ -18,7 +18,7 @@ import 'package:fa/sandbox/unload_flush.dart';
 /// `AgentService` is built — so uploaded files (and the agent's own work,
 /// including sessions under `/sessions`) survive a page reload.
 /// Web has no home directory concept - user-level skill roots do not apply.
-String? desktopHomeDir() => null;
+String? desktopHomeDir([Map<String, String>? _]) => null;
 
 Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
   final shell = MemoryShell(httpClient: httpClient);
