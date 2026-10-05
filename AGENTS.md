@@ -1194,8 +1194,11 @@ factual: paths, commands, invariants — no essays.
   host's merged secrets (AgentService.hostSecrets); `request` renders the
   shared secret_request sheet from JsAppView and persists via
   AgentService.acceptSecretGrant; contacts is a gated "not
-  available yet" stub); the `js-apps` skill seeds
-  into `.fah/skills/` on startup. Bundled demos (seeded by
+  available yet" stub); the `js-apps` skill is a package builtin
+  (gh-1164 retired the `.fah/skills/` seeder — it is compiled into
+  `builtinSkillFiles` by `scripts/gen_prompts.dart`, and the gh-1275
+  packaging-content gate is `scripts/verify_builtin_skills.dart`, wired
+  into the app build workflows). Bundled demos (seeded by
   `AppsStore.demoAppIds`, assets in `flutter_app/assets/apps/` — each id
   MUST also have its `- assets/apps/<id>/` entry in pubspec.yaml, gated by
   `test/apps/demo_assets_declared_test.dart`): calculator,
