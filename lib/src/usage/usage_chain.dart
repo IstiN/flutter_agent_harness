@@ -117,12 +117,24 @@ final class UsageChainScanner {
       final timestamp = DateTime.tryParse(
         decoded['timestamp'] as String? ?? '',
       );
+      if (type == 'custom' &&
+          decoded['customType'] == usageSegmentStartCustomType) {
+        _handleMarker(timestamp, state);
+        continue;
+      }
+      // Every other consumed record contributes its timestamp to the
+      // current segment (its closedAt, or firstRecordAt fallback).
+      state.current().noteRecordAt(timestamp);
       if (type == 'custom') {
-        _handleCustom(decoded, timestamp, state);
+        // A model_request_summary becomes the pending pair for the
+        // assistant message its request produces.
+        if (decoded['customType'] == modelRequestSummaryCustomType) {
+          state.pending = _PendingSummary.fromData(decoded['data']);
+        }
         continue;
       }
       if (type != 'message') continue;
-      _handleMessage(decoded, timestamp, state);
+      _handleAssistantMessage(decoded, state);
     }
     return state.finish();
   }
@@ -136,46 +148,26 @@ final class UsageChainScanner {
     return false;
   }
 
-  /// Handles a `custom` record: a segment marker is a boundary (it claims
-  /// an empty virgin segment or closes the contentful previous one); any
-  /// other custom record contributes its timestamp to the current segment,
-  /// and a `model_request_summary` becomes the pending pair for the
-  /// assistant message its request produces.
-  void _handleCustom(
-    Map<String, dynamic> decoded,
-    DateTime? timestamp,
-    _ScanState state,
-  ) {
-    final customType = decoded['customType'] as String? ?? '';
-    if (customType == usageSegmentStartCustomType) {
-      // A marker OPENS the segment it introduces: the first marker on
-      // a chain claims the (lazy) first segment; a later marker closes
-      // the previous segment only when it carried anything (an empty
-      // trailing segment from a killed boot is not materialized, I1).
-      // The marker itself is not a "contributing" record: the previous
-      // segment's closedAt stays its last request's timestamp.
-      if (!state.segments.lastOrNull.hasContentOrNull) {
-        state.current().setOpenedAt(timestamp);
-      } else {
-        state.closeSegment(timestamp);
-      }
-      return;
-    }
-    state.current().noteRecordAt(timestamp);
-    if (customType == modelRequestSummaryCustomType) {
-      state.pending = _PendingSummary.fromData(decoded['data']);
+  /// Handles a segment-marker record. A marker OPENS the segment it
+  /// introduces: the first marker on a chain claims the (lazy) first
+  /// segment; a later marker closes the previous segment only when it
+  /// carried anything (an empty trailing segment from a killed boot is
+  /// not materialized, I1). The marker itself is not a "contributing"
+  /// record: the previous segment's closedAt stays its last request's
+  /// timestamp.
+  void _handleMarker(DateTime? timestamp, _ScanState state) {
+    if (!state.segments.lastOrNull.hasContentOrNull) {
+      state.current().setOpenedAt(timestamp);
+    } else {
+      state.closeSegment(timestamp);
     }
   }
 
-  /// Handles a `message` record: only assistant messages produce a
-  /// [FoldRequest], priced from the provider-reported usage or — when the
-  /// provider omitted usage — estimated from the paired request summary.
-  void _handleMessage(
-    Map<String, dynamic> decoded,
-    DateTime? timestamp,
-    _ScanState state,
-  ) {
-    state.current().noteRecordAt(timestamp);
+  /// Handles an assistant `message` record: only assistant messages
+  /// produce a [FoldRequest], priced from the provider-reported usage or —
+  /// when the provider omitted usage — estimated from the paired request
+  /// summary.
+  void _handleAssistantMessage(Map<String, dynamic> decoded, _ScanState state) {
     final message = decoded['message'];
     if (message is! Map || message['role'] != 'assistant') return;
     state.current().requests.add(

@@ -257,6 +257,28 @@ void main() {
     });
 
     test(
+      'a non-message record (checkpoint/label/...) still stamps the '
+      'segment closedAt',
+      () {
+        // The scan refactor dispatches per record type; a record that is
+        // neither a marker, a summary, nor an assistant message must not
+        // be dropped from the segment's timestamp window.
+        final scan = const UsageChainScanner().scan([
+          sessionHeaderLine('sess-1'),
+          segmentMarkerLine(1),
+          requestSummaryLine(2),
+          assistantLine(3, usage: reportedUsage(input: 10, output: 5)),
+          otherRecordLine(9),
+        ]);
+        expect(scan.segments.single.requests, hasLength(1));
+        expect(
+          scan.segments.single.closedAt,
+          DateTime.utc(2024, 1, 1, 0, 9),
+        );
+      },
+    );
+
+    test(
       'a dangling summary (request died mid-flight) still counts, marked estimated',
       () {
         final ledger = foldChain([
