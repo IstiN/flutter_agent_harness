@@ -49,6 +49,7 @@ void main() {
       final tmp = io.Directory.systemTemp.createTempSync('fah_hostroot');
       addTearDown(() => tmp.deleteSync(recursive: true));
       final real = io.Directory('${tmp.path}/real')..createSync();
+      io.Directory('${real.path}/work').createSync();
       final link = io.Link('${tmp.path}/link')..createSync(real.path);
 
       final root = SandboxHostRoot(real.path, caseInsensitive: false);

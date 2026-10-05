@@ -66,6 +66,23 @@ final class SandboxHostRoot {
   String? stripToSandboxPath(String path) {
     if (path.isEmpty) return null;
     final trimmed = _stripTrailingSeparator(path);
+    final direct = _stripMatched(trimmed);
+    if (direct != null) return direct;
+    // Symlink spelling variant (/var → /private/var on the iOS simulator):
+    // the symlink can sit in the path itself, not just the root, so
+    // resolve the path and retry. The path may not exist (e.g. a file
+    // about to be created) — a resolution failure simply means no match.
+    String resolved;
+    try {
+      resolved = io.Directory(trimmed).resolveSymbolicLinksSync();
+    } on Object {
+      return null;
+    }
+    if (resolved == trimmed) return null;
+    return _stripMatched(_stripTrailingSeparator(resolved));
+  }
+
+  String? _stripMatched(String trimmed) {
     final pathKey = _key(trimmed);
     final candidates = <String>[_root];
     final resolved = _resolvedRoot;
@@ -73,6 +90,11 @@ final class SandboxHostRoot {
     for (final root in candidates) {
       final rootKey = _key(root);
       if (pathKey == rootKey) return '/';
+      // A lone '/' root: every absolute path is directly under it.
+      if (rootKey == '/') {
+        if (trimmed.startsWith('/')) return normalizeLexicalPath(trimmed);
+        continue;
+      }
       final prefix = '$rootKey/';
       if (pathKey.startsWith(prefix)) {
         // Cut in the *original* string: case folding can shift lengths,
