@@ -470,4 +470,90 @@ void main() {
       );
     });
   });
+
+  group('IT-5 — the gate charges the system prompt exactly once (review '
+      'thread 1)', () {
+    test('a request between the shrunk-window and full-window triggers '
+        'does NOT compact', () async {
+      // Window 4096 with a 400-char system prompt (100 tokens of fixed
+      // request overhead). The request-size estimate prices that overhead
+      // INTO the numerator (the loop-guard basis), so the gate denominator
+      // must be the FULL effective window — gating on window − overhead
+      // would charge the system prompt twice and compact a transcript that
+      // actually fits. A transcript sized into the 100-token band between
+      // the two triggers discriminates the two gates.
+      final env = MemoryExecutionEnv();
+      final service = AgentService(
+        agent: _agent(
+          _recordingText(<String>[], 'reply'),
+          contextWindow: 4096,
+          systemPrompt: 's' * 400,
+        ),
+        env: env,
+        sessionsRoot: '/sessions',
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+
+      await service.sendText('ping');
+      await service.waitForIdle();
+
+      final wiring = service.compactionWiringForTest;
+      final overhead = wiring.window - wiring.conversationWindow;
+      expect(overhead, greaterThanOrEqualTo(100));
+      // trigger = window − reserve; the shrunk one subtracts the overhead
+      // a second time (the double charge), the full one charges once.
+      final triggerShrunk =
+          wiring.conversationWindow - wiring.settings.reserveTokens;
+      final triggerFull = wiring.window - wiring.settings.reserveTokens;
+      expect(triggerShrunk, lessThan(triggerFull));
+
+      // Size the next turn so the request estimate lands mid-band. The
+      // estimator is the shared chars/4 heuristic, so (target − current)
+      // tokens is exactly (target − current) * 4 chars; the assistant
+      // reply adds a constant 2 tokens ('reply').
+      final current = service.gateRequestTokensForTest;
+      final target = (triggerShrunk + triggerFull) ~/ 2;
+      final chars = (target - current - 2) * 4;
+      expect(chars, greaterThan(0));
+      await service.sendText('u' * chars);
+      await service.waitForIdle();
+
+      final sized = service.gateRequestTokensForTest;
+      expect(
+        sized,
+        greaterThan(triggerShrunk),
+        reason: 'premise: the transcript overflows the double-charged '
+            '(shrunk-window) trigger',
+      );
+      expect(
+        sized,
+        lessThanOrEqualTo(triggerFull),
+        reason: 'premise: the same request fits the full-window trigger '
+            'with reserve',
+      );
+
+      // Single-charge contract: NO compaction — no checkpoint marker, the
+      // transcript is intact.
+      expect(
+        service.messages.any((m) => m.content.contains('ckpt·')),
+        isFalse,
+        reason: 'a request inside window − reserve must not compact',
+      );
+      expect(service.messages.where((m) => m.role == 'user'), hasLength(2));
+      expect(service.error, isNull);
+
+      // The gate is not dead: one more turn past the full-window trigger
+      // compacts.
+      final more = service.gateRequestTokensForTest;
+      final extraChars = (triggerFull - more + 10) * 4;
+      await service.sendText('v' * extraChars);
+      await service.waitForIdle();
+      expect(
+        service.messages.any((m) => m.content.contains('ckpt·')),
+        isTrue,
+        reason: 'past window − reserve the gate must fire',
+      );
+    });
+  });
 }

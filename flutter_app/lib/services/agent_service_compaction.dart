@@ -225,6 +225,19 @@ extension CompactionWindowSizing on AgentService {
   @visibleForTesting
   int get conversationWindowForTest => _compactionWiring.conversationWindow;
 
+  /// The exact request-size estimate the compaction gate compares against
+  /// the window (review thread 1): transcript + system-prompt/tool-schema
+  /// overhead, the SAME basis as the loop's over-window guard. Exposed so
+  /// the gate-basis test can size a transcript into the band between the
+  /// full-window trigger and the overhead-shrunk one — the estimator is
+  /// the shared chars/4 heuristic, so the measurement is exact.
+  @visibleForTesting
+  int get gateRequestTokensForTest => estimateRequestTokens(
+    _agent.state.messages,
+    systemPrompt: _agent.state.systemPrompt,
+    tools: _agent.state.tools,
+  );
+
   CompactionHostWiring get _compactionWiring => resolveCompactionHostWiring(
     mainModel: _agent.state.model,
     contextWindowCap: _contextWindowCap,
