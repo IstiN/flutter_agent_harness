@@ -296,7 +296,9 @@ void main() {
     'RT5: an over-wide paste keeps every frame row inside the terminal',
     () async {
       await bootAndRequest();
-      const pasted = 'k' * 200;
+      // 'k' * 200 is not const-evaluable in Dart (const_eval_type_num) —
+      // the literal multiplication stays a runtime value, so `final`.
+      final pasted = 'k' * 200;
       harness.sendText('\x1b[200~$pasted\x1b[201~');
       // gh-1244: synchronize on the painted SCREEN, not a transient raw
       // bullet count. The sheet TRIMS an over-wide value row to the frame
