@@ -33,6 +33,18 @@ import 'dart:io';
 import 'package:pty2/pty2.dart';
 import 'package:xterm/xterm.dart';
 
+/// The secret sheet's frame-closed masked value row on a captured screen
+/// (gh-1244): the line carrying bullets AND closing with the `│` border.
+/// The history's tool row (`• request_secret · …`) is not frame-closed,
+/// so the `│` guard pins the match to the sheet's own row. Null when no
+/// such row is painted (sheet not open, or the row's closing border has
+/// not landed in this frame yet). Top-level (like [frameContentLines])
+/// so the row-anchor rule is unit-testable without a PTY.
+String? maskedValueRow(String screen) => screen
+    .split('\n')
+    .where((l) => l.contains('•') && l.trimRight().endsWith('│'))
+    .firstOrNull;
+
 /// The visible viewport with each line's trailing blank cells stripped —
 /// the CONTENT-faithful view for cross-frame equality (gh-982).
 ///
