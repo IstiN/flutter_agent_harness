@@ -10,7 +10,6 @@ list(APPEND FLUTTER_PLUGIN_LIST
   file_selector_windows
   firebase_core
   flutter_gemma
-  flutter_inappwebview_windows
   flutter_js
   pasteboard
   url_launcher_windows
