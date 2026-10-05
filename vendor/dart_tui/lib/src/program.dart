@@ -335,6 +335,45 @@ final class Program {
       });
     }
 
+    // gh-1197 AC3: a throwing view()/renderer must never kill painting —
+    // the run continues underneath and a dead pipeline looks exactly like
+    // the silent freeze (no bytes for minutes, then the teardown burst).
+    // The guard logs loudly (same convention as the update()/runCmd()
+    // guards), invalidates the renderer so the NEXT frame is one full
+    // repaint from clean state (a mid-frame throw can strand partial
+    // diff state, e.g. an unclosed BSU), and schedules the repaint. The
+    // exception is rethrown only when NOTHING has ever painted — a
+    // program that cannot paint its initial screen has nothing to heal
+    // into, so it dies loudly instead of freezing on a blank glass.
+    var renderedOnce = false;
+    var lastRenderFailed = false;
+    Future<void> renderGuarded({bool force = false}) async {
+      try {
+        await render(_runningModel!.view, force: force);
+        renderedOnce = true;
+        lastRenderFailed = false;
+      } catch (e, st) {
+        if (!renderedOnce) rethrow;
+        final repeatFailure = lastRenderFailed;
+        lastRenderFailed = true;
+        _renderer?.invalidate();
+        lastRenderMicros = -1;
+        redrawArmed = false;
+        stderr
+          ..writeln('Caught render exception (frame pipeline self-heals): $e')
+          ..writeln(st);
+        tracer?.event({
+          't': frameClock.elapsedMicroseconds,
+          'ev': 'render_error',
+          'err': '$e',
+        });
+        // A repeat retry lands only on the next REAL message: re-arming
+        // immediately would hot-spin a permanently throwing view through
+        // catch -> RenderTick -> catch forever.
+        if (_running && !repeatFailure) enqueue(const RenderTickMsg());
+      }
+    }
+
     void scheduleResizeMsg() {
       final width =
           _width ?? (stdout.hasTerminal ? stdout.terminalColumns : 80);
@@ -623,7 +662,7 @@ final class Program {
       // Render the first frame immediately before firing the init command.
       // This matches Bubbletea's behaviour: Init() runs concurrently while
       // the initial view is already visible on screen.
-      await render(_runningModel!.view);
+      await renderGuarded(force: true);
       bench('first_frame');
 
       // Send capability queries AFTER the first frame so the first visible
@@ -678,7 +717,7 @@ final class Program {
         // throttle (kitty's input_delay/repaint_delay split). A forced
         // paint also carries any collapsed output frame with it.
         if (needsRender && _running) {
-          await render(_runningModel!.view, force: inputDriven);
+          await renderGuarded(force: inputDriven);
         }
         if (_running) {
           await waitForActivity();
