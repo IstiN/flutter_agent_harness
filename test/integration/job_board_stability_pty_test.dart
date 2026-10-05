@@ -262,7 +262,15 @@ void main() {
         _firstSettle,
         timeout: const Duration(seconds: 60),
       );
-      await harness.waitForOutput(settleMs: 300);
+      // Fixed beat, not a quiet-gap wait (issue #1250): each settle notice
+      // steers a wrap turn, so the raw stream stays noisy across the whole
+      // drain on a loaded runner — waitForOutput's 2x-settleMs quiet
+      // detector only fired AFTER the last settle, and `mid` caught the
+      // by-design fully-drained frame (frozen row gone) instead of the
+      // mid-drain one (3 distinct-SHA gate reds). The drain floor is 4 s
+      // (sleeps 21..25 exit >=1 s apart), so a fixed 300 ms beat always
+      // lands mid-drain while still letting the settle's frame paint.
+      await Future<void>.delayed(const Duration(milliseconds: 300));
       final mid = harness.viewportLines;
       expectComposerReserved(mid, columns);
       expect(
