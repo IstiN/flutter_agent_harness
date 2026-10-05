@@ -204,7 +204,7 @@ void main() {
     expect(await cli.runHeadless('say hi'), 0);
 
     expect(tuiIo.out.toString(), isNot(contains(usageTokensLogPrefix)));
-    // The diag-file write stays (the guard is about stdout only).
+    // The diag-file write stays (the guard only disables the mirror).
     final log = (await env.readTextFile('/home/.fah/logs/fa.log')).valueOrNull!;
     expect(log, contains(usageTokensLogPrefix));
   });
