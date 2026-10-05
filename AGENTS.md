@@ -1784,6 +1784,20 @@ builder.
   (issue #544: build 160, boot refactor created the platform env before
   `WidgetsFlutterBinding.ensureInitialized`); boot stage order is pinned by
   `flutter_app/test/boot/app_boot_test.dart`.
+- Lockfile policy (gh-1296 NG1): EVERY lockfile is committed and enforced —
+  one inventory list in `scripts/check_lockfiles.sh` (`flutter_app/
+  pubspec.lock`, `ios/Podfile.lock`, `macos/Podfile.lock`); a listed
+  lockfile that is missing/untracked/gitignored fails the Static gates, and
+  pod-sync (flutter-analyze + nightly build legs, after `pub get`) fails
+  when a native iOS/macOS plugin resolved by pubspec.lock has no pod in the
+  platform's `Podfile.lock` (the gh-1274 class). After ANY pubspec.yaml
+  dependency change that adds/updates a darwin-native plugin: `cd
+  flutter_app/ios && pod install --repo-update` and the same in `macos/`,
+  commit both `Podfile.lock`s (CocoaPods runs fine on Linux for
+  regeneration; the wasm_run `nm` step needs an llvm-nm shim + the
+  XCFramework staged via `scripts/setup_vendor_ios.sh` or the upstream zip).
+  Guard red exits are fixture-self-tested (`scripts/
+  check_lockfiles_selftest.sh`, Static gates).
 - TestFlight external distribution (issue #239): the `submit_only` lanes
   (driven by build-mobile.yml / build-macos.yml) distribute every build
   straight to the EXTERNAL group — REQUIRED repo variables
