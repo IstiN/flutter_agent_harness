@@ -14,6 +14,17 @@
       ]
     },
     {
+      "file": "test/integration/dap_wake_hang_test.dart",
+      "test": "mail-wake turns never wedge: 12 hub DMs each wake and answer; ESC recovers a stalled wake",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1248",
+      "since": "2026-10-04",
+      "runs": [
+        37225510196,
+        37214807813,
+        37214599192
+      ]
+    },
+    {
       "file": "test/integration/scheduled_indicator_test.dart",
       "test": "a scheduled follow-up shows on top of the working row, persists while idle, and clears when it fires",
       "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1252",
