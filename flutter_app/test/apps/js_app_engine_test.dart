@@ -2006,6 +2006,53 @@ void main() {
         });
       });
     });
+
+    group('regex escape round-trip (gh-1272)', () {
+      // The exact corruption from the TestFlight report: a regex literal
+      // with \t/\n in its char class must survive source → engine → eval
+      // byte-identically, and the engine's own injected bootstrap must
+      // not inject real control characters into the parse stream.
+      const regexHeavyWidgetJs = r'''
+(function() {
+  var ws = /[ 	
+]+/g;
+  var norm = String('a  b	c
+d').replace(ws, '_');
+  jsr.exportState({norm: norm});
+  jsr.render({type: 'text', data: norm});
+})();
+''';
+
+      testWidgets('a widget whose source uses \t/\n regex char classes '
+          'evals and renders (uiTree set)', (tester) async {
+        await tester.runAsync(() async {
+          final env = MemoryExecutionEnv();
+          await env.writeFile('apps/demo/widget.js', regexHeavyWidgetJs);
+          final engine = JsAppEngine(
+            app: JsAppInfo.fromManifest(
+              const {'id': 'demo', 'name': 'Demo'},
+              bundled: false,
+              fallbackId: 'demo',
+            ),
+            env: env,
+            permissions: const AppPermissions(),
+          );
+          try {
+            await engine.start();
+            for (var i = 0; i < 40 && engine.tree.value == null; i++) {
+              await Future<void>.delayed(const Duration(milliseconds: 150));
+            }
+            // uiTree set: the eval succeeded (gh-1272 AC1)…
+            expect(engine.tree.value, isNotNull);
+            expect(jsonEncode(engine.tree.value), contains('a_b_c_d'));
+            // …and the regex matched byte-identically (NG2).
+            expect(engine.exportedState?['norm'], 'a_b_c_d');
+          } finally {
+            await engine.dispose();
+          }
+        });
+      });
+    });
   }, skip: _engineSkip);
 
   group(
@@ -2716,6 +2763,40 @@ jsr.render({type: 'text', data: 'full-app'});
       // collapse to ONE dedup key and the circuit breaker can trip.
       expect(js, contains("replace(/[0-9]+/g, '#')"));
       expect(js, contains("replace(/0x[0-9a-fA-F]+/g, '#')"));
+    });
+
+    test('the injected bootstrap keeps JS escape sequences byte-identical '
+        '(gh-1272: a non-raw Dart string unescaped \\t/\\n into real '
+        'control chars, killing every widget eval)', () {
+      final js = JsAppEngine.faBootstrapJsFor('en');
+      // The gh-1164 fingerprint normalizer collapses whitespace runs via
+      // a regex char class and splits stack strings on a newline. Those
+      // backslash escapes must reach the JS engine as TWO characters
+      // each: a real TAB/CR/LF inside the char class is a JS SyntaxError
+      // ("Unterminated regular expression literal '/[ <TAB>'") that
+      // kills EVERY widget boot, since the bootstrap precedes all widget
+      // code (TestFlight 1.0.512: all catalog widgets dead, gh-1272).
+      expect(
+        js,
+        contains(r".replace(/[ \t\r\n]+/g, ' ')"),
+        reason: 'the whitespace-collapse regex must survive byte-identically',
+      );
+      expect(
+        js,
+        contains(r"String(stack || '').split('\n')"),
+        reason: 'stack-line splitting must survive byte-identically',
+      );
+      expect(
+        js,
+        contains(r"return norm + '\n' + frame;"),
+        reason: 'the fingerprint join must survive byte-identically',
+      );
+      // No real control character may leak out of Dart escape
+      // processing: the bootstrap's own line breaks are fine, a real
+      // TAB/CR never is — inside JS they only ever appear as escaped
+      // pairs in this source.
+      expect(js, isNot(contains('\t')));
+      expect(js, isNot(contains('\r')));
     });
 
     test('live engines join the sibling group; smoke-gate probes never '
