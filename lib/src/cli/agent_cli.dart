@@ -207,6 +207,9 @@ import '../redact/redaction_pipeline.dart';
 import '../spill/spill.dart';
 import '../ttsr/ttsr.dart';
 import '../types.dart';
+import '../usage/usage_chain.dart';
+import '../usage/usage_ledger_io.dart';
+import '../usage/usage_log_line.dart';
 import '../usage_summary.dart';
 import '../web_search/web_search.dart';
 // The interactive dart_tui REPL is VM-only (raw terminal + FFI); web builds
@@ -285,6 +288,7 @@ part 'agent_cli_lifecycle.dart';
 part 'agent_cli_input.dart';
 part 'agent_cli_pickers.dart';
 part 'agent_cli_run.dart';
+part 'agent_cli_usage_ledger.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -1001,6 +1005,12 @@ class AgentCli {
   @visibleForTesting
   Future<void> tuiPickSessionForTest(String key) => _tuiPickSession(key);
 
+  /// Test seam: swaps the active session so command paths can be driven
+  /// over a session shape the real repo never produces (e.g. empty
+  /// metadata path — the usage-ledger command guards).
+  @visibleForTesting
+  set sessionForTest(Session? session) => _session = session;
+
   /// Session-correlation env vars injected into bash tool executions (see
   /// [SessionVarsExecutionEnv]). Read live per exec: the session is created
   /// after tool wiring, and `/provider`/`/model` switches must show up in
@@ -1309,6 +1319,16 @@ class AgentCli {
   var _persistedCount = 0;
   var _streamedText = false;
 
+  /// The session instance the gh-1241 usage segment-start marker was
+  /// appended for in THIS process (null = not yet marked). Lazily set at
+  /// first drive (see [_runPrompt]) or eagerly by the headless/serve boot:
+  /// an idle owner boot must add zero session bytes (issue #428's
+  /// "no idle session bytes" invariant), and a `/sessions` switch must not
+  /// mark the new session until it is actually driven. Identity-keyed: a
+  /// switch replaces `_session` with a fresh instance, so the next drive
+  /// re-marks.
+  Session? _usageSegmentMarkedFor;
+
   /// Whether the current assistant message already printed its `fa> ` prefix
   /// and whether any thinking deltas were streamed (TUI-only progress for
   /// reasoning models).
@@ -1512,6 +1532,9 @@ class AgentCli {
     // Ownership lease (#428): claim before anything can drive — a live
     // lease flips this boot into viewer mode (no takeover exists).
     await _claimSessionLease();
+    // gh-1241: NO segment marker here — an idle owner boot must add zero
+    // session bytes (issue #428 invariant); the marker lands lazily at the
+    // first drive ([_runPrompt]) instead.
     // Sleep prevention (#325/#326): only the EXPLICIT session hold
     // acquires here — the default per-run hold acquires at every run
     // start instead, so an idle agent never pins the machine awake.
@@ -1703,6 +1726,8 @@ class AgentCli {
       io.writeln(viewerBannerText(leaseBlocked, stale: false));
       return 3;
     }
+    // gh-1241: the owner opens a usage segment (viewer never appends).
+    await _markUsageSegmentStart();
     // HEP (issue #155) + stream-json (issue #695) headers: the FIRST
     // stdout line of each structured mode, written the moment the
     // session id exists — before any event can race them.
@@ -1826,6 +1851,10 @@ class AgentCli {
       await taskSub.cancel();
       hepSub?.call();
       streamJsonSub?.call();
+      // gh-1241: close the usage segment — fold the chain, write
+      // usage.json, log the `fa-tokens:` line (a kill mid-segment loses
+      // nothing: the fold rebuilds from the chain on the next close).
+      await _flushUsageLedger();
     }
     // The exit code describes the LAST completed turn's terminal outcome
     // (captured from the turn events above) — not the visible transcript,
