@@ -1817,10 +1817,11 @@ class AgentCli {
       // gh-1241: close the usage segment — fold the chain, write
       // usage.json, log the `fa-tokens:` line (a kill mid-segment loses
       // nothing: the fold rebuilds from the chain on the next close).
-      // gh-1292: mirror that line to stdout — the headless/CI leg's diag
-      // file dies with the runner, and the token reporter greps the
-      // captured run log.
-      await _flushUsageLedger(mirrorTokensLineToStdout: true);
+      // gh-1292: mirror that line onto the diagnostics channel (stderr
+      // on this headless leg) — the diag file dies with the runner, and
+      // the token reporter greps the captured run log. Stdout stays the
+      // pipeable prose stream (issue #774 AC3).
+      await _flushUsageLedger(mirrorTokensLineToRunLog: true);
     }
     // The exit code describes the LAST completed turn's terminal outcome
     // (captured from the turn events above) — not the visible transcript,

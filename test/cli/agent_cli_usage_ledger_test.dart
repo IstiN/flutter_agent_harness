@@ -20,6 +20,41 @@ Usage reportedUsage({int input = 100, int output = 50}) => Usage(
   cost: const UsageCost(),
 );
 
+/// Split-channel headless IO — the same split the real headless terminal
+/// IO applies (bin/fah_io.dart): [write] is the pipeable primary stream
+/// (stdout), [writeln] is diagnostics (stderr on headless hosts).
+class _HeadlessSplitIO implements CliIO {
+  final out = StringBuffer();
+  final diag = StringBuffer();
+
+  @override
+  bool get isInteractive => false;
+
+  @override
+  int columns = 80;
+
+  @override
+  int rows = 24;
+
+  @override
+  Stream<String> get lines => const Stream<String>.empty();
+
+  @override
+  Stream<void> get interrupts => const Stream<void>.empty();
+
+  @override
+  Stream<KeyEvent> get keys => const Stream<KeyEvent>.empty();
+
+  @override
+  bool get supportsRawMode => false;
+
+  @override
+  void write(String text) => out.write(text);
+
+  @override
+  void writeln(String text) => diag.write('$text\n');
+}
+
 void main() {
   late MemoryExecutionEnv env;
   late FakeCliIO io;
@@ -101,22 +136,49 @@ void main() {
     },
   );
 
-  test('headless run mirrors the fa-tokens line to stdout (gh-1292)', () async {
-    final cli = cliFor([textTurn('ok', usage: reportedUsage())]);
+  test('headless run mirrors the fa-tokens line to the run-log channel, '
+      'stdout stays prose (gh-1292)', () async {
+    // Split-channel headless IO (write = pipeable stdout, writeln =
+    // diagnostics → stderr on real hosts): the round-1 stdout mirror
+    // reded the headless_cli/markdown_surface/headless_hep exact-stdout
+    // suites — the line rides the diagnostics channel ONLY, and the
+    // reporter still finds it (it greps the whole GH job log, stderr
+    // included).
+    final splitIo = _HeadlessSplitIO();
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: '[REDACTED:Sensitive Value]',
+        env: env,
+        sessionRoot: '/sessions',
+        homeDir: '/home',
+        providerKind: 'openai-completions',
+      ),
+      io: splitIo,
+      streamFunction: FakeStreamFunction([
+        textTurn('ok', usage: reportedUsage()),
+      ]).call,
+      version: '0.0.0-test',
+    );
     expect(await cli.runHeadless('say hi'), 0);
 
-    // The diag file dies with an ephemeral CI runner — the line must
-    // also land where the run-log capture sees it: stdout.
-    final lines = io.out
+    // Stdout carries nothing but the assistant prose (issue #774 AC3).
+    expect(splitIo.out.toString(), 'ok\n');
+
+    // The diagnostics channel carries exactly one segment-close line,
+    // matching the reporter's pinned regex with no timestamp prefix.
+    final lines = splitIo.diag
         .toString()
         .split('\n')
         .where((line) => line.contains(usageTokensLogPrefix))
         .toList();
     expect(lines, hasLength(1));
-    // No timestamp prefix on stdout (unlike fa.log): the reporter's
-    // pinned regex must match the line as-is.
     expect(usageTokensLogPattern.hasMatch(lines.single), isTrue);
     expect(lines.single, contains('"sessionId":'));
+
+    // The diag-file write is unchanged.
+    final log = (await env.readTextFile('/home/.fah/logs/fa.log')).valueOrNull!;
+    expect(log, contains(usageTokensLogPrefix));
   });
 
   test('a TUI-attached session keeps stdout clean — the fa-tokens line '
@@ -152,8 +214,7 @@ void main() {
     // The real host wraps the terminal io in HepEventsIO for
     // structured modes (bin/fah_runapp.dart: prose writes are
     // dropped, frames own stdout) — mirror that wiring here.
-    final rawIo = FakeCliIO();
-    addTearDown(rawIo.close);
+    final rawIo = _HeadlessSplitIO();
     final cli = AgentCli(
       config: AgentCliConfig(
         model: testModel,
@@ -179,9 +240,12 @@ void main() {
     // Structured modes own stdout exclusively — every emitted line
     // must stay machine-parseable NDJSON.
     expect(lines.where((line) => line.contains(usageTokensLogPrefix)), isEmpty);
-    // The prose channel (raw stdout) stays clean too — the frames
-    // carry everything.
-    expect(rawIo.out.toString(), isNot(contains(usageTokensLogPrefix)));
+    // HepEventsIO drops write and forwards writeln: raw stdout stays
+    // empty (the frames carry everything), while the mirror line rides
+    // the host's diagnostics channel (stderr headless) — the run-log
+    // capture still sees it in structured modes.
+    expect(rawIo.out.toString(), isEmpty);
+    expect(rawIo.diag.toString(), contains(usageTokensLogPrefix));
     // The line still reached the diag log.
     final log = (await env.readTextFile('/home/.fah/logs/fa.log')).valueOrNull!;
     expect(log, contains(usageTokensLogPrefix));

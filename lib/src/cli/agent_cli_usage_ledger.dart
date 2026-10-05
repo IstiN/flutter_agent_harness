@@ -44,13 +44,16 @@ extension AgentCliUsageLedger on AgentCli {
   /// -request session writes nothing; a stale/corrupt artifact is replaced
   /// by the fresh fold, never merged into. Failures stay in the diagnostic
   /// log — exit paths never fail on the ledger.
-  /// [mirrorTokensLineToStdout]: the headless/CI leg passes true — its
+  /// [mirrorTokensLineToRunLog]: the headless/CI leg passes true — its
   /// diag file dies with the ephemeral runner, so the segment-close line
-  /// must also land on stdout where the run-log capture sees it. The REPL
-  /// exit/switch paths keep the default false: interactive transcripts
-  /// (and PTY screen assertions) stay clean.
+  /// is also emitted on the CLI diagnostics channel ([CliIO.writeln]:
+  /// stderr on headless hosts) where the captured run log sees it. It
+  /// never rides [CliIO.write] — headless stdout stays pipeable prose
+  /// (issue #774 AC3). The REPL exit/switch paths keep the default
+  /// false: interactive transcripts (and PTY screen assertions) stay
+  /// clean.
   Future<void> _flushUsageLedger({
-    bool mirrorTokensLineToStdout = false,
+    bool mirrorTokensLineToRunLog = false,
   }) async {
     if (_viewer != null) return;
     final session = _session;
@@ -101,13 +104,17 @@ extension AgentCliUsageLedger on AgentCli {
           segment: closed,
         );
         _logDiagnostic(line);
-        // gh-1292: mirror the segment-close line to stdout on the
-        // headless/CI leg — [CliIO.write] is the stdout channel (headless
-        // hosts route writeln to stderr). TUI sessions keep stdout clean;
-        // the structured modes (HEP/stream-json) wrap io in
-        // [HepEventsIO], which drops write — their frames own stdout, so
-        // the wires stay pure by construction.
-        if (mirrorTokensLineToStdout && !_useTui) io.write('$line\n');
+        // gh-1292: mirror the segment-close line onto the CLI diagnostics
+        // channel ([CliIO.writeln] — stderr on headless hosts) so the
+        // ephemeral runner's captured run log sees it. It must NOT ride
+        // [CliIO.write]: headless stdout is the pipeable primary stream
+        // (issue #774 AC3 — byte-identical assistant prose only). The
+        // reporter greps the whole GH job log, stderr included. TUI
+        // sessions keep the channel clean (the line stays in fa.log);
+        // structured modes (HEP/stream-json) forward writeln to the
+        // host's diagnostics channel via [HepEventsIO] — their NDJSON
+        // wires stay pure by construction.
+        if (mirrorTokensLineToRunLog && !_useTui) io.writeln(line);
       }
     } on Object catch (error) {
       _logDiagnostic('usage ledger flush failed: $error');
