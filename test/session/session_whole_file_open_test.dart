@@ -190,5 +190,121 @@ void main() {
         throwsA(isA<SessionException>()),
       );
     });
+
+    test('wholeFileOnly opens through bulk reads on a ranged fs', () async {
+      // gh-1073 regression (flutter shard 1/2, agent_service_windowed):
+      // the default full open STREAMS over ranged reads, so an
+      // error-recovery retry on a filesystem whose ranged reads just
+      // failed would fail identically. `wholeFileOnly` forces the
+      // classic whole-file read: a ranged fs with a dead readRange
+      // still opens, while the default dispatch dies on it.
+      final deadRange = DeadRangeFileSystem(fs);
+      await fs.writeFile(path, '${[
+        headerLine(),
+        messageLine('m1'),
+        messageLine('m2', parentId: 'm1'),
+      ].join('\n')}\n');
+
+      await expectLater(
+        JsonlSessionStorage.open(deadRange, path),
+        throwsA(isA<SessionException>()),
+        reason: 'the default streamed open rides ranged reads',
+      );
+
+      final storage = await JsonlSessionStorage.open(
+        deadRange,
+        path,
+        wholeFileOnly: true,
+      );
+      expect((await storage.getEntries()).map((e) => e.id), ['m1', 'm2']);
+      expect(storage.quarantinedEntries, 0);
+    });
   });
+}
+
+/// A [FileSystem] that advertises the ranged-read capability (like the
+/// app's IO filesystem) but fails every [readRange] — the production
+/// shape behind "the ranged path just died", where an error-recovery
+/// retry must not ride that capability again.
+final class DeadRangeFileSystem implements FileSystem, RangedReadFileSystem {
+  DeadRangeFileSystem(this._delegate);
+
+  final FileSystem _delegate;
+
+  @override
+  String get cwd => _delegate.cwd;
+
+  @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      _delegate.absolutePath(path);
+
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      _delegate.joinPath(parts);
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) =>
+      _delegate.readTextFile(path);
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      _delegate.readBinaryFile(path);
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => _delegate.readTextLines(path, maxLines: maxLines);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => _delegate.writeBinaryFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      _delegate.writeFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      _delegate.appendFile(path, content);
+
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      _delegate.fileInfo(path);
+
+  @override
+  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
+      _delegate.listDir(path);
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) =>
+      _delegate.exists(path);
+
+  @override
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => _delegate.createDir(path, recursive: recursive);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _delegate.remove(path, recursive: recursive, force: force);
+
+  @override
+  Future<Result<Uint8List, FileError>> readRange(
+    String path,
+    int start,
+    int end,
+  ) async => Err(
+        FileError(
+          FileErrorCode.notSupported,
+          'ranged reads unavailable',
+          path: path,
+        ),
+      );
 }

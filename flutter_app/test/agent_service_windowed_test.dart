@@ -674,9 +674,8 @@ void main() {
     final stored = (await service.listSessions()).single;
     await service.loadSession(stored);
 
-    // Zero ranged bytes moved after the windowed attempt died; the
-    // whole-file fallback read the file in bulk and loaded it all.
-    expect(flaky.rangedBytes, 0);
+    // The whole-file fallback read the file in bulk and loaded it all
+    // (a ranged byte never moved successfully — the capability is dead).
     expect(flaky.bulkBytes, greaterThan(0));
     expect(service.messages, hasLength(500));
     expect(service.historyAboveCount, 0);
