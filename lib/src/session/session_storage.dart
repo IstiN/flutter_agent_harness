@@ -16,8 +16,41 @@ import '../env/execution_env.dart';
 import '../env/session_parse_executor.dart';
 import '../exceptions.dart';
 import '../session_io_retry.dart';
+import '../session_line_scanner.dart';
 import 'session_record.dart';
 import 'uuid.dart';
+
+/// Hard backstop for the full open (gh-1073): a session file larger than
+/// this refuses to load whole — the open throws a [SessionErrorCode.
+/// tooLarge] [SessionException] naming the windowed resume and
+/// `fa session repair` rescue paths instead of exhausting the heap on a
+/// multi-GiB read. Range-capable filesystems still stream the file in
+/// bounded chunks below the bound; the bound exists so no caller is ever
+/// one bad session away from an OOM kill.
+const int defaultMaxFullOpenBytes = 2 << 30;
+
+/// Human-readable byte count for the backstop error (GiB/MB granularity).
+String _formatBytes(int bytes) {
+  if (bytes >= (1 << 30)) {
+    return '${(bytes / (1 << 30)).toStringAsFixed(1)} GiB';
+  }
+  if (bytes >= (1 << 20)) {
+    return '${(bytes / (1 << 20)).toStringAsFixed(1)} MB';
+  }
+  return '$bytes bytes';
+}
+
+/// Appends the byte span `(start, end)` to a sorted, disjoint span list,
+/// merging into the tail when contiguous (the streamed scan yields lines
+/// in file order, so good lines coalesce into one span per run).
+void _appendSpan(List<(int, int)> spans, (int, int) span) {
+  if (spans.isNotEmpty && spans.last.$2 == span.$1) {
+    final (start, _) = spans.removeLast();
+    spans.add((start, span.$2));
+  } else {
+    spans.add(span);
+  }
+}
 
 /// Metadata describing a stored session.
 ///
@@ -533,17 +566,34 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   /// and the main file is rewritten from the surviving records so every
   /// later open/append sees whole JSONL. The number of quarantined lines is
   /// reported through [quarantinedEntries].
+  ///
+  /// A ranged [fs] opens through the streamed scan (gh-1073 — no segment
+  /// is ever materialized as one `String`); [wholeFileOnly] forces the
+  /// classic whole-file read instead. That flag exists for error-recovery
+  /// fallbacks: when the caller just watched a ranged read fail, retrying
+  /// over the same capability is unsound — the fallback must load through
+  /// plain whole-file reads only.
   static Future<JsonlSessionStorage> open(
     FileSystem fs,
     String filePath, {
     SessionParseExecutor? parseExecutor,
     SessionIoRetryConfig ioRetry = const SessionIoRetryConfig(),
     SessionTimingLogger? timingLog,
+    int maxFullOpenBytes = defaultMaxFullOpenBytes,
+    bool wholeFileOnly = false,
   }) async {
     final sw = Stopwatch()..start();
     final storage = await withSessionFileLock(
       filePath,
-      () => _openLocked(fs, filePath, parseExecutor, ioRetry, timingLog),
+      () => _openLocked(
+        fs,
+        filePath,
+        parseExecutor,
+        ioRetry,
+        timingLog,
+        maxFullOpenBytes,
+        wholeFileOnly,
+      ),
     );
     timingLog?.call(
       'resume_timing open file=${filePath.split('/').last} '
@@ -559,21 +609,486 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     SessionParseExecutor? parseExecutor,
     SessionIoRetryConfig ioRetry,
     SessionTimingLogger? timingLog,
+    int maxFullOpenBytes,
+    bool wholeFileOnly,
   ) async {
-    final totalSw = Stopwatch()..start();
-    var phaseSw = Stopwatch()..start();
     // Segment rotation (fa gh-1077): `<path>.part-NN` siblings hold older
-    // segments, the primary holds a header copy + the active tail. They
-    // are loaded in order — a resumed session must see the whole record
-    // chain (parents of recent records live in older segments).
-    // A null listing (listDir failed) fails CLOSED: rotation stays
-    // suspended for this storage so a blind sequence can never
-    // overwrite an existing part.
+    // segments. List them (a null listing fails CLOSED — rotation stays
+    // suspended so a blind sequence can never overwrite an existing part)
+    // and heal the primary BEFORE the backstop stat below: the heal
+    // reseeds/prefixes a primary lost or header-less mid-rotation, which
+    // changes its size — statting first would measure the pre-heal file
+    // (the streamed scan would then read a stale byte count) and a
+    // missing primary would be refused before the heal could rescue it.
     final listed = await _listSessionParts(fs, filePath);
     final parts = listed?.parts ?? const <String>[];
     if (parts.isNotEmpty) {
       await _healPrimarySegmentLocked(fs, filePath, parts.last, ioRetry);
     }
+    // gh-1073 backstop: stat first, refuse the pathological full read.
+    // The size also bounds the streamed scan below. A 12 GiB session used
+    // to die inside readTextFile with `Exhausted heap space` — the refusal
+    // names the rescue paths instead.
+    final stat = _fsOrThrow(
+      await retryTransientSessionFileIo(
+        () => fs.fileInfo(filePath),
+        op: 'open',
+        path: filePath,
+        config: ioRetry,
+      ),
+      'Failed to read session $filePath',
+    );
+    if (stat.size > maxFullOpenBytes) {
+      throw SessionException(
+        'Refusing to open session $filePath: ${_formatBytes(stat.size)} '
+        'exceeds the ${_formatBytes(maxFullOpenBytes)} full-open bound. '
+        'Resume it windowed (`fa --session ${filePath.split('/').last}`) or '
+        'shrink the ledger with `fa session repair` — the full open would '
+        'exhaust the heap (gh-1073).',
+        code: SessionErrorCode.tooLarge,
+      );
+    }
+    final Object maybeRanged = fs;
+    // wholeFileOnly (error-recovery fallback): skip the streamed dispatch
+    // even on a ranged fs — the caller just watched a ranged read fail,
+    // so the retry must not depend on that capability again.
+    if (!wholeFileOnly && maybeRanged is RangedReadFileSystem) {
+      return _openStreamedLocked(
+        fs,
+        maybeRanged,
+        filePath,
+        parseExecutor,
+        ioRetry,
+        timingLog,
+        stat.size,
+        maxFullOpenBytes,
+        listed,
+      );
+    }
+    return _openWholeFileLocked(
+      fs,
+      filePath,
+      parseExecutor,
+      ioRetry,
+      timingLog,
+      listed,
+    );
+  }
+
+  /// Streamed full open (gh-1073): every segment of the JSONL (the
+  /// `.part-NN` rotation siblings, then the primary) is scanned line by
+  /// line in bounded byte chunks ([SessionLineScanner] over
+  /// [RangedReadFileSystem]) and parsed in bounded batches — no segment
+  /// is EVER materialized as one `String`. The segment merge itself
+  /// matches [_openWholeFileLocked] exactly: the parts load oldest-first
+  /// so a resumed session sees the whole record chain, a failed part
+  /// listing fails CLOSED (rotation suspended, never a blind sequence
+  /// reset that could overwrite a part), and a primary lost or
+  /// header-less mid-rotation is healed from the newest part.
+  ///
+  /// Giant `custom` ledger records (the ~0.5 MB `model_request_summary` /
+  /// `shell_job_registry` payloads that grew the ticket's session to
+  /// 12.4 GiB) decode HEADER-ONLY ([parseShallowCustomRecord], data
+  /// stubbed to null) EXCEPT the latest record per `customType`, whose raw
+  /// line is kept and fully parsed at the end — resume-time rehydration
+  /// (job board, subagent registry) reads only the latest snapshot, so the
+  /// retained payload is exactly what consumers need at a bounded cost of
+  /// one giant line per ledger type.
+  static Future<JsonlSessionStorage> _openStreamedLocked(
+    FileSystem fs,
+    RangedReadFileSystem ranged,
+    String filePath,
+    SessionParseExecutor? parseExecutor,
+    SessionIoRetryConfig ioRetry,
+    SessionTimingLogger? timingLog,
+    int primaryFileSize,
+    int maxFullOpenBytes,
+    ({List<String> parts, int maxSeq})? listed,
+  ) async {
+    final totalSw = Stopwatch()..start();
+    var phaseSw = Stopwatch()..start();
+    // The part listing and the primary heal already ran in [_openLocked]
+    // (before the backstop stat) — here the parts simply load oldest-first
+    // so a resumed session sees the whole record chain (parents of recent
+    // records live in older segments).
+    final parts = listed?.parts ?? const <String>[];
+    final segmentPaths = [...parts, filePath];
+    final entries = <SessionRecord>[];
+    final seenRecordIds = <String>{};
+    // customType → raw line of the LATEST giant custom ledger across all
+    // segments (segments scan oldest-first, so later ones win). Fully
+    // parsed after the scan (see the method doc).
+    final latestGiantCustoms = <String, String>{};
+    SessionHeader? header;
+    String? headerLine;
+    var primaryBytes = 0;
+    var readMs = 0;
+    var parseMs = 0;
+    var rewriteMs = 0;
+    var quarantined = 0;
+    var duplicates = 0;
+    for (final segmentPath in segmentPaths) {
+      final isPrimary = segmentPath == filePath;
+      // gh-1073 backstop per segment: the primary was already stat'd by
+      // [_openLocked] (its refusal names the rescue paths); the parts
+      // stat here behind the same transient-ENOENT retry.
+      final int fileSize;
+      if (isPrimary) {
+        fileSize = primaryFileSize;
+      } else {
+        final stat = _fsOrThrow(
+          await retryTransientSessionFileIo(
+            () => fs.fileInfo(segmentPath),
+            op: 'open',
+            path: segmentPath,
+            config: ioRetry,
+          ),
+          'Failed to read session $segmentPath',
+        );
+        fileSize = stat.size;
+      }
+      if (fileSize > maxFullOpenBytes) {
+        throw SessionException(
+          'Refusing to open session $segmentPath: '
+          '${_formatBytes(fileSize)} exceeds the '
+          '${_formatBytes(maxFullOpenBytes)} full-open bound. Resume it '
+          'windowed (`fa --session ${filePath.split('/').last}`) or shrink '
+          'the ledger with `fa session repair` — the full open would '
+          'exhaust the heap (gh-1073).',
+          code: SessionErrorCode.tooLarge,
+        );
+      }
+      final load = await _scanSegmentStreamed(
+        fs,
+        ranged,
+        segmentPath,
+        fileSize,
+        parseExecutor,
+        entries,
+        seenRecordIds,
+        latestGiantCustoms,
+      );
+      readMs += load.readMs;
+      rewriteMs += load.rewriteMs;
+      quarantined += load.torn;
+      duplicates += load.duplicates;
+      // Every segment carries a copy of the same header; the primary's
+      // is the one the storage exposes (rotation seeds all segments from
+      // the same header line, so today they are identical — pin the
+      // primary's explicitly so a drifted archived header can never win;
+      // the loop visits the oldest segment first).
+      if (isPrimary) {
+        header = load.header;
+        headerLine = load.headerLine;
+        primaryBytes = fileSize;
+      }
+      header ??= load.header;
+      headerLine ??= load.headerLine;
+    }
+    if (header == null) _invalidSession(filePath, 'missing session header');
+    phaseSw
+      ..reset()
+      ..start();
+    // Rehydrate the LATEST giant custom per ledger type at full fidelity.
+    for (final rawLine in latestGiantCustoms.values) {
+      final full = parseSessionEntryLine(rawLine, filePath, 0);
+      final index = entries.indexWhere((e) => e.id == full.id);
+      if (index >= 0) entries[index] = full;
+    }
+    parseMs += phaseSw.elapsedMilliseconds;
+    phaseSw
+      ..reset()
+      ..start();
+    final (:leafId, healed: healedLeafEntries) = _resolveTrackedLeaf(entries);
+    final storage = JsonlSessionStorage._(
+      fs,
+      filePath,
+      header,
+      entries,
+      leafId,
+      quarantined: quarantined,
+      healedLeafEntries: healedLeafEntries,
+      ioRetry: ioRetry,
+      headerLine: headerLine,
+      nextPartSeq: (listed?.maxSeq ?? 0) + 1,
+      rotationSuspended: listed == null,
+    );
+    final buildMs = phaseSw.elapsedMilliseconds;
+    storage._openInnerMs = totalSw.elapsedMilliseconds;
+    timingLog?.call(
+      'resume_timing open-detail file=${filePath.split('/').last} '
+      'mode=full-stream segments=${segmentPaths.length} bytes=$primaryBytes '
+      'read_ms=$readMs parse_ms=$parseMs '
+      'records=${entries.length} torn=$quarantined dup=$duplicates '
+      'rewrite_ms=$rewriteMs build_ms=$buildMs '
+      'inner_ms=${storage._openInnerMs}',
+    );
+    return storage;
+  }
+
+  /// Scans ONE session segment line by line (bounded chunks, batched
+  /// parse, giant `custom` ledgers stubbed header-only) and folds its
+  /// records into [entries] with cross-segment record-id dedupe: a repeat
+  /// is always a failed-rotation restore leftover (ids are
+  /// storage-unique) — the FIRST copy wins, the later copy is scrubbed
+  /// from the segment on rewrite. Torn lines are quarantined to the
+  /// `<segment>.corrupt` sidecar and the segment is rewritten from the
+  /// surviving byte spans (temp file + atomic rename) so the NEXT open is
+  /// clean; read-only stores skip the writes and still load fine.
+  static Future<
+    ({
+      SessionHeader header,
+      String headerLine,
+      int torn,
+      int duplicates,
+      int readMs,
+      int rewriteMs,
+    })
+  >
+  _scanSegmentStreamed(
+    FileSystem fs,
+    RangedReadFileSystem ranged,
+    String segmentPath,
+    int fileSize,
+    SessionParseExecutor? parseExecutor,
+    List<SessionRecord> entries,
+    Set<String> seenRecordIds,
+    Map<String, String> latestGiantCustoms,
+  ) async {
+    final phaseSw = Stopwatch()..start();
+    // Merged byte spans of the surviving (good) lines, in file order.
+    final goodSpans = <(int, int)>[];
+    // Byte spans of torn lines and duplicate-id lines (unmerged — they
+    // are rare and disjoint); both are excluded from the rewrite, but
+    // only the torn ones are quarantined to the sidecar.
+    final tornSpans = <(int, int)>[];
+    final duplicateSpans = <(int, int)>[];
+    SessionHeader? header;
+    String? headerLine;
+    var first = true;
+    // 1-based PHYSICAL line number of the line the callback is looking
+    // at — blanks included, so parse batches can be numbered by the
+    // real file even when blank lines intervene.
+    var lineNumber = 0;
+    var batchLines = <String>[];
+    var batchSpans = <(int, int)>[];
+    var batchFirstLineNumber = 2;
+
+    Future<void> flushBatch() async {
+      if (batchLines.isEmpty) return;
+      final parsed = await parseSessionLines(
+        batchLines,
+        filePath: segmentPath,
+        firstLineNumber: batchFirstLineNumber,
+        executor: parseExecutor,
+        // The ledger payloads are exactly what must not materialize: the
+        // batch parse stubs giant canonical `custom` records header-only.
+        shallowGiantCustoms: true,
+      );
+      for (var i = 0; i < parsed.length; i++) {
+        final entry = parsed[i];
+        final span = batchSpans[i];
+        final rawLine = batchLines[i];
+        if (entry == null) {
+          // A malformed line is a torn write: drop the record, keep its
+          // byte span for the quarantine below. Never fatal.
+          tornSpans.add(span);
+          continue;
+        }
+        if (!seenRecordIds.add(entry.id)) {
+          duplicateSpans.add(span);
+          continue;
+        }
+        if (entry is CustomRecord &&
+            entry.data == null &&
+            rawLine.length >= shallowCustomRecordThreshold &&
+            rawLine.startsWith('{"type":"custom"')) {
+          // Stubbed giant: remember the latest per customType.
+          latestGiantCustoms[entry.customType] = rawLine;
+        }
+        entries.add(entry);
+        _appendSpan(goodSpans, span);
+      }
+      // The NEXT batch's number is captured when its first line arrives
+      // (blank lines make counting-based numbers drift from the physical
+      // file).
+      batchLines = <String>[];
+      batchSpans = <(int, int)>[];
+    }
+
+    await SessionLineScanner(
+      fs: fs,
+      path: segmentPath,
+    ).scan((line) async {
+      lineNumber++;
+      // Blank lines are skipped — INCLUDING before the header, matching
+      // the whole-file path (which filters blanks before taking
+      // allLines.first): the same session must open identically on a
+      // ranged and a non-ranged filesystem.
+      if (line.text.trim().isEmpty) return;
+      if (first) {
+        first = false;
+        headerLine = line.text;
+        header = parseSessionHeaderLine(line.text, segmentPath);
+        goodSpans.add((line.start, line.end));
+        return;
+      }
+      if (batchLines.isEmpty) batchFirstLineNumber = lineNumber;
+      batchLines.add(line.text);
+      batchSpans.add((line.start, line.end));
+      if (batchLines.length >= sessionParseBatchMaxLines ||
+          batchLines.fold<int>(0, (n, l) => n + l.length) >=
+              sessionParseBatchMaxBytes) {
+        await flushBatch();
+      }
+    }, fileSize: fileSize);
+    if (header == null) {
+      _invalidSession(segmentPath, 'missing session header');
+    }
+    await flushBatch();
+    final readMs = phaseSw.elapsedMilliseconds;
+    // Forensics sidecar + span rewrite of the dropped lines — extracted
+    // so this scan stays under the CRAP ratchet.
+    final rewriteMs = await _quarantineAndRewriteSegment(
+      fs,
+      ranged,
+      segmentPath,
+      goodSpans,
+      tornSpans,
+      duplicateSpans,
+    );
+    return (
+      header: header!,
+      headerLine: headerLine!,
+      torn: tornSpans.length,
+      duplicates: duplicateSpans.length,
+      readMs: readMs,
+      rewriteMs: rewriteMs,
+    );
+  }
+
+  /// Forensics + rewrite for one scanned segment that produced torn lines
+  /// or duplicate record ids: the torn spans are appended to the
+  /// `<segment>.corrupt` sidecar, duplicate drops get a rotation warning,
+  /// and the segment is rewritten from [goodSpans] via a temp file +
+  /// atomic rename — so the heal never materializes the good content and
+  /// the NEXT open is clean. Read-only storage skips the writes and still
+  /// loads fine with the dropped records simply absent in memory; any
+  /// failure degrades to "leave the file, the in-memory state is
+  /// consistent". Returns the rewrite's millisecond cost (0 when there
+  /// was nothing to heal).
+  static Future<int> _quarantineAndRewriteSegment(
+    FileSystem fs,
+    RangedReadFileSystem ranged,
+    String segmentPath,
+    List<(int, int)> goodSpans,
+    List<(int, int)> tornSpans,
+    List<(int, int)> duplicateSpans,
+  ) async {
+    if (tornSpans.isEmpty && duplicateSpans.isEmpty) return 0;
+    if (duplicateSpans.isNotEmpty) {
+      JsonlSessionStorage.onRotationWarning?.call(
+        'session open: dropped ${duplicateSpans.length} duplicated '
+        'record(s) from ${segmentPath.split('/').last} (a '
+        'failed-rotation restore left a segment copy behind)',
+      );
+    }
+    final sw = Stopwatch()..start();
+    try {
+      for (final (start, end) in tornSpans) {
+        final raw = await ranged.readRange(segmentPath, start, end);
+        final text = raw.isErr
+            ? null
+            : utf8.decode(raw.valueOrNull!, allowMalformed: true);
+        if (text != null) {
+          // The span already carries the line's trailing newline
+          // (SessionScannedLine.byteLength — "trailing newline
+          // included"); appending '$text\n' would leave a stray blank
+          // line per record and the sidecar would stop round-tripping
+          // as one-record-per-line JSONL.
+          await fs.appendFile(
+            '$segmentPath.corrupt',
+            text.endsWith('\n') ? text : '$text\n',
+          );
+        }
+      }
+      // Rewrite whole via a streamed span copy into a temp file + atomic
+      // rename, so the heal never materializes the good content either.
+      // Text decode/encode is byte-exact for every parsed (JSON-valid)
+      // line; only genuinely malformed bytes inside a JSON-valid line
+      // would re-encode as U+FFFD.
+      final Object maybeRenamable = fs;
+      if (maybeRenamable is RenamableFileSystem) {
+        final rewritten = await _rewriteSegmentFromSpans(
+          fs,
+          ranged,
+          maybeRenamable,
+          segmentPath,
+          goodSpans,
+        );
+        if (rewritten) return sw.elapsedMilliseconds;
+      }
+    } on Object {
+      // Read-only storage: the in-memory state is still consistent.
+    }
+    return 0;
+  }
+
+  /// The rewrite half of [_quarantineAndRewriteSegment]: streams
+  /// [goodSpans] from [segmentPath] into a temp file and atomically
+  /// renames it over the segment. False (with the temp removed) when a
+  /// read, write, or rename failed — the file is left untouched and the
+  /// next open re-applies the same heal.
+  static Future<bool> _rewriteSegmentFromSpans(
+    FileSystem fs,
+    RangedReadFileSystem ranged,
+    RenamableFileSystem renamable,
+    String segmentPath,
+    List<(int, int)> goodSpans,
+  ) async {
+    final tempPath = '$segmentPath.repaired';
+    Result<void, FileError> wrote = await fs.writeFile(tempPath, '');
+    for (final (start, end) in goodSpans) {
+      final raw = await ranged.readRange(segmentPath, start, end);
+      if (raw.isErr) break;
+      wrote = await fs.appendFile(
+        tempPath,
+        utf8.decode(raw.valueOrNull!, allowMalformed: true),
+      );
+      if (wrote.isErr) break;
+    }
+    if (wrote.isErr) {
+      await fs.remove(tempPath, force: true);
+      return false;
+    }
+    final renamed = await renamable.renamePath(tempPath, segmentPath);
+    if (renamed.isErr) {
+      // Non-renameable after all (or the rename failed): leave the file
+      // untouched — the in-memory state is still consistent and the next
+      // open re-applies the same heal.
+      await fs.remove(tempPath, force: true);
+      return false;
+    }
+    return true;
+  }
+
+  /// Legacy whole-file open — the fallback for filesystems without byte
+  /// range reads (pure web stores). Identical to the pre-gh-1073 behavior;
+  /// the size backstop in [_openLocked] bounds what this can materialize.
+  static Future<JsonlSessionStorage> _openWholeFileLocked(
+    FileSystem fs,
+    String filePath,
+    SessionParseExecutor? parseExecutor,
+    SessionIoRetryConfig ioRetry,
+    SessionTimingLogger? timingLog,
+    ({List<String> parts, int maxSeq})? listed,
+  ) async {
+    final totalSw = Stopwatch()..start();
+    var phaseSw = Stopwatch()..start();
+    // The part listing and the primary heal already ran in [_openLocked];
+    // the segments load in order — a resumed session must see the whole
+    // record chain (parents of recent records live in older segments).
+    final parts = listed?.parts ?? const <String>[];
     final segmentPaths = [...parts, filePath];
     var primaryBytes = 0;
     var readMs = 0;
