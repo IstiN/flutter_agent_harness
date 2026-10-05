@@ -66,8 +66,16 @@ abstract interface class SessionRepo {
   /// Creates a new session.
   Future<Session> create(JsonlSessionCreateOptions options);
 
-  /// Opens an existing session from its metadata.
-  Future<Session> open(SessionMetadata metadata, {bool windowed = false});
+  /// Opens an existing session from its metadata. With [windowed] only
+  /// the header plus the newest chunk are materialized; with
+  /// [wholeFileOnly] the full open takes the classic whole-file read even
+  /// on a ranged filesystem (error-recovery fallbacks: a retry after a
+  /// ranged-read failure must not depend on that capability again).
+  Future<Session> open(
+    SessionMetadata metadata, {
+    bool windowed = false,
+    bool wholeFileOnly = false,
+  });
 
   /// Lists stored sessions, newest first; [cwd] filters to one directory.
   Future<List<SessionMetadata>> list({String? cwd});
@@ -297,9 +305,13 @@ final class JsonlSessionRepo implements SessionRepo {
   /// records page in on demand through the returned [Session]'s
   /// [WindowedSessionStorage]; small sessions load completely either way.
   /// The default full open reads the whole file (CLI, tools, migrations).
+  /// [wholeFileOnly] forces the classic whole-file read even on a ranged
+  /// filesystem — the error-recovery fallback contract: after a
+  /// ranged-read failure the retry must not ride the same capability.
   Future<Session> open(
     SessionMetadata metadata, {
     bool windowed = false,
+    bool wholeFileOnly = false,
   }) async {
     final exists = _fsOrThrow(
       await _fs.exists(metadata.path),
@@ -341,6 +353,7 @@ final class JsonlSessionRepo implements SessionRepo {
               parseExecutor: _parseExecutor,
               ioRetry: _ioRetry,
               timingLog: timingLog,
+              wholeFileOnly: wholeFileOnly,
             ),
     );
   }
