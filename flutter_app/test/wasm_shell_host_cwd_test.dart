@@ -13,7 +13,6 @@
 // semantics are the ones seen on device.
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io' as io;
 import 'dart:typed_data';
 
@@ -156,15 +155,15 @@ void main() {
     test('cd from a host-cwd exec lands at a guest path', () async {
       io.Directory('${sandbox.path}/work').createSync();
       rec.next = _ScriptedInstance();
-      final shell = this.shell();
+      final session = shell();
       // Mobile flow: every exec carries the host cwd; `cd` in its own
       // command must still move the shell to a *guest* path.
-      final cd = await shell.exec(
+      final cd = await session.exec(
         'cd work',
         options: ShellExecOptions(cwd: hostCwd.single),
       );
       expect(cd.isOk, isTrue, reason: cd.errorOrNull?.message);
-      final cat = await shell.exec('cat t.txt');
+      final cat = await session.exec('cat t.txt');
       expect(cat.isOk, isTrue, reason: cat.errorOrNull?.message);
       expect(rec.configs.single.args, ['cat', '/work/t.txt']);
     });
