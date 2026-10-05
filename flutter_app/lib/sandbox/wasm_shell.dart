@@ -479,7 +479,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         ),
       );
     }
-    final cwd = options?.cwd ?? _currentDir;
+    final cwd = _effectiveCwd(options);
     final cwdArgs = _rewriteRelativeArgs(command, args, cwd);
     final effectiveArgs = inputSource != null && command != 'rg'
         ? [...cwdArgs, inputSource]
@@ -815,7 +815,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     } else if (redirects.stdinFile != null) {
       input = _resolveSandboxPath(
         redirects.stdinFile!,
-        options?.cwd ?? _currentDir,
+        _effectiveCwd(options),
       );
     }
 
@@ -909,7 +909,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (stdoutFile != null) {
       final target = _resolveSandboxPath(
         stdoutFile,
-        options?.cwd ?? _currentDir,
+        _effectiveCwd(options),
       );
       await _writeRedirectBytes(
         stdoutBytes,
@@ -948,7 +948,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (stderrFile != null) {
       final target = _resolveSandboxPath(
         stderrFile,
-        options?.cwd ?? _currentDir,
+        _effectiveCwd(options),
       );
       await _writeRedirectBytes(
         stderrBytes,
@@ -1048,7 +1048,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// expansion: sandbox defaults, persistent `export`ed variables, and any
   /// per-call overrides (later wins).
   Map<String, String> _effectiveEnv(ShellExecOptions? options) {
-    final cwd = options?.cwd ?? _currentDir;
+    final cwd = _effectiveCwd(options);
     return <String, String>{
       'HOME': '/',
       'PATH': '/bin',
@@ -1064,6 +1064,29 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// Normalizes a sandbox path: collapses `.` and `..` segments and always
   /// returns an absolute path starting at the sandbox root `/`.
   String _normalizeSandboxPath(String path) => normalizeLexicalPath(path);
+
+  /// Effective guest cwd for an exec: [ShellExecOptions.cwd] when given,
+  /// else the shell's own [_currentDir] (already guest-side).
+  ///
+  /// The harness layer reports the *host* sandbox directory as the env cwd
+  /// (`/var/mobile/Containers/…/fah_sandbox` on iOS — gh-1274) and callers
+  /// pass it straight into [ShellExecOptions]. Used verbatim as a guest
+  /// path it resolves every relative argument against a nested mirror that
+  /// does not exist under the preopened sandbox root, so
+  /// `echo hello > t.txt && cat t.txt` fails with ENOENT. A cwd inside
+  /// [sandboxHostPath] is therefore mapped back to its sandbox-absolute
+  /// form (`<host>` → `/`, `<host>/work` → `/work`); anything outside the
+  /// sandbox is left unchanged.
+  String _effectiveCwd(ShellExecOptions? options) {
+    final cwd = options?.cwd ?? _currentDir;
+    final host = sandboxHostPath;
+    if (host == null || host.isEmpty) return cwd;
+    if (cwd == host) return '/';
+    if (cwd.startsWith('$host/')) {
+      return _normalizeSandboxPath(cwd.substring(host.length));
+    }
+    return cwd;
+  }
 
   /// Resolves [path] against [cwd] inside the sandbox, returning an absolute
   /// sandbox path.
@@ -1958,7 +1981,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     // Result contract and abort the pipeline - issue #337 review).
     final stdinBytes = await _inputBytes(inputSource);
     final result = await _sandboxBuiltins(
-      options?.cwd ?? _currentDir,
+      _effectiveCwd(options),
     ).curl(stage.args, stdinBytes: stdinBytes, timeout: options?.timeout);
     return _builtinOk(result);
   }
@@ -1988,7 +2011,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options,
   ) async {
     final result = await _sandboxBuiltins(
-      options?.cwd ?? _currentDir,
+      _effectiveCwd(options),
     ).tree(stage.args);
     return _builtinOk(result);
   }
@@ -1998,7 +2021,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options,
   ) async {
     final result = await _sandboxBuiltins(
-      options?.cwd ?? _currentDir,
+      _effectiveCwd(options),
     ).file(stage.args);
     return _builtinOk(result);
   }
@@ -2009,7 +2032,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     required bool decompress,
   }) async {
     final result = await _sandboxBuiltins(
-      options?.cwd ?? _currentDir,
+      _effectiveCwd(options),
     ).xz(stage.args, decompress: decompress);
     return _builtinOk(result);
   }
@@ -2020,7 +2043,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     required bool decompress,
   }) async {
     final result = await _sandboxBuiltins(
-      options?.cwd ?? _currentDir,
+      _effectiveCwd(options),
     ).bzip2(stage.args, decompress: decompress);
     return _builtinOk(result);
   }
@@ -2030,7 +2053,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options,
     String? inputSource,
   ) async {
-    final builtins = _sandboxBuiltins(options?.cwd ?? _currentDir);
+    final builtins = _sandboxBuiltins(_effectiveCwd(options));
     // Only a `-` operand reads the piped/redirected input; plain
     // `diff a b` ignores stdin like GNU diff.
     final stdin = stage.args.contains('-') && inputSource != null
@@ -2045,7 +2068,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options,
     String? inputSource,
   ) async {
-    final builtins = _sandboxBuiltins(options?.cwd ?? _currentDir);
+    final builtins = _sandboxBuiltins(_effectiveCwd(options));
     final stdin = inputSource != null
         ? await builtins.readTextFile(inputSource)
         : null;
@@ -2058,7 +2081,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options,
   ) async {
     final result = await _sandboxBuiltins(
-      options?.cwd ?? _currentDir,
+      _effectiveCwd(options),
     ).nslookup(stage.args, timeout: options?.timeout);
     return _builtinOk(result);
   }
@@ -2068,7 +2091,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options,
   ) async {
     final result = await _sandboxBuiltins(
-      options?.cwd ?? _currentDir,
+      _effectiveCwd(options),
     ).dig(stage.args, timeout: options?.timeout);
     return _builtinOk(result);
   }
@@ -2078,7 +2101,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options,
   ) async {
     final result = await _sandboxBuiltins(
-      options?.cwd ?? _currentDir,
+      _effectiveCwd(options),
       timeout: options?.timeout,
     ).whois(stage.args, timeout: options?.timeout);
     return _builtinOk(result);
@@ -2090,7 +2113,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     String? inputSource,
   ) async {
     final result = await WasmSshCommands(this)
-        .builtinsFor(options?.cwd ?? _currentDir)
+        .builtinsFor(_effectiveCwd(options))
         .ssh(
           stage.args,
           stdin: await _inputBytes(inputSource),
@@ -2105,7 +2128,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options,
   ) async {
     final result = await WasmSshCommands(this)
-        .builtinsFor(options?.cwd ?? _currentDir)
+        .builtinsFor(_effectiveCwd(options))
         .scp(
           stage.args,
           env: _effectiveEnv(options),
@@ -2119,7 +2142,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options,
     String? inputSource,
   ) async {
-    final cwd = options?.cwd ?? _currentDir;
+    final cwd = _effectiveCwd(options);
     final result = await WasmSshCommands(this)
         .builtinsFor(cwd)
         .sftp(
@@ -2172,7 +2195,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options,
   ) async {
     final target = stage.args.isEmpty ? '/' : stage.args.first;
-    final cwd = options?.cwd ?? _currentDir;
+    final cwd = _effectiveCwd(options);
     final resolved = _resolveSandboxPath(target, cwd);
     try {
       final dir = io.Directory(_hostPath(resolved));
@@ -2201,7 +2224,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   Future<Result<StageResult, ExecutionError>> _pwdBuiltin(
     ShellExecOptions? options,
   ) async {
-    final cwd = options?.cwd ?? _currentDir;
+    final cwd = _effectiveCwd(options);
     return Ok(
       StageResult(stdout: utf8.encode('$cwd\n'), stderr: const [], exitCode: 0),
     );
@@ -2255,7 +2278,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     final files = _grepInputFiles(
       parsed,
       inputSource,
-      options?.cwd ?? _currentDir,
+      _effectiveCwd(options),
     );
 
     final rgResult = await _runStage(
@@ -2294,7 +2317,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options,
   ) async {
     final result = await _sandboxBuiltins(
-      options?.cwd ?? _currentDir,
+      _effectiveCwd(options),
     ).wget(stage.args, timeout: options?.timeout);
     return _builtinOk(result);
   }
@@ -2371,7 +2394,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options,
   ) async {
     final parsed = parseDuArgs(stage.args);
-    final cwd = options?.cwd ?? _currentDir;
+    final cwd = _effectiveCwd(options);
     final lines = <String>[];
     for (final path in parsed.paths) {
       final resolved = _resolveSandboxPath(path, cwd);
@@ -2462,7 +2485,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       );
     }
 
-    final cwd = options?.cwd ?? _currentDir;
+    final cwd = _effectiveCwd(options);
     final out = StringBuffer();
     for (final file in files) {
       final resolved = _resolveSandboxPath(file, cwd);
@@ -2533,7 +2556,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     ShellExecOptions? options,
     String? inputSource,
   ) async {
-    final cwd = options?.cwd ?? _currentDir;
+    final cwd = _effectiveCwd(options);
     final files = scanFlags(stage.args, const FlagSpec()).positional;
     if (files.isEmpty && inputSource != null) files.add(inputSource);
     if (files.isEmpty) {
@@ -2647,7 +2670,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         ),
       );
     }
-    final cwd = options?.cwd ?? _currentDir;
+    final cwd = _effectiveCwd(options);
     final from = _resolveSandboxPath(paths[0], cwd);
     final start = paths.length > 1 ? _resolveSandboxPath(paths[1], cwd) : cwd;
     final relative = sandboxRelativePath(from, start);
