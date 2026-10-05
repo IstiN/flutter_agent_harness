@@ -326,6 +326,17 @@ jobs:
       - name: Flake quarantine list guard (gh-1199 AC6)
         run: python3 scripts/apply_quarantine.py --check
 
+      # gh-1296 NG1/AC2: every lockfile in the repo is committed and
+      # enforced — ONE inventory list (scripts/check_lockfiles.sh) fails the
+      # PR when a listed lockfile is missing, untracked, or gitignored, and
+      # the guard's own red exits are fixture-self-tested so the check
+      # cannot rot silently (#1100 pattern).
+      - name: Lockfile inventory gate (gh-1296 NG1)
+        run: bash scripts/check_lockfiles.sh inventory
+
+      - name: Lockfile gate self-test (gh-1296 AC2)
+        run: bash scripts/check_lockfiles_selftest.sh
+
       # Full analyze needs the example app's package config (Flutter imports);
       # a docs-only PR skips the flutter setup entirely and analyzes the pure
       # Dart scopes only — it cannot have changed resolution anyway.
@@ -1126,6 +1137,15 @@ jobs:
 
       - run: cd flutter_app && flutter pub get --enforce-lockfile
 
+      # gh-1296 NG1: the Podfile.lock half of the lockfile gate. pub get just
+      # generated .flutter-plugins-dependencies; the gate fails the PR when a
+      # native iOS/macOS plugin resolved by the committed pubspec.lock has no
+      # pod in the platform's Podfile.lock (the gh-1274 class: a native
+      # plugin lands, the pod locks are never regenerated, and the drift
+      # rides until a build trips). Self-tested in Static gates (AC2).
+      - name: Lockfile pod-sync gate (gh-1296 NG1)
+        run: bash scripts/check_lockfiles.sh pod-sync
+
       # gh-1232 AC2: the core static-gates size guard only scans
       # lib/test/example/bin — flutter_app/lib was never measured in CI
       # (scripts/ci_fast_gate.sh measures it only when APP_IN_SCOPE). Same
@@ -1767,14 +1787,29 @@ jobs:
       - run: cd flutter_app && flutter pub get --enforce-lockfile
 
       - name: flutter build ios (debug, unsigned)
-        # E2: when the failure is in the CocoaPods layer, name the fix
-        # (repo update + lockfile regen), not a raw stack.
+        # E2, corrected by gh-1296: classify the failure by EVIDENCE in the
+        # log, not by a blanket keyword. The old grep matched 'cocoapods' or
+        # 'pod install' in EVERY flutter iOS build log ("Running pod
+        # install… 4.4s" prints even on green builds), so every failure was
+        # mislabeled "CocoaPods layer — likely spec drift" — that
+        # mislabeling sent gh-1296 at a Podfile.lock fix while the real
+        # killer was a package build hook (sqlite3's native-assets download
+        # hash check). Most-specific layer first; unmatched failures stay
+        # unlabeled rather than guessed.
         run: |
           set -o pipefail
           cd flutter_app
           if ! flutter build ios --debug --no-codesign 2>&1 | tee /tmp/build-ios.log; then
-            if grep -qiE 'cocoapods|pod install|pod repo|No podspec' /tmp/build-ios.log; then
-              echo "::error::iOS build failed in the CocoaPods layer — likely spec drift. Fix: cd flutter_app/ios && pod install --repo-update, commit the regenerated Podfile.lock (the pods cache re-rolls weekly, see the cache step). Raw log above."
+            if grep -qE 'Building native assets failed|build_hooks failed|Hash of downloaded file|build\.dart returned with exit code' /tmp/build-ios.log; then
+              if grep -q 'Hash of downloaded file' /tmp/build-ios.log; then
+                echo "::error::iOS build failed in the NATIVE-ASSETS layer: a package build hook downloaded a prebuilt artifact whose SHA-256 no longer matches the hash pinned in the package (upstream re-uploaded a release asset, gh-1296). NOT a CocoaPods/Podfile problem. It self-heals when upstream restores the asset — or bump the package version. The hook's 'To reproduce run:' line above names the package; check its GitHub releases. Raw log above."
+              else
+                echo "::error::iOS build failed in the NATIVE-ASSETS layer: a package build hook (hook/build.dart) failed. The log names the package and its 'To reproduce run:' line — reproduce locally. NOT a CocoaPods/Podfile problem. Raw log above."
+              fi
+            elif grep -qE "CocoaPods could not find compatible versions|The sandbox is not in sync with the Podfile\.lock|No podspec found|error while running pod install|Unable to satisfy the following requirements" /tmp/build-ios.log; then
+              echo "::error::iOS build failed in the CocoaPods layer — spec/sandbox drift. Fix: cd flutter_app/ios && pod install --repo-update, commit the regenerated Podfile.lock (the pods cache re-rolls weekly, see the cache step; scripts/check_lockfiles.sh pod-sync catches this class pre-merge). Raw log above."
+            else
+              echo "::error::iOS build failed (Xcode/app layer — no CocoaPods or native-assets signature in the log; read the first error above)."
             fi
             exit 1
           fi

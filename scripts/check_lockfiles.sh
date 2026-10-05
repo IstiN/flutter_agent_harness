@@ -64,7 +64,9 @@ if [ "$mode" = "inventory" ] || [ "$mode" = "all" ]; then
       echo "::error::lockfile not tracked by git: $f — git add $f and commit (gh-1296 NG1)"
       fail=1
     fi
-    if git check-ignore -q "$f"; then
+    if git check-ignore -q --no-index "$f"; then
+      # --no-index: a TRACKED file still matching an ignore pattern is the
+      # #1265/#1296 trap — one future `git rm --cached` and drift goes dark
       echo "::error::lockfile is GITIGNORED: $f — remove the ignore pattern; a lockfile that drifts invisibly is how #1265/#1296 happened"
       fail=1
     fi
