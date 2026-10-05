@@ -114,6 +114,51 @@ void main() {
       );
     });
 
+    test('lockfile is in sync with the current package versions', () {
+      // The lockfile records the resolved version of the root
+      // flutter_agent_harness path dependency. A merge from main that
+      // bumps the root/app version (chore(release) commits) without
+      // regenerating flutter_app/pubspec.lock makes every
+      // `flutter pub get --enforce-lockfile` step in CI exit 1 ("Unable
+      // to satisfy pubspec.yaml using pubspec.lock") — the exact
+      // Quality-gate red this PR landed with on head a702c3170.
+      final rootVersion =
+          (loadYaml(read('pubspec.yaml')) as YamlMap)['version'] as String;
+      final rootName = (loadYaml(read('pubspec.yaml')) as YamlMap)['name']
+          as String;
+      final appVersion =
+          (loadYaml(read('flutter_app/pubspec.yaml')) as YamlMap)['version']
+              as String?;
+      final lock = loadYaml(read('flutter_app/pubspec.lock')) as YamlMap;
+      final lockedRoot =
+          (lock['packages'] as YamlMap)[rootName] as YamlMap?;
+      expect(
+        lockedRoot,
+        isNotNull,
+        reason: 'flutter_app/pubspec.lock must record the $rootName path '
+            'dependency.',
+      );
+      // The root pubspec carries the bare version (e.g. 1.0.513); the app
+      // pubspec may carry build metadata (e.g. 1.0.513+1). The lockfile
+      // records the bare version for path deps.
+      expect(
+        lockedRoot!['version'],
+        rootVersion.split('+').first,
+        reason: 'the committed lockfile was generated against an older '
+            '$rootName version — regenerate it with `cd flutter_app && '
+            'flutter pub get` after any version bump, or CI\'s '
+            '--enforce-lockfile steps fail (gh-1265 AC2 REG guard).',
+      );
+      // Sanity: the app version must not lag the root version either —
+      // both are bumped together by the release chore.
+      expect(
+        appVersion?.split('+').first,
+        rootVersion.split('+').first,
+        reason: 'flutter_app/pubspec.yaml version must match the root '
+            'pubspec.yaml version (release chore bumps both).',
+      );
+    });
+
     for (final workflow in enforcedWorkflows) {
       test('$workflow resolves flutter_app with --enforce-lockfile', () {
         final offending = stepsOf(workflow)
