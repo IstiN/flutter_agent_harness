@@ -15,8 +15,9 @@ import 'package:fa/sandbox/fs_persistence.dart';
 import 'package:fa/sandbox/persistent_web_env.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-// ignore: implementation_imports — PromptLoader is not exported by the
-// package barrel; setLoader is its documented host-injection hook.
+// ignore: implementation_imports, depend_on_referenced_packages —
+// PromptLoader is not exported by the package barrel (and the package is a
+// pinned transitive dep), but setLoader is its documented host hook.
 import 'package:flutter_agent_memory/src/agents/prompts/prompt_loader.dart';
 import 'package:flutter_test/flutter_test.dart';
 
