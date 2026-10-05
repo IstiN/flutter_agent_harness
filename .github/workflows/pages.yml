@@ -54,7 +54,8 @@ jobs:
 
       - name: Example app pub get
         working-directory: flutter_app
-        run: flutter pub get
+        # gh-1265 AC2: resolve against the committed lockfile.
+        run: flutter pub get --enforce-lockfile
 
       # .env is gitignored but declared as a Flutter asset (flutter_dotenv);
       # the build fails without it.
