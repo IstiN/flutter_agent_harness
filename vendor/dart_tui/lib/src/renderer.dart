@@ -194,31 +194,38 @@ final class AnsiRenderer implements TeaRenderer {
     }
     final nextLines = view.content.split('\n');
 
+    // gh-1197 AC3: a throw mid-frame must not leave the terminal inside
+    // DEC 2026 sync mode (a stranded BSU defers every later paint — the
+    // silent-freeze presentation). Close the frame on the way out.
     if (_syncUpdates) _output.write('\x1b[?2026h');
-    final maxRows = nextLines.length > _lastLines.length
-        ? nextLines.length
-        : _lastLines.length;
-    final firstFrame = !_hasRenderedFrame;
     var wroteRows = false;
-    for (var row = 0; row < maxRows; row++) {
-      final next = row < nextLines.length ? nextLines[row] : '';
-      final prev = row < _lastLines.length ? _lastLines[row] : '';
-      if (!firstFrame && next == prev) continue;
-      wroteRows = true;
-      _output.write('\x1b[${row + 1};1H');
-      if (firstFrame) _output.write('\x1b[K');
-      _output.write(next);
-      // Only erase to end of line when the new line is *narrower* than the old
-      // one — the sole case where stale cells from the previous frame remain
-      // (the columns between the two widths). Erasing unconditionally lands the
-      // EL on the pending-wrap last column of a full-width line and wipes the
-      // just-painted cell, which loses the right edge and flickers it on every
-      // redraw. Widths are compared visibly (SGR codes ignored, wide chars = 2).
-      if (!firstFrame && getWidth(next) < getWidth(prev)) {
-        _output.write('\x1b[K');
+    try {
+      final maxRows = nextLines.length > _lastLines.length
+          ? nextLines.length
+          : _lastLines.length;
+      final firstFrame = !_hasRenderedFrame;
+      for (var row = 0; row < maxRows; row++) {
+        final next = row < nextLines.length ? nextLines[row] : '';
+        final prev = row < _lastLines.length ? _lastLines[row] : '';
+        if (!firstFrame && next == prev) continue;
+        wroteRows = true;
+        _output.write('\x1b[${row + 1};1H');
+        if (firstFrame) _output.write('\x1b[K');
+        _output.write(next);
+        // Only erase to end of line when the new line is *narrower* than the
+        // old one — the sole case where stale cells from the previous frame
+        // remain (the columns between the two widths). Erasing
+        // unconditionally lands the EL on the pending-wrap last column of a
+        // full-width line and wipes the just-painted cell, which loses the
+        // right edge and flickers it on every redraw. Widths are compared
+        // visibly (SGR codes ignored, wide chars = 2).
+        if (!firstFrame && getWidth(next) < getWidth(prev)) {
+          _output.write('\x1b[K');
+        }
       }
+    } finally {
+      if (_syncUpdates) _output.write('\x1b[?2026l');
     }
-    if (_syncUpdates) _output.write('\x1b[?2026l');
 
     _lastLines = nextLines;
     _lastContent = view.content;
@@ -436,28 +443,38 @@ final class CellRenderer implements TeaRenderer {
     final nextGrid = _buildGrid(view.content);
     final prev = _lastGrid;
     var wroteCells = false;
-    if (prev == null) {
-      // First frame: clear every row we are about to own, then paint.
-      if (nextGrid.isNotEmpty) _syncBegin();
-      for (var row = 0; row < nextGrid.length; row++) {
-        _output.write('\x1b[${row + 1};1H\x1b[K');
-      }
-      wroteCells = nextGrid.isNotEmpty;
-      wroteCells = _diffAndEmit(nextGrid) || wroteCells;
-      _syncEnd();
-    } else {
-      final shift = _detectScrollShift(prev, nextGrid);
-      if (shift != null) {
-        // Scroll fast path: one scroll op + the fresh rows (+ any overlap
-        // rows the live chrome rewrote across the shift) — never a repaint.
-        _syncBegin();
-        _emitScrollFrame(k: shift.k, repaint: shift.repaint, next: nextGrid);
+    // gh-1197 AC3: a throw mid-frame must not strand the BSU — a terminal
+    // left inside DEC 2026 sync mode defers every subsequent paint
+    // indefinitely, which presents as the silent freeze. Close the frame
+    // on the way out; the program's render guard invalidates the stale
+    // diff state so the healing frame repaints fully.
+    try {
+      if (prev == null) {
+        // First frame: clear every row we are about to own, then paint.
+        if (nextGrid.isNotEmpty) _syncBegin();
+        for (var row = 0; row < nextGrid.length; row++) {
+          _output.write('\x1b[${row + 1};1H\x1b[K');
+        }
+        wroteCells = nextGrid.isNotEmpty;
+        wroteCells = _diffAndEmit(nextGrid) || wroteCells;
         _syncEnd();
-        wroteCells = true;
       } else {
-        wroteCells = _diffAndEmit(nextGrid);
-        _syncEnd();
+        final shift = _detectScrollShift(prev, nextGrid);
+        if (shift != null) {
+          // Scroll fast path: one scroll op + the fresh rows (+ any overlap
+          // rows the live chrome rewrote across the shift) — never a repaint.
+          _syncBegin();
+          _emitScrollFrame(k: shift.k, repaint: shift.repaint, next: nextGrid);
+          _syncEnd();
+          wroteCells = true;
+        } else {
+          wroteCells = _diffAndEmit(nextGrid);
+          _syncEnd();
+        }
       }
+    } on Object {
+      _syncEnd();
+      rethrow;
     }
     if (nextGrid.length > _maxRows) _maxRows = nextGrid.length;
     _lastGrid = nextGrid;
