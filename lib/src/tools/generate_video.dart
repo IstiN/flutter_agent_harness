@@ -23,6 +23,7 @@ import 'package:http/http.dart' as http;
 import '../agent/agent_loop.dart' show ToolExecutionResult, ToolUpdateCallback;
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
+import '../cancel_token.dart';
 import '../env/execution_env.dart';
 import '../model_roles/models_config.dart';
 import '../types.dart';
