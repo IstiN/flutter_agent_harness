@@ -1785,12 +1785,18 @@ builder.
   `WidgetsFlutterBinding.ensureInitialized`); boot stage order is pinned by
   `flutter_app/test/boot/app_boot_test.dart`.
 - Lockfile policy (gh-1296 NG1): EVERY lockfile is committed and enforced —
-  one inventory list in `scripts/check_lockfiles.sh` (`flutter_app/
-  pubspec.lock`, `ios/Podfile.lock`, `macos/Podfile.lock`); a listed
+  one inventory list in `scripts/check_lockfiles.sh` (7 files:
+  `flutter_app/pubspec.lock`, `ios/Podfile.lock`, `macos/Podfile.lock`,
+  the vendored `flutter_inappwebview_macos` `Package.resolved`, both e2e
+  `package-lock.json`s, and `vendor/wasm_run/native/Cargo.lock`); a listed
   lockfile that is missing/untracked/gitignored fails the Static gates, and
   pod-sync (flutter-analyze + nightly build legs, after `pub get`) fails
   when a native iOS/macOS plugin resolved by pubspec.lock has no pod in the
-  platform's `Podfile.lock` (the gh-1274 class). After ANY pubspec.yaml
+  platform's `Podfile.lock` (the gh-1274 class), or its pod is pinned at a
+  stale version vs the resolved plugin podspec's `s.version` (the
+  flutter_gemma 1.8.0-vs-1.11.3 skew; the podspec is the comparison target,
+  not the pubspec version — vendored/beta pods legitimately differ from the
+  Dart package version). After ANY pubspec.yaml
   dependency change that adds/updates a darwin-native plugin: `cd
   flutter_app/ios && pod install --repo-update` and the same in `macos/`,
   commit both `Podfile.lock`s (CocoaPods runs fine on Linux for

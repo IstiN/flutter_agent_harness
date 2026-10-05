@@ -1140,9 +1140,10 @@ jobs:
       # gh-1296 NG1: the Podfile.lock half of the lockfile gate. pub get just
       # generated .flutter-plugins-dependencies; the gate fails the PR when a
       # native iOS/macOS plugin resolved by the committed pubspec.lock has no
-      # pod in the platform's Podfile.lock (the gh-1274 class: a native
-      # plugin lands, the pod locks are never regenerated, and the drift
-      # rides until a build trips). Self-tested in Static gates (AC2).
+      # pod in the platform's Podfile.lock, or its pod is pinned at a stale
+      # version vs the resolved podspec (the gh-1274 class, plus the
+      # flutter_gemma 1.8.0-vs-1.11.3 skew this PR fixed). Self-tested in
+      # Static gates (AC2).
       - name: Lockfile pod-sync gate (gh-1296 NG1)
         run: bash scripts/check_lockfiles.sh pod-sync
 
@@ -1806,7 +1807,7 @@ jobs:
               else
                 echo "::error::iOS build failed in the NATIVE-ASSETS layer: a package build hook (hook/build.dart) failed. The log names the package and its 'To reproduce run:' line — reproduce locally. NOT a CocoaPods/Podfile problem. Raw log above."
               fi
-            elif grep -qE "CocoaPods could not find compatible versions|The sandbox is not in sync with the Podfile\.lock|No podspec found|error while running pod install|Unable to satisfy the following requirements" /tmp/build-ios.log; then
+            elif grep -qE "CocoaPods could not find compatible versions|The sandbox is not in sync with the Podfile\.lock|No podspec found|Error running pod install|Unable to satisfy the following requirements" /tmp/build-ios.log; then
               echo "::error::iOS build failed in the CocoaPods layer — spec/sandbox drift. Fix: cd flutter_app/ios && pod install --repo-update, commit the regenerated Podfile.lock (the pods cache re-rolls weekly, see the cache step; scripts/check_lockfiles.sh pod-sync catches this class pre-merge). Raw log above."
             else
               echo "::error::iOS build failed (Xcode/app layer — no CocoaPods or native-assets signature in the log; read the first error above)."

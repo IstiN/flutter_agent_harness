@@ -460,11 +460,13 @@ jobs:
         # pubspec/lockfile skew must fail the nightly, not float.
         run: flutter pub get --enforce-lockfile
 
-      # gh-1296 NG1/NG3: the scheduled legs are the drift detector — lockfile
-      # inventory + pod-sync run here every night (upstream spec drift, a
-      # gitignored/missing lockfile, or a plugin landing without a pod lock
-      # reds the scheduled build and the auto-issue leg files nightly-red)
-      # instead of being first discovered by a random PR.
+      # gh-1296 NG1/NG3: the scheduled legs are the drift detector — the
+      # pod-sync half of the lockfile gate runs nightly (upstream spec drift
+      # or a native plugin landing without / behind its pod lock reds the
+      # scheduled build and the auto-issue leg files nightly-red) instead of
+      # being first discovered by a random PR. The inventory half
+      # (missing/untracked/gitignored lockfiles) is enforced in ci.yml
+      # Static gates, not here.
       - name: Lockfile gate (gh-1296 NG1/NG3)
         working-directory: flutter_app
         shell: bash

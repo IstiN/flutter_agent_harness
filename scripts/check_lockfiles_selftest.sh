@@ -34,10 +34,11 @@ git_config() {
 # A minimal fixture: two native ios plugins (one plain name, one whose
 # podspec s.name contains a dash), one dart-only ios plugin, the plugins
 # file, every NG1 inventory lockfile, and a Podfile.lock body.
-# $3 = native_pkg version in ios/Podfile.lock (the podspec always declares
-# 0.0.2 — a mismatch is the stale-version drift pod-sync must catch).
+# $2 = the native_pkg pod line in ios/Podfile.lock — "  - native_pkg (0.0.2):"
+# when in sync (the podspec declares 0.0.2), "" when the pod never landed
+# (the gh-1274 class), "  - native_pkg (0.0.1):" for the stale-VERSION class.
 make_fixture() {
-  local dir="$1" lock_pods="$2" lock_native_version="${3:-0.0.2}"
+  local dir="$1" lock_pods="$2"
   mkdir -p "$dir/flutter_app/ios" "$dir/flutter_app/macos" \
     "$dir/vendor/native_pkg/ios" "$dir/vendor/dashpkg/ios" \
     "$dir/vendor/dart_only/lib" \
@@ -82,7 +83,6 @@ EOF
 PODS:
   - Flutter (1.0.0)
   - dash-pkg (1.0.0)
-  - native_pkg ($lock_native_version):
 $lock_pods
 DEPENDENCIES:
   - Flutter (from \`Flutter\`)
@@ -126,7 +126,7 @@ expect_pass() {
 expect_fail_clean() {
   local name="$1" dir="$2" log; shift 2
   log="$(mktemp)"
-  if ( cd "$dir" && FAH_REPO_ROOT="$dir" "$@" ) > /dev/null 2>"$log"; then
+  if ( cd "$dir" && FAH_REPO_ROOT="$dir" "$@" ) >"$log" 2>&1; then
     echo "FAIL: $name — the gate PASSED but must fail (AC2 red exit rot)" >&2
     rm -f "$log"
     exit 1
@@ -189,7 +189,7 @@ expect_fail "missing plugins file fails loudly" "$d" bash "$GATE" pod-sync
 #    (the pre-rework flutter_gemma 1.8.0-vs-1.11.3 skew). Presence-only
 #    checking stayed green through exactly this drift.
 d="$tmp/stale-version"
-make_fixture "$d" "  - native_pkg (0.0.2):" 0.0.1
+make_fixture "$d" "  - native_pkg (0.0.1):"
 expect_fail "stale pod version fails" "$d" bash "$GATE" pod-sync
 
 # 8. PR #1298 review thread 6: a corrupt/truncated plugins file fails the
