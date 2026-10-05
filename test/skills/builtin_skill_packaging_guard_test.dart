@@ -10,10 +10,12 @@
 @TestOn('vm')
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart'
     show builtinSkillFiles;
+import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 import '../../scripts/verify_builtin_skills.dart' as guard;
@@ -74,6 +76,49 @@ void main() {
     });
   });
 
+  group('builtinSkillMdByteViolations — the single-read byte-level core', () {
+    test('flags empty and whitespace-only bytes', () {
+      for (final content in [
+        utf8.encode(''),
+        utf8.encode('   \n \t\n'),
+      ]) {
+        final violations = guard.builtinSkillMdByteViolations(
+          'some-skill',
+          content,
+        );
+        expect(violations, hasLength(1));
+        expect(violations.single, contains('some-skill'));
+        expect(violations.single, contains('EMPTY'));
+      }
+    });
+
+    test('flags bytes below the floor, reporting the inspected count', () {
+      final violations = guard.builtinSkillMdByteViolations(
+        'stub-skill',
+        utf8.encode('---\nname: x\ndescription: y\n---\n'),
+      );
+      expect(violations, hasLength(1));
+      expect(violations.single, contains('stub-skill'));
+      expect(violations.single, contains('below'));
+    });
+
+    test('passes content at or above the floor', () {
+      expect(
+        guard.builtinSkillMdByteViolations('full', utf8.encode('x' * 2048)),
+        isEmpty,
+      );
+    });
+
+    test('labels the verdict with the source path when given', () {
+      final violations = guard.builtinSkillMdByteViolations(
+        'some-skill',
+        utf8.encode(''),
+        path: 'prompts/skills/some-skill/SKILL.md',
+      );
+      expect(violations.single, contains('prompts/skills/some-skill/SKILL.md'));
+    });
+  });
+
   group('builtinSkillSourceViolations — the on-disk source check', () {
     test('current tree passes: every prompts/skills/<name>/SKILL.md is full', () {
       expect(
@@ -118,6 +163,32 @@ void main() {
           expect(violations[0], contains('EMPTY'));
           expect(violations[1], contains('js-apps'));
           expect(violations[1], contains('WITHOUT'));
+        } finally {
+          await tmp.delete(recursive: true);
+        }
+      },
+    );
+
+    test(
+      'fixture: a dotted skill dir name survives the source scan intact '
+      '(basename, not the uri.pathSegments idiom)',
+      () async {
+        final tmp = await Directory.systemTemp.createTemp(
+          'builtin_skill_guard',
+        );
+        try {
+          await Directory(
+            '${tmp.path}/prompts/skills/dotted.name',
+          ).create(recursive: true);
+          await File(
+            '${tmp.path}/prompts/skills/dotted.name/SKILL.md',
+          ).writeAsString('');
+          final violations = await guard.builtinSkillSourceViolations(
+            tmp.path,
+          );
+          expect(violations, hasLength(1));
+          expect(violations.single, contains('dotted.name'));
+          expect(violations.single, contains('EMPTY'));
         } finally {
           await tmp.delete(recursive: true);
         }
@@ -170,9 +241,7 @@ void main() {
       final dir = Directory('prompts/skills');
       final sources = <String, String>{
         for (final d in dir.listSync().whereType<Directory>())
-          d.uri.pathSegments.reversed.toList()[1]: File(
-            '${d.path}/SKILL.md',
-          ).readAsStringSync(),
+        p.basename(d.path): File('${d.path}/SKILL.md').readAsStringSync(),
       };
       expect(builtinSkillFiles.keys.toSet(), sources.keys.toSet());
       for (final entry in sources.entries) {

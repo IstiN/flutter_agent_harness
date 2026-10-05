@@ -27,6 +27,36 @@ import 'dart:io';
 
 import 'package:flutter_agent_harness/src/prompts/prompts.g.dart'
     show builtinSkillFiles;
+import 'package:path/path.dart' as p;
+
+/// Byte-level content verdicts for ONE SKILL.md, shared by the packaged
+/// and on-disk checkers. Takes the file's bytes (read ONCE — the source
+/// checker passes the result of a single `readAsBytes`, so the byte
+/// count and the inspected text can never disagree between two reads)
+/// and returns an empty list when the skill carries usable content.
+/// Pure and synchronous so the tests can drive it with
+/// incident-shaped fixtures.
+List<String> builtinSkillMdByteViolations(
+  String name,
+  List<int> content, {
+  int minBytes = builtinSkillMinBytes,
+  String path = 'SKILL.md',
+}) {
+  if (utf8.decode(content).trim().isEmpty) {
+    return [
+      'built-in skill "$name": $path ships EMPTY (0 bytes of content — '
+          'the gh-1275 incident shape)',
+    ];
+  }
+  if (content.length < minBytes) {
+    return [
+      'built-in skill "$name": $path is ${content.length} bytes, below '
+          'the $minBytes-byte floor — a frontmatter-only stub is not a '
+          'usable skill',
+    ];
+  }
+  return const [];
+}
 
 /// Byte floor for a shipped SKILL.md (gh-1275 AC3: "each built-in skill
 /// dir contains a non-empty SKILL.md (byte size > some floor)"). The
@@ -53,19 +83,9 @@ List<String> builtinSkillContentViolations(
   final entries = builtinFiles.entries.toList()
     ..sort((a, b) => a.key.compareTo(b.key));
   for (final entry in entries) {
-    final bytes = utf8.encode(entry.value).length;
-    if (entry.value.trim().isEmpty) {
-      violations.add(
-        'built-in skill "${entry.key}": SKILL.md ships EMPTY '
-        '(0 bytes of content — the gh-1275 incident shape)',
-      );
-    } else if (bytes < minBytes) {
-      violations.add(
-        'built-in skill "${entry.key}": SKILL.md is $bytes bytes, below '
-        'the $minBytes-byte floor — a frontmatter-only stub is not a '
-        'usable skill',
-      );
-    }
+    violations.addAll(
+      builtinSkillMdByteViolations(entry.key, utf8.encode(entry.value)),
+    );
   }
   return violations;
 }
@@ -84,9 +104,7 @@ Future<List<String>> builtinSkillSourceViolations(
   }
   final violations = <String>[];
   final names =
-      dir.listSync().whereType<Directory>().map(
-        (d) => d.uri.pathSegments.reversed.toList()[1],
-      ).toList()
+      dir.listSync().whereType<Directory>().map((d) => p.basename(d.path)).toList()
         ..sort();
   if (names.isEmpty) {
     violations.add(
@@ -103,19 +121,18 @@ Future<List<String>> builtinSkillSourceViolations(
       );
       continue;
     }
-    final bytes = file.lengthSync();
-    if (bytes == 0 || (await file.readAsString()).trim().isEmpty) {
-      violations.add(
-        'built-in skill "$name": prompts/skills/$name/SKILL.md ships '
-        'EMPTY — directory structure without content (gh-1275)',
-      );
-    } else if (bytes < minBytes) {
-      violations.add(
-        'built-in skill "$name": prompts/skills/$name/SKILL.md is '
-        '$bytes bytes, below the $minBytes-byte floor — a '
-        'frontmatter-only stub is not a usable skill',
-      );
-    }
+    // One read: the byte count and the inspected text come from the
+    // same bytes (the review-flagged lengthSync + readAsString pair
+    // could disagree if the file changed between the two calls).
+    final content = await file.readAsBytes();
+    violations.addAll(
+      builtinSkillMdByteViolations(
+        name,
+        content,
+        minBytes: minBytes,
+        path: 'prompts/skills/$name/SKILL.md',
+      ),
+    );
   }
   return violations;
 }
