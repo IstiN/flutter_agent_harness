@@ -2714,15 +2714,10 @@ final class FaTuiController {
     final savedTermios = await _sanitizeTermiosInput();
     try {
       // Flip `_running` only here — after every await, immediately before
-      // `_program.run` flips the Program's own gate (synchronously, at
-      // `_runCore` entry). With `_running = true` earlier, an output flush
-      // landing while the termios probe awaits (a real `stty` subprocess,
-      // ~20ms on Linux) routed through `_program.send`, which DROPS
-      // messages sent before the program started — boot-time plugin
-      // output (e.g. the hub plugin's `[hub] connected as …`) vanished on
-      // slow hosts (issue #538: dap integration legs red on Linux CI,
-      // green on fast dev machines). Until this point `_send` parks
-      // messages in `_pending`; drain them again now.
+      // `_program.run` sets the Program's own gate. Earlier, an output flush
+      // landing during the termios probe went through `_program.send`, which
+      // DROPS pre-start sends — boot-time plugin output vanished on slow
+      // hosts (issue #538). Until here `_send` parks in `_pending`; drain now.
       _flushOutput();
       _running = true;
       for (final msg in _pending) {
@@ -2731,11 +2726,7 @@ final class FaTuiController {
       _pending.clear();
       await _program.run(model);
     } finally {
-      // The program is done (quit, kill, or a run-loop exception): stop
-      // arming output-flush timers into it. `Program.send` silently drops
-      // sends to a stopped program (gh-1248) — parking pre-run style in
-      // [_pending] keeps the bytes at least reachable for diagnostics
-      // instead of vanishing into a dead queue.
+      // gh-1248: program ended (quit/kill/throw) — stop arming flush timers into its dead send queue.
       _running = false;
       if (savedTermios != null) await _restoreTermios(savedTermios);
     }
