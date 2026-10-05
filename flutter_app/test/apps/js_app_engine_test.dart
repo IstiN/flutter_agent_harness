@@ -23,6 +23,15 @@ import '../native_test_guard.dart';
 /// boots a real JS engine (issue #184). Resolved once per isolate.
 final _engineSkip = quickJsBridgeAvailable ? false : kQuickJsBridgeUnavailable;
 
+/// Polls [done] once per 150 ms tick until it returns true or [maxTicks]
+/// elapse. Shared by the engine tests below: bridge calls cross real
+/// platform channels, so a single fixed settle can race under load.
+Future<void> waitFor(bool Function() done, {int maxTicks = 40}) async {
+  for (var i = 0; i < maxTicks && !done(); i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+  }
+}
+
 /// Fake [CalendarApi] for the `fa.calendar` bridge tests — the host-side
 /// tests never touch the real method channel.
 final class _FakeCalendarApi implements CalendarApi {
@@ -384,9 +393,7 @@ void main() {
     /// Waits until the app exported state (the bridge calls cross real
     /// platform channels, so a single fixed settle can race under load).
     Future<void> waitForState(JsAppEngine engine) async {
-      for (var i = 0; i < 40 && engine.exportedState == null; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 150));
-      }
+      await waitFor(() => engine.exportedState != null);
     }
 
     testWidgets('engine renders the initial tree and exports state', (
@@ -1756,9 +1763,7 @@ void main() {
       );
 
       Future<void> waitForExport(JsAppEngine engine, String key) async {
-        for (var i = 0; i < 40 && engine.exportedState?[key] == null; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 150));
-        }
+        await waitFor(() => engine.exportedState?[key] != null);
       }
 
       testWidgets('a storage write reaches sibling engines, not the writer', (
@@ -2037,9 +2042,7 @@ void main() {
           );
           try {
             await engine.start();
-            for (var i = 0; i < 40 && engine.tree.value == null; i++) {
-              await Future<void>.delayed(const Duration(milliseconds: 150));
-            }
+            await waitFor(() => engine.tree.value != null);
             // uiTree set: the eval succeeded (gh-1272 AC1)…
             expect(engine.tree.value, isNotNull);
             expect(jsonEncode(engine.tree.value), contains('a_b_c_d'));
@@ -2789,11 +2792,22 @@ jsr.render({type: 'text', data: 'full-app'});
         reason: 'the fingerprint join must survive byte-identically',
       );
       // No real control character may leak out of Dart escape
-      // processing: the bootstrap's own line breaks are fine, a real
-      // TAB/CR never is — inside JS they only ever appear as escaped
-      // pairs in this source.
-      expect(js, isNot(contains('\t')));
-      expect(js, isNot(contains('\r')));
+      // processing. Scoped to the fingerprint-normalizer region rather
+      // than the whole bootstrap (review): a CRLF checkout would put \r
+      // on the raw string's own line ends and false-positive here, while
+      // a real TAB/CR can only ever appear inside this JS block as an
+      // escaped pair — so the region bound is the exact guard needed.
+      final fpStart = js.indexOf('var __faFingerprint');
+      final fpEnd = js.indexOf('var __faReport', fpStart);
+      expect(
+        fpStart,
+        greaterThanOrEqualTo(0),
+        reason: 'fingerprint block present',
+      );
+      expect(fpEnd, greaterThan(fpStart), reason: 'fingerprint block closed');
+      final fpBlock = js.substring(fpStart, fpEnd);
+      expect(fpBlock, isNot(contains('\t')));
+      expect(fpBlock, isNot(contains('\r')));
     });
 
     test('live engines join the sibling group; smoke-gate probes never '
