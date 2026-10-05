@@ -170,6 +170,18 @@ QUICK COMMANDS
                                emits one JSON object per row. An unknown
                                session or out-of-range record exits 1
                                with a message on stderr.
+  session                      fa session list [--json] [--flat]: the
+                               tree-grouped session listing (agents
+                               nested under parents). fa session repair
+                               <sessionId|path> [--dry-run]: rewrite a
+                               bloated session file dropping the
+                               append-only custom ledgers
+                               (model_request_summary, registry
+                               snapshots) so a marathon session resumes
+                               instead of exhausting the heap; the
+                               conversation is kept verbatim and the
+                               original preserved as <file>.bak. A live
+                               session (fresh heartbeat) is refused.
   config                       fa config export-providers [--out
                                <file.fahx>] [--passphrase-stdin]: write
                                the saved custom providers (plus their
