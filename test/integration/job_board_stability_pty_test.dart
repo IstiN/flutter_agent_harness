@@ -267,22 +267,36 @@ void main() {
       // drain on a loaded runner — waitForOutput's 2x-settleMs quiet
       // detector only fired AFTER the last settle, and `mid` caught the
       // by-design fully-drained frame (frozen row gone) instead of the
-      // mid-drain one (3 distinct-SHA gate reds). The drain floor is 4 s
-      // (sleeps 21..25 exit >=1 s apart), so a fixed 300 ms beat always
-      // lands mid-drain while still letting the settle's frame paint.
+      // mid-drain one (3 distinct-SHA gate reds). A fixed 300 ms beat is
+      // not enough either (gh-1250 CI frames): the settle HARVESTER batches
+      // — a starved poll prints all five `exited(0)` notices in one burst,
+      // so no post-first-notice beat can land mid-drain. The sampleable
+      // contract is the INVARIANT, not the intermediate state: if the
+      // `· older` row is still on screen it must be byte-identical (a
+      // re-derived board would show `· 4 running · 1 done`); if the whole
+      // batch drained between camera samples the AFTER asserts below
+      // (exactly one terminal card, row leaves the live region) still
+      // police the transition.
       await Future<void>.delayed(const Duration(milliseconds: 300));
       final mid = harness.viewportLines;
       expectComposerReserved(mid, columns);
-      expect(
-        frameContentLines(mid)
-            .where((l) => l.contains('· older') && l.contains('(5)'))
-            .toList(),
-        beforeOlder,
-        reason:
-            'the printed `· older` row never changes counts while its '
-            'jobs settle (before:\n${before.join('\n')}\nmid:\n'
-            '${mid.join('\n')})',
-      );
+      final midOlder = frameContentLines(mid)
+          .where((l) => l.contains('· older') && l.contains('(5)'))
+          .map((l) => l.trimRight())
+          .toList();
+      // Absent = the whole batch drained between camera samples (legal
+      // under harvester batching; the AFTER asserts police the
+      // transition). Present = byte-identical, never re-derived.
+      if (midOlder.isNotEmpty) {
+        expect(
+          midOlder,
+          beforeOlder,
+          reason:
+              'a printed `· older` row never changes counts while its '
+              'jobs settle (before:\n${before.join('\n')}\nmid:\n'
+              '${mid.join('\n')})',
+        );
+      }
 
       // Full settle hands the bucket to the transcript: exactly ONE
       // terminal summary card, and the aged row leaves the live region.
