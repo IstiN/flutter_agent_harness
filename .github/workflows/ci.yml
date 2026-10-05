@@ -2115,11 +2115,11 @@ jobs:
           dart pub get
           # Vendored third-party code: analyze keeps ERRORS fatal (the
           # gh-1248 compile rot this step exists to catch was error-level)
-          # but pre-existing vendor warnings/infos must not red unrelated
-          # PRs — same policy as the example app's analyze
-          # (--no-fatal-infos --no-fatal-warnings). The test run below is
-          # the fatal gate.
-          dart analyze --no-fatal-warnings --no-fatal-infos
+          # but pre-existing vendor warnings must not red unrelated PRs.
+          # Plain `dart analyze` has no --no-fatal-infos (that flag is the
+          # flutter tool's; infos are already non-fatal by default) — only
+          # warnings need negating here. The test run below is the fatal gate.
+          dart analyze --no-fatal-warnings
           dart test
 
   # SEC-07 (#795) AC4: run the installer against fixture releases
