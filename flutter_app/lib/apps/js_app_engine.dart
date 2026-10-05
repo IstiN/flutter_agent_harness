@@ -340,7 +340,8 @@ class JsAppEngine {
   /// `WidgetsBinding.instance`, which THROWS in that state (gh-1266).
   static bool get _inWidgetTest {
     final type = BindingBase.debugBindingType();
-    return type != null && type.toString().contains('TestWidgetsFlutterBinding');
+    return type != null &&
+        type.toString().contains('TestWidgetsFlutterBinding');
   }
 
   /// Serializes [action] process-wide in production; runs it directly
@@ -850,11 +851,14 @@ class JsAppEngine {
     return "jsr.locale = '$safe';\n$_faBootstrapJs";
   }
 
-  // Raw: the gh-1164 fingerprint block below relies on JS escape sequences
-  // (\n, \t, \r) surviving verbatim — a non-raw literal converts them into
-  // real control characters and the JS parser rejects the regex literal
-  // ("unexpected line terminator in regexp"), killing the whole widget eval
-  // on every engine-capable host (gh-1266).
+  // Raw string (gh-1266 / gh-1272): the gh-1164 fingerprint block below
+  // embeds JS regex char classes (/[ \t\r\n]+/) and '\n' string literals —
+  // a non-raw Dart literal unescapes those into REAL tab/CR/LF before the
+  // JS engine ever sees the source, so the JS parser rejects the regex
+  // literal ("unexpected line terminator in regexp"), killing the whole
+  // widget eval (bootstrap + app code in one script) on every
+  // engine-capable host (macOS JSC, Linux/Windows QuickJS). No $
+  // interpolation inside; raw is safe.
   static const String _faBootstrapJs = r'''
 jsr.fa = {
   call: function(method, args) {
