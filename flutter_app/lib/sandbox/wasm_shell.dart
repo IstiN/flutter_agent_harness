@@ -18,6 +18,7 @@ import 'package:path/path.dart' as p;
 import 'package:wasm_run/wasm_run.dart';
 
 import 'package:fa/sandbox/sandbox_builtins.dart';
+import 'package:fa/sandbox/sandbox_host_paths.dart';
 import 'package:fa/sandbox/sandbox_pip.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/sandbox/shell_job.dart';
@@ -163,6 +164,21 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// Host directory exposed to the WASM guest at `/`.
   @override
   final String? sandboxHostPath;
+
+  /// Lazily-built matcher for the "inside [sandboxHostPath]" convention
+  /// shared with `SandboxedExecutionEnv._map` (gh-1274 review); null when
+  /// no host root is configured.
+  SandboxHostRoot? _hostRoot;
+  bool _hostRootReady = false;
+
+  SandboxHostRoot? get _sandboxHostRoot {
+    if (!_hostRootReady) {
+      _hostRootReady = true;
+      final host = sandboxHostPath;
+      if (host != null && host.isNotEmpty) _hostRoot = SandboxHostRoot(host);
+    }
+    return _hostRoot;
+  }
 
   /// Compiles a bundled `assets/wasm/<name>` module on demand (issue #640).
   /// Null when all modules were supplied eagerly (tests).
@@ -404,8 +420,8 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       'curl' => _curlBuiltin(stage, options, inputSource),
       'wget' => _wgetBuiltin(stage, options),
       'git' => _gitBuiltin(stage, options),
-      'jq' => _jqBuiltin(stage, inputSource),
-      'yq' => _yqBuiltin(stage, inputSource),
+      'jq' => _jqBuiltin(stage, options, inputSource),
+      'yq' => _yqBuiltin(stage, options, inputSource),
       'env' => _envBuiltin(stage, options),
       'test' || '[' => _testBuiltin(stage),
       'which' => _whichBuiltin(stage),
@@ -1044,8 +1060,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     // SandboxedExecutionEnv._map, a sandbox-virtual path that textually
     // begins with the host root is treated as already mapped; both
     // readings stay inside the sandbox.
-    if (host.isNotEmpty &&
-        (sandboxPath == host || sandboxPath.startsWith('$host/'))) {
+    if (_sandboxHostRoot?.contains(sandboxPath) ?? false) {
       return sandboxPath;
     }
     final stripped = sandboxPath.startsWith('/')
@@ -1086,16 +1101,15 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// `echo hello > t.txt && cat t.txt` fails with ENOENT. A cwd inside
   /// [sandboxHostPath] is therefore mapped back to its sandbox-absolute
   /// form (`<host>` → `/`, `<host>/work` → `/work`); anything outside the
-  /// sandbox is left unchanged.
+  /// sandbox is left unchanged. The membership test is the shared
+  /// [SandboxHostRoot] convention — hardened against trailing separators
+  /// and symlink/case spelling variants (gh-1274 review) — so it cannot
+  /// drift from `SandboxedExecutionEnv._map`.
   String _effectiveCwd(ShellExecOptions? options) {
     final cwd = options?.cwd ?? _currentDir;
-    final host = sandboxHostPath;
-    if (host == null || host.isEmpty) return cwd;
-    if (cwd == host) return '/';
-    if (cwd.startsWith('$host/')) {
-      return _normalizeSandboxPath(cwd.substring(host.length));
-    }
-    return cwd;
+    final root = _sandboxHostRoot;
+    if (root == null) return cwd;
+    return root.stripToSandboxPath(cwd) ?? cwd;
   }
 
   /// Resolves [path] against [cwd] inside the sandbox, returning an absolute
@@ -1998,20 +2012,22 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
 
   Future<Result<StageResult, ExecutionError>> _jqBuiltin(
     Stage stage,
+    ShellExecOptions? options,
     String? inputSource,
   ) async {
     final result = await _sandboxBuiltins(
-      _currentDir,
+      _effectiveCwd(options),
     ).jq(stage.args, stdin: await _stdinFromSource(stage, inputSource));
     return _builtinOk(result);
   }
 
   Future<Result<StageResult, ExecutionError>> _yqBuiltin(
     Stage stage,
+    ShellExecOptions? options,
     String? inputSource,
   ) async {
     final result = await _sandboxBuiltins(
-      _currentDir,
+      _effectiveCwd(options),
     ).yq(stage.args, stdin: await _stdinFromSource(stage, inputSource));
     return _builtinOk(result);
   }

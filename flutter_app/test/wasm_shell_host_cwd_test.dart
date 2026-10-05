@@ -227,5 +227,73 @@ void main() {
       expect(r.valueOrNull!.stdout, '/\n');
       expect(io.File('${sandbox.path}/t.txt').existsSync(), isTrue);
     });
+
+    test('host root reported with a trailing separator still maps cwd', () async {
+      // gh-1274 review: a `Directory.path` join can leave the sandbox root
+      // stored as `<root>/`; the mapping must not require a double slash
+      // to recognize the cwd as inside the sandbox.
+      io.File('${sandbox.path}/t.txt').writeAsStringSync('hello\n');
+      final trailing = WasiSandboxShell(
+        coreutils: _SlotModule(rec),
+        rg: _SlotModule(rec),
+        find: _SlotModule(rec),
+        sed: _SlotModule(rec),
+        awk: _SlotModule(rec),
+        tar: _SlotModule(rec),
+        gzip: _SlotModule(rec),
+        zip: _SlotModule(rec),
+        sandboxHostPath: '${sandbox.path}/',
+      );
+      rec.next = _ScriptedInstance();
+      final r = await trailing.exec(
+        'cat t.txt',
+        options: ShellExecOptions(cwd: hostCwd.single),
+      );
+      expect(r.isOk, isTrue, reason: r.errorOrNull?.message);
+      expect(rec.configs.single.args, ['cat', '/t.txt']);
+    });
+
+    test('cwd spelled through a symlink to the sandbox root maps back', () async {
+      // gh-1274 review: on the iOS simulator `/var` is a symlink to
+      // `/private/var`, so the same directory can arrive as a different
+      // string. The mapping resolves the root once and matches the cwd
+      // against both spellings.
+      io.File('${sandbox.path}/t.txt').writeAsStringSync('hello\n');
+      final link = io.Link('${tmp.path}/link')..createSync(sandbox.path);
+      rec.next = _ScriptedInstance();
+      final r = await shell().exec(
+        'cat t.txt',
+        options: ShellExecOptions(cwd: link.path),
+      );
+      expect(r.isOk, isTrue, reason: r.errorOrNull?.message);
+      expect(rec.configs.single.args, ['cat', '/t.txt']);
+    });
+
+    test('jq file operand resolves against the per-call host cwd', () async {
+      // gh-1274 review follow-up: jq/yq were the only builtins still
+      // resolving file operands against the shell's own dir and ignoring
+      // options.cwd entirely.
+      io.Directory('${sandbox.path}/work').createSync();
+      io.File(
+        '${sandbox.path}/work/data.json',
+      ).writeAsStringSync('{"a":1}\n');
+      final r = await shell().exec(
+        'jq . data.json',
+        options: ShellExecOptions(cwd: '${hostCwd.single}/work'),
+      );
+      expect(r.isOk, isTrue, reason: r.errorOrNull?.message);
+      expect(r.valueOrNull!.stdout, contains('"a": 1'));
+    });
+
+    test('yq file operand resolves against the per-call host cwd', () async {
+      io.Directory('${sandbox.path}/work').createSync();
+      io.File('${sandbox.path}/work/data.yaml').writeAsStringSync('a: 1\n');
+      final r = await shell().exec(
+        'yq . data.yaml',
+        options: ShellExecOptions(cwd: '${hostCwd.single}/work'),
+      );
+      expect(r.isOk, isTrue, reason: r.errorOrNull?.message);
+      expect(r.valueOrNull!.stdout, contains('"a": 1'));
+    });
   });
 }
