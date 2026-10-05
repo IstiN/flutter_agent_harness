@@ -13,6 +13,8 @@ library;
 
 import 'package:fa/services/agent_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_memory/flutter_agent_memory.dart'
+    show PromptLoader;
 import 'package:flutter_test/flutter_test.dart';
 
 StreamFunction _singleTextResponse(String text) {
@@ -63,6 +65,15 @@ Future<String> _run(AgentService service, String name,
 
 void main() {
   group('gh-1276: app memory user scope', () {
+    setUp(() {
+      // flutter_test cannot resolve package: URIs (the vendor prompt
+      // loader reads its XML templates via Isolate.resolvePackageUri).
+      // PromptLoader.setLoader is the package's documented host hook —
+      // a minimal template keeps the enrichment/search LLM stages alive.
+      PromptLoader.setLoader(
+          (name) async => '<prompt>stub for $name: ${'query'}</prompt>');
+    });
+    tearDown(() => PromptLoader.setLoader(null));
     test(
       'AC1: memory_add (user) → memory_list shows it → memory_search '
       'ranks it for its own keywords',
@@ -107,7 +118,7 @@ void main() {
     );
 
     test(
-      'user root resolution: desktop home wins, then config override, '
+      'user root resolution: config override wins, then desktop home, '
       'then a sandbox-local fallback',
       () async {
         expect(
