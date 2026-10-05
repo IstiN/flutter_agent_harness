@@ -125,8 +125,9 @@ extension on AgentCli {
     // used to skip the detach below — io kept routing into the dead
     // controller whose Program.send silently drops everything, so the CLI
     // ghosted: turns ran, sessions persisted, nothing ever painted and
-    // ESC was dead. Detach in a finally so any program death degrades to
-    // line-mode output (visible) instead of a silent black hole.
+    // ESC was dead. Detach in a finally so a program death can never
+    // ghost the CLI; the exception still propagates and the process dies
+    // loudly (gh-1197 initial-frame policy).
     try {
       await controller.run();
     } finally {

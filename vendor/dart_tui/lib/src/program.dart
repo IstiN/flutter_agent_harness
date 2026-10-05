@@ -269,16 +269,16 @@ final class Program {
         final msg = await Future<Msg?>.value(cmd());
         if (msg != null) enqueue(msg);
       } catch (e, st) {
-        // Log and KEEP RUNNING: InterruptMsg here stopped the whole
-        // program, and a stopped program silently drops every later
+        // "without catch panics" = don't catch: rethrow and die loudly.
+        if (_disableCatchPanics) rethrow;
+        // Otherwise log and KEEP RUNNING: InterruptMsg here stopped the
+        // whole program, and a stopped program silently drops every later
         // `send` — the CLI kept running its agent loop against a dead
         // screen (the gh-1248 mail-wake ghost: turns persisted to the
         // session while nothing painted ever again). Only a deliberate
         // QuitMsg / external cancellation ends the program.
-        if (!_disableCatchPanics) {
-          stderr.writeln('Caught command exception: $e');
-          stderr.writeln(st);
-        }
+        stderr.writeln('Caught command exception: $e');
+        stderr.writeln(st);
       }
     }
 
@@ -564,12 +564,12 @@ final class Program {
           try {
             unawaited(runCmd(onMouse(msg)));
           } catch (e, st) {
-            // Log and keep running — same rationale as runCmd's guard
-            // above (gh-1248): a handler bug must not ghost the UI.
-            if (!_disableCatchPanics) {
-              stderr.writeln('Caught mouse handler exception: $e');
-              stderr.writeln(st);
-            }
+            // "without catch panics" = don't catch: rethrow and die loudly.
+            if (_disableCatchPanics) rethrow;
+            // Otherwise log and keep running — same rationale as runCmd's
+            // guard above (gh-1248): a handler bug must not ghost the UI.
+            stderr.writeln('Caught mouse handler exception: $e');
+            stderr.writeln(st);
           }
         }
       }
@@ -577,6 +577,8 @@ final class Program {
       try {
         updateResult = model.update(msg);
       } catch (e, st) {
+        // "without catch panics" = don't catch: rethrow and die loudly.
+        if (_disableCatchPanics) rethrow;
         // A throwing update() must never kill the whole TUI: log and keep
         // running (matches runCmd's guard above — a picker bug must not
         // close the app). The enqueue(InterruptMsg()) that used to live
