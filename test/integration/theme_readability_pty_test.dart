@@ -66,7 +66,9 @@ void main() {
           // roundtrips + 2 echo spawns) passed 60s mid-flight — dump shows
           // tool-0 already settled `exit 0` with the spinner still running.
           // 150s covers the loaded-host envelope (per-test @Timeout stays
-          // 10 min: 180 + 15 + 150 + 30 + 5 < 600).
+          // 10 min: 180 + 15 + 150 + 30 + 5, plus ~20s bounded
+          // settle/slash overhead — waitForBoot's settle wait and the
+          // runSlashCommand key delays — < 600 total).
           await harness.waitForText(
             'scenario-complete',
             timeout: const Duration(seconds: 150),
