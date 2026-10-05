@@ -982,7 +982,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     }
     final sw = Stopwatch()..start();
     try {
-      for (final (start, end) of tornSpans) {
+      for (final (start, end) in tornSpans) {
         final raw = await ranged.readRange(segmentPath, start, end);
         final text = raw.isErr
             ? null
@@ -1008,7 +1008,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       if (maybeRenamable is RenamableFileSystem) {
         final tempPath = '$segmentPath.repaired';
         Result<void, FileError> wrote = await fs.writeFile(tempPath, '');
-        for (final (start, end) of goodSpans) {
+        for (final (start, end) in goodSpans) {
           final raw = await ranged.readRange(segmentPath, start, end);
           if (raw.isErr) break;
           wrote = await fs.appendFile(

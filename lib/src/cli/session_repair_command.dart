@@ -35,6 +35,7 @@ Future<int> runSessionRepairCliCommand({
     return 1;
   }
   String? path;
+  SessionPresence? liveRow;
   if (target.endsWith('.jsonl')) {
     final exists = await env.exists(target);
     if (exists.isErr || !exists.valueOrNull!) {
@@ -43,25 +44,11 @@ Future<int> runSessionRepairCliCommand({
     }
     path = target;
     // Live guard for the path branch too: resolve the file to its
-    // session id through the repo listing (ids are the presence key)
-    // and refuse a fresh heartbeat, exactly like the by-id branch —
-    // repairing under a writer loses appends. A file that is not a
-    // session under [sessionRoot] matches no presence row; there is no
-    // writer heartbeat to check against (see the doc comment).
-    final liveRow = await _liveRowForPath(
-      env,
-      sessionRoot,
-      path,
-      presenceStore,
-    );
-    if (liveRow != null) {
-      writeln(
-        'session repair: session ${liveRow.sessionId} is live (pid '
-        '${liveRow.pid ?? 'unknown'}, heartbeat ${liveRow.touchedAt}) — '
-        'stop the owning process first.',
-      );
-      return 1;
-    }
+    // session id through the repo listing (ids are the presence key).
+    // A file that is not a session under [sessionRoot] matches no
+    // presence row; there is no writer heartbeat to check against (see
+    // the doc comment).
+    liveRow = await _liveRowForPath(env, sessionRoot, path, presenceStore);
   } else {
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionRoot);
     final metadata = await resolveRepairableSession(repo, target);
@@ -70,19 +57,19 @@ Future<int> runSessionRepairCliCommand({
       return 1;
     }
     path = metadata.path;
-    // Live guard: a fresh heartbeat means a running process owns the
-    // session — repairing under a writer loses appends (the same rule as
-    // `delete`, minus the own-process pass: repair never runs in the
-    // owning process).
-    final row = (await presenceStore?.list())?[metadata.id];
-    if (row != null) {
-      writeln(
-        'session repair: session ${metadata.id} is live (pid '
-        '${row.pid ?? 'unknown'}, heartbeat ${row.touchedAt}) — stop the '
-        'owning process first.',
-      );
-      return 1;
-    }
+    liveRow = (await presenceStore?.list())?[metadata.id];
+  }
+  // Live guard: a fresh heartbeat means a running process owns the
+  // session — repairing under a writer loses appends (the same rule as
+  // `delete`, minus the own-process pass: repair never runs in the
+  // owning process).
+  if (liveRow != null) {
+    writeln(
+      'session repair: session ${liveRow.sessionId} is live (pid '
+      '${liveRow.pid ?? 'unknown'}, heartbeat ${liveRow.touchedAt}) — '
+      'stop the owning process first.',
+    );
+    return 1;
   }
   try {
     final report = await repairSessionLedgers(env, path, dryRun: dryRun);
