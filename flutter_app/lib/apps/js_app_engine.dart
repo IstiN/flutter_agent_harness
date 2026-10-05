@@ -845,7 +845,12 @@ class JsAppEngine {
     return "jsr.locale = '$safe';\n$_faBootstrapJs";
   }
 
-  static const String _faBootstrapJs = '''
+  // Raw: the gh-1164 fingerprint block below relies on JS escape sequences
+  // (\n, \t, \r) surviving verbatim — a non-raw literal converts them into
+  // real control characters and the JS parser rejects the regex literal
+  // ("unexpected line terminator in regexp"), killing the whole widget eval
+  // on every engine-capable host (gh-1266).
+  static const String _faBootstrapJs = r'''
 jsr.fa = {
   call: function(method, args) {
     return jsr.exec(JSON.stringify({fa: method, args: args || {}}));
