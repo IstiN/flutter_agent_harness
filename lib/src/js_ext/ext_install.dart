@@ -379,7 +379,7 @@ ExtensionManifest _parseManifest(Map<String, String> files, String label) {
 }
 
 /// Decodes the raw manifest text and asserts it is a JSON object.
-Object? _decodeManifestJson(String text, String label) {
+Map<String, dynamic> _decodeManifestJson(String text, String label) {
   final Object? decoded;
   try {
     decoded = jsonDecode(text);
