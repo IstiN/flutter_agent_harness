@@ -322,8 +322,16 @@ extension AgentServiceSessions on AgentService {
   /// records page in through loadOlderHistory. Small sessions load
   /// completely either way. A windowed-open failure (a corrupt tail,
   /// an IO hiccup on the ranged-read path) falls back to the FULL
-  /// open rather than failing the session — the compatibility path
-  /// (round-4 review); paging surfaces stay null for full-open.
+  /// Windowed open (issue #135): header + newest chunk only; older
+  /// records page in through loadOlderHistory. Small sessions load
+  /// completely either way. A windowed-open failure (a corrupt tail,
+  /// an IO hiccup on the ranged-read path) falls back to the classic
+  /// WHOLE-FILE open rather than failing the session — the compatibility
+  /// path (round-4 review); paging surfaces stay null for full-open.
+  /// The fallback is `wholeFileOnly`: the default full open streams over
+  /// ranged reads (gh-1073), i.e. the very capability that just failed —
+  /// an error-recovery retry must load through plain whole-file reads
+  /// only, or a real ranged-read breakage fails the fallback identically.
   Future<Session> _openSessionWindowed(
     SessionMetadata metadata, {
     required bool allowFullOpenFallback,
@@ -332,7 +340,7 @@ extension AgentServiceSessions on AgentService {
       return await _repo.open(metadata, windowed: true);
     } on Object {
       if (!allowFullOpenFallback) rethrow;
-      return _repo.open(metadata);
+      return _repo.open(metadata, wholeFileOnly: true);
     }
   }
 

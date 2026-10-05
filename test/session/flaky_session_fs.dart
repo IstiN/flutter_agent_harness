@@ -14,7 +14,9 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
 
   final MemoryFileSystem _delegate;
 
-  /// How many more [readTextFile] calls fail before reads succeed.
+  /// How many more [readTextFile]/[fileInfo]/[readRange] calls fail before
+  /// reads succeed (the open path's read surface since gh-1073: the open
+  /// stats first and streams ranged chunks — it never readTextFiles).
   int failNextReads = 0;
 
   /// How many more [writeFile] calls fail before writes succeed.
@@ -26,7 +28,9 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
   /// How many more [listDir] calls fail before listings succeed.
   int failNextListings = 0;
 
-  /// How many more [fileInfo] calls fail before stats succeed.
+  /// How many more [fileInfo] calls fail before stats succeed. On top of
+  /// [failNextReads], which also covers stats (the open path's read
+  /// surface since gh-1073), for tests that target the stat specifically.
   int failNextFileInfos = 0;
 
   /// When set, [writeFile] calls whose (path, content) match fail with
@@ -37,6 +41,8 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
   /// Total calls seen per op, successes and simulated ENOENTs alike —
   /// the retry-cap assertions read these.
   int readCalls = 0;
+  int statCalls = 0;
+  int rangeCalls = 0;
   int writeCalls = 0;
   int appendCalls = 0;
 
@@ -70,10 +76,7 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
   }
 
   @override
-  Future<Result<void, FileError>> appendFile(
-    String path,
-    String content,
-  ) async {
+  Future<Result<void, FileError>> appendFile(String path, String content) async {
     appendCalls++;
     if (failNextAppends > 0) {
       failNextAppends--;
@@ -110,10 +113,15 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
   ) => _delegate.writeBinaryFile(path, content);
 
   @override
-  Future<Result<FileInfo, FileError>> fileInfo(String path) {
+  Future<Result<FileInfo, FileError>> fileInfo(String path) async {
+    statCalls++;
     if (failNextFileInfos > 0) {
       failNextFileInfos--;
-      return Future.value(Err(_enoent(path)));
+      return Err(_enoent(path));
+    }
+    if (failNextReads > 0) {
+      failNextReads--;
+      return Err(_enoent(path));
     }
     return _delegate.fileInfo(path);
   }
@@ -128,7 +136,8 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
   }
 
   @override
-  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
+  Future<Result<bool, FileError>> exists(String path) =>
+      _delegate.exists(path);
 
   @override
   Future<Result<void, FileError>> createDir(
@@ -148,5 +157,12 @@ final class FlakySessionFs implements FileSystem, RangedReadFileSystem {
     String path,
     int start,
     int end,
-  ) => _delegate.readRange(path, start, end);
+  ) async {
+    rangeCalls++;
+    if (failNextReads > 0) {
+      failNextReads--;
+      return Err(_enoent(path));
+    }
+    return _delegate.readRange(path, start, end);
+  }
 }

@@ -123,18 +123,37 @@ Future<void> _runApp(List<String> args) async {
   }
   // `fa session list [--json] [--flat]` (issue #198) — the tree-grouped
   // session listing, intercepted like trajectory: no agent boot.
+  // `fa session repair <sessionId|path> [--dry-run]` (gh-1073) — ledger
+  // surgery on a bloated session file, also without booting the agent.
   final sessionList = parsed.sessionList;
   if (sessionList != null) {
     final io = _TerminalCliIO(headless: true);
     final listEnv = LocalExecutionEnv(
       cwd: parsed.cwd ?? Directory.current.path,
     );
+    final sessionRoot = parsed.sessionRoot ?? _defaultSessionRoot();
+    if (sessionList.verb == 'repair') {
+      exit(
+        await runSessionRepairCliCommand(
+          write: io.write,
+          writeln: io.writeln,
+          env: listEnv,
+          sessionRoot: sessionRoot,
+          sessionId: sessionList.repairTarget,
+          dryRun: sessionList.dryRun,
+          presenceStore: FileSessionPresenceStore(
+            env: listEnv,
+            root: sessionRoot,
+          ),
+        ),
+      );
+    }
     exit(
       await runSessionListCliCommand(
         write: io.write,
         writeln: io.writeln,
         env: listEnv,
-        sessionRoot: parsed.sessionRoot ?? _defaultSessionRoot(),
+        sessionRoot: sessionRoot,
         cwd: listEnv.cwd,
         json: sessionList.json,
         flat: sessionList.flat,
