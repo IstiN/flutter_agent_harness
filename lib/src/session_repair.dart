@@ -4,7 +4,7 @@
 /// conversation itself (messages, custom_message records, the tree
 /// structure) — so the session resumes.
 ///
-/// TheLedger records are safe to drop BY CONSTRUCTION:
+/// The ledger records are safe to drop BY CONSTRUCTION:
 /// - `model_request_summary` / `trajectory_prompt_blob` /
 ///   `trajectory_manifest_blob` / `trajectory_wire_dump` — Request-tab
 ///   replay detail; the transcript renders without them.
@@ -75,6 +75,7 @@ final class SessionRepairReport {
     required this.bytesAfter,
     required this.backupPath,
     required this.dryRun,
+    required this.untouchedSegments,
   });
 
   /// The session file this pass targeted.
@@ -83,7 +84,8 @@ final class SessionRepairReport {
   /// Total non-blank lines below the header.
   final int recordsRead;
 
-  /// Lines kept in the rewritten file (header excluded).
+  /// Records kept in the rewritten file (header excluded) — counted per
+  /// line, never derived from merged byte-span counts.
   final int recordsKept;
 
   /// Dropped records per custom type — full ledger drops AND superseded
@@ -105,6 +107,12 @@ final class SessionRepairReport {
   /// Whether this pass only counted.
   final bool dryRun;
 
+  /// Rotated `<file>.part-NN` segments (gh-1077) found next to [path] that
+  /// this pass did NOT touch — they still hold their ledger records, so
+  /// `bytesBefore`/`bytesAfter` alone overstate the on-disk reduction
+  /// when this is non-zero.
+  final int untouchedSegments;
+
   /// Human-readable summary lines for a CLI report.
   List<String> summaryLines() {
     final droppedTotal = droppedByType.values.fold<int>(0, (a, b) => a + b);
@@ -119,6 +127,9 @@ final class SessionRepairReport {
         'dropped $droppedTotal ledger records: ${_counts(droppedByType)}',
       if (keptLatestTotal > 0)
         'kept the latest snapshot of: ${_counts(keptLatestByType)}',
+      if (untouchedSegments > 0)
+        '$untouchedSegments rotated segment(s) untouched — ledger '
+        'records remain in ${path.split('/').last}.part-*',
       '${_bytes(bytesBefore)} → ${_bytes(bytesAfter)}'
           '${dryRun ? '' : ' · original kept at $backupPath'}',
     ];
@@ -203,6 +214,13 @@ Future<SessionRepairReport> repairSessionLedgers(
   }
   final bytesBefore = stat.valueOrNull!.size;
 
+  // Rotated segment siblings (gh-1077: `<file>.part-NN` holds the records
+  // rotated out of the primary). Repair rewrites ONLY the primary — the
+  // count goes into the report so the bytesBefore/bytesAfter line cannot
+  // overstate the on-disk reduction. A listing hiccup must not fail the
+  // repair: the note degrades to "parts unknown".
+  final untouchedSegments = await _countPartSiblings(fs, path);
+
   // Pass 1: classify every line by byte span. Nothing is decoded whole —
   // a 12 GiB file scans in bounded chunks.
   final headerSpan = <(int, int)>[];
@@ -211,10 +229,20 @@ Future<SessionRepairReport> repairSessionLedgers(
   final droppedByType = <String, int>{};
   final keptLatestCounts = <String, int>{};
   var recordsRead = 0;
+  // Records kept, counted per LINE — never derived from keptSpans.length,
+  // which is the merged SPAN count (contiguous runs coalesce into one
+  // span): the report must say how many records survive, or a reader
+  // doing recordsRead - recordsKept infers phantom drops.
+  var keptRecords = 0;
   var first = true;
   await SessionLineScanner(fs: fs, path: path).scan((line) async {
     if (first) {
       first = false;
+      // Repair refuses to produce an unopenable file: line 1 must parse
+      // as a session header. A torn creation-write otherwise survives
+      // "repair" byte-identically broken and the next open fails the
+      // same way — exactly when the user reached for repair.
+      _ensureRepairableHeader(line.text, path);
       headerSpan.add((line.start, line.end));
       return;
     }
@@ -235,14 +263,15 @@ Future<SessionRepairReport> repairSessionLedgers(
       latestByType[customType] = span;
       return;
     }
+    keptRecords++;
     _appendSpan(keptSpans, span);
   }, fileSize: bytesBefore);
 
   // The LATEST snapshot of each keep-latest type joins the kept spans, in
-  // file position order.
+  // file position order — one record each.
   keptSpans.addAll(latestByType.values);
   keptSpans.sort((a, b) => a.$1.compareTo(b.$1));
-  final recordsKept = keptSpans.length;
+  final recordsKept = keptRecords + latestByType.length;
 
   if (dryRun) {
     return SessionRepairReport(
@@ -255,6 +284,7 @@ Future<SessionRepairReport> repairSessionLedgers(
       bytesAfter: bytesBefore,
       backupPath: '$path.bak',
       dryRun: true,
+      untouchedSegments: untouchedSegments,
     );
   }
 
@@ -331,7 +361,55 @@ Future<SessionRepairReport> repairSessionLedgers(
     bytesAfter: afterStat.valueOrNull?.size ?? 0,
     backupPath: backupPath,
     dryRun: false,
+    untouchedSegments: untouchedSegments,
   );
+}
+
+/// Repair refuses to produce an unopenable file: line 1 must parse as a
+/// session header. A torn creation-write otherwise survives "repair"
+/// byte-identically broken. Bounded sniff — a header is a small JSON
+/// object; anything larger is corrupt by definition.
+void _ensureRepairableHeader(String line, String path) {
+  Object? decoded;
+  if (line.length <= 16384) {
+    try {
+      decoded = jsonDecode(line);
+    } on Object {
+      decoded = null;
+    }
+  }
+  if (decoded is! Map<String, dynamic> || decoded['type'] != 'session') {
+    throw SessionRepairException(
+      'first line of $path is not a valid session header — repair would '
+      'produce an unopenable file',
+      code: SessionRepairErrorCode.unknown,
+    );
+  }
+}
+
+/// Counts the rotated `<file>.part-NN` siblings next to [path] (gh-1077
+/// segment rotation) — repair rewrites only the primary, and the report
+/// must not let the bytesBefore/bytesAfter delta imply a full cleanup
+/// while the parts keep their ledger records. Zero when the listing
+/// fails (the note degrades silently rather than failing the repair).
+Future<int> _countPartSiblings(FileSystem fs, String path) async {
+  final slash = path.lastIndexOf('/');
+  if (slash < 0) return 0;
+  final dir = path.substring(0, slash);
+  if (dir.isEmpty) return 0;
+  final base = path.substring(slash + 1);
+  final listed = await fs.listDir(dir);
+  if (listed.isErr) return 0;
+  var count = 0;
+  for (final entry in listed.valueOrNull!) {
+    if (entry.kind != FileKind.file) continue;
+    final name = entry.name;
+    if (name.startsWith('$base.part-') &&
+        int.tryParse(name.substring('$base.part-'.length)) != null) {
+      count++;
+    }
+  }
+  return count;
 }
 
 void _appendSpan(List<(int, int)> spans, (int, int) span) {

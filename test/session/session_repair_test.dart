@@ -119,34 +119,6 @@ void main() {
       );
     });
 
-    test('rotated .part-NN siblings are reported as untouched', () async {
-      await writeSession([
-        header(),
-        message('m1'),
-        custom('c1', customType: 'model_request_summary'),
-      ]);
-      // A rotated segment (gh-1077) still holds ledger records; repair
-      // rewrites only the primary, so the report must say so instead of
-      // letting bytesBefore/bytesAfter imply a full cleanup.
-      await fs.writeFile(
-        '$path.part-0001',
-        '${header()}\n'
-        '${custom('c2', customType: 'model_request_summary')}\n',
-      );
-      final report = await repairSessionLedgers(fs, path, dryRun: true);
-      expect(report.untouchedSegments, 1);
-      expect(
-        report.summaryLines().join('\n'),
-        contains('.part-'),
-        reason: 'the summary warns that part siblings keep their ledgers',
-      );
-      // The part itself is untouched by the real pass too.
-      await repairSessionLedgers(fs, path);
-      final part =
-          (await fs.readTextFile('$path.part-0001')).getOrThrow();
-      expect(part, contains('model_request_summary'));
-    });
-
     test('a torn header line is refused — repair must not produce an '
         'unopenable file', () async {
       await writeSession([
@@ -189,6 +161,34 @@ void main() {
           ),
         ),
       );
+    });
+
+    test('rotated .part-NN siblings are reported as untouched', () async {
+      await writeSession([
+        header(),
+        message('m1'),
+        custom('c1', customType: 'model_request_summary'),
+      ]);
+      // A rotated segment (gh-1077) still holds ledger records; repair
+      // rewrites only the primary, so the report must say so instead of
+      // letting bytesBefore/bytesAfter imply a full cleanup.
+      await fs.writeFile(
+        '$path.part-0001',
+        '${header()}\n'
+        '${custom('c2', customType: 'model_request_summary')}\n',
+      );
+      final report = await repairSessionLedgers(fs, path, dryRun: true);
+      expect(report.untouchedSegments, 1);
+      expect(
+        report.summaryLines().join('\n'),
+        contains('.part-'),
+        reason: 'the summary warns that part siblings keep their ledgers',
+      );
+      // The part itself is untouched by the real pass too.
+      await repairSessionLedgers(fs, path);
+      final part =
+          (await fs.readTextFile('$path.part-0001')).getOrThrow();
+      expect(part, contains('model_request_summary'));
     });
 
     test('a second repair rotates the previous backup instead of '

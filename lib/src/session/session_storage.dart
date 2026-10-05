@@ -853,6 +853,10 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     SessionHeader? header;
     String? headerLine;
     var first = true;
+    // 1-based PHYSICAL line number of the line the callback is looking
+    // at — blanks included, so parse batches can be numbered by the
+    // real file even when blank lines intervene.
+    var lineNumber = 0;
     var batchLines = <String>[];
     var batchSpans = <(int, int)>[];
     var batchFirstLineNumber = 2;
@@ -892,7 +896,9 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
         entries.add(entry);
         _appendSpan(goodSpans, span);
       }
-      batchFirstLineNumber += batchLines.length;
+      // The NEXT batch's number is captured when its first line arrives
+      // (blank lines make counting-based numbers drift from the physical
+      // file).
       batchLines = <String>[];
       batchSpans = <(int, int)>[];
     }
@@ -901,6 +907,12 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       fs: fs,
       path: segmentPath,
     ).scan((line) async {
+      lineNumber++;
+      // Blank lines are skipped — INCLUDING before the header, matching
+      // the whole-file path (which filters blanks before taking
+      // allLines.first): the same session must open identically on a
+      // ranged and a non-ranged filesystem.
+      if (line.text.trim().isEmpty) return;
       if (first) {
         first = false;
         headerLine = line.text;
@@ -908,7 +920,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
         goodSpans.add((line.start, line.end));
         return;
       }
-      if (line.text.trim().isEmpty) return; // blank lines are skipped
+      if (batchLines.isEmpty) batchFirstLineNumber = lineNumber;
       batchLines.add(line.text);
       batchSpans.add((line.start, line.end));
       if (batchLines.length >= sessionParseBatchMaxLines ||
@@ -933,6 +945,11 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       }
       // Forensics sidecar first; read-only storage skips both writes and
       // still loads fine with the dropped records simply absent in memory.
+      // Reset the phase stopwatch: rewrite_ms must isolate the rewrite,
+      // not read+quarantine+rewrite.
+      phaseSw
+        ..reset()
+        ..start();
       try {
         for (final (start, end) in tornSpans) {
           final raw = await ranged.readRange(segmentPath, start, end);
