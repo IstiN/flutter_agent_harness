@@ -284,9 +284,11 @@ void main() {
           .where((l) => l.contains('· older') && l.contains('(5)'))
           .map((l) => l.trimRight())
           .toList();
-      // Absent = the whole batch drained between camera samples (legal
-      // under harvester batching; the AFTER asserts police the
-      // transition). Present = byte-identical, never re-derived.
+      // Absent = the whole batch drained between camera samples — legal
+      // only as the fully-drained frame: the harvester hands the bucket
+      // to the transcript in ONE transition, so the settled card must
+      // already be painted (a row that vanished without the card is a
+      // wedge). Present = byte-identical, never re-derived.
       if (midOlder.isNotEmpty) {
         expect(
           midOlder,
@@ -295,6 +297,14 @@ void main() {
               'a printed `· older` row never changes counts while its '
               'jobs settle (before:\n${before.join('\n')}\nmid:\n'
               '${mid.join('\n')})',
+        );
+      } else {
+        expect(
+          mid.join('\n'),
+          contains(_settledCardBody),
+          reason:
+              'row gone at MID is only legal as a fully-drained frame:\n'
+              '${mid.join('\n')}',
         );
       }
 
