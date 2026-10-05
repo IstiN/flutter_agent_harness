@@ -97,6 +97,10 @@ extension AgentCliLifecycle on AgentCli {
     // A session nobody wrote to leaves no file behind (never a viewer's
     // call — the owner's file is not ours to delete).
     if (_viewer == null) await deleteSessionIfEmpty();
+    // gh-1241: close the usage segment AFTER the empty-session cleanup —
+    // a deleted session has no chain to fold and no artifact should
+    // outlive it.
+    await _flushUsageLedger();
   }
 
   /// Warm the endpoint metadata (model list, dial features, reported
