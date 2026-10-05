@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026, the Flutter Agent Harness authors.
+# Use of this source code is governed by a MIT license that can be found
+# in the LICENSE file.
+#
+# gh-1296 NG1: every lockfile in the repo is committed and enforced.
+#
+# ONE inventory list (below) drives every check — a new lockfile joins the
+# list, it is never discovered per-file after a red build (#1265/#1296 class).
+#
+#   inventory  — each listed lockfile exists, is git-tracked, and is NOT
+#                gitignored (a gitignored/missing lockfile fails CI)
+#   pod-sync   — every native (native_build: true) iOS/macOS Flutter plugin
+#                resolved by the committed pubspec.lock has its pod in the
+#                platform's Podfile.lock. Catches the gh-1274 class: a native
+#                plugin lands in pubspec.yaml/lock but the Podfile.locks are
+#                never regenerated (drift rides silently until a build trips).
+#                Requires flutter_app/.flutter-plugins-dependencies (generated
+#                by `flutter pub get`; run this after it, as ci.yml does).
+#   all        — both (default)
+#
+# Self-test (synthetic fixtures, no flutter needed):
+#   scripts/check_lockfiles_selftest.sh   — wired into ci.yml Static gates
+#
+# Environment overrides (used by the selftest; normal runs need nothing):
+#   FAH_REPO_ROOT       repo root (default: script's grandparent)
+#   FAH_PLUGINS_FILE    .flutter-plugins-dependencies path for pod-sync
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${FAH_REPO_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+
+# ── THE inventory (gh-1296 NG1: one list, not per-file discoveries) ──────
+# Every lockfile whose drift can break a build must appear here exactly once.
+LOCKFILES=(
+  "flutter_app/pubspec.lock"        # app dependency pins (#1265)
+  "flutter_app/ios/Podfile.lock"    # iOS CocoaPods pins (#1296)
+  "flutter_app/macos/Podfile.lock"  # macOS CocoaPods pins (#1296)
+)
+
+cd "$REPO_ROOT"
+
+mode="${1:-all}"
+case "$mode" in
+  inventory|pod-sync|all) ;;
+  *)
+    echo "usage: $0 [inventory|pod-sync|all]" >&2
+    exit 64
+    ;;
+esac
+
+fail=0
+
+# ── inventory: exists + tracked + not gitignored ─────────────────────────
+if [ "$mode" = "inventory" ] || [ "$mode" = "all" ]; then
+  for f in "${LOCKFILES[@]}"; do
+    if [ ! -f "$f" ]; then
+      echo "::error::lockfile MISSING from the working tree: $f — restore it (git checkout -- $f) or regenerate it and commit"
+      fail=1
+      continue
+    fi
+    if ! git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+      echo "::error::lockfile not tracked by git: $f — git add $f and commit (gh-1296 NG1)"
+      fail=1
+    fi
+    if git check-ignore -q "$f"; then
+      echo "::error::lockfile is GITIGNORED: $f — remove the ignore pattern; a lockfile that drifts invisibly is how #1265/#1296 happened"
+      fail=1
+    fi
+  done
+  if [ "$fail" -eq 0 ]; then
+    echo "lockfile inventory ok: ${#LOCKFILES[@]} files tracked, none ignored"
+  fi
+fi
+
+# ── pod-sync: native darwin plugins vs Podfile.lock ──────────────────────
+if [ "$mode" = "pod-sync" ] || [ "$mode" = "all" ]; then
+  PLUGINS_FILE="${FAH_PLUGINS_FILE:-flutter_app/.flutter-plugins-dependencies}"
+  if [ ! -f "$PLUGINS_FILE" ]; then
+    echo "::error::$PLUGINS_FILE not found — run 'cd flutter_app && flutter pub get --enforce-lockfile' first (the pod-sync check reads the resolved plugin set)"
+    exit 1
+  fi
+
+  python3 - "$PLUGINS_FILE" <<'PYEOF' || fail=1
+import json, os, re, sys
+
+plugins_file, repo_root = sys.argv[1], os.getcwd()
+platforms = {"ios": "flutter_app/ios/Podfile.lock", "macos": "flutter_app/macos/Podfile.lock"}
+
+with open(plugins_file) as f:
+    deps = json.load(f)
+
+pod_names = {}
+for plat, lockfile in platforms.items():
+    if not os.path.isfile(lockfile):
+        print(f"::error::{lockfile} not found — it must exist (gh-1296 NG1)")
+        sys.exit(1)
+    text = open(lockfile).read()
+    section = text.split("DEPENDENCIES:")[0]
+    pod_names[plat] = set(re.findall(r"^  - ([A-Za-z0-9_.]+) \(", section, re.M))
+
+missing = []
+for plat, lockfile in platforms.items():
+    for p in deps.get("plugins", {}).get(plat, []):
+        # dart-plugin-class-only plugins (native_build: false) never produce pods
+        if not p.get("native_build", True):
+            continue
+        name, base = p["name"], p["path"]
+        if not os.path.isabs(base):
+            base = os.path.join(repo_root, base)
+        pod = None
+        for sub in (plat, "darwin"):
+            d = os.path.join(base, sub)
+            if not os.path.isdir(d):
+                continue
+            for spec in sorted(os.listdir(d)):
+                if not spec.endswith(".podspec"):
+                    continue
+                m = re.search(r"^\s*s\.name\s*=\s*'([^']+)'", open(os.path.join(d, spec)).read(), re.M)
+                pod = m.group(1) if m else spec[: -len(".podspec")]
+                break
+            if pod:
+                break
+        if pod is None:
+            pod = name  # no podspec shipped — assume the default name
+        if pod not in pod_names[plat]:
+            missing.append((plat, name, pod))
+
+if missing:
+    print("::error::Podfile.lock drift — native plugins resolved by pubspec.lock have no pod in the committed Podfile.lock (gh-1296 NG1). Regenerate and commit:")
+    for plat, plugin, pod in missing:
+        print(f"::error::  {plat}: plugin {plugin} (pod '{pod}' missing from flutter_app/{plat}/Podfile.lock)")
+    print("::error::fix: cd flutter_app/ios && pod install --repo-update && cd ../macos && pod install --repo-update; git add both Podfile.lock files")
+    sys.exit(1)
+print("pod-sync ok: every native darwin plugin has its pod committed")
+PYEOF
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "lockfile gate FAILED" >&2
+  exit 1
+fi
+echo "lockfile gate passed"
