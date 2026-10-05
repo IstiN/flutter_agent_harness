@@ -74,55 +74,61 @@ void main() {
     );
 
     /// Types [secret] into the sheet's value field and synchronizes on
-    /// STABLE markers only (gh-1244): verified quiescence after the full
-    /// string, then the masking property. Never waits on an exact
+    /// STABLE markers only (gh-1244): the full masked value row on the
+    /// painted SCREEN, then the masking property. Never waits on an exact
     /// transient bullet count — under CI timing the PTY paints past the
     /// checkpoint before the wait evaluates, and on the raw wire the
     /// focused row's cursor cell is wrapped in inverse-video escapes, so
-    /// N consecutive `•` need never exist in the stream at all.
+    /// N consecutive `•` need never exist in the STREAM at all.
     ///
-    /// Quiescence is verified, not hoped (gh-1244 review thread): a bare
-    /// `waitForOutput` returns the buffer SILENTLY at its timeout, so
-    /// `waitForSettledOutput` demands a second byte-identical settle
-    /// window before anything reads the screen — on a runner where the
-    /// TUI keeps repainting past the window this now fails loudly here
-    /// instead of spuriously at the bullet count (a mid-repaint frame
-    /// could show 13 of 15 bullets).
+    /// The anchor is the screen, not raw quiescence (gh-1244 review
+    /// thread): while the sheet is open the pending turn keeps the TUI
+    /// repainting (spinner/elapsed rows), so the raw buffer NEVER reaches
+    /// byte quiescence — a `waitForOutput` settle always expires silently
+    /// and a snapshot read afterwards can still catch a mid-echo frame
+    /// (e.g. 13 of 15 bullets). Bullets are append-only while typing, so
+    /// the full N-bullet row is a monotone, stable synchronization
+    /// point: `waitForScreen` holds until it is painted (or fails loudly
+    /// with the screen dump), and the returned anchored screen is what
+    /// the assertions read — never a fresh re-sample (gh-1049 family).
     Future<void> typeSecret(String secret) async {
       harness.sendText(secret);
-      await harness.waitForSettledOutput(settleMs: 300);
-
-      String? valueRow() => harness.screenLines
-          .where((l) => l.contains('•') && l.trimRight().endsWith('│'))
-          .firstOrNull;
-
-      // (b) The security pin first — rawOutput is append-only, so this
-      // scan is race-free even for a frame painted after the last settle
-      // poll: the plaintext bytes must never appear in ANY captured
-      // frame. rawOutput is the whole PTY transcript — every screen the
-      // emulator ever rendered derives from it — so scanning it covers
-      // raced intermediates a current-screen-only check would miss.
+      var screen = await harness.waitForScreen(
+        '•' * secret.length,
+        timeout: const Duration(seconds: 30),
+      );
+      // The anchored frame can still predate the value row's closing
+      // border by one repaint; re-anchor once on the current screen
+      // before failing (review thread: tolerate a short-lived
+      // intermediate frame by re-settling once on mismatch).
+      if (maskedValueRow(screen) == null) {
+        screen = await harness.waitForScreen(
+          '•' * secret.length,
+          timeout: const Duration(seconds: 30),
+        );
+      }
+      // (b) The security pin, asserted BEFORE the row-dependent (a) —
+      // it is race-free: rawOutput is append-only, and by now every frame
+      // the typing could ever paint has been captured (the screen wait
+      // proves the last keystroke's frame landed). The plaintext bytes
+      // must never appear in ANY captured frame: rawOutput is the whole
+      // PTY transcript — every screen the emulator ever rendered derives
+      // from it — so scanning it covers raced intermediates a
+      // current-screen-only check would miss.
       expect(
         harness.rawOutput.contains(secret),
         isFalse,
         reason: 'the secret bytes appeared in the raw PTY output',
       );
-      expect(harness.screenText.contains(secret), isFalse);
+      expect(screen.contains(secret), isFalse);
       // (a) The frame-closed value row carries exactly one bullet per
       // typed char — masking held from the first keystroke through the
       // last. The history's tool row (`• request_secret · …`) is not
       // frame-closed, so the `│` guard pins this to the sheet's own row.
-      // One repaint can still race the verification window's last poll;
-      // re-settle once before failing.
-      var row = valueRow();
-      if (row == null) {
-        await harness.waitForOutput(settleMs: 300);
-        row = valueRow();
-      }
+      final row = maskedValueRow(screen);
       if (row == null) {
         throw StateError(
-          'the value row must render the masked secret; screen:\n'
-          '${harness.screenText}',
+          'the value row must render the masked secret; screen:\n$screen',
         );
       }
       expect(

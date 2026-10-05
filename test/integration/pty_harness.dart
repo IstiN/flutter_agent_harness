@@ -33,6 +33,18 @@ import 'dart:io';
 import 'package:pty2/pty2.dart';
 import 'package:xterm/xterm.dart';
 
+/// The secret sheet's frame-closed masked value row on a captured screen
+/// (gh-1244): the line carrying bullets AND closing with the `│` border.
+/// The history's tool row (`• request_secret · …`) is not frame-closed,
+/// so the `│` guard pins the match to the sheet's own row. Null when no
+/// such row is painted (sheet not open, or the row's closing border has
+/// not landed in this frame yet). Top-level (like [frameContentLines])
+/// so the row-anchor rule is unit-testable without a PTY.
+String? maskedValueRow(String screen) => screen
+    .split('\n')
+    .where((l) => l.contains('•') && l.trimRight().endsWith('│'))
+    .firstOrNull;
+
 /// The visible viewport with each line's trailing blank cells stripped —
 /// the CONTENT-faithful view for cross-frame equality (gh-982).
 ///
@@ -323,25 +335,6 @@ final class FaCliHarness {
       }
     }
     return _rawBuffer.toString();
-  }
-
-  /// Verified-quiescence variant of [waitForOutput] (gh-1244 review
-  /// thread): [waitForOutput] returns the buffer SILENTLY when [timeout]
-  /// expires without two consecutive stable polls, and even on a clean
-  /// settle a frame can land between its last poll and a caller's screen
-  /// read — a caller that then asserts on the painted screen can see a
-  /// mid-repaint frame (e.g. 13 of 15 bullets) and fail spuriously on a
-  /// loaded runner. This takes a second full settle window and throws
-  /// [TimeoutException] via [requireSettledOutput] unless the buffer is
-  /// byte-identical across both (the PTY buffer is append-only — any
-  /// repaint appends bytes). Returns the settled raw output.
-  Future<String> waitForSettledOutput({
-    int settleMs = 200,
-    Duration timeout = const Duration(seconds: 10),
-  }) async {
-    final settled = await waitForOutput(settleMs: settleMs, timeout: timeout);
-    final recheck = await waitForOutput(settleMs: settleMs, timeout: timeout);
-    return requireSettledOutput(settled, recheck);
   }
 
   /// Waits for [pattern] to appear in the accumulated raw output OR on the
