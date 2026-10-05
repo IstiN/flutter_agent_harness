@@ -48,6 +48,12 @@ module PlayListingSync
   SCREENSHOT_TYPES = %w[phoneScreenshots sevenInchScreenshots tenInchScreenshots].freeze
   # Single-slot types: an upload replaces the stored image by itself.
   SINGLE_IMAGE_TYPES = %w[icon featureGraphic].freeze
+  # The image types this sync manages. validate_image_type! pins every
+  # image call against this list BEFORE any HTTP request — it is a
+  # module-local guard, NOT the full AppImageType enum (tvScreenshots,
+  # wearScreenshots, promo graphics, …). EXTEND THIS LIST (in lock-step
+  # with clear_plan/expected_state/sync_and_verify!) when adding managed
+  # types, or the new types will be rejected pre-flight.
   MANAGED_TYPES = (SCREENSHOT_TYPES + SINGLE_IMAGE_TYPES).freeze
 
   module_function
@@ -190,16 +196,29 @@ module PlayListingSync
     return if MANAGED_TYPES.include?(type)
 
     raise "invalid Play image_type #{type.inspect} — the edits.images path " \
-          "takes an AppImageType enum value, one of: #{MANAGED_TYPES.join(', ')}"
+          "takes an AppImageType enum value managed here (MANAGED_TYPES), " \
+          "one of: #{MANAGED_TYPES.join(', ')}"
   end
 
-  # One-line readable rendering of a Google API error body ({"error":
-  # {"status": …, "message": …}}); falls back to a trimmed raw body.
+  # One-line readable rendering of a Google API error body. The `error`
+  # field is usually a Hash ({"status": …, "message": …} — but several
+  # endpoints omit `status` and carry only `code` + `message`) and, for
+  # OAuth token endpoints, a plain string with `error_description`. Any
+  # other shape falls back to a trimmed raw body.
   def api_error_message(body)
-    err = JSON.parse(body.to_s)["error"]
-    return body.to_s[0, 300] unless err.is_a?(Hash) && err["message"]
+    parsed = JSON.parse(body.to_s)
+    err = parsed["error"]
+    case err
+    when Hash
+      return body.to_s[0, 300] unless err["message"]
 
-    "#{err['status']}: #{err['message']}"[0, 300]
+      label = err["status"] || err["code"] || "ERROR"
+      "#{label}: #{err['message']}"[0, 300]
+    when String
+      err.empty? ? body.to_s[0, 300] : "#{err}: #{parsed['error_description']}"[0, 300].sub(/: \z/, "")
+    else
+      body.to_s[0, 300]
+    end
   rescue JSON::ParserError
     body.to_s[0, 300]
   end
@@ -215,7 +234,7 @@ module PlayListingSync
       "assertion" => assertion
     ), content_type: "application/x-www-form-urlencoded")
     unless res[:status] == 200
-      raise "Play API auth failed (HTTP #{res[:status]}): #{res[:body][0, 300]}"
+      raise "Play API auth failed (HTTP #{res[:status]}): #{api_error_message(res[:body])}"
     end
 
     { "Authorization" => "Bearer #{JSON.parse(res[:body]).fetch("access_token")}" }
@@ -244,7 +263,7 @@ module PlayListingSync
   def begin_edit!(http, package_name, auth)
     res = http.request(:Post, "#{API_ROOT}/#{package_name}/edits", headers: auth)
     unless res[:status] == 200
-      raise "edits.insert failed (HTTP #{res[:status]}): #{res[:body][0, 300]}"
+      raise "edits.insert failed (HTTP #{res[:status]}): #{api_error_message(res[:body])}"
     end
 
     JSON.parse(res[:body]).fetch("id")
@@ -254,7 +273,7 @@ module PlayListingSync
     res = http.request(:Get, "#{API_ROOT}/#{package_name}/edits/#{edit_id}/listings",
                        headers: auth)
     unless res[:status] == 200
-      raise "edits.listings.list failed (HTTP #{res[:status]}): #{res[:body][0, 300]}"
+      raise "edits.listings.list failed (HTTP #{res[:status]}): #{api_error_message(res[:body])}"
     end
 
     JSON.parse(res[:body]).fetch("listings", []).map { |l| l.fetch("language") }
@@ -312,7 +331,7 @@ module PlayListingSync
                        headers: auth)
     return if res[:status] == 200
 
-    raise "edits.commit failed (HTTP #{res[:status]}): #{res[:body][0, 300]}"
+    raise "edits.commit failed (HTTP #{res[:status]}): #{api_error_message(res[:body])}"
   end
 
   def delete_edit!(http, package_name, edit_id, auth)

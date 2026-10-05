@@ -41,7 +41,8 @@ if $PROGRAM_NAME == __FILE__
   class FakePlayHttp
     attr_reader :calls, :store, :committed
     attr_accessor :upload_sha_override, :token_response, :remote_languages,
-                  :post_commit_drift, :post_commit_reverse, :image_delete_error
+                  :post_commit_drift, :post_commit_reverse, :image_delete_error,
+                  :edit_insert_error, :listings_error, :commit_error
 
     def initialize
       @calls = []
@@ -57,8 +58,10 @@ if $PROGRAM_NAME == __FILE__
         @token_assertion = body
         @token_response || { status: 200, body: { access_token: "t0k3n" }.to_json }
       when method == :Post && url.end_with?("/edits")
+        return @edit_insert_error if @edit_insert_error
         { status: 200, body: { id: "edit1" }.to_json }
       when method == :Get && url.end_with?("/listings")
+        return @listings_error if @listings_error
         { status: 200, body: { listings: @remote_languages.map { |l| { language: l } } }.to_json }
       when method == :Delete && (m = url.match(%r{/listings/([^/]+)/([^/]+)\z}))
         return @image_delete_error if @image_delete_error
@@ -80,6 +83,7 @@ if $PROGRAM_NAME == __FILE__
         images.reverse! if !@committed.empty? && @post_commit_reverse == [m[1], m[2]]
         { status: 200, body: { images: images }.to_json }
       when method == :Post && url.end_with?(":commit")
+        return @commit_error if @commit_error
         @committed << url
         { status: 200, body: { id: "edit1" }.to_json }
       when method == :Delete && url.end_with?("/edits/edit1")
@@ -405,6 +409,97 @@ if $PROGRAM_NAME == __FILE__
     end
     ok("gh-1261: recorded 400 fixture fails with a readable INVALID_ARGUMENT message")
   end
+
+  # ── gh-1261 rework: api_error_message never renders a bare ": msg" ──────
+  # Several Google endpoints omit `status` (code + message only), and
+  # OAuth-style errors shape the error field as a string — both must still
+  # surface a readable `LABEL: message`, never a leading ": " or raw JSON.
+  api_error_cases = [
+    # code + message, no status → the numeric code is the label.
+    ['{"error":{"code":400,"message":"Request contains an invalid argument."}}',
+     "400: Request contains an invalid argument."],
+    # message only → a stable ERROR label, not ": message".
+    ['{"error":{"message":"backend exploded"}}', "ERROR: backend exploded"],
+    # OAuth token errors: error is a string, details in error_description.
+    ['{"error":"invalid_grant","error_description":"bad jwt"}',
+     "invalid_grant: bad jwt"],
+    # The recorded incident payload keeps rendering status-first.
+    [{ error: { code: 400, message: "Invalid value at 'image_type'",
+                status: "INVALID_ARGUMENT" } }.to_json,
+     "INVALID_ARGUMENT: Invalid value at 'image_type'"],
+    # Non-JSON bodies still fall back to the trimmed raw body.
+    ["<html>proxy error</html>", "<html>proxy error</html>"]
+  ]
+  api_error_cases.each do |body, want|
+    got = PlayListingSync.api_error_message(body)
+    raise "FAIL: api_error_message(#{body[0, 60]}...) must render #{want.inspect}, got #{got.inspect}" unless got == want
+  end
+  ok("gh-1261 rework: api_error_message falls back to code/ERROR/OAuth labels")
+
+  # ── gh-1261 rework: sibling REST wrappers render readable failures ──────
+  # bearer!/begin_edit!/list_locales!/commit_edit! used to truncate-dump
+  # raw JSON bodies — the same readability problem the image calls fixed.
+  Dir.mktmpdir do |_root|
+    http = FakePlayHttp.new
+    http.token_response = { status: 401,
+                            body: { error: "invalid_grant", error_description: "bad jwt" }.to_json }
+    begin
+      PlayListingSync.bearer!(service_account_json, http: http)
+      raise "FAIL: a 401 token response must raise"
+    rescue RuntimeError => e
+      raise "FAIL: bearer! must render the OAuth error readably, got: #{e.message}" unless
+        e.message.include?("Play API auth failed (HTTP 401): invalid_grant: bad jwt")
+    end
+
+    http = FakePlayHttp.new
+    http.edit_insert_error = { status: 400,
+                               body: { error: { code: 400, message: "Package not found" } }.to_json }
+    begin
+      PlayListingSync.begin_edit!(http, "dev.fa1.app", {})
+      raise "FAIL: a 400 edits.insert must raise"
+    rescue RuntimeError => e
+      raise "FAIL: begin_edit! must render the code-labelled error, got: #{e.message}" unless
+        e.message.include?("edits.insert failed (HTTP 400): 400: Package not found")
+      raise "FAIL: begin_edit! must not dump raw JSON: #{e.message}" if e.message.include?("{")
+    end
+
+    http = FakePlayHttp.new
+    http.listings_error = { status: 403,
+                            body: { error: { status: "PERMISSION_DENIED", message: "no access" } }.to_json }
+    begin
+      PlayListingSync.list_locales!(http, "dev.fa1.app", "edit1", {})
+      raise "FAIL: a 403 edits.listings.list must raise"
+    rescue RuntimeError => e
+      raise "FAIL: list_locales! must render the status-labelled error, got: #{e.message}" unless
+        e.message.include?("edits.listings.list failed (HTTP 403): PERMISSION_DENIED: no access")
+    end
+
+    http = FakePlayHttp.new
+    http.commit_error = { status: 400,
+                          body: { error: { status: "FAILED_PRECONDITION", message: "edit expired" } }.to_json }
+    begin
+      PlayListingSync.commit_edit!(http, "dev.fa1.app", "edit1", {})
+      raise "FAIL: a 400 edits.commit must raise"
+    rescue RuntimeError => e
+      raise "FAIL: commit_edit! must render the status-labelled error, got: #{e.message}" unless
+        e.message.include?("edits.commit failed (HTTP 400): FAILED_PRECONDITION: edit expired")
+    end
+    ok("gh-1261 rework: bearer!/begin_edit!/list_locales!/commit_edit! fail readably")
+  end
+
+  # ── gh-1261 rework: MANAGED_TYPES is the module-local enum guard ────────
+  # Every managed type passes; a real-but-unmanaged AppImageType enum value
+  # (tvScreenshots) is still rejected pre-flight — the guard pins against
+  # MANAGED_TYPES, which must grow in lock-step with new managed types.
+  PlayListingSync::MANAGED_TYPES.each { |type| PlayListingSync.validate_image_type!(type) }
+  begin
+    PlayListingSync.validate_image_type!("tvScreenshots")
+    raise "FAIL: an unmanaged AppImageType enum value must be rejected pre-flight"
+  rescue RuntimeError => e
+    raise "FAIL: the rejection must name the value and MANAGED_TYPES, got: #{e.message}" unless
+      e.message.include?("\"tvScreenshots\"") && e.message.include?("MANAGED_TYPES")
+  end
+  ok("gh-1261 rework: validate_image_type! pins MANAGED_TYPES (extend-on-add)")
 
   # ── gh-1261 AC3: 4xx is never retried; only 5xx/transport errors are ────
   StubResp = Struct.new(:code, :body)
