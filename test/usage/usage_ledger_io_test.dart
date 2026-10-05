@@ -139,6 +139,39 @@ void main() {
         isNull,
       );
     });
+
+    // read() is the display path (/usage shows whatever is on disk, no
+    // fingerprint check) — the CRAP ratchet needs every branch covered.
+    group('read (display path, no fingerprint check)', () {
+      test('parses the artifact on disk', () async {
+        final env = MemoryExecutionEnv();
+        final ledger = buildLedger(simpleChain());
+        final writer = UsageLedgerWriter(env);
+        await writer.write('/sessions/sess-1', ledger);
+        final read = await writer.read('/sessions/sess-1');
+        expect(read?.chainHash, ledger.chainHash);
+        expect(read?.sessionId, 'sess-1');
+      });
+
+      test('returns null for a missing artifact', () async {
+        final env = MemoryExecutionEnv();
+        expect(await UsageLedgerWriter(env).read('/nope'), isNull);
+      });
+
+      test('returns null for corrupt JSON', () async {
+        final env = MemoryExecutionEnv();
+        await env.createDir('/sessions/sess-1', recursive: true);
+        await env.writeFile('/sessions/sess-1/usage.json', '{not json');
+        expect(await UsageLedgerWriter(env).read('/sessions/sess-1'), isNull);
+      });
+
+      test('returns null when the artifact is not a JSON object', () async {
+        final env = MemoryExecutionEnv();
+        await env.createDir('/sessions/sess-1', recursive: true);
+        await env.writeFile('/sessions/sess-1/usage.json', '[1,2,3]');
+        expect(await UsageLedgerWriter(env).read('/sessions/sess-1'), isNull);
+      });
+    });
   });
 
   group('usageDirFor', () {

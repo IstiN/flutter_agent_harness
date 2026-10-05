@@ -101,114 +101,87 @@ final class UsageChainScanner {
 
   /// Scans [lines] (the session file's raw lines, header included).
   UsageChainScan scan(Iterable<String> lines) {
-    final bytes = BytesBuilder(copy: false);
-    var recordCount = 0;
-    final segments = <_ScanSegment>[];
-    _PendingSummary? pending;
-    // The current segment, creating the first lazily so a chain with no
-    // markers still folds as ONE segment.
-    _ScanSegment current() {
-      if (segments.isEmpty) segments.add(_ScanSegment());
-      return segments.last;
-    }
-
-    void closeSegment(DateTime? boundaryAt) {
-      if (pending case final summary?) {
-        // A summary whose request never produced an assistant message
-        // (provider error, abort): the request counts, with zero-fill
-        // marked estimated — never silently dropped (E1's "counts summed
-        // over what exists").
-        segments.last.requests.add(summary.fallback());
-        pending = null;
-      }
-      segments.add(_ScanSegment()..setOpenedAt(boundaryAt));
-    }
-
+    final state = _ScanState();
     for (final raw in lines) {
       final line = raw.trimRight();
       if (line.isEmpty) continue;
       // Cheap pre-check for the giant blob records: hashed, counted, never
       // decoded.
-      var skippedDecode = false;
-      for (final blobType in _skipDecodeCustomTypes) {
-        if (line.contains('"customType":"$blobType"')) {
-          skippedDecode = true;
-          break;
-        }
-      }
+      final skippedDecode = _isBlobRecord(line);
       final decoded = skippedDecode ? <String, dynamic>{} : _decode(line);
       if (decoded == null) continue; // torn line: contributes nothing
       final type = decoded['type'];
       if (type == 'session') continue; // header line
-      recordCount += 1;
-      bytes
-        ..add(utf8.encode(line))
-        ..add(const [10]);
+      state.noteRecord(line);
       if (skippedDecode) continue;
       final timestamp = DateTime.tryParse(
         decoded['timestamp'] as String? ?? '',
       );
       if (type == 'custom') {
-        final customType = decoded['customType'] as String? ?? '';
-        if (customType == usageSegmentStartCustomType) {
-          // A marker OPENS the segment it introduces: the first marker on
-          // a chain claims the (lazy) first segment; a later marker closes
-          // the previous segment only when it carried anything (an empty
-          // trailing segment from a killed boot is not materialized, I1).
-          // The marker itself is not a "contributing" record: the previous
-          // segment's closedAt stays its last request's timestamp.
-          if (!segments.lastOrNull.hasContentOrNull) {
-            current().setOpenedAt(timestamp);
-          } else {
-            closeSegment(timestamp);
-          }
-          continue;
-        }
-      }
-      final segment = current();
-      segment.noteRecordAt(timestamp);
-      if (type == 'custom') {
-        final customType = decoded['customType'] as String? ?? '';
-        if (customType == modelRequestSummaryCustomType) {
-          pending = _PendingSummary.fromData(decoded['data']);
-        }
+        _handleCustom(decoded, timestamp, state);
         continue;
       }
       if (type != 'message') continue;
-      final message = decoded['message'];
-      if (message is! Map || message['role'] != 'assistant') continue;
-      final request = _foldAssistant(message.cast<String, dynamic>(), pending);
-      pending = null;
-      current().requests.add(request);
+      _handleMessage(decoded, timestamp, state);
     }
-    // Close the trailing segment: a dangling summary still counts. A
-    // header-only chain still yields ONE (empty) segment so the ledger
-    // schema stays stable. A marker that closed a contentful segment
-    // opens a new one — when nothing followed it (the first drive after
-    // a resume errored before any request record landed), the empty
-    // trailing segment is trimmed, not materialized: otherwise
-    // resumedCount inflates (I1 noise) and the flush's fa-tokens line
-    // reports a zero-count segment labeled "reported".
-    if (pending case final summary?) {
-      segments.lastOrNull?.requests.add(summary.fallback());
-      pending = null;
+    return state.finish();
+  }
+
+  /// Whether [line] carries one of the megabyte-wide ledger blob records
+  /// the scanner skips without decoding.
+  static bool _isBlobRecord(String line) {
+    for (final blobType in _skipDecodeCustomTypes) {
+      if (line.contains('"customType":"$blobType"')) return true;
     }
-    if (segments.isEmpty) segments.add(_ScanSegment());
-    while (segments.length > 1 && !segments.last.hasContent) {
-      segments.removeLast();
+    return false;
+  }
+
+  /// Handles a `custom` record: a segment marker is a boundary (it claims
+  /// an empty virgin segment or closes the contentful previous one); any
+  /// other custom record contributes its timestamp to the current segment,
+  /// and a `model_request_summary` becomes the pending pair for the
+  /// assistant message its request produces.
+  void _handleCustom(
+    Map<String, dynamic> decoded,
+    DateTime? timestamp,
+    _ScanState state,
+  ) {
+    final customType = decoded['customType'] as String? ?? '';
+    if (customType == usageSegmentStartCustomType) {
+      // A marker OPENS the segment it introduces: the first marker on
+      // a chain claims the (lazy) first segment; a later marker closes
+      // the previous segment only when it carried anything (an empty
+      // trailing segment from a killed boot is not materialized, I1).
+      // The marker itself is not a "contributing" record: the previous
+      // segment's closedAt stays its last request's timestamp.
+      if (!state.segments.lastOrNull.hasContentOrNull) {
+        state.current().setOpenedAt(timestamp);
+      } else {
+        state.closeSegment(timestamp);
+      }
+      return;
     }
-    return UsageChainScan(
-      segments: [
-        for (final segment in segments)
-          UsageChainSegment(
-            requests: segment.requests,
-            openedAt: segment.openedAt ?? segment.firstRecordAt,
-            closedAt: segment.closedAt,
-          ),
-      ],
-      recordCount: recordCount,
-      chainHash: 'sha256:${sha256.convert(bytes.toBytes())}',
+    state.current().noteRecordAt(timestamp);
+    if (customType == modelRequestSummaryCustomType) {
+      state.pending = _PendingSummary.fromData(decoded['data']);
+    }
+  }
+
+  /// Handles a `message` record: only assistant messages produce a
+  /// [FoldRequest], priced from the provider-reported usage or — when the
+  /// provider omitted usage — estimated from the paired request summary.
+  void _handleMessage(
+    Map<String, dynamic> decoded,
+    DateTime? timestamp,
+    _ScanState state,
+  ) {
+    state.current().noteRecordAt(timestamp);
+    final message = decoded['message'];
+    if (message is! Map || message['role'] != 'assistant') return;
+    state.current().requests.add(
+      _foldAssistant(message.cast<String, dynamic>(), state.pending),
     );
+    state.pending = null;
   }
 
   static Map<String, dynamic>? _decode(String line) {
@@ -275,6 +248,75 @@ final class UsageChainScanner {
     } on Object {
       return 0;
     }
+  }
+}
+
+/// Mutable scan state: the segment list, the pending request summary, the
+/// consumed-record fingerprint material, and the segment-close/finish
+/// policy. Extracted from [UsageChainScanner.scan] so the per-record-type
+/// handlers stay small enough for the CRAP ratchet.
+final class _ScanState {
+  final BytesBuilder _bytes = BytesBuilder(copy: false);
+  final List<_ScanSegment> segments = [];
+  _PendingSummary? pending;
+  var recordCount = 0;
+
+  /// The current segment, creating the first lazily so a chain with no
+  /// markers still folds as ONE segment.
+  _ScanSegment current() {
+    if (segments.isEmpty) segments.add(_ScanSegment());
+    return segments.last;
+  }
+
+  /// Hashes and counts a consumed record line.
+  void noteRecord(String line) {
+    recordCount += 1;
+    _bytes
+      ..add(utf8.encode(line))
+      ..add(const [10]);
+  }
+
+  /// A segment boundary: a summary whose request never produced an
+  /// assistant message (provider error, abort) counts, with zero-fill
+  /// marked estimated — never silently dropped (E1's "counts summed over
+  /// what exists").
+  void closeSegment(DateTime? boundaryAt) {
+    if (pending case final summary?) {
+      segments.last.requests.add(summary.fallback());
+      pending = null;
+    }
+    segments.add(_ScanSegment()..setOpenedAt(boundaryAt));
+  }
+
+  /// Builds the scan result. A dangling summary still counts. A
+  /// header-only chain still yields ONE (empty) segment so the ledger
+  /// schema stays stable. A marker that closed a contentful segment
+  /// opens a new one — when nothing followed it (the first drive after
+  /// a resume errored before any request record landed), the empty
+  /// trailing segment is trimmed, not materialized: otherwise
+  /// resumedCount inflates (I1 noise) and the flush's fa-tokens line
+  /// reports a zero-count segment labeled "reported".
+  UsageChainScan finish() {
+    if (pending case final summary?) {
+      segments.lastOrNull?.requests.add(summary.fallback());
+      pending = null;
+    }
+    if (segments.isEmpty) segments.add(_ScanSegment());
+    while (segments.length > 1 && !segments.last.hasContent) {
+      segments.removeLast();
+    }
+    return UsageChainScan(
+      segments: [
+        for (final segment in segments)
+          UsageChainSegment(
+            requests: segment.requests,
+            openedAt: segment.openedAt ?? segment.firstRecordAt,
+            closedAt: segment.closedAt,
+          ),
+      ],
+      recordCount: recordCount,
+      chainHash: 'sha256:${sha256.convert(_bytes.toBytes())}',
+    );
   }
 }
 
