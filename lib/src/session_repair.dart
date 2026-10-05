@@ -189,19 +189,7 @@ Future<SessionRepairReport> repairSessionLedgers(
 }) async {
   final drops = dropTypes ?? repairDropCustomTypes;
   final keepLatest = keepLatestTypes ?? repairKeepLatestCustomTypes;
-  final Object maybeRanged = fs;
-  final ranged = maybeRanged is RangedReadFileSystem ? maybeRanged : null;
-  final Object maybeRenamable = fs;
-  final renamable =
-      maybeRenamable is RenamableFileSystem ? maybeRenamable : null;
-  if (ranged == null || renamable == null) {
-    throw SessionRepairException(
-      'session repair needs byte-range reads and an atomic rename; this '
-      'filesystem supports neither — copy the file to a local filesystem '
-      'and repair it there',
-      code: SessionRepairErrorCode.unsupported,
-    );
-  }
+  final (:ranged, :renamable) = _repairIoSurface(fs);
   final stat = await fs.fileInfo(path);
   if (stat.isErr) {
     final code = stat.errorOrNull!.code == FileErrorCode.notFound
@@ -223,63 +211,24 @@ Future<SessionRepairReport> repairSessionLedgers(
 
   // Pass 1: classify every line by byte span. Nothing is decoded whole —
   // a 12 GiB file scans in bounded chunks.
-  final headerSpan = <(int, int)>[];
-  final keptSpans = <(int, int)>[];
-  final latestByType = <String, (int, int)>{};
-  final droppedByType = <String, int>{};
-  final keptLatestCounts = <String, int>{};
-  var recordsRead = 0;
-  // Records kept, counted per LINE — never derived from keptSpans.length,
-  // which is the merged SPAN count (contiguous runs coalesce into one
-  // span): the report must say how many records survive, or a reader
-  // doing recordsRead - recordsKept infers phantom drops.
-  var keptRecords = 0;
-  var first = true;
-  await SessionLineScanner(fs: fs, path: path).scan((line) async {
-    if (first) {
-      first = false;
-      // Repair refuses to produce an unopenable file: line 1 must parse
-      // as a session header. A torn creation-write otherwise survives
-      // "repair" byte-identically broken and the next open fails the
-      // same way — exactly when the user reached for repair.
-      _ensureRepairableHeader(line.text, path);
-      headerSpan.add((line.start, line.end));
-      return;
-    }
-    if (line.text.trim().isEmpty) return;
-    recordsRead++;
-    final customType = _sniffCustomType(line.text);
-    final span = (line.start, line.end);
-    if (customType != null && drops.contains(customType)) {
-      droppedByType[customType] = (droppedByType[customType] ?? 0) + 1;
-      return;
-    }
-    if (customType != null && keepLatest.contains(customType)) {
-      if (latestByType.containsKey(customType)) {
-        droppedByType[customType] = (droppedByType[customType] ?? 0) + 1;
-      } else {
-        keptLatestCounts[customType] = 1;
-      }
-      latestByType[customType] = span;
-      return;
-    }
-    keptRecords++;
-    _appendSpan(keptSpans, span);
-  }, fileSize: bytesBefore);
+  final scan = _RepairLedgerScan(path, drops, keepLatest);
+  await SessionLineScanner(
+    fs: fs,
+    path: path,
+  ).scan(scan.handleLine, fileSize: bytesBefore);
 
   // The LATEST snapshot of each keep-latest type joins the kept spans, in
   // file position order — one record each.
-  keptSpans.addAll(latestByType.values);
-  keptSpans.sort((a, b) => a.$1.compareTo(b.$1));
-  final recordsKept = keptRecords + latestByType.length;
+  final keptSpans = scan.finishSpans();
+  final recordsKept = scan.keptRecords + scan.latestByType.length;
 
   if (dryRun) {
     return SessionRepairReport(
       path: path,
-      recordsRead: recordsRead,
+      recordsRead: scan.recordsRead,
       recordsKept: recordsKept,
-      droppedByType: droppedByType,
-      keptLatestByType: keptLatestCounts,
+      droppedByType: scan.droppedByType,
+      keptLatestByType: scan.keptLatestByType,
       bytesBefore: bytesBefore,
       bytesAfter: bytesBefore,
       backupPath: '$path.bak',
@@ -289,34 +238,151 @@ Future<SessionRepairReport> repairSessionLedgers(
   }
 
   // Pass 2: stream the kept spans into a temp file, then swap atomically.
-  final tempPath = '$path.repairing';
-  var write = await fs.writeFile(tempPath, '');
-  for (final span in headerSpan.followedBy(keptSpans)) {
-    final raw = await ranged.readRange(path, span.$1, span.$2);
-    if (raw.isErr) {
-      throw SessionRepairException(
-        'read failed during repair of $path: ${raw.errorOrNull!.message}',
-        code: SessionRepairErrorCode.unknown,
-      );
-    }
-    write = await fs.appendFile(
-      tempPath,
-      utf8.decode(raw.valueOrNull!, allowMalformed: true),
+  final bytesAfter = await _writeRepairedAndSwap(
+    fs,
+    ranged,
+    renamable,
+    path,
+    scan.headerSpan.followedBy(keptSpans),
+  );
+  return SessionRepairReport(
+    path: path,
+    recordsRead: scan.recordsRead,
+    recordsKept: recordsKept,
+    droppedByType: scan.droppedByType,
+    keptLatestByType: scan.keptLatestByType,
+    bytesBefore: bytesBefore,
+    bytesAfter: bytesAfter,
+    backupPath: '$path.bak',
+    dryRun: false,
+    untouchedSegments: untouchedSegments,
+  );
+}
+
+/// The repair IO surface: a [RangedReadFileSystem] (bounded streaming)
+/// plus a [RenamableFileSystem] (atomic swap). Anything else fails with
+/// [SessionRepairErrorCode.unsupported] rather than half-applying.
+({RangedReadFileSystem ranged, RenamableFileSystem renamable})
+_repairIoSurface(FileSystem fs) {
+  final Object maybeRanged = fs;
+  final Object maybeRenamable = fs;
+  final ranged = maybeRanged is RangedReadFileSystem ? maybeRanged : null;
+  final renamable =
+      maybeRenamable is RenamableFileSystem ? maybeRenamable : null;
+  if (ranged == null || renamable == null) {
+    throw SessionRepairException(
+      'session repair needs byte-range reads and an atomic rename; this '
+      'filesystem supports neither — copy the file to a local filesystem '
+      'and repair it there',
+      code: SessionRepairErrorCode.unsupported,
     );
-    if (write.isErr) {
-      throw SessionRepairException(
-        'write failed during repair of $path: ${write.errorOrNull!.message}',
-        code: SessionRepairErrorCode.unknown,
-      );
-    }
   }
-  // An existing backup is rotated to `.bak1` first: repair is exactly the
-  // operation users run twice (dry-run, then real, then again after a
-  // mistake) — silently replacing the previous `.bak` would destroy the
-  // first repair's pristine original.
+  return (ranged: ranged, renamable: renamable);
+}
+
+/// Mutable accumulator for the repair pass-1 line scan: classifies each
+/// line's byte span (full drop / keep-latest supersede / keep verbatim),
+/// counts kept records per LINE (never per merged span — contiguous runs
+/// coalesce into one span, which made the old report say "1 kept" for 10
+/// surviving records), and remembers the latest keep-latest span per
+/// type. Extracted from [repairSessionLedgers] so the pass stays under
+/// the CRAP ratchet.
+final class _RepairLedgerScan {
+  _RepairLedgerScan(this._path, this._drops, this._keepLatest);
+
+  final String _path;
+  final Set<String> _drops;
+  final Set<String> _keepLatest;
+
+  /// Byte span of the (validated) header line.
+  final headerSpan = <(int, int)>[];
+
+  /// Merged byte spans of the surviving non-ledger lines, in file order.
+  final keptSpans = <(int, int)>[];
+
+  /// The LATEST span per keep-latest custom type.
+  final latestByType = <String, (int, int)>{};
+
+  /// Dropped records per custom type — full ledger drops AND superseded
+  /// registry snapshots.
+  final droppedByType = <String, int>{};
+
+  /// Latest snapshots KEPT per superseding registry type.
+  final keptLatestByType = <String, int>{};
+
+  /// Total non-blank lines below the header.
+  var recordsRead = 0;
+
+  /// Records kept, counted per LINE — never derived from keptSpans.length.
+  var keptRecords = 0;
+
+  var _first = true;
+
+  /// One scanned line: header sniff (first non-blank line), blank skip,
+  /// ledger classification. Tearing is impossible here — spans are
+  /// recorded, not decoded.
+  Future<void> handleLine(SessionScannedLine line) async {
+    if (_first) {
+      _first = false;
+      // Repair refuses to produce an unopenable file: line 1 must parse
+      // as a session header. A torn creation-write otherwise survives
+      // "repair" byte-identically broken and the next open fails the
+      // same way — exactly when the user reached for repair.
+      _ensureRepairableHeader(line.text, _path);
+      headerSpan.add((line.start, line.end));
+      return;
+    }
+    if (line.text.trim().isEmpty) return;
+    recordsRead++;
+    final customType = _sniffCustomType(line.text);
+    final span = (line.start, line.end);
+    if (customType != null && _drops.contains(customType)) {
+      droppedByType[customType] = (droppedByType[customType] ?? 0) + 1;
+      return;
+    }
+    if (customType != null && _keepLatest.contains(customType)) {
+      if (latestByType.containsKey(customType)) {
+        droppedByType[customType] = (droppedByType[customType] ?? 0) + 1;
+      } else {
+        keptLatestByType[customType] = 1;
+      }
+      latestByType[customType] = span;
+      return;
+    }
+    keptRecords++;
+    _appendSpan(keptSpans, span);
+  }
+
+  /// The write-side span list: the kept spans with the latest
+  /// keep-latest snapshots joined in file position order.
+  List<(int, int)> finishSpans() {
+    final spans = [...keptSpans, ...latestByType.values]
+      ..sort((a, b) => a.$1.compareTo(b.$1));
+    return spans;
+  }
+}
+
+/// Pass 2 of a repair: streams [spans] from the original into a temp
+/// file, rotates any existing `<path>.bak` to `.bak1` (repair is exactly
+/// the operation users run twice — silently replacing the previous
+/// `.bak` would destroy the first repair's pristine original), then
+/// swaps the temp file into [path] atomically. Any failure rolls the
+/// original back — never leave the session missing. Returns the repaired
+/// file's size.
+Future<int> _writeRepairedAndSwap(
+  FileSystem fs,
+  RangedReadFileSystem ranged,
+  RenamableFileSystem renamable,
+  String path,
+  Iterable<(int, int)> spans,
+) async {
+  final tempPath = '$path.repairing';
+  await _writeSpansToTemp(fs, ranged, path, tempPath, spans);
+  // An existing backup is rotated to `.bak1` first.
   final backupPath = '$path.bak';
   final backupExists = await fs.exists(backupPath);
   if (backupExists.isErr) {
+    await fs.remove(tempPath, force: true);
     throw SessionRepairException(
       'cannot check for an existing backup at $backupPath: '
       '${backupExists.errorOrNull!.message}',
@@ -326,6 +392,7 @@ Future<SessionRepairReport> repairSessionLedgers(
   if (backupExists.valueOrNull!) {
     final rotated = await renamable.renamePath(backupPath, '$path.bak1');
     if (rotated.isErr) {
+      await fs.remove(tempPath, force: true);
       throw SessionRepairException(
         'cannot rotate the previous backup $backupPath to $path.bak1: '
         '${rotated.errorOrNull!.message}',
@@ -335,6 +402,7 @@ Future<SessionRepairReport> repairSessionLedgers(
   }
   final backup = await renamable.renamePath(path, backupPath);
   if (backup.isErr) {
+    await fs.remove(tempPath, force: true);
     throw SessionRepairException(
       'cannot back up $path to $backupPath: ${backup.errorOrNull!.message}',
       code: SessionRepairErrorCode.unknown,
@@ -351,24 +419,43 @@ Future<SessionRepairReport> repairSessionLedgers(
     );
   }
   final afterStat = await fs.fileInfo(path);
-  return SessionRepairReport(
-    path: path,
-    recordsRead: recordsRead,
-    recordsKept: recordsKept,
-    droppedByType: droppedByType,
-    keptLatestByType: keptLatestCounts,
-    bytesBefore: bytesBefore,
-    bytesAfter: afterStat.valueOrNull?.size ?? 0,
-    backupPath: backupPath,
-    dryRun: false,
-    untouchedSegments: untouchedSegments,
-  );
+  return afterStat.valueOrNull?.size ?? 0;
 }
 
-/// Repair refuses to produce an unopenable file: line 1 must parse as a
-/// session header. A torn creation-write otherwise survives "repair"
-/// byte-identically broken. Bounded sniff — a header is a small JSON
-/// object; anything larger is corrupt by definition.
+/// Streams every span of [spans] from [path] into the empty file at
+/// [tempPath]; removes the temp file and throws on the first read or
+/// write failure.
+Future<void> _writeSpansToTemp(
+  FileSystem fs,
+  RangedReadFileSystem ranged,
+  String path,
+  String tempPath,
+  Iterable<(int, int)> spans,
+) async {
+  var write = await fs.writeFile(tempPath, '');
+  for (final span in spans) {
+    final raw = await ranged.readRange(path, span.$1, span.$2);
+    if (raw.isErr) {
+      await fs.remove(tempPath, force: true);
+      throw SessionRepairException(
+        'read failed during repair of $path: ${raw.errorOrNull!.message}',
+        code: SessionRepairErrorCode.unknown,
+      );
+    }
+    write = await fs.appendFile(
+      tempPath,
+      utf8.decode(raw.valueOrNull!, allowMalformed: true),
+    );
+    if (write.isErr) {
+      await fs.remove(tempPath, force: true);
+      throw SessionRepairException(
+        'write failed during repair of $path: ${write.errorOrNull!.message}',
+        code: SessionRepairErrorCode.unknown,
+      );
+    }
+  }
+}
+
 void _ensureRepairableHeader(String line, String path) {
   Object? decoded;
   if (line.length <= 16384) {

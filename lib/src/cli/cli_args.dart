@@ -1320,26 +1320,10 @@ CliArgsResult _parseSessionArgs(List<String> args) {
       '(expected ${sessionVerbs.join('|')})\n$_sessionUsage',
     );
   }
-  var json = false;
-  var flat = false;
-  var dryRun = false;
-  String? repairTarget;
-  for (var i = 1; i < args.length; i++) {
-    switch (args[i]) {
-      case '--json' when verb == 'list':
-        json = true;
-      case '--flat' when verb == 'list':
-        flat = true;
-      case '--dry-run' when verb == 'repair':
-        dryRun = true;
-      default:
-        if (verb == 'repair' && repairTarget == null && !args[i].startsWith('-')) {
-          repairTarget = args[i];
-          continue;
-        }
-        throw CliArgsException('unknown argument: ${args[i]}\n$_sessionUsage');
-    }
-  }
+  final (:json, :flat, :dryRun, :repairTarget) = _parseSessionVerbArgs(
+    verb,
+    args,
+  );
   if (verb == 'repair' && repairTarget == null) {
     throw CliArgsException(
       'session repair needs a session id or a .jsonl path\n$_sessionUsage',
@@ -1354,4 +1338,39 @@ CliArgsResult _parseSessionArgs(List<String> args) {
       dryRun: dryRun,
     ),
   );
+}
+
+/// The flags and operands after `fa session <verb>`: `--json`/`--flat`
+/// for `list`, `--dry-run` and the single repair target for `repair`.
+/// Anything else is a usage error. Split out of [_parseSessionArgs] so
+/// each piece stays under the CRAP ratchet.
+({
+  bool json,
+  bool flat,
+  bool dryRun,
+  String? repairTarget,
+}) _parseSessionVerbArgs(String verb, List<String> args) {
+  var json = false;
+  var flat = false;
+  var dryRun = false;
+  String? repairTarget;
+  for (var i = 1; i < args.length; i++) {
+    switch (args[i]) {
+      case '--json' when verb == 'list':
+        json = true;
+      case '--flat' when verb == 'list':
+        flat = true;
+      case '--dry-run' when verb == 'repair':
+        dryRun = true;
+      default:
+        if (verb == 'repair' &&
+            repairTarget == null &&
+            !args[i].startsWith('-')) {
+          repairTarget = args[i];
+          continue;
+        }
+        throw CliArgsException('unknown argument: ${args[i]}\n$_sessionUsage');
+    }
+  }
+  return (json: json, flat: flat, dryRun: dryRun, repairTarget: repairTarget);
 }

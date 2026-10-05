@@ -934,79 +934,16 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     }
     await flushBatch();
     final readMs = phaseSw.elapsedMilliseconds;
-    var rewriteMs = 0;
-    if (tornSpans.isNotEmpty || duplicateSpans.isNotEmpty) {
-      if (duplicateSpans.isNotEmpty) {
-        JsonlSessionStorage.onRotationWarning?.call(
-          'session open: dropped ${duplicateSpans.length} duplicated '
-          'record(s) from ${segmentPath.split('/').last} (a '
-          'failed-rotation restore left a segment copy behind)',
-        );
-      }
-      // Forensics sidecar first; read-only storage skips both writes and
-      // still loads fine with the dropped records simply absent in memory.
-      // Reset the phase stopwatch: rewrite_ms must isolate the rewrite,
-      // not read+quarantine+rewrite.
-      phaseSw
-        ..reset()
-        ..start();
-      try {
-        for (final (start, end) in tornSpans) {
-          final raw = await ranged.readRange(segmentPath, start, end);
-          final text = raw.isErr
-              ? null
-              : utf8.decode(raw.valueOrNull!, allowMalformed: true);
-          if (text != null) {
-            // The span already carries the line's trailing newline
-            // (SessionScannedLine.byteLength — "trailing newline
-            // included"); appending '$text\n' would leave a stray blank
-            // line per record and the sidecar would stop round-tripping
-            // as one-record-per-line JSONL.
-            await fs.appendFile(
-              '$segmentPath.corrupt',
-              text.endsWith('\n') ? text : '$text\n',
-            );
-          }
-        }
-        // Rewrite whole via a streamed span copy into a temp file + atomic
-        // rename, so the heal never materializes the good content either.
-        // Text decode/encode is byte-exact for every parsed (JSON-valid)
-        // line; only genuinely malformed bytes inside a JSON-valid line
-        // would re-encode as U+FFFD.
-        final Object maybeRenamable = fs;
-        if (maybeRenamable is RenamableFileSystem) {
-          final tempPath = '$segmentPath.repaired';
-          var wrote = await fs.writeFile(tempPath, '');
-          for (final (start, end) in goodSpans) {
-            final raw = await ranged.readRange(segmentPath, start, end);
-            if (raw.isErr) break;
-            wrote = await fs.appendFile(
-              tempPath,
-              utf8.decode(raw.valueOrNull!, allowMalformed: true),
-            );
-            if (wrote.isErr) break;
-          }
-          if (wrote.isErr) {
-            await fs.remove(tempPath, force: true);
-          } else {
-            final renamed = await maybeRenamable.renamePath(
-              tempPath,
-              segmentPath,
-            );
-            if (renamed.isErr) {
-              // Non-renameable after all (or the rename failed): leave the
-              // file untouched — the in-memory state is still consistent
-              // and the next open re-applies the same heal.
-              await fs.remove(tempPath, force: true);
-            } else {
-              rewriteMs = phaseSw.elapsedMilliseconds;
-            }
-          }
-        }
-      } on Object {
-        // Read-only storage: the in-memory state is still consistent.
-      }
-    }
+    // Forensics sidecar + span rewrite of the dropped lines — extracted
+    // so this scan stays under the CRAP ratchet.
+    final rewriteMs = await _quarantineAndRewriteSegment(
+      fs,
+      ranged,
+      segmentPath,
+      goodSpans,
+      tornSpans,
+      duplicateSpans,
+    );
     return (
       header: header!,
       headerLine: headerLine!,
@@ -1015,6 +952,92 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       readMs: readMs,
       rewriteMs: rewriteMs,
     );
+  }
+
+  /// Forensics + rewrite for one scanned segment that produced torn lines
+  /// or duplicate record ids: the torn spans are appended to the
+  /// `<segment>.corrupt` sidecar, duplicate drops get a rotation warning,
+  /// and the segment is rewritten from [goodSpans] via a temp file +
+  /// atomic rename — so the heal never materializes the good content and
+  /// the NEXT open is clean. Read-only storage skips the writes and still
+  /// loads fine with the dropped records simply absent in memory; any
+  /// failure degrades to "leave the file, the in-memory state is
+  /// consistent". Returns the rewrite's millisecond cost (0 when there
+  /// was nothing to heal).
+  static Future<int> _quarantineAndRewriteSegment(
+    FileSystem fs,
+    RangedReadFileSystem ranged,
+    String segmentPath,
+    List<(int, int)> goodSpans,
+    List<(int, int)> tornSpans,
+    List<(int, int)> duplicateSpans,
+  ) async {
+    if (tornSpans.isEmpty && duplicateSpans.isEmpty) return 0;
+    if (duplicateSpans.isNotEmpty) {
+      JsonlSessionStorage.onRotationWarning?.call(
+        'session open: dropped ${duplicateSpans.length} duplicated '
+        'record(s) from ${segmentPath.split('/').last} (a '
+        'failed-rotation restore left a segment copy behind)',
+      );
+    }
+    final sw = Stopwatch()..start();
+    try {
+      for (final (start, end) of tornSpans) {
+        final raw = await ranged.readRange(segmentPath, start, end);
+        final text = raw.isErr
+            ? null
+            : utf8.decode(raw.valueOrNull!, allowMalformed: true);
+        if (text != null) {
+          // The span already carries the line's trailing newline
+          // (SessionScannedLine.byteLength — "trailing newline
+          // included"); appending '$text\n' would leave a stray blank
+          // line per record and the sidecar would stop round-tripping
+          // as one-record-per-line JSONL.
+          await fs.appendFile(
+            '$segmentPath.corrupt',
+            text.endsWith('\n') ? text : '$text\n',
+          );
+        }
+      }
+      // Rewrite whole via a streamed span copy into a temp file + atomic
+      // rename, so the heal never materializes the good content either.
+      // Text decode/encode is byte-exact for every parsed (JSON-valid)
+      // line; only genuinely malformed bytes inside a JSON-valid line
+      // would re-encode as U+FFFD.
+      final Object maybeRenamable = fs;
+      if (maybeRenamable is RenamableFileSystem) {
+        final tempPath = '$segmentPath.repaired';
+        Result<void, FileError> wrote = await fs.writeFile(tempPath, '');
+        for (final (start, end) of goodSpans) {
+          final raw = await ranged.readRange(segmentPath, start, end);
+          if (raw.isErr) break;
+          wrote = await fs.appendFile(
+            tempPath,
+            utf8.decode(raw.valueOrNull!, allowMalformed: true),
+          );
+          if (wrote.isErr) break;
+        }
+        if (wrote.isErr) {
+          await fs.remove(tempPath, force: true);
+        } else {
+          final renamed = await maybeRenamable.renamePath(
+            tempPath,
+            segmentPath,
+          );
+          if (renamed.isErr) {
+            // Non-renameable after all (or the rename failed): leave the
+            // file untouched — the in-memory state is still consistent
+            // and the next open re-applies the same heal.
+            await fs.remove(tempPath, force: true);
+          } else {
+            return sw.elapsedMilliseconds;
+          }
+        }
+      }
+    } on Object {
+      // Read-only storage: the in-memory state is still consistent.
+    }
+    return 0;
   }
 
   /// Legacy whole-file open — the fallback for filesystems without byte
