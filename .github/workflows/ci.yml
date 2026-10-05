@@ -2266,7 +2266,10 @@ jobs:
       - run: dart pub get
 
       - name: Usage-fold suite
-        run: dart test test/usage
+        # The path classifier also gates on ^lib/src/cli/agent_cli_usage_ledger\.dart$
+        # — the CLI wiring test that exercises that file must run here too,
+        # otherwise a wiring regression merges behind a green test/usage.
+        run: dart test test/usage test/cli/agent_cli_usage_ledger_test.dart
 
   # Issue #194 (point 4): per-step duration telemetry. The jobs API already
   # records started/completed per step — dump it as a summary table plus a

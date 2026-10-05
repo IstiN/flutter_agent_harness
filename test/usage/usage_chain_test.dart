@@ -225,28 +225,25 @@ void main() {
       expect(ledger.segments.single.totals.input, 100);
     });
 
-    test(
-      'a marker closing a contentful segment with nothing after it is '
-      'not materialized (no zero-count trailing segment)',
-      () {
-        // Resume drive errors out before any request record lands: the
-        // marker closed segment 0 and opened an empty segment 1. The
-        // empty trailing segment must be trimmed — otherwise resumedCount
-        // inflates (I1 noise) and the flush emits a zero-count fa-tokens
-        // line labeled "reported".
-        final ledger = foldChain([
-          sessionHeaderLine('sess-1'),
-          segmentMarkerLine(1),
-          requestSummaryLine(2),
-          assistantLine(3, usage: reportedUsage(input: 10, output: 5)),
-          segmentMarkerLine(4), // closes segment 0; no records follow
-        ]);
-        expect(ledger.segments.length, 1);
-        expect(ledger.resumedCount, 0);
-        expect(ledger.total.totals.requests, 1);
-        expect(ledger.total.totals.input, 10);
-      },
-    );
+    test('a marker closing a contentful segment with nothing after it is '
+        'not materialized (no zero-count trailing segment)', () {
+      // Resume drive errors out before any request record lands: the
+      // marker closed segment 0 and opened an empty segment 1. The
+      // empty trailing segment must be trimmed — otherwise resumedCount
+      // inflates (I1 noise) and the flush emits a zero-count fa-tokens
+      // line labeled "reported".
+      final ledger = foldChain([
+        sessionHeaderLine('sess-1'),
+        segmentMarkerLine(1),
+        requestSummaryLine(2),
+        assistantLine(3, usage: reportedUsage(input: 10, output: 5)),
+        segmentMarkerLine(4), // closes segment 0; no records follow
+      ]);
+      expect(ledger.segments.length, 1);
+      expect(ledger.resumedCount, 0);
+      expect(ledger.total.totals.requests, 1);
+      expect(ledger.total.totals.input, 10);
+    });
 
     test('a header-only chain still yields ONE (empty) segment', () {
       final scan = const UsageChainScanner().scan([

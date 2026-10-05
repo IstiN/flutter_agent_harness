@@ -246,23 +246,23 @@ void main() {
     },
   );
 
-  test(
-    '/usage rebuild with an empty chain path says so instead of failing '
-    'the read (flush-path guard parity)',
-    () async {
-      // A session whose metadata carries no chain path is unreachable
-      // through the real repo — the test seam swaps one in after boot.
-      final cli = cliFor(const []);
-      final run = cli.run();
-      await waitForIt(() => !cli.isBusy);
-      cli.sessionForTest = Session(_EmptyChainPathStorage());
-      io.sendLine('/usage rebuild');
-      await waitForIt(() => io.out.toString().contains('usage: no session chain'));
-      io.sendLine('/exit');
-      await run;
-      expect(io.out.toString(), contains('usage: no session chain'));
-    },
-  );
+  test('/usage rebuild with an empty chain path says so instead of failing '
+      'the read (flush-path guard parity)', () async {
+    // A session whose metadata carries no chain path is unreachable
+    // through the real repo — the test seam swaps one in after boot
+    // (the `fa> ` prompt means boot finished and _session is stable).
+    final cli = cliFor(const []);
+    final run = cli.run();
+    await waitForIt(() => io.out.toString().contains('fa> '));
+    cli.sessionForTest = Session(_EmptyChainPathStorage());
+    io.sendLine('/usage rebuild');
+    await waitForIt(
+      () => io.out.toString().contains('usage: no session chain'),
+    );
+    io.sendLine('/exit');
+    await run;
+    expect(io.out.toString(), contains('usage: no session chain'));
+  });
 }
 
 /// A storage whose metadata has no chain path: the shape the usage-ledger
