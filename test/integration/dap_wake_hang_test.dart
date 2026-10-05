@@ -166,6 +166,24 @@ Future<void> _dumpWedgeDiagnostics(
   final raw = harness.rawOutput;
   final tailStart = raw.length > 600 ? raw.length - 600 : 0;
   printOnFailure('terminal tail: …${raw.substring(tailStart)}');
+  // gh-1248 kill-chain forensics: the vendored dart_tui logs swallowed
+  // cmd/update/frame exceptions to stderr, which the PTY merges into the
+  // raw stream. A TUI program killed mid-run ghosts the CLI (agent alive,
+  // screen dead — exactly this flake), so surface the traces that name
+  // the trigger instead of leaving them outside the 600-byte tail window.
+  final traces = raw
+      .split('\n')
+      .where(
+        (line) =>
+            line.contains('Caught ') ||
+            line.contains('Unhandled exception') ||
+            line.contains('dart_tui: rendering disabled'),
+      )
+      .take(10)
+      .toList();
+  if (traces.isNotEmpty) {
+    printOnFailure('tui exception traces:\n  ${traces.join('\n  ')}');
+  }
 }
 
 void main() {

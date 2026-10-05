@@ -269,11 +269,16 @@ final class Program {
         final msg = await Future<Msg?>.value(cmd());
         if (msg != null) enqueue(msg);
       } catch (e, st) {
+        // Log and KEEP RUNNING: InterruptMsg here stopped the whole
+        // program, and a stopped program silently drops every later
+        // `send` — the CLI kept running its agent loop against a dead
+        // screen (the gh-1248 mail-wake ghost: turns persisted to the
+        // session while nothing painted ever again). Only a deliberate
+        // QuitMsg / external cancellation ends the program.
         if (!_disableCatchPanics) {
           stderr.writeln('Caught command exception: $e');
           stderr.writeln(st);
         }
-        enqueue(InterruptMsg());
       }
     }
 
@@ -301,6 +306,8 @@ final class Program {
     // The view is built LAZILY: dropped frames never pay for `model.view()`
     // — the old eager call site assembled the whole screen string upstream
     // only to throw it away.
+    // Exception policy lives in [renderGuarded] below (gh-1197 self-heal +
+    // loud initial-frame death); render() itself stays a raw paint.
     Future<void> render(View Function() buildView, {bool force = false}) async {
       final nowMicros = frameClock.elapsedMicroseconds;
       if (lastRenderMicros >= 0 && minFrameMicros > 0 && !force) {
@@ -557,11 +564,12 @@ final class Program {
           try {
             unawaited(runCmd(onMouse(msg)));
           } catch (e, st) {
+            // Log and keep running — same rationale as runCmd's guard
+            // above (gh-1248): a handler bug must not ghost the UI.
             if (!_disableCatchPanics) {
               stderr.writeln('Caught mouse handler exception: $e');
               stderr.writeln(st);
             }
-            enqueue(InterruptMsg());
           }
         }
       }
@@ -571,11 +579,13 @@ final class Program {
       } catch (e, st) {
         // A throwing update() must never kill the whole TUI: log and keep
         // running (matches runCmd's guard above — a picker bug must not
-        // close the app).
+        // close the app). The enqueue(InterruptMsg()) that used to live
+        // here DID kill the program — a stopped program silently drops
+        // every later `send`, ghosting a still-running CLI (gh-1248).
+        // QuitMsg is handled before update() and still works.
         stderr.writeln('Caught update exception: $e');
         stderr.writeln(st);
-        enqueue(InterruptMsg());
-        return true;
+        return false;
       }
       final (nextModel, cmd) = updateResult;
       _runningModel = nextModel;

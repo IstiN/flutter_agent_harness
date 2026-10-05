@@ -2731,6 +2731,12 @@ final class FaTuiController {
       _pending.clear();
       await _program.run(model);
     } finally {
+      // The program is done (quit, kill, or a run-loop exception): stop
+      // arming output-flush timers into it. `Program.send` silently drops
+      // sends to a stopped program (gh-1248) — parking pre-run style in
+      // [_pending] keeps the bytes at least reachable for diagnostics
+      // instead of vanishing into a dead queue.
+      _running = false;
       if (savedTermios != null) await _restoreTermios(savedTermios);
     }
   }
