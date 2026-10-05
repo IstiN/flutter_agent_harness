@@ -1,0 +1,303 @@
+// Copyright (c) 2026, the Flutter Agent Harness authors.
+// Use of this source code is governed by a MIT license that can be found
+// in the LICENSE file.
+
+/// gh-1164 Part C: the pre-flight gate on the app handover path — the
+/// `open_app` tool call NEVER returns success for an app whose JS fails to
+/// load/render or whose test is red (the "no fake success" contract, AC7).
+///
+/// Gate selection (AC10):
+///
+/// 1. **`flutter-test`** — the app's standing test `test/apps/<id>_test.dart`
+///    exists AND the host provides a [FlutterTestRunner] (it can spawn the
+///    toolchain). A red test fails with the failure excerpt.
+/// 2. **`smoke-render`** — everywhere else (sandboxed hosts cannot run
+///    `flutter test`): the app boots headlessly in a real JS engine; the
+///    gate requires a first render with no captured error within the
+///    budget. A load-time throw, a `jsr.showError`, or "no render at all"
+///    (a syntax error) fails with the excerpt.
+///
+/// The gate never degrades to a silent skip: every outcome NAMES the gate
+/// that ran, and the failure text carries the error excerpt.
+///
+/// Web safety: the native-bridge probe ([jsEngineBootable]) lives in a
+/// conditional-import pair (`app_preflight_probe_io.dart` /
+/// `app_preflight_probe_stub.dart`) — dart:ffi has no web target, and on
+/// the web the JS engine ships inside the page bundle anyway (the stub
+/// reports bootable). The gate itself (engine boot + tree read) is pure
+/// Dart and compiles for every surface.
+library;
+
+import 'dart:async';
+
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:meta/meta.dart' show visibleForTesting;
+
+import 'package:fa/apps/app_preflight_probe_stub.dart'
+    if (dart.library.io) 'package:fa/apps/app_preflight_probe_io.dart';
+import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/apps/js_app_error_channel.dart';
+
+export 'package:fa/apps/app_preflight_probe_stub.dart'
+    if (dart.library.io) 'package:fa/apps/app_preflight_probe_io.dart';
+
+/// The outcome of one gate run; [gate] is always named.
+sealed class AppPreflightOutcome {
+  const AppPreflightOutcome({required this.gate});
+
+  /// Which gate ran: `flutter-test` or `smoke-render`.
+  final String gate;
+}
+
+/// The app passed its gate (green test, or a clean first render).
+class AppPreflightPassed extends AppPreflightOutcome {
+  const AppPreflightPassed({required super.gate});
+
+  @override
+  String toString() => 'pre-flight $gate: passed';
+}
+
+/// The app failed its gate; [excerpt] is the bounded failure text for the
+/// tool result (AC7: the tool result itself is a failure carrying the
+/// error).
+class AppPreflightFailed extends AppPreflightOutcome {
+  const AppPreflightFailed({required super.gate, required this.excerpt});
+
+  final String excerpt;
+
+  @override
+  String toString() => 'pre-flight $gate failed:\n$excerpt';
+}
+
+/// The seam the gate uses to run `flutter test test/apps/<id>_test.dart`
+/// on hosts that can spawn the toolchain. Null on sandboxed hosts → the
+/// gate degrades to the named smoke-render gate (AC10).
+abstract class FlutterTestRunner {
+  /// Runs the app's standing test and returns the (bounded) output.
+  Future<FlutterTestResult> runAppTest(String appId);
+}
+
+/// Result of one [FlutterTestRunner] invocation.
+class FlutterTestResult {
+  const FlutterTestResult({required this.passed, required this.output});
+
+  final bool passed;
+
+  /// Bounded stdout/stderr excerpt (already capped by the runner).
+  final String output;
+}
+
+/// A captured JS error for the smoke gate; [revision] is the app's source
+/// revision at boot, so the gate summary can name the exact source that
+/// failed.
+class SmokeProbeError {
+  const SmokeProbeError({required this.event, required this.revision});
+
+  final JsAppErrorEvent event;
+  final String revision;
+}
+
+/// Boots the app headlessly in a real JS engine on a SCRATCH COPY of the
+/// app folder (the app's own files are never touched) and requires a first
+/// render with no captured error within [renderBudget]. Mirrors the
+/// js_app_engine suite's boot recipe so the smoke gate sees exactly what
+/// the real launcher would.
+Future<AppPreflightOutcome> runSmokeRenderGate(
+  JsAppInfo app,
+  ExecutionEnv env, {
+  JsAppEngine Function({
+    required JsAppInfo app,
+    required ExecutionEnv env,
+    required AppPermissions permissions,
+    String entryFile,
+    void Function(JsAppErrorEvent event)? errorSink,
+  })?
+  engineFactory,
+  Duration renderBudget = const Duration(seconds: 10),
+}) async {
+  final errors = <SmokeProbeError>[];
+  JsAppEngine? engine;
+  final scratch = MemoryExecutionEnv();
+  try {
+    // Copy ONLY the app folder (text files — the JS/manifest source) — the
+    // smoke run must never touch the app's real storage or files.
+    if (!(await _copyAppTree(env, scratch, app.dir))) {
+      return const AppPreflightFailed(
+        gate: 'smoke-render',
+        excerpt: 'smoke setup failed: could not stage the app copy',
+      );
+    }
+    engine = (engineFactory ?? smokeProbeEngineFactory)(
+      app: app,
+      env: scratch,
+      permissions: app.declaredPermissions,
+      entryFile: JsAppEngine.defaultEntryFile,
+      errorSink: (event) => errors.add(
+        SmokeProbeError(event: event, revision: engine?.sourceRevision ?? ''),
+      ),
+    );
+    try {
+      await engine.start();
+    } on Object catch (error) {
+      return AppPreflightFailed(
+        gate: 'smoke-render',
+        excerpt: 'engine boot failed: ${JsAppErrorChannel.capExcerpt('$error')}',
+      );
+    }
+    final rendered = await _awaitFirstRender(engine, renderBudget);
+    if (!rendered) {
+      final excerpt = errors.isNotEmpty
+          ? 'no first render within ${renderBudget.inSeconds}s; captured '
+                'error: ${JsAppErrorChannel.capExcerpt(errors.first.event.message)}'
+          : 'no first render within ${renderBudget.inSeconds}s (a syntax '
+                'error in the entry usually produces no render at all)';
+      return AppPreflightFailed(gate: 'smoke-render', excerpt: excerpt);
+    }
+    if (errors.isNotEmpty) {
+      return AppPreflightFailed(
+        gate: 'smoke-render',
+        excerpt:
+            'rendered with a captured error: '
+            '${JsAppErrorChannel.capExcerpt(errors.first.event.message)}',
+      );
+    }
+    return const AppPreflightPassed(gate: 'smoke-render');
+  } finally {
+    await engine?.dispose();
+  }
+}
+
+/// Copies the app source tree (text files only) from [env] into [target]
+/// under the same env-relative path — the smoke engine boots from the copy
+/// so a probe can never mutate the app's real files or storage.
+Future<bool> _copyAppTree(
+  ExecutionEnv env,
+  ExecutionEnv target,
+  String dir,
+) async {
+  Future<bool> copyDir(String path) async {
+    final entries = (await env.listDir(path)).valueOrNull;
+    if (entries == null) return false;
+    for (final entry in entries) {
+      if (entry.kind == FileKind.directory) {
+        if (!await copyDir(entry.path)) return false;
+        continue;
+      }
+      final text = (await env.readTextFile(entry.path)).valueOrNull;
+      if (text == null) continue; // binary asset — not app source
+      if ((await target.writeFile(entry.path, text)).isErr) return false;
+    }
+    return true;
+  }
+
+  return copyDir(dir);
+}
+
+/// The engine factory the smoke gate uses when the caller injects none.
+/// EXPOSED FOR TESTS: asserts the probe wiring — a scratch-env probe
+/// engine stays OUT of the process-wide live-engine sibling group and
+/// forwards captured errors to the local sink (never the live channel).
+@visibleForTesting
+JsAppEngine smokeProbeEngineFactory({
+  required JsAppInfo app,
+  required ExecutionEnv env,
+  required AppPermissions permissions,
+  String entryFile = JsAppEngine.defaultEntryFile,
+  void Function(JsAppErrorEvent event)? errorSink,
+}) => JsAppEngine(
+  app: app,
+  env: env,
+  permissions: permissions,
+  entryFile: entryFile,
+  errorSink: errorSink,
+  // gh-1164 review: the probe boots on a SCRATCH env copy — it must
+  // never join the process-wide live-engine sibling group, or its
+  // storage writes would reach the app's real live viewports (and a
+  // live write landing mid-probe would replay into the gate).
+  joinSiblingGroup: false,
+);
+
+Future<bool> _awaitFirstRender(JsAppEngine engine, Duration budget) {
+  if (engine.tree.value != null) return Future.value(true);
+  final completer = Completer<bool>();
+  Timer? timeout;
+  late void Function() listener;
+  listener = () {
+    if (engine.tree.value != null && !completer.isCompleted) {
+      completer.complete(true);
+    }
+  };
+  engine.tree.addListener(listener);
+  timeout = Timer(budget, () {
+    engine.tree.removeListener(listener);
+    if (!completer.isCompleted) completer.complete(false);
+  });
+  return completer.future.whenComplete(() {
+    timeout?.cancel();
+    engine.tree.removeListener(listener);
+  });
+}
+
+/// Runs the pre-flight gate for [appId]: the app's standing test when the
+/// host can run it, otherwise the in-engine smoke render (AC10 — the tool
+/// result names which gate ran). Returns null when the app has no gate at
+/// all: no test file AND a host where no JS engine can boot (bare CI
+/// runners) — installing a gate there would report every healthy app
+/// broken (a host-capability error masquerading as an app error).
+///
+/// Note (gh-1164 review): the flutter-test gate is test-host-only today —
+/// no production [FlutterTestRunner] implementation exists (a sandboxed
+/// app host cannot spawn the toolchain), so in the shipped app every real
+/// gate decision is the smoke render. The seam stays for hosts that gain
+/// a runner later.
+Future<AppPreflightOutcome?> runAppPreflight(
+  String appId,
+  ExecutionEnv env, {
+  FlutterTestRunner? testRunner,
+  Future<AppPreflightOutcome> Function(JsAppInfo app, ExecutionEnv env)?
+  smokeProbe,
+  bool? jsEngineBootableOverride,
+}) async {
+  final apps = await AppsStore(env).listApps();
+  JsAppInfo? app;
+  for (final candidate in apps) {
+    if (candidate.id == appId) {
+      app = candidate;
+      break;
+    }
+  }
+  if (app == null) {
+    return const AppPreflightFailed(gate: 'none', excerpt: 'app not found');
+  }
+  final found = app;
+  // gh-866 affordance: the manifest itself does not parse — the launcher
+  // would show a broken-app error instead of launching; fail fast with it.
+  final manifestError = found.error;
+  if (manifestError != null) {
+    return AppPreflightFailed(gate: 'none', excerpt: manifestError);
+  }
+  final foundId = found.id;
+  final hasTest =
+      (await env.listDir(
+        'test/apps',
+      )).valueOrNull?.any((entry) => entry.name == '${foundId}_test.dart') ??
+      false;
+  if (testRunner != null && hasTest) {
+    final result = await testRunner.runAppTest(foundId);
+    if (!result.passed) {
+      return AppPreflightFailed(
+        gate: 'flutter-test',
+        // Bounded even though the runner contract promises a capped
+        // output: no production runner exists yet (see
+        // [FlutterTestRunner]), so the gate enforces the bound itself
+        // rather than trusting an unbounded excerpt into the LLM-facing
+        // tool result.
+        excerpt: JsAppErrorChannel.capExcerpt(result.output),
+      );
+    }
+    return const AppPreflightPassed(gate: 'flutter-test');
+  }
+  if (!(jsEngineBootableOverride ?? jsEngineBootable)) return null;
+  return (smokeProbe ?? runSmokeRenderGate)(found, env);
+}
