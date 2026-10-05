@@ -3,7 +3,6 @@ import 'dart:collection';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter/widgets.dart' show WidgetsBinding;
 import 'package:fa_ui/fa_ui.dart'
@@ -33,7 +32,9 @@ import 'relay/ext_runtime.dart';
 import 'session_names_store.dart';
 
 import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/app_preflight.dart';
 import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/apps/js_app_error_channel.dart';
 import 'package:fa/apps/dynamic_messages.dart';
 import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/l10n/l10n_ext.dart';
@@ -146,6 +147,11 @@ class AgentService extends ChangeNotifier
   /// store whose renames round-trip through the hosting backend so every
   /// surface sees them; `null` keeps the env-file store.
   SessionNamesStore? get namesStoreOverride => null;
+
+  /// The agent's opt-in hub membership (issue #402) — surfaces read the
+  /// live state and toggle the join from here.
+  AgentNetworkController get agentNetwork =>
+      _agentNetwork ?? (throw StateError('agentNetwork before initialize()'));
 
   /// The sleep-prevention guard (issue #325): acquired on `initialize`,
   /// released on `dispose`. Null (tests, web, `off` config) runs the
@@ -747,6 +753,12 @@ class AgentService extends ChangeNotifier
     _taskCompletionsSub = taskJobManager.completions.listen(
       _onTaskJobCompleted,
     );
+    // gh-1164 Part B: JS app render/runtime/load errors ride the shared
+    // error channel — a gated notice re-enters the conversation the same
+    // way (steered mid-run, a fresh system-notice turn while idle).
+    _jsAppErrorSub = JsAppErrorChannel.instance.onDeliver.listen(
+      _onJsAppError,
+    );
     // Interactive dynamic messages (issue #102): the host machinery behind
     // the `dynamic_message` tool — session-scoped JS widgets rendered
     // inline in the transcript with the full installed-app engine surface.
@@ -989,6 +1001,7 @@ class AgentService extends ChangeNotifier
       providerKind == gemmaProviderKind ||
       providerKind == transformersJsProviderKind;
 
+
   /// The system prompt composition lives in the
   /// `agent_service_prompt.dart` part (issue #692 B): `{{commands}}` is
   /// filled from the central sandbox registry for the current platform,
@@ -1002,6 +1015,19 @@ class AgentService extends ChangeNotifier
     SecretRedactor? redactor, [
     SandboxPlatform? platformOverride,
   ]) => _effectiveAgentSystemPrompt(config, redactor, platformOverride);
+
+  /// The composed registry's tool names, in registration order (issue
+  /// #692 AC1 tests): pins the per-host availability floor — surfaces the
+  /// sandbox cannot run (LSP, MCP servers, DAP, checkpoints, the sqlite
+  /// engine) must be ABSENT from the app registry, not merely error at
+  /// call time.
+  @visibleForTesting
+  List<String> get registeredToolNamesForTest => [
+    for (final tool in _agent.state.tools) tool.name,
+  ];
+
+
+
 
   /// The approval gate attached to the agent. Default mode is
   /// [ApprovalMode.write] — read-only tools run freely, mutating and shell
@@ -1132,8 +1158,19 @@ class AgentService extends ChangeNotifier
   /// (tests) has nothing to tear down.
   AgentNetworkController? _agentNetwork;
 
+  /// The session's retained-subagent registry (null before the agent is
+  /// built). The settings Agents section renders the live tree from it.
+  SubagentManager? get subagentManager => _subagentManager;
+
+  /// Test-only injection: the lightweight constructor (pre-built agent)
+  /// never builds the messaging fabric, so widget tests that exercise
+  /// subagent surfaces (badge, task list) install a bare manager here.
+  @visibleForTesting
+  set subagentManager(SubagentManager? manager) => _subagentManager = manager;
+
   /// Task tool config (child surface set after registry is built).
   TaskToolConfig? _taskConfig;
+
 
   /// The session's background shell jobs (bash background / steer-yield);
   /// null before the agent is built.
@@ -1150,7 +1187,87 @@ class AgentService extends ChangeNotifier
   /// Memory controller (Phase 1): durable cross-session memory.
   MemoryController? _memoryController;
 
+  /// UI hook that opens a JS app for the user — the chat screen installs it
+  /// and pushes the app's `JsAppView`. Setting a non-null launcher registers
+  /// the `open_app` tool (see `open_app_tool.dart`); setting `null`
+  /// unregisters it, the safe headless default.
+  AppLauncher? get appLauncher => _appLauncher;
   AppLauncher? _appLauncher;
+
+  set appLauncher(AppLauncher? launcher) {
+    if (launcher == _appLauncher) return;
+    _appLauncher = launcher;
+    Future<AppPreflightOutcome?> gate(String appId) =>
+        runAppPreflight(appId, env);
+    final registry = _toolRegistry;
+    if (registry != null) {
+      if (launcher == null) {
+        registry.unregister(openAppToolName);
+      } else {
+        registry.register(
+          openAppTool(env, launcher: launcher, preflight: gate),
+        );
+      }
+      _agent.state.tools = registry.tools;
+    } else {
+      // Pre-constructed agent (tests): mirror the registration on the
+      // advertised tool list — the tool's execute callback is self-contained.
+      final tools = _agent.state.tools
+          .where((tool) => tool.name != openAppToolName)
+          .toList();
+      if (launcher != null) {
+        tools.add(openAppTool(env, launcher: launcher, preflight: gate));
+      }
+      _agent.state.tools = tools;
+    }
+  }
+
+
+
+  /// The merged host secrets the agent runs with (dotenv + saved keys +
+  /// `request_secret` grants) — the read surface behind the JS apps'
+  /// `jsr.fa.keys.list/get` bridge. Empty for services built around a
+  /// pre-constructed [Agent].
+  Map<String, String> hostSecrets() =>
+      _secretsEnv?.secretsSnapshot() ?? const {};
+
+  /// Persists and activates a credential the user granted through a
+  /// host-rendered prompt: saved into the Keys store, injected into the
+  /// running shell environment, and registered with the redactor — the
+  /// post-grant half of the `request_secret` flow, reused by the JS apps'
+  /// `jsr.fa.keys.request` bridge (the app view renders the same prompt
+  /// sheet itself).
+  Future<RequestSecretResult> acceptSecretGrant(
+    RequestSecretResult result,
+  ) async {
+    // Services built around a pre-constructed Agent (tests) may have none of
+    // these; the grant still applies for the caller, it just is not
+    // persisted or injected — [RequestSecretResult.persisted] reflects that.
+    await _sessionKeys?.set(result.name, result.value);
+    _secretsEnv?.addSecrets({result.name: result.value});
+    _registerRedactionSecret(result.name, result.value);
+    return RequestSecretResult(
+      name: result.name,
+      value: result.value,
+      persisted: _sessionKeys != null,
+    );
+  }
+
+  /// Exposes the agent's registered tools to tests (ask-tool wiring checks).
+  @visibleForTesting
+  List<Tool> get toolsForTest => _agent.state.tools;
+
+  /// Exposes the live system prompt to tests (memory-section checks).
+  @visibleForTesting
+  String get systemPromptForTest => _agent.state.systemPrompt;
+
+  /// Exposes the live secrets env to tests (`request_secret` grant checks).
+  @visibleForTesting
+  SecretsExecutionEnv? get secretsEnvForTest => _secretsEnv;
+
+  /// Exposes the redactor to tests (runtime secret registration checks).
+  @visibleForTesting
+  SecretRedactor? get redactorForTest => _redactor;
 
   /// Switches the approval mode (settings dialog's mode selector) and
   /// persists the choice when a store is wired (fire-and-forget — the UI
@@ -1163,6 +1280,40 @@ class AgentService extends ChangeNotifier
     final store = _approvalModeStore;
     if (store != null) unawaited(store.save(mode));
   }
+
+  /// The current consent for third-party skill discovery (`.claude`,
+  /// `.github/skills`, `.codex`). Default: [SkillsAccess.granted].
+  SkillsAccess get skillsAccess => _skillsAccess;
+
+  /// Switches the third-party skills consent (the settings "Skills access"
+  /// section, the boot dialog), persists it when a
+  /// store is wired (fire-and-forget), then re-discovers skills under the
+  /// new consent and recomposes the system prompt — like
+  /// [_refreshMemorySection], no [reconfigure] needed. Services built from
+  /// a pre-constructed [Agent] (tests) have no config: they record the
+  /// choice but skip the re-discovery.
+  Future<void> setSkillsAccess(SkillsAccess access) async {
+    if (access == _skillsAccess) return;
+    _skillsAccess = access;
+    notifyListeners();
+    final store = _skillsAccessStore;
+    if (store != null) unawaited(store.save(access));
+    final config = _config;
+    if (config == null) return;
+    final suffix = await _discoverPromptSuffix(
+      env,
+      access,
+      homeDir: _skillsHomeDir ?? desktopHomeDir(),
+    );
+    // A newer choice made while discovery ran wins — don't clobber it.
+    if (access != _skillsAccess) return;
+    _promptSuffix = suffix;
+    _agent.state.systemPrompt = _composeSystemPrompt(config);
+  }
+
+  /// The user's per-tool availability choices (the app twin of the CLI
+  /// `tools:` section; persisted via [ToolsAvailabilityStore]).
+  ToolsConfig get toolsConfig => _toolsAvailability.config;
 
   /// The availability decision per known tool id (capabilities + config).
   Map<String, ResolvedToolAvailability> get toolAvailability =>
@@ -1218,6 +1369,57 @@ class AgentService extends ChangeNotifier
   @override
   String get activeBaseUrl => _activeBaseUrl;
 
+  /// Model id of the active backend, read live from the agent's model state;
+  /// the settings Task models section uses it as the editor's placeholder.
+  String get agentModelId => _agent.state.model.id;
+
+  /// Reads the last [tail] messages of subagent [id]'s session as
+  /// `(role, text)` pairs (settings Agents section → observe). Empty when
+  /// the child session is unavailable or the id is unknown.
+  Future<List<(String, String)>> observeSubagent(
+    String id, {
+    int tail = 20,
+  }) async {
+    final handle = _subagentManager?[id];
+    if (handle == null) return const [];
+    try {
+      final exists = await env.fileInfo(handle.sessionId);
+      if (exists.valueOrNull == null) return const [];
+      final session = await _repo.open(_subagentSessionMetadata(handle));
+      return tailMessagePairs(await session.buildContextMessages(), tail);
+    } on Object {
+      return const [];
+    }
+  }
+
+  /// Sends a follow-up message to subagent [id] (settings Agents section →
+  /// send): appends to the child session and marks it resumed. Falls back to
+  /// the sibling pending-queue when the session is unavailable.
+  Future<void> sendToSubagent(String id, String message) async {
+    final handle = _subagentManager?[id];
+    if (handle == null) {
+      throw StateError('no subagent "$id"');
+    }
+    ensureSendableSubagent(handle, id);
+    try {
+      final session = await _repo.open(_subagentSessionMetadata(handle));
+      await session.appendMessage(UserMessage.text(message));
+    } on Object {
+      // Fall back to the sibling pending queue when the session is gone.
+      await _subagentManager!.enqueueMessage(
+        id,
+        SubagentMessage(
+          fromId: 'parent',
+          text: message,
+          sentAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      return;
+    }
+    await _subagentManager!.update(id, status: SubagentStatus.running);
+  }
+
+
   /// A follow-up message needs a live-or-idle child; failed/aborted
   /// children have no session to append to.
   static void ensureSendableSubagent(SubagentHandle handle, String id) {
@@ -1266,9 +1468,35 @@ class AgentService extends ChangeNotifier
   /// saved-keys store, and the provider registry's session keys.
   final MediaKeyResolver? _resolveSecretName;
 
+  /// Media generation gateway shared by the `generate_image` / `speak` /
+  /// `generate_music` / `generate_video` tools and exposed for the
+  /// `jsr.fa.media.*` bridge.
+  /// `null` for services constructed around a pre-constructed [Agent]
+  /// (tests).
+  MediaGateway? get mediaGateway => _mediaGateway;
   MediaGateway? _mediaGateway;
 
+  /// Video reader behind the `read_video` tool, exposed for the
+  /// `jsr.fa.media.readVideo` bridge. `null` for services constructed
+  /// around a pre-constructed [Agent] (tests).
+  VideoReader? get videoReader => _videoReader;
   VideoReader? _videoReader;
+
+  /// Derives the ASR transcriber for jsr bridges (the media_models.json
+  /// `transcription` slot, falling back to the active provider); null when
+  /// no ASR-capable (OpenAI-compatible) endpoint is configured — the bridge
+  /// then answers with an actionable error. Shared by the app view and the
+  /// dynamic-message widgets (issue #102 AC6).
+  Future<AsrTranscriber?> resolveAsrTranscriber() async {
+    final gateway = _mediaGateway;
+    if (gateway != null) return whisperTranscriberForGateway(gateway);
+    final config = _config;
+    return whisperTranscriberFor(
+      providerKind: _providerKind,
+      baseUrl: config?.baseUrl ?? '',
+      apiKey: config?.apiKey ?? '',
+    );
+  }
 
   /// Model id of the active backend (shorthand for the agent's current
   /// model; updated by [reconfigure]).
@@ -1294,10 +1522,28 @@ class AgentService extends ChangeNotifier
   /// [setSkillsAccess] when the third-party consent changes).
   String _promptSuffix;
 
+
+
   /// The cached `<memory>` prompt section (durable facts from past
   /// sessions), refreshed asynchronously after create and on every
   /// `memory_add` — the prompt composition itself stays synchronous.
   String _memorySection = '';
+
+
+
+  /// Recomposes the system prompt after the project-folder mount changes
+  /// (the file browser's open/unmount flow).
+  void refreshProjectMountPrompt() {
+    final config = _config;
+    if (config != null) {
+      _agent.state.systemPrompt = _composeSystemPrompt(config);
+    }
+  }
+
+  /// The config this service was created with, kept so a new session can be
+  /// cloned from it (see [clone]). `null` when the service was built from a
+  /// pre-constructed [Agent] (tests).
+  AgentConfig? get configForClone => _config;
 
   /// New-session support for services whose session does NOT live in this
   /// process (the relay's session is owned by the extension SW; cloning a
@@ -1382,6 +1628,8 @@ class AgentService extends ChangeNotifier
   int? _backgroundTaskId;
   Timer? _liveActivityEndTimer;
 
+
+
   /// True under `flutter test` (binding class name; web-safe). False when
   /// no binding exists (plain dart tests — there the real event loop just
   /// runs the end timer out).
@@ -1394,6 +1642,8 @@ class AgentService extends ChangeNotifier
       return false;
     }
   }
+
+
 
   @override
   String? error;
@@ -1428,6 +1678,13 @@ class AgentService extends ChangeNotifier
   /// shared App Group / `~/.fah/sessions` roots (host sessions leak into
   /// hermetic tests); tests pass `includeSharedSessionRoots: false`.
   final bool _includeSharedSessionRoots;
+
+  /// The windowed storage when the open session was opened windowed
+  /// (issue #135); null for full-open sessions — no paging surface.
+  WindowedSessionStorage? get _windowed {
+    final storage = _session?.getStorage();
+    return storage is WindowedSessionStorage ? storage : null;
+  }
 
   /// Transcript records sitting above the loaded window
   /// ([FaChatService.historyAboveCount]): `null` while the background
@@ -1510,6 +1767,7 @@ class AgentService extends ChangeNotifier
   /// is a view concern, not a context concern). `null` for full-open
   /// sessions (rows come straight from the loaded context).
   List<SessionRecord>? _viewBranch;
+
 
   /// Pages one chunk of records above the window into the transcript
   /// ([FaChatService.loadOlderHistory]). Re-entrant taps are ignored, as
@@ -1657,11 +1915,11 @@ class AgentService extends ChangeNotifier
     return reached;
   }
 
-  @override
-  void dispose() {
-    _disposeService();
-    super.dispose();
-  }
+
+
+
+
+
 
   Session? _session;
   String? _sessionId;
@@ -1687,6 +1945,7 @@ class AgentService extends ChangeNotifier
   TrajectoryBlobPersister? _trajectoryBlobPersister;
   Session? _trajectoryBlobPersisterSession;
 
+
   /// The producer behind [trajectory]: rebuilt from the active branch on
   /// session open/switch, mirrored live from agent events, and fed the
   /// finalized records on every persist.
@@ -1694,6 +1953,14 @@ class AgentService extends ChangeNotifier
   FahChatMessage? _currentAssistantMessage;
   FahChatMessage? _currentThinkingMessage;
 
+  /// Id of the session new messages persist to (`null` until [initialize]).
+  String? get currentSessionId => _sessionId;
+
+  /// The cwd of the OPEN session (from its on-disk metadata): the folder
+  /// that conversation belongs to, regardless of the app's current mount
+  /// (the env is shared across sessions; the session's own folder is not).
+  /// Null until a session materializes.
+  String? get currentSessionCwd => _sessionCwd;
   String? _sessionCwd;
 
   /// The inbox watcher: incoming inter-agent mail while IDLE wakes the
@@ -1706,6 +1973,10 @@ class AgentService extends ChangeNotifier
   /// Background `task` job settlements (issue #958): each one re-enters the
   /// conversation as an async-result notice (see `_onTaskJobCompleted`).
   StreamSubscription<TaskJob>? _taskCompletionsSub;
+
+  /// JS app error-channel deliveries (gh-1164 Part B): gated render/
+  /// runtime/load notices re-enter the conversation (see `_onJsAppError`).
+  StreamSubscription<JsAppErrorNotice>? _jsAppErrorSub;
 
   /// Opt-in for the real app bootstrap (main.dart): the periodic watcher
   /// never starts in tests (a pending periodic Timer fails flutter_test's
@@ -1720,6 +1991,19 @@ class AgentService extends ChangeNotifier
   /// [InboxWakePolicy.defaultMaxInboxWakeStreak] consecutive wakes
   /// without user input.
   final InboxWakePolicy _inboxWakePolicy = InboxWakePolicy();
+
+  /// Test seam: observe/reset the inbox-wake streak without driving ten
+  /// real runs — the same seam name the CLI keeps; the streak lives in
+  /// [_inboxWakePolicy] (one source of truth).
+  @visibleForTesting
+  int get inboxWakeStreakForTest => _inboxWakePolicy.streak;
+  @visibleForTesting
+  set inboxWakeStreakForTest(int value) => _inboxWakePolicy.streak = value;
+
+  /// Test seam: the persisted receipt trail (queue-side AND wake-path
+  /// events, gh-1180 AC4).
+  @visibleForTesting
+  ScheduledReceiptLog get scheduledReceiptsForTest => _scheduledReceipts;
 
   var _fabricHeartbeatTick = 0;
 
@@ -1745,6 +2029,8 @@ class AgentService extends ChangeNotifier
   /// machinery behind the `dynamic_message` tool. UI reads it for the
   /// ✦ list, the inline widget tiles, and save-as-app.
   late final DynamicMessagesService dynamicMessages;
+
+
 
   /// Sends a plain-text user message. While the agent is already running the
   /// message is queued as a steering message and the UI shows it as pending
@@ -1790,6 +2076,11 @@ class AgentService extends ChangeNotifier
   /// Directory (relative to [env]'s working directory) where chat
   /// attachments are staged before the outgoing message references them.
   static const String uploadsDir = uploadsDirName;
+
+  /// Whether the active provider accepts inline image content: hosted
+  /// providers do; the on-device text-only backends (WebLLM, Gemma,
+  /// transformers.js) get file paths only, never [ImageContent].
+  bool get inlinesImageAttachments => !_isOnDeviceKind(providerKind);
 
   /// Stages a chat attachment into [uploadsDir] inside the sandbox,
   /// creating the directory and de-duplicating the file name on collision
@@ -1883,6 +2174,33 @@ class AgentService extends ChangeNotifier
     _runWithTimeout(() => _agent.promptMessage(message));
   }
 
+  /// Sends a user message with an attached image.
+  Future<void> sendImage({
+    required Uint8List bytes,
+    required String mimeType,
+    String text = '',
+  }) async {
+    _clearError();
+    final rowProblem = _liveConnectionRowProblem();
+    if (rowProblem != null) {
+      error = rowProblem;
+      notifyListeners();
+      return;
+    }
+    final content = <ContentBlock>[
+      if (text.isNotEmpty) TextContent(text: text),
+      ImageContent(data: base64Encode(bytes), mimeType: mimeType),
+    ];
+    final message = UserMessage(content: content, timestamp: DateTime.now());
+    if (_agent.state.isStreaming) {
+      _agent.steer(message);
+      pendingSteerTexts.add(text.isEmpty ? '[image]' : text);
+      notifyListeners();
+      return;
+    }
+    _runWithTimeout(() => _agent.promptMessage(message));
+  }
+
   /// Idle watchdog: the run aborts only when NOTHING comes back for
   /// [_responseTimeout] — any event (tokens, tool calls) proves the model is
   /// alive and rearms it. Replaces the previous whole-run timeout, which
@@ -1911,6 +2229,12 @@ class AgentService extends ChangeNotifier
   /// Set when a `_persist` trigger landed while a pass was in flight; the
   /// running drain re-runs the full-state sweep once more before it ends.
   bool _persistDirty = false;
+
+  @override
+  void dispose() {
+    _disposeService();
+    super.dispose();
+  }
 
   /// Switches the backend (provider/model/key) for subsequent messages while
   /// keeping the visible transcript and the current session.
@@ -2008,11 +2332,31 @@ class AgentService extends ChangeNotifier
     }
   }
 
+
   /// Add-provider-flow latch (gh-1044 I1/AC6): > 0 while a provider
   /// add/connect flow runs (AIIN sign-in and friends). While held,
   /// [reconfigure] refuses restore-shaped calls — the active connection
   /// is never hijacked mid-flow.
   int _providerAddFlowDepth = 0;
+
+  /// Whether a provider add/connect flow is latched (gh-1044 I1/AC6).
+  bool get providerAddFlowInProgress => _providerAddFlowDepth > 0;
+
+  /// Whether a `reconfigure` from outside an add-provider flow is
+  /// currently refused (the gh-1044 I1 latch): shared by the base
+  /// [reconfigure] and subclass overrides (the extension relay) so the
+  /// refusal rule exists in exactly one shape.
+  bool reconfigureRefusedByAddFlow(bool fromProviderAddFlow) =>
+      _providerAddFlowDepth > 0 && !fromProviderAddFlow;
+
+  /// Marks a provider add/connect flow start (see [reconfigure]'s
+  /// `fromProviderAddFlow`).
+  void beginProviderAddFlow() => _providerAddFlowDepth++;
+
+  /// Marks a provider add/connect flow end.
+  void endProviderAddFlow() {
+    if (_providerAddFlowDepth > 0) _providerAddFlowDepth--;
+  }
 
   /// Bridge for the part-file extension members ([AgentServiceAssistant],
   /// [AgentServiceEvents]): `notifyListeners` is `@protected`, callable
@@ -2045,6 +2389,10 @@ class AgentService extends ChangeNotifier
     }
     return buffer.toString();
   }
+
+
+
+
 
   @override
   Stream<TrajectorySnapshot> get trajectory => _trajectory.stream;

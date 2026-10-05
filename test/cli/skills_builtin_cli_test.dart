@@ -376,12 +376,12 @@ void main() {
         .where((item) => item.key == 'skills')
         .single;
     expect(row.label, 'Skills');
-    expect(row.description, '2 of 2 skills available');
+    expect(row.description, '3 of 3 skills available');
     expect(cli.settingsPickerHandlerKeysForTest(), contains('skills'));
     // The line-mode summary shows the same live balance.
     io.sendLine('/settings');
     await waitForIt(
-      () => io.out.toString().contains('skills: 2 of 2 skills available'),
+      () => io.out.toString().contains('skills: 3 of 3 skills available'),
     );
     io.sendLine('/exit');
     await run;
@@ -405,7 +405,7 @@ void main() {
       expect(goal!.description, contains('(builtin)'));
       // The project skill's row has no badge.
       io.sendLine('/skills reload');
-      await waitForIt(() => io.out.toString().contains('reloaded: 3 skill(s)'));
+      await waitForIt(() => io.out.toString().contains('reloaded: 4 skill(s)'));
       final ship = menuRow(cli, '/ship', '/ship');
       expect(ship, isNotNull);
       expect(ship!.description, isNot(contains('(builtin)')));
@@ -442,8 +442,9 @@ void main() {
         () => out().contains('skills: enabled create-goal (scope: project)'),
       );
       // The loop returns to the skill pick; disable the other builtin in
-      // the global scope.
-      io.sendLine('2'); // self-settings
+      // the global scope. (Name-ordered builtins: create-goal, js-apps,
+      // self-settings — gh-1164 added the third.)
+      io.sendLine('3'); // self-settings
       await waitForIt(() => out().contains('skills — self-settings'));
       io.sendLine('2'); // Disable
       await waitForIt(
@@ -453,7 +454,7 @@ void main() {
       await waitForIt(
         () => out().contains('skills: disabled self-settings (scope: global)'),
       );
-      io.sendLine('3'); // Done
+      io.sendLine('4'); // Done
       await flow;
 
       // The project arm persisted the enable; the global arm fired the
@@ -517,7 +518,7 @@ void main() {
     await waitForIt(() => out().contains('skills — pick a skill'));
     io.sendLine('9');
     await waitForIt(() => out().contains('invalid selection: 9'));
-    io.sendLine('3'); // Done
+    io.sendLine('4'); // Done
     await flow;
     // No pass completed: no toggle was ever applied or persisted.
     expect(out(), isNot(contains('(scope:')));
