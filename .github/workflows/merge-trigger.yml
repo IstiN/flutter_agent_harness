@@ -31,6 +31,6 @@ jobs:
     with:
       runner: ubuntu-latest
       remove_pr_label: false
-      map_pr_labels: false
+      map_pr_labels: true
       gh_branch_pattern: false
     secrets: inherit
