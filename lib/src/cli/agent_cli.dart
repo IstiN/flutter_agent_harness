@@ -1934,19 +1934,20 @@ class AgentCli {
   /// (nothing is older than the kept region), so an over-window guard can
   /// never be satisfied by compacting.
   ///
-  /// Resolved through the shared host wiring (gh-1077): the CLI path and
-  /// the app path must agree on window/reserve semantics, and the parity
-  /// test pins that agreement — the window here is
+  /// Resolved through [resolveCliCompactionWiring] (gh-1077): the CLI
+  /// path and the app path must agree on window/reserve semantics, and
+  /// the parity test pins that agreement — the window here is
   /// [effectiveContextWindow] under the owner cap, no overhead subtracted
-  /// (the CLI carries no fixed request overhead).
-  CompactionSettings get _effectiveCompactionSettings {
-    final override = config.compactionSettings;
-    if (override != null) return override;
-    return resolveCompactionHostWiring(
-      mainModel: _agent.state.model,
-      contextWindowCap: config.contextWindowCap,
-    ).settings;
-  }
+  /// (the CLI carries no fixed request overhead). `rolesResolver: null`:
+  /// settings resolution never touches the smol chain (see
+  /// [EffectiveContextWindow]).
+  CompactionSettings get _effectiveCompactionSettings =>
+      resolveCliCompactionWiring(
+        mainModel: _agent.state.model,
+        rolesResolver: null,
+        contextWindowCap: config.contextWindowCap,
+        settingsOverride: config.compactionSettings,
+      ).settings;
 
   /// Whether a guided flow is between prompts.
   var _providerFlowActive = false;

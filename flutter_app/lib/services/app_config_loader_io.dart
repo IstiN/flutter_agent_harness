@@ -27,6 +27,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:yaml/yaml.dart';
 
 import '../sandbox/env_factory_io.dart' show desktopHomeDir;
+import 'app_log.dart';
 
 /// The `FA_PROVIDER_TIMEOUT_SECONDS` env value (issue #1036): read here,
 /// behind the same conditional import as the config file, so the web stub
@@ -91,18 +92,47 @@ Object? _readYaml(String path, List<String> warnings) {
 
 /// The app's owner context-window cap (`agent.contextWindowCap`, gh-1077):
 /// project `.fah/config.yaml` wins over `~/.fah/config.yaml` — the same
-/// chain the CLI honors — null when neither states one (uncapped). A
-/// missing or unreadable config never blocks boot (E2: silence, like the
-/// section loader above).
-int? loadAppContextWindowCap([String? projectDir]) {
-  try {
-    if (projectDir != null) {
+/// project < user chain the CLI honors (gh-1077 review thread 2a: the CLI
+/// boot resolves the project leg through [resolveContextWindowCap]) — null
+/// when neither states one (uncapped).
+///
+/// Degradation (E2): a missing or unreadable config never blocks boot and
+/// keeps the chain walking (silence, like the section loader above). A
+/// STRICT parse failure ([ConfigException] — a below-floor cap or an
+/// unknown `agent:` key) is different: the section is present but invalid,
+/// so the loader warns through [AppLog] naming the error (the
+/// `_warnCanonicalizedProvider` precedent) and degrades to the next chain
+/// leg — a silent "uncapped" would mask a real config error on exactly
+/// the setting this loader exists for (review thread 2b).
+int? loadAppContextWindowCap([String? projectDir, String? homeDir]) {
+  if (projectDir != null) {
+    try {
       final project = loadProjectContextWindowCap(projectDir);
       if (project != null) return project;
+    } on ConfigException catch (error) {
+      AppLog.i(
+        'config',
+        'invalid project agent section — project context window cap '
+        'ignored: ${error.message}',
+      );
+    } on Object {
+      // Unreadable/malformed project file: silence (E2), fall through to
+      // the user config — like the section loader above.
     }
-    final home = desktopHomeDir();
-    if (home == null) return null;
+  }
+  final home = homeDir ?? desktopHomeDir();
+  if (home == null) return null;
+  try {
     return loadCliConfig(home).contextWindowCap;
+  } on ConfigException catch (error) {
+    // The CLI fails loudly at boot for the same error; the app's boot
+    // resilience (E2) keeps it running — but the warning must not be
+    // swallowed (review thread 2b).
+    AppLog.i(
+      'config',
+      'invalid user config — context window cap ignored: ${error.message}',
+    );
+    return null;
   } on Object {
     return null;
   }

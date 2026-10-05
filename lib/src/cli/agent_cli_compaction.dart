@@ -18,10 +18,17 @@ part of 'agent_cli.dart';
 /// Resolved through the shared host wiring (gh-1077): identical output to
 /// the bare `effectiveContextWindow` call (no overhead, smol irrelevant
 /// to the window), but the parity test compares THIS path against the
-/// app's, so the semantics stay pinned in one place.
+/// app's, so the semantics stay pinned in one place. Routed through
+/// [resolveCliCompactionWiring] (review thread 4) so the merge-blocking
+/// parity helper guards the code that actually ships; the gate/meter/guard
+/// pass `rolesResolver: null` — they never resolve the smol chain, so a
+/// broken chain surfaces as a compaction failure instead of blocking
+/// every turn (the smol slot resolves post-gate at
+/// [_runAutoCompactWithToken]).
 extension EffectiveContextWindow on AgentCli {
-  int get _effectiveContextWindow => resolveCompactionHostWiring(
+  int get _effectiveContextWindow => resolveCliCompactionWiring(
     mainModel: _agent.state.model,
+    rolesResolver: null,
     contextWindowCap: config.contextWindowCap,
   ).window;
 }
@@ -444,7 +451,25 @@ extension AgentCliCompactionRun on AgentCli {
   }
 
   Future<bool> _runAutoCompactWithToken(String label, CancelToken token) async {
-    final smol = config.modelRolesResolver?.resolveRole(smolModelRole);
+    // The shared host wiring, post-gate like the app (gh-1077 review
+    // thread 4): ONE resolution for window/settings/smol through
+    // [resolveCliCompactionWiring], so the merge-blocking AC5 parity test
+    // guards the code that actually ships instead of an exported helper
+    // no call site used. A broken smol chain throws here exactly like the
+    // previous inline resolveRole — a loud compaction failure, never a
+    // silent no-op. The wiring normalizes a same-model smol to null (the
+    // AutoCompactor skips the fallback for that pair anyway), so the slot
+    // re-resolution below only runs for a DISTINCT smol.
+    final rolesResolver = config.modelRolesResolver;
+    final wiring = resolveCliCompactionWiring(
+      mainModel: _agent.state.model,
+      rolesResolver: rolesResolver,
+      contextWindowCap: config.contextWindowCap,
+      settingsOverride: config.compactionSettings,
+    );
+    final smol = wiring.smolModel == null
+        ? null
+        : rolesResolver?.resolveRole(smolModelRole);
     final hooks = _AutoCompactorCliHooks(
       this,
       auto: label == '[auto-compacted]',
@@ -452,8 +477,8 @@ extension AgentCliCompactionRun on AgentCli {
     await AutoCompactorFactory(
       session: _session!,
       state: _agent.state,
-      window: _effectiveContextWindow,
-      settings: _effectiveCompactionSettings,
+      window: wiring.window,
+      settings: wiring.settings,
       sources: AutoCompactorSources(
         smolStream: smol?.stream,
         smolModel: smol?.model,

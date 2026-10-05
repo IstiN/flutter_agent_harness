@@ -11,6 +11,7 @@ library;
 import 'dart:io';
 
 import 'package:fa/services/app_config_loader.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -151,5 +152,64 @@ ttsr:
     )!;
     expect(sections.redact, isNull);
     expect(sections.warnings, isEmpty);
+  });
+
+  group('loadAppContextWindowCap (gh-1077 review thread 2)', () {
+    test('the project cap wins over the user cap (the CLI chain)', () {
+      fileOf(home, '.fah/config.yaml', 'agent:\n  contextWindowCap: 64000\n');
+      fileOf(
+        project,
+        '.fah/config.yaml',
+        'agent:\n  contextWindowCap: 128000\n',
+      );
+      expect(
+        loadAppContextWindowCap(project.path, home.path),
+        128000,
+      );
+    });
+
+    test('no caps anywhere resolves to null (uncapped)', () {
+      expect(loadAppContextWindowCap(project.path, home.path), isNull);
+    });
+
+    test('a user cap applies when the project states none', () {
+      fileOf(home, '.fah/config.yaml', 'agent:\n  contextWindowCap: 64000\n');
+      fileOf(project, '.fah/config.yaml', 'provider: anthropic\n');
+      expect(loadAppContextWindowCap(project.path, home.path), 64000);
+    });
+
+    test('a strictly-invalid PROJECT section warns and falls back to the '
+        'user cap (never a silent uncapped)', () {
+      fileOf(home, '.fah/config.yaml', 'agent:\n  contextWindowCap: 64000\n');
+      // Below the compaction-reserve floor — loadProjectContextWindowCap
+      // is strict and throws ConfigException.
+      fileOf(project, '.fah/config.yaml', 'agent:\n  contextWindowCap: 100\n');
+      final logBefore = AppLog.dump().length;
+      expect(loadAppContextWindowCap(project.path, home.path), 64000);
+      expect(
+        AppLog.dump().substring(logBefore),
+        contains('project context window cap ignored'),
+      );
+    });
+
+    test('a strictly-invalid USER section warns and degrades to '
+        'uncapped (boot never blocks, E2)', () {
+      fileOf(home, '.fah/config.yaml', 'agent:\n  contextWindowCap: 100\n');
+      final logBefore = AppLog.dump().length;
+      expect(loadAppContextWindowCap(null, home.path), isNull);
+      expect(
+        AppLog.dump().substring(logBefore),
+        contains('context window cap ignored'),
+      );
+    });
+
+    test('a malformed (non-strict) project file is silent and falls back '
+        'to the user cap (E2)', () {
+      fileOf(home, '.fah/config.yaml', 'agent:\n  contextWindowCap: 64000\n');
+      fileOf(project, '.fah/config.yaml', 'agent: [unclosed');
+      final logBefore = AppLog.dump().length;
+      expect(loadAppContextWindowCap(project.path, home.path), 64000);
+      expect(AppLog.dump().substring(logBefore), isNot(contains('cap')));
+    });
   });
 }
