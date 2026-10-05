@@ -21,10 +21,11 @@ void main() {
   // reminder delay, the mid-run steering drain consumed the record and
   // cleared the indicator before the idle-persistence assert. Hardened by
   // awaiting the boot FIRST (the suite-wide pattern) so every window below
-  // starts from a booted TUI — over the local mock the schedule →
-  // indicator → turn-complete tail is then a bounded ~2s — plus screen
-  // polling for the painted-row contract (#550/#557) and longer wait
-  // windows that cost nothing while green.
+  // starts from a booted TUI — plus screen polling for the painted-row
+  // contract (#550/#557) and longer wait windows that cost nothing while
+  // green. gh-1250 re-hardened: even post-boot, the full pre-check path
+  // (turn tail + settles) measured ~44s on a loaded CI runner, so the
+  // scripted reminder delay must dominate it — now 90s (see below).
   test('a scheduled follow-up shows on top of the working row, persists '
       'while idle, and clears when it fires', () async {
     final mock = _SchedulingMock();
@@ -39,9 +40,14 @@ void main() {
       await mock.close();
     });
     await harness.waitForBoot();
-    // Turn 1: the scripted answer schedules a follow-up 20s out — with the
-    // boot already paid, the idle-persistence assert below always lands
-    // well BEFORE the fire.
+    // Turn 1: the scripted answer schedules a follow-up 90s out. The boot
+    // is paid first, but the whole pre-check path — boot frame, the
+    // scheduling turn's tail, and the settle waits — still ran ~44 s on a
+    // loaded CI runner (3 distinct-SHA reds, gh-1250 window): the old 20s
+    // reminder fired and delivered BEFORE the `· next in` check began
+    // sampling. 90s dwarfs that path so the pending-window asserts below
+    // always sample a live record; the fire wait's own 90s budget still
+    // covers the tail (issue #1252).
     harness.sendText('set a reminder');
     harness.sendEnter();
 
@@ -112,7 +118,7 @@ allowedTools: []
 }
 
 /// A tiny OpenAI-compatible SSE server: the first chat request answers
-/// with a scripted `schedule_message` tool call (3s delay), every later
+/// with a scripted `schedule_message` tool call (90s delay), every later
 /// one with a plain text answer.
 final class _SchedulingMock {
   HttpServer? _server;
@@ -189,7 +195,7 @@ final class _SchedulingMock {
               {
                 'index': 0,
                 'function': {
-                  'arguments': '{"text": "check the build", "delay": "20s"}',
+                  'arguments': '{"text": "check the build", "delay": "90s"}',
                 },
               },
             ],
