@@ -1,6 +1,9 @@
 @TestOn('vm')
 @Tags(['integration'])
-@Timeout(Duration(minutes: 5))
+// gh-1283: the 180s boot budget in openSheet needs a proportionate
+// backstop (10 min, like the steering suite's heavy leg) — at the old
+// 5-minute cap a slow boot would starve the assertion waits of budget.
+@Timeout(Duration(minutes: 10))
 /// Issue #97 — the TUI secret sheet drove users into a trap: focus started
 /// on the prefilled name, the typed secret echoed in cleartext in that row,
 /// and Enter was a silent no-op. These tests drive the REAL binary over a
@@ -39,7 +42,14 @@ void main() {
     /// Boots the REPL and sends a message whose scripted answer is the
     /// `request_secret` tool call, leaving the secret sheet open.
     Future<void> openSheet() async {
-      await harness.waitForBoot();
+      // gh-1283: the 90s harness default loses on loaded CI runners — a
+      // JIT boot painted the [Model] banner only at the deadline (run
+      // 37268915954), and the Dart CFE can stall the compile outright
+      // (run 37297674933; its one-liner `File not formatted as yaml: .`
+      // is the SDK's own boot error). Explicit boot budget, same as
+      // job_card_heredoc_pty_test.dart (#604); 180s leaves the file's
+      // 5-minute per-test cap room for the assertions after boot.
+      await harness.waitForBoot(timeout: const Duration(seconds: 180));
       harness.sendText('need the key');
       harness.sendEnter();
       await harness.waitForText(
