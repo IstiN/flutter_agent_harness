@@ -107,6 +107,9 @@ const _nonSettingsCommands = <String, String>{
   '/mouse':
       'session TUI mouse-capture toggle, nothing persisted (the '
       'capture default is the FA_TUI_MOUSE env/config, not config.yaml)',
+  '/usage':
+      'read-only token-usage ledger view + rebuild (gh-1241), writes '
+      'usage.json next to the session, never config.yaml',
 };
 
 /// The commands the skill's parity marker documents.
