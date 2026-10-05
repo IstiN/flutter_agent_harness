@@ -80,6 +80,11 @@ enum SessionErrorCode {
   /// registration (issue #522): the owning process is still running.
   liveSession,
 
+  /// The session file is too large for the requested operation (gh-1073):
+  /// a full read would materialize more than the heap survives. The error
+  /// names the bounded paths — windowed resume or `fa session repair`.
+  tooLarge,
+
   /// The underlying filesystem operation failed.
   storage,
 

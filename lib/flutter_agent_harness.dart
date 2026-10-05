@@ -22,6 +22,7 @@ export 'src/agent/auto_compactor.dart'
         AutoCompactorSources;
 export 'src/agent/param_validator.dart';
 export 'src/agent/tool_registry.dart';
+export 'src/apps/js_app_errors.dart';
 export 'src/approval/approval.dart';
 export 'src/approval/approval_hook.dart';
 export 'src/approval/bash_interceptor.dart';
@@ -47,6 +48,7 @@ export 'src/cli/cli_config.dart'
         applyProviderTimeoutEnvOverride,
         loadCliConfig,
         loadProjectCompactionEngine,
+        loadProjectContextWindowCap,
         loadProjectMemoryConfig,
         loadProjectCubeSettings,
         parseProviderTimeouts,
@@ -114,6 +116,7 @@ export 'src/cli/key_event.dart';
 export 'src/cli/prompt_templates.dart';
 export 'src/cli/tui_mouse_mode.dart';
 export 'src/compaction/branch_summarization.dart';
+export 'src/compaction/host_wiring.dart';
 export 'src/compaction/compaction.dart';
 export 'src/compaction/summary_sanitizer.dart';
 export 'src/compaction/token_estimation.dart';
@@ -255,7 +258,14 @@ export 'src/prompts/prompt_overrides.dart';
 export 'src/parity/settings_registry.dart';
 export 'src/hosts/host_capability_profile.dart';
 export 'src/hosts/host_wiring_builder.dart';
+export 'src/hosts/host_agent_wiring.dart';
 export 'src/types.dart';
+export 'src/usage/usage_chain.dart';
+export 'src/usage/usage_fold.dart';
+export 'src/usage/usage_hygiene.dart';
+export 'src/usage/usage_ledger.dart';
+export 'src/usage/usage_ledger_io.dart';
+export 'src/usage/usage_log_line.dart';
 export 'src/usage_summary.dart';
 export 'src/utils/path_text.dart';
 export 'src/wire/wire_adapter.dart';

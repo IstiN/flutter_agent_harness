@@ -68,6 +68,14 @@ extension on AgentCli {
       await _switchToMetadata(metadata, trimmed);
       return;
     }
+    // gh-1241: close the outgoing session's usage segment before the
+    // switch. NO deleteSessionIfEmpty() here: the switch's own cleanup ran
+    // at the top of _switchSession (BEFORE _subagentManager.reset()) —
+    // this create path runs AFTER the reset, when the registry handles are
+    // already gone, so a session holding only a persisted subagent_registry
+    // record would wrongly count as "empty" and be trashed (#332 data
+    // loss). The fresh session's marker lands lazily at its first drive.
+    await _flushUsageLedger();
     _agent.reset();
     _checkpoints.clear();
     _ttsr?.reset();
@@ -94,6 +102,9 @@ extension on AgentCli {
   /// in the project the session belongs to.
   Future<void> _switchToMetadata(SessionMetadata metadata, String label) async {
     await deleteSessionIfEmpty();
+    // gh-1241: close the outgoing session's usage segment before the
+    // switch (after the empty-cleanup: a deleted session folds nothing).
+    await _flushUsageLedger();
     _subagentManager.reset();
     // The status meter belongs to the session: tok/cost/turn must not carry
     // the previous session's totals into the new one.
@@ -114,6 +125,9 @@ extension on AgentCli {
     await _releaseSessionLease();
     await _claimSessionLease();
     await _printViewerBannerIfAny();
+    // gh-1241: NO eager marker — a switch that never drives must leave the
+    // resumed chain byte-untouched; the segment opens lazily at the first
+    // drive ([_runPrompt]).
     // Now that `_session` is assigned, the registry source can read the
     // resumed session's `subagent_registry` records. Awaited (issue #332):
     // zombie rows settle before the next prompt can spawn children, and no
@@ -227,6 +241,9 @@ extension on AgentCli {
       return;
     }
     await deleteSessionIfEmpty();
+    // gh-1241: close the outgoing session's usage segment (after the
+    // empty-cleanup: a deleted session folds nothing).
+    await _flushUsageLedger();
     _subagentManager.reset();
     _agent.reset();
     _checkpoints.clear();
@@ -238,6 +255,8 @@ extension on AgentCli {
     await _releaseSessionLease();
     await _claimSessionLease();
     await _printViewerBannerIfAny();
+    // gh-1241: NO eager marker — the fresh session's segment opens lazily
+    // at its first drive ([_runPrompt]), keeping an idle boot byte-silent.
     _persistedCount = 0;
     io.writeln("created session '$trimmed'");
   }

@@ -5,11 +5,13 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
 import 'package:fa/apps/fa_js3d_host.dart';
 import 'package:fa/apps/fa_webview_host.dart';
+import 'package:fa/apps/js_app_error_channel.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -154,6 +156,8 @@ class JsAppEngine {
     this.onEmit,
     this.hostLocale = 'en',
     this.initialTheme = const {},
+    this.errorSink,
+    this.joinSiblingGroup = true,
     this._onLog,
   });
 
@@ -247,6 +251,28 @@ class JsAppEngine {
   /// apps leave it null and the bridge resolves {emitted: false}.
   final void Function(String event, Map<String, Object?> payload)? onEmit;
 
+  /// Where captured JS errors go (gh-1164): raw runtime events forwarded
+  /// through the [JsAppErrorFeedback] gate by the sink's owner. Null
+  /// publishes into the app-wide [JsAppErrorChannel.instance] (the
+  /// authoring session's delivery channel); the pre-flight smoke gate
+  /// passes a local collector so gate probes never publish into the live
+  /// session.
+  final void Function(JsAppErrorEvent event)? errorSink;
+
+  /// Content revision of the entry file the CURRENT run booted from — the
+  /// dedup key boundary of the error gate (an edit re-arms reporting).
+  String get sourceRevision => _sourceRevision ?? '';
+  String? _sourceRevision;
+
+  /// Whether this engine joins the process-wide per-app live-engine
+  /// sibling group (gh-1164 review): live view engines (board tile +
+  /// fullscreen) sync `jsr.storage` state across viewports through the
+  /// group. Throwaway probes — the `open_app` smoke gate, which boots a
+  /// SCRATCH env copy — must stay out: their storage writes would
+  /// otherwise reach the app's real live engines (and live writes would
+  /// replay into the probe). Live views leave the default `true`.
+  final bool joinSiblingGroup;
+
   final void Function(String line)? _onLog;
 
   /// The latest rendered UI tree; the view listens and rebuilds.
@@ -337,6 +363,11 @@ class JsAppEngine {
     // be indistinguishable between apps (and tiles vs full apps).
     AppLog.i('apps', 'engine start: ${app.id}/$entryFile');
     final js = await _assembleEntryJs();
+    // gh-1164: the error gate dedups per source revision — hash the WHOLE
+    // app source tree (entry + sibling source files), so an edit to any
+    // app source file re-arms reporting (a helper-only fix used to leave
+    // the old revision's silenced keys silenced, gh-1164 review).
+    _sourceRevision = await computeSourceRevision(env, app.dir, entryFile);
     final storage = await _readStorage();
     final config = JsRuntimeConfig(
       widgetId: app.id,
@@ -353,7 +384,7 @@ class JsAppEngine {
       onRender: (t) => tree.value = t,
       onSetTitle: (_) {},
       onStorageUpdate: _persistStorage,
-      onLog: _onLog,
+      onLog: _handleEngineLog,
       isPermissionAllowed: _isAllowed,
       onResolveReady: (resolve) => _resolve = resolve,
       fetchHandler: _fetch,
@@ -376,7 +407,11 @@ class JsAppEngine {
     await engine.run(js);
     // Live now: join the app's sibling group so later storage writes from
     // OTHER engines of the same app reach this one (and vice versa).
-    _liveByApp.putIfAbsent(app.id, () => <JsAppEngine>{}).add(this);
+    // Smoke-gate probes (joinSiblingGroup: false) stay out — they boot on
+    // a scratch env and must never see or send live storage state.
+    if (joinSiblingGroup) {
+      _liveByApp.putIfAbsent(app.id, () => <JsAppEngine>{}).add(this);
+    }
     // Boot-race healing: a sibling write landing between the storage read
     // above and this point was persisted but never delivered (we were not
     // in the group yet / the JS engine was not ready). Re-read the file and
@@ -462,6 +497,46 @@ class JsAppEngine {
     required String entryFile,
   }) => _AppWidgetFileReader(env, dir: dir, entryFile: entryFile);
 
+  /// Content revision of the app's whole source tree — the entry file
+  /// plus every sibling source file under [dir], hashed in sorted path
+  /// order (gh-1164 review): the error gate's dedup boundary keys on
+  /// this, so an edit to ANY app source file (including helper modules
+  /// the entry only reaches transitively) re-arms reporting. Runtime
+  /// state (`storage.json`, `session.json`) is NOT source and stays out
+  /// of the hash.
+  @visibleForTesting
+  static Future<String> computeSourceRevision(
+    ExecutionEnv env,
+    String dir,
+    String entryFile,
+  ) async {
+    final files = <(String, String)>[];
+    Future<void> walk(String path) async {
+      final entries = (await env.listDir(path)).valueOrNull;
+      if (entries == null) return;
+      for (final entry in entries) {
+        if (entry.kind == FileKind.directory) {
+          await walk(entry.path);
+          continue;
+        }
+        if (entry.name == 'storage.json' || entry.name == 'session.json') {
+          continue; // runtime state, not source
+        }
+        final text = (await env.readTextFile(entry.path)).valueOrNull;
+        if (text == null) continue; // binary asset — not app source
+        files.add((entry.path, text));
+      }
+    }
+
+    await walk(dir);
+    files.sort((a, b) => a.$1.compareTo(b.$1));
+    final buffer = StringBuffer('$dir/$entryFile\n');
+    for (final (path, text) in files) {
+      buffer.write('$path\n$text\n');
+    }
+    return sha256.convert(utf8.encode(buffer.toString())).toString();
+  }
+
   /// Delivers a fire-and-forget host event to the app's bootstrap listeners
   /// (`jsr.scene3d.onTap` raycast results, keyboard) — no-op before [start]
   /// completes. See [JsWidgetEngine.dispatchHostEvent].
@@ -491,6 +566,64 @@ class JsAppEngine {
     tree.dispose();
     backHandlerRegistered.dispose();
   });
+
+  // --- error capture (gh-1164 Part B) ----------------------------------------
+
+  /// The `__jsr_log` tap: plain lines pass to the host's log sink
+  /// unchanged; the bootstrap's structured `faAppError:` records (gh-1164)
+  /// are ALSO forwarded to the error sink (the channel's gate decides
+  /// delivery).
+  void _handleEngineLog(String line) {
+    final event = parseJsAppErrorLogLine(line);
+    if (event != null) _forwardError(event);
+    _onLog?.call(line);
+  }
+
+  /// Forwards one captured error to this engine's sink. The surface is the
+  /// live viewport: the full app (default entry) or the launcher tile.
+  /// With no local sink the app-wide channel gates first — only a
+  /// first-per-revision occurrence is published for delivery (AC4/AC6
+  /// anti-spam).
+  void _forwardError(JsAppErrorEvent event) {
+    if (errorSink != null) {
+      errorSink!(event);
+      return;
+    }
+    final feedback = JsAppErrorChannel.instance.reportAppError(
+      event,
+      appId: app.id,
+      surface: entryFile == JsAppEngine.defaultEntryFile ? 'app' : 'tile',
+      sourceRevision: sourceRevision,
+    );
+    if (feedback == null || !feedback.deliver) return; // dedup / breaker
+    JsAppErrorChannel.instance.publish(
+      JsAppErrorNotice(
+        event: event,
+        appId: app.id,
+        surface: entryFile == JsAppEngine.defaultEntryFile ? 'app' : 'tile',
+        sourceRevision: sourceRevision,
+        notice: feedback.notice,
+      ),
+    );
+  }
+
+  /// Host-side error capture (gh-1164): Flutter render-host exceptions and
+  /// any other surface failure the view wants on the agent's channel —
+  /// same gate + delivery as JS-reported errors.
+  void reportHostError(
+    String message, {
+    String kind = 'render',
+    String? stack,
+  }) {
+    final parsed = JsAppErrorKind.values.asNameMap()[kind];
+    _forwardError(
+      JsAppErrorEvent(
+        kind: parsed ?? JsAppErrorKind.render,
+        message: message,
+        stack: stack ?? '',
+      ),
+    );
+  }
 
   // --- storage persistence + live sync ---------------------------------------
 
@@ -712,7 +845,12 @@ class JsAppEngine {
     return "jsr.locale = '$safe';\n$_faBootstrapJs";
   }
 
-  static const String _faBootstrapJs = '''
+  // RAW string (gh-1272): the block below embeds JS regex char classes
+  // (/[ \t\r\n]+/) and '\n' string literals — a non-raw Dart string would
+  // unescape those into REAL tab/CR/LF before the JS engine ever sees the
+  // source, killing every widget eval with "Unterminated regular
+  // expression literal". No $ interpolation inside; raw is safe.
+  static const String _faBootstrapJs = r'''
 jsr.fa = {
   call: function(method, args) {
     return jsr.exec(JSON.stringify({fa: method, args: args || {}}));
@@ -871,6 +1009,95 @@ Object.defineProperty(jsr, 'onBack', {
   baseOnEvent(function(actionId, payload) {
     if (actionId === 'llm.delta') jsr._dispatchLlmDelta(payload);
   });
+})();
+
+// gh-1164 error reporting: load/runtime exceptions reach the AUTHORING
+// AGENT, not only the screen. Every captured error rides one structured
+// console.error record — the host's log channel already classifies it
+// ('[E] ') and the engine parses the JSON payload into the session's
+// error gate (dedup + delivery). Never remove or reword the marker.
+(function() {
+  // Stable fingerprint for the dedup gate (gh-1164 review): normalize
+  // per-occurrence noise (numbers, hex ids, whitespace) out of the
+  // message and keep only the first app frame's location shape, so
+  // "Failed to load chunk 14" vs "chunk 15" or per-frame layout values
+  // collapse to ONE key — the circuit breaker can actually trip on the
+  // noisy failure class (RAF/animation loops) instead of seeing a new
+  // key every occurrence.
+  var __faFingerprint = function(message, stack) {
+    try {
+      var norm = String(message)
+        .replace(/0x[0-9a-fA-F]+/g, '#')
+        .replace(/[0-9]+/g, '#')
+        .replace(/[ \t\r\n]+/g, ' ')
+        .trim();
+      var frame = '';
+      var lines = String(stack || '').split('\n');
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (line && line.indexOf('__faReport') < 0 &&
+            line.indexOf('__wrapCb') < 0 &&
+            line.indexOf('__faFingerprint') < 0) {
+          frame = line;
+          break;
+        }
+      }
+      frame = frame.replace(/:[0-9]+:[0-9]+/g, '').replace(/[ \t\r\n]+/g, ' ').trim();
+      return norm + '\n' + frame;
+    } catch (e) {
+      return '';
+    }
+  };
+  var __faReport = function(kind, message, stack) {
+    try {
+      console.error('faAppError:' + JSON.stringify({
+        kind: kind,
+        message: String(message),
+        stack: String(stack || ''),
+        fingerprint: __faFingerprint(message, stack)
+      }));
+    } catch (e) {}
+  };
+  // 1. jsr.showError is the runtime's own crash surface (the widget eval
+  //    wrapper reports every load-time throw through it) — report in
+  //    addition to rendering the overlay.
+  var baseShowError = jsr.showError;
+  jsr.showError = function(msg) {
+    var stack = '';
+    try { stack = (new Error('')).stack || ''; } catch (e) {}
+    __faReport('showError', msg, stack);
+    return baseShowError(msg);
+  };
+  // 2. Timer + RAF callbacks: exceptions there are swallowed by the
+  //    bridge (an animation frame throwing 100x would die silently) —
+  //    wrap, report, and keep the previous swallow semantics.
+  var __wrapCb = function(fn) {
+    if (typeof fn !== 'function') return fn;
+    return function() {
+      try { return fn.apply(this, arguments); }
+      catch (e) {
+        __faReport('callback', (e && e.message) ? e.message : String(e), (e && e.stack) || '');
+      }
+    };
+  };
+  var baseSetTimeout = setTimeout;
+  setTimeout = function(fn, ms) { return baseSetTimeout(__wrapCb(fn), ms); };
+  var baseSetInterval = setInterval;
+  setInterval = function(fn, ms) { return baseSetInterval(__wrapCb(fn), ms); };
+  var baseRaf = requestAnimationFrame;
+  requestAnimationFrame = function(fn) { return baseRaf(__wrapCb(fn)); };
+  // 3. window.onerror + unhandledrejection cover everything else.
+  if (typeof window !== 'undefined') {
+    window.onerror = function(message, source, lineno, colno, error) {
+      __faReport('onerror', message, (error && error.stack) || '');
+    };
+    window.onunhandledrejection = function(event) {
+      var reason = event && event.reason;
+      __faReport('unhandledrejection',
+        (reason && reason.message) ? reason.message : String(reason),
+        (reason && reason.stack) || '');
+    };
+  }
 })();
 ''';
 

@@ -423,16 +423,32 @@ extension AgentCliHubDriver on AgentCli {
   /// `latestRecords` on resume: 4 of 5 running jobs silently vanished from
   /// the registry (observed: "1 background task lost" for 5 live jobs).
   /// Chained, the last queued write carries the newest snapshot.
+  ///
+  /// gh-1073: a byte-identical snapshot is skipped — the ledger is
+  /// latest-snapshot-wins, so re-appending unchanged payloads only grew
+  /// the session file (29k snapshots = 3.65 GB on the ticket's session).
   Future<void> _persistJobBoard() {
     final session = _session;
     if (session == null) return Future.value();
     _persistChain = _persistChain
         .then((_) async {
+          // Serialize ONCE — the dedupe key must be the exact payload
+          // that gets appended, not a second encoding of the same board.
           final records = _jobBoard.toRecords();
-          await session.appendCustomEntry(
-            customType: 'shell_job_registry',
-            data: records,
-          );
+          final json = jsonEncode(records);
+          if (!_jobBoardPersistDeduper.shouldPersist(json)) return;
+          try {
+            await session.appendCustomEntry(
+              customType: 'shell_job_registry',
+              data: records,
+            );
+            _jobBoardPersistDeduper.confirmPersisted();
+          } on Object {
+            // The chain swallows below by design; roll the deduper back
+            // first so the retried identical snapshot is NOT skipped.
+            _jobBoardPersistDeduper.revertFailedPersist();
+            rethrow;
+          }
         })
         // One failed append must not poison the chain (every later persist
         // would be skipped) nor escape as an unhandled zone error — the
@@ -450,6 +466,9 @@ extension AgentCliHubDriver on AgentCli {
     final latest = ShellJobBoard.latestRecords(await session.getEntries());
     if (latest.isEmpty) return;
     _jobBoard = ShellJobBoard.rehydrated(latest);
+    // Fresh session file content: the next persist is a new snapshot, not
+    // a repeat of whatever the previous session last wrote (gh-1073).
+    _jobBoardPersistDeduper.reset();
     _printBoardLines(_jobBoard.takeTranscriptLines(width: _hubBlockWidth));
   }
 

@@ -4605,4 +4605,24 @@
 - feat(1101): Agent Wire Protocol v1 — web reference client (sdk/web), conformance runner, browser example (#1228)
 - gh-1224 [BUG] iOS 1.0.504: all wasm interpreters (python/qjs/lua/sqlite3) dead — 'no lazy loader' in FOREGROUND bash _forJob() clone drops moduleLoader (regression suspect #1163) (#1225)
 
+## 1.0.511
+
+- gh-1164 [GOAL] built-in js-apps skill (promoted from app asset, decisive apps-vs-widget routing) + JS render/runtime errors reported back to the authoring agent as failures (blocked by #1151) (#1246)
+- gh-1244 [FLAKE] PTY integration: secret_sheet_test «IT-mask: masked from the first keystroke» waits for exactly 5 bullets while typing races ahead (red main, run 37232401938) (#1245)
+- gh-1241 [GOAL] Session token-usage ledger: resume-aware usage.json fold over the session chain (provider-reported, estimated marked) (#1243)
+- ci(quarantine): skip scheduled_indicator_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1252) (#1253)
+- gh-1077 [GOAL] flutter_app compaction parity with CLI — mobile sessions never compact (roles/smol absent, wrong context window, silent failure, no over-window relief) (#1239)
+- ci(quarantine): skip job_board_stability_pty_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1250) (#1251)
+- gh-1235 Wire jsr.openUrl + webView host into the app JS engine (js_widget_runtime = 0.4.154) (#1238)
+- gh-1226 [BUG] 1.0.505 (with #1190 aboard): mail-wake turn after /sessions restore still loses the provider/key binding — copilot-401 error on a z.ai session + fused guidance text (#1237)
+- gh-1199 [GOAL] Deterministic-only Quality gate: mock LLM everywhere, live models move to supervised benches (#1229)
+- feat(1101): Agent Wire Protocol v1 — web reference client (sdk/web), conformance runner, browser example (#1228)
+- gh-1224 [BUG] iOS 1.0.504: all wasm interpreters (python/qjs/lua/sqlite3) dead — 'no lazy loader' in FOREGROUND bash _forJob() clone drops moduleLoader (regression suspect #1163) (#1225)
+
+## 1.0.513
+
+- fix(1096): reseed fa-extension size floor for intentional js-apps skill growth (gh-1164) (#1258)
+
 ## Unreleased
+
+- fix(#1197): TUI frame pipeline self-heals a throwing view/render (gh-1197 AC3) — a mid-run render exception now logs loudly, invalidates the diff state (no stranded DEC 2026 BSU), and repaints instead of dying or freezing; PTY liveness regression test proving paced thinking + answer text + a long silent tool call paint continuously (AC1/AC2/AC4), via the scripted stream's new paced `chunks`/`pace_ms`, `thinking`, and `sleep_ms` steps

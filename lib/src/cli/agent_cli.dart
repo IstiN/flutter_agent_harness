@@ -90,6 +90,7 @@ import '../wire/wire_serve.dart';
 import '../approval/approval_hook.dart';
 import '../cancel_token.dart';
 import '../compaction/compaction.dart';
+import '../compaction/host_wiring.dart';
 import '../compaction/structured/continuation_notice.dart';
 import '../compaction/token_estimation.dart';
 import '../context.dart';
@@ -97,6 +98,8 @@ import '../cube/cube.dart';
 import '../env/cwd_override_env.dart';
 import '../env/execution_env.dart';
 import '../env/session_vars_execution_env.dart';
+import '../hosts/host_agent_wiring.dart';
+import '../hosts/host_wiring_builder.dart';
 import '../exceptions.dart';
 import '../js_ext/ext_bootstrap_js.dart';
 import '../js_ext/ext_catalog.dart';
@@ -165,6 +168,7 @@ import 'custom_providers.dart';
 import 'folder_model_state.dart';
 import 'provider_flow.dart';
 import '../session/session_storage.dart';
+import '../session/ledger_caps.dart';
 import '../session/session_tree.dart';
 import 'session_tree.dart';
 import '../trajectory/trajectory_snapshot.dart';
@@ -177,8 +181,6 @@ import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/checkpoint_tool.dart';
-import '../tools/generate_image.dart';
-import '../tools/generate_video.dart';
 import '../tools/inspect_image.dart';
 import '../tools/shell_jobs.dart';
 import '../tools/sqlite/sqlite_reader.dart';
@@ -194,10 +196,8 @@ import '../messaging/agent_message.dart';
 import '../messaging/file_messaging_repository.dart';
 import '../messaging/inbox_wake_policy.dart';
 import '../messaging/messaging_repository.dart';
-import '../messaging/schedule_message_tool.dart';
 import '../messaging/scheduled_messages.dart';
 import '../messaging/scheduled_receipts.dart';
-import '../memory/memory_tools.dart';
 import '../plugins/plugin.dart';
 import '../redact/redaction_cli.dart';
 import '../redact/redaction_hooks.dart';
@@ -205,6 +205,9 @@ import '../redact/redaction_pipeline.dart';
 import '../spill/spill.dart';
 import '../ttsr/ttsr.dart';
 import '../types.dart';
+import '../usage/usage_chain.dart';
+import '../usage/usage_ledger_io.dart';
+import '../usage/usage_log_line.dart';
 import '../usage_summary.dart';
 import '../web_search/web_search.dart';
 // The interactive dart_tui REPL is VM-only (raw terminal + FFI); web builds
@@ -283,6 +286,7 @@ part 'agent_cli_lifecycle.dart';
 part 'agent_cli_input.dart';
 part 'agent_cli_pickers.dart';
 part 'agent_cli_run.dart';
+part 'agent_cli_usage_ledger.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -384,111 +388,67 @@ class AgentCli {
       llmProvider: HarnessLlmProvider(resolve: () => _resolveMemoryLlmSlot()),
     );
 
-    // fa_cube sandbox: fs ops route through the fs guard and shell ops
-    // through the policy engine while a spec is active; a null spec boots
-    // the env in passthrough mode (`/cube use` swaps one in later). Sits
-    // INSIDE session vars so session vars merge after the cube clamp.
-    _cubeEnv = SandboxedExecutionEnv(
-      _env,
-      config.cubeSpec,
-      homeDir: config.homeDir,
-      workspaceRoot: _env.cwd,
-      pathProbe: config.fsProbe,
-      os: config.osName,
-      // A `backend: kernel` cube on a host without an enforcing backend
-      // refuses by default; only an explicit spec.allowDegrade opt-in
-      // degrades to policy mode (a security-relevant downgrade — say so).
-      onWarning: (message) => io.writeln(tuiWarning(message)),
-    );
-    _webNetworkGate = _initWebNetworkGate(_cubeEnv);
-    _cubeSource = config.cubeSource;
-    _coreToolEnv = SessionVarsExecutionEnv(_cubeEnv, _sessionEnvVars);
-    final decoratedEnv = _coreToolEnv;
-    // ONE hashline snapshot store shared by `read` and `edit` (and by the
-    // sqlite-variant swap of `read` in agent_cli_tools.dart), so anchors
-    // recorded by any variant validate for edits.
+    // Issue #1079 slice 2: the core stack — env chain, capability-gated
+    // core tools, registry, agent — is wired by the shared builder over
+    // the CLI profile and this host's typed services. The shell keeps
+    // process glue + callbacks only.
     _snapshotStore = HashlineSnapshotStore();
-    // Session-scoped background shell jobs (bash background / steer-yield);
-    // settle notifications re-enter the conversation like task completions.
-    _shellJobs = ShellJobRegistry(
-      env: decoratedEnv,
-      onSettled: AgentCliShellJobSettle(this)._onShellJobSettled,
-      onStart: _onShellJobStarted,
-      onStaleJobLog: _onStaleJobLog,
-      jobLogMaxBytes: config.jobs.maxLogBytes,
-      onJobLogWarning: _onJobLogWarning,
-    );
-    final coreTools = <AgentTool>[
-      ...builtinTools(
-        // Session-correlation env vars (FAH_SESSION_ID/FILE/PROVIDER/MODEL)
-        // for the bash tool; resolved live, so `/provider` switches and
-        // session (re)creation are picked up per exec.
-        decoratedEnv,
+    final wired = wireAgentCore(
+      profile: cliProfile,
+      services: AgentCoreServices(
+        baseEnv: _env,
+        sessionEnvVars: _sessionEnvVars,
+        sandbox: SandboxServices(
+          spec: config.cubeSpec,
+          homeDir: config.homeDir,
+          os: config.osName,
+          pathProbe: config.fsProbe,
+          onWarning: (message) => io.writeln(tuiWarning(message)),
+        ),
         snapshots: _snapshotStore,
         webSearch: config.webSearchConfig,
-        networkGate: _webNetworkGate,
-        model: () => _agent.state.model,
         sqlite: config.sqliteEngine,
         lsp: config.lspConfig,
         mcp: _mcp.manager,
-        shellJobs: _shellJobs,
-        // Mid-run password asks (issue #367): the TUI opens the masked
-        // secret-mode prompt; the value streams to the live process stdin.
-        onPasswordPrompt: io.isInteractive ? _answerPasswordPrompt : null,
-        config: ConfigService(env: decoratedEnv, homeDir: config.homeDir),
-      ),
-      ...memoryTools(
-        _memory,
-        onChanged: () => unawaited(_refreshMemorySection()),
-      ),
-      // schedule_message: self-addressed delayed notes — an agent can
-      // schedule its own follow-up check; delivery rides the inbox idle-wake.
-      // gh-970: inside a subagent run "your own mailbox" is the CHILD's —
-      // the queue's selfMailbox always resolves main, which redirected
-      // every subagent self-reminder into main's inbox.
-      scheduleMessageTool(
-        _scheduledMessages,
-        senderMailbox: _childSenderMailbox,
-      ),
-      // Non-interactive input gets a null ask callback (safe default).
-      askTool(callback: io.isInteractive ? _answerAskQuestions : null),
-      // request_secret: ask the user for missing API keys securely.
-      requestSecretTool(
-        callback: io.isInteractive ? _answerSecretRequest : null,
-      ),
-      if (config.visionConfig != null)
-        inspectImageTool(_env, config.visionConfig!),
-      if (config.transcribeConfig != null)
-        transcribeAudioTool(_env, config.transcribeConfig!),
-      // Image generation: resolves the `imageGeneration` slot lazily per
-      // call so `/models set imageGeneration ...` is picked up live.
-      generateImageTool(
-        env: _env,
-        modelsConfig: config.modelsConfig,
-        mainBaseUrl: () => _agent.state.model.baseUrl,
-        mainModelId: () => _agent.state.model.id,
-        mainApiKey: () => _apiKey,
-        resolveKey: _resolveMediaKey,
-      ),
-      // Video generation: videoGeneration slot only (no chat fallback).
-      generateVideoTool(
-        env: _env,
-        modelsConfig: config.modelsConfig,
-        mainBaseUrl: () => _agent.state.model.baseUrl,
-        mainModelId: () => _agent.state.model.id,
-        mainApiKey: () => _apiKey,
-        resolveKey: _resolveMediaKey,
-      ),
-      // Browser control (issue #23): registered only when the host
-      // attaches a controller; the family then flips with the bridge via
-      // the controller's onAvailabilityChanged hook below.
-      if (config.browserController != null)
-        ...browserTools(
-          controller: config.browserController!,
-          saveScreenshot: (png) => saveBrowserScreenshot(_env, png),
+        shellJobsFactory: (coreEnv) => ShellJobRegistry(
+          env: coreEnv,
+          onSettled: AgentCliShellJobSettle(this)._onShellJobSettled,
+          onStart: _onShellJobStarted,
+          onStaleJobLog: _onStaleJobLog,
+          jobLogMaxBytes: config.jobs.maxLogBytes,
+          onJobLogWarning: _onJobLogWarning,
         ),
-      ...pluginTools,
-    ];
+        onPasswordPrompt: io.isInteractive ? _answerPasswordPrompt : null,
+        configServiceFactory: (coreEnv) =>
+            ConfigService(env: coreEnv, homeDir: config.homeDir),
+        memory: _memory,
+        onMemoryChanged: () => unawaited(_refreshMemorySection()),
+        scheduledMessages: _scheduledMessages,
+        scheduleSenderMailbox: _childSenderMailbox,
+        onAsk: io.isInteractive ? _answerAskQuestions : null,
+        onRequestSecret: io.isInteractive ? _answerSecretRequest : null,
+        vision: config.visionConfig,
+        transcribe: config.transcribeConfig,
+        media: MediaToolServices(
+          modelsConfig: config.modelsConfig,
+          mainApiKey: () => _apiKey,
+          resolveKey: _resolveMediaKey,
+        ),
+        browserController: config.browserController,
+        // Builder hands the decorated env (review #1230) — screenshot
+        // saves clamp like every other fs-touching tool.
+        saveBrowserScreenshot: saveBrowserScreenshot,
+        hostTools: pluginTools,
+        hubFabric: config.hubFabric,
+        extRuntimeFactory: config.extRuntimeFactory,
+        sessionRoot: config.sessionRoot,
+      ),
+    );
+    _cubeEnv = wired.sandboxEnv!;
+    _webNetworkGate = wired.networkGate;
+    _coreToolEnv = wired.env;
+    _shellJobs = wired.shellJobs!;
+    _cubeSource = config.cubeSource;
     // The `task` tool (omp's background subagents): children draw from the
     // core tool surface (never `task` itself), completions are injected back
     // into the parent conversation as async-result messages. Child sessions
@@ -573,7 +533,7 @@ class AgentCli {
       ),
     );
     _taskConfig = TaskToolConfig(
-      childTools: coreTools,
+      childTools: wired.tools,
       // Live accessors, resolved per spawn: a runtime `/provider`/`/model`
       // switch (or a token refresh) re-points `_streamFunction`/the agent
       // model, and children spawned afterwards must inherit the LIVE
@@ -633,42 +593,49 @@ class AgentCli {
     // status gates) lives on the manager; this host supplies the resume.
     _subagentManager.wakeChild = (id) =>
         _taskConfig.executor.resumeChild(id, childInboxWakePrompt);
-    _toolRegistry = ToolRegistry(
-      [...coreTools, ...monitoringTools, taskTool(config: _taskConfig)],
-      (note) {
+    // Registry + agent: assembled by the shared builder (issue #1079
+    // slice 2) — core tools first, then the host's task/monitoring
+    // surface, exactly the pre-conversion registration order.
+    final stack = wired.buildAgentStack(
+      additionalTools: [
+        ...monitoringTools,
+        taskTool(config: _taskConfig),
+      ],
+      onDuplicate: (note) {
         // Issue #862 review: a duplicate registration (e.g. a host passing
         // child-injected tools through the parent surface) must be loud.
         io.writeln(_style.dim('[fah] warning: $note'));
       },
-    );
-    _agent = Agent(
-      model: config.model,
-      systemPrompt: config.systemPrompt ?? _currentMode.systemPrompt,
       streamFunction: _streamFunction,
-      toolRegistry: _toolRegistry,
-      // The CLI handles empty-response retries itself with a 'continue' nudge
-      // so the transcript reflects the retry explicitly.
-      maxEmptyRetries: 0,
-      // Post-mortem "who held the busy row": the run idle watchdog's fire
-      // lands in fa.log with the session id.
-      onRunIdleTimeout: (error) =>
-          _logDiagnostic('RUN IDLE WATCHDOG fired sid=$_logSid error=$error'),
-      // Issue #1085 M3: the watchdog PAUSE (mid-run relief compaction) is
-      // a visible dim note, not only a fa.log line — a quiet stretch the
-      // user can now attribute.
-      onRunWatchdogPaused: () => io.writeln(
-        _style.dim('watchdog paused — over-window compaction in progress'),
+      spec: AgentWiringSpec(
+        model: config.model,
+        systemPrompt: config.systemPrompt ?? _currentMode.systemPrompt,
+        // The CLI handles empty-response retries itself with a 'continue'
+        // nudge so the transcript reflects the retry explicitly.
+        maxEmptyRetries: 0,
+        // Post-mortem "who held the busy row": the run idle watchdog's fire
+        // lands in fa.log with the session id.
+        onRunIdleTimeout: (error) =>
+            _logDiagnostic('RUN IDLE WATCHDOG fired sid=$_logSid error=$error'),
+        // Issue #1085 M3: the watchdog PAUSE (mid-run relief compaction) is
+        // a visible dim note, not only a fa.log line — a quiet stretch the
+        // user can now attribute.
+        onRunWatchdogPaused: () => io.writeln(
+          _style.dim('watchdog paused — over-window compaction in progress'),
+        ),
+        contextWindowCap: config.contextWindowCap,
+        stuckTool: config.effectiveStuckTool(),
+        wireDump: config.wireDump,
+        // Issue #387: the loop's over-window guard hands the transcript to
+        // this relief before refusing — one synchronous compaction pass.
+        overWindowRelief: (overWindow) => _relieveOverWindow(overWindow),
+        // Issue #862: tool-misuse circuit breaker (off switch:
+        // `agent.misuseBreaker: false`).
+        toolMisuseBreaker: config.misuseBreaker ? ToolMisuseBreaker() : null,
       ),
-      contextWindowCap: config.contextWindowCap,
-      stuckTool: config.effectiveStuckTool(),
-      wireDump: config.wireDump,
-      // Issue #387: the loop's over-window guard hands the transcript to
-      // this relief before refusing — one synchronous compaction pass.
-      overWindowRelief: (overWindow) => _relieveOverWindow(overWindow),
-      // Issue #862: tool-misuse circuit breaker (off switch:
-      // `agent.misuseBreaker: false`).
-      toolMisuseBreaker: config.misuseBreaker ? ToolMisuseBreaker() : null,
     );
+    _toolRegistry = stack.registry;
+    _agent = stack.agent;
     // The main agent's inbox in the messaging fabric: messages from
     // children (agent_message to "main") and from other Fa instances
     // sharing the messaging root arrive at turn boundaries.
@@ -999,6 +966,12 @@ class AgentCli {
   @visibleForTesting
   Future<void> tuiPickSessionForTest(String key) => _tuiPickSession(key);
 
+  /// Test seam: swaps the active session so command paths can be driven
+  /// over a session shape the real repo never produces (e.g. empty
+  /// metadata path — the usage-ledger command guards).
+  @visibleForTesting
+  set sessionForTest(Session? session) => _session = session;
+
   /// Session-correlation env vars injected into bash tool executions (see
   /// [SessionVarsExecutionEnv]). Read live per exec: the session is created
   /// after tool wiring, and `/provider`/`/model` switches must show up in
@@ -1035,7 +1008,10 @@ class AgentCli {
   /// to the active cube (`null` = passthrough). `/cube` manages it live.
   late final SandboxedExecutionEnv _cubeEnv;
 
-  /// Web-egress gate for the web tools; see [_initWebNetworkGate].
+  /// Web-egress gate for the web tools (issue #682), derived by the host
+  /// wiring builder from the live sandbox spec: `/cube use` / `/cube off`
+  /// are honored by the next web tool call; null spec (no cube) is
+  /// allow-all. Null only when the profile wires no sandbox.
   late final CubeNetworkGate? _webNetworkGate;
 
   /// Where the active cube came from — a manifest path or a cube name;
@@ -1173,7 +1149,7 @@ class AgentCli {
   late final Map<String, List<AgentTool>> _toolGroupsById;
   late final ToolAvailabilityGate _toolGate;
   late final HashlineSnapshotStore _snapshotStore;
-  late final SessionVarsExecutionEnv _coreToolEnv;
+  late final ExecutionEnv _coreToolEnv;
   final _ToolsWiringState _toolsWiring = _ToolsWiringState();
 
   /// The LIVE tool-load preset (issue #680): [AgentCliConfig.loadMode] at
@@ -1219,6 +1195,11 @@ class AgentCli {
   /// Issue #429: per-session background-job board (truthful phases,
   /// per-turn collapse, reload records) — replaced wholesale on resume.
   ShellJobBoard _jobBoard = ShellJobBoard();
+
+  /// gh-1073: suppresses byte-identical `shell_job_registry` snapshot
+  /// appends (reset in `_rehydrateJobBoard` on every session load).
+  final LedgerSnapshotDeduper _jobBoardPersistDeduper =
+      LedgerSnapshotDeduper();
 
   /// Registry-persist serialization tail (issue #539; see `_persistJobBoard` in the driver).
   Future<void> _persistChain = Future.value();
@@ -1301,6 +1282,16 @@ class AgentCli {
   HepWriter? _hep;
   var _persistedCount = 0;
   var _streamedText = false;
+
+  /// The session instance the gh-1241 usage segment-start marker was
+  /// appended for in THIS process (null = not yet marked). Lazily set at
+  /// first drive (see [_runPrompt]) or eagerly by the headless/serve boot:
+  /// an idle owner boot must add zero session bytes (issue #428's
+  /// "no idle session bytes" invariant), and a `/sessions` switch must not
+  /// mark the new session until it is actually driven. Identity-keyed: a
+  /// switch replaces `_session` with a fresh instance, so the next drive
+  /// re-marks.
+  Session? _usageSegmentMarkedFor;
 
   /// Whether the current assistant message already printed its `fa> ` prefix
   /// and whether any thinking deltas were streamed (TUI-only progress for
@@ -1505,6 +1496,9 @@ class AgentCli {
     // Ownership lease (#428): claim before anything can drive — a live
     // lease flips this boot into viewer mode (no takeover exists).
     await _claimSessionLease();
+    // gh-1241: NO segment marker here — an idle owner boot must add zero
+    // session bytes (issue #428 invariant); the marker lands lazily at the
+    // first drive ([_runPrompt]) instead.
     // Sleep prevention (#325/#326): only the EXPLICIT session hold
     // acquires here — the default per-run hold acquires at every run
     // start instead, so an idle agent never pins the machine awake.
@@ -1696,6 +1690,8 @@ class AgentCli {
       io.writeln(viewerBannerText(leaseBlocked, stale: false));
       return 3;
     }
+    // gh-1241: the owner opens a usage segment (viewer never appends).
+    await _markUsageSegmentStart();
     // HEP (issue #155) + stream-json (issue #695) headers: the FIRST
     // stdout line of each structured mode, written the moment the
     // session id exists — before any event can race them.
@@ -1819,6 +1815,10 @@ class AgentCli {
       await taskSub.cancel();
       hepSub?.call();
       streamJsonSub?.call();
+      // gh-1241: close the usage segment — fold the chain, write
+      // usage.json, log the `fa-tokens:` line (a kill mid-segment loses
+      // nothing: the fold rebuilds from the chain on the next close).
+      await _flushUsageLedger();
     }
     // The exit code describes the LAST completed turn's terminal outcome
     // (captured from the turn events above) — not the visible transcript,
@@ -1932,10 +1932,19 @@ class AgentCli {
   /// an 8k-window model the compactor always "keeps" the whole transcript
   /// (nothing is older than the kept region), so an over-window guard can
   /// never be satisfied by compacting.
+  ///
+  /// Resolved through the shared host wiring (gh-1077): the CLI path and
+  /// the app path must agree on window/reserve semantics, and the parity
+  /// test pins that agreement — the window here is
+  /// [effectiveContextWindow] under the owner cap, no overhead subtracted
+  /// (the CLI carries no fixed request overhead).
   CompactionSettings get _effectiveCompactionSettings {
     final override = config.compactionSettings;
     if (override != null) return override;
-    return CompactionSettings.forWindow(_effectiveContextWindow);
+    return resolveCompactionHostWiring(
+      mainModel: _agent.state.model,
+      contextWindowCap: config.contextWindowCap,
+    ).settings;
   }
 
   /// Whether a guided flow is between prompts.
