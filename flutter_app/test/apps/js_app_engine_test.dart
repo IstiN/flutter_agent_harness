@@ -2914,6 +2914,46 @@ jsr.render({type: 'text', data: 'full-app'});
       );
     });
   });
+
+  group('gh-1266 bootstrap raw-string invariant (host-side, no live '
+      'engine)', () {
+    test('the injected bootstrap keeps JS escape sequences intact '
+        '(gh-1266: a non-raw Dart literal swallows them and the JS parser '
+        'dies with "unexpected line terminator in regexp")', () {
+      final js = JsAppEngine.faBootstrapJsFor('en');
+      // The gh-1164 fingerprint normalizer splits stack strings on a JS
+      // '\n' escape and normalizes whitespace with a /[ \t\r\n]+/ regex.
+      // Those backslash escapes must reach the engine verbatim — if the
+      // Dart literal is not raw, Dart converts them into real control
+      // characters, the regex literal contains a line terminator, and the
+      // ENTIRE widget eval (bootstrap + app code in one script) fails on
+      // every engine-capable host (macOS JSC, Linux/Windows QuickJS).
+      expect(
+        js,
+        contains(r"split('\n')"),
+        reason: 'stack splitting must use a JS newline escape',
+      );
+      expect(
+        js,
+        contains(r"norm + '\n' + frame"),
+        reason: 'fingerprint join must use a JS newline escape',
+      );
+      expect(
+        js,
+        contains(r'/[ \t\r\n]+/g'),
+        reason: 'whitespace normalization regex must keep its escapes',
+      );
+      expect(
+        js,
+        contains(r".replace(/[ \t\r\n]+/g, ' ')"),
+        reason:
+            'whitespace runs must collapse to a single quoted space — '
+            'an unterminated replacement string kills the whole eval',
+      );
+      expect(js.contains('\r'), isFalse, reason: 'no raw CR in the JS');
+      expect(js.contains('\t'), isFalse, reason: 'no raw TAB in the JS');
+    });
+  });
 }
 
 /// Fake [AsrApi] for the `fa.asr` bridge tests — the host-side tests never
