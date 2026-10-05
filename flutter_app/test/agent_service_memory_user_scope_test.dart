@@ -15,9 +15,9 @@ import 'package:fa/sandbox/fs_persistence.dart';
 import 'package:fa/sandbox/persistent_web_env.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-// ignore: implementation_imports, depend_on_referenced_packages —
 // PromptLoader is not exported by the package barrel (and the package is a
 // pinned transitive dep), but setLoader is its documented host hook.
+// ignore: implementation_imports, depend_on_referenced_packages
 import 'package:flutter_agent_memory/src/agents/prompts/prompt_loader.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -59,13 +59,17 @@ Future<AgentService> _createService(
 }
 
 AgentTool _tool(AgentService service, String name) =>
-    service.toolsForTest.firstWhere((t) => t.name == name)
-        as AgentTool;
+    service.toolsForTest.firstWhere((t) => t.name == name) as AgentTool;
 
-Future<String> _run(AgentService service, String name,
-        Map<String, dynamic> args) async =>
-    (_tool(service, name).execute(args, null, null))
-        .then((r) => r.content.whereType<TextContent>().map((b) => b.text).join());
+Future<String> _run(
+  AgentService service,
+  String name,
+  Map<String, dynamic> args,
+) async => (_tool(service, name).execute(
+  args,
+  null,
+  null,
+)).then((r) => r.content.whereType<TextContent>().map((b) => b.text).join());
 
 void main() {
   group('gh-1276: app memory user scope', () {
@@ -75,73 +79,84 @@ void main() {
       // PromptLoader.setLoader is the package's documented host hook —
       // a minimal template keeps the enrichment/search LLM stages alive.
       PromptLoader.setLoader(
-          (name) async => '<prompt>stub for $name: ${'query'}</prompt>');
+        (name) async => '<prompt>stub for $name: ${'query'}</prompt>',
+      );
     });
     tearDown(() => PromptLoader.setLoader(null));
-    test(
-      'AC1: memory_add (user) → memory_list shows it → memory_search '
-      'ranks it for its own keywords',
-      () async {
-        final env = MemoryExecutionEnv(cwd: '/');
-        final service = await _createService(env);
+    test('AC1: memory_add (user) → memory_list shows it → memory_search '
+        'ranks it for its own keywords', () async {
+      final env = MemoryExecutionEnv(cwd: '/');
+      final service = await _createService(env);
 
-        const note =
-            'User prefers running flutter tests with --concurrency 1 on CI';
-        final added = await _run(service, 'memory_add',
-            {'text': note, 'scope': 'user'});
-        expect(added, contains('saved memory (user)'));
+      const note =
+          'User prefers running flutter tests with --concurrency 1 on CI';
+      final added = await _run(service, 'memory_add', {
+        'text': note,
+        'scope': 'user',
+      });
+      expect(added, contains('saved memory (user)'));
 
-        final listed = await _run(service, 'memory_list', const {});
-        expect(listed, contains(note),
-            reason: 'the user note must appear in memory_list immediately');
+      final listed = await _run(service, 'memory_list', const {});
+      expect(
+        listed,
+        contains(note),
+        reason: 'the user note must appear in memory_list immediately',
+      );
 
-        final found = await _run(
-            service, 'memory_search', {'query': 'flutter test concurrency'});
-        expect(found, contains(note),
-            reason: 'search must rank the user note for its own keywords');
-      },
-    );
+      final found = await _run(service, 'memory_search', {
+        'query': 'flutter test concurrency',
+      });
+      expect(
+        found,
+        contains(note),
+        reason: 'search must rank the user note for its own keywords',
+      );
+    });
 
-    test(
-      'desktop parity: configHomeDir anchors the user store at '
-      '<home>/.fah/memory',
-      () async {
-        final env = MemoryExecutionEnv(cwd: '/');
-        final service = await _createService(env, configHomeDir: '/home/u');
+    test('desktop parity: configHomeDir anchors the user store at '
+        '<home>/.fah/memory', () async {
+      final env = MemoryExecutionEnv(cwd: '/');
+      final service = await _createService(env, configHomeDir: '/home/u');
 
-        await _run(service, 'memory_add',
-            {'text': 'user-scope parity note', 'scope': 'user'});
+      await _run(service, 'memory_add', {
+        'text': 'user-scope parity note',
+        'scope': 'user',
+      });
 
-        // Same store location the CLI uses for user scope: the note file
-        // lands under <home>/.fah/memory/note/ (hash-suffixed id).
-        final dir =
-            (await env.listDir('/home/u/.fah/memory/note')).valueOrNull;
-        expect(dir, isNotNull);
-        expect(dir!.where((f) => f.name.startsWith('n_0001_')), hasLength(1));
-      },
-    );
+      // Same store location the CLI uses for user scope: the note file
+      // lands under <home>/.fah/memory/note/ (hash-suffixed id).
+      final dir = (await env.listDir('/home/u/.fah/memory/note')).valueOrNull;
+      expect(dir, isNotNull);
+      expect(dir!.where((f) => f.name.startsWith('n_0001_')), hasLength(1));
+    });
 
-    test(
-      'user root resolution: config override wins, then desktop home, '
-      'then a sandbox-local fallback',
-      () async {
-        expect(
-          appMemoryUserRoot(
-              configHomeDir: '/cfg', desktopHome: '/desk', envCwd: '/cwd'),
-          '/cfg',
-        );
-        expect(
-          appMemoryUserRoot(
-              configHomeDir: null, desktopHome: '/desk', envCwd: '/cwd'),
-          '/desk',
-        );
-        expect(
-          appMemoryUserRoot(
-              configHomeDir: null, desktopHome: null, envCwd: '/cwd'),
-          '/cwd/home',
-        );
-      },
-    );
+    test('user root resolution: config override wins, then desktop home, '
+        'then a sandbox-local fallback', () async {
+      expect(
+        appMemoryUserRoot(
+          configHomeDir: '/cfg',
+          desktopHome: '/desk',
+          envCwd: '/cwd',
+        ),
+        '/cfg',
+      );
+      expect(
+        appMemoryUserRoot(
+          configHomeDir: null,
+          desktopHome: '/desk',
+          envCwd: '/cwd',
+        ),
+        '/desk',
+      );
+      expect(
+        appMemoryUserRoot(
+          configHomeDir: null,
+          desktopHome: null,
+          envCwd: '/cwd',
+        ),
+        '/cwd/home',
+      );
+    });
 
     test(
       'AC3 backend sweep: the add→flush→reboot→list→search round-trip '
@@ -173,7 +188,17 @@ void main() {
           store,
         );
         addTearDown(restored.dispose);
-        final afterReboot = MemoryController(env: restored, userRoot: '/home');
+        final afterReboot = MemoryController(
+          env: restored,
+          // Derive through the production helper, not a hardcoded '/home':
+          // the two are only equal by coincidence of the current fallback
+          // format, and this test must track the real resolution.
+          userRoot: appMemoryUserRoot(
+            configHomeDir: null,
+            desktopHome: null,
+            envCwd: restored.cwd,
+          ),
+        );
 
         final listed = await afterReboot.list(limit: 10);
         expect(

@@ -11,6 +11,27 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
 void main() {
+  group('desktopHomeDir (gh-1276 review: CLI parity on Windows)', () {
+    test('falls back to USERPROFILE when HOME is unset', () {
+      // The CLI's homeDirectory() (lib/src/cli/cli_config.dart) falls
+      // back to USERPROFILE on Windows, where HOME is typically unset.
+      // The app must mirror it — otherwise a Windows desktop build keeps
+      // a user memory store disjoint from the CLI's %USERPROFILE%/.fah.
+      final home = app_env.desktopHomeDir({'USERPROFILE': r'C:\Users\me'});
+      expect(home, r'C:\Users\me');
+    });
+
+    test('HOME wins when both are set (bin/fah.dart order)', () {
+      // bin/fah.dart resolves `HOME ?? USERPROFILE` everywhere; the CLI
+      // config loader prefers USERPROFILE only on Windows.
+      final home = app_env.desktopHomeDir({
+        'HOME': '/posix-home',
+        'USERPROFILE': r'C:\Users\me',
+      });
+      expect(home, Platform.isWindows ? r'C:\Users\me' : '/posix-home');
+    });
+  });
+
   group('SandboxedExecutionEnv', () {
     late Directory hostRoot;
     late app_env.SandboxedExecutionEnv env;

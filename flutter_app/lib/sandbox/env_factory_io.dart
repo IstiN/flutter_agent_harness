@@ -25,9 +25,18 @@ import 'package:fa/sandbox/wasm_shell.dart';
 /// The user's home directory on desktop (for user-level skill roots like
 /// `~/.claude/skills`, `~/.copilot/skills`); null on mobile/web where those
 /// directories do not exist.
-String? desktopHomeDir() {
+///
+/// gh-1276 review: the CLI's `homeDirectory()` (`lib/src/cli/cli_config.dart`)
+/// falls back to `USERPROFILE` on Windows, where `HOME` is typically unset —
+/// the app mirrors that fallback (and `bin/fah.dart`'s `HOME ?? USERPROFILE`
+/// order elsewhere) so a Windows desktop build shares the CLI's user store
+/// (`%USERPROFILE%/.fah/memory`) instead of silently falling back to a
+/// disjoint sandbox-local one. [environment] is injectable for tests.
+String? desktopHomeDir([Map<String, String>? environment]) {
   if (kIsWeb || Platform.isAndroid || Platform.isIOS) return null;
-  return Platform.environment['HOME'];
+  final env = environment ?? Platform.environment;
+  if (Platform.isWindows) return env['USERPROFILE'] ?? env['HOME'];
+  return env['HOME'] ?? env['USERPROFILE'];
 }
 
 Future<ExecutionEnv> createPlatformEnv({http.Client? httpClient}) async {
