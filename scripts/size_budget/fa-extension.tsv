@@ -1,4 +1,4 @@
-78057079	TOTAL
+78579365	TOTAL
 1578462	panel/app/assets/NOTICES
 420428	panel/app/assets/assets/fonts/Inter-Bold.ttf
 417300	panel/app/assets/assets/fonts/Inter-Medium.ttf
@@ -24,7 +24,7 @@
 1813030	panel/app/canvaskit/692136cb6582dbfc5af3fb33c2515a069f2f66d0/wimp.js.symbols
 3581677	panel/app/canvaskit/692136cb6582dbfc5af3fb33c2515a069f2f66d0/wimp.wasm
 11511535	panel/app/main.dart.js
-1657251	sw/agent.js
+1791532	sw/agent.js
 1070863	vendor/interpreters/asyncify/emscripten-module.wasm
 2224743	vendor/interpreters/index.global.js
 106335	vendor/interpreters/pyodide-lock.json
