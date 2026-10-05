@@ -72,31 +72,7 @@ extension AgentCliUsageLedger on AgentCli {
         sessionsRoot: config.sessionRoot,
         sessionId: metadata.id,
       );
-      final writer = UsageLedgerWriter(_env);
-      // E3: only rewrite when missing/stale/corrupt — an already-valid
-      // artifact means a concurrent writer landed the same fold (E2).
-      final existing = await writer.readIfValid(
-        dir,
-        expectedRecords: ledger.chainRecords,
-        expectedHash: ledger.chainHash,
-      );
-      if (existing == null) {
-        // E2: a fingerprint mismatch can also mean the on-disk artifact
-        // is a NEWER fold than our chain view (a concurrent writer got
-        // further along the chain before we flushed). Never clobber a
-        // fold that consumed more chain records than ours — the slowest
-        // writer must not win; the next close over the full chain
-        // rebuilds the complete ledger (E3/I6).
-        final onDisk = await writer.read(dir);
-        if (onDisk == null || onDisk.chainRecords <= ledger.chainRecords) {
-          await writer.write(
-            dir,
-            ledger,
-            tmpSuffix: config.processId?.toString(),
-            forbiddenSecrets: _usageLedgerForbiddenSecrets(),
-          );
-        }
-      }
+      await _persistFoldIfStale(dir, ledger);
       final closed = ledger.segments.lastOrNull;
       if (closed != null) {
         final line = usageTokensLogLine(
@@ -118,6 +94,34 @@ extension AgentCliUsageLedger on AgentCli {
       }
     } on Object catch (error) {
       _logDiagnostic('usage ledger flush failed: $error');
+    }
+  }
+
+  /// E3: rewrite the fold only when the on-disk artifact is
+  /// missing/stale/corrupt — an already-valid artifact means a
+  /// concurrent writer landed the same fold (E2).
+  Future<void> _persistFoldIfStale(String dir, UsageLedger ledger) async {
+    final writer = UsageLedgerWriter(_env);
+    final existing = await writer.readIfValid(
+      dir,
+      expectedRecords: ledger.chainRecords,
+      expectedHash: ledger.chainHash,
+    );
+    if (existing != null) return;
+    // E2: a fingerprint mismatch can also mean the on-disk artifact is a
+    // NEWER fold than our chain view (a concurrent writer got further
+    // along the chain before we flushed). Never clobber a fold that
+    // consumed more chain records than ours — the slowest writer must
+    // not win; the next close over the full chain rebuilds the complete
+    // ledger (E3/I6).
+    final onDisk = await writer.read(dir);
+    if (onDisk == null || onDisk.chainRecords <= ledger.chainRecords) {
+      await writer.write(
+        dir,
+        ledger,
+        tmpSuffix: config.processId?.toString(),
+        forbiddenSecrets: _usageLedgerForbiddenSecrets(),
+      );
     }
   }
 
