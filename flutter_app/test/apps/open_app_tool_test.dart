@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'package:fa/apps/apps_store.dart';
+import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/apps/open_app_tool.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -70,6 +72,23 @@ AgentTool _openAppToolOf(AgentService service) => service.toolsForTest
     .first;
 
 void main() {
+  // gh-1266: this file runs plain `test()`s with NO widget binding
+  // initialized. Engine lifecycle must not touch WidgetsBinding.instance
+  // unguarded — on engine-capable hosts (macOS JSC) dispose used to throw
+  // "Binding has not yet been initialized".
+  test('JsAppEngine.dispose is safe without a widget binding', () async {
+    final engine = JsAppEngine(
+      app: JsAppInfo.fromManifest(
+        const {'id': 'demo', 'name': 'Demo'},
+        bundled: false,
+        fallbackId: 'demo',
+      ),
+      env: MemoryExecutionEnv(),
+      permissions: const AppPermissions(),
+    );
+    await engine.dispose();
+  });
+
   group('openAppTool', () {
     test(
       'success invokes the launcher and returns "Opened app" text',

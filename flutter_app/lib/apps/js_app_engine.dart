@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show BindingBase;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
@@ -333,9 +334,13 @@ class JsAppEngine {
   /// native work never completes inside the widget-test fake zone, which
   /// would stall every later engine in the process. Tests exercise the
   /// unserialized path (the production hazard is native and untestable).
+  ///
+  /// Probed via [BindingBase.debugBindingType] (null when no binding is
+  /// initialized, e.g. plain `test()`s with no widget tree) — never via
+  /// `WidgetsBinding.instance`, which THROWS in that state (gh-1266).
   static bool get _inWidgetTest {
-    final binding = WidgetsBinding.instance;
-    return binding.runtimeType.toString().contains('TestWidgetsFlutterBinding');
+    final type = BindingBase.debugBindingType();
+    return type != null && type.toString().contains('TestWidgetsFlutterBinding');
   }
 
   /// Serializes [action] process-wide in production; runs it directly
