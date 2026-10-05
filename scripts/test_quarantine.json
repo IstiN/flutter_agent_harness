@@ -25,6 +25,16 @@
       ]
     },
     {
+      "file": "test/integration/theme_readability_pty_test.dart",
+      "test": "theme readability scenarios (gh-671) dracula: success + failure rows keep explicit fg over tints",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1254",
+      "since": "2026-10-04",
+      "runs": [
+        37236232271,
+        37211438713
+      ]
+    },
+    {
       "file": "test/integration/scheduled_indicator_test.dart",
       "test": "a scheduled follow-up shows on top of the working row, persists while idle, and clears when it fires",
       "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1252",
