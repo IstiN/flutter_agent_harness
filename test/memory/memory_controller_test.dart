@@ -161,6 +161,23 @@ void main() {
       expect(section, contains('memory_search'));
     });
 
+    test('gh-1276 AC1: user add → list → search round-trip', () async {
+      final env = MemoryExecutionEnv();
+      final controller = MemoryController(env: env, userRoot: '/user');
+      const note =
+          'User prefers running flutter tests with --concurrency 1 on CI';
+      await controller.add(text: note, scope: 'user');
+
+      final entries = await controller.list(limit: 10);
+      expect(entries.map((e) => e.text), contains(note));
+      expect(entries.single.scope, 'user');
+
+      // Keyword fallback (no LLM provider) must still rank the note for
+      // its own keywords — the iOS session's search never saw it.
+      final results = await controller.search('flutter test concurrency');
+      expect(results.map((e) => e.text), contains(note));
+    });
+
     test(
       'config source hot-swaps the project store without a restart',
       () async {

@@ -689,6 +689,16 @@ class AgentService extends ChangeNotifier
         loadAppImageRegistryConfig() ?? const ImageRegistryConfig();
     _memoryController = MemoryController(
       env: env,
+      // User-scope memory root (gh-1276): without it every user-scope
+      // add is a silent no-op that still reports "saved". Desktop → the
+      // real home (CLI parity, ~/.fah/memory); sandboxed platforms
+      // (iOS/Android/web, no OS home) → a sandbox-local root next to the
+      // project store.
+      userRoot: appMemoryUserRoot(
+        configHomeDir: configHomeDir,
+        desktopHome: desktopHomeDir(),
+        envCwd: env.cwd,
+      ),
       // `memory:` section of ~/.fah/config.yaml — the same git-backed
       // memory path overrides the CLI honors (null = .fah/memory default).
       projectStoragePath: memoryConfig?.projectPath,
@@ -2397,3 +2407,19 @@ class AgentService extends ChangeNotifier
   @override
   Stream<TrajectorySnapshot> get trajectory => _trajectory.stream;
 }
+
+/// Resolves the user-scope memory root for the app (gh-1276).
+///
+/// Precedence: the `~/.fah` home override (tests/issue #1078), then the
+/// desktop home (CLI parity — the user store lands at `~/.fah/memory`
+/// exactly where the CLI keeps it), then — on platforms with no OS home
+/// (iOS/Android sandbox, web) — a sandbox-local root inside the env cwd so
+/// user-scope notes persist next to the project store instead of being
+/// silently dropped. The desktop home is a parameter (not read here) so
+/// the precedence is table-testable on any host.
+String appMemoryUserRoot({
+  required String? configHomeDir,
+  required String? desktopHome,
+  required String envCwd,
+}) =>
+    configHomeDir ?? desktopHome ?? '$envCwd/home';
