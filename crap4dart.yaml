@@ -62,10 +62,14 @@ gates:
   # Issue #1234: the whole-tree ≤2800-line guard (was stage_size +
   # ci.yml shell find-exec, gh-1232). wc -l semantics, generated output
   # excluded — nothing exceeds 2800 today, so the shrink-only baseline
-  # starts EMPTY of loc entries.
+  # starts EMPTY of loc entries. sources widened to the exact scope the
+  # retired shell guards scanned (lib test example bin) — the gate-level
+  # override mirrors the duplication gate's mechanism below; the app
+  # package's own config covers flutter_app/lib.
   loc:
     enabled: true
     max_lines: 2800
+    sources: [lib, bin, test, example]
     exclude:
       - '**.g.dart'
       - '**.freezed.dart'
