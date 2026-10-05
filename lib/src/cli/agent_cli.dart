@@ -886,6 +886,12 @@ class AgentCli {
   @visibleForTesting
   Future<void> tuiSelectModelForTest(String key) => _tuiSelectModel(key);
 
+  /// Test seam for the TUI provider-picker selection: routes `add`,
+  /// `saved:<name>`, `ext:<name>:<id>`, and catalog keys exactly like the
+  /// live picker (`_tuiPickProvider`).
+  @visibleForTesting
+  Future<void> tuiPickProviderForTest(String key) => _tuiPickProvider(key);
+
   /// Test seam for the private `/model` memory write path: records
   /// [modelId] into the active saved entry (no-op without one), the same
   /// thing a real `/model` switch does while a custom provider is active.

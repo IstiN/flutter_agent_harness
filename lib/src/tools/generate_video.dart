@@ -20,7 +20,7 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
-import '../agent/agent_loop.dart' show ToolExecutionResult;
+import '../agent/agent_loop.dart' show ToolExecutionResult, ToolUpdateCallback;
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
 import '../env/execution_env.dart';
@@ -620,51 +620,81 @@ AgentTool generateVideoTool({
       },
       'required': ['prompt'],
     },
-    execute: (arguments, cancelToken, onUpdate) async {
-      cancelToken?.throwIfCancelled();
-      final prompt = arguments['prompt'] as String? ?? '';
-      final size = arguments['size'] as String?;
-      final quality = arguments['quality'] as String?;
-      if (prompt.trim().isEmpty) {
-        throw VideoException('prompt is required');
-      }
-      final endpoint = await resolveVideoGenerationEndpoint(
-        modelsConfig,
-        resolveKey: resolveKey,
-      );
-      cancelToken?.throwIfCancelled();
-      if (endpoint == null) {
-        throw VideoException(
-          'no endpoint configured for slot videoGeneration; set one in '
-          'models.slots.videoGeneration (~/.fah/config.yaml). The chat '
-          'endpoint cannot generate video — you must pick a video '
-          'provider (e.g. MiniMax MiniMax-H3).',
-        );
-      }
-      final file = await generateVideoBytes(
-        env: env,
-        endpoint: endpoint,
-        prompt: prompt,
-        size: size,
-        quality: quality,
-        httpClient: httpClient,
-        onPollProgress: () async {
-          // Surface progress to the UI — the polling can take up to
-          // ~2 minutes for MiniMax, without a heartbeat the user sees
-          // nothing.
-          onUpdate?.call(
-            ToolExecutionResult(
-              content: [TextContent(text: 'video generation: polling task...')],
-            ),
-          );
-        },
-      );
-      cancelToken?.throwIfCancelled();
-      return ToolExecutionResult(
-        content: [
-          TextContent(text: 'saved video to ${file.path} (${file.detail})'),
-        ],
+    execute: (arguments, cancelToken, onUpdate) => _runVideoGeneration(
+      arguments: arguments,
+      cancelToken: cancelToken,
+      onUpdate: onUpdate,
+      env: env,
+      modelsConfig: modelsConfig,
+      resolveKey: resolveKey,
+      httpClient: httpClient,
+    ),
+  );
+}
+
+/// The `generate_video` execute body: validate the prompt, resolve the
+/// slot endpoint lazily per call (a `/models set videoGeneration …`
+/// switch is picked up without a restart), then delegate to the matching
+/// dialect.
+Future<ToolExecutionResult> _runVideoGeneration({
+  required Map<String, dynamic> arguments,
+  CancelToken? cancelToken,
+  ToolUpdateCallback? onUpdate,
+  required ExecutionEnv env,
+  required ModelsConfig? modelsConfig,
+  VideoKeyResolver? resolveKey,
+  http.Client? httpClient,
+}) async {
+  cancelToken?.throwIfCancelled();
+  final prompt = arguments['prompt'] as String? ?? '';
+  if (prompt.trim().isEmpty) {
+    throw VideoException('prompt is required');
+  }
+  final endpoint = await _videoEndpointOrThrow(modelsConfig, resolveKey);
+  cancelToken?.throwIfCancelled();
+  final file = await generateVideoBytes(
+    env: env,
+    endpoint: endpoint,
+    prompt: prompt,
+    size: arguments['size'] as String?,
+    quality: arguments['quality'] as String?,
+    httpClient: httpClient,
+    onPollProgress: () async {
+      // Surface progress to the UI — the polling can take up to
+      // ~2 minutes for MiniMax, without a heartbeat the user sees
+      // nothing.
+      onUpdate?.call(
+        ToolExecutionResult(
+          content: [TextContent(text: 'video generation: polling task...')],
+        ),
       );
     },
   );
+  cancelToken?.throwIfCancelled();
+  return ToolExecutionResult(
+    content: [
+      TextContent(text: 'saved video to ${file.path} (${file.detail})'),
+    ],
+  );
+}
+
+/// Resolves the `videoGeneration` slot or throws the named
+/// [VideoException] the model can act on.
+Future<VideoEndpoint> _videoEndpointOrThrow(
+  ModelsConfig? modelsConfig,
+  VideoKeyResolver? resolveKey,
+) async {
+  final endpoint = await resolveVideoGenerationEndpoint(
+    modelsConfig,
+    resolveKey: resolveKey,
+  );
+  if (endpoint == null) {
+    throw VideoException(
+      'no endpoint configured for slot videoGeneration; set one in '
+      'models.slots.videoGeneration (~/.fah/config.yaml). The chat '
+      'endpoint cannot generate video — you must pick a video '
+      'provider (e.g. MiniMax MiniMax-H3).',
+    );
+  }
+  return endpoint;
 }

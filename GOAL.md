@@ -174,13 +174,20 @@ file-fallback → recovery is covered (no lost or duplicated mail, order
 preserved); addressing/name-resolution tests for the phase 27.2 bug;
 docs (`docs/dap.md`, messaging section) + `CHANGELOG.md` updated.
 
-## Quality gates (enforced by git pre-commit hook)
+## Quality gates (enforced by git pre-commit hook + CI)
 
 Hook: `scripts/pre-commit` — canonical copy, also installed in
-`.git/hooks/pre-commit`. Every commit must pass:
+`.git/hooks/pre-commit`. CI: `.github/workflows/ci.yml` (`static`,
+`coverage-gate`, `guards`, `app-crap-gate` jobs — whole-tree, not
+staged-scoped). Every commit/merge must pass:
 
 1. **File size guard** — no `.dart` file over 2800 lines (generated files
-   exempt).
+   exempt). Enforcement points (issue #1234): crap4dart `loc` gate
+   (`max_lines: 2800` in both `crap4dart.yaml` files) — staged files via
+   the hook's `crap4dart check --staged`, whole-tree via
+   `crap4dart check --baseline` in the CI quality-gates step (core) and
+   the `app-crap-gate` job (flutter_app). The retired shell guards:
+   `ci_fast_gate.sh` stage_size + the ci.yml find-exec jobs (gh-1232).
 2. **`dart analyze`** — zero issues (infos allowed unless fatal-infos).
 3. **`dart test --coverage`** — all tests green. LLM-calling integration
    tests are tagged `integration` and excluded from the hook (run in CI /
@@ -188,6 +195,11 @@ Hook: `scripts/pre-commit` — canonical copy, also installed in
 4. **Coverage ratchet** — line coverage of `lib/` ≥ **80%**
    (`scripts/check_coverage.py`).
 5. **Duplication guard** — jscpd over `lib/` < **1.0%**.
+6. **CRAP ratchet** — whole-tree max CRAP ≤ threshold (`crap4dart.yaml`:
+   core 8.0; `flutter_app/crap4dart.yaml`: 30.0), enforced by
+   `crap4dart check --baseline` on every merge validation (issue #1234:
+   CI runs whole-tree, so drift invisible to staged-only hook runs —
+   e.g. a method pushed over threshold in an untouched file — goes red).
 
 Emergency skip: `git commit --no-verify` (not recommended).
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  QUALITY GATE — DO NOT LOWER THESE THRESHOLDS WITHOUT TEAM APPROVAL       ║
-# ║  Every commit must pass: file size, analyze, tests, coverage ≥ 80%,       ║
-# ║  CRAP ratchet (crap4dart.yaml), duplication < 1%.                         ║
+# ║  Every commit must pass: file size (crap4dart loc), analyze, tests,       ║
+# ║  coverage ≥ 80%, CRAP ratchet (crap4dart.yaml), duplication < 1%.         ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 #
 # Pre-commit hook for flutter_agent_harness (pure Dart package).

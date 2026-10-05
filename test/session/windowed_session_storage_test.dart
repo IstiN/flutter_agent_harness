@@ -464,6 +464,44 @@ void main() {
       expect(idsOf(entries), ['e0', 'e1', 'e2']);
       expect(await windowed.getLeafId(), 'e2');
     });
+
+    test(
+      'deep-paged (jumped) ingest counts appends below the window without re-anchoring',
+      () async {
+        await seed(10);
+        final windowed = await WindowedSessionStorage.open(
+          fs,
+          path,
+          chunkRecords: 5,
+        );
+        // Jump mid-file: the tail (e5..e9) now sits BELOW the window and
+        // the below-count is unknown until an edge is walked.
+        await windowed.jumpToRecord('e2');
+        expect(windowed.countBelow, isNull);
+
+        // An external writer appends BELOW the window.
+        final external = await JsonlSessionStorage.open(fs, path);
+        await external.appendEntry(
+          MessageRecord(
+            id: 'e10',
+            parentId: 'e9',
+            timestamp: DateTime.utc(2026, 1, 2),
+            message: UserMessage.text('from cli'),
+          ),
+        );
+
+        // Deep-paged ingest: the appended range is counted and its
+        // offsets remembered for jumps, but the window is untouched —
+        // no delta, no re-anchor.
+        final ingest = await windowed.ingestAppended();
+        expect(ingest.reanchored, isFalse);
+        expect(ingest.delta, isEmpty);
+
+        // The remembered offset makes the appended record jumpable.
+        final branch = await windowed.jumpToRecord('e10');
+        expect(idsOf(branch), contains('e10'));
+      },
+    );
   });
 
   group('SessionChunkReader', () {

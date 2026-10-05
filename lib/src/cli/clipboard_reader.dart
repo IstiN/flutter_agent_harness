@@ -45,6 +45,52 @@ Future<ProcessResult> _runBinaryProcess(
   return ProcessResult(process.pid, exitCode, stdout.toBytes(), null);
 }
 
+/// The `FA_FAKE_PASTEBOARD` seam: reads the pinned file. `null` = no fake
+/// configured (the caller falls through to the platform readers).
+PasteboardRead? _readFakePasteboard(String? fake) {
+  if (fake == null || fake.isEmpty) return null;
+  try {
+    return PasteboardImage(File(fake).readAsBytesSync());
+  } on Object catch (error) {
+    return PasteboardUnavailable('FA_FAKE_PASTEBOARD read failed: $error');
+  }
+}
+
+/// The effective platform id (`macos`/`linux`/`windows`): the explicit
+/// [platform] pin wins (unit tests), else the host [Platform]. `null` =
+/// no pasteboard reader for this platform.
+String? _effectivePlatform(String? platform) {
+  if (platform != null) return platform;
+  if (Platform.isMacOS) return 'macos';
+  if (Platform.isLinux) return 'linux';
+  if (Platform.isWindows) return 'windows';
+  return null;
+}
+
+/// Dispatches to the platform reader. Never throws (doc): a missing
+/// xclip/osascript/powershell surfaces as a ProcessException here — turn
+/// it into the named unavailable result the transcript prints as a clean
+/// note (edge E1).
+Future<PasteboardRead> _readPlatform(
+  ProcessRunner run,
+  Directory tmp,
+  String? platform,
+) async {
+  try {
+    switch (_effectivePlatform(platform)) {
+      case 'macos':
+        return await _readMacos(run, tmp);
+      case 'linux':
+        return await _readLinux(run);
+      case 'windows':
+        return await _readWindows(run, tmp);
+    }
+  } on Object catch (error) {
+    return PasteboardUnavailable('pasteboard read failed: $error');
+  }
+  return const PasteboardUnavailable('no pasteboard reader for this platform');
+}
+
 /// Reads the platform pasteboard's image content, trying each platform path
 /// in order. Never throws — every failure becomes [PasteboardUnavailable].
 Future<PasteboardRead> readPasteboardImage({
@@ -59,37 +105,12 @@ Future<PasteboardRead> readPasteboardImage({
   final run = runner ?? _runBinaryProcess;
   // The explicit map wins (unit tests); the real process env is the seam
   // the PTY golden tests and headless debugging actually set.
-  final fake =
-      environment['FA_FAKE_PASTEBOARD'] ??
-      Platform.environment['FA_FAKE_PASTEBOARD'];
-  if (fake != null && fake.isNotEmpty) {
-    try {
-      return PasteboardImage(File(fake).readAsBytesSync());
-    } on Object catch (error) {
-      return PasteboardUnavailable('FA_FAKE_PASTEBOARD read failed: $error');
-    }
-  }
-  final tmp = tempDir ?? Directory.systemTemp;
-  // Never throws (doc): a missing xclip/osascript/powershell surfaces as
-  // a ProcessException here — turn it into the named unavailable result
-  // the transcript prints as a clean note (edge E1).
-  try {
-    final isMacOS = platform != null
-        ? platform == 'macos'
-        : Platform.isMacOS;
-    final isLinux = platform != null
-        ? platform == 'linux'
-        : Platform.isLinux;
-    final isWindows = platform != null
-        ? platform == 'windows'
-        : Platform.isWindows;
-    if (isMacOS) return await _readMacos(run, tmp);
-    if (isLinux) return await _readLinux(run);
-    if (isWindows) return await _readWindows(run, tmp);
-  } on Object catch (error) {
-    return PasteboardUnavailable('pasteboard read failed: $error');
-  }
-  return const PasteboardUnavailable('no pasteboard reader for this platform');
+  final fake = _readFakePasteboard(
+    environment['FA_FAKE_PASTEBOARD'] ??
+        Platform.environment['FA_FAKE_PASTEBOARD'],
+  );
+  if (fake != null) return fake;
+  return _readPlatform(run, tempDir ?? Directory.systemTemp, platform);
 }
 
 Future<PasteboardRead> _readMacos(ProcessRunner runner, Directory tmp) async {

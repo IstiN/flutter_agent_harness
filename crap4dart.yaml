@@ -17,14 +17,29 @@ exclude:
 
 crap:
   enabled: true
-  # Current max CRAP score in the repo (2026-08-12 — GREEN zone after the
-  # cleanup rounds 356.34 → 65.1 → 16 → 8 → 12; three TUI-only dispatchers
-  # at CC 3 / 0% cov land at CRAP 12 — they need a real PTY to test). Only
+  # Current max CRAP score in the repo. Descent (issue #1234): the
+  # whole-tree offenders went down — readPasteboardImage 16.32 (split into
+  # fake-seam / platform-dispatch helpers), the CC-12 trio (_handleTreeKey,
+  # discoverTaskAgents, _rebuild) split into cohesive sub-dispatchers, the
+  # four 0%-cov CC-3 methods covered by tests (frontmatter, video endpoint,
+  # below-window ingest, provider picker), the CC-9 tier split or covered,
+  # and _listModels covered by the line-mode /models test (the old NOTE
+  # below is history). Threshold follows the fixes: 12.0 → 8.0 — the
+  # classic green zone (ratchet history 356 → 65 → 16 → 8 → 12 → 8). Only
   # down from here.
-  threshold: 12.0
-# NOTE: _listModels (provider_commands.dart) hits 20 with 0% coverage
-# because it is line-mode-only output; it pre-dates the dial work. Fix
-# separately — do not ratchet up for it.
+  threshold: 8.0
+  # _listModels used to hit 20 with 0% coverage (line-mode-only output);
+  # covered by test/cli/provider_models_line_mode_test.dart in #1234.
+
+# ─── loc gate (issue #1234, gh-1232 migration) ─────────────────────────────
+# The ≤2800-line file guard MOVED from scripts/ci_fast_gate.sh stage_size +
+# the ci.yml shell find-exec guards onto crap4dart's `loc` gate (0.11.0,
+# maintainer-confirmed wc -l semantics). Enforced whole-tree on every merge
+# validation via `crap4dart check --baseline` (CI quality-gates step) and
+# staged files in the pre-commit hook — no staged-scoping escape, no
+# hook-dependence, merge-bot merges included. max_lines only DOWN;
+# app_localizations.dart is gen-l10n OUTPUT (no .g.dart suffix) — excluded,
+# not baselined.
 
 coverage:
   # scripts/pre-commit regenerates this (dart test --coverage) right
@@ -44,7 +59,18 @@ coverage:
 # `check --staged` (pre-commit, core-only #433 split) means exactly the
 # pixel gate. The flutter_app goldens live in flutter_app/crap4dart.yaml.
 gates:
-  loc: {enabled: false} # own ≤2800 gate (scripts/ci_fast_gate.sh)
+  # Issue #1234: the whole-tree ≤2800-line guard (was stage_size +
+  # ci.yml shell find-exec, gh-1232). wc -l semantics, generated output
+  # excluded — nothing exceeds 2800 today, so the shrink-only baseline
+  # starts EMPTY of loc entries.
+  loc:
+    enabled: true
+    max_lines: 2800
+    exclude:
+      - '**.g.dart'
+      - '**.freezed.dart'
+      - '**.mocks.dart'
+      - 'vendor/**'
   test_coverage: {enabled: false} # own ≥80% coverage-gate job
   complexity: {enabled: false} # CRAP ratchet above already covers it
   method_size: {enabled: false}
@@ -52,7 +78,13 @@ gates:
   class_size: {enabled: false}
   weight_of_class: {enabled: false}
   unused_code: {enabled: false}
-  unused_files: {enabled: false}
+  unused_files: {enabled: false} # follow-up card (issue #1234 §5). Known
+    # FPs to exclude when enabling: the conditional-export IO entry points
+    # (lib/io.dart, lib/flutter_agent_harness.dart — public barrels whose
+    # importers live outside this repo's import graph) and shared pinned
+    # data modules imported only from test/ (lib/src/cli/omp_reg_scenarios.dart,
+    # issue #810). lib/fanet.dart was the one confirmed-dead hit — deleted
+    # in #1234.
   banned_imports: {enabled: false}
   # Type-2 duplication gate (issue #1106, crap4dart 0.11.0). Renamed-clone
   # detection on top of the Type-1 default; the union with the raw pass can
