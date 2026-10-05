@@ -4619,6 +4619,10 @@
 - feat(1101): Agent Wire Protocol v1 — web reference client (sdk/web), conformance runner, browser example (#1228)
 - gh-1224 [BUG] iOS 1.0.504: all wasm interpreters (python/qjs/lua/sqlite3) dead — 'no lazy loader' in FOREGROUND bash _forJob() clone drops moduleLoader (regression suspect #1163) (#1225)
 
+## 1.0.513
+
+- fix(1096): reseed fa-extension size floor for intentional js-apps skill growth (gh-1164) (#1258)
+
 ## Unreleased
 
 - fix(#1197): TUI frame pipeline self-heals a throwing view/render (gh-1197 AC3) — a mid-run render exception now logs loudly, invalidates the diff state (no stranded DEC 2026 BSU), and repaints instead of dying or freezing; PTY liveness regression test proving paced thinking + answer text + a long silent tool call paint continuously (AC1/AC2/AC4), via the scripted stream's new paced `chunks`/`pace_ms`, `thinking`, and `sleep_ms` steps
