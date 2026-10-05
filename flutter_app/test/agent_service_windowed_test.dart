@@ -649,6 +649,37 @@ void main() {
     await service.loadOlderHistory();
     expect(service.messages, hasLength(500));
   });
+  test('a permanent ranged-read failure still loads (capability-independent fallback)', () async {
+    // The ranged-read capability is BROKEN, not hiccuping: every
+    // readRange throws. gh-1073's default full open streams over ranged
+    // reads, so the windowed→full fallback must force the classic
+    // whole-file read — a retry riding the same capability would fail
+    // the session identically. The whole-file fallback loads everything
+    // through plain bulk reads.
+    final tmp = await io.Directory.systemTemp.createTemp('fa_fallback_dead');
+    addTearDown(() => tmp.delete(recursive: true));
+    await seedRaw('${tmp.path}/big.jsonl', 500);
+    final flaky = FlakyFileSystem(LocalFileSystem(cwd: tmp.path));
+    flaky.failEveryReadRange = true;
+    final service = AgentService(
+      agent: _createAgent(),
+      env: LocalExecutionEnv(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+      repo: JsonlSessionRepo(fs: flaky, sessionsRoot: tmp.path),
+      watchExternalSessions: false,
+      includeSharedSessionRoots: false,
+    );
+    addTearDown(service.dispose);
+    await service.initialize();
+    final stored = (await service.listSessions()).single;
+    await service.loadSession(stored);
+
+    // The whole-file fallback read the file in bulk and loaded it all
+    // (a ranged byte never moved successfully — the capability is dead).
+    expect(flaky.bulkBytes, greaterThan(0));
+    expect(service.messages, hasLength(500));
+    expect(service.historyAboveCount, 0);
+  });
   test('jumpToMessage resolves record ids on fallback-open sessions', () async {
     // The windowed open dies on the first ranged read: the session
     // loads through the FULL open — where a record-id jump must still
@@ -705,12 +736,14 @@ void main() {
   });
 }
 
-/// A [CountingFileSystem] whose ranged reads can be armed to fail once -
-/// the historyLoadError surface test's torn-read fault.
+/// A [CountingFileSystem] whose ranged reads can be armed to fail — once
+/// (the historyLoadError surface test's torn-read fault) or on EVERY call
+/// (a ranged-read capability that is simply broken).
 final class FlakyFileSystem extends CountingFileSystem {
   FlakyFileSystem(super.delegate);
 
   bool failNextReadRange = false;
+  bool failEveryReadRange = false;
 
   @override
   Future<Result<Uint8List, FileError>> readRange(
@@ -721,6 +754,9 @@ final class FlakyFileSystem extends CountingFileSystem {
     if (failNextReadRange) {
       failNextReadRange = false;
       throw StateError('torn read');
+    }
+    if (failEveryReadRange) {
+      throw StateError('ranged reads unavailable');
     }
     return super.readRange(path, start, end);
   }

@@ -41,7 +41,9 @@ void main() {
     final session = await jsonlChildSessionOpener(fs, ioRetry: config)(path);
 
     expect(session.cachedId, 'child-1');
-    expect(fs.readCalls, 2);
+    // gh-1073: the open stats first (fileInfo) and streams ranged chunks —
+    // it never readTextFiles, so the retried read surface is statCalls.
+    expect(fs.statCalls, 2);
     expect(delays, hasLength(1));
     expect(logs.single, contains('session_io_retry'));
     expect(logs.single, contains('op=open'));
@@ -84,7 +86,7 @@ void main() {
         ),
       ),
     );
-    expect(fs.readCalls, 3);
+    expect(fs.statCalls, 3);
     expect(logs, hasLength(2));
     expect(logs.every((l) => l.contains('session_io_retry')), isTrue);
   });
