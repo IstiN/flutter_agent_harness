@@ -15,6 +15,7 @@ import '../a2a/a2a_mail_gateway.dart';
 import '../messaging/agent_message.dart';
 import '../messaging/fallback_messaging_repository.dart';
 import '../messaging/messaging_repository.dart';
+import '../session/ledger_caps.dart';
 import 'subagent.dart';
 
 /// One observable event from a subagent (status transition, output preview,
@@ -38,6 +39,21 @@ typedef SubagentRegistrySource = Future<List<Map<String, dynamic>>> Function();
 /// The session-record type of the registry snapshot: one full row list
 /// per write, in the parent session's JSONL (a side-leaf custom record).
 const String subagentRegistryRecordType = 'subagent_registry';
+
+/// Char cap of a persisted `task`/`error` string in a `subagent_registry`
+/// snapshot row (gh-1073): the task text is display + resume metadata, not
+/// child context — the child's own transcript carries the real prompt.
+const int subagentRegistryTextCapChars = 4000;
+
+/// Char cap of a persisted batch `context` (gh-1073). Generous — the
+/// resume path (issue #222) re-renders it into the child's system prompt —
+/// while bounding the pathological batch that made the registry records
+/// average ~140 KB on the ticket's session.
+const int subagentRegistryContextCapChars = 32000;
+
+/// Char cap of a persisted `lastReply` (gh-1073): a preview; the full
+/// reply reaches the parent as its own message.
+const int subagentRegistryReplyCapChars = 4000;
 
 /// The steering text a host's [SubagentManager.wakeChild] ride resumes a
 /// child with (gh-970). The resumed run's warm wake drains the inbox
@@ -664,10 +680,18 @@ final class SubagentManager {
   /// race), and a failed write must never break a spawn. Every mutation
   /// writes a full fresh snapshot, so a lost write is healed by the next
   /// one.
+  ///
+  /// gh-1073: display strings are truncated
+  /// ([subagentRegistryTextCapChars] / [subagentRegistryContextCapChars] /
+  /// [subagentRegistryReplyCapChars]) — the snapshot rows were averaging
+  /// ~140 KB on a month-long session. No dedup here: every mutation
+  /// re-stamps `lastActivity`, so snapshots never repeat byte-for-byte.
   void _persist() {
     final write = sink;
     if (write == null) return;
-    final snapshot = [for (final h in _handles.values) h.toJson()];
+    final snapshot = [
+      for (final h in _handles.values) _cappedRegistryRow(h.toJson()),
+    ];
     _persistChain = _persistChain.then((_) async {
       try {
         await write(snapshot);
@@ -676,4 +700,21 @@ final class SubagentManager {
       }
     });
   }
+
+  /// One persisted registry row with the display strings capped (gh-1073).
+  Map<String, dynamic> _cappedRegistryRow(Map<String, dynamic> row) => {
+    ...row,
+    'task': capLedgerText(row['task'] as String?,
+            maxChars: subagentRegistryTextCapChars) ??
+        '',
+    if (row['context'] != null)
+      'context': capLedgerText(row['context'] as String?,
+          maxChars: subagentRegistryContextCapChars),
+    if (row['error'] != null)
+      'error': capLedgerText(row['error'] as String?,
+          maxChars: subagentRegistryTextCapChars),
+    if (row['lastReply'] != null)
+      'lastReply': capLedgerText(row['lastReply'] as String?,
+          maxChars: subagentRegistryReplyCapChars),
+  };
 }

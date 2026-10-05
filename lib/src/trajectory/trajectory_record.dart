@@ -249,6 +249,71 @@ final class TrajectoryRequestDetail {
   }
 }
 
+/// How many per-message summaries stay in FULL (preview + block texts)
+/// in a persisted `model_request_summary` record (gh-1073): a 1030-message
+/// request wrote ~0.5 MB per record — 18,753 records = 9 GB of ledger on
+/// the ticket's session. The newest [requestSummaryMaxMessages] summaries
+/// are the tail the Request tab is actually scrolled to; everything older
+/// degrades to a role+chars size stub (order and count stay truthful).
+const int requestSummaryMaxMessages = 64;
+
+/// Char budget of the full-summary portion of one `model_request_summary`
+/// record (gh-1073): a block text runs to [requestBlockChars], so 64 full
+/// messages can still reach ~1 MB — the budget stops the walk early.
+const int requestSummaryCharsBudget = 256 << 10;
+
+/// Bounds the per-message summaries of [detail] (gh-1073): newest messages
+/// keep their full summaries while both caps allow, older ones become
+/// size-only stubs. `messageCount`, sizes, tool names and hashes pass
+/// through untouched — the record keeps describing the WHOLE request, it
+/// just stops embedding every message's text. Returns [detail] itself when
+/// everything already fits.
+TrajectoryRequestDetail capTrajectoryRequestDetail(
+  TrajectoryRequestDetail detail,
+) {
+  final messages = detail.messages;
+  var fullChars = 0;
+  var fullCount = 0;
+  // Walk from the NEWEST end; the first [requestSummaryMaxMessages]
+  // messages (or until the char budget runs out) stay full.
+  for (var i = messages.length - 1; i >= 0; i--) {
+    final message = messages[i];
+    final weight =
+        message.preview.length +
+        [for (final b in message.blocks) b.text.length].fold<int>(
+          0,
+          (a, b) => a + b,
+        );
+    if (fullCount >= requestSummaryMaxMessages ||
+        fullChars + weight > requestSummaryCharsBudget) {
+      break;
+    }
+    fullChars += weight;
+    fullCount++;
+  }
+  if (fullCount >= messages.length) return detail;
+  final fullFrom = messages.length - fullCount;
+  return TrajectoryRequestDetail(
+    messageCount: detail.messageCount,
+    systemPromptChars: detail.systemPromptChars,
+    toolCount: detail.toolCount,
+    toolNames: detail.toolNames,
+    systemPromptHash: detail.systemPromptHash,
+    toolManifestHash: detail.toolManifestHash,
+    wireDumpHash: detail.wireDumpHash,
+    messages: [
+      for (var i = 0; i < messages.length; i++)
+        i < fullFrom
+            ? TrajectoryRequestMessageSummary(
+                role: messages[i].role,
+                chars: messages[i].chars,
+                preview: '',
+              )
+            : messages[i],
+    ],
+  );
+}
+
 /// Base of the trajectory ledger hierarchy.
 ///
 /// Sealed counterpart of the TS `TrajectoryCellProps` union over record

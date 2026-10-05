@@ -145,6 +145,13 @@ void main() {
         // The raw bytes survive in a sidecar for forensics…
         final sidecar = (await fs.readTextFile('$path.corrupt')).getOrThrow();
         expect(sidecar.trim(), '{"id":"torn","parentId":"e1"');
+        // …and the sidecar itself stays clean one-record-per-line JSONL —
+        // the quarantined span already carries its trailing newline, so
+        // no stray blank line may separate records.
+        expect(
+          sidecar.split('\n'),
+          ['{"id":"torn","parentId":"e1"', ''],
+        );
 
         // …and the main file was rewritten without the tear: every line
         // past the header is valid JSON again.
@@ -395,6 +402,66 @@ void main() {
         ),
       );
     });
+
+    test(
+      'a blank first line opens on the streamed path too (whole-file '
+      'parity)',
+      () async {
+        // _openWholeFileLocked filters blank lines before taking the
+        // header; the streamed scan must skip leading blanks the same
+        // way — same session, different filesystem capability, same
+        // outcome.
+        await createStorage();
+        final content = (await fs.readTextFile(path)).getOrThrow();
+        await fs.writeFile(path, '\n$content');
+        final reopened = await JsonlSessionStorage.open(fs, path);
+        await reopened.appendEntry(msg('e1', null, 'hello'));
+        final again = await JsonlSessionStorage.open(fs, path);
+        expect((await again.getEntries()).map((e) => e.id), ['e1']);
+      },
+    );
+
+    test(
+      'parse batches carry physical line numbers — blank lines do not '
+      'drift the numbering',
+      () async {
+        final batches = <SessionParseBatch>[];
+        final storage = await createStorage();
+        for (var i = 1; i <= 600; i++) {
+          await storage.appendEntry(
+            MessageRecord(
+              id: 'm$i',
+              parentId: null,
+              timestamp: DateTime.utc(2026),
+              message: UserMessage.text('line $i'),
+            ),
+          );
+        }
+        // Physical layout: line 1 header, line 2 m1, line 3 BLANK, then
+        // m2..m600. Blank lines are not records, so the batch that starts
+        // at m501 must be numbered by its PHYSICAL line (503), not by
+        // counting only records (502).
+        final content = (await fs.readTextFile(path)).getOrThrow();
+        final lines = content.split('\n');
+        await fs.writeFile(
+          path,
+          [lines.first, lines[1], '', ...lines.sublist(2)].join('\n'),
+        );
+        await JsonlSessionStorage.open(
+          fs,
+          path,
+          parseExecutor: _CapturingParseExecutor(batches),
+        );
+        expect(batches.length, greaterThanOrEqualTo(2));
+        expect(batches[0].firstLineNumber, 2);
+        expect(
+          batches[1].firstLineNumber,
+          503,
+          reason: 'the blank line shifted the physical numbering by one — '
+              'error-text line numbers must follow the real file',
+        );
+      },
+    );
 
     test(
       'open quarantines a corrupt entry line (JSON garbage) mid-file',
@@ -1376,4 +1443,19 @@ void main() {
       },
     );
   });
+}
+
+/// Records every batch submitted for parsing and parses it inline — lets
+/// a test observe the line numbers the streamed open assigns to its
+/// parse batches without an isolate.
+final class _CapturingParseExecutor implements SessionParseExecutor {
+  _CapturingParseExecutor(this.batches);
+
+  final List<SessionParseBatch> batches;
+
+  @override
+  Future<SessionParseResult> parse(SessionParseBatch batch) async {
+    batches.add(batch);
+    return parseSessionEntryLinesSync(batch);
+  }
 }
