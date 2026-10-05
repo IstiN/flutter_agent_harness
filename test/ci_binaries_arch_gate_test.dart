@@ -38,7 +38,7 @@ const expectedArchLegs = {
 Set<String> matrixLegs(YamlMap job) {
   final include = (job['strategy'] as YamlMap)['matrix'] as YamlMap;
   return (include['include'] as YamlList)
-      .map((e) => '${(e as YamlMap)['os']}-${(e as YamlMap)['arch']}')
+      .map((e) => '${(e as YamlMap)['os']}-${e['arch']}')
       .toSet();
 }
 
