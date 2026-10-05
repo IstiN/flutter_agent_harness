@@ -566,6 +566,13 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
   /// and the main file is rewritten from the surviving records so every
   /// later open/append sees whole JSONL. The number of quarantined lines is
   /// reported through [quarantinedEntries].
+  ///
+  /// A ranged [fs] opens through the streamed scan (gh-1073 — no segment
+  /// is ever materialized as one `String`); [wholeFileOnly] forces the
+  /// classic whole-file read instead. That flag exists for error-recovery
+  /// fallbacks: when the caller just watched a ranged read fail, retrying
+  /// over the same capability is unsound — the fallback must load through
+  /// plain whole-file reads only.
   static Future<JsonlSessionStorage> open(
     FileSystem fs,
     String filePath, {
@@ -573,6 +580,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     SessionIoRetryConfig ioRetry = const SessionIoRetryConfig(),
     SessionTimingLogger? timingLog,
     int maxFullOpenBytes = defaultMaxFullOpenBytes,
+    bool wholeFileOnly = false,
   }) async {
     final sw = Stopwatch()..start();
     final storage = await withSessionFileLock(
@@ -584,6 +592,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
         ioRetry,
         timingLog,
         maxFullOpenBytes,
+        wholeFileOnly,
       ),
     );
     timingLog?.call(
@@ -601,6 +610,7 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
     SessionIoRetryConfig ioRetry,
     SessionTimingLogger? timingLog,
     int maxFullOpenBytes,
+    bool wholeFileOnly,
   ) async {
     // Segment rotation (fa gh-1077): `<path>.part-NN` siblings hold older
     // segments. List them (a null listing fails CLOSED — rotation stays
@@ -639,7 +649,10 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       );
     }
     final Object maybeRanged = fs;
-    if (maybeRanged is RangedReadFileSystem) {
+    // wholeFileOnly (error-recovery fallback): skip the streamed dispatch
+    // even on a ranged fs — the caller just watched a ranged read fail,
+    // so the retry must not depend on that capability again.
+    if (!wholeFileOnly && maybeRanged is RangedReadFileSystem) {
       return _openStreamedLocked(
         fs,
         maybeRanged,

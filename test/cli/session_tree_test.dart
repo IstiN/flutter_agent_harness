@@ -408,8 +408,15 @@ class _GenericRepo implements SessionRepo {
   final JsonlSessionRepo _inner;
 
   @override
-  Future<Session> open(SessionMetadata metadata, {bool windowed = false}) =>
-      _inner.open(metadata, windowed: windowed);
+  Future<Session> open(
+    SessionMetadata metadata, {
+    bool windowed = false,
+    bool wholeFileOnly = false,
+  }) => _inner.open(
+        metadata,
+        windowed: windowed,
+        wholeFileOnly: wholeFileOnly,
+      );
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>
