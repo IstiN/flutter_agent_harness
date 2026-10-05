@@ -1006,38 +1006,57 @@ final class JsonlSessionStorage implements SessionStorage, SessionHeaderCache {
       // would re-encode as U+FFFD.
       final Object maybeRenamable = fs;
       if (maybeRenamable is RenamableFileSystem) {
-        final tempPath = '$segmentPath.repaired';
-        Result<void, FileError> wrote = await fs.writeFile(tempPath, '');
-        for (final (start, end) in goodSpans) {
-          final raw = await ranged.readRange(segmentPath, start, end);
-          if (raw.isErr) break;
-          wrote = await fs.appendFile(
-            tempPath,
-            utf8.decode(raw.valueOrNull!, allowMalformed: true),
-          );
-          if (wrote.isErr) break;
-        }
-        if (wrote.isErr) {
-          await fs.remove(tempPath, force: true);
-        } else {
-          final renamed = await maybeRenamable.renamePath(
-            tempPath,
-            segmentPath,
-          );
-          if (renamed.isErr) {
-            // Non-renameable after all (or the rename failed): leave the
-            // file untouched — the in-memory state is still consistent
-            // and the next open re-applies the same heal.
-            await fs.remove(tempPath, force: true);
-          } else {
-            return sw.elapsedMilliseconds;
-          }
-        }
+        final rewritten = await _rewriteSegmentFromSpans(
+          fs,
+          ranged,
+          maybeRenamable,
+          segmentPath,
+          goodSpans,
+        );
+        if (rewritten) return sw.elapsedMilliseconds;
       }
     } on Object {
       // Read-only storage: the in-memory state is still consistent.
     }
     return 0;
+  }
+
+  /// The rewrite half of [_quarantineAndRewriteSegment]: streams
+  /// [goodSpans] from [segmentPath] into a temp file and atomically
+  /// renames it over the segment. False (with the temp removed) when a
+  /// read, write, or rename failed — the file is left untouched and the
+  /// next open re-applies the same heal.
+  static Future<bool> _rewriteSegmentFromSpans(
+    FileSystem fs,
+    RangedReadFileSystem ranged,
+    RenamableFileSystem renamable,
+    String segmentPath,
+    List<(int, int)> goodSpans,
+  ) async {
+    final tempPath = '$segmentPath.repaired';
+    Result<void, FileError> wrote = await fs.writeFile(tempPath, '');
+    for (final (start, end) in goodSpans) {
+      final raw = await ranged.readRange(segmentPath, start, end);
+      if (raw.isErr) break;
+      wrote = await fs.appendFile(
+        tempPath,
+        utf8.decode(raw.valueOrNull!, allowMalformed: true),
+      );
+      if (wrote.isErr) break;
+    }
+    if (wrote.isErr) {
+      await fs.remove(tempPath, force: true);
+      return false;
+    }
+    final renamed = await renamable.renamePath(tempPath, segmentPath);
+    if (renamed.isErr) {
+      // Non-renameable after all (or the rename failed): leave the file
+      // untouched — the in-memory state is still consistent and the next
+      // open re-applies the same heal.
+      await fs.remove(tempPath, force: true);
+      return false;
+    }
+    return true;
   }
 
   /// Legacy whole-file open — the fallback for filesystems without byte

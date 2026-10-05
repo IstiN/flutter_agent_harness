@@ -34,43 +34,14 @@ Future<int> runSessionRepairCliCommand({
     writeln('usage: fa session repair <sessionId|path> [--dry-run]');
     return 1;
   }
-  String? path;
-  SessionPresence? liveRow;
-  if (target.endsWith('.jsonl')) {
-    final exists = await env.exists(target);
-    if (exists.isErr || !exists.valueOrNull!) {
-      writeln('session repair: no such file: $target');
-      return 1;
-    }
-    path = target;
-    // Live guard for the path branch too: resolve the file to its
-    // session id through the repo listing (ids are the presence key).
-    // A file that is not a session under [sessionRoot] matches no
-    // presence row; there is no writer heartbeat to check against (see
-    // the doc comment).
-    liveRow = await _liveRowForPath(env, sessionRoot, path, presenceStore);
-  } else {
-    final repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionRoot);
-    final metadata = await resolveRepairableSession(repo, target);
-    if (metadata == null) {
-      writeln('session repair: session not found: $target');
-      return 1;
-    }
-    path = metadata.path;
-    liveRow = (await presenceStore?.list())?[metadata.id];
-  }
-  // Live guard: a fresh heartbeat means a running process owns the
-  // session — repairing under a writer loses appends (the same rule as
-  // `delete`, minus the own-process pass: repair never runs in the
-  // owning process).
-  if (liveRow != null) {
-    writeln(
-      'session repair: session ${liveRow.sessionId} is live (pid '
-      '${liveRow.pid ?? 'unknown'}, heartbeat ${liveRow.touchedAt}) — '
-      'stop the owning process first.',
-    );
-    return 1;
-  }
+  final path = await _resolveRepairTarget(
+    target: target,
+    writeln: writeln,
+    env: env,
+    sessionRoot: sessionRoot,
+    presenceStore: presenceStore,
+  );
+  if (path == null) return 1;
   try {
     final report = await repairSessionLedgers(env, path, dryRun: dryRun);
     for (final line in report.summaryLines()) {
@@ -87,6 +58,56 @@ Future<int> runSessionRepairCliCommand({
     writeln('session repair failed: $error');
     return 1;
   }
+}
+
+/// Resolves the repair target to a session file path, enforcing the
+/// live-session guard for BOTH target shapes (a `.jsonl` path and a
+/// session id/name): a fresh heartbeat means a running process owns the
+/// session — repairing under a writer loses appends (the same rule as
+/// `delete`, minus the own-process pass: repair never runs in the owning
+/// process). Returns null when the target is unusable or live — the
+/// refusal message is already written.
+Future<String?> _resolveRepairTarget({
+  required String target,
+  required void Function(String text) writeln,
+  required FileSystem env,
+  required String sessionRoot,
+  required SessionPresenceStore? presenceStore,
+}) async {
+  String? path;
+  SessionPresence? liveRow;
+  if (target.endsWith('.jsonl')) {
+    final exists = await env.exists(target);
+    if (exists.isErr || !exists.valueOrNull!) {
+      writeln('session repair: no such file: $target');
+      return null;
+    }
+    path = target;
+    // Live guard for the path branch too: resolve the file to its
+    // session id through the repo listing (ids are the presence key).
+    // A file that is not a session under [sessionRoot] matches no
+    // presence row; there is no writer heartbeat to check against (see
+    // the doc comment).
+    liveRow = await _liveRowForPath(env, sessionRoot, path, presenceStore);
+  } else {
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: sessionRoot);
+    final metadata = await resolveRepairableSession(repo, target);
+    if (metadata == null) {
+      writeln('session repair: session not found: $target');
+      return null;
+    }
+    path = metadata.path;
+    liveRow = (await presenceStore?.list())?[metadata.id];
+  }
+  if (liveRow != null) {
+    writeln(
+      'session repair: session ${liveRow.sessionId} is live (pid '
+      '${liveRow.pid ?? 'unknown'}, heartbeat ${liveRow.touchedAt}) — '
+      'stop the owning process first.',
+    );
+    return null;
+  }
+  return path;
 }
 
 /// Resolves a repair target WITHOUT opening the session (a full open is
