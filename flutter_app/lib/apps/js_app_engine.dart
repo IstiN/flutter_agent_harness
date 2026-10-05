@@ -845,7 +845,12 @@ class JsAppEngine {
     return "jsr.locale = '$safe';\n$_faBootstrapJs";
   }
 
-  static const String _faBootstrapJs = '''
+  // RAW string (gh-1272): the block below embeds JS regex char classes
+  // (/[ \t\r\n]+/) and '\n' string literals — a non-raw Dart string would
+  // unescape those into REAL tab/CR/LF before the JS engine ever sees the
+  // source, killing every widget eval with "Unterminated regular
+  // expression literal". No $ interpolation inside; raw is safe.
+  static const String _faBootstrapJs = r'''
 jsr.fa = {
   call: function(method, args) {
     return jsr.exec(JSON.stringify({fa: method, args: args || {}}));
@@ -1024,7 +1029,7 @@ Object.defineProperty(jsr, 'onBack', {
       var norm = String(message)
         .replace(/0x[0-9a-fA-F]+/g, '#')
         .replace(/[0-9]+/g, '#')
-        .replace(/[ \t\r\n]+/g, ')
+        .replace(/[ \t\r\n]+/g, ' ')
         .trim();
       var frame = '';
       var lines = String(stack || '').split('\n');
@@ -1037,7 +1042,7 @@ Object.defineProperty(jsr, 'onBack', {
           break;
         }
       }
-      frame = frame.replace(/:[0-9]+:[0-9]+/g, '').replace(/[ \t\r\n]+/g, ').trim();
+      frame = frame.replace(/:[0-9]+:[0-9]+/g, '').replace(/[ \t\r\n]+/g, ' ').trim();
       return norm + '\n' + frame;
     } catch (e) {
       return '';

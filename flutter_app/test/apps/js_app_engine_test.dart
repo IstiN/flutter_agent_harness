@@ -2014,10 +2014,8 @@ void main() {
       // not inject real control characters into the parse stream.
       const regexHeavyWidgetJs = r'''
 (function() {
-  var ws = /[ 	
-]+/g;
-  var norm = String('a  b	c
-d').replace(ws, '_');
+  var ws = /[ \t\n]+/g;
+  var norm = String('a  b\tc\nd').replace(ws, '_');
   jsr.exportState({norm: norm});
   jsr.render({type: 'text', data: norm});
 })();
