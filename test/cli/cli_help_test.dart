@@ -65,6 +65,8 @@ void main() {
       'trajectory <view|tail|cost|inspect>',
       '[--json] [--at N]',
       '/trajectory',
+      // Session repair (gh-1073).
+      'fa session repair',
       // Headless config verbs (fa config).
       'fa config export-providers',
       '--passphrase-stdin',
