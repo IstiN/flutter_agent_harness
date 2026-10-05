@@ -48,10 +48,12 @@ if ! command -v flutter >/dev/null 2>&1; then
   exit 1
 fi
 echo "building fa web app (flutter build web --release)…"
+# gh-1265 AC2: resolve against the committed lockfile so a pubspec/lockfile
+# skew fails the packaging build instead of silently floating.
 # --base-href MUST match the taskpane URL: the pane opens
 # /outlook/app/index.html directly (manifest 1.2.0.0), so the bundle
 # lives at build/pages/root/outlook/app/.
-( cd flutter_app && flutter pub get >/dev/null && \
+( cd flutter_app && flutter pub get --enforce-lockfile >/dev/null && \
   FLUTTER_WEB_CANVASKIT_URL=./canvaskit/ \
   flutter build web --release --pwa-strategy=none --base-href=/outlook/app/ \
     --dart-define=FA_HOST=office )

@@ -241,7 +241,8 @@ jobs:
       - name: Install Flutter dependencies
         working-directory: flutter_app
         run: |
-          flutter pub get
+          # gh-1265 AC2: resolve against the committed lockfile.
+          flutter pub get --enforce-lockfile
           echo "=== Dependency versions ==="
           flutter pub deps --style=compact
 

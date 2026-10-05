@@ -62,10 +62,14 @@ if [ "$with_app" -eq 1 ]; then
     exit 1
   fi
   echo "building fa web app (flutter build web --release)…"
+  # gh-1265 AC2: resolve against the committed lockfile — in the
+  # build-macos release job this script's pub get is the ONLY
+  # flutter_app resolution, so a plain resolve would float a
+  # pubspec/lockfile skew into a green release build.
   # --base-href MUST match the panel-relative location: panel.js resolves
   # 'app/index.html' against panel/panel.html, so the bundle lives at
   # browser_ext/panel/app/ (a root-level copy is invisible to the panel).
-  ( cd flutter_app && flutter pub get >/dev/null
+  ( cd flutter_app && flutter pub get --enforce-lockfile >/dev/null
     # .env is gitignored but declared as a Flutter asset (pubspec.yaml),
     # so the web build dies bundling it when the file is absent (#140).
     # Create it AFTER pub get — pub get removes a placeholder touched

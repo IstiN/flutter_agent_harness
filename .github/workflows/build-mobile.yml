@@ -162,7 +162,8 @@ jobs:
 
       - name: Install dependencies
         working-directory: flutter_app
-        run: flutter pub get
+        # gh-1265 AC2: resolve against the committed lockfile.
+        run: flutter pub get --enforce-lockfile
 
       # Mirrors the iOS GoogleService-Info.plist step: the committed
       # google-services.json is a placeholder (the google-services Gradle
@@ -396,7 +397,8 @@ jobs:
 
       - name: Install dependencies
         working-directory: flutter_app
-        run: flutter pub get
+        # gh-1265 AC2: resolve against the committed lockfile.
+        run: flutter pub get --enforce-lockfile
 
       # Mirrors build-android, gated to the store flavor: the secret file
       # carries ONLY the dev.fa1.app client, while the god applicationId is
@@ -544,7 +546,8 @@ jobs:
 
       - name: Install dependencies
         working-directory: flutter_app
-        run: flutter pub get
+        # gh-1265 AC2: resolve against the committed lockfile.
+        run: flutter pub get --enforce-lockfile
 
       - name: Boot emulator
         run: |
@@ -655,12 +658,24 @@ jobs:
           GIT_TERMINAL_PROMPT: '0'
         run: |
           set -euo pipefail
+          LOG_FILE="$(mktemp)"
           for attempt in 1 2 3; do
-            if flutter pub get; then
+            # gh-1265 AC2: resolve against the committed lockfile.
+            if flutter pub get --enforce-lockfile 2>&1 | tee "$LOG_FILE"; then
+              rm -f "$LOG_FILE"
               exit 0
+            fi
+            # A pubspec/lockfile skew is deterministic — retrying cannot
+            # fix it, so fail fast instead of burning ~30s per red leg and
+            # blaming the network (PR #1268 review thread 3).
+            if grep -qE 'Unable to satisfy .* using .*pubspec\.lock' "$LOG_FILE"; then
+              echo "::error::flutter_app/pubspec.lock is out of sync with flutter_app/pubspec.yaml — regenerate it (cd flutter_app && flutter pub get) and commit; not retrying a deterministic skew"
+              rm -f "$LOG_FILE"
+              exit 1
             fi
             if [ "$attempt" = 3 ]; then
               echo "::error::flutter pub get failed after 3 attempts — the runner's network to pub.dev/github.com is unhealthy"
+              rm -f "$LOG_FILE"
               exit 1
             fi
             echo "::warning::flutter pub get failed (attempt $attempt/3) — retrying in 15s"
