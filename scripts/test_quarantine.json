@@ -12,6 +12,17 @@
         37219125631,
         37211433024
       ]
+    },
+    {
+      "file": "test/integration/scheduled_indicator_test.dart",
+      "test": "a scheduled follow-up shows on top of the working row, persists while idle, and clears when it fires",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1252",
+      "since": "2026-10-04",
+      "runs": [
+        37223287603,
+        37221386347,
+        37221353540
+      ]
     }
   ]
 }
