@@ -1,5 +1,10 @@
+@TestOn('vm')
+library;
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
+
+import 'agent_cli_test_support.dart';
 
 /// A scriptable monotonic clock: the window must be measured on elapsed
 /// time, so tests advance it explicitly instead of faking wall clock.
@@ -130,6 +135,82 @@ void main() {
         'press ctrl+c again to exit',
         reason: 'piped runs must not see escape bytes',
       );
+    });
+  });
+
+  group('press-window env override (gh-1014 PTY seam)', () {
+    test('a positive millisecond value widens the window', () {
+      expect(
+        resolveSigintWindowOverride(
+          env: const {'FA_SIGINT_WINDOW_MS': '12000'},
+        ),
+        const Duration(seconds: 12),
+      );
+    });
+
+    test('absent, blank, non-numeric, zero and negative keep the contract '
+        'window (null)', () {
+      Duration? resolve(Map<String, String> env) =>
+          resolveSigintWindowOverride(env: env);
+      expect(resolve(const {}), isNull);
+      expect(resolve(const {'FA_SIGINT_WINDOW_MS': ''}), isNull);
+      expect(resolve(const {'FA_SIGINT_WINDOW_MS': 'soon'}), isNull);
+      expect(resolve(const {'FA_SIGINT_WINDOW_MS': '0'}), isNull);
+      expect(resolve(const {'FA_SIGINT_WINDOW_MS': '-250'}), isNull);
+    });
+
+    test('the parsed override drives the policy window end to end', () {
+      final window = resolveSigintWindowOverride(
+        env: const {'FA_SIGINT_WINDOW_MS': '750'},
+      )!;
+      final clocks = <FakeStopwatch>[];
+      final policy = SigintPolicy(
+        window: window,
+        stopwatch: () => FakeStopwatch(clocks),
+      );
+      expect(policy.press(headless: false), SigintAction.interruptAndStay);
+      for (final sw in clocks) {
+        sw.advanceAll(const Duration(milliseconds: 751)); // 750 ms expired
+      }
+      expect(
+        policy.press(headless: false),
+        SigintAction.interruptAndStay,
+        reason: 'a press past the overridden window is a fresh press 1',
+      );
+      for (final sw in clocks) {
+        sw.advanceAll(const Duration(milliseconds: 300)); // inside NEW window
+      }
+      expect(policy.press(headless: false), SigintAction.exitInteractive);
+    });
+  });
+
+  group('AgentCli sigintPolicy injection (ACX.5 one-instance wiring)', () {
+    AgentCli cliFor({SigintPolicy? sigintPolicy}) => AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: 'test-key',
+        env: MemoryExecutionEnv(cwd: '/work'),
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+      ),
+      io: FakeCliIO(),
+      streamFunction: FakeStreamFunction([textTurn('idle')]).call,
+      sigintPolicy: sigintPolicy,
+    );
+
+    test(
+      'an injected policy IS the cli policy — both input paths share it',
+      () {
+        final injected = SigintPolicy(window: const Duration(seconds: 9));
+        expect(
+          identical(cliFor(sigintPolicy: injected).sigintPolicy, injected),
+          isTrue,
+        );
+      },
+    );
+
+    test('omitted → the contract default window', () {
+      expect(cliFor().sigintPolicy.window, kSigintPressWindow);
     });
   });
 }

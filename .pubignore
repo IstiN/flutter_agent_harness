@@ -1,0 +1,39 @@
+# gh-1220: the publish payload must mirror scripts/stage_publish_package.sh
+# (issue #597) — the package surface only, never the sub-projects that share
+# the repo root. The nightly/PR dry-runs validate at the REPO ROOT, where pub
+# would otherwise pack everything under the root that git tracks: the
+# flutter_app fastlane test fixtures (fake keys, #1046) trip the publish
+# leak detector (nightly 37177316619, exit 65) and the payload blows past
+# the pub.dev size cap (101.5 MB). This file changes only what pub SHIPS —
+# nothing on disk is ignored for git, and the fastlane fixtures stay
+# byte-identical for the tests that consume them.
+#
+# Keep in lockstep with stage_publish_package.sh — the mirror is guarded by
+# test/publish_staging_test.dart. build/, .dart_tool/ and coverage/ need no
+# entry here: .gitignore already keeps them out of pub's git file list.
+
+# Sub-projects and non-package trees at the repo root (the #597 list).
+/.git/
+/.github/
+/.worktrees/
+/.trash/
+/flutter_app/
+/yoclip/
+/browser_ext/
+/office_addin/
+/docs/
+/memory/
+/fa-local/
+/coverage/
+
+# Vendored forks: only the xterm dev-dependency ships (pubspec dev_deps).
+/vendor/*
+!/vendor/xterm/
+
+# Local packages: only the fa_llm_mock dev-dependency ships.
+/packages/*
+!/packages/fa_llm_mock/
+
+# Workspace-only dart_tui vendor pin — never published (see its header);
+# shipped, it re-dangles dart_tui onto the excluded vendor dir (v0.1.407).
+/pubspec_overrides.yaml

@@ -77,6 +77,42 @@ void main() {
       expect(restored.modelId, 'claude');
     });
 
+    test('ModelChangeRecord carries the custom provider pin (gh-1000)', () {
+      final restored =
+          roundTrip(
+                ModelChangeRecord(
+                  id: 'e4',
+                  parentId: 'e3',
+                  timestamp: ts,
+                  provider: 'openai',
+                  modelId: 'k3-256k',
+                  baseUrl: 'https://api.kimi.com/coding/v1',
+                  customProvider: 'kimi_me',
+                ),
+              )
+              as ModelChangeRecord;
+      expect(restored.baseUrl, 'https://api.kimi.com/coding/v1');
+      expect(restored.customProvider, 'kimi_me');
+    });
+
+    test('ModelChangeRecord without the pin fields restores nulls (REG-5)',
+        () {
+      final restored =
+          SessionRecord.fromJson(
+                {
+                  'type': 'model_change',
+                  'id': 'e4',
+                  'parentId': 'e3',
+                  'timestamp': ts.toIso8601String(),
+                  'provider': 'openai',
+                  'modelId': 'k3-256k',
+                },
+              )
+              as ModelChangeRecord;
+      expect(restored.baseUrl, isNull);
+      expect(restored.customProvider, isNull);
+    });
+
     test('ActiveToolsChangeRecord', () {
       final restored =
           roundTrip(

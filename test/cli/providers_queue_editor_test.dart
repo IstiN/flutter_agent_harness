@@ -72,7 +72,10 @@ providersQueue:
     );
   }
 
-  AgentCli cliFor({ProviderQueueRuntime? runtime}) {
+  AgentCli cliFor({
+    ProviderQueueRuntime? runtime,
+    Map<String, String>? providerQueueEnv = const {},
+  }) {
     return AgentCli(
       config: AgentCliConfig(
         model: testModel,
@@ -81,6 +84,13 @@ providersQueue:
         homeDir: home.path,
         sessionRoot: '${home.path}/sessions',
         providersQueueRuntime: runtime,
+        // The SAME env view [runtimeFromBoot] resolved through (issue
+        // #675): the editor's scope re-check consults the CLI's own queue
+        // env, never the host process environment — an ambient
+        // FA_PROVIDERS_QUEUE on the runner (the ai-teammate dev-write
+        // hosts export one) must not flip these tests to the env-wins
+        // refusal. Null (the production default) = Platform.environment.
+        providerQueueEnv: providerQueueEnv,
         envVarValue: (name) => switch (name) {
           'K_A' || 'K_B' || 'K_C' || 'K_X' => 'secret-$name',
           _ => null,
@@ -180,6 +190,49 @@ providersQueue:
     final aIndex = body.indexOf('queue-a');
     final bIndex = body.indexOf('queue-b');
     expect(bIndex, lessThan(aIndex), reason: 'queue-b moved to the head');
+  });
+
+  test('issue #675: an ambient FA_PROVIDERS_QUEUE in the CLI env view '
+      'refuses the write — deterministically, no process-env read', () async {
+    // The hostile-ambient-env contract: the editor consults ONLY the env
+    // view the CLI was booted with (here: one that carries the var), so
+    // this refusal is pinned on every machine — including hosts whose
+    // process environment is clean, and hosts (the ai-teammate runner)
+    // whose process env exports the var and must NOT leak into the
+    // opposite direction either (the persistence tests above boot with an
+    // empty view and must persist regardless of the host).
+    final cli = cliFor(
+      runtime: ProviderQueueRuntime.build(
+        resolveProviderQueueAtBoot(
+          projectDir: project.path,
+          homeDir: home.path,
+          env: {
+            'FA_PROVIDERS_QUEUE': '''
+[
+  {
+    "provider_type": "openai-completions",
+    "provider_config": {"model": "env-queue", "apiKeyEnv": "K_X"}
+  }
+]
+''',
+          },
+        ),
+        secrets: const {'K_X': 'x'},
+        streamFactory: (kind, key) => FakeStreamFunction([textTurn('ok')]).call,
+      ),
+      providerQueueEnv: const {
+        'FA_PROVIDERS_QUEUE':
+            '[{"provider_type":"openai-completions",'
+            '"provider_config":{"model":"env-queue","apiKeyEnv":"K_X"}}]',
+      },
+    );
+    await runCli(cli, '/providers queue remove 0');
+    expect(
+      io.out.toString(),
+      contains('FA_PROVIDERS_QUEUE env wins over any file queue'),
+    );
+    final body = File('${home.path}/.fah/config.yaml').readAsStringSync();
+    expect(body.contains('queue-a'), isTrue, reason: 'nothing written');
   });
 
   test('test with an out-of-range index says so without probing', () async {

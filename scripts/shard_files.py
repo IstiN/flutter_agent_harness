@@ -23,6 +23,13 @@ dedicated per-PR gate stage (no-key legs) plus the tag-only provider smoke.
 --exclude STR
 drops paths containing STR (e.g. golden — host-locked suites stay out of
 the shards even when a PR adds one post-rebalance, issue #283 E4).
+--exclude-tag TAG (gh-1199 AC1, tag-boundary manifests)
+drops every FILE whose real (non-comment) @Tags annotation names TAG —
+the deterministic-gate integration shards pass --exclude-tag llm so no
+live-provider file is ever selected for the merge-blocking gate, however
+it reached the manifest (rebalance inclusion or runtime bin-pack). Only
+file-level manifest units are tag-checked; directory units pass through
+(the dart-test invocation's --exclude-tags is the backstop there).
 --tags TAG (issue #931, integration shards)
 inverts the integration exclusion: only files whose @Tags annotation names
 TAG are bin-packed as uncovered, so an INTEGRATION manifest (e.g.
@@ -71,7 +78,7 @@ def file_has_tag(path: str, tag: str) -> bool:
 
 
 def uncovered_files(covered: set, root: str, exclude: list,
-                    required_tag=None) -> list:
+                    required_tag=None, exclude_tags=None) -> list:
     """Individual test files missing from a file-level manifest, as (path, 1).
 
     Default (no required_tag): files under test/ excluding integration and
@@ -79,7 +86,9 @@ def uncovered_files(covered: set, root: str, exclude: list,
     the integration shards, issue #931): only files whose @Tags annotation
     names the tag — an integration manifest must never bin-pack untagged
     core files (they would be filtered out by --tags anyway, but selecting
-    them is noise) and must NOT skip test/integration.
+    them is noise) and must NOT skip test/integration. With exclude_tags
+    (gh-1199 AC1): files carrying an excluded tag stay out even when they
+    match required_tag — the live boundary holds for runtime bin-packs.
     """
     out = []
     for path in sorted(glob.glob(os.path.join(root, "**", "*_test.dart"), recursive=True)):
@@ -90,6 +99,8 @@ def uncovered_files(covered: set, root: str, exclude: list,
             if "/integration/" in norm:
                 continue  # integration runs in its own CI job; excludes stay out
         elif not file_has_tag(path, required_tag):
+            continue
+        if exclude_tags and any(file_has_tag(path, t) for t in exclude_tags):
             continue
         if norm not in covered:
             out.append((norm, 1))
@@ -109,9 +120,11 @@ def bin_pack_by_count(units: list, n: int) -> list:
 def main() -> int:
     argv = sys.argv[1:]
     exclude = []
+    exclude_tags = []
     tags = []
-    while "--exclude" in argv or "--tags" in argv:
-        for flag, sink in (("--exclude", exclude), ("--tags", tags)):
+    while "--exclude" in argv or "--tags" in argv or "--exclude-tag" in argv:
+        for flag, sink in (("--exclude", exclude), ("--tags", tags),
+                           ("--exclude-tag", exclude_tags)):
             while flag in argv:
                 i = argv.index(flag)
                 try:
@@ -148,9 +161,22 @@ def main() -> int:
     file_level = any(u.replace(os.sep, "/").endswith("_test.dart")
                      for s in shards for u in s)
     if file_level:
+        # gh-1199 AC1: a tag-boundary manifest (--exclude-tag llm) never
+        # selects a file carrying the excluded tag — neither a manifest
+        # unit nor a runtime bin-pack addition.
+        for tag in exclude_tags:
+            dropped = sorted(u for u in covered
+                             if u.replace(os.sep, "/").endswith("_test.dart")
+                             and file_has_tag(u, tag))
+            if dropped:
+                print(f"NOTE: --exclude-tag {tag} drops {len(dropped)} "
+                      f"file(s) from the selection (live boundary)",
+                      file=sys.stderr)
+            covered -= set(dropped)
         # File-level manifest (issue #283): bin-pack uncovered FILES.
         extra = uncovered_files(covered, "test", exclude,
-                                required_tag=(tags[0] if tags else None))
+                                required_tag=(tags[0] if tags else None),
+                                exclude_tags=exclude_tags)
     else:
         extra = uncovered_units(covered, "test")
     if extra:
@@ -161,6 +187,13 @@ def main() -> int:
             file=sys.stderr,
         )
     extra_bucket = bin_pack_by_count(extra, len(shards))[index]
+
+    # gh-1199 AC1: exclude-tag units leave the SHARD selection too, not
+    # just the uncovered bin-pack (covered was filtered above).
+    if file_level and exclude_tags:
+        shard = [u for u in shard
+                 if not u.replace(os.sep, "/").endswith("_test.dart")
+                 or not any(file_has_tag(u, t) for t in exclude_tags)]
 
     for unit in list(shard) + extra_bucket:
         if os.path.isdir(unit):

@@ -63,6 +63,10 @@ final class CurlArgs {
   bool followRedirects = false;
   bool explicitMethod = false;
 
+  /// `-w`/`--write-out` template; printed to stdout after the transfer
+  /// (even with `-o`), like real curl.
+  String? writeOut;
+
 }
 
 /// Parsed `jq`/`yq` command line; see [SandboxBuiltins.parseJqArgs].
@@ -341,12 +345,65 @@ final class SandboxBuiltins {
         'HTTP ${response.statusCode} '
         '${response.reasonPhrase ?? ""}\n';
     final stderr = parsed.silent ? const <int>[] : utf8.encode(statusLine);
+
+    // `-w` prints its template (variables + escapes expanded) to stdout
+    // after the body/-o write, like real curl.
+    final writeOut = parsed.writeOut == null
+        ? const <int>[]
+        : utf8.encode(_renderCurlWriteOut(parsed.writeOut!, response));
+
     if (parsed.outputFile != null) {
       await writeBinaryFile(parsed.outputFile!, response.bodyBytes);
-      return _ok(const [], stderr);
+      return _ok(writeOut, stderr);
     }
 
-    return _ok(response.bodyBytes, stderr);
+    return _ok([...response.bodyBytes, ...writeOut], stderr);
+  }
+
+  /// Renders a curl `-w` template against [response]: `%{variable}` for the
+  /// supported set (unknown → empty, like real curl), `%%` → `%`, and the
+  /// `\n`/`\r`/`\t` escapes.
+  static String _renderCurlWriteOut(String template, http.Response response) {
+    final variables = <String, String>{
+      'http_code': '${response.statusCode}',
+      'size_download': '${response.bodyBytes.length}',
+      'size_upload': '0',
+      'content_type': response.headers['content-type'] ?? '',
+      'url_effective': response.request?.url.toString() ?? '',
+      'response_code': '${response.statusCode}',
+    };
+    final out = StringBuffer();
+    for (var i = 0; i < template.length; i++) {
+      final c = template[i];
+      if (c == '%' && i + 1 < template.length) {
+        final n = template[i + 1];
+        if (n == '%') {
+          out.write('%');
+          i++;
+          continue;
+        }
+        if (n == '{') {
+          final close = template.indexOf('}', i + 2);
+          if (close != -1) {
+            out.write(variables[template.substring(i + 2, close)] ?? '');
+            i = close;
+            continue;
+          }
+        }
+      }
+      if (c == r'\' && i + 1 < template.length) {
+        out.write(switch (template[i + 1]) {
+          'n' => '\n',
+          'r' => '\r',
+          't' => '\t',
+          final other => other,
+        });
+        i++;
+        continue;
+      }
+      out.write(c);
+    }
+    return out.toString();
   }
   /// Pure `wget` → `curl` argument translation: `-O f`/`--output-document=f`
   /// become `-o f` (a missing value drops the flag), `-q`/`--quiet` become
@@ -367,6 +424,21 @@ final class SandboxBuiltins {
         curlArgs.add('-s');
       } else if (arg == '--no-check-certificate') {
         // Ignored: TLS verification is not configurable in the curl builtin.
+      } else if (arg == '-w' ||
+          arg == '--wait' ||
+          arg.startsWith('--wait=') ||
+          arg.startsWith('--waitretry')) {
+        // wget wait flags: not curl flags — drop them (with the separate
+        // seconds value of `-w`/`--wait`/`--waitretry`) instead of leaking
+        // into curl's parser, where `-w` means --write-out (issue #1156
+        // review).
+        final takesSeparateValue =
+            arg == '-w' || arg == '--wait' || arg == '--waitretry';
+        if (takesSeparateValue &&
+            i + 1 < args.length &&
+            !args[i + 1].startsWith('-')) {
+          i++;
+        }
       } else {
         curlArgs.add(arg);
       }
@@ -418,6 +490,9 @@ final class SandboxBuiltins {
       case '-o' || '--output':
         if (next == null) return false;
         c.outputFile = next;
+      case '-w' || '--write-out':
+        if (next == null) return false;
+        c.writeOut = next;
       case '--url':
         if (next == null) return false;
         c.url = next;
@@ -498,8 +573,12 @@ final class SandboxBuiltins {
   // ---------------------------------------------------------------------------
 
   /// Runs the `jq` builtin: `jq <filter> [file]`. Without a file argument the
-  /// JSON document is read from [stdin] (piped input).
+  /// JSON document is read from [stdin] (piped input). `--version` answers
+  /// like real jq instead of a usage error (issue #1156 row 6).
   Future<SandboxBuiltinResult> jq(List<String> args, {String? stdin}) {
+    if (args.contains('--version') || args.contains('-V')) {
+      return Future.value(_ok(utf8.encode('jq-1.7.1 (Fa sandbox)\n')));
+    }
     return _jsonFilter(
       'jq',
       args,

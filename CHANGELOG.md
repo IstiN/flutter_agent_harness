@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.0.508
+
+
+- chore(ci): document the sm-kicker head-completeness codeless-head crash
+  (upstream awf#15) — the factory job's `gh api` calls put `--jq` before
+  `--arg`/`--argjson`, so a CODELESS branch head (2 parents, 0 changed
+  files: a routine branch-sync merge with no content diff) crashes the
+  job with `accepts 1 arg(s), received 4` — even when CI is fully green
+  on that head, and the job's own rescue dispatch can never heal exactly
+  those heads. Workaround until the upstream fix: keep the branch head
+  code-bearing. Live instance: run 37193754301 on head 1fe9b1232.
+- fix(messaging): gh-1180 — `schedule_message` self-chains no longer die
+  silently at the agent-chatter wake cap. The idle inbox-wake gate
+  (`InboxWakePolicy`, shared by the CLI and the app hosts) now exempts a
+  delivered scheduled self-reminder (`[scheduled] ` prefix, from == to)
+  from the 10-consecutive-wake streak: a deliberate agent-chosen cadence
+  (night watch, periodic sweep) wakes forever, while foreign
+  agent-to-agent chatter stays capped (anti-storm REG) and user-kind
+  mail always wakes. A 30s cadence floor bounds a zero-delay
+  re-schedule spin (E5). Refused wakes are visible (`[mail] wake
+  refused`, once per episode) and every lifecycle step is receipted to
+  `<messagesRoot>/_scheduled/receipts.jsonl` (`ScheduledReceiptLog`):
+  scheduled / delivered / delivery_failed / scan_failed /
+  wake_attempted / turn_started / wake_refused. A failed scheduler scan
+  (transient `listDir` error) now re-arms at `failureBackoff` with an
+  `onError` log instead of silently disarming the delivery heartbeat.
+- fix(messaging): gh-1180 review round — refusal receipts and the
+  visible refusal line are gated once per refusal EPISODE (the latch
+  lives in `InboxWakePolicy` next to the streak and re-arms on the same
+  resets), so a held gate no longer appends per-tick `wake_attempted`
+  rows (~43k duplicate lines/day) and a repeat episode after user input
+  is announced and receipted again. The app host receipts its wake path
+  (`wake_attempted` / `turn_started` / `wake_refused`) onto the same
+  trail — AC4 is no longer CLI-only. A self-reminder adopted across a
+  session-id change delivers FROM the live mailbox (from re-addressed
+  alongside to), so the resumed chain stays self-shaped and exempt
+  instead of falling back to the capped chatter lane. Plugin-only
+  pending batches are explicitly classified as chatter (the contract is
+  stated, not accidental), the wake cap is single-sourced from
+  `InboxWakePolicy.defaultMaxInboxWakeStreak`, and the policy file lost
+  a stale copy-pasted `ignore_for_file`.
+
 ## 1.0.485
 
 
@@ -4485,6 +4527,97 @@
 ## 1.0.500
 
 - chore: repin factory workflows to f47d52b (kit in RUNNER_TEMP) (#1191)
+
+## 1.0.501
+
+- fix(#1121): replay zero-byte watchdog-killed requests on the shared ladder (#1188)
+- fix(#1168): resume mid-stream connection failures from the completed prefix (#1169)
+- test: deflake memory round-trip PTY waits (kill taggen 500-storm, re-anchor on terminal marker) (#1166)
+- bench-mls.yml: run fa on MLS-Bench via the existing Harbor adapter (staged nop→oracle→agent, GPU cost discipline) (#1161)
+- chore: repin factory workflows to f47d52b (kit in RUNNER_TEMP) (#1191)
+
+## 1.0.502
+
+- fix(#1175): one Fa, one session — FAB continues the app-bound session, never re-mints (#1173)
+- WASI sandbox fidelity: dup-merge, per-exec pipe dirs, drain-before-cancel, clean errors (#1156) (#1163)
+- fix(chat): Load-newer banner works mid-run, auto-clears at the live tail (#1159) (#1165)
+- feat(#862): tool-misuse resilience (#1143)
+- fix(#858): Codex/Responses wire — no replayable history may ever brick a session (#1140)
+
+## 1.0.503
+
+- gh-1054 [GOAL] Headless/unattended runs must detect long-stuck tool calls mid-run and follow up — liveness heartbeats + cancel/retry/convert, not a silent 10-min wait for the external watchdog (#1200)
+- chore(ci): bump sm-kicker pin — real-dispatch fix (awf#13) (#1213)
+- fix(kicker): wake machine-sm on CI conclusions (workflow_run) (#1203)
+- gh-1171 flake: subagent_integration_test 'memory_add and memory_search tools are available' — mock script exhausted by memory auto-tag LLM call (#1202)
+- gh-1014 Flaky: ctrl_c_double_press_test ACX.3 SIGINT timing-window flake under runner load — quarantined, fix + re-enable (#1196)
+- test(#1172): pin the CHANGELOG '## Unreleased' dedupe + deflake sandbox authorship under git hooks (#1195)
+- gh-1000 Key resolution loses the provider/key binding: 401 after /sessions restore and on pinned roles (smol/subagents) — duplicate modelId, env-only roles path (#1190)
+- gh-1192 [GOAL] Release-flow race hardening: daily verify must skip 'release in flight', version tag must pin the bump commit (#1193)
+- fix(#1175): one Fa, one session — FAB continues the app-bound session, never re-mints (#1173)
+- WASI sandbox fidelity: dup-merge, per-exec pipe dirs, drain-before-cancel, clean errors (#1156) (#1163)
+- fix(chat): Load-newer banner works mid-run, auto-clears at the live tail (#1159) (#1165)
+- feat(#862): tool-misuse resilience (#1143)
+- fix(#858): Codex/Responses wire — no replayable history may ever brick a session (#1140)
+
+## 1.0.505
+
+- gh-1210 [BENCH] Pre-seed a system-level git identity in task containers (fa-setup.sh.j2) — stop burning agent turns on 'Author identity unknown' (#1214)
+
+## 1.0.506
+
+- fix(#1044): AIIN mobile/macOS add-provider — sign-in completes but the provider is never added (#1194)
+- fix(ci): pass flutter-version explicitly — awf no longer defaults a toolchain (#1205)
+
+## 1.0.507
+
+- gh-1208 [BENCH] fix-git task image broken on CI runners — docker compose build fails in BOTH TBench-1 runs (unknown_agent_error, trial never starts) (#1218)
+- gh-1206 WIP auto-save 2026-10-04T05-52-28 (#1216)
+- gh-1209 [BENCH] usage fold skips failed trials — agent_timeout rows report 0/0 tokens though the session JSONL has full usage (#1123 follow-up) (#1215)
+
+## 1.0.509
+
+
+- chore(pin): awf workflows track @main — always-latest policy (owner
+  directive 2026-10-04). All five machine-loop stubs (teammate, SM,
+  merge, sm-kicker, merge-trigger) flip from immutable SHA pins to
+  `dmtools-agentic-workflows@main`, so awf fixes (kicker real ticks
+  awf#13, per-SHA concurrency awf#14, teammate defaults awf#12) go live
+  on merge with no re-pin ceremony. Security trade-off (owner-accepted):
+  a mutable ref executes whatever sits at the awf main head — mitigated
+  by awf main being review-gated, by
+  `test/machine_kit/factory_stub_ref_test.dart` now guarding ALL FIVE
+  `uses:` refs resolve to exactly `main` (never a stale SHA, never a
+  random ref) in lockstep, and by the agents ENGINE pin staying an
+  immutable 40-hex SHA via `factory_ref`. The `secrets:` policy is
+  settled per-callee in the same guard: teammate/sm/merge map
+  `SOURCE_GITHUB_TOKEN` explicitly (their factories declare it
+  required), while merge-trigger keeps the factory-documented
+  `secrets: inherit` PAT passthrough (factory-merge-trigger declares no
+  secrets) and the kicker carries no secrets block. Stale
+  immutable-SHA pin comments in ai-teammate.yml / machine-sm.yml
+  rewritten to state the always-`main` policy (#1222).
+
+## 1.0.510
+
+- gh-1226 [BUG] 1.0.505 (with #1190 aboard): mail-wake turn after /sessions restore still loses the provider/key binding — copilot-401 error on a z.ai session + fused guidance text (#1237)
+- gh-1199 [GOAL] Deterministic-only Quality gate: mock LLM everywhere, live models move to supervised benches (#1229)
+- feat(1101): Agent Wire Protocol v1 — web reference client (sdk/web), conformance runner, browser example (#1228)
+- gh-1224 [BUG] iOS 1.0.504: all wasm interpreters (python/qjs/lua/sqlite3) dead — 'no lazy loader' in FOREGROUND bash _forJob() clone drops moduleLoader (regression suspect #1163) (#1225)
+
+## 1.0.511
+
+- gh-1164 [GOAL] built-in js-apps skill (promoted from app asset, decisive apps-vs-widget routing) + JS render/runtime errors reported back to the authoring agent as failures (blocked by #1151) (#1246)
+- gh-1244 [FLAKE] PTY integration: secret_sheet_test «IT-mask: masked from the first keystroke» waits for exactly 5 bullets while typing races ahead (red main, run 37232401938) (#1245)
+- gh-1241 [GOAL] Session token-usage ledger: resume-aware usage.json fold over the session chain (provider-reported, estimated marked) (#1243)
+- ci(quarantine): skip scheduled_indicator_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1252) (#1253)
+- gh-1077 [GOAL] flutter_app compaction parity with CLI — mobile sessions never compact (roles/smol absent, wrong context window, silent failure, no over-window relief) (#1239)
+- ci(quarantine): skip job_board_stability_pty_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1250) (#1251)
+- gh-1235 Wire jsr.openUrl + webView host into the app JS engine (js_widget_runtime = 0.4.154) (#1238)
+- gh-1226 [BUG] 1.0.505 (with #1190 aboard): mail-wake turn after /sessions restore still loses the provider/key binding — copilot-401 error on a z.ai session + fused guidance text (#1237)
+- gh-1199 [GOAL] Deterministic-only Quality gate: mock LLM everywhere, live models move to supervised benches (#1229)
+- feat(1101): Agent Wire Protocol v1 — web reference client (sdk/web), conformance runner, browser example (#1228)
+- gh-1224 [BUG] iOS 1.0.504: all wasm interpreters (python/qjs/lua/sqlite3) dead — 'no lazy loader' in FOREGROUND bash _forJob() clone drops moduleLoader (regression suspect #1163) (#1225)
 
 ## Unreleased
 

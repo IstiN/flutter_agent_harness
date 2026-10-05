@@ -228,15 +228,30 @@ List<CustomProviderEntry> mergeCustomProviderEntries(
   ];
 }
 
+/// Endpoint equality ignoring ONE trailing slash (saved entries, resolved
+/// endpoints, and catalog defaults disagree on it routinely) — the ONE
+/// rule for "is this endpoint that endpoint": saved-entry matches
+/// (key_status), catalog-default classification (key_status, the roles
+/// resolver's endpoint-slot probe, startup's preload set) share it, so a
+/// trailing-slash spelling can never be custom in one helper and default
+/// in another (round-3 review).
+bool sameEndpoint(String a, String b) {
+  String norm(String u) => u.endsWith('/') ? u.substring(0, u.length - 1) : u;
+  return norm(a) == norm(b);
+}
+
 /// The `authHeader` of the saved entry serving [baseUrl], for the
 /// folder-model-state restores (boot in `bin/fah.dart` and session
 /// re-apply in `agent_cli.dart` — issue #964 review): a restored gateway
 /// endpoint without its header 401s. Null when [baseUrl] is null (catalog
 /// default) or no saved entry matches it.
-String? authHeaderForBaseUrl(List<CustomProviderEntry> entries, String? baseUrl) {
+String? authHeaderForBaseUrl(
+  List<CustomProviderEntry> entries,
+  String? baseUrl,
+) {
   if (baseUrl == null) return null;
   for (final entry in entries) {
-    if (entry.baseUrl == baseUrl) return entry.authHeader;
+    if (sameEndpoint(entry.baseUrl, baseUrl)) return entry.authHeader;
   }
   return null;
 }
@@ -268,6 +283,42 @@ final class CustomProviderRegistry {
   /// actually survived (a ghost-first load swaps both — see
   /// [_mergeOnLoad]).
   final List<String> mergeNotes;
+
+  /// Non-destructive migration notes for key slots an older build
+  /// generated with the pre-gh-1226 doubling rule — an entry named
+  /// `z.ai` on host `api.z.ai` persisted `FA_KEY_API_Z_AI_Z_AI` where the
+  /// canonical slot is `FA_KEY_API_Z_AI` (gh-1226 AC3). Resolution still
+  /// probes each entry's OWN stored keyName first, so an existing doubled
+  /// slot keeps working; the note tells the user the canonical name to
+  /// move the value to AND to delete the doubled slot afterwards —
+  /// otherwise the pinned slot keeps winning and the note reprints on
+  /// every boot (review thread). Only the doubling class nags: an
+  /// intentional non-canonical keyName (e.g. a slot shared on purpose
+  /// across entries) is a user choice, not a defect.
+  List<String> get keyNameMigrationNotes {
+    final notes = <String>[];
+    for (final entry in entries) {
+      final stored = entry.keyName;
+      if (stored == null) continue;
+      final canonical = keyNameFor(entry.baseUrl, providerName: entry.name);
+      if (stored == canonical) continue;
+      if (!stored.startsWith('${canonical}_')) continue;
+      final twin = entries.any(
+        (other) =>
+            other != entry &&
+            other.baseUrl == entry.baseUrl &&
+            other.keyName == canonical,
+      );
+      notes.add(
+        'saved key slot for "${entry.name}" is "$stored"; the canonical '
+        'slot is "$canonical"'
+        '${twin ? ' — a same-endpoint entry already uses "$canonical"' : ' — move the value with /key set $canonical <value>'}'
+        '; then /key delete $stored (the pinned slot keeps winning '
+        'while it holds a value)',
+      );
+    }
+    return notes;
+  }
 
   /// The load-time merge result: one record per canonical identity; a
   /// reserved-named ghost (e.g. `chatgpt`, which would shadow
@@ -399,9 +450,15 @@ final class CustomProviderRegistry {
     final sanitized = _sanitizeKeyHost(_hostWithPort(uri, baseUrl));
     final base = 'FA_KEY_${sanitized.isEmpty ? 'CUSTOM' : sanitized}';
     final name = providerName == null ? null : _sanitizeKeyHost(providerName);
-    // A provider named after its host (the default derived name) must not
-    // double the suffix: FA_KEY_API_AIIN_BY, not FA_KEY_API_AIIN_BY_API_AIIN_BY.
-    return name == null || name.isEmpty || name == sanitized
+    // A provider named after its host (the default derived name) — or
+    // already a suffix of the host slug, e.g. an entry named 'z.ai' on
+    // api.z.ai (gh-1226 AC3) — must not double the suffix:
+    // FA_KEY_API_AIIN_BY / FA_KEY_API_Z_AI, not ..._API_AIIN_BY /
+    // ..._Z_AI_Z_AI.
+    return name == null ||
+            name.isEmpty ||
+            name == sanitized ||
+            sanitized.endsWith('_$name')
         ? base
         : '${base}_$name';
   }

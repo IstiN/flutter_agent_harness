@@ -38,6 +38,16 @@ import 'dart:convert';
 
 import '../cancel_token.dart';
 import '../compaction/token_estimation.dart' show estimateRequestTokens;
+// The supervisor's cancel marker + the soft-yield hand-back marker live in
+// the pure-data stuck_tool module (gh-1054 review) so the tool layer can
+// recognize a supervisor-driven yield; re-exported for the loop's
+// consumers.
+export 'stuck_tool.dart'
+    show
+        StuckCallFollowUp,
+        stuckBackgroundHandbackMarker,
+        stuckBackgroundHandbackSentence,
+        stuckBackgroundHandbackText;
 import '../context.dart';
 import '../event_stream.dart';
 import '../exceptions.dart';
@@ -48,7 +58,11 @@ import '../trajectory/trajectory_blobs.dart';
 import '../trajectory/trajectory_record.dart';
 import 'agent_tool.dart';
 import 'image_registry.dart';
+import 'misuse_breaker.dart';
+import 'stuck_tool.dart';
 import 'tool_pairing.dart';
+
+part 'agent_loop_stuck_supervision.dart';
 
 /// Marker embedded in the over-window guard's error message (see
 /// [_streamAssistantResponse]): hosts match it to recognize "the loop
@@ -395,6 +409,8 @@ final class AgentLoopConfig {
     this.maxSteeringTurns = 20,
     this.contextWindowCap,
     this.wireDump = false,
+    this.toolMisuseBreaker,
+    this.stuckTool,
   });
 
   /// The model to call each turn.
@@ -472,6 +488,18 @@ final class AgentLoopConfig {
   /// active pipeline and cap before persisting. Default: false.
   final bool wireDump;
 
+  /// The tool-misuse circuit breaker (issue #862): N consecutive identical
+  /// rejections of the same tool arm a corrective note for the next request
+  /// payload; M stop executing that identical call for the rest of the run.
+  /// `null` disables the breaker entirely — behavior is byte-identical to
+  /// the pre-breaker loop (E5).
+  final ToolMisuseBreaker? toolMisuseBreaker;
+
+  /// Stuck-call supervision (gh-1054): liveness heartbeats for long-running
+  /// tool calls plus the autonomous cancel/retry/convert follow-up.
+  /// `null` = unsupervised (byte-identical legacy behavior).
+  final StuckToolConfig? stuckTool;
+
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
   AgentLoopConfig copyWith({Model? model}) {
     return AgentLoopConfig(
@@ -490,6 +518,8 @@ final class AgentLoopConfig {
       maxSteeringTurns: maxSteeringTurns,
       contextWindowCap: contextWindowCap,
       wireDump: wireDump,
+      toolMisuseBreaker: toolMisuseBreaker,
+      stuckTool: stuckTool,
     );
   }
 }
@@ -698,6 +728,111 @@ final class ToolExecutionEndEvent extends AgentEvent {
   final bool isError;
 }
 
+/// Liveness heartbeat for a long-outstanding tool call (gh-1054).
+///
+/// Emitted every [StuckToolConfig.heartbeatInterval] once the call has run
+/// past [StuckToolConfig.heartbeatStart] — cheap, append-only sideband
+/// records that let external watchers (and the owner) distinguish
+/// alive-busy from dead. Never provider traffic.
+final class ToolCallHeartbeatEvent extends AgentEvent {
+  const ToolCallHeartbeatEvent({
+    required this.toolCallId,
+    required this.toolName,
+    required this.args,
+    required this.elapsed,
+    required this.outputBytes,
+    required this.attempt,
+    required this.timestamp,
+  });
+
+  /// The [ToolCall.id] still executing.
+  final String toolCallId;
+
+  /// The tool's name.
+  final String toolName;
+
+  /// The parsed tool call arguments (the command/args of the call).
+  final Map<String, dynamic> args;
+
+  /// How long the call has been running.
+  final Duration elapsed;
+
+  /// Captured output so far — the size of the last partial result the tool
+  /// reported (0 when the tool reports no progress updates).
+  final int outputBytes;
+
+  /// 1-based execution attempt (the stuck-follow-up retry is attempt 2).
+  final int attempt;
+
+  /// When the heartbeat fired.
+  final DateTime timestamp;
+}
+
+/// What the stuck-call follow-up did (or decided) at the threshold.
+enum StuckFollowUpAction {
+  /// Advisory only (interactive mode): the threshold was hit, nothing was
+  /// cancelled.
+  advisory,
+
+  /// The stuck call was cancelled and is being retried once (marked).
+  cancelRetry,
+
+  /// The retry also exceeded the threshold and was converted to a
+  /// background job via its soft-yield path; the turn continues with the
+  /// job id + log path.
+  backgroundConvert,
+
+  /// Recovery failed: the session-visible escalation names the call, its
+  /// duration, and the partial output.
+  escalate;
+
+  /// The snake_case label used in session records and HEP frames
+  /// (`cancel_retry`, `background_convert`).
+  String get label => switch (this) {
+    advisory => 'advisory',
+    cancelRetry => 'cancel_retry',
+    backgroundConvert => 'background_convert',
+    escalate => 'escalate',
+  };
+}
+
+/// A stuck-call follow-up transition (gh-1054): the threshold fired and the
+/// supervisor acted — advised, cancelled+retried, background-converted, or
+/// escalated. Session-visible so a hung call never dies silently.
+final class ToolCallStuckEvent extends AgentEvent {
+  const ToolCallStuckEvent({
+    required this.toolCallId,
+    required this.toolName,
+    required this.args,
+    required this.elapsed,
+    required this.action,
+    this.detail = '',
+    required this.timestamp,
+  });
+
+  /// The [ToolCall.id] that was stuck.
+  final String toolCallId;
+
+  /// The tool's name.
+  final String toolName;
+
+  /// The parsed tool call arguments.
+  final Map<String, dynamic> args;
+
+  /// How long the call had run when the action fired.
+  final Duration elapsed;
+
+  /// The follow-up action taken.
+  final StuckFollowUpAction action;
+
+  /// Human-readable detail (the reason, or the partial-output pointer for
+  /// an escalation).
+  final String detail;
+
+  /// When the action fired.
+  final DateTime timestamp;
+}
+
 /// The event stream returned by [agentLoop] and [agentLoopContinue].
 ///
 /// Completes on [AgentEndEvent]; [EventStream.result] then yields the
@@ -869,6 +1004,9 @@ Future<List<Message>> _runAgentLoop({
     tools: context.tools,
   );
   var currentConfig = config;
+  // Issue #862: breaker counters are per run (per user turn) — a fresh
+  // prompt starts from zero consecutive failures.
+  config.toolMisuseBreaker?.beginRun();
 
   await _emitRunStart(prompts, emit);
 
@@ -1193,6 +1331,9 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
 ) async {
   var reliefUsed = false;
   var pairingHealed = false;
+  // Issue #862: drain the armed corrective note once per streamed response
+  // (not per built context) so a mid-turn retry re-attaches it.
+  final misuseNote = config.toolMisuseBreaker?.drainPendingNote();
   // Hardening over pi: short-circuit an already-cancelled token instead of
   // relying on the provider to surface the abort as an error event.
   if (_isCancelRequested(cancelToken)) {
@@ -1203,6 +1344,7 @@ Future<(AssistantMessage, Context)> _streamAssistantResponse(
       context,
       config,
       cancelToken,
+      misuseNote: misuseNote,
     );
     // Pairing repairs are always surfaced (issue #85): hosts see exactly
     // what was dropped/synthesized/renamed before the request went out.
@@ -1482,8 +1624,9 @@ AssistantMessage _streamEndedWithoutTerminal(
 Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   Context context,
   AgentLoopConfig config,
-  CancelToken? cancelToken,
-) async {
+  CancelToken? cancelToken, {
+  String? misuseNote,
+}) async {
   // pi applies transformContext (then convertToLlm) before each provider
   // call; only the request payload is rewritten, never the transcript.
   var requestContext = context;
@@ -1520,6 +1663,18 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
     requestContext = Context(
       systemPrompt: requestContext.systemPrompt,
       messages: repaired.messages,
+      tools: requestContext.tools,
+    );
+  }
+  // Issue #862: an armed corrective note rides the NEXT request payload as
+  // a trailing user message — visible to the model, never in the transcript.
+  // Drained ONCE by the caller ([_streamAssistantResponse], before the
+  // attempt loop) and re-attached on every rebuild, so an over-window
+  // retry cannot silently drop an already-armed note (issue #862 review).
+  if (misuseNote != null) {
+    requestContext = Context(
+      systemPrompt: requestContext.systemPrompt,
+      messages: [...requestContext.messages, UserMessage.text(misuseNote)],
       tools: requestContext.tools,
     );
   }
@@ -1917,6 +2072,7 @@ Future<_ExecutedToolCallBatch> _executeToolCallsSequential(
           toolExecutor,
           cancelToken,
           emit,
+          stuckTool: config.stuckTool,
         ),
         config,
         cancelToken,
@@ -1978,6 +2134,7 @@ Future<_ExecutedToolCallBatch> _executeToolCallsParallel(
             toolExecutor,
             cancelToken,
             emit,
+            stuckTool: config.stuckTool,
           );
           final finalized = await _finalizeExecutedToolCall(
             context,
@@ -2023,6 +2180,17 @@ Future<_ToolCallPreparation> _prepareToolCall(
       _errorToolResult('Tool ${toolCall.name} not found'),
       true,
     );
+  }
+
+  // Issue #862: after 6 consecutive identical failures the loop refuses to
+  // execute this exact call again in this run — an honest error naming the
+  // misuse instead of another silent loop turn.
+  final refusal = config.toolMisuseBreaker?.refusalFor(
+    toolCall.name,
+    toolCall.arguments,
+  );
+  if (refusal != null) {
+    return _ImmediateToolCall(_errorToolResult(refusal), true);
   }
 
   try {
@@ -2089,38 +2257,70 @@ Tool? _findTool(Context context, String name) {
 }
 
 /// Port of pi's `executePreparedToolCall`: run the executor, relay partial
-/// updates, convert a throw into an error result.
+/// updates, convert a throw into an error result. When a [StuckToolConfig]
+/// is configured (and the tool is not excluded) the execution runs under
+/// the stuck-call supervisor (gh-1054): liveness heartbeats past half the
+/// threshold, then the autonomous cancel/retry/convert follow-up.
 Future<_ExecutedToolCallOutcome> _executePreparedToolCall(
   ToolCall toolCall,
   ToolExecutor toolExecutor,
   CancelToken? cancelToken,
-  AgentEventSink emit,
-) async {
+  AgentEventSink emit, {
+  StuckToolConfig? stuckTool,
+}) async {
   final updateEvents = <Future<void>>[];
   var acceptingUpdates = true;
-  try {
-    final result = await toolExecutor(toolCall, cancelToken, (partialResult) {
-      if (!acceptingUpdates) return;
-      updateEvents.add(
-        Future<void>(
-          () => emit(
-            ToolExecutionUpdateEvent(
-              toolCallId: toolCall.id,
-              toolName: toolCall.name,
-              args: toolCall.arguments,
-              partialResult: partialResult,
-            ),
+  void onPartial(ToolExecutionResult partialResult) {
+    if (!acceptingUpdates) return;
+    updateEvents.add(
+      Future<void>(
+        () => emit(
+          ToolExecutionUpdateEvent(
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+            args: toolCall.arguments,
+            partialResult: partialResult,
           ),
         ),
-      );
-    });
+      ),
+    );
+  }
+
+  Future<ToolExecutionResult> run(
+    CancelToken? token, [
+    void Function(ToolExecutionResult partialResult)? observe,
+  ]) => toolExecutor(toolCall, token, (partialResult) {
+    observe?.call(partialResult);
+    onPartial(partialResult);
+  });
+
+  final supervised =
+      stuckTool != null &&
+      stuckTool.enabled &&
+      !stuckTool.excludes(toolCall.name);
+  final execution = supervised
+      ? _superviseToolExecution(
+          toolCall: toolCall,
+          run: run,
+          runToken: cancelToken,
+          stuck: stuckTool,
+          emit: emit,
+        )
+      : run(cancelToken);
+  try {
+    final result = await execution;
     acceptingUpdates = false;
     await Future.wait(updateEvents);
     return _ExecutedToolCallOutcome(result, false);
   } catch (error) {
     acceptingUpdates = false;
     await Future.wait(updateEvents);
-    return _ExecutedToolCallOutcome(_errorToolResult(error), true);
+    return _ExecutedToolCallOutcome(
+      _errorToolResult(error),
+      true,
+      validationRejection:
+          error is ToolValidationException || error is ToolNotFoundException,
+    );
   }
 }
 
@@ -2136,6 +2336,33 @@ Future<_FinalizedToolCall> _finalizeExecutedToolCall(
 ) async {
   var result = executed.result;
   var isError = executed.isError;
+
+  // Issue #862: feed the breaker. Only call-shape VALIDATION rejections
+  // count toward the identical-call thresholds; a success clears the
+  // tool's consecutive-failure state. Operational failures (bash exits,
+  // refused writes) are invisible to the breaker — a deterministic failing
+  // command must stay runnable (issue #862 review). The stuck-call
+  // supervisor's marked results (gh-1054) ride the same rule: an
+  // escalation throws a plain StateError (operational), so a hung call
+  // never poisons the breaker's counters.
+  final breaker = config.toolMisuseBreaker;
+  if (breaker != null) {
+    if (isError && !executed.validationRejection) {
+      // Operational failure: neither counts nor resets.
+    } else if (isError) {
+      breaker.observeFailure(
+        toolCall.name,
+        toolCall.arguments,
+        result.content
+            .whereType<TextContent>()
+            .map((block) => block.text)
+            .join('\n'),
+        toolDescription: _findTool(context, toolCall.name)?.description,
+      );
+    } else {
+      breaker.observeSuccess(toolCall.name);
+    }
+  }
 
   final afterToolCall = config.afterToolCall;
   if (afterToolCall != null) {
@@ -2251,10 +2478,30 @@ final class _ExecutedToolCallBatch {
 }
 
 final class _ExecutedToolCallOutcome {
-  const _ExecutedToolCallOutcome(this.result, this.isError);
+  const _ExecutedToolCallOutcome(
+    this.result,
+    this.isError, {
+    this.validationRejection = false,
+  });
 
   final ToolExecutionResult result;
   final bool isError;
+
+  /// True when the failure was a call-shape rejection thrown by the
+  /// registry BEFORE any tool body ran — in practice
+  /// [ToolValidationException] (schema mismatch). Only these count toward
+  /// the misuse breaker; an operational failure (a non-zero bash exit, a
+  /// refused write) is the environment's answer, not the model misusing
+  /// the tool (issue #862 review).
+  ///
+  /// Scope note: the loop's IMMEDIATE tool outcomes (unknown tool —
+  /// caught by the `_prepareToolCall` `_findTool` check, breaker refusals,
+  /// `beforeToolCall` denials such as approval rejections) bypass
+  /// [_finalizeExecutedToolCall] entirely and never reach the breaker. In
+  /// the wired CLI, `context.tools` mirrors the registry surface, so a
+  /// registry-thrown [ToolNotFoundException] is nearly unreachable; the
+  /// counted class is effectively validation rejections only.
+  final bool validationRejection;
 }
 
 sealed class _ToolCallPreparation {

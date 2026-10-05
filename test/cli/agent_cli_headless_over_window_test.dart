@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -14,10 +16,12 @@ import 'agent_cli_test_support.dart';
 void main() {
   late MemoryExecutionEnv env;
   late FakeCliIO io;
+  late TransientRetryNotice? savedNotice;
 
   setUp(() {
     env = MemoryExecutionEnv(cwd: '/work');
     io = FakeCliIO();
+    savedNotice = transientRetryNotice;
     // The overflow payload: a real tool result the `read` tool returns in
     // full (short lines stay under its line cap; ~46k chars ≈ 11.5k
     // estimated tokens) — not a split assistant turn, so the classic
@@ -25,7 +29,12 @@ void main() {
     env.writeFile('big.txt', List.filled(1000, 'x' * 45).join('\n'));
   });
 
-  tearDown(() => io.close());
+  tearDown(() {
+    // `runHeadless` wires the global [net] notice (issue #1121) — never
+    // leak it into other suites.
+    transientRetryNotice = savedNotice;
+    io.close();
+  });
 
   // 12k window: the harness's system-prompt + tool-schema overhead (~8.5k
   // estimated tokens) still fits request 1, while the 100k-char (~25k
@@ -153,6 +162,79 @@ void main() {
         io.out.toString(),
         contains('The task was NOT continued'),
         reason: 'the loud terminal verdict names the stopped task',
+      );
+    },
+  );
+
+  test(
+    'the [net] retry notice reaches headless output (issue #1121)',
+    timeout: const Timeout(Duration(seconds: 60)),
+    () async {
+      // Attempt 1 dies with a classified transient wording; attempt 2
+      // recovers. The bench (fa -p) must SEE the retry.
+      var calls = 0;
+      final base = FakeStreamFunction([
+        textTurn('unused'),
+      ]).call;
+      // The retry ladder wraps the catalog fn in production; an injected
+      // test fn composes it the same way — attempt 1 dies inside the
+      // ladder with a transient wording, attempt 2 recovers.
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: const Model(
+            id: 'tiny-window',
+            api: 'test-api',
+            provider: 'test-provider',
+            baseUrl: 'https://example.test',
+            contextWindow: 12000,
+            maxTokens: 4096,
+          ),
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+        ),
+        io: io,
+        streamFunction: transientRetryStreamFunction((
+          model,
+          context, {
+          cancelToken,
+        }) {
+          calls++;
+          if (calls == 1) {
+            final stream = AssistantMessageEventStream();
+            scheduleMicrotask(() {
+              stream
+                ..push(
+                  ErrorEvent(
+                    reason: StopReason.error,
+                    error: testAssistant(
+                      stopReason: StopReason.error,
+                      errorMessage: 'SocketException: Connection reset by peer',
+                    ),
+                  ),
+                )
+                ..end();
+            });
+            return stream;
+          }
+          return base(model, context, cancelToken: cancelToken);
+        }),
+      );
+
+      final exitCode = await cli.runHeadless('count the words');
+
+      expect(exitCode, 0, reason: 'the retry recovered the run');
+      expect(calls, 2);
+      expect(
+        io.out.toString(),
+        contains('[net] connection lost'),
+        reason: 'the transient ladder speaks on the headless surface too',
+      );
+      expect(
+        io.out.toString(),
+        contains('attempt 2/3'),
+        reason: 'the notice announces the REPLAY (the first attempt died)',
       );
     },
   );

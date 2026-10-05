@@ -154,9 +154,108 @@ The 0.1.1 row is the legacy `Bench` regression baseline (issue #142);
 it is not comparable with the Harbor families (different harness
 generation) and is kept only as the harness-regression anchor.
 
+## MLS-Bench (Harbor)
+
+`bench/mls_bench/` + `Bench MLS` workflow — runs fa on
+[MLS-Bench](https://github.com/Imbernoulli/MLS-Bench) (140 ML-science
+research tasks; the 30-task MLS-Bench-Lite slice is the cheap comparison
+set) through the same Harbor runtime and `bench/harbor_fa/fa_agent.py`
+adapter as Bench 4.0:
+
+```
+harbor run -c run-<provider>[-lite].yaml -a bench.harbor_fa.fa_agent:FaAgent
+```
+
+No fork: the workflow checks out Imbernoulli/MLS-Bench at a pinned SHA and
+runs its own configs verbatim, including their `harbor_env:` provider
+environment clamps (provider ceilings are upstream's).
+
+### Staging ladder (cost discipline)
+
+Each job needs the previous one, so a failure stops the spend before the
+next stage: `plan` (bundle + subset + secret fail-fast) → `nop` (image
+builds + sandbox start on the sanity CPU task, no agent) → `oracle`
+(strongest declared baseline replay) → `agent` (fa over the subset).
+Dispatch inputs: `subset` = `smoke-cpu` (default) | `lite` | `full`
+(~138 GPU-sandboxed tasks; requires `confirm-full=yes`) | `task=<name>`;
+`provider` = `daytona` | `modal` (required); `model`, `gpu-type` (H100
+default), `mls-sha`, `shards`. The `model` input is wired into the z.ai
+provider preconfig (the builder emits the JSON), so `-m`, the preconfig,
+and the archived run identity all name the same model. Dispatch inputs
+reach `run:` steps only via `env:` indirection (no shell interpolation of
+free-form input). Runs are serialized (`concurrency: bench-mls`).
+
+### Timeout discipline
+
+Every task ships `[agent] timeout_sec = 18000` (5 h) and Harbor enforces
+it; the builder (`bench/mls_bench/build_run.py`) never emits
+`--*-timeout-multiplier` or override flags — changing the budget voids
+comparability with the published leaderboard. The summary step re-checks
+recorded trial configs and fails the run on a violation. Errored trials
+(a routine 5 h-budget frontier outcome) are `::warning::` annotations and
+stay out of the per-domain means — the step fails only on structural
+problems (lost shard, comparability violation, unreadable artifacts).
+
+### Secrets (owner-provisioned, env-only, never echoed)
+
+| Secret | Used for |
+|---|---|
+| `FA_BENCH_ZAI_KEY` | z.ai key for glm-5.3-flash (shared with Bench 4.0) |
+| `DAYTONA_API_KEY` | provider=daytona |
+| `MODAL_TOKEN_ID` / `MODAL_TOKEN_SECRET` | provider=modal |
+
+A missing secret fails the `plan` job before any spend, naming the exact
+key. On `modal`, tasks whose declared budgets exceed the 24 h sandbox cap
+are flagged as clip-risk in the summary (not silently clipped).
+
+### Results
+
+1. **Job summary** — per-domain arithmetic-mean aggregate
+   (`bench/mls_bench/summary_mls.py`) over the agent trials, plus run
+   identity (dataset SHA, model, fa commit, budget statement) and a
+   completeness verdict.
+2. **Artifacts** — per-trial `result.json` + logs + `mls-run-config.json`
+   with 90-day retention; `mls-jobs-merged` bundles everything.
+3. **Permanent archive** — each run's bundle is attached to the
+   `bench-mls-archive` release.
+
+**Scores are pending the first full run** — the workflow and aggregation
+are live; ledger rows append per MLS dataset version per the ledger
+discipline above, with cost from `bench/pricing.json` (#1123).
+
 ## Legacy: terminal-bench-core 0.1.1
 
 `bench/terminal_bench/` + `Bench` workflow — kept for regression runs of
 the 0.1.1 baseline (32.5% with fa + glm-5.3-flash; harness-side failure
 clusters tracked in issue #142). See `bench/terminal_bench/run.sh` for the
 local path. Not valid for leaderboard submissions.
+
+### Dataset rot repairs (patch_dataset.py)
+
+`tb datasets download` is re-fetched fresh per run and then patched in
+place by `bench/terminal_bench/patch_dataset.py` before `tb run` (both in
+the workflow and in run.sh):
+
+- debian:-based task Dockerfiles get the archive.debian.org /
+  snapshot.debian.org repoint + `Acquire::Check-Valid-Until "false"` conf
+  (Debian archived bullseye; issue #142).
+- `fix-git` gets its `setup.sh` replaced: the original clones
+  `TheMikeMerrill/personal-site`, which was deleted (404 → `docker compose
+  build` exit 128, no trial ever starts — gh-1208). The replacement
+  rebuilds the identical task state locally, network-free: master one
+  commit past a detached-HEAD "Move to Stanford" commit holding the
+  shipped `resources/patch_files` payloads, with the HEAD reflog keeping
+  that commit on line 4 — where the upstream `solution.sh` reads it.
+  Marker for idempotency: the dead repo URL's presence in setup.sh.
+
+### Compose failure visibility (sitecustomize.py)
+
+tb logs captured `docker compose` stdout/stderr at DEBUG only, so a build
+failure on CI surfaces as a bare `CalledProcessError` (gh-1208 cost two
+full runs before anyone saw the real error). `bench/terminal_bench/`
+is already on `PYTHONPATH` for every `tb run` (run.sh + the workflow), and
+python auto-imports `sitecustomize` from it at startup: a post-import hook
+patches `DockerComposeManager._run_docker_compose_command` to re-log the
+captured output at ERROR (tail-capped to 32 KiB per stream) before the
+exception propagates — no invocation changes, no eager tb import.
+Opt-out: `FA_TB_LOG_COMPOSE_FAILURES=0`.

@@ -42,8 +42,9 @@ library;
 
 import 'dart:async';
 
-import '../agent/agent_loop.dart' show AgentEvent;
+import '../agent/agent_loop.dart' show AgentEvent, ToolCallStuckEvent;
 import '../approval/approval.dart';
+import '../redact/redaction_pipeline.dart';
 import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
 import 'wire_protocol.dart';
@@ -79,6 +80,7 @@ final class WireServeServer {
     required bool Function() isBusy,
     AgentWireProtocol? protocol,
     void Function(String line)? onLog,
+    this.redactionPipeline,
   }) : _runPrompt = runPrompt,
        _steer = steer,
        _abort = abort,
@@ -92,6 +94,13 @@ final class WireServeServer {
   final void Function() _abort;
   final bool Function() _isBusy;
   final void Function(String line)? _onLog;
+
+  /// Masks the stuck events' captured-output detail before a frame leaves
+  /// for the attached client — `tool_call_stuck` frames land in external
+  /// bridges, the same secret-bearing surface the session record's
+  /// redaction targets (gh-1054 review round 2). Optional: hosts without
+  /// a pipeline pass details through (test hosts).
+  final RedactionPipeline? redactionPipeline;
 
   WireFrameSink? _client;
   bool _attaching = false;
@@ -268,6 +277,18 @@ final class WireServeServer {
   void handleAgentEvent(AgentEvent event) {
     final client = _client;
     if (client == null) return;
+    if (event is ToolCallStuckEvent && redactionPipeline != null) {
+      final pipeline = redactionPipeline!;
+      event = ToolCallStuckEvent(
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        args: event.args,
+        elapsed: event.elapsed,
+        action: event.action,
+        detail: pipeline.redact(event.detail),
+        timestamp: event.timestamp,
+      );
+    }
     _sendSafely(_protocol.encodeEvent(event), client);
   }
 

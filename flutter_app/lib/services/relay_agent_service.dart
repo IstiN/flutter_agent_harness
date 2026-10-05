@@ -943,8 +943,24 @@ final class RelayAgentService extends AgentService {
   /// the SW persists it to chrome.storage and reconfigures its agent. The
   /// local (idle) agent is deliberately never touched — the panel holds no
   /// provider state of its own in extension mode.
+  ///
+  /// gh-1044 I1: the same add-provider-flow refusal the base implements —
+  /// a restore-shaped `settings_put` is dropped while an add flow is
+  /// latched; the flow's own switch (`fromProviderAddFlow`) goes through.
   @override
-  Future<void> reconfigure(AgentConfig config) async {
+  Future<void> reconfigure(
+    AgentConfig config, {
+    bool fromProviderAddFlow = false,
+  }) async {
+    // The shared predicate (the base owns the refusal rule — one shape,
+    // no drift); only the log prefix differs.
+    if (reconfigureRefusedByAddFlow(fromProviderAddFlow)) {
+      debugPrint(
+        '[fah][relay] reconfigure refused: a provider add flow is in '
+        'progress — the active connection stays untouched until it finishes',
+      );
+      return;
+    }
     // Issue #327: the same guard the local service runs in reconfigure -
     // the relay override dispatched settings_put blindly (the exact
     // surface where an OpenRouter-format model id rode a CodeMie

@@ -27,6 +27,8 @@ import '../context.dart';
 import '../model.dart';
 import '../types.dart';
 import 'agent_loop.dart';
+import 'misuse_breaker.dart';
+import 'stuck_tool.dart';
 import 'tool_registry.dart';
 
 /// Thrown (as [ArgumentError]) when neither a tool executor nor a tool
@@ -205,6 +207,8 @@ class Agent {
     this.contextWindowCap,
     this.wireDump = false,
     this.overWindowRelief,
+    this.toolMisuseBreaker,
+    this.stuckTool,
   }) : toolExecutor =
            toolExecutor ?? toolRegistry?.executor ?? _missingToolExecutor(),
        _state = AgentState(
@@ -261,6 +265,13 @@ class Agent {
   /// Executes tool calls requested by the model. See [ToolExecutor].
   ToolExecutor toolExecutor;
 
+  /// The tool-misuse circuit breaker (issue #862): 3 consecutive identical
+  /// tool-call rejections arm a corrective note in the next request
+  /// payload; 6 stop executing that identical call for the rest of the run.
+  /// `null` (default) disables it — byte-identical to the pre-breaker
+  /// harness.
+  ToolMisuseBreaker? toolMisuseBreaker;
+
   /// Called before a tool is executed; can block it. See [BeforeToolCallHook].
   BeforeToolCallHook? beforeToolCall;
 
@@ -285,8 +296,18 @@ class Agent {
 
   /// Emergency relief for the loop's over-window guard (issue #387),
   /// threaded into every [AgentLoopConfig]. `null` = the guard keeps
-  /// today's behavior (verbatim error, no mid-turn compaction).
-  final OverWindowRelief? overWindowRelief;
+  /// today's behavior (verbatim error, no mid-turn compaction). Mutable
+  /// like the other late-wirable host knobs ([streamFunction],
+  /// [externalSteeringSource]): hosts that build the agent before the
+  /// service exists (the app's pre-constructed-agent constructor) attach
+  /// the relief right after (gh-1077).
+  OverWindowRelief? overWindowRelief;
+
+  /// Stuck-call supervision (gh-1054), threaded into every
+  /// [AgentLoopConfig]: liveness heartbeats for long-running tool calls
+  /// plus the autonomous cancel/retry/convert follow-up. `null` =
+  /// unsupervised.
+  final StuckToolConfig? stuckTool;
 
   /// External messages merged into the steering poll at every turn boundary
   /// (before the first turn and after each one) — e.g. the agent's inbox in
@@ -538,6 +559,7 @@ class Agent {
                 }
               }
             },
+      stuckTool: stuckTool,
       toolExecution: toolExecution,
       beforeToolCall: beforeToolCall,
       afterToolCall: afterToolCall,
@@ -545,6 +567,7 @@ class Agent {
       prepareNextTurn: prepareNextTurn == null
           ? null
           : (context) => prepareNextTurn?.call(context),
+      toolMisuseBreaker: toolMisuseBreaker,
       getSteeringMessages: () async {
         if (skip) {
           skip = false;

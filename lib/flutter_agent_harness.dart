@@ -9,7 +9,9 @@ library;
 export 'src/agent/agent.dart';
 export 'src/agent/agent_loop.dart';
 export 'src/agent/agent_tool.dart';
+export 'src/agent/misuse_breaker.dart';
 export 'src/agent/image_registry.dart';
+export 'src/agent/stuck_tool.dart';
 export 'src/agent/tool_pairing.dart';
 export 'src/agent/auto_compactor.dart'
     show
@@ -20,6 +22,7 @@ export 'src/agent/auto_compactor.dart'
         AutoCompactorSources;
 export 'src/agent/param_validator.dart';
 export 'src/agent/tool_registry.dart';
+export 'src/apps/js_app_errors.dart';
 export 'src/approval/approval.dart';
 export 'src/approval/approval_hook.dart';
 export 'src/approval/bash_interceptor.dart';
@@ -32,6 +35,7 @@ export 'src/dap/dap_hub_snapshot.dart';
 export 'src/cli/agent_cli.dart';
 export 'src/cli/browser_bridge_commands.dart';
 export 'src/cli/custom_providers.dart';
+export 'src/cli/key_status.dart';
 export 'src/cli/env_provider_preconfig.dart';
 export 'src/model_roles/provider_key_resolver.dart';
 export 'src/cli/config_command.dart';
@@ -44,6 +48,7 @@ export 'src/cli/cli_config.dart'
         applyProviderTimeoutEnvOverride,
         loadCliConfig,
         loadProjectCompactionEngine,
+        loadProjectContextWindowCap,
         loadProjectMemoryConfig,
         loadProjectCubeSettings,
         parseProviderTimeouts,
@@ -111,6 +116,7 @@ export 'src/cli/key_event.dart';
 export 'src/cli/prompt_templates.dart';
 export 'src/cli/tui_mouse_mode.dart';
 export 'src/compaction/branch_summarization.dart';
+export 'src/compaction/host_wiring.dart';
 export 'src/compaction/compaction.dart';
 export 'src/compaction/summary_sanitizer.dart';
 export 'src/compaction/token_estimation.dart';
@@ -136,8 +142,10 @@ export 'src/memory/memory_controller.dart';
 export 'src/memory/memory_tools.dart';
 export 'src/messaging/agent_message.dart';
 export 'src/messaging/fallback_messaging_repository.dart';
+export 'src/messaging/inbox_wake_policy.dart';
 export 'src/messaging/schedule_message_tool.dart';
 export 'src/messaging/scheduled_messages.dart';
+export 'src/messaging/scheduled_receipts.dart';
 export 'src/messaging/file_messaging_repository.dart';
 export 'src/messaging/messaging_repository.dart';
 export 'src/messaging/fabric_config.dart';
@@ -231,6 +239,7 @@ export 'src/tools/checkpoint_tool.dart';
 export 'src/tools/dynamic_message_tool.dart';
 export 'src/tools/inspect_image.dart';
 export 'src/tools/mobile/mobile_tools.dart';
+export 'src/tools/misuse_policy.dart';
 export 'src/tools/password_prompt.dart';
 export 'src/tools/read_selector.dart';
 export 'src/tools/request_secret_tool.dart';
@@ -250,6 +259,12 @@ export 'src/parity/settings_registry.dart';
 export 'src/hosts/host_capability_profile.dart';
 export 'src/hosts/host_wiring_builder.dart';
 export 'src/types.dart';
+export 'src/usage/usage_chain.dart';
+export 'src/usage/usage_fold.dart';
+export 'src/usage/usage_hygiene.dart';
+export 'src/usage/usage_ledger.dart';
+export 'src/usage/usage_ledger_io.dart';
+export 'src/usage/usage_log_line.dart';
 export 'src/usage_summary.dart';
 export 'src/utils/path_text.dart';
 export 'src/wire/wire_adapter.dart';

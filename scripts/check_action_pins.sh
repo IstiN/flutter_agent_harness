@@ -7,9 +7,15 @@
 #   bash scripts/check_action_pins.sh --path DIR # scan DIR/*.yml (fixtures)
 #
 # Exempt:
-#   - ./...          first-party repo-relative actions/workflows
-#   - @<40-hex>      full commit SHA (the only accepted third-party form)
-# Everything else (tags, branches, latest, main, master, short SHAs) fails.
+#   - ./...                                 first-party repo-relative actions/workflows
+#   - @<40-hex>                             full commit SHA (the default third-party form)
+#   - IstiN/dmtools-agentic-workflows/*@main  owner directive 2026-10-04: awf tracks
+#     @main (always-latest, review-gated) — scoped EXACTLY to this repo at
+#     exactly main; enforced per-stub by
+#     test/machine_kit/factory_stub_ref_test.dart (every awf uses: resolves
+#     to exactly 'main', all five stubs in lockstep).
+# Everything else (tags, branches, latest, master, short SHAs, other repos
+# at main) fails.
 
 set -eu
 
@@ -67,7 +73,14 @@ for file in "${files[@]}"; do
         # A mutable ref whose NAME is exactly 40 chars would pass a pure
         # length glob — require hex digits (a commit SHA), nothing else.
         if [[ "$sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
-          : # full 40-hex commit SHA — the only accepted third-party form
+          : # full 40-hex commit SHA — the default accepted third-party form
+        elif [[ "$ref" == IstiN/dmtools-agentic-workflows/*@main ]]; then
+          : # owner directive 2026-10-04: awf tracks @main (always-latest,
+            # review-gated). Scoped exactly: THIS repo at exactly main —
+            # test/machine_kit/factory_stub_ref_test.dart pins the policy
+            # per-stub (never a stale SHA, never a random ref, all five
+            # stubs in lockstep) — while this gate still rejects any other
+            # awf ref and any OTHER repo at main.
         else
           echo "::error file=$file::third-party action not SHA-pinned: $ref"
           violations=$((violations + 1))

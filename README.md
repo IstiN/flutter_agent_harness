@@ -130,7 +130,10 @@ fa "summarize the changelog" | pbcopy  # pipes cleanly
 Flags: `--model <id>`,
 `--provider openai-completions|anthropic|google|dial|minimax|zai`,
 `--base-url <url>`, `--cwd <dir>`, `--session-root <dir>`, `-p`/`--prompt
-<text>`, `--help`, `--version`.
+<text>`, `--stream-thinking` (stream the model's thinking deltas dimmed
+into stdout — off by default, so piped/machine-consumed output stays
+byte-identical; `output.streamThinking: true` in the config is the
+durable form), `--help`, `--version`.
 
 The `chatgpt` provider (Codex backend) is also available: sign in with a
 ChatGPT account via `/provider chatgpt oauth` in the REPL (OAuth-only —

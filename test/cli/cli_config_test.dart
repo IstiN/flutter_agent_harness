@@ -828,6 +828,40 @@ prompts:
         expect(loaded.agentMode, isNull);
       });
 
+      test('parses agent.misuseBreaker = false (issue #862)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  misuseBreaker: false\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.misuseBreaker, isFalse);
+      });
+
+      test('misuseBreaker defaults to true when the key is absent '
+          '(issue #862)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: pi\n');
+        final loaded = loadCliConfig(tmp.path);
+        expect(loaded.misuseBreaker, isTrue);
+      });
+
+      test('rejects a non-boolean misuseBreaker with the exact message '
+          '(issue #862)', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  misuseBreaker: "off"\n');
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              '"agent.misuseBreaker" must be a boolean',
+            ),
+          ),
+        );
+      });
+
       test('rejects an unknown agent.mode value', () {
         final file = File('${tmp.path}/.fah/config.yaml');
         file.createSync(recursive: true);
@@ -925,6 +959,110 @@ prompts:
           contains('agent:\n  contextWindowCap: 256000\n  mode: omp\n'),
         );
       });
+
+      test('absent agent.stuckTool parses to null', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync('agent:\n  mode: omp\n');
+        expect(loadCliConfig(tmp.path).stuckTool, isNull);
+      });
+
+      test('parses agent.stuckTool and persists only non-defaults back', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync(
+          'agent:\n'
+          '  stuckTool:\n'
+          '    floorSeconds: 42\n'
+          '    heartbeatSeconds: 7\n'
+          '    followUp: advisory\n'
+          '    excludeTools: [task]\n',
+        );
+        final loaded = loadCliConfig(tmp.path);
+        final stuck = loaded.stuckTool;
+        expect(stuck, isNotNull);
+        expect(stuck!.floor, const Duration(seconds: 42));
+        expect(stuck.heartbeatInterval, const Duration(seconds: 7));
+        expect(stuck.followUp, StuckFollowUpMode.advisory);
+        expect(stuck.excludeTools, ['task']);
+        final yaml = loaded
+            .withCustomProviders(loaded.customProviders)
+            .toYaml();
+        expect(
+          yaml,
+          contains(
+            '  stuckTool:\n'
+            '    followUp: advisory\n'
+            '    floorSeconds: 42\n'
+            '    heartbeatSeconds: 7\n'
+            '    excludeTools: [task]\n',
+          ),
+        );
+      });
+
+      test('rejects an unknown agent.stuckTool key', () {
+        final file = File('${tmp.path}/.fah/config.yaml');
+        file.createSync(recursive: true);
+        file.writeAsStringSync(
+          'agent:\n  stuckTool:\n    floorSeconds: 10\n    turbo: true\n',
+        );
+        expect(
+          () => loadCliConfig(tmp.path),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('unknown "agent.stuckTool" key'),
+            ),
+          ),
+        );
+      });
+      test(
+        'the effective supervision is advisory for interactive hosts, '
+        'autonomous for headless — explicit config wins everywhere',
+        () {
+          // Issue review (gh-1054): the ticket's non-goal — auto-cancelling
+          // interactive sessions with a human present. The autonomous
+          // default is a headless-only policy; `agent.stuckTool:` in the
+          // yaml always wins.
+          AgentCliConfig cli({bool headless = false, StuckToolConfig? stuck}) =>
+              AgentCliConfig(
+                model: const Model(
+                  id: 'm',
+                  api: 'test-api',
+                  provider: 'test-provider',
+                  baseUrl: 'https://example.test',
+                  contextWindow: 100000,
+                  maxTokens: 4096,
+                ),
+                apiKey: 'k',
+                env: MemoryExecutionEnv(cwd: '/work'),
+                sessionRoot: '/sessions',
+                headlessRun: headless,
+                stuckTool: stuck,
+              );
+          expect(
+            cli().effectiveStuckTool().followUp,
+            StuckFollowUpMode.advisory,
+            reason: 'REPL/TUI: a human is present — advise only',
+          );
+          expect(
+            cli(headless: true).effectiveStuckTool().followUp,
+            StuckFollowUpMode.autonomous,
+            reason: 'fa run: unattended — the autonomous default',
+          );
+          const explicit = StuckToolConfig(followUp: StuckFollowUpMode.advisory);
+          expect(
+            cli(headless: true, stuck: explicit).effectiveStuckTool(),
+            same(explicit),
+            reason: 'an explicit agent.stuckTool wins in both modes',
+          );
+          expect(
+            cli(stuck: explicit).effectiveStuckTool(),
+            same(explicit),
+          );
+        },
+      );
     });
   });
 
@@ -1089,6 +1227,83 @@ prompts:
     test('non-map yaml doc loads as null', () {
       writeProjectConfig('just-a-string\n');
       expect(loadProjectSpillsConfig(tmp.path), isNull);
+    });
+  });
+
+  group('project agent section (gh-1077)', () {
+    late Directory tmp;
+
+    setUp(() {
+      tmp = Directory.systemTemp.createTempSync('fah-config-test-');
+    });
+
+    tearDown(() {
+      tmp.deleteSync(recursive: true);
+    });
+
+    void writeProjectConfig(String yaml) {
+      final file = File('${tmp.path}/.fah/config.yaml');
+      file.createSync(recursive: true);
+      file.writeAsStringSync(yaml);
+    }
+
+    test('missing project file loads as null', () {
+      expect(loadProjectContextWindowCap(tmp.path), isNull);
+    });
+
+    test('parses the project-level owner cap', () {
+      writeProjectConfig('agent:\n  contextWindowCap: 128000\n');
+      expect(loadProjectContextWindowCap(tmp.path), 128000);
+    });
+
+    test('absent agent section loads as null', () {
+      writeProjectConfig('provider: anthropic\n');
+      expect(loadProjectContextWindowCap(tmp.path), isNull);
+    });
+
+    test('empty agent section loads as null', () {
+      writeProjectConfig('agent: {}\n');
+      expect(loadProjectContextWindowCap(tmp.path), isNull);
+    });
+
+    test('malformed yaml loads as null', () {
+      writeProjectConfig('agent: [unclosed');
+      expect(loadProjectContextWindowCap(tmp.path), isNull);
+    });
+
+    test('non-map yaml doc loads as null', () {
+      writeProjectConfig('just-a-string\n');
+      expect(loadProjectContextWindowCap(tmp.path), isNull);
+    });
+
+    test('present-but-invalid cap throws ConfigException (strict)', () {
+      // Below the compaction-reserve floor — the same strict rule the
+      // user config applies.
+      writeProjectConfig('agent:\n  contextWindowCap: 100\n');
+      expect(
+        () => loadProjectContextWindowCap(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('contextWindowCap'),
+          ),
+        ),
+      );
+    });
+
+    test('unknown agent key throws ConfigException (strict)', () {
+      writeProjectConfig('agent:\n  bogus: 1\n');
+      expect(
+        () => loadProjectContextWindowCap(tmp.path),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('unknown "agent" key'),
+          ),
+        ),
+      );
     });
   });
 
@@ -1548,6 +1763,48 @@ memory:
       expect(file.readAsStringSync(), contains('provider: chatgpt'));
       await saveCliConfig(tmp.path, loaded);
       expect(file.readAsStringSync(), contains('provider: chatgpt-codex'));
+    });
+  });
+
+  group('output.streamThinking (gh-1198)', () {
+    bool streamThinkingOf(String yaml) =>
+        CliConfig.fromYaml(loadYaml(yaml) as YamlMap).streamThinking;
+
+    test('defaults to false when the section is absent (byte-identical '
+        'legacy)', () {
+      expect(streamThinkingOf('mode: code\n'), isFalse);
+      final tmp = Directory.systemTemp.createTempSync('fah-output-');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      expect(loadCliConfig(tmp.path).streamThinking, isFalse);
+    });
+
+    test('parses the section', () {
+      expect(streamThinkingOf('output:\n  streamThinking: true\n'), isTrue);
+      expect(streamThinkingOf('output:\n  streamThinking: false\n'), isFalse);
+    });
+
+    test('rejects unknown output keys', () {
+      expect(
+        () => streamThinkingOf('output:\n  bogus: true\n'),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            contains('bogus'),
+          ),
+        ),
+      );
+    });
+
+    test('rejects a non-boolean streamThinking', () {
+      expect(
+        () => streamThinkingOf('output:\n  streamThinking: "yes"\n'),
+        throwsA(isA<ConfigException>()),
+      );
+      expect(
+        () => streamThinkingOf('output: true\n'),
+        throwsA(isA<ConfigException>()),
+      );
     });
   });
 }

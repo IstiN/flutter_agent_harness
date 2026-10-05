@@ -1,9 +1,21 @@
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart' as http_testing;
 import 'package:test/test.dart';
 
 import 'flaky_session_fs.dart';
+
+final chatGptModel = Model(
+  id: 'gpt-5-codex',
+  api: 'responses',
+  provider: 'chatgpt',
+  baseUrl: chatGptCodexBaseUrl,
+  input: const ['text'],
+  contextWindow: 128000,
+  maxTokens: 16384,
+);
 
 void main() {
   late MemoryFileSystem fs;
@@ -293,7 +305,8 @@ void main() {
       expect(infos.single, isA<SessionInfoRecord>());
     });
 
-    test('getPathToRoot walks a branch and validates ids', () async {
+    test('getPathToRoot walks a branch; unknown ids fail loudly (#1114)',
+        () async {
       final storage = await createStorage();
       await storage.appendEntry(
         MessageRecord(
@@ -1110,5 +1123,257 @@ void main() {
         reason: 'the heal left the primary untouched',
       );
     });
+  });
+
+  // Issue #858: no replayable history may ever brick a session. Quarantine
+  // drops a malformed record, but surviving records still reference it via
+  // parentId — the branch walk must stop at the hole instead of failing
+  // every future resume (the windowed storage's "stop, never throw"
+  // contract).
+  group('quarantine never bricks the branch walk (#858)', () {
+    /// A message record a pre-#705 / foreign binary could have written:
+    /// the assistant content carries a WIRE-style `function_call` part —
+    /// not a known [ContentBlock] type, so the line quarantines on open.
+    String poisonAssistantLine(String id, String? parentId) => jsonEncode({
+      'type': 'message',
+      'id': id,
+      'parentId': parentId,
+      'timestamp': DateTime.utc(2026).toIso8601String(),
+      'message': {
+        'role': 'assistant',
+        'api': 'responses',
+        'provider': 'chatgpt',
+        'model': 'gpt-5-codex',
+        'usage': {'input': 1, 'output': 1, 'totalTokens': 2},
+        'stopReason': 'toolUse',
+        'timestamp': DateTime.utc(2026).millisecondsSinceEpoch,
+        'content': [
+          {'type': 'text', 'text': 'checking'},
+          {
+            'type': 'function_call',
+            'call_id': 'call_42',
+            'name': 'bash',
+            'arguments': '{}',
+          },
+        ],
+      },
+    });
+
+    test(
+      'a descendant of a quarantined record no longer bricks the resume',
+      () async {
+        final storage = await createStorage();
+        await storage.appendEntry(
+          MessageRecord(
+            id: 'r0',
+            parentId: null,
+            timestamp: DateTime.utc(2026),
+            message: UserMessage.text('list the files'),
+          ),
+        );
+        // The poison line, then a VALID record parented on it — the shape
+        // every post-quarantine open of such a session carries.
+        (await fs.appendFile(path, '${poisonAssistantLine('rp', 'r0')}\n'))
+            .getOrThrow();
+        await storage.appendEntry(
+          MessageRecord(
+            id: 'r1',
+            parentId: 'rp',
+            timestamp: DateTime.utc(2026),
+            message: UserMessage.text('and the dirs too'),
+          ),
+        );
+
+        final reopened = await JsonlSessionStorage.open(fs, path);
+        expect(reopened.quarantinedEntries, 1);
+        expect(await reopened.getLeafId(), 'r1');
+
+        // Pre-fix this threw `Entry rp not found` — a permanent brick: the
+        // rewrite had already dropped rp, so EVERY later open failed.
+        final session = Session(reopened);
+        final messages = await session.buildContextMessages();
+        expect(messages, hasLength(1));
+        expect(messages.single, isA<UserMessage>());
+
+        // The surviving context converts grammar-valid for the responses
+        // wire — the poisoned record never re-enters the payload.
+        expect(
+          firstResponsesGrammarViolation(responsesInputItems(messages)),
+          isNull,
+        );
+      },
+    );
+
+    test('a dangling LeafRecord target falls back to the newest record',
+        () async {
+      final storage = await createStorage();
+      await storage.appendEntry(
+        MessageRecord(
+          id: 'r0',
+          parentId: null,
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('hello'),
+        ),
+      );
+      (await fs.appendFile(path, '${poisonAssistantLine('rp', 'r0')}\n'))
+          .getOrThrow();
+      // A navigation leaf whose target is the record about to quarantine.
+      await storage.appendEntry(
+        LeafRecord(
+          id: 'L1',
+          parentId: 'r0',
+          timestamp: DateTime.utc(2026),
+          targetId: 'rp',
+        ),
+      );
+
+      final reopened = await JsonlSessionStorage.open(fs, path);
+      expect(reopened.quarantinedEntries, 1);
+      // The heal is surfaced, not silent — same convention as quarantine.
+      expect(reopened.healedLeafEntries, 1);
+      // The tracked leaf dangled ('rp' quarantined); load healed it to the
+      // newest surviving record — the LeafRecord itself.
+      expect(await reopened.getLeafId(), 'L1');
+      final session = Session(reopened);
+      final messages = await session.buildContextMessages();
+      expect(messages, hasLength(1));
+    });
+
+    test('a parentId cycle terminates the walk instead of spinning',
+        () async {
+      final storage = await createStorage();
+      // An adversarial/foreign-authored file can carry a cycle; appendEntry
+      // does not validate tree shape, so it is reachable through the API.
+      await storage.appendEntry(
+        MessageRecord(
+          id: 'a',
+          parentId: 'b',
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('a'),
+        ),
+      );
+      await storage.appendEntry(
+        MessageRecord(
+          id: 'b',
+          parentId: 'a',
+          timestamp: DateTime.utc(2026),
+          message: UserMessage.text('b'),
+        ),
+      );
+
+      final reopened = await JsonlSessionStorage.open(fs, path);
+      // Terminates bounded by the record count; never spins, never throws.
+      final walked = await reopened.getPathToRoot('a');
+      expect(walked.length, lessThanOrEqualTo(3));
+    });
+
+    test(
+      'poison-typed session resumes a full turn without any JSONL rewrite',
+      () async {
+        // The pre-#705 session: typed records authored under the old
+        // converter, ending with a compaction whose cut falls EXACTLY
+        // between a function_call and its output (E4) — the kept region
+        // opens with an orphan tool result.
+        final storage = await createStorage();
+        await storage.appendEntry(
+          MessageRecord(
+            id: 'r0',
+            parentId: null,
+            timestamp: DateTime.utc(2026),
+            message: UserMessage.text('list the files'),
+          ),
+        );
+        await storage.appendEntry(
+          MessageRecord(
+            id: 'r1',
+            parentId: 'r0',
+            timestamp: DateTime.utc(2026),
+            message: AssistantMessage(
+              content: const [
+                TextContent(text: 'Checking.'),
+                ToolCall(id: 'call_42', name: 'bash', arguments: {'cmd': 'ls'}),
+              ],
+              api: 'responses',
+              provider: 'chatgpt',
+              model: 'gpt-5-codex',
+              usage: Usage.zero,
+              stopReason: StopReason.toolUse,
+              timestamp: DateTime.utc(2026),
+            ),
+          ),
+        );
+        await storage.appendEntry(
+          MessageRecord(
+            id: 'r2',
+            parentId: 'r1',
+            timestamp: DateTime.utc(2026),
+            message: ToolResultMessage(
+              toolCallId: 'call_42',
+              toolName: 'bash',
+              content: const [TextContent(text: 'file.txt')],
+              isError: false,
+              timestamp: DateTime.utc(2026),
+            ),
+          ),
+        );
+        await storage.appendEntry(
+          CompactionRecord(
+            id: 'c1',
+            parentId: 'r2',
+            timestamp: DateTime.utc(2026),
+            summary: 'Earlier: the user asked for files and bash listed them.',
+            firstKeptEntryId: 'r2',
+            tokensBefore: 10,
+          ),
+        );
+
+        final before = (await fs.readTextFile(path)).getOrThrow();
+
+        final reopened = await JsonlSessionStorage.open(fs, path);
+        final session = Session(reopened);
+        final messages = await session.buildContextMessages();
+
+        // E4: the cut leaves an orphan function_call_output — emitted
+        // TOP-LEVEL (a valid item slot), never as a message content part.
+        final input = responsesInputItems(messages);
+        expect(firstResponsesGrammarViolation(input), isNull);
+        expect(
+          [
+            for (final item in input)
+              if (item['type'] == 'function_call_output') item,
+          ],
+          hasLength(1),
+        );
+
+        // The resumed turn completes against a fake Responses stream…
+        final client = http_testing.MockClient.streaming((request, body) async {
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(
+              'data: ${jsonEncode({
+                'type': 'response.completed',
+                'response': {'id': 'r', 'model': 'gpt-5-codex'},
+              })}\n\n',
+            )),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          );
+        });
+        final events = await streamChatGptCodex(
+          chatGptModel,
+          Context(messages: messages),
+          credentials: const ChatGptOAuthCredentials(
+            accessToken: 'at-1',
+            refreshToken: 'rt-1',
+            idToken: 'it-1',
+            accountId: 'acc-1',
+          ).encode(),
+          client: client,
+        ).toList();
+        expect(events.last, isA<DoneEvent>());
+
+        // …and the transcript is byte-identical: repair is outbound-only.
+        expect((await fs.readTextFile(path)).getOrThrow(), before);
+      },
+    );
   });
 }

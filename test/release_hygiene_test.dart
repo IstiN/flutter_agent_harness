@@ -187,6 +187,7 @@ RegExp globToRegExp(String glob) =>
 // ── fixture helpers ────────────────────────────────────────────────────────
 
 final _fixtureRoot = Directory.systemTemp.createTempSync('release-hygiene-');
+
 /// Full behavioral sandbox for the gh-1172 direct-push path of
 /// scripts/auto_release.sh: a bare origin whose main carries pubspec 0.1.495
 /// tagged v0.1.495 [tagAgeHours] ago (3h = past the 2h coalesce window) plus
@@ -272,20 +273,24 @@ exec "\$FA_REAL_GIT" "\$@"
   git(['config', 'user.name', 't']);
   Directory('$seed/flutter_app').createSync();
   File('$seed/pubspec.yaml').writeAsStringSync('version: 0.1.495\n');
-  File('$seed/flutter_app/pubspec.yaml').writeAsStringSync(
-    'version: 0.1.495+1\n',
-  );
-  File('$seed/CHANGELOG.md').writeAsStringSync('# Changelog\n\n## Unreleased\n');
+  File(
+    '$seed/flutter_app/pubspec.yaml',
+  ).writeAsStringSync('version: 0.1.495+1\n');
+  File(
+    '$seed/CHANGELOG.md',
+  ).writeAsStringSync('# Changelog\n\n## Unreleased\n');
   git(['add', '-A']);
-  git([
-    'commit',
-    '-q',
-    '-m',
-    'seed',
-  ], env: {
-    'GIT_COMMITTER_DATE': (DateTime.now().subtract(Duration(hours: tagAgeHours)).millisecondsSinceEpoch ~/ 1000)
-        .toString(),
-  });
+  git(
+    ['commit', '-q', '-m', 'seed'],
+    env: {
+      'GIT_COMMITTER_DATE':
+          (DateTime.now()
+                      .subtract(Duration(hours: tagAgeHours))
+                      .millisecondsSinceEpoch ~/
+                  1000)
+              .toString(),
+    },
+  );
   git(['tag', 'v0.1.495']);
   File('$seed/README.md').writeAsStringSync('pending\n');
   git(['add', '-A']);
@@ -306,12 +311,22 @@ exec "\$FA_REAL_GIT" "\$@"
 
   final headBefore = originMain();
 
-  final env = <String, String>{
+  // Sanitize GIT_* out of the inherited environment: `git commit` exports
+  // GIT_AUTHOR_*/GIT_COMMITTER_* (the COMMITTING repo's identity) into hook
+  // processes, and ci_fast_gate.sh unsets only GIT_DIR/GIT_INDEX_FILE/
+  // GIT_WORK_TREE — under the pre-commit gate those vars overrode the
+  // sandbox script's own `git config user.name fa-release-bot[bot]` and the
+  // bump came out authored as the host repo's identity, flaking the
+  // authorship assertion (hook runs only; direct `dart test` was green).
+  final baseEnv = <String, String>{
+    for (final e in Platform.environment.entries)
+      if (!e.key.startsWith('GIT_')) e.key: e.value,
     'PATH': '$bin:${Platform.environment['PATH']}',
     'FA_REAL_GIT': realGit,
     'FA_RACER': racer,
     'FA_RACE_FILE': raceFile,
   };
+  final env = Map<String, String>.from(baseEnv);
   if (dryRun) env['RELEASE_DRY_RUN'] = '1';
 
   final res = Process.runSync(
@@ -319,6 +334,7 @@ exec "\$FA_REAL_GIT" "\$@"
     ['${Directory.current.path}/scripts/auto_release.sh'],
     workingDirectory: seed,
     environment: env,
+    includeParentEnvironment: false, // sanitized above — no GIT_* leak
   );
   return AutoReleaseRun(
     res.exitCode,
@@ -328,6 +344,7 @@ exec "\$FA_REAL_GIT" "\$@"
     realGit,
     seed,
     origin,
+    baseEnv,
   );
 }
 
@@ -340,6 +357,7 @@ class AutoReleaseRun {
     this._gitBin,
     this._seedPath,
     this._originGitDir,
+    this._baseEnv,
   );
 
   final int exitCode;
@@ -349,28 +367,29 @@ class AutoReleaseRun {
   final String _gitBin;
   final String _seedPath;
   final String _originGitDir;
+  final Map<String, String> _baseEnv;
 
   /// Subjects of the last [n] commits on origin/main, newest first.
   List<String> originSubjects([int n = 3]) => _git([
-        '--git-dir',
-        _originGitDir,
-        'log',
-        '--pretty=%s',
-        '-n',
-        '$n',
-        'main',
-      ]).split('\n');
+    '--git-dir',
+    _originGitDir,
+    'log',
+    '--pretty=%s',
+    '-n',
+    '$n',
+    'main',
+  ]).split('\n');
 
   /// Author identity of origin/main's head commit.
   String originHeadAuthor() => _git([
-        '--git-dir',
-        _originGitDir,
-        'log',
-        '--pretty=%an <%ae>',
-        '-n',
-        '1',
-        'main',
-      ]);
+    '--git-dir',
+    _originGitDir,
+    'log',
+    '--pretty=%an <%ae>',
+    '-n',
+    '1',
+    'main',
+  ]);
 
   /// Subject of the seed clone's HEAD (the local would-be/landed bump).
   String seedLastSubject() =>
@@ -381,6 +400,36 @@ class AutoReleaseRun {
     expect(r.exitCode, 0, reason: 'sandbox git $args failed: ${r.stderr}');
     return r.stdout.toString().trim();
   }
+
+  /// Re-runs auto_release.sh in the SAME sandbox (seed + origin keep their
+  /// state from the previous run) — for multi-release sequences like the
+  /// CHANGELOG '## Unreleased' dedupe test.
+  AutoReleaseRun rerun({bool dryRun = false}) {
+    final before = _git(['--git-dir', _originGitDir, 'rev-parse', 'main']);
+    final env = Map<String, String>.from(_baseEnv);
+    if (dryRun) env['RELEASE_DRY_RUN'] = '1';
+    final res = Process.runSync(
+      'bash',
+      ['${Directory.current.path}/scripts/auto_release.sh'],
+      workingDirectory: _seedPath,
+      environment: env,
+      includeParentEnvironment: false, // sanitized baseEnv — no GIT_* leak
+    );
+    return AutoReleaseRun(
+      res.exitCode,
+      '${res.stdout}${res.stderr}',
+      before,
+      _git(['--git-dir', _originGitDir, 'rev-parse', 'main']),
+      _gitBin,
+      _seedPath,
+      _originGitDir,
+      _baseEnv,
+    );
+  }
+
+  /// Reads [path] from origin/main (post-run remote file state).
+  String originFile(String path) =>
+      _git(['--git-dir', _originGitDir, 'show', 'main:$path']);
 }
 
 /// The real git binary for sandbox shims AND for the fixture helpers: the
@@ -1170,10 +1219,7 @@ gh release create "v9.9.9" \
     String notes(String cwd, List<String> args) {
       final r = Process.runSync(
         'bash',
-        [
-          File('scripts/release_notes.sh').absolute.path,
-          ...args,
-        ],
+        [File('scripts/release_notes.sh').absolute.path, ...args],
         workingDirectory: cwd,
         environment: {
           'PATH': '${gitShimBin.path}:${Platform.environment['PATH']}',
@@ -1570,7 +1616,9 @@ gh release create "v9.9.9" \
           expect(
             checkout['with']['token']?.toString(),
             jobName == 'release'
-                ? equals(r'${{ steps.app-token.outputs.token || github.token }}')
+                ? equals(
+                    r'${{ steps.app-token.outputs.token || github.token }}',
+                  )
                 : equals(r'${{ steps.app-token.outputs.token }}'),
             reason:
                 '$jobName checkout must ride the App token — GITHUB_TOKEN '
@@ -1628,8 +1676,7 @@ gh release create "v9.9.9" \
             .map((s) => s as YamlMap)
             .firstWhere(
               (s) =>
-                  s['uses']?.toString().startsWith('actions/checkout') ??
-                  false,
+                  s['uses']?.toString().startsWith('actions/checkout') ?? false,
             );
         expect(
           checkout['with']['token']?.toString(),
@@ -1759,8 +1806,10 @@ gh release create "v9.9.9" \
         // The invariant itself: EVERY occurrence of the workflow_dispatch
         // check must live inside a gated arm. A bare `|| workflow_dispatch`
         // arm shows up as an occurrence no arm accounts for.
-        final armOccurrences =
-            dispatchArms.fold<int>(0, (n, a) => n + a.split(wd).length - 1);
+        final armOccurrences = dispatchArms.fold<int>(
+          0,
+          (n, a) => n + a.split(wd).length - 1,
+        );
         expect(
           releaseIf.split(wd).length - 1,
           armOccurrences,
@@ -1813,7 +1862,8 @@ gh release create "v9.9.9" \
             multiLine: true,
           ).hasMatch(ciRaw),
           isTrue,
-          reason: 'releaseDispatch must be a typed boolean input defaulting to false',
+          reason:
+              'releaseDispatch must be a typed boolean input defaulting to false',
         );
         // The dry-run env must normalize through == 'true' — the bare
         // `inputs.releaseDryRun || '0'` fallback is dead code (a typed boolean
@@ -1822,7 +1872,8 @@ gh release create "v9.9.9" \
         expect(
           ciRaw,
           isNot(contains('inputs.releaseDryRun ||')),
-          reason: "the dead `inputs.releaseDryRun || '0'` fallback must not return",
+          reason:
+              "the dead `inputs.releaseDryRun || '0'` fallback must not return",
         );
         final steps = (ci['release'] as YamlMap)['steps'] as YamlList;
         final bumpStep = steps
@@ -1832,8 +1883,11 @@ gh release create "v9.9.9" \
             );
         expect(
           (bumpStep['env'] as YamlMap)['RELEASE_DRY_RUN']?.toString(),
-          equals(r"${{ github.event.inputs.releaseDryRun == 'true' && '1' || '0' }}"),
-          reason: "RELEASE_DRY_RUN must normalize via == 'true' to a literal 1/0",
+          equals(
+            r"${{ github.event.inputs.releaseDryRun == 'true' && '1' || '0' }}",
+          ),
+          reason:
+              "RELEASE_DRY_RUN must normalize via == 'true' to a literal 1/0",
         );
       },
     );
@@ -1863,7 +1917,8 @@ gh release create "v9.9.9" \
           expect(
             comment,
             isNot(contains(retired)),
-            reason: 'retired PR-path text "$retired" must not return above release-tag',
+            reason:
+                'retired PR-path text "$retired" must not return above release-tag',
           );
         }
         expect(
@@ -1919,10 +1974,7 @@ gh release create "v9.9.9" \
         r.originHeadBefore,
         reason: 'no bump may land inside the coalesce window',
       );
-      expect(
-        r.originSubjects(1),
-        isNot(contains('chore(release): v0.1.496')),
-      );
+      expect(r.originSubjects(1), isNot(contains('chore(release): v0.1.496')));
     });
 
     test(
@@ -1935,18 +1987,21 @@ gh release create "v9.9.9" \
         expect(
           subjects.where((s) => s.startsWith('chore(release):')),
           hasLength(1),
-          reason: 'exactly one bump lands — the raced attempt is discarded, not stacked',
+          reason:
+              'exactly one bump lands — the raced attempt is discarded, not stacked',
         );
         expect(subjects.first, 'chore(release): v0.1.496');
         expect(
           subjects,
           contains('raced commit'),
-          reason: 'the bump must sit on top of the raced main — recomputed, never a blind push',
+          reason:
+              'the bump must sit on top of the raced main — recomputed, never a blind push',
         );
         expect(
           r.originHeadAuthor(),
           'fa-release-bot[bot] <fa-release-bot[bot]@users.noreply.github.com>',
-          reason: 'the bump commit is authored by the App (auditability contract)',
+          reason:
+              'the bump commit is authored by the App (auditability contract)',
         );
       },
     );
@@ -1966,24 +2021,92 @@ gh release create "v9.9.9" \
       },
     );
 
-    test('suite git resolution is host-independent — no session shim decides fixture behavior', () {
-      // gh-1172 round-3 suggestion: the pre-existing fixture helpers called
-      // bare `Process.runSync('git', ...)`, inheriting whatever git sat first
-      // on PATH — on shim-hostile hosts that was a broken git-push-guard copy
-      // and the AC5 notes tests failed with "No changes since the previous
-      // release." All fixture/notes git traffic now routes through the
-      // resolved real binary; pin its invariants.
-      final git = _resolveRealGit();
-      expect(File(git).existsSync(), isTrue, reason: '$git must exist');
-      expect(
-        git.endsWith('git-push-guard.sh'),
-        isFalse,
-        reason: 'the resolved git must never be an agent-session guard shim',
-      );
-      final r = Process.runSync(git, ['--version']);
-      expect(r.exitCode, 0, reason: r.stderr.toString());
-      expect(r.stdout.toString(), startsWith('git version'));
-    });
+    test(
+      "CHANGELOG '## Unreleased' dedupe — a second release never stacks duplicate sections",
+      () {
+        // Round-4 review: the dedupe side-fix (append a fresh empty
+        // Unreleased exactly once) shipped untested. Drive TWO real releases
+        // through the sandbox: after the first push, play the release-tag
+        // job catching up — backdate the landed bump (so the 2h coalesce
+        // window and the untagged guard both open), tag it, queue new work —
+        // then release again. Both runs regenerate CHANGELOG.md, which is
+        // where a naive append would stack a second '## Unreleased'.
+        final r1 = runAutoReleaseDirect('dedupe');
+        expect(r1.exitCode, 0, reason: r1.output);
+        expect(r1.originSubjects(1).single, 'chore(release): v0.1.496');
+        expect(
+          '## Unreleased'.allMatches(r1.originFile('CHANGELOG.md')),
+          hasLength(1),
+          reason:
+              'one release from a changelog WITH an Unreleased section '
+              'must end with exactly one',
+        );
+
+        // release-tag catch-up: tag the bump (commit backdated 3h so the
+        // coalesce guard opens), then queue the next pending work.
+        final backdate = {
+          'GIT_COMMITTER_DATE':
+              (DateTime.now()
+                          .subtract(const Duration(hours: 3))
+                          .millisecondsSinceEpoch ~/
+                      1000)
+                  .toString(),
+        };
+        void git(List<String> args, {Map<String, String> env = const {}}) {
+          final res = Process.runSync(
+            r1._gitBin,
+            args,
+            workingDirectory: r1._seedPath,
+            environment: env,
+            includeParentEnvironment: true,
+          );
+          expect(res.exitCode, 0, reason: 'dedupe git $args: ${res.stderr}');
+        }
+
+        git(['commit', '-q', '--amend', '--no-edit'], env: backdate);
+        git(['push', '-q', '-f', 'origin', 'HEAD:main']);
+        git(['tag', 'v0.1.496'], env: backdate);
+        git(['push', '-q', 'origin', 'v0.1.496']);
+        File('${r1._seedPath}/README.md').writeAsStringSync('more work\n');
+        git(['add', '-A']);
+        git(['commit', '-q', '-m', 'more pending work']);
+        git(['push', '-q', 'origin', 'HEAD:main']);
+
+        final r2 = r1.rerun();
+        expect(r2.exitCode, 0, reason: r2.output);
+        expect(r2.originSubjects(1).single, 'chore(release): v0.1.497');
+        final changelog = r2.originFile('CHANGELOG.md');
+        expect(changelog, contains('## 0.1.497'));
+        expect(changelog, contains('## 0.1.496'));
+        expect(
+          '## Unreleased'.allMatches(changelog),
+          hasLength(1),
+          reason: 'repeated runs must not stack duplicate Unreleased sections',
+        );
+      },
+    );
+
+    test(
+      'suite git resolution is host-independent — no session shim decides fixture behavior',
+      () {
+        // gh-1172 round-3 suggestion: the pre-existing fixture helpers called
+        // bare `Process.runSync('git', ...)`, inheriting whatever git sat first
+        // on PATH — on shim-hostile hosts that was a broken git-push-guard copy
+        // and the AC5 notes tests failed with "No changes since the previous
+        // release." All fixture/notes git traffic now routes through the
+        // resolved real binary; pin its invariants.
+        final git = _resolveRealGit();
+        expect(File(git).existsSync(), isTrue, reason: '$git must exist');
+        expect(
+          git.endsWith('git-push-guard.sh'),
+          isFalse,
+          reason: 'the resolved git must never be an agent-session guard shim',
+        );
+        final r = Process.runSync(git, ['--version']);
+        expect(r.exitCode, 0, reason: r.stderr.toString());
+        expect(r.stdout.toString(), startsWith('git version'));
+      },
+    );
   });
 
   // ── gh-995 — artifact action pins + PTY shard pipeline coherence ────────

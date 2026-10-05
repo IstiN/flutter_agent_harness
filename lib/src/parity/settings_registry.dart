@@ -372,6 +372,16 @@ const fileOnlyConfigKeys = <String, String>{
       'READS (app Get banner, CLI, fa1.dev generator); the config file '
       'is the single source of truth and no surface edits it '
       'interactively.',
+
+  // Console-output presentation flag (gh-1198): the opt-in live thinking
+  // stream for CLI line-mode/headless runs — a CI/log presentation choice
+  // with no app-side analog (the app renders thinking in its own UI),
+  // so it stays file/flag-tuned.
+  'output':
+      'The live thinking stream (gh-1198) is a CLI console/log '
+      'presentation choice (fa --stream-thinking or the file); the app '
+      'renders thinking in its own UI and has no console output to '
+      'configure.',
 };
 
 /// Which app surfaces carry a shared setting: the Flutter app on macOS,

@@ -249,6 +249,24 @@ AgentEvent nativeEventFor(String kind) => switch (kind) {
     ),
     providerError: 'unexpected tool_use_id',
   ),
+  'tool_call_heartbeat' => ToolCallHeartbeatEvent(
+    toolCallId: 'call_1',
+    toolName: 'bash',
+    args: const {'command': 'sleep 600'},
+    elapsed: const Duration(seconds: 61),
+    outputBytes: 12,
+    attempt: 1,
+    timestamp: DateTime.fromMillisecondsSinceEpoch(fixtureTimestampMs),
+  ),
+  'tool_call_stuck' => ToolCallStuckEvent(
+    toolCallId: 'call_1',
+    toolName: 'bash',
+    args: const {'command': 'sleep 600'},
+    elapsed: const Duration(seconds: 3),
+    action: StuckFollowUpAction.cancelRetry,
+    detail: '300s stuck threshold exceeded',
+    timestamp: DateTime.fromMillisecondsSinceEpoch(fixtureTimestampMs),
+  ),
   _ => throw StateError('No native event builder pinned for kind "$kind"'),
 };
 

@@ -27,6 +27,7 @@ import '../memory_config.dart';
 import '../messaging/fabric_config.dart';
 import '../redact/redaction_types.dart';
 import '../agent/image_registry.dart';
+import '../agent/stuck_tool.dart';
 import '../power_config.dart';
 import '../ttsr/ttsr.dart';
 import '../tools/availability.dart';
@@ -34,6 +35,7 @@ import '../tools/load_modes.dart';
 import 'custom_providers.dart';
 import '../task/subagent_heartbeat.dart';
 import 'links_config.dart';
+import 'output_config.dart';
 import 'tui_status_line.dart';
 
 /// Parses the `providerTimeouts:` section: provider watchdog overrides
@@ -204,6 +206,32 @@ String? _parseAgentModeValue(Object? value) {
   return value == 'default' ? null : value as String;
 }
 
+bool? _parseAgentMisuseBreakerValue(Object? value) {
+  if (value is! bool) {
+    throw ConfigException('"agent.misuseBreaker" must be a boolean');
+  }
+  return value;
+}
+
+/// The compaction reserve the cap floor mirrors (see [_parseAgentSection]).
+const _agentContextWindowCapMin = 16384;
+
+int _parseAgentContextWindowCapValue(Object? value) {
+  if (value is! int || value <= 0) {
+    throw ConfigException(
+      '"agent.contextWindowCap" must be a positive integer (tokens)',
+    );
+  }
+  if (value < _agentContextWindowCapMin) {
+    throw ConfigException(
+      '"agent.contextWindowCap" must be at least $_agentContextWindowCapMin'
+      ' — below the compaction reserve the compaction trigger threshold '
+      'would go negative',
+    );
+  }
+  return value;
+}
+
 /// Parses the `agent:` section (issues #273/#679/#680):
 /// `contextWindowCap` — the owner-side effective context override — and
 /// `mode` — the `default|pi|omp` preset label. The cap SETS the EFFECTIVE
@@ -224,34 +252,32 @@ String? _parseAgentModeValue(Object? value) {
 /// (issue #679: bare prompt, 4-tool sweep, boot print) the executable
 /// re-resolves through its flag > env > config ladder. `omp` carries no
 /// harness behavior, so it never reaches that ladder.
-({int? contextWindowCap, String? mode, String? agentMode})? _parseAgentSection(
-  Object? node,
-) {
+({
+  int? contextWindowCap,
+  String? mode,
+  String? agentMode,
+  bool? misuseBreaker,
+  StuckToolConfig? stuckTool,
+})?
+_parseAgentSection(Object? node) {
   if (node == null) return null;
   if (node is! YamlMap) {
     throw ConfigException('agent must be a map, got: $node');
   }
   int? cap;
   String? mode;
+  bool? misuseBreaker;
+  StuckToolConfig? stuckTool;
   for (final key in node.keys) {
     switch (key) {
       case 'contextWindowCap':
-        final value = node[key];
-        if (value is! int || value <= 0) {
-          throw ConfigException(
-            '"agent.contextWindowCap" must be a positive integer (tokens)',
-          );
-        }
-        if (value < 16384) {
-          throw ConfigException(
-            '"agent.contextWindowCap" must be at least 16384 — below the '
-            'compaction reserve the compaction trigger threshold would go '
-            'negative',
-          );
-        }
-        cap = value;
+        cap = _parseAgentContextWindowCapValue(node[key]);
       case 'mode':
         mode = _parseAgentModeValue(node[key]);
+      case 'misuseBreaker':
+        misuseBreaker = _parseAgentMisuseBreakerValue(node[key]);
+      case 'stuckTool':
+        stuckTool = StuckToolConfig.fromYaml(node[key]);
       default:
         throw ConfigException('unknown "agent" key: $key');
     }
@@ -260,6 +286,8 @@ String? _parseAgentModeValue(Object? value) {
     contextWindowCap: cap,
     mode: mode,
     agentMode: mode == 'pi' ? 'pi' : null,
+    misuseBreaker: misuseBreaker,
+    stuckTool: stuckTool,
   );
 }
 
@@ -328,6 +356,7 @@ final class CliConfig {
     this.modelRoles,
     this.ttsr,
     this.contextWindowCap,
+    this.stuckTool,
     this.agentLoadMode,
     this.customProviders = const [],
     this.models,
@@ -348,6 +377,7 @@ final class CliConfig {
     this.wireDump = false,
     this.images,
     this.agentMode,
+    this.misuseBreaker = true,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
@@ -358,6 +388,7 @@ final class CliConfig {
     this.tuiClassic = false,
     this.statusLine,
     this.links = const LinksConfig(),
+    this.streamThinking = false,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -480,8 +511,10 @@ final class CliConfig {
       // The agent section (owner-side context cap + mode, issues
       // #273/#679/#680) is strict too.
       contextWindowCap: agentSection?.contextWindowCap,
+      stuckTool: agentSection?.stuckTool,
       agentMode: agentSection?.agentMode,
       agentLoadMode: agentSection?.mode,
+      misuseBreaker: agentSection?.misuseBreaker ?? true,
       // The subagents section (background-subagent heartbeat, issue #383)
       subagents: SubagentsConfig.fromYaml(map['subagents']),
       waiting: WaitingConfig.fromYaml(map['waiting']),
@@ -505,7 +538,18 @@ final class CliConfig {
           skillsSection['skillsDisableShellExecution'] as bool? ?? false,
       skillToggles:
           skillsSection['skillToggles'] as Map<String, bool>? ?? const {},
+      // The output section (gh-1198) is strict: `streamThinking` opts
+      // line-mode/headless runs into the live dimmed thinking stream;
+      // absent = false = the byte-identical legacy output.
+      streamThinking: _outputStreamThinking(map['output']),
     );
+  }
+
+  /// The `output.streamThinking` value: the strict parser validates the
+  /// section, the walk below reads the single key (defaults false).
+  static bool _outputStreamThinking(Object? node) {
+    parseOutputSection(node);
+    return outputStreamThinkingValue(node);
   }
 
   /// Parses the `skills:` section: `access` (ask/granted/denied — consent
@@ -689,10 +733,22 @@ final class CliConfig {
   /// raw model window).
   final int? contextWindowCap;
 
+  /// Stuck-call supervision config (`agent.stuckTool`, gh-1054): liveness
+  /// heartbeats for long-running tool calls plus the autonomous
+  /// cancel/retry/convert follow-up. `null` = unsupervised.
+  final StuckToolConfig? stuckTool;
+
   /// The parsed harness mode preset (`agent.mode`, issue #679): `'pi'` or
   /// null (absent or explicit `default`). Resolved against the flag/env
   /// tiers by the executable via `resolveHarnessMode`.
   final String? agentMode;
+
+  /// The tool-misuse circuit breaker switch (`agent.misuseBreaker`,
+  /// issue #862, default true): 3 consecutive identical tool-call
+  /// rejections arm a corrective note in the next request; 6 stop executing
+  /// that identical call for the run. `false` preserves the pre-breaker
+  /// behavior byte-identically (E5).
+  final bool misuseBreaker;
 
   /// Tool-load preset from `agent.mode` (`default|pi|omp`, issue #680):
   /// the curated essential set that boots into the schema; everything
@@ -758,6 +814,13 @@ final class CliConfig {
   /// links.…`) and the site generator all resolve the same values.
   final LinksConfig links;
 
+  /// The opt-in live thinking stream for line-mode/headless runs
+  /// (gh-1198, `output.streamThinking` yaml key, default false): when
+  /// true, thinking deltas print dimmed, live, like the TUI's progress
+  /// signal. `--stream-thinking` wins for the run. The default keeps the
+  /// byte-identical legacy output (machine consumers, AC3).
+  final bool streamThinking;
+
   /// Returns a copy with [entries] as the custom-providers list; every
   /// other field carries over. [saveCliConfig] uses it for its
   /// merge-before-write union (issue #221) — keep this field list in sync
@@ -791,6 +854,7 @@ final class CliConfig {
       wireDump: wireDump,
       images: images,
       contextWindowCap: contextWindowCap,
+      stuckTool: stuckTool,
       agentLoadMode: agentLoadMode,
       powerSleepPrevention: powerSleepPrevention,
       powerHold: powerHold,
@@ -885,13 +949,25 @@ final class CliConfig {
     buffer.write(_linksYaml());
     buffer.write(_powerYaml());
     buffer.write(_quotaYaml());
+    buffer.write(_outputYaml());
     return buffer.toString();
   }
 
-  /// The `agent:` section, only when a cap or a load mode is persisted;
+  /// The `output:` section (gh-1198), only when explicitly opted in;
   /// defaults are never written so the file stays minimal.
+  String _outputYaml() =>
+      streamThinking ? 'output:\n  streamThinking: true\n' : '';
+
+  /// The `agent:` section, only when a cap, a load mode, or a stuck-tool
+  /// config is persisted; defaults are never written so the file stays
+  /// minimal.
   String _agentSectionYaml() {
-    if (contextWindowCap == null && agentLoadMode == null) return '';
+    final stuckYaml = _stuckToolYaml();
+    if (contextWindowCap == null &&
+        agentLoadMode == null &&
+        stuckYaml.isEmpty) {
+      return '';
+    }
     final section = StringBuffer('agent:\n');
     if (contextWindowCap != null) {
       section.write('  contextWindowCap: $contextWindowCap\n');
@@ -899,7 +975,27 @@ final class CliConfig {
     if (agentLoadMode != null) {
       section.write('  mode: $agentLoadMode\n');
     }
+    section.write(stuckYaml);
     return section.toString();
+  }
+
+  /// The `agent.stuckTool:` sub-map, only when explicitly configured
+  /// (defaults are never written so the file stays minimal).
+  String _stuckToolYaml() {
+    final stuck = stuckTool;
+    if (stuck == null) return '';
+    final map = stuck.toYamlMap();
+    if (map.isEmpty) return '';
+    final buffer = StringBuffer('  stuckTool:\n');
+    for (final entry in map.entries) {
+      final value = entry.value;
+      if (value is List) {
+        buffer.write('    ${entry.key}: [${value.join(', ')}]\n');
+      } else {
+        buffer.write('    ${entry.key}: $value\n');
+      }
+    }
+    return buffer.toString();
   }
 
   /// The `links:` section (issue #691), only when explicitly configured;
@@ -1305,6 +1401,28 @@ bool? loadProjectWireDump(String projectDir) {
   }
 }
 
+/// Loads the PROJECT-level `agent.contextWindowCap` from
+/// `<projectDir>/.fah/config.yaml` (gh-1077) — the owner-side effective
+/// window cap travels with the repo the same way it does for the CLI.
+/// Null when the file or the section is absent/unreadable; a
+/// present-but-invalid section throws [ConfigException] (strict, like the
+/// user config — same [agent-section rules](_parseAgentSection)).
+int? loadProjectContextWindowCap(String projectDir) {
+  final file = File('$projectDir/.fah/config.yaml');
+  if (!file.existsSync()) return null;
+  try {
+    final doc = loadYaml(file.readAsStringSync());
+    if (doc is! YamlMap) return null;
+    final node = doc['agent'];
+    if (node == null) return null;
+    return _parseAgentSection(node)?.contextWindowCap;
+  } on ConfigException {
+    rethrow;
+  } on Object {
+    return null;
+  }
+}
+
 /// Loads the PROJECT-level `tools:` section from
 /// `<projectDir>/.fah/config.yaml` — the git-backed availability policy
 /// travels with the repo. The PROJECT scope is consumed live (separate
@@ -1447,6 +1565,10 @@ const _diskPreservedSections = {
   // omits a default-valued section — the raw block (future keys the
   // typed renderer does not know yet) survives untouched.
   'links',
+  // The output section (gh-1198): the emitter writes only the opt-in
+  // `streamThinking: true`; a hand-written block (the default-false
+  // form, comments, future keys) survives a save untouched.
+  'output',
 };
 
 /// Re-attaches the [_diskPreservedSections] blocks of [diskText] to

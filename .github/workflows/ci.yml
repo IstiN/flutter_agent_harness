@@ -95,6 +95,9 @@ jobs:
       # PR-only (issue #303): a trajectory-touching diff flips this on so
       # the perf-gate leg below runs the #262 DoD gate per-merge.
       perf: ${{ steps.paths.outputs.perf }}
+      # PR-only (gh-1241 REG-1): a trajectory/session/usage-touching diff
+      # runs the usage-fold suite per-merge.
+      usagefold: ${{ steps.paths.outputs.usagefold }}
       # PR-only (issue #551): test/integration/** changes run the no-key
       # mock-LLM integration legs per-PR instead of at tag time only.
       intmock: ${{ steps.paths.outputs.intmock }}
@@ -151,6 +154,14 @@ jobs:
           if git diff --name-only "$BASE_REF" "$HEAD_REF" |
               grep -qE '(^lib/src/trajectory/|^packages/fa_ui/lib/src/trajectory/|^lib/src/cli/trajectory_|^bin/fah\.dart$|^test/(integration/)?trajectory/|^flutter_app/lib/services/agent_service(_sessions)?\.dart$)'; then
             echo "perf=true" >> "$GITHUB_OUTPUT"
+          fi
+          # gh-1241 REG-1: the usage fold consumes the trajectory ledger's
+          # model_request_summary records and the session chain's shape —
+          # a red usage-fold suite blocks the merge even when the regular
+          # legs are green.
+          if git diff --name-only "$BASE_REF" "$HEAD_REF" |
+              grep -qE '(^lib/src/trajectory/|^lib/src/session/|^lib/src/usage/|^test/usage/|^lib/src/cli/agent_cli_usage_ledger\.dart$)'; then
+            echo "usagefold=true" >> "$GITHUB_OUTPUT"
           fi
 
   # ─────────────────────────────────────────────────────────────────────────
@@ -235,10 +246,16 @@ jobs:
 
       - run: dart pub get
 
+      # gh-1232 AC2: `bin` was missing here — bin/fah.dart sailed past 2800
+      # unnoticed because this guard only scanned lib/test/example. The dir
+      # list and generated-file exclusions mirror scripts/ci_fast_gate.sh's
+      # stage_size (the canonical guard).
       - name: File size guard (no dart file over 2800 lines)
         run: |
-          violations=$(find lib test example -name '*.dart' \
+          violations=$(find lib test example bin -name '*.dart' \
             ! -name '*.g.dart' ! -name '*.freezed.dart' ! -name '*.mocks.dart' \
+            ! -name '*bridge_generated*.dart' ! -name '*app_localizations*.dart' \
+            ! -name '*localizations_*.dart' \
             -exec sh -c 'lines=$(wc -l < "$1"); if [ "$lines" -gt 2800 ]; then echo "$1: $lines lines"; fi' _ {} \;)
           if [ -n "$violations" ]; then echo "$violations"; exit 1; fi
 
@@ -294,6 +311,20 @@ jobs:
       # drift vector).
       - name: CRAP badge/config sync guard
         run: python3 scripts/check_crap_guards.py
+
+      # gh-1199 AC2: the deterministic-gate boundary is self-enforcing —
+      # an integration-tagged test that looks live (real provider URL, or
+      # a credential-key literal with no mock/loopback in sight) without
+      # the `llm` tag fails the gate. Runs on every PR: a PR adding a live
+      # test (E1) is exactly the diff this must catch.
+      - name: LLM tag boundary lint (gh-1199 AC2)
+        run: python3 scripts/check_llm_tag_boundary.py
+
+      # gh-1199 AC6/E3: the flake quarantine list itself must stay
+      # honest — every entry documented (issue, since, >=2 proving runs)
+      # and pointing at an existing integration-tagged file.
+      - name: Flake quarantine list guard (gh-1199 AC6)
+        run: python3 scripts/apply_quarantine.py --check
 
       # Full analyze needs the example app's package config (Flutter imports);
       # a docs-only PR skips the flutter setup entirely and analyzes the pure
@@ -499,13 +530,23 @@ jobs:
           dart run bin/fah.dart --help > /dev/null
 
       - name: dart test test/integration (excluding llm, browser-ext, perf, pty)
-        run: dart test test/integration --exclude-tags llm,browser-ext,perf,pty
+        # gh-1199 AC6: explicit file list (not the bare directory) so the
+        # quarantine filter can drop flake-quarantined files here too.
+        run: |
+          targets=$(find test/integration -name '*_test.dart' | sort | python3 scripts/apply_quarantine.py)
+          echo "integration-mock targets: $targets"
+          dart test --exclude-tags llm,browser-ext,perf,pty $targets
 
   # Issue #675: the suite must be immune to a hostile ambient env — the
   # dmtools ai-teammate runner exports FA_PROVIDER_TYPE / FA_PROVIDER_CONFIG /
   # FAH_PROVIDER, which used to decide test fate through the args resolver.
   # Run the non-integration suite under the same hostile env so any
   # ambient-env read that leaks back into resolution regresses loudly.
+  # gh-1198 rework: the runner now ALSO exports FA_PROVIDERS_QUEUE (the
+  # provider-queue env won over the file queue and silently flipped the
+  # /providers queue editor tests to the env-wins refusal on the PR head) —
+  # the var rides the same hostile block so a future ambient read of it
+  # regresses here, not only on the runner.
   hostile-env:
     name: Hostile ambient env
     runs-on: ubuntu-latest
@@ -518,6 +559,7 @@ jobs:
       FA_PROVIDER_TYPE: zai
       FA_PROVIDER_CONFIG: '{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"glm-5.3-flash","apiKeyEnvVar":"ZAI_CODE_KEY"}'
       FAH_PROVIDER: zai
+      FA_PROVIDERS_QUEUE: '[{"provider_type":"zai","provider_config":{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"glm-5.3-flash","apiKeyEnv":"ZAI_CODE_KEY"}}]'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
@@ -640,10 +682,19 @@ jobs:
           dart run bin/fah.dart --help > /dev/null
       - name: dart test --tags integration (linux, shard ${{ matrix.shard }}/3)
         run: |
-          targets=$(python3 scripts/shard_files.py scripts/test_integration_shards.json ${{ matrix.shard }} --tags integration --exclude browser_ext)
+          # gh-1199 AC1: --exclude-tag llm keeps every live-provider file
+          # out of the merge-blocking selection (manifest unit AND runtime
+          # bin-pack); --exclude-tags browser-ext,llm is the dart-test
+          # backstop. AC6: the quarantine filter drops flake-quarantined
+          # files (scripts/test_quarantine.json) pending their fix PRs.
+          targets=$(python3 scripts/shard_files.py scripts/test_integration_shards.json ${{ matrix.shard }} --tags integration --exclude browser_ext --exclude-tag llm | python3 scripts/apply_quarantine.py)
           echo "shard targets: $targets"
+          if [ -z "$targets" ]; then
+            echo "shard fully quarantined — nothing to run"
+            exit 0
+          fi
           mkdir -p test-results
-          dart test --tags integration --exclude-tags browser-ext \
+          dart test --tags integration --exclude-tags browser-ext,llm \
             --concurrency=4 \
             --coverage=coverage \
             --file-reporter="json:test-results/integration-shard-${{ matrix.shard }}.json" \
@@ -724,7 +775,7 @@ jobs:
       # (browser-ext excluded, it owns browser-ext.yml), pairwise disjoint,
       # every unit on disk. Fails loudly BEFORE the ratchet reads shard data.
       - name: Assert integration shard manifest (union/disjoint/exists)
-        run: python3 scripts/assert_shard_manifest.py scripts/test_integration_shards.json --shards 3 --tags integration --exclude browser_ext
+        run: python3 scripts/assert_shard_manifest.py scripts/test_integration_shards.json --shards 3 --tags integration --exclude browser_ext --exclude-tag llm
       # The leg's dart json reports for the #928 duration gate below.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -1074,6 +1125,19 @@ jobs:
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
       - run: cd flutter_app && flutter pub get
+
+      # gh-1232 AC2: the core static-gates size guard only scans
+      # lib/test/example/bin — flutter_app/lib was never measured in CI
+      # (scripts/ci_fast_gate.sh measures it only when APP_IN_SCOPE). Same
+      # generated-file exclusions as the core guard.
+      - name: File size guard (flutter_app, no dart file over 2800 lines)
+        run: |
+          violations=$(find flutter_app/lib -name '*.dart' \
+            ! -name '*.g.dart' ! -name '*.freezed.dart' ! -name '*.mocks.dart' \
+            ! -name '*bridge_generated*.dart' ! -name '*app_localizations*.dart' \
+            ! -name '*localizations_*.dart' \
+            -exec sh -c 'lines=$(wc -l < "$1"); if [ "$lines" -gt 2800 ]; then echo "$1: $lines lines"; fi' _ {} \;)
+          if [ -n "$violations" ]; then echo "$violations"; exit 1; fi
 
       - name: flutter analyze
         run: cd flutter_app && flutter analyze --no-fatal-infos --no-fatal-warnings
@@ -1886,27 +1950,36 @@ jobs:
         run: |
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
-          mkdir -p "$tmp/bad" "$tmp/bad-hex" "$tmp/bad-composite/.github/actions/probe/deep" "$tmp/good" "$tmp/good-composite/.github/actions/probe/deep" "$tmp/string-safe"
+          mkdir -p "$tmp/bad" "$tmp/bad-hex" "$tmp/bad-composite/.github/actions/probe/deep" "$tmp/bad-awf-ref" "$tmp/bad-other-main" "$tmp/good" "$tmp/good-awf-main" "$tmp/good-composite/.github/actions/probe/deep" "$tmp/string-safe"
           printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@v4\n' > "$tmp/bad/bad.yml"
           printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@gggggggggggggggggggggggggggggggggggggggg\n' > "$tmp/bad-hex/bad.yml"
+          printf 'jobs:\n  probe:\n    steps:\n      - uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-sm.yml@master\n' > "$tmp/bad-awf-ref/wf.yml"
+          printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@main\n' > "$tmp/bad-other-main/wf.yml"
           printf 'name: probe\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@v4\n' > "$tmp/bad-composite/.github/actions/probe/deep/action.yaml"
           printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4\n' > "$tmp/good/good.yml"
+          # owner directive 2026-10-04: awf@main is the ONE accepted mutable
+          # ref (always-latest, review-gated; per-stub-enforced by
+          # test/machine_kit/factory_stub_ref_test.dart). Every other
+          # mutable ref — awf at a non-main ref, another repo at main —
+          # stays a violation (fixtures above).
+          printf 'jobs:\n  probe:\n    uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-sm.yml@main\n' > "$tmp/good-awf-main/wf.yml"
           printf 'name: probe\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4\n' > "$tmp/good-composite/.github/actions/probe/deep/action.yaml"
           # String-safety: a uses-shaped string INSIDE a run: scalar is not a
           # step ref — the checker is line-anchored (^[[:space:]]*(- )?uses:)
           # and must not flag it. (Regression: a reviewer suspected the
           # fixture printf lines in this very workflow would trip AC1.)
           printf "jobs:\n  probe:\n    steps:\n      - name: write fixture\n        run: |\n          printf 'jobs:\\\\n  probe:\\\\n    steps:\\\\n      - uses: actions/checkout@v4\\\\n' > out.yml\n          bash scripts/check_action_pins.sh --path . >/dev/null 2>&1 || true\n" > "$tmp/string-safe/wf.yml"
-          for bad in bad bad-hex bad-composite; do
+          for bad in bad bad-hex bad-composite bad-awf-ref bad-other-main; do
             if bash scripts/check_action_pins.sh --path "$tmp/$bad" >/dev/null 2>&1; then
               echo "::error::pin checker FAILED to flag the $bad fixture"
               exit 1
             fi
           done
           bash scripts/check_action_pins.sh --path "$tmp/good" >/dev/null
+          bash scripts/check_action_pins.sh --path "$tmp/good-awf-main" >/dev/null
           bash scripts/check_action_pins.sh --path "$tmp/good-composite" >/dev/null
           bash scripts/check_action_pins.sh --path "$tmp/string-safe" >/dev/null
-          echo "fixture regression OK: @v4 / 40-char non-hex / unpinned nested composite rejected; SHA-pinned accepted; uses-shaped run-scalar strings ignored"
+          echo "fixture regression OK: @v4 / 40-char non-hex / unpinned nested composite / awf@master / other-repo@main rejected; SHA-pinned + awf@main accepted; uses-shaped run-scalar strings ignored"
 
   # SEC-08 (#796): audit BOTH dependency graphs. pubspec_overrides.yaml
   # redirects dart_tui to the vendored fork (vendor/dart_tui) for local/CI/
@@ -2035,7 +2108,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify, install-pin-gate]
+    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify, install-pin-gate]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -2053,6 +2126,7 @@ jobs:
           echo "test-faui     = ${{ needs.test-faui.result }}"
           echo "app-crap-gate = ${{ needs.app-crap-gate.result }}"
           echo "perf-gate     = ${{ needs.perf-gate.result }}"
+          echo "usage-fold    = ${{ needs.usage-fold.result }}"
           echo "cube-live     = ${{ needs.cube-kernel-live.result }}"
           echo "cli-visual    = ${{ needs.cli-visual-settings.result }}"
           echo "build-web     = ${{ needs.build-web.result }}"
@@ -2082,6 +2156,7 @@ jobs:
           R_CRAP: ${{ needs.app-crap-gate.result }}
           R_FAUI: ${{ needs.test-faui.result }}
           R_PERF: ${{ needs.perf-gate.result }}
+          R_USAGE_FOLD: ${{ needs.usage-fold.result }}
           R_CUBE: ${{ needs.cube-kernel-live.result }}
           R_CLI_VISUAL: ${{ needs.cli-visual-settings.result }}
           R_BUILD_WEB: ${{ needs.build-web.result }}
@@ -2115,7 +2190,7 @@ jobs:
           # green required check.
           for kv in "static:$R_STATIC" "flutter-analyze:$R_FLUTTER_ANALYZE" "test-core:$R_TEST_CORE" "coverage-gate:$R_COVERAGE" \
                     "guards:$R_GUARDS" "flutter-tests:$R_FLUTTER" "app-crap-gate:$R_CRAP" \
-                    "test-faui:$R_FAUI" "perf-gate:$R_PERF" "cube-kernel-live:$R_CUBE" \
+                    "test-faui:$R_FAUI" "perf-gate:$R_PERF" "usage-fold:$R_USAGE_FOLD" "cube-kernel-live:$R_CUBE" \
                     "cli-visual-settings:$R_CLI_VISUAL" "build-web:$R_BUILD_WEB" \
                     "build-android:$R_BUILD_ANDROID" "build-ios:$R_BUILD_IOS" "build-macos:$R_BUILD_MACOS" \
                     "integration-mock:$R_INTEG" "hostile-env:$R_HOSTILE" \
@@ -2160,6 +2235,41 @@ jobs:
 
       - name: dart test --tags perf
         run: dart test --tags perf
+
+  # gh-1241 REG-1: the usage fold consumes the trajectory ledger's
+  # `model_request_summary` records and the session chain's record shape —
+  # a shape change there breaks the fold even when every regular leg is
+  # green, so this suite is a merge gate for trajectory/session/usage
+  # diffs. Gate model (2026-09 dispatch-only CI): this workflow has NO
+  # pull_request trigger — the SM dispatches it on the PR head, so
+  # `github.event_name` is never 'pull_request' and a PR-only `if` would
+  # leave this leg permanently skipped (REG-1 gating nothing). On real PR
+  # events the path classifier narrows it to usage-relevant diffs; on every
+  # other event (main/tags/schedule/release + SM validation dispatches)
+  # the full gate runs, so the suite runs there too. Same latent bug still
+  # pending for perf-gate (issue #303) — flagged in the gh-1243 rework.
+  usage-fold:
+    name: Usage fold (ledger chain)
+    runs-on: ubuntu-latest
+    needs: changes
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.changes.outputs.usagefold == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        with:
+          sdk: stable
+      - run: dart pub get
+
+      - name: Usage-fold suite
+        # The path classifier also gates on ^lib/src/cli/agent_cli_usage_ledger\.dart$
+        # — the CLI wiring test that exercises that file must run here too,
+        # otherwise a wiring regression merges behind a green test/usage.
+        run: dart test test/usage test/cli/agent_cli_usage_ledger_test.dart
 
   # Issue #194 (point 4): per-step duration telemetry. The jobs API already
   # records started/completed per step — dump it as a summary table plus a
@@ -3024,6 +3134,14 @@ jobs:
       - name: Cut annotated tag + GitHub Release
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # gh-1192 AC3: pin the tag to the bump commit the push event
+          # carried. head_commit.id is frozen at event time; a default
+          # checkout can land on a main that moved in the seconds between the
+          # bump push and this job starting (v1.0.498 captured the #1178
+          # interloper that way). tag_release.sh validates the sha (exact
+          # bump subject + matching pubspec version) before tagging and
+          # refuses to tag a moving HEAD when nothing qualifies.
+          BUMP_SHA: ${{ github.event.head_commit.id || github.sha }}
         run: bash scripts/tag_release.sh
 
   # PR-gate twin of the release `binaries` job: the CLI bundle must compile

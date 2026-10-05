@@ -5,8 +5,10 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:fa/apps/app_preflight.dart' show smokeProbeEngineFactory;
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
+import 'package:fa/apps/js_app_error_channel.dart';
 import 'package:fa/services/asr_service.dart';
 import 'package:fa/services/calendar_service.dart';
 import 'package:fa/services/contact_service.dart';
@@ -2006,6 +2008,286 @@ void main() {
     });
   }, skip: _engineSkip);
 
+  group(
+    'multi-file app boot (entry assembled via WidgetManifest, gh-1207)',
+    () {
+      TestWidgetsFlutterBinding.ensureInitialized();
+
+      const settle = Duration(milliseconds: 300);
+
+      JsAppInfo appOf([
+        Map<String, Object?> manifest = const {'id': 'demo', 'name': 'Demo'},
+      ]) =>
+          JsAppInfo.fromManifest(manifest, bundled: false, fallbackId: 'demo');
+
+      testWidgets('a bare-import entry boots and renders (fa-craft shape)', (
+        tester,
+      ) async {
+        await tester.runAsync(() async {
+          final env = MemoryExecutionEnv();
+          // The fa-craft shape: a one-line multi-file entry. A bare `import`
+          // is a syntax error in the script-eval path — without the
+          // assembler the engine never renders and the view spins forever.
+          await env.writeFile(
+            'apps/demo/widget.js',
+            "import './game/main.js';\n",
+          );
+          await env.writeFile('apps/demo/game/main.js', '''
+import { tag } from './parts.js';
+jsr.render({type: 'text', data: 'assembled:' + tag});
+jsr.exportState({booted: true});
+''');
+          await env.writeFile(
+            'apps/demo/game/parts.js',
+            "export const tag = 'mf';\n",
+          );
+
+          final engine = JsAppEngine(
+            app: appOf(),
+            env: env,
+            permissions: const AppPermissions(),
+          );
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
+            expect(jsonEncode(engine.tree.value), contains('assembled:mf'));
+            expect(engine.exportedState?['booted'], isTrue);
+          } finally {
+            await engine.dispose();
+          }
+        });
+      });
+
+      testWidgets('a manifest files list concatenates the declared order', (
+        tester,
+      ) async {
+        await tester.runAsync(() async {
+          final env = MemoryExecutionEnv();
+          await env.writeFile(
+            'apps/demo/manifest.json',
+            jsonEncode({
+              'id': 'demo',
+              'name': 'Demo',
+              'files': ['game/first.js', 'game/second.js'],
+            }),
+          );
+          await env.writeFile('apps/demo/widget.js', '/* unused: files win */');
+          await env.writeFile(
+            'apps/demo/game/first.js',
+            "var bootOrder = '1';",
+          );
+          await env.writeFile(
+            'apps/demo/game/second.js',
+            "jsr.render({type: 'text', data: 'order-' + bootOrder});",
+          );
+
+          final engine = JsAppEngine(
+            app: appOf(),
+            env: env,
+            permissions: const AppPermissions(),
+          );
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
+            expect(jsonEncode(engine.tree.value), contains('order-1'));
+          } finally {
+            await engine.dispose();
+          }
+        });
+      });
+
+      testWidgets('a live-tile entry assembles its own imports', (
+        tester,
+      ) async {
+        await tester.runAsync(() async {
+          final env = MemoryExecutionEnv();
+          await env.writeFile('apps/demo/widget.js', '''
+jsr.render({type: 'text', data: 'full-app'});
+''');
+          await env.writeFile(
+            'apps/demo/widget_tile.js',
+            "import './game/tile.js';\n",
+          );
+          await env.writeFile(
+            'apps/demo/game/tile.js',
+            "jsr.render({type: 'text', data: 'tile-boot'});",
+          );
+
+          final engine = JsAppEngine(
+            app: appOf(const {
+              'id': 'demo',
+              'name': 'Demo',
+              'widget': {'entry': 'widget_tile.js'},
+            }),
+            env: env,
+            permissions: const AppPermissions(),
+            entryFile: 'widget_tile.js',
+          );
+          try {
+            await engine.start();
+            await Future<void>.delayed(settle);
+            // The tile entry runs — not the app's own widget.js.
+            expect(jsonEncode(engine.tree.value), contains('tile-boot'));
+            expect(jsonEncode(engine.tree.value), isNot(contains('full-app')));
+          } finally {
+            await engine.dispose();
+          }
+        });
+      });
+    },
+    skip: _engineSkip,
+  );
+
+  group('entry assembly (host-side, no live engine, gh-1207)', () {
+    test(
+      'a manifest files list + a live-tile entry assembles the tile entry, not the files bundle',
+      () async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile(
+          'apps/demo/manifest.json',
+          jsonEncode({
+            'id': 'demo',
+            'name': 'Demo',
+            'files': ['game/first.js', 'game/second.js'],
+          }),
+        );
+        await env.writeFile('apps/demo/widget.js', '/* full-app entry */');
+        await env.writeFile(
+          'apps/demo/game/first.js',
+          "var fullAppOnly = '1';",
+        );
+        await env.writeFile(
+          'apps/demo/game/second.js',
+          'var fullAppSecond = true;',
+        );
+        await env.writeFile(
+          'apps/demo/widget_tile.js',
+          "import './game/tile.js';\n",
+        );
+        await env.writeFile(
+          'apps/demo/game/tile.js',
+          "jsr.render({type: 'text', data: 'tile-boot'});",
+        );
+
+        final js = await JsAppEngine.assembleEntryJsForTest(
+          env: env,
+          dir: 'apps/demo',
+          entryFile: 'widget_tile.js',
+        );
+
+        // The tile entry (with its own import inlined) assembles — never
+        // the full-app `files` bundle, which would render the whole app
+        // inside the tile (gh-1207 review thread 1).
+        expect(js, contains('tile-boot'));
+        expect(js, isNot(contains('fullAppOnly')));
+        expect(js, isNot(contains('fullAppSecond')));
+        expect(js, isNot(contains('full-app entry')));
+      },
+    );
+
+    test('the default entry still honors a manifest files list', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/demo/manifest.json',
+        jsonEncode({
+          'id': 'demo',
+          'name': 'Demo',
+          'files': ['game/first.js', 'game/second.js'],
+        }),
+      );
+      await env.writeFile('apps/demo/widget.js', '/* unused: files win */');
+      await env.writeFile('apps/demo/game/first.js', "var bootOrder = '1';");
+      await env.writeFile(
+        'apps/demo/game/second.js',
+        "jsr.render({type: 'text', data: 'order-' + bootOrder});",
+      );
+
+      final js = await JsAppEngine.assembleEntryJsForTest(
+        env: env,
+        dir: 'apps/demo',
+        entryFile: 'widget.js',
+      );
+
+      expect(js, contains('bootOrder'));
+      expect(js, contains('order-'));
+      expect(js, isNot(contains('unused: files win')));
+    });
+
+    test(
+      'a missing entry file fails assembly with a clear StateError',
+      () async {
+        final env = MemoryExecutionEnv();
+        await expectLater(
+          JsAppEngine.assembleEntryJsForTest(
+            env: env,
+            dir: 'apps/demo',
+            entryFile: 'widget.js',
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('app entry not found'),
+            ),
+          ),
+        );
+      },
+    );
+
+    test('engine start fails with the same StateError before any JS engine '
+        'work — no native bridge needed', () async {
+      final env = MemoryExecutionEnv();
+      final engine = JsAppEngine(
+        app: JsAppInfo.fromManifest(
+          const {'id': 'demo', 'name': 'Demo'},
+          bundled: false,
+          fallbackId: 'demo',
+        ),
+        env: env,
+        permissions: const AppPermissions(),
+      );
+      try {
+        await expectLater(engine.start(), throwsA(isA<StateError>()));
+      } finally {
+        await engine.dispose();
+      }
+    });
+
+    test('the reader redirects the manifest entry path and passes everything '
+        'else 1:1', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/widget_tile.js', 'tile entry');
+      await env.writeFile('apps/demo/game/parts.js', 'parts');
+
+      final reader = JsAppEngine.appWidgetFileReaderForTest(
+        env: env,
+        dir: 'apps/demo',
+        entryFile: 'widget_tile.js',
+      );
+
+      expect(await reader.readString('apps/demo/widget.js'), 'tile entry');
+      expect(await reader.readString('apps/demo/game/parts.js'), 'parts');
+      expect(await reader.readString('apps/demo/missing.js'), isNull);
+    });
+
+    test(
+      'the reader exists() answers presence without reading content',
+      () async {
+        final env = MemoryExecutionEnv();
+        await env.writeFile('apps/demo/widget.js', 'entry');
+
+        final reader = JsAppEngine.appWidgetFileReaderForTest(
+          env: env,
+          dir: 'apps/demo',
+          entryFile: 'widget.js',
+        );
+
+        expect(await reader.exists('apps/demo/widget.js'), isTrue);
+        expect(await reader.exists('apps/demo/missing.js'), isFalse);
+      },
+    );
+  });
+
   group('host-side home dispatcher (no live engine)', () {
     JsAppInfo app() => JsAppInfo.fromManifest(
       const {'id': 'demo', 'name': 'Demo'},
@@ -2354,6 +2636,189 @@ void main() {
       expect(JsAppEngine.emitPayload('text'), isEmpty);
       expect(JsAppEngine.emitPayload(null), isEmpty);
       expect(JsAppEngine.emitPayload(['list']), isEmpty);
+    });
+  });
+
+  group('gh-1164 review hardening (host-side, no live engine)', () {
+    test('computeSourceRevision hashes the WHOLE source tree — a '
+        'helper-file edit re-arms the error gate (review thread 6)', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile(
+        'apps/demo/manifest.json',
+        '{"id":"demo","name":"Demo"}',
+      );
+      await env.writeFile('apps/demo/widget.js', "import './components/a.js';");
+      await env.writeFile('apps/demo/components/a.js', 'jsr.render({});');
+
+      final rev1 = await JsAppEngine.computeSourceRevision(
+        env,
+        'apps/demo',
+        'widget.js',
+      );
+      expect(rev1, isNotEmpty);
+      expect(rev1, hasLength(64), reason: 'sha256 hex');
+
+      // The entry is untouched — only a HELPER file changed.
+      await env.writeFile(
+        'apps/demo/components/a.js',
+        'jsr.render({type:"text",data:"v2"});',
+      );
+      final rev2 = await JsAppEngine.computeSourceRevision(
+        env,
+        'apps/demo',
+        'widget.js',
+      );
+      expect(rev2, isNot(rev1));
+
+      await env.writeFile(
+        'apps/demo/widget.js',
+        "import './components/a.js'; // v3",
+      );
+      final rev3 = await JsAppEngine.computeSourceRevision(
+        env,
+        'apps/demo',
+        'widget.js',
+      );
+      expect({rev1, rev2, rev3}, hasLength(3));
+    });
+
+    test('computeSourceRevision excludes runtime state (storage/session '
+        'json are not source)', () async {
+      final env = MemoryExecutionEnv();
+      await env.writeFile('apps/demo/manifest.json', '{"id":"demo"}');
+      await env.writeFile('apps/demo/widget.js', 'jsr.render({});');
+      final rev1 = await JsAppEngine.computeSourceRevision(
+        env,
+        'apps/demo',
+        'widget.js',
+      );
+      await env.writeFile('apps/demo/storage.json', '{"score":1}');
+      await env.writeFile('apps/demo/session.json', '{"sessionId":"s1"}');
+      final rev2 = await JsAppEngine.computeSourceRevision(
+        env,
+        'apps/demo',
+        'widget.js',
+      );
+      expect(rev2, rev1, reason: 'runtime state must not re-arm the gate');
+    });
+
+    test('the injected bootstrap emits a stable fingerprint per error '
+        '(review thread 7: dedup does not collapse to message equality)',
+        () {
+      final js = JsAppEngine.faBootstrapJsFor('en');
+      expect(
+        js,
+        contains('fingerprint: __faFingerprint(message, stack)'),
+        reason: 'every faAppError record must carry the fingerprint',
+      );
+      // The normalization strips per-occurrence noise (indices,
+      // timestamps, per-frame layout values) so noisy RAF-loop errors
+      // collapse to ONE dedup key and the circuit breaker can trip.
+      expect(js, contains("replace(/[0-9]+/g, '#')"));
+      expect(js, contains("replace(/0x[0-9a-fA-F]+/g, '#')"));
+    });
+
+    test('live engines join the sibling group; smoke-gate probes never '
+        'do (review thread 4)', () {
+      JsAppInfo app() => JsAppInfo.fromManifest(
+        const {'id': 'demo', 'name': 'Demo'},
+        bundled: false,
+        fallbackId: 'demo',
+      );
+
+      final live = JsAppEngine(
+        app: app(),
+        env: MemoryExecutionEnv(),
+        permissions: const AppPermissions(),
+      );
+      expect(live.joinSiblingGroup, isTrue);
+
+      final probe = smokeProbeEngineFactory(
+        app: app(),
+        env: MemoryExecutionEnv(),
+        permissions: const AppPermissions(),
+      );
+      expect(
+        probe.joinSiblingGroup,
+        isFalse,
+        reason: 'a scratch-env probe must stay out of the process-wide '
+            'live-engine group: its storage writes would otherwise '
+            'reach the real viewports (and vice versa)',
+      );
+    });
+
+    test('reportHostError forwards render-host errors: a local sink owns '
+        'them; otherwise the channel gates + publishes (host-side, feeds '
+        'the CRAP-covered _forwardError path)', () async {
+      JsAppErrorChannel.instance.disposeAndReset();
+      addTearDown(JsAppErrorChannel.instance.disposeAndReset);
+      final notices = <JsAppErrorNotice>[];
+      final sub = JsAppErrorChannel.instance.onDeliver.listen(notices.add);
+      addTearDown(sub.cancel);
+
+      JsAppInfo app() => JsAppInfo.fromManifest(
+        const {'id': 'demo', 'name': 'Demo'},
+        bundled: false,
+        fallbackId: 'demo',
+      );
+      final env = MemoryExecutionEnv();
+
+      // 1. Local sink (the pre-flight probe shape): the event goes to
+      // the sink ONLY — never the app-wide channel.
+      final sunk = <JsAppErrorEvent>[];
+      final probe = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+        errorSink: sunk.add,
+      );
+      addTearDown(() => probe.dispose());
+      probe.reportHostError('tile blew up');
+      expect(sunk, hasLength(1));
+      expect(sunk.single.kind, JsAppErrorKind.render);
+      expect(sunk.single.message, 'tile blew up');
+      expect(notices, isEmpty, reason: 'a local sink owns the error');
+
+      // 2. No sink (the live viewport shape): the channel gates — the
+      // first occurrence publishes; an identical repeat is deduped; past
+      // the breaker threshold the gate silences the key entirely.
+      final live = JsAppEngine(
+        app: app(),
+        env: env,
+        permissions: const AppPermissions(),
+        entryFile: 'tile.js', // non-default entry → the launcher tile
+      );
+      addTearDown(() => live.dispose());
+      live.reportHostError('render blew up');
+      // The channel's broadcast delivery lands on the next event-loop
+      // turns — flush before asserting.
+      for (var i = 0; i < 3; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(notices, hasLength(1));
+      expect(notices.single.appId, 'demo');
+      expect(
+        notices.single.surface,
+        'tile',
+        reason: 'a non-default entry powers the launcher tile surface',
+      );
+      live.reportHostError('render blew up');
+      for (var i = 0; i < 3; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(
+        notices,
+        hasLength(1),
+        reason: 'one report per (app, fingerprint) per source revision',
+      );
+      for (var i = 0; i < JsAppErrorChannel.breakerThreshold + 2; i++) {
+        live.reportHostError('render blew up');
+      }
+      expect(
+        notices,
+        hasLength(1),
+        reason: 'the per-app circuit breaker silences the loop',
+      );
     });
   });
 }

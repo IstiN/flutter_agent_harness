@@ -93,6 +93,15 @@ String _dirname(String path) {
 
 /// The `/tools` command, capability mapping, and live scope resolution.
 extension AgentCliTools on AgentCli {
+  /// Re-registers the MCP tool surface and rebuilds the prompt whenever a
+  /// server connects, fails, or drops.
+  void _onMcpChanged() {
+    _mcp.reRegister(_toolRegistry, _agent, _applyPromptComposition);
+    // Re-apply the availability decision to the fresh MCP surface (a
+    // no-op until the first rebuild produced a resolution).
+    AgentCliTools(this).resyncMcpAvailability();
+  }
+
   /// Host-specific tool name → availability id, layered over
   /// [coreToolFamilies] (whose mappings come through
   /// [toolAvailabilityIdOf]): the lsp tool carries its own id here

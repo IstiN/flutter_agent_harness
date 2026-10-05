@@ -75,7 +75,23 @@ void main() {
   });
 
   tearDown(() async {
-    await tmp.delete(recursive: true);
+    // _rememberActive's last-active write is fire-and-forget; on a loaded
+    // box it can still be flushing when teardown runs and the temp dir
+    // reports ENOTEMPTY ("Directory not empty") mid-delete — retry briefly
+    // instead of failing a green test on cleanup (same pattern as
+    // session_oversized_windowed_test.dart's _deleteTmpDir).
+    Object? lastError;
+    for (var attempt = 0; attempt < 5; attempt++) {
+      try {
+        await tmp.delete(recursive: true);
+        return;
+      } on FileSystemException catch (e) {
+        lastError = e;
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+    }
+    // ignore: only_throw_errors
+    throw lastError!;
   });
 
   Future<SessionMetadata> seed(String id) async {

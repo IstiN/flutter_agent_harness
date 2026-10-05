@@ -684,7 +684,10 @@ Future<http.StreamedResponse> _sendWatchedOnce(
     throw TimeoutException(
       'provider stream request to ${redactProviderUrl(request.url)} timed out: '
       'no response headers within ${effectiveProviderConnectTimeout.inSeconds}s '
-      '(connect watchdog)',
+      // The classifier consumes [connectWatchdogTag] (transient_retry_
+      // stream.dart): one constant keeps the wording and the retry
+      // classification pinned together (issue #1121, review r1).
+      '$connectWatchdogTag',
     );
   }
 

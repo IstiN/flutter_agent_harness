@@ -11,13 +11,39 @@
 /// reaches the TUI as a key event) and the TUI's `ctrl+c` KeyMsg handler
 /// (kitty protocol / raw-mode terminals where isig is off). Headless runs
 /// bypass the window entirely — scripts rely on an immediate exit 130.
-/// Esc stays abort-without-exit everywhere; no config knob.
+/// Esc stays abort-without-exit everywhere; no user-facing config knob
+/// — [kSigintWindowEnvVar] is a harness TEST seam, not configuration
+/// (gh-1014): PTY integration suites spawn the real binary and cannot
+/// inject a clock, so they widen the window instead, keeping both window
+/// crossings far from runner-load jitter.
 library;
 
 /// How long press 2 may follow press 1. The contract constant: the policy
 /// default and every window-crossing test sleep reference it so there is
 /// exactly one place where the window lives.
 const kSigintPressWindow = Duration(seconds: 3);
+
+/// Test-only press-window override (gh-1014): set to an integer number of
+/// milliseconds and the CLI builds its [SigintPolicy] with that window.
+/// NOT user configuration — the 3 s contract stands for every interactive
+/// surface and nothing in the help text or docs mentions this variable.
+/// It exists because a PTY integration test spawns the real binary and
+/// cannot inject a clock into it (unlike the in-process unit tests, which
+/// use the injectable stopwatch): widening the window makes both window
+/// crossings of the double-press ladder insensitive to runner-load jitter
+/// — the wait past the window can only land later (always a fresh press
+/// 1), and the presses inside the fresh window land seconds before it
+/// closes. Invalid values are ignored silently (null), never errors.
+const kSigintWindowEnvVar = 'FA_SIGINT_WINDOW_MS';
+
+/// Parses [kSigintWindowEnvVar] from [env]. Absent, blank, non-numeric,
+/// zero and negative values yield null — the [kSigintPressWindow]
+/// contract window stands.
+Duration? resolveSigintWindowOverride({required Map<String, String> env}) {
+  final ms = int.tryParse(env[kSigintWindowEnvVar]?.trim() ?? '');
+  if (ms == null || ms <= 0) return null;
+  return Duration(milliseconds: ms);
+}
 
 /// The dim hint shown after press 1 (TUI prompt-zone footer row, line-mode
 /// stderr line). One constant so every surface carries the same wording.

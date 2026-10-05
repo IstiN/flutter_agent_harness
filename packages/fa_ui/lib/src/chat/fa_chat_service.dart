@@ -50,7 +50,6 @@ final class FaChatMessage {
   final Object? data;
 }
 
-
 /// One attachment of a user message: [bytes] when the record carries the
 /// inline image part, plus the sandbox [path] it was staged under
 /// (`uploads/…`, null for bytes sent without a path — in-app screenshots).
@@ -158,7 +157,8 @@ abstract interface class FaChatService implements FaApprovalModeController {
   /// bounded previews. Default `null` — hosts opt in by overriding; the
   /// trajectory shows the drill-in tab only when this is non-null.
   Future<List<TrajectoryHiddenRecordPreview>> Function(
-    TrajectoryCompactedRecord record)?
+    TrajectoryCompactedRecord record,
+  )?
   get resolveHiddenRecords => null;
 
   /// Transcript records sitting ABOVE the loaded window: `null` while the
@@ -200,8 +200,13 @@ abstract interface class FaChatService implements FaApprovalModeController {
   /// [historyHasNewer], not from this count.
   int? get historyBelowCount;
 
-  /// Pages the next chunk of newer transcript history back into view -
-  /// the page-down path back to the live tail after deep paging.
+  /// Brings the transcript back to the LIVE TAIL after deep paging - the
+  /// page-down path. Jumps in one bounded step (no chunk-by-chunk crawl)
+  /// and MUST work while the agent is streaming: paging newer is a view
+  /// operation, and a run actively appending below a deep-paged window is
+  /// exactly when the "Load newer" banner gets tapped (issue #1159).
+  /// Reaching the tail clears [historyHasNewer] and dismisses the banner.
+  /// No-op while a page load is already running.
   Future<void> loadNewerHistory();
 
   /// Jump-to-message (issue #135 AC6): brings the transcript row

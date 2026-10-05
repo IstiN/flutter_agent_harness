@@ -54,6 +54,7 @@ extension WireServeBoot on AgentCli {
         abort: _abortIfBusy,
         isBusy: () => isBusy,
         onLog: onDiagnostic,
+        redactionPipeline: config.redactionPipeline,
       );
 
   /// Host-interaction over the wire (E1): the same three surfaces the
@@ -87,6 +88,9 @@ extension WireServeBoot on AgentCli {
       pumpSub();
       return null;
     }
+    // gh-1241: NO eager marker — a serve boot that never serves a turn
+    // must leave the chain byte-untouched (same invariant as the REPL);
+    // the segment opens lazily at the first wire-driven [_runPrompt].
     await _subagentManager.rehydrate();
     unawaited(AgentCliTools(this).rebuildToolAvailability());
     await acquirePowerAssertions();

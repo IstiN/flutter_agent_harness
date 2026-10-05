@@ -43,6 +43,7 @@ void main() {
       '-p',
       '--prompt-file',
       '-f',
+      '--stream-thinking',
     ];
     for (final flag in flags) {
       test('mentions flag $flag', () {

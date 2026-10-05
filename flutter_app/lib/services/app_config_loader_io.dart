@@ -32,8 +32,8 @@ import '../sandbox/env_factory_io.dart' show desktopHomeDir;
 /// behind the same conditional import as the config file, so the web stub
 /// keeps its "no environment on this platform" contract. Function-typed so
 /// tests can inject a value without mutating the process environment.
-String? Function() faProviderTimeoutSecondsEnv =
-    () => Platform.environment['FA_PROVIDER_TIMEOUT_SECONDS'];
+String? Function() faProviderTimeoutSecondsEnv = () =>
+    Platform.environment['FA_PROVIDER_TIMEOUT_SECONDS'];
 
 /// Reads and resolves the app-honored config sections; null when this
 /// platform has no readable home (web-like sandboxes). [homeDir] and
@@ -85,6 +85,25 @@ Object? _readYaml(String path, List<String> warnings) {
     return loadYaml(text);
   } on Object catch (error) {
     warnings.add('cannot parse $path: $error');
+    return null;
+  }
+}
+
+/// The app's owner context-window cap (`agent.contextWindowCap`, gh-1077):
+/// project `.fah/config.yaml` wins over `~/.fah/config.yaml` — the same
+/// chain the CLI honors — null when neither states one (uncapped). A
+/// missing or unreadable config never blocks boot (E2: silence, like the
+/// section loader above).
+int? loadAppContextWindowCap([String? projectDir]) {
+  try {
+    if (projectDir != null) {
+      final project = loadProjectContextWindowCap(projectDir);
+      if (project != null) return project;
+    }
+    final home = desktopHomeDir();
+    if (home == null) return null;
+    return loadCliConfig(home).contextWindowCap;
+  } on Object {
     return null;
   }
 }

@@ -57,6 +57,16 @@ if _BENCH_DIR not in sys.path:
     sys.path.insert(0, _BENCH_DIR)
 import fa_usage  # noqa: E402
 
+# Never-started trials: the only outcomes where fa cannot have produced a
+# session, so the issue #1123 usage fold is skipped (gh-1209 — every
+# outcome where the agent actually ran gets the fold).
+_NEVER_STARTED_MODES = frozenset(
+    {
+        FailureMode.AGENT_INSTALLATION_FAILED,
+        FailureMode.UNKNOWN_AGENT_ERROR,
+    }
+)
+
 _VERSION = "0.1.0"
 
 # Host-side pane tap: tmux pipe-pane mirrors the pane stream (the agent's
@@ -121,10 +131,16 @@ class FaAgent(AbstractInstalledAgent):
         knobs = _timeout.TimeoutKnobs.from_env()
         if knobs is None:
             result = super().perform_task(instruction, session, logging_dir)
-            # Issue #1123: fold fa's real session usage into the result.
-            # An installation failure means fa never ran — nothing to
-            # measure — so only healthy results get the fold.
-            if result.failure_mode != FailureMode.NONE:
+            # Issue #1123, corrected by gh-1209: fold fa's real session
+            # usage into the result for ANY outcome where the agent process
+            # actually ran — the timed-out trials are the expensive ones,
+            # so skipping them reports zero spend on the costliest rows.
+            # Only true never-started trials skip the fold: an installation
+            # failure means fa never installed, and unknown_agent_error
+            # means the harness never got the agent going. The fold itself
+            # fails soft (zeros survive when no session file exists), so
+            # folding a ran-but-empty trial is always safe.
+            if result.failure_mode in _NEVER_STARTED_MODES:
                 return result
             return self._fold_session_usage(session, result)
         return self._perform_task_with_deadline(

@@ -11,7 +11,8 @@
 #   PLAN_RESULT         needs.plan.result — a plan failure files its own issue
 #   LEG_<NAME>          needs result: success | failure | skipped | cancelled
 #   LEG_<NAME>_URL      child run URL (empty on internal/skip paths)
-#   LEG_PUBDEV_*        status (up-to-date/private/recovered), versions, tag-run URL
+#   LEG_PUBDEV_*        status (up-to-date/private/recovered/release-in-flight),
+#                       versions, tag-run URL
 #   NEXT_TAG            estimated next tag (informational; legs derive latest+1 themselves)
 #   GITHUB_RUN_ID, GITHUB_REPOSITORY, GITHUB_SERVER_URL   runner defaults
 #
@@ -201,6 +202,8 @@ case "${LEG_PUBDEV_STATUS:-}" in
   private)    pubdev_override="private (publish_to: none)";;
   recovered)  pubdev_override="recovered — tag-publish rerun, pub.dev serves ${LEG_PUBDEV_PUBLISHED:-?}";;
   up-to-date) pubdev_override="up-to-date (pub.dev serves ${LEG_PUBDEV_PUBLISHED:-?})";;
+  # gh-1192: the tag-publish is still executing — neutral, no issue filed.
+  release-in-flight) pubdev_override="skipped: release in flight (tag-publish still executing; the next daily re-verifies)";;
 esac
 
 process_leg testflight "TestFlight" "${LEG_TESTFLIGHT:-}" "${LEG_TESTFLIGHT_URL:-}" \

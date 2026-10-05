@@ -95,6 +95,8 @@ final class StageRedirects {
     required this.appendStdout,
     required this.appendStderr,
     this.stdinBody,
+    this.dupStderrIntoStdout = false,
+    this.dupStdoutIntoStderr = false,
   });
 
   /// `> file` / `>> file` target for stdout, or `null`.
@@ -116,6 +118,12 @@ final class StageRedirects {
 
   /// Stderr target opened for append (`2>>`).
   final bool appendStderr;
+
+  /// `2>&1`: stderr folds into stdout's destination (file, pipe, capture).
+  final bool dupStderrIntoStdout;
+
+  /// `1>&2` / `>&2`: stdout folds into stderr's destination.
+  final bool dupStdoutIntoStderr;
 }
 
 /// Resolves a stage's redirect list into targets.
@@ -127,6 +135,8 @@ final class StageRedirects {
 StageRedirects collectStageRedirects(List<Redirect> redirects) {
   String? stdoutFile;
   String? stderrFile;
+  var dupStderrIntoStdout = false;
+  var dupStdoutIntoStderr = false;
   String? stdinFile;
   var appendStdout = false;
   var appendStderr = false;
@@ -143,21 +153,43 @@ StageRedirects collectStageRedirects(List<Redirect> redirects) {
       // POSIX here-strings append a trailing newline after expansion.
       stdinBody = '${redirect.target}\n';
       stdinFile = null;
+    } else if (redirect.kind == RedirectKind.dup) {
+      // `2>&1` folds stderr into stdout's destination; `1>&2`/`>&2` the
+      // reverse. POSIX: the dup snapshots the target AT THIS POINT —
+      // `2>&1 > f` sends stderr to the pre-redirect stdout, `> f 2>&1`
+      // sends it to f. Applied by the WASI pipeline stage runner only.
+      if (redirect.target == '1' && redirect.fd == 2) {
+        if (stdoutFile != null) {
+          stderrFile = stdoutFile;
+          appendStderr = true;
+        } else {
+          dupStderrIntoStdout = true;
+        }
+      } else if (redirect.target == '2' && redirect.fd == 1) {
+        if (stderrFile != null) {
+          stdoutFile = stderrFile;
+          appendStdout = true;
+        } else {
+          dupStdoutIntoStderr = true;
+        }
+      }
     } else if (redirect.fd == 1 || redirect.fd == -1) {
-      if (redirect.kind == RedirectKind.write) {
+      if (redirect.kind == RedirectKind.write ||
+          redirect.kind == RedirectKind.append) {
         stdoutFile = redirect.target;
-        appendStdout = false;
-      } else if (redirect.kind == RedirectKind.append) {
-        stdoutFile = redirect.target;
-        appendStdout = true;
+        appendStdout = redirect.kind == RedirectKind.append;
+        // A file redirect replaces the fd: an earlier dup of (or into)
+        // this fd no longer routes here.
+        dupStderrIntoStdout = false;
+        dupStdoutIntoStderr = false;
       }
     } else if (redirect.fd == 2 || redirect.fd == -1) {
-      if (redirect.kind == RedirectKind.write) {
+      if (redirect.kind == RedirectKind.write ||
+          redirect.kind == RedirectKind.append) {
         stderrFile = redirect.target;
-        appendStderr = false;
-      } else if (redirect.kind == RedirectKind.append) {
-        stderrFile = redirect.target;
-        appendStderr = true;
+        appendStderr = redirect.kind == RedirectKind.append;
+        dupStderrIntoStdout = false;
+        dupStdoutIntoStderr = false;
       }
     }
   }
@@ -168,6 +200,8 @@ StageRedirects collectStageRedirects(List<Redirect> redirects) {
     stdinBody: stdinBody,
     appendStdout: appendStdout,
     appendStderr: appendStderr,
+    dupStderrIntoStdout: dupStderrIntoStdout,
+    dupStdoutIntoStderr: dupStdoutIntoStderr,
   );
 }
 

@@ -28,6 +28,7 @@ final _infoCommandHandlers = <String, Future<void> Function(AgentCli, String)>{
   '/redact': (cli, rest) async => cli._handleRedactCommand(rest),
   '/theme': (cli, rest) async => cli._themeSlash(rest),
   '/trajectory': (cli, rest) async => cli._handleTrajectoryCommand(rest),
+  '/usage': (cli, rest) async => cli._handleUsageCommand(rest),
   '/mail': (cli, rest) async => cli.handleMailCommand(rest),
   '/reply': (cli, rest) async => cli.handleReplyCommand(rest),
   '/agents': (cli, rest) async => cli.handleAgentsCommand(rest),
@@ -741,9 +742,12 @@ extension ProviderQueueEditor on AgentCli {
       io.writeln('not applied: $error');
       return;
     }
+    // Same env view the boot resolved through (issue #675): the config's
+    // queue env when the host injected one, else the process environment.
     final scope = resolveProviderQueueAtBoot(
       projectDir: config.env.cwd,
       homeDir: config.homeDir ?? config.env.cwd,
+      env: config.providerQueueEnv,
     );
     if (scope.scope == ProviderQueueScope.env) {
       io.writeln(
@@ -803,6 +807,7 @@ extension ProviderQueueEditor on AgentCli {
       final queue = resolveProviderQueueAtBoot(
         projectDir: config.env.cwd,
         homeDir: config.homeDir ?? config.env.cwd,
+        env: config.providerQueueEnv,
       );
       config.providersQueueRuntime = queue.entries.isEmpty
           ? null

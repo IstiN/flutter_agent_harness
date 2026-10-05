@@ -189,4 +189,134 @@ void main() {
       );
     });
   });
+
+  group('customProvider pin (gh-1000)', () {
+    test('round-trips the pinned entry name', () async {
+      await saveFolderModelState(
+        env,
+        sessionsRoot: '/sessions',
+        cwd: '/work',
+        providerKind: 'openai-completions',
+        modelId: 'k3-256k',
+        baseUrl: 'https://api.kimi.com/coding/v1',
+        customProvider: 'kimi_me',
+      );
+      final state = await loadFolderModelState(
+        env,
+        sessionsRoot: '/sessions',
+        cwd: '/work',
+      );
+      expect(state!.customProvider, 'kimi_me');
+    });
+
+    test('a pre-change state file loads with a null pin (AC4)', () async {
+      final path = folderModelStatePath(sessionsRoot: '/sessions', cwd: '/work');
+      await env.writeFile(
+        path,
+        jsonEncode({
+          'providerKind': 'openai-completions',
+          'modelId': 'k3-256k',
+          'baseUrl': 'https://api.kimi.com/coding/v1',
+        }),
+      );
+      final state = await loadFolderModelState(
+        env,
+        sessionsRoot: '/sessions',
+        cwd: '/work',
+      );
+      expect(state, isNotNull);
+      expect(state!.customProvider, isNull);
+    });
+
+    test('a non-string pin degrades to null', () async {
+      final path = folderModelStatePath(sessionsRoot: '/sessions', cwd: '/work');
+      await env.writeFile(
+        path,
+        jsonEncode({
+          'providerKind': 'openai-completions',
+          'modelId': 'k3-256k',
+          'customProvider': 42,
+        }),
+      );
+      final state = await loadFolderModelState(
+        env,
+        sessionsRoot: '/sessions',
+        cwd: '/work',
+      );
+      expect(state!.customProvider, isNull);
+    });
+
+    CustomProviderRegistry registryWith() => CustomProviderRegistry([
+      CustomProviderEntry(
+        name: 'ira-1',
+        apiType: 'kimi',
+        baseUrl: 'https://api.kimi.com/coding/v1',
+        modelId: 'k3-256k',
+        keyName: 'FA_KEY_API_KIMI_COM_IRA_1',
+      ),
+      CustomProviderEntry(
+        name: 'kimi_me',
+        apiType: 'openai',
+        baseUrl: 'https://api.kimi.com/coding/v1',
+        modelId: 'k3-256k',
+        keyName: 'FA_KEY_API_KIMI_COM_KIMI_ME',
+      ),
+    ]);
+
+    test('pinnedEntry resolves the named entry among same-modelId twins '
+        '(AC1)', () {
+      final state = FolderModelState(
+        providerKind: 'openai-completions',
+        modelId: 'k3-256k',
+        baseUrl: 'https://api.kimi.com/coding/v1',
+        customProvider: 'kimi_me',
+      );
+      final decision = folderStateProviderEntry(state, registryWith());
+      expect(decision.entry, isNotNull);
+      expect(decision.entry!.name, 'kimi_me');
+      expect(decision.entry!.keyName, 'FA_KEY_API_KIMI_COM_KIMI_ME');
+      expect(decision.note, isNull);
+    });
+
+    test('pin resolution is case-insensitive', () {
+      final state = FolderModelState(
+        providerKind: 'openai-completions',
+        modelId: 'k3-256k',
+        baseUrl: 'https://api.kimi.com/coding/v1',
+        customProvider: 'Kimi_Me',
+      );
+      expect(folderStateProviderEntry(state, registryWith()).entry!.name,
+          'kimi_me');
+    });
+
+    test('a deleted entry yields the E1 note with the model kept', () {
+      final state = FolderModelState(
+        providerKind: 'openai-completions',
+        modelId: 'k3-256k',
+        baseUrl: 'https://api.kimi.com/coding/v1',
+        customProvider: 'gone-provider',
+      );
+      final decision = folderStateProviderEntry(state, registryWith());
+      expect(decision.entry, isNull);
+      expect(decision.note, contains('gone-provider'));
+      expect(decision.note, contains('no longer configured'));
+    });
+
+    test('no pin → no entry and no note (legacy state)', () {
+      final state = FolderModelState(
+        providerKind: 'openai-completions',
+        modelId: 'k3-256k',
+        baseUrl: 'https://api.kimi.com/coding/v1',
+      );
+      final decision = folderStateProviderEntry(state, registryWith());
+      expect(decision.entry, isNull);
+      expect(decision.note, isNull);
+    });
+
+    test('a null state yields nothing', () {
+      final decision = folderStateProviderEntry(null, registryWith());
+      expect(decision.entry, isNull);
+      expect(decision.note, isNull);
+    });
+  });
 }

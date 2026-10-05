@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
@@ -810,16 +811,18 @@ void main() {
 
     test('a grammar-shaped 400 surfaces the suspect item and a recovery '
         'hint, never a bare loop', () async {
+      // The verbatim `git/references` brick (the card's seed clip).
+      const verbatimError =
+          "Invalid value: 'function_call'. Supported values are: "
+          "'input_text', 'input_image', 'input_audio', 'output_text', "
+          "'refusal', 'input_file', 'computer_screenshot', "
+          "'summary_text', and 'encrypted_content'.";
       final client = http_testing.MockClient.streaming(
         (request, requestBody) async => http.StreamedResponse(
           Stream.value(
             utf8.encode(
               jsonEncode({
-                'error': {
-                  'message':
-                      "Invalid value: 'function_call'. Supported values "
-                      "are: ['input_text', 'output_text', 'input_image']",
-                },
+                'error': {'message': verbatimError},
               }),
             ),
           ),
@@ -834,7 +837,7 @@ void main() {
       ).toList();
 
       final message = events.whereType<ErrorEvent>().single.error.errorMessage!;
-      expect(message, contains("Invalid value: 'function_call'"));
+      expect(message, contains(verbatimError));
       expect(message, contains('rejected the outbound item/content grammar'));
       expect(message, contains('/compact'));
     });
@@ -910,6 +913,168 @@ void main() {
         isNull,
       );
     });
+
+    test(
+      'adversarial corpus: every authored/poisoned/degenerate shape '
+      'converts grammar-valid (#858 AC1)',
+      () {
+        AssistantMessage codexAsst(List<ContentBlock> content) =>
+            AssistantMessage(
+              content: content,
+              api: 'responses',
+              provider: 'chatgpt',
+              model: 'gpt-5-codex',
+              usage: Usage.zero,
+              stopReason: StopReason.toolUse,
+              timestamp: DateTime.utc(2026),
+            );
+        const call = ToolCall(id: 'call_1', name: 'bash', arguments: {'c': 'ls'});
+        ToolResultMessage result(String callId, List<ContentBlock> content) =>
+            ToolResultMessage(
+              toolCallId: callId,
+              toolName: 'bash',
+              content: content,
+              isError: false,
+              timestamp: DateTime.utc(2026),
+            );
+
+        // Every threat case the card names: poison (a tool call inside an
+        // assistant record — the pre-#705 converter nested it into message
+        // content), thinking-only, image-only, orphan results, merged
+        // roles, empty records, steering interleave (E3), codex-authored
+        // tails (E5), and an orphan result from a compaction cut (E4).
+        final corpus = <String, List<Message>>{
+          'poison-call': [
+            UserMessage.text('list files'),
+            geminiAssistant([
+              const TextContent(text: 'checking'),
+              call,
+            ]),
+            result('call_1', const [TextContent(text: 'a')]),
+          ],
+          'thinking-only (E2)': [geminiAssistant([const ThinkingContent(thinking: 'h')])],
+          'image-only-assistant': [
+            geminiAssistant([
+              ImageContent(data: 'aGk=', mimeType: 'image/png'),
+            ]),
+          ],
+          'image-only-tool-result': [
+            result('call_x', const [
+              ImageContent(data: 'aGk=', mimeType: 'image/png'),
+            ]),
+          ],
+          'orphan-tool-result': [
+            UserMessage.text('go'),
+            result('call_orphan', const [TextContent(text: 'out')]),
+          ],
+          'merged-roles': [
+            UserMessage.text('a'),
+            UserMessage.text('b'),
+            geminiAssistant([const TextContent(text: 'x')]),
+            geminiAssistant([const TextContent(text: 'y'), call]),
+          ],
+          'empty-records': [
+            UserMessage.text(''),
+            geminiAssistant([const TextContent(text: '')]),
+            result('', const []),
+          ],
+          'steering-interleave (E3)': [
+            UserMessage.text('start'),
+            geminiAssistant([call]),
+            UserMessage.text('wait, also do X'),
+            result('call_1', const [TextContent(text: 'done')]),
+          ],
+          'compaction-split-pair (E4)': [
+            UserMessage.text('summary of earlier work'),
+            result('call_42', const [TextContent(text: 'file.txt')]),
+          ],
+          'codex-authored-tail (E5)': [
+            codexAsst([
+              const TextContent(text: 'did it'),
+              const ToolCall(
+                id: 'call_9',
+                name: 'bash',
+                arguments: {'x': '1'},
+              ),
+            ]),
+            result('call_9', const [TextContent(text: 'ok')]),
+          ],
+        };
+
+        corpus.forEach((name, messages) {
+          final input = responsesInputItems(messages);
+          expect(
+            firstResponsesGrammarViolation(input),
+            isNull,
+            reason: 'corpus case $name must convert grammar-valid',
+          );
+          // Idempotence (E5): a provider switch does NOT keep the typed
+          // objects in memory — every record round-trips the session JSONL
+          // (toJson → messageFromJson) before the codex wire sees it
+          // again. Re-converting that round-tripped history must produce
+          // byte-identical items, so no signature/field the converter
+          // reads can silently drift across the switch.
+          final roundTripped = [
+            for (final message in messages)
+              messageFromJson(message.toJson()),
+          ];
+          expect(
+            responsesInputItems(roundTripped),
+            input,
+            reason: 'corpus case $name must survive a switch round-trip '
+                'without conversion drift',
+          );
+        });
+      },
+    );
+  });
+
+  group('choke-point guard (#858 AC4)', () {
+    test(
+      'the outbound input array is assembled only through '
+      'responsesInputItems in chatgpt_codex.dart',
+      () {
+        final source = File('lib/src/providers/chatgpt_codex.dart')
+            .readAsStringSync();
+
+        // Exactly ONE request-body assembly of the `input` array exists,
+        // and it routes through the converter (the only other
+        // responsesInputItems call is the 400-diagnostic annotation).
+        final inputKeyLines = source
+            .split('\n')
+            .where((line) => line.trim().startsWith("'input':"))
+            .toList();
+        expect(inputKeyLines, hasLength(1));
+        expect(inputKeyLines.single, contains('responsesInputItems('));
+
+        // Every converter USE in the file is the request body or the
+        // diagnostic annotation (the third match is the declaration) — no
+        // third path shapes wire items.
+        final useLines = source
+            .split('\n')
+            .where((line) => line.contains('responsesInputItems('))
+            .where((line) => !line.contains(
+                'List<Map<String, dynamic>> responsesInputItems('))
+            .toList();
+        expect(useLines, hasLength(2));
+        expect(
+          useLines.any((line) => line.trim().startsWith("'input':")),
+          isTrue,
+        );
+
+        // No other lib file converts or assembles responses input items —
+        // a second assembly site would bypass the invariant's tests.
+        final offenders = <String>[];
+        for (final entity in Directory('lib').listSync(recursive: true)) {
+          if (entity is! File || !entity.path.endsWith('.dart')) continue;
+          if (entity.path.endsWith('chatgpt_codex.dart')) continue;
+          if (entity.readAsStringSync().contains('responsesInputItems')) {
+            offenders.add(entity.path);
+          }
+        }
+        expect(offenders, isEmpty);
+      },
+    );
   });
 
   group('sse event coverage', () {

@@ -85,6 +85,9 @@ Never runChatGptOAuthCliFlow({
 final class AiinSurfaceClosedException implements Exception {}
 
 /// Always throws on the web — the AIIN connect flow needs a local server.
+/// The signature mirrors the IO implementation parameter-for-parameter
+/// (dart2js compiles the mobile branch even on web, so a missing named
+/// parameter is a web-only BUILD break the VM tests never see).
 Never runAiinConnectCliFlow({
   required void Function(String) onStatus,
   http.Client? client,
@@ -92,6 +95,8 @@ Never runAiinConnectCliFlow({
   void Function()? onCallback,
   bool cancelWhenOpenSettles = false,
   Duration? timeout,
+  String callbackHost = '127.0.0.1',
+  Future<String?> Function()? interceptedCallback,
 }) => throw UnsupportedError(
   'AIIN sign-in is not supported on the web platform.',
 );

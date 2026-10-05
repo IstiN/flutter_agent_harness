@@ -3,7 +3,7 @@
 // in the LICENSE file.
 
 /// AC8 (issue #29), the exhaustive sweep: every config key the
-/// `fa-self-config` skill documents — with the example values the skill
+/// `self-settings` skill documents — with the example values the skill
 /// itself shows — must round-trip through the real [ConfigService] the
 /// `config` tool and `fa config` wrap. A documented key that cannot be
 /// set (or read back) is a bug in the skill or the writer; this test pins
@@ -12,6 +12,10 @@
 /// Complements `fa_self_config_accuracy_test.dart`, which pins that the
 /// documented keys match the parsers; this one pins that they are all
 /// WRITABLE end to end, and that no schema key is left undocumented.
+///
+/// The guarded skill is the LIVE `prompts/skills/self-settings/SKILL.md`
+/// (issue #1151 retired the `.fah/skills/fa-self-config` seed — that copy
+/// is frozen last-seeded bytes, see `retired_seed_frozen_test.dart`).
 library;
 
 import 'dart:io';
@@ -24,7 +28,7 @@ import 'package:flutter_agent_harness/src/exceptions.dart';
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
 
-const _skillPath = '.fah/skills/fa-self-config/SKILL.md';
+const _skillPath = 'prompts/skills/self-settings/SKILL.md';
 
 /// Converts a parsed yaml node to plain Dart for JSON encoding.
 Object? _plain(Object? node) {

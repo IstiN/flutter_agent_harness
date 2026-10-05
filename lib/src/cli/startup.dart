@@ -359,17 +359,40 @@ EnvProviderPreconfig? faProviderPreconfig(
 }
 
 /// The explicit `apiKeyName`s referenced by a roles config (the
-/// secure-store preload set; the catalog names are always preloaded).
+/// secure-store preload set; the catalog names are always preloaded), plus
+/// the endpoint-scoped `FA_KEY_<HOST>` slot of every chain entry pinned to
+/// a custom endpoint (gh-1000 AC5 — the same source a manual provider
+/// switch resolves; the catalog env names describe default endpoints
+/// only).
 Set<String> roleKeyNames(ModelRolesConfig rolesConfig) {
-  return {
-    for (final chain in rolesConfig.roles.values)
-      for (final ref in chain)
-        if (ref.apiKeyName != null) ref.apiKeyName!,
+  final refs = [
+    for (final chain in rolesConfig.roles.values) ...chain,
     for (final override in rolesConfig.pathOverrides)
-      for (final chain in override.roles.values)
-        for (final ref in chain)
-          if (ref.apiKeyName != null) ref.apiKeyName!,
+      for (final chain in override.roles.values) ...chain,
+  ];
+  return {
+    for (final ref in refs) ...[
+      if (ref.apiKeyName != null) ref.apiKeyName!,
+      if (_refNeedsEndpointSlot(ref))
+        CustomProviderRegistry.keyNameFor(ref.baseUrl!),
+    ],
   };
+}
+
+/// Whether [ref] pins a NON-default endpoint — the roles resolver then
+/// probes the endpoint-scoped `FA_KEY_<HOST>` slot for it (gh-1000 AC5),
+/// so the snapshot must carry that slot. A catalog-default pin resolves
+/// through the provider's env-name chain instead and adds no slot
+/// (mirroring [ModelRolesResolver._endpointScopedKeyName] exactly: the
+/// ref's OWN spec decides); an unknown provider skips in the resolver and
+/// consumes no key, so it adds no slot either.
+bool _refNeedsEndpointSlot(ModelRef ref) {
+  final baseUrl = ref.baseUrl;
+  if (baseUrl == null) return false;
+  final spec = resolveCliProviderSpec(ref.provider, honorBuildFilter: true);
+  // Trailing-slash-normalized — mirrors ModelRolesResolver
+  // ._endpointScopedKeyName exactly (the shared sameEndpoint rule).
+  return spec != null && !sameEndpoint(baseUrl, spec.defaultBaseUrl);
 }
 
 /// Every provider key name the startup snapshot must preload: each catalog
@@ -637,6 +660,9 @@ Map<String, String> collectRoleSecrets(
 ///
 /// Saved custom entries for [baseUrl] carry name-scoped keys
 /// (multi-account); they resolve right after the host-scoped slot.
+/// [pinnedKeyName] (the restored folder state's saved provider entry,
+/// gh-1000) resolves BEFORE both — it names the account the session
+/// actually ran on.
 ///
 /// Throws [ConfigException] when the key is required and missing — the
 /// executable maps that to its `fa:` usage failure.
@@ -648,6 +674,7 @@ String startupApiKey(
   required bool defaultRoleResolved,
   required bool interactive,
   Map<String, String>? env,
+  String? pinnedKeyName,
 }) {
   // A base URL other than the catalog default (--base-url or config
   // baseUrl) means a user-configured endpoint: local servers need no key.
@@ -667,6 +694,7 @@ String startupApiKey(
               baseUrl: baseUrl,
               scopedKeyNames: entryKeyNames,
               env: env,
+              pinnedKeyName: pinnedKeyName,
             ) ??
             '')
       : _requiredProviderApiKey(
@@ -675,6 +703,7 @@ String startupApiKey(
           baseUrl: baseUrl,
           scopedKeyNames: entryKeyNames,
           env: env,
+          pinnedKeyName: pinnedKeyName,
         );
   return key;
 }
@@ -688,6 +717,7 @@ String _requiredProviderApiKey(
   String? baseUrl,
   Iterable<String>? scopedKeyNames,
   Map<String, String>? env,
+  String? pinnedKeyName,
 }) {
   final key = optionalProviderApiKey(
     provider,
@@ -695,11 +725,18 @@ String _requiredProviderApiKey(
     baseUrl: baseUrl,
     scopedKeyNames: scopedKeyNames,
     env: env,
+    pinnedKeyName: pinnedKeyName,
   );
   if (key == null || key.isEmpty) {
     throw ConfigException(
-      'missing API key: set ${apiKeyEnvNames(provider).first} in the '
-      'environment',
+      pinnedKeyName != null
+          // A RESTORED pin: the catalog env name describes the DEFAULT
+          // endpoint — wrong-slot guidance (gh-1000 AC2, round-3 review).
+          // Name the pinned slot the restore actually probed.
+          ? 'missing API key for the restored provider: '
+                'set it with /key set $pinnedKeyName <value>'
+          : 'missing API key: set ${apiKeyEnvNames(provider).first} in the '
+                'environment',
     );
   }
   return key;

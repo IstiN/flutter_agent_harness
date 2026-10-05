@@ -22,6 +22,13 @@ final class AgentCliConfig {
     required this.sessionRoot,
     this.wakeExecutable,
     this.folderModelStateApplies = true,
+    this.activeCustomName,
+    // Test-only seam (never set by bin/fah.dart): a restore re-bind or a
+    // live /provider switch rebuilds the stream through
+    // [_catalogStreamFunction]; hosts that injected a scripted stream for
+    // hermetic tests set this so the rebuilt stream stays scripted and
+    // records the model a restored turn would serve (gh-1226 AC1).
+    this.catalogStreamOverride,
     this.presenceStore,
     this.leaseStore,
     this.parseExecutor,
@@ -54,6 +61,7 @@ final class AgentCliConfig {
     this.alwaysAllowTools = const {},
     this.modelRolesResolver,
     this.providersQueueRuntime,
+    this.providerQueueEnv,
     this.ttsr,
     this.memoryConfig,
     this.redactionPipeline,
@@ -97,9 +105,12 @@ final class AgentCliConfig {
     this.compactionEngine,
     this.compactionJudgeBudgetSeconds,
     this.contextWindowCap,
+    this.stuckTool,
+    this.headlessRun = false,
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
+    this.streamThinking = false,
     this.cubeSpec,
     this.cubeSource,
     this.cubeSettings,
@@ -111,6 +122,7 @@ final class AgentCliConfig {
     this.dapHubState,
     this.runtimeTools,
     this.agentMode,
+    this.misuseBreaker = true,
     this.loadMode = AgentLoadMode.defaultMode,
     this.onToolsConfigChanged,
     this.onDapHubConfigChanged,
@@ -165,6 +177,18 @@ final class AgentCliConfig {
   /// it raises the effective window to the served truth. `null` =
   /// uncapped.
   final int? contextWindowCap;
+
+  /// Stuck-call supervision (`agent.stuckTool`, gh-1054): liveness
+  /// heartbeats for long-running tool calls plus the autonomous
+  /// cancel/retry/convert follow-up. `null` = unsupervised (the loop runs
+  /// byte-identically to before).
+  final StuckToolConfig? stuckTool;
+
+  /// Whether this process drives a headless run (`fah run "<prompt>"` and
+  /// friends) as opposed to an interactive REPL/TUI session. Set by the
+  /// executable's dispatch; decides the DEFAULT supervision mode only —
+  /// an explicit `agent.stuckTool:` wins in both (gh-1054 review).
+  final bool headlessRun;
 
   /// Per-call judge/summarizer budget seconds (`compaction.
   /// judgeBudgetSeconds`, issue #541), resolved by the host from the
@@ -344,6 +368,12 @@ final class AgentCliConfig {
   /// every optional section.
   final String? agentMode;
 
+  /// The tool-misuse circuit breaker switch (`agent.misuseBreaker`,
+  /// issue #862, default true): wired into the [Agent] and every spawned
+  /// child. `false` disables it everywhere — byte-identical to the
+  /// pre-breaker harness (E5).
+  final bool misuseBreaker;
+
   /// The tool-load preset for this boot (issue #680): resolves
   /// `--omp` > `FA_AGENT_MODE` > `agent.mode`. [AgentLoadMode.defaultMode]
   /// keeps every present tool in the schema (byte-identical behavior).
@@ -371,6 +401,15 @@ final class AgentCliConfig {
   /// chain; auxiliary roles (smol/slow/plan) keep resolving independently.
   /// Mutable for the same live-override reasons as [modelRolesResolver].
   ProviderQueueRuntime? providersQueueRuntime;
+
+  /// The environment view the provider-queue scope resolves through
+  /// (issue #418 + #675): the queue editor re-resolves the winning scope
+  /// before a write, and it MUST see the same env the boot saw — an
+  /// ambient `FA_PROVIDERS_QUEUE` on the host process (the ai-teammate
+  /// runner exports one) must not decide test/embedder fate after the
+  /// host booted with its own view. Null = the process environment (the
+  /// production boot reads it directly, so behavior is unchanged).
+  final Map<String, String>? providerQueueEnv;
 
   /// Optional TTSR configuration (stream rules from the CLI config and the
   /// project rules file). When set and enabled, a [TtsrController] watches
@@ -570,6 +609,17 @@ final class AgentCliConfig {
   /// an unpinned launch.
   final bool folderModelStateApplies;
 
+  /// The saved custom provider entry the boot restored (the folder model
+  /// state's name pin, gh-1000): the CLI starts with that entry marked
+  /// active — its key slot and its name in the status bar. Null when the
+  /// boot restored no named entry.
+  final String? activeCustomName;
+
+  /// Test-only seam: builds the stream a restore re-bind or a live
+  /// /provider switch would serve for [kind]/[key]; null (every
+  /// production boot) keeps the real catalog adapter.
+  final StreamFunction Function(String kind, String key)? catalogStreamOverride;
+
   /// Live-session presence heartbeats: the running CLI registers its
   /// session here so the Fa app (sharing the sessions root) can mark the
   /// session live and attach to it. Null (tests, web) disables presence.
@@ -768,9 +818,31 @@ final class AgentCliConfig {
   /// `maxLogBytes` per-log ceiling (issue #919).
   final JobsConfig jobs;
 
+  /// The effective gh-1198 thinking-stream setting for the run
+  /// (`--stream-thinking` flag OR the `output.streamThinking` config,
+  /// resolved by the host): line-mode/headless runs print thinking
+  /// deltas dimmed, live, like the TUI. False — the default — keeps the
+  /// byte-identical legacy output and enables the reasoning-phase
+  /// liveness line instead.
+  final bool streamThinking;
+
   /// This host's machine name for `name@machine` addressing (issue #27
   /// phase 2): a `@machine` suffix matching it is stripped before local
   /// resolution; other machines are phase-3 A2A territory. Null when the
   /// hostname is unavailable.
   final String? machineName;
+
+  /// The effective stuck supervision for THIS host (gh-1054 review): an
+  /// explicit `agent.stuckTool:` wins everywhere; otherwise headless runs
+  /// keep the autonomous default (unattended — nobody to advise) while
+  /// interactive REPL/TUI sessions default to advisory (a human is
+  /// present; auto-cancelling under their cursor is the ticket's
+  /// non-goal).
+  StuckToolConfig effectiveStuckTool() {
+    final configured = stuckTool;
+    if (configured != null) return configured;
+    return headlessRun
+        ? const StuckToolConfig()
+        : const StuckToolConfig(followUp: StuckFollowUpMode.advisory);
+  }
 }

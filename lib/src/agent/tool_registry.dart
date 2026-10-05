@@ -46,12 +46,26 @@ import 'param_validator.dart';
 /// state's `tools` for that run.
 final class ToolRegistry {
   /// Creates a registry pre-populated with [tools]. Throws [ConfigException]
-  /// on a duplicate or empty tool name.
-  ToolRegistry([Iterable<AgentTool> tools = const []]) {
+  /// on an empty tool name; a duplicate name replaces the earlier
+  /// registration and is recorded in [duplicateNotes] (issue #862:
+  /// replace-and-note — a wiring bug degrades loudly, a child never dies).
+  /// [onDuplicate] fires for every duplicate registration (at construction
+  /// AND later) so hosts can surface the wiring bug without polling.
+  ToolRegistry([Iterable<AgentTool> tools = const [], this.onDuplicate]) {
     registerAll(tools);
   }
 
+  /// Called with each duplicate-registration note as it happens (issue
+  /// #862 review: the note must surface, not silently accumulate).
+  void Function(String note)? onDuplicate;
+
   final _tools = <String, AgentTool>{};
+
+  final _duplicateNotes = <String>[];
+
+  /// One note per duplicate-name registration, in order (issue #862): who
+  /// replaced whom, so hosts can surface the wiring bug loudly.
+  List<String> get duplicateNotes => List.unmodifiable(_duplicateNotes);
 
   /// Number of registered tools.
   int get length => _tools.length;
@@ -66,14 +80,22 @@ final class ToolRegistry {
   /// All registered [AgentTool]s. Unmodifiable snapshot.
   List<AgentTool> get agentTools => List.unmodifiable(_tools.values);
 
-  /// Registers [tool]. Throws [ConfigException] if the name is empty or
-  /// already registered (pi duplicate-name semantics).
+  /// Registers [tool]. Throws [ConfigException] if the name is empty.
+  /// A duplicate name REPLACES the earlier registration and records a
+  /// warning in [duplicateNotes]; the later registration wins (issue #862:
+  /// never throw on a child's duplicate tool registration).
   void register(AgentTool tool) {
     if (tool.name.isEmpty) {
       throw const ConfigException('Tool name must not be empty');
     }
-    if (_tools.containsKey(tool.name)) {
-      throw ConfigException('Duplicate tool name: ${tool.name}');
+    final previous = _tools[tool.name];
+    if (previous != null) {
+      final note =
+          'Duplicate tool name: ${tool.name} — the later registration '
+          '(runtime ${previous.runtimeType} → ${tool.runtimeType}) replaced '
+          'the earlier one';
+      _duplicateNotes.add(note);
+      onDuplicate?.call(note);
     }
     _tools[tool.name] = tool;
   }

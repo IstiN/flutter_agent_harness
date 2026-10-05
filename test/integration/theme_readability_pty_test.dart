@@ -232,6 +232,16 @@ void main() {
         await harness.runSlashCommand('/exit');
         await harness.waitForOutput();
       },
+      // QUARANTINE 2026-10-04 (fa#1205 validation, double flake):
+      // run 37185424964 07:25 + the ~09:55 re-validation both timed out
+      // waiting for '✓ current' while the captured screen VISIBLY showed
+      // '▸ nord ... ✓ current' rendered — a marker/timing race between
+      // waitForScreen's frame sampling and the progressive picker reveal
+      // (FA_TUI_PICKER_REVEAL_MS), not a product regression (gh-671 /
+      // gh-1049 family). Two reds on an unchanged head = quarantine, not a
+      // third rerun. Un-quarantine when the wait/reveal race is fixed.
+      skip: 'QUARANTINE 2026-10-04: waitForScreen-vs-reveal timing race — '
+          'marker rendered but wait timed out twice (fa#1205, gh-671 family)',
     );
   });
 }

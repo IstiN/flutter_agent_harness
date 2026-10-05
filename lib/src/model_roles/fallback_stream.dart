@@ -40,6 +40,12 @@ import '../event_stream.dart';
 import '../model.dart';
 import '../overflow.dart';
 import '../providers/quota.dart';
+// Issue #1168: the resumed-exhaustion terminal signature - a transport
+// chain that spent its budget mid-answer must not be re-classified as
+// retryable (the ladder would rewrap it as "not retried", false after
+// the chain's own attempts) nor retried again.
+import '../providers/transient_retry_stream.dart'
+    show isTransientExhaustionStory;
 import '../types.dart';
 import 'key_rotation.dart';
 import 'roles_config.dart';
@@ -123,6 +129,7 @@ bool isTransientTransportError(AssistantMessage message) {
   final text = message.errorMessage;
   if (text == null || text.isEmpty) return false;
   if (isContextOverflow(message)) return false;
+  if (isTransientExhaustionStory(text)) return false;
   if (_rateLimitPatterns.any((pattern) => pattern.hasMatch(text))) {
     return false;
   }

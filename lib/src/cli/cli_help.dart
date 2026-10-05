@@ -117,6 +117,13 @@ OPTIONS
                                color TTY (issue #774). Same effect as
                                the FA_NO_FORMAT env var; piped or
                                redirected output is always raw
+  --stream-thinking             Stream the model's thinking deltas live,
+                               dimmed, in line mode and headless runs
+                               (gh-1198) — the TUI always streams them.
+                               Wins over the output.streamThinking
+                               config for the run; without it, a
+                               reasoning phase with no events prints a
+                               periodic `… reasoning Ns` liveness line
   --log-file <path>            Tee every printed line (assistant text,
                                tool trace, diagnostics) to <path> as it
                                is produced — a live, `tail -f`-able
@@ -634,9 +641,10 @@ TERMINAL
 CONFIGURATION FILES
   ~/.fah/config.yaml   user preferences: provider, model, baseUrl, mode,
                        approvalMode, allowedTools, plus the prompts:, roles:,
-                       modelOverrides:, retry:, ttsr:, models:, cube:, and
-                       tools: sections. Invalid roles/ttsr/prompts/models/
-                       cube/tools sections fail loudly at startup.
+                       modelOverrides:, retry:, ttsr:, models:, cube:,
+                       output:, and tools: sections. Invalid roles/ttsr/
+                       prompts/models/cube/tools sections fail loudly at
+                       startup.
   .fah/cubes/          cube sandbox manifests (--cube <name> and /cube use
                        resolve <name>.yaml here); the project .fah/
                        config.yaml cube: section picks the startup default
