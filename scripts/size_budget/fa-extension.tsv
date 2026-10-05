@@ -7,7 +7,6 @@
 274096	panel/app/assets/assets/fonts/JetBrainsMono-Bold.ttf
 270224	panel/app/assets/assets/fonts/JetBrainsMono-Regular.ttf
 70386	panel/app/assets/assets/skills/js-apps/SKILL.md
-5621868	panel/app/assets/packages/js_widget_runtime/test/assets/coach_anny.glb
 86987	panel/app/canvaskit/692136cb6582dbfc5af3fb33c2515a069f2f66d0/canvaskit.js
 1356926	panel/app/canvaskit/692136cb6582dbfc5af3fb33c2515a069f2f66d0/canvaskit.js.symbols
 7284602	panel/app/canvaskit/692136cb6582dbfc5af3fb33c2515a069f2f66d0/canvaskit.wasm
@@ -23,7 +22,7 @@
 3729129	panel/app/canvaskit/692136cb6582dbfc5af3fb33c2515a069f2f66d0/webparagraph/canvaskit.wasm
 1813030	panel/app/canvaskit/692136cb6582dbfc5af3fb33c2515a069f2f66d0/wimp.js.symbols
 3581677	panel/app/canvaskit/692136cb6582dbfc5af3fb33c2515a069f2f66d0/wimp.wasm
-11511535	panel/app/main.dart.js
+11582554	panel/app/main.dart.js
 1791532	sw/agent.js
 1070863	vendor/interpreters/asyncify/emscripten-module.wasm
 2224743	vendor/interpreters/index.global.js
