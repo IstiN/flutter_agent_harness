@@ -74,41 +74,62 @@ void main() {
     );
 
     /// Types [secret] into the sheet's value field and synchronizes on
-    /// STABLE markers only (gh-1244): quiescence after the full string,
-    /// then the masking property. Never waits on an exact transient bullet
-    /// count — under CI timing the PTY paints past the checkpoint before
-    /// the wait evaluates, and on the raw wire the focused row's cursor
-    /// cell is wrapped in inverse-video escapes, so N consecutive `•` need
-    /// never exist in the stream at all.
+    /// STABLE markers only (gh-1244): verified quiescence after the full
+    /// string, then the masking property. Never waits on an exact
+    /// transient bullet count — under CI timing the PTY paints past the
+    /// checkpoint before the wait evaluates, and on the raw wire the
+    /// focused row's cursor cell is wrapped in inverse-video escapes, so
+    /// N consecutive `•` need never exist in the stream at all.
+    ///
+    /// Quiescence is verified, not hoped (gh-1244 review thread): a bare
+    /// `waitForOutput` returns the buffer SILENTLY at its timeout, so
+    /// `waitForSettledOutput` demands a second byte-identical settle
+    /// window before anything reads the screen — on a runner where the
+    /// TUI keeps repainting past the window this now fails loudly here
+    /// instead of spuriously at the bullet count (a mid-repaint frame
+    /// could show 13 of 15 bullets).
     Future<void> typeSecret(String secret) async {
       harness.sendText(secret);
-      await harness.waitForOutput(settleMs: 300);
-      // (a) The frame-closed value row carries exactly one bullet per
-      // typed char — masking held from the first keystroke through the
-      // last. The history's tool row (`• request_secret · …`) is not
-      // frame-closed, so the `│` guard pins this to the sheet's own row.
-      final valueRow = harness.screenLines.firstWhere(
-        (l) => l.contains('•') && l.trimRight().endsWith('│'),
-        orElse: () => throw StateError(
-          'the value row must render the masked secret; screen:\n'
-          '${harness.screenText}',
-        ),
-      );
-      expect(
-        valueRow.split('•').length - 1,
-        secret.length,
-        reason: 'every typed char must be masked (one bullet per char)',
-      );
-      // (b) The security pin: the plaintext bytes must never appear in ANY
-      // captured frame. rawOutput is the whole PTY transcript — every
-      // screen the emulator ever rendered derives from it — so scanning it
-      // covers raced intermediates a current-screen-only check would miss.
+      await harness.waitForSettledOutput(settleMs: 300);
+
+      String? valueRow() => harness.screenLines
+          .where((l) => l.contains('•') && l.trimRight().endsWith('│'))
+          .firstOrNull;
+
+      // (b) The security pin first — rawOutput is append-only, so this
+      // scan is race-free even for a frame painted after the last settle
+      // poll: the plaintext bytes must never appear in ANY captured
+      // frame. rawOutput is the whole PTY transcript — every screen the
+      // emulator ever rendered derives from it — so scanning it covers
+      // raced intermediates a current-screen-only check would miss.
       expect(
         harness.rawOutput.contains(secret),
         isFalse,
         reason: 'the secret bytes appeared in the raw PTY output',
       );
       expect(harness.screenText.contains(secret), isFalse);
+      // (a) The frame-closed value row carries exactly one bullet per
+      // typed char — masking held from the first keystroke through the
+      // last. The history's tool row (`• request_secret · …`) is not
+      // frame-closed, so the `│` guard pins this to the sheet's own row.
+      // One repaint can still race the verification window's last poll;
+      // re-settle once before failing.
+      var row = valueRow();
+      if (row == null) {
+        await harness.waitForOutput(settleMs: 300);
+        row = valueRow();
+      }
+      if (row == null) {
+        throw StateError(
+          'the value row must render the masked secret; screen:\n'
+          '${harness.screenText}',
+        );
+      }
+      expect(
+        row.split('•').length - 1,
+        secret.length,
+        reason: 'every typed char must be masked (one bullet per char)',
+      );
     }
 
     test('IT-mask: the secret is masked from the first keystroke', () async {

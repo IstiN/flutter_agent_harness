@@ -33,6 +33,27 @@ import 'dart:io';
 import 'package:pty2/pty2.dart';
 import 'package:xterm/xterm.dart';
 
+/// Verified-quiescence verdict behind [FaCliHarness.waitForSettledOutput]
+/// (gh-1244 review thread): `waitForOutput` returns the buffer SILENTLY
+/// when its deadline expires without two consecutive stable polls, so a
+/// caller asserting on the painted screen needs proof the buffer actually
+/// stopped growing. The PTY buffer is append-only — any repaint appends
+/// bytes — so two consecutive settle windows are quiescent iff they
+/// captured byte-identical output. Throws [TimeoutException] naming the
+/// mid-repaint-screen hazard otherwise. Top-level (like
+/// [frameContentLines]) so the never-settles case is unit-testable
+/// without a PTY.
+String requireSettledOutput(String settled, String recheck) {
+  if (recheck != settled) {
+    throw TimeoutException(
+      'PTY output did not reach quiescence: the buffer changed during '
+      'the verification window, so the painted screen may be a '
+      'mid-repaint frame — re-settle before asserting on it.',
+    );
+  }
+  return settled;
+}
+
 /// The visible viewport with each line's trailing blank cells stripped —
 /// the CONTENT-faithful view for cross-frame equality (gh-982).
 ///
@@ -323,6 +344,25 @@ final class FaCliHarness {
       }
     }
     return _rawBuffer.toString();
+  }
+
+  /// Verified-quiescence variant of [waitForOutput] (gh-1244 review
+  /// thread): [waitForOutput] returns the buffer SILENTLY when [timeout]
+  /// expires without two consecutive stable polls, and even on a clean
+  /// settle a frame can land between its last poll and a caller's screen
+  /// read — a caller that then asserts on the painted screen can see a
+  /// mid-repaint frame (e.g. 13 of 15 bullets) and fail spuriously on a
+  /// loaded runner. This takes a second full settle window and throws
+  /// [TimeoutException] via [requireSettledOutput] unless the buffer is
+  /// byte-identical across both (the PTY buffer is append-only — any
+  /// repaint appends bytes). Returns the settled raw output.
+  Future<String> waitForSettledOutput({
+    int settleMs = 200,
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    final settled = await waitForOutput(settleMs: settleMs, timeout: timeout);
+    final recheck = await waitForOutput(settleMs: settleMs, timeout: timeout);
+    return requireSettledOutput(settled, recheck);
   }
 
   /// Waits for [pattern] to appear in the accumulated raw output OR on the
