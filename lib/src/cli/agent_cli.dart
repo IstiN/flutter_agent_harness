@@ -1198,8 +1198,7 @@ class AgentCli {
 
   /// gh-1073: suppresses byte-identical `shell_job_registry` snapshot
   /// appends (reset in `_rehydrateJobBoard` on every session load).
-  final LedgerSnapshotDeduper _jobBoardPersistDeduper =
-      LedgerSnapshotDeduper();
+  final LedgerSnapshotDeduper _jobBoardPersistDeduper = LedgerSnapshotDeduper();
 
   /// Registry-persist serialization tail (issue #539; see `_persistJobBoard` in the driver).
   Future<void> _persistChain = Future.value();
@@ -1818,7 +1817,10 @@ class AgentCli {
       // gh-1241: close the usage segment — fold the chain, write
       // usage.json, log the `fa-tokens:` line (a kill mid-segment loses
       // nothing: the fold rebuilds from the chain on the next close).
-      await _flushUsageLedger();
+      // gh-1292: mirror that line to stdout — the headless/CI leg's diag
+      // file dies with the runner, and the token reporter greps the
+      // captured run log.
+      await _flushUsageLedger(mirrorTokensLineToStdout: true);
     }
     // The exit code describes the LAST completed turn's terminal outcome
     // (captured from the turn events above) — not the visible transcript,
