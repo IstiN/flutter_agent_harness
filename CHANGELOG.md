@@ -4619,4 +4619,8 @@
 - feat(1101): Agent Wire Protocol v1 — web reference client (sdk/web), conformance runner, browser example (#1228)
 - gh-1224 [BUG] iOS 1.0.504: all wasm interpreters (python/qjs/lua/sqlite3) dead — 'no lazy loader' in FOREGROUND bash _forJob() clone drops moduleLoader (regression suspect #1163) (#1225)
 
+## 1.0.513
+
+- fix(1096): reseed fa-extension size floor for intentional js-apps skill growth (gh-1164) (#1258)
+
 ## Unreleased
