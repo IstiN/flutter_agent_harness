@@ -16,6 +16,7 @@ import '../context.dart';
 import '../session/session_record.dart';
 import '../tools/checkpoint_tool.dart';
 import '../types.dart';
+import '../usage/usage_chain.dart' show usageSegmentStartCustomType;
 import 'event_projection.dart';
 import 'trajectory_blobs.dart';
 import 'trajectory_record.dart';
@@ -30,6 +31,9 @@ const hiddenCustomRecordTypes = {
   'ttsr_injection',
   'dynamic_widget',
   'dynamic_message',
+  // gh-1241: the usage ledger's segment boundary (gh-1241) — bookkeeping
+  // for the usage fold, not a ledger row.
+  usageSegmentStartCustomType,
 };
 
 /// Walks session records and live agent events, projecting them into
