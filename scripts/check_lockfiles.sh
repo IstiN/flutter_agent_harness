@@ -37,6 +37,12 @@ LOCKFILES=(
   "flutter_app/pubspec.lock"        # app dependency pins (#1265)
   "flutter_app/ios/Podfile.lock"    # iOS CocoaPods pins (#1296)
   "flutter_app/macos/Podfile.lock"  # macOS CocoaPods pins (#1296)
+  # PR #1298 rework — the rest of the NG1 "every lockfile in the repo" set
+  # (all tracked today; the inventory keeps them that way):
+  "vendor/flutter_inappwebview_macos/macos/flutter_inappwebview_macos/Package.resolved"  # SwiftPM pins of the vendored macOS plugin
+  "browser_ext/e2e/package-lock.json"   # npm pins the browser-ext e2e legs `npm ci` against
+  "office_addin/e2e/package-lock.json"  # npm pins the office-addin e2e legs `npm ci` against
+  "vendor/wasm_run/native/Cargo.lock"   # vendored wasm native build crate pins
 )
 
 cd "$REPO_ROOT"
