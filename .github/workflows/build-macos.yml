@@ -198,6 +198,10 @@ jobs:
           flutter --version
           dart --version
 
+      # gh-1275 AC3: fail fast before any build minute is spent — the full
+      # gate rationale lives in .github/actions/assert-builtin-skills.
+      - uses: ./.github/actions/assert-builtin-skills
+
       - name: Install Rust toolchain
         run: |
           if command -v rustup &> /dev/null; then
