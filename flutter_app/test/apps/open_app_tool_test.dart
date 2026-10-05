@@ -70,6 +70,13 @@ AgentTool _openAppToolOf(AgentService service) => service.toolsForTest
     .first;
 
 void main() {
+  // The app-launcher gate boots a real JS engine on engine-capable hosts
+  // (macOS JSC, Linux/Windows QuickJS — issue #184). flutter_js's fetch
+  // bootstrap loads its polyfill through the root asset bundle, which needs
+  // the services binding — initialize it even though this file is plain
+  // `test()`s with no widget tree (gh-1266).
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('openAppTool', () {
     test(
       'success invokes the launcher and returns "Opened app" text',

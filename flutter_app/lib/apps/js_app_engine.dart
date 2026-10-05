@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show BindingBase;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
@@ -333,9 +334,14 @@ class JsAppEngine {
   /// native work never completes inside the widget-test fake zone, which
   /// would stall every later engine in the process. Tests exercise the
   /// unserialized path (the production hazard is native and untestable).
+  ///
+  /// Probed via [BindingBase.debugBindingType] (null when no binding is
+  /// initialized, e.g. plain `test()`s with no widget tree) — never via
+  /// `WidgetsBinding.instance`, which THROWS in that state (gh-1266).
   static bool get _inWidgetTest {
-    final binding = WidgetsBinding.instance;
-    return binding.runtimeType.toString().contains('TestWidgetsFlutterBinding');
+    final type = BindingBase.debugBindingType();
+    return type != null &&
+        type.toString().contains('TestWidgetsFlutterBinding');
   }
 
   /// Serializes [action] process-wide in production; runs it directly
@@ -845,11 +851,14 @@ class JsAppEngine {
     return "jsr.locale = '$safe';\n$_faBootstrapJs";
   }
 
-  // RAW string (gh-1272): the block below embeds JS regex char classes
-  // (/[ \t\r\n]+/) and '\n' string literals — a non-raw Dart string would
-  // unescape those into REAL tab/CR/LF before the JS engine ever sees the
-  // source, killing every widget eval with "Unterminated regular
-  // expression literal". No $ interpolation inside; raw is safe.
+  // Raw string (gh-1266 / gh-1272): the gh-1164 fingerprint block below
+  // embeds JS regex char classes (/[ \t\r\n]+/) and '\n' string literals —
+  // a non-raw Dart literal unescapes those into REAL tab/CR/LF before the
+  // JS engine ever sees the source, so the JS parser rejects the regex
+  // literal ("unexpected line terminator in regexp"), killing the whole
+  // widget eval (bootstrap + app code in one script) on every
+  // engine-capable host (macOS JSC, Linux/Windows QuickJS). No $
+  // interpolation inside; raw is safe.
   static const String _faBootstrapJs = r'''
 jsr.fa = {
   call: function(method, args) {
