@@ -47,8 +47,9 @@ void main() {
       // 37268915954), and the Dart CFE can stall the compile outright
       // (run 37297674933; its one-liner `File not formatted as yaml: .`
       // is the SDK's own boot error). Explicit boot budget, same as
-      // job_card_heredoc_pty_test.dart (#604); 180s leaves the file's
-      // 5-minute per-test cap room for the assertions after boot.
+      // job_card_heredoc_pty_test.dart (#604); 180s boot + the waits
+      // below (≈ 286s worst case) sit well inside the file's 10-minute
+      // per-test cap.
       await harness.waitForBoot(timeout: const Duration(seconds: 180));
       harness.sendText('need the key');
       harness.sendEnter();
