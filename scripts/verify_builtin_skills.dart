@@ -167,7 +167,7 @@ Future<List<String>> verifyBuiltinSkills({String repoRoot = '.'}) async {
       ...skillsDir
           .listSync()
           .whereType<Directory>()
-          .map((d) => d.uri.pathSegments.reversed.toList()[1]),
+          .map((d) => p.basename(d.path)),
   };
   return [
     ...await builtinSkillSourceViolations(repoRoot),

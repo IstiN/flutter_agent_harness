@@ -48,15 +48,9 @@ jobs:
           flutter-version: '3.47.x'
           channel: stable
 
-      # gh-1275 AC3 (web leg): fail fast before the web build if a built-in
-      # skill would ship without a non-empty SKILL.md — the 1.0.512
-      # empty-skill-dirs incident class. Same gate on every PR via
-      # test/skills/builtin_skill_packaging_guard_test.dart.
-      - name: Assert built-in skills packaged (gh-1275 AC3)
-        run: |
-          set -euo pipefail
-          dart pub get
-          dart run scripts/verify_builtin_skills.dart
+      # gh-1275 AC3 (web leg): fail fast before the web build — the full
+      # gate rationale lives in .github/actions/assert-builtin-skills.
+      - uses: ./.github/actions/assert-builtin-skills
 
       - name: Example app pub get
         working-directory: flutter_app

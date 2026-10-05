@@ -1,0 +1,20 @@
+name: 'Assert built-in skills packaged (gh-1275 AC3)'
+description: >-
+  Release gate for built-in skill PACKAGED CONTENT: fail fast before any
+  build minute is spent if a built-in skill would ship without a non-empty
+  SKILL.md — the 1.0.512 empty-skill-dirs incident (structure packaged,
+  content lost, gh-1275). The SAME checkers run on every PR via
+  test/skills/builtin_skill_packaging_guard_test.dart, so the gate cannot
+  rot silently between releases. Requires `dart` on PATH — run this AFTER
+  the job's Flutter/Dart setup step (gh-798 "Assert TestFlight version
+  floor" pattern).
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Assert built-in skills packaged (gh-1275 AC3)
+      shell: bash
+      run: |
+        set -euo pipefail
+        dart pub get
+        dart run scripts/verify_builtin_skills.dart

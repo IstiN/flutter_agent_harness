@@ -18,6 +18,7 @@ import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show parseFrontmatter;
+import 'package:path/path.dart' as p;
 
 /// Output path (repo-root-relative) for the core package's prompt constants.
 const rootOutputPath = 'lib/src/prompts/prompts.g.dart';
@@ -413,7 +414,7 @@ Future<String> renderBuiltinSkills(String repoRoot) async {
   final names =
       (dir.existsSync() ? dir.listSync() : <FileSystemEntity>[])
           .whereType<Directory>()
-          .map((d) => d.uri.pathSegments.reversed.toList()[1])
+          .map((d) => p.basename(d.path))
           .toList()
         ..sort();
   final buffer = StringBuffer('''
