@@ -434,7 +434,9 @@ class AgentCli {
           resolveKey: _resolveMediaKey,
         ),
         browserController: config.browserController,
-        saveBrowserScreenshot: (png) => saveBrowserScreenshot(_env, png),
+        // Builder hands the decorated env (review #1230) — screenshot
+        // saves clamp like every other fs-touching tool.
+        saveBrowserScreenshot: saveBrowserScreenshot,
         hostTools: pluginTools,
         hubFabric: config.hubFabric,
         extRuntimeFactory: config.extRuntimeFactory,

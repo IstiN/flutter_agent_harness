@@ -156,7 +156,14 @@ final class AgentCoreServices {
   final TranscribeAudioConfig? transcribe;
   final MediaToolServices? media;
   final BrowserController? browserController;
-  final Future<String> Function(Uint8List png)? saveBrowserScreenshot;
+
+  /// The browser screenshot saver. The builder hands it the SAME
+  /// decorated env every fs-touching tool rides (base → sandbox →
+  /// session vars, review #1230): a screenshot save clamps through the
+  /// cube fs policy exactly like `generate_image` writes to the same
+  /// tree. One rule — hosts must not close over their raw base env.
+  final Future<String> Function(ExecutionEnv coreEnv, Uint8List png)?
+      saveBrowserScreenshot;
 
   /// Host-extension tools (the CLI's plugin surface — the public shape
   /// of what `FahPlugin` registers, issue #1079 HostExtensionApi).
@@ -334,7 +341,10 @@ List<AgentTool> _buildCoreTools({
   final browser = switch (plan.planFor(HostCapability.browserBridge)) {
     WiredCapability() => browserTools(
       controller: services.browserController!,
-      saveScreenshot: services.saveBrowserScreenshot!,
+      // Same decorated env as the vision/transcribe/media tools below
+      // (review #1230): one rule — screenshot saves clamp through the
+      // cube fs policy too.
+      saveScreenshot: (png) => services.saveBrowserScreenshot!(env, png),
     ),
     _ => null,
   };
@@ -377,7 +387,9 @@ List<AgentTool> _buildCoreTools({
     // bypassed the sandbox; they now take the decorated chain
     // (base → sandbox → session vars), so image reads, transcription
     // input and media file writes are clamped by the active cube fs
-    // policy — closing a sandbox escape, not a regression.
+    // policy — closing a sandbox escape, not a regression. The browser
+    // screenshot saver rides the same chain (see the browser assembly
+    // above) — one rule for every fs-touching tool.
     ...?services.vision == null
         ? null
         : [inspectImageTool(env, services.vision!)],

@@ -8,6 +8,8 @@
 /// (registry + agent assembled in the documented order).
 library;
 
+import 'dart:typed_data';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -264,6 +266,73 @@ void main() {
       );
     });
   });
+
+  group('env chain for fs-touching tools (review #1230 decision)', () {
+    test('vision reads and browser screenshot saves clamp through the cube', () async {
+      final base = MemoryExecutionEnv(cwd: '/work');
+      // Outside the workspace: the RAW env the pre-conversion CLI handed
+      // these tools reads this file fine — the decorated chain must not.
+      expect((await base.createDir('/etc')).isOk, isTrue);
+      expect((await base.writeFile('/etc/secret.png', 'raw')).isOk, isTrue);
+      final screenshotEnvs = <ExecutionEnv>[];
+      final wired = wireAgentCore(
+        profile: cliProfile,
+        services: AgentCoreServices(
+          baseEnv: base,
+          sessionEnvVars: () => {},
+          sandbox: const SandboxServices(
+            spec: CubeSpec(
+              name: 'clamp',
+              tools: CubeToolPolicy(allow: {'git'}),
+              filesystem: CubeFsPolicy(workspace: '/work'),
+            ),
+          ),
+          vision: const InspectImageConfig(modelId: 'vision', apiKey: 'k'),
+          transcribe: const TranscribeAudioConfig(apiKey: 'k'),
+          media: MediaToolServices(mainApiKey: () => 'k'),
+          shellJobsFactory: (coreEnv) => ShellJobRegistry(env: coreEnv),
+          browserController: _ShotController(Uint8List(8)),
+          saveBrowserScreenshot: (coreEnv, png) async {
+            screenshotEnvs.add(coreEnv);
+            return '/work/generated/browser-1.png';
+          },
+          sessionRoot: '/tmp/fah-test',
+        ),
+      );
+
+      // ONE env object everywhere: the service seams and the tool
+      // closures all receive wired.env — never the raw base env.
+      expect(screenshotEnvs, isEmpty);
+      // The vision tool REALLY reads through the guard: an
+      // outside-workspace path is permission-denied where the raw base
+      // env reads it — the exact bypass the decorated chain closes.
+      final inspect = wired.tools.firstWhere((t) => t.name == 'inspect_image');
+      await expectLater(
+        inspect.execute(const {'path': '/etc/secret.png'}, null, null),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            // The guard HIDES outside-workspace paths (notFound), and
+            // names itself: only the cube guard produces this denial.
+            allOf(contains('notFound'), contains('fa_cube[clamp]:')),
+          ),
+        ),
+      );
+      expect((await base.readBinaryFile('/etc/secret.png')).isOk, isTrue);
+
+      // And the browser save rides the same chain end-to-end: executing
+      // the tool hands its screenshot to the service callback over
+      // wired.env.
+      final shot = wired.tools.firstWhere(
+        (t) => t.name == 'browser_screenshot',
+      );
+      final saved = await shot.execute(const {}, null, null);
+      expect(saved.content.first, isA<TextContent>());
+      expect(identical(screenshotEnvs.single, wired.env), isTrue);
+      expect(screenshotEnvs.single, isNot(same(base)));
+    });
+  });
 }
 
 final _model = Model(
@@ -289,6 +358,27 @@ AgentTool _namedTool(String name) => AgentTool(
   execute: (arguments, cancelToken, onUpdate) async =>
       ToolExecutionResult.text('ok'),
 );
+
+/// Screenshot-only controller: the env-chain pin drives just the
+/// `browser_screenshot` tool; every other bridge member is never called.
+final class _ShotController implements BrowserController {
+  _ShotController(this.png);
+
+  final Uint8List png;
+
+  @override
+  bool get attached => true;
+
+  @override
+  void Function(bool attached)? onAvailabilityChanged;
+
+  @override
+  Future<Uint8List> screenshot({int? tabId}) async => png;
+
+  @override
+  Object noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('not driven in this test');
+}
 
 Future<LspTransport> _fakeLspTransport(LspServerConfig config, String cwd) =>
     throw UnimplementedError('not started in this test');
