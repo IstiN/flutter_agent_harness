@@ -34,11 +34,14 @@ if $PROGRAM_NAME == __FILE__
 
   # ── fake transport ──────────────────────────────────────────────────────
   # Stateful androidpublisher stand-in: token → edit → listings →
-  # delete/upload/list images → commit/delete-edit.
+  # delete/upload/list images → commit/delete-edit. The image paths mirror
+  # the REAL androidpublisher v3 contract (gh-1261): the AppImageType enum
+  # value sits DIRECTLY in the path (.../listings/<locale>/<imageType>) —
+  # there is no "images" collection segment.
   class FakePlayHttp
     attr_reader :calls, :store, :committed
     attr_accessor :upload_sha_override, :token_response, :remote_languages,
-                  :post_commit_drift, :post_commit_reverse
+                  :post_commit_drift, :post_commit_reverse, :image_delete_error
 
     def initialize
       @calls = []
@@ -57,14 +60,15 @@ if $PROGRAM_NAME == __FILE__
         { status: 200, body: { id: "edit1" }.to_json }
       when method == :Get && url.end_with?("/listings")
         { status: 200, body: { listings: @remote_languages.map { |l| { language: l } } }.to_json }
-      when method == :Delete && (m = url.match(%r{/listings/([^/]+)/images/([^/]+)\z}))
+      when method == :Delete && (m = url.match(%r{/listings/([^/]+)/([^/]+)\z}))
+        return @image_delete_error if @image_delete_error
         @store.delete([m[1], m[2]])
         { status: 204, body: "" }
-      when method == :Post && (m = url.match(%r{/listings/([^/]+)/images/([^/]+)\?uploadType=media\z}))
+      when method == :Post && (m = url.match(%r{/listings/([^/]+)/([^/]+)\?uploadType=media\z}))
         sha = @upload_sha_override || Digest::SHA256.hexdigest(body.to_s)
         @store[[m[1], m[2]]] << sha
         { status: 200, body: { sha256: sha }.to_json }
-      when method == :Get && (m = url.match(%r{/listings/([^/]+)/images/([^/]+)\z}))
+      when method == :Get && (m = url.match(%r{/listings/([^/]+)/([^/]+)\z}))
         images = @store[[m[1], m[2]]].map { |s| { sha256: s } }
         # Post-commit drift injection: the committed listing keeps an image
         # the sync never uploaded (the stale-state failure mode #947 gates).
@@ -193,7 +197,7 @@ if $PROGRAM_NAME == __FILE__
     [%w[en-US phoneScreenshots], %w[ru-RU phoneScreenshots],
      %w[en-US tenInchScreenshots], %w[ru-RU tenInchScreenshots],
      %w[en-US sevenInchScreenshots], %w[ru-RU sevenInchScreenshots]].each do |locale, type|
-      raise "FAIL: #{locale}/#{type} not cleared" unless deletes.any? { |u| u.include?("/listings/#{locale}/images/#{type}") }
+      raise "FAIL: #{locale}/#{type} not cleared" unless deletes.any? { |u| u.include?("/listings/#{locale}/#{type}") }
     end
     ok("stale sets cleared for every locale × multi-slot type (ru-RU tenInch, sevenInch, stale en shot)")
 
@@ -265,13 +269,13 @@ if $PROGRAM_NAME == __FILE__
     summary = PlayListingSync.sync_and_verify!(metadata_dir: metadata_dir, json_key: service_account_json,
                                                package_name: "dev.fa1.app", http: http)
     raise "FAIL: stale de-DE phone screenshot must be cleared" unless
-      http.calls.any? { |m, u| m == :Delete && u.include?("/listings/de-DE/images/phoneScreenshots") }
+      http.calls.any? { |m, u| m == :Delete && u.include?("/listings/de-DE/phoneScreenshots") }
     raise "FAIL: de-DE icon must not be deleted or uploaded" unless
-      http.calls.none? { |m, u| m != :Get && u.include?("/listings/de-DE/images/icon") }
+      http.calls.none? { |m, u| m != :Get && u.include?("/listings/de-DE/icon") }
     raise "FAIL: de-DE featureGraphic must not be deleted or uploaded" unless
-      http.calls.none? { |m, u| m != :Get && u.include?("/listings/de-DE/images/featureGraphic") }
+      http.calls.none? { |m, u| m != :Get && u.include?("/listings/de-DE/featureGraphic") }
     raise "FAIL: verify must not read de-DE single-image slots" unless
-      http.calls.none? { |m, u| m == :Get && u =~ %r{/listings/de-DE/images/(icon|featureGraphic)\z} }
+      http.calls.none? { |m, u| m == :Get && u =~ %r{/listings/de-DE/(icon|featureGraphic)\z} }
     ok("console-only locale: screenshot slots cleared, single images untouched")
   end
 
@@ -311,6 +315,133 @@ if $PROGRAM_NAME == __FILE__
     end
     ok("token failure fails loudly with the HTTP status")
   end
+
+  # ── gh-1261: REST path contract pins the AppImageType enum in the path ──
+  # The Play API binds {imageType} directly (.../listings/<locale>/<type>).
+  # The bug: the module sent .../images/<type>, so the literal "images" sat
+  # in the enum slot → HTTP 400 INVALID_ARGUMENT (daily-publish Play leg).
+  # Delete-all and list ride API_ROOT; upload rides the /upload/ media host.
+  Dir.mktmpdir do |root|
+    http = FakePlayHttp.new
+    metadata_dir = metadata_dir_with_goldens(root)
+    PlayListingSync.sync_and_verify!(metadata_dir: metadata_dir, json_key: service_account_json,
+                                     package_name: "dev.fa1.app", http: http)
+    api = "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/dev.fa1.app/edits/edit1"
+    deletes = http.calls.select { |m, u| m == :Delete && u.include?("/listings/") }.map { |_m, u| u }
+    raise "FAIL: expected screenshot deletes" if deletes.empty?
+    deletes.each do |u|
+      m = u.match(%r{\A#{Regexp.escape(api)}/listings/([^/]+)/([^/]+)\z})
+      raise "FAIL: delete must be .../listings/<locale>/<imageType> (no 'images' segment): #{u}" unless m
+      unless PlayListingSync::SCREENSHOT_TYPES.include?(m[2])
+        raise "FAIL: delete imageType must be an AppImageType enum value, got #{m[2].inspect} in #{u}"
+      end
+    end
+    uploads = http.calls.select { |m, u| m == :Post && u.include?("uploadType=media") }.map { |_m, u| u }
+    raise "FAIL: expected image uploads" if uploads.empty?
+    uploads.each do |u|
+      m = u.match(%r{\Ahttps://androidpublisher\.googleapis\.com/upload/androidpublisher/v3/applications/dev\.fa1\.app/edits/edit1/listings/([^/]+)/([^/]+)\?uploadType=media\z})
+      raise "FAIL: upload must be /upload/.../listings/<locale>/<imageType>?uploadType=media: #{u}" unless m
+      unless PlayListingSync::MANAGED_TYPES.include?(m[2])
+        raise "FAIL: upload imageType must be an AppImageType enum value, got #{m[2].inspect} in #{u}"
+      end
+    end
+    lists = http.calls.select { |m, u| m == :Get && u =~ %r{/listings/[^/]+/[^/]+\z} }.map { |_m, u| u }
+    raise "FAIL: expected edits.images.list calls" if lists.empty?
+    lists.each do |u|
+      unless u.match?(%r{\A#{Regexp.escape(api)}/listings/[^/]+/[^/]+\z})
+        raise "FAIL: list must be .../listings/<locale>/<imageType> (no 'images' segment): #{u}"
+      end
+    end
+    ok("gh-1261: delete/list = .../listings/<locale>/<imageType>, upload = /upload/ host")
+  end
+
+  # ── gh-1261 AC2: image_type pinned/validated BEFORE the API call ────────
+  Dir.mktmpdir do |root|
+    http = FakePlayHttp.new
+    metadata_dir = metadata_dir_with_goldens(root)
+    # The exact bad value from the incident: the collection name "images"
+    # where the AppImageType enum is expected.
+    begin
+      PlayListingSync.clear_images!(http, "dev.fa1.app", "edit1", "en-US", "images", {})
+      raise "FAIL: clear_images! must reject a non-enum image_type before the API call"
+    rescue RuntimeError => e
+      unless e.message.include?("image_type") && e.message.include?("\"images\"") &&
+             e.message.include?("phoneScreenshots")
+        raise "FAIL: rejection must name the bad value and the expected enum, got: #{e.message}"
+      end
+    end
+    raise "FAIL: a rejected image_type must never reach the transport" unless http.calls.empty?
+    ok("gh-1261: clear_images! pins image_type before any HTTP call")
+  end
+
+  # ── gh-1261 AC2: recorded 400 payload surfaces as a readable message ────
+  Dir.mktmpdir do |root|
+    http = FakePlayHttp.new
+    # The verbatim error body the daily-publish run logged for
+    # en-US/phoneScreenshots — kept as the contract fixture.
+    http.image_delete_error = {
+      status: 400,
+      body: {
+        error: {
+          code: 400,
+          message: "Invalid value at 'image_type' (type.googleapis.com/google.play.publishingapi.v3.AppImageType), \"images\"",
+          status: "INVALID_ARGUMENT"
+        }
+      }.to_json
+    }
+    metadata_dir = metadata_dir_with_goldens(root)
+    begin
+      PlayListingSync.clear_images!(http, "dev.fa1.app", "edit1", "en-US", "phoneScreenshots", {})
+      raise "FAIL: a 400 delete response must raise"
+    rescue RuntimeError => e
+      unless e.message.include?("edits.images.delete failed for en-US/phoneScreenshots (HTTP 400)") &&
+             e.message.include?("INVALID_ARGUMENT") &&
+             e.message.include?("Invalid value at 'image_type'")
+        raise "FAIL: the API error must surface readably, got: #{e.message}"
+      end
+      if e.message.include?("\"error\":") || e.message.include?("{")
+        raise "FAIL: the error must be a readable message, not a raw JSON dump: #{e.message}"
+      end
+    end
+    ok("gh-1261: recorded 400 fixture fails with a readable INVALID_ARGUMENT message")
+  end
+
+  # ── gh-1261 AC3: 4xx is never retried; only 5xx/transport errors are ────
+  StubResp = Struct.new(:code, :body)
+  # Scripted transport: `perform` is replaced (no network), the real retry
+  # loop in Http#request runs against it. Backoff sleeps are stubbed out.
+  class ScriptedHttp < PlayListingSync::Http
+    attr_reader :perform_calls
+    def initialize(*script)
+      @script = script
+      @perform_calls = 0
+    end
+    def sleep(*); end
+    private
+    def perform(*_args)
+      @perform_calls += 1
+      step = @script.shift || @last
+      @last = step
+      raise step if step.is_a?(StandardError)
+      step
+    end
+  end
+
+  http400 = ScriptedHttp.new(StubResp.new("400", '{"error":{"status":"INVALID_ARGUMENT"}}'))
+  res = http400.request(:Delete, "https://example.test/x")
+  raise "FAIL: a 400 must be returned to the caller" unless res[:status] == 400
+  raise "FAIL: a 400 must never be retried, got #{http400.perform_calls} attempt(s)" unless http400.perform_calls == 1
+
+  http500 = ScriptedHttp.new(StubResp.new("500", "{}"))
+  res = http500.request(:Get, "https://example.test/x")
+  raise "FAIL: a persistent 5xx must surface to the caller (which raises readably)" unless res[:status] == 500
+  raise "FAIL: a 5xx must be retried up to 3 attempts, got #{http500.perform_calls}" unless http500.perform_calls == 3
+
+  flaky = ScriptedHttp.new(Net::ReadTimeout.new("boom"), StubResp.new("200", "{}"))
+  res = flaky.request(:Get, "https://example.test/x")
+  raise "FAIL: a transport timeout followed by a 200 must succeed" unless res[:status] == 200
+  raise "FAIL: transport errors must be retried, got #{flaky.perform_calls} attempt(s)" unless flaky.perform_calls == 2
+  ok("gh-1261: 4xx never retried; 5xx/time-out retried with bounded backoff")
 
   puts "play_listing_sync: #{$checks} checks passed"
 end

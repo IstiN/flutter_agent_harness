@@ -36,6 +36,9 @@ require "uri"
 
 module PlayListingSync
   API_ROOT = "https://androidpublisher.googleapis.com/androidpublisher/v3/applications"
+  # Media-upload host prefix: edits.images.upload POSTs the SAME path under
+  # the /upload/ prefix with ?uploadType=media (gh-1261).
+  UPLOAD_ROOT = "https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications"
   TOKEN_URL = "https://oauth2.googleapis.com/token"
   SCOPE = "https://www.googleapis.com/auth/androidpublisher"
 
@@ -179,6 +182,28 @@ module PlayListingSync
 
   # ── androidpublisher REST calls (all thin + injectable via http) ────────
 
+  # gh-1261 AC2: the {imageType} path slot takes an AppImageType ENUM value
+  # (phoneScreenshots, …) — never the collection name "images". Pin the
+  # value BEFORE the API call so a bad type fails here with a readable
+  # message instead of a raw HTTP 400 INVALID_ARGUMENT from Play.
+  def validate_image_type!(type)
+    return if MANAGED_TYPES.include?(type)
+
+    raise "invalid Play image_type #{type.inspect} — the edits.images path " \
+          "takes an AppImageType enum value, one of: #{MANAGED_TYPES.join(', ')}"
+  end
+
+  # One-line readable rendering of a Google API error body ({"error":
+  # {"status": …, "message": …}}); falls back to a trimmed raw body.
+  def api_error_message(body)
+    err = JSON.parse(body.to_s)["error"]
+    return body.to_s[0, 300] unless err.is_a?(Hash) && err["message"]
+
+    "#{err['status']}: #{err['message']}"[0, 300]
+  rescue JSON::ParserError
+    body.to_s[0, 300]
+  end
+
   def bearer!(json_key, http:, now: Time.now)
     account = JSON.parse(json_key)
     %w[client_email private_key].each do |field|
@@ -236,38 +261,47 @@ module PlayListingSync
   end
 
   # Deletes the WHOLE image set of a locale/type. 404 = nothing to clear.
+  # Contract (gh-1261): DELETE …/listings/<locale>/<imageType> — the enum
+  # value sits DIRECTLY in the path; there is no "images" collection
+  # segment (the old …/images/<type> path put the literal "images" into the
+  # {imageType} slot → HTTP 400 INVALID_ARGUMENT from Play).
   def clear_images!(http, package_name, edit_id, locale, type, auth)
+    validate_image_type!(type)
     res = http.request(:Delete,
                        "#{API_ROOT}/#{package_name}/edits/#{edit_id}/listings/" \
-                       "#{locale}/images/#{type}", headers: auth)
+                       "#{locale}/#{type}", headers: auth)
     return if [200, 204, 404].include?(res[:status])
 
     raise "edits.images.delete failed for #{locale}/#{type} " \
-          "(HTTP #{res[:status]}): #{res[:body][0, 300]}"
+          "(HTTP #{res[:status]}): #{api_error_message(res[:body])}"
   end
 
+  # Contract (gh-1261): POST {UPLOAD_ROOT}/…/listings/<locale>/<imageType>?uploadType=media.
   def upload_image!(http, package_name, edit_id, locale, type, path, auth)
+    validate_image_type!(type)
     res = http.request(
       :Post,
-      "#{API_ROOT}/#{package_name}/edits/#{edit_id}/listings/#{locale}/" \
-      "images/#{type}?uploadType=media",
+      "#{UPLOAD_ROOT}/#{package_name}/edits/#{edit_id}/listings/#{locale}/" \
+      "#{type}?uploadType=media",
       headers: auth, body: File.binread(path), content_type: "image/png"
     )
     unless res[:status] == 200
       raise "edits.images.upload failed for #{locale}/#{type}/" \
-            "#{File.basename(path)} (HTTP #{res[:status]}): #{res[:body][0, 300]}"
+            "#{File.basename(path)} (HTTP #{res[:status]}): #{api_error_message(res[:body])}"
     end
 
     JSON.parse(res[:body])["sha256"]
   end
 
+  # Contract (gh-1261): GET …/listings/<locale>/<imageType>.
   def list_images!(http, package_name, edit_id, locale, type, auth)
+    validate_image_type!(type)
     res = http.request(:Get,
                        "#{API_ROOT}/#{package_name}/edits/#{edit_id}/listings/" \
-                       "#{locale}/images/#{type}", headers: auth)
+                       "#{locale}/#{type}", headers: auth)
     unless res[:status] == 200
       raise "edits.images.list failed for #{locale}/#{type} " \
-            "(HTTP #{res[:status]}): #{res[:body][0, 300]}"
+            "(HTTP #{res[:status]}): #{api_error_message(res[:body])}"
     end
 
     JSON.parse(res[:body]).fetch("images", [])
