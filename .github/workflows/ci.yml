@@ -95,6 +95,9 @@ jobs:
       # PR-only (issue #303): a trajectory-touching diff flips this on so
       # the perf-gate leg below runs the #262 DoD gate per-merge.
       perf: ${{ steps.paths.outputs.perf }}
+      # PR-only (gh-1241 REG-1): a trajectory/session/usage-touching diff
+      # runs the usage-fold suite per-merge.
+      usagefold: ${{ steps.paths.outputs.usagefold }}
       # PR-only (issue #551): test/integration/** changes run the no-key
       # mock-LLM integration legs per-PR instead of at tag time only.
       intmock: ${{ steps.paths.outputs.intmock }}
@@ -151,6 +154,14 @@ jobs:
           if git diff --name-only "$BASE_REF" "$HEAD_REF" |
               grep -qE '(^lib/src/trajectory/|^packages/fa_ui/lib/src/trajectory/|^lib/src/cli/trajectory_|^bin/fah\.dart$|^test/(integration/)?trajectory/|^flutter_app/lib/services/agent_service(_sessions)?\.dart$)'; then
             echo "perf=true" >> "$GITHUB_OUTPUT"
+          fi
+          # gh-1241 REG-1: the usage fold consumes the trajectory ledger's
+          # model_request_summary records and the session chain's shape —
+          # a red usage-fold suite blocks the merge even when the regular
+          # legs are green.
+          if git diff --name-only "$BASE_REF" "$HEAD_REF" |
+              grep -qE '(^lib/src/trajectory/|^lib/src/session/|^lib/src/usage/|^test/usage/|^lib/src/cli/agent_cli_usage_ledger\.dart$)'; then
+            echo "usagefold=true" >> "$GITHUB_OUTPUT"
           fi
 
   # ─────────────────────────────────────────────────────────────────────────
@@ -2097,7 +2108,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify, install-pin-gate]
+    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify, install-pin-gate]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -2115,6 +2126,7 @@ jobs:
           echo "test-faui     = ${{ needs.test-faui.result }}"
           echo "app-crap-gate = ${{ needs.app-crap-gate.result }}"
           echo "perf-gate     = ${{ needs.perf-gate.result }}"
+          echo "usage-fold    = ${{ needs.usage-fold.result }}"
           echo "cube-live     = ${{ needs.cube-kernel-live.result }}"
           echo "cli-visual    = ${{ needs.cli-visual-settings.result }}"
           echo "build-web     = ${{ needs.build-web.result }}"
@@ -2144,6 +2156,7 @@ jobs:
           R_CRAP: ${{ needs.app-crap-gate.result }}
           R_FAUI: ${{ needs.test-faui.result }}
           R_PERF: ${{ needs.perf-gate.result }}
+          R_USAGE_FOLD: ${{ needs.usage-fold.result }}
           R_CUBE: ${{ needs.cube-kernel-live.result }}
           R_CLI_VISUAL: ${{ needs.cli-visual-settings.result }}
           R_BUILD_WEB: ${{ needs.build-web.result }}
@@ -2177,7 +2190,7 @@ jobs:
           # green required check.
           for kv in "static:$R_STATIC" "flutter-analyze:$R_FLUTTER_ANALYZE" "test-core:$R_TEST_CORE" "coverage-gate:$R_COVERAGE" \
                     "guards:$R_GUARDS" "flutter-tests:$R_FLUTTER" "app-crap-gate:$R_CRAP" \
-                    "test-faui:$R_FAUI" "perf-gate:$R_PERF" "cube-kernel-live:$R_CUBE" \
+                    "test-faui:$R_FAUI" "perf-gate:$R_PERF" "usage-fold:$R_USAGE_FOLD" "cube-kernel-live:$R_CUBE" \
                     "cli-visual-settings:$R_CLI_VISUAL" "build-web:$R_BUILD_WEB" \
                     "build-android:$R_BUILD_ANDROID" "build-ios:$R_BUILD_IOS" "build-macos:$R_BUILD_MACOS" \
                     "integration-mock:$R_INTEG" "hostile-env:$R_HOSTILE" \
@@ -2222,6 +2235,41 @@ jobs:
 
       - name: dart test --tags perf
         run: dart test --tags perf
+
+  # gh-1241 REG-1: the usage fold consumes the trajectory ledger's
+  # `model_request_summary` records and the session chain's record shape —
+  # a shape change there breaks the fold even when every regular leg is
+  # green, so this suite is a merge gate for trajectory/session/usage
+  # diffs. Gate model (2026-09 dispatch-only CI): this workflow has NO
+  # pull_request trigger — the SM dispatches it on the PR head, so
+  # `github.event_name` is never 'pull_request' and a PR-only `if` would
+  # leave this leg permanently skipped (REG-1 gating nothing). On real PR
+  # events the path classifier narrows it to usage-relevant diffs; on every
+  # other event (main/tags/schedule/release + SM validation dispatches)
+  # the full gate runs, so the suite runs there too. Same latent bug still
+  # pending for perf-gate (issue #303) — flagged in the gh-1243 rework.
+  usage-fold:
+    name: Usage fold (ledger chain)
+    runs-on: ubuntu-latest
+    needs: changes
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.changes.outputs.usagefold == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        with:
+          sdk: stable
+      - run: dart pub get
+
+      - name: Usage-fold suite
+        # The path classifier also gates on ^lib/src/cli/agent_cli_usage_ledger\.dart$
+        # — the CLI wiring test that exercises that file must run here too,
+        # otherwise a wiring regression merges behind a green test/usage.
+        run: dart test test/usage test/cli/agent_cli_usage_ledger_test.dart
 
   # Issue #194 (point 4): per-step duration telemetry. The jobs API already
   # records started/completed per step — dump it as a summary table plus a
