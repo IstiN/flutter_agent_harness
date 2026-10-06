@@ -126,7 +126,7 @@ add_stages() {
 classify_path() {
   # Echoes the stage group contributed by one changed path (union logic).
   case "$1" in
-    scripts/*|.github/*|crap4dart.yaml) echo "all" ;;
+    scripts/*|.github/*|crap4dart.yaml|crap4dart.loc-scope.yaml) echo "all" ;;
     test/integration/*) echo "integ" ;;
     lib/*|bin/*|test/*|example/*|pubspec.yaml|pubspec.*) echo "core" ;;
     flutter_app/*|packages/*) echo "app" ;;
@@ -199,9 +199,6 @@ ensure_app_placeholders() {
   fi
 }
 
-FLUTTER_ANALYZED=0
-
-# ── Stage implementations ───────────────────────────────────────────────────
 FLUTTER_ANALYZED=0
 
 # ── Stage implementations ───────────────────────────────────────────────────

@@ -14,10 +14,12 @@ factual: paths, commands, invariants — no essays.
   No per-subsystem mini-barrels, no re-sorting of existing lines — append
   only, so parallel edits almost never touch the same line.
 - God-file ceiling (gh-1232): no Dart file over 2800 lines anywhere
-  (crap4dart `loc` gate, `max_lines: 2800` in both `crap4dart.yaml`
-  files — issue #1234 migrated the shell guards; enforced whole-tree by
-  `crap4dart check --baseline` in CI and on staged files by the
-  pre-commit hook, covering `lib bin test example flutter_app/lib`).
+  (crap4dart `loc` gate, `max_lines: 2800` — issue #1234 migrated the
+  shell guards; enforced whole-tree in CI and on staged files by the
+  pre-commit hook. Scope: core `lib bin` via `crap4dart.yaml` +
+  `test example` via the `crap4dart.loc-scope.yaml` companion config
+  (0.11.0 has no per-gate sources override), flutter_app/lib via
+  `flutter_app/crap4dart.yaml`).
   Target < 2000 for primary
   files; when a file approaches it, split by concern into `part` files
   (the established pattern: `agent_cli.dart`, `builtin_tools.dart`,

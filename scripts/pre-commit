@@ -74,6 +74,14 @@ if command -v dart >/dev/null 2>&1; then
         echo "❌ QUALITY GATE FAILED — crap4dart gates" >&2
         exit 1
       fi
+      # Issue #1234 rework: the ≤2800 ceiling over test/ + example/ via
+      # the loc-scope companion config (the package config's sources are
+      # [lib, bin]; 0.11.0 has no per-gate sources override). No-ops
+      # unless a staged file lives under test/ or example/.
+      if ! dart pub global run crap4dart check --staged --config crap4dart.loc-scope.yaml --only loc; then
+        echo "❌ QUALITY GATE FAILED — loc scope (test/example)" >&2
+        exit 1
+      fi
       ;;
     "")
       ;; # not activated — skip silently (CI and the fast gate cover it)

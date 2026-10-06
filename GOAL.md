@@ -183,11 +183,14 @@ staged-scoped). Every commit/merge must pass:
 
 1. **File size guard** — no `.dart` file over 2800 lines (generated files
    exempt). Enforcement points (issue #1234): crap4dart `loc` gate
-   (`max_lines: 2800` in both `crap4dart.yaml` files) — staged files via
-   the hook's `crap4dart check --staged`, whole-tree via
-   `crap4dart check --baseline` in the CI quality-gates step (core) and
-   the `app-crap-gate` job (flutter_app). The retired shell guards:
-   `ci_fast_gate.sh` stage_size + the ci.yml find-exec jobs (gh-1232).
+   (`max_lines: 2800`) — staged files via the hook's
+   `crap4dart check --staged`, whole-tree via `crap4dart check
+   --baseline` in the CI quality-gates step (core `lib bin`) and the
+   `app-crap-gate` job (flutter_app); `test example` via the
+   `crap4dart.loc-scope.yaml` companion config (`--only loc`, same hook
+   + CI points — 0.11.0 has no per-gate sources override). The retired
+   shell guards: `ci_fast_gate.sh` stage_size + the ci.yml find-exec
+   jobs (gh-1232).
 2. **`dart analyze`** — zero issues (infos allowed unless fatal-infos).
 3. **`dart test --coverage`** — all tests green. LLM-calling integration
    tests are tagged `integration` and excluded from the hook (run in CI /

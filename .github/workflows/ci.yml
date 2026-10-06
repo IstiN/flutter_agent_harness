@@ -1143,6 +1143,17 @@ jobs:
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: dart pub global run crap4dart check --baseline
 
+      # Issue #1234 rework: 0.11.0 has no per-gate sources override (a
+      # gates.loc.sources key is a ConfigException — caught here on
+      # 019ede65), and the package config's sources drive the CRAP census
+      # too, so test/ + example/ get the SAME loc gate from the companion
+      # config (crap4dart.loc-scope.yaml) — the scope the retired shell
+      # guards (gh-1232) scanned there. No baseline: nothing exceeds 2800
+      # today, and the ceiling itself is the point.
+      - name: Loc scope gate (test/ + example/, gh-1232 whole-tree ceiling)
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        run: dart pub global run crap4dart check --config crap4dart.loc-scope.yaml --only loc
+
       - name: Duplication guard (lib/ < 1%)
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: |
