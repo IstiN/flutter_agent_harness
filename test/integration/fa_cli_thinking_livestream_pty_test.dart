@@ -65,11 +65,19 @@ void main() {
         );
 
         // End the run early: the mock would keep streaming for ~13s more.
+        // Re-sent up to twice on a ~5s probe per attempt (the sibling
+        // thinking-abort suite's hardening): on a loaded CI runner a
+        // single-shot write raced the 10ms lone-escape timer window
+        // (run 36732676599) and the run streamed on untouched.
         harness.sendText('\x1b\x1b');
-        final abortDeadline = DateTime.now().add(const Duration(seconds: 10));
-        var aborted = false;
-        while (!aborted && DateTime.now().isBefore(abortDeadline)) {
-          await Future<void>.delayed(const Duration(milliseconds: 100));
+        var aborted = !harness.screenText.contains('Working');
+        for (var attempt = 0; attempt < 3 && !aborted; attempt++) {
+          if (attempt > 0) harness.sendText('\x1b\x1b');
+          final deadline = DateTime.now().add(const Duration(seconds: 5));
+          while (DateTime.now().isBefore(deadline)) {
+            if (!harness.screenText.contains('Working')) break;
+            await Future<void>.delayed(const Duration(milliseconds: 100));
+          }
           aborted = !harness.screenText.contains('Working');
         }
         expect(aborted, isTrue, reason: 'the run kept streaming after Esc Esc');
