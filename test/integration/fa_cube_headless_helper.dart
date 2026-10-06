@@ -10,6 +10,8 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
+import 'pty_harness.dart';
+
 /// Captured result of one headless CLI run.
 final class FaResult {
   const FaResult({
@@ -66,9 +68,15 @@ Future<FaResult> spawnFa({
   // boot-resolution inputs. Blank values read as unset at every consumer,
   // so the explicit blanks keep the override minimal where the injection
   // re-adds missing vars.
+  // gh-1300: honor the FA_BIN AOT seam — CI compiles the bundle ONCE per
+  // shard and every headless spawn here drops from ~30 s (VM+CFE) to ~1 s.
+  final command = faCliCommand(
+    fahArgs,
+    jitPrefix: const ['dart', 'run', 'bin/fah.dart'],
+  );
   final result = await Process.run(
-    'dart',
-    ['run', 'bin/fah.dart', ...fahArgs],
+    command.first,
+    command.sublist(1),
     workingDirectory: Directory.current.path,
     environment: {
       ...scrubbedChildEnv(),

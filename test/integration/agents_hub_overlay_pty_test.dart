@@ -40,9 +40,10 @@ allowedTools: []
         extraEnv: {'HOME': tempHome.path},
       );
       addTearDown(harness.close);
-      // Generous: a loaded box (sibling test loops) can take minutes to
-      // jit the entrypoint; the 90s default misreads that as a dead boot.
-      await harness.waitForBoot(timeout: const Duration(seconds: 300));
+      // gh-1300: boot is the AOT binary in CI (~1 s) — the 300 s JIT
+      // band-aid ("a loaded box can take minutes to jit the entrypoint")
+      // is gone; the harness 90 s default is back in charge.
+      await harness.waitForBoot();
 
       // Open the hub once (arms the event subscription), then close it.
       await harness.runSlashCommand('/agents');
