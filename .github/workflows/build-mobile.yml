@@ -165,9 +165,7 @@ jobs:
           EOF
 
       - name: Install dependencies
-        working-directory: flutter_app
-        # gh-1265 AC2: resolve against the committed lockfile.
-        run: flutter pub get --enforce-lockfile
+        uses: ./.github/actions/flutter-pub-get
 
       # Mirrors the iOS GoogleService-Info.plist step: the committed
       # google-services.json is a placeholder (the google-services Gradle
@@ -404,9 +402,7 @@ jobs:
           EOF
 
       - name: Install dependencies
-        working-directory: flutter_app
-        # gh-1265 AC2: resolve against the committed lockfile.
-        run: flutter pub get --enforce-lockfile
+        uses: ./.github/actions/flutter-pub-get
 
       # Mirrors build-android, gated to the store flavor: the secret file
       # carries ONLY the dev.fa1.app client, while the god applicationId is
@@ -553,9 +549,7 @@ jobs:
           EOF
 
       - name: Install dependencies
-        working-directory: flutter_app
-        # gh-1265 AC2: resolve against the committed lockfile.
-        run: flutter pub get --enforce-lockfile
+        uses: ./.github/actions/flutter-pub-get
 
       - name: Boot emulator
         run: |
