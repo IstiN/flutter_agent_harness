@@ -528,10 +528,12 @@ Future<bool> _afterTransientFailure(
     );
     return false;
   }
+  // `error` IS `state.lastFailure` here — the caller assigns it before
+  // this handler runs (the field is not promoted through the state hold).
   return _pauseBetweenAttempts(
     out,
     model,
-    state.lastFailure,
+    error,
     resume,
     cancelToken,
     delay,
