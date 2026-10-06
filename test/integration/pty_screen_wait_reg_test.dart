@@ -87,6 +87,67 @@ void main() {
     },
   );
 
+  test('no waitForOutput result is harvested for settle notices (gh-1250 '
+      'drain family)', () {
+    // gh-1250 + run 37521987367 (pr-1288 rework, PTY shard 2/3): a captured
+    // `waitForOutput(` result scanned for `[bash] … exited(0)` settle
+    // notices rides the quiet detector — 2×settleMs of raw-buffer silence
+    // returns the wait EARLY. Around a staggered job drain that is a race,
+    // not a wait: settles land ~1 s apart (sleeps staggered by 1 s) and any
+    // ≥1 s output lull — a CI-load stall between frame repaints is enough —
+    // ends the wait with a partial harvest ({1..5} of 10). The anchored
+    // convention is to wait for the board's drained row
+    // (`waitForText`/`waitForScreen` on `· 0 running · N done · 0 lost`)
+    // and only then settle + harvest (job_board_stability_pty_test.dart's
+    // fixed-beat precedent).
+    final violations = <String>[];
+    final testDir = Directory('test');
+    final files =
+        testDir
+            .listSync(recursive: true)
+            .whereType<File>()
+            .where(
+              (f) =>
+                  f.path.endsWith('.dart') &&
+                  !_excluded.contains(f.uri.pathSegments.last),
+            )
+            .toList()
+          ..sort((a, b) => a.path.compareTo(b.path));
+
+    for (final file in files) {
+      final lines = _codeLines(file.readAsLinesSync());
+      if (!lines.any((l) => l.contains('RegExp(') && l.contains('exited('))) {
+        continue; // no settle-notice regex in this file — nothing to police
+      }
+      for (var i = 0; i < lines.length; i++) {
+        final line = lines[i];
+        if (!line.contains('waitForOutput(')) continue;
+        final captured =
+            line.contains(RegExp(r'=\s*(await\s+)?[\w.]*waitForOutput')) ||
+            (i > 0 && lines[i - 1].trimRight().endsWith('='));
+        if (!captured) continue;
+        final varName = _capturedVarName(lines, i);
+        if (varName == null) continue;
+        final harvested = lines
+            .skip(i + 1)
+            .any((l) => l.contains(RegExp('\\.allMatches\\(\\s*$varName')));
+        if (harvested) {
+          violations.add(
+            '${file.path}:${i + 1}: captured waitForOutput result '
+            '`$varName` is harvested for settle notices — the quiet '
+            'detector early-returns on any ≥1 s output lull and a staggered '
+            'drain settles ~1 s apart, so the harvest races the last '
+            'settles (gh-1250; run 37521987367 harvested {1..5} of 10). '
+            'Anchor on the board\'s drained row: `await harness.waitForText('
+            "'· 0 running · N done · 0 lost', timeout: …)` then settle + "
+            'harvest.',
+          );
+        }
+      }
+    }
+    expect(violations, isEmpty, reason: violations.join('\n'));
+  });
+
   test('_statementEnd ignores parens inside string literals (gh-1049 '
       'review)', () {
     // A marker string with an unbalanced `(` must not inflate the depth
@@ -160,4 +221,18 @@ int _statementEnd(List<String> lines, int start) {
     if (depth <= 0) return j;
   }
   return lines.length - 1;
+}
+
+/// The variable name a captured `waitForOutput(` call is assigned to:
+/// either on the call's own line (`final drained = await harness.waitForOutput(`)
+/// or on the line above (assignment split across lines, the file's usual
+/// wrapping). Null when the assignment shape is unrecognized — the naive
+/// matcher stays silent rather than guess.
+String? _capturedVarName(List<String> lines, int callLine) {
+  var decl = lines[callLine];
+  if (callLine > 0 && lines[callLine - 1].trimRight().endsWith('=')) {
+    decl = lines[callLine - 1];
+  }
+  final m = RegExp(r'(?:final|var)\s+(\w+)\s*=').firstMatch(decl);
+  return m?.group(1);
 }
