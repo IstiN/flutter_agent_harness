@@ -130,8 +130,48 @@ PY
   # bump so the ASC-approved floor can never outgrow it again.
   sed -i "s/^version: .*/version: $next+1/" flutter_app/pubspec.yaml
 
-  git add pubspec.yaml flutter_app/pubspec.yaml CHANGELOG.md
+  # gh-1299 NG1: the bump invalidates every lockfile pinning the root
+  # package version — flutter_app/pubspec.lock pins `flutter_agent_harness
+  # <old> from path ..`, and #1268's repo-wide `pub get --enforce-lockfile`
+  # hard-fails on exactly that stale pin (v1.0.515 red all 13 main legs).
+  # Regenerate the committed lockfiles and ship the refresh IN the bump
+  # commit — a release that leaves the tree --enforce-lockfile-dirty is a
+  # failed release.
+  if ! ( cd flutter_app && flutter pub get ); then
+    echo "::error::flutter pub get failed in flutter_app — aborting the release rather than pushing a bump that leaves pubspec.lock stale (gh-1299 NG1)." >&2
+    exit 1
+  fi
+
+  git add pubspec.yaml flutter_app/pubspec.yaml CHANGELOG.md flutter_app/pubspec.lock
+
   git commit -m "chore(release): v$next"
+
+  # No committed lockfile may stay dirty across a release (gh-1299 NG1):
+  # anything the refresh above could not regenerate (Podfile.lock needs
+  # `pod install` — runs on Linux per AGENTS.md/gh-1296; npm pins need
+  # `npm install`) fails the release LOUDLY here — after the commit (the
+  # staged refresh must not trip this), before the push. Never a shipped
+  # bump that leaves the tree stale.
+  # The list comes from the ONE inventory (scripts/check_lockfiles.sh).
+  lockfiles=()
+  while IFS= read -r f; do lockfiles+=("$f"); done < <(bash scripts/check_lockfiles.sh list)
+  # PR #1304 rework threads 1+5: the process substitution above swallows a
+  # non-zero exit — a `check_lockfiles.sh list` that failed (bad merge,
+  # partial checkout, broken LOCKFILES) would leave `lockfiles` EMPTY and
+  # degenerate the status below into an unrestricted whole-tree scan, the
+  # gate silently no-oping on the exact incident class it guards (and a
+  # hard abort under bash 3.2 + `set -u`). Refuse to release unguarded.
+  if [ "${#lockfiles[@]}" -eq 0 ]; then
+    echo "::error::lockfile inventory is EMPTY — scripts/check_lockfiles.sh list failed; refusing to release without the dirty-tree gate (gh-1299 NG1)." >&2
+    exit 1
+  fi
+  dirty=$(git status --porcelain -- "${lockfiles[@]}")
+  if [ -n "$dirty" ]; then
+    echo "::error::release aborted — committed lockfile(s) still dirty after the refresh; a release that leaves the tree --enforce-lockfile-dirty is a failed release (gh-1299 NG1):"
+    echo "$dirty"
+    echo "::error::regenerate them (flutter pub get; pod install --repo-update in flutter_app/ios and flutter_app/macos — runs on Linux per AGENTS.md; npm install for the e2e package-locks), commit, re-run the release."
+    exit 1
+  fi
 
   if [ "$dry_run" -eq 1 ]; then
     echo "Auto-release DRY-RUN: would push to main: $(git rev-parse --short HEAD) 'chore(release): v$next'"
