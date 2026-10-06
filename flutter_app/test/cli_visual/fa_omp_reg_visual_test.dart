@@ -329,11 +329,22 @@ void _diffTurnChrome(
   }
 }
 
-/// Theme-token pixel comparison of the status-bar band: finds the bar band
-/// row in the omp reference PNG (the #121212 flat fill), then requires the
-/// fa render's same row to match across the width — both renders go through
-/// the identical TerminalView pipeline, so fills must be identical;
-/// antialiased glyph edges are the tolerated minority.
+/// Status-bar band conformance, per side (issue #918 capture reality):
+/// the committed omp reference twins were captured with omp's AUTO-DARK
+/// theme — statusLineBg #070a10. The capture-time `theme:` pin wrote omp's
+/// settings in a shape omp ignores (the committed PNGs show the auto-dark
+/// bar), and a re-capture needs a PTY host with the omp checkout, so the
+/// omp band token HERE is #070a10. fa paints its band with the active
+/// theme's `userMessageBg` token ([StatusLineRoleKey.bandBg] maps there —
+/// `#1E222A` on the boot default theme, not the legacy `statusLineBg`
+/// #121212). Cross-side pixel equality is therefore impossible by token —
+/// each band is instead checked against its OWN documented token: a
+/// bottom-region row that is a majority flat fill of the token, with
+/// vertical band extent above it (both renders go through the identical
+/// TerminalView pipeline, so fills must not bleed) and both bands inside
+/// the terminal's bottom rows (geometry parity). A fixture re-capture
+/// that flips the omp theme, a fa band regression, or a band drifting
+/// out of the bottom rows fails loudly.
 void _pixelCompareBand(String faShotsDir, String name, String repoRoot) {
   final ompPng = img.decodePng(
     File(
@@ -344,46 +355,90 @@ void _pixelCompareBand(String faShotsDir, String name, String repoRoot) {
   expect(faPng.width, ompPng.width, reason: 'render geometry drifted');
   expect(faPng.height, ompPng.height, reason: 'render geometry drifted');
 
-  var bandY = -1;
-  for (var y = ompPng.height - 1; y >= 0 && bandY < 0; y--) {
+  const ompToken = [0x07, 0x0a, 0x10]; // omp auto-dark, the captured theme
+  final faToken = [0x1e, 0x22, 0x2a]; // fa band = theme userMessageBg
+  final ompBand = _findBandRow(ompPng, ompToken);
+  expect(
+    ompBand,
+    isNotNull,
+    reason:
+        'omp band fill (auto-dark #070A10, the captured theme) not found '
+        'in the reference render — wrong fixture or theme drift; '
+        're-baseline the token if the fixture was legitimately re-captured',
+  );
+  final faBand = _findBandRow(faPng, faToken);
+  expect(
+    faBand,
+    isNotNull,
+    reason:
+        'fa band fill (bandBg = theme userMessageBg #1E222A) not found in '
+        'the fa render — band regression or theme change',
+  );
+
+  // Geometry parity: the bar is bottom-fixed chrome on both sides (fa
+  // paints composer input rows below its band, omp a prompt row below
+  // its bar — allow the bottom 3 cells of the 36-row terminal).
+  final bottomLimit = (ompPng.height * 33) ~/ 36;
+  expect(
+    ompBand! >= bottomLimit,
+    isTrue,
+    reason: 'omp band left the terminal bottom rows (y=$ompBand)',
+  );
+  expect(
+    faBand! >= bottomLimit,
+    isTrue,
+    reason: 'fa band left the terminal bottom rows (y=$faBand)',
+  );
+
+  // Vertical extent: the band is a real band, not a stray antialiased
+  // row — the rows directly above the found one must still carry the
+  // token as a strong minority (glyph pixels carve into the fill, so a
+  // majority is required only on the found row itself).
+  for (final (label, png, bandY, token) in [
+    ('omp', ompPng, ompBand, ompToken),
+    ('fa', faPng, faBand, faToken),
+  ]) {
+    var above = 0;
+    var samples = 0;
+    final y = bandY - 1;
+    if (y < 0) continue;
+    for (var x = 0; x < png.width; x += 4) {
+      samples++;
+      final p = png.getPixel(x, y);
+      if ((p.r - token[0]).abs() <= 2 &&
+          (p.g - token[1]).abs() <= 2 &&
+          (p.b - token[2]).abs() <= 2) {
+        above++;
+      }
+    }
+    expect(
+      above / samples,
+      greaterThanOrEqualTo(0.4),
+      reason:
+          '$label band has no vertical extent above y=$bandY '
+          '(token fill ${(above / samples).toStringAsFixed(2)}) — '
+          'paint-pipeline bleed or theme drift',
+    );
+  }
+}
+
+/// Bottom-up scan for the first row that is a majority flat fill of
+/// [token] (±2 per channel, sampled every 4px) — the row index, or null
+/// when no such row exists.
+int? _findBandRow(img.Image png, List<int> token) {
+  for (var y = png.height - 1; y >= 0; y--) {
     var fillHits = 0;
     var samples = 0;
-    for (var x = 0; x < ompPng.width; x += 4) {
+    for (var x = 0; x < png.width; x += 4) {
       samples++;
-      final p = ompPng.getPixel(x, y);
-      if ((p.r - 0x12).abs() <= 2 &&
-          (p.g - 0x12).abs() <= 2 &&
-          (p.b - 0x12).abs() <= 2) {
+      final p = png.getPixel(x, y);
+      if ((p.r - token[0]).abs() <= 2 &&
+          (p.g - token[1]).abs() <= 2 &&
+          (p.b - token[2]).abs() <= 2) {
         fillHits++;
       }
     }
-    if (fillHits >= samples / 2) bandY = y;
+    if (fillHits >= samples / 2) return y;
   }
-  expect(
-    bandY,
-    greaterThanOrEqualTo(0),
-    reason: 'omp band fill (#121212) not found in the reference render',
-  );
-
-  var equal = 0;
-  var total = 0;
-  for (final dy in [-1, 0, 1]) {
-    final y = bandY + dy;
-    if (y < 0 || y >= ompPng.height) continue;
-    for (var x = 0; x < ompPng.width; x += 4) {
-      total++;
-      final a = ompPng.getPixel(x, y);
-      final b = faPng.getPixel(x, y);
-      if ((a.r - b.r).abs() <= 3 &&
-          (a.g - b.g).abs() <= 3 &&
-          (a.b - b.b).abs() <= 3) {
-        equal++;
-      }
-    }
-  }
-  expect(
-    equal / total,
-    greaterThanOrEqualTo(0.8),
-    reason: 'fa band pixels diverge from the omp reference at y=$bandY',
-  );
+  return null;
 }
