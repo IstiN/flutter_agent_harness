@@ -116,13 +116,16 @@ Future<void> _dumpWedgeDiagnostics(
 ) async {
   printOnFailure('=== WEDGE FORENSICS (message #$messageIndex) ===');
   try {
-    final pgrep = await Process.run('pgrep', ['-f', 'bin/fah.dart']);
+    // gh-1300: match the shape we actually spawned — the FA_BIN AOT binary
+    // path when the seam is set, else the JIT script path.
+    final pattern = Platform.environment['FA_BIN'] ?? 'bin/fah.dart';
+    final pgrep = await Process.run('pgrep', ['-f', pattern]);
     final pids = (pgrep.stdout as String)
         .split(RegExp(r'\s+'))
         .where((id) => id.isNotEmpty)
         .toList();
     if (pids.isEmpty) {
-      printOnFailure('ps: no bin/fah.dart process alive (already dead?)');
+      printOnFailure('ps: no $pattern process alive (already dead?)');
     } else {
       final ps = await Process.run('ps', [
         '-o',
