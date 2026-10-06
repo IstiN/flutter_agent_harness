@@ -44,7 +44,17 @@ extension AgentCliUsageLedger on AgentCli {
   /// -request session writes nothing; a stale/corrupt artifact is replaced
   /// by the fresh fold, never merged into. Failures stay in the diagnostic
   /// log — exit paths never fail on the ledger.
-  Future<void> _flushUsageLedger() async {
+  /// [mirrorTokensLineToRunLog]: the headless/CI leg passes true — its
+  /// diag file dies with the ephemeral runner, so the segment-close line
+  /// is also emitted on the CLI diagnostics channel ([CliIO.writeln]:
+  /// stderr on headless hosts) where the captured run log sees it. It
+  /// never rides [CliIO.write] — headless stdout stays pipeable prose
+  /// (issue #774 AC3). The REPL exit/switch paths keep the default
+  /// false: interactive transcripts (and PTY screen assertions) stay
+  /// clean.
+  Future<void> _flushUsageLedger({
+    bool mirrorTokensLineToRunLog = false,
+  }) async {
     if (_viewer != null) return;
     final session = _session;
     if (session == null) return;
@@ -62,39 +72,56 @@ extension AgentCliUsageLedger on AgentCli {
         sessionsRoot: config.sessionRoot,
         sessionId: metadata.id,
       );
-      final writer = UsageLedgerWriter(_env);
-      // E3: only rewrite when missing/stale/corrupt — an already-valid
-      // artifact means a concurrent writer landed the same fold (E2).
-      final existing = await writer.readIfValid(
-        dir,
-        expectedRecords: ledger.chainRecords,
-        expectedHash: ledger.chainHash,
-      );
-      if (existing == null) {
-        // E2: a fingerprint mismatch can also mean the on-disk artifact
-        // is a NEWER fold than our chain view (a concurrent writer got
-        // further along the chain before we flushed). Never clobber a
-        // fold that consumed more chain records than ours — the slowest
-        // writer must not win; the next close over the full chain
-        // rebuilds the complete ledger (E3/I6).
-        final onDisk = await writer.read(dir);
-        if (onDisk == null || onDisk.chainRecords <= ledger.chainRecords) {
-          await writer.write(
-            dir,
-            ledger,
-            tmpSuffix: config.processId?.toString(),
-            forbiddenSecrets: _usageLedgerForbiddenSecrets(),
-          );
-        }
-      }
+      await _persistFoldIfStale(dir, ledger);
       final closed = ledger.segments.lastOrNull;
       if (closed != null) {
-        _logDiagnostic(
-          usageTokensLogLine(sessionId: metadata.id, segment: closed),
+        final line = usageTokensLogLine(
+          sessionId: metadata.id,
+          segment: closed,
         );
+        _logDiagnostic(line);
+        // gh-1292: mirror the segment-close line onto the CLI diagnostics
+        // channel ([CliIO.writeln] — stderr on headless hosts) so the
+        // ephemeral runner's captured run log sees it. It must NOT ride
+        // [CliIO.write]: headless stdout is the pipeable primary stream
+        // (issue #774 AC3 — byte-identical assistant prose only). The
+        // reporter greps the whole GH job log, stderr included. TUI
+        // sessions keep the channel clean (the line stays in fa.log);
+        // structured modes (HEP/stream-json) forward writeln to the
+        // host's diagnostics channel via [HepEventsIO] — their NDJSON
+        // wires stay pure by construction.
+        if (mirrorTokensLineToRunLog && !_useTui) io.writeln(line);
       }
     } on Object catch (error) {
       _logDiagnostic('usage ledger flush failed: $error');
+    }
+  }
+
+  /// E3: rewrite the fold only when the on-disk artifact is
+  /// missing/stale/corrupt — an already-valid artifact means a
+  /// concurrent writer landed the same fold (E2).
+  Future<void> _persistFoldIfStale(String dir, UsageLedger ledger) async {
+    final writer = UsageLedgerWriter(_env);
+    final existing = await writer.readIfValid(
+      dir,
+      expectedRecords: ledger.chainRecords,
+      expectedHash: ledger.chainHash,
+    );
+    if (existing != null) return;
+    // E2: a fingerprint mismatch can also mean the on-disk artifact is a
+    // NEWER fold than our chain view (a concurrent writer got further
+    // along the chain before we flushed). Never clobber a fold that
+    // consumed more chain records than ours — the slowest writer must
+    // not win; the next close over the full chain rebuilds the complete
+    // ledger (E3/I6).
+    final onDisk = await writer.read(dir);
+    if (onDisk == null || onDisk.chainRecords <= ledger.chainRecords) {
+      await writer.write(
+        dir,
+        ledger,
+        tmpSuffix: config.processId?.toString(),
+        forbiddenSecrets: _usageLedgerForbiddenSecrets(),
+      );
     }
   }
 

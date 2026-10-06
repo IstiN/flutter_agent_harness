@@ -129,6 +129,46 @@ class FakeCliIO implements CliIO {
   }
 }
 
+/// Split-channel headless IO — the canonical fixture for the headless
+/// channel contract (gh-1292 review): [write] is the pipeable primary
+/// stream (stdout — byte-identical assistant prose only, issue #774
+/// AC3), [writeln] is the diagnostics channel (stderr on headless hosts,
+/// per bin/fah_io.dart). Use it wherever a suite pins "this must reach
+/// the captured run log but never pollute stdout" — sibling suites that
+/// still hand-roll the shape (headless_cli, headless_hep,
+/// markdown_surface, log_file_tee, ext_cli) adopt it incrementally.
+class SplitChannelCliIO implements CliIO {
+  final out = StringBuffer();
+  final diag = StringBuffer();
+
+  @override
+  bool get isInteractive => false;
+
+  @override
+  int columns = 80;
+
+  @override
+  int rows = 24;
+
+  @override
+  Stream<String> get lines => const Stream<String>.empty();
+
+  @override
+  Stream<void> get interrupts => const Stream<void>.empty();
+
+  @override
+  Stream<KeyEvent> get keys => const Stream<KeyEvent>.empty();
+
+  @override
+  bool get supportsRawMode => false;
+
+  @override
+  void write(String text) => out.write(text);
+
+  @override
+  void writeln(String text) => diag.write('$text\n');
+}
+
 /// In-memory [SecureKeyStore] with a toggleable availability flag.
 class FakeSecureKeyStore implements SecureKeyStore {
   FakeSecureKeyStore({this.available = true});
