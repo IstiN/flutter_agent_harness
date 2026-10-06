@@ -22,7 +22,12 @@
 # source, gh-1299 NG1) prints exactly the ONE inventory (case 11).
 # gh-1303 rework addition: the app lock's path-dep pin must equal the root
 # pubspec version — a stale pin reds, the synced bump shape passes
-# (cases 12/13).
+# (cases 12/13). Rework re-review additions (threads 1-3): a MISSING pin in
+# the real-repo shape reds too — same --enforce-lockfile drift class, and
+# the realistic path is a conflict resolved by dropping the hunk (case 14);
+# a root pubspec without a version skips silently (case 15); a broken
+# python3 fails cleanly with ::error::, pod-sync's `|| fail=1` convention
+# (case 16).
 
 set -euo pipefail
 
@@ -278,5 +283,78 @@ cat >> "$d/flutter_app/pubspec.lock" <<'EOF'
     version: "1.2.3"
 EOF
 expect_pass "synced path-dep pin passes" "$d" bash "$GATE" inventory
+
+# 14. gh-1303 rework thread 1 (IMPORTANT): the lock exists but the
+#     flutter_agent_harness entry is MISSING — e.g. a merge conflict
+#     resolved by dropping the hunk, exactly what happened on this PR. A
+#     lock without the pin fails every `flutter pub get --enforce-lockfile`
+#     consumer with the SAME "Unable to satisfy pubspec.yaml" error as a
+#     stale pin, so the real-repo shape (root pubspec has a version + the
+#     lock exists) must RED, and must never claim "path-pin ok ... pins
+#     flutter_agent_harness" for a pin that does not exist.
+d="$tmp/no-harness-entry"
+make_fixture "$d" "  - native_pkg (0.0.2):"
+printf 'name: repo\nversion: 1.2.3\n' > "$d/pubspec.yaml"
+expect_fail_clean "missing path-dep pin in the app lock fails" "$d" bash "$GATE" inventory
+
+# 15. The tolerance's other half, pinned: a root pubspec.yaml WITHOUT a
+#     `version:` key has nothing to compare (fixtures/packages without the
+#     real-repo shape) — the guard must skip SILENTLY, printing no
+#     "path-pin" line at all (neither a false ok nor a noisy skip).
+d="$tmp/no-root-version"
+make_fixture "$d" "  - native_pkg (0.0.2):"
+printf 'name: repo\n' > "$d/pubspec.yaml"
+skip_log="$(mktemp)"
+if ! ( cd "$d" && FAH_REPO_ROOT="$d" bash "$GATE" inventory ) >"$skip_log" 2>&1; then
+  echo "FAIL: root pubspec without a version must skip the path-pin guard (gate should pass)" >&2
+  cat "$skip_log" >&2
+  rm -f "$skip_log"
+  exit 1
+fi
+if grep -q 'path-pin' "$skip_log"; then
+  echo "FAIL: root pubspec without a version must not print any path-pin line:" >&2
+  cat "$skip_log" >&2
+  rm -f "$skip_log"
+  exit 1
+fi
+rm -f "$skip_log"
+echo "ok: root pubspec without a version skips the path-pin guard silently"
+
+# 16. gh-1303 rework thread 2 (SUGGESTION): a broken/missing python3 must
+#     fail the gate CLEANLY (::error:: annotation, pod-sync's `|| fail=1`
+#     convention) — not a raw 'command not found'/exit-code death of the
+#     whole inventory run under set -euo pipefail. A python3 shim that
+#     exits 3 models both a broken install and a missing binary.
+d="$tmp/broken-python3"
+make_fixture "$d" "  - native_pkg (0.0.2):"
+printf 'name: repo\nversion: 1.2.3\n' > "$d/pubspec.yaml"
+cat >> "$d/flutter_app/pubspec.lock" <<'EOF'
+  flutter_agent_harness:
+    dependency: "direct main"
+    description:
+      path: ".."
+      relative: true
+    source: path
+    version: "1.2.3"
+EOF
+mkdir "$d/bin"
+printf '#!/usr/bin/env bash\nexit 3\n' > "$d/bin/python3"
+chmod +x "$d/bin/python3"
+log="$(mktemp)"
+py_ok=0
+if ( cd "$d" && FAH_REPO_ROOT="$d" PATH="$d/bin:$PATH" bash "$GATE" inventory ) >"$log" 2>&1; then
+  echo "FAIL: broken python3 must fail the gate, not pass unguarded" >&2
+  cat "$log" >&2
+  rm -f "$log"
+  exit 1
+fi
+if ! grep -q '::error::' "$log"; then
+  echo "FAIL: broken python3 must produce a clean ::error:: annotation, not a raw failure:" >&2
+  cat "$log" >&2
+  rm -f "$log"
+  exit 1
+fi
+rm -f "$log"
+echo "ok: broken python3 fails the gate with a clean ::error:: (pod-sync convention)"
 
 echo "lockfile gate self-test: all red exits stay red, green path stays green (gh-1296 AC2)"
