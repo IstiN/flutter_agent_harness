@@ -592,6 +592,50 @@ tui:
       expect(reparsed.segmentOptions!.maxLength, 25);
     });
 
+    test('nerdSymbols strict bool, yaml round-trip, preset precedence', () {
+      // Strict schema: a non-bool value throws (issue #918 knob wiring).
+      expect(
+        () => parseTuiSection(
+          _tui('tui:\n  statusLine:\n    nerdSymbols: 1'),
+        ),
+        throwsA(isA<ConfigException>()),
+      );
+      // Both bool values parse and round-trip through toYaml.
+      for (final value in [true, false]) {
+        final parsed = parseTuiSection(
+          _tui('tui:\n  statusLine:\n    nerdSymbols: $value'),
+        ).statusLine!;
+        expect(parsed.nerdSymbols, value);
+        final yaml = parsed.toYaml();
+        expect(yaml, contains('nerdSymbols: $value'));
+        final reparsed = parseTuiSection(
+          (loadYaml('tui:\n$yaml') as YamlMap)['tui'],
+        ).statusLine!;
+        expect(reparsed.nerdSymbols, value);
+      }
+      // Absent key leaves the override null (preset decides).
+      expect(
+        parseTuiSection(_tui('tui:\n  statusLine:\n    preset: nerd'))
+            .statusLine!
+            .nerdSymbols,
+        isNull,
+      );
+      // Config override wins over the preset's nerd flag, in both
+      // directions (nerd preset default-true, ascii default-false).
+      expect(
+        resolveStatusLineSpec(
+          const StatusLineConfig(nerdSymbols: false, preset: 'nerd'),
+        ).nerdSymbols,
+        isFalse,
+      );
+      expect(
+        resolveStatusLineSpec(
+          const StatusLineConfig(nerdSymbols: true, preset: 'ascii'),
+        ).nerdSymbols,
+        isTrue,
+      );
+    });
+
     test('CliConfig carries the fields and emits the section', () {
       final config = CliConfig(
         tuiTheme: 'catppuccin',
