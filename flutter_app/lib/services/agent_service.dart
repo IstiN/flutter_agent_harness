@@ -1789,7 +1789,7 @@ class AgentService extends ChangeNotifier
     if (windowed == null) return;
     final gen = _loadGeneration;
     _loadingHistory = true;
-    notifyListeners();
+    _notify();
     try {
       final joined = await windowed.loadOlder();
       if (gen != _loadGeneration) return;
@@ -1801,14 +1801,14 @@ class AgentService extends ChangeNotifier
       if (gen != _loadGeneration) return;
       if (_historyLoadError != null) {
         _historyLoadError = null;
-        notifyListeners();
+        _notify();
       }
     } on Object catch (e) {
       _historyLoadError = e is StateError ? e.message : e.toString();
-      notifyListeners();
+      _notify();
     } finally {
       _loadingHistory = false;
-      notifyListeners();
+      _notify();
     }
   }
 
@@ -1830,7 +1830,7 @@ class AgentService extends ChangeNotifier
     if (!windowed.hasNewer) return;
     final gen = _loadGeneration;
     _loadingHistory = true;
-    notifyListeners();
+    _notify();
     try {
       await windowed.jumpToTail();
       if (gen != _loadGeneration) return;
@@ -1871,13 +1871,13 @@ class AgentService extends ChangeNotifier
       await _refreshHistoryAbove();
       if (gen != _loadGeneration) return;
       _historyLoadError = null;
-      notifyListeners();
+      _notify();
     } on Object catch (e) {
       _historyLoadError = e is StateError ? e.message : e.toString();
-      notifyListeners();
+      _notify();
     } finally {
       _loadingHistory = false;
-      notifyListeners();
+      _notify();
     }
   }
 
@@ -1906,7 +1906,7 @@ class AgentService extends ChangeNotifier
     if (_loadingHistory || isStreaming) return index < messages.length;
     final gen = _loadGeneration;
     _loadingHistory = true;
-    notifyListeners();
+    _notify();
     var reached = index < messages.length;
     try {
       for (var pass = 0; !reached && pass < 100 && windowed.hasOlder; pass++) {
@@ -1920,7 +1920,7 @@ class AgentService extends ChangeNotifier
       _historyLoadError = e is StateError ? e.message : e.toString();
     } finally {
       _loadingHistory = false;
-      notifyListeners();
+      _notify();
     }
     return reached;
   }

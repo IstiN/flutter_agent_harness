@@ -157,4 +157,53 @@ void main() {
     // being disposed"; the escaping async error fails this test.
     await Future<void>.delayed(const Duration(milliseconds: 20));
   });
+
+  test('UT-dispose-race-paging: disposing the service while a page-in is '
+      'in flight does not notify the disposed notifier', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_1319_page');
+    addTearDown(() => _deleteTmpDir(tmp));
+    await io.File(
+      '${tmp.path}/big.jsonl',
+    ).writeAsString(_sessionBody('big', 300));
+    final gated = GatedFileSystem(
+      LocalFileSystem(cwd: tmp.path),
+      gatePath: 'big.jsonl',
+    );
+    final service = _service(tmp.path, gated);
+    // No addTearDown(service.dispose): the body disposes it mid-test —
+    // the crash ordering under test — and dispose is not idempotent.
+    await service.initialize();
+
+    final manager = FlutterSessionManager(
+      env: LocalExecutionEnv(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+      repo: JsonlSessionRepo(fs: gated, sessionsRoot: tmp.path),
+      maxSessionLoadBytes: 1024,
+      includeSharedSessionRoots: false,
+    );
+    final metadata = (await manager.listPersistedSessions()).single;
+    final managed = await manager.openSession(
+      metadata,
+      config: _config,
+      serviceFactory: () async => service,
+    );
+    expect(managed.service.messages, hasLength(200));
+
+    // Freeze the next ranged read, then page older history in:
+    // loadOlderHistory suspends inside windowed.loadOlder() with 100
+    // records still above the tail window.
+    gated.armGate();
+    final pageIn = service.loadOlderHistory();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    service.dispose();
+    gated.releaseGate();
+
+    // The page-in continuation resumes against the disposed service and
+    // still notifies from its tail (the gen guard passes — dispose never
+    // bumps the generation). On the unpatched code the direct
+    // notifyListeners() throws "used after being disposed" inside the
+    // method, so `await pageIn` fails this test deterministically.
+    await pageIn;
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  });
 }
