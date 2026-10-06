@@ -18,6 +18,8 @@ import 'package:flutter_agent_harness/io.dart' show LocalHub;
 import 'package:flutter_agent_harness/src/hub/dap_local_hub_state.dart';
 import 'package:test/test.dart';
 
+import 'pty_harness.dart';
+
 void main() {
   late Directory tempHome;
   late int port;
@@ -52,14 +54,18 @@ void main() {
     'DAP_HUB_PID_FILE': dapHubPidFileFor(tempHome.path),
   };
 
-  Future<ProcessResult> fa(List<String> args) => Process.run(
-    'dart',
-    ['bin/fah.dart', 'dap', ...args],
-    workingDirectory: Directory.current.path,
-    environment: envOf(),
-    stdoutEncoding: utf8,
-    stderrEncoding: utf8,
-  ).timeout(const Duration(seconds: 90));
+  Future<ProcessResult> fa(List<String> args) {
+    // gh-1300: honor the FA_BIN AOT seam (compiled ONCE per CI shard).
+    final command = faCliCommand(['dap', ...args]);
+    return Process.run(
+      command.first,
+      command.sublist(1),
+      workingDirectory: Directory.current.path,
+      environment: envOf(),
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    ).timeout(const Duration(seconds: 90));
+  }
 
   Future<bool> healthz() async {
     try {
@@ -157,12 +163,18 @@ void main() {
       final stop = await fa(['stop', '--port', '$port']);
       final stopOut = '${stop.stdout}${stop.stderr}';
       expect(stop.exitCode, 0, reason: stopOut);
-      expect(stopOut, contains('Browser'),
-          reason: 'the stop warning names the connected extension peer');
+      expect(
+        stopOut,
+        contains('Browser'),
+        reason: 'the stop warning names the connected extension peer',
+      );
       expect(stopOut, contains('DAP hub stopped'));
       expect(await healthz(), isFalse);
-      expect(await File(dapHubPidFileFor(tempHome.path)).exists(), isFalse,
-          reason: 'no zombie pid state (E4)');
+      expect(
+        await File(dapHubPidFileFor(tempHome.path)).exists(),
+        isFalse,
+        reason: 'no zombie pid state (E4)',
+      );
 
       // Second stop: calm no-op.
       final stop2 = await fa(['stop', '--port', '$port']);

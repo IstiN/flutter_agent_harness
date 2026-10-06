@@ -91,13 +91,14 @@ final class CliVisualHarness {
     String? workingDirectory,
   }) async {
     final (env, sandboxHome) = resolveSpawnEnv(extraEnv);
+    final (exe, exeArgs) = resolveFaCommand(
+      args: args,
+      executable: executable,
+      executableArgs: executableArgs,
+    );
     final pty = PseudoTerminal.start(
-      executable,
-      // Default `dart bin/fah.dart`, NOT `dart run ...`: `dart run` spawns
-      // a separate child VM that escapes pty.kill() and keeps the PTY (and
-      // the whole test run) alive. Direct execution runs in-process, so
-      // kill() in close() actually terminates the CLI.
-      executableArgs ?? ['bin/fah.dart', ...args],
+      exe,
+      exeArgs,
       // [workingDirectory] overrides the default (the fa repo root) — the
       // omp REG captures boot in a GIT-CLEAN sandbox so the git segment is
       // hidden on BOTH sides of the parity diff (issue #810). Pass an
@@ -140,6 +141,37 @@ final class CliVisualHarness {
     final sandbox = Directory.systemTemp.createTempSync('fa_visual_home_');
     env['HOME'] = sandbox.path;
     return (env, sandbox);
+  }
+
+  /// The CLI command for [spawn] under the gh-1300 FA_BIN seam: an
+  /// ambient `FA_BIN` (the `dart build cli` AOT bundle, compiled once per
+  /// CI job) replaces the default `dart bin/fah.dart` JIT spawn, dropping
+  /// per-test boot from the VM+CFE compile (~30 s on loaded ARM runners)
+  /// to ~1 s. A caller that PINNED a spawn spec ([executable]/
+  /// [executableArgs] passed explicitly — e.g. the omp REG capture pins an
+  /// absolute script path) is never overridden. [ambientFaBin] is
+  /// injectable so the unit test pins the environment (an empty string
+  /// reads as unset — CI may export it blank; `useAmbientFaBin: false`
+  /// makes the default-shape case deterministic on hosts that export
+  /// FA_BIN for the leg).
+  static (String, List<String>) resolveFaCommand({
+    required List<String> args,
+    String executable = 'dart',
+    List<String>? executableArgs,
+    bool useAmbientFaBin = true,
+    String? ambientFaBin,
+  }) {
+    final pinned = executableArgs != null || executable != 'dart';
+    final faBin =
+        ambientFaBin ??
+        (useAmbientFaBin ? Platform.environment['FA_BIN'] : null);
+    if (!pinned && faBin != null && faBin.isNotEmpty) return (faBin, args);
+    // Default `dart bin/fah.dart`, NOT `dart run ...`: `dart run` spawns
+    // a separate child VM that escapes pty.kill() and keeps the PTY (and
+    // the whole test run) alive. Direct execution runs in-process, so
+    // kill() in close() actually terminates the CLI. (An AOT binary is
+    // direct execution too — the kill() property holds.)
+    return (executable, executableArgs ?? ['bin/fah.dart', ...args]);
   }
 
   /// The pseudo-terminal running the CLI process.
@@ -375,8 +407,7 @@ final class CliVisualHarness {
   Future<bool> waitForRawSettle({
     int settleMs = 200,
     Duration grace = const Duration(seconds: 2),
-  }) =>
-      _rawQuiet(settleMs, DateTime.now().add(grace));
+  }) => _rawQuiet(settleMs, DateTime.now().add(grace));
 
   /// True when no new raw bytes arrived for [settleMs] twice in a row
   /// before [deadline] (bounded by it). The ONE stability loop behind

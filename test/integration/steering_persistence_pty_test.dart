@@ -71,7 +71,9 @@ allowedTools: []
         args: spawnArgs(),
       );
       addTearDown(harness.close);
-      await harness.waitForBoot(timeout: const Duration(seconds: 300));
+      // gh-1300: boot is the AOT binary in CI (~1 s) — the 300 s JIT
+      // band-aid is gone; the harness 90 s default is back in charge.
+      await harness.waitForBoot();
 
       // ---- Phase 0 (AC4): idle "steering" starts a turn at once — the
       // wake semantics (delivered immediately, nothing stranded). The
