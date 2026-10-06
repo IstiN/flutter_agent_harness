@@ -286,8 +286,9 @@ class JsAppEngine {
   /// aborts the whole script parse, so neither the wrapper's inner JS
   /// try/catch nor the host's can see it (the backend only debugPrints
   /// the eval error). The views render this as an error card instead of
-  /// an infinite spinner.
-  final ValueNotifier<Object?> bootError = ValueNotifier<Object?>(null);
+  /// an infinite spinner. A plain display String — no error type, so no
+  /// `Bad state:` prefix leaks into user-facing cards.
+  final ValueNotifier<String?> bootError = ValueNotifier<String?>(null);
 
   /// How long after [start] a null [tree] turns into [bootError].
   @visibleForTesting
@@ -400,7 +401,14 @@ class JsAppEngine {
       initialTheme: initialTheme,
       initialStorage: storage,
       hostBootstrapJs: faBootstrapJsFor(hostLocale),
-      onRender: (t) => tree.value = t,
+      onRender: (t) {
+        // A late render (slow device, bootstrap that fetches before its
+        // first jsr.render) proves the boot was fine — clear the
+        // watchdog's stale verdict so the widget surfaces instead of
+        // hiding behind a permanent error card (gh-1336 review).
+        bootError.value = null;
+        tree.value = t;
+      },
       onSetTitle: (_) {},
       onStorageUpdate: _persistStorage,
       onLog: _handleEngineLog,
@@ -456,11 +464,10 @@ class JsAppEngine {
     final waited = uiTreeWarnAfter.inSeconds >= 1
         ? '${uiTreeWarnAfter.inSeconds}s'
         : '${uiTreeWarnAfter.inMilliseconds}ms';
-    bootError.value = StateError(
-      "widget '${app.id}' ($entryFile) produced no UI tree within $waited "
-      'of engine start — the app source likely fails to parse (syntax '
-      'error); fix the widget source and retry',
-    );
+    bootError.value =
+        "widget '${app.id}' ($entryFile) produced no UI tree within $waited "
+        'of engine start — the app source likely fails to parse (syntax '
+        'error); fix the widget source and retry';
     AppLog.i(
       'apps',
       'WARNING: ${app.id}/$entryFile: uiTree not set $waited after '

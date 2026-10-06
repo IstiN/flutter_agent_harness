@@ -2078,7 +2078,6 @@ void main() {
       ) async {
         await tester.runAsync(() async {
           final previousWarn = JsAppEngine.uiTreeWarnAfter;
-          JsAppEngine.uiTreeWarnAfter = const Duration(milliseconds: 400);
           final env = MemoryExecutionEnv();
           await env.writeFile('apps/broken/widget.js', brokenWidgetJs);
           await env.writeFile('apps/healthy/widget.js', healthyWidgetJs);
@@ -2093,6 +2092,7 @@ void main() {
             permissions: const AppPermissions(),
           );
           try {
+            JsAppEngine.uiTreeWarnAfter = const Duration(milliseconds: 400);
             // The runtime swallows the eval failure: start() resolves and
             // the tree never arrives (the old infinite-spinner shape).
             await broken.start();
@@ -2112,6 +2112,43 @@ void main() {
             JsAppEngine.uiTreeWarnAfter = previousWarn;
             await broken.dispose();
             await healthy.dispose();
+          }
+        });
+      });
+
+      testWidgets('a widget that renders after the warn window recovers: '
+          'the stale bootError clears and the tree surfaces (gh-1336 '
+          'review — late-arriving success)', (tester) async {
+        await tester.runAsync(() async {
+          final previousWarn = JsAppEngine.uiTreeWarnAfter;
+          final env = MemoryExecutionEnv();
+          await env.writeFile('apps/late/widget.js', '''
+(function() {
+  setTimeout(function() {
+    jsr.render({type: 'text', data: 'late-recovery'});
+  }, 1500);
+})();
+''');
+          final late = JsAppEngine(
+            app: appOf('late'),
+            env: env,
+            permissions: const AppPermissions(),
+          );
+          try {
+            JsAppEngine.uiTreeWarnAfter = const Duration(milliseconds: 400);
+            await late.start();
+            // The warn window elapses first: the error surface fires…
+            await waitFor(() => late.bootError.value != null);
+            expect(late.tree.value, isNull);
+            // …then the late render lands. The engine must clear the
+            // stale verdict — a slow-but-healthy widget recovers in
+            // place instead of hiding behind a permanent error card.
+            await waitFor(() => late.tree.value != null, maxTicks: 30);
+            expect(jsonEncode(late.tree.value), contains('late-recovery'));
+            expect(late.bootError.value, isNull);
+          } finally {
+            JsAppEngine.uiTreeWarnAfter = previousWarn;
+            await late.dispose();
           }
         });
       });

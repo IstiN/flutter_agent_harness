@@ -356,14 +356,14 @@ class _DynamicWidgetCanvasState extends State<DynamicWidgetCanvas> {
             // the content inside is free to be taller and scroll.
             child: SingleChildScrollView(
               controller: _scroll,
-              child: ValueListenableBuilder<Object?>(
+              child: ValueListenableBuilder<String?>(
                 // Issue #1336: an engine that booted but never rendered
                 // (eval failed before the first render) shows the error
                 // tile — never an infinite spinner.
                 valueListenable: engine.bootError,
                 builder: (context, bootError, _) {
                   if (bootError != null) {
-                    return _errorTile(context, '$bootError');
+                    return _errorTile(context, bootError);
                   }
                   return ValueListenableBuilder<Map<String, dynamic>?>(
                     valueListenable: engine.tree,

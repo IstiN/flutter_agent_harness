@@ -240,5 +240,85 @@ void main() {
       expect(find.text('open-app'), findsOneWidget);
       await unmount(tester);
     });
+
+    testWidgets('a widget whose eval never renders shows the boot error '
+        'card with the widget id, not an infinite spinner (gh-1336)', (
+      tester,
+    ) async {
+      final previousWarn = JsAppEngine.uiTreeWarnAfter;
+      try {
+        JsAppEngine.uiTreeWarnAfter = const Duration(milliseconds: 400);
+        final env = MemoryExecutionEnv();
+        // A SYNTAX error: the wrapper IIFE never parses, so neither the
+        // runtime's inner catch nor jsr.showError can run — the exact
+        // silent failure from the field report.
+        await tester.runAsync(
+          () => env.writeFile('apps/broken/widget.js', 'syntax error ;;; {'),
+        );
+        final permissions = await tester.runAsync(
+          () => AppPermissionsStore.load(env),
+        );
+        // Same route shape as pumpAppRoute: the view (and its engine,
+        // and every timer it arms) must come up INSIDE runAsync — a boot
+        // in the test's fake zone leaves the runtime's native pollers
+        // tracked as fake timers and trips the pending-timer invariant.
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildFahTheme(),
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: Builder(
+                builder: (context) => Scaffold(
+                  body: TextButton(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => JsAppView(
+                          app: JsAppInfo.fromManifest(
+                            const {'id': 'broken', 'name': 'Broken'},
+                            bundled: false,
+                            fallbackId: 'broken',
+                          ),
+                          env: env,
+                          permissionsStore: permissions!,
+                        ),
+                      ),
+                    ),
+                    child: const Text('open-app'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.runAsync(() async {
+          await tester.tap(find.text('open-app'));
+          await tester.pump();
+          for (var i = 0; i < 40; i++) {
+            await Future<void>.delayed(const Duration(milliseconds: 150));
+            await tester.pump();
+            if (find
+                .textContaining('produced no UI tree')
+                .evaluate()
+                .isNotEmpty) {
+              break;
+            }
+          }
+        });
+        // The error card names the widget and the failure mode; no
+        // spinner survives it.
+        expect(find.textContaining("'broken'"), findsOneWidget);
+        expect(find.textContaining('produced no UI tree'), findsOneWidget);
+        expect(find.byType(CircularProgressIndicator), findsNothing);
+      } finally {
+        JsAppEngine.uiTreeWarnAfter = previousWarn;
+        await tester.runAsync(() async {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        });
+        await tester.pump();
+      }
+    });
   }, skip: _engineSkip);
 }

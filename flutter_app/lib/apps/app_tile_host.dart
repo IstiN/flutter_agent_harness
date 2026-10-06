@@ -357,7 +357,7 @@ class _AppTileHostState extends State<AppTileHost> {
     }
     // Issue #1336: an engine that booted but never rendered must not spin
     // forever — same fallback as a failed boot: the app icon.
-    return ValueListenableBuilder<Object?>(
+    return ValueListenableBuilder<String?>(
       valueListenable: engine.bootError,
       builder: (context, bootError, _) {
         if (bootError != null) {
