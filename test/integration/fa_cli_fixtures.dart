@@ -81,36 +81,53 @@ final class MockOpenAiServer {
   Future<void> start() async {
     _server = await HttpServer.bind('127.0.0.1', 0);
     _server!.listen((request) async {
-      // The boot-time model-cache refresh must not consume a scripted
-      // chat turn.
-      if (request.method == 'GET' && request.uri.path.endsWith('/models')) {
-        request.response.headers.contentType = ContentType.json;
-        request.response.write(jsonEncode({'object': 'list', 'data': []}));
-        await request.response.close();
-        return;
+      try {
+        await _handle(request);
+      } on HttpException {
+        // The CLI under test vanishes mid-request as a matter of course:
+        // the provider layer cancels an in-flight request when a transient
+        // stream error triggers a retry, a watchdog aborts a stalled read,
+        // and the PTY harness kills the CLI in teardown while a request is
+        // open. dart:io surfaces a body cut mid-read as HttpException HERE;
+        // left unhandled it fails whatever test is running (gh-1310 red
+        // validation leg — the approval-selector suite died on exactly this
+        // while its own assertions were still waiting). Transport aborts
+        // are part of the script; a scripting bug (StateError, bad chunk
+        // shape, ...) still propagates and fails loudly.
+      } on SocketException {
+        // The peer died while a response chunk was in flight — same abort
+        // class, same treatment (gh-1310).
       }
-      if (request.method != 'POST' ||
-          !request.uri.path.endsWith('/chat/completions')) {
-        request.response.statusCode = HttpStatus.notFound;
-        await request.response.close();
-        return;
-      }
-      final body = await utf8.decoder.bind(request).join();
-      bodies.add(body);
-      final n = bodies.length - 1;
-      request.response.headers.contentType = ContentType(
-        'text',
-        'event-stream',
-      );
-      final chunks = n == 0 ? _toolCallChunks() : _textChunks();
-      for (final chunk in chunks) {
-        // A blank line terminates each SSE event — without it the decoder
-        // concatenates every data line into one unreadable payload.
-        request.response.write('data: $chunk\n\n');
-      }
-      request.response.write('data: [DONE]\n\n');
-      await request.response.close();
     });
+  }
+
+  Future<void> _handle(HttpRequest request) async {
+    // The boot-time model-cache refresh must not consume a scripted
+    // chat turn.
+    if (request.method == 'GET' && request.uri.path.endsWith('/models')) {
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({'object': 'list', 'data': []}));
+      await request.response.close();
+      return;
+    }
+    if (request.method != 'POST' ||
+        !request.uri.path.endsWith('/chat/completions')) {
+      request.response.statusCode = HttpStatus.notFound;
+      await request.response.close();
+      return;
+    }
+    final body = await utf8.decoder.bind(request).join();
+    bodies.add(body);
+    final n = bodies.length - 1;
+    request.response.headers.contentType = ContentType('text', 'event-stream');
+    final chunks = n == 0 ? _toolCallChunks() : _textChunks();
+    for (final chunk in chunks) {
+      // A blank line terminates each SSE event — without it the decoder
+      // concatenates every data line into one unreadable payload.
+      request.response.write('data: $chunk\n\n');
+    }
+    request.response.write('data: [DONE]\n\n');
+    await request.response.close();
   }
 
   Future<void> close() async {
@@ -194,54 +211,65 @@ final class SlowThinkingMockServer {
   Future<void> start() async {
     _server = await HttpServer.bind('127.0.0.1', 0);
     _server!.listen((request) async {
-      if (request.method == 'GET' && request.uri.path.endsWith('/models')) {
-        request.response.headers.contentType = ContentType.json;
-        request.response.write(jsonEncode({'object': 'list', 'data': []}));
-        await request.response.close();
-        return;
+      try {
+        await _handle(request);
+      } on HttpException {
+        // This mock exists to be aborted MID-STREAM (the thinking-abort
+        // suite kills the CLI while the scripted stream is still running)
+        // — a dead peer must stay a script event, never an unhandled
+        // error that fails the running test (gh-1310). Scripting bugs
+        // still propagate.
+      } on SocketException {
+        // Same abort class on the write path (gh-1310).
       }
-      if (request.method != 'POST' ||
-          !request.uri.path.endsWith('/chat/completions')) {
-        request.response.statusCode = HttpStatus.notFound;
-        await request.response.close();
-        return;
-      }
-      await utf8.decoder.bind(request).join();
-      request.response.headers.contentType = ContentType(
-        'text',
-        'event-stream',
-      );
-      Map<String, dynamic> chunk(String reasoning) => {
-        'id': 'chatcmpl-think',
-        'object': 'chat.completion.chunk',
-        'model': 'test-model',
+    });
+  }
+
+  Future<void> _handle(HttpRequest request) async {
+    if (request.method == 'GET' && request.uri.path.endsWith('/models')) {
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({'object': 'list', 'data': []}));
+      await request.response.close();
+      return;
+    }
+    if (request.method != 'POST' ||
+        !request.uri.path.endsWith('/chat/completions')) {
+      request.response.statusCode = HttpStatus.notFound;
+      await request.response.close();
+      return;
+    }
+    await utf8.decoder.bind(request).join();
+    request.response.headers.contentType = ContentType('text', 'event-stream');
+    Map<String, dynamic> chunk(String reasoning) => {
+      'id': 'chatcmpl-think',
+      'object': 'chat.completion.chunk',
+      'model': 'test-model',
+      'choices': [
+        {
+          'index': 0,
+          'delta': {'reasoning_content': reasoning},
+          'finish_reason': null,
+        },
+      ],
+    };
+    for (var i = 0; i < 100; i++) {
+      request.response.write('data: ${jsonEncode(chunk('t$i '))}\n\n');
+      await request.response.flush();
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+    request.response.write(
+      'data: ${jsonEncode({
         'choices': [
           {
             'index': 0,
-            'delta': {'reasoning_content': reasoning},
-            'finish_reason': null,
+            'delta': {'content': 'done'},
+            'finish_reason': 'stop',
           },
         ],
-      };
-      for (var i = 0; i < 100; i++) {
-        request.response.write('data: ${jsonEncode(chunk('t$i '))}\n\n');
-        await request.response.flush();
-        await Future<void>.delayed(const Duration(milliseconds: 150));
-      }
-      request.response.write(
-        'data: ${jsonEncode({
-          'choices': [
-            {
-              'index': 0,
-              'delta': {'content': 'done'},
-              'finish_reason': 'stop',
-            },
-          ],
-        })}\n\n',
-      );
-      request.response.write('data: [DONE]\n\n');
-      await request.response.close();
-    });
+      })}\n\n',
+    );
+    request.response.write('data: [DONE]\n\n');
+    await request.response.close();
   }
 
   Future<void> close() async {

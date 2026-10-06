@@ -91,7 +91,19 @@ void main() {
     ompCheckout = ompCheckoutEnv!;
     bunBin = bun0!;
     server = await MockLlmServer.start(
-      script: MockLlmScript.parse(kRegMockScriptYaml),
+      // omp at this pin fires background LLM requests (session titling,
+      // today-reminders) that match no scenario; an unmatched request is a
+      // 500 and omp retries it in a storm that wedges the UI before the
+      // first prompt dispatches (issue #918 capture debugging). A sticky
+      // catch-all absorbs them: empty match matches everything, placed
+      // LAST so the real prompts still match their scenarios first.
+      script: MockLlmScript.parse(
+        '$kRegMockScriptYaml\n'
+        '  - match: ""\n'
+        '    sticky: true\n'
+        '    responses:\n'
+        "      - text: 'ok'\n",
+      ),
     );
     // Hermetic omp agent dir: HOME for the child, carrying
     // .omp/agent/models.yml — omp's custom-provider table (docs/models.md)
@@ -101,6 +113,29 @@ void main() {
     modelsYml
       ..createSync(recursive: true)
       ..writeAsStringSync(_modelsYaml(server!.baseUrl));
+    // Suppress omp's first-run setup wizard (issue #918): a fresh agent dir
+    // otherwise drops the CLI into "Setup step 1 of 5 — Set up your
+    // providers" right after boot and the tool-call prompt gets typed into
+    // the wizard's provider search box. pi-tui setup/wizard.ts
+    // selectSetupScenes returns no scenes when startup.setupWizard is false
+    // (packages/coding-agent/src/main.ts reads it from agent config.yml).
+    File('${agentDir!.path}/.omp/agent/config.yml')
+      ..createSync(recursive: true)
+      ..writeAsStringSync(
+        'startup:\n'
+        '  setupWizard: false\n'
+        // omp's default symbolPreset is "unicode", which downgrades the
+        // powerline-thin status-bar separators to fallback chevrons
+        // (U+25B6); the REG parity detector counts U+E0B1 runs (the glyph
+        // fa renders natively). Pin the nerd preset so both sides emit the
+        // same separator band (issue #918 capture debugging).
+        'symbolPreset: nerd\n'
+        // omp auto-picks a theme whose statusLineBg (#070a10 for the
+        // auto-dark default) differs from fa's #121212; the built-in
+        // "dark" theme carries exactly #121212 (dark.json statusLineBg).
+        'theme:\n'
+        '  dark: dark\n',
+      );
     // Git-clean capture cwd: the git status segment must be hidden on BOTH
     // sides of the parity diff (the fa REG renders git: null too), and a
     // worktree branch name would leak path shapes into the bar.
@@ -150,17 +185,56 @@ void main() {
     // frame a generous settle instead of a fa-specific banner marker.
     await harness.settle(settleMs: 1500, timeout: const Duration(seconds: 120));
 
+    // Snapshot the omp version OFF THE BOOT FRAME (issue #810 review):
+    // the "omp vN.N.N" banner renders at boot and scrolls away with the
+    // first turn — reading it at the END (as the first capture did)
+    // yielded provenance.omp_version = null. Asserted non-null HERE so a
+    // future capture fails loudly instead of committing a null version.
+    final bootVersion = _ompVersion(harness.screenText);
+    expect(
+      bootVersion,
+      isNotNull,
+      reason:
+          'omp version banner not on the boot frame — capture it during '
+          'boot (before the first turn scrolls it away), issue #810 review',
+    );
+
     final outDir = '$repoRoot/test/integration/screenshots/omp_ref';
     Directory(outDir).createSync(recursive: true);
 
     // 1. Welcome/idle boot screen.
     await harness.screenshot(outDir, '01_welcome_idle');
-    // 2. Status bar, default preset: the same boot frame — the bar is part
-    //    of every screen; the twin exists so the bar diff has a dedicated
-    //    fixture.
+    // 2. Status bar, default preset: DELIBERATELY the same boot frame —
+    //    the bar is part of every screen; this twin exists so the bar
+    //    diff has a dedicated fixture. The twin-ness is ASSERTED below
+    //    (issue #810 review): a capture that (wrongly) drives a
+    //    different screen for 02 must fail loudly, not silently commit
+    //    a second unrelated fixture.
     await harness.screenshot(outDir, '02_status_bar_default');
+    expect(
+      File('$outDir/02_status_bar_default.txt').readAsStringSync(),
+      File('$outDir/01_welcome_idle.txt').readAsStringSync(),
+      reason:
+          '02_status_bar_default must stay the boot-frame twin of '
+          '01_welcome_idle (the dedicated bar fixture) — capture drove a '
+          'different screen for 02 (issue #810 review)',
+    );
+    // 3 (captured second in file order but driven FIRST): fenced code
+    // block — a pure-text turn. omp at the pinned commit dispatches the
+    // FIRST turn of a session with an EMPTY toolset (async native tool
+    // registry, issue #918): a scripted tool call in turn 1 is dropped and
+    // the turn degrades to plain text. The text-only snippet turn completes
+    // cleanly and the toolset is attached for every later request, so the
+    // tool-call turn below sees its `read` offered and executes it.
+    harness.sendText(kRegPrompts['code_block']!);
+    harness.sendEnter();
+    await harness.liveWaitForScreen(
+      "print('hello omp parity')",
+      timeout: const Duration(minutes: 3),
+    );
+    await harness.screenshot(outDir, '04_code_block');
 
-    // 3. Streaming turn with one tool call: the mock returns a `read` call
+    // 4. Streaming turn with one tool call: the mock returns a `read` call
     //    for note.md, then echoes the real tool result — the unique note
     //    marker lands on screen only after the read actually ran.
     harness.sendText(kRegPrompts['tool_call']!);
@@ -170,15 +244,6 @@ void main() {
       timeout: const Duration(minutes: 5),
     );
     await harness.screenshot(outDir, '03_tool_call');
-
-    // 4. Fenced code block.
-    harness.sendText(kRegPrompts['code_block']!);
-    harness.sendEnter();
-    await harness.liveWaitForScreen(
-      "print('hello omp parity')",
-      timeout: const Duration(minutes: 3),
-    );
-    await harness.screenshot(outDir, '04_code_block');
 
     final bunVersion = (await tester.runAsync(() async {
       final result = await Process.run(bunBin, ['--version']);
@@ -224,6 +289,38 @@ void main() {
       File('$outDir/02_status_bar_default.png').readAsBytesSync(),
     )!;
 
+    // THEME-PIN GUARD (issue #918 round-2 CI red): the parity leg anchors
+    // the omp band on the CAPTURED theme token. The first capture claimed
+    // `theme: dark` but committed AUTO-DARK twins (a #070A10 bar — the
+    // `theme:` map shape omp ignores) and nothing at capture time caught
+    // it. Assert the pinned dark theme's #121212 band fill is actually on
+    // screen in the bar region before the twins are committed: a pin that
+    // doesn't take must fail HERE (manual run, omp sources at hand), not
+    // as a red merge-blocking leg or a silently wrong baseline later.
+    var bandHits = 0;
+    for (var y = (barPng.height * 33) ~/ 36; y < barPng.height; y++) {
+      for (var x = 0; x < barPng.width; x += 4) {
+        final p = barPng.getPixel(x, y);
+        if ((p.r - 0x12).abs() <= 2 &&
+            (p.g - 0x12).abs() <= 2 &&
+            (p.b - 0x12).abs() <= 2) {
+          bandHits++;
+        }
+      }
+    }
+    expect(
+      bandHits,
+      greaterThan(50),
+      reason:
+          'the captured omp bar band is not the pinned dark theme '
+          '(#121212 statusLineBg) — the `theme:` pin in '
+          '.omp/agent/config.yml did not take (omp kept its auto-dark '
+          '#070A10, exactly what the first capture committed). Verify the '
+          'theme key against omp\'s config parser and re-capture BEFORE '
+          'committing these twins (issue #918). #121212 hits in the bar '
+          'region: $bandHits',
+    );
+
     final ompCommit = (await tester.runAsync(() async {
       final result = await Process.run('git', [
         '-C',
@@ -238,7 +335,7 @@ void main() {
       const JsonEncoder.withIndent('  ').convert({
         'omp_commit': ompCommit,
         'captured_at': DateTime.now().toUtc().toIso8601String(),
-        'omp_version': _ompVersion(harness.screenText),
+        'omp_version': bootVersion,
         'bun_version': bunVersion,
         'mock_model': 'mockcap/$kRegModelId',
         'scenarios': [
