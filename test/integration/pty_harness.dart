@@ -65,13 +65,18 @@ List<String> frameContentLines(List<String> viewport) => [
   for (final line in viewport) line.trimRight(),
 ];
 
-/// One finished background shell job's settle notice (`[bash] sh-… exited(0)`)
-/// as painted into the raw stream by the CLI; exactly one per job proves the
-/// command started AND finished.
-final shellJobSettleNotice = RegExp(r'\[bash\] sh-(\S+) exited\(0\)');
+/// One finished background shell job's settle notice (`[bash] sh-…
+/// exited(code) — log`) as painted into the raw stream by the CLI; exactly
+/// one per job proves the command started AND finished. ANY exit code is
+/// terminal — a failed job is settled too (#1345 review), so the pattern
+/// matches `exited(-?\d+)`, not a pinned zero. A job reported LOST paints
+/// no `[bash]` notice at all (the boot reconcile counts it on the board
+/// only) — lost coverage stays the suite's screen-side `· 0 lost` proof.
+final shellJobSettleNotice = RegExp(r'\[bash\] sh-(\S+) exited\(-?\d+\)');
 
 /// The DISTINCT settled shell-job numbers in [raw] — the start/finish proof
-/// set for background-job suites. Matched on the NUMBER PREFIX, never the
+/// set for background-job suites, regardless of exit status. Matched on the
+/// NUMBER PREFIX, never the
 /// full id: a frame repaint can interleave cursor-move escapes mid-id
 /// (observed under CI load: `sh-10-…xqo<esc>[11;29H5<esc>[11;31H exited(0)`),
 /// and a fragmented re-emit must not inflate the distinct-id set with a

@@ -40,6 +40,17 @@ void main() {
       expect(settledJobNumbers(raw), {'10'});
     });
 
+    test('a FAILED job (non-zero exit) is settled too — the #1345 review '
+        'regression: the drain predicate must not hang on it', () {
+      final raw = [
+        for (var i = 1; i <= 9; i++) '[bash] sh-$i-abc$i exited(0)',
+        '[bash] sh-10-def10 exited(127)',
+      ].join('\n');
+
+      expect(settledJobNumbers(raw), {for (var i = 1; i <= 10; i++) '$i'});
+      expect(settledJobNumbers(raw).length == 10, isTrue);
+    });
+
     test('the drained-wait predicate rejects a truncated capture (the '
         'v1.0.520 {1..7} shape) and accepts only the full set', () {
       String notices(int from, int to) => [

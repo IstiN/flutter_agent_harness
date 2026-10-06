@@ -15,7 +15,11 @@
 /// no fixed sleeps beyond the harness settle windows.
 @TestOn('vm')
 @Tags(['io', 'integration'])
-@Timeout(Duration(minutes: 5))
+// 8 min, not 5: the stage ceilings sum to ~7 min in the everything-times-
+// out path (gh-1337 review) — at 5 the generic per-test abort would eat
+// waitForRaw's diagnostic-rich TimeoutException (screen + raw tail) in
+// exactly the slow-runner hang case this suite is hardened against.
+@Timeout(Duration(minutes: 8))
 library;
 
 import 'dart:convert';
@@ -53,7 +57,7 @@ final _turns = [
 /// The live collapsed board row: ten started, nothing settled yet.
 const _allRunning = 'Background jobs (10) · 10 running · 0 done · 0 lost';
 
-/// One settle notice per finished job (`[bash] sh-… exited(0)`); exactly
+/// One settle notice per finished job (`[bash] sh-… exited(code)`); exactly
 /// ten of these prove every command started AND finished — the proof set
 /// lives in the harness as [shellJobSettleNotice] / `settledJobNumbers`
 /// (top-level, unit-provable without a PTY).
