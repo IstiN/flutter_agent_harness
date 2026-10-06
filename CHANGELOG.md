@@ -4628,4 +4628,26 @@
 
 - fix(#1197): TUI frame pipeline self-heals a throwing view/render (gh-1197 AC3) — a mid-run render exception now logs loudly, invalidates the diff state (no stranded DEC 2026 BSU), and repaints instead of dying or freezing; PTY liveness regression test proving paced thinking + answer text + a long silent tool call paint continuously (AC1/AC2/AC4), via the scripted stream's new paced `chunks`/`pace_ms`, `thinking`, and `sleep_ms` steps
 
+## 1.0.515
+
+- gh-1292 fa-tokens line must reach stdout in headless/CI runs (ledger emission invisible to the GH log) (#1295)
+- gh-1296 [BUG] iOS build red in CocoaPods layer: package:sqlite3 build_hook fails — Podfile.lock drift (pods cache re-rolls weekly) never-again: ALL lockfiles committed + enforced (#1298)
+- feat(1096): mac size diet — wasm_run_flutter.framework + never-loaded assets, ratcheted (#1227)
+- chore(merge-trigger): track awf @main + map_pr_labels: true (#1285)
+- ci(quarantine): skip secret_sheet_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1283) (#1284)
+- fix(1280): CLI arch matrix gates the merge; release binaries boot-smoked (#1282)
+- gh-1276 [BUG] iOS: memory_search returns garbage + memory_list hides user-scope notes (agent fell back to memory_delete by exact text) (#1281)
+- ci(quarantine): test/integration/theme_readability_pty_test.dart (flake) (#1255)
+- gh-1274 [BUG] iOS sandbox bash: relative paths resolve to a nonexistent CWD — files written in the sandbox are invisible to relative-path commands (still broken on 1.0.512 after #1225) (#1279)
+- gh-1266 [BUG] nightly red: macOS flutter_app suite — 5-test cluster around apps panel / open_app launcher / dynamic_message tiles (suspects #1139, #1173) (#1278)
+- gh-1275 [BUG] Built-in skills (#1151) not packaged into the apps: iOS ships EMPTY skill dirs (create-goal/fa-self-config/js-apps exist, SKILL.md missing) — verify macOS/Android too (#1277)
+- gh-1272 [BUG] [URGENT] 1.0.512 TestFlight (build 205): EVERY JS widget dead — engine eval error 'Unterminated regular expression literal /[ ⇥' on all widgets (source corruption in assembly/catalog path) (#1273)
+- gh-1265 [BUG] nightly red 5 nights: native desktop builds broken by a TRANSITIVE flutter_inappwebview nobody declares — linux WPE missing + windows MSVC 14.51 STL1011 (lockfile not committed) (#1268)
+- gh-1261 [BUG] Play listing deploy fails: clear_images! HTTP 400 — invalid image_type "images" for en-US/phoneScreenshots (daily-publish Play leg red) (#1264)
+- feat(#1079): SDK slice 2 — live agent-stack wiring (wireAgentCore); CLI converts to the shared builder (#1230)
+- gh-1197 [BUG] TUI fixes (recovered dev leg) (#1263)
+- ci(quarantine): skip dap_wake_hang_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1248) (#1249)
+- gh-1073 Session JSONL grows unboundedly (12 GiB ledger records) → resume fails with 'Failed to read session' + heap-exhaustion crash (#1247)
+- fix(1096): reseed fa-extension size floor for intentional js-apps skill growth (gh-1164) (#1258)
+
 ## Unreleased
