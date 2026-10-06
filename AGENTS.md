@@ -1695,7 +1695,14 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   trajectory-touching PRs. Issue #551 adds the `integration-mock` leg to
   the aggregate for `test/integration/**` PRs (no-key legs via
   MockLlmServer); the tag-only `integration` job is just the llm provider
-  smoke and `publish` waits on it. `nightly.yml` runs the full monolith +
+  smoke and `publish` waits on it. Issue #1267 N1 adds the
+  `flutter-app-exzone` leg: a PR touching the macOS exclusion zone
+  (`flutter_app/lib/apps/`, `lib/src/js_ext/`, the JS-engine-guarded
+  `flutter_app/test/apps/` family, `native_test_guard.dart`, or the
+  `js_widget_runtime` pin in `flutter_app/pubspec.yaml`) runs that family
+  on macos pre-merge — the ubuntu leg skips those engine tests
+  (`native_test_guard.dart`), so they were nightly-only (the #1309 escape).
+  `nightly.yml` runs the full monolith +
   PTY/CLI integration (full real-provider suite with secrets) +
   terminal-visual suites; `coverage-gardener.yml` measures the only-up CLI
   coverage weekly and files an ai-teammate "raise coverage to X" issue —
