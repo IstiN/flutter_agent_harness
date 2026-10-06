@@ -312,4 +312,235 @@ void main() {
       reason: 'cleared (empty last name) and anonymous contribute no entry',
     );
   });
+
+  // -- Issue #1332: resume of a compacted session must not force-compact --
+  //
+  // The fixture window is 100000; the app wiring prices the 'You are Fa.'
+  // system prompt at ceil(11/4) = 3 tokens, so conversationWindow = 99997
+  // and the compaction trigger sits at 99997 - 16384 = 83613.
+
+  // An assistant message record with optional provider usage (the
+  // generation-time anchor the resume path must re-anchor).
+  String assistantMessageLine(
+    String id,
+    String parentId,
+    String text, {
+    int? totalTokens,
+  }) {
+    final usage = totalTokens == null
+        ? '{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}'
+        : '{"input":${totalTokens - 4000},"output":4000,"cacheRead":0,"cacheWrite":0,"totalTokens":$totalTokens,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}';
+    return '{"type":"message","id":"$id","parentId":"$parentId","timestamp":"$_iso",'
+        '"message":{"role":"assistant","content":[{"type":"text","text":"$text"}],'
+        '"api":"test-api","provider":"test","model":"test-model",'
+        '"usage":$usage,"stopReason":"stop","timestamp":1767225600000}}\n';
+  }
+
+  String compactionRecordLine(
+    String id,
+    String parentId,
+    String firstKeptEntryId,
+    int tokensBefore,
+  ) =>
+      '{"type":"compaction","id":"$id","parentId":"$parentId","timestamp":"$_iso",'
+      '"summary":"structured checkpoint of the earlier work",'
+      '"firstKeptEntryId":"$firstKeptEntryId","tokensBefore":$tokensBefore}\n';
+
+  String chainedUserLine(String id, String parentId, String text) =>
+      '{"type":"message","id":"$id","parentId":"$parentId","timestamp":"$_iso",'
+      '"message":{"role":"user","content":[{"type":"text","text":"$text"}]}}\n';
+
+  String hiddenRangeLine(String id, String parentId, List<String> recordIds) =>
+      '{"type":"hidden_range","id":"$id","parentId":"$parentId","timestamp":"$_iso",'
+      '"recordIds":[${recordIds.map((r) => '"$r"').join(',')}]\n';
+
+  test('resume of a compacted session re-anchors stale usage — no phantom '
+      'force-compact (issue #1332)', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_1332');
+    addTearDown(() => tmp.delete(recursive: true));
+    // The exact #1332 shape: a session whose last live run ended AT the
+    // compaction trigger (the auto-compact appended the boundary record
+    // right after the run's final assistant message), then suspended.
+    // The final assistant's usage anchor reports the PRE-compaction
+    // request (~102% of the window); the projection after the boundary
+    // is tiny.
+    const staleAnchorTokens = 102000; // 102% of the 100000 window
+    await io.File('${tmp.path}/big.jsonl').writeAsString(
+      _header('big', '2026-01-01T00:00:00.000Z') +
+          chainedUserLine('u1', 'root', 'old big question one') +
+          assistantMessageLine('a1', 'u1', 'old big answer one') +
+          chainedUserLine('u2', 'a1', 'recent question') +
+          assistantMessageLine(
+            'a2',
+            'u2',
+            'recent answer',
+            totalTokens: staleAnchorTokens,
+          ) +
+          compactionRecordLine('c1', 'a2', 'u2', staleAnchorTokens),
+    );
+    final agent = _createAgent();
+    final service = AgentService(
+      agent: agent,
+      env: LocalExecutionEnv(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+      repo: JsonlSessionRepo(
+        fs: LocalFileSystem(cwd: tmp.path),
+        sessionsRoot: tmp.path,
+      ),
+      watchExternalSessions: false,
+    );
+    addTearDown(service.dispose);
+    await service.initialize();
+
+    final big = (await service.listSessions())
+        .where((m) => m.id == 'big')
+        .single;
+    await service.loadSession(big);
+
+    // The phantom basis WOULD force-compact: 102000 > 83613.
+    final settings = CompactionSettings.forWindow(99997);
+    expect(
+      shouldCompact(staleAnchorTokens, 99997, settings),
+      isTrue,
+      reason: 'fixture sanity: the stale anchor reads over the trigger',
+    );
+
+    // The resumed meter reads the REAL projected context: the stale
+    // anchor is gone, the estimate sits below the trigger — no
+    // compaction fires on resume or on the first turn's gate.
+    final meter = estimateRequestTokens(
+      agent.state.messages,
+      systemPrompt: agent.state.systemPrompt,
+      tools: agent.state.tools,
+    );
+    expect(
+      meter,
+      lessThan(staleAnchorTokens),
+      reason: 'the meter must not anchor at the phantom pre-compaction size',
+    );
+    expect(
+      shouldCompact(meter, 99997, settings),
+      isFalse,
+      reason: 'a session that fit when suspended must resume under the trigger',
+    );
+    // The projection kept the kept-region records and folded the covered
+    // region (no summary+source double-count).
+    expect(
+      agent.state.messages.map((m) => m.toString().contains('old big')),
+      everyElement(isFalse),
+    );
+    expect(
+      agent.state.messages.whereType<AssistantMessage>().last.usage.totalTokens,
+      0,
+      reason: 'loaded anchors are re-anchored at zero (CLI resume parity)',
+    );
+
+    // End to end: the first turn after resume must NOT compact — the run
+    // completes, and no new compaction record lands in the session file.
+    await service.sendText('next turn please');
+    await service.waitForIdle();
+    final fileText = await io.File('${tmp.path}/big.jsonl').readAsString();
+    expect(
+      'type":"compaction'.allMatches(fileText).length,
+      1,
+      reason: 'exactly the fixture compaction — resume + one turn added none',
+    );
+  });
+
+  test('a session genuinely over-window on resume still reads over the '
+      'trigger (issue #1332 AC3)', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_1332_over');
+    addTearDown(() => tmp.delete(recursive: true));
+    // Kept region (~85k chars/4 tokens, u2+a2) genuinely exceeds the
+    // trigger (83613) with NO stale anchor inflating it — the resume must
+    // still read over-window so the compaction path stays armed.
+    final bigText = 'x' * 170000;
+    await io.File('${tmp.path}/over.jsonl').writeAsString(
+      _header('over', '2026-01-01T00:00:00.000Z') +
+          chainedUserLine('u1', 'root', 'old big question one') +
+          assistantMessageLine('a1', 'u1', 'old big answer one') +
+          chainedUserLine('u2', 'a1', bigText) +
+          assistantMessageLine('a2', 'u2', bigText) +
+          compactionRecordLine('c1', 'a2', 'u2', 200000),
+    );
+    final agent = _createAgent();
+    final service = AgentService(
+      agent: agent,
+      env: LocalExecutionEnv(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+      repo: JsonlSessionRepo(
+        fs: LocalFileSystem(cwd: tmp.path),
+        sessionsRoot: tmp.path,
+      ),
+      watchExternalSessions: false,
+    );
+    addTearDown(service.dispose);
+    await service.initialize();
+
+    final over = (await service.listSessions())
+        .where((m) => m.id == 'over')
+        .single;
+    await service.loadSession(over);
+
+    final meter = estimateRequestTokens(
+      agent.state.messages,
+      systemPrompt: agent.state.systemPrompt,
+      tools: agent.state.tools,
+    );
+    expect(
+      shouldCompact(meter, 99997, CompactionSettings.forWindow(99997)),
+      isTrue,
+      reason: 'a genuinely over-window resume still trips the compaction gate',
+    );
+  });
+
+  test('structured projection does not double-count the hidden region on '
+      'resume (issue #1332 candidate 2)', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_1332_struct');
+    addTearDown(() => tmp.delete(recursive: true));
+    // A structured-compacted branch: the big source records are hidden in
+    // place. The resume must project markers, not replay the source
+    // region under its checkpoint.
+    final bigText = 'y' * 100000;
+    await io.File('${tmp.path}/struct.jsonl').writeAsString(
+      _header('struct', '2026-01-01T00:00:00.000Z') +
+          chainedUserLine('u1', 'root', bigText) +
+          assistantMessageLine('a1', 'u1', bigText) +
+          hiddenRangeLine('h1', 'a1', ['u1', 'a1']) +
+          chainedUserLine('u2', 'h1', 'recent question') +
+          assistantMessageLine('a2', 'u2', 'recent answer'),
+    );
+    final agent = _createAgent();
+    final service = AgentService(
+      agent: agent,
+      env: LocalExecutionEnv(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+      repo: JsonlSessionRepo(
+        fs: LocalFileSystem(cwd: tmp.path),
+        sessionsRoot: tmp.path,
+      ),
+      watchExternalSessions: false,
+    );
+    addTearDown(service.dispose);
+    await service.initialize();
+
+    final struct = (await service.listSessions())
+        .where((m) => m.id == 'struct')
+        .single;
+    await service.loadSession(struct);
+
+    final meter = estimateRequestTokens(
+      agent.state.messages,
+      systemPrompt: agent.state.systemPrompt,
+      tools: agent.state.tools,
+    );
+    // Double-counted raw replay would price ~50k tokens; the marker
+    // projection prices a few dozen.
+    expect(meter, lessThan(1000));
+    expect(
+      agent.state.messages.map((m) => m.toString().contains('yyyy')),
+      everyElement(isFalse),
+      reason: 'the hidden source region never replays into the context',
+    );
+  });
 }

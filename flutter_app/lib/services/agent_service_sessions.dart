@@ -255,7 +255,13 @@ extension AgentServiceSessions on AgentService {
     if (gen != _loadGeneration) return;
     contextMs = openSw.elapsedMilliseconds - storageMs - branchMs;
     if (gen != _loadGeneration) return;
-    final contextMessages = context.messages;
+    // CLI resume parity (session_commands.dart): loaded usage anchors are
+    // generation-time — after a compaction they phantom-report the
+    // pre-compaction request size (issue #1332: a resumed session that fit
+    // its window read ~102% and force-compacted before any new turn).
+    // Re-anchor at chars/4 over the REAL projected context; the first live
+    // turn stamps fresh usage again.
+    final contextMessages = resetLoadedUsageAnchors(context.messages);
     _agent.reset();
     _agent.state.messages = contextMessages;
     _session = session;
