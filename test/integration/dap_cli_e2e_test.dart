@@ -60,11 +60,12 @@ void main() {
     return Process.run(
       command.first,
       command.sublist(1),
-    workingDirectory: Directory.current.path,
-    environment: envOf(),
-    stdoutEncoding: utf8,
-    stderrEncoding: utf8,
-  ).timeout(const Duration(seconds: 90));
+      workingDirectory: Directory.current.path,
+      environment: envOf(),
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    ).timeout(const Duration(seconds: 90));
+  }
 
   Future<bool> healthz() async {
     try {

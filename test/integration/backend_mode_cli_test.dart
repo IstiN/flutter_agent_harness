@@ -50,11 +50,9 @@ void main() {
 
   /// Spawns the real CLI headless with [extraArgs] before the prompt.
   Future<ProcessResult> runFah(MockLlmServer server, List<String> extraArgs) {
-    return Process.run(
-      'dart',
+    // gh-1300: honor the FA_BIN AOT seam (compiled ONCE per CI shard).
+    final command = faCliCommand(
       [
-        'run',
-        'bin/fah.dart',
         '--provider',
         'openai-completions',
         '--base-url',
@@ -67,6 +65,11 @@ void main() {
         '-p',
         'hi',
       ],
+      jitPrefix: const ['dart', 'run', 'bin/fah.dart'],
+    );
+    return Process.run(
+      command.first,
+      command.sublist(1),
       workingDirectory: Directory.current.path,
       environment: envOf(),
       stdoutEncoding: utf8,
@@ -80,10 +83,9 @@ void main() {
     List<String> extraArgs, {
     String prompt = 'hi',
   }) {
-    return Process.start(
-      'dart',
+    // gh-1300: honor the FA_BIN AOT seam (compiled ONCE per CI shard).
+    final command = faCliCommand(
       [
-        'bin/fah.dart',
         '--provider',
         'openai-completions',
         '--base-url',
@@ -96,6 +98,10 @@ void main() {
         '-p',
         prompt,
       ],
+    );
+    return Process.start(
+      command.first,
+      command.sublist(1),
       workingDirectory: Directory.current.path,
       environment: envOf(),
     );
@@ -148,9 +154,16 @@ void main() {
   });
 
   test('--version --output json is machine-readable', () async {
+    // gh-1300: honor the FA_BIN AOT seam. NOTE the AOT binary resolves its
+    // version from the bundle's version.txt (`dart build cli` layout) —
+    // same contract the installer ships.
+    final command = faCliCommand(
+      ['--version', '--output', 'json'],
+      jitPrefix: const ['dart', 'run', 'bin/fah.dart'],
+    );
     final result = await Process.run(
-      'dart',
-      ['run', 'bin/fah.dart', '--version', '--output', 'json'],
+      command.first,
+      command.sublist(1),
       workingDirectory: Directory.current.path,
       environment: envOf(),
     ).timeout(const Duration(minutes: 4));

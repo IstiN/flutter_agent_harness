@@ -230,10 +230,9 @@ tui:
       });
       addTearDown(sub.cancel);
 
-      final process = await Process.start(
-        'dart',
+      // gh-1300: honor the FA_BIN AOT seam (compiled ONCE per CI shard).
+      final command = faCliCommand(
         [
-          'bin/fah.dart',
           '--provider',
           'openai-completions',
           '--base-url',
@@ -247,6 +246,10 @@ tui:
           '-p',
           'hi',
         ],
+      );
+      final process = await Process.start(
+        command.first,
+        command.sublist(1),
         workingDirectory: Directory.current.path,
         // NOT merged: Process.start adds `environment:` ON TOP of the
         // parent env by default, so a developer/agent machine carrying

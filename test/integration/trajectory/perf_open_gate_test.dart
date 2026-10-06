@@ -29,7 +29,7 @@ import 'package:flutter_agent_harness/src/session/session_repo.dart';
 import 'package:flutter_agent_harness/src/types.dart';
 import 'package:test/test.dart';
 
-import 'pty_harness.dart';
+import '../pty_harness.dart';
 
 /// Records appended per turn (user + assistant + 2 tool results).
 const _recordsPerTurn = 4;
@@ -146,19 +146,28 @@ Future<void> main() async {
       () async {
     final sizeMb = sessionFile.lengthSync() / (1024 * 1024);
     expect(sizeMb, greaterThan(80), reason: 'fixture must be ~100 MB class');
-    final result = await Process.run('dart', [
-      'run',
-      'bin/fah.dart',
-      'trajectory',
-      'view',
-      sessionId,
-      '--session-root',
-      sessionsRoot.path,
-    ], environment: {
-      'FA_TIMING': '1',
-      'HOME': tempHome.path,
-      'OPENAI_API_KEY': 'mock',
-    });
+    // gh-1300: honor the FA_BIN AOT seam (compiled ONCE per CI shard).
+    final command = faCliCommand(
+      [
+        'trajectory',
+        'view',
+        sessionId,
+        '--session-root',
+        sessionsRoot.path,
+      ],
+      jitPrefix: const ['dart', 'run', 'bin/fah.dart'],
+    );
+    final result = await Process.run(
+      command.first,
+      command.sublist(1),
+      environment: {
+        'FA_TIMING': '1',
+        'HOME': tempHome.path,
+        'OPENAI_API_KEY': 'mock',
+      },
+      stdoutEncoding: utf8,
+      stderrEncoding: utf8,
+    );
     expect(result.exitCode, 0, reason: 'stderr: ${result.stderr}');
     // Content actually rendered through the real path: the last turn's
     // assistant row must be in the ledger output.
