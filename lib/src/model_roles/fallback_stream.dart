@@ -610,6 +610,22 @@ final class _AttemptBuffer {
     if (event.reason == StopReason.error && isBudgetExhaustion(event.error)) {
       return _Retryable(event.retryAfter, event.error, immediate: true);
     }
+    // gh-1308: the zero-byte stall verdict already consumed the entry's
+    // whole silent-replay budget — an in-place retry costs another
+    // watchdog interval to re-prove the same fact. Hand off to the next
+    // chain entry at once (auth precedent, `immediate`); a sole entry
+    // forwards the verdict. Checked BEFORE the generic transport class:
+    // the tag classifies as transport too, but this class never earns
+    // same-entry paid retries.
+    if (event.reason == StopReason.error &&
+        (event.error.errorMessage ?? '').contains(zeroByteStallTag)) {
+      return _Retryable(
+        event.retryAfter,
+        event.error,
+        isTransport: true,
+        immediate: true,
+      );
+    }
     if (event.reason == StopReason.error &&
         isRateLimitOrQuota(event.error, retryAfter: event.retryAfter)) {
       // Not forwarded: the buffer is discarded and the chain retries.

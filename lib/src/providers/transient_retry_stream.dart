@@ -388,8 +388,10 @@ Future<void> _drive(
   final attemptLog = <String>[];
   AssistantMessage? lastFailure;
   // gh-1308: consecutive pre-commit attempts the run-idle watchdog killed
-  // with zero output. Any other outcome resets the streak — only
-  // back-to-back full-interval silences prove the wedged-endpoint class.
+  // with zero output. Only back-to-back full-interval silences prove the
+  // wedged-endpoint class: any non-watchdog failure resets the streak, and
+  // a mid-stream resume (partial progress) leaves it standing — the
+  // terminal then carries the preserved prefix.
   var zeroByteKills = 0;
   // Issue #1126: the resume-from-prefix state. `attemptContext` changes
   // only when a mid-stream abort resumes (the tail request carries the

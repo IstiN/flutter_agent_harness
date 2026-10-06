@@ -940,15 +940,19 @@ void main() {
             'v-a': [zeroByteStallTurn(a)],
             'v-b': [_okTurn(b, 'hello from the fallback')],
           });
+          // DEFAULT policy: the wedged primary gets NO same-entry paid
+          // retries — its verdict already consumed the whole silent-replay
+          // budget, and each in-place retry would cost another watchdog
+          // interval. The chain advances at once (auth precedent).
           final w = wrapper([
             entry(probe, a, ['v-a']),
             entry(probe, b, ['v-b']),
-          ], policy: const ModelRolesRetryPolicy(retriesPerEntry: 0));
+          ]);
 
           final events = await run(w);
 
           // The turn completes on the SECONDARY — the hung primary did
-          // not dead-end the run.
+          // not dead-end the run, and it was not replayed in place.
           expect(events.last, 'done:${b.id}');
           expect(probe.calls, ['v-a', 'v-b']);
           final fallback = notices.single;
