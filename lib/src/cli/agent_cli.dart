@@ -58,7 +58,6 @@ import '../agent/stuck_tool.dart';
 import '../providers/models_for_endpoint.dart';
 import '../agent/tool_registry.dart';
 import '../a2a/a2a_config.dart';
-import '../a2a/a2a_mail_gateway.dart';
 import '../a2a/a2a_manager.dart';
 import '../task/task.dart';
 import 'agent_tree.dart';
@@ -76,7 +75,7 @@ import '../task/subagent.dart';
 import '../task/subagent_manager.dart';
 import '../task/subagent_scope.dart';
 import '../task/subagent_heartbeat.dart';
-import '../task/subagent_tools.dart';
+import '../task/subagent_tools.dart' show cancelSubagentWithoutJob;
 import '../task/delivery_slo.dart';
 import '../skills/builtin_skills.dart';
 import '../skills/skill_availability.dart';
@@ -191,7 +190,6 @@ import '../memory/memory_controller.dart';
 import '../memory_config.dart';
 import '../power_config.dart';
 import '../power_runner.dart';
-import '../messaging/agent_fabric.dart';
 import '../messaging/agent_message.dart';
 import '../messaging/file_messaging_repository.dart';
 import '../messaging/inbox_wake_policy.dart';
@@ -441,6 +439,72 @@ class AgentCli {
         saveBrowserScreenshot: saveBrowserScreenshot,
         hostTools: pluginTools,
         hubFabric: config.hubFabric,
+        // Hub mail merges into the MAIN inbox — lazily, so the manager
+        // (constructed inside the builder) may not exist yet.
+        mainMailbox: () => _subagentManager.mailboxOf('main'),
+        subagents: SubagentServices(
+          homeDir: config.homeDir,
+          machineName: config.machineName,
+          a2a: config.a2aConfig,
+          wakeProcess: _launchMailboxWake,
+          // The registry persists into the parent session as
+          // `subagent_registry` custom records, so a resumed session
+          // rehydrates its agents. Issue #488 AC2: the snapshot is read
+          // by RAW file scan (the windowed boot open drops side-leaf
+          // custom records out of getEntries — the registry used to come
+          // back EMPTY on every restart) and transcript-only children
+          // are adopted, so task_send/task_resume address pre-restart
+          // children.
+          registrySink: (registry) async {
+            final session = _session;
+            if (session == null) return;
+            await session.appendCustomEntry(
+              customType: subagentRegistryRecordType,
+              data: registry,
+            );
+          },
+          registrySource: () async {
+            final session = _session;
+            if (session == null) return const [];
+            return subagentRegistryRows(
+              repo: _repo as JsonlSessionRepo,
+              parent: await session.getMetadata(),
+            );
+          },
+          // Issue #383: the heartbeat rides the steering channel — the
+          // getters consult the config EVERY tick, so a config rewrite
+          // applies at the next digest without a restart (E6).
+          notifyHeartbeat: _deliverHeartbeatDigest,
+          heartbeatMinutes: () => config.subagents.heartbeatMinutes,
+          stallMinutes: () => config.subagents.stallMinutes,
+          rolesResolver: config.modelRolesResolver,
+          // Issue #439: children compact on the host's engine choice
+          // (live settings override, else config, else default).
+          compactionEngine:
+              config.liveCompactionEngine ?? config.compactionEngine,
+          // Issue #862: the `agent.misuseBreaker` switch covers children.
+          misuseBreaker: config.misuseBreaker,
+          // Real JSONL child sessions, created at child completion (fast
+          // register keeps the steering race away; the transcript lands
+          // when the child finishes).
+          childSessionFactory: (parentId, childId) async {
+            final session = await _repo.create(
+              JsonlSessionCreateOptions(
+                cwd: _env.cwd,
+                metadata: {
+                  'agent': 'subagent',
+                  'id': childId,
+                  'parent': parentId,
+                  'model': _agent.state.model.id,
+                },
+              ),
+            );
+            return session;
+          },
+          // Issue #427: the task-resume reopen of a child's session file
+          // rides the same transient-ENOENT retry, logged to fa.log.
+          sessionIoRetry: SessionIoRetryConfig(logger: _logDiagnostic),
+        ),
         extRuntimeFactory: config.extRuntimeFactory,
         sessionRoot: config.sessionRoot,
       ),
@@ -450,75 +514,19 @@ class AgentCli {
     _coreToolEnv = wired.env;
     _shellJobs = wired.shellJobs!;
     _cubeSource = config.cubeSource;
-    // The `task` tool (omp's background subagents): children draw from the
-    // core tool surface (never `task` itself), completions are injected back
-    // into the parent conversation as async-result messages. Child sessions
-    // are REAL JSONL sessions in the same repo, created at child COMPLETION
-    // (not at register — creating a session mid-spawn loses the steering
-    // race), so `/agents open <id>` can switch into them with the full
-    // transcript. The registry itself persists into the parent session as
-    // `subagent_registry` custom records, so a resumed session rehydrates
-    // its agents (and `/sessions`-shared repos make agents visible across
-    // instances of the same cwd).
-    // Messaging fabric: file inboxes; hub primary composes over (#27).
-    final (:fabric, :fileFabric, :messagesRoot) = buildAgentFabric(
-      env: _env,
-      sessionRoot: config.sessionRoot,
-      homeDir: config.homeDir,
-      hubFabric: config.hubFabric,
-      mainMailbox: () => _subagentManager.mailboxOf('main'),
-    );
-    _messagesRoot = messagesRoot;
-    _fileFabric = fileFabric;
-    _fabricRepository = fabric;
-    _subagentManager = SubagentManager(
-      parentSessionId: '',
-      messaging: _fabricRepository,
-      selfId: 'main',
-      homeDir: config.homeDir,
-      wakeProcess: _launchMailboxWake,
-      sink: (registry) async {
-        final session = _session;
-        if (session == null) return;
-        await session.appendCustomEntry(
-          customType: subagentRegistryRecordType,
-          data: registry,
-        );
-      },
-      // Issue #488 AC2: the snapshot is read by RAW file scan (the
-      // windowed boot open drops side-leaf custom records out of
-      // getEntries — the registry used to come back EMPTY on every
-      // restart) and transcript-only children are adopted, so
-      // task_send/task_resume address pre-restart children.
-      source: () async {
-        final session = _session;
-        if (session == null) return const [];
-        return subagentRegistryRows(
-          repo: _repo as JsonlSessionRepo,
-          parent: await session.getMetadata(),
-        );
-      },
-    );
-    _subagentManager.machineName = config.machineName;
-    // Phase 5a: A2A remote agents from the `a2a:` config section. Connects
-    // lazily per server (never blocks boot).
-    _a2aManager = A2aManager(config.a2aConfig);
-    // Issue #27 phase 3: cross-machine `agent_message` rides the A2A
-    // boundary gateway (the `a2a:` config's server per machine).
-    _subagentManager.a2aGateway = A2aMailGateway(
-      manager: _a2aManager,
-      machineName: config.machineName,
-    );
-    // Issue #383: the heartbeat rides the steering channel — the getters
-    // consult the config EVERY tick, so a config rewrite applies at the
-    // next digest without a restart (E6).
-    _subagentHeartbeat = SubagentHeartbeat(
-      manager: _subagentManager,
-      heartbeatMinutes: () => config.subagents.heartbeatMinutes,
-      stallMinutes: () => config.subagents.stallMinutes,
-      notify: _deliverHeartbeatDigest,
-    );
-    _subagentHeartbeat.start();
+    // Issue #1079 slice 3: the messaging fabric, subagent manager,
+    // heartbeat and the task/monitoring surface are assembled by the
+    // shared builder, gated by the messagingFabric/subagents
+    // capabilities. The shell keeps only its callbacks — session
+    // persistence, the wake launcher, heartbeat delivery, child-session
+    // minting (passed as services above).
+    _fabricRepository = wired.fabric!;
+    _fileFabric = wired.fileFabric!;
+    _messagesRoot = wired.messagesRoot!;
+    _subagentManager = wired.subagentManager!;
+    _a2aManager = wired.a2aManager!;
+    _subagentHeartbeat = wired.subagentHeartbeat!;
+    _taskConfig = wired.taskConfig!;
     // Discover agent types from the agent roots (.fah/.agents/.claude/.github/
     // .codex) — fire-and-forget; the registry starts with built-ins and merges
     // discovered types when they arrive. Third-party roots ride the same
@@ -533,75 +541,10 @@ class AgentCli {
         allowedSources: _skillsAllowedSources,
       ),
     );
-    _taskConfig = TaskToolConfig(
-      childTools: wired.tools,
-      // Live accessors, resolved per spawn: a runtime `/provider`/`/model`
-      // switch (or a token refresh) re-points `_streamFunction`/the agent
-      // model, and children spawned afterwards must inherit the LIVE
-      // credential — the boot wiring here would send the stale key (401).
-      streamFunction: () => _agent.streamFunction,
-      model: () => _agent.state.model,
-      rolesResolver: config.modelRolesResolver,
-      subagentManager: _subagentManager,
-      a2aManager: _a2aManager,
-      // Issue #439: children compact on the host's engine choice (live
-      // settings override, else config, else structured default).
-      compactionEngine: config.liveCompactionEngine ?? config.compactionEngine,
-      // Issue #862: the `agent.misuseBreaker` switch covers children too.
-      misuseBreaker: config.misuseBreaker,
-      // Real JSONL child sessions, created at child completion (fast
-      // register keeps the steering race away; the transcript lands when
-      // the child finishes).
-      childSessionFactory: (parentId, childId) async {
-        final session = await _repo.create(
-          JsonlSessionCreateOptions(
-            cwd: _env.cwd,
-            metadata: {
-              'agent': 'subagent',
-              'id': childId,
-              'parent': parentId,
-              'model': _agent.state.model.id,
-            },
-          ),
-        );
-        return session;
-      },
-      // Issue #222: the resume path reopens a child's JSONL session by
-      // path so task_resume/task_send continue the child in the SAME file.
-      // Issue #427: the task-resume reopen of a child's session file
-      // rides the same transient-ENOENT retry, logged to fa.log.
-      childSessionOpener: jsonlChildSessionOpener(
-        _env,
-        ioRetry: SessionIoRetryConfig(logger: _logDiagnostic),
-      ),
-    );
-    final monitoringTools = subagentMonitoringTools(
-      manager: _subagentManager,
-      jobs: _taskConfig.jobManager,
-      // Issue #222: child messaging IS available on this host — observe
-      // reads the child's JSONL transcript; send/resume continue the child
-      // in its own session via the session-shared executor.
-      readMessages: jsonlChildMessageReader(_env),
-      resumeChild: _taskConfig.executor.resumeChild,
-      // Issue #332: task_cancel must reach inline children (blocking
-      // batches, resumes) through the executor's in-flight cancel set —
-      // without it the tombstone fallback would fire over LIVE children.
-      executor: _taskConfig.executor,
-    );
-    // gh-970: a scheduled reminder (or sibling mail) that fires into a
-    // finished child's inbox resumes the child in its own session — the
-    // child-side analog of the idle inbox wake below. The sweep (dedup,
-    // status gates) lives on the manager; this host supplies the resume.
-    _subagentManager.wakeChild = (id) =>
-        _taskConfig.executor.resumeChild(id, childInboxWakePrompt);
     // Registry + agent: assembled by the shared builder (issue #1079
-    // slice 2) — core tools first, then the host's task/monitoring
-    // surface, exactly the pre-conversion registration order.
+    // slices 2+3) — core tools, then the gated task/monitoring surface,
+    // exactly the pre-conversion registration order.
     final stack = wired.buildAgentStack(
-      additionalTools: [
-        ...monitoringTools,
-        taskTool(config: _taskConfig),
-      ],
       onDuplicate: (note) {
         // Issue #862 review: a duplicate registration (e.g. a host passing
         // child-injected tools through the parent surface) must be loud.
