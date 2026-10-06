@@ -121,9 +121,19 @@ extension on AgentCli {
     // the auto-resolved session stays when dismissed.
     unawaited(_offerStartupSessionChoice());
 
-    await controller.run();
-    _setTuiIo(null);
-    _tuiController = null;
+    // gh-1248: a controller.run() that THROWS (program event-loop crash)
+    // used to skip the detach below — io kept routing into the dead
+    // controller whose Program.send silently drops everything, so the CLI
+    // ghosted: turns ran, sessions persisted, nothing ever painted and
+    // ESC was dead. Detach in a finally so a program death can never
+    // ghost the CLI; the exception still propagates and the process dies
+    // loudly (gh-1197 initial-frame policy).
+    try {
+      await controller.run();
+    } finally {
+      _setTuiIo(null);
+      _tuiController = null;
+    }
   }
 
   /// Routes [io]'s output through the TUI controller while it runs (null
