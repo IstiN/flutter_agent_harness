@@ -15,8 +15,14 @@ import 'package:test/test.dart';
 
 /// Minimal full-CLI service bundle: every optional facility provided so
 /// the run profile equals [cliProfile] (the CLI boots exactly this when
-/// every config section is present).
-AgentCoreServices fullServices(ExecutionEnv env) => AgentCoreServices(
+/// every config section is present). The #1322 seams default to absent —
+/// pass them to exercise the wired path.
+AgentCoreServices fullServices(
+  ExecutionEnv env, {
+  AgentTelemetrySink? telemetry,
+  HostKeyResolver? keyResolver,
+  void Function(String hint)? onKeySlotDrift,
+}) => AgentCoreServices(
   baseEnv: env,
   sessionEnvVars: () => {},
   sandbox: const SandboxServices(),
@@ -37,6 +43,9 @@ AgentCoreServices fullServices(ExecutionEnv env) => AgentCoreServices(
   hubFabric: Object(),
   extRuntimeFactory: Object(),
   sessionRoot: '/tmp/fah-test',
+  telemetry: telemetry,
+  keyResolver: keyResolver,
+  onKeySlotDrift: onKeySlotDrift,
 );
 
 void main() {
@@ -208,43 +217,52 @@ void main() {
   });
 
   group('headless host-callback tools (ask / request_secret)', () {
-    test('null callbacks still register the tools (graceful in-tool failure)', () {
-      // CLI parity: the pre-conversion shell registered ask and
-      // request_secret UNCONDITIONALLY — a null callback is the tools'
-      // documented headless mode (executing throws a StateError the loop
-      // converts into "cannot answer questions" / "cannot request
-      // secrets"). Dropping the tools instead surfaces a bare
-      // "Tool ask not found", which is the regression this pins.
-      final services = AgentCoreServices(
-        baseEnv: MemoryExecutionEnv(cwd: '/w'),
-        sandbox: const SandboxServices(),
-        media: MediaToolServices(mainApiKey: () => 'k'),
-        sessionRoot: '/tmp/fah-test',
-      );
-      final wired = wireAgentCore(profile: cliProfile, services: services);
-      final names = wired.tools.map((t) => t.name);
-      expect(names, contains('ask'));
-      expect(names, contains('request_secret'));
-      // And the headless mode still resolves gracefully per tool.
-      final ask = wired.tools.firstWhere((t) => t.name == 'ask');
-      expect(
-        () => ask.execute(const {
-          'questions': [
-            {'question': 'q'},
-          ],
-        }, null, null),
-        throwsA(isA<StateError>()),
-      );
-      final secret = wired.tools.firstWhere((t) => t.name == 'request_secret');
-      expect(
-        () => secret.execute(
-          const {'name': 'GITHUB_TOKEN', 'reason': 'needed'},
-          null,
-          null,
-        ),
-        throwsA(isA<StateError>()),
-      );
-    });
+    test(
+      'null callbacks still register the tools (graceful in-tool failure)',
+      () {
+        // CLI parity: the pre-conversion shell registered ask and
+        // request_secret UNCONDITIONALLY — a null callback is the tools'
+        // documented headless mode (executing throws a StateError the loop
+        // converts into "cannot answer questions" / "cannot request
+        // secrets"). Dropping the tools instead surfaces a bare
+        // "Tool ask not found", which is the regression this pins.
+        final services = AgentCoreServices(
+          baseEnv: MemoryExecutionEnv(cwd: '/w'),
+          sandbox: const SandboxServices(),
+          media: MediaToolServices(mainApiKey: () => 'k'),
+          sessionRoot: '/tmp/fah-test',
+        );
+        final wired = wireAgentCore(profile: cliProfile, services: services);
+        final names = wired.tools.map((t) => t.name);
+        expect(names, contains('ask'));
+        expect(names, contains('request_secret'));
+        // And the headless mode still resolves gracefully per tool.
+        final ask = wired.tools.firstWhere((t) => t.name == 'ask');
+        expect(
+          () => ask.execute(
+            const {
+              'questions': [
+                {'question': 'q'},
+              ],
+            },
+            null,
+            null,
+          ),
+          throwsA(isA<StateError>()),
+        );
+        final secret = wired.tools.firstWhere(
+          (t) => t.name == 'request_secret',
+        );
+        expect(
+          () => secret.execute(
+            const {'name': 'GITHUB_TOKEN', 'reason': 'needed'},
+            null,
+            null,
+          ),
+          throwsA(isA<StateError>()),
+        );
+      },
+    );
   });
 
   group('media facility', () {
@@ -267,71 +285,172 @@ void main() {
     });
   });
 
-  group('env chain for fs-touching tools (review #1230 decision)', () {
-    test('vision reads and browser screenshot saves clamp through the cube', () async {
-      final base = MemoryExecutionEnv(cwd: '/work');
-      // Outside the workspace: the RAW env the pre-conversion CLI handed
-      // these tools reads this file fine — the decorated chain must not.
-      expect((await base.createDir('/etc')).isOk, isTrue);
-      expect((await base.writeFile('/etc/secret.png', 'raw')).isOk, isTrue);
-      final screenshotEnvs = <ExecutionEnv>[];
+  group('issue #1322 host seams (telemetry + key resolution)', () {
+    test('services.telemetry wires the sink in one field', () async {
+      final sink = InMemoryTelemetrySink();
       final wired = wireAgentCore(
         profile: cliProfile,
-        services: AgentCoreServices(
-          baseEnv: base,
-          sessionEnvVars: () => {},
-          sandbox: const SandboxServices(
-            spec: CubeSpec(
-              name: 'clamp',
-              tools: CubeToolPolicy(allow: {'git'}),
-              filesystem: CubeFsPolicy(workspace: '/work'),
+        services: fullServices(MemoryExecutionEnv(cwd: '/w'), telemetry: sink),
+      );
+      final stack = wired.buildAgentStack(
+        spec: AgentWiringSpec(model: _model, systemPrompt: 's'),
+        streamFunction: _textTurnStream,
+      );
+      await stack.agent.prompt('hi');
+      expect(
+        sink.events.map((e) => e.kind),
+        containsAll([
+          AgentTelemetryEventKind.requestStart,
+          AgentTelemetryEventKind.firstToken,
+          AgentTelemetryEventKind.runEnd,
+        ]),
+      );
+      // The agent runs through the WRAPPED stream function — the host's
+      // own function still receives the call underneath.
+      expect(_textTurnCalls, 1);
+    });
+
+    test('a pinned key slot fires the drift warning at stack build', () {
+      final hints = <String>[];
+      final wired = wireAgentCore(
+        profile: cliProfile,
+        services: fullServices(
+          MemoryExecutionEnv(cwd: '/w'),
+          keyResolver: HostKeyResolver(
+            envRead: (name) => null,
+            storeRead: (name) =>
+                name == 'FA_KEY_API_KIMI_COM_IRA_1' ? 'sk-ira' : null,
+            knownSlotNames: const ['FA_KEY_API_KIMI_COM_IRA_1'],
+          ),
+          onKeySlotDrift: hints.add,
+        ),
+      );
+      wired.buildAgentStack(
+        spec: AgentWiringSpec(
+          model: const Model(
+            id: 'kimi-k2',
+            api: 'openai-completions',
+            provider: 'kimi',
+            baseUrl: 'https://api.kimi.com',
+            contextWindow: 8192,
+            maxTokens: 1024,
+          ),
+          systemPrompt: 's',
+        ),
+        streamFunction: _fakeStream,
+      );
+      expect(hints, hasLength(1));
+      expect(
+        hints.single,
+        allOf(
+          contains('FA_KEY_API_KIMI_COM_IRA_1'),
+          contains('/key set FA_KEY_API_KIMI_COM <value>'),
+        ),
+      );
+    });
+
+    test('no resolver, no telemetry → byte-identical legacy wiring', () {
+      final wired = wireAgentCore(
+        profile: cliProfile,
+        services: fullServices(MemoryExecutionEnv(cwd: '/w')),
+      );
+      final stack = wired.buildAgentStack(
+        spec: AgentWiringSpec(model: _model, systemPrompt: 's'),
+        streamFunction: _fakeStream,
+      );
+      // Same surface as before #1322: the host's stream function rides
+      // the agent unwrapped, no telemetry attached.
+      expect(identical(stack.agent.streamFunction, _fakeStream), isTrue);
+    });
+
+    test('services.resolveKey answers before the session binds', () {
+      final services = fullServices(
+        MemoryExecutionEnv(cwd: '/w'),
+        keyResolver: HostKeyResolver(
+          envRead: (name) => null,
+          storeRead: (name) =>
+              name == 'FA_KEY_API_KIMI_COM' ? 'sk-canonical' : null,
+        ),
+      );
+      final resolution = services.resolveKey(
+        provider: 'kimi',
+        baseUrl: 'https://api.kimi.com',
+      );
+      expect(resolution!.slotName, 'FA_KEY_API_KIMI_COM');
+      expect(resolution.driftHint, isNull);
+    });
+  });
+
+  group('env chain for fs-touching tools (review #1230 decision)', () {
+    test(
+      'vision reads and browser screenshot saves clamp through the cube',
+      () async {
+        final base = MemoryExecutionEnv(cwd: '/work');
+        // Outside the workspace: the RAW env the pre-conversion CLI handed
+        // these tools reads this file fine — the decorated chain must not.
+        expect((await base.createDir('/etc')).isOk, isTrue);
+        expect((await base.writeFile('/etc/secret.png', 'raw')).isOk, isTrue);
+        final screenshotEnvs = <ExecutionEnv>[];
+        final wired = wireAgentCore(
+          profile: cliProfile,
+          services: AgentCoreServices(
+            baseEnv: base,
+            sessionEnvVars: () => {},
+            sandbox: const SandboxServices(
+              spec: CubeSpec(
+                name: 'clamp',
+                tools: CubeToolPolicy(allow: {'git'}),
+                filesystem: CubeFsPolicy(workspace: '/work'),
+              ),
+            ),
+            vision: const InspectImageConfig(modelId: 'vision', apiKey: 'k'),
+            transcribe: const TranscribeAudioConfig(apiKey: 'k'),
+            media: MediaToolServices(mainApiKey: () => 'k'),
+            shellJobsFactory: (coreEnv) => ShellJobRegistry(env: coreEnv),
+            browserController: _ShotController(Uint8List(8)),
+            saveBrowserScreenshot: (coreEnv, png) async {
+              screenshotEnvs.add(coreEnv);
+              return '/work/generated/browser-1.png';
+            },
+            sessionRoot: '/tmp/fah-test',
+          ),
+        );
+
+        // ONE env object everywhere: the service seams and the tool
+        // closures all receive wired.env — never the raw base env.
+        expect(screenshotEnvs, isEmpty);
+        // The vision tool REALLY reads through the guard: an
+        // outside-workspace path is permission-denied where the raw base
+        // env reads it — the exact bypass the decorated chain closes.
+        final inspect = wired.tools.firstWhere(
+          (t) => t.name == 'inspect_image',
+        );
+        await expectLater(
+          inspect.execute(const {'path': '/etc/secret.png'}, null, null),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              // The guard HIDES outside-workspace paths (notFound), and
+              // names itself: only the cube guard produces this denial.
+              allOf(contains('notFound'), contains('fa_cube[clamp]:')),
             ),
           ),
-          vision: const InspectImageConfig(modelId: 'vision', apiKey: 'k'),
-          transcribe: const TranscribeAudioConfig(apiKey: 'k'),
-          media: MediaToolServices(mainApiKey: () => 'k'),
-          shellJobsFactory: (coreEnv) => ShellJobRegistry(env: coreEnv),
-          browserController: _ShotController(Uint8List(8)),
-          saveBrowserScreenshot: (coreEnv, png) async {
-            screenshotEnvs.add(coreEnv);
-            return '/work/generated/browser-1.png';
-          },
-          sessionRoot: '/tmp/fah-test',
-        ),
-      );
+        );
+        expect((await base.readBinaryFile('/etc/secret.png')).isOk, isTrue);
 
-      // ONE env object everywhere: the service seams and the tool
-      // closures all receive wired.env — never the raw base env.
-      expect(screenshotEnvs, isEmpty);
-      // The vision tool REALLY reads through the guard: an
-      // outside-workspace path is permission-denied where the raw base
-      // env reads it — the exact bypass the decorated chain closes.
-      final inspect = wired.tools.firstWhere((t) => t.name == 'inspect_image');
-      await expectLater(
-        inspect.execute(const {'path': '/etc/secret.png'}, null, null),
-        throwsA(
-          isA<StateError>().having(
-            (e) => e.message,
-            'message',
-            // The guard HIDES outside-workspace paths (notFound), and
-            // names itself: only the cube guard produces this denial.
-            allOf(contains('notFound'), contains('fa_cube[clamp]:')),
-          ),
-        ),
-      );
-      expect((await base.readBinaryFile('/etc/secret.png')).isOk, isTrue);
-
-      // And the browser save rides the same chain end-to-end: executing
-      // the tool hands its screenshot to the service callback over
-      // wired.env.
-      final shot = wired.tools.firstWhere(
-        (t) => t.name == 'browser_screenshot',
-      );
-      final saved = await shot.execute(const {}, null, null);
-      expect(saved.content.first, isA<TextContent>());
-      expect(identical(screenshotEnvs.single, wired.env), isTrue);
-      expect(screenshotEnvs.single, isNot(same(base)));
-    });
+        // And the browser save rides the same chain end-to-end: executing
+        // the tool hands its screenshot to the service callback over
+        // wired.env.
+        final shot = wired.tools.firstWhere(
+          (t) => t.name == 'browser_screenshot',
+        );
+        final saved = await shot.execute(const {}, null, null);
+        expect(saved.content.first, isA<TextContent>());
+        expect(identical(screenshotEnvs.single, wired.env), isTrue);
+        expect(screenshotEnvs.single, isNot(same(base)));
+      },
+    );
   });
 }
 
@@ -349,6 +468,30 @@ AssistantMessageEventStream _fakeStream(
   Context context, {
   CancelToken? cancelToken,
 }) => AssistantMessageEventStream();
+
+/// A scripted completed text turn — counts the calls so the telemetry
+/// wrap provably delegates to the host's own stream function.
+var _textTurnCalls = 0;
+AssistantMessageEventStream _textTurnStream(
+  Model model,
+  Context context, {
+  CancelToken? cancelToken,
+}) {
+  _textTurnCalls++;
+  final stream = AssistantMessageEventStream();
+  final partial = AssistantMessage(
+    content: const [TextContent(text: 'hi')],
+    api: 'test-api',
+    provider: 'test-provider',
+    model: 'test-model',
+    usage: Usage.zero,
+    stopReason: StopReason.stop,
+    timestamp: DateTime.utc(2026),
+  );
+  stream.push(StartEvent(partial: partial));
+  stream.push(DoneEvent(reason: StopReason.stop, message: partial));
+  return stream;
+}
 
 AgentTool _namedTool(String name) => AgentTool(
   name: name,

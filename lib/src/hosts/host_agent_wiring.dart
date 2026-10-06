@@ -52,6 +52,8 @@ import '../messaging/schedule_message_tool.dart';
 import '../messaging/scheduled_messages.dart';
 import '../mcp/mcp_manager.dart';
 import '../model_roles/models_config.dart';
+import '../model_roles/provider_key_resolver.dart';
+import '../telemetry/agent_telemetry.dart';
 import '../tools/ask_tool.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/generate_image.dart';
@@ -163,11 +165,30 @@ final class AgentCoreServices {
   /// cube fs policy exactly like `generate_image` writes to the same
   /// tree. One rule — hosts must not close over their raw base env.
   final Future<String> Function(ExecutionEnv coreEnv, Uint8List png)?
-      saveBrowserScreenshot;
+  saveBrowserScreenshot;
 
   /// Host-extension tools (the CLI's plugin surface — the public shape
   /// of what `FahPlugin` registers, issue #1079 HostExtensionApi).
   final List<AgentTool> hostTools;
+
+  /// Lifecycle telemetry for in-process hosts (issue #1322 Gap 3). When
+  /// present, `buildAgentStack` attaches the sink to the built agent and
+  /// wraps the stream function — turn/tool/first-token/provider-status
+  /// records flow with zero further host code. Null = silent (today's
+  /// behavior). The interface is pure; the fa.log file sink comes from
+  /// `package:flutter_agent_harness/io.dart`.
+  final AgentTelemetrySink? telemetry;
+
+  /// Host-facing provider-key slot resolution (issue #1322 Gap 2). The
+  /// host injects its env/store readers; [resolveKey] then answers which
+  /// slot the request path WILL use. Null = the host resolves keys its
+  /// own way (and owns the canonical-vs-pinned drift risk).
+  final HostKeyResolver? keyResolver;
+
+  /// Fires when the run's model resolves to a PINNED key slot instead of
+  /// the canonical one — the same migration hint the CLI prints at boot.
+  /// Requires [keyResolver]; called once per [WiredAgentCore.buildAgentStack].
+  final void Function(String hint)? onKeySlotDrift;
 
   // Passthrough facilities the builder does not assemble yet but the
   // catalog's E1 contract declares for wired capabilities. Null =
@@ -203,7 +224,29 @@ final class AgentCoreServices {
     this.hubFabric,
     this.extRuntimeFactory,
     this.sessionRoot,
+    this.telemetry,
+    this.keyResolver,
+    this.onKeySlotDrift,
   });
+
+  /// The effective key-slot name (and drift hints) for [baseUrl] — the
+  /// host-facing ask the CLI kept internal (issue #1322 Gap 2). Null when
+  /// no [keyResolver] was supplied.
+  HostKeyResolution? resolveKey({
+    String? provider,
+    required String baseUrl,
+    String? model,
+    List<String> envNames = const [],
+    String? defaultBaseUrl,
+    String? activeCustomKeyName,
+  }) => keyResolver?.resolveKey(
+    provider: provider,
+    baseUrl: baseUrl,
+    model: model,
+    envNames: envNames,
+    defaultBaseUrl: defaultBaseUrl,
+    activeCustomKeyName: activeCustomKeyName,
+  );
 
   /// The catalog service names this bundle provides — the run-narrowing
   /// input. Names match [CapabilitySpec.requiredServices] keys exactly.
@@ -257,8 +300,12 @@ final class AgentWiringSpec {
 /// the service instances the host needs to keep handles on (the CLI's
 /// `/cube` family drives [sandboxEnv] live).
 final class WiredAgentCore {
-  /// The plan the wired capabilities come from — run-narrowed.
+  /// The (run-narrowed) plan the wired capabilities come from.
   final HostWiringPlan plan;
+
+  /// The services bundle this core was wired over — `buildAgentStack`
+  /// reads the host-seam facilities (telemetry, key resolution) from it.
+  final AgentCoreServices services;
 
   /// baseEnv → sandbox (when wired) → session vars (when provided).
   final ExecutionEnv env;
@@ -286,6 +333,7 @@ final class WiredAgentCore {
 
   WiredAgentCore._({
     required this.plan,
+    required this.services,
     required this.env,
     required this.sandboxEnv,
     required this.networkGate,
@@ -304,11 +352,34 @@ final class WiredAgentCore {
     List<AgentTool> additionalTools = const [],
     void Function(String note)? onDuplicate,
   }) {
+    // ---- issue #1322 host seams ----
+    // Key-slot drift (Gap 2): when the host supplied a resolver, the run's
+    // model gets the same boot-time canonical-vs-pinned check the CLI
+    // prints — one visible warning instead of a silently empty slot.
+    final keyResolver = services.keyResolver;
+    if (keyResolver != null) {
+      final resolution = keyResolver.resolveKey(
+        provider: spec.model.provider,
+        baseUrl: spec.model.baseUrl,
+      );
+      final hint = resolution.driftHint;
+      if (hint != null) services.onKeySlotDrift?.call(hint);
+    }
+    // Telemetry (Gap 3): the adapter subscribes the sink to the agent and
+    // wraps the provider leg (requestStart / firstToken / HTTP status on
+    // error). Null sink → byte-identical to the pre-telemetry wiring.
+    var wiredStream = streamFunction;
+    AgentTelemetry? telemetryAdapter;
+    final sink = services.telemetry;
+    if (sink != null) {
+      telemetryAdapter = AgentTelemetry(sink);
+      wiredStream = telemetryAdapter.wrapStreamFunction(streamFunction);
+    }
     final registry = ToolRegistry([...tools, ...additionalTools], onDuplicate);
     final agent = _agent = Agent(
       model: spec.model,
       systemPrompt: spec.systemPrompt,
-      streamFunction: streamFunction,
+      streamFunction: wiredStream,
       toolRegistry: registry,
       maxEmptyRetries: spec.maxEmptyRetries,
       onRunIdleTimeout: spec.onRunIdleTimeout,
@@ -319,6 +390,7 @@ final class WiredAgentCore {
       overWindowRelief: spec.overWindowRelief,
       toolMisuseBreaker: spec.toolMisuseBreaker,
     );
+    telemetryAdapter?.attach(agent);
     return WiredAgentStack(registry: registry, agent: agent);
   }
 }
@@ -509,6 +581,7 @@ WiredAgentCore wireAgentCore({
   );
   core = WiredAgentCore._(
     plan: plan,
+    services: services,
     env: env,
     sandboxEnv: sandboxEnv,
     networkGate: networkGate,
