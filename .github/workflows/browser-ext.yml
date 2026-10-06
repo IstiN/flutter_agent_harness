@@ -141,10 +141,14 @@ jobs:
       - name: dart pub get (root)
         run: dart pub get
 
+      # The web app's deps resolve through the shared retry action BEFORE
+      # the packaging script runs — the script's own `flutter pub get
+      # --enforce-lockfile` then rides a warm pub cache (no fresh git-dep
+      # clone to flake, gh-1310).
+      - uses: ./.github/actions/flutter-pub-get
+
       - name: Build extension with the fa web app
-        run: |
-          (cd flutter_app && flutter pub get --enforce-lockfile)
-          bash scripts/build_browser_ext.sh --with-app
+        run: bash scripts/build_browser_ext.sh --with-app
 
       - name: Playwright e2e (app branch)
         env:

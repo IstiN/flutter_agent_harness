@@ -1,0 +1,16 @@
+{
+  "_meta": {
+    "issue": 1300,
+    "what": "Per-SHARD duration budgets for the pty-integration-linux leg (PTY/CLI integration). The per-SUITE ratchet lives in test_duration_baseline.json (issue #928); this file is the total-leg teeth.",
+    "metric": "shard wall = max(testDone) - min(testStart) over the shard's dart-json file-reporter output — the test-run span itself; checkout/pub get/AOT download stay outside the budget on purpose",
+    "seed": "2026-10-06 gh-1300: 420 s/shard = the ticket's expected~360 s + ~17% headroom (ticket example: expected 6 min -> budget 7 min), measured from the PR-era CI jobs (345-381 s wall incl. setup, runner span ~280-320 s). Pre-FA_BIN numbers: the gh-1300 AOT seam drops every per-test spawn from ~30 s to ~1 s, so the first post-merge runs are expected FAR under this seed — tighten it from those artifacts in the follow-up optimization PR (python3 scripts/check_shard_durations.py --update-budgets on downloaded integration-json-shard-* artifacts).",
+    "law": "budgets only move DOWN via optimization PRs (--update-budgets refuses to raise; no workflow may call it). Raising requires a hand-edited reviewed PR with a written justification. Breaching a budget fails the gate AND auto-files the [ENH] optimization issue (label duration-budget); the issue closes when a run fits again.",
+    "note": "no scheduled workflow writes this file"
+  },
+  "warn_fraction": 0.9,
+  "shards": {
+    "0": 420.0,
+    "1": 420.0,
+    "2": 420.0
+  }
+}

@@ -130,4 +130,45 @@ customProviders:
       expect(hit, isNull);
     });
   });
+
+  group('resolveFaCommand — gh-1300 FA_BIN seam', () {
+    test('ambient FA_BIN replaces the default dart spawn', () {
+      final (exe, exeArgs) = CliVisualHarness.resolveFaCommand(
+        args: ['--model', 'm'],
+        ambientFaBin: '/ambient/fa',
+      );
+      expect(exe, '/ambient/fa');
+      expect(exeArgs, ['--model', 'm']);
+    });
+
+    test('an empty ambient FA_BIN reads as unset (CI may export it blank)', () {
+      final (exe, exeArgs) = CliVisualHarness.resolveFaCommand(
+        args: ['--model', 'm'],
+        ambientFaBin: '',
+      );
+      expect(exe, 'dart');
+      expect(exeArgs, ['bin/fah.dart', '--model', 'm']);
+    });
+
+    test('no FA_BIN keeps the direct-VM default shape', () {
+      final (exe, exeArgs) = CliVisualHarness.resolveFaCommand(
+        args: const [],
+        useAmbientFaBin: false,
+      );
+      expect(exe, 'dart');
+      expect(exeArgs, ['bin/fah.dart']);
+    });
+
+    test('a caller-pinned executable spec is never overridden (2+ args)', () {
+      // Even with FA_BIN exported: a test that pinned the spawn (e.g. the
+      // omp REG capture pins an absolute script path) meant it.
+      final (exe, exeArgs) = CliVisualHarness.resolveFaCommand(
+        args: ['--model', 'm'],
+        executableArgs: ['/repo/bin/fah.dart', '--theme', 'dark'],
+        ambientFaBin: '/ambient/fa',
+      );
+      expect(exe, 'dart');
+      expect(exeArgs, ['/repo/bin/fah.dart', '--theme', 'dark']);
+    });
+  });
 }

@@ -126,9 +126,10 @@ void main() {
     );
     addTearDown(harness.close);
 
-    // The JIT frontend needs >60s cold on slow single-host CI boxes — the
-    // boot budget rides the harness default of 90s nowhere; give it room.
-    await harness.waitForBoot(timeout: const Duration(minutes: 5));
+    // gh-1300: boot is the AOT binary in CI (~1 s) — the 5-minute JIT
+    // band-aid (">60s cold on slow single-host CI boxes") is gone; the
+    // harness 90 s default is back in charge.
+    await harness.waitForBoot();
 
     // ── spawn the background heredoc job and wait for its settle ───────
     harness.sendText('run the heredoc job');

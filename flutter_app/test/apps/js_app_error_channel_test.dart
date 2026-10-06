@@ -111,6 +111,75 @@ void main() {
     expect(report(channel, _error())!.deliver, isTrue);
   });
 
+  group('parseJsAppErrorLogLine (gh-1307: the engine log tap transport)', () {
+    // The record the bootstrap emits, verbatim.
+    const record =
+        '{"kind":"showError","message":"Widget error: Error: load blew up",'
+        '"stack":"    at foo (<eval>:3)\\n","fingerprint":"load blew #\\nat foo"}';
+
+    test('a plain structured record parses (the gh-1164 wire shape)', () {
+      final event = parseJsAppErrorLogLine('[E] faAppError:$record');
+      expect(event, isNotNull);
+      expect(event!.kind, JsAppErrorKind.showError);
+      expect(event.message, contains('load blew up'));
+    });
+
+    test('a record inside the engine log envelope still parses — the iid '
+        'tag wraps console lines as {id: "[E] faAppError:{…}"} by the time '
+        'they reach Dart (flutter_js jsonDecodes the payload before the '
+        'channel callback, so the {id: …} wrap survives dispatch)', () {
+      final event = parseJsAppErrorLogLine('{id: [E] faAppError:$record}');
+      expect(event, isNotNull, reason: 'the load error must be captured');
+      expect(event!.kind, JsAppErrorKind.showError);
+      expect(event.message, contains('load blew up'));
+      expect(event.fingerprint, contains('load blew #'));
+    });
+
+    test('a record with nested braces/escapes inside its strings parses '
+        'inside the envelope', () {
+      final nested =
+          '{"kind":"callback","message":"bad {token} \\"q\\" end",'
+          '"stack":"at f ({a:1})\\n","fingerprint":"bad {token}#"}';
+      final event = parseJsAppErrorLogLine('{id: [E] faAppError:$nested}');
+      expect(event, isNotNull);
+      expect(event!.kind, JsAppErrorKind.callback);
+      expect(event.message, contains('{token}'));
+    });
+
+    test('a marker mention in a plain log line followed by unrelated JSON '
+        'is NOT captured — the record `{` must be the first non-whitespace '
+        'character after the marker (gh-1307 review)', () {
+      final event = parseJsAppErrorLogLine(
+        'the host parses faAppError: records like {"message":"hint"}',
+      );
+      expect(event, isNull, reason: 'a marker mention is not a record');
+    });
+
+    test('a truncated (unbalanced) record stays null — never a best-effort '
+        'prefix decode (gh-1307 review: pins the scanner\u2019s truncation '
+        'exit)', () {
+      expect(
+        parseJsAppErrorLogLine(
+          '[E] faAppError:{"kind":"showError","message":"x"',
+        ),
+        isNull,
+        reason: 'unbalanced record must stay null, not decode a prefix',
+      );
+    });
+
+    test('non-record lines (plain logs, marker-free, malformed payloads) '
+        'return null', () {
+      expect(parseJsAppErrorLogLine('hello world'), isNull);
+      expect(parseJsAppErrorLogLine('{id: [E] some plain log}'), isNull);
+      expect(parseJsAppErrorLogLine('[E] faAppError:not-json'), isNull);
+      expect(
+        parseJsAppErrorLogLine('{id: [E] faAppError:{"kind":"showError"}}'),
+        isNull,
+        reason: 'no message → not a captureable record',
+      );
+    });
+  });
+
   test(
     'capExcerpt bounds gate excerpts with the same cap as the notices '
     '(gh-1164 review: pathological error text can never balloon the '
