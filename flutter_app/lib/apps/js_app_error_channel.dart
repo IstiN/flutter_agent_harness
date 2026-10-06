@@ -29,11 +29,24 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 /// structured `faAppError:{json}` record (the marker the bootstrap emits);
 /// returns null for every other line. Exported for the engine's log tap
 /// and for tests.
+///
+/// The record's `{` must be the first non-whitespace character after the
+/// marker — both wire shapes put it there (the plain
+/// `[E] faAppError:{json}` and the iid envelope `{id: "[E] faAppError:{…}"}`
+/// the engine's transport wraps console lines in by the time they reach
+/// Dart; flutter_js jsonDecodes the sendMessage payload before the channel
+/// callback, so the wrap survives routing — gh-1307). The object is then
+/// decoded as the first balanced `{…}` from that brace (string-literal
+/// aware — NOT the exact rest of the line, whose trailing envelope brace
+/// used to make the payload malformed JSON and silently blind the whole
+/// capture surface). A marker mention inside a plain log line — with or
+/// without unrelated JSON after it — returns null.
 JsAppErrorEvent? parseJsAppErrorLogLine(String line) {
   const marker = 'faAppError:';
   final index = line.indexOf(marker);
   if (index < 0) return null;
-  final payload = line.substring(index + marker.length).trim();
+  final payload = _balancedJsonObjectAfter(line, index + marker.length);
+  if (payload == null) return null;
   try {
     final decoded = jsonDecode(payload);
     if (decoded is Map<String, dynamic>) {
@@ -43,6 +56,43 @@ JsAppErrorEvent? parseJsAppErrorLogLine(String line) {
     // Not our record — a stray console line mentioning the marker.
   }
   return null;
+}
+
+/// The balanced `{…}` object whose `{` is the first non-whitespace
+/// character at or after [from] (the position right after the
+/// `faAppError:` marker), honoring string literals and backslash escapes
+/// so braces inside message/stack text never cut the record short. Null
+/// when anything but whitespace precedes the record's `{` (a plain log
+/// line mentioning the marker) or no balanced object exists (a truncated
+/// record).
+String? _balancedJsonObjectAfter(String line, int from) {
+  var start = from;
+  while (start < line.length && line[start].trim().isEmpty) {
+    start++;
+  }
+  if (start >= line.length || line[start] != '{') return null;
+  var depth = 0;
+  var inString = false;
+  for (var i = start; i < line.length; i++) {
+    final ch = line[i];
+    if (inString) {
+      if (ch == r'\') {
+        i++; // skip the escaped character verbatim
+      } else if (ch == '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch == '"') {
+      inString = true;
+    } else if (ch == '{') {
+      depth++;
+    } else if (ch == '}') {
+      depth--;
+      if (depth == 0) return line.substring(start, i + 1);
+    }
+  }
+  return null; // unbalanced — truncated record
 }
 
 /// One dedup-gate decision: whether a report is new enough to deliver,
