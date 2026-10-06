@@ -136,7 +136,14 @@ void main() {
       await browser.sendDm(self.agentId!, 'e2e hello');
       final inbound = await self.inbound
           .firstWhere((m) => m.plaintext == 'e2e hello')
-          .timeout(const Duration(seconds: 5));
+          // Real loopback transport under a loaded shared runner (the
+          // gate runs 3 PTY shards + builds on one box): hub delivery
+          // can lag the send by seconds of scheduler starvation — the
+          // 5s window once fired exactly there (run 37477045292, shard
+          // 1). 20s is the live-transport wait convention
+          // (live_hub_test.dart); a genuinely broken DM path still
+          // fails here, well inside the 5-minute library timeout.
+          .timeout(const Duration(seconds: 20));
       expect(inbound.from, browser.agentId);
 
       // ---- fa dap status sees the hub and names the peer --------------

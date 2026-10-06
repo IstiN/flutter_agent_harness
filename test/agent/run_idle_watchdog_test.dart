@@ -105,6 +105,59 @@ void main() {
       expect(last.stopReason, StopReason.aborted);
     });
 
+    test(
+      'gh-1308: a replayed zero-byte stall is bounded — the run ends as a '
+      'retryable provider error at ≈N×watchdog-interval, never at the cap',
+      () async {
+        var fires = 0;
+        var innerCalls = 0;
+        final agent = Agent(
+          model: _model,
+          // The production shape (provider_catalog): the provider function
+          // wrapped by the transient-retry wrapper. The endpoint accepts
+          // the request and streams NOTHING — the bench's zero-byte hang —
+          // so every attempt is killed only by the run-idle watchdog.
+          streamFunction: transientRetryStreamFunction(
+            (model, context, {cancelToken}) {
+              innerCalls++;
+              return _hangingStream(cancelToken);
+            },
+            delay: const Duration(milliseconds: 20),
+          ),
+          toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+          runIdleTimeout: const Duration(milliseconds: 100),
+          onRunIdleTimeout: (_) => fires++,
+        );
+        final watch = Stopwatch()..start();
+        await agent.prompt('hi');
+        await agent.waitForIdle();
+        watch.stop();
+
+        // Both silent attempts were watchdog-killed: the fire re-arms, so
+        // the replayed request is bounded by the SAME interval instead of
+        // running to the trial cap (the pre-fix replay was unbounded).
+        expect(fires, 2, reason: 'each silent attempt is watchdog-bounded');
+        expect(
+          innerCalls,
+          2,
+          reason: 'the transient ladder stops at the zero-byte budget '
+              '(2 consecutive watchdog-killed silent attempts)',
+        );
+        // AC1: verdict ≈ N×watchdog-interval (here ≈200ms), not the full
+        // agent cap — a minutes-long bench cap is never reached.
+        expect(
+          watch.elapsed,
+          lessThan(const Duration(seconds: 5)),
+          reason: 'verdict at ≈2×watchdog-interval, not at a cap',
+        );
+        // The verdict is a TRUTHFUL retryable provider error, not a
+        // timeout/abort — with the zero-byte classification on it.
+        final last = agent.state.messages.last as AssistantMessage;
+        expect(last.stopReason, StopReason.error);
+        expect(last.errorMessage, contains('zero-byte stall'));
+      },
+    );
+
     test('stays quiet while a tool is executing (long test gates)', () async {
       var fires = 0;
       final turns = <List<AssistantMessageEvent>>[
