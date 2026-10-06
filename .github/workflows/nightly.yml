@@ -164,12 +164,32 @@ jobs:
         with:
           python-version: '3.x'
       - run: dart pub get
+      # gh-1300: compile the AOT bundle ONCE for the whole nightly leg and
+      # point the FA_BIN seam at it — same shape as ci.yml's fa-aot-build
+      # job (the nightly runs one unsharded job, so the build is in-job).
+      - name: Native-assets hook cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+      - name: dart build cli (AOT bundle, gh-1300)
+        run: |
+          dart build cli --target=bin/fah.dart --output=fa-local
+          version=$(sed -n 's/^version: //p' pubspec.yaml)
+          echo "$version" > fa-local/bundle/version.txt
+          test -x fa-local/bundle/bin/fah
+          ./fa-local/bundle/bin/fah --version
       - name: dart test --tags integration (excluding browser-ext — it owns browser-ext.yml)
         # gh-1199 AC5/AC6: this unsharded leg (with secrets) is the
         # SUPERVISED home of the live (`llm`) suite — and it deliberately
         # does NOT apply the flake quarantine: a quarantined file keeps
         # running here nightly, producing the repeat-run proof its fix PR
         # needs for un-quarantine.
+        env:
+          # gh-1300 FA_BIN seam: every CLI spawn runs the AOT binary
+          # (~1 s) instead of the JIT VM+CFE compile (~30 s on ARM).
+          FA_BIN: ${{ github.workspace }}/fa-local/bundle/bin/fah
         run: |
           mkdir -p test-results
           dart test --tags integration --exclude-tags browser-ext \

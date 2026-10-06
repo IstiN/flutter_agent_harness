@@ -151,7 +151,7 @@ check "AC5b budget lowered to the measured wall (90.0)" "$?"
 echo '{"_meta": {}, "warn_fraction": 0.9, "shards": {"0": 60.0}}' >"$TMP/b5.json"
 python3 "$GATE" --budgets "$TMP/b5.json" --update-budgets \
   "$TMP/integration-shard-0.json" >"$TMP/update-c.txt" 2>&1
-check "AC5c update that would RAISE is refused (exit 1)" "$?"
+check_fail "AC5c update that would RAISE is refused (exit 1)" "$?"
 grep -q "REFUSED" "$TMP/update-c.txt"
 check "AC5c refusal is named" "$?"
 python3 - "$TMP/b5.json" <<'EOF'

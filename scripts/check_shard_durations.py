@@ -293,6 +293,9 @@ def main() -> int:
                 "reviewed PR; a new shard cannot sneak past the ratchet."
             )
             breaches.append((sid, wall, float("inf")))
+            report.append(f"| {sid} | {wall:.1f} | {span:.1f} | — | "
+                          f"{status} |")
+            continue
         elif wall > budget:
             status = "**FAIL**"
             failures.append(
