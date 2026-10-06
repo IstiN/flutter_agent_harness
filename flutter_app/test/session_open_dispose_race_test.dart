@@ -1,0 +1,160 @@
+// Copyright (c) 2026, the Flutter Agent Harness authors.
+// Use of this source code is governed by a MIT license that can be found
+// in the LICENSE file.
+
+/// Issue #1319: `openSession`'s background history-count continuation
+/// (`loadSession` → `unawaited(_refreshHistoryAbove)`) can resume AFTER the
+/// test (or the app) has disposed the [AgentService] — a `notifyListeners`
+/// on a dead ChangeNotifier, the "failed after test completion" CI crash.
+/// The gated file system (the issue #1159 generation-race fixture) freezes
+/// the count mid-flight, so the dispose-vs-continuation ordering here is
+/// deterministic, not a timing flake.
+library;
+
+import 'dart:io' as io;
+
+import 'package:fa/services/agent_service.dart';
+import 'package:fa/services/flutter_session_manager.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'agent_service_windowed_test.dart' show GatedFileSystem;
+
+StreamFunction _singleTextResponse(String text) {
+  return (model, context, {cancelToken}) {
+    final stream = AssistantMessageEventStream();
+    final message = AssistantMessage(
+      content: [TextContent(text: text)],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: Usage.zero,
+      stopReason: StopReason.stop,
+      timestamp: DateTime.now(),
+    );
+    stream.push(DoneEvent(reason: StopReason.stop, message: message));
+    stream.end();
+    return stream;
+  };
+}
+
+Agent _createAgent() {
+  return Agent(
+    model: Model(
+      id: 'test-model',
+      api: 'test-api',
+      provider: 'test',
+      baseUrl: 'https://example.com',
+      contextWindow: 100000,
+      maxTokens: 4096,
+    ),
+    systemPrompt: 'You are Fa.',
+    streamFunction: _singleTextResponse('ok'),
+    toolRegistry: ToolRegistry(const []),
+  );
+}
+
+final _config = AgentConfig(
+  providerKind: 'test',
+  modelId: 'test-model',
+  baseUrl: 'https://example.com',
+  apiKey: '',
+);
+
+/// Builds a session file body in one string (the windowed-suite pattern).
+String _sessionBody(String id, int count) {
+  const iso = '2026-01-01T00:00:00.000Z';
+  final buffer = StringBuffer(
+    '{"type":"session","version":3,"id":"$id","timestamp":"$iso",'
+    '"cwd":"/work"}\n',
+  );
+  for (var i = 0; i < count; i++) {
+    buffer.write(
+      '{"type":"message","id":"e$i","parentId":'
+      '${i == 0 ? 'null' : '"e${i - 1}"'},"timestamp":"$iso",'
+      '"message":{"role":"user","content":[{"type":"text","text":'
+      '"message $i with a bit of body to be realistic"}]}}\n',
+    );
+  }
+  return buffer.toString();
+}
+
+AgentService _service(String cwd, FileSystem fs) {
+  return AgentService(
+    agent: _createAgent(),
+    env: LocalExecutionEnv(cwd: cwd),
+    sessionsRoot: cwd,
+    repo: JsonlSessionRepo(fs: fs, sessionsRoot: cwd),
+    watchExternalSessions: false,
+    includeSharedSessionRoots: false,
+  );
+}
+
+/// Deletes a temp dir tolerantly (the windowed-suite pattern).
+Future<void> _deleteTmpDir(io.Directory tmp) async {
+  Object? lastError;
+  for (var attempt = 0; attempt < 5; attempt++) {
+    try {
+      await tmp.delete(recursive: true);
+      return;
+    } on io.FileSystemException catch (e) {
+      lastError = e;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+  }
+  // ignore: only_throw_errors
+  throw lastError!;
+}
+
+void main() {
+  test('UT-dispose-race: disposing the service while the background history '
+      'count is in flight does not notify the disposed notifier', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_1319_race');
+    addTearDown(() => _deleteTmpDir(tmp));
+    await io.File(
+      '${tmp.path}/big.jsonl',
+    ).writeAsString(_sessionBody('big', 300));
+    final gated = GatedFileSystem(
+      LocalFileSystem(cwd: tmp.path),
+      gatePath: 'big.jsonl',
+    );
+    final service = _service(tmp.path, gated);
+    // No addTearDown(service.dispose): the body disposes it mid-test —
+    // the crash ordering under test — and dispose is not idempotent.
+    await service.initialize();
+
+    final manager = FlutterSessionManager(
+      env: LocalExecutionEnv(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+      repo: JsonlSessionRepo(fs: gated, sessionsRoot: tmp.path),
+      maxSessionLoadBytes: 1024,
+      includeSharedSessionRoots: false,
+    );
+    final metadata = (await manager.listPersistedSessions()).single;
+
+    // The windowed open reads big.jsonl freely (gate not armed yet). By
+    // the time openSession resolves, the only remaining reader is the
+    // unawaited history count — suspended inside its stat, about to hit
+    // the first gated ranged read.
+    final managed = await manager.openSession(
+      metadata,
+      config: _config,
+      serviceFactory: () async => service,
+    );
+    expect(managed.service.messages, hasLength(200));
+
+    // Freeze the count mid-flight, then tear the service down under it —
+    // exactly the ordering of the CI crash ("failed after test
+    // completion").
+    gated.armGate();
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    service.dispose();
+    gated.releaseGate();
+
+    // Let the continuation resume against the disposed service. On the
+    // unpatched code `_notify()` throws "A AgentService was used after
+    // being disposed"; the escaping async error fails this test.
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  });
+}
