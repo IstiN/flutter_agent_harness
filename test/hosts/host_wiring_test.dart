@@ -29,6 +29,10 @@ final cliPlatformServices = {
   'browserBridgeHandle': Object(),
   'extRuntimeFactory': Object(),
   'sessionRoot': Object(),
+  // Slice 3: the subagents row requires the typed bundle's presence
+  // name too (slice-2 wireAgentCore derives it from
+  // AgentCoreServices.subagents != null; here it is name-only).
+  'subagentServices': Object(),
 };
 
 /// [cliPlatformServices] plus what the non-CLI hosts' wired rows need

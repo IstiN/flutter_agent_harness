@@ -1,4 +1,8 @@
 /// Issue #1079 slice 2 — live agent-stack wiring through the builder.
+/// Slice 3 — the builder-owned task/subagent/fabric complex: the gated
+/// task surface rides the stack after the host tools (canonical order),
+/// stays OUT of the child-safe core list, and disappears with its
+/// capability (off = absent from tools AND tokens, no orphan handles).
 ///
 /// Canonical CLI tool-order parity (the conversion must reproduce the
 /// pre-conversion registration order) · AC7 run-hiding (off capabilities
@@ -40,12 +44,20 @@ AgentCoreServices fullServices(
   onRequestSecret: (name, reason) async => null,
   media: MediaToolServices(mainApiKey: () => 'key'),
   hostTools: const [],
-  hubFabric: Object(),
+  hubFabric: const _HubRepo(),
+  mainMailbox: () => 'main',
   extRuntimeFactory: Object(),
   sessionRoot: '/tmp/fah-test',
   telemetry: telemetry,
   keyResolver: keyResolver,
   onKeySlotDrift: onKeySlotDrift,
+  subagents: SubagentServices(
+    homeDir: '/tmp/fah-test',
+    machineName: 'test-machine',
+    notifyHeartbeat: (_) {},
+    // Kill switch: no heartbeat timer arms under tests.
+    heartbeatMinutes: () => 0,
+  ),
 );
 
 void main() {
@@ -452,6 +464,197 @@ void main() {
       },
     );
   });
+
+  group('task/subagent complex (slice 3 — builder-owned jobs)', () {
+    test(
+      'full bundle: gated task surface rides AFTER the host tools; core tools stay child-safe',
+      () {
+        final wired = wireAgentCore(
+          profile: cliProfile,
+          services: fullServices(MemoryExecutionEnv(cwd: '/w')),
+        );
+        // The core list is the child tool pool: the executor strips only
+        // `task` itself, so NO monitoring/task tool may ride in it.
+        final coreNames = wired.tools.map((t) => t.name).toSet();
+        for (final childUnsafe in [
+          'task',
+          'task_status',
+          'task_send',
+          'task_resume',
+          'task_cancel',
+          'agent_directory',
+          'reply',
+          'agent_message',
+        ]) {
+          expect(coreNames, isNot(contains(childUnsafe)));
+        }
+        // The gated surface: monitoring first, `task` LAST (canonical
+        // pre-conversion order).
+        expect(wired.taskSurface, isNotEmpty);
+        expect(wired.taskSurface.first.name, 'task_status');
+        expect(wired.taskSurface.last.name, 'task');
+        // Registry order: core → host tools → monitoring → task → extras.
+        final stack = wired.buildAgentStack(
+          spec: AgentWiringSpec(model: _model, systemPrompt: 's'),
+          streamFunction: _fakeStream,
+          additionalTools: [_namedTool('host_extra')],
+        );
+        final names = stack.registry.names;
+        expect(names.indexOf('host_extra'), greaterThan(names.indexOf('task')));
+        expect(names, containsAll(['task_status', 'agent_directory', 'task']));
+      },
+    );
+
+    test('wired handles expose the assembled complex for the shell', () {
+      final wired = wireAgentCore(
+        profile: cliProfile,
+        services: fullServices(MemoryExecutionEnv(cwd: '/w')),
+      );
+      expect(wired.messagesRoot, contains('/tmp/fah-test'));
+      expect(wired.fileFabric, isNotNull);
+      expect(wired.fabric, isNotNull);
+      expect(wired.subagentManager, isNotNull);
+      expect(wired.subagentManager!.selfId, 'main');
+      expect(wired.taskConfig, isNotNull);
+      expect(wired.taskConfig!.subagentManager, same(wired.subagentManager));
+      expect(wired.a2aManager, isNotNull);
+      expect(wired.subagentHeartbeat, isNotNull);
+    });
+
+    test(
+      'hub fabric composes over the file layer; hub-absent stays bare file',
+      () {
+        final env = MemoryExecutionEnv(cwd: '/w');
+        final withHub = wireAgentCore(
+          profile: cliProfile,
+          services: fullServices(env),
+        );
+        expect(withHub.fabric, isA<FallbackMessagingRepository>());
+        final noHubServices = AgentCoreServices(
+          baseEnv: env,
+          sandbox: const SandboxServices(),
+          media: MediaToolServices(mainApiKey: () => 'k'),
+          sessionRoot: '/tmp/fah-test',
+          subagents: SubagentServices(
+            notifyHeartbeat: (_) {},
+            heartbeatMinutes: () => 0,
+          ),
+        );
+        final withoutHub = wireAgentCore(
+          profile: cliProfile,
+          services: noHubServices,
+        );
+        expect(withoutHub.fabric, isA<SwappableMessagingRepository>());
+        expect(withoutHub.fabric, isNot(isA<FallbackMessagingRepository>()));
+      },
+    );
+
+    test(
+      'profile with subagents off hides the whole surface — tools AND tokens',
+      () {
+        final profile = cliProfile.narrowed({
+          HostCapability.subagents: CapabilityState.off('test host'),
+        });
+        final wired = wireAgentCore(
+          profile: profile,
+          services: fullServices(MemoryExecutionEnv(cwd: '/w')),
+        );
+        expect(wired.taskSurface, isEmpty);
+        expect(wired.subagentManager, isNull);
+        expect(wired.taskConfig, isNull);
+        final stack = wired.buildAgentStack(
+          spec: AgentWiringSpec(model: _model, systemPrompt: 's'),
+          streamFunction: _fakeStream,
+        );
+        expect(stack.registry.names, isNot(contains('task')));
+        expect(stack.registry.names, isNot(contains('agent_directory')));
+        expect(wired.plan.surfacedTokens, isNot(contains('task')));
+        expect(wired.plan.surfacedTokens, isNot(contains('agent_directory')));
+      },
+    );
+
+    test(
+      'absent subagent bundle run-narrows the capability off (reason names the gap)',
+      () {
+        final wired = wireAgentCore(
+          profile: cliProfile,
+          services: AgentCoreServices(
+            baseEnv: MemoryExecutionEnv(cwd: '/w'),
+            sandbox: const SandboxServices(),
+            media: MediaToolServices(mainApiKey: () => 'k'),
+            sessionRoot: '/tmp/fah-test',
+          ),
+        );
+        final plan = wired.plan.planFor(HostCapability.subagents);
+        expect(plan, isA<HiddenCapability>());
+        expect((plan as HiddenCapability).reason, contains('subagentServices'));
+        expect(wired.taskSurface, isEmpty);
+        expect(wired.subagentManager, isNull);
+      },
+    );
+
+    test('hub-only run keeps the wired hub — no silent fabric discard', () {
+      // A transport-narrowed profile (the mobile shape: hub, no file
+      // layer) must still get its WIRED hub as the fabric — the file
+      // transport's absence discards only the file layer, never the
+      // whole fabric.
+      const hub = _HubRepo();
+      final profile = cliProfile.narrowed({
+        HostCapability.messagingFabric: CapabilityTransportState({
+          'hub',
+        }, 'test hub-only host'),
+      });
+      final wired = wireAgentCore(
+        profile: profile,
+        services: AgentCoreServices(
+          baseEnv: MemoryExecutionEnv(cwd: '/w'),
+          sandbox: const SandboxServices(),
+          media: MediaToolServices(mainApiKey: () => 'k'),
+          hubFabric: hub,
+          mainMailbox: () => 'main',
+          sessionRoot: '/tmp/fah-test',
+          subagents: SubagentServices(
+            notifyHeartbeat: (_) {},
+            heartbeatMinutes: () => 0,
+          ),
+        ),
+      );
+      expect(
+        wired.plan.planFor(HostCapability.messagingFabric),
+        isA<WiredCapability>(),
+      );
+      expect(wired.fabric, same(hub));
+      expect(wired.fileFabric, isNull);
+      expect(wired.messagesRoot, isNull);
+    });
+
+    test('hub wired without a mainMailbox resolver fails loudly (E1)', () {
+      final services = AgentCoreServices(
+        baseEnv: MemoryExecutionEnv(cwd: '/w'),
+        sandbox: const SandboxServices(),
+        media: MediaToolServices(mainApiKey: () => 'k'),
+        sessionRoot: '/tmp/fah-test',
+        hubFabric: const _HubRepo(),
+        // No mainMailbox: the hub merge seam is unnamed — must be a loud
+        // E1 build failure, never a silent null-resolver crash at mail
+        // time.
+        subagents: SubagentServices(
+          notifyHeartbeat: (_) {},
+          heartbeatMinutes: () => 0,
+        ),
+      );
+      expect(
+        () => wireAgentCore(profile: cliProfile, services: services),
+        throwsA(
+          isA<HostWiringException>().having(
+            (e) => e.message,
+            'message',
+            contains('mainMailbox'),
+          ),
+        ),
+      );
+    });
+  });
 }
 
 final _model = Model(
@@ -525,3 +728,13 @@ final class _ShotController implements BrowserController {
 
 Future<LspTransport> _fakeLspTransport(LspServerConfig config, String cwd) =>
     throw UnimplementedError('not started in this test');
+
+/// Hub-transport stand-in: never driven — the builder only composes it as
+/// the fabric's hub primary and stores the mailbox merge callback.
+final class _HubRepo implements MessagingRepository {
+  const _HubRepo();
+
+  @override
+  Object noSuchMethod(Invocation invocation) =>
+      throw UnimplementedError('not driven in this test');
+}
