@@ -4650,4 +4650,20 @@
 - gh-1073 Session JSONL grows unboundedly (12 GiB ledger records) → resume fails with 'Failed to read session' + heap-exhaustion crash (#1247)
 - fix(1096): reseed fa-extension size floor for intentional js-apps skill growth (gh-1164) (#1258)
 
+## 1.0.516
+
+- gh-1299 [BUG] [URGENT] main red 13 legs: release commit v1.0.515 bumps version WITHOUT regenerating pubspec.lock — new --enforce-lockfile (#1268) hard-fails every leg (#1304)
+
+## 1.0.517
+
+- gh-1299 [BUG] [URGENT] main red 13 legs: release commit v1.0.515 bumps version WITHOUT regenerating pubspec.lock — new --enforce-lockfile (#1268) hard-fails every leg (#1304)
+
+## 1.0.518
+
+- gh-1307 [BUG] nightly macOS suite red: js_app_error_capture_test — load error NOT captured (empty list) regression from #1273's engine fix, merged green through the PR exclusion-zone hole (#1309)
+- fix(918): omp_ref reference fixtures captured on PTY host + nerd-glyph parity wiring (#1231)
+- gh-1310 [CI] Tag CI for v1.0.513 red — 4+ jobs fail (Android APK, web debug, Hostile ambient env, PTY screenshots) → release asset-less, legs fall back to v1.0.511 (#1312)
+- gh-1303 [CI] Pages 'Build landing + web demo' red on main — '41 packages have newer versions incompatible with dependency constraints' (blocks publish + merge-trigger) (#1305)
+- gh-1299 [BUG] [URGENT] main red 13 legs: release commit v1.0.515 bumps version WITHOUT regenerating pubspec.lock — new --enforce-lockfile (#1268) hard-fails every leg (#1304)
+
 ## Unreleased
