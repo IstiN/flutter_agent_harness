@@ -110,8 +110,9 @@ Future<String> pollUntil({
 
 /// The resolved Fa CLI command (gh-1300): an explicit [faBin] (a per-spawn
 /// `extraEnv['FA_BIN']` override) wins, then the ambient `FA_BIN`
-/// environment (CI compiles the AOT bundle ONCE per shard job and exports
-/// it for the whole test step), else the JIT [jitPrefix] + [args].
+/// environment (CI compiles the AOT bundle ONCE per run — the
+/// `fa-aot-build` job — and exports it for the whole test step), else the
+/// JIT [jitPrefix] + [args].
 ///
 /// Why the seam exists: every PTY/CLI integration test spawns a fresh
 /// `dart bin/fah.dart` and each spawn paid VM start + CFE kernel compile
