@@ -4650,4 +4650,8 @@
 - gh-1073 Session JSONL grows unboundedly (12 GiB ledger records) → resume fails with 'Failed to read session' + heap-exhaustion crash (#1247)
 - fix(1096): reseed fa-extension size floor for intentional js-apps skill growth (gh-1164) (#1258)
 
+## 1.0.516
+
+- gh-1299 [BUG] [URGENT] main red 13 legs: release commit v1.0.515 bumps version WITHOUT regenerating pubspec.lock — new --enforce-lockfile (#1268) hard-fails every leg (#1304)
+
 ## Unreleased
