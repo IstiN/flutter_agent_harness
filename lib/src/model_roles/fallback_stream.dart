@@ -604,10 +604,29 @@ final class _AttemptBuffer {
         immediate: death.immediate,
       );
     }
+    final retryable = event.reason == StopReason.error
+        ? _nonQueueRetryable(event)
+        : null;
+    if (retryable == null) {
+      _buffer.forEach(out.push);
+      out.push(event);
+      return const _Forwarded();
+    }
+    return retryable;
+  }
+
+  /// The non-queue retry decision (issue #418: queue mode owns the ladder
+  /// otherwise). Budget exhaustion and the gh-1308 zero-byte verdict
+  /// advance to the next chain entry at once; rate limits and transport
+  /// classes retry in place. Null forwards the event verbatim.
+  _Retryable? _nonQueueRetryable(ErrorEvent event) {
+    // A non-error pre-commit error event (a user/machine abort) stands
+    // verbatim — the chain never retries someone's abort decision.
+    if (event.reason != StopReason.error) return null;
     // Issue #926: budget/spending exhaustion is dead until the budget
     // reset — no paid retries, advance to the next chain entry at once
     // (the modelFallback notice carries the provider's budget wording).
-    if (event.reason == StopReason.error && isBudgetExhaustion(event.error)) {
+    if (isBudgetExhaustion(event.error)) {
       return _Retryable(event.retryAfter, event.error, immediate: true);
     }
     // gh-1308: the zero-byte stall verdict already consumed the entry's
@@ -617,8 +636,7 @@ final class _AttemptBuffer {
     // forwards the verdict. Checked BEFORE the generic transport class:
     // the tag classifies as transport too, but this class never earns
     // same-entry paid retries.
-    if (event.reason == StopReason.error &&
-        (event.error.errorMessage ?? '').contains(zeroByteStallTag)) {
+    if ((event.error.errorMessage ?? '').contains(zeroByteStallTag)) {
       return _Retryable(
         event.retryAfter,
         event.error,
@@ -626,25 +644,21 @@ final class _AttemptBuffer {
         immediate: true,
       );
     }
-    if (event.reason == StopReason.error &&
-        isRateLimitOrQuota(event.error, retryAfter: event.retryAfter)) {
+    if (isRateLimitOrQuota(event.error, retryAfter: event.retryAfter)) {
       // Not forwarded: the buffer is discarded and the chain retries.
       return _Retryable(event.retryAfter, event.error, isRateLimit: true);
     }
     final retryClass = finishReasonRetryClass(event.error);
-    if (event.reason == StopReason.error &&
-        (retryClass != null
-            ? retryClass != FinishReasonClass.terminal
-            : isTransientTransportError(event.error))) {
+    if (retryClass != null
+        ? retryClass != FinishReasonClass.terminal
+        : isTransientTransportError(event.error)) {
       // Not forwarded: same retry path, but the in-place policy (no key
       // rotation) — see [_onRetryable]. A classified finish_reason
       // (issue #312) rides it too: terminal (content_filter family)
       // never retries, transient/unknown vendor words do.
       return _Retryable(event.retryAfter, event.error, isTransport: true);
     }
-    _buffer.forEach(out.push);
-    out.push(event);
-    return const _Forwarded();
+    return null;
   }
 
   /// Flushes the buffered events (stream closed without a terminal event).
@@ -1078,8 +1092,9 @@ final class FallbackStreamFunction {
     if (_failoverTarget(state.tried) != null) {
       return _failOver(out, state);
     }
-    final bounded =
-        delay < policy.maxWaitForLastEntry ? delay : policy.maxWaitForLastEntry;
+    final bounded = delay < policy.maxWaitForLastEntry
+        ? delay
+        : policy.maxWaitForLastEntry;
     return _sleepAndRetry(
       out,
       state,
