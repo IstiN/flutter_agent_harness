@@ -1758,7 +1758,11 @@ per-transport services are dropped. When adding a capability: declare
 every host's cell, add its `requiredServices` to the catalog, wire its
 tools inside `wireAgentCore`'s canonical order, and extend the
 hosts test — never gate tool registration with a bare `if` outside the
-builder.
+builder. The task/subagent complex (fabric → manager → heartbeat →
+task/monitoring tools, slice 3) is builder-owned the same way: hosts pass
+shell glue as `SubagentServices` callbacks and keep handles from
+`WiredAgentCore` — a host never hand-assembles the manager or registers
+`task` outside the gated surface.
 
 ## Commits and releases
 
