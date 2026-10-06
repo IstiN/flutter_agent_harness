@@ -139,7 +139,7 @@ def slowest_table(rows):
     return lines
 
 
-def issue_body(breaches, warn_rows, run_url):
+def issue_body(breaches, slow_rows, run_url):
     """The `[ENH]` optimization-issue markdown (gh-1300 auto-filer)."""
     now = datetime.now(timezone.utc).date().isoformat()
     lines = [
@@ -155,10 +155,14 @@ def issue_body(breaches, warn_rows, run_url):
         "|-------|------------------:|-----------:|--------:|",
     ]
     for sid, wall, budget in breaches:
-        lines.append(f"| {sid} | {wall:.1f} | {budget:.1f} | "
-                     f"+{wall - budget:.1f} |")
+        # Unbudgeted shards breach with budget None (nothing to exceed —
+        # the shard must be budgeted in a reviewed PR), rendered as "—".
+        budget_cell = "—" if budget is None else f"{budget:.1f}"
+        over_cell = "—" if budget is None else f"+{wall - budget:.1f}"
+        lines.append(f"| {sid} | {wall:.1f} | {budget_cell} | "
+                     f"{over_cell} |")
     lines.append("")
-    lines.extend(slowest_table(warn_rows))
+    lines.extend(slowest_table(slow_rows))
     if run_url:
         lines.append("")
         lines.append(f"Run: {run_url}")
@@ -292,7 +296,7 @@ def main() -> int:
                 "budget — budget it in scripts/test_shard_budgets.json in a "
                 "reviewed PR; a new shard cannot sneak past the ratchet."
             )
-            breaches.append((sid, wall, float("inf")))
+            breaches.append((sid, wall, None))
             report.append(f"| {sid} | {wall:.1f} | {span:.1f} | — | "
                           f"{status} |")
             continue
@@ -324,10 +328,14 @@ def main() -> int:
                 "its budget in a reviewed PR."
             )
 
+    # Slowest rows from the BREACHING shards only; empty when failures
+    # exist with no breach (e.g. a budgeted shard that did not run).
+    slow_rows = []
     if breaches:
+        breaching = {sid for sid, _wall, _budget in breaches}
+        slow_rows = [r for sid in breaching for r in test_rows[sid]]
         report.append("")
-        all_rows = [r for sid in measured for r in test_rows[sid]]
-        report.extend(slowest_table(all_rows))
+        report.extend(slowest_table(slow_rows))
     if failures:
         report.append("")
         report.extend(failures)
@@ -337,9 +345,8 @@ def main() -> int:
             "shave; the budget does not move up." % len(failures)
         )
         if args.issue_body:
-            body_rows = [r for sid in measured for r in test_rows[sid]]
             with open(args.issue_body, "w", encoding="utf-8") as fh:
-                fh.write(issue_body(breaches, body_rows, args.run_url))
+                fh.write(issue_body(breaches, slow_rows, args.run_url))
         write_summary(report)
         return 1
     report.append("")

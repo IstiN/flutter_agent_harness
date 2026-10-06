@@ -11,7 +11,12 @@
 #   AC4 an unbudgeted shard is a loud failure (a new shard cannot sneak
 #       past the ratchet);
 #   AC5 --update-budgets is down-only: it lowers and adds, refuses to
-#       raise.
+#       raise;
+#   AC6 an unbudgeted-shard breach renders the issue body's budget/over
+#       cells as "—" (never the float("inf") sentinel garbage);
+#   AC7 the slowest-tests table (summary + issue body) carries rows from
+#       the BREACHING shards only, matching its "(breaching shards)"
+#       header.
 # Same discipline as check_lockfiles_selftest.sh (#1100 pattern): the
 # gate's own red exits are fixture-tested so the check cannot rot
 # silently.
@@ -160,6 +165,44 @@ b = json.load(open(sys.argv[1]))
 sys.exit(0 if abs(b["shards"]["0"] - 60.0) < 0.01 else 1)
 EOF
 check "AC5c raised entry left untouched" "$?"
+
+# ── AC6: an unbudgeted-shard breach files a "—" body, never inf ──────────
+out="$TMP/summary-e.txt"
+body="$TMP/issue-e.md"
+python3 "$GATE" --budgets "$budgets9" --issue-body "$body" \
+  "$TMP/integration-shard-9.json" >"$out" 2>&1
+check_fail "AC6 unbudgeted-shard breach exits 1" "$?"
+test -f "$body"
+check "AC6 issue body written for the unbudgeted shard" "$?"
+grep -qF "| 9 | 90.0 | — | — |" "$body"
+check "AC6 body renders — budget/over cells for the unbudgeted shard" "$?"
+grep -q "inf" "$body"
+check_fail "AC6 body never renders the inf sentinel garbage" "$?"
+
+# ── AC7: the slowest-tests table carries breaching shards' rows only ─────
+# Shard 0 breaches (wall 90 s > budget 60 s); shard 1 fits (90 < 300) and
+# runs differently-named tests, so table rows are attributable by name.
+cat >"$TMP/integration-shard-1.json" <<'EOF'
+{"type":"suite","suite":{"id":1,"path":"test/integration/green_a_suite_test.dart","platform":"vm"}}
+{"type":"suite","suite":{"id":2,"path":"test/integration/green_b_suite_test.dart","platform":"vm"}}
+{"type":"testStart","test":{"id":10,"name":"green case a","suiteID":1},"time":100}
+{"type":"testDone","testID":10,"result":"success","hidden":false,"time":60100}
+{"type":"testStart","test":{"id":11,"name":"green case b","suiteID":2},"time":60100}
+{"type":"testDone","testID":11,"result":"success","hidden":false,"time":90100}
+EOF
+budgets7="$TMP/budgets7.json"
+echo '{"_meta": {}, "warn_fraction": 0.9, "shards": {"0": 60.0, "1": 300.0}}' >"$budgets7"
+out="$TMP/summary-f.txt"
+body="$TMP/issue-f.md"
+python3 "$GATE" --budgets "$budgets7" --issue-body "$body" \
+  "$TMP/integration-shard-0.json" "$TMP/integration-shard-1.json" >"$out" 2>&1
+check_fail "AC7 partially-breaching run exits 1" "$?"
+for f in "$out" "$body"; do
+  grep -q "slow case" "$f"
+  check "AC7 $f carries the breaching shard's slow test" "$?"
+  grep -q "green case" "$f"
+  check_fail "AC7 $f keeps fitting shards' tests out of the slowest table" "$?"
+done
 
 echo
 if [ "$fails" = "0" ]; then
