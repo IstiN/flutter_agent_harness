@@ -23,8 +23,8 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:meta/meta.dart' show visibleForTesting;
 
 /// Parses one raw engine-log line into a [JsAppErrorEvent] when it is a
 /// structured `faAppError:{json}` record (the marker the bootstrap emits);
