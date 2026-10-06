@@ -54,10 +54,9 @@ final _turns = [
 const _allRunning = 'Background jobs (10) · 10 running · 0 done · 0 lost';
 
 /// One settle notice per finished job (`[bash] sh-… exited(0)`); exactly
-/// ten of these prove every command started AND finished.
-final _settleNotice = RegExp(r'\[bash\] sh-(\S+) exited\(0\)');
-
-/// The same row mid-drain — the countdown segment this test photographs.
+/// ten of these prove every command started AND finished — the proof set
+/// lives in the harness as [shellJobSettleNotice] / `settledJobNumbers`
+/// (top-level, unit-provable without a PTY).
 final _liveBoard = RegExp(r'Background jobs \(10\) · (\d+) running');
 
 /// Any live running count above zero — forbidden on the final frame.
@@ -138,22 +137,26 @@ void main() {
       _writeShot(harness, '301_shell_job_countdown_mid_$mid');
 
       // ── all ten FINISH: one settle notice per job, exactly ────────────
-      final drained = await harness.waitForOutput(
-        settleMs: 500,
-        timeout: const Duration(seconds: 60),
+      // gh-1337 (CI v1.0.520): this was a silence settle —
+      // `waitForOutput(settleMs: 500)` returns once ~1 s of raw-stream
+      // quiet passes. But this scenario staggers its sleeps exactly 1 s
+      // apart (3..12 s), so the gaps BETWEEN settle notices sit right on
+      // that threshold; one stretched gap on a loaded runner (job 7 → 8)
+      // returned mid-drain with the tail jobs unlanded and the capture
+      // held only {1..7}. The wait is now anchored on the proof data
+      // itself — all ten DISTINCT settle numbers present in the raw
+      // buffer — with a generous ceiling for slow runners; expiry throws
+      // with diagnostics instead of silently truncating.
+      final drained = await harness.waitForRaw(
+        (raw) => settledJobNumbers(raw).length == 10,
+        what: 'all ten distinct shell-job settle notices in raw output',
+        timeout: const Duration(seconds: 120),
       );
       // Frame repaints re-emit notices into the raw stream — the start/
       // finish proof is the set of DISTINCT settled job numbers, not the
-      // raw match count. Match on the NUMBER PREFIX, never the full id:
-      // a repaint can interleave cursor-move escapes mid-id (observed
-      // under CI load: `sh-10-…xqo<esc>[11;29H5<esc>[11;31H exited(0)`),
-      // and a fragmented re-emit would otherwise inflate the distinct-id
-      // set with a corrupt entry. The number is the first token written,
-      // so it survives any such fragmentation.
-      final settledNumbers = _settleNotice
-          .allMatches(drained)
-          .map((m) => m.group(1)!.split('-').first)
-          .toSet();
+      // raw match count (fragmented-id tolerance lives inside
+      // settledJobNumbers).
+      final settledNumbers = settledJobNumbers(drained);
       expect(
         settledNumbers,
         {for (var i = 1; i <= 10; i++) '$i'},

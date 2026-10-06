@@ -65,6 +65,24 @@ List<String> frameContentLines(List<String> viewport) => [
   for (final line in viewport) line.trimRight(),
 ];
 
+/// One finished background shell job's settle notice (`[bash] sh-… exited(0)`)
+/// as painted into the raw stream by the CLI; exactly one per job proves the
+/// command started AND finished.
+final shellJobSettleNotice = RegExp(r'\[bash\] sh-(\S+) exited\(0\)');
+
+/// The DISTINCT settled shell-job numbers in [raw] — the start/finish proof
+/// set for background-job suites. Matched on the NUMBER PREFIX, never the
+/// full id: a frame repaint can interleave cursor-move escapes mid-id
+/// (observed under CI load: `sh-10-…xqo<esc>[11;29H5<esc>[11;31H exited(0)`),
+/// and a fragmented re-emit must not inflate the distinct-id set with a
+/// corrupt entry. The number is the first token written, so it survives any
+/// such fragmentation. Top-level (like [maskedValueRow]) so the settle
+/// predicate is unit-testable without a PTY.
+Set<String> settledJobNumbers(String raw) => shellJobSettleNotice
+    .allMatches(raw)
+    .map((m) => m.group(1)!.split('-').first)
+    .toSet();
+
 /// The shared deadline-poll engine behind [FaCliHarness.waitForText] and
 /// [FaCliHarness.waitForScreen]: polls [matched] every [pollInterval] until
 /// it turns true or [timeout] expires, then returns [onHit]() — waitForText
@@ -501,6 +519,31 @@ final class FaCliHarness {
       screenText: () => screenText,
       rawTail: _rawTail,
       what: '"$pattern" on screen',
+      timeout: timeout,
+    );
+  }
+
+  /// Waits until [matched] accepts the accumulated raw output, then
+  /// returns that raw output (capture, don't re-read). The
+  /// predicate-anchored raw-stream wait: [waitForOutput] settles on
+  /// SILENCE — the wrong tool when the payload IS the stream, e.g.
+  /// waiting for N settle notices whose inter-arrival gaps rival the
+  /// settle window (gh-1337: the v1.0.520 countdown capture returned
+  /// mid-drain with the tail jobs unlanded because a stretched
+  /// inter-notice gap satisfied the silence rule). On expiry it throws
+  /// with the screen and raw-tail diagnostics — a settled-or-not answer
+  /// can never silently truncate the capture.
+  Future<String> waitForRaw(
+    bool Function(String raw) matched, {
+    String what = 'raw-output predicate',
+    Duration timeout = const Duration(seconds: 10),
+  }) {
+    return pollUntil(
+      matched: () => matched(_rawBuffer.toString()),
+      onHit: _rawBuffer.toString,
+      screenText: () => screenText,
+      rawTail: _rawTail,
+      what: what,
       timeout: timeout,
     );
   }
