@@ -29,6 +29,8 @@ import 'package:flutter_agent_harness/src/session/session_repo.dart';
 import 'package:flutter_agent_harness/src/types.dart';
 import 'package:test/test.dart';
 
+import 'pty_harness.dart';
+
 /// Records appended per turn (user + assistant + 2 tool results).
 const _recordsPerTurn = 4;
 

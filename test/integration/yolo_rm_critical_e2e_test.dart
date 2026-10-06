@@ -20,6 +20,8 @@ import 'package:test/test.dart';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
 
+import 'pty_harness.dart';
+
 void main() {
   late Directory tempHome;
   late Directory workspace;
@@ -38,11 +40,9 @@ void main() {
   });
 
   Future<ProcessResult> runHeadless(MockLlmServer server) {
-    return Process.run(
-      'dart',
+    // gh-1300: honor the FA_BIN AOT seam (compiled ONCE per CI shard).
+    final command = faCliCommand(
       [
-        'run',
-        'bin/fah.dart',
         '--provider',
         'openai-completions',
         '--base-url',
@@ -54,6 +54,11 @@ void main() {
         '-p',
         'hi',
       ],
+      jitPrefix: const ['dart', 'run', 'bin/fah.dart'],
+    );
+    return Process.run(
+      command.first,
+      command.sublist(1),
       workingDirectory: Directory.current.path,
       environment: {'OPENAI_API_KEY': 'mock', 'HOME': tempHome.path},
       stdoutEncoding: utf8,

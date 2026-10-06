@@ -11,6 +11,7 @@ import 'package:test/test.dart';
 
 import '../fa_cube_headless_helper.dart' show FaResult;
 import 'mock_session.dart';
+import 'pty_harness.dart';
 
 void main() {
   late Directory tempHome;

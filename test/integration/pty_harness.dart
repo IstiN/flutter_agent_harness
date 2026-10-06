@@ -108,8 +108,75 @@ Future<String> pollUntil({
   );
 }
 
+/// The resolved Fa CLI command (gh-1300): an explicit [faBin] (a per-spawn
+/// `extraEnv['FA_BIN']` override) wins, then the ambient `FA_BIN`
+/// environment (CI compiles the AOT bundle ONCE per shard job and exports
+/// it for the whole test step), else the JIT [jitPrefix] + [args].
+///
+/// Why the seam exists: every PTY/CLI integration test spawns a fresh
+/// `dart bin/fah.dart` and each spawn paid VM start + CFE kernel compile
+/// of the whole harness before `main()` ran (~30 s per test on loaded
+/// ARM runners; even green mock suites measured 28-32 s end-to-end).
+/// The AOT bundle pays the compile ONCE per shard and a spawn drops to
+/// ~1 s — while per-test isolation is untouched (each spawn is still a
+/// fresh process with the caller's env/cwd), which is the point: gh-1300
+/// ships FA_BIN first because it captures the win with zero isolation
+/// redesign.
+///
+/// [jitPrefix] preserves each call site's exact JIT shape when the seam
+/// is unset (local runs): the PTY harness uses the direct-VM
+/// `dart <abs>/bin/fah.dart` (possibly with VM flags before the script
+/// path), the headless helpers use `dart run bin/fah.dart`.
+///
+/// Pure with injectable inputs — [ambientFaBin]/[useAmbientFaBin] let the
+/// unit test pin both inputs instead of reading the environment (a CI
+/// shard exports FA_BIN for the whole leg, so an environment read would
+/// be order- and host-dependent there).
+List<String> faCliCommand(
+  List<String> args, {
+  String? faBin,
+  bool useAmbientFaBin = true,
+  String? ambientFaBin,
+  List<String> jitPrefix = const ['dart', 'bin/fah.dart'],
+}) {
+  final ambient =
+      ambientFaBin ?? (useAmbientFaBin ? Platform.environment['FA_BIN'] : null);
+  final bin = (faBin != null && faBin.isNotEmpty)
+      ? faBin
+      : (ambient != null && ambient.isNotEmpty ? ambient : null);
+  return bin != null ? [bin, ...args] : [...jitPrefix, ...args];
+}
+
 /// Spawns the Fa CLI as a subprocess with a PTY, feeds output to an xterm
 /// terminal emulator, and provides keystroke sending + output capture.
+///
+/// PER-SPAWN RESET CONTRACT (gh-1300 AC5): isolation between tests is by
+/// process construction — every test spawns a fresh CLI, so state resets
+/// to empty rather than being cleared. The inventory, explicitly:
+///
+/// - session store — fresh (a new process sees no session for its slug);
+/// - config + keys — the caller passes a temp HOME (`extraEnv['HOME']`;
+///   the env whitelist above never forwards the developer's real
+///   environment), so `.fah` config and keys start clean per spawn;
+/// - mailbox/inbox dirs, secrets store, provider-mock state — all live
+///   under that temp HOME / the caller's server; a fresh process starts
+///   with none;
+/// - screen/scrollback + composer state — a fresh [Terminal] per spawn;
+/// - skill/approval turn grants, shell-job registry — in-memory, die with
+///   the process (a killed CLI can leak no background jobs into the next
+///   test);
+/// - hub — always pinned to the dead loopback above (a caller may point
+///   `extraEnv` at its own hub; the dead default means a boot never
+///   dials a foreign hub);
+/// - per-spawn CWD — a UNIQUE git-init'd temp dir per spawn (#948
+///   lesson: no shared mutable dir exists, so no run's teardown can
+///   delete another run's cwd).
+///
+/// What STAYS across tests within a shard job: the compiled binary itself
+/// (immutable for the job — the `FA_BIN` AOT seam), the pub cache
+/// (read-only inputs) and the shell host. Nothing else is shared by
+/// construction. (gh-1300's boot-once + process-reset design is the
+/// follow-up this contract is written for; FA_BIN lands first.)
 final class FaCliHarness {
   FaCliHarness._(
     this.pty,
@@ -201,30 +268,30 @@ final class FaCliHarness {
       'DAP_LOCAL_HUB_URL': 'ws://127.0.0.1:1/ws',
       ...?extraEnv,
     };
-    // FA_BIN (test-only seam): run a prebuilt binary (e.g. the AOT bundle
-    // from `dart build cli`) instead of JIT `dart bin/fah.dart` — perf
-    // probes must measure what install_local.sh actually ships.
     // Own the default CWD when the caller did not pin one, so close()/
     // hardKill() can remove it (review #963: a fresh git-init'd root per
     // spawn must not accumulate across runs on persistent hosts).
     final ownedCwd = workingDirectory == null ? _shortDefaultCwd() : null;
-    final faBin = extraEnv?['FA_BIN'];
-    final pty = PseudoTerminal.start(
-      faBin ?? 'dart',
-      // Absolute script path so a non-default [workingDirectory] still
-      // resolves the repo's binary (folder-scoping tests launch fa in
-      // temp dirs while package resolution stays on the repo).
-      [
-        if (faBin == null) ...[
-          // VM flags go BEFORE the script path.
-          if (vmServicePort != null) ...[
-            '--disable-service-auth-codes',
-            '--observe=$vmServicePort',
-          ],
-          '${Directory.current.path}/bin/fah.dart',
+    final command = faCliCommand(
+      args,
+      faBin: extraEnv?['FA_BIN'],
+      jitPrefix: [
+        'dart',
+        // VM flags go BEFORE the script path (JIT shape only; the AOT
+        // binary has no VM service and ignores vmServicePort).
+        if (vmServicePort != null) ...[
+          '--disable-service-auth-codes',
+          '--observe=$vmServicePort',
         ],
-        ...args,
+        // Absolute script path so a non-default [workingDirectory] still
+        // resolves the repo's binary (folder-scoping tests launch fa in
+        // temp dirs while package resolution stays on the repo).
+        '${Directory.current.path}/bin/fah.dart',
       ],
+    );
+    final pty = PseudoTerminal.start(
+      command.first,
+      command.sublist(1),
       workingDirectory: ownedCwd?.path ?? workingDirectory,
       environment: env,
       raw: raw,

@@ -18,6 +18,8 @@ import 'package:flutter_agent_harness/io.dart' show LocalHub;
 import 'package:flutter_agent_harness/src/hub/dap_local_hub_state.dart';
 import 'package:test/test.dart';
 
+import 'pty_harness.dart';
+
 void main() {
   late Directory tempHome;
   late int port;
@@ -52,9 +54,12 @@ void main() {
     'DAP_HUB_PID_FILE': dapHubPidFileFor(tempHome.path),
   };
 
-  Future<ProcessResult> fa(List<String> args) => Process.run(
-    'dart',
-    ['bin/fah.dart', 'dap', ...args],
+  Future<ProcessResult> fa(List<String> args) {
+    // gh-1300: honor the FA_BIN AOT seam (compiled ONCE per CI shard).
+    final command = faCliCommand(['dap', ...args]);
+    return Process.run(
+      command.first,
+      command.sublist(1),
     workingDirectory: Directory.current.path,
     environment: envOf(),
     stdoutEncoding: utf8,

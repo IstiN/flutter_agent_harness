@@ -24,6 +24,8 @@ import 'package:test/test.dart';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
 
+import 'pty_harness.dart';
+
 void main() {
   late Directory tempHome;
   late Directory workspace;
