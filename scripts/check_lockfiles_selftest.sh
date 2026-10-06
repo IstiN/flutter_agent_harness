@@ -18,6 +18,11 @@
 # a dashed podspec name must NOT false-red (part of the healthy fixture);
 # a corrupt plugins file must fail with a clean ::error::, not a Python
 # traceback (case 8).
+# PR #1304 rework addition: `list` mode (the release dirty-gate's inventory
+# source, gh-1299 NG1) prints exactly the ONE inventory (case 11).
+# gh-1303 rework addition: the app lock's path-dep pin must equal the root
+# pubspec version — a stale pin reds, the synced bump shape passes
+# (cases 12/13).
 
 set -euo pipefail
 
@@ -212,7 +217,33 @@ make_fixture "$d" "  - native_pkg (0.0.2):"
 rm "$d/browser_ext/e2e/package-lock.json"
 expect_fail "deleted e2e package-lock.json fails" "$d" bash "$GATE" inventory
 
-# 11. gh-1303: the app lock pins THIS repo as a path dependency — a pin
+# 11. PR #1304 rework threads 1+5: `list` mode is the ONE inventory source
+#     auto_release.sh's release dirty-tree gate consumes (gh-1299 NG1) — it
+#     must exit 0 and print exactly the inventoried paths, one per line,
+#     nothing else. A silent/empty/broken `list` is what let the rework
+#     threads flag the empty-array no-op hazard, so the mode itself stays
+#     asserted here.
+d="$tmp/list-mode"
+make_fixture "$d" "  - native_pkg (0.0.2):"
+if ! list_out="$( cd "$d" && FAH_REPO_ROOT="$d" bash "$GATE" list )"; then
+  echo "FAIL: list mode must exit 0 — it is the release dirty-gate's inventory source" >&2
+  exit 1
+fi
+expected_list="flutter_app/pubspec.lock
+flutter_app/ios/Podfile.lock
+flutter_app/macos/Podfile.lock
+vendor/flutter_inappwebview_macos/macos/flutter_inappwebview_macos/Package.resolved
+browser_ext/e2e/package-lock.json
+office_addin/e2e/package-lock.json
+vendor/wasm_run/native/Cargo.lock"
+if [ "$list_out" != "$expected_list" ]; then
+  echo "FAIL: list mode must print exactly the ONE inventory, one path per line. Got:" >&2
+  printf '%s\n' "$list_out" >&2
+  exit 1
+fi
+echo "ok: list mode prints the ONE inventory verbatim (release dirty-gate source)"
+
+# 12. gh-1303: the app lock pins THIS repo as a path dependency — a pin
 #     that diverged from the root pubspec version reds every
 #     `flutter pub get --enforce-lockfile` consumer (pages.yml web demo,
 #     ci.yml flutter legs) the moment the skew lands on main. Must red at
@@ -231,9 +262,9 @@ cat >> "$d/flutter_app/pubspec.lock" <<'EOF'
 EOF
 expect_fail_clean "stale path-dep pin in the app lock fails" "$d" bash "$GATE" inventory
 
-# 12. The same fixture with the pin re-synced (exactly what the release
-#     bump in scripts/auto_release.sh now writes) must pass — no false
-#     positive on the healthy bump shape.
+# 13. The same fixture with the pin re-synced (exactly the shape the release
+#     bump in scripts/auto_release.sh ships in the chore(release): commit)
+#     must pass — no false positive on the healthy bump shape.
 d="$tmp/fresh-path-pin"
 make_fixture "$d" "  - native_pkg (0.0.2):"
 printf 'name: repo\nversion: 1.2.3\n' > "$d/pubspec.yaml"
