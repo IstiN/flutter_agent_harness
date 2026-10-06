@@ -2578,10 +2578,18 @@ void main() {
         cancelToken: source.token,
       ).toList();
 
-      expect(calls, 3, reason: 'the full transient budget is spent');
+      // gh-1308: the zero-byte budget is 2 consecutive watchdog-killed
+      // silent attempts. The ladder never spends its third attempt (and
+      // the caller's whole cap with it) replaying into an endpoint that
+      // produced nothing across the first two.
+      expect(calls, 2, reason: 'the zero-byte replay budget is bounded');
       final terminal = events.whereType<ErrorEvent>().single;
       expect(terminal.reason, StopReason.error);
-      expect(terminal.error.errorMessage, contains('failed after 3'));
+      expect(terminal.error.errorMessage, contains('after 2 attempt(s)'));
+      // The zero-byte classification rides the terminal (NG1): upper
+      // layers and post-mortems can tell a provider hang from other
+      // failures without opening logs.
+      expect(terminal.error.errorMessage, contains(zeroByteStallTag));
       // The per-attempt story names the machine trigger, not just the
       // raw abort (review r1, thread 1).
       expect(
@@ -2591,10 +2599,64 @@ void main() {
           'Request was aborted',
         ),
       );
+      // The terminal is classified RETRYABLE/transport so the roles
+      // ladder fails over to the next configured model (gh-1308 AC2)
+      // instead of standing.
+      expect(isTransientNetworkError(terminal.error), isTrue);
       // The latch is re-armed: the run ends as a provider ERROR the
       // roles ladder can act on — never a fake `aborted` (the #1122
       // misclassification in the bench repro).
       expect(source.token.isCancelled, isFalse);
+    });
+
+    test('the zero-byte stall terminal is transport-classified for the '
+        'roles ladder and a queue timeout death', () {
+      final terminal = testAssistant(
+        stopReason: StopReason.error,
+        errorMessage:
+            'Provider zero-byte stall after 2 attempt(s) over 9s — the '
+            'endpoint accepted the request but streamed nothing '
+            '(zero-byte stall). Check the provider status or try again '
+            'later.',
+      );
+      expect(isTransientNetworkError(terminal), isTrue);
+    });
+
+    test('a socket-class failure chain keeps the full 3-attempt budget — '
+        'the zero-byte bound governs only watchdog-killed silent attempts',
+        () async {
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        final stream = AssistantMessageEventStream();
+        scheduleMicrotask(() {
+          stream
+            ..push(
+              ErrorEvent(
+                reason: StopReason.error,
+                error: testAssistant(
+                  stopReason: StopReason.error,
+                  errorMessage: 'Connection reset by peer',
+                ),
+              ),
+            )
+            ..end();
+        });
+        return stream;
+      });
+
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).toList();
+
+      expect(calls, 3, reason: 'socket-class replays keep the full budget');
+      final terminal = events.whereType<ErrorEvent>().single;
+      expect(terminal.error.errorMessage, contains('failed after 3'));
     });
 
     test('a USER abort before any byte still stands — no replay', () async {

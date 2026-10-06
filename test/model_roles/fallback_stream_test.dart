@@ -762,6 +762,25 @@ void main() {
         ];
       }
 
+      /// The terminal the transient ladder emits after its zero-byte
+      /// replay budget is spent (gh-1308): the endpoint accepted every
+      /// request and produced nothing — the run-idle watchdog killed the
+      /// silent attempts.
+      List<AssistantMessageEvent> zeroByteStallTurn(Model model) {
+        return transportTurn(
+          model,
+          error:
+              'Provider zero-byte stall after 2 attempt(s) over 962s — the '
+              'endpoint accepted the request but streamed nothing; the '
+              'run-idle watchdog killed every silent attempt (zero-byte '
+              'stall). Attempts: run-idle watchdog replay of zero-byte '
+              'request: Request was aborted; run-idle watchdog replay of '
+              'zero-byte request: Request was aborted. The failure is '
+              'retryable: a fallback model may take over, or check the '
+              'provider status / try again later.',
+        );
+      }
+
       test('retries the same entry on a dropped connection', () async {
         final a = _model('openai', 'gpt-a');
         final probe = _Probe({
@@ -910,6 +929,35 @@ void main() {
         expect(probe.calls, ['v-a', 'v-b']);
         expect(notices.single.kind, FallbackNoticeKind.modelFallback);
       });
+
+      test(
+        'gh-1308 AC2: a zero-byte stall on the primary hands off to the '
+        'next chain entry — the fallback answers, its model recorded',
+        () async {
+          final a = _model('openai', 'gpt-a');
+          final b = _model('anthropic', 'claude-b');
+          final probe = _Probe({
+            'v-a': [zeroByteStallTurn(a)],
+            'v-b': [_okTurn(b, 'hello from the fallback')],
+          });
+          final w = wrapper([
+            entry(probe, a, ['v-a']),
+            entry(probe, b, ['v-b']),
+          ], policy: const ModelRolesRetryPolicy(retriesPerEntry: 0));
+
+          final events = await run(w);
+
+          // The turn completes on the SECONDARY — the hung primary did
+          // not dead-end the run.
+          expect(events.last, 'done:${b.id}');
+          expect(probe.calls, ['v-a', 'v-b']);
+          final fallback = notices.single;
+          expect(fallback.kind, FallbackNoticeKind.modelFallback);
+          expect(fallback.toModel, 'anthropic/claude-b');
+          // The take-over reason names the zero-byte classification.
+          expect(fallback.reason, contains('zero-byte stall'));
+        },
+      );
 
       test(
         'forwards the last transport error when the chain exhausts',
