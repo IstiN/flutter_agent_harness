@@ -487,6 +487,68 @@ void main() {
         expect(wired.subagentManager, isNull);
       },
     );
+
+    test('hub-only run keeps the wired hub — no silent fabric discard', () {
+      // A transport-narrowed profile (the mobile shape: hub, no file
+      // layer) must still get its WIRED hub as the fabric — the file
+      // transport's absence discards only the file layer, never the
+      // whole fabric.
+      const hub = _HubRepo();
+      final profile = cliProfile.narrowed({
+        HostCapability.messagingFabric: CapabilityTransportState({
+          'hub',
+        }, 'test hub-only host'),
+      });
+      final wired = wireAgentCore(
+        profile: profile,
+        services: AgentCoreServices(
+          baseEnv: MemoryExecutionEnv(cwd: '/w'),
+          sandbox: const SandboxServices(),
+          media: MediaToolServices(mainApiKey: () => 'k'),
+          hubFabric: hub,
+          mainMailbox: () => 'main',
+          sessionRoot: '/tmp/fah-test',
+          subagents: SubagentServices(
+            notifyHeartbeat: (_) {},
+            heartbeatMinutes: () => 0,
+          ),
+        ),
+      );
+      expect(
+        wired.plan.planFor(HostCapability.messagingFabric),
+        isA<WiredCapability>(),
+      );
+      expect(wired.fabric, same(hub));
+      expect(wired.fileFabric, isNull);
+      expect(wired.messagesRoot, isNull);
+    });
+
+    test('hub wired without a mainMailbox resolver fails loudly (E1)', () {
+      final services = AgentCoreServices(
+        baseEnv: MemoryExecutionEnv(cwd: '/w'),
+        sandbox: const SandboxServices(),
+        media: MediaToolServices(mainApiKey: () => 'k'),
+        sessionRoot: '/tmp/fah-test',
+        hubFabric: const _HubRepo(),
+        // No mainMailbox: the hub merge seam is unnamed — must be a loud
+        // E1 build failure, never a silent null-resolver crash at mail
+        // time.
+        subagents: SubagentServices(
+          notifyHeartbeat: (_) {},
+          heartbeatMinutes: () => 0,
+        ),
+      );
+      expect(
+        () => wireAgentCore(profile: cliProfile, services: services),
+        throwsA(
+          isA<HostWiringException>().having(
+            (e) => e.message,
+            'message',
+            contains('mainMailbox'),
+          ),
+        ),
+      );
+    });
   });
 }
 

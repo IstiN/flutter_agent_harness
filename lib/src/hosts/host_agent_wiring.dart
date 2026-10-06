@@ -606,10 +606,14 @@ final class _WiredTaskSurface {
 /// run-narrowing (hub fabric provided). Independent of the subagent
 /// complex — the MAIN inbox drain rides it even where subagents stay
 /// off. Null when the profile declares the capability off.
+///
+/// File-less shapes keep their wired hub: a hub-only (mobile) profile
+/// gets the hub repository itself as the fabric — the file transport's
+/// absence discards only the file layer, never the whole fabric.
 ({
   MessagingRepository fabric,
-  SwappableMessagingRepository fileFabric,
-  String messagesRoot,
+  SwappableMessagingRepository? fileFabric,
+  String? messagesRoot,
 })?
 _wireFabric({
   required HostWiringPlan plan,
@@ -618,8 +622,16 @@ _wireFabric({
   final fabricPlan = plan.planFor(HostCapability.messagingFabric);
   if (fabricPlan is! WiredCapability) return null;
   final transports = fabricPlan.transports;
-  if (!transports.contains('file') || services.sessionRoot == null) {
-    return null;
+  final wantFile = transports.contains('file');
+  if (wantFile && services.sessionRoot == null) {
+    // E1: run-narrowing guarantees sessionRoot for a wired file
+    // transport; a caller bypassing _narrowToServices gets the loud
+    // named failure instead of a silent discard.
+    throw HostWiringException(
+      'Profile "${plan.profile.name}" wires the messagingFabric file '
+      'transport but the host provided no sessionRoot (E1: name the '
+      'missing service, never a null crash at write time).',
+    );
   }
   if (transports.contains('hub') && services.mainMailbox == null) {
     // E1: the hub primary merges mail into a host-named mailbox — a host
@@ -629,6 +641,13 @@ _wireFabric({
       'transport but the host provided no mainMailbox resolver (E1: name '
       'the missing service, never a null crash at mail time).',
     );
+  }
+  if (!wantFile) {
+    // File-less (hub-only/mobile) profile: the wired hub IS the fabric —
+    // no file layer to swap and no root to name. Null never rides here:
+    // run-narrowing dropped the hub transport when hubFabric was absent,
+    // so a hub-only shape means the hub is present.
+    return (fabric: services.hubFabric!, fileFabric: null, messagesRoot: null);
   }
   return buildAgentFabric(
     env: services.baseEnv,
