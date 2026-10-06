@@ -106,11 +106,11 @@ void main() {
       lines[4],
       endsWith(' tool end sid=yoclip-1a2b name=bash error=false'),
     );
-    // The CLI's heartbeat line shape: out=<n>B attempt=<n>.
+    // The CLI's heartbeat line shape: name=… elapsed=… out=<n>B attempt=<n>.
     expect(
       lines[5],
       endsWith(
-        ' tool heartbeat sid=yoclip-1a2b elapsed=12s out=834B attempt=1',
+        ' tool heartbeat sid=yoclip-1a2b name=bash elapsed=12s out=834B attempt=1',
       ),
     );
     expect(

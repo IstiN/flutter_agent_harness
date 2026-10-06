@@ -84,6 +84,10 @@ final class AgentTelemetryEvent {
   /// The stuck-supervision attempt number (toolHeartbeat/toolStuck only).
   final int? attempt;
 
+  /// Free-form detail: model id on requestStart/firstToken, the formatted
+  /// provider error on error, the stuck action label on toolStuck.
+  final String? detail;
+
   const AgentTelemetryEvent({
     required this.kind,
     required this.timestamp,

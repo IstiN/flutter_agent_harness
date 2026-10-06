@@ -76,7 +76,7 @@ final class FileAgentTelemetrySink implements AgentTelemetrySink {
   /// terminal lines. [detail]-less events render without a trailing
   /// segment (never a dangling separator).
   String _message(AgentTelemetryEvent event) {
-    final tail = _tail(event);
+    final tail = _tail(event) ?? '';
     final head = switch (event.kind) {
       AgentTelemetryEventKind.runStart => 'run start',
       AgentTelemetryEventKind.turnStart => 'turn start',
@@ -104,15 +104,21 @@ final class FileAgentTelemetrySink implements AgentTelemetrySink {
       AgentTelemetryEventKind.turnStart => const <String>[],
       AgentTelemetryEventKind.requestStart => [?detail],
       AgentTelemetryEventKind.firstToken => [?detail],
-      AgentTelemetryEventKind.toolStart => [?name],
-      AgentTelemetryEventKind.toolEnd => [?name, 'error=${event.isError}'],
+      AgentTelemetryEventKind.toolStart => [if (name != null) 'name=$name'],
+      AgentTelemetryEventKind.toolEnd => [
+        if (name != null) 'name=$name',
+        'error=${event.isError}',
+      ],
       AgentTelemetryEventKind.toolHeartbeat => [
-        ?name,
+        if (name != null) 'name=$name',
         ?detail,
         if (event.outputBytes != null) 'out=${event.outputBytes}B',
         if (event.attempt != null) 'attempt=${event.attempt}',
       ],
-      AgentTelemetryEventKind.toolStuck => [?name, ?detail],
+      AgentTelemetryEventKind.toolStuck => [
+        if (name != null) 'name=$name',
+        ?detail,
+      ],
       AgentTelemetryEventKind.turnEnd => [
         'stop=${event.stopReason}',
         'elapsed=${event.sinceRunStart.inSeconds}s',
