@@ -1800,7 +1800,15 @@ shell glue as `SubagentServices` callbacks and keep handles from
   stale version vs the resolved plugin podspec's `s.version` (the
   flutter_gemma 1.8.0-vs-1.11.3 skew; the podspec is the comparison target,
   not the pubspec version — vendored/beta pods legitimately differ from the
-  Dart package version). After ANY pubspec.yaml
+  Dart package version). The inventory also enforces the gh-1303 path-pin
+  sync: `flutter_app/pubspec.lock` pins this repo as a path dependency, so
+  its `flutter_agent_harness` pin must EXIST and equal the root
+  `pubspec.yaml` version — a stale OR MISSING pin (e.g. a merge conflict
+  resolved by dropping the entry) makes every
+  `flutter pub get --enforce-lockfile` consumer red —
+  the release bump re-pins the lock itself (`scripts/auto_release.sh`
+  ships the re-pin inside the `chore(release):` commit), and the Static
+  gate catches any other path to the drift at PR time. After ANY pubspec.yaml
   dependency change that adds/updates a darwin-native plugin: `cd
   flutter_app/ios && pod install --repo-update` and the same in `macos/`,
   commit both `Podfile.lock`s (CocoaPods runs fine on Linux for
