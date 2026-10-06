@@ -4654,4 +4654,8 @@
 
 - gh-1299 [BUG] [URGENT] main red 13 legs: release commit v1.0.515 bumps version WITHOUT regenerating pubspec.lock — new --enforce-lockfile (#1268) hard-fails every leg (#1304)
 
+## 1.0.517
+
+- gh-1299 [BUG] [URGENT] main red 13 legs: release commit v1.0.515 bumps version WITHOUT regenerating pubspec.lock — new --enforce-lockfile (#1268) hard-fails every leg (#1304)
+
 ## Unreleased
