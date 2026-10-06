@@ -144,10 +144,13 @@ PY
 
   git add pubspec.yaml flutter_app/pubspec.yaml CHANGELOG.md flutter_app/pubspec.lock
 
+  git commit -m "chore(release): v$next"
+
   # No committed lockfile may stay dirty across a release (gh-1299 NG1):
   # anything the refresh above could not regenerate (Podfile.lock needs
   # macOS `pod install`, npm pins need `npm install`) fails the release
-  # LOUDLY here instead of shipping a bump that leaves the tree stale.
+  # LOUDLY here — after the commit (the staged refresh must not trip this),
+  # before the push. Never a shipped bump that leaves the tree stale.
   # The list comes from the ONE inventory (scripts/check_lockfiles.sh).
   lockfiles=()
   while IFS= read -r f; do lockfiles+=("$f"); done < <(bash scripts/check_lockfiles.sh list)
@@ -158,8 +161,6 @@ PY
     echo "::error::regenerate them (flutter pub get; pod install on macOS for the Podfile.locks; npm install for the e2e package-locks), commit, re-run the release."
     exit 1
   fi
-
-  git commit -m "chore(release): v$next"
 
   if [ "$dry_run" -eq 1 ]; then
     echo "Auto-release DRY-RUN: would push to main: $(git rev-parse --short HEAD) 'chore(release): v$next'"
