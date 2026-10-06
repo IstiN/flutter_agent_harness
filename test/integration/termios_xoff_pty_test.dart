@@ -93,7 +93,9 @@ allowedTools: []
         ],
       );
       addTearDown(harness.close);
-      await harness.waitForBoot(timeout: const Duration(seconds: 300));
+      // gh-1300: boot is the AOT binary in CI (~1 s) — the 300 s JIT
+      // band-aid is gone; the harness 90 s default is back in charge.
+      await harness.waitForBoot();
 
       await harness.runSlashCommand('run the tool please');
       // The corruption's own receipt — and a fail-fast diagnostic: if the
