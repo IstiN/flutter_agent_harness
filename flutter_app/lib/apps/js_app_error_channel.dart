@@ -23,7 +23,6 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 /// Parses one raw engine-log line into a [JsAppErrorEvent] when it is a
@@ -31,20 +30,22 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 /// returns null for every other line. Exported for the engine's log tap
 /// and for tests.
 ///
-/// The record is located by the marker and decoded as the first balanced
-/// `{…}` object after it (string-literal aware) — NOT as the exact rest of
-/// the line. The engine's transport wraps console lines in the iid tag's
-/// `{id: "[E] faAppError:{…}"}` envelope by the time they reach Dart
-/// (flutter_js jsonDecodes the sendMessage payload before the channel
-/// callback, so the wrap survives routing — gh-1307), and a trailing
-/// envelope brace used to make the payload malformed JSON, silently
-/// blinding the whole capture surface. Any envelope around the record now
-/// decodes; a marker mention inside a plain log line still returns null.
+/// The record's `{` must be the first non-whitespace character after the
+/// marker — both wire shapes put it there (the plain
+/// `[E] faAppError:{json}` and the iid envelope `{id: "[E] faAppError:{…}"}`
+/// the engine's transport wraps console lines in by the time they reach
+/// Dart; flutter_js jsonDecodes the sendMessage payload before the channel
+/// callback, so the wrap survives routing — gh-1307). The object is then
+/// decoded as the first balanced `{…}` from that brace (string-literal
+/// aware — NOT the exact rest of the line, whose trailing envelope brace
+/// used to make the payload malformed JSON and silently blind the whole
+/// capture surface). A marker mention inside a plain log line — with or
+/// without unrelated JSON after it — returns null.
 JsAppErrorEvent? parseJsAppErrorLogLine(String line) {
   const marker = 'faAppError:';
   final index = line.indexOf(marker);
   if (index < 0) return null;
-  final payload = balancedJsonObjectAfter(line, index + marker.length);
+  final payload = _balancedJsonObjectAfter(line, index + marker.length);
   if (payload == null) return null;
   try {
     final decoded = jsonDecode(payload);
@@ -57,14 +58,19 @@ JsAppErrorEvent? parseJsAppErrorLogLine(String line) {
   return null;
 }
 
-/// The first balanced `{…}` object in [line] starting at or after [from]
-/// (the scan begins at the first `{` found there), honoring string
-/// literals and backslash escapes so braces inside message/stack text
-/// never cut the record short. Null when no balanced object exists.
-@visibleForTesting
-String? balancedJsonObjectAfter(String line, int from) {
-  final start = line.indexOf('{', from);
-  if (start < 0) return null;
+/// The balanced `{…}` object whose `{` is the first non-whitespace
+/// character at or after [from] (the position right after the
+/// `faAppError:` marker), honoring string literals and backslash escapes
+/// so braces inside message/stack text never cut the record short. Null
+/// when anything but whitespace precedes the record's `{` (a plain log
+/// line mentioning the marker) or no balanced object exists (a truncated
+/// record).
+String? _balancedJsonObjectAfter(String line, int from) {
+  var start = from;
+  while (start < line.length && line[start].trim().isEmpty) {
+    start++;
+  }
+  if (start >= line.length || line[start] != '{') return null;
   var depth = 0;
   var inString = false;
   for (var i = start; i < line.length; i++) {

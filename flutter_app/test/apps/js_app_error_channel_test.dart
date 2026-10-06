@@ -146,6 +146,27 @@ void main() {
       expect(event.message, contains('{token}'));
     });
 
+    test('a marker mention in a plain log line followed by unrelated JSON '
+        'is NOT captured — the record `{` must be the first non-whitespace '
+        'character after the marker (gh-1307 review)', () {
+      final event = parseJsAppErrorLogLine(
+        'the host parses faAppError: records like {"message":"hint"}',
+      );
+      expect(event, isNull, reason: 'a marker mention is not a record');
+    });
+
+    test('a truncated (unbalanced) record stays null — never a best-effort '
+        'prefix decode (gh-1307 review: pins the scanner\u2019s truncation '
+        'exit)', () {
+      expect(
+        parseJsAppErrorLogLine(
+          '[E] faAppError:{"kind":"showError","message":"x"',
+        ),
+        isNull,
+        reason: 'unbalanced record must stay null, not decode a prefix',
+      );
+    });
+
     test('non-record lines (plain logs, marker-free, malformed payloads) '
         'return null', () {
       expect(parseJsAppErrorLogLine('hello world'), isNull);
