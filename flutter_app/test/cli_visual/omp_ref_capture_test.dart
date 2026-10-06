@@ -289,6 +289,38 @@ void main() {
       File('$outDir/02_status_bar_default.png').readAsBytesSync(),
     )!;
 
+    // THEME-PIN GUARD (issue #918 round-2 CI red): the parity leg anchors
+    // the omp band on the CAPTURED theme token. The first capture claimed
+    // `theme: dark` but committed AUTO-DARK twins (a #070A10 bar — the
+    // `theme:` map shape omp ignores) and nothing at capture time caught
+    // it. Assert the pinned dark theme's #121212 band fill is actually on
+    // screen in the bar region before the twins are committed: a pin that
+    // doesn't take must fail HERE (manual run, omp sources at hand), not
+    // as a red merge-blocking leg or a silently wrong baseline later.
+    var bandHits = 0;
+    for (var y = (barPng.height * 33) ~/ 36; y < barPng.height; y++) {
+      for (var x = 0; x < barPng.width; x += 4) {
+        final p = barPng.getPixel(x, y);
+        if ((p.r - 0x12).abs() <= 2 &&
+            (p.g - 0x12).abs() <= 2 &&
+            (p.b - 0x12).abs() <= 2) {
+          bandHits++;
+        }
+      }
+    }
+    expect(
+      bandHits,
+      greaterThan(50),
+      reason:
+          'the captured omp bar band is not the pinned dark theme '
+          '(#121212 statusLineBg) — the `theme:` pin in '
+          '.omp/agent/config.yml did not take (omp kept its auto-dark '
+          '#070A10, exactly what the first capture committed). Verify the '
+          'theme key against omp\'s config parser and re-capture BEFORE '
+          'committing these twins (issue #918). #121212 hits in the bar '
+          'region: $bandHits',
+    );
+
     final ompCommit = (await tester.runAsync(() async {
       final result = await Process.run('git', [
         '-C',

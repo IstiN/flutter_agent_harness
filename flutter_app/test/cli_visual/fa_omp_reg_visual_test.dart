@@ -356,7 +356,7 @@ void _pixelCompareBand(String faShotsDir, String name, String repoRoot) {
   expect(faPng.height, ompPng.height, reason: 'render geometry drifted');
 
   const ompToken = [0x07, 0x0a, 0x10]; // omp auto-dark, the captured theme
-  final faToken = [0x1e, 0x22, 0x2a]; // fa band = theme userMessageBg
+  const faToken = [0x1e, 0x22, 0x2a]; // fa band = theme userMessageBg
   final ompBand = _findBandRow(ompPng, ompToken);
   expect(
     ompBand,
