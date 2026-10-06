@@ -1,38 +1,7 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:dart_tui/dart_tui.dart';
 import 'package:test/test.dart';
 
-class _StringSink implements IOSink {
-  final StringBuffer buf = StringBuffer();
-  @override
-  void write(Object? obj) => buf.write(obj);
-  @override
-  void writeln([Object? obj = '']) => buf.writeln(obj);
-  @override
-  void writeAll(Iterable<dynamic> objects, [String separator = '']) =>
-      buf.writeAll(objects, separator);
-  @override
-  void writeCharCode(int charCode) => buf.writeCharCode(charCode);
-  @override
-  Future<void> flush() async {}
-  @override
-  Future<void> close() async {}
-  @override
-  Future<void> get done async {}
-  @override
-  void add(List<int> data) => buf.write(utf8.decode(data));
-  @override
-  void addError(Object error, [StackTrace? stackTrace]) {}
-  @override
-  Future<void> addStream(Stream<List<int>> stream) async {}
-  @override
-  Encoding get encoding => utf8;
-  @override
-  set encoding(Encoding value) {}
-}
+import 'support/string_sink.dart';
 
 /// A marker message the test model reacts to.
 class _FrameMsg extends Msg {
@@ -90,7 +59,7 @@ final class _ThrowingViewModel extends Model {
 void main() {
   test('a throwing view() self-heals: the pipeline logs and keeps painting',
       () async {
-    final sink = _StringSink();
+    final sink = TestSink();
     final model = _ThrowingViewModel();
     // run() must COMPLETE normally (QuitMsg reached) — a dead pipeline
     // would leave the program hanging past the timeout instead.
