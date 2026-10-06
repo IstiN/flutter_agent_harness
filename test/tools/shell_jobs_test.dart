@@ -264,6 +264,22 @@ void main() {
       expect(env.jobs.single.isRunning, isTrue);
     });
 
+    // Issue #1349 AC: the fix must not touch the background path — a bare
+    // long sleep is the exact command class background: true exists for.
+    test('a bare long sleep with background: true runs and settles', () async {
+      final result = await tool.execute(
+        {'command': 'sleep 300', 'background': true},
+        null,
+        null,
+      );
+      expect(_text(result), contains('Started background job sh-1'));
+      expect(env.jobs.single.isRunning, isTrue);
+      env.jobs.single.complete(0);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(settleNotifications, [env.jobs.single.id]);
+    });
+
     test('background on an unsupported env answers a clean note', () async {
       final plainEnv = MemoryExecutionEnv(cwd: '/work');
       final plainRegistry = ShellJobRegistry(env: plainEnv);

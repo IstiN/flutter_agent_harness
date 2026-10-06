@@ -22,6 +22,59 @@ String _appendStatus(String text, String status) {
   return text.isEmpty ? status : '$text\n\n$status';
 }
 
+/// Foreground sleep deny threshold (issue #1349): a bare `sleep` longer
+/// than this is rejected at call validation. A bare long sleep is never
+/// legitimate foreground work — it parks the whole turn (steering and the
+/// cancel path cannot reach the agent while the call stays open) — while
+/// real long work (builds, test suites) keeps its foreground path.
+const int maxForegroundSleepSeconds = 60;
+
+/// One `sleep` duration argument: a plain number or a GNU-suffixed one
+/// (`30`, `1.5s`, `2m`, `1h`, `7d`, case-insensitive).
+final RegExp _sleepDurationArg = RegExp(
+  r'^(\d+(?:\.\d+)?)([smhd]?)$',
+  caseSensitive: false,
+);
+
+/// The total requested duration in seconds iff [command] is a BARE
+/// `sleep <duration>…` (nothing but sleep and its duration arguments),
+/// else null. Deliberately conservative (issue #1349): sleeps wrapped in
+/// shell constructs are phase 2 — extend detection only if the deny data
+/// shows the class survives.
+double? bareForegroundSleepSeconds(String command) {
+  final words = command.trim().split(RegExp(r'\s+'));
+  if (words.first != 'sleep' || words.length < 2) return null;
+  var total = 0.0;
+  for (final word in words.skip(1)) {
+    final match = _sleepDurationArg.firstMatch(word);
+    if (match == null) return null;
+    final value = double.parse(match.group(1)!);
+    total += switch (match.group(2)!.toLowerCase()) {
+      'm' => value * 60,
+      'h' => value * 3600,
+      'd' => value * 86400,
+      _ => value, // '' | 's'
+    };
+  }
+  return total;
+}
+
+/// The instructive validation denial for a bare long foreground `sleep`,
+/// or null when the command may run in the foreground.
+String? foregroundSleepDenial(String command) {
+  final seconds = bareForegroundSleepSeconds(command);
+  if (seconds == null || seconds <= maxForegroundSleepSeconds) return null;
+  final label = seconds == seconds.truncateToDouble()
+      ? '${seconds.truncate()}'
+      : '$seconds';
+  return 'Denied: a bare foreground sleep of ${label}s parks the whole '
+      'turn — owner steering and cancel cannot reach the agent while the '
+      'call stays open. Re-run it with background: true: the command keeps '
+      'running as a job, the job id returns immediately, and a settle '
+      'notification wakes you when it finishes; collect progress with '
+      'bash_job (action: output). Never poll in the foreground.';
+}
+
 /// Creates the `bash` tool: executes a shell command via [ExecutionEnv.exec]
 /// and returns stdout followed by stderr, truncated to the last
 /// [defaultToolMaxLines] lines / [defaultToolMaxBytes] bytes. A non-zero
@@ -100,6 +153,13 @@ AgentTool shellTool(
       final background = arguments['background'] as bool? ?? false;
       final stdinData = arguments['stdin'] as String?;
       final canJob = jobs != null && jobs.isSupported;
+
+      // Issue #1349: a bare long foreground sleep is rejected at call
+      // validation — it parks the turn; background: true is the fix.
+      if (!background) {
+        final sleepDenial = foregroundSleepDenial(command);
+        if (sleepDenial != null) return ToolExecutionResult.text(sleepDenial);
+      }
 
       if (background) {
         if (!canJob) {

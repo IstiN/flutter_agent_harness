@@ -1201,6 +1201,52 @@ void main() {
       expect(text, contains('o2001'));
       expect(text, endsWith('\n\n[Showing lines 2-2001 of 2001.]'));
     });
+
+    // Issue #1349: a bare long foreground sleep parks the whole turn —
+    // steering and cancel cannot reach the agent while the call stays open.
+    test('denies a bare long foreground sleep with the instructive message',
+        () async {
+      final result = await tool.execute({'command': 'sleep 300'}, null, null);
+      final text = _text(result);
+      expect(text, contains('Denied: a bare foreground sleep of 300s'));
+      expect(text, contains('background: true'));
+      expect(text, contains('bash_job'));
+      expect(text, contains('Never poll in the foreground'));
+      // Validation, not execution: the shell never saw the command.
+      expect(shell.lastCommand, isNull);
+    });
+
+    test('the sleep deny threshold allows sleep 60, denies sleep 61',
+        () async {
+      await tool.execute({'command': 'sleep 60'}, null, null);
+      expect(shell.lastCommand, 'sleep 60');
+      final result = await tool.execute({'command': 'sleep 61'}, null, null);
+      expect(_text(result), contains('Denied'));
+    });
+
+    test(
+      'GNU sleep suffixes are measured (sleep 2m denied, sleep 1m allowed)',
+      () async {
+        await tool.execute({'command': 'sleep 1m'}, null, null);
+        expect(shell.lastCommand, 'sleep 1m');
+        final result = await tool.execute({'command': 'sleep 2m'}, null, null);
+        expect(
+          _text(result),
+          contains('Denied: a bare foreground sleep of 120s'),
+        );
+      },
+    );
+
+    test('a sleep wrapped in shell constructs is NOT denied (phase 2 scope)',
+        () async {
+      await tool.execute({'command': 'sleep 300 && echo done'}, null, null);
+      expect(shell.lastCommand, 'sleep 300 && echo done');
+    });
+
+    test('a long quiet legit command is NOT denied', () async {
+      await tool.execute({'command': 'make release'}, null, null);
+      expect(shell.lastCommand, 'make release');
+    });
   });
 
   group('Image support in readFileTool', () {
