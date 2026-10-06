@@ -40,15 +40,17 @@ if $PROGRAM_NAME == __FILE__
   # there is no "images" collection segment.
   class FakePlayHttp
     attr_reader :calls, :store, :committed
-    attr_accessor :upload_sha_override, :token_response, :remote_languages,
+    attr_accessor :upload_sha_override, :upload_omit_sha, :token_response, :remote_languages,
                   :post_commit_drift, :post_commit_reverse, :image_delete_error,
-                  :edit_insert_error, :listings_error, :commit_error
+                  :edit_insert_error, :listings_error, :commit_error,
+                  :hide_shas_until_list_no
 
     def initialize
       @calls = []
       @store = Hash.new { |h, key| h[key] = [] }
       @committed = []
       @remote_languages = %w[en-US ru-RU]
+      @list_reads = Hash.new(0)
     end
 
     def request(method, url, headers: {}, body: nil, content_type: nil)
@@ -70,17 +72,24 @@ if $PROGRAM_NAME == __FILE__
       when method == :Post && (m = url.match(%r{/listings/([^/]+)/([^/]+)\?uploadType=media\z}))
         sha = @upload_sha_override || Digest::SHA256.hexdigest(body.to_s)
         @store[[m[1], m[2]]] << sha
-        { status: 200, body: { sha256: sha }.to_json }
+        # gh-1328: Play sometimes 200s the upload WITHOUT a usable sha256
+        # while the image is still processing.
+        { status: 200, body: (@upload_omit_sha ? {} : { sha256: sha }).to_json }
       when method == :Get && (m = url.match(%r{/listings/([^/]+)/([^/]+)\z}))
-        images = @store[[m[1], m[2]]].map { |s| { sha256: s } }
+        key = [m[1], m[2]]
+        @list_reads[key] += 1
+        images = @store[key].map { |s| { sha256: s } }
         # Post-commit drift injection: the committed listing keeps an image
         # the sync never uploaded (the stale-state failure mode #947 gates).
-        if !@committed.empty? && @post_commit_drift == [m[1], m[2]]
+        if !@committed.empty? && @post_commit_drift == key
           images += [{ sha256: Digest::SHA256.hexdigest("drift-junk") }]
         end
         # Post-commit order injection: the committed listing serves the same
         # image set in a different order (the ordering failure mode).
-        images.reverse! if !@committed.empty? && @post_commit_reverse == [m[1], m[2]]
+        images.reverse! if !@committed.empty? && @post_commit_reverse == key
+        # gh-1328: an entry (or its sha) may be unreadable until Play
+        # finishes processing the just-uploaded bytes.
+        images = images.map { |img| { sha256: nil } } if @hide_shas_until_list_no && @list_reads[key] <= @hide_shas_until_list_no
         { status: 200, body: { images: images }.to_json }
       when method == :Post && url.end_with?(":commit")
         return @commit_error if @commit_error
@@ -226,10 +235,100 @@ if $PROGRAM_NAME == __FILE__
                                        package_name: "dev.fa1.app", http: http)
       raise "FAIL: sha mismatch must raise"
     rescue RuntimeError => e
-      raise "FAIL: error must name the mismatch, got: #{e.message}" unless e.message.include?("stored different bytes")
+      raise "FAIL: error must carry the gh-1328 mismatch class, got: #{e.message}" unless
+        e.message.include?("remote sha mismatch") && e.message.include?("stored different bytes")
     end
     raise "FAIL: a failed upload must never commit" unless http.committed.empty?
     ok("stored-bytes mismatch aborts before commit (listing untouched)")
+  end
+
+  # ── gh-1328: a nil stored sha is UNREADABLE, not a byte mismatch ────────
+  # edits.images.upload may answer 200 without a usable sha256 while Play
+  # is still processing the upload (transcoding window). The sync retries
+  # the read across that window and only then classifies: verified →
+  # proceed, different bytes → abort, still unreadable → abort with an
+  # error DISTINCT from the byte-mismatch one.
+  class PollHttp
+    def initialize(responses)
+      @responses = responses
+    end
+
+    def request(_method, _url, headers: {}, body: nil, content_type: nil)
+      images = @responses.shift
+      raise "FAIL: scripted list responses exhausted" if images.nil?
+
+      { status: 200, body: { images: images }.to_json }
+    end
+  end
+
+  sha1 = Digest::SHA256.hexdigest("golden-01")
+  sha2 = Digest::SHA256.hexdigest("golden-02")
+  poll_auth = { "Authorization" => "Bearer t" }
+
+  poll = PollHttp.new([[{ "sha256" => nil }, { "sha256" => nil }],
+                       [{ "sha256" => sha1 }],
+                       [{ "sha256" => sha1 }, { "sha256" => sha2 }]])
+  verified = PlayListingSync.poll_stored_sha!(
+    poll, "dev.fa1.app", "edit1", "en-US", "phoneScreenshots",
+    [sha1, sha2], poll_auth, attempts: 3, backoff: 0
+  )
+  raise "FAIL: the sha must verify once it materializes, got #{verified.inspect}" unless verified == sha2
+  ok("gh-1328: nil stored sha is retried across the processing window, then verifies")
+
+  [["foreign sha", [{ "sha256" => sha1 }, { "sha256" => "junk" }]],
+   ["reordered goldens", [{ "sha256" => sha2 }, { "sha256" => sha1 }]]].each do |label, images|
+    poll = PollHttp.new([images])
+    begin
+      PlayListingSync.poll_stored_sha!(poll, "dev.fa1.app", "edit1", "en-US", "phoneScreenshots",
+                                       [sha1, sha2], poll_auth, attempts: 3, backoff: 0)
+      raise "FAIL: #{label} must classify as a mismatch"
+    rescue RuntimeError => e
+      raise "FAIL: #{label} must carry the mismatch class, got: #{e.message}" unless
+        e.message.include?("remote sha mismatch")
+    end
+  end
+  ok("gh-1328: readable-but-different bytes stay a hard mismatch (never retried away)")
+
+  poll = PollHttp.new([[{ "sha256" => nil }], [{ "sha256" => nil }], [{ "sha256" => nil }]])
+  verdict = PlayListingSync.poll_stored_sha!(poll, "dev.fa1.app", "edit1", "en-US", "phoneScreenshots",
+                                             [sha1, sha2], poll_auth, attempts: 3, backoff: 0)
+  raise "FAIL: an unreadable-after-window poll must return nil, got #{verdict.inspect}" unless verdict.nil?
+  ok("gh-1328: unreadable after the window yields the distinct unreadable verdict")
+
+  # End-to-end (never-again #3): a fake Play returning a DELAYED listing
+  # must produce a green verify after the delay, not an abort.
+  Dir.mktmpdir do |root|
+    http = FakePlayHttp.new
+    http.upload_omit_sha = true       # every upload answers without a sha256
+    http.hide_shas_until_list_no = 2  # entries materialize on the 3rd read
+    metadata_dir = metadata_dir_with_goldens(root)
+    summary = PlayListingSync.sync_and_verify!(
+      metadata_dir: metadata_dir, json_key: service_account_json,
+      package_name: "dev.fa1.app", http: http, sha_backoff: 0
+    )
+    raise "FAIL: the delayed listing must go green, got: #{summary.inspect}" unless summary.include?("verified")
+    raise "FAIL: the listing must commit once every sha materializes" unless http.committed.size == 1
+    ok("gh-1328: delayed-materialization listing verifies and commits (no false abort)")
+  end
+
+  # End-to-end: never materializes → abort with the DISTINCT unreadable class.
+  Dir.mktmpdir do |root|
+    http = FakePlayHttp.new
+    http.upload_omit_sha = true
+    http.hide_shas_until_list_no = 10_000 # still processing for the whole window
+    metadata_dir = metadata_dir_with_goldens(root)
+    begin
+      PlayListingSync.sync_and_verify!(metadata_dir: metadata_dir, json_key: service_account_json,
+                                       package_name: "dev.fa1.app", http: http,
+                                       sha_attempts: 2, sha_backoff: 0)
+      raise "FAIL: a permanently unreadable remote must raise"
+    rescue RuntimeError => e
+      raise "FAIL: must name the unreadable class, got: #{e.message}" unless
+        e.message.include?("remote unreadable after 2 attempts")
+      raise "FAIL: must NOT claim a byte mismatch, got: #{e.message}" if e.message.include?("stored different bytes")
+    end
+    raise "FAIL: an unreadable remote must never commit" unless http.committed.empty?
+    ok("gh-1328: still-unreadable aborts with 'remote unreadable', never a false mismatch")
   end
 
   # ── post-commit drift fails the job ─────────────────────────────────────

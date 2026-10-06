@@ -17,7 +17,10 @@
 #   1. one edit: clear every managed screenshot set for EVERY listing
 #      locale (repo locales ∪ locales live on the Play listing), then
 #      upload the committed goldens (sorted — file name order is the
-#      listing order), checking each stored sha256 against the local file;
+#      listing order), checking each stored sha256 against the local file
+#      (gh-1328: a nil stored sha means Play is still processing — the
+#      read is retried with backoff, and an unreadable remote aborts with
+#      its own "remote unreadable" class, never as a byte mismatch);
 #   2. commit — a failed upload aborts BEFORE the commit, so the live
 #      listing keeps its previous state;
 #   3. a fresh read-only edit re-reads edits.images.list and fails the job
@@ -126,7 +129,8 @@ module PlayListingSync
   # Replace the listing images with the committed goldens and verify the
   # committed state (edits.images.list). Raises on any mismatch — the
   # fastlane lane turns that into a red job. Returns a summary line.
-  def sync_and_verify!(metadata_dir:, json_key:, package_name:, http: Http.new, now: Time.now)
+  def sync_and_verify!(metadata_dir:, json_key:, package_name:, http: Http.new, now: Time.now,
+                       sha_attempts: 5, sha_backoff: 30)
     auth = bearer!(json_key, http: http, now: now)
 
     edit_id = begin_edit!(http, package_name, auth)
@@ -138,13 +142,32 @@ module PlayListingSync
     end
     repo_locales(metadata_dir).each do |locale|
       MANAGED_TYPES.each do |type|
+        verified_prefix = [] # golden shas already confirmed for this set
         local_images(metadata_dir, locale, type).each do |path|
+          local = sha256(path)
           stored = upload_image!(http, package_name, edit_id, locale, type, path, auth)
-          unless stored == sha256(path)
-            raise "Play stored different bytes for #{locale}/#{type}/" \
-                  "#{File.basename(path)} (sha256 #{stored.inspect} != local " \
-                  "#{sha256(path)}) — aborting before commit, listing untouched"
+          if stored.nil?
+            # gh-1328: Play answered the upload without a usable sha256 —
+            # the remote is UNREADABLE (usually still processing), never a
+            # byte mismatch. Poll edits.images.list across the processing
+            # window before classifying.
+            stored = poll_stored_sha!(http, package_name, edit_id, locale, type,
+                                      verified_prefix + [local], auth,
+                                      attempts: sha_attempts, backoff: sha_backoff)
+            if stored.nil?
+              raise "remote unreadable after #{sha_attempts} attempts for " \
+                    "#{locale}/#{type}/#{File.basename(path)} — Play never " \
+                    "returned a usable sha256 for the just-uploaded image — " \
+                    "aborting before commit, listing untouched"
+            end
           end
+          unless stored == local
+            raise "remote sha mismatch: Play stored different bytes for " \
+                  "#{locale}/#{type}/#{File.basename(path)} (sha256 " \
+                  "#{stored.inspect} != local #{local}) — aborting before " \
+                  "commit, listing untouched"
+          end
+          verified_prefix << local
           uploaded += 1
         end
       end
@@ -310,6 +333,38 @@ module PlayListingSync
     end
 
     JSON.parse(res[:body])["sha256"]
+  end
+
+  # gh-1328: edits.images.upload may answer 200 WITHOUT a usable sha256
+  # while Play is still processing the image. nil is UNREADABLE, never a
+  # byte mismatch — poll edits.images.list across the processing window
+  # (attempts × backoff seconds) and only then classify:
+  #   returns the verified sha of the just-uploaded image once the readable
+  #   set equals the goldens uploaded so far;
+  #   raises "remote sha mismatch" on readable bytes contradicting the
+  #   goldens (a real byte/ordering mismatch);
+  #   returns nil when still unreadable after `attempts` — the caller
+  #   aborts with the distinct "remote unreadable" class.
+  def poll_stored_sha!(http, package_name, edit_id, locale, type, expected_prefix, auth,
+                       attempts: 5, backoff: 30)
+    attempts.times do |attempt|
+      readable = list_images!(http, package_name, edit_id, locale, type, auth)
+                 .map { |image| image["sha256"] }.compact
+      return expected_prefix.last if readable == expected_prefix
+
+      if readable.any? { |sha| !expected_prefix.include?(sha) } ||
+         readable.size == expected_prefix.size
+        raise "remote sha mismatch: edits.images.list for #{locale}/#{type} " \
+              "shows #{readable.size} readable sha256(s) contradicting the " \
+              "#{expected_prefix.size} golden(s) uploaded so far — Play " \
+              "stored different bytes — aborting before commit, listing untouched"
+      end
+      warn "play_listing_sync: remote unreadable for #{locale}/#{type} " \
+           "(attempt #{attempt + 1}/#{attempts}, Play still processing?) — " \
+           "retrying in #{backoff}s"
+      sleep(backoff) if attempt < attempts - 1
+    end
+    nil
   end
 
   # Contract (gh-1261): GET …/listings/<locale>/<imageType>.
