@@ -620,9 +620,10 @@ final class _AttemptBuffer {
   /// advance to the next chain entry at once; rate limits and transport
   /// classes retry in place. Null forwards the event verbatim.
   _Retryable? _nonQueueRetryable(ErrorEvent event) {
-    // A non-error pre-commit error event (a user/machine abort) stands
-    // verbatim — the chain never retries someone's abort decision.
-    if (event.reason != StopReason.error) return null;
+    // Precondition: the caller routes only StopReason.error here — a
+    // non-error pre-commit error event (a user/machine abort) stands
+    // verbatim via the forward-on-null path in [_forwardOrRetryable].
+    assert(event.reason == StopReason.error);
     // Issue #926: budget/spending exhaustion is dead until the budget
     // reset — no paid retries, advance to the next chain entry at once
     // (the modelFallback notice carries the provider's budget wording).

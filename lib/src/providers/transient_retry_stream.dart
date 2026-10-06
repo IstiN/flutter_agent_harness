@@ -431,7 +431,6 @@ Future<void> _drive(
       case _Forwarded():
         return;
       case _TransientFailure(:final error):
-        state.lastFailure = error;
         if (!await _afterTransientFailure(
           out,
           model,
@@ -483,6 +482,10 @@ Future<void> _drive(
 /// zero-byte bound and the generic budget — a bound hit pushes the matching
 /// terminal and ends the call — and otherwise runs the inter-attempt
 /// pause. Returns true when the ladder continues to the next attempt.
+///
+/// The failure itself is stored here (`state.lastFailure = error` is the
+/// handler's first statement — this handler owns the chain state it
+/// touches, so the field and the parameter cannot diverge).
 Future<bool> _afterTransientFailure(
   AssistantMessageEventStream out,
   Model model,
@@ -494,6 +497,7 @@ Future<bool> _afterTransientFailure(
   int attempt,
   int maxAttempts,
 ) async {
+  state.lastFailure = error;
   // A machine-cancelled latch re-arms IN PLACE (the issue #1132
   // discipline): the run-idle watchdog fired over a request that never
   // received a byte, and the replay re-opens the SAME token so the loop,
@@ -528,8 +532,6 @@ Future<bool> _afterTransientFailure(
     );
     return false;
   }
-  // `error` IS `state.lastFailure` here — the caller assigns it before
-  // this handler runs (the field is not promoted through the state hold).
   return _pauseBetweenAttempts(
     out,
     model,
