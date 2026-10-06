@@ -11,10 +11,11 @@
 #   inventory  — each listed lockfile exists, is git-tracked, and is NOT
 #                gitignored (a gitignored/missing lockfile fails CI); plus
 #                the gh-1303 path-pin sync: flutter_app/pubspec.lock's pin
-#                of this repo (path dependency) must equal the root
-#                pubspec.yaml version — a stale pin fails every
-#                `flutter pub get --enforce-lockfile` consumer (pages.yml
-#                web demo, ci.yml flutter legs) the moment it lands
+#                of this repo (path dependency) must EXIST and equal the
+#                root pubspec.yaml version — a stale OR MISSING pin fails
+#                every `flutter pub get --enforce-lockfile` consumer
+#                (pages.yml web demo, ci.yml flutter legs) the moment it
+#                lands
 #   pod-sync   — every native (native_build: true) iOS/macOS Flutter plugin
 #                resolved by the committed pubspec.lock has its pod in the
 #                platform's Podfile.lock, AT THE PODSPEC'S VERSION. Catches
@@ -171,7 +172,6 @@ PY
       fi
     fi
   fi
-fi
 fi
 
 # ── pod-sync: native darwin plugins vs Podfile.lock ──────────────────────

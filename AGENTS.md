@@ -1798,8 +1798,10 @@ builder.
   not the pubspec version — vendored/beta pods legitimately differ from the
   Dart package version). The inventory also enforces the gh-1303 path-pin
   sync: `flutter_app/pubspec.lock` pins this repo as a path dependency, so
-  its `flutter_agent_harness` version must equal the root `pubspec.yaml`
-  version or every `flutter pub get --enforce-lockfile` consumer reds —
+  its `flutter_agent_harness` pin must EXIST and equal the root
+  `pubspec.yaml` version — a stale OR MISSING pin (e.g. a merge conflict
+  resolved by dropping the entry) makes every
+  `flutter pub get --enforce-lockfile` consumer red —
   the release bump re-pins the lock itself (`scripts/auto_release.sh`
   ships the re-pin inside the `chore(release):` commit), and the Static
   gate catches any other path to the drift at PR time. After ANY pubspec.yaml
