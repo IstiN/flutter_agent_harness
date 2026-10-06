@@ -199,10 +199,12 @@ staged-scoped). Every commit/merge must pass:
    (`scripts/check_coverage.py`).
 5. **Duplication guard** — jscpd over `lib/` < **1.0%**.
 6. **CRAP ratchet** — whole-tree max CRAP ≤ threshold (`crap4dart.yaml`:
-   core 8.0; `flutter_app/crap4dart.yaml`: 30.0), enforced by
-   `crap4dart check --baseline` on every merge validation (issue #1234:
-   CI runs whole-tree, so drift invisible to staged-only hook runs —
-   e.g. a method pushed over threshold in an untouched file — goes red).
+   core 12.0 (measured max — the #1234 8.0 repin is blocked on the
+   12.00/9.00 tier campaign); `flutter_app/crap4dart.yaml`: 30.0),
+   enforced by `crap4dart check --baseline` on every merge validation
+   (issue #1234: CI runs whole-tree, so drift invisible to staged-only
+   hook runs — e.g. a method pushed over threshold in an untouched file
+   — goes red).
 
 Emergency skip: `git commit --no-verify` (not recommended).
 

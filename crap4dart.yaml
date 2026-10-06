@@ -17,17 +17,22 @@ exclude:
 
 crap:
   enabled: true
-  # Current max CRAP score in the repo. Descent (issue #1234): the
-  # whole-tree offenders went down — readPasteboardImage 16.32 (split into
-  # fake-seam / platform-dispatch helpers), the CC-12 trio (_handleTreeKey,
-  # discoverTaskAgents, _rebuild) split into cohesive sub-dispatchers, the
-  # four 0%-cov CC-3 methods covered by tests (frontmatter, video endpoint,
-  # below-window ingest, provider picker), the CC-9 tier split or covered,
-  # and _listModels covered by the line-mode /models test (the old NOTE
-  # below is history). Threshold follows the fixes: 12.0 → 8.0 — the
-  # classic green zone (ratchet history 356 → 65 → 16 → 8 → 12 → 8). Only
-  # down from here.
-  threshold: 8.0
+  # Current max CRAP score in the repo: 12.0 (re-measured whole-tree on
+  # the merged-suite lcov, #1234 rework). The card's named offenders DID
+  # move — readPasteboardImage 16.32 (split into fake-seam /
+  # platform-dispatch helpers), the CC-12 trio (_handleTreeKey,
+  # discoverTaskAgents, _rebuild) split into cohesive sub-dispatchers,
+  # the four 0%-cov CC-3 methods covered by tests (frontmatter, video
+  # endpoint, below-window ingest, provider picker), the named CC-9 tier
+  # split, and _listModels (20 @ 0%) covered by the line-mode /models
+  # test. But the FIRST real whole-tree measurement (the authoring box
+  # had no dart toolchain) shows the 12.0 → 8.0 repin is not earned yet:
+  # 137 methods measure above 8.0 — 54 at exactly 12.00 (the CC-3 @ 0%
+  # tier + fully-covered CC-12 dispatchers) and 83 at 9.00 (CC-9 @ 100%).
+  # Threshold stays at the measured max; the 12.00/9.00 tier is the next
+  # ladder card (cover the CC-3@0% half, split the CC-12 dispatchers,
+  # then the threshold follows down to 8.0). Only down from here.
+  threshold: 12.0
   # _listModels used to hit 20 with 0% coverage (line-mode-only output);
   # covered by test/cli/provider_models_line_mode_test.dart in #1234.
 

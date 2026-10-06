@@ -1657,10 +1657,13 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   superseded the old 0.10 bound; gates/baselines need 0.11), one config
   per package, thresholds are the current per-package max — only down
   from here:
-  - core (`crap4dart.yaml`, sources `[lib, bin]`): **8.0** (issue #1234:
-    the CC-12 trio + readPasteboardImage 16.32 split, the 0%-cov CC-3
-    quartet and the CC-9 tier covered or split, `_listModels` covered —
-    12.0 → 8.0).
+  - core (`crap4dart.yaml`, sources `[lib, bin]`): **12.0** (issue #1234:
+    the named census offenders moved — CC-12 trio + readPasteboardImage
+    16.32 split, the 0%-cov CC-3 quartet and the named CC-9 tier covered
+    or split, `_listModels` covered — but the first whole-tree
+    measurement showed the 8.0 repin unearned: 54 methods at 12.00
+    (CC-3@0% tier + covered CC-12 dispatchers) and 83 at 9.00. Threshold
+    stays at the measured max; the tier is the next ladder card).
   - flutter_app (`flutter_app/crap4dart.yaml`, sources `[lib]`,
     issue #433/#475): **30.0** — measured by the SAME pipeline the CI gate
     uses (the two `flutter-tests` shards emit `--coverage`; the
