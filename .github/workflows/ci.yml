@@ -3134,6 +3134,15 @@ jobs:
         with:
           python-version: '3.x'
 
+      # gh-1299 NG1: the bump regenerates flutter_app/pubspec.lock in-commit
+      # (the lockfile pins the parent path package version, so every bump
+      # invalidates it) and refuses to ship while any inventory lockfile is
+      # dirty — both need flutter on PATH (hosted stable, same pin as CI).
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          cache: true
+
       - name: Bump version, changelog, push to main
         env:
           RELEASE_DRY_RUN: ${{ github.event.inputs.releaseDryRun == 'true' && '1' || '0' }}
@@ -3182,6 +3191,15 @@ jobs:
           # GITHUB_TOKEN pushes never trigger downstream workflow runs.
           token: ${{ steps.app-token.outputs.token }}
 
+      # gh-1299 NG2/AC3: the tag step smokes `flutter pub get --enforce-lockfile`
+      # on the bump commit BEFORE tagging/publishing (a release commit that
+      # cannot resolve its own lockfile is never tagged, never published) —
+      # the gate needs flutter on PATH (hosted stable, same pin as CI).
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          cache: true
+
       - name: Cut annotated tag + GitHub Release
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -3194,7 +3212,6 @@ jobs:
           # refuses to tag a moving HEAD when nothing qualifies.
           BUMP_SHA: ${{ github.event.head_commit.id || github.sha }}
         run: bash scripts/tag_release.sh
-
   # PR-gate twin of the release `binaries` job: the CLI bundle must compile
   # on every supported platform and actually run (`fa --help`) BEFORE a PR
   # can merge — but only when the CLI surface could have changed (issue

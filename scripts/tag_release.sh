@@ -66,9 +66,21 @@ if [ -z "$bump_sha" ]; then
 fi
 
 echo "Tagging $tag at $(git rev-parse --short "$bump_sha") (bump commit pinned — gh-1192 AC3)"
-# Detach onto the bump so everything below (release notes) reads the tree
-# that actually ships, even when the checkout had drifted.
+# Detach onto the bump so everything below (release notes, the smoke)
+# reads the tree that actually ships, even when the checkout had drifted.
 git checkout -q --detach "$bump_sha"
+
+# ── gh-1299 NG2: post-release smoke BEFORE tagging/publishing ─────────────
+# The tag fires every tag-scoped binaries/publish job, so this is the last
+# gate. #1268 runs the whole of CI on `flutter pub get --enforce-lockfile`
+# — assert it exits 0 on the exact tree being tagged (v1.0.515 shipped a
+# stale pubspec.lock pin and red all 13 main legs). A release commit that
+# cannot resolve its own lockfile is never tagged, never published.
+if ! ( cd flutter_app && flutter pub get --enforce-lockfile ); then
+  echo "::error::release commit $(git rev-parse --short "$bump_sha") fails 'flutter pub get --enforce-lockfile' — refusing to tag/publish v$version (gh-1299 NG2). Regenerate the lockfile on main first (flutter pub get, commit the refresh)."
+  exit 1
+fi
+
 git tag -a "$tag" -m "Release $tag" "$bump_sha"
 git push origin "$tag"
 

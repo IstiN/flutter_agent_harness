@@ -276,8 +276,8 @@ if [ -f "$FA_FLUTTER_DIRTY" ]; then
 fi
 ''');
   Process.runSync('chmod', ['+x', '$bin/flutter']);
-  if (flutterFails) File('$root/flutter-fail').writeAsStringSync('1');
-  if (flutterDirty) File('$root/flutter-dirty').writeAsStringSync('1');
+  if (flutterFails) File('${root.path}/flutter-fail').writeAsStringSync('1');
+  if (flutterDirty) File('${root.path}/flutter-dirty').writeAsStringSync('1');
 
   void git(
     List<String> args, {
@@ -378,8 +378,8 @@ fi
     'FA_REAL_GIT': realGit,
     'FA_RACER': racer,
     'FA_RACE_FILE': raceFile,
-    'FA_FLUTTER_FAIL': '$root/flutter-fail',
-    'FA_FLUTTER_DIRTY': '$root/flutter-dirty',
+    'FA_FLUTTER_FAIL': '${root.path}/flutter-fail',
+    'FA_FLUTTER_DIRTY': '${root.path}/flutter-dirty',
   };
   final env = Map<String, String>.from(baseEnv);
   if (dryRun) env['RELEASE_DRY_RUN'] = '1';

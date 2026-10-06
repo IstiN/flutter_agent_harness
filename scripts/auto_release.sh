@@ -130,7 +130,35 @@ PY
   # bump so the ASC-approved floor can never outgrow it again.
   sed -i "s/^version: .*/version: $next+1/" flutter_app/pubspec.yaml
 
-  git add pubspec.yaml flutter_app/pubspec.yaml CHANGELOG.md
+  # gh-1299 NG1: the bump invalidates every lockfile pinning the root
+  # package version — flutter_app/pubspec.lock pins `flutter_agent_harness
+  # <old> from path ..`, and #1268's repo-wide `pub get --enforce-lockfile`
+  # hard-fails on exactly that stale pin (v1.0.515 red all 13 main legs).
+  # Regenerate the committed lockfiles and ship the refresh IN the bump
+  # commit — a release that leaves the tree --enforce-lockfile-dirty is a
+  # failed release.
+  if ! ( cd flutter_app && flutter pub get ); then
+    echo "::error::flutter pub get failed in flutter_app — aborting the release rather than pushing a bump that leaves pubspec.lock stale (gh-1299 NG1)." >&2
+    exit 1
+  fi
+
+  git add pubspec.yaml flutter_app/pubspec.yaml CHANGELOG.md flutter_app/pubspec.lock
+
+  # No committed lockfile may stay dirty across a release (gh-1299 NG1):
+  # anything the refresh above could not regenerate (Podfile.lock needs
+  # macOS `pod install`, npm pins need `npm install`) fails the release
+  # LOUDLY here instead of shipping a bump that leaves the tree stale.
+  # The list comes from the ONE inventory (scripts/check_lockfiles.sh).
+  lockfiles=()
+  while IFS= read -r f; do lockfiles+=("$f"); done < <(bash scripts/check_lockfiles.sh list)
+  dirty=$(git status --porcelain -- "${lockfiles[@]}")
+  if [ -n "$dirty" ]; then
+    echo "::error::release aborted — committed lockfile(s) still dirty after the refresh; a release that leaves the tree --enforce-lockfile-dirty is a failed release (gh-1299 NG1):"
+    echo "$dirty"
+    echo "::error::regenerate them (flutter pub get; pod install on macOS for the Podfile.locks; npm install for the e2e package-locks), commit, re-run the release."
+    exit 1
+  fi
+
   git commit -m "chore(release): v$next"
 
   if [ "$dry_run" -eq 1 ]; then
