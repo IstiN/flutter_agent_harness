@@ -35,8 +35,7 @@ const actionUses = './.github/actions/flutter-pub-get';
 const actionPath = '.github/actions/flutter-pub-get/action.yml';
 
 /// The seven workflows that resolved flutter_app with
-/// `flutter pub get --enforce-lockfile` before the gh-1310 migration
-/// (same list as nightly_desktop_leg_guard_test.dart's enforcedWorkflows).
+/// `flutter pub get --enforce-lockfile` before the gh-1310 migration.
 const workflows = [
   '.github/workflows/ci.yml',
   '.github/workflows/nightly.yml',
@@ -52,7 +51,12 @@ const workflows = [
 /// --enforce-lockfile` before the migration. A refactor that drops a
 /// resolution step fails AC3 instead of silently skipping pub get.
 const expectedUsesPerWorkflow = {
-  '.github/workflows/ci.yml': 10,
+  // 10 pre-migration resolutions + 1 (gh-1310 rework, review thread 1): the
+  // release-tag job warms the pub cache through the action BEFORE
+  // tag_release.sh's own enforce-lockfile smoke. The smoke stays in the
+  // script (release_hygiene_test.dart NG2/AC3 pins it) but no longer
+  // cold-clones the git deps unretried on the release path.
+  '.github/workflows/ci.yml': 11,
   '.github/workflows/nightly.yml': 4,
   '.github/workflows/build-mobile.yml': 4,
   '.github/workflows/build-macos.yml': 1,
@@ -74,6 +78,40 @@ Iterable<YamlMap> stepsOf(String workflowPath) sync* {
       if (step is YamlMap) yield step;
     }
   }
+}
+
+/// Every run-step in [workflowPath] as (run, workingDirectory).
+Iterable<({String run, String? workingDirectory})> runStepsOf(
+    String workflowPath) sync* {
+  for (final step in stepsOf(workflowPath)) {
+    if (step['run'] is! String) continue;
+    yield (
+      run: step['run'] as String,
+      workingDirectory: step['working-directory'] as String?,
+    );
+  }
+}
+
+/// The AC2 regression class: run-steps that resolve flutter_app with a
+/// bare `flutter pub get` instead of the shared action. A step counts
+/// when the command mentions flutter_app OR runs inside flutter_app.
+List<({String run, String? workingDirectory})> bareFlutterAppPubGetRunSteps(
+    Iterable<({String run, String? workingDirectory})> steps) {
+  return steps
+      // Normalize the `./` spelling so `working-directory: ./flutter_app`
+      // counts the same as `working-directory: flutter_app` (review
+      // thread 3 — the heuristic must not depend on spelling).
+      .map((step) => (
+            run: step.run,
+            workingDirectory: step.workingDirectory == null
+                ? null
+                : step.workingDirectory!.replaceFirst(RegExp(r'^\./'), ''),
+          ))
+      .where((step) =>
+          step.run.contains('flutter pub get') &&
+          (step.run.contains('flutter_app') ||
+              (step.workingDirectory ?? '').startsWith('flutter_app')))
+      .toList();
 }
 
 void main() {
@@ -130,17 +168,7 @@ void main() {
     for (final workflow in workflows) {
       test('AC2: $workflow has NO run-step resolving flutter_app itself',
           () {
-        final offending = stepsOf(workflow)
-            .where((step) => step['run'] is String)
-            .map((step) => (
-                  run: step['run'] as String,
-                  workingDirectory: step['working-directory'] as String?,
-                ))
-            .where((step) =>
-                step.run.contains('flutter pub get') &&
-                (step.run.contains('flutter_app') ||
-                    (step.workingDirectory ?? '').startsWith('flutter_app')))
-            .toList();
+        final offending = bareFlutterAppPubGetRunSteps(runStepsOf(workflow));
         expect(
           offending,
           isEmpty,
@@ -168,6 +196,75 @@ void main() {
         );
       });
     }
+
+    test('AC2: the detector catches the `working-directory: ./flutter_app` '
+        'spelling of a bare resolve', () {
+      // Review thread 3 (gh-1310 rework): the heuristic must not depend on
+      // how the working directory is spelled — `./flutter_app` resolves to
+      // the same directory, and a future bare pub get written that way
+      // must red exactly like the plain spelling.
+      final offending = bareFlutterAppPubGetRunSteps(const [
+        (
+          run: 'flutter pub get --enforce-lockfile',
+          workingDirectory: 'flutter_app',
+        ),
+        (
+          run: 'flutter pub get --enforce-lockfile',
+          workingDirectory: './flutter_app',
+        ),
+        // Not the regression class: a library-package resolve (fa_ui's
+        // lockfile stays uncommitted by design) and a non-pub-get flutter
+        // command in flutter_app.
+        (run: 'flutter pub get', workingDirectory: 'packages/fa_ui'),
+        (run: 'flutter build web', workingDirectory: './flutter_app'),
+      ]);
+      expect(
+        offending.map((step) => step.workingDirectory),
+        ['flutter_app', 'flutter_app'],
+      );
+    });
+
+    test('AC4: office-addin.yml resolves flutter_app BEFORE its first '
+        'flutter consumer (no implicit pub get first)', () {
+      // Review thread 2 (gh-1310 rework): the flutter_app package config
+      // does not exist at checkout (.dart_tool/ is not committed), so the
+      // first step that runs `flutter` against flutter_app triggers
+      // flutter's IMPLICIT pub get — without --enforce-lockfile and
+      // without the bounded retry. The shared action must run first so
+      // the job's first resolution is the enforced, retried one.
+      final steps = stepsOf('.github/workflows/office-addin.yml').toList();
+      final actionIndex = steps
+          .indexWhere((step) => (step['uses'] as String?) == actionUses);
+      expect(actionIndex, isNonNegative,
+          reason: 'office-addin.yml must resolve flutter_app through '
+              '`$actionUses`');
+      final consumers = <int>[];
+      for (var i = 0; i < steps.length; i++) {
+        final run = steps[i]['run'];
+        if (run is! String) continue;
+        final workingDirectory =
+            (steps[i]['working-directory'] as String?) ?? '';
+        final inFlutterApp = workingDirectory.startsWith('flutter_app') ||
+            run.contains('cd flutter_app');
+        final runsFlutter = RegExp(r'\bflutter\b').hasMatch(run);
+        if (inFlutterApp && runsFlutter) consumers.add(i);
+      }
+      expect(consumers, isNotEmpty,
+          reason: 'precondition: the job runs flutter against flutter_app '
+              '(Chrome boot tests, office wiring tests) — otherwise this '
+              'guard pins nothing');
+      for (final consumer in consumers) {
+        final name = (steps[consumer]['name'] as String?) ?? 'step $consumer';
+        expect(
+          actionIndex,
+          lessThan(consumer),
+          reason: 'office-addin.yml "$name" runs flutter against '
+              'flutter_app BEFORE the shared pub-get action — flutter '
+              'test/build triggers an implicit, unenforced, unretried pub '
+              'get there (gh-1310 rework review thread 2).',
+        );
+      }
+    });
 
     test('AC3: every workflow that needs flutter_app references the action',
         () {
