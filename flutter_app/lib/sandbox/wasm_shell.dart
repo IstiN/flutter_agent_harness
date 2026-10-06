@@ -483,6 +483,19 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         inputSource: inputSource,
       );
     }
+    // Issue #1335: an unadvertised command must fail loudly like the web
+    // MemoryShell does, not fall through to coreutils.wasm with an
+    // unrecognized argv[0] (silent empty output). The registry sets are the
+    // same truth `which` advertises, so execution and `which` now agree.
+    if (!_isCommandAvailable(command)) {
+      return Ok(
+        StageResult(
+          stdout: const [],
+          stderr: utf8.encode('$command: command not found\n'),
+          exitCode: 127,
+        ),
+      );
+    }
     // tar_util.wasm has no `--version` — it exits 1 with a usage error on
     // the version probe (issue #1156 row 9); answer directly instead.
     // Only the long flag: GNU tar's `-V` is `--label`, not a version flag.
@@ -829,10 +842,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       );
       input = '$pipeDir/pipe_heredoc_$index';
     } else if (redirects.stdinFile != null) {
-      input = _resolveSandboxPath(
-        redirects.stdinFile!,
-        _effectiveCwd(options),
-      );
+      input = _resolveSandboxPath(redirects.stdinFile!, _effectiveCwd(options));
     }
 
     final result = await _runCommand(
@@ -923,10 +933,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   }) async {
     final stdoutFile = redirects.stdoutFile;
     if (stdoutFile != null) {
-      final target = _resolveSandboxPath(
-        stdoutFile,
-        _effectiveCwd(options),
-      );
+      final target = _resolveSandboxPath(stdoutFile, _effectiveCwd(options));
       await _writeRedirectBytes(
         stdoutBytes,
         target,
@@ -962,10 +969,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   }) async {
     final stderrFile = redirects.stderrFile;
     if (stderrFile != null) {
-      final target = _resolveSandboxPath(
-        stderrFile,
-        _effectiveCwd(options),
-      );
+      final target = _resolveSandboxPath(stderrFile, _effectiveCwd(options));
       await _writeRedirectBytes(
         stderrBytes,
         target,
@@ -1083,6 +1087,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       'USER': io.Platform.environment['USER'] ?? 'Fa',
       ..._shellEnv,
       ...?options?.env,
+      // POSIX `$?` (issue #1335): the last completed stage's exit code.
+      // Placed after every spread so it always reports the real status; the
+      // `env` builtin and the WASI spawn env filter it out.
+      '?': '${_lastStageExitCode ?? 0}',
     };
   }
 
@@ -1114,10 +1122,28 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
 
   /// Resolves [path] against [cwd] inside the sandbox, returning an absolute
   /// sandbox path.
+  ///
+  /// Absolute paths are first mapped through [_toGuestPath]: the harness
+  /// projects the sandbox as *host* paths (the env cwd, `write`/`edit`
+  /// results, `FileInfo.path` — all under [sandboxHostPath]), and agents
+  /// paste those strings into arguments and redirect targets. Left verbatim
+  /// they address a path the WASI guest cannot see, so `ls` (which rewrote
+  /// its operand) shows a file `cat <absolute>` cannot read — the
+  /// file-visibility split of issue #1335.
   String _resolveSandboxPath(String path, String cwd) {
-    if (path.startsWith('/')) return _normalizeSandboxPath(path);
-    return _normalizeSandboxPath('$cwd/$path');
+    if (path.startsWith('/')) {
+      return _normalizeSandboxPath(_toGuestPath(path));
+    }
+    // A cwd the host-root mapping somehow missed would re-leak host paths
+    // into the join; normalize the result through the same mapping.
+    return _normalizeSandboxPath(_toGuestPath('$cwd/$path'));
   }
+
+  /// Maps an absolute path into the WASI guest namespace: a host-projection
+  /// path under [sandboxHostPath] becomes its sandbox-absolute form
+  /// (`<host>/f` → `/f`); guest-side paths pass through unchanged.
+  String _toGuestPath(String path) =>
+      _sandboxHostRoot?.stripToSandboxPath(path) ?? path;
 
   /// Commands whose positional arguments are file paths and therefore get
   /// rewritten relative to the shell's current directory.
@@ -1253,14 +1279,17 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     final key = arg.substring(0, idx);
     if (key != 'if' && key != 'of') return arg;
     final value = arg.substring(idx + 1);
-    if (value.isEmpty || value.startsWith('/')) return arg;
+    if (value.isEmpty) return arg;
     return '$key=${_resolveSandboxPath(value, cwd)}';
   }
 
   String _maybeRewritePath(String command, String arg, String cwd) {
     if (_isVerbatimArg(arg)) return arg;
-    // Absolute paths are already sandbox-rooted.
-    if (arg.startsWith('/')) return arg;
+    // Absolute operands resolve through _resolveSandboxPath too: a
+    // host-projection path (the shape the env cwd and file-tool results
+    // hand the agent) maps back into the guest namespace instead of
+    // reaching the WASI guest verbatim and failing ENOENT there
+    // (issue #1335).
     return _rewriteRelativePath(command, arg, cwd);
   }
 
@@ -1434,7 +1463,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     final builder = module.builder(
       wasiConfig: WasiConfig(
         args: argv,
+        // `'?'` (and any future special parameter) must not reach the WASI
+        // process environment: WASI env names are identifiers.
         env: env.entries
+            .where((e) => exportEnvVarName.hasMatch(e.key))
             .map((e) => EnvVariable(name: e.key, value: e.value))
             .toList(),
         preopenedDirs: _stagePreopenedDirs(),
@@ -1831,8 +1863,12 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     }
 
     final merged = <String, String>{...env, ...assignments};
-    final lines = merged.entries.map((e) => '${e.key}=${e.value}').toList()
-      ..sort();
+    final lines =
+        merged.entries
+            .where((e) => e.key != '?') // POSIX `$?` is not a real env var.
+            .map((e) => '${e.key}=${e.value}')
+            .toList()
+          ..sort();
     return Ok(
       StageResult(
         stdout: utf8.encode(lines.join('\n') + (lines.isNotEmpty ? '\n' : '')),
@@ -2301,11 +2337,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         ),
       );
     }
-    final files = _grepInputFiles(
-      parsed,
-      inputSource,
-      _effectiveCwd(options),
-    );
+    final files = _grepInputFiles(parsed, inputSource, _effectiveCwd(options));
 
     final rgResult = await _runStage(
       command: 'rg',

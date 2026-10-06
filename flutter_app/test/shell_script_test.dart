@@ -199,4 +199,51 @@ void main() {
       expect(r.stderr, contains('nested too deeply'));
     });
   });
+
+  group(r'exit status $? (issue #1335)', () {
+    test(r'false; echo rc=$? prints rc=1', () async {
+      final r = await run('false; echo rc=\$?');
+      expect(r.stdout.trim(), 'rc=1');
+    });
+
+    test(r'true; echo rc=$? prints rc=0', () async {
+      final r = await run('true; echo rc=\$?');
+      expect(r.stdout.trim(), 'rc=0');
+    });
+
+    test(r'status updates between statements (issue AC2)', () async {
+      final r = await run(r'test -f /nope; echo rc=$?; test -d /; echo rc=$?');
+      expect(r.stdout.trim().split('\n'), ['rc=1', 'rc=0']);
+    });
+
+    test(r'status persists to the next exec call', () async {
+      await run('false');
+      final r = await run(r'echo rc=$?');
+      expect(r.stdout.trim(), 'rc=1');
+    });
+
+    test(r'double quotes expand; single quotes keep it literal', () async {
+      final r = await run("false; echo \"rc=\$?\"; echo 'rc=\$?'");
+      expect(r.stdout.trim().split('\n'), ['rc=1', 'rc=\$?']);
+    });
+
+    test(r'${?} brace form expands too', () async {
+      final r = await run(r'false; echo rc=${?}');
+      expect(r.stdout.trim(), 'rc=1');
+    });
+
+    test('env output does not list the status parameter', () async {
+      final r = await run('false; env');
+      expect(r.stdout, isNot(contains('?=')));
+      expect(r.stdout, contains('PATH='));
+    });
+
+    test('export ?=1 cannot shadow the real status', () async {
+      // A spoofed `'?'` in _shellEnv would print rc=1; the guard + the
+      // shell-owned entry (placed after every spread) keep it rc=0 — the
+      // status of the `export` command itself, per POSIX.
+      final r = await run('false; export ?=1; echo rc=\$?');
+      expect(r.stdout.trim(), 'rc=0');
+    });
+  });
 }

@@ -684,13 +684,20 @@ final class TestEvaluator {
   return (assignments: assignments, remaining: remaining);
 }
 
-/// Applies `export` operands to [env]: `NAME=value` assigns, a bare `NAME`
-/// marks it exported with an empty value only when not already present.
+/// Valid shell/WASI environment variable names. Special shell parameters
+/// like `'?'` are expansion-only: exports must not shadow them.
+final RegExp exportEnvVarName = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$');
+
+/// Applies `export NAME=value` arguments to [env]. Names that are not valid
+/// environment variables (e.g. the special `'?'` parameter) are ignored —
+/// `$?` is shell-owned (issue #1335).
 void applyExportArgs(Map<String, String> env, List<String> args) {
   for (final arg in args) {
     final idx = arg.indexOf('=');
     if (idx > 0) {
-      env[arg.substring(0, idx)] = arg.substring(idx + 1);
+      final name = arg.substring(0, idx);
+      if (!exportEnvVarName.hasMatch(name)) continue;
+      env[name] = arg.substring(idx + 1);
     } else {
       env.putIfAbsent(arg, () => '');
     }
