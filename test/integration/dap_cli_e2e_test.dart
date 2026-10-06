@@ -156,12 +156,18 @@ void main() {
       final stop = await fa(['stop', '--port', '$port']);
       final stopOut = '${stop.stdout}${stop.stderr}';
       expect(stop.exitCode, 0, reason: stopOut);
-      expect(stopOut, contains('Browser'),
-          reason: 'the stop warning names the connected extension peer');
+      expect(
+        stopOut,
+        contains('Browser'),
+        reason: 'the stop warning names the connected extension peer',
+      );
       expect(stopOut, contains('DAP hub stopped'));
       expect(await healthz(), isFalse);
-      expect(await File(dapHubPidFileFor(tempHome.path)).exists(), isFalse,
-          reason: 'no zombie pid state (E4)');
+      expect(
+        await File(dapHubPidFileFor(tempHome.path)).exists(),
+        isFalse,
+        reason: 'no zombie pid state (E4)',
+      );
 
       // Second stop: calm no-op.
       final stop2 = await fa(['stop', '--port', '$port']);

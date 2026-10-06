@@ -142,66 +142,62 @@ Future<void> main() async {
     sessionsRoot.deleteSync(recursive: true);
   });
 
-  test('30k-record session opens through the real CLI path within budget',
-      () async {
-    final sizeMb = sessionFile.lengthSync() / (1024 * 1024);
-    expect(sizeMb, greaterThan(80), reason: 'fixture must be ~100 MB class');
-    // gh-1300: honor the FA_BIN AOT seam (compiled ONCE per CI shard).
-    final command = faCliCommand(
-      [
-        'trajectory',
-        'view',
-        sessionId,
-        '--session-root',
-        sessionsRoot.path,
-      ],
-      jitPrefix: const ['dart', 'run', 'bin/fah.dart'],
-    );
-    final result = await Process.run(
-      command.first,
-      command.sublist(1),
-      environment: {
-        'FA_TIMING': '1',
-        'HOME': tempHome.path,
-        'OPENAI_API_KEY': 'mock',
-      },
-      stdoutEncoding: utf8,
-      stderrEncoding: utf8,
-    );
-    expect(result.exitCode, 0, reason: 'stderr: ${result.stderr}');
-    // Content actually rendered through the real path: the last turn's
-    // assistant row must be in the ledger output.
-    expect(result.stdout, contains('answer $_turns'));
+  test(
+    '30k-record session opens through the real CLI path within budget',
+    () async {
+      final sizeMb = sessionFile.lengthSync() / (1024 * 1024);
+      expect(sizeMb, greaterThan(80), reason: 'fixture must be ~100 MB class');
+      // gh-1300: honor the FA_BIN AOT seam (compiled ONCE per CI shard).
+      final command = faCliCommand(
+        ['trajectory', 'view', sessionId, '--session-root', sessionsRoot.path],
+        jitPrefix: const ['dart', 'run', 'bin/fah.dart'],
+      );
+      final result = await Process.run(
+        command.first,
+        command.sublist(1),
+        environment: {
+          'FA_TIMING': '1',
+          'HOME': tempHome.path,
+          'OPENAI_API_KEY': 'mock',
+        },
+        stdoutEncoding: utf8,
+        stderrEncoding: utf8,
+      );
+      expect(result.exitCode, 0, reason: 'stderr: ${result.stderr}');
+      // Content actually rendered through the real path: the last turn's
+      // assistant row must be in the ledger output.
+      expect(result.stdout, contains('answer $_turns'));
 
-    final timing = RegExp(
-      r'trajectory timing: parse=(\d+)ms build=(\d+)ms render=(\d+)ms total=(\d+)ms records=(\d+)',
-    ).firstMatch(result.stderr);
-    expect(timing, isNotNull, reason: 'stderr: ${result.stderr}');
-    final parseMs = int.parse(timing!.group(1)!);
-    final buildMs = int.parse(timing.group(2)!);
-    final renderMs = int.parse(timing.group(3)!);
-    final totalMs = int.parse(timing.group(4)!);
-    final records = int.parse(timing.group(5)!);
-    expect(records, 1 + _turns * _recordsPerTurn);
-    // The card's budget: ledger projection (where the O(n²) lived) under
-    // 1 s. Render is O(n) printing and reported, not budgeted.
-    expect(buildMs, lessThanOrEqualTo(1000));
-    // Whole open pipeline (parse + projection + render). Budget
-    // recalibrated 4000 -> 6000 (runs 34756684875, 34757563776,
-    // 34758642826, 34759682841: 5098 / 5010 / 5098 / 4737 — stable at
-    // ~4.7-5.1 s idle on CI runners) and now 6000 -> 9000 (issue #943):
-    // 6000 was the idle p95 +17%, which concurrent-CI load on the spawned
-    // `dart run` blew past (the #938 skip). Local clean reference
-    // (2026-09-25, M4 Pro): total=2433 ms — CI idle ≈ 2x local, busy adds
-    // another ~1.5-2x, so 9000 ≈ idle p95 × 1.8 with headroom, while the
-    // O(n²) regression class this gate guards (#262) still trips it by
-    // multiples. buildMs stays the sharp DoD line; per-merge trending is
-    // wired by #305/#303.
-    expect(totalMs, lessThanOrEqualTo(9000));
-    // ignore: avoid_print
-    print(
-      'perf-gate: ${sizeMb.toStringAsFixed(1)} MB, parse=${parseMs}ms '
-      'build=${buildMs}ms render=${renderMs}ms total=${totalMs}ms',
-    );
-  });
+      final timing = RegExp(
+        r'trajectory timing: parse=(\d+)ms build=(\d+)ms render=(\d+)ms total=(\d+)ms records=(\d+)',
+      ).firstMatch(result.stderr);
+      expect(timing, isNotNull, reason: 'stderr: ${result.stderr}');
+      final parseMs = int.parse(timing!.group(1)!);
+      final buildMs = int.parse(timing.group(2)!);
+      final renderMs = int.parse(timing.group(3)!);
+      final totalMs = int.parse(timing.group(4)!);
+      final records = int.parse(timing.group(5)!);
+      expect(records, 1 + _turns * _recordsPerTurn);
+      // The card's budget: ledger projection (where the O(n²) lived) under
+      // 1 s. Render is O(n) printing and reported, not budgeted.
+      expect(buildMs, lessThanOrEqualTo(1000));
+      // Whole open pipeline (parse + projection + render). Budget
+      // recalibrated 4000 -> 6000 (runs 34756684875, 34757563776,
+      // 34758642826, 34759682841: 5098 / 5010 / 5098 / 4737 — stable at
+      // ~4.7-5.1 s idle on CI runners) and now 6000 -> 9000 (issue #943):
+      // 6000 was the idle p95 +17%, which concurrent-CI load on the spawned
+      // `dart run` blew past (the #938 skip). Local clean reference
+      // (2026-09-25, M4 Pro): total=2433 ms — CI idle ≈ 2x local, busy adds
+      // another ~1.5-2x, so 9000 ≈ idle p95 × 1.8 with headroom, while the
+      // O(n²) regression class this gate guards (#262) still trips it by
+      // multiples. buildMs stays the sharp DoD line; per-merge trending is
+      // wired by #305/#303.
+      expect(totalMs, lessThanOrEqualTo(9000));
+      // ignore: avoid_print
+      print(
+        'perf-gate: ${sizeMb.toStringAsFixed(1)} MB, parse=${parseMs}ms '
+        'build=${buildMs}ms render=${renderMs}ms total=${totalMs}ms',
+      );
+    },
+  );
 }

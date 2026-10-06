@@ -29,18 +29,12 @@ void main() {
     });
 
     test('ambient FA_BIN applies when the caller pins nothing', () {
-      final cmd = faCliCommand(
-        ['--model', 'm'],
-        ambientFaBin: '/ambient/fa',
-      );
+      final cmd = faCliCommand(['--model', 'm'], ambientFaBin: '/ambient/fa');
       expect(cmd, ['/ambient/fa', '--model', 'm']);
     });
 
     test('no FA_BIN anywhere falls back to the default JIT prefix', () {
-      final cmd = faCliCommand(
-        ['--model', 'm'],
-        useAmbientFaBin: false,
-      );
+      final cmd = faCliCommand(['--model', 'm'], useAmbientFaBin: false);
       expect(cmd, ['dart', 'bin/fah.dart', '--model', 'm']);
     });
 
@@ -64,18 +58,22 @@ void main() {
           '/repo/bin/fah.dart',
         ],
       );
-      expect(
-        cmd,
-        ['dart', '--disable-service-auth-codes', '--observe=8123',
-            '/repo/bin/fah.dart'],
-      );
+      expect(cmd, [
+        'dart',
+        '--disable-service-auth-codes',
+        '--observe=8123',
+        '/repo/bin/fah.dart',
+      ]);
     });
 
     test('args are appended verbatim in the AOT shape (2+ items)', () {
-      final cmd = faCliCommand(
-        ['trajectory', 'view', 's1', '--session-root', '/tmp/s'],
-        faBin: '/ambient/fa',
-      );
+      final cmd = faCliCommand([
+        'trajectory',
+        'view',
+        's1',
+        '--session-root',
+        '/tmp/s',
+      ], faBin: '/ambient/fa');
       expect(cmd, [
         '/ambient/fa',
         'trajectory',
@@ -88,10 +86,10 @@ void main() {
 
     test('empty args reduce to the binary itself', () {
       expect(faCliCommand(const [], faBin: '/ambient/fa'), ['/ambient/fa']);
-      expect(
-        faCliCommand(const [], useAmbientFaBin: false),
-        ['dart', 'bin/fah.dart'],
-      );
+      expect(faCliCommand(const [], useAmbientFaBin: false), [
+        'dart',
+        'bin/fah.dart',
+      ]);
     });
   });
 }

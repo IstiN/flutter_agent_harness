@@ -37,7 +37,8 @@ void main() {
 
     test('PUB_CACHE passes through for package resolution', () {
       // The harness forwards PUB_CACHE because the pub cache lives under
-      // the REAL home; without it a HOME override breaks `dart` startup.      const pubCache = '/tmp/pub-cache-probe';
+      // the REAL home; without it a HOME override breaks `dart` startup.
+      const pubCache = '/tmp/pub-cache-probe';
       final withCache = CliVisualHarness.resolveSpawnEnv({
         'HOME': '/tmp/any',
         'PUB_CACHE': pubCache,
@@ -140,8 +141,7 @@ customProviders:
       expect(exeArgs, ['--model', 'm']);
     });
 
-    test('an empty ambient FA_BIN reads as unset (CI may export it blank)',
-        () {
+    test('an empty ambient FA_BIN reads as unset (CI may export it blank)', () {
       final (exe, exeArgs) = CliVisualHarness.resolveFaCommand(
         args: ['--model', 'm'],
         ambientFaBin: '',
@@ -153,13 +153,13 @@ customProviders:
     test('no FA_BIN keeps the direct-VM default shape', () {
       final (exe, exeArgs) = CliVisualHarness.resolveFaCommand(
         args: const [],
+        useAmbientFaBin: false,
       );
       expect(exe, 'dart');
       expect(exeArgs, ['bin/fah.dart']);
     });
 
-    test('a caller-pinned executable spec is never overridden (2+ args)',
-        () {
+    test('a caller-pinned executable spec is never overridden (2+ args)', () {
       // Even with FA_BIN exported: a test that pinned the spawn (e.g. the
       // omp REG capture pins an absolute script path) meant it.
       final (exe, exeArgs) = CliVisualHarness.resolveFaCommand(
