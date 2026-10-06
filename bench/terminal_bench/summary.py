@@ -187,12 +187,33 @@ def render(runs_dir: Path, expected=None, model_override=None):
     # cluster, not just as one accuracy number. `unset` covers both
     # resolved trials (tb's default mode) and unresolved ones whose
     # tests ran and failed — the model side.
+    #
+    # gh-1308 (NG2/AC3): agent_timeout rows split by recorded tokens —
+    # a 0-token timeout is a provider hang (the endpoint accepted the
+    # request and streamed nothing), not a trial that ran out of clock
+    # doing real work. The explicit count is the provider-health
+    # regression guard across bench runs.
     modes = {}
-    for _, _, mark, mode, _, _, _ in rows:
-        modes[(mode or "unset", mark)] = modes.get((mode or "unset", mark), 0) + 1
+    hang = work = 0
+    for _, _, mark, mode, tin, tout, _ in rows:
+        key = mode or "unset"
+        if key == "agent_timeout":
+            if not tin and not tout:
+                key = "agent_timeout (0 tokens — provider hang)"
+                hang += 1
+            else:
+                key = "agent_timeout (real work, cap exhausted)"
+                work += 1
+        modes[(key, mark)] = modes.get((key, mark), 0) + 1
     lines.append("Failure families (mode x resolved):")
     for (mode, mark), n in sorted(modes.items()):
         lines.append(f"- {mode or 'unset'} / {mark}: {n}")
+    if hang or work:
+        lines.append(
+            f"**zero-token timeouts (provider hang): {hang}**"
+            f" — agent_timeout split: {hang} with 0 tokens (provider hang),"
+            f" {work} with real work (cap exhausted)"
+        )
     lines.append("")
 
     # Token/cost totals (issue #1123): sums over exactly the rows above.
