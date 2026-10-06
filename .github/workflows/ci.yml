@@ -744,6 +744,18 @@ jobs:
         with:
           name: fa-aot-bin
           path: fa-local/bundle
+      # Artifact zips do NOT preserve the exec bit (download-artifact
+      # README: "post-download the file is no longer guaranteed to be set
+      # as an executable"). Run 37446280743: `test -x` below failed
+      # silently ~20 ms in on EVERY shard — the gate went red before a
+      # single test ran. Restore the mode the build job shipped; the
+      # smoke below still verifies the restored binary is executable and
+      # boots (never a silent JIT fallback). Content integrity is not
+      # affected: download-artifact digest-validates (digest-mismatch:
+      # error default), so this chmod only ever touches the verified
+      # bundle the fa-aot-build job produced.
+      - name: Restore exec bit (artifact zips drop permissions)
+        run: chmod +x fa-local/bundle/bin/fah
       - name: Smoke the AOT binary (fail loud, never JIT-fallback)
         run: |
           test -x fa-local/bundle/bin/fah
