@@ -471,7 +471,10 @@ extension AgentServiceSessions on AgentService {
           if (gen != _loadGeneration) return;
           final context = await session.buildContext();
           if (gen != _loadGeneration) return;
-          _agent.state.messages = context.messages;
+          // Same resume parity as [loadSession] (issue #1332): records
+          // reloaded off disk carry generation-time anchors that
+          // phantom-report a pre-compaction request size.
+          _agent.state.messages = resetLoadedUsageAnchors(context.messages);
           _persistedCount = context.messages.length;
         } else if (ingest.delta.isNotEmpty) {
           _viewBranch?.addAll(ingest.delta);
@@ -505,16 +508,21 @@ extension AgentServiceSessions on AgentService {
   ) async {
     final hasCompaction = delta.any((r) => r is CompactionRecord);
     final branch = _viewBranch;
+    // Disk-reloaded records re-anchor (issue #1332): generation-time
+    // usage describes the WRITER's context — pre-compaction for a
+    // compaction delta — never this host's projection.
     if (hasCompaction || branch == null) {
       final full = session.projectPath(branch ?? delta);
-      _agent.state.messages
-        ..clear()
-        ..addAll(full);
+      _agent.state.messages = resetLoadedUsageAnchors(full);
       _persistedCount = full.length;
       return;
     }
-    final projected = session.projectPath(delta);
-    _agent.state.messages.addAll(projected);
+    final projected = resetLoadedUsageAnchors(session.projectPath(delta));
+    // state.messages hands out an unmodifiable view — grow through the
+    // setter (the old addAll on the getter threw UnsupportedError,
+    // silently swallowed by the watcher's catch, and external appends
+    // never reached the provider context).
+    _agent.state.messages = [..._agent.state.messages, ...projected];
     _persistedCount += projected.length;
   }
 
