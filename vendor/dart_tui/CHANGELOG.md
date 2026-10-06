@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Program survival (gh-1248):** an exception inside a `Cmd`, `update()`,
+  or a mouse callback no longer stops the program. Those guards enqueued
+  `InterruptMsg` — the program died while the embedding host kept running,
+  and `Program.send` then silently dropped every later message: a live
+  agent answering into a screen that never painted again (the
+  dap_wake_hang flake family). Guards now log and keep running; under
+  `withoutCatchPanics()` they rethrow — the flag means don't catch, so
+  failures stay fatal and loud. Only
+  `QuitMsg` and external cancellation end the program. (The render
+  pipeline's own self-heal is gh-1197's `renderGuarded`.)
+
 ## 2.0.0 - 2026-08-08
 
 This major release hardens the terminal runtime, ports the selected Bubble Tea
