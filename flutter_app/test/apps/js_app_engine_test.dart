@@ -2054,6 +2054,68 @@ void main() {
         });
       });
     });
+
+    group('uiTree watchdog (gh-1336)', () {
+      // A SYNTAX error: the whole wrapper IIFE fails to parse, so neither
+      // the runtime's inner try/catch nor `jsr.showError` ever runs — the
+      // exact silent-failure shape from the field report.
+      const brokenWidgetJs = 'this is not valid javascript ;;; {';
+      const healthyWidgetJs = '''
+(function() {
+  jsr.render({type: 'text', data: 'neighbour-ok'});
+})();
+''';
+
+      JsAppInfo appOf(String id) => JsAppInfo.fromManifest(
+        {'id': id, 'name': id},
+        bundled: false,
+        fallbackId: id,
+      );
+
+      testWidgets('a widget whose source fails to eval surfaces bootError '
+          'instead of spinning forever, and its neighbour keeps rendering', (
+        tester,
+      ) async {
+        await tester.runAsync(() async {
+          final previousWarn = JsAppEngine.uiTreeWarnAfter;
+          JsAppEngine.uiTreeWarnAfter = const Duration(milliseconds: 400);
+          final env = MemoryExecutionEnv();
+          await env.writeFile('apps/broken/widget.js', brokenWidgetJs);
+          await env.writeFile('apps/healthy/widget.js', healthyWidgetJs);
+          final broken = JsAppEngine(
+            app: appOf('broken'),
+            env: env,
+            permissions: const AppPermissions(),
+          );
+          final healthy = JsAppEngine(
+            app: appOf('healthy'),
+            env: env,
+            permissions: const AppPermissions(),
+          );
+          try {
+            // The runtime swallows the eval failure: start() resolves and
+            // the tree never arrives (the old infinite-spinner shape).
+            await broken.start();
+            expect(broken.tree.value, isNull);
+            // The neighbour boots and renders normally — one broken
+            // widget never touches other engines (gh-1336 AC1).
+            await healthy.start();
+            await waitFor(() => healthy.tree.value != null);
+            expect(jsonEncode(healthy.tree.value), contains('neighbour-ok'));
+            // …and the broken engine's spinner turns into a surfaceable
+            // error with the widget id + failure mode (gh-1336 AC1/AC3).
+            await waitFor(() => broken.bootError.value != null);
+            final error = '${broken.bootError.value}';
+            expect(error, contains("'broken'"));
+            expect(error, contains('UI tree'));
+          } finally {
+            JsAppEngine.uiTreeWarnAfter = previousWarn;
+            await broken.dispose();
+            await healthy.dispose();
+          }
+        });
+      });
+    });
   }, skip: _engineSkip);
 
   group(
