@@ -661,6 +661,7 @@ jobs:
       # test.dart).
       - name: Install Flutter dependencies
         uses: ./.github/actions/flutter-pub-get
+
       # The workspace is re-cloned every run, which wipes Pods/ and forces a
       # full pod install. Cache it keyed by the lockfile; $HOME-level caches
       # (pub-cache, CocoaPods download cache, Ruby gems, Flutter SDK) already
