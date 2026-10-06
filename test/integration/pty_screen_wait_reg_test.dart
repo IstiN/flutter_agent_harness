@@ -116,7 +116,9 @@ void main() {
 
     for (final file in files) {
       final lines = _codeLines(file.readAsLinesSync());
-      if (!lines.any((l) => l.contains('RegExp(') && l.contains('exited('))) {
+      // Prefilter only: the raw source spells the escaped paren (`exited\(`),
+      // so match on the stem and let the dataflow checks below discriminate.
+      if (!lines.any((l) => l.contains('RegExp(') && l.contains('exited'))) {
         continue; // no settle-notice regex in this file — nothing to police
       }
       for (var i = 0; i < lines.length; i++) {
