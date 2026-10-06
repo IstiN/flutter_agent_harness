@@ -4666,4 +4666,9 @@
 - gh-1303 [CI] Pages 'Build landing + web demo' red on main — '41 packages have newer versions incompatible with dependency constraints' (blocks publish + merge-trigger) (#1305)
 - gh-1299 [BUG] [URGENT] main red 13 legs: release commit v1.0.515 bumps version WITHOUT regenerating pubspec.lock — new --enforce-lockfile (#1268) hard-fails every leg (#1304)
 
+## 1.0.520
+
+- fix(1250): assert frozen-row invariant, not an unsampleable mid-drain frame (#1286)
+- gh-1300 [ENH] PTY integration tests: pay toolchain+boot ONCE per shard, not per test (~30s spawn overhead × N tests) — boot-once + reset between tests (owner design), FA_BIN AOT seam as the cheap first cut (#1306)
+
 ## Unreleased
