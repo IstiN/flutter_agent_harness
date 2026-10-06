@@ -53,11 +53,28 @@ void main() {
         );
         const secret = 'pt-E2E-secret-9';
         harness.sendText(secret);
-        await harness.waitForText('•••••', timeout: const Duration(seconds: 10));
+        // gh-1244: the exact transient `waitForText('•••••')` anchor is
+        // not a synchronization point — under CI timing the prompt paints
+        // past the checkpoint before the poll evaluates, and the caret
+        // cell is wrapped in inverse-video escapes on the raw wire, so N
+        // consecutive `•` need never exist in the stream at all.
+        // Synchronize on the full masked row on the painted SCREEN (the
+        // 1245 property anchor), re-anchoring once if the closing border
+        // lagged a repaint.
+        var screen = await harness.waitForScreen(
+          '•' * secret.length,
+          timeout: const Duration(seconds: 30),
+        );
+        if (maskedValueRow(screen) == null) {
+          screen = await harness.waitForScreen(
+            '•' * secret.length,
+            timeout: const Duration(seconds: 30),
+          );
+        }
         // Security pin: no rendered frame — raw or on-screen — may carry
-        // the password bytes.
+        // the password bytes (asserted on the ANCHORED screen).
         expect(harness.rawOutput.contains(secret), isFalse);
-        expect(harness.screenText.contains(secret), isFalse);
+        expect(screen.contains(secret), isFalse);
         harness.sendEnter();
         // The write unblocks `head`; the command finishes and its output
         // (marker included) reaches the model on the scripted follow-up.
