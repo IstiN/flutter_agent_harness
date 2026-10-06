@@ -77,11 +77,6 @@ gates:
       - '**.freezed.dart'
       - '**.mocks.dart'
       - 'vendor/**'
-    exclude:
-      - '**.g.dart'
-      - '**.freezed.dart'
-      - '**.mocks.dart'
-      - 'vendor/**'
   test_coverage: {enabled: false} # own ≥80% coverage-gate job
   complexity: {enabled: false} # CRAP ratchet above already covers it
   method_size: {enabled: false}
