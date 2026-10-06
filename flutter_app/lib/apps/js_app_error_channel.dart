@@ -24,16 +24,28 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:meta/meta.dart' show visibleForTesting;
 
 /// Parses one raw engine-log line into a [JsAppErrorEvent] when it is a
 /// structured `faAppError:{json}` record (the marker the bootstrap emits);
 /// returns null for every other line. Exported for the engine's log tap
 /// and for tests.
+///
+/// The record is located by the marker and decoded as the first balanced
+/// `{…}` object after it (string-literal aware) — NOT as the exact rest of
+/// the line. The engine's transport wraps console lines in the iid tag's
+/// `{id: "[E] faAppError:{…}"}` envelope by the time they reach Dart
+/// (flutter_js jsonDecodes the sendMessage payload before the channel
+/// callback, so the wrap survives routing — gh-1307), and a trailing
+/// envelope brace used to make the payload malformed JSON, silently
+/// blinding the whole capture surface. Any envelope around the record now
+/// decodes; a marker mention inside a plain log line still returns null.
 JsAppErrorEvent? parseJsAppErrorLogLine(String line) {
   const marker = 'faAppError:';
   final index = line.indexOf(marker);
   if (index < 0) return null;
-  final payload = line.substring(index + marker.length).trim();
+  final payload = balancedJsonObjectAfter(line, index + marker.length);
+  if (payload == null) return null;
   try {
     final decoded = jsonDecode(payload);
     if (decoded is Map<String, dynamic>) {
@@ -43,6 +55,38 @@ JsAppErrorEvent? parseJsAppErrorLogLine(String line) {
     // Not our record — a stray console line mentioning the marker.
   }
   return null;
+}
+
+/// The first balanced `{…}` object in [line] starting at or after [from]
+/// (the scan begins at the first `{` found there), honoring string
+/// literals and backslash escapes so braces inside message/stack text
+/// never cut the record short. Null when no balanced object exists.
+@visibleForTesting
+String? balancedJsonObjectAfter(String line, int from) {
+  final start = line.indexOf('{', from);
+  if (start < 0) return null;
+  var depth = 0;
+  var inString = false;
+  for (var i = start; i < line.length; i++) {
+    final ch = line[i];
+    if (inString) {
+      if (ch == r'\') {
+        i++; // skip the escaped character verbatim
+      } else if (ch == '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch == '"') {
+      inString = true;
+    } else if (ch == '{') {
+      depth++;
+    } else if (ch == '}') {
+      depth--;
+      if (depth == 0) return line.substring(start, i + 1);
+    }
+  }
+  return null; // unbalanced — truncated record
 }
 
 /// One dedup-gate decision: whether a report is new enough to deliver,
