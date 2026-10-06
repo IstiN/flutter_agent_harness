@@ -716,6 +716,16 @@ class Agent {
     );
     onRunIdleTimeout?.call(error);
     run.source.cancel(error);
+    // gh-1308: the transient-retry ladder replays the watchdog-cancelled
+    // request (the machine-cancel resume class) — the replayed silent
+    // attempt must be bounded by the SAME interval, or it lives to the
+    // caller's cap (the bench's zero-token trials died with this timer
+    // dead after its one shot). Re-arm while this fire owns the latch: a
+    // replay that produces events re-arms per event anyway, run
+    // settlement disarms (`_finishRun`), and a user abort that won the
+    // race leaves a bare cancel reason — that run is ending.
+    if (run.source.token.cancelReason is! RunIdleWatchdogFire) return;
+    _armRunWatchdog();
   }
 
   /// Folds the message-lifecycle and turn events into [_state].

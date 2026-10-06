@@ -56,6 +56,28 @@ import '../types.dart';
 /// consumer of the wording are pinned together (issue #1121, review r1).
 const String connectWatchdogTag = '(connect watchdog)';
 
+/// The structural tag the zero-byte stall terminal carries (gh-1308):
+/// the endpoint accepted every request and produced nothing across the
+/// replay budget — the run-idle watchdog killed the silent attempts.
+/// Classified retryable/transport by this file's ladder and the roles
+/// ladder (a hung primary fails over to the next configured model, the
+/// 429 take-over path) and as a timeout death by the queue classifier.
+/// Producer and consumers pin the constant, [connectWatchdogTag]-style.
+const String zeroByteStallTag = '(zero-byte stall)';
+
+/// The zero-byte replay budget (gh-1308): consecutive PRE-COMMIT attempts
+/// killed by the run-idle watchdog — zero bytes ever reached the caller —
+/// before the ladder stops replaying and fails the call with the
+/// zero-byte terminal instead of spending the remaining budget. 2 on
+/// purpose: every kill costs a full watchdog interval (default 8 min), so
+/// the third attempt the generic budget allows pushed the bench's
+/// zero-token trials past their caps — they died as `agent_timeout` with
+/// 0 tokens mid-attempt while the ladder still had "budget" left. With
+/// the bound, the verdict lands at ≈ 2×watchdog-interval as a truthful
+/// retryable error. The generic [maxAttempts] budget keeps governing
+/// every other failure class.
+const int maxZeroByteWatchdogAttempts = 2;
+
 final _transientNetworkPatterns = [
   RegExp(r'connection reset', caseSensitive: false),
   RegExp(r'socketexception', caseSensitive: false),
@@ -83,6 +105,11 @@ final _transientNetworkPatterns = [
   // silently drop a #1125 ladder exhaustion out of this ladder
   // (review r1, thread 2).
   RegExp(RegExp.escape(connectWatchdogTag)),
+  // The zero-byte stall terminal (gh-1308): this ladder's own verdict for
+  // a wedged endpoint that produced nothing across its watchdog-replay
+  // budget. Retryable on sight so a re-entered ladder (a roles failover
+  // target builds a fresh one) treats it like any transport failure.
+  RegExp(RegExp.escape(zeroByteStallTag)),
   // Truncation class (issue #312): a stream that closes without a
   // finish_reason and without content is a cut transport.
   RegExp(r'stream ended without finish_reason'),
@@ -360,6 +387,10 @@ Future<void> _drive(
   final startedAt = DateTime.now();
   final attemptLog = <String>[];
   AssistantMessage? lastFailure;
+  // gh-1308: consecutive pre-commit attempts the run-idle watchdog killed
+  // with zero output. Any other outcome resets the streak — only
+  // back-to-back full-interval silences prove the wedged-endpoint class.
+  var zeroByteKills = 0;
   // Issue #1126: the resume-from-prefix state. `attemptContext` changes
   // only when a mid-stream abort resumes (the tail request carries the
   // completed prefix as the anchor); the caller's token stays THE token.
@@ -392,6 +423,24 @@ Future<void> _drive(
         final watchdogReplay = cancelToken?.cancelReason is RunIdleWatchdogFire;
         attemptLog.add(_replayReason(watchdogReplay, error));
         _rearmWatchdogLatch(cancelToken, watchdogReplay);
+        // gh-1308: replaying into an endpoint that produced NOTHING is
+        // bounded separately from the generic budget — every watchdog
+        // kill costs a full watchdog interval, so the third attempt the
+        // generic budget allows burned the caller's whole cap (bench run
+        // 37418229569: 11 trials died as agent_timeout with 0 tokens
+        // while the ladder still had "budget"). Past the bound the call
+        // fails fast and truthfully: a retryable provider error the
+        // roles ladder can fail over on, never a caller timeout.
+        zeroByteKills = watchdogReplay ? zeroByteKills + 1 : 0;
+        if (zeroByteKills >= maxZeroByteWatchdogAttempts) {
+          final terminal = _zeroByteStallTerminal(
+            model,
+            attemptLog,
+            startedAt,
+          );
+          out.push(resume.isEmpty ? terminal : _resumeEvent(terminal, resume));
+          return;
+        }
         if (attempt >= maxAttempts) {
           final terminal = _transientExhaustedTerminal(
             model,
@@ -458,6 +507,52 @@ String _shortReason(String? errorMessage) {
   final text = errorMessage ?? 'network error';
   final line = text.split('\n').first;
   return line.length <= 120 ? line : '${line.substring(0, 120)}...';
+}
+
+/// The zero-byte stall terminal (gh-1308): the endpoint accepted every
+/// request and produced nothing — the run-idle watchdog killed the silent
+/// attempts — so the ladder stops replaying and fails the call fast and
+/// truthfully: a retryable provider error carrying the [zeroByteStallTag]
+/// classification, never a caller timeout.
+ErrorEvent _zeroByteStallTerminal(
+  Model model,
+  List<String> attemptLog,
+  DateTime startedAt,
+) => ErrorEvent(
+  reason: StopReason.error,
+  error: _zeroByteStallMessage(model, attemptLog, startedAt),
+);
+
+/// The zero-byte stall story (see [_zeroByteStallTerminal]).
+AssistantMessage _zeroByteStallMessage(
+  Model model,
+  List<String> attemptLog,
+  DateTime startedAt,
+) {
+  final elapsed = DateTime.now().difference(startedAt);
+  final elapsedText = elapsed.inSeconds < 1 ? '<1s' : '${elapsed.inSeconds}s';
+  final log = attemptLog
+      .map(
+        (line) =>
+            line.endsWith('.') ? line.substring(0, line.length - 1) : line,
+      )
+      .join('; ');
+  return AssistantMessage(
+    content: const [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: Usage.zero,
+    stopReason: StopReason.error,
+    errorMessage:
+        'Provider zero-byte stall after ${attemptLog.length} attempt(s) '
+        'over $elapsedText — the endpoint accepted the request but never '
+        'produced output; the run-idle watchdog killed every silent '
+        'attempt ($zeroByteStallTag). Attempts: $log. The failure is '
+        'retryable: a fallback model may take over, or check the '
+        'provider status / try again later.',
+    timestamp: DateTime.now(),
+  );
 }
 
 /// The exhaustion terminal message (issue #290 AC2): the story is the

@@ -45,7 +45,7 @@ import '../providers/quota.dart';
 // retryable (the ladder would rewrap it as "not retried", false after
 // the chain's own attempts) nor retried again.
 import '../providers/transient_retry_stream.dart'
-    show isTransientExhaustionStory;
+    show isTransientExhaustionStory, zeroByteStallTag;
 import '../types.dart';
 import 'key_rotation.dart';
 import 'roles_config.dart';
@@ -114,6 +114,12 @@ final _transportPatterns = [
   // plain request-timeout wordings — always retryable.
   RegExp(r'timeout ?exception', caseSensitive: false),
   RegExp(r'request (attempt )?timed? ?out', caseSensitive: false),
+  // gh-1308: the transient ladder's zero-byte stall terminal — an
+  // endpoint that accepted every request and produced nothing across its
+  // watchdog-replay budget. Tag-pinned to the producer
+  // ([zeroByteStallTag], the connectWatchdogTag discipline) so the hung
+  // primary fails over to the next chain entry instead of standing.
+  RegExp(RegExp.escape(zeroByteStallTag)),
   // Truncation class (issue #312): a stream that closes without a
   // finish_reason and without committed content is a cut transport.
   RegExp(r'stream ended without finish_reason'),

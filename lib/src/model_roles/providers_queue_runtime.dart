@@ -145,6 +145,9 @@ final _timeoutPatterns = [
   RegExp(r'timeout ?exception', caseSensitive: false),
   RegExp(r'stream idle timeout', caseSensitive: false),
   RegExp(r'request (attempt )?timed? ?out', caseSensitive: false),
+  // gh-1308: the zero-byte stall terminal — the wedged endpoint class the
+  // provider watchdogs exist for; the entry benches and the queue advances.
+  RegExp(r'zero-byte stall'),
 ];
 
 /// Maps a queue adapter kind to the catalog provider NAME the model
