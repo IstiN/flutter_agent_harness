@@ -11,8 +11,28 @@ dart test --tags integration
 ```
 
 The `integration` tag is excluded from the pre-commit gate (see
-`dart_test.yaml`); these tests are slow because every spawn JIT-compiles
-the CLI. First-time boot can take up to ~90 s.
+`dart_test.yaml`). First-time boot can take up to ~90 s.
+
+### The FA_BIN AOT seam (gh-1300)
+
+Every test spawn pays a JIT cost: VM start + CFE kernel compile of the
+whole harness (~30 s per spawn on loaded ARM CI runners; ~9 s even on a
+warm dev box). Set `FA_BIN` to a prebuilt binary to skip it:
+
+```bash
+dart build cli --target=bin/fah.dart --output=fa-local
+FA_BIN=$PWD/fa-local/bundle/bin/fah dart test --tags integration
+```
+
+CI compiles the bundle ONCE per run (`fa-aot-build` job; nightly builds
+in-job) and exports `FA_BIN` for the PTY/CLI legs — every spawn (the PTY
+harness and the headless helpers, via `faCliCommand`) then runs the AOT
+binary (~0.01 s). Isolation is untouched: a spawn is still a fresh
+process with its own env/cwd — the per-spawn reset contract is documented
+on `FaCliHarness` in `pty_harness.dart`. The per-shard duration budgets
+this optimizes live in `scripts/test_shard_budgets.json`
+(`scripts/check_shard_durations.py` gates them and auto-files the
+`[ENH]` issue on breach).
 
 Visual (screenshot) tests live in `flutter_app/test/cli_visual/` — they run
 the same PTY harness but render every step through the real Flutter

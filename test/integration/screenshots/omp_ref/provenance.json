@@ -1,0 +1,19 @@
+{
+  "omp_commit": "df624f56b0508c51067a70422606cac898ac2bcb",
+  "captured_at": "2026-10-04T15:11:11.543469Z",
+  "omp_version": "18.2.8",
+  "bun_version": "1.4.2",
+  "mock_model": "mockcap/test-model",
+  "scenarios": [
+    "welcome/idle boot screen",
+    "status bar (default preset, boot)",
+    "streaming turn with one tool call (read note.md)",
+    "fenced code block"
+  ],
+  "geometry": {
+    "columns": 131,
+    "rows": 36,
+    "render_width": 2048,
+    "render_height": 1168
+  }
+}

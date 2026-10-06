@@ -83,6 +83,13 @@ jobs:
           touch flutter_app/.env
           cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
+      # gh-1310 rework (review thread 2): resolve flutter_app through the
+      # shared retry action BEFORE the first flutter consumer — the package
+      # config doesn't exist at checkout, so "Chrome boot tests" would
+      # otherwise trigger flutter test's implicit (unenforced, unretried)
+      # pub get first.
+      - uses: ./.github/actions/flutter-pub-get
+
       # The office boot seam compiles web-only code, so its guard tests run
       # on the chrome platform (VM suite can't import them). FA_HOST=office
       # compiles the real boot branch in; Office.js is absent in the test
@@ -91,8 +98,7 @@ jobs:
         run: cd flutter_app && flutter test test/web --platform chrome --dart-define=FA_HOST=office
 
       - name: Office wiring tests (flutter_app)
-        # gh-1265 AC2: resolve against the committed lockfile.
-        run: cd flutter_app && flutter pub get --enforce-lockfile && flutter test test/services/office_wiring_test.dart
+        run: cd flutter_app && flutter test test/services/office_wiring_test.dart
 
       # Validates the manifest (fails loudly on any issue), builds the
       # fa web app with FA_HOST=office and assembles the site slice —
