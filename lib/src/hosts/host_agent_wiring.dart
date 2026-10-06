@@ -185,9 +185,16 @@ final class AgentCoreServices {
   /// own way (and owns the canonical-vs-pinned drift risk).
   final HostKeyResolver? keyResolver;
 
-  /// Fires when the run's model resolves to a PINNED key slot instead of
+  /// Fires when the run's model resolved to a PINNED key slot instead of
   /// the canonical one — the same migration hint the CLI prints at boot.
   /// Requires [keyResolver]; called once per [WiredAgentCore.buildAgentStack].
+  ///
+  /// Scope note: the automatic check resolves STORE-only (it has no
+  /// catalog facts), so a host that runs a catalog env var AND a pinned
+  /// store twin may see a drift hint for a key the env leg actually wins.
+  /// Hosts with catalog facts should call `services.resolveKey(envNames: …,
+  /// defaultBaseUrl: …)` themselves and treat the boot-time hint as
+  /// store-scope only.
   final void Function(String hint)? onKeySlotDrift;
 
   // Passthrough facilities the builder does not assemble yet but the

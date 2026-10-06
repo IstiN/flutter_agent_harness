@@ -92,12 +92,62 @@ void main() {
           (e) => e.kind == AgentTelemetryEventKind.requestStart,
         );
         expect(request.detail, contains('model=test-model'));
+        // The wrap names the request context on BOTH provider-leg records.
+        final firstToken = sink.events.firstWhere(
+          (e) => e.kind == AgentTelemetryEventKind.firstToken,
+        );
+        expect(firstToken.detail, contains('model=test-model'));
         final runEnd = sink.events.last;
         expect(runEnd.sinceRunStart, greaterThanOrEqualTo(Duration.zero));
         // No error → no status claimed on the clean run's terminal record.
         expect(runEnd.httpStatus, isNull);
       },
     );
+
+    test('an aborted run is a phase outcome, never a run error', () async {
+      final sink = InMemoryTelemetrySink();
+      final telemetry = AgentTelemetry(sink);
+      final stream = AssistantMessageEventStream();
+      stream.push(StartEvent(partial: _assistant()));
+      final agent = Agent(
+        model: _model,
+        systemPrompt: 's',
+        toolExecutor: _okExecutor,
+        streamFunction: telemetry.wrapStreamFunction((m, c, {cancelToken}) {
+          // The abort terminal mirrors agent_loop's own: an errorMessage
+          // RIDES the aborted message — and must not become a run error.
+          cancelToken?.onCancel.then((_) {
+            stream.push(
+              ErrorEvent(
+                reason: StopReason.aborted,
+                error: _assistant(
+                  stopReason: StopReason.aborted,
+                  errorMessage: 'Operation aborted',
+                ),
+              ),
+            );
+          });
+          return stream;
+        }),
+      );
+      telemetry.attach(agent);
+      final run = agent.prompt('hi');
+      agent.abort();
+      await run;
+
+      // `turn end stop=aborted` carries the distinction, `run end` closes
+      // the run — and NO `error` record lands (the CLI logs aborted runs
+      // as a plain run end, no error line).
+      expect(
+        sink.events.map((e) => e.kind),
+        isNot(contains(AgentTelemetryEventKind.error)),
+      );
+      final turnEnd = sink.events.firstWhere(
+        (e) => e.kind == AgentTelemetryEventKind.turnEnd,
+      );
+      expect(turnEnd.stopReason, 'aborted');
+      expect(sink.events.last.kind, AgentTelemetryEventKind.runEnd);
+    });
 
     test(
       'an in-stream provider error records the parsed HTTP status',

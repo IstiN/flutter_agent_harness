@@ -70,15 +70,19 @@ final class AgentTelemetryEvent {
   /// `aborted`, …).
   final String? stopReason;
 
-  /// The provider HTTP status when known: on `error`, the status of the
-  /// failed request (typed [ProviderHttpError], or parsed from the harness
-  /// error formatter's own `<status>: <body>` shape); on `runEnd`, the
-  /// status of the LAST request (2xx when any token streamed, else null).
+  /// The provider HTTP status of the FAILED request, on the `error` kind:
+  /// typed [ProviderHttpError] when the harness has it, else parsed from
+  /// the error formatter's own `<status>: ` shape. Null on every other
+  /// kind — success statuses are not observable through the event surface
+  /// (a streamed token implies 2xx, but the code never crosses it), so
+  /// `runEnd` carries the duration and stop outcome only.
   final int? httpStatus;
 
-  /// Free-form detail: model id on requestStart/firstToken, the formatted
-  /// provider error on error, the stuck action label on toolStuck.
-  final String? detail;
+  /// The heartbeat's captured-output size in bytes (toolHeartbeat only).
+  final int? outputBytes;
+
+  /// The stuck-supervision attempt number (toolHeartbeat/toolStuck only).
+  final int? attempt;
 
   const AgentTelemetryEvent({
     required this.kind,
@@ -89,6 +93,8 @@ final class AgentTelemetryEvent {
     this.isError,
     this.stopReason,
     this.httpStatus,
+    this.outputBytes,
+    this.attempt,
     this.detail,
   });
 
@@ -102,6 +108,8 @@ final class AgentTelemetryEvent {
       if (isError != null) 'error=$isError',
       if (stopReason != null) 'stop=$stopReason',
       if (httpStatus != null) 'http=$httpStatus',
+      if (outputBytes != null) 'out=${outputBytes}B',
+      if (attempt != null) 'attempt=$attempt',
       ?detail,
     ];
     return parts.isEmpty ? head : '$head ${parts.join(' ')}';
@@ -153,10 +161,14 @@ final class AgentTelemetry {
   DateTime? _runStart;
   bool _sawFirstToken = false;
   int? _lastHttpStatus;
+  Agent? _agent;
 
   /// Subscribes to [agent]'s lifecycle events. Returns the unsubscribe
   /// function (the same contract as [Agent.subscribe]).
-  void Function() attach(Agent agent) => agent.subscribe(_onEvent);
+  void Function() attach(Agent agent) {
+    _agent = agent;
+    return agent.subscribe(_onEvent);
+  }
 
   FutureOr<void> _onEvent(AgentEvent event, CancelToken cancelToken) {
     try {
@@ -178,7 +190,10 @@ final class AgentTelemetry {
       case MessageUpdateEvent() when !_sawFirstToken:
         // The agent loop's first streamed update — the provider answered.
         _sawFirstToken = true;
-        _emit(AgentTelemetryEventKind.firstToken);
+        _emit(
+          AgentTelemetryEventKind.firstToken,
+          detail: _modelDetail(_agent?.state.model),
+        );
       case ToolExecutionStartEvent(:final toolCallId, :final toolName):
         _emit(
           AgentTelemetryEventKind.toolStart,
@@ -200,11 +215,15 @@ final class AgentTelemetry {
         :final toolCallId,
         :final toolName,
         :final elapsed,
+        :final outputBytes,
+        :final attempt,
       ):
         _emit(
           AgentTelemetryEventKind.toolHeartbeat,
           toolCallId: toolCallId,
           toolName: toolName,
+          outputBytes: outputBytes,
+          attempt: attempt,
           detail: 'elapsed=${elapsed.inSeconds}s',
         );
       case ToolCallStuckEvent(
@@ -233,22 +252,26 @@ final class AgentTelemetry {
             detail: error,
           );
         }
-        _emit(
-          AgentTelemetryEventKind.runEnd,
-          httpStatus: error == null ? _lastHttpStatus : null,
-        );
+        // Aborted runs (user stop, watchdog fire) are NOT errors — the
+        // CLI's fa.log records them as a plain `run end` with the turn's
+        // `stop=aborted` carrying the distinction; mirror that.
+        _emit(AgentTelemetryEventKind.runEnd);
       default:
       // MessageStart/End, ModelRequest, pairing repair, partial
       // updates — per-message detail the CLI also keeps out of fa.log.
     }
   }
 
-  /// The terminal error of a finished run, or null on a clean run. The
-  /// agent loop stores the last failed assistant turn's message on the
-  /// agent state; [event]'s messages carry the same field.
+  /// The terminal PROVIDER error of a finished run, or null. Only a
+  /// `StopReason.error` message counts: the abort terminal also carries an
+  /// errorMessage (`Operation aborted`), and a user stop / watchdog fire
+  /// is a phase outcome, not a failure — it must not produce a `run error`
+  /// record (the CLI logs those runs as a plain `run end`).
   String? agentErrorMessage(AgentEndEvent event) {
     for (final message in event.messages.reversed) {
-      if (message is AssistantMessage && message.errorMessage != null) {
+      if (message is AssistantMessage &&
+          message.stopReason == StopReason.error &&
+          message.errorMessage != null) {
         return message.errorMessage;
       }
     }
@@ -262,6 +285,8 @@ final class AgentTelemetry {
     bool? isError,
     String? stopReason,
     int? httpStatus,
+    int? outputBytes,
+    int? attempt,
     String? detail,
   }) {
     final start = _runStart;
@@ -276,29 +301,36 @@ final class AgentTelemetry {
         toolName: toolName,
         isError: isError,
         stopReason: stopReason,
-        httpStatus: httpStatus ?? _kindStatus(kind),
+        httpStatus: httpStatus,
+        outputBytes: outputBytes,
+        attempt: attempt,
         detail: detail,
       ),
     );
   }
 
-  /// requestStart/firstToken imply the transport is at least talking — no
-  /// status is claimed for them (a hang after requestStart has no status
-  /// to report, which is exactly the diagnosable state).
-  int? _kindStatus(AgentTelemetryEventKind kind) =>
-      kind == AgentTelemetryEventKind.error ? _lastHttpStatus : null;
+  /// The `model=<id> provider=<id>` context both provider-leg records
+  /// carry, so a shared fa.log line names its request without the
+  /// preceding record.
+  static String _modelDetail(Model? model) =>
+      model == null ? '' : 'model=${model.id} provider=${model.provider}';
 
   /// Wraps [inner] so the provider leg records `requestStart` (the exact
   /// moment a hung call starts), `firstToken` (the first provider event —
   /// the 512-s zero-byte hang from the issue is visible as requestStart
   /// with no firstToken and a growing age), and the structured HTTP status
   /// of a failed request on the follow-up `error` record.
+  ///
+  /// The wrap is OBSERVATIONAL for conforming providers only: a host
+  /// stream function that THROWS (out of contract — providers never
+  /// throw) gets its exception converted here into an `ErrorEvent` whose
+  /// message is `formatProviderError`-shaped — with telemetry off, the
+  /// loop's own conversion records the raw `'$error'` text instead.
+  /// Toggling telemetry therefore changes the user-visible message only
+  /// for out-of-contract functions; provider adapters are unaffected.
   StreamFunction wrapStreamFunction(StreamFunction inner) {
     return (model, context, {cancelToken}) {
-      _emit(
-        AgentTelemetryEventKind.requestStart,
-        detail: 'model=${model.id} provider=${model.provider}',
-      );
+      _emit(AgentTelemetryEventKind.requestStart, detail: _modelDetail(model));
       final outer = AssistantMessageEventStream();
       AssistantMessageEventStream response;
       try {
@@ -345,9 +377,12 @@ final class AgentTelemetry {
           first = false;
           // Provider bytes are flowing: the transport answered. No status
           // is claimed (the adapters throw on non-2xx, so this is the
-          // success path) — only `error`/`runEnd` carry one.
+          // success path) — only `error` carries one.
           _sawFirstToken = true;
-          _emit(AgentTelemetryEventKind.firstToken);
+          _emit(
+            AgentTelemetryEventKind.firstToken,
+            detail: _modelDetail(model),
+          );
         }
         if (event is ErrorEvent) _statusFromError(event.error.errorMessage);
         outer.push(event);

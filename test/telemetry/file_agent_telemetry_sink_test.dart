@@ -15,6 +15,8 @@ AgentTelemetryEvent _event(
   String? stopReason,
   int? httpStatus,
   String? detail,
+  int? outputBytes,
+  int? attempt,
   Duration sinceRunStart = const Duration(seconds: 7),
 }) => AgentTelemetryEvent(
   kind: kind,
@@ -24,6 +26,8 @@ AgentTelemetryEvent _event(
   isError: isError,
   stopReason: stopReason,
   httpStatus: httpStatus,
+  outputBytes: outputBytes,
+  attempt: attempt,
   detail: detail,
 );
 
@@ -40,8 +44,9 @@ void main() {
     await dir.delete(recursive: true);
   });
 
-  test('writes the CLI phase vocabulary, one line per record', () {
-    FileAgentTelemetrySink(path)
+  test('writes the CLI phase vocabulary, one sid-tagged line per record', () {
+    const tag = 'yoclip-1a2b';
+    FileAgentTelemetrySink(path, tag: tag)
       ..record(_event(AgentTelemetryEventKind.runStart))
       ..record(
         _event(
@@ -63,6 +68,15 @@ void main() {
           isError: false,
         ),
       )
+      ..record(
+        _event(
+          AgentTelemetryEventKind.toolHeartbeat,
+          toolName: 'bash',
+          outputBytes: 834,
+          attempt: 1,
+          detail: 'elapsed=12s',
+        ),
+      )
       ..record(_event(AgentTelemetryEventKind.turnEnd, stopReason: 'stop'))
       ..record(
         _event(
@@ -74,31 +88,51 @@ void main() {
       ..record(_event(AgentTelemetryEventKind.runEnd));
 
     final lines = File(path).readAsLinesSync();
-    expect(lines, hasLength(8));
+    expect(lines, hasLength(9));
     // The CLI's `<iso8601> <message>` shape, so the same greps work.
     for (final line in lines) {
       expect(line, matches(RegExp(r'^\d{4}-\d{2}-\d{2}T')));
     }
-    expect(lines[0], endsWith(' run start'));
+    expect(lines[0], endsWith(' run start sid=yoclip-1a2b'));
     expect(
       lines[1],
-      endsWith(' request start model=test-model provider=test-provider'),
-    );
-    expect(
-      lines[2],
-      endsWith(' first token model=test-model provider=test-provider'),
-    );
-    expect(lines[3], endsWith(' tool start name=bash'));
-    expect(lines[4], endsWith(' tool end name=bash error=false'));
-    expect(lines[5], contains(' turn end stop=stop elapsed=7s'));
-    expect(
-      lines[6],
-      allOf(
-        contains(' run error elapsed=7s http=502'),
-        contains(': 502: bad gateway'),
+      endsWith(
+        ' request start sid=yoclip-1a2b '
+        'model=test-model provider=test-provider',
       ),
     );
-    expect(lines[7], contains(' run end elapsed=7s'));
+    expect(lines[3], endsWith(' tool start sid=yoclip-1a2b name=bash'));
+    expect(
+      lines[4],
+      endsWith(' tool end sid=yoclip-1a2b name=bash error=false'),
+    );
+    // The CLI's heartbeat line shape: out=<n>B attempt=<n>.
+    expect(
+      lines[5],
+      endsWith(
+        ' tool heartbeat sid=yoclip-1a2b elapsed=12s out=834B attempt=1',
+      ),
+    );
+    expect(
+      lines[6],
+      contains(' turn end sid=yoclip-1a2b stop=stop elapsed=7s'),
+    );
+    expect(
+      lines[7],
+      allOf(
+        contains(' run error sid=yoclip-1a2b elapsed=7s http=502 '),
+        contains('502: bad gateway'),
+      ),
+    );
+    expect(lines[8], contains(' run end sid=yoclip-1a2b elapsed=7s'));
+  });
+
+  test('a detail-less firstToken renders without a trailing segment', () {
+    FileAgentTelemetrySink(
+      path,
+    ).record(_event(AgentTelemetryEventKind.firstToken));
+    final line = File(path).readAsLinesSync().single;
+    expect(line, endsWith(' first token sid=-'));
   });
 
   test('appends across runs (the CLI shares one fa.log)', () {
@@ -124,6 +158,10 @@ void main() {
     expect(
       FileAgentTelemetrySink.forHomeDir('/home/u')!.path,
       '/home/u/.fah/logs/fa.log',
+    );
+    expect(
+      FileAgentTelemetrySink.forHomeDir('/home/u', tag: 'app')!.tag,
+      'app',
     );
     expect(FileAgentTelemetrySink.forHomeDir(null), isNull);
     expect(FileAgentTelemetrySink.forHomeDir(''), isNull);

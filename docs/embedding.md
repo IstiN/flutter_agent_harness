@@ -107,8 +107,8 @@ final resolution = services.resolveKey(
   baseUrl: 'https://api.kimi.com',
   model: model.id,
 );
-if (resolution?.slotName == null) {
-  myUi.showBanner(resolution!.missingKeyHint!);  // names the slot to set
+if (resolution != null && resolution.slotName == null) {
+  myUi.showBanner(resolution.missingKeyHint!);  // names the slot to set
 }
 ```
 
@@ -118,7 +118,10 @@ if (resolution?.slotName == null) {
 (`/key set <canonical> <value>`, then `/key delete <pinned>`). If you
 supply a `keyResolver`, `buildAgentStack` also runs this check for the
 run's model and fires `onKeySlotDrift` once — the same boot-time nag the
-CLI prints, with one line of host code.
+CLI prints, with one line of host code. That automatic check is
+**store-only** (it has no catalog facts); a host that runs a catalog env
+var alongside a pinned store twin should call `resolveKey` itself with
+`envNames:`/`defaultBaseUrl:` and treat the boot-time hint as store-scope.
 
 Store-only resolution note: without catalog facts (`envNames` /
 `defaultBaseUrl`) the resolver is store-only by design, so the env leg can
@@ -134,7 +137,9 @@ import 'package:flutter_agent_harness/io.dart';   // the file sink (dart:io)
 
 final services = AgentCoreServices(
   baseEnv: env,
-  telemetry: FileAgentTelemetrySink.forHomeDir(home), // ~/.fah/logs/fa.log
+  // sid=<tag> lands on every line — the CLI's own lines always name their
+  // session, so interleaved host/CLI processes stay attributable.
+  telemetry: FileAgentTelemetrySink.forHomeDir(home, tag: 'yoclip-1'),
   // ... or your own sink over the pure interface:
   // telemetry: myAnalyticsSink,
 );
@@ -143,12 +148,18 @@ final services = AgentCoreServices(
 Records (`AgentTelemetryEvent`): `runStart`, `turnStart`, `requestStart`
 (the exact moment a provider call begins), `firstToken` (the provider
 answered — a hang after `requestStart` is inbound), `toolStart`/`toolEnd`
-(per call, with `isError`), heartbeats/stuck-call forensics,
-`turnEnd` (stop reason), and `runEnd`/`error` with durations and the
-provider HTTP status when known. The file sink writes the SAME
-`<iso8601> <message>` lines as the CLI (`run start`, `tool start name=…`,
-`turn end stop=…`), into the same `~/.fah/logs/fa.log` — one log for a
-host embed and a CLI session.
+(per call, with `isError`), heartbeats/stuck-call forensics (with
+`outputBytes`/`attempt`), and `turnEnd` (stop reason). Aborted runs — a
+user stop or a watchdog fire — are phase outcomes, not failures: they
+render as the CLI's plain `run end` with `turn end stop=aborted`, never a
+`run error` line. `error` records carry the FAILED request's duration and
+provider HTTP status when the harness has it (typed `ProviderHttpError`,
+or parsed from the error formatter's own `<status>: ` shape); success
+statuses never cross the event surface, so no other record claims one.
+The file sink writes the SAME `<iso8601> <message>` lines as the CLI
+(`run start sid=…`, `tool start sid=… name=…`, `turn end sid=… stop=…`),
+into the same `~/.fah/logs/fa.log` — one log for a host embed and a CLI
+session, every line attributable via `sid=`.
 
 Pure-Dart/web hosts get the interface plus `InMemoryTelemetrySink` (a
 bounded ring) — no `dart:io` crosses the core boundary.

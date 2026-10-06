@@ -9,8 +9,15 @@
 /// `AgentCoreServices(telemetry: …)` (one line; AC3).
 ///
 /// Lines land in the SAME file the CLI writes (`~/.fah/logs/fa.log`) in
-/// the SAME `<iso8601> <message>` shape, so a host embed and a CLI session
-/// are post-mortem-identical: grep one log for either.
+/// the SAME `<iso8601> <message>` shape, and — like every CLI lifecycle
+/// line — carry `sid=<tag>` so interleaved host/CLI processes in the
+/// shared log stay attributable: pass the host's own correlation id as
+/// [tag] (`FileAgentTelemetrySink.forHomeDir(home, tag: 'yoclip-$runId')`).
+///
+/// `record` performs SYNCHRONOUS appends (create-dir once + writeAsString).
+/// Record rate is low (phase transitions + heartbeats), but a UI-sensitive
+/// host that cannot tolerate a rare frame hitch should wrap the sink in
+/// its own queue/isolate — the interface is one method by design.
 library;
 
 import 'dart:io';
@@ -23,18 +30,28 @@ import 'agent_telemetry.dart'
 /// writer.
 final class FileAgentTelemetrySink implements AgentTelemetrySink {
   /// Creates a sink appending to [path] (the CLI's is `~/.fah/logs/fa.log`).
-  FileAgentTelemetrySink(this.path);
+  /// [tag] is the correlation id rendered as `sid=<tag>` on every line —
+  /// the CLI's own lines always name their session for shared-log
+  /// post-mortems; `-` (the CLI's no-session marker) when the host has none.
+  FileAgentTelemetrySink(this.path, {this.tag = '-'});
 
   /// The canonical fa.log sink for [homeDir], or null when the host has no
   /// home dir (web build, sandbox) — mirror of the CLI's own null path
   /// stance.
-  static FileAgentTelemetrySink? forHomeDir(String? homeDir) {
+  static FileAgentTelemetrySink? forHomeDir(
+    String? homeDir, {
+    String tag = '-',
+  }) {
     if (homeDir == null || homeDir.isEmpty) return null;
-    return FileAgentTelemetrySink('$homeDir/.fah/logs/fa.log');
+    return FileAgentTelemetrySink('$homeDir/.fah/logs/fa.log', tag: tag);
   }
 
   /// The log file path.
   final String path;
+
+  /// The correlation id rendered as `sid=<tag>` (the CLI's `_logSid`
+  /// convention; `-` when the host runs session-less).
+  final String tag;
 
   var _dirEnsured = false;
 
@@ -53,35 +70,62 @@ final class FileAgentTelemetrySink implements AgentTelemetrySink {
   }
 
   /// The message half of the line — the CLI's phase vocabulary
-  /// (`run start` / `tool start name=…` / `turn end stop=…` / …), extended
-  /// with the in-process records the CLI cannot have (`request start`,
-  /// `first token`) and durations/status on the terminal lines.
-  static String _message(AgentTelemetryEvent event) {
-    final name = event.toolName;
-    return switch (event.kind) {
+  /// (`run start sid=…` / `tool start sid=… name=…` / `turn end sid=…
+  /// stop=…` / …), extended with the in-process records the CLI cannot
+  /// have (`request start`, `first token`) and durations/status on the
+  /// terminal lines. [detail]-less events render without a trailing
+  /// segment (never a dangling separator).
+  String _message(AgentTelemetryEvent event) {
+    final tail = _tail(event);
+    final head = switch (event.kind) {
       AgentTelemetryEventKind.runStart => 'run start',
       AgentTelemetryEventKind.turnStart => 'turn start',
-      AgentTelemetryEventKind.requestStart => 'request start ${event.detail}',
-      AgentTelemetryEventKind.firstToken => 'first token ${event.detail ?? ''}',
-      AgentTelemetryEventKind.toolStart => 'tool start name=$name',
-      AgentTelemetryEventKind.toolEnd =>
-        'tool end name=$name error=${event.isError}',
-      AgentTelemetryEventKind.toolHeartbeat =>
-        'tool heartbeat name=$name ${event.detail}',
-      AgentTelemetryEventKind.toolStuck =>
-        'tool stuck name=$name ${event.detail}',
-      AgentTelemetryEventKind.turnEnd =>
-        'turn end stop=${event.stopReason} '
-            'elapsed=${event.sinceRunStart.inSeconds}s',
-      AgentTelemetryEventKind.error =>
-        'run error elapsed=${event.sinceRunStart.inSeconds}s'
-            '${_status(event)}: ${event.detail}',
-      AgentTelemetryEventKind.runEnd =>
-        'run end elapsed=${event.sinceRunStart.inSeconds}s'
-            '${_status(event)}',
+      AgentTelemetryEventKind.requestStart => 'request start',
+      AgentTelemetryEventKind.firstToken => 'first token',
+      AgentTelemetryEventKind.toolStart => 'tool start',
+      AgentTelemetryEventKind.toolEnd => 'tool end',
+      AgentTelemetryEventKind.toolHeartbeat => 'tool heartbeat',
+      AgentTelemetryEventKind.toolStuck => 'tool stuck',
+      AgentTelemetryEventKind.turnEnd => 'turn end',
+      AgentTelemetryEventKind.error => 'run error',
+      AgentTelemetryEventKind.runEnd => 'run end',
     };
+    return tail.isEmpty ? '$head sid=$tag' : '$head sid=$tag $tail';
   }
 
-  static String _status(AgentTelemetryEvent event) =>
-      event.httpStatus == null ? '' : ' http=${event.httpStatus}';
+  /// The per-kind fields after `sid=`, null-guarded so a record missing
+  /// its optional detail never renders a dangling separator or a literal
+  /// `null`.
+  String? _tail(AgentTelemetryEvent event) {
+    final name = event.toolName;
+    final detail = event.detail;
+    final parts = switch (event.kind) {
+      AgentTelemetryEventKind.runStart => const <String>[],
+      AgentTelemetryEventKind.turnStart => const <String>[],
+      AgentTelemetryEventKind.requestStart => [?detail],
+      AgentTelemetryEventKind.firstToken => [?detail],
+      AgentTelemetryEventKind.toolStart => [?name],
+      AgentTelemetryEventKind.toolEnd => [?name, 'error=${event.isError}'],
+      AgentTelemetryEventKind.toolHeartbeat => [
+        ?name,
+        ?detail,
+        if (event.outputBytes != null) 'out=${event.outputBytes}B',
+        if (event.attempt != null) 'attempt=${event.attempt}',
+      ],
+      AgentTelemetryEventKind.toolStuck => [?name, ?detail],
+      AgentTelemetryEventKind.turnEnd => [
+        'stop=${event.stopReason}',
+        'elapsed=${event.sinceRunStart.inSeconds}s',
+      ],
+      AgentTelemetryEventKind.error => [
+        'elapsed=${event.sinceRunStart.inSeconds}s',
+        if (event.httpStatus != null) 'http=${event.httpStatus}',
+        ?detail,
+      ],
+      AgentTelemetryEventKind.runEnd => [
+        'elapsed=${event.sinceRunStart.inSeconds}s',
+      ],
+    };
+    return parts.isEmpty ? null : parts.join(' ');
+  }
 }
