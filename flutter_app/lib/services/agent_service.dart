@@ -2309,7 +2309,10 @@ class AgentService extends ChangeNotifier
         ? const Duration(minutes: 5)
         : const Duration(seconds: 90);
     error = null;
-    notifyListeners();
+    // Post-await notify: a dispose landing inside the waitForIdle() drain
+    // (the abort of the in-flight run) otherwise fires on the dead
+    // notifier — the #1319 race class, same bridge as the paging methods.
+    _notify();
     // Best effort: a failed marker write must not break the switch.
     try {
       await _session?.appendModelChange(
