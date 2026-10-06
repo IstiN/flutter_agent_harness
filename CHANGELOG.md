@@ -4671,4 +4671,9 @@
 - fix(1250): assert frozen-row invariant, not an unsampleable mid-drain frame (#1286)
 - gh-1300 [ENH] PTY integration tests: pay toolchain+boot ONCE per shard, not per test (~30s spawn overhead × N tests) — boot-once + reset between tests (owner design), FA_BIN AOT seam as the cheap first cut (#1306)
 
+## 1.0.521
+
+- fix(1248): dart_tui guard misfires ghost mail-wake turns — log-and-keep-running (#1289)
+- gh-1257 [FLAKE] PTY integration: convert the 5 residual exact-bullet-count anchors (secret_sheet_residual_test / password_prompt_pty_test) to the gh-1244 property anchor (#1287)
+
 ## Unreleased
