@@ -10,6 +10,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
 import '../fa_cube_headless_helper.dart' show FaResult;
+import '../pty_harness.dart';
 import 'mock_session.dart';
 
 void main() {
@@ -73,16 +74,19 @@ void main() {
     List<String> args, {
     String? sessionRoot,
   }) async {
-    final run = await Process.run(
-      'dart',
+    // gh-1300: honor the FA_BIN AOT seam (compiled ONCE per CI shard).
+    final command = faCliCommand(
       [
-        'run',
-        'bin/fah.dart',
         'trajectory',
         ...args,
         '--session-root',
         sessionRoot ?? sessionsRoot.path,
       ],
+      jitPrefix: const ['dart', 'run', 'bin/fah.dart'],
+    );
+    final run = await Process.run(
+      command.first,
+      command.sublist(1),
       workingDirectory: Directory.current.path,
       environment: {'HOME': tempHome.path, 'OPENAI_API_KEY': 'mock'},
       stdoutEncoding: utf8,

@@ -12,6 +12,9 @@ library;
 import '../agent/agent_loop.dart';
 import '../cancel_token.dart';
 import '../providers/quota.dart';
+// gh-1308: the zero-byte stall tag — the transient ladder's wedged-endpoint
+// verdict, classified as an immediate queue advance.
+import '../providers/transient_retry_stream.dart' show zeroByteStallTag;
 import 'roles_config.dart';
 import '../types.dart';
 import '../exceptions.dart';
@@ -70,6 +73,15 @@ QueueDeath? classifyQueueDeath(ErrorEvent event) {
   // Transient/unknown wire finish_reason after retries (issue #312).
   if (retryClass != null) {
     return const QueueDeath(kind: QueueDeathKind.finishReason);
+  }
+
+  // gh-1308: the zero-byte stall verdict — the entry already consumed its
+  // whole silent-replay budget; same-entry retries cost another watchdog
+  // interval each to re-prove the same wedged-endpoint fact. Advance at
+  // once (auth precedent). Checked before the labeled nets (the tag also
+  // matches the timeout net, which would retry in place first).
+  if (text.contains(zeroByteStallTag)) {
+    return const QueueDeath(kind: QueueDeathKind.timeout, immediate: true);
   }
 
   // The labeled regex nets in precedence order, then the transport net;
@@ -145,6 +157,9 @@ final _timeoutPatterns = [
   RegExp(r'timeout ?exception', caseSensitive: false),
   RegExp(r'stream idle timeout', caseSensitive: false),
   RegExp(r'request (attempt )?timed? ?out', caseSensitive: false),
+  // gh-1308: the zero-byte stall terminal — the wedged endpoint class the
+  // provider watchdogs exist for; the entry benches and the queue advances.
+  RegExp(r'zero-byte stall'),
 ];
 
 /// Maps a queue adapter kind to the catalog provider NAME the model

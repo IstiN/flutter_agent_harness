@@ -337,6 +337,13 @@ jobs:
       - name: Lockfile gate self-test (gh-1296 AC2)
         run: bash scripts/check_lockfiles_selftest.sh
 
+      # gh-1300 AC6: the shard duration-budget gate's own red exits are
+      # fixture-self-tested (breach fails + files the body; fit passes;
+      # warn band; unbudgeted shard is loud; update is down-only) so the
+      # ratchet cannot rot silently (#1100 pattern).
+      - name: Duration budget gate self-test (gh-1300 AC6)
+        run: bash scripts/duration_budget_selftest.sh
+
       # Full analyze needs the example app's package config (Flutter imports);
       # a docs-only PR skips the flutter setup entirely and analyzes the pure
       # Dart scopes only — it cannot have changed resolution anyway.
@@ -352,8 +359,9 @@ jobs:
           printf 'OPENROUTER_API_KEY=\nMODEL_ID=\nBASE_URL=\nHUGGINGFACE_TOKEN=\n' > flutter_app/.env
           cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
           dart pub get --directory=office_addin/dart
-          cd flutter_app && flutter pub get --enforce-lockfile
 
+      - uses: ./.github/actions/flutter-pub-get
+        if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
       - name: dart analyze (full)
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: dart analyze
@@ -597,6 +605,52 @@ jobs:
   # Machine SM dispatches ci.yml per PR head), unconditioned by path — a
   # diff that breaks them must red-block THE PR, never the 3:30 nightly.
   # Main remains backstopped by nightly.yml.
+  # gh-1300 (2026-10-06): the PTY/CLI shards pay toolchain+boot ONCE per
+  # run, not per test. Every integration test spawns a fresh CLI; JIT
+  # `dart bin/fah.dart` cost VM start + CFE kernel compile ~30 s PER SPAWN
+  # on loaded ARM runners (the dominant term: 29 files, 3 shards x
+  # ~350 s). This job compiles the AOT bundle once, the shards download
+  # it and point the FA_BIN seam (test/integration/pty_harness.dart,
+  # faCliCommand) at it — spawn ~1 s, per-test isolation untouched (each
+  # spawn is still a fresh process with its own env/cwd). The binary MUST
+  # match the PR's sources: built fresh in this run, never cached across
+  # runs; the shards fail loudly if it is missing or dead (`test -x` +
+  # `--version` smoke), never silently fall back to JIT.
+  fa-aot-build:
+    name: AOT fa binary (compiled once per run, gh-1300)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        with:
+          sdk: stable
+      # Same hooks cache key as the shards: the build pays the native
+      # assets hooks here so the shard-side restore is warm.
+      - name: Native-assets hook cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .dart_tool/hooks_runner/shared
+          key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
+      - run: dart pub get
+      - name: dart build cli (AOT bundle, same shape install_local.sh ships)
+        run: |
+          dart build cli --target=bin/fah.dart --output=fa-local
+          # The installer writes version.txt into the bundle; mirror it so
+          # `fa --version` from the AOT binary reports the real version
+          # (the _packageVersion() fallback chain reads bundle/version.txt).
+          version=$(sed -n 's/^version: //p' pubspec.yaml)
+          echo "$version" > fa-local/bundle/version.txt
+          ./fa-local/bundle/bin/fah --version
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fa-aot-bin
+          path: fa-local/bundle/
+          retention-days: 1
+
   # ─────────────────────────────────────────────────────────────────────────
   # ─────────────────────────────────────────────────────────────────────────
   # gh-1005 (2026-09-30): the PTY legs are hosted-Linux ONLY. The audit of
@@ -633,6 +687,9 @@ jobs:
     # and false-regress. Each shard also emits the dart json
     # file-reporter: junit feeds rebalancing/budget-tightening PRs, the
     # raw json feeds the #928 duration gate (pty-coverage-gate below).
+    # gh-1300: needs the once-per-run AOT build; FA_BIN points every CLI
+    # spawn (PTY harness + headless helpers) at the prebuilt binary.
+    needs: [fa-aot-build]
     name: PTY/CLI integration (linux, shard ${{ matrix.shard }}/3)
     runs-on: ubuntu-24.04-arm
     # 40 > 30: the leg now carries the coverage + file-reporter overhead the
@@ -680,18 +737,37 @@ jobs:
           key: hooks-shared-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pubspec.lock') }}
           restore-keys: hooks-shared-${{ runner.os }}-${{ runner.arch }}-
 
-      # Issue #943 (vector 3): one warm fa boot before the PTY shards. The
-      # first `dart` invocation pays the native-assets build hooks (20-30 s
-      # under load) — paid HERE instead of inside a test's boot timeout
-      # (tui_prototype_snapshot ×5 on 2026-09-24). Both invocation shapes
-      # the tests use (file path + `dart run`) are warmed; every shard of
-      # this matrix job does it, so each shard process meets a warm cache
-      # and the duration gate below measures warm-boot truth.
-      - name: Prewarm build hooks + fa boot
+      # gh-1300: the AOT binary built once per run by fa-aot-build. The
+      # guard FAILS the shard loudly if the artifact is missing or dead —
+      # a silent JIT fallback would hide the optimization from AC1's
+      # before/after numbers.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: fa-aot-bin
+          path: fa-local/bundle
+      # Artifact zips do NOT preserve the exec bit (download-artifact
+      # README: "post-download the file is no longer guaranteed to be set
+      # as an executable"). Run 37446280743: `test -x` below failed
+      # silently ~20 ms in on EVERY shard — the gate went red before a
+      # single test ran. Restore the mode the build job shipped; the
+      # smoke below still verifies the restored binary is executable and
+      # boots (never a silent JIT fallback). Content integrity is not
+      # affected: download-artifact digest-validates (digest-mismatch:
+      # error default), so this chmod only ever touches the verified
+      # bundle the fa-aot-build job produced.
+      - name: Restore exec bit (artifact zips drop permissions)
+        run: chmod +x fa-local/bundle/bin/fah
+      - name: Smoke the AOT binary (fail loud, never JIT-fallback)
         run: |
-          dart bin/fah.dart --help > /dev/null
-          dart run bin/fah.dart --help > /dev/null
+          test -x fa-local/bundle/bin/fah
+          ./fa-local/bundle/bin/fah --version
       - name: dart test --tags integration (linux, shard ${{ matrix.shard }}/3)
+        env:
+          # gh-1300 FA_BIN seam: every CLI spawn (pty_harness + the
+          # headless helpers via faCliCommand) runs the AOT binary —
+          # ~1 s per spawn instead of the JIT VM+CFE compile (~30 s on
+          # loaded ARM runners). Per-test isolation is unchanged.
+          FA_BIN: ${{ github.workspace }}/fa-local/bundle/bin/fah
         run: |
           # gh-1199 AC1: --exclude-tag llm keeps every live-provider file
           # out of the merge-blocking selection (manifest unit AND runtime
@@ -772,6 +848,11 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      # gh-1300: issues: write — the duration-budget auto-filer files/
+      # comments/closes the [ENH] optimization issue. A job-level
+      # permissions block drops every unlisted scope to none, so both
+      # scopes are listed explicitly (the filing leg reads nothing else).
+      issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -820,6 +901,59 @@ jobs:
           python3 scripts/check_test_durations.py \
             --baseline scripts/test_duration_baseline.json \
             integration-json-shards/*/integration-shard-*.json
+      # gh-1300: per-SHARD budget (expected runner span + headroom, one
+      # place: scripts/test_shard_budgets.json). Breach fails the job
+      # LOUDLY and writes the [ENH] issue body the filer step below posts
+      # — crossing the line always produces work, never a silent bump.
+      - name: Shard duration budget gate (gh-1300, down-only ratchet)
+        id: shard_budget
+        run: |
+          python3 scripts/check_shard_durations.py \
+            --budgets scripts/test_shard_budgets.json \
+            --issue-body duration-budget-issue.md \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            integration-json-shards/*/integration-shard-*.json
+      # Best-effort on forks (their GITHUB_TOKEN cannot write issues);
+      # the gate failure above is the loud part. Deduped: an open
+      # duration-budget issue is commented with the fresh numbers, not
+      # duplicated (the nightly-red / flake-quarantine pattern).
+      - name: File the duration-budget optimization issue (gh-1300)
+        if: always() && steps.shard_budget.outcome == 'failure'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          repo="$GITHUB_REPOSITORY"
+          gh label create duration-budget --force \
+            --description "PTY/CLI shard over its duration budget (gh-1300)" \
+            --color D93F0B --repo "$repo"
+          title="[ENH] PTY/CLI shard duration budget breach (auto-filed)"
+          existing=$(gh issue list --state open --label duration-budget \
+            --json number --jq '.[0].number' --repo "$repo")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file duration-budget-issue.md \
+              --repo "$repo"
+          else
+            gh issue create --title "$title" --label duration-budget \
+              --body-file duration-budget-issue.md \
+              --assignee ai-teammate --repo "$repo"
+          fi
+      # The auto-filed issue closes only when the run fits under the
+      # budget again — the green path of THIS step is that proof.
+      - name: Close the duration-budget issue on a fitting run
+        if: always() && steps.shard_budget.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          repo="$GITHUB_REPOSITORY"
+          existing=$(gh issue list --state open --label duration-budget \
+            --json number --jq '.[0].number' --repo "$repo")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$repo" \
+              --body "Fits under budget again: ${GITHUB_SERVER_URL}/${repo}/actions/runs/${GITHUB_RUN_ID} — closing."
+            gh issue close "$existing" --repo "$repo"
+          fi
 
   # gh-1005: Terminal visual is platform-independent and pinned to hosted
   # linux arm64. Evidence: every assertion reads the xterm terminal BUFFER /
@@ -860,7 +994,7 @@ jobs:
         working-directory: flutter_app
         run: touch .env
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
-      - run: cd flutter_app && flutter pub get --enforce-lockfile
+      - uses: ./.github/actions/flutter-pub-get
       # The harness spawns `dart bin/fah.dart` FROM THE REPO ROOT; without
       # a root package config it resolves the package to the pub-cache copy
       # (an old published build) and the CLI dies before the first frame.
@@ -1135,7 +1269,7 @@ jobs:
       # compile (Firebase init is skipped for YOUR_* values at runtime).
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
-      - run: cd flutter_app && flutter pub get --enforce-lockfile
+      - uses: ./.github/actions/flutter-pub-get
 
       # gh-1296 NG1: the Podfile.lock half of the lockfile gate. pub get just
       # generated .flutter-plugins-dependencies; the gate fails the PR when a
@@ -1217,7 +1351,7 @@ jobs:
 
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
-      - run: cd flutter_app && flutter pub get --enforce-lockfile
+      - uses: ./.github/actions/flutter-pub-get
 
       # Golden suite is intentionally NOT here: goldens are host-locked
       # (same macOS host renders them differently across minor SDKs — see the
@@ -1513,7 +1647,7 @@ jobs:
 
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
-      - run: cd flutter_app && flutter pub get --enforce-lockfile
+      - uses: ./.github/actions/flutter-pub-get
 
       # The harness spawns `dart bin/fah.dart` FROM THE REPO ROOT; without
       # a root package config that resolves package:flutter_agent_harness
@@ -1587,7 +1721,7 @@ jobs:
 
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
-      - run: cd flutter_app && flutter pub get --enforce-lockfile
+      - uses: ./.github/actions/flutter-pub-get
 
       - name: flutter build web
         # E3: warnings (including the Wasm dry-run diagnostics) are allowed;
@@ -1681,7 +1815,7 @@ jobs:
 
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
 
-      - run: cd flutter_app && flutter pub get --enforce-lockfile
+      - uses: ./.github/actions/flutter-pub-get
 
       - name: flutter build apk (debug)
         run: cd flutter_app && flutter build apk --debug --flavor store
@@ -1785,7 +1919,7 @@ jobs:
           unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
           ls -la "$DEST/WasmRun.xcframework"
 
-      - run: cd flutter_app && flutter pub get --enforce-lockfile
+      - uses: ./.github/actions/flutter-pub-get
 
       - name: flutter build ios (debug, unsigned)
         # E2, corrected by gh-1296: classify the failure by EVIDENCE in the
@@ -1905,7 +2039,7 @@ jobs:
           unzip -q /tmp/WasmRun.xcframework.zip -d "$DEST"
           ls -la "$DEST/WasmRun.xcframework"
 
-      - run: cd flutter_app && flutter pub get --enforce-lockfile
+      - uses: ./.github/actions/flutter-pub-get
 
       # The macOS Podfile bundles the LiteRT-LM companion dylibs via a
       # Runner script phase that fails on a fresh runner ("Could not find
@@ -2144,7 +2278,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify, install-pin-gate]
+    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify, install-pin-gate]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -2172,6 +2306,7 @@ jobs:
           echo "integ-mock    = ${{ needs.integration-mock.result }}"
           echo "hostile-env   = ${{ needs.hostile-env.result }}"
           echo "pty-integ-linux = ${{ needs.pty-integration-linux.result }}"
+          echo "fa-aot-build  = ${{ needs.fa-aot-build.result }}"
           echo "pty-gates     = ${{ needs.pty-coverage-gate.result }}"
           echo "pty-visual    = ${{ needs.pty-visual.result }}"
           echo "supply-chain  = ${{ needs.supply-chain.result }}"
@@ -2202,6 +2337,7 @@ jobs:
           R_INTEG: ${{ needs.integration-mock.result }}
           R_HOSTILE: ${{ needs.hostile-env.result }}
           R_PTY_LINUX: ${{ needs.pty-integration-linux.result }}
+          R_FA_AOT: ${{ needs.fa-aot-build.result }}
           R_PTY_GATES: ${{ needs.pty-coverage-gate.result }}
           R_PTY_VISUAL: ${{ needs.pty-visual.result }}
           R_INSTALLER_VERIFY: ${{ needs.installer-verify.result }}
@@ -2230,6 +2366,7 @@ jobs:
                     "cli-visual-settings:$R_CLI_VISUAL" "build-web:$R_BUILD_WEB" \
                     "build-android:$R_BUILD_ANDROID" "build-ios:$R_BUILD_IOS" "build-macos:$R_BUILD_MACOS" \
                     "integration-mock:$R_INTEG" "hostile-env:$R_HOSTILE" \
+                    "fa-aot-build:$R_FA_AOT" \
                     "pty-integration-linux:$R_PTY_LINUX" "pty-coverage-gate:$R_PTY_GATES" "pty-visual:$R_PTY_VISUAL" \
                     "installer-verify:$R_INSTALLER_VERIFY" "install-pin-gate:$R_INSTALL_PIN_GATE"; do
             name="${kv%%:*}"; r="${kv#*:}"
@@ -2817,10 +2954,9 @@ jobs:
           cache: true
 
       - name: Example app pub get
-        working-directory: flutter_app
         # gh-1265 AC2: resolve against the committed lockfile; a
         # pubspec/lockfile skew must fail the PR, not float.
-        run: flutter pub get --enforce-lockfile
+        uses: ./.github/actions/flutter-pub-get
 
       # Same placeholders as the Pages job (both files are gitignored).
       - name: Placeholder .env for the example app
@@ -3205,6 +3341,15 @@ jobs:
           flutter-version: '3.47.x'
           channel: stable
           cache: true
+
+      # gh-1310 rework (review thread 1): warm the pub cache with the shared
+      # bounded-retry action so tag_release.sh's own enforce-lockfile smoke
+      # rides it — the smoke stays in the script (release_hygiene NG2/AC3
+      # pins it) but is no longer the job's first resolution, so one
+      # transient git-dep clone reset cannot abort the pre-tag gate on a
+      # cold cache (the v1.0.516 build-macos exit-69 class, on the release
+      # path).
+      - uses: ./.github/actions/flutter-pub-get
 
       - name: Cut annotated tag + GitHub Release
         env:

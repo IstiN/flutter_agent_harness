@@ -2370,8 +2370,14 @@ class AgentService extends ChangeNotifier
 
   /// Bridge for the part-file extension members ([AgentServiceAssistant],
   /// [AgentServiceEvents]): `notifyListeners` is `@protected`, callable
-  /// only inside the class.
-  void _notify() => notifyListeners();
+  /// only inside the class. Fire-and-forget continuations can resume after
+  /// dispose (issue #1319: openSession's background history count lands
+  /// after the test/app tore the service down) and ChangeNotifier throws
+  /// on a dead notifier — a notification nobody can receive is dropped.
+  void _notify() {
+    if (_disposed) return;
+    notifyListeners();
+  }
 
   /// The visible transcript as Markdown (`## You` / `## Fa` / `## tool`
   /// sections) — shared by the chat screen's and the sheet's "Copy session"

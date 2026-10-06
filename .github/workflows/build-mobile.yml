@@ -165,9 +165,7 @@ jobs:
           EOF
 
       - name: Install dependencies
-        working-directory: flutter_app
-        # gh-1265 AC2: resolve against the committed lockfile.
-        run: flutter pub get --enforce-lockfile
+        uses: ./.github/actions/flutter-pub-get
 
       # Mirrors the iOS GoogleService-Info.plist step: the committed
       # google-services.json is a placeholder (the google-services Gradle
@@ -404,9 +402,7 @@ jobs:
           EOF
 
       - name: Install dependencies
-        working-directory: flutter_app
-        # gh-1265 AC2: resolve against the committed lockfile.
-        run: flutter pub get --enforce-lockfile
+        uses: ./.github/actions/flutter-pub-get
 
       # Mirrors build-android, gated to the store flavor: the secret file
       # carries ONLY the dev.fa1.app client, while the god applicationId is
@@ -553,9 +549,7 @@ jobs:
           EOF
 
       - name: Install dependencies
-        working-directory: flutter_app
-        # gh-1265 AC2: resolve against the committed lockfile.
-        run: flutter pub get --enforce-lockfile
+        uses: ./.github/actions/flutter-pub-get
 
       - name: Boot emulator
         run: |
@@ -658,41 +652,15 @@ jobs:
           bundle install
           bundle exec fastlane ios assert_version_floor
 
-      # Issue #726 (run 35491603044): pub re-fetches the moving `ref: master`
-      # git deps (dart_git) on every resolve — pubspec.lock is untracked —
-      # and one flaky TCP connect to github.com:443 ("Failed to connect
-      # ... after 11155 ms") failed the whole leg with no retry. Bounded
-      # retry with backoff; GIT_TERMINAL_PROMPT=0 fails fast on auth prompts
-      # instead of hanging the self-hosted runner.
+      # Issue #726 (run 35491603044): pub has no retry for its git-dep
+      # mirror clones — one flaky TCP connect to github.com:443 ("Failed
+      # to connect ... after 11155 ms") failed the whole leg with no
+      # retry. The bounded retry + deterministic-skew fail-fast now lives
+      # in the shared composite action every enforce-lockfile pub get in
+      # the repo rides (gh-1310; pinned by test/ci_pub_get_retry_guard_
+      # test.dart).
       - name: Install Flutter dependencies
-        working-directory: flutter_app
-        env:
-          GIT_TERMINAL_PROMPT: '0'
-        run: |
-          set -euo pipefail
-          LOG_FILE="$(mktemp)"
-          for attempt in 1 2 3; do
-            # gh-1265 AC2: resolve against the committed lockfile.
-            if flutter pub get --enforce-lockfile 2>&1 | tee "$LOG_FILE"; then
-              rm -f "$LOG_FILE"
-              exit 0
-            fi
-            # A pubspec/lockfile skew is deterministic — retrying cannot
-            # fix it, so fail fast instead of burning ~30s per red leg and
-            # blaming the network (PR #1268 review thread 3).
-            if grep -qE 'Unable to satisfy .* using .*pubspec\.lock' "$LOG_FILE"; then
-              echo "::error::flutter_app/pubspec.lock is out of sync with flutter_app/pubspec.yaml — regenerate it (cd flutter_app && flutter pub get) and commit; not retrying a deterministic skew"
-              rm -f "$LOG_FILE"
-              exit 1
-            fi
-            if [ "$attempt" = 3 ]; then
-              echo "::error::flutter pub get failed after 3 attempts — the runner's network to pub.dev/github.com is unhealthy"
-              rm -f "$LOG_FILE"
-              exit 1
-            fi
-            echo "::warning::flutter pub get failed (attempt $attempt/3) — retrying in 15s"
-            sleep 15
-          done
+        uses: ./.github/actions/flutter-pub-get
 
       # The workspace is re-cloned every run, which wipes Pods/ and forces a
       # full pod install. Cache it keyed by the lockfile; $HOME-level caches

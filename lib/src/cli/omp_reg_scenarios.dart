@@ -64,6 +64,7 @@ const kRegMockScriptYaml =
 model: mockcap/$kRegModelId
 scenarios:
   - match: 'Read the note.'
+    sticky: true
     responses:
       - toolCall:
           name: read
@@ -71,6 +72,7 @@ scenarios:
       - toolResultEcho: true
       - text: 'turn complete'
   - match: 'Show a snippet.'
+    sticky: true
     responses:
       - text: |
             ```dart
