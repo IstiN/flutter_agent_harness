@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/material.dart';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart' as harness;
@@ -14,6 +15,7 @@ import 'package:fa_ui/src/providers/openrouter_oauth_button.dart';
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_marks.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
+import 'package:fa_ui/src/providers/sso_flows.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
 import 'package:fa_ui/src/utils/page_presentation.dart';
@@ -209,9 +211,11 @@ Future<void> pushAddProviderFlow(
 ///
 /// Tapping a key-based preset (OpenRouter, Ollama, Gemini, …) opens the
 /// [ProviderEditorPage] pre-filled with the preset's base URL — the user
-/// enters their API key and saves. Tapping CodeMie calls [onCodeMieSso]
-/// (host-provided, because the WebView SSO flow is app-specific). Custom
-/// opens [ProviderEditorPage] in create mode.
+/// enters their API key and saves. Tapping an SSO/OAuth preset (CodeMie,
+/// ChatGPT, Copilot, AIIN) runs the host callback when given, else the
+/// default [FaUiSso] flow when [sso] is given; with neither, the tile
+/// renders disabled under a tooltip (never silently hidden — issue #1321).
+/// Custom opens [ProviderEditorPage] in create mode.
 ///
 /// The page pops when a provider was added (returns `true`) or the user
 /// cancels (returns `null`).
@@ -227,6 +231,7 @@ class AddProviderPresetPickerPage extends StatelessWidget {
     this.onCopilotConnect,
     this.openRouterOAuthCallbackUrl,
     this.openRouterOAuthCapture,
+    this.sso,
     this.onDeviceRoutes = const [],
     this.onOnDeviceConnected,
     this.modelsFetcher,
@@ -245,22 +250,26 @@ class AddProviderPresetPickerPage extends StatelessWidget {
   /// Called when the user picks the AIIN preset. The host should run its
   /// aiin.by connect flow (browser sign-in + automatic API-key
   /// registration on desktop; WebView in mobile apps). When null, the
-  /// AIIN tile is hidden.
+  /// default [FaUiSso] flow runs if [sso] is given; otherwise the tile
+  /// renders disabled (issue #1321).
   final VoidCallback? onAiinConnect;
 
   /// Called when the user picks the CodeMie preset. The host should launch
-  /// its CodeMie SSO flow (WebView in the app). When null, the CodeMie tile
-  /// is hidden.
+  /// its CodeMie SSO flow (WebView in the app). When null, the default
+  /// [FaUiSso] flow runs if [sso] is given; otherwise the tile renders
+  /// disabled (issue #1321).
   final VoidCallback? onCodeMieSso;
 
   /// Called when the user picks the ChatGPT preset. The host should launch
   /// its ChatGPT OAuth flow (local server + browser on macOS, WebView on
-  /// iOS). When null, the ChatGPT tile is hidden.
+  /// iOS). When null, the default [FaUiSso] flow runs if [sso] is given;
+  /// otherwise the tile renders disabled (issue #1321).
   final VoidCallback? onChatGptOAuth;
 
   /// Called when the user picks the Copilot preset. The host should run
   /// the GitHub Copilot connect flow (device-flow sheet + provider setup).
-  /// When null, the Copilot tile is hidden.
+  /// When null, the default [FaUiSso] flow runs if [sso] is given;
+  /// otherwise the tile renders disabled (issue #1321).
   final VoidCallback? onCopilotConnect;
 
   /// `callback_url` for the OpenRouter OAuth flow (forwarded to the editor).
@@ -269,6 +278,15 @@ class AddProviderPresetPickerPage extends StatelessWidget {
   /// Automatic callback capture for OpenRouter OAuth (forwarded to the
   /// editor).
   final OpenRouterOAuthCaptureCallback? openRouterOAuthCapture;
+
+  /// Ready-made SSO/OAuth/device-flow flows (issue #1321): when given,
+  /// the four sign-in tiles no longer require the host callbacks — the
+  /// default flows run the CLI's desktop sign-ins and land the provider
+  /// in [registry]. An explicit per-provider callback (below) wins over
+  /// the default, so a host can adopt the bundle and still customize one
+  /// flow. When neither is given, the tile renders DISABLED with a
+  /// tooltip (issue #1321 option C — never silently hidden).
+  final FaUiSso? sso;
 
   /// On-device engine routes (Gemma/WebLLM/…): each renders a tile after
   /// the hosted presets so a never-configured engine is discoverable here
@@ -279,18 +297,47 @@ class AddProviderPresetPickerPage extends StatelessWidget {
   /// marks the engine configured).
   final ValueChanged<FaChatModelConfig>? onOnDeviceConnected;
 
+  /// Whether a sign-in flow exists for the callback-gated [preset] (a
+  /// host callback or the default [sso] bundle).
+  bool _hasSsoFlow(AddProviderPreset preset) {
+    switch (preset.key) {
+      case 'aiin':
+        return onAiinConnect != null || sso != null;
+      case 'codemie':
+        return onCodeMieSso != null || sso != null;
+      case 'chatgpt':
+        return onChatGptOAuth != null || sso != null;
+      case 'copilot':
+        return onCopilotConnect != null || sso != null;
+      default:
+        return true;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final strings = FaUiStrings.of(context);
-    final visiblePresets = presets.where((p) {
-      if (!addProviderPresetEnabled(p)) return false;
-      if (p.key == 'aiin' && onAiinConnect == null) return false;
-      if (p.key == 'codemie' && onCodeMieSso == null) return false;
-      if (p.key == 'chatgpt' && onChatGptOAuth == null) return false;
-      if (p.key == 'copilot' && onCopilotConnect == null) return false;
-      return true;
-    }).toList();
+    // Catalog/build filters hide (intentional — FA_PROVIDERS scims the
+    // binary/app down); the callback-gated SSO tiles DISABLE instead
+    // (issue #1321 option C: an absent flow is visible and explained,
+    // never silent).
+    final visiblePresets = <AddProviderPreset>[];
+    final catalogHidden = <AddProviderPreset>[];
+    for (final preset in presets) {
+      if (!addProviderPresetEnabled(preset)) {
+        catalogHidden.add(preset);
+      } else {
+        visiblePresets.add(preset);
+      }
+    }
+    if (catalogHidden.isNotEmpty && kDebugMode) {
+      debugPrint(
+        'fa_ui: add-provider tiles hidden by the provider catalog / '
+        'FA_PROVIDERS filter: '
+        '${catalogHidden.map((p) => '${p.key} (${p.name})').join(', ')}',
+      );
+    }
     return Scaffold(
       appBar: AppBar(title: Text(strings.settingsAddProvider)),
       body: SafeArea(
@@ -298,17 +345,7 @@ class AddProviderPresetPickerPage extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 8),
           children: [
             for (final preset in visiblePresets)
-              ListTile(
-                leading: ProviderMark(preset.key, size: 32),
-                title: Text(preset.name),
-                subtitle: Text(preset.description),
-                trailing: Icon(
-                  Icons.chevron_right,
-                  size: 18,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-                onTap: () => _onPresetTap(context, preset),
-              ),
+              _pickerTile(context, theme, strings, preset),
             for (final route in onDeviceRoutes)
               ListTile(
                 leading: Icon(
@@ -330,26 +367,68 @@ class AddProviderPresetPickerPage extends StatelessWidget {
     );
   }
 
+  /// The one tile for [preset]: enabled with its routing tap when a flow
+  /// exists, disabled under a tooltip when the SSO flow is not wired
+  /// (issue #1321 option C).
+  Widget _pickerTile(
+    BuildContext context,
+    ThemeData theme,
+    FaUiStrings strings,
+    AddProviderPreset preset,
+  ) {
+    final enabled = _hasSsoFlow(preset);
+    final tile = ListTile(
+      leading: ProviderMark(preset.key, size: 32),
+      title: Text(preset.name),
+      subtitle: Text(preset.description),
+      enabled: enabled,
+      trailing: Icon(
+        Icons.chevron_right,
+        size: 18,
+        color: theme.colorScheme.onSurfaceVariant,
+      ),
+      onTap: enabled ? () => _onPresetTap(context, preset) : null,
+    );
+    if (enabled) return tile;
+    return Tooltip(message: strings.ssoFlowUnavailableTooltip, child: tile);
+  }
+
   Future<void> _onPresetTap(
     BuildContext context,
     AddProviderPreset preset,
   ) async {
     switch (preset.key) {
       case 'aiin':
-        Navigator.of(context).pop();
-        onAiinConnect?.call();
+        if (onAiinConnect != null) {
+          Navigator.of(context).pop();
+          onAiinConnect!();
+          return;
+        }
+        await _runDefaultSsoFlow(context, sso!.connectAiin);
         return;
       case 'codemie':
-        Navigator.of(context).pop();
-        onCodeMieSso?.call();
+        if (onCodeMieSso != null) {
+          Navigator.of(context).pop();
+          onCodeMieSso!();
+          return;
+        }
+        await _runDefaultSsoFlow(context, sso!.connectCodeMie);
         return;
       case 'chatgpt':
-        Navigator.of(context).pop();
-        onChatGptOAuth?.call();
+        if (onChatGptOAuth != null) {
+          Navigator.of(context).pop();
+          onChatGptOAuth!();
+          return;
+        }
+        await _runDefaultSsoFlow(context, sso!.connectChatGpt);
         return;
       case 'copilot':
-        Navigator.of(context).pop();
-        onCopilotConnect?.call();
+        if (onCopilotConnect != null) {
+          Navigator.of(context).pop();
+          onCopilotConnect!();
+          return;
+        }
+        await _runDefaultSsoFlow(context, sso!.connectCopilot);
         return;
       case 'custom':
         await pushProviderEditor(
@@ -411,6 +490,17 @@ class AddProviderPresetPickerPage extends StatelessWidget {
         }
         if (context.mounted) Navigator.of(context).pop(true);
     }
+  }
+
+  /// Runs one of [FaUiSso]'s default flows with the picker's own context
+  /// (the page stays mounted — the flow pushes its pages on top), then
+  /// pops with the connect outcome.
+  Future<void> _runDefaultSsoFlow(
+    BuildContext context,
+    Future<bool> Function(BuildContext) flow,
+  ) async {
+    final added = await flow(context);
+    if (added && context.mounted) Navigator.of(context).pop(true);
   }
 
   /// On-device tile: pushes the route's connect page; a completed connect
