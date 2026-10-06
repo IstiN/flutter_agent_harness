@@ -672,11 +672,18 @@ jobs:
       - name: Prune never-loaded package test fixture (#1331)
         run: |
           set -euo pipefail
+          # NOTE: no percent-decoding of the file: URI — pub-cache paths on
+          # this runner carry no URI escapes; add unquoting if that changes.
           JS_WR=$(python3 -c '
             import json, pathlib
             cfg = json.loads(pathlib.Path("flutter_app/.dart_tool/package_config.json").read_text())
-            print(next(p["rootUri"] for p in cfg["packages"] if p["name"] == "js_widget_runtime"))
+            p = next((q for q in cfg["packages"] if q["name"] == "js_widget_runtime"), None)
+            print(p["rootUri"] if p else "")
           ')
+          if [ -z "$JS_WR" ]; then
+            echo "::warning::js_widget_runtime not in package_config.json — no fixture to prune, skipping"
+            exit 0
+          fi
           case "$JS_WR" in
             file://*) JS_WR=${JS_WR#file://} ;;
           esac
@@ -878,12 +885,14 @@ jobs:
             exit 0
           fi
           STRIP=$(mktemp -d)
+          trap 'rm -rf "$STRIP"' EXIT
           unzip -q "$IPA_PATH" -d "$STRIP"
           rm -rf "$STRIP/Symbols"
           BEFORE=$(stat -f%z "$IPA_PATH")
-          rm -f "$IPA_PATH"
-          (cd "$STRIP" && find . -mindepth 1 -maxdepth 1 -exec zip -qyr9 "$IPA_PATH" {} +)
-          rm -rf "$STRIP"
+          # Atomic swap: the original IPA survives a failed rezip (the
+          # un-stripped copy still beats no artifact for debugging).
+          (cd "$STRIP" && find . -mindepth 1 -maxdepth 1 -exec zip -qyr9 "$IPA_PATH.stripped" {} +)
+          mv -f "$IPA_PATH.stripped" "$IPA_PATH"
           AFTER=$(stat -f%z "$IPA_PATH")
           echo "IPA stripped: $BEFORE -> $AFTER bytes ($((BEFORE - AFTER)) saved compressed)"
 
@@ -898,17 +907,23 @@ jobs:
 
       # #1331 ratchet: per-file uncompressed floor seeded from the last
       # release-shape CI artifact (run 37495702186 fa.ipa) with the diet
-      # applied. Growth >5% on any line or TOTAL, or a re-added heavy line
-      # (e.g. Symbols/ or coach_anny.glb coming back), fails the leg —
-      # same gate family as the macOS pass (#1227). Also pins the owner
+      # applied. Growth >5% on any line or TOTAL fails the leg — same gate
+      # family as the macOS pass (#1227). Eviction is pinned separately by
+      # the --forbid deny-list: the NEW-line guard alone only catches
+      # re-adds above 5% of TOTAL (Symbols/ qualifies at 99 MB; the 5.6 MB
+      # glb does not — +3.8% TOTAL, sub-share NEW), so a returning evicted
+      # artifact fails via --forbid in the same step. Also pins the owner
       # hard constraint: the js-apps WASM runtime and LiteRT LM always ship.
       - name: Size manifest ratchet + wasm keep-set (#1331)
         run: |
           set -euo pipefail
           IPA_PATH=$(find flutter_app/build/ios -name "*.ipa" -type f | head -1)
           MANIFEST=$(mktemp)
+          trap 'rm -f "$MANIFEST"' EXIT
           python3 scripts/size_manifest.py check "$IPA_PATH" \
-            --baseline scripts/size_budget/fa-ios.tsv --manifest-out "$MANIFEST"
+            --baseline scripts/size_budget/fa-ios.tsv \
+            --forbid '^Symbols/' --forbid 'coach_anny\.glb$' \
+            --manifest-out "$MANIFEST"
           for ASSET in \
             flutter_assets/assets/wasm/python.wasm \
             flutter_assets/assets/wasm/qjs.wasm \
