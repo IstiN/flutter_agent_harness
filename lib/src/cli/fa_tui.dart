@@ -283,7 +283,6 @@ final class FaTuiModel extends Model {
     this.stickyLines = const [],
     this.stickyIndex = -1,
     this.stickyEchoLineCount = 0,
-    this.turnStartLine = -1,
     this.bootAnchorLine = 0,
     this.queue = const [],
     this.attachments = const [],
@@ -476,13 +475,6 @@ final class FaTuiModel extends Model {
   /// set at submit time; the sticky pins only when these rows have fully
   /// scrolled out of view.
   final int stickyEchoLineCount;
-
-  /// Output-lines index where the CURRENT turn starts — the last submitted
-  /// prompt's echo (or the first steered/drained echo); -1 until then
-  /// (issue #827). Drives the follow anchor [_turnAnchor]: a fresh
-  /// prompt's window starts at its own echo instead of showing turn N-1
-  /// above the prompt line.
-  final int turnStartLine;
 
   /// The resumed boot's replay anchor (issue #446 wave-14): the LOGICAL
   /// line index of the restored session's first row. While following and
@@ -703,7 +695,6 @@ final class FaTuiModel extends Model {
     List<String>? stickyLines,
     int? stickyIndex,
     int? stickyEchoLineCount,
-    int? turnStartLine,
     int? bootAnchorLine,
     List<QueuedMessage>? queue,
     List<TuiImageAttachment>? attachments,
@@ -763,7 +754,6 @@ final class FaTuiModel extends Model {
       stickyLines: stickyLines ?? this.stickyLines,
       stickyIndex: stickyIndex ?? this.stickyIndex,
       stickyEchoLineCount: stickyEchoLineCount ?? this.stickyEchoLineCount,
-      turnStartLine: turnStartLine ?? this.turnStartLine,
       bootAnchorLine: bootAnchorLine ?? this.bootAnchorLine,
       queue: queue ?? this.queue,
       attachments: attachments ?? this.attachments,
@@ -905,20 +895,23 @@ final class FaTuiModel extends Model {
     final displayText = needsSystemNoticeRewrite(msg.text)
         ? renderSystemNoticeLines(msg.text).join('\n')
         : msg.text;
-    final (newLines, cut) = _appendOutput(outputLines, displayText, msg.newline);
+    final (newLines, cut) = _appendOutput(
+      outputLines,
+      displayText,
+      msg.newline,
+    );
     final next = copyWith(
       outputLines: newLines,
-      // A head trim shifts every transcript index — anchor and pin (#827).
-      turnStartLine: _turnStartShiftedBy(cut),
+      // A head trim shifts every transcript index — the pin (#827).
       bootAnchorLine: _bootAnchorShiftedBy(cut),
       stickyIndex: _stickyShiftedBy(cut),
     );
     final nextWrapped = next._wrappedLines();
     // Auto-follow the stream while the latch holds; preserve the scroll
     // position (clamped) when the user scrolled up. Following re-anchors
-    // at the turn boundary (issue #827) — the stream owns the window.
+    // at the live edge (issue #1348) — the stream owns the window.
     final nextOffset = followTail
-        ? next._turnAnchor(nextWrapped)
+        ? next._followAnchor(nextWrapped)
         : next._clampScroll(scrollOffset, nextWrapped);
     return (next.copyWith(scrollOffset: nextOffset), null);
   }
@@ -1033,23 +1026,19 @@ final class FaTuiModel extends Model {
     msg.completer.complete([for (final m in queued) m.text]);
     if (queued.isEmpty) return (this, null);
     var lines = outputLines;
-    var echoCut = 0;
     for (final message in queued) {
-      final (appended, cut) = _echoAppend(lines, message.text);
+      final (appended, _) = _echoAppend(lines, message.text);
       lines = appended;
-      echoCut += cut;
     }
     final cleared = copyWith(
       queue: const [],
       outputLines: lines,
-      // The first drained echo opens the next turn's window (issue #827);
-      // echo-time head-trims shift it by the accumulated cut. A live
-      // submit also dissolves the boot anchor — the boundary re-arms.
-      turnStartLine: outputLines.length - echoCut,
+      // A live submit/drain dissolves the boot anchor: the window returns
+      // to the live edge (#1348).
       bootAnchorLine: 0,
     );
     final next = cleared.copyWith(
-      scrollOffset: cleared._turnAnchor(cleared._wrappedLines()),
+      scrollOffset: cleared._followAnchor(cleared._wrappedLines()),
       followTail: true,
     );
     return (next, null);
@@ -1828,13 +1817,12 @@ final class FaTuiModel extends Model {
   }
 
   /// Appends [text] as a service line (dim hint/error) and keeps the
-  /// turn-start index accurate across a head-trim the append may fire
+  /// pinned-echo index accurate across a head-trim the append may fire
   /// (issue #827).
   FaTuiModel _appendServiceLine(String text) {
     final (lines, cut) = _appendOutput(outputLines, text, true);
     return copyWith(
       outputLines: lines,
-      turnStartLine: _turnStartShiftedBy(cut),
       bootAnchorLine: _bootAnchorShiftedBy(cut),
       stickyIndex: _stickyShiftedBy(cut),
     );
@@ -1886,24 +1874,22 @@ final class FaTuiModel extends Model {
       menuTokenStart: -1,
       stickyLines: sticky,
       // The echo lands at the old length minus the cut the append may
-      // have fired — the new turn's first line (issue #827); the sticky
-      // math shares the exact same index.
+      // have fired — the sticky math shares the exact same index.
       stickyIndex: outputLines.length - echoCut,
       stickyEchoLineCount: stickyEchoLineCount,
-      turnStartLine: outputLines.length - echoCut,
-      // A live submit dissolves the boot anchor: the turn boundary re-arms
-      // at this echo (issue #446 wave-14).
+      // A live submit dissolves the boot anchor: the window returns to
+      // the live edge (issue #1348).
       bootAnchorLine: 0,
       attachments: keepAttachments ? null : const [],
     );
     return (
       // A fresh submit always jumps to the bottom AND re-attaches follow:
       // without it, a latch detached by an earlier scroll-up froze the
-      // stream off-screen (and the sticky echo never activated). #827: the
-      // landing spot is the turn anchor — this turn's echo — not a window
-      // over turn N-1's tail.
+      // stream off-screen (and the sticky echo never activated). #1348:
+      // the landing spot is the live edge — the echo sits at the BOTTOM
+      // above the composer, prior history directly above it.
       cleared.copyWith(
-        scrollOffset: cleared._turnAnchor(cleared._wrappedLines()),
+        scrollOffset: cleared._followAnchor(cleared._wrappedLines()),
         followTail: true,
       ),
       _submitCmd(text, images),
@@ -1986,22 +1972,19 @@ final class FaTuiModel extends Model {
     ];
     if (messages.isEmpty) return (this, null);
     var lines = outputLines;
-    var echoCut = 0;
     for (final message in messages) {
-      final (appended, cut) = _echoAppend(lines, message);
+      final (appended, _) = _echoAppend(lines, message);
       lines = appended;
-      echoCut += cut;
     }
     // A visible receipt: an echoed-but-unanswered message otherwise reads
     // as "sent into the void" while the turn runs (or wedges on a dead
     // endpoint).
-    final (receipted, receiptCut) = _appendOutput(
+    final (receipted, _) = _appendOutput(
       lines,
       _dim('⤷ steered into the running turn — esc aborts'),
       true,
     );
     lines = receipted;
-    echoCut += receiptCut;
     // Steered messages are sent for real — they join the input history.
     var history = inputHistory;
     for (final message in messages) {
@@ -2021,14 +2004,10 @@ final class FaTuiModel extends Model {
       historyIndex: -1,
       historyDraft: null,
       outputLines: lines,
-      // The first steered echo starts the interrupted turn's window
-      // (issue #827 — each steered message is a separate user turn);
-      // echo-time head-trims shift it by the accumulated cut.
-      turnStartLine: outputLines.length - echoCut,
     );
     return (
       cleared.copyWith(
-        scrollOffset: cleared._turnAnchor(cleared._wrappedLines()),
+        scrollOffset: cleared._followAnchor(cleared._wrappedLines()),
         followTail: true,
       ),
       () async {

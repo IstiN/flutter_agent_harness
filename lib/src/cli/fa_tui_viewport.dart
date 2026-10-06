@@ -1,9 +1,9 @@
-/// The viewport scroll machinery (issue #827) — follow anchor, turn-boundary
-/// pinning, and the shared wrap cache bridge — split out of `fa_tui.dart` to
-/// keep it under the repo's 2800-line size gate. Same library (a `part of`),
-/// so the extension sees the model's private members; the render state
-/// (`_wrapCache`, `turnStartLine`) is declared on [FaTuiModel] itself —
-/// extensions cannot add fields.
+/// The viewport scroll machinery (issues #827 + #1348) — the follow
+/// anchor, pin-to-bottom tail tracking, and the shared wrap cache bridge —
+/// split out of `fa_tui.dart` to keep it under the repo's 2800-line size
+/// gate. Same library (a `part of`), so the extension sees the model's
+/// private members; the render state (`_wrapCache`) is declared on
+/// [FaTuiModel] itself — extensions cannot add fields.
 part of 'fa_tui.dart';
 
 extension _TuiViewport on FaTuiModel {
@@ -21,35 +21,10 @@ extension _TuiViewport on FaTuiModel {
     );
   }
 
-  /// The current turn's first wrapped row (issue #827). -1 (nothing
-  /// submitted yet) and out-of-range (a foreign stale index) both return
-  /// 0, riding the global bottom exactly like the pre-#827 follow. The
-  /// bounded-history head-trim is NOT stale-by-design: every append shifts
-  /// the index by the cut ([_turnStartShiftedBy]), so it keeps naming the
-  /// echo across 2000+-line turns.
-  int _turnStartRow() {
-    if (turnStartLine < 0) return 0;
-    _wrappedLines(); // refresh the shared wrap cache when stale
-    final starts = _wrapCache.lineStartRows;
-    if (turnStartLine >= starts.length) return 0;
-    return starts[turnStartLine];
-  }
-
-  /// The turn-start index after a transcript head-trim dropped [cut] lines
-  /// from the head (issue #827): every transcript index shifts by the cut.
-  /// A turn whose echo was dropped entirely degrades to -1 — the
-  /// pre-#827 global-bottom follow.
-  int _turnStartShiftedBy(int cut) {
-    if (cut == 0 || turnStartLine < 0) return turnStartLine;
-    final shifted = turnStartLine - cut;
-    return shifted < 0 ? -1 : shifted;
-  }
-
   /// The sticky-echo index after a transcript head-trim dropped [cut]
-  /// lines (issue #827 review): the pinned echo is a transcript index
-  /// exactly like the turn anchor — it shifts by the cut too, and a trim
-  /// that swallowed the pinned echo drops the pin (-1) instead of leaving
-  /// it aimed at a foreign line.
+  /// lines (issue #827 review): the pinned echo is a transcript index —
+  /// it shifts by the cut, and a trim that swallowed the pinned echo
+  /// drops the pin (-1) instead of leaving it aimed at a foreign line.
   int _stickyShiftedBy(int cut) {
     if (cut == 0 || stickyIndex < 0) return stickyIndex;
     final shifted = stickyIndex - cut;
@@ -98,14 +73,14 @@ extension _TuiViewport on FaTuiModel {
     return null;
   }
 
-  /// The follow anchor (issue #827): the live edge, but never below the
-  /// current turn's first wrapped row while that turn fits the viewport —
-  /// a freshly submitted prompt's window starts at its OWN echo, not at
-  /// turn N-1's tail (the cross-turn bleed the sticky echo used to paper
-  /// over). Long turns exceed the viewport and the anchor degrades to the
-  /// bottom, where the fold indicator owns the explanation.
+  /// The follow anchor (issues #827 + #1348): the live edge — the window
+  /// pins to the BOTTOM, so a submitted message lands above the composer
+  /// with the prior history directly above it and streaming scrolls up
+  /// line by line (standard terminal semantics). #1348 supersedes #827's
+  /// short-turn park at the turn's first row: that anchor pinned the fresh
+  /// echo to the TOP of the glass with a blank page reserved underneath.
   ///
-  /// The resumed boot's replay anchor joins the same max() (issue #446
+  /// The resumed boot's replay anchor joins the bottom (issue #446
   /// wave-14) — but ONLY when the glass must fold something: banner
   /// chrome + restored transcript overflowing the viewport anchors at the
   /// transcript start (the banner rides the fold under the #827
@@ -115,17 +90,14 @@ extension _TuiViewport on FaTuiModel {
   /// '[Model]' never painted, every PTY suite timed out at waitForBoot).
   /// And when even the anchored region overflows, the tail outranks the
   /// boot region and the anchor degrades to the bottom.
-  int _turnAnchor(List<String> wrapped) {
+  int _followAnchor(List<String> wrapped) {
     final bottom = _scrollBottom(wrapped);
-    var anchor = bottom;
-    final start = _turnStartRow();
-    if (start > anchor) anchor = start;
     final boot = _bootAnchorRow();
     if (boot != null && wrapped.length > _viewportHeight) {
       final region = wrapped.length - boot;
-      if (region <= _viewportHeight && boot > anchor) anchor = boot;
+      if (region <= _viewportHeight && boot > bottom) return boot;
     }
-    return anchor;
+    return bottom;
   }
 
   /// The boot anchor's wrapped row, or null when absent/foreign (0 = no
@@ -151,26 +123,23 @@ extension _TuiViewport on FaTuiModel {
   }
 
   /// The effective viewport offset while the follow latch holds: the
-  /// anchor, unless the user parked the window inside the turn-boundary
-  /// pad zone above the live edge ([_scrollTopMax] allows that without
-  /// detaching — the newest row is still on the glass there). The park
-  /// survives frames with no new output (spinner ticks, keys, resize);
-  /// the next streamed append hands the window back to the stream, which
-  /// re-anchors at [_turnAnchor] — [_handleOutputMsg] owns that decision
-  /// ("the stream owns the window").
+  /// anchor — the live edge, or the boot-resume park above it — unless the
+  /// user's own offset already sits there. The park survives frames with
+  /// no new output (spinner ticks, keys, resize); the next streamed append
+  /// hands the window back to the stream, which re-anchors at
+  /// [_followAnchor] — [_handleOutputMsg] owns that decision ("the stream
+  /// owns the window").
   int _followOffset(List<String> wrapped) {
     if (scrollOffset > _scrollBottom(wrapped)) return scrollOffset;
-    return _turnAnchor(wrapped);
+    return _followAnchor(wrapped);
   }
 
-  /// The highest offset a user scroll may store: the usual live-edge
-  /// bottom, plus — while the latch holds — the pad zone of a SHORT
-  /// current turn (window above the bottom, blank-padded below without
-  /// losing the live edge). Detached scrolls stay clamped to the bottom,
-  /// as before. Same computation as [_turnAnchor] while latched: the
+  /// The highest offset a user scroll may store: the follow anchor while
+  /// the latch holds (the boot-resume park), the plain bottom when
+  /// detached. Same computation as [_followAnchor] while latched: the
   /// stream re-anchor and the user-scroll ceiling must not drift.
   int _scrollTopMax(List<String> wrapped) =>
-      followTail ? _turnAnchor(wrapped) : _scrollBottom(wrapped);
+      followTail ? _followAnchor(wrapped) : _scrollBottom(wrapped);
 
   /// The output history formatted and wrapped to physical rows at [width]
   /// (default: the current terminal width). All scroll math happens in
@@ -202,5 +171,4 @@ extension _TuiViewport on FaTuiModel {
 
   int _clampScroll(int offset, List<String> wrapped) =>
       offset.clamp(0, _scrollBottom(wrapped));
-
 }
