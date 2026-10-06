@@ -9,7 +9,12 @@
 # list, it is never discovered per-file after a red build (#1265/#1296 class).
 #
 #   inventory  — each listed lockfile exists, is git-tracked, and is NOT
-#                gitignored (a gitignored/missing lockfile fails CI)
+#                gitignored (a gitignored/missing lockfile fails CI); plus
+#                the gh-1303 path-pin sync: flutter_app/pubspec.lock's pin
+#                of this repo (path dependency) must equal the root
+#                pubspec.yaml version — a stale pin fails every
+#                `flutter pub get --enforce-lockfile` consumer (pages.yml
+#                web demo, ci.yml flutter legs) the moment it lands
 #   pod-sync   — every native (native_build: true) iOS/macOS Flutter plugin
 #                resolved by the committed pubspec.lock has its pod in the
 #                platform's Podfile.lock, AT THE PODSPEC'S VERSION. Catches
@@ -91,6 +96,43 @@ if [ "$mode" = "inventory" ] || [ "$mode" = "all" ]; then
   done
   if [ "$fail" -eq 0 ]; then
     echo "lockfile inventory ok: ${#LOCKFILES[@]} files tracked, none ignored"
+  fi
+
+  # gh-1303: the app lock pins THIS repo as a path dependency — when its
+  # version diverges from the root pubspec (exactly what a version bump
+  # without a lock regen produces), every `flutter pub get
+  # --enforce-lockfile` consumer (pages.yml web demo build, ci.yml flutter
+  # legs, the packaging scripts) reds with "Unable to satisfy pubspec.yaml
+  # using pubspec.lock". The release bump re-pins the lock itself
+  # (scripts/auto_release.sh); this catches every other path to the same
+  # drift at PR time. Tolerant: needs BOTH the root pubspec's version and
+  # a harness entry in the lock to have anything to compare — fixtures and
+  # packages without that shape skip silently.
+  if [ -f pubspec.yaml ] && grep -q '^version:' pubspec.yaml && [ -f flutter_app/pubspec.lock ]; then
+    root_version="$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -1 | tr -d '\"')"
+    lock_pin="$(python3 - flutter_app/pubspec.lock <<'PY'
+import sys
+
+pin = None
+inside = False
+for line in open(sys.argv[1], encoding="utf-8").read().splitlines():
+    if line.rstrip() == "  flutter_agent_harness:":
+        inside = True
+        continue
+    if inside and line.startswith("  ") and not line.startswith("    "):
+        break  # next package entry — the pin was not inside this one
+    if inside and line.strip().startswith("version:"):
+        pin = line.split("version:", 1)[1].strip().strip('"')
+        break
+print(pin or "")
+PY
+)"
+    if [ -n "$lock_pin" ] && [ "$lock_pin" != "$root_version" ]; then
+      echo "::error::flutter_app/pubspec.lock pins flutter_agent_harness $lock_pin but pubspec.yaml is $root_version (gh-1303 class) — every 'flutter pub get --enforce-lockfile' consumer (pages.yml web demo, ci.yml flutter legs) would red on main. Re-pin the lock and commit: cd flutter_app && flutter pub get"
+      fail=1
+    elif [ "$fail" -eq 0 ]; then
+      echo "path-pin ok: flutter_app/pubspec.lock pins flutter_agent_harness at the pubspec version ($root_version)"
+    fi
   fi
 fi
 

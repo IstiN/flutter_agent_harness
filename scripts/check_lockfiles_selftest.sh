@@ -212,4 +212,40 @@ make_fixture "$d" "  - native_pkg (0.0.2):"
 rm "$d/browser_ext/e2e/package-lock.json"
 expect_fail "deleted e2e package-lock.json fails" "$d" bash "$GATE" inventory
 
+# 11. gh-1303: the app lock pins THIS repo as a path dependency — a pin
+#     that diverged from the root pubspec version reds every
+#     `flutter pub get --enforce-lockfile` consumer (pages.yml web demo,
+#     ci.yml flutter legs) the moment the skew lands on main. Must red at
+#     PR time, with a clean ::error:: naming both versions.
+d="$tmp/stale-path-pin"
+make_fixture "$d" "  - native_pkg (0.0.2):"
+printf 'name: repo\nversion: 1.2.3\n' > "$d/pubspec.yaml"
+cat >> "$d/flutter_app/pubspec.lock" <<'EOF'
+  flutter_agent_harness:
+    dependency: "direct main"
+    description:
+      path: ".."
+      relative: true
+    source: path
+    version: "1.2.2"
+EOF
+expect_fail_clean "stale path-dep pin in the app lock fails" "$d" bash "$GATE" inventory
+
+# 12. The same fixture with the pin re-synced (exactly what the release
+#     bump in scripts/auto_release.sh now writes) must pass — no false
+#     positive on the healthy bump shape.
+d="$tmp/fresh-path-pin"
+make_fixture "$d" "  - native_pkg (0.0.2):"
+printf 'name: repo\nversion: 1.2.3\n' > "$d/pubspec.yaml"
+cat >> "$d/flutter_app/pubspec.lock" <<'EOF'
+  flutter_agent_harness:
+    dependency: "direct main"
+    description:
+      path: ".."
+      relative: true
+    source: path
+    version: "1.2.3"
+EOF
+expect_pass "synced path-dep pin passes" "$d" bash "$GATE" inventory
+
 echo "lockfile gate self-test: all red exits stay red, green path stays green (gh-1296 AC2)"
