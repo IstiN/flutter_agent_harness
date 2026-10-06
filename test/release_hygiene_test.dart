@@ -202,6 +202,7 @@ AutoReleaseRun runAutoReleaseDirect(
   String raceMode = 'never',
   bool flutterFails = false,
   bool flutterDirty = false,
+  bool brokenInventory = false,
 }) {
   final root = Directory(
     '${_fixtureRoot.path}/direct-$name-${DateTime.now().microsecondsSinceEpoch}',
@@ -332,6 +333,17 @@ fi
       '${Directory.current.path}/scripts/check_lockfiles.sh',
     ).readAsStringSync(),
   );
+  if (brokenInventory) {
+    // PR #1304 rework threads 1+5: model a BROKEN inventory source — a bad
+    // merge / partial checkout where `check_lockfiles.sh list` exits 0
+    // printing NOTHING. The dirty-tree gate must refuse to release
+    // unguarded, never degrade to an unrestricted whole-tree scan.
+    File('$seed/scripts/check_lockfiles.sh').writeAsStringSync(
+      '#!/usr/bin/env bash\n'
+      '# sandbox: broken inventory — silent success, zero paths\n'
+      'exit 0\n',
+    );
+  }
   git(['add', '-A']);
   git(
     ['commit', '-q', '-m', 'seed'],
@@ -2237,6 +2249,35 @@ gh release create "v9.9.9" \
     );
 
     test(
+      'NG1 — an EMPTY lockfile inventory (broken `check_lockfiles.sh list`) refuses to release — the dirty gate must never silently no-op',
+      () {
+        // PR #1304 rework threads 1+5: the inventory is consumed inside a
+        // process substitution whose exit status `set -euo pipefail` cannot
+        // observe — a `check_lockfiles.sh list` that fails or prints nothing
+        // left `lockfiles` empty and degenerated `git status --porcelain --`
+        // into an unrestricted whole-tree scan (clean right after the
+        // commit), shipping releases with zero lockfile protection. The
+        // precondition must be explicit: no inventory, no release.
+        final r = runAutoReleaseDirect(
+          'empty-inventory',
+          brokenInventory: true,
+        );
+        expect(r.exitCode, 1, reason: r.output);
+        expect(r.output, contains('lockfile inventory is EMPTY'));
+        expect(
+          r.originHeadAfter,
+          r.originHeadBefore,
+          reason:
+              'refusing to release without the dirty-tree gate (gh-1299 NG1)',
+        );
+        expect(
+          r.originSubjects(1),
+          isNot(contains('chore(release): v0.1.496')),
+        );
+      },
+    );
+
+    test(
       'NG1 — auto_release.sh refreshes the lockfile, stages it IN the bump commit, then runs the dirty gate',
       () {
         final script = read('scripts/auto_release.sh');
@@ -2299,20 +2340,34 @@ gh release create "v9.9.9" \
       final jobs = jobsOf('.github/workflows/ci.yml');
       for (final name in ['release', 'release-tag']) {
         final steps = jobs[name]['steps'] as YamlList;
-        final hasFlutter = steps.any(
-          (s) =>
-              s is Map &&
-              (s['uses']?.toString() ?? '').startsWith(
+        final flutterSteps = steps
+            .whereType<YamlMap>()
+            .where(
+              (s) => (s['uses']?.toString() ?? '').startsWith(
                 'subosito/flutter-action',
               ),
-        );
+            )
+            .toList();
         expect(
-          hasFlutter,
-          isTrue,
+          flutterSteps,
+          isNotEmpty,
           reason:
               'job $name runs a gh-1299 lockfile gate — it needs flutter '
               'installed (hosted stable, same pin as every other leg)',
         );
+        // PR #1304 rework thread 8: these jobs AUTHOR flutter_app/pubspec.lock
+        // for every future release — the authoring SDK must be pinned to the
+        // same 3.47.x the consuming (`--enforce-lockfile`) build legs pin,
+        // closing the author/consumer SDK drift class for one line per step.
+        for (final s in flutterSteps) {
+          expect(
+            (s['with'] as YamlMap?)?['flutter-version']?.toString(),
+            '3.47.x',
+            reason:
+                'job $name authors flutter_app/pubspec.lock — its SDK must '
+                'be pinned to the same 3.47.x the consuming build legs use',
+          );
+        }
       }
     });
   });

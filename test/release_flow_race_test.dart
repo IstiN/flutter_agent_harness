@@ -937,6 +937,28 @@ void main() {
     });
 
     test(
+        'gh-1299 NG2 — a transient smoke failure (healthy pin, flutter itself '
+        'broken) is NEVER tagged or published', () {
+      // PR #1304 rework thread 2: exercises the `lockfileFails` knob (the
+      // FA_FLUTTER_FAIL wiring makes the stub fail EVERY invocation), so the
+      // refusal is driven by the smoke command itself dying — not by a stale
+      // pin. Same never-tagged/never-published invariants as the
+      // staleBumpLockfile case above.
+      final r = runTagRelease('smoke-fails', lockfileFails: true);
+      expect(r.exitCode, 1, reason:
+          'the smoke must fail the release: ${r.output}');
+      expect(
+        r.output,
+        contains('fails \'flutter pub get --enforce-lockfile\''),
+      );
+      expect(r.output, contains('refusing to tag/publish v0.1.496'));
+      expect(r.tagCommit('0.1.496'), isNull,
+          reason: 'no tag — nothing downstream may consume an unsmoked bump');
+      expect(r.ghLog.where((l) => l.contains('release create')), isEmpty,
+          reason: 'no GitHub Release either');
+    });
+
+    test(
         'gh-1299 NG2 — the smoke passes on a lockfile-refreshed bump and the '
         'tag still pins the bump sha', () {
       final r = runTagRelease('lockfile-ok');

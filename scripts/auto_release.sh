@@ -148,17 +148,28 @@ PY
 
   # No committed lockfile may stay dirty across a release (gh-1299 NG1):
   # anything the refresh above could not regenerate (Podfile.lock needs
-  # macOS `pod install`, npm pins need `npm install`) fails the release
-  # LOUDLY here — after the commit (the staged refresh must not trip this),
-  # before the push. Never a shipped bump that leaves the tree stale.
+  # `pod install` — runs on Linux per AGENTS.md/gh-1296; npm pins need
+  # `npm install`) fails the release LOUDLY here — after the commit (the
+  # staged refresh must not trip this), before the push. Never a shipped
+  # bump that leaves the tree stale.
   # The list comes from the ONE inventory (scripts/check_lockfiles.sh).
   lockfiles=()
   while IFS= read -r f; do lockfiles+=("$f"); done < <(bash scripts/check_lockfiles.sh list)
+  # PR #1304 rework threads 1+5: the process substitution above swallows a
+  # non-zero exit — a `check_lockfiles.sh list` that failed (bad merge,
+  # partial checkout, broken LOCKFILES) would leave `lockfiles` EMPTY and
+  # degenerate the status below into an unrestricted whole-tree scan, the
+  # gate silently no-oping on the exact incident class it guards (and a
+  # hard abort under bash 3.2 + `set -u`). Refuse to release unguarded.
+  if [ "${#lockfiles[@]}" -eq 0 ]; then
+    echo "::error::lockfile inventory is EMPTY — scripts/check_lockfiles.sh list failed; refusing to release without the dirty-tree gate (gh-1299 NG1)." >&2
+    exit 1
+  fi
   dirty=$(git status --porcelain -- "${lockfiles[@]}")
   if [ -n "$dirty" ]; then
     echo "::error::release aborted — committed lockfile(s) still dirty after the refresh; a release that leaves the tree --enforce-lockfile-dirty is a failed release (gh-1299 NG1):"
     echo "$dirty"
-    echo "::error::regenerate them (flutter pub get; pod install on macOS for the Podfile.locks; npm install for the e2e package-locks), commit, re-run the release."
+    echo "::error::regenerate them (flutter pub get; pod install --repo-update in flutter_app/ios and flutter_app/macos — runs on Linux per AGENTS.md; npm install for the e2e package-locks), commit, re-run the release."
     exit 1
   fi
 
