@@ -57,7 +57,7 @@ jobs:
       # The example Flutter app lives in this repo; without its package
       # config the repo-wide `dart analyze` cannot resolve Flutter imports.
       - name: Example app pub get (for repo-wide analyze)
-        run: cd flutter_app && flutter pub get --enforce-lockfile
+        uses: ./.github/actions/flutter-pub-get
 
       # The repo-wide `dart analyze` also walks office_addin/dart; without
       # its package config the analyzer cannot resolve
@@ -269,7 +269,7 @@ jobs:
       # "No file or variants found for asset: .env".)
       - run: touch flutter_app/.env
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
-      - run: cd flutter_app && flutter pub get --enforce-lockfile
+      - uses: ./.github/actions/flutter-pub-get
       # The harness spawns `dart bin/fah.dart` FROM THE REPO ROOT; without
       # a root package config that resolves package:flutter_agent_harness
       # to the pub-cache copy (an old published build) and the CLI dies on
@@ -312,7 +312,7 @@ jobs:
           HUGGINGFACE_TOKEN=
           EOF
       - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
-      - run: cd flutter_app && flutter pub get --enforce-lockfile
+      - uses: ./.github/actions/flutter-pub-get
       - name: flutter test (all except integration + goldens)
         run: |
           cd flutter_app
@@ -474,11 +474,7 @@ jobs:
           ls -la "$GEMMA_CACHE"
 
       - name: Install Flutter dependencies
-        working-directory: flutter_app
-        shell: bash
-        # gh-1265 AC2: resolve against the committed lockfile; a
-        # pubspec/lockfile skew must fail the nightly, not float.
-        run: flutter pub get --enforce-lockfile
+        uses: ./.github/actions/flutter-pub-get
 
       # gh-1296 NG1/NG3: the scheduled legs are the drift detector — the
       # pod-sync half of the lockfile gate runs nightly (upstream spec drift

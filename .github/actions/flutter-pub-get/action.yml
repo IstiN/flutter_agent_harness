@@ -1,0 +1,57 @@
+name: 'Flutter pub get (enforced lockfile, bounded retry)'
+description: >-
+  The ONE sanctioned flutter_app dependency-resolution step:
+  `flutter pub get --enforce-lockfile` with the #726 bounded retry. pub
+  has no retry for its git-dependency mirror clones (flutter_js,
+  flutter_js_widget_runtime) — one transient "Connection reset by peer" on
+  github.com:443 failed the whole leg (#726 on the iOS release leg; gh-1310
+  on ci.yml build-macos, where the v1.0.516 lockfile refresh cold-missed
+  the flutter-action pub cache and forced fresh clones exactly when a
+  release lands). Deterministic pubspec/lockfile skews (gh-1299: a release
+  commit that bumps the version without regenerating flutter_app/
+  pubspec.lock) fail identically on every attempt — the loop detects the
+  "Unable to satisfy" signature and fails fast instead of burning ~30s per
+  red leg and blaming the network (PR #1268 review thread 3). Guarded by
+  test/ci_pub_get_retry_guard_test.dart: no workflow run-step may resolve
+  flutter_app itself.
+
+inputs:
+  working-directory:
+    description: 'Directory holding the pubspec.yaml to resolve.'
+    required: false
+    default: flutter_app
+
+runs:
+  using: 'composite'
+  steps:
+    - name: flutter pub get --enforce-lockfile (bounded retry, #726)
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        # Git-dep clones must never hang a leg on a credential prompt.
+        GIT_TERMINAL_PROMPT: '0'
+      shell: bash
+      run: |
+        set -euo pipefail
+        LOG_FILE="$(mktemp)"
+        for attempt in 1 2 3; do
+          # gh-1265 AC2: resolve against the committed lockfile.
+          if flutter pub get --enforce-lockfile 2>&1 | tee "$LOG_FILE"; then
+            rm -f "$LOG_FILE"
+            exit 0
+          fi
+          # A pubspec/lockfile skew is deterministic — retrying cannot
+          # fix it, so fail fast instead of burning ~30s per red leg and
+          # blaming the network (PR #1268 review thread 3).
+          if grep -qE 'Unable to satisfy .* using .*pubspec\.lock' "$LOG_FILE"; then
+            echo "::error::$PWD/pubspec.lock is out of sync with $PWD/pubspec.yaml — regenerate it (cd $PWD && flutter pub get) and commit; not retrying a deterministic skew"
+            rm -f "$LOG_FILE"
+            exit 1
+          fi
+          if [ "$attempt" = 3 ]; then
+            echo "::error::flutter pub get failed after 3 attempts — the runner's network to pub.dev/github.com is unhealthy"
+            rm -f "$LOG_FILE"
+            exit 1
+          fi
+          echo "::warning::flutter pub get failed (attempt $attempt/3) — retrying in 15s"
+          sleep 15
+        done
