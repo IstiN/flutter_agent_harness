@@ -1,5 +1,6 @@
 /// Live agent-stack wiring through the builder (issue #1079, slice 2 —
-/// the CLI converts to this as the first host shell).
+/// the CLI converts to this as the first host shell; slice 3 — the
+/// fabric/subagent/task complex joins the builder-owned set).
 ///
 /// [wireAgentCore] consumes a [HostCapabilityProfile] plus the host's
 /// typed [AgentCoreServices] and returns a [WiredAgentCore]: the
@@ -35,7 +36,11 @@ import '../agent/agent_tool.dart';
 import '../agent/misuse_breaker.dart';
 import '../agent/stuck_tool.dart' show StuckToolConfig;
 import '../agent/tool_registry.dart';
+import '../a2a/a2a_config.dart' show A2aConfig;
+import '../a2a/a2a_mail_gateway.dart' show A2aMailGateway;
+import '../a2a/a2a_manager.dart' show A2aManager;
 import '../browser/browser_tools.dart';
+import '../compaction/compaction_engine.dart' show CompactionEngine;
 import '../config/config_service.dart';
 import '../cube/config/cube_spec.dart';
 import '../cube/config/fs_policy.dart';
@@ -48,10 +53,29 @@ import '../lsp/lsp_tool.dart';
 import '../memory/memory_controller.dart';
 import '../model.dart';
 import '../memory/memory_tools.dart';
+import '../model_roles/model_resolver.dart' show ModelRolesResolver;
+import '../messaging/agent_fabric.dart' show buildAgentFabric;
+import '../messaging/file_messaging_repository.dart'
+    show SwappableMessagingRepository;
+import '../messaging/messaging_repository.dart' show MessagingRepository;
 import '../messaging/schedule_message_tool.dart';
 import '../messaging/scheduled_messages.dart';
 import '../mcp/mcp_manager.dart';
 import '../model_roles/models_config.dart';
+import '../session/session_tree.dart' show Session;
+import '../session_io_retry.dart' show SessionIoRetryConfig;
+import '../task/child_session_io.dart'
+    show jsonlChildMessageReader, jsonlChildSessionOpener;
+import '../task/subagent_heartbeat.dart' show SubagentHeartbeat;
+import '../task/subagent_manager.dart'
+    show
+        MailboxWakeLauncher,
+        SubagentManager,
+        SubagentRegistrySink,
+        SubagentRegistrySource,
+        childInboxWakePrompt;
+import '../task/subagent_tools.dart' show subagentMonitoringTools;
+import '../task/task_tool.dart' show TaskToolConfig, taskTool;
 import '../tools/ask_tool.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/generate_image.dart';
@@ -102,6 +126,78 @@ final class MediaToolServices {
     required this.mainApiKey,
     this.modelsConfig,
     this.resolveKey,
+  });
+}
+
+/// The subagent/task complex the builder assembles when the profile wires
+/// [HostCapability.subagents] (issue #1079, slice 3): the messaging
+/// fabric, the [SubagentManager], the heartbeat and the task/monitoring
+/// tool surface become builder-owned, capability-gated wiring. The host
+/// provides only what is genuinely shell glue: session persistence, the
+/// wake launcher, heartbeat delivery, child-session minting. Absent
+/// bundle = the capability run-narrows off with a named reason; the
+/// complex never half-wires.
+final class SubagentServices {
+  /// Fabric + manager inputs: the user home (cwd-tag shortening, fabric
+  /// root context) and this host's machine name (`name@machine`
+  /// addressing, issue #27 phase 2/3).
+  final String? homeDir;
+  final String? machineName;
+
+  /// The parsed `a2a:` config section (null = no remote agents).
+  final A2aConfig? a2a;
+
+  /// Detached wake launcher for asleep mailboxes (the CLI spawns its own
+  /// binary with `--session <name>`). Null keeps the "how to start it"
+  /// hint path.
+  final MailboxWakeLauncher? wakeProcess;
+
+  /// Registry persistence into the parent session + rehydration at boot
+  /// (the `subagent_registry` custom records, issue #488 AC2).
+  final SubagentRegistrySink? registrySink;
+  final SubagentRegistrySource? registrySource;
+
+  /// Heartbeat delivery sink — required: a heartbeat without a delivery
+  /// path would silently discard digests. Threshold getters stay live so
+  /// a config rewrite applies at the next tick without a restart (E6).
+  final void Function(String digest) notifyHeartbeat;
+  final int Function()? heartbeatMinutes;
+  final int Function()? stallMinutes;
+
+  /// Task children: role resolution (agent types with a `modelRole`) and
+  /// the host's compaction choice (live settings override, else config —
+  /// issue #439).
+  final ModelRolesResolver? rolesResolver;
+  final CompactionEngine? compactionEngine;
+
+  /// `agent.misuseBreaker` covers children too (issue #862).
+  final bool misuseBreaker;
+
+  /// Real JSONL child sessions, created at child COMPLETION (fast
+  /// register keeps the steering race away; the transcript lands when the
+  /// child finishes).
+  final Future<Session> Function(String parentId, String childId)?
+  childSessionFactory;
+
+  /// Transient-ENOENT retry for the child-session reopen (issue #427);
+  /// the builder derives the JSONL opener from it.
+  final SessionIoRetryConfig? sessionIoRetry;
+
+  const SubagentServices({
+    this.homeDir,
+    this.machineName,
+    this.a2a,
+    this.wakeProcess,
+    this.registrySink,
+    this.registrySource,
+    required this.notifyHeartbeat,
+    this.heartbeatMinutes,
+    this.stallMinutes,
+    this.rolesResolver,
+    this.compactionEngine,
+    this.misuseBreaker = true,
+    this.childSessionFactory,
+    this.sessionIoRetry,
   });
 }
 
@@ -163,16 +259,32 @@ final class AgentCoreServices {
   /// cube fs policy exactly like `generate_image` writes to the same
   /// tree. One rule — hosts must not close over their raw base env.
   final Future<String> Function(ExecutionEnv coreEnv, Uint8List png)?
-      saveBrowserScreenshot;
+  saveBrowserScreenshot;
 
   /// Host-extension tools (the CLI's plugin surface — the public shape
   /// of what `FahPlugin` registers, issue #1079 HostExtensionApi).
   final List<AgentTool> hostTools;
 
-  // Passthrough facilities the builder does not assemble yet but the
-  // catalog's E1 contract declares for wired capabilities. Null =
+  /// The hub-transport messaging backend. The builder composes the
+  /// fabric's hub primary over it (slice 3: the fabric itself is
+  /// builder-owned); null drops the hub transport at run-narrowing, the
+  /// file layer keeps working.
+  final MessagingRepository? hubFabric;
+
+  /// The host's MAIN inbox resolver for the hub primary's mail merge —
+  /// required whenever the hub transport wires (E1-loud otherwise). The
+  /// CLI resolves `() => _subagentManager.mailboxOf('main')` lazily, so
+  /// the manager may be constructed after the fabric.
+  final String? Function()? mainMailbox;
+
+  /// The subagent/task complex (slice 3). Null = the capability narrows
+  /// off this run with a named reason; the task/monitoring surface and
+  /// the fabric/manager/heartbeat never half-wire.
+  final SubagentServices? subagents;
+
+  // Remaining passthrough facilities the builder does not assemble yet
+  // but the catalog's E1 contract declares for wired capabilities. Null =
   // honest run-narrowing of the affected capability/transport.
-  final Object? hubFabric;
   final Object? extRuntimeFactory;
   final String? sessionRoot;
 
@@ -201,6 +313,8 @@ final class AgentCoreServices {
     this.saveBrowserScreenshot,
     this.hostTools = const [],
     this.hubFabric,
+    this.mainMailbox,
+    this.subagents,
     this.extRuntimeFactory,
     this.sessionRoot,
   });
@@ -218,6 +332,7 @@ final class AgentCoreServices {
     if (transcribe != null) 'transcribeConfig',
     if (browserController != null) 'browserBridgeHandle',
     if (hubFabric != null) 'hubFabric',
+    if (subagents != null) 'subagentServices',
     if (extRuntimeFactory != null) 'extRuntimeFactory',
     if (sessionRoot != null) 'sessionRoot',
   };
@@ -279,8 +394,34 @@ final class WiredAgentCore {
   /// order (builtins → memory → schedule → ask → secret → vision →
   /// transcribe → media → browser → host tools). Set at construction by
   /// [wireAgentCore] — a wired core ALWAYS carries its tools (no
-  /// post-hoc assignment that a refactor could orphan).
+  /// post-hoc assignment that a refactor could orphan). Child-safe: the
+  /// task executor strips only `task` itself, so the gated task surface
+  /// below never rides in this list.
   final List<AgentTool> tools;
+
+  // ---- the builder-owned task/subagent complex (slice 3) ----
+  // Null/empty when HostCapability.subagents is off (profile choice or
+  // run-narrowing): no orphan handles, no half-wired surface (AC7).
+
+  /// The messaging fabric over the file/hub transports; null when the
+  /// profile declares messagingFabric off.
+  final MessagingRepository? fabric;
+
+  /// The swappable file layer (hosts re-point it on storage fallback).
+  final SwappableMessagingRepository? fileFabric;
+
+  /// The messaging root the file inboxes live under.
+  final String? messagesRoot;
+
+  final SubagentManager? subagentManager;
+  final A2aManager? a2aManager;
+  final SubagentHeartbeat? subagentHeartbeat;
+  final TaskToolConfig? taskConfig;
+
+  /// The gated task/monitoring surface (monitoring tools, then `task`
+  /// LAST — the canonical pre-conversion order). Child-UNSAFE: kept out
+  /// of [tools] so child tool pools never draw it.
+  final List<AgentTool> taskSurface;
 
   Agent? _agent;
 
@@ -291,10 +432,18 @@ final class WiredAgentCore {
     required this.networkGate,
     required this.shellJobs,
     required this.tools,
+    required this.fabric,
+    required this.fileFabric,
+    required this.messagesRoot,
+    required this.subagentManager,
+    required this.a2aManager,
+    required this.subagentHeartbeat,
+    required this.taskConfig,
+    required this.taskSurface,
   });
 
-  /// Assembles the [ToolRegistry] (core tools first, then
-  /// [additionalTools] — the host's task/monitoring surface) and the
+  /// Assembles the [ToolRegistry] (core tools first, then the gated task
+  /// surface, then [additionalTools] — any residual host surface) and the
   /// [Agent] over it. The model-reading tool closures resolve against
   /// the constructed agent, exactly like the host shells' own
   /// `() => _agent.state.model` today.
@@ -304,7 +453,11 @@ final class WiredAgentCore {
     List<AgentTool> additionalTools = const [],
     void Function(String note)? onDuplicate,
   }) {
-    final registry = ToolRegistry([...tools, ...additionalTools], onDuplicate);
+    final registry = ToolRegistry([
+      ...tools,
+      ...taskSurface,
+      ...additionalTools,
+    ], onDuplicate);
     final agent = _agent = Agent(
       model: spec.model,
       systemPrompt: spec.systemPrompt,
@@ -429,6 +582,188 @@ final class WiredAgentStack {
   const WiredAgentStack({required this.registry, required this.agent});
 }
 
+/// The assembled task/subagent complex (slice 3): the service instances a
+/// host shell keeps handles on, plus the gated tool surface.
+final class _WiredTaskSurface {
+  final SubagentManager subagentManager;
+  final A2aManager a2aManager;
+  final SubagentHeartbeat subagentHeartbeat;
+  final TaskToolConfig taskConfig;
+  final List<AgentTool> tools;
+
+  const _WiredTaskSurface({
+    required this.subagentManager,
+    required this.a2aManager,
+    required this.subagentHeartbeat,
+    required this.taskConfig,
+    required this.tools,
+  });
+}
+
+/// Assembles the messaging fabric when the (run-narrowed) plan wires
+/// [HostCapability.messagingFabric]: the file layer over the session
+/// root, the hub primary only when the hub transport survived
+/// run-narrowing (hub fabric provided). Independent of the subagent
+/// complex — the MAIN inbox drain rides it even where subagents stay
+/// off. Null when the profile declares the capability off.
+///
+/// File-less shapes keep their wired hub: a hub-only (mobile) profile
+/// gets the hub repository itself as the fabric — the file transport's
+/// absence discards only the file layer, never the whole fabric.
+({
+  MessagingRepository fabric,
+  SwappableMessagingRepository? fileFabric,
+  String? messagesRoot,
+})?
+_wireFabric({
+  required HostWiringPlan plan,
+  required AgentCoreServices services,
+}) {
+  final fabricPlan = plan.planFor(HostCapability.messagingFabric);
+  if (fabricPlan is! WiredCapability) return null;
+  final transports = fabricPlan.transports;
+  final wantFile = transports.contains('file');
+  if (wantFile && services.sessionRoot == null) {
+    // E1: run-narrowing guarantees sessionRoot for a wired file
+    // transport; a caller bypassing _narrowToServices gets the loud
+    // named failure instead of a silent discard.
+    throw HostWiringException(
+      'Profile "${plan.profile.name}" wires the messagingFabric file '
+      'transport but the host provided no sessionRoot (E1: name the '
+      'missing service, never a null crash at write time).',
+    );
+  }
+  if (transports.contains('hub') && services.mainMailbox == null) {
+    // E1: the hub primary merges mail into a host-named mailbox — a host
+    // serving the hub transport must say which one, or say nothing loud.
+    throw HostWiringException(
+      'Profile "${plan.profile.name}" wires the messagingFabric hub '
+      'transport but the host provided no mainMailbox resolver (E1: name '
+      'the missing service, never a null crash at mail time).',
+    );
+  }
+  if (!wantFile) {
+    // File-less (hub-only/mobile) profile: the wired hub IS the fabric —
+    // no file layer to swap and no root to name. Null never rides here:
+    // run-narrowing dropped the hub transport when hubFabric was absent,
+    // so a hub-only shape means the hub is present.
+    return (fabric: services.hubFabric!, fileFabric: null, messagesRoot: null);
+  }
+  return buildAgentFabric(
+    env: services.baseEnv,
+    sessionRoot: services.sessionRoot!,
+    homeDir: services.subagents?.homeDir,
+    hubFabric: transports.contains('hub') ? services.hubFabric : null,
+    // The hub primary merges mail into the MAIN inbox only — resolved
+    // lazily by the host once its manager exists. The fallback is dead
+    // code without a hub (the E1 guard above covers hub-wired hosts).
+    mainMailbox: services.mainMailbox ?? (() => null),
+  );
+}
+
+/// Assembles the fabric → manager → heartbeat → task/monitoring complex
+/// when the (run-narrowed) plan wires [HostCapability.subagents] and the
+/// host provided the [SubagentServices] bundle; null otherwise — the
+/// capability stays off, the surface stays absent (AC7).
+///
+/// The complex rides the host's BASE env (the fabric's file inboxes and
+/// the JSONL child-session helpers are infrastructure, not tools — the
+/// shell wired them identically pre-conversion; the decorated chain
+/// remains the rule for fs-touching TOOLS, review #1230).
+_WiredTaskSurface? _wireTaskSurface({
+  required HostWiringPlan plan,
+  required AgentCoreServices services,
+  required MessagingRepository? fabric,
+  required List<AgentTool> coreTools,
+  required Agent? Function() currentAgent,
+}) {
+  final bundle = services.subagents;
+  if (bundle == null ||
+      plan.planFor(HostCapability.subagents) is! WiredCapability) {
+    return null;
+  }
+  final manager = SubagentManager(
+    parentSessionId: '',
+    messaging: fabric,
+    selfId: 'main',
+    homeDir: bundle.homeDir,
+    wakeProcess: bundle.wakeProcess,
+    sink: bundle.registrySink,
+    source: bundle.registrySource,
+  )..machineName = bundle.machineName;
+  // A2A remote agents ride the a2a transport (phase 5a): the gateway
+  // merges cross-machine `agent_message` mail into the manager.
+  final a2a = A2aManager(bundle.a2a);
+  final fabricPlan = plan.planFor(HostCapability.messagingFabric);
+  if (fabricPlan is WiredCapability && fabricPlan.transports.contains('a2a')) {
+    manager.a2aGateway = A2aMailGateway(
+      manager: a2a,
+      machineName: bundle.machineName,
+    );
+  }
+  final heartbeat = SubagentHeartbeat(
+    manager: manager,
+    notify: bundle.notifyHeartbeat,
+    heartbeatMinutes: bundle.heartbeatMinutes,
+    stallMinutes: bundle.stallMinutes,
+  )..start();
+  // The `task` tool (omp's background subagents): children draw from the
+  // child-safe core tool surface (never `task` itself), completions are
+  // injected back into the parent conversation as async-result messages.
+  // Live accessors, resolved per spawn: a runtime `/provider`/`/model`
+  // switch (or a token refresh) re-points the stream function/the agent
+  // model, and children spawned afterwards must inherit the LIVE
+  // credential — a boot-frozen wiring would send the stale key (401).
+  final taskConfig = TaskToolConfig(
+    childTools: coreTools,
+    streamFunction: () => currentAgent()!.streamFunction,
+    model: () => currentAgent()!.state.model,
+    rolesResolver: bundle.rolesResolver,
+    subagentManager: manager,
+    a2aManager: a2a,
+    compactionEngine: bundle.compactionEngine,
+    misuseBreaker: bundle.misuseBreaker,
+    childSessionFactory: bundle.childSessionFactory,
+    // Issue #222: the resume path reopens a child's JSONL session by
+    // path so task_resume/task_send continue the child in the SAME file.
+    // Issue #427: the reopen rides the same transient-ENOENT retry as
+    // every other session open.
+    childSessionOpener: jsonlChildSessionOpener(
+      services.baseEnv,
+      ioRetry: bundle.sessionIoRetry ?? const SessionIoRetryConfig(),
+    ),
+  );
+  // gh-970: a scheduled reminder (or sibling mail) that fires into a
+  // finished child's inbox resumes the child in its own session — the
+  // child-side analog of the idle inbox wake. The sweep (dedup, status
+  // gates) lives on the manager; the resume rides the executor.
+  manager.wakeChild = (id) =>
+      taskConfig.executor.resumeChild(id, childInboxWakePrompt);
+  final tools = [
+    // Issue #222: child messaging IS available on this host — observe
+    // reads the child's JSONL transcript; send/resume continue the child
+    // in its own session via the session-shared executor. Issue #332:
+    // task_cancel reaches inline children (blocking batches, resumes)
+    // through the executor's in-flight cancel set — without it the
+    // tombstone fallback would fire over LIVE children.
+    ...subagentMonitoringTools(
+      manager: manager,
+      jobs: taskConfig.jobManager,
+      readMessages: jsonlChildMessageReader(services.baseEnv),
+      resumeChild: taskConfig.executor.resumeChild,
+      executor: taskConfig.executor,
+    ),
+    taskTool(config: taskConfig),
+  ];
+  return _WiredTaskSurface(
+    subagentManager: manager,
+    a2aManager: a2a,
+    subagentHeartbeat: heartbeat,
+    taskConfig: taskConfig,
+    tools: tools,
+  );
+}
+
 /// Wires the agent core for [profile] over [services]: run-narrows the
 /// profile against the provided services, builds the plan (E1 loud on
 /// anything still wired without its services), constructs the env chain
@@ -507,6 +842,18 @@ WiredAgentCore wireAgentCore({
     configService: configService,
     currentAgent: () => core._agent,
   );
+  // The task/subagent complex (slice 3) assembles after the core list —
+  // children draw it as their tool pool — and reads the late-bound agent
+  // through the same closure. The fabric assembles independently: the
+  // MAIN inbox drain rides it wherever messagingFabric wires.
+  final fabricAssembly = _wireFabric(plan: plan, services: services);
+  final taskComplex = _wireTaskSurface(
+    plan: plan,
+    services: services,
+    fabric: fabricAssembly?.fabric,
+    coreTools: tools,
+    currentAgent: () => core._agent,
+  );
   core = WiredAgentCore._(
     plan: plan,
     env: env,
@@ -514,6 +861,14 @@ WiredAgentCore wireAgentCore({
     networkGate: networkGate,
     shellJobs: gatedShellJobs,
     tools: tools,
+    fabric: fabricAssembly?.fabric,
+    fileFabric: fabricAssembly?.fileFabric,
+    messagesRoot: fabricAssembly?.messagesRoot,
+    subagentManager: taskComplex?.subagentManager,
+    a2aManager: taskComplex?.a2aManager,
+    subagentHeartbeat: taskComplex?.subagentHeartbeat,
+    taskConfig: taskComplex?.taskConfig,
+    taskSurface: taskComplex?.tools ?? const [],
   );
   return core;
 }
