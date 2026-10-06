@@ -3206,6 +3206,15 @@ jobs:
           channel: stable
           cache: true
 
+      # gh-1310 rework (review thread 1): warm the pub cache with the shared
+      # bounded-retry action so tag_release.sh's own enforce-lockfile smoke
+      # rides it — the smoke stays in the script (release_hygiene NG2/AC3
+      # pins it) but is no longer the job's first resolution, so one
+      # transient git-dep clone reset cannot abort the pre-tag gate on a
+      # cold cache (the v1.0.516 build-macos exit-69 class, on the release
+      # path).
+      - uses: ./.github/actions/flutter-pub-get
+
       - name: Cut annotated tag + GitHub Release
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}

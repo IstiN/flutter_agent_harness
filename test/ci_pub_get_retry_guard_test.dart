@@ -103,9 +103,8 @@ List<({String run, String? workingDirectory})> bareFlutterAppPubGetRunSteps(
       // thread 3 — the heuristic must not depend on spelling).
       .map((step) => (
             run: step.run,
-            workingDirectory: step.workingDirectory == null
-                ? null
-                : step.workingDirectory!.replaceFirst(RegExp(r'^\./'), ''),
+            workingDirectory:
+                step.workingDirectory?.replaceFirst(RegExp(r'^\./'), ''),
           ))
       .where((step) =>
           step.run.contains('flutter pub get') &&
