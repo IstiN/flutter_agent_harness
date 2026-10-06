@@ -66,6 +66,16 @@
         37517510546,
         37482587645
       ]
+    },
+    {
+      "file": "test/integration/dap_cli_e2e_test.dart",
+      "test": "E2E-start + E2E-endtoend + IT-stop: start, zero-config extension join, DM round-trip via the persisted credential, status, stop",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1293",
+      "since": "2026-10-06",
+      "runs": [
+        37477045292,
+        37458020020
+      ]
     }
   ]
 }
