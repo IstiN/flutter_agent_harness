@@ -23,7 +23,14 @@
 //       not a silent network roulette), and
 //  AC3  each workflow still resolves flutter_app exactly as many times as
 //       it did before the migration (a refactor that DELETES a pub-get
-//       step must red here, not silently skip resolution).
+//       step must red here, not silently skip resolution),
+//  AC4  a job's first flutter_app resolution is the enforced one — the
+//       shared action runs BEFORE any step that consumes flutter_app with
+//       a bare `flutter` command (office-addin.yml: flutter test's
+//       implicit pub get would otherwise be the first, unenforced and
+//       unretried, resolution), and the AC2 detector itself is unit-tested
+//       against both `flutter_app` and `./flutter_app` working-directory
+//       spellings (gh-1310 rework review threads 1-3).
 import 'dart:io';
 
 import 'package:test/test.dart';
