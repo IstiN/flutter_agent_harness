@@ -7,10 +7,10 @@
     "seed_policy": "suites budgeted ONLY when every test passed locally with a meaningful span (sub-second totals are silent early-return skips, not measurements)",
     "provisional": "budgets tighten from RUNNER-class data: download the integration-json-shard-* artifacts from a keyed ci.yml pty-integration-linux run and run scripts/check_test_durations.py --update-baseline on them in a reviewed PR (ratchet only tightens); any suite needing a HIGHER budget than this seed requires a hand-edited reviewed PR",
     "ratchet": "down-only via check_test_durations.py --update-baseline; raises require a hand-edited reviewed PR",
-    "note": "no scheduled workflow writes this file"
+    "note": "no scheduled workflow writes this file",
+    "removed": "pr-1294 (2026-10-06): test/integration/dap_cli_e2e_test.dart budget (140.1 s) removed — the suite is flake-quarantined out of the gate legs (scripts/test_quarantine.json, gh-1293), so its absence tripped the budgeted-suite-did-not-run check. Returns unbudgeted (nightly-visible) until the gh-1293 fix lands; re-budget from the nightly integration-json artifact in the un-quarantine PR."
   },
   "suites": {
-    "test/integration/dap_cli_e2e_test.dart": 140.1,
     "test/integration/dap_start_test.dart": 17.4,
     "test/integration/headless_tools_flag_test.dart": 111.2,
     "test/integration/poisoned_provider_boot_test.dart": 196.2,
