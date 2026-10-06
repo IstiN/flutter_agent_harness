@@ -1989,7 +1989,7 @@ jobs:
           mkdir -p "$tmp/bad" "$tmp/bad-hex" "$tmp/bad-composite/.github/actions/probe/deep" "$tmp/bad-awf-ref" "$tmp/bad-other-main" "$tmp/good" "$tmp/good-awf-main" "$tmp/good-composite/.github/actions/probe/deep" "$tmp/string-safe"
           printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@v4\n' > "$tmp/bad/bad.yml"
           printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@gggggggggggggggggggggggggggggggggggggggg\n' > "$tmp/bad-hex/bad.yml"
-          printf 'jobs:\n  probe:\n    steps:\n      - uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-sm.yml@master\n' > "$tmp/bad-awf-ref/wf.yml"
+          printf 'jobs:\n  probe:\n    steps:\n      - uses: IstiN/dmtools-agentic-workflows/.github/workflows/factory-sm.yml@main\n' > "$tmp/bad-awf-ref/wf.yml"
           printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@main\n' > "$tmp/bad-other-main/wf.yml"
           printf 'name: probe\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@v4\n' > "$tmp/bad-composite/.github/actions/probe/deep/action.yaml"
           printf 'jobs:\n  probe:\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4\n' > "$tmp/good/good.yml"
