@@ -58,7 +58,9 @@ providersQueue:
         extraEnv: {'HOME': tempHome.path, 'K_A': 'secret-a', 'K_B': 'secret-b'},
       );
       addTearDown(harness.close);
-      await harness.waitForBoot(timeout: const Duration(seconds: 300));
+      // gh-1300: boot is the AOT binary in CI (~1 s) — the 300 s JIT
+      // band-aid is gone; the harness 90 s default is back in charge.
+      await harness.waitForBoot();
 
       // The boot notice names the winning scope and the entry count.
       await harness.waitForText(
