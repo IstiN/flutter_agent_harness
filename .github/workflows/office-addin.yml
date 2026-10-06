@@ -90,9 +90,10 @@ jobs:
       - name: Chrome boot tests (flutter_app/test/web)
         run: cd flutter_app && flutter test test/web --platform chrome --dart-define=FA_HOST=office
 
+      - uses: ./.github/actions/flutter-pub-get
+
       - name: Office wiring tests (flutter_app)
-        # gh-1265 AC2: resolve against the committed lockfile.
-        run: cd flutter_app && flutter pub get --enforce-lockfile && flutter test test/services/office_wiring_test.dart
+        run: cd flutter_app && flutter test test/services/office_wiring_test.dart
 
       # Validates the manifest (fails loudly on any issue), builds the
       # fa web app with FA_HOST=office and assembles the site slice —

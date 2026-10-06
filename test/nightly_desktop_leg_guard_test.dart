@@ -240,13 +240,16 @@ void main() {
       }
     });
 
-    test('build-mobile.yml fails fast on deterministic lockfile skew', () {
-      // PR #1268 review thread 3: the iOS leg's bounded retry loop exists
-      // for transient runner/network failures — but a pubspec/lockfile
-      // skew fails identically on every attempt, costing ~30s per red leg
-      // and blaming the network. The loop must detect the skew signature
-      // in the failed resolve's output and exit immediately.
-      final body = read('.github/workflows/build-mobile.yml');
+    test('the shared pub-get action fails fast on deterministic skew', () {
+      // PR #1268 review thread 3: the bounded retry loop exists for
+      // transient runner/network failures — but a pubspec/lockfile skew
+      // fails identically on every attempt, costing ~30s per red leg and
+      // blaming the network. The loop must detect the skew signature in
+      // the failed resolve's output and exit immediately. gh-1310 moved
+      // the loop OUT of build-mobile.yml into the shared composite action
+      // every enforce-lockfile pub get rides
+      // (.github/actions/flutter-pub-get) — the guard follows it there.
+      final body = read('.github/actions/flutter-pub-get/action.yml');
       expect(body, contains('for attempt in 1 2 3'));
       expect(body, contains('flutter pub get --enforce-lockfile'));
       expect(
