@@ -5,7 +5,7 @@ fa runs two benchmark pipelines:
 | workflow | dataset | framework | runner |
 |---|---|---|---|
 | `Bench` (`.github/workflows/bench.yml`) | terminal-bench-core 0.1.1 (LEGACY — board closed) | terminal-bench `tb` | ubuntu-latest |
-| `Bench Harbor` (`.github/workflows/bench-harbor.yml`) | the Terminal-Bench family — `2.0` / `2.1` / `3.0` / `4.0` via the `dataset` input (issue #1124) | Harbor (`harbor` CLI) | self-hosted (CPU/docker) + Modal (GPU) |
+| `Bench Harbor` (`.github/workflows/bench-harbor.yml`) | the Terminal-Bench family — default `2.1`; `2.0` / `3.0` / `4.0` via the `dataset` input (issues #1124, #1316) | Harbor (`harbor` CLI) | ubuntu-latest (CPU/docker) + Modal (GPU) |
 
 The official leaderboard (tbench.ai) reads Terminal-Bench 4.0 jobs from
 Harbor Hub — legacy submissions are closed, so 4.0 is the live
@@ -61,7 +61,9 @@ output. Nothing is hardcoded — a run without a secret fails fast with a
 Dispatch **Bench Harbor** (`workflow_dispatch`). Inputs:
 
 - `dataset` — family label (`2.0`/`2.1`/`3.0`/`4.0`), a bare version
-  (`4.0.0`), or a full Harbor id; default `terminal-bench/terminal-bench@4.0.0`.
+  (`4.0.0`), or a full Harbor id; default
+  `terminal-bench/terminal-bench-2-1@latest` (the 2.1 family — issue
+  #1316 migrated the default dispatch from 4.0 to Terminal-Bench 2.x).
 - `tasks` — comma fnmatch globs narrowing the dataset. Empty = the full
   dataset (size per family above). The family smoke task is the
   one-task check.
@@ -75,8 +77,13 @@ Dispatch **Bench Harbor** (`workflow_dispatch`). Inputs:
 - `n-concurrent` — default `1` (z.ai rate limits; raise with care).
 - `shards` — CPU docker shards, default `16` (~4 tasks/shard keeps each
   job inside the job window; raise to ~22 for the 89-task 2.x sets).
-  Shards queue serially on a single self-hosted runner.
-- `cpu-runner` — runner label for the docker shards, default `self-hosted`.
+  Shards run up to 5 in parallel on the default ubuntu runners.
+- `cpu-env` — Harbor env for the CPU shards, default `docker` (issue
+  #1316: local docker, no Modal/cloud dependency); `modal` for the
+  self-hosted path.
+- `cpu-runner` — runner label for the docker shards, default
+  `ubuntu-latest` (GH runners ship docker); `self-hosted` for the modal
+  path.
 
 Smoke first, per family: dispatch with `tasks: <smoke task from the
 table>, attempts: 1` (e.g. `dataset: 2.1, tasks: fix-git, attempts: 1`).
@@ -112,8 +119,8 @@ automatically (`bench/harbor_fa/split_tasks.py` reads each task's
 
 ### Cost
 
-- CPU shards: self-hosted runner, $0. GitHub-hosted minutes are reserved
-  for the light setup/summary jobs.
+- CPU shards: default ubuntu-latest runners (GitHub minutes; the
+  self-hosted box remains a `cpu-runner` option for the modal path).
 - GPU shard (Modal): pay-per-second — T4 $0.59/h, A10 $1.10/h. A full 4.0
   run (3 GPU tasks × 5 attempts) is single-digit dollars and fits the
   Starter plan's free monthly credits.
