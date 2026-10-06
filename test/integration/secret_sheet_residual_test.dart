@@ -56,6 +56,61 @@ void main() {
     await harness.waitForOutput(settleMs: 300);
   }
 
+  /// Types [secret] into the sheet's value field and synchronizes on
+  /// STABLE markers only (gh-1244, same [typeSecret] property anchor as
+  /// secret_sheet_test.dart): the full masked value row on the painted
+  /// SCREEN, then the masking property. Never waits on an exact transient
+  /// bullet count — under CI timing the PTY paints past the checkpoint
+  /// before the wait evaluates, and on the raw wire the focused row's
+  /// cursor cell is wrapped in inverse-video escapes, so N consecutive
+  /// `•` need never exist in the STREAM at all. The full N-bullet row is
+  /// monotone while typing, so `waitForScreen` holds until it is painted
+  /// (or fails loudly with the screen dump), and the returned anchored
+  /// screen is what the assertions read — never a fresh re-sample
+  /// (gh-1049 family).
+  Future<void> typeSecret(String secret) async {
+    harness.sendText(secret);
+    var screen = await harness.waitForScreen(
+      '•' * secret.length,
+      timeout: const Duration(seconds: 30),
+    );
+    // The anchored frame can still predate the value row's closing
+    // border by one repaint; re-anchor once on the current screen
+    // before failing (gh-1244 review thread: tolerate a short-lived
+    // intermediate frame by re-settling once on mismatch).
+    if (maskedValueRow(screen) == null) {
+      screen = await harness.waitForScreen(
+        '•' * secret.length,
+        timeout: const Duration(seconds: 30),
+      );
+    }
+    // The security pin, asserted BEFORE the row-dependent masking count —
+    // it is race-free: rawOutput is append-only, and by now every frame
+    // the typing could ever paint has been captured. The plaintext bytes
+    // must never appear in ANY captured frame.
+    expect(
+      harness.rawOutput.contains(secret),
+      isFalse,
+      reason: 'the secret bytes appeared in the raw PTY output',
+    );
+    expect(screen.contains(secret), isFalse);
+    // The frame-closed value row carries exactly one bullet per typed
+    // char — masking held from the first keystroke through the last. The
+    // history's tool row (`• request_secret · …`) is not frame-closed, so
+    // the `│` guard (maskedValueRow) pins this to the sheet's own row.
+    final row = maskedValueRow(screen);
+    if (row == null) {
+      throw StateError(
+        'the value row must render the masked secret; screen:\n$screen',
+      );
+    }
+    expect(
+      row.split('•').length - 1,
+      secret.length,
+      reason: 'every typed char must be masked (one bullet per char)',
+    );
+  }
+
   /// Every rendered line must fit the terminal width, and every frame row
   /// (between ┌ and └ inclusive) must close with its border glyph at the
   /// ┌ row's right edge — no wrapped, torn, or short-closed rows.
@@ -88,8 +143,9 @@ void main() {
 
   test('RT1: a second, shorter sheet fully replaces the first', () async {
     await bootAndRequest();
-    harness.sendText('s3cr3t-TOKEN-42');
-    await harness.waitForText('•••••', timeout: const Duration(seconds: 10));
+    // gh-1244: assert the masking property instead of pinning a transient
+    // bullet count the PTY can paint past.
+    await typeSecret('s3cr3t-TOKEN-42');
     harness.sendEnter(); // grant #1 -> mock turn 2 requests another secret
     await harness.waitForText(
       'OTHER_API_KEY',
@@ -115,9 +171,8 @@ void main() {
     );
     expectFrameIntact();
 
-    // And the second sheet is a live, submittable sheet.
-    harness.sendText('second-secret');
-    await harness.waitForText('•••••', timeout: const Duration(seconds: 10));
+    // And the second sheet is a live, submittable sheet (gh-1244 anchor).
+    await typeSecret('second-secret');
     harness.sendEnter();
     await harness.waitForText(
       'turn-complete',
@@ -175,15 +230,41 @@ void main() {
     () async {
       await bootAndRequest();
       // Bracketed paste: the PTY input path a password manager actually uses.
-      harness.sendText(
-        '\x1b[200~-----BEGIN KEY-----\nabc123\n-----END KEY-----\x1b[201~',
+      const pasted = '-----BEGIN KEY-----\nabc123\n-----END KEY-----';
+      harness.sendText('\x1b[200~$pasted\x1b[201~');
+      // gh-1244: synchronize on the painted SCREEN, not a transient raw
+      // bullet count. The paste lands as one buffer update and the masked
+      // value renders ONE FRAME ROW PER LINE (tui_prompt masks per
+      // segment), so no row ever carries all 44 bullets — anchor on the
+      // full first-segment run instead (19 == '-----BEGIN KEY-----'),
+      // which exists only once the pasted frame has painted.
+      final screen = await harness.waitForScreen(
+        '•' * 19,
+        timeout: const Duration(seconds: 30),
       );
-      await harness.waitForText('•••••', timeout: const Duration(seconds: 10));
+      // Multiline masking property: one bullet per pasted char, one frame
+      // row per line (same `│` guard as maskedValueRow — the history's
+      // tool-row glyph is not frame-closed — over all masked rows).
+      final maskedRows = screen
+          .split('\n')
+          .where((l) => l.contains('•') && l.trimRight().endsWith('│'))
+          .map((l) => l.split('•').length - 1)
+          .toList();
+      expect(
+        maskedRows,
+        [19, 6, 17],
+        reason: 'every pasted char must be masked (one row per line)',
+      );
       await harness.waitForOutput(settleMs: 500);
       expectFrameIntact();
       // Masked mode: no byte of the secret may reach the screen or the raw
       // output (the input stream itself is not echoed).
-      expect(harness.screenText.contains('BEGIN KEY'), isFalse);
+      expect(screen.contains('BEGIN KEY'), isFalse);
+      expect(
+        harness.rawOutput.contains(pasted),
+        isFalse,
+        reason: 'the secret bytes appeared in the raw PTY output',
+      );
       harness.sendEnter();
       // The mock scripts a second request (turn 2); decline it to finish.
       await harness.waitForText(
@@ -215,10 +296,47 @@ void main() {
     'RT5: an over-wide paste keeps every frame row inside the terminal',
     () async {
       await bootAndRequest();
-      harness.sendText('\x1b[200~${'k' * 200}\x1b[201~');
-      await harness.waitForText('•••••', timeout: const Duration(seconds: 10));
+      // 'k' * 200 is not const-evaluable in Dart (const_eval_type_num) —
+      // the literal multiplication stays a runtime value, so `final`.
+      final pasted = 'k' * 200;
+      harness.sendText('\x1b[200~$pasted\x1b[201~');
+      // gh-1244: synchronize on the painted SCREEN, not a transient raw
+      // bullet count. The sheet TRIMS an over-wide value row to the frame
+      // budget (_wrapBodyLine), so only the leading run of the 200-bullet
+      // mask can ever paint — anchor on a 40-bullet leading run instead
+      // (only masked value cells carry bullet runs; the history's
+      // tool-row glyph is a single '•'). 40 < the trimmed run at the
+      // 80-col PTY (75 cells), and the run is monotone once painted.
+      final screen = await harness.waitForScreen(
+        '•' * 40,
+        timeout: const Duration(seconds: 30),
+      );
+      // The frame-closed value row is ALL bullets — no pasted byte may
+      // leak into the frame or the raw transcript (gh-1244 property
+      // anchor, trim-aware: assert the masked prefix, not the full count).
+      final row = maskedValueRow(screen);
+      if (row == null) {
+        throw StateError(
+          'the value row must render the masked paste; screen:\n$screen',
+        );
+      }
+      expect(
+        row.split('•').length - 1,
+        greaterThanOrEqualTo(40),
+        reason: 'the masked run must cover the anchored prefix',
+      );
+      expect(
+        screen.contains('kk'),
+        isFalse,
+        reason: 'the pasted value must be fully masked on screen',
+      );
       await harness.waitForOutput(settleMs: 500);
       expectFrameIntact();
+      expect(
+        harness.rawOutput.contains(pasted),
+        isFalse,
+        reason: 'the secret bytes appeared in the raw PTY output',
+      );
       harness.sendEscape();
       // The mock scripts a second request (turn 2); decline it to finish.
       await harness.waitForText(
