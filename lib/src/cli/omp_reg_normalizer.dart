@@ -22,7 +22,10 @@ library;
 /// Separator glyphs the status bar may use, by preset separator style
 /// (omp `separators.ts`; fa `StatusLineSeparatorStyle`).
 const Map<String, String> kRegSeparatorGlyphs = {
-  'powerline-thin': '\u{E0B2}',
+  // powerline-thin is the thin chevron U+E0B1 — omp's statusLine.separator
+  // "powerline-thin" and fa's sep.powerlineThin both render E0B1 (verified
+  // against captured twins, issue #918); E0B2 is the SOLID powerline cap.
+  'powerline-thin': '\u{E0B1}',
   'powerline-thick': '\u{E0B0}',
   'plain': ' ',
 };
@@ -70,6 +73,43 @@ String scrubVolatile(String text) {
     out = out.replaceAllMapped(pattern, (_) => replacement);
   }
   return out;
+}
+
+/// Volatile CHROME ROWS dropped from both twins before any structural
+/// comparison: omp's network update notice ("Update Available / New
+/// version N.N.N is available. Run: omp update") is present only when the
+/// registry answers — a re-capture with no pending update must produce
+/// the SAME signature as one with it, and fa never renders the notice at
+/// all (issue #810 review).
+final List<RegExp> kVolatileRowPatterns = [
+  RegExp(r'\bUpdate Available\b'),
+  RegExp(r'\bNew version \S+ is available\b'),
+];
+
+/// A notice-wrapping horizontal rule: ONLY `─` box glyphs and whitespace,
+/// full-width-ish (issue #810 review, re-review). Distinct from layout
+/// rules that carry corner glyphs (`╰`, `┴`, …) — those stay counted.
+final RegExp _fullWidthRule = RegExp(r'^[\s─]{8,}$');
+
+/// Drops notice rows AND their wrapping rules: the whole notice block
+/// goes, so a re-capture cannot leak rule-count churn into the signature
+/// if omp redraws the notice's framing (issue #810 re-review).
+List<String> dropVolatileRows(List<String> screenLines) {
+  final dropped = <bool>[
+    for (final l in screenLines) kVolatileRowPatterns.any((p) => p.hasMatch(l)),
+  ];
+  for (var i = 0; i < screenLines.length; i++) {
+    if (!dropped[i]) continue;
+    for (final j in [i - 1, i + 1]) {
+      if (j >= 0 && j < screenLines.length && !dropped[j]) {
+        if (_fullWidthRule.hasMatch(screenLines[j])) dropped[j] = true;
+      }
+    }
+  }
+  return [
+    for (var i = 0; i < screenLines.length; i++)
+      if (!dropped[i]) screenLines[i],
+  ];
 }
 
 /// Finds the status-bar row inside [screenLines] (a rendered `.txt` twin,
@@ -205,24 +245,27 @@ List<String> _segmentFindings(
 /// Structural diff of two rendered twin screens for one shared surface.
 ///
 /// Returns human-readable findings; empty list = structurally equal.
+/// Volatile chrome rows (network update notices) are dropped from both
+/// sides before any comparison — see [dropVolatileRows].
 /// Compared per surface:
 /// - row count of the chrome region (non-empty trimmed lines);
 /// - status-bar segment signature ([barSignature]) when a bar row exists
-///   on both sides;
-/// - separator glyph runs per line (the band's glyph inventory).
+///   on both sides.
 List<String> structuralDiff(
   List<String> faScreen,
   List<String> ompScreen, {
   required String surfaceName,
   required String separatorGlyph,
 }) {
+  final fa = dropVolatileRows(faScreen);
+  final omp = dropVolatileRows(ompScreen);
   final findings = <String>[];
-  final rowFinding = _chromeRowCountFinding(faScreen, ompScreen, surfaceName);
+  final rowFinding = _chromeRowCountFinding(fa, omp, surfaceName);
   if (rowFinding != null) findings.add(rowFinding);
   findings.addAll(
     _statusBarFindings(
-      faScreen,
-      ompScreen,
+      fa,
+      omp,
       surfaceName: surfaceName,
       separatorGlyph: separatorGlyph,
     ),
