@@ -509,6 +509,23 @@ void main() {
       }
     });
 
+    test('gh-1308: the zero-byte stall verdict → timeout death, immediate', () {
+      // The entry's silent-replay budget is already spent — same-entry
+      // retries cost a watchdog interval each. The queue advances at once.
+      final r = classify(
+        _err(
+          m,
+          'Provider zero-byte stall after 2 attempt(s) over 962s — the '
+              'endpoint accepted the request but never produced output; '
+              'the run-idle watchdog killed every silent attempt '
+              '(zero-byte stall). Check the provider status or try again '
+              'later.',
+        ),
+      );
+      expect(r.kind, QueueDeathKind.timeout);
+      expect(r.immediate, isTrue);
+    });
+
     test('network, timeout, malformed, 5xx, finish_reason labels', () {
       expect(
         classify(_err(m, 'Connection refused (os error 111)')).kind,

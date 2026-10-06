@@ -56,6 +56,28 @@ import '../types.dart';
 /// consumer of the wording are pinned together (issue #1121, review r1).
 const String connectWatchdogTag = '(connect watchdog)';
 
+/// The structural tag the zero-byte stall terminal carries (gh-1308):
+/// the endpoint accepted every request and produced nothing across the
+/// replay budget — the run-idle watchdog killed the silent attempts.
+/// Classified retryable/transport by this file's ladder and the roles
+/// ladder (a hung primary fails over to the next configured model, the
+/// 429 take-over path) and as a timeout death by the queue classifier.
+/// Producer and consumers pin the constant, [connectWatchdogTag]-style.
+const String zeroByteStallTag = '(zero-byte stall)';
+
+/// The zero-byte replay budget (gh-1308): consecutive PRE-COMMIT attempts
+/// killed by the run-idle watchdog — zero bytes ever reached the caller —
+/// before the ladder stops replaying and fails the call with the
+/// zero-byte terminal instead of spending the remaining budget. 2 on
+/// purpose: every kill costs a full watchdog interval (default 8 min), so
+/// the third attempt the generic budget allows pushed the bench's
+/// zero-token trials past their caps — they died as `agent_timeout` with
+/// 0 tokens mid-attempt while the ladder still had "budget" left. With
+/// the bound, the verdict lands at ≈ 2×watchdog-interval as a truthful
+/// retryable error. The generic [maxAttempts] budget keeps governing
+/// every other failure class.
+const int maxZeroByteWatchdogAttempts = 2;
+
 final _transientNetworkPatterns = [
   RegExp(r'connection reset', caseSensitive: false),
   RegExp(r'socketexception', caseSensitive: false),
@@ -83,6 +105,11 @@ final _transientNetworkPatterns = [
   // silently drop a #1125 ladder exhaustion out of this ladder
   // (review r1, thread 2).
   RegExp(RegExp.escape(connectWatchdogTag)),
+  // The zero-byte stall terminal (gh-1308): this ladder's own verdict for
+  // a wedged endpoint that produced nothing across its watchdog-replay
+  // budget. Retryable on sight so a re-entered ladder (a roles failover
+  // target builds a fresh one) treats it like any transport failure.
+  RegExp(RegExp.escape(zeroByteStallTag)),
   // Truncation class (issue #312): a stream that closes without a
   // finish_reason and without content is a cut transport.
   RegExp(r'stream ended without finish_reason'),
@@ -348,6 +375,34 @@ Future<bool> _pauseBetweenAttempts(
   return false;
 }
 
+/// The mutable state of one retry chain ([_drive]): the per-attempt story,
+/// the last failure, the gh-1308 zero-byte kill streak, and the context the
+/// next attempt runs with.
+final class _DriveState {
+  _DriveState(this.context) : startedAt = DateTime.now();
+
+  /// The chain's clock: every terminal story reports its elapsed time.
+  final DateTime startedAt;
+
+  /// The per-attempt story — rides every terminal message as evidence.
+  final attemptLog = <String>[];
+
+  /// The last failure message, reused by the aborted terminal so the
+  /// transcript shows WHAT was interrupted.
+  AssistantMessage? lastFailure;
+
+  /// Consecutive pre-commit attempts the run-idle watchdog killed with
+  /// zero output (gh-1308). Only back-to-back full-interval silences prove
+  /// the wedged-endpoint class: any non-watchdog failure resets the
+  /// streak, and a mid-stream resume (partial progress) leaves it
+  /// standing — the terminal then carries the preserved prefix.
+  var zeroByteKills = 0;
+
+  /// The context the NEXT attempt runs with — the resume anchor after a
+  /// mid-stream abort (issue #1126); the caller's token stays THE token.
+  Context context;
+}
+
 Future<void> _drive(
   AssistantMessageEventStream out,
   StreamFunction inner,
@@ -357,24 +412,18 @@ Future<void> _drive(
   int maxAttempts,
   Duration delay,
 ) async {
-  final startedAt = DateTime.now();
-  final attemptLog = <String>[];
-  AssistantMessage? lastFailure;
-  // Issue #1126: the resume-from-prefix state. `attemptContext` changes
-  // only when a mid-stream abort resumes (the tail request carries the
-  // completed prefix as the anchor); the caller's token stays THE token.
-  var attemptContext = context;
+  final state = _DriveState(context);
   final resume = _ResumeState();
   for (var attempt = 1; attempt <= maxAttempts; attempt++) {
     if (cancelToken?.isCancelled ?? false) {
-      _pushAborted(out, model, lastFailure, resume: resume);
+      _pushAborted(out, model, state.lastFailure, resume: resume);
       return;
     }
     final outcome = await _runAttempt(
       out,
       inner,
       model,
-      attemptContext,
+      state.context,
       cancelToken,
       resume: resume.isEmpty ? null : resume,
     );
@@ -382,75 +431,157 @@ Future<void> _drive(
       case _Forwarded():
         return;
       case _TransientFailure(:final error):
-        lastFailure = error;
-        // A machine-cancelled latch re-arms IN PLACE (the issue #1132
-        // discipline): the run-idle watchdog fired over a request that
-        // never received a byte, and the replay re-opens the SAME token so
-        // the loop, tool phases and a later user abort keep working (issue
-        // #1121). A user cancel never reaches this branch —
-        // `_resumableAbort` stands it before the outcome exists.
-        final watchdogReplay = cancelToken?.cancelReason is RunIdleWatchdogFire;
-        attemptLog.add(_replayReason(watchdogReplay, error));
-        _rearmWatchdogLatch(cancelToken, watchdogReplay);
-        if (attempt >= maxAttempts) {
-          final terminal = _transientExhaustedTerminal(
-            model,
-            attemptLog,
-            startedAt,
-          );
-          out.push(resume.isEmpty ? terminal : _resumeEvent(terminal, resume));
-          return;
-        }
-        if (!await _pauseBetweenAttempts(
+        if (!await _afterTransientFailure(
           out,
           model,
-          lastFailure,
-          resume,
+          error,
+          state,
           cancelToken,
+          resume,
           delay,
           attempt,
           maxAttempts,
-          _replayReason(watchdogReplay, error),
         )) {
           return;
         }
       case _AbortedPartial(:final snapshot, :final keptBlocks, :final reason):
-        lastFailure = snapshot;
-        attemptLog.add(_shortReason(snapshot.errorMessage));
+        state.lastFailure = snapshot;
+        state.attemptLog.add(_shortReason(snapshot.errorMessage));
         if (attempt >= maxAttempts) {
-          out.push(
-            _resumeEvent(
-              _partialExhaustionTerminal(
-                model,
-                snapshot,
-                reason,
-                attemptLog,
-                resume,
-                startedAt,
-              ),
+          _pushTerminal(
+            out,
+            _partialExhaustionTerminal(
+              model,
+              snapshot,
+              reason,
+              state.attemptLog,
               resume,
+              state.startedAt,
             ),
+            resume,
           );
           return;
         }
-        resume.absorb(snapshot, keptBlocks);
-        transientRetryNotice?.call(
+        state.context = _resumeAfterPartial(
+          model,
+          snapshot,
+          keptBlocks,
+          reason,
           attempt,
           maxAttempts,
-          Duration.zero,
-          _midStreamResumeNotice(reason, resume.blocks.length),
+          context,
+          resume,
+          cancelToken,
         );
-        attemptContext = _resumeAnchor(context, model, resume);
-        // A watchdog-cancelled token re-arms IN PLACE (issue #1132
-        // review): `CancelToken.reset` re-opens the latch on the SAME
-        // object every holder shares, so the loop's tool phases, a later
-        // `Agent.abort()`, and the tail request itself all observe a live
-        // token again. A user cancel (bare reason) never reaches this
-        // branch — `_resumableAbort` stands it.
-        cancelToken?.reset();
     }
   }
 }
+
+/// The [_drive] handler for a PRE-commit transient failure: records the
+/// attempt, re-arms a watchdog-cancelled latch, enforces the gh-1308
+/// zero-byte bound and the generic budget — a bound hit pushes the matching
+/// terminal and ends the call — and otherwise runs the inter-attempt
+/// pause. Returns true when the ladder continues to the next attempt.
+///
+/// The failure itself is stored here (`state.lastFailure = error` is the
+/// handler's first statement — this handler owns the chain state it
+/// touches, so the field and the parameter cannot diverge).
+Future<bool> _afterTransientFailure(
+  AssistantMessageEventStream out,
+  Model model,
+  AssistantMessage error,
+  _DriveState state,
+  CancelToken? cancelToken,
+  _ResumeState resume,
+  Duration delay,
+  int attempt,
+  int maxAttempts,
+) async {
+  state.lastFailure = error;
+  // A machine-cancelled latch re-arms IN PLACE (the issue #1132
+  // discipline): the run-idle watchdog fired over a request that never
+  // received a byte, and the replay re-opens the SAME token so the loop,
+  // tool phases and a later user abort keep working (issue #1121). A user
+  // cancel never reaches this branch — `_resumableAbort` stands it before
+  // the outcome exists.
+  final watchdogReplay = cancelToken?.cancelReason is RunIdleWatchdogFire;
+  state.attemptLog.add(_replayReason(watchdogReplay, error));
+  _rearmWatchdogLatch(cancelToken, watchdogReplay);
+  // gh-1308: replaying into an endpoint that produced NOTHING is bounded
+  // separately from the generic budget — every watchdog kill costs a full
+  // watchdog interval, so the third attempt the generic budget allows
+  // burned the caller's whole cap (bench run 37418229569: 11 trials died
+  // as agent_timeout with 0 tokens while the ladder still had "budget").
+  // Past the bound the call fails fast and truthfully: a retryable
+  // provider error the roles ladder can fail over on, never a caller
+  // timeout.
+  state.zeroByteKills = watchdogReplay ? state.zeroByteKills + 1 : 0;
+  if (state.zeroByteKills >= maxZeroByteWatchdogAttempts) {
+    _pushTerminal(
+      out,
+      _zeroByteStallTerminal(model, state.attemptLog, state.startedAt),
+      resume,
+    );
+    return false;
+  }
+  if (attempt >= maxAttempts) {
+    _pushTerminal(
+      out,
+      _transientExhaustedTerminal(model, state.attemptLog, state.startedAt),
+      resume,
+    );
+    return false;
+  }
+  return _pauseBetweenAttempts(
+    out,
+    model,
+    error,
+    resume,
+    cancelToken,
+    delay,
+    attempt,
+    maxAttempts,
+    _replayReason(watchdogReplay, error),
+  );
+}
+
+/// Absorbs a mid-stream abort's completed prefix (issue #1126) and builds
+/// the tail-request context for the next attempt: the anchor carries the
+/// finished blocks, the dead in-flight block dropped (issue #1132 r2).
+Context _resumeAfterPartial(
+  Model model,
+  AssistantMessage snapshot,
+  int keptBlocks,
+  StopReason reason,
+  int attempt,
+  int maxAttempts,
+  Context context,
+  _ResumeState resume,
+  CancelToken? cancelToken,
+) {
+  resume.absorb(snapshot, keptBlocks);
+  transientRetryNotice?.call(
+    attempt,
+    maxAttempts,
+    Duration.zero,
+    _midStreamResumeNotice(reason, resume.blocks.length),
+  );
+  // A watchdog-cancelled token re-arms IN PLACE (issue #1132 review):
+  // `CancelToken.reset` re-opens the latch on the SAME object every holder
+  // shares, so the loop's tool phases, a later `Agent.abort()`, and the
+  // tail request itself all observe a live token again. A user cancel
+  // (bare reason) never reaches this branch — `_resumableAbort` stands it.
+  cancelToken?.reset();
+  return _resumeAnchor(context, model, resume);
+}
+
+/// Pushes a terminal error event, preserving an already-streamed resume
+/// prefix (issue #1132 review: the transcript keeps what the host saw).
+void _pushTerminal(
+  AssistantMessageEventStream out,
+  ErrorEvent terminal,
+  _ResumeState resume,
+) => out.push(resume.isEmpty ? terminal : _resumeEvent(terminal, resume));
 
 /// The first line of a provider error, bounded for notices and the
 /// per-attempt log.
@@ -458,6 +589,52 @@ String _shortReason(String? errorMessage) {
   final text = errorMessage ?? 'network error';
   final line = text.split('\n').first;
   return line.length <= 120 ? line : '${line.substring(0, 120)}...';
+}
+
+/// The zero-byte stall terminal (gh-1308): the endpoint accepted every
+/// request and produced nothing — the run-idle watchdog killed the silent
+/// attempts — so the ladder stops replaying and fails the call fast and
+/// truthfully: a retryable provider error carrying the [zeroByteStallTag]
+/// classification, never a caller timeout.
+ErrorEvent _zeroByteStallTerminal(
+  Model model,
+  List<String> attemptLog,
+  DateTime startedAt,
+) => ErrorEvent(
+  reason: StopReason.error,
+  error: _zeroByteStallMessage(model, attemptLog, startedAt),
+);
+
+/// The zero-byte stall story (see [_zeroByteStallTerminal]).
+AssistantMessage _zeroByteStallMessage(
+  Model model,
+  List<String> attemptLog,
+  DateTime startedAt,
+) {
+  final elapsed = DateTime.now().difference(startedAt);
+  final elapsedText = elapsed.inSeconds < 1 ? '<1s' : '${elapsed.inSeconds}s';
+  final log = attemptLog
+      .map(
+        (line) =>
+            line.endsWith('.') ? line.substring(0, line.length - 1) : line,
+      )
+      .join('; ');
+  return AssistantMessage(
+    content: const [],
+    api: model.api,
+    provider: model.provider,
+    model: model.id,
+    usage: Usage.zero,
+    stopReason: StopReason.error,
+    errorMessage:
+        'Provider zero-byte stall after ${attemptLog.length} attempt(s) '
+        'over $elapsedText — the endpoint accepted the request but never '
+        'produced output; the run-idle watchdog killed every silent '
+        'attempt ($zeroByteStallTag). Attempts: $log. The failure is '
+        'retryable: a fallback model may take over, or check the '
+        'provider status / try again later.',
+    timestamp: DateTime.now(),
+  );
 }
 
 /// The exhaustion terminal message (issue #290 AC2): the story is the
