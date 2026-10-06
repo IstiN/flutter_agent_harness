@@ -13,8 +13,11 @@
 //       (stub overrides under vendor/) so the linux/windows release legs
 //       build the same native surface they had when last green,
 //  AC2  flutter_app/pubspec.lock is committed (not gitignored) and every
-//       workflow's flutter_app pub-get step resolves with
-//       --enforce-lockfile, so transitive drift surfaces as a PR diff,
+//       flutter_app resolution enforces it — packaging scripts resolve
+//       with --enforce-lockfile, and the workflow steps ride the shared
+//       composite action (.github/actions/flutter-pub-get), pinned by
+//       test/ci_pub_get_retry_guard_test.dart — so transitive drift
+//       surfaces as a PR diff,
 //  AC3  the parent dep + versions that introduced the drift, in code:
 //       flutter_inappwebview 6.2.0-beta.3 (direct, gh-1235) →
 //       flutter_inappwebview_linux 0.1.0-beta.1 /
@@ -25,20 +28,6 @@ import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
 
 String read(String path) => File(path).readAsStringSync();
-
-/// Workflow files whose flutter_app `flutter pub get` steps must resolve
-/// against the committed lockfile. (Root-level `dart pub get` steps use the
-/// root library lockfile, which has always been committed; `packages/fa_ui`
-/// and friends are libraries whose lockfiles stay uncommitted.)
-const enforcedWorkflows = [
-  '.github/workflows/ci.yml',
-  '.github/workflows/nightly.yml',
-  '.github/workflows/build-mobile.yml',
-  '.github/workflows/build-macos.yml',
-  '.github/workflows/browser-ext.yml',
-  '.github/workflows/office-addin.yml',
-  '.github/workflows/pages.yml',
-];
 
 /// Minimal gitignore rule evaluation for the single path we care about:
 /// returns true if [path] (repo-relative) ends up IGNORED. Handles the only
@@ -66,20 +55,6 @@ bool gitIgnored(String path, String gitignore) {
     if (matches) ignored = !negate;
   }
   return ignored;
-}
-
-/// Every step of every job in [workflowPath] as (run, workingDirectory).
-Iterable<(String, String?)> stepsOf(String workflowPath) sync* {
-  final jobs = (loadYaml(read(workflowPath)) as YamlMap)['jobs'] as YamlMap;
-  for (final job in jobs.values) {
-    final steps = (job as YamlMap)['steps'];
-    if (steps is! YamlList) continue;
-    for (final step in steps) {
-      if (step is YamlMap && step['run'] is String) {
-        yield (step['run'] as String, step['working-directory'] as String?);
-      }
-    }
-  }
 }
 
 void main() {
@@ -240,13 +215,16 @@ void main() {
       }
     });
 
-    test('build-mobile.yml fails fast on deterministic lockfile skew', () {
-      // PR #1268 review thread 3: the iOS leg's bounded retry loop exists
-      // for transient runner/network failures — but a pubspec/lockfile
-      // skew fails identically on every attempt, costing ~30s per red leg
-      // and blaming the network. The loop must detect the skew signature
-      // in the failed resolve's output and exit immediately.
-      final body = read('.github/workflows/build-mobile.yml');
+    test('the shared pub-get action fails fast on deterministic skew', () {
+      // PR #1268 review thread 3: the bounded retry loop exists for
+      // transient runner/network failures — but a pubspec/lockfile skew
+      // fails identically on every attempt, costing ~30s per red leg and
+      // blaming the network. The loop must detect the skew signature in
+      // the failed resolve's output and exit immediately. gh-1310 moved
+      // the loop OUT of build-mobile.yml into the shared composite action
+      // every enforce-lockfile pub get rides
+      // (.github/actions/flutter-pub-get) — the guard follows it there.
+      final body = read('.github/actions/flutter-pub-get/action.yml');
       expect(body, contains('for attempt in 1 2 3'));
       expect(body, contains('flutter pub get --enforce-lockfile'));
       expect(
@@ -259,26 +237,13 @@ void main() {
       );
     });
 
-    for (final workflow in enforcedWorkflows) {
-      test('$workflow resolves flutter_app with --enforce-lockfile', () {
-        final offending = stepsOf(workflow)
-            .where(
-              (step) =>
-                  step.$1.contains('flutter pub get') &&
-                  (step.$1.contains('flutter_app') ||
-                      (step.$2 ?? '').startsWith('flutter_app')),
-            )
-            .where((step) => !step.$1.contains('--enforce-lockfile'))
-            .toList();
-        expect(
-          offending,
-          isEmpty,
-          reason: '$workflow has a flutter_app `flutter pub get` without '
-              '--enforce-lockfile — a pubspec/lockfile skew would float '
-              'silently instead of failing CI (gh-1265 AC2).',
-        );
-      });
-    }
+    // The per-workflow "resolves flutter_app with --enforce-lockfile"
+    // loop (gh-1265) is retired: gh-1310 moved every flutter_app pub-get
+    // run-step out of the workflows into the shared composite action, so
+    // the loop iterated an empty set — vacuous, and blind to the
+    // `working-directory: ./flutter_app` spelling. The resolution
+    // invariants now live in test/ci_pub_get_retry_guard_test.dart
+    // (AC2: no bare run-step; AC3: per-workflow action-step counts).
   });
 
   group('AC1 — desktop plugin impls carry no native registration', () {
