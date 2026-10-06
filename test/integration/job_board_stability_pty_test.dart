@@ -262,19 +262,51 @@ void main() {
         _firstSettle,
         timeout: const Duration(seconds: 60),
       );
-      await harness.waitForOutput(settleMs: 300);
+      // Fixed beat, not a quiet-gap wait (issue #1250): each settle notice
+      // steers a wrap turn, so the raw stream stays noisy across the whole
+      // drain on a loaded runner — waitForOutput's 2x-settleMs quiet
+      // detector only fired AFTER the last settle, and `mid` caught the
+      // by-design fully-drained frame (frozen row gone) instead of the
+      // mid-drain one (3 distinct-SHA gate reds). A fixed 300 ms beat is
+      // not enough either (gh-1250 CI frames): the settle HARVESTER batches
+      // — a starved poll prints all five `exited(0)` notices in one burst,
+      // so no post-first-notice beat can land mid-drain. The sampleable
+      // contract is the INVARIANT, not the intermediate state: if the
+      // `· older` row is still on screen it must be byte-identical (a
+      // re-derived board would show `· 4 running · 1 done`); if the whole
+      // batch drained between camera samples the AFTER asserts below
+      // (exactly one terminal card, row leaves the live region) still
+      // police the transition.
+      await Future<void>.delayed(const Duration(milliseconds: 300));
       final mid = harness.viewportLines;
       expectComposerReserved(mid, columns);
-      expect(
-        frameContentLines(mid)
-            .where((l) => l.contains('· older') && l.contains('(5)'))
-            .toList(),
-        beforeOlder,
-        reason:
-            'the printed `· older` row never changes counts while its '
-            'jobs settle (before:\n${before.join('\n')}\nmid:\n'
-            '${mid.join('\n')})',
-      );
+      final midOlder = frameContentLines(mid)
+          .where((l) => l.contains('· older') && l.contains('(5)'))
+          .map((l) => l.trimRight())
+          .toList();
+      // Absent = the whole batch drained between camera samples — legal
+      // only as the fully-drained frame: the harvester hands the bucket
+      // to the transcript in ONE transition, so the settled card must
+      // already be painted (a row that vanished without the card is a
+      // wedge). Present = byte-identical, never re-derived.
+      if (midOlder.isNotEmpty) {
+        expect(
+          midOlder,
+          beforeOlder,
+          reason:
+              'a printed `· older` row never changes counts while its '
+              'jobs settle (before:\n${before.join('\n')}\nmid:\n'
+              '${mid.join('\n')})',
+        );
+      } else {
+        expect(
+          mid.join('\n'),
+          contains(_settledCardBody),
+          reason:
+              'row gone at MID is only legal as a fully-drained frame:\n'
+              '${mid.join('\n')}',
+        );
+      }
 
       // Full settle hands the bucket to the transcript: exactly ONE
       // terminal summary card, and the aged row leaves the live region.
