@@ -198,6 +198,8 @@ dev_dependencies:
     path: ../packages/fa_llm_mock
 
 dependency_overrides:
+  # TEMP local-only (uncommitted): the 3.44.4 local SDK pins meta 1.18.0.
+  meta: ^1.19.0
   # fa_widgets_tool declares archive ^3.6.1 while the app needs ^4.0.9 (the
   # wasm/zip sandbox builtins). The override resolves the graph to 4.x; the
   # client only exercises validateWidgetDirectory, which never touches
