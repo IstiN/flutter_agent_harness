@@ -256,6 +256,66 @@ void main() {
     }, timeout: timeout);
   });
 
+  group('dial credential durability (issue #1293)', () {
+    test(
+      'a lost secret is repaired from the captured value, url kept',
+      () async {
+        final path = configPath();
+        await Directory('${tempHome.path}/.dap').create(recursive: true);
+        // The interleaved-write end state: the url write landed, the
+        // secret did not.
+        File(path).writeAsStringSync('{"url": "ws://127.0.0.1:9/ws"}\n');
+        expect(
+          await dapCredentialDurable(
+            path,
+            url: 'ws://127.0.0.1:41111/ws',
+            capturedSecret: 'issued-sec',
+          ),
+          isTrue,
+        );
+        final config = client.readDapConfig(path);
+        expect(config['clientSecret'], 'issued-sec');
+        expect(config['url'], 'ws://127.0.0.1:41111/ws');
+      },
+    );
+
+    test('a torn config repairs the lost secret (the #1293 red)', () async {
+      final path = configPath();
+      await Directory('${tempHome.path}/.dap').create(recursive: true);
+      File(path).writeAsStringSync('{"url": "ws://127.0.0.1:9/w');
+      expect(
+        await dapCredentialDurable(path, capturedSecret: 'sec-after-tear'),
+        isTrue,
+      );
+      expect(client.readDapConfig(path)['clientSecret'], 'sec-after-tear');
+    });
+
+    test('secret already on disk: durable without a rewrite', () async {
+      final path = configPath();
+      await Directory('${tempHome.path}/.dap').create(recursive: true);
+      const body =
+          '{"url": "ws://127.0.0.1:9/ws", '
+          '"clientSecret": "already-there"}\n';
+      File(path).writeAsStringSync(body);
+      expect(
+        await dapCredentialDurable(path, capturedSecret: 'ignored'),
+        isTrue,
+      );
+      expect(
+        File(path).readAsStringSync(),
+        body,
+        reason: 'the fast path must not touch the file',
+      );
+    });
+
+    test('nothing on disk and nothing captured: honestly false', () async {
+      expect(
+        await dapCredentialDurable(configPath(), url: 'ws://127.0.0.1:9/ws'),
+        isFalse,
+      );
+    });
+  });
+
   group('E1: foreign server on the port', () {
     test(
       'start detects a non-DAP /healthz answer and refuses to enroll',

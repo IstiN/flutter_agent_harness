@@ -121,6 +121,13 @@ class DapHubController {
   /// session (the `enrolled` line reports reality, not optimism).
   bool _enrolledThisSession = false;
 
+  /// The hub-issued secret as the persistence poll saw it land on disk.
+  /// The repair source for [#1293]: the client's own persist is
+  /// `unawaited(_persistEnrolled)` and every config writer is an
+  /// unsynchronized read-modify-write, so the value can be dropped again
+  /// by an interleaved write before the CLI exits.
+  String? _issuedSecret;
+
   void Function(String line)? _out;
 
   void say(String line) {
@@ -289,10 +296,7 @@ class DapHubController {
   ) async {
     for (final (secret, enroll) in attempts) {
       final outcome = await _tryDial(secret, enroll: enroll);
-      if (outcome.ok) {
-        await _finishCredential();
-        return true;
-      }
+      if (outcome.ok) return _finishCredential();
       if (outcome.unauthorized && identical(secret, cachedSecret)) {
         await client.persistDapConfig(
           clearClientSecret: true,
@@ -311,10 +315,7 @@ class DapHubController {
     for (var attempt = 1; attempt <= 3; attempt++) {
       final outcome = await _promptedMasterDial(prompt);
       if (outcome == null) break;
-      if (outcome.ok) {
-        await _finishCredential();
-        return true;
-      }
+      if (outcome.ok) return _finishCredential();
       if (outcome.unauthorized && attempt < 3) {
         say('enrollment rejected (wrong master key) — try again');
       } else {
@@ -336,13 +337,27 @@ class DapHubController {
   }
 
   /// Post-success bookkeeping: pin the url next to the credential and
-  /// tighten the config file mode (0600 where chmod exists).
-  Future<void> _finishCredential() async {
+  /// tighten the config file mode (0600 where chmod exists). Returns
+  /// whether the dial credential is durably on disk (issue #1293) —
+  /// false fails the start loudly instead of exiting 0 with a config
+  /// that lost the secret to an interleaved write.
+  Future<bool> _finishCredential() async {
     try {
       await client.persistDapConfig(url: url, file: _configPath);
       await Process.run('chmod', ['600', _configPath]);
     } on Object {
       // Best-effort; the credential itself is already persisted.
+    }
+    if (!await dapCredentialDurable(
+      _configPath,
+      url: url,
+      capturedSecret: _issuedSecret,
+    )) {
+      say(
+        'the dial credential did not survive in $_configPath — '
+        'manual recovery: re-run fa dap start',
+      );
+      return false;
     }
     if (_enrolledThisSession) {
       say('enrolled — client secret saved to $_configPath (0600)');
@@ -351,6 +366,7 @@ class DapHubController {
       'fabric enabled — hub peers appear in agent_directory on the next '
       'fa session',
     );
+    return true;
   }
 
   /// One dial attempt with a FRESH client (each client escalates its own
@@ -380,15 +396,25 @@ class DapHubController {
       await hubClient.connect().timeout(const Duration(seconds: 8));
       if (enroll) {
         // The enrolled frame lands right after the welcome; wait for the
-        // issued secret to reach the config (≤3s).
-        final deadline = DateTime.now().add(const Duration(seconds: 3));
+        // issued secret to reach the config. The budget matches the
+        // client's own round trip (connect cap 8s, enroll request 5s): a
+        // smaller window can expire on a loaded runner while the
+        // persistence is still legitimately in flight (issue #1293).
+        final deadline = DateTime.now().add(const Duration(seconds: 10));
         while (DateTime.now().isBefore(deadline)) {
           final stored = client.readDapConfig(_configPath)['clientSecret'];
           if (stored is String && stored.isNotEmpty && stored != secret) {
             _enrolledThisSession = true;
+            _issuedSecret = stored;
             break;
           }
           await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        // No silent success without the credential: an expired poll is a
+        // failed dial (exit 1 + the recovery hint), not an exit 0 whose
+        // config never got the secret (issue #1293).
+        if (!_enrolledThisSession) {
+          return (ok: false, unauthorized: false);
         }
       }
       return (ok: true, unauthorized: false);
@@ -990,6 +1016,34 @@ void writeSecretFile0600(File file, String body) {
     // No chmod here: keep the content, keep the umask mode.
   }
   file.writeAsStringSync(body, mode: FileMode.write, flush: true);
+}
+
+/// Verifies the dial credential survived on disk, repairing it once from
+/// [capturedSecret] (issue #1293). Every `~/.dap/config.json` writer is
+/// an unsynchronized read-modify-write — the client's enroll persist is
+/// `unawaited(_persistEnrolled)` — so the secret an "enrolled" line
+/// reported can be dropped by an interleaved or torn read before the CLI
+/// exits. Exit 0 must mean the credential IS on disk: present → true;
+/// a captured secret re-persisted successfully → true; otherwise false
+/// (the caller fails the start loudly).
+Future<bool> dapCredentialDurable(
+  String configPath, {
+  String? url,
+  String? capturedSecret,
+}) async {
+  bool secretOnDisk() {
+    final stored = client.readDapConfig(configPath)['clientSecret'];
+    return stored is String && stored.isNotEmpty;
+  }
+
+  if (secretOnDisk()) return true;
+  if (capturedSecret == null || capturedSecret.isEmpty) return false;
+  await client.persistDapConfig(
+    url: url,
+    clientSecret: capturedSecret,
+    file: configPath,
+  );
+  return secretOnDisk();
 }
 
 /// `fa dap import <invite>` — ingests the Fa app's add-agent invite
