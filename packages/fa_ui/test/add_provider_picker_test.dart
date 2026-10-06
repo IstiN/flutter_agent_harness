@@ -158,11 +158,12 @@ void main() {
 
   testWidgets('the sso bundle enables all four sign-in tiles without any '
       'host callbacks', (tester) async {
+    final registry = ProviderRegistry.inMemory();
     await tester.pumpWidget(
       MaterialApp(
         home: AddProviderPresetPickerPage(
-          registry: ProviderRegistry.inMemory(),
-          sso: FaUiSso(registry: ProviderRegistry.inMemory()),
+          registry: registry,
+          sso: FaUiSso(registry: registry),
         ),
       ),
     );
@@ -186,15 +187,31 @@ void main() {
 
   testWidgets('a preset dropped by the FA_PROVIDERS filter stays hidden and '
       'is logged', (tester) async {
-    providerFilterEnvOverride = 'dial';
+    // AC3's log half: the filter drop must name every hidden tile.
+    final logs = <String>[];
+    final originalDebugPrint = debugPrint;
+    debugPrint = (String? message, {int? wrapWidth}) {
+      if (message != null) logs.add(message);
+    };
+    // Restore INSIDE the body: the binding's foundation-var invariant
+    // (debugPrint must equal debugPrintThrottled) runs before addTearDown.
     try {
+      providerFilterEnvOverride = 'dial';
       await tester.pumpWidget(
         const MaterialApp(home: AddProviderPresetPickerPage()),
       );
       // A build-intentional catalog filter HIDES (unlike the flow gating).
       expect(find.text('OpenAI'), findsNothing);
       expect(find.text('DIAL'), findsOneWidget);
+      expect(
+        logs.any(
+          (line) =>
+              line.contains('openai (OpenAI)') && line.contains('FA_PROVIDERS'),
+        ),
+        isTrue,
+      );
     } finally {
+      debugPrint = originalDebugPrint;
       providerFilterEnvOverride = null;
     }
   });

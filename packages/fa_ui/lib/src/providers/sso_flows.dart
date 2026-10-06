@@ -7,7 +7,8 @@
 import 'dart:convert';
 
 import 'package:fa_llm/fa_llm.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, debugPrint, defaultTargetPlatform, kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
@@ -73,7 +74,11 @@ class FaUiSso {
     this.modelsFetcher = fetchModelsForEndpoint,
   });
 
-  /// The provider registry the connected entries are saved to.
+  /// The provider registry the connected entries are saved to. A host
+  /// wiring `FaUiSso` into the add-provider picker or ProvidersSection
+  /// MUST pass the same registry instance that widget receives — the
+  /// picker asserts this in debug mode (a split silently partitions SSO
+  /// landings away from the key-based saves).
   final ProviderRegistry registry;
 
   /// The secure store for the entry-scoped key slots (iOS/macOS Keychain,
@@ -119,7 +124,9 @@ class FaUiSso {
   Future<bool> connectCodeMie(
     BuildContext context, {
     String orgUrl = defaultCodeMieBaseUrl,
-  }) async {
+  }) => _guarded('CodeMie', context, () => _connectCodeMie(context, orgUrl));
+
+  Future<bool> _connectCodeMie(BuildContext context, String orgUrl) async {
     final credentials = await _runDesktopFlow(
       context,
       'CodeMie',
@@ -131,7 +138,9 @@ class FaUiSso {
     final existing = registry.byBaseUrl(baseUrl);
     if (existing != null) {
       registry.rememberKey(existing.id, credentials.authToken);
-      if (context.mounted) showFahSnack(context, 'CodeMie re-authorized');
+      if (context.mounted) {
+        showFahSnack(context, 'CodeMie re-authorized', hideCurrent: true);
+      }
       return true;
     }
     final models = await _fetchLenient(
@@ -149,7 +158,9 @@ class FaUiSso {
     );
     registry.rememberKey(provider.id, credentials.authToken);
     _notify(provider);
-    if (context.mounted) showFahSnack(context, 'CodeMie connected');
+    if (context.mounted) {
+      showFahSnack(context, 'CodeMie connected', hideCurrent: true);
+    }
     return true;
   }
 
@@ -158,7 +169,10 @@ class FaUiSso {
   /// account email (the CLI contract — several accounts coexist), the
   /// encoded credential blob in the entry-scoped slot. Returns whether a
   /// provider was connected.
-  Future<bool> connectChatGpt(BuildContext context) async {
+  Future<bool> connectChatGpt(BuildContext context) =>
+      _guarded('ChatGPT', context, () => _connectChatGpt(context));
+
+  Future<bool> _connectChatGpt(BuildContext context) async {
     final sessionKeys = this.sessionKeys ?? SessionKeysScope.maybeOf(context);
     final credentials = await _runDesktopFlow(
       context,
@@ -173,7 +187,7 @@ class FaUiSso {
       name: name,
       baseUrl: chatGptCodexBaseUrl,
       modelId: chatGptCodexDefaultModel,
-      kind: 'chatgpt-codex',
+      kind: chatgptCodexDispatchHint,
     );
     registry.rememberKey(provider.id, credentials.encode());
     await _persistEntryScopedKey(
@@ -186,7 +200,9 @@ class FaUiSso {
       value: credentials.encode(),
     );
     _notify(provider);
-    if (context.mounted) showFahSnack(context, 'ChatGPT connected');
+    if (context.mounted) {
+      showFahSnack(context, 'ChatGPT connected', hideCurrent: true);
+    }
     return true;
   }
 
@@ -195,7 +211,10 @@ class FaUiSso {
   /// with the `sk-aiin-…` key in the entry-scoped slot, and a model is
   /// picked (the manual entry covers a failed list fetch). Returns whether
   /// a provider was connected.
-  Future<bool> connectAiin(BuildContext context) async {
+  Future<bool> connectAiin(BuildContext context) =>
+      _guarded('AIIN', context, () => _connectAiin(context));
+
+  Future<bool> _connectAiin(BuildContext context) async {
     final sessionKeys = this.sessionKeys ?? SessionKeysScope.maybeOf(context);
     final result = await _runDesktopFlow(
       context,
@@ -226,7 +245,9 @@ class FaUiSso {
       value: result.apiKey.raw,
     );
     _notify(provider);
-    if (context.mounted) showFahSnack(context, 'AIIN connected');
+    if (context.mounted) {
+      showFahSnack(context, 'AIIN connected', hideCurrent: true);
+    }
     return true;
   }
 
@@ -235,7 +256,10 @@ class FaUiSso {
   /// lands as a `copilot` custom entry with the GitHub token stored
   /// entry-scoped (the CLI contract). Returns whether a provider was
   /// connected.
-  Future<bool> connectCopilot(BuildContext context) async {
+  Future<bool> connectCopilot(BuildContext context) =>
+      _guarded('Copilot', context, () => _connectCopilot(context));
+
+  Future<bool> _connectCopilot(BuildContext context) async {
     final sessionKeys = this.sessionKeys ?? SessionKeysScope.maybeOf(context);
     if (kIsWeb) {
       // github.com serves no CORS headers — the web build cannot run the
@@ -271,15 +295,26 @@ class FaUiSso {
     );
     final connect = result;
     if (connect == null) return false;
-    final provider = await landCopilotConnect(
-      registry,
-      connect,
-      keychain: keychain,
-      sessionKeys: sessionKeys,
-    );
+    final CustomProvider? provider;
+    try {
+      provider = await landCopilotConnect(
+        registry,
+        connect,
+        keychain: keychain,
+        sessionKeys: sessionKeys,
+      );
+    } on Object catch (error) {
+      _logStatus('Copilot connect failed: $error');
+      if (context.mounted) {
+        showFahErrorSnack(context, 'Copilot connect failed: $error');
+      }
+      return false;
+    }
     if (provider == null) return false;
     _notify(provider);
-    if (context.mounted) showFahSnack(context, 'Copilot connected');
+    if (context.mounted) {
+      showFahSnack(context, 'Copilot connected', hideCurrent: true);
+    }
     return true;
   }
 
@@ -329,6 +364,30 @@ class FaUiSso {
   }
 
   void _notify(CustomProvider provider) => onConnected?.call(provider);
+
+  /// One sign-in flow per provider at a time — the CLI's
+  /// `_providerFlowActive` latch. A second tap while a hop waits for its
+  /// callback would bind a second loopback server and race the first
+  /// landing's re-auth; the second caller gets a named snack instead.
+  static final Set<String> _inFlight = {};
+
+  Future<bool> _guarded(
+    String provider,
+    BuildContext context,
+    Future<bool> Function() flow,
+  ) async {
+    if (!_inFlight.add(provider)) {
+      if (context.mounted) {
+        showFahSnack(context, 'A $provider sign-in is already running.');
+      }
+      return false;
+    }
+    try {
+      return await flow();
+    } finally {
+      _inFlight.remove(provider);
+    }
+  }
 }
 
 /// The entry-scoped key persist shared by the connect methods (Keychain
@@ -350,23 +409,56 @@ Future<void> _persistEntryScopedKey({
   }
 }
 
-/// Runs a desktop sign-in hop, surfacing an unsupported platform as a
-/// clean snack (the web stubs throw [UnsupportedError]) instead of a
-/// mid-flow crash. Null otherwise means the user cancelled or the flow
-/// reported its own failure through the status channel.
+/// Runs a desktop sign-in hop — the single error boundary for the three
+/// desktop hops, mirroring the CLI's broad wrap of the same flows
+/// (`catch (e) { io.writeln('… failed: $e'); }`). An unsupported platform
+/// (web stub or the mobile refusal in `sso_desktop_flows_io.dart`) gets
+/// the named platform snack; any other failure (loopback bind
+/// `SocketException`, unexpected IO/process errors) surfaces as an error
+/// snack instead of escaping into the tap handler's zone. Null otherwise
+/// means the user cancelled or the flow reported its own failure through
+/// the status channel.
 Future<T?> _runDesktopFlow<T>(
   BuildContext context,
   String provider,
   Future<T?> Function() flow,
 ) async {
+  if (context.mounted &&
+      !kIsWeb &&
+      const {
+        TargetPlatform.macOS,
+        TargetPlatform.linux,
+        TargetPlatform.windows,
+      }.contains(defaultTargetPlatform)) {
+    // Desktop-only: the hop can legitimately wait minutes for the browser
+    // callback — give the picker user visible in-flight feedback (the
+    // status lines themselves stay debug-only diagnostics). Mobile/web
+    // refuse synchronously below, so a waiting hint there would be noise
+    // racing the refusal snack in the queue.
+    showFahSnack(
+      context,
+      'Waiting for the $provider sign-in — complete it in your browser.',
+      duration: const Duration(seconds: 30),
+    );
+  }
   try {
     return await flow();
   } on UnsupportedError {
     if (context.mounted) {
       showFahSnack(
         context,
-        '$provider sign-in is not available on this '
-        'platform.',
+        '$provider sign-in is not available on this platform.',
+        hideCurrent: true,
+      );
+    }
+    return null;
+  } on Object catch (error) {
+    _logStatus('$provider sign-in failed: $error');
+    if (context.mounted) {
+      showFahErrorSnack(
+        context,
+        '$provider sign-in failed: $error',
+        hideCurrent: true,
       );
     }
     return null;

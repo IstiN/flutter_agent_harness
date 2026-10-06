@@ -2,10 +2,14 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show SocketException;
 
 import 'package:fa_llm/fa_llm.dart' show CopilotAccountType;
 import 'package:fa_ui/fa_ui.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -116,9 +120,9 @@ void main() {
     );
     expect(connected, isFalse);
     expect(registry.providers, isEmpty);
-    expect(
+    await _pumpUntilFound(
+      tester,
       find.text('CodeMie sign-in is not available on this platform.'),
-      findsOneWidget,
     );
   });
 
@@ -250,6 +254,85 @@ void main() {
     expect(registry.keyFor(provider.id), 'sk-aiin-xyz');
   });
 
+  testWidgets('the default desktop hops refuse LOUDLY on mobile — no '
+      'silent hang', (tester) async {
+    // dart.library.io is true on iOS/Android too; without the gate the
+    // CLI hop would shell out to a missing `open` and wait out its full
+    // 5-minute callback timeout with debug-only status lines (PR #1326
+    // review, BLOCKING). Default hops, exactly what the AC2 one-liner
+    // wires on a mobile host.
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    // Reset INSIDE the body: the binding's foundation-var invariant check
+    // runs before addTearDown teardowns, so an override surviving to the
+    // check fails this and every later test in the run.
+    try {
+      final registry = ProviderRegistry.inMemory();
+      for (final connect in <Future<bool> Function(BuildContext)>[
+        (context) => FaUiSso(registry: registry).connectCodeMie(context),
+        (context) => FaUiSso(registry: registry).connectChatGpt(context),
+        (context) => FaUiSso(registry: registry).connectAiin(context),
+      ]) {
+        final connected = await _run(tester, connect);
+        expect(connected, isFalse);
+        expect(registry.providers, isEmpty);
+        await _pumpUntilFound(
+          tester,
+          find.textContaining('not available on this platform'),
+        );
+      }
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets('a flow failure surfaces as an error snack instead of '
+      'escaping into the zone', (tester) async {
+    final registry = ProviderRegistry.inMemory();
+    final sso = FaUiSso(
+      registry: registry,
+      codeMieSsoFn: (orgUrl, onStatus) async =>
+          throw const SocketException('loopback bind refused'),
+    );
+    final connected = await _run(
+      tester,
+      (context) => sso.connectCodeMie(context),
+    );
+    expect(connected, isFalse);
+    expect(registry.providers, isEmpty);
+    await _pumpUntilFound(
+      tester,
+      find.textContaining('CodeMie sign-in failed'),
+    );
+  });
+
+  testWidgets('a second concurrent sign-in for the same provider is '
+      'latched', (tester) async {
+    final registry = ProviderRegistry.inMemory();
+    final gate = Completer<CodeMieSsoCredentials?>();
+    final sso = FaUiSso(
+      registry: registry,
+      codeMieSsoFn: (orgUrl, onStatus) => gate.future,
+    );
+    BuildContext? flowContext;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (builderContext) {
+            flowContext = builderContext;
+            return const Scaffold(body: SizedBox.shrink());
+          },
+        ),
+      ),
+    );
+    final context = flowContext!;
+    final pending = sso.connectCodeMie(context);
+    final second = await sso.connectCodeMie(context);
+    expect(second, isFalse);
+    gate.complete(null);
+    expect(await pending, isFalse);
+    expect(registry.providers, isEmpty);
+  });
+
   test('landCopilotConnect adds a copilot entry with the entry-scoped '
       'token slot', () async {
     final registry = ProviderRegistry.inMemory();
@@ -325,6 +408,16 @@ void main() {
   });
 }
 
+/// Pumps frames until [finder] matches (snack queues rotate on frame
+/// timers — a terminal snack can sit queued behind the in-flight start
+/// snack for a frame or two), then asserts one match.
+Future<void> _pumpUntilFound(WidgetTester tester, Finder finder) async {
+  for (var i = 0; i < 12 && !tester.any(finder); i++) {
+    await tester.pump(const Duration(milliseconds: 500));
+  }
+  expect(finder, findsOneWidget);
+}
+
 /// Runs [flow] from a live context under a MaterialApp (snacks and pushed
 /// pages resolve), optionally tapping [thenTap] on the pushed pick page.
 Future<bool> _run(
@@ -346,10 +439,15 @@ Future<bool> _run(
     ),
   );
   await tester.tap(find.text('go'));
-  await tester.pumpAndSettle();
+  // pumpAndSettle here races the snack queue (a 30s in-flight snack's
+  // auto-hide timer pins the frame schedule) — bounded pumps let the
+  // flow's synchronous refusal land and the snack animate in.
+  await tester.pump();
+  await tester.pump(const Duration(seconds: 1));
   if (thenTap != null) {
     await tester.tap(thenTap);
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
   }
   return result;
 }

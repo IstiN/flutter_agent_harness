@@ -286,6 +286,12 @@ class AddProviderPresetPickerPage extends StatelessWidget {
   /// the default, so a host can adopt the bundle and still customize one
   /// flow. When neither is given, the tile renders DISABLED with a
   /// tooltip (issue #1321 option C — never silently hidden).
+  ///
+  /// The bundle MUST be built around the same [ProviderRegistry] instance
+  /// this page receives — SSO landings go to `sso.registry` while
+  /// key-based saves go to [registry], and a split would silently hide
+  /// entries from whichever list observes the other store (asserted in
+  /// debug mode).
   final FaUiSso? sso;
 
   /// On-device engine routes (Gemma/WebLLM/…): each renders a tile after
@@ -316,6 +322,14 @@ class AddProviderPresetPickerPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Not a const-ctor assert (instance member access): the bundle MUST be
+    // built around the same registry the page received, or SSO landings
+    // partition away from the key-based saves.
+    assert(
+      sso == null || registry == null || identical(sso!.registry, registry),
+      'FaUiSso must be built around the same ProviderRegistry the page '
+      'receives — SSO landings and key-based saves must land in one store.',
+    );
     final theme = Theme.of(context);
     final strings = FaUiStrings.of(context);
     // Catalog/build filters hide (intentional — FA_PROVIDERS scims the
