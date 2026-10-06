@@ -2224,6 +2224,25 @@ jobs:
           esac
           echo "$GRAPH graph audit OK"
 
+      # gh-1248 (review): the vendored fork has its own test suite, but no
+      # root-level `dart test` ever discovers it — the fork's tests can rot
+      # invisibly (that is exactly how the gh-1248 regression suite shipped
+      # with a compile error). Run analyze + tests on the vendored leg,
+      # where pubspec_overrides.yaml resolves the fork in-place.
+      - name: Vendor fork tests (dart_tui)
+        if: matrix.graph == 'vendored'
+        run: |
+          cd vendor/dart_tui
+          dart pub get
+          # Vendored third-party code: analyze keeps ERRORS fatal (the
+          # gh-1248 compile rot this step exists to catch was error-level)
+          # but pre-existing vendor warnings must not red unrelated PRs.
+          # Plain `dart analyze` has no --no-fatal-infos (that flag is the
+          # flutter tool's; infos are already non-fatal by default) — only
+          # warnings need negating here. The test run below is the fatal gate.
+          dart analyze --no-fatal-warnings
+          dart test
+
   # SEC-07 (#795) AC4: run the installer against fixture releases
   # (good / tampered / unsigned) on EVERY PR — no path gating needed at
   # ~15s/job, and a security IT you can dodge with a cunning diff is not
