@@ -130,7 +130,62 @@ PY
   # bump so the ASC-approved floor can never outgrow it again.
   sed -i "s/^version: .*/version: $next+1/" flutter_app/pubspec.yaml
 
+  # gh-1303: the app lockfile pins this repo as a PATH dependency, so the
+  # version bump above stales it — every `flutter pub get --enforce-lockfile`
+  # consumer (pages.yml web demo build, ci.yml flutter legs, the packaging
+  # scripts) fails with "Unable to satisfy pubspec.yaml using
+  # pubspec.lock" until the lock is re-pinned. The bump pushes straight to
+  # protected main as the bypass App, so no PR gate can catch the skew
+  # afterwards: re-pin the lock HERE, inside the bump commit. The release
+  # job has no Flutter SDK, but pub keeps no content hash in pubspec.lock
+  # and the app's own version is not recorded in it — the only delta a real
+  # `flutter pub get` produces for this bump is the harness version line,
+  # which is what the edit below writes. Tolerant: no lock, or no harness
+  # entry in it, means there is no skew to fix.
+  NEXT="$next" python3 - <<'PY'
+import os, re, sys
+
+nxt = os.environ["NEXT"]
+path = "flutter_app/pubspec.lock"
+try:
+    with open(path, encoding="utf-8") as f:
+        lines = f.readlines()
+except FileNotFoundError:
+    raise SystemExit(0)  # no committed app lock — nothing to re-pin
+
+start = next(
+    (i for i, l in enumerate(lines) if l.rstrip("\r\n") == "  flutter_agent_harness:"),
+    None,
+)
+if start is None:
+    raise SystemExit(0)  # the app no longer depends on the harness — no skew
+
+for j in range(start + 1, len(lines)):
+    cur = lines[j]
+    if re.match(r"^ {2}\S", cur) or not cur.startswith(" "):
+        break  # next package entry / sdks: — the pin is not inside this entry
+    pin = re.match(r'(\s+version: )"([^"]+)"(\r?\n?)$', cur)
+    if pin:
+        lines[j] = f'{pin.group(1)}"{nxt}"{pin.group(3)}'
+        with open(path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        raise SystemExit(0)
+
+print(
+    "::error::flutter_app/pubspec.lock: the flutter_agent_harness entry has no"
+    " version line — regenerate the lockfile (cd flutter_app && flutter pub"
+    " get) and retry the release",
+    file=sys.stderr,
+)
+raise SystemExit(1)
+PY
+
   git add pubspec.yaml flutter_app/pubspec.yaml CHANGELOG.md
+  # gh-1303: the re-pinned app lock rides the bump commit (conditional: the
+  # file may legitimately not exist — the edit above no-ops in that case).
+  if [ -f flutter_app/pubspec.lock ]; then
+    git add flutter_app/pubspec.lock
+  fi
   git commit -m "chore(release): v$next"
 
   if [ "$dry_run" -eq 1 ]; then
