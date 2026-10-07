@@ -253,17 +253,21 @@ Future<void> _runApp(List<String> args) async {
     case BootUpdateAction.none:
       break;
     case BootUpdateAction.notifyCheck:
-      // Bounded: a dead endpoint must never stall the boot past ~3 s;
-      // failures (network) stay silent. stderr — the same pre-TUI boot
-      // notice channel as the config warnings above.
-      final latest = await fetchLatestTag().timeout(
-        const Duration(seconds: 3),
-        onTimeout: () => null,
-      );
-      if (latest != null && compareVersions(latest, packageVersion) > 0) {
-        final banner = autoUpdateNotify.banner(latest);
-        if (banner != null) stderr.writeln(banner);
-      }
+      // Background probe: the boot never waits on it — the banner prints
+      // WHEN the answer lands (a dead endpoint just stays silent; the
+      // 3 s bound keeps a hung socket from printing late into a live
+      // TUI). stderr — the same pre-TUI boot-notice channel as the
+      // config warnings above.
+      unawaited(() async {
+        final latest = await fetchLatestTag().timeout(
+          const Duration(seconds: 3),
+          onTimeout: () => null,
+        );
+        if (latest != null && compareVersions(latest, packageVersion) > 0) {
+          final banner = autoUpdateNotify.banner(latest);
+          if (banner != null) stderr.writeln(banner);
+        }
+      }());
     case BootUpdateAction.applyAndExit:
       final outcome = await applyUpdate(
         currentVersion: packageVersion,
@@ -276,6 +280,14 @@ Future<void> _runApp(List<String> args) async {
           break;
         case ApplyUpdateOutcome.refusedDevRun:
           stderr.writeln('fa: auto update unavailable for source runs');
+        case ApplyUpdateOutcome.unsupportedPlatform:
+          break; // The engine swapped and printed the restart hint.
+        case ApplyUpdateOutcome.convergenceGuard:
+          stderr.writeln(
+            'fa: auto update paused — the same release was already '
+            'attempted and is still not resolving; continuing on '
+            'v$packageVersion',
+          );
         case _:
           // Never crash the boot: one warn, then continue on the current
           // binary (restartFailed keeps the already-swapped new binary).
@@ -1409,10 +1421,12 @@ Future<void> _runApp(List<String> args) async {
       // `/update` (issue #1377): the engine lives in bin/self_manage.dart
       // and lib stays dart:io-free, so the command calls back into this
       // closure — check, apply, spawn the successor, exit(0) on success;
-      // print + stay alive on any failure.
-      updateCommand: () => _runSlashUpdate(
+      // print + stay alive on any failure. The LIVE session id rides
+      // into the successor argv (appended only when the argv itself does
+      // not carry one), so the conversation survives the restart.
+      updateCommand: (sessionId) => _runSlashUpdate(
         currentVersion: packageVersion,
-        launchArgs: args,
+        launchArgs: successorArgs(args, sessionId),
         writeln: io.writeln,
       ),
       // The settings-hub row reads the live policy (slice B): seed it from

@@ -170,9 +170,12 @@ final class AgentCliConfig {
   /// engine lives in the host executable (`bin/self_manage.dart`) and
   /// lib/src stays dart:io-free, so the host injects a closure that
   /// checks, applies, spawns the successor and exits(0) on success — and
-  /// prints + stays alive on any failure. Null (tests, embedded hosts):
-  /// the command reports the surface as unavailable.
-  final Future<void> Function()? updateCommand;
+  /// prints + stays alive on any failure. [String? sessionId] is the
+  /// LIVE session to resume (resolved by the caller): the successor argv
+  /// gains `--session <id>` when the argv does not already carry one, so
+  /// the running conversation survives the restart. Null (tests,
+  /// embedded hosts): the command reports the surface as unavailable.
+  final Future<void> Function(String? sessionId)? updateCommand;
 
   /// Override for the compaction thresholds (ratio-based trigger, reserve
   /// and recent-token budgets). When `null`, `defaultCompactionSettings`

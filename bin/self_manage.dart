@@ -14,7 +14,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import 'package:archive/archive.dart';
-import 'package:crypto/crypto.dart' show hex, sha256;
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:cryptography/cryptography.dart'
     show RsaPublicKey, RsaSsaPkcs1v15, Signature;
 
@@ -291,10 +291,8 @@ Future<bool> verifyReleaseProvenance({
     if (!verified) return false;
     final expected = _manifestDigest(sums.body, archiveName);
     if (expected == null) return false;
-    return _listEquals(
-      sha256.convert(archiveBytes).bytes,
-      hex.decode(expected),
-    );
+    return sha256.convert(archiveBytes).toString() ==
+        expected.toLowerCase();
   } catch (_) {
     return false;
   }
@@ -672,6 +670,71 @@ Future<int> fallbackZipUpdate(
   return 0;
 }
 
+/// The successor argv for a restart ([applyUpdate]'s `launchArgs` input):
+/// the ORIGINAL argv with `--session <sessionId>` appended when the id is
+/// known and the argv does not already carry one — a live session must
+/// survive the restart (issue #1377: same terminal, same session).
+List<String> successorArgs(List<String> args, String? sessionId) {
+  final carriesSession = args.any(
+    (arg) => arg == '--session' || arg.startsWith('--session='),
+  );
+  if (sessionId == null || carriesSession) return args;
+  return [...args, '--session', sessionId];
+}
+
+/// The default convergence-guard state file (`~/.fah/update-state.json`);
+/// null when the host has no home directory (guard disabled, disclosed).
+String? _convergenceStatePath() {
+  final home =
+      Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+  if (home == null || home.isEmpty) return null;
+  return '$home/.fah/update-state.json';
+}
+
+/// Reads the convergence-guard state: the tag the updater last attempted
+/// and how many times. Null when absent/corrupt (a fresh attempt is then
+/// allowed — the guard caps REPEAT attempts, not first ones).
+({String tag, int attempts})? _readConvergence(String? statePath) {
+  if (statePath == null) return null;
+  try {
+    final doc = jsonDecode(File(statePath).readAsStringSync());
+    final tag = doc is Map<String, dynamic> ? doc['tag'] : null;
+    if (tag is String && tag.isNotEmpty) {
+      return (tag: tag, attempts: (doc['attempts'] as int?) ?? 0);
+    }
+  } catch (_) {
+    // Corrupt/missing state: the guard opens (a first attempt is honest).
+  }
+  return null;
+}
+
+/// Records an attempt to reach [tag] in the convergence-guard state.
+void _writeConvergence(String? statePath, String tag) {
+  if (statePath == null) return;
+  try {
+    final previous = _readConvergence(statePath);
+    final attempts = previous?.tag == tag ? previous.attempts + 1 : 1;
+    final file = File(statePath);
+    file.parent.createSync(recursive: true);
+    file.writeAsStringSync(jsonEncode({'tag': tag, 'attempts': attempts}));
+  } catch (_) {
+    // The guard must never break the update it guards.
+  }
+}
+
+/// Clears the convergence-guard state: a boot that finds itself up to
+/// date closes the loop, so a FUTURE release gets its attempts back.
+void _clearConvergence(String? statePath) {
+  if (statePath == null) return;
+  try {
+    File(statePath).deleteSync();
+  } on FileSystemException {
+    // Nothing to clear.
+  } catch (_) {
+    // The guard must never break the boot.
+  }
+}
+
 /// The result of [applyUpdate], the autonomous update path
 /// (`auto_update: on` at boot, `/update` in a session).
 enum ApplyUpdateOutcome {
@@ -682,6 +745,7 @@ enum ApplyUpdateOutcome {
   downloadFailed,
   unsupportedPlatform,
   restartFailed,
+  convergenceGuard,
 }
 
 /// Updates fa autonomously: fetch the latest tag, download and VERIFY the
@@ -704,20 +768,41 @@ Future<ApplyUpdateOutcome> applyUpdate({
   String pem = kFaReleaseSigningPem,
   Duration settleDelay = const Duration(seconds: 2),
   void Function(String message)? logLine,
+  String? statePath,
 }) async {
   final install = (detectInstall ?? _detectInstall)();
   if (install.kind == InstallKind.devRun) {
     return ApplyUpdateOutcome.refusedDevRun;
   }
   final log = logLine ?? logUpdateLine;
+  final state = statePath ?? _convergenceStatePath();
   final client = (newClient ?? http.Client.new)();
   try {
     final tag = await fetchLatestTag(client: client);
     if (tag == null) return ApplyUpdateOutcome.downloadFailed;
     final latest = tag.replaceFirst('v', '');
     if (compareVersions(latest, currentVersion) <= 0) {
+      // Up to date: the loop is closed — a future release gets its
+      // attempts back.
+      _clearConvergence(state);
       return ApplyUpdateOutcome.upToDate;
     }
+
+    // Convergence guard (issue #1377): auto_update:on + a channel that
+    // lags (pub.dev propagation, stale release assets) must not respawn
+    // forever. Two attempts per target tag; the state clears as soon as
+    // a boot reports up to date.
+    final convergence = _readConvergence(state);
+    if (convergence != null &&
+        convergence.tag == tag &&
+        convergence.attempts >= 2) {
+      log(
+        'fa update paused: v$latest attempted ${convergence.attempts}× '
+        'and still not resolving — not respawning again',
+      );
+      return ApplyUpdateOutcome.convergenceGuard;
+    }
+    _writeConvergence(state, tag);
 
     if (install.kind == InstallKind.pubGlobal) {
       final code = await _pubGlobalUpdate(
@@ -802,8 +887,14 @@ Future<bool> _restartAfterUpdate(
   required void Function(String) logLine,
 }) async {
   var restarted = false;
-  if (spawn != null && install.kind == InstallKind.binary) {
-    restarted = await spawn(Platform.resolvedExecutable, launchArgs);
+  if (spawn != null) {
+    // Test seam: the injected spawner covers BOTH install kinds. The exe
+    // follows the same rule the real path uses — the swapped AOT binary
+    // for release installs, the `fa` PATH shim for pub-global ones.
+    final exe = install.kind == InstallKind.binary
+        ? Platform.resolvedExecutable
+        : (_whichFa() ?? 'fa');
+    restarted = await spawn(exe, launchArgs);
   } else {
     restarted = await spawnSuccessor(
       launchArgs: launchArgs,
@@ -816,9 +907,15 @@ Future<bool> _restartAfterUpdate(
   return false;
 }
 
-/// Starts [exe] with [args], inheriting this process's stdio.
-Future<Process> _startInherited(String exe, List<String> args) {
-  return Process.start(exe, args, mode: ProcessStartMode.inheritedStdio);
+/// Starts [exe] with [args]: the successor owns the terminal (stdio
+/// inherited) and outlives this process — the spawn-successor-then-exit
+/// restart contract (Dart has no exec-replace).
+Future<Process> _startSuccessor(String exe, List<String> args) {
+  return Process.start(
+    exe,
+    args,
+    mode: ProcessStartMode.detachedWithStdio,
+  );
 }
 
 /// Spawns the freshly installed fa over this one. [launchArgs] is the
@@ -837,7 +934,7 @@ Future<bool> spawnSuccessor({
       ? Platform.resolvedExecutable
       : (_whichFa() ?? 'fa');
   try {
-    final process = await (spawn ?? _startInherited)(exe, launchArgs);
+    final process = await (spawn ?? _startSuccessor)(exe, launchArgs);
     await Future<void>.delayed(settleDelay);
     final exitCode = await process.exitCode
         .then<int?>((code) => code)

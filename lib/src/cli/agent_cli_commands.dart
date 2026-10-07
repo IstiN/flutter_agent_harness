@@ -543,7 +543,29 @@ extension SlashCommandDispatch on AgentCli {
       io.writeln('update: unavailable in this host');
       return;
     }
-    await update();
+    await update(await _updateSessionId());
+  }
+
+  /// The live session id for the `/update` restart: the session NAME when
+  /// one was written (resumable by name), else the raw id — the same
+  /// resolution the exit hint uses, minus the persisted-count gate (an
+  /// untouched session still restarts as itself).
+  Future<String?> _updateSessionId() async {
+    final session = _session;
+    if (session == null) return null;
+    var name = await session.getSessionName();
+    final metadata = await session.getMetadata();
+    if (name == null) {
+      final repo = _repo;
+      if (repo is JsonlSessionRepo) {
+        try {
+          name = await repo.sessionNameQuick(metadata);
+        } on Object {
+          name = null; // unreadable file: degrade to the id
+        }
+      }
+    }
+    return name ?? metadata.id;
   }
 
   /// `/approval`: a bare command opens the TUI picker; anything else sets

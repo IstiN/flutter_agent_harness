@@ -100,6 +100,56 @@ void main() {
     return File('${dir.path}/fa')..writeAsBytesSync(magic);
   }
 
+  /// A client serving the fake release v9.9.9: permalink redirect,
+  /// signed provenance fixtures, and the archive ([archiveBytes]).
+  http.Client releaseClient({List<int>? archiveBytes}) =>
+      MockClient((request) async {
+        if (request.url.path.endsWith('/releases/latest')) {
+          return http.Response(
+            '',
+            302,
+            headers: {
+              'location':
+                  'https://github.com/IstiN/flutter_agent_harness/'
+                  'releases/tag/v9.9.9',
+            },
+          );
+        }
+        if (request.url.path.endsWith('SHA256SUMS.sig')) {
+          return http.Response.bytes(_fixtureSig, 200);
+        }
+        if (request.url.path.endsWith('SHA256SUMS')) {
+          return http.Response(_fixtureSums, 200);
+        }
+        return http.Response.bytes(archiveBytes ?? _fixtureTarGz, 200);
+      });
+
+  /// A runProcess seam that actually extracts tar.gz archives instead of
+  /// invoking the system `tar`.
+  Future<ProcessResult> extractingRunProcess(
+    String exe,
+    List<String> args,
+  ) async {
+    if (exe == 'tar') {
+      final destDir = args.last;
+      final archiveFile = args[args.indexOf('-xzf') + 1];
+      final data = File(archiveFile).readAsBytesSync();
+      final decoded = TarDecoder().decodeBytes(
+        GZipDecoder().decodeBytes(data),
+      );
+      for (final entry in decoded) {
+        if (entry.isFile) {
+          final parts = entry.name.split('/');
+          final dest = File('$destDir/${parts.join('/')}');
+          dest.parent.createSync(recursive: true);
+          dest.writeAsBytesSync(entry.content as List<int>);
+        }
+      }
+    }
+    return ProcessResult(0, 0, '', '');
+  }
+
+
   group('classifyInstall', () {
     test('a .dart script is a dev run', () {
       final install = classifyInstall(
@@ -788,6 +838,7 @@ void main() {
         final outcome = await applyUpdate(
           currentVersion: '0.1.0',
           launchArgs: const ['--session', 'abc'],
+          statePath: '${temp.path}/update-state.json',
           detectInstall: () => binaryInstall(target.path),
           newClient: () => releaseClient(),
           runProcess: extractingRunProcess,
@@ -829,6 +880,7 @@ void main() {
         final outcome = await applyUpdate(
           currentVersion: '0.1.0',
           launchArgs: const [],
+          statePath: '${temp.path}/update-state.json',
           detectInstall: () => binaryInstall('${temp.path}/fa'),
           newClient: () => client,
           spawn: (_, _) async => fail('no successor should be spawned'),
@@ -845,6 +897,7 @@ void main() {
       final outcome = await applyUpdate(
         currentVersion: '0.1.0',
         launchArgs: const [],
+        statePath: '${temp.path}/update-state.json',
         detectInstall: () => binaryInstall(target.path),
         newClient: () => releaseClient(archiveBytes: tampered),
         runProcess: extractingRunProcess,
@@ -876,6 +929,7 @@ void main() {
       final outcome = await applyUpdate(
         currentVersion: '0.1.0',
         launchArgs: const [],
+        statePath: '${temp.path}/update-state.json',
         detectInstall: () => binaryInstall(target.path),
         newClient: () => client,
         spawn: (_, _) async => fail('no successor should be spawned'),
@@ -893,6 +947,7 @@ void main() {
       final outcome = await applyUpdate(
         currentVersion: '0.1.0',
         launchArgs: const [],
+        statePath: '${temp.path}/update-state.json',
         detectInstall: () =>
             const Install(InstallKind.devRun, 'bin/fah.dart'),
         newClient: () => client,
@@ -909,6 +964,7 @@ void main() {
         final outcome = await applyUpdate(
           currentVersion: '0.1.0',
           launchArgs: const [],
+          statePath: '${temp.path}/update-state.json',
           detectInstall: () => binaryInstall(target.path),
           newClient: () => releaseClient(),
           runProcess: extractingRunProcess,
@@ -987,5 +1043,235 @@ void main() {
         returnsNormally,
       );
     });
+  });
+
+  group('applyUpdate pub-global branch', () {
+    test(
+      're-activates via dart pub, spawns the fa shim, and records state',
+      () async {
+        final statePath = '${temp.path}/update-state.json';
+        final runCalls = <(String, List<String>)>[];
+        final spawnCalls = <(String, List<String>)>[];
+        final log = <String>[];
+        final outcome = await applyUpdate(
+          currentVersion: '1.0.522',
+          launchArgs: const ['--session', 'live'],
+          detectInstall: () => Install(
+            InstallKind.pubGlobal,
+            '${temp.path}/pub-cache/bin/fa',
+          ),
+          newClient: () => releaseClient(),
+          runProcess: (exe, args) async {
+            runCalls.add((exe, args));
+            // `pub global list` reports the OLD activation; activate
+            // succeeds.
+            return ProcessResult(
+              0,
+              0,
+              'flutter_agent_harness 1.0.522',
+              '',
+            );
+          },
+          spawn: (exe, args) async {
+            spawnCalls.add((exe, args));
+            return true;
+          },
+          pem: _testPem,
+          logLine: log.add,
+          statePath: statePath,
+        );
+        expect(outcome, ApplyUpdateOutcome.applied);
+        // list + activate ran (no deactivate: pub believes an OLDER spec).
+        final verbs = [
+          for (final (_, args) in runCalls)
+            if (args.length >= 3) args[2],
+        ];
+        expect(verbs, containsAll(['list', 'activate']));
+        expect(
+          verbs.where((v) => v == 'deactivate'),
+          isEmpty,
+        );
+        // The successor exe is the PATH shim (never the dart VM), and the
+        // original argv — with the live session — rides through.
+        final (spawnExe, spawnArgs) = spawnCalls.single;
+        expect(spawnExe, endsWith('fa'));
+        expect(spawnArgs, containsAllInOrder(['--session', 'live']));
+        expect(log, contains('fa update applied: v1.0.522 -> v9.9.9'));
+        // The convergence state recorded the first attempt at v9.9.9.
+        final state =
+            jsonDecode(File(statePath).readAsStringSync())
+                as Map<String, dynamic>;
+        expect(state['tag'], 'v9.9.9');
+        expect(state['attempts'], 1);
+      },
+    );
+  });
+
+  group('applyUpdate convergence guard', () {
+    test('caps repeat attempts for the same tag at two', () async {
+      final statePath = '${temp.path}/update-state.json';
+      var sumsFetches = 0;
+      http.Client countingClient() => MockClient((request) async {
+        if (request.url.path.endsWith('SHA256SUMS')) sumsFetches++;
+        if (request.url.path.endsWith('/releases/latest')) {
+          return http.Response(
+            '',
+            302,
+            headers: {
+              'location':
+                  'https://github.com/IstiN/flutter_agent_harness/'
+                  'releases/tag/v9.9.9',
+            },
+          );
+        }
+        if (request.url.path.endsWith('SHA256SUMS.sig')) {
+          return http.Response.bytes(_fixtureSig, 200);
+        }
+        if (request.url.path.endsWith('SHA256SUMS')) {
+          return http.Response(_fixtureSums, 200);
+        }
+        return http.Response.bytes(_fixtureTarGz, 200);
+      });
+      final target = File('${temp.path}/fa')..writeAsStringSync('old');
+      Install binaryInstall() => Install(InstallKind.binary, target.path);
+      final common = (
+        currentVersion: '1.0.522',
+        detectInstall: binaryInstall,
+        newClient: countingClient,
+        runProcess: extractingRunProcess,
+        spawn: (String _, List<String> __) async => true,
+        pem: _testPem,
+        logLine: (String _) {},
+        statePath: statePath,
+      );
+      expect(
+        await applyUpdate(
+          currentVersion: common.currentVersion,
+          launchArgs: const [],
+          detectInstall: common.detectInstall,
+          newClient: common.newClient,
+          runProcess: common.runProcess,
+          spawn: common.spawn,
+          pem: common.pem,
+          logLine: common.logLine,
+          statePath: common.statePath,
+        ),
+        ApplyUpdateOutcome.applied,
+      );
+      expect(
+        await applyUpdate(
+          currentVersion: common.currentVersion,
+          launchArgs: const [],
+          detectInstall: common.detectInstall,
+          newClient: common.newClient,
+          runProcess: common.runProcess,
+          spawn: common.spawn,
+          pem: common.pem,
+          logLine: common.logLine,
+          statePath: common.statePath,
+        ),
+        ApplyUpdateOutcome.applied,
+      );
+      final before = sumsFetches;
+      final log = <String>[];
+      expect(
+        await applyUpdate(
+          currentVersion: common.currentVersion,
+          launchArgs: const [],
+          detectInstall: common.detectInstall,
+          newClient: common.newClient,
+          runProcess: common.runProcess,
+          spawn: common.spawn,
+          pem: common.pem,
+          logLine: log.add,
+          statePath: common.statePath,
+        ),
+        ApplyUpdateOutcome.convergenceGuard,
+      );
+      // The guarded boot never downloaded a third archive.
+      expect(sumsFetches, before);
+      expect(log.join('\n'), contains('not respawning again'));
+    });
+
+    test('a moved tag resets the attempt count', () async {
+      final statePath = '${temp.path}/update-state.json';
+      File(
+        statePath,
+      ).writeAsStringSync(jsonEncode({'tag': 'v0.0.1', 'attempts': 7}));
+      final target = File('${temp.path}/fa')..writeAsStringSync('old');
+      final outcome = await applyUpdate(
+        currentVersion: '1.0.522',
+        launchArgs: const [],
+        detectInstall: () => Install(InstallKind.binary, target.path),
+        newClient: () => releaseClient(),
+        runProcess: extractingRunProcess,
+        spawn: (_, _) async => true,
+        pem: _testPem,
+        logLine: (_) {},
+        statePath: statePath,
+      );
+      expect(outcome, ApplyUpdateOutcome.applied);
+      final state =
+          jsonDecode(File(statePath).readAsStringSync())
+              as Map<String, dynamic>;
+      expect(state['tag'], 'v9.9.9');
+      expect(state['attempts'], 1);
+    });
+
+    test('a boot that reports up to date clears the state', () async {
+      final statePath = '${temp.path}/update-state.json';
+      File(
+        statePath,
+      ).writeAsStringSync(jsonEncode({'tag': 'v0.1.0', 'attempts': 2}));
+      final client = MockClient((request) async {
+        return http.Response(
+          '',
+          302,
+          headers: {
+            'location':
+                'https://github.com/IstiN/flutter_agent_harness/'
+                'releases/tag/v0.1.0',
+          },
+        );
+      });
+      final outcome = await applyUpdate(
+        currentVersion: '0.1.0',
+        launchArgs: const [],
+        detectInstall: () => Install(InstallKind.binary, '${temp.path}/fa'),
+        newClient: () => client,
+        spawn: (_, _) async => fail('no successor on the up-to-date path'),
+        statePath: statePath,
+      );
+      expect(outcome, ApplyUpdateOutcome.upToDate);
+      expect(File(statePath).existsSync(), isFalse);
+    });
+  });
+
+  group('successorArgs', () {
+    test('appends the live session when the argv carries none', () {
+      expect(
+        successorArgs(const ['-p', 'hi'], 's1'),
+        const ['-p', 'hi', '--session', 's1'],
+      );
+    });
+
+    test('passes the argv through unchanged without a session id', () {
+      const argv = ['-p', 'hi'];
+      expect(identical(successorArgs(argv, null), argv), isTrue);
+    });
+
+    test(
+      'never double-flags when the argv already resumes a session',
+      () {
+        expect(
+          successorArgs(const ['--session', 'other'], 's1'),
+          const ['--session', 'other'],
+        );
+        expect(
+          successorArgs(const ['--session=other'], 's1'),
+          const ['--session=other'],
+        );
+      },
+    );
   });
 }
