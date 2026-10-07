@@ -60,8 +60,15 @@ grace="${RELEASE_FLIGHT_GRACE_SECS:-900}" # AC1: «no run at all» window bound
 read_sleep="${PUBDEV_READ_SLEEP_SECS:-10}"  # test seam (production: 10s)
 poll_sleep="${PUBDEV_POLL_SLEEP_SECS:-20}"  # test seam (production: 20s)
 tag_appear_wait="${TAG_APPEAR_WAIT_SECS:-600}"      # wait for a pending tag cut
-run_terminal_wait="${RUN_TERMINAL_WAIT_SECS:-1800}" # wait for the tag run to go terminal
+run_terminal_wait="${RUN_TERMINAL_WAIT_SECS:-900}"  # wait for the tag run to go terminal
 max_polls="${PUBDEV_MAX_POLLS:-90}"         # iteration cap (bounds the waits in tests)
+#
+# Budget vs the pubdev leg's 60m ceiling (daily-publish.yml): the waits are
+# sized so the leg always finishes INSIDE the wall — appear-wait 10m +
+# terminal-wait 15m = 25m, or appear-wait 10m + bounded rerun watch 20m +
+# post-rerun verify poll 10m ≈ 40m. A job killed at 60m is a CANCELLED leg
+# the report files as a watcher death — the «past any budget → neutral skip,
+# never an error» guarantee must survive end-to-end (#1370 review).
 
 emit() { printf '%s\n' "$1" >> "$out"; }
 
@@ -110,7 +117,6 @@ fi
 
 # Behind: classify the tag's publish state before reaching for recovery.
 tag="v$pubspec"
-now=$(date +%s)
 
 in_flight() { # $1 = human reason — the outcome is UNOBSERVED, never an alarm
   emit "status=release-in-flight"
@@ -123,17 +129,17 @@ never_triggered() { # $1 = which state — nothing publishable is in flight
   exit 1
 }
 
-# The tag's ci.yml runs. The PUSH-event twin is the only publisher (pub.dev
-# OIDC accepts push/workflow_dispatch events only, #1368) — classification
-# and recovery must use THAT run, never the release twin. One list read,
-# filtered locally.
+# The tag's ci.yml runs. PUSH and workflow_dispatch events carry OIDC tokens
+# pub.dev accepts; the release-event twin can never publish (#1368) —
+# classification and recovery use a publishable run, never the release twin.
+# One list read, filtered locally.
 fetch_runs() {
   gh run list --repo "$repo" --workflow ci.yml \
     --branch "$tag" --limit 20 \
     --json databaseId,status,conclusion,event
 }
-push_run_of() { # $1 = runs JSON array
-  jq -c 'map(select(.event == "push")) | .[0] // empty' <<<"$1"
+publishable_run_of() { # $1 = runs JSON array
+  jq -c 'map(select(.event == "push" or .event == "workflow_dispatch")) | .[0] // empty' <<<"$1"
 }
 any_run_of() { # $1 = runs JSON array
   jq -c '.[0] // empty' <<<"$1"
@@ -141,11 +147,12 @@ any_run_of() { # $1 = runs JSON array
 
 # Tag presence + age. creatordate = the annotated tag's tagger date (the
 # moment release-tag cut it); a lightweight tag falls back to its commit date.
-# Echoes the age on stdout, nothing when the tag is absent.
+# The timestamp is sampled per call — after the appear-wait a just-cut tag
+# must not read as a negative age (#1370 review).
 read_tag_age() {
   if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
     git fetch -q --depth 1 origin "refs/tags/$tag:refs/tags/$tag"
-    echo "$(( now - $(git for-each-ref "refs/tags/$tag" --format='%(creatordate:unix)') ))"
+    echo "$(( $(date +%s) - $(git for-each-ref "refs/tags/$tag" --format='%(creatordate:unix)') ))"
   fi
 }
 tag_age=$(read_tag_age)
@@ -163,7 +170,7 @@ if [ -z "$tag_age" ]; then
   if [ -z "$bump" ]; then
     never_triggered "no tag and no chore(release) bump on main"
   fi
-  bump_age=$(( now - $(git log -1 --format=%ct "$bump") ))
+  bump_age=$(( $(date +%s) - $(git log -1 --format=%ct "$bump") ))
   echo "release-tag has not cut $tag yet (bump ${bump_age}s old) — waiting up to ${tag_appear_wait}s for the tag"
   attempts=$(poll_attempts "$tag_appear_wait")
   attempt=1
@@ -180,17 +187,17 @@ if [ -z "$tag_age" ]; then
 fi
 
 runs_json=$(fetch_runs)
-tag_run=$(push_run_of "$runs_json")
+tag_run=$(publishable_run_of "$runs_json")
 if [ -z "$tag_run" ]; then
-  if [ -n "$(any_run_of "$runs_json")" ]; then
-    never_triggered "only release-event run(s) exist and pub.dev OIDC accepts push-event runs only"
-  fi
+  # AC1 — the 2026-10-03 #1189 false positive: between `git push <tag>` and
+  # the tag's ci.yml run becoming visible there is a seconds-to-minutes
+  # window (tag 05:32, verify 05:35 read «no run», the healthy run
+  # completed 05:37). release-tag cuts the GitHub Release concurrently with
+  # the tag push, so the RELEASE twin can register while the publishable
+  # run has not — the grace window governs before ANY «never triggered»
+  # verdict (#1370 review): a young tag is release-in-flight, full stop.
   if [ "$tag_age" -lt "$grace" ]; then
-    # AC1 — the 2026-10-03 #1189 false positive: between `git push <tag>` and
-    # the tag's ci.yml run becoming visible there is a seconds-to-minutes
-    # window (tag 05:32, verify 05:35 read «no run», the healthy run
-    # completed 05:37). Neutral skip; the next daily re-verifies.
-    in_flight "$tag exists (${tag_age}s old < ${grace}s grace) but its ci.yml run is not visible yet"
+    in_flight "$tag exists (${tag_age}s old < ${grace}s grace) but its publishable ci.yml run is not visible yet"
   fi
   # Review thread 2 (E4 residual): a freshly re-pushed tag takes seconds to
   # register in the API — an operator re-pushing while this leg sits between
@@ -198,16 +205,20 @@ if [ -z "$tag_run" ]; then
   # once. One spaced re-read; alarm only if it is empty too.
   sleep "$read_sleep"
   runs_json=$(fetch_runs)
-  tag_run=$(push_run_of "$runs_json")
+  tag_run=$(publishable_run_of "$runs_json")
   if [ -n "$tag_run" ]; then
     echo "::notice::$tag's ci run registered between the reads — continuing with it"
-  elif [ -n "$(any_run_of "$runs_json")" ]; then
-    never_triggered "only release-event run(s) exist and pub.dev OIDC accepts push-event runs only"
   fi
 fi
 if [ -z "$tag_run" ]; then
-  # AC2 — past the grace window with no run at all (both reads empty):
-  # genuinely never triggered (e.g. a GITHUB_TOKEN push cannot cascade).
+  # Past the grace window and both reads saw no publishable run.
+  if [ -n "$(any_run_of "$runs_json")" ]; then
+    # Release-event run(s) only: their OIDC tokens are rejected by pub.dev
+    # (push/workflow_dispatch events only, #1368) — the publish genuinely
+    # never triggered, and re-running them can never publish either.
+    never_triggered "only release-event run(s) exist — pub.dev OIDC accepts push/workflow_dispatch runs only"
+  fi
+  # AC2 — no run at all (e.g. a GITHUB_TOKEN push cannot cascade).
   never_triggered "no run registered past the ${grace}s grace window"
 fi
 run_id=$(jq -r '.databaseId' <<<"$tag_run")
@@ -225,7 +236,14 @@ if [ "$status" != "completed" ]; then
   attempt=1
   while [ "$attempt" -le "$attempts" ]; do
     sleep "$poll_sleep"
-    status=$(gh run view "$run_id" --repo "$repo" --json status --jq .status)
+    # A transient gh/network failure must read as «still pending», never
+    # kill the leg under set -e (#1370 review — this loop is the most
+    # fault-exposed network path in the file).
+    if ! status=$(gh run view "$run_id" --repo "$repo" --json status --jq .status 2>/dev/null); then
+      echo "transient gh failure polling run $run_id (attempt $attempt/$attempts)"
+      attempt=$(( attempt + 1 ))
+      continue
+    fi
     [ "$status" = "completed" ] && break
     attempt=$(( attempt + 1 ))
   done
@@ -233,7 +251,7 @@ if [ "$status" != "completed" ]; then
     in_flight "tag run $run_id is still $status after ~${run_terminal_wait}s — publish outcome unobserved, not failed"
   fi
 fi
-conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
+conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion 2>/dev/null || echo unknown)
 
 if [ "$conclusion" = "success" ]; then
   # Push run went green but pub.dev still serves $published — not
@@ -243,10 +261,29 @@ if [ "$conclusion" = "success" ]; then
 fi
 
 echo "tag run $run_id concluded $conclusion — re-running its failed jobs (keeps the original tag-push event/OIDC claims)"
-gh run rerun "$run_id" --repo "$repo" --failed
+# An unreadable conclusion (transient API failure) may hide a successful
+# run — `rerun --failed` on it fails to start; fail loud, never fall off
+# set -e mid-recovery (#1370 review).
+if ! gh run rerun "$run_id" --repo "$repo" --failed 2>/dev/null; then
+  echo "::error::could not start the rerun of the $tag publish run ($run_id, concluded $conclusion) — manual recovery needed: https://github.com/$repo/actions/runs/$run_id"
+  exit 1
+fi
 sleep "$poll_sleep"
-gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 >/dev/null 2>&1 || true
-conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion)
+# Bounded watch — the leg's 60m ceiling must survive appear-wait + rerun +
+# post-verify (thread: budget arithmetic); `timeout` is absent on some
+# dev hosts (macOS/BSD), fall back to the unbounded watch there.
+if command -v timeout >/dev/null 2>&1; then
+  timeout 1200 gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 >/dev/null 2>&1 || true
+else
+  gh run watch "$run_id" --repo "$repo" --exit-status --interval 60 >/dev/null 2>&1 || true
+fi
+rstatus=$(gh run view "$run_id" --repo "$repo" --json status --jq .status 2>/dev/null || echo unknown)
+conclusion=$(gh run view "$run_id" --repo "$repo" --json conclusion --jq .conclusion 2>/dev/null || echo unknown)
+if [ "$rstatus" != "completed" ]; then
+  # The bounded watch lapsed (or the API blipped) with the rerun still
+  # executing — outcome unobserved: neutral skip, the next daily re-verifies.
+  in_flight "rerun of the $tag publish run is $rstatus — outcome unobserved, not failed"
+fi
 if [ "$conclusion" != "success" ]; then
   echo "::error::rerun of the $tag publish run failed again ($conclusion) — see https://github.com/$repo/actions/runs/$run_id"
 fi

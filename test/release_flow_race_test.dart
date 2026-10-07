@@ -879,7 +879,7 @@ void main() {
 
   // ── #1368 — twin-run selection, bounded waits, true-state errors ─────────
   group('#1368 — push-twin selection and the bounded waits', () {
-    test('release-event-only runs -> «never triggered», the exit-65 arm named',
+    test('release-event-only runs past grace -> «never triggered», the exit-65 arm named',
         () {
       // The old release arm: the release twin attempted the publish pub.dev
       // OIDC always rejects. Its failure must read as never-published, and
@@ -890,9 +890,35 @@ void main() {
       expect(r.exitCode, isNot(0), reason: r.output);
       expect(r.errored, isTrue);
       expect(r.output, contains(
-          'never triggered (only release-event run(s) exist and pub.dev OIDC accepts push-event runs only)'));
+          'never triggered (only release-event run(s) exist — pub.dev OIDC accepts push/workflow_dispatch runs only)'));
       expect(r.ghLog.where((l) => l.contains('run rerun')), isEmpty,
           reason: 'rerunning the release twin can never publish');
+    });
+
+    test('young tag with release-only runs visible -> grace skip, never alarms', () {
+      // #1370 review: release-tag cuts the GitHub Release concurrently with
+      // the tag push — the release twin registers while the push twin has
+      // not. Within the grace window this is release-in-flight, not
+      // «never triggered» (the #1189 false-alarm class).
+      final r = runVerify('young-release-twin',
+          runsJson:
+              '[{"databaseId":77,"status":"queued","conclusion":null,"event":"release"}]');
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.inFlight, isTrue, reason: r.output);
+      expect(r.errored, isFalse, reason: r.output);
+      expect(r.output, isNot(contains('never triggered')));
+    });
+
+    test('release-only run registers on the spaced re-read -> still alarms (past grace)',
+        () {
+      final r = runVerify('release-twin-second-read',
+          tagAge: const Duration(hours: 2),
+          runsJson: '[]',
+          secondReadJson:
+              '[{"databaseId":77,"status":"completed","conclusion":"failure","event":"release"}]');
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(r.errored, isTrue);
+      expect(r.output, contains('only release-event run(s) exist'));
     });
 
     test('twin runs: recovery targets the PUSH twin, never the release twin',
@@ -1191,6 +1217,17 @@ void main() {
       final ci = read('.github/workflows/ci.yml');
       expect(ci, contains('dart_ok: \${{ steps.gate.outputs.dart_ok }}'),
           reason: 'publish consumes the output');
+      // The gate verdicts (review-thread fix on #1370): package legs feed
+      // dart_blocker (dart_ok + aggregate), platform legs feed ONLY
+      // platform_red (aggregate) — and dart_ok is exported BEFORE the fail
+      // so it is always 'true'/'false', never ''.
+      expect(ci, contains('platform_red=false'),
+          reason: 'platform reds are tracked separately from dart_ok');
+      expect(
+          ci,
+          contains(
+              'if [ -n "\$dart_blocker" ]; then dart_ok=false; else dart_ok=true; fi'),
+          reason: 'the export is explicit and precedes the aggregate fails');
       // The exclusion list inside the gate step: the full platform case
       // pattern, verbatim.
       expect(
