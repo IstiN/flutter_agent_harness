@@ -5,11 +5,11 @@
 /// While a foreground tool call is in flight, the tracker (one instance per
 /// CLI host) evaluates on a ~60s chain: past `waiting.toolLivenessSeconds`
 /// every tick prints ONE grep-friendly status line (elapsed seconds, tool
-/// name, short command tail); past `waiting.toolEscalateSeconds` the tick
-/// instead prints — exactly once per stuck call — the background
-/// escape-hatch hint, so an operator tailing the run (and the model reading
-/// its own logs) learns the call is a `bash background: true` / `/tasks` /
-/// `--wait-for-jobs` candidate.
+/// name, short command tail, and the #1349 background hint); past
+/// `waiting.toolEscalateSeconds` the tick instead prints — exactly once per
+/// stuck call — the fuller background escape-hatch hint, so an operator
+/// tailing the run (and the model reading its own logs) learns the call is
+/// a `bash background: true` / `/tasks` / `--wait-for-jobs` candidate.
 ///
 /// One clock only: every elapsed value derives from the host's
 /// waiting-clock seam (the same `waitingClock` the #450 waiting layer and
@@ -44,6 +44,13 @@ const String toolLivenessEscalationHint =
     '--wait-for-jobs · cancel: fa bash_job stop <id> once backgrounded; '
     'Ctrl+C / inbox steering takes effect once the call unwinds '
     '(until #1053)';
+
+/// The short background hint every periodic reminder line carries
+/// (issue #1349): a warned parked turn is still a parked turn, so each
+/// reminder names the escape while the call keeps running — the model
+/// reading its own logs sees the option before the 300s escalation.
+const String toolLivenessForegroundHint =
+    'consider background: true for long waits (settle notification wakes you)';
 
 /// Flatten + clip budget for the command tail inside a liveness line — the
 /// line must stay grep-friendly and single-line (repeated every tick).
@@ -230,9 +237,10 @@ final class ToolLivenessTracker {
 }
 
 /// The periodic reminder line (gh-1055 AC1): `⏳ [bash] sleep 500 — running
-/// 120s`. Single line, tool name, short command tail, elapsed seconds.
+/// 120s · consider background: true …`. Single line, tool name, short
+/// command tail, elapsed seconds, and the #1349 background hint.
 String toolLivenessReminderLine(ToolLivenessCall call, DateTime now) =>
-    _livenessLine(call, now);
+    _livenessLine(call, now, hint: toolLivenessForegroundHint);
 
 /// The escalation line (gh-1055 AC3): the reminder's facts plus the
 /// background escape hatch. Emitted once per stuck call.
