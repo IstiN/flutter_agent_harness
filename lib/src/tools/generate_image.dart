@@ -236,26 +236,41 @@ final class DialImageDialect extends ImageDialect {
     return att is Map<String, dynamic> ? att : null;
   }
 
+  /// Inline base64 image payload (`b64_json`/`data`), `null` when the
+  /// attachment carries none.
+  Uint8List? _dialInlineImage(Map<String, dynamic> att) {
+    final b64 = att['b64_json'] ?? att['data'];
+    if (b64 is String && b64.isNotEmpty) {
+      return base64Decode(b64);
+    }
+    return null;
+  }
+
+  /// Absolute `http(s)://` URLs pass through; DIAL-relative URLs resolve
+  /// against `$base/v1/`.
+  String _dialDownloadUrl(String relUrl, String base) {
+    if (relUrl.startsWith('http://') || relUrl.startsWith('https://')) {
+      return relUrl;
+    }
+    return '$base/v1/${relUrl.startsWith('/') ? relUrl.substring(1) : relUrl}';
+  }
+
   Future<Uint8List> _downloadDialAttachment(
     Map<String, dynamic> att, {
     required String base,
     required String apiKey,
     required http.Client client,
   }) async {
-    final b64 = att['b64_json'] ?? att['data'];
-    if (b64 is String && b64.isNotEmpty) {
-      return base64Decode(b64);
+    final inline = _dialInlineImage(att);
+    if (inline != null) {
+      return inline;
     }
     final relUrl = att['url'] as String?;
     if (relUrl == null || relUrl.isEmpty) {
       throw MediaException('image generation: no image in DIAL response');
     }
-    final downloadUrl =
-        relUrl.startsWith('http://') || relUrl.startsWith('https://')
-            ? relUrl
-            : '$base/v1/${relUrl.startsWith('/') ? relUrl.substring(1) : relUrl}';
     final imgResp = await client.get(
-      Uri.parse(downloadUrl),
+      Uri.parse(_dialDownloadUrl(relUrl, base)),
       headers: {
         if (apiKey.isNotEmpty) 'Api-Key': apiKey,
       },

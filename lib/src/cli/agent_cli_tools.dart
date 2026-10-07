@@ -381,6 +381,10 @@ extension AgentCliTools on AgentCli {
     }
   }
 
+  /// Whether the registered `read` tool is currently the sqlite variant.
+  bool _readToolIsSqlite(List<AgentTool> group) =>
+      group.first.description.contains(readSqliteSectionPrompt);
+
   /// Swaps the registered `read` tool when the sqlite decision flipped:
   /// same shared snapshot store (hashline anchors recorded by either
   /// variant validate for `edit`), same env, only the description and the
@@ -389,8 +393,7 @@ extension AgentCliTools on AgentCli {
     final wantSqlite = resolution.byId['sqlite']?.enabled ?? false;
     final group = _toolGroupsById['read'];
     if (group == null || group.isEmpty) return;
-    final hasSqlite = group.first.description.contains(readSqliteSectionPrompt);
-    if (wantSqlite == hasSqlite) return;
+    if (wantSqlite == _readToolIsSqlite(group)) return;
     final fresh = readFileTool(
       _coreToolEnv,
       snapshots: _snapshotStore,
