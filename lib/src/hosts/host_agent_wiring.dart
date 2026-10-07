@@ -930,15 +930,29 @@ WiredAgentCore wireAgentCore({
       : null;
 
   // ---- host extensions (slice 4, HostExtensionApi) ----
-  // E6 was enforced at construction (every built-in profile declared);
-  // here the builder resolves each extension against the profile the
-  // host actually wires (custom profiles included — a missing state is a
-  // wire-time E6 violation) and applies E8 hiding. The E7 collision
-  // check runs after the task complex assembles, below.
-  final extensionWiring = _wireExtensions(
-    profileName: profile.name,
-    extensions: services.extensions,
-  );
+  // The surface RIDES the hostExtensionApi capability cell: a profile
+  // declaring it off hides every declared extension with the cell's
+  // reason — the same hide-with-reason contract as any off capability
+  // (E8). Declared-but-unenforced would make the cell decorative (E2:
+  // silence is not a declaration). E6 was enforced at construction
+  // (every built-in profile declared); below, the builder resolves each
+  // extension against the profile the host actually wires (custom
+  // profiles included — a missing state is a wire-time E6 violation).
+  // The E7 collision check runs after the task complex assembles.
+  final extensionCell = plan.planFor(HostCapability.hostExtensionApi);
+  final extensionWiring = extensionCell is WiredCapability
+      ? _wireExtensions(
+          profileName: profile.name,
+          extensions: services.extensions,
+        )
+      : [
+          for (final extension in services.extensions)
+            WiredHostExtension(
+              extension: extension,
+              tools: const [],
+              hiddenReason: (extensionCell as HiddenCapability).reason,
+            ),
+        ];
 
   // Tools first, core second: the list rides the constructor so a wired
   // core can never exist without its tools. The agent closures read the

@@ -59,9 +59,10 @@ final class HostExtension {
   /// empty/duplicate tool id.
   HostExtension({
     required this.name,
-    this.tools = const [],
+    List<AgentTool> tools = const [],
     required Map<String, CapabilityState> profileStates,
-  }) : profileStates = Map.unmodifiable(profileStates) {
+  }) : tools = List.unmodifiable(tools),
+       profileStates = Map.unmodifiable(profileStates) {
     if (name.trim().isEmpty) {
       throw const HostProfileViolation(
         'HostExtension name must not be blank (E7 names registrants — '

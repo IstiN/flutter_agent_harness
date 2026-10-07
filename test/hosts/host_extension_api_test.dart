@@ -240,6 +240,40 @@ void main() {
       expect(outcome.tools.single.name, 'yoclip_cut');
     });
 
+    test('a profile with hostExtensionApi off hides every declared '
+        'extension with the cell reason (the cell is enforced, E8)', () {
+      final custom = HostCapabilityProfile(
+        name: 'locked-embed',
+        states: {
+          for (final capability in HostCapability.values)
+            capability:
+                capability == HostCapability.hostExtensionApi
+                ? const CapabilityOffState(
+                    'no third-party tools in this embed',
+                  )
+                : const CapabilityOnState(),
+        },
+      );
+      final wired = wireAgentCore(
+        profile: custom,
+        services: AgentCoreServices(
+          baseEnv: MemoryExecutionEnv(cwd: '/w'),
+          extensions: [
+            HostExtension(
+              name: 'yoclip',
+              tools: [_tool('yoclip_cut')],
+              profileStates: _states(),
+            ),
+          ],
+        ),
+      );
+      expect(wired.tools.map((t) => t.name), isNot(contains('yoclip_cut')));
+      expect(wired.extensions, hasLength(1));
+      final outcome = wired.extensions.single;
+      expect(outcome.isHidden, isTrue);
+      expect(outcome.hiddenReason, 'no third-party tools in this embed');
+    });
+
     test('a custom profile without a state is a wire-time E6 violation',
         () {
       final custom = HostCapabilityProfile(
@@ -281,7 +315,7 @@ void main() {
             sessionEnvVars: () => {},
             sandbox: const SandboxServices(),
             sessionRoot: '/tmp/fah-test',
-            extensions: [if (extension != null) extension],
+            extensions: [?extension],
           );
       final yoclip = HostExtension(
         name: 'yoclip',
