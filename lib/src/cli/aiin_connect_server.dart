@@ -237,6 +237,10 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
   /// ambiguity) — other values only for tests.
   String callbackHost = '127.0.0.1',
 
+  /// How long an already-landed callback waits for the open surface to
+  /// settle (gh-1378) — injectable so tests pay no real wall clock.
+  Duration sheetSettleGrace = _sheetSettleGrace,
+
   /// The auth-session surface's completion value (gh-1044 AC9): resolves
   /// with the callback URL the native scheme interception caught
   /// (`callbackScheme: 'http'`), or null when the sheet closed without
@@ -323,7 +327,7 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
       // after the callback line. A short grace keeps the ordering (the
       // sheet had its chance to close before the exchange starts); the
       // timeout is a status line, never dead air.
-      await opened.timeout(_sheetSettleGrace);
+      await opened.timeout(sheetSettleGrace);
     } on TimeoutException {
       onStatus(
         'the sign-in sheet did not close after the callback — '

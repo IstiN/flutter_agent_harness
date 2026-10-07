@@ -196,6 +196,12 @@ Future<void> pushAddProviderFlow(
   ProviderRegistry? registry,
   harness.ModelsEndpointFetcher? modelsFetcher,
   List<FaOnDeviceRoute> onDeviceRoutes = const [],
+
+  /// The quota service, when the host has one: forwarded to the fallback
+  /// picker so its manual adds run the endpoint-confirmation probe
+  /// (gh-1378 AC3) the same way the direct constructions do. Host pages
+  /// wire their own.
+  harness.ProviderQuotaService? quotas,
 }) => Navigator.of(context).push(
   MaterialPageRoute<void>(
     builder: (routeContext) => hostPage != null
@@ -204,6 +210,7 @@ Future<void> pushAddProviderFlow(
             registry: registry,
             modelsFetcher: modelsFetcher,
             onDeviceRoutes: onDeviceRoutes,
+            quotas: quotas,
           ),
   ),
 );
@@ -530,11 +537,20 @@ class AddProviderPresetPickerPage extends StatelessWidget {
   /// gh-1378 AC3: a manual add on a quota-marked endpoint runs the same
   /// endpoint confirmation the row's gauge reads — at add time, not at
   /// the next pull-to-refresh. Key-less adds stay probe-less (the gauge
-  /// gates on connectivity the same way).
+  /// gates on connectivity the same way). The catchError mirrors the
+  /// service's own `_kick`/`QuotaStore.confirmEndpoint` shape: a failed
+  /// probe must never surface as an unhandled async exception on a
+  /// fire-and-forget future.
   void _confirmQuotaFor(String baseUrl, {required bool keyed}) {
     final mark = providerMarkKeyForBaseUrl(baseUrl);
     if (quotas == null || !keyed || !quotaMarkIds.contains(mark)) return;
-    unawaited(quotas!.refresh(mark));
+    unawaited(
+      quotas!
+          .refresh(mark)
+          .catchError(
+            (_) => const harness.QuotaFetchResult.unknown('no quota source'),
+          ),
+    );
   }
 
   /// Runs one of [FaUiSso]'s default flows with the picker's own context
