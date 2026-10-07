@@ -813,55 +813,64 @@ class _JsAppViewState extends State<JsAppView> {
         if (bootError != null) {
           return _errorCard(theme, bootError);
         }
-        return ValueListenableBuilder<Map<String, dynamic>?>(
-          valueListenable: engine.tree,
-          builder: (context, tree, _) {
-            if (tree == null) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            final renderer = JsonWidgetRenderer(
-              theme: JsonWidgetTheme.fromAccent(
-                theme.colorScheme.primary,
-                brightness: theme.brightness,
-              ),
-              mapTileProvider: widget.mapTileProvider,
-              mediaHost: widget.mediaHost ?? const FaMediaHost(),
-              // Embedded web content: the SAME host the engine's JsRuntimeConfig
-              // got (see JsAppEngine.start), so a `webView` node renders
-              // identically wherever the tree is drawn.
-              webViewHost: widget.webViewHost ?? createFaWebViewHost(),
-              // 3D scenes: the dispatcher singleton shared with the engine's
-              // JsRuntimeConfig (see JsAppEngine.start); taps raycast into
-              // `jsr.scene3d.onTap` handlers in the app.
-              js3dHost: createFaJs3dHost(widget.env),
-              onScene3dTap: (sceneId, payload) =>
-                  engine.dispatchHostEvent('scene3d.tap:$sceneId', payload),
-              onEvent: (actionId, payload) {
-                unawaited(engine.callEvent(actionId, payload));
-              },
-            );
-            // gh-1164 Part B: a host-side render/build failure is reported to
-            // the authoring agent through the same gate as JS-side errors —
-            // the framework still renders its own error UI for the user.
-            Widget rendered;
-            try {
-              rendered = renderer.build(tree, context);
-            } on Object catch (error, stackTrace) {
-              engine.reportHostError(
-                'render: $error',
-                kind: 'render',
-                stack: '$stackTrace',
-              );
-              rethrow;
-            }
-            return ViewportReporter(
-              onSize: (size) => engine.dispatchHostEvent('viewport', {
-                'width': size.width,
-                'height': size.height,
-              }),
-              child: ClipRect(child: rendered),
-            );
+        return _treeView(theme, engine);
+      },
+    );
+  }
+
+  /// The app tree once the boot is trusted (gh-1336): a spinner until the
+  /// first render lands, then the JSON widget tree. Extracted from
+  /// [_buildBody] to keep both halves under the CRAP ratchet — the lines
+  /// here are covered by the native-bridge suites, which skip on hosted
+  /// Linux, so the CI analyzer measures ~0% widget-test coverage.
+  Widget _treeView(ThemeData theme, JsAppEngine engine) {
+    return ValueListenableBuilder<Map<String, dynamic>?>(
+      valueListenable: engine.tree,
+      builder: (context, tree, _) {
+        if (tree == null) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final renderer = JsonWidgetRenderer(
+          theme: JsonWidgetTheme.fromAccent(
+            theme.colorScheme.primary,
+            brightness: theme.brightness,
+          ),
+          mapTileProvider: widget.mapTileProvider,
+          mediaHost: widget.mediaHost ?? const FaMediaHost(),
+          // Embedded web content: the SAME host the engine's JsRuntimeConfig
+          // got (see JsAppEngine.start), so a `webView` node renders
+          // identically wherever the tree is drawn.
+          webViewHost: widget.webViewHost ?? createFaWebViewHost(),
+          // 3D scenes: the dispatcher singleton shared with the engine's
+          // JsRuntimeConfig (see JsAppEngine.start); taps raycast into
+          // `jsr.scene3d.onTap` handlers in the app.
+          js3dHost: createFaJs3dHost(widget.env),
+          onScene3dTap: (sceneId, payload) =>
+              engine.dispatchHostEvent('scene3d.tap:$sceneId', payload),
+          onEvent: (actionId, payload) {
+            unawaited(engine.callEvent(actionId, payload));
           },
+        );
+        // gh-1164 Part B: a host-side render/build failure is reported to
+        // the authoring agent through the same gate as JS-side errors —
+        // the framework still renders its own error UI for the user.
+        Widget rendered;
+        try {
+          rendered = renderer.build(tree, context);
+        } on Object catch (error, stackTrace) {
+          engine.reportHostError(
+            'render: $error',
+            kind: 'render',
+            stack: '$stackTrace',
+          );
+          rethrow;
+        }
+        return ViewportReporter(
+          onSize: (size) => engine.dispatchHostEvent('viewport', {
+            'width': size.width,
+            'height': size.height,
+          }),
+          child: ClipRect(child: rendered),
         );
       },
     );
