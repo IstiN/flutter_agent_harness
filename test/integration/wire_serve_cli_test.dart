@@ -535,7 +535,12 @@ void main() {
           'versions': [1],
         }),
       );
-      final first = await ws.first.timeout(const Duration(seconds: 10));
+      // 30s, not 10s: the shard runs 4 suites on 4 arm64 cores and a
+      // loaded event loop once starved the welcome past 10s (run
+      // 37552613207 — the only red of this test, no product path
+      // involved). The budget matches this file's other handshake waits
+      // (20s settle / 20s serve shutdown); the assertion is unchanged.
+      final first = await ws.first.timeout(const Duration(seconds: 30));
       expect(decodeLine(first as String)['kind'], 'welcome');
       await ws.close();
       await http.close(force: true);
