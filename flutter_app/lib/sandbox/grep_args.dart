@@ -97,6 +97,7 @@ GrepArgs? parseGrepArgs(List<String> args) {
   final files = <String>[];
   var quiet = false;
   var recursive = false;
+  var extended = false; // -E / --extended-regexp: ERE input, no BRE pass
   var noMoreFlags = false;
   String? error;
 
@@ -132,6 +133,10 @@ GrepArgs? parseGrepArgs(List<String> args) {
     }
     if (_recursiveLongFlags.contains(arg)) {
       recursive = true;
+      continue;
+    }
+    if (arg == '--extended-regexp') {
+      extended = true;
       continue;
     }
     if (_acceptedNoOpLongFlags.contains(arg)) continue;
@@ -227,7 +232,7 @@ GrepArgs? parseGrepArgs(List<String> args) {
         case 'r' || 'R':
           recursive = true;
         case 'E':
-          break; // rg regex syntax is ERE-shaped already
+          extended = true; // rg regex syntax is ERE-shaped already
         case 'q':
           quiet = true;
         case 'T' || 'd' || 's':
@@ -254,7 +259,7 @@ GrepArgs? parseGrepArgs(List<String> args) {
   }
   final translatedPattern = pattern == null
       ? null
-      : (flags.contains('-F') || flags.contains('-P')
+      : (flags.contains('-F') || flags.contains('-P') || extended
             ? pattern
             : translateBREToERE(pattern));
   return GrepArgs(

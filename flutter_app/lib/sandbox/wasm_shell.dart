@@ -2322,16 +2322,17 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     }
     final files = _grepInputFiles(parsed, inputSource, _effectiveCwd(options));
 
-    // `--no-ignore --hidden` make rg traverse like grep (gitignore files
-    // and dot entries do not filter results out — bash-identical surface,
-    // gh-1393 WS-1). The pattern rides `-e` (position-safe) and the argv is
-    // built by the SHARED parser (grep_args.dart), so the flags the field
-    // evidence broke on (`-rl`, `--include=`, `\|`) translate exactly once
-    // for both shells.
+    // `--include=`/`--exclude=` ride rg's `-g` glob filters (bash parity:
+    // traversal already covers rg's defaults via --no-ignore --hidden).
+    // The pattern rides `-e` (position-safe) and the argv is built by the
+    // SHARED parser (grep_args.dart), so the flags the field evidence broke
+    // on (`-rl`, `--include=`, `\|`) translate exactly once for both shells.
     final rgResult = await _runStage(
       command: 'rg',
       args: [
         ...parsed.flags,
+        for (final glob in parsed.includeGlobs) ...['-g', glob],
+        for (final glob in parsed.excludeGlobs) ...['-g', '!$glob'],
         '--no-ignore',
         '--hidden',
         '-e',

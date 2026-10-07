@@ -1139,7 +1139,8 @@ void shellJobTests() {
       await env.createDir('/.fah/bash_jobs');
 
       // `cat` on a missing file exercises the stderr path into the log
-      // (`>&2` fd duplication is a known MemoryShell parser gap).
+      // (the `>&2` parser gap is closed — gh-1393 — but this job does not
+      // use it; the log shape is what matters here).
       final job = await startJob(env, 'echo hello; cat /nope; echo done');
       expect(job.isRunning, isTrue);
       await job.settled;
