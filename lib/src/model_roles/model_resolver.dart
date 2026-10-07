@@ -28,6 +28,9 @@ import 'fallback_stream.dart';
 import 'key_rotation.dart';
 import 'roles_config.dart';
 import 'provider_catalog.dart';
+import '../providers/silent_stream_policy.dart';
+import '../providers/transient_retry_stream.dart' show transientRetryNotice;
+import '../exceptions.dart' show ConfigException;
 
 /// gh-760 (review): the role's chain has NO usable entry AND the skip
 /// reasons include unknown providers — a config written by a newer
@@ -153,6 +156,7 @@ final class ModelRolesResolver {
       final entry = _buildEntry(
         ref,
         skipped,
+        role: role,
         onUnknownProvider: () => sawUnknownProvider = true,
       );
       if (entry != null) entries.add(entry);
@@ -174,6 +178,7 @@ final class ModelRolesResolver {
   ChainEntry? _buildEntry(
     ModelRef ref,
     List<String> skipped, {
+    required String role,
     required void Function() onUnknownProvider,
   }) {
     // gh-760 (review): resolve by catalog name AND adapter kind — a roles
@@ -217,20 +222,59 @@ final class ModelRolesResolver {
       ),
       keyRing: ring,
       streamForKey: (apiKey) {
-        final inner = _streamFactory(spec.kind, apiKey);
-        return (model, context, {cancelToken}) {
-          // An explicit per-call override (the compaction bypass) wins over
-          // the resolver's bound session id.
-          if (StreamCacheRouting.current != null) {
-            return inner(model, context, cancelToken: cancelToken);
-          }
-          return StreamCacheRouting.runWith(
-            () => inner(model, context, cancelToken: cancelToken),
-            // Read the mutable field lazily: hosts learn the session id
-            // after the resolver (and its chains) were built.
-            sessionId: sessionId?.call(),
-          );
-        };
+        // gh-1395 (AC4): every chain entry's stream rides the
+        // SilentStreamPolicy — a PRE-commit idle stall gets the bounded,
+        // escalating ladder (backoff 5→60s, key rotation on the ring after
+        // the 2nd stall of the run, smol-role takeover attempt after the
+        // 3rd) instead of a blind same-upstream replay (bench recovery
+        // 1/13). Non-stall classes pass through untouched: transport
+        // failures still replay in the transient ladder, rate limits still
+        // rotate in the roles ladder, and the policy never replays
+        // post-commit content (#964).
+        var currentKey = apiKey;
+        StreamFunction buildRouted() {
+          final inner = _streamFactory(spec.kind, currentKey);
+          return (model, context, {cancelToken}) {
+            // An explicit per-call override (the compaction bypass) wins
+            // over the resolver's bound session id.
+            if (StreamCacheRouting.current != null) {
+              return inner(model, context, cancelToken: cancelToken);
+            }
+            return StreamCacheRouting.runWith(
+              () => inner(model, context, cancelToken: cancelToken),
+              // Read the mutable field lazily: hosts learn the session id
+              // after the resolver (and its chains) were built.
+              sessionId: sessionId?.call(),
+            );
+          };
+        }
+
+        return silentStreamPolicyFunction(
+          buildRouted,
+          hooks: SilentStreamPolicyHooks(
+            rotateKey: () {
+              final next = ring.rotate(currentKey);
+              if (next == null) return false;
+              currentKey = next.value;
+              return true;
+            },
+            buildTakeover: role == smolModelRole
+                ? null
+                : () {
+                    try {
+                      final smolWrapper = streamForRole(smolModelRole);
+                      final smolModel = smolWrapper.currentModel;
+                      return (model, context, {cancelToken}) => smolWrapper
+                          .call(smolModel, context, cancelToken: cancelToken);
+                    } on ConfigException {
+                      return null; // smol not configured (logged by the policy)
+                    }
+                  },
+            onNotice: (note) =>
+                transientRetryNotice?.call(0, 1, Duration.zero, note),
+          ),
+          sleeper: sleeper,
+        );
       },
     );
   }
