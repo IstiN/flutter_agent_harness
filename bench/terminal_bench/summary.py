@@ -21,8 +21,9 @@ Issue #1339: rows whose recorded totals were lost (tb's flat-cap timeout
 fabrication discards the adapter's fold — gh-1209) re-fold their usage
 from the synced session logs; an agent_timeout trial that did real work
 after a zero-byte takeover classifies as `recovered`, distinct from
-provider hang and cap exhaustion; a finished trial's terminal failure
-mode renders in the resolved column instead of `pending`; and the
+provider hang and cap exhaustion; a test_timeout trial reads as a
+terminal `no (test_timeout)` in the resolved column, while other
+unresolved modes render honest `pending (mode)`; and the
 unpriced line names the model ids it could not price (or says the id is
 unknown).
 

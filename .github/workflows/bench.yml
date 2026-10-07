@@ -82,8 +82,9 @@ concurrency:
   cancel-in-progress: false
 
 # One source of truth for the bench model id (PR #1351 review): the run
-# config, the job name and both summary steps must never drift apart — a
-# stale copy is exactly the silent mispricing AC3 of issue #1339 fixes.
+# config and both summary steps must never drift apart — a stale copy is
+# exactly the silent mispricing AC3 of issue #1339 fixes. (The job name
+# cannot read this context — see the note on `name:` below.)
 env:
   BENCH_MODEL: glm-5.3-flash
 

@@ -321,6 +321,42 @@ class ExtractSessionArchiveTest(unittest.TestCase):
             ), self.dest)
         self.assertFalse((self.dest / "fah-sessions" / "escape").is_symlink())
 
+    def test_ac4_legacy_fallback_extracts_screened_and_warns(self):
+        # The pre-backport branch (except TypeError) never runs on CI's
+        # Python — force it on any interpreter: a filter= call raising
+        # TypeError must fall back to a LOUD warning plus the already
+        # screened members= extraction, never a silent pass.
+        real = tarfile.TarFile.extractall
+
+        def legacy(self, path=".", members=None, **kwargs):
+            if "filter" in kwargs:
+                raise TypeError(
+                    "extractall() got an unexpected keyword argument 'filter'"
+                )
+            return real(self, path, members=members)
+
+        tarfile.TarFile.extractall = legacy
+        self.addCleanup(setattr, tarfile.TarFile, "extractall", real)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            n = fa_usage.extract_session_archive(
+                _tar_bytes(("fah-sessions/s.jsonl", "file")), self.dest
+            )
+        self.assertEqual(n, 1)
+        self.assertTrue((self.dest / "fah-sessions" / "s.jsonl").is_file())
+        self.assertIn("lacks the tarfile data filter", err.getvalue())
+        # The manual screen sits BEFORE the branch: a hostile member is
+        # denied without ever reaching the fallback (no fallback noise,
+        # nothing extracted).
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            with self.assertRaises(ValueError):
+                fa_usage.extract_session_archive(
+                    _tar_bytes(("fah-sessions/../../evil.jsonl", "file")), self.dest
+                )
+        self.assertNotIn("lacks the tarfile data filter", err.getvalue())
+        self.assertFalse((self.dest.parent / "evil.jsonl").exists())
+
 
 class _FakeContainer:
     def __init__(self, tar_bytes, fail=None):
