@@ -114,7 +114,12 @@ module PlayUploadPreflight
       skip_upload_metadata: !(metadata && !validate_only),
       skip_upload_images: true,
       skip_upload_screenshots: true,
-      skip_upload_changelogs: true
+      skip_upload_changelogs: true,
+      # gh-1330/gh-1367: Google no longer auto-sends committed edits for
+      # review — supply's listing-texts commit must opt out explicitly,
+      # same as PlayListingSync.commit_edit! does for the images edit.
+      # Review is triggered from the Play Console UI instead.
+      changes_not_sent_for_review: true
     }
   end
 end
