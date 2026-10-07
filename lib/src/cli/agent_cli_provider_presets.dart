@@ -219,19 +219,7 @@ extension _AgentCliProviderPresets on AgentCli {
     }
     final registry = config.customProviders;
     if (typed == null || registry == null) {
-      // A resolved env/store key stays an implicit resolution inside
-      // `_switchProvider` (the "key: KIMI_API_KEY" line, no re-store); a
-      // keyless switch reports the missing key as before. Without a
-      // registry there is nothing to save an entry into — the plain
-      // catalog switch still stores the typed key under the host slot.
-      _activeCustomName = null;
-      final picked = await _kimiPickModel(spec, url, typed ?? resolved);
-      if (picked == null) {
-        io.writeln('kimi setup cancelled');
-        return _KimiOutcome.switched;
-      }
-      await _switchProvider(spec, url, picked, token: typed);
-      return _KimiOutcome.switched;
+      return _kimiImplicitKeyPath(spec, url, typed: typed, resolved: resolved);
     }
     // A freshly typed key is a NEW account: save it as a named entry (the
     // provider-name step every add flow offers), so it lists in /provider
@@ -258,6 +246,28 @@ extension _AgentCliProviderPresets on AgentCli {
         token: typed,
       ),
     );
+    return _KimiOutcome.switched;
+  }
+
+  /// The keyless/registry-less half of [_kimiFreshKeyPath]: a resolved
+  /// env/store key stays an implicit resolution inside `_switchProvider`
+  /// (the "key: KIMI_API_KEY" line, no re-store); a keyless switch
+  /// reports the missing key as before. Without a registry there is
+  /// nothing to save an entry into — the plain catalog switch still
+  /// stores the typed key under the host slot.
+  Future<_KimiOutcome> _kimiImplicitKeyPath(
+    ProviderSpec spec,
+    String url, {
+    required String? typed,
+    required String? resolved,
+  }) async {
+    _activeCustomName = null;
+    final picked = await _kimiPickModel(spec, url, typed ?? resolved);
+    if (picked == null) {
+      io.writeln('kimi setup cancelled');
+      return _KimiOutcome.switched;
+    }
+    await _switchProvider(spec, url, picked, token: typed);
     return _KimiOutcome.switched;
   }
 
