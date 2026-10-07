@@ -29,11 +29,39 @@ YamlMap loadPubspec(String path) =>
 const minFixedVersion = '0.4.156';
 
 int pubVersion(String v) {
-  final parts = v.split('.').map(int.parse).toList();
+  // Strip any prerelease/build suffix ("0.5.0-dev.1", "0.4.157+1") —
+  // a suffixed version is >= its plain triple.
+  final core = v.split('-').first.split('+').first;
+  final parts = core.split('.').map(int.parse).toList();
+  assert(parts.length == 3, 'unexpected pub version: $v');
   return (parts[0] << 20) | (parts[1] << 10) | parts[2];
 }
 
 void main() {
+  group('pubVersion', () {
+    test('parses a plain triple', () {
+      expect(pubVersion('0.4.156'), pubVersion('0.4.156'));
+    });
+
+    test('tolerates a build-suffixed version', () {
+      // "0.4.157+hotfix" is >= the plain 0.4.156 floor — must not throw.
+      expect(
+        pubVersion('0.4.157+hotfix'),
+        greaterThanOrEqualTo(pubVersion('0.4.156')),
+      );
+    });
+
+    test('tolerates a prerelease-suffixed version', () {
+      // "0.5.0-dev.1" sorts against its plain triple, never FormatException.
+      expect(pubVersion('0.5.0-dev.1'), pubVersion('0.5.0'));
+    });
+
+    test('a suffixed version equals its plain triple', () {
+      expect(pubVersion('0.4.157+1'), pubVersion('0.4.157'));
+      expect(pubVersion('0.4.157+1'), greaterThan(pubVersion('0.4.156')));
+    });
+  });
+
   test('pubspec.yaml has no js_widget_runtime dependency_override', () {
     final overrides = loadPubspec('flutter_app/pubspec.yaml')
         ['dependency_overrides'] as YamlMap?;

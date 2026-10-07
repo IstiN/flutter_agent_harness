@@ -1161,7 +1161,7 @@ factual: paths, commands, invariants — no essays.
   0.4.156 = upstream 9d57570 (gh-1341), the flutter_js bridge registers
   EVERY `__jsr_*` channel (`JsWidgetBridge.handledChannels` is the source
   of truth), so `jsr.hostCall`/`jsr.capture` no longer hang forever on JSC
-  builds; the git pin convention is drop-the-override-once-hosted-lands,
+  builds; the git pin convention is drop-the-override-once-hosted-lands;
   `js_app_engine.dart` wires `openUrlHandler` over `url_launcher`
   (LaunchMode.externalApplication, {'__error': ...} rejections) and passes a
   `JsWebViewHost` (fa_webview_host.dart, `flutter_inappwebview` over the
