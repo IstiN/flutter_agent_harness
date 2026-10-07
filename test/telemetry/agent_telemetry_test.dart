@@ -1,0 +1,436 @@
+/// Issue #1322 Gap 3 — the pure-core telemetry adapter: the CLI's fa.log
+/// phase map (run/turn/tool start+end) extended with the in-process
+/// records the CLI cannot have (requestStart, firstToken) and the
+/// provider HTTP status on the terminal error record.
+library;
+
+import 'dart:async';
+
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:test/test.dart';
+
+const _model = Model(
+  id: 'test-model',
+  api: 'test-api',
+  provider: 'test-provider',
+  baseUrl: 'https://example.test',
+  contextWindow: 100000,
+  maxTokens: 4096,
+);
+
+AssistantMessage _assistant({
+  List<ContentBlock> content = const [],
+  StopReason stopReason = StopReason.stop,
+  String? errorMessage,
+}) => AssistantMessage(
+  content: content,
+  api: 'test-api',
+  provider: 'test-provider',
+  model: 'test-model',
+  usage: Usage.zero,
+  stopReason: stopReason,
+  errorMessage: errorMessage,
+  timestamp: DateTime.utc(2026),
+);
+
+/// A scripted turn: stream start, text delta, done.
+AssistantMessageEventStream _textTurn() {
+  final stream = AssistantMessageEventStream();
+  final empty = _assistant();
+  final partial = _assistant(content: [const TextContent(text: 'hi')]);
+  stream.push(StartEvent(partial: empty));
+  stream.push(TextDeltaEvent(contentIndex: 0, delta: 'hi', partial: partial));
+  stream.push(DoneEvent(reason: StopReason.stop, message: partial));
+  return stream;
+}
+
+AssistantMessageEventStream _errorTurn(String message) {
+  final stream = AssistantMessageEventStream();
+  stream.push(StartEvent(partial: _assistant()));
+  stream.push(
+    ErrorEvent(
+      reason: StopReason.error,
+      error: _assistant(stopReason: StopReason.error, errorMessage: message),
+    ),
+  );
+  return stream;
+}
+
+/// A scripted MULTI-turn stream function: one pushed turn per call (the
+/// tool-use flow needs a tool turn followed by the answer turn).
+StreamFunction _scriptedTurns(List<List<AssistantMessageEvent>> turns) {
+  var next = 0;
+  return (model, context, {cancelToken}) {
+    final stream = AssistantMessageEventStream();
+    for (final event in turns[next++]) {
+      stream.push(event);
+    }
+    stream.end();
+    return stream;
+  };
+}
+
+/// The [AssistantMessageEvent] LIST behind [_textTurn] — the scripted
+/// multi-turn helper composes turns as lists.
+List<AssistantMessageEvent> _textTurnEvents() {
+  final empty = _assistant();
+  final partial = _assistant(content: [const TextContent(text: 'hi')]);
+  return [
+    StartEvent(partial: empty),
+    TextDeltaEvent(contentIndex: 0, delta: 'hi', partial: partial),
+    DoneEvent(reason: StopReason.stop, message: partial),
+  ];
+}
+
+List<AssistantMessageEvent> _toolTurn(List<ToolCall> calls) {
+  final empty = _assistant();
+  final partial = _assistant(content: calls, stopReason: StopReason.toolUse);
+  final events = <AssistantMessageEvent>[StartEvent(partial: empty)];
+  for (var i = 0; i < calls.length; i++) {
+    events
+      ..add(ToolCallStartEvent(contentIndex: i, partial: empty))
+      ..add(
+        ToolCallEndEvent(contentIndex: i, toolCall: calls[i], partial: partial),
+      );
+  }
+  events.add(DoneEvent(reason: StopReason.toolUse, message: partial));
+  return events;
+}
+
+const _bashCall = ToolCall(
+  id: 'c1',
+  name: 'bash',
+  arguments: {'command': 'long-thing'},
+);
+
+Tool _bashTool() =>
+    Tool(name: 'bash', description: 'bash tool', parameters: const {});
+
+void main() {
+  group('AgentTelemetry (the agent → sink adapter)', () {
+    test(
+      'a clean run produces the CLI phase map plus the provider records',
+      () async {
+        final sink = InMemoryTelemetrySink();
+        final telemetry = AgentTelemetry(sink);
+        final agent = Agent(
+          model: _model,
+          systemPrompt: 's',
+          toolExecutor: _okExecutor,
+          streamFunction: telemetry.wrapStreamFunction((m, c, {cancelToken}) {
+            return _textTurn();
+          }),
+        );
+        telemetry.attach(agent);
+        await agent.prompt('hi');
+
+        final kinds = sink.events.map((e) => e.kind).toList();
+        expect(
+          kinds,
+          // requestStart/firstToken are the wrap's; the rest mirror the
+          // CLI's fa.log lines one for one.
+          [
+            AgentTelemetryEventKind.runStart,
+            AgentTelemetryEventKind.turnStart,
+            AgentTelemetryEventKind.requestStart,
+            AgentTelemetryEventKind.firstToken,
+            AgentTelemetryEventKind.turnEnd,
+            AgentTelemetryEventKind.runEnd,
+          ],
+        );
+        final request = sink.events.firstWhere(
+          (e) => e.kind == AgentTelemetryEventKind.requestStart,
+        );
+        expect(request.detail, contains('model=test-model'));
+        // The wrap names the request context on BOTH provider-leg records.
+        final firstToken = sink.events.firstWhere(
+          (e) => e.kind == AgentTelemetryEventKind.firstToken,
+        );
+        expect(firstToken.detail, contains('model=test-model'));
+        final runEnd = sink.events.last;
+        expect(runEnd.sinceRunStart, greaterThanOrEqualTo(Duration.zero));
+        // No error → no status claimed on the clean run's terminal record.
+        expect(runEnd.httpStatus, isNull);
+      },
+    );
+
+    test('an aborted run is a phase outcome, never a run error', () async {
+      final sink = InMemoryTelemetrySink();
+      final telemetry = AgentTelemetry(sink);
+      final stream = AssistantMessageEventStream();
+      stream.push(StartEvent(partial: _assistant()));
+      final agent = Agent(
+        model: _model,
+        systemPrompt: 's',
+        toolExecutor: _okExecutor,
+        streamFunction: telemetry.wrapStreamFunction((m, c, {cancelToken}) {
+          // The abort terminal mirrors agent_loop's own: an errorMessage
+          // RIDES the aborted message — and must not become a run error.
+          cancelToken?.onCancel.then((_) {
+            stream.push(
+              ErrorEvent(
+                reason: StopReason.aborted,
+                error: _assistant(
+                  stopReason: StopReason.aborted,
+                  errorMessage: 'Operation aborted',
+                ),
+              ),
+            );
+          });
+          return stream;
+        }),
+      );
+      telemetry.attach(agent);
+      final run = agent.prompt('hi');
+      agent.abort();
+      await run;
+
+      // `turn end stop=aborted` carries the distinction, `run end` closes
+      // the run — and NO `error` record lands (the CLI logs aborted runs
+      // as a plain run end, no error line).
+      expect(
+        sink.events.map((e) => e.kind),
+        isNot(contains(AgentTelemetryEventKind.error)),
+      );
+      final turnEnd = sink.events.firstWhere(
+        (e) => e.kind == AgentTelemetryEventKind.turnEnd,
+      );
+      expect(turnEnd.stopReason, 'aborted');
+      expect(sink.events.last.kind, AgentTelemetryEventKind.runEnd);
+    });
+
+    test(
+      'an in-stream provider error records the parsed HTTP status',
+      () async {
+        final sink = InMemoryTelemetrySink();
+        final telemetry = AgentTelemetry(sink);
+        final agent = Agent(
+          model: _model,
+          systemPrompt: 's',
+          toolExecutor: _okExecutor,
+          streamFunction: telemetry.wrapStreamFunction((m, c, {cancelToken}) {
+            // formatProviderError's own shape for a ProviderHttpError.
+            return _errorTurn('429: rate limited');
+          }),
+        );
+        telemetry.attach(agent);
+        await agent.prompt('hi');
+
+        final error = sink.events.firstWhere(
+          (e) => e.kind == AgentTelemetryEventKind.error,
+        );
+        expect(error.httpStatus, 429);
+        expect(error.detail, '429: rate limited');
+        final runEnd = sink.events.last;
+        expect(runEnd.kind, AgentTelemetryEventKind.runEnd);
+        // The failed run's terminal record does not dress up as a status.
+        expect(runEnd.httpStatus, isNull);
+      },
+    );
+
+    test('a provider exception thrown before the stream is converted to '
+        'the providers-never-throw shape', () async {
+      final sink = InMemoryTelemetrySink();
+      final telemetry = AgentTelemetry(sink);
+      final agent = Agent(
+        model: _model,
+        systemPrompt: 's',
+        toolExecutor: _okExecutor,
+        streamFunction: telemetry.wrapStreamFunction((m, c, {cancelToken}) {
+          throw const ProviderHttpError(502, 'bad gateway');
+        }),
+      );
+      telemetry.attach(agent);
+      await agent.prompt('hi');
+
+      final error = sink.events.firstWhere(
+        (e) => e.kind == AgentTelemetryEventKind.error,
+      );
+      expect(error.httpStatus, 502);
+      expect(error.detail, '502: bad gateway');
+    });
+
+    test(
+      'a hanging request is visible as requestStart with no firstToken',
+      () async {
+        final sink = InMemoryTelemetrySink();
+        final telemetry = AgentTelemetry(sink);
+        final neverAnswered = AssistantMessageEventStream();
+        final agent = Agent(
+          model: _model,
+          systemPrompt: 's',
+          toolExecutor: _okExecutor,
+          streamFunction: telemetry.wrapStreamFunction((m, c, {cancelToken}) {
+            return neverAnswered;
+          }),
+        );
+        telemetry.attach(agent);
+        unawaited(agent.prompt('hi'));
+        // Let the loop reach the request.
+        await Future<void>.delayed(Duration.zero);
+        await Future<void>.delayed(Duration.zero);
+
+        expect(
+          sink.events.map((e) => e.kind),
+          contains(AgentTelemetryEventKind.requestStart),
+        );
+        expect(
+          sink.events.map((e) => e.kind),
+          isNot(contains(AgentTelemetryEventKind.firstToken)),
+        );
+        agent.abort();
+        neverAnswered.end();
+        await agent.waitForIdle();
+      },
+    );
+
+    test('tool execution lands as toolStart/toolEnd records', () async {
+      final sink = InMemoryTelemetrySink();
+      final telemetry = AgentTelemetry(sink);
+      final agent = Agent(
+        model: _model,
+        systemPrompt: 's',
+        toolExecutor: _okExecutor,
+        streamFunction: telemetry.wrapStreamFunction(
+          _scriptedTurns([
+            _toolTurn([_bashCall]),
+            _textTurnEvents(),
+          ]),
+        ),
+      );
+      agent.state.tools = [_bashTool()];
+      telemetry.attach(agent);
+      await agent.prompt('run the thing');
+
+      final kinds = sink.events.map((e) => e.kind).toList();
+      expect(
+        kinds,
+        containsAll([
+          AgentTelemetryEventKind.toolStart,
+          AgentTelemetryEventKind.toolEnd,
+        ]),
+      );
+      final start = sink.events.firstWhere(
+        (e) => e.kind == AgentTelemetryEventKind.toolStart,
+      );
+      expect(start.toolName, 'bash');
+      expect(start.toolCallId, 'c1');
+      final end = sink.events.firstWhere(
+        (e) => e.kind == AgentTelemetryEventKind.toolEnd,
+      );
+      expect(end.toolName, 'bash');
+      expect(end.isError, isFalse);
+      // The tool phase sits between its turn's start and end records.
+      expect(
+        kinds.indexOf(AgentTelemetryEventKind.turnStart),
+        lessThan(kinds.indexOf(AgentTelemetryEventKind.toolStart)),
+      );
+      expect(
+        kinds.indexOf(AgentTelemetryEventKind.toolEnd),
+        lessThan(kinds.indexOf(AgentTelemetryEventKind.turnEnd)),
+      );
+    });
+
+    test(
+      'stuck-tool supervision lands as heartbeat and stuck records',
+      timeout: const Timeout(Duration(seconds: 30)),
+      () async {
+        final sink = InMemoryTelemetrySink();
+        final telemetry = AgentTelemetry(sink);
+        var hungOnce = false;
+        final agent = Agent(
+          model: _model,
+          systemPrompt: 's',
+          stuckTool: const StuckToolConfig(
+            floor: Duration(milliseconds: 300),
+            declaredTimeoutFactor: 2,
+            heartbeatInterval: Duration(milliseconds: 60),
+            cancelGrace: Duration(milliseconds: 100),
+          ),
+          toolExecutor: (toolCall, cancelToken, onUpdate) async {
+            // The wedged exec reports a partial output (the heartbeat's
+            // captured-output size) and ignores the cancel token — the
+            // supervisor cancels + retries; attempt 2 answers.
+            onUpdate?.call(ToolExecutionResult.text('0123456789'));
+            if (!hungOnce) {
+              hungOnce = true;
+              await Completer<void>().future;
+              throw StateError('hangs forever');
+            }
+            return ToolExecutionResult.text('retry output');
+          },
+          streamFunction: telemetry.wrapStreamFunction(
+            _scriptedTurns([
+              _toolTurn([_bashCall]),
+              _textTurnEvents(),
+            ]),
+          ),
+        );
+        agent.state.tools = [_bashTool()];
+        telemetry.attach(agent);
+        await agent.prompt('run the long thing');
+
+        final kinds = sink.events.map((e) => e.kind).toList();
+        expect(
+          kinds,
+          containsAll([
+            AgentTelemetryEventKind.toolHeartbeat,
+            AgentTelemetryEventKind.toolStuck,
+          ]),
+        );
+        final heartbeat = sink.events.firstWhere(
+          (e) => e.kind == AgentTelemetryEventKind.toolHeartbeat,
+        );
+        expect(heartbeat.toolName, 'bash');
+        expect(heartbeat.attempt, 1);
+        expect(heartbeat.outputBytes, greaterThanOrEqualTo(10));
+        expect(heartbeat.detail, startsWith('elapsed='));
+        final stuck = sink.events.firstWhere(
+          (e) => e.kind == AgentTelemetryEventKind.toolStuck,
+        );
+        expect(stuck.toolName, 'bash');
+        expect(stuck.detail, contains('action='));
+      },
+    );
+
+    test('the in-memory ring keeps the last [capacity] records', () {
+      final sink = InMemoryTelemetrySink(capacity: 3);
+      for (var i = 0; i < 5; i++) {
+        sink.record(
+          AgentTelemetryEvent(
+            kind: AgentTelemetryEventKind.turnStart,
+            timestamp: DateTime.utc(2026),
+            sinceRunStart: Duration(milliseconds: i),
+          ),
+        );
+      }
+      expect(sink.events.length, 3);
+      expect(sink.events.first.sinceRunStart, const Duration(milliseconds: 2));
+      expect(sink.events.last.sinceRunStart, const Duration(milliseconds: 4));
+    });
+
+    test('a throwing sink never breaks the run', () async {
+      final telemetry = AgentTelemetry(_ThrowingSink());
+      final agent = Agent(
+        model: _model,
+        systemPrompt: 's',
+        toolExecutor: _okExecutor,
+        streamFunction: (m, c, {cancelToken}) => _textTurn(),
+      );
+      telemetry.attach(agent);
+      await agent.prompt('hi');
+      // Reaching here is the assertion: the sink threw on every record.
+    });
+  });
+}
+
+final class _ThrowingSink implements AgentTelemetrySink {
+  @override
+  void record(AgentTelemetryEvent event) => throw StateError('broken sink');
+}
+
+Future<ToolExecutionResult> _okExecutor(
+  ToolCall toolCall,
+  CancelToken? cancelToken,
+  ToolUpdateCallback? onUpdate,
+) async => ToolExecutionResult.text('ok');
