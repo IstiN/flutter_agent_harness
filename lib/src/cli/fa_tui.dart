@@ -56,6 +56,7 @@ part 'fa_tui_controller_io.dart';
 part 'fa_tui_picker.dart';
 part 'fa_tui_composer.dart';
 part 'fa_tui_viewport.dart';
+part 'fa_tui_kaomoji.dart';
 
 /// Translates the (web-safe) headless test hooks into dart_tui program
 /// options: a scripted key byte stream replaces stdin, the rendered frames
@@ -200,9 +201,6 @@ final class FaTuiCallbacks {
   final Future<void> Function(String action, String? key)? onHubAction;
 }
 
-/// The braille spinner frames cycled while [FaTuiModel.busy] is set.
-const _spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
 /// Memoized markdown+wrap pass over [FaTuiModel.outputLines]. Formatting is
 /// O(transcript) (regex-heavy markdown plus ANSI-safe wrapping) and used to
 /// run two to four times PER event (update handler, `_echoEndRow`, view),
@@ -280,6 +278,8 @@ final class FaTuiModel extends Model {
     this.mouseCapture = true,
     this.forceSyncUpdates = false,
     this.spinnerFrame = 0,
+    this.kaomojiFace = 0,
+    int Function(int max)? kaomojiPick,
     this.stickyLines = const [],
     this.stickyIndex = -1,
     this.stickyEchoLineCount = 0,
@@ -304,6 +304,7 @@ final class FaTuiModel extends Model {
     this.ctrlCGeneration = 0,
     DateTime Function()? now,
   }) : nowFn = now ?? DateTime.now,
+       kaomojiPick = kaomojiPick ?? _defaultKaomojiPick,
        sigintPolicy = sigintPolicy ?? SigintPolicy(),
        editor = editor ?? const TuiLineEditor.empty();
 
@@ -462,7 +463,23 @@ final class FaTuiModel extends Model {
   /// package and the vendored fork alike, replacing the fork-only
   /// `withSyncUpdates` ProgramOption (issue #613).
   final bool forceSyncUpdates;
+
+  /// The busy-row tick counter: +1 per [SpinnerTickMsg] (100 ms apart).
+  /// No longer a frame index — the face lives in [kaomojiFace]; this
+  /// counter only drives the swap cadence ([kKaomojiSwapTicks], #1374).
   final int spinnerFrame;
+
+  /// Index into [kKaomojiFaces] — the face the busy row shows. Picked
+  /// randomly at busy start and re-picked (never the same face) every
+  /// [kKaomojiSwapTicks] ticks (~0.9 s) while the run streams (issue
+  /// #1374). Not a rotation: the pick is random via [kaomojiPick].
+  final int kaomojiFace;
+
+  /// The face-picker seam (issue #1374 tests): returns an index in
+  /// `0…max-1`. Defaults to a process-random pick; tests inject a
+  /// deterministic function instead of seeding [math.Random] at the
+  /// call sites.
+  final int Function(int max) kaomojiPick;
 
   /// The last submitted user echo (rule + first input line), pinned to the
   /// top of the viewport while a run streams and the echo itself has
@@ -700,6 +717,7 @@ final class FaTuiModel extends Model {
     bool? mouseCapture,
     bool? forceSyncUpdates,
     int? spinnerFrame,
+    int? kaomojiFace,
     List<String>? stickyLines,
     int? stickyIndex,
     int? stickyEchoLineCount,
@@ -760,6 +778,8 @@ final class FaTuiModel extends Model {
       mouseCapture: mouseCapture ?? this.mouseCapture,
       forceSyncUpdates: forceSyncUpdates ?? this.forceSyncUpdates,
       spinnerFrame: spinnerFrame ?? this.spinnerFrame,
+      kaomojiFace: kaomojiFace ?? this.kaomojiFace,
+      kaomojiPick: kaomojiPick,
       stickyLines: stickyLines ?? this.stickyLines,
       stickyIndex: stickyIndex ?? this.stickyIndex,
       stickyEchoLineCount: stickyEchoLineCount ?? this.stickyEchoLineCount,
@@ -905,7 +925,11 @@ final class FaTuiModel extends Model {
     final displayText = needsSystemNoticeRewrite(msg.text)
         ? renderSystemNoticeLines(msg.text).join('\n')
         : msg.text;
-    final (newLines, cut) = _appendOutput(outputLines, displayText, msg.newline);
+    final (newLines, cut) = _appendOutput(
+      outputLines,
+      displayText,
+      msg.newline,
+    );
     final next = copyWith(
       outputLines: newLines,
       // A head trim shifts every transcript index — anchor and pin (#827).
@@ -987,6 +1011,9 @@ final class FaTuiModel extends Model {
         // leak into the next run (issue #514).
         runStalled: msg.busy ? runStalled : false,
         spinnerFrame: 0,
+        // A fresh run opens on a random face (issue #1374) — the same
+        // seam the swap cadence uses, so tests stay deterministic.
+        kaomojiFace: msg.busy ? kaomojiPick(kKaomojiFaces.length) : kaomojiFace,
         stickyLines: msg.busy ? null : const [],
         stickyIndex: msg.busy ? null : -1,
       ),
@@ -1022,7 +1049,19 @@ final class FaTuiModel extends Model {
         null,
       );
     }
-    return (copyWith(spinnerFrame: spinnerFrame + 1), _scheduleSpinnerTick());
+    // The tick counter drives the kaomoji cadence (issue #1374): every
+    // kKaomojiSwapTicks ticks (~0.9 s at the 100 ms chain) the face is
+    // re-picked — randomly, and never to the face already showing. The
+    // chain itself dies with the busy bracket, so an idle row never
+    // animates (AC4).
+    final frame = spinnerFrame + 1;
+    final face = frame % kKaomojiSwapTicks == 0
+        ? _nextKaomojiIndex(kaomojiPick, kaomojiFace)
+        : kaomojiFace;
+    return (
+      copyWith(spinnerFrame: frame, kaomojiFace: face),
+      _scheduleSpinnerTick(),
+    );
   }
 
   (Model, Cmd?) _handleDrainQueue(DrainQueueMsg msg) {

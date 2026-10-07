@@ -22,7 +22,9 @@ import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:test/test.dart';
 
 void main() {
-  final ansi = RegExp(r'\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)');
+  final ansi = RegExp(
+    r'\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)',
+  );
 
   FaTuiCallbacks callbacks() => FaTuiCallbacks(
     onSubmit: (_, {images = const []}) async {},
@@ -37,6 +39,7 @@ void main() {
     callbacks: callbacks(),
     isExited: () => false,
     termWidth: width,
+    kaomojiPick: (_) => 0, // deterministic busy-row face across models
   );
 
   FaTuiModel send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
@@ -67,9 +70,7 @@ void main() {
     final end = rules.last;
     return (
       raw: lines.sublist(start, end),
-      plain: [
-        for (final line in lines.sublist(start, end)) stripAnsi(line),
-      ],
+      plain: [for (final line in lines.sublist(start, end)) stripAnsi(line)],
       baseRow: start,
     );
   }
@@ -93,11 +94,12 @@ void main() {
   void expectClustersIntact(FaTuiModel m, String text) {
     final region = composerRegion(m);
     final buffer = text.characters.toList();
-    final rendered = [
-      for (final row in region.plain) ...row.characters,
-    ];
-    expect(rendered.length, buffer.length,
-        reason: 'wrap must not drop or split clusters');
+    final rendered = [for (final row in region.plain) ...row.characters];
+    expect(
+      rendered.length,
+      buffer.length,
+      reason: 'wrap must not drop or split clusters',
+    );
     for (var i = 0; i < buffer.length; i++) {
       expect(rendered[i], buffer[i], reason: 'cluster $i diverged');
     }
@@ -176,7 +178,12 @@ void main() {
     }
 
     final busyAt0 = busyRowOf(m);
-    m = send(m, SpinnerTickMsg());
+    // Pump one full swap cadence: the face only changes at the
+    // kKaomojiSwapTicks boundary (#1374) — sub-cadence ticks repaint
+    // without altering the row bytes.
+    for (var i = 0; i < kKaomojiSwapTicks; i++) {
+      m = send(m, SpinnerTickMsg());
+    }
     expect(busyRowOf(m), isNot(busyAt0), reason: 'ticks must repaint busy');
   });
 
@@ -200,21 +207,23 @@ void main() {
 
   // ── E1 ───────────────────────────────────────────────────────────────────
 
-  test('E1: an overlong word hard-breaks at the viewport with no wrap loop',
-      () {
-    final url = 'https://example.com/${'a' * 180}'; // one 200-char word
-    final m = type(model(), url);
+  test(
+    'E1: an overlong word hard-breaks at the viewport with no wrap loop',
+    () {
+      final url = 'https://example.com/${'a' * 180}'; // one 200-char word
+      final m = type(model(), url);
 
-    final region = composerRegion(m);
-    expect(region.plain.length, 3); // ceil(200 / 80)
-    for (final row in region.plain) {
-      expect(tuiTextWidth(row), lessThanOrEqualTo(80));
-    }
-    expect(region.plain.join(), url); // hard breaks drop nothing
-    final (row, col) = cursorInRegion(m);
-    expect(row, 2);
-    expect(col, 40); // 200 = 80 + 80 + 40
-  });
+      final region = composerRegion(m);
+      expect(region.plain.length, 3); // ceil(200 / 80)
+      for (final row in region.plain) {
+        expect(tuiTextWidth(row), lessThanOrEqualTo(80));
+      }
+      expect(region.plain.join(), url); // hard breaks drop nothing
+      final (row, col) = cursorInRegion(m);
+      expect(row, 2);
+      expect(col, 40); // 200 = 80 + 80 + 40
+    },
+  );
 
   // ── E2 ───────────────────────────────────────────────────────────────────
 
@@ -286,8 +295,7 @@ void main() {
 
   // ── E4 ───────────────────────────────────────────────────────────────────
 
-  test('E4: history recall of a long entry renders wrapped, cursor at end',
-      () {
+  test('E4: history recall of a long entry renders wrapped, cursor at end', () {
     final text = '${'loremipsum ' * 17}loremipsum xy'; // 200 chars
     var m = model();
     m = type(m, text);
@@ -338,9 +346,7 @@ void main() {
       required bool cursorMid,
     }) {
       var m = model(width: width);
-      m = m.copyWith(
-        termHeight: 24,
-      ); // deterministic viewport
+      m = m.copyWith(termHeight: 24); // deterministic viewport
       if (text != null) m = type(m, text);
       if (cursorMid) {
         m = send(m, KeyPressMsg(const TeaKey(code: KeyCode.home)));
@@ -388,7 +394,8 @@ void main() {
           expect(
             rendered,
             file.readAsStringSync().trim(),
-            reason: 'composer wrap drift in $name/$theme; regenerate with '
+            reason:
+                'composer wrap drift in $name/$theme; regenerate with '
                 'FA_UPDATE_COMPOSER_GOLDENS=1',
           );
         });

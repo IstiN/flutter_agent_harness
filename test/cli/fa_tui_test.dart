@@ -318,35 +318,40 @@ void main() {
     expect(cursor!.x, 1);
   });
 
-  test(
-    'spinner ticks cycle the Working… frame while the cursor stays hidden',
-    () {
-      var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);
-      model = model.update(BusyMsg(true)).$1 as FaTuiModel;
-      final spinnerRows = <String>{};
-      for (var i = 0; i < 3; i++) {
-        spinnerRows.add(
-          model
-              .view()
-              .content
-              .split('\n')
-              .firstWhere((line) => line.contains('Working')),
-        );
-        model = model.update(SpinnerTickMsg()).$1 as FaTuiModel;
-      }
-      // The spinner animates; the caret stays in the input zone while a
-      // run streams (typing mid-stream is first-class) — the View carries
-      // a real cursor, and the program derives DECTCEM visibility from it.
-      expect(spinnerRows.length, greaterThan(1));
-      expect(model.view().cursor, isNotNull);
-      // The busy row carries the elapsed seconds — a wedged endpoint is
-      // visible instead of looking like a frozen UI.
-      expect(
-        spinnerRows.every((row) => RegExp(r'Working…\s*\d+s').hasMatch(row)),
-        isTrue,
+  test('kaomoji ticks keep the Working… row live on the 0.9 s swap cadence '
+      'while the cursor stays hidden', () {
+    var model = FaTuiModel(
+      callbacks: callbacks(),
+      isExited: () => false,
+      kaomojiPick: (_) => 0,
+    );
+    model = model.update(BusyMsg(true)).$1 as FaTuiModel;
+    final busyRows = <String>{};
+    for (var i = 0; i < kKaomojiSwapTicks; i++) {
+      model = model.update(SpinnerTickMsg()).$1 as FaTuiModel;
+      busyRows.add(
+        model
+            .view()
+            .content
+            .split('\n')
+            .firstWhere((line) => line.contains('Working')),
       );
-    },
-  );
+    }
+    // The face swaps exactly at the cadence boundary (pinned pick:
+    // face 0 → 1), so the busy row visibly changes across the window;
+    // the caret stays in the input zone while a run streams (typing
+    // mid-stream is first-class) — the View carries a real cursor, and
+    // the program derives DECTCEM visibility from it.
+    expect(busyRows.length, greaterThan(1));
+    expect(model.kaomojiFace, 1);
+    expect(model.view().cursor, isNotNull);
+    // The busy row carries the elapsed seconds — a wedged endpoint is
+    // visible instead of looking like a frozen UI.
+    expect(
+      busyRows.every((row) => RegExp(r'Working…\s*\d+s').hasMatch(row)),
+      isTrue,
+    );
+  });
 
   test('history cap trims in batches, not on every overflowing append', () {
     var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);

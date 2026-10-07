@@ -19,7 +19,20 @@ List<String> _grid(FaCliHarness harness) => [
   for (final line in harness.viewportLines) line.trimRight(),
 ];
 
-const _spinners = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+/// The busy-row face set (issue #1374) — any of these inside the status
+/// row is a frame bleed. Includes the ASCII fallback faces.
+const _spinners = [
+  '>_o',
+  '-_-',
+  'o_o',
+  '>_<',
+  'o_<',
+  '◕‿◕',
+  '¬_¬',
+  'o_o?',
+  '^.^',
+  '-_/',
+];
 
 void main() {
   test('E2E-1 #479 AC3: 80x24, four live jobs — status whole, composer '
