@@ -20,6 +20,12 @@ import 'package:cryptography/cryptography.dart'
 
 const _repo = 'IstiN/flutter_agent_harness';
 
+/// Network bounds for the self-update paths: metadata answers (latest
+/// tag, manifest, signature) within [kFaUpdateNetworkTimeout]; the
+/// archive body gets [kFaUpdateArchiveTimeout] (tens of MB on slow
+/// links). Anything exceeding its bound aborts the update — fail-closed,
+/// never a hang (issue #1377 review r4).
+
 void _say(String text) => stdout.writeln(text);
 void _warn(String text) => stderr.writeln('fa: $text');
 
@@ -279,10 +285,12 @@ Future<bool> verifyReleaseProvenance({
     final sumsUri = Uri.parse(
       'https://github.com/$_repo/releases/download/$tag/SHA256SUMS',
     );
-    final sums = await client.get(sumsUri);
-    final sig = await client.get(
-      sumsUri.replace(path: '${sumsUri.path}.sig'),
-    );
+    final sums = await client
+        .get(sumsUri)
+        .timeout(kFaUpdateNetworkTimeout);
+    final sig = await client
+        .get(sumsUri.replace(path: '${sumsUri.path}.sig'))
+        .timeout(kFaUpdateNetworkTimeout);
     if (sums.statusCode != 200 || sig.statusCode != 200) return false;
     final verified = await RsaSsaPkcs1v15.sha256().verify(
       sums.bodyBytes,
@@ -333,11 +341,11 @@ Future<int> runSelfUpdate({
     }
 
     if (install.kind == InstallKind.pubGlobal) {
-      return await _pubGlobalUpdate(
+      return (await _pubGlobalUpdate(
         currentVersion: currentVersion,
         latest: latest,
         runProcess: runProcess,
-      );
+      )).$1;
     }
 
     return await _binaryUpdate(client, install, tag, latest, runProcess, pem);
@@ -349,7 +357,7 @@ Future<int> runSelfUpdate({
 /// Pub-global update path: re-activate the package, forcing a clean
 /// re-activation first when pub believes a NEWER spec than the running
 /// binary.
-Future<int> _pubGlobalUpdate({
+Future<(int, String?)> _pubGlobalUpdate({
   required String currentVersion,
   required String latest,
   required Future<ProcessResult> Function(String, List<String>) runProcess,
@@ -392,7 +400,10 @@ Future<int> _pubGlobalUpdate({
       'curl -fsSL https://fa1.dev/install.sh | sh',
     );
   }
-  return result.exitCode;
+  final activated = RegExp(
+    r'[Aa]ctivated flutter_agent_harness (\d+\.\d+\.\d+)',
+  ).firstMatch('${result.stdout}${result.stderr}')?.group(1);
+  return (result.exitCode, activated);
 }
 
 /// Binary update path: download the release archive for this platform,
@@ -416,9 +427,21 @@ Future<int> _binaryUpdate(
   final url = 'https://github.com/$_repo/releases/download/$tag/$archive';
   _say('downloading $archive…');
   final request = http.Request('GET', Uri.parse(url));
-  final streamed = await client.send(request);
+  final http.StreamedResponse streamed;
+  try {
+    streamed = await client.send(request).timeout(kFaUpdateNetworkTimeout);
+  } on Exception catch (error) {
+    _warn('download failed (network): $error');
+    return 1;
+  }
   if (streamed.statusCode == 200) {
-    final bytes = await streamed.stream.toBytes();
+    final List<int> bytes;
+    try {
+      bytes = await streamed.stream.toBytes().timeout(kFaUpdateArchiveTimeout);
+    } on Exception catch (error) {
+      _warn('download failed (network): $error');
+      return 1;
+    }
     if (!await verifyReleaseProvenance(
       client: client,
       tag: tag,
@@ -640,13 +663,21 @@ Future<int> fallbackZipUpdate(
 }) async {
   final zipUrl = 'https://github.com/$_repo/releases/download/$tag/$zipAsset';
   final request = http.Request('GET', Uri.parse(zipUrl));
-  final streamed = await client.send(request);
+  final http.StreamedResponse streamed;
+  try {
+    streamed = await client.send(request).timeout(kFaUpdateNetworkTimeout);
+  } on Exception catch (error) {
+    _warn('download failed (network): $error');
+    return 1;
+  }
   if (streamed.statusCode != 200) {
     _warn('download failed (HTTP ${streamed.statusCode}): $zipUrl');
     return 1;
   }
   _say('extracting $zipAsset…');
-  final bytes = await streamed.stream.toBytes();
+  final bytes = await streamed.stream
+      .toBytes()
+      .timeout(kFaUpdateArchiveTimeout);
   if (!await verifyReleaseProvenance(
     client: client,
     tag: tag,
@@ -769,6 +800,7 @@ Future<ApplyUpdateOutcome> applyUpdate({
   Duration settleDelay = const Duration(seconds: 2),
   void Function(String message)? logLine,
   String? statePath,
+  Duration networkTimeout = kFaUpdateNetworkTimeout,
 }) async {
   final install = (detectInstall ?? _detectInstall)();
   if (install.kind == InstallKind.devRun) {
@@ -778,7 +810,9 @@ Future<ApplyUpdateOutcome> applyUpdate({
   final state = statePath ?? _convergenceStatePath();
   final client = (newClient ?? http.Client.new)();
   try {
-    final tag = await fetchLatestTag(client: client);
+    final tag = await fetchLatestTag(
+      client: client,
+    ).timeout(networkTimeout, onTimeout: () => null);
     if (tag == null) return ApplyUpdateOutcome.downloadFailed;
     final latest = tag.replaceFirst('v', '');
     if (compareVersions(latest, currentVersion) <= 0) {
@@ -805,13 +839,26 @@ Future<ApplyUpdateOutcome> applyUpdate({
     _writeConvergence(state, tag);
 
     if (install.kind == InstallKind.pubGlobal) {
-      final code = await _pubGlobalUpdate(
+      final pub = await _pubGlobalUpdate(
         currentVersion: currentVersion,
         latest: latest,
         runProcess: runProcess ?? Process.run,
       );
-      if (code != 0) return ApplyUpdateOutcome.downloadFailed;
-      log('fa update applied: v$currentVersion -> v$latest');
+      if (pub.$1 != 0) return ApplyUpdateOutcome.downloadFailed;
+      final activated = pub.$2;
+      if (activated != null &&
+          compareVersions(activated, currentVersion) > 0) {
+        log('fa update applied: v$currentVersion -> v$activated');
+      } else {
+        // pub exit 0 without an advance (propagation lag): a respawn
+        // would reboot the SAME binary — say so instead of lying about an
+        // applied version (issue #1377 review r4).
+        log(
+          'fa update: pub resolved v${activated ?? currentVersion} '
+          '(release v$latest not on pub.dev yet)',
+        );
+        return ApplyUpdateOutcome.convergenceGuard;
+      }
       final restarted = await _restartAfterUpdate(
         install,
         launchArgs,
@@ -836,11 +883,15 @@ Future<ApplyUpdateOutcome> applyUpdate({
       return ApplyUpdateOutcome.unsupportedPlatform;
     }
     final url = 'https://github.com/$_repo/releases/download/$tag/$archive';
-    final streamed = await client.send(http.Request('GET', Uri.parse(url)));
+    final streamed = await client
+        .send(http.Request('GET', Uri.parse(url)))
+        .timeout(networkTimeout);
     if (streamed.statusCode != 200) {
       return ApplyUpdateOutcome.downloadFailed;
     }
-    final bytes = await streamed.stream.toBytes();
+    final bytes = await streamed.stream
+        .toBytes()
+        .timeout(kFaUpdateArchiveTimeout);
     if (!await verifyReleaseProvenance(
       client: client,
       tag: tag,

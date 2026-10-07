@@ -242,6 +242,10 @@ Future<void> _runApp(List<String> args) async {
   // itself under connected clients), and `fa config export-providers`
   // (intercepted below) is not a session boot either.
   final autoUpdateNotify = AutoUpdateNotify();
+  // The banner is best-effort: once the TUI owns the terminal a late
+  // stderr line would garble a frame, so the probe drops it instead
+  // (issue #1377 review r4).
+  var autoUpdateTuiOwnsScreen = false;
   switch (bootUpdateAction(
     mode: saved.autoUpdate,
     serveOrDaemon:
@@ -270,10 +274,14 @@ Future<void> _runApp(List<String> args) async {
             onTimeout: () => null,
           );
           if (latest != null &&
-              compareVersions(latest, packageVersion) > 0) {
+              compareVersions(latest, packageVersion) > 0 &&
+              !autoUpdateTuiOwnsScreen) {
             final banner = autoUpdateNotify.banner(latest);
             if (banner != null) stderr.writeln(banner);
           }
+        } on Object catch (_) {
+          // Best-effort probe: a hostile/unreachable network must be
+          // INVISIBLE (no banner), never a crash (issue #1377 review r4).
         } finally {
           probe.close();
         }
@@ -1050,6 +1058,9 @@ Future<void> _runApp(List<String> args) async {
   // never polls the HID state, so it never pays for the probe.
   final useTui =
       headlessPrompt == null && stdout.supportsAnsiEscapes && io.isInteractive;
+  // From here the TUI (when it starts) owns the terminal: a late
+  // best-effort banner must not paint into its frame (issue #1377 r4).
+  if (useTui) autoUpdateTuiOwnsScreen = true;
   // Shift+Enter HID polling (issue #355): resolved ONCE at startup, off
   // the UI isolate — a CoreGraphics call wedged by a GUI-less session
   // (SSH) must never block the REPL. Null: modifier-encoding terminals

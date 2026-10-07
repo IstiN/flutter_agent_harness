@@ -2,6 +2,7 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -1064,13 +1065,12 @@ void main() {
           runProcess: (exe, args) async {
             runCalls.add((exe, args));
             // `pub global list` reports the OLD activation; activate
-            // succeeds.
-            return ProcessResult(
-              0,
-              0,
-              'flutter_agent_harness 1.0.522',
-              '',
-            );
+            // succeeds AND resolves the release version (the honest-log
+            // parse must see an advance).
+            final out = args.contains('list')
+                ? 'flutter_agent_harness 1.0.522'
+                : 'Activated flutter_agent_harness 9.9.9.';
+            return ProcessResult(0, 0, out, '');
           },
           spawn: (exe, args) async {
             spawnCalls.add((exe, args));
@@ -1216,6 +1216,22 @@ void main() {
               as Map<String, dynamic>;
       expect(state['tag'], 'v9.9.9');
       expect(state['attempts'], 1);
+    });
+
+    test('a blackholed network aborts through the outcome matrix', () async {
+      final statePath = '${temp.path}/update-state.json';
+      final hung = Completer<http.Response>().future;
+      final client = MockClient((request) => hung);
+      final outcome = await applyUpdate(
+        currentVersion: '1.0.522',
+        launchArgs: const [],
+        detectInstall: () => Install(InstallKind.binary, '${temp.path}/fa'),
+        newClient: () => client,
+        spawn: (_, _) async => fail('no successor on a network abort'),
+        statePath: statePath,
+        networkTimeout: const Duration(milliseconds: 120),
+      );
+      expect(outcome, ApplyUpdateOutcome.downloadFailed);
     });
 
     test('a boot that reports up to date clears the state', () async {
