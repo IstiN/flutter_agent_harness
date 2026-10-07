@@ -467,6 +467,12 @@ int _expandPlainAt(
     return i + 1;
   }
   final next = input[i + 1];
+  if (next == '?') {
+    // POSIX `$?`: the last completed pipeline's exit code, provided by the
+    // owning shell under the `'?'` env key (issue #1335).
+    buffer.write(env['?'] ?? '');
+    return i + 2;
+  }
   if (next == '{') {
     final end = input.indexOf('}', i + 2);
     if (end == -1) {
