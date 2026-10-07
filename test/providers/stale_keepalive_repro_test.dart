@@ -1,8 +1,8 @@
-// Issue #1392 research repro (bench round-2 forensics): does the PROCESS-WIDE
-// keep-alive client (`sharedProviderHttpClient`, lib/src/providers/
-// provider_common.dart) stall for a watchdog window when the server kills
-// idle keep-alive sockets, and does a watchdog abort+retry land on a FRESH
-// connection?
+// Issue #1395 (ReproSuite, AC1) — empirical evidence reframing #1392's bench
+// round-2 forensics: does the PROCESS-WIDE keep-alive client
+// (`sharedProviderHttpClient`, lib/src/providers/provider_common.dart) stall
+// for a watchdog window when the server kills idle keep-alive sockets, and
+// does a watchdog abort+retry land on a FRESH connection?
 //
 // This file is an EMPIRICAL instrument, not a behavior spec: every test
 // measures wall-clock classes and pins the observed mechanism with asserts
@@ -218,6 +218,9 @@ final class LabServer {
   List<int> get ports => [for (final s in served) s.remotePort];
   Set<int> get distinctPorts => ports.toSet();
 
+  /// Server-side connection total (active + idle + closing) right now.
+  int get totalConnections => _server.connectionsInfo().total;
+
   String describeConnections() {
     final info = _server.connectionsInfo();
     return 'server connections: total=${info.total} active=${info.active} '
@@ -271,9 +274,16 @@ Future<void> swallowForever(HttpRequest request) async {
   await Completer<void>().future;
 }
 
-/// Error strings captured from the live scenarios, replayed into the
-/// classifier/ladder tests below (tests run in file order).
-final List<String> observedStaleErrors = <String>[];
+/// Error strings replayed into the classifier/ladder tests below. Seeded
+/// with the two canonical stale-socket wordings — the send-phase RST class
+/// A2/A3 pin live, and the mid-body cut class the rest of the suite pins —
+/// so D1 always exercises the classifier even when the recording scenarios
+/// are filtered out via `--plain-name`/`--name`; live captures only ADD to
+/// it.
+final List<String> observedStaleErrors = <String>[
+  'ClientException: Connection closed before full header was received',
+  'ClientException: Connection closed while receiving data',
+];
 
 final _reproModel = Model(
   id: 'repro-1392',
@@ -284,6 +294,21 @@ final _reproModel = Model(
   contextWindow: 1000,
   maxTokens: 100,
 );
+
+/// One construction point for scenario D's [AssistantMessage] carriers:
+/// [raw] feeds [AssistantMessage.errorMessage]; [ok] switches the stop
+/// reason to [StopReason.stop] for the success-path cases.
+AssistantMessage errorMessageOf(String? raw, {bool ok = false}) =>
+    AssistantMessage(
+      content: const [],
+      api: _reproModel.api,
+      provider: _reproModel.provider,
+      model: _reproModel.id,
+      usage: Usage.zero,
+      stopReason: ok ? StopReason.stop : StopReason.error,
+      errorMessage: raw,
+      timestamp: DateTime.now(),
+    );
 
 void main() {
   final savedSleeper = transientRetrySleeper;
@@ -474,7 +499,6 @@ void main() {
       };
 
       final o1 = await streamedCall(lab.url);
-      // ignore: avoid-print silence: print below
       // ignore: avoid_print
       print('B1: $o1 then ${lab.describeConnections()}');
       expect(
@@ -498,8 +522,8 @@ void main() {
           lessThan(const Duration(milliseconds: 2000)),
         ),
         reason:
-            'idle-watchdog cost == the override (250ms class here '
-            '1200ms), the quantization #1392 saw at 5min',
+            'idle-watchdog cost == the streamIdle override (1200ms here), '
+            'the quantization #1395 reproduced at the 5min production default',
       );
       final p1 = lab.ports.single;
 
@@ -642,7 +666,7 @@ void main() {
       // ignore: avoid_print
       print('C1 after idle: $info');
       expect(
-        lab._server.connectionsInfo().total,
+        lab.totalConnections,
         lessThan(2),
         reason: 'no lingering conns once the server FINs them',
       );
@@ -702,23 +726,8 @@ void main() {
   group('scenario D — retry-ladder interplay (the #1392 recovery path)', () {
     test('D1. every stale-socket error observed above classifies as a '
         'TRANSIENT network failure — the ladder replays them', () {
-      // Fail-open: if the recording scenarios changed shape, keep green.
-      if (observedStaleErrors.isEmpty) {
-        // ignore: avoid_print
-        print('D1: no live error strings recorded — skipping');
-        return;
-      }
       for (final raw in observedStaleErrors) {
-        final message = AssistantMessage(
-          content: const [],
-          api: _reproModel.api,
-          provider: _reproModel.provider,
-          model: _reproModel.id,
-          usage: Usage.zero,
-          stopReason: StopReason.error,
-          errorMessage: raw,
-          timestamp: DateTime.now(),
-        );
+        final message = errorMessageOf(raw);
         // ignore: avoid_print
         print(
           'D1 classify: ${isTransientNetworkError(message)} '
@@ -735,17 +744,9 @@ void main() {
       // not the transient ladder.
       expect(
         isTransientNetworkError(
-          AssistantMessage(
-            content: const [],
-            api: _reproModel.api,
-            provider: _reproModel.provider,
-            model: _reproModel.id,
-            usage: Usage.zero,
-            stopReason: StopReason.error,
-            errorMessage:
-                'TimeoutException: no events from the endpoint for 300s '
-                '(stream idle timeout)',
-            timestamp: DateTime.now(),
+          errorMessageOf(
+            'TimeoutException: no events from the endpoint for 300s '
+            '(stream idle timeout)',
           ),
         ),
         isFalse,
@@ -763,18 +764,6 @@ void main() {
         return swallowAndKill(request);
       };
 
-      AssistantMessage message(String? errorMessage, {required bool ok}) =>
-          AssistantMessage(
-            content: const [],
-            api: _reproModel.api,
-            provider: _reproModel.provider,
-            model: _reproModel.id,
-            usage: Usage.zero,
-            stopReason: ok ? StopReason.stop : StopReason.error,
-            errorMessage: errorMessage,
-            timestamp: DateTime.now(),
-          );
-
       var attempts = 0;
       final wrapped = transientRetryStreamFunction(
         (model, context, {cancelToken}) {
@@ -786,14 +775,14 @@ void main() {
               stream.push(
                 DoneEvent(
                   reason: StopReason.stop,
-                  message: message(null, ok: true),
+                  message: errorMessageOf(null, ok: true),
                 ),
               );
             } else {
               stream.push(
                 ErrorEvent(
                   reason: StopReason.error,
-                  error: message(outcome.error, ok: false),
+                  error: errorMessageOf(outcome.error),
                 ),
               );
             }
