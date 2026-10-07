@@ -309,7 +309,7 @@ void main() {
 
     test('the committed lockfile pins the drift chain', () {
       // Parent dep: the umbrella gh-1235 added directly (data, not vibes —
-      // js_widget_runtime, hosted 0.4.155 AND git bd1e7c2, declares no
+      // js_widget_runtime, hosted 0.4.156, declares no
       // inappwebview dependency; the umbrella is the only graph edge).
       expect(lockedVersion('flutter_inappwebview'), '6.2.0-beta.3');
       // Its desktop impls, kept at the exact versions that broke nightly:
