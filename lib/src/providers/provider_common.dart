@@ -23,6 +23,7 @@ import '../model.dart';
 import '../rate_limit_info.dart';
 import '../sse_decoder.dart';
 import '../types.dart';
+import 'conn_trace.dart';
 import 'transient_retry_stream.dart';
 
 /// Placeholder substituted for user-message images when the target model has
@@ -621,6 +622,11 @@ Future<http.StreamedResponse> sendWatchedProviderRequest(
       );
       // Bounded backoff; the sleeper races the cancel token, so a user
       // abort during the wait wins over the pending retry.
+      connTrace.retryScheduled(
+        attempt: attempt + 1,
+        delaySec: delay.inMicroseconds / 1e6,
+        reason: 'connect stall: no response bytes',
+      );
       final survived = await transientRetrySleeper(delay, cancelToken);
       if (!survived) {
         cancelToken?.throwIfCancelled(); // the abort propagates
@@ -667,6 +673,10 @@ Future<http.StreamedResponse> _sendWatchedOnce(
     // handler, never the zone (issue #921 discipline). The retry cap
     // bounds the abandoned-attempt multiplication at
     // providerConnectRetries + 1 per stalled turn.
+    connTrace.connectWatchdogFired(
+      timeoutSec: effectiveProviderConnectTimeout.inMicroseconds / 1e6,
+      attempt: attempt,
+    );
     unawaited(
       responseFuture.then<Object?>((late) {
         transientRetryNotice?.call(
@@ -846,6 +856,11 @@ http.Client Function()? providerHttpClientFactory;
 
 http.Client? _sharedProviderClient;
 
+/// Test/ops seam: drops the cached shared client so the next
+/// [sharedProviderHttpClient] call rebuilds it (ConnTrace toggling and
+/// factory swaps in tests, issue #1392).
+void debugResetSharedProviderHttpClient() => _sharedProviderClient = null;
+
 /// The shared keep-alive HTTP client for provider streams.
 ///
 /// Streaming adapters use it when the caller injects no client: a fresh
@@ -857,8 +872,20 @@ http.Client? _sharedProviderClient;
 ///
 /// If [providerHttpClientFactory] is set, its product is used and cached
 /// instead of the default [http.Client].
-http.Client sharedProviderHttpClient() => _sharedProviderClient ??=
-    (providerHttpClientFactory?.call() ?? http.Client());
+///
+/// Issue #1392 (bench round 3): with `FA_CONN_DEBUG=1` (or
+/// `FA_PROVIDER_DEBUG`) the default product is the traced client — every
+/// send/first-byte/watchdog event lands as a structured `FA_CONN` line on
+/// stderr (and `FA_CONN_TRACE_FILE`), so a bench stall is diagnosable
+/// from the live run log. Without the flag the factory chain is
+/// byte-for-byte what it was.
+http.Client sharedProviderHttpClient() {
+  connTrace.configureFromEnv();
+  return _sharedProviderClient ??=
+      (providerHttpClientFactory?.call() ??
+      connTrace.tracedClient() ??
+      http.Client());
+}
 
 /// The effective connect watchdog: the config override or the default.
 Duration get effectiveProviderConnectTimeout =>
@@ -1076,6 +1103,15 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
     }
     _timer = Timer(_idleTimeout, () {
       if (completer.isCompleted) return;
+      // Issue #1392 ConnTrace: the idle-watchdog fire is invisible today —
+      // exactly why class-B's ~300s gaps are a guess. Name the idle span
+      // and the current connection (single-flight bench contract) before
+      // the abort lands.
+      connTrace.idleWatchdogFired(
+        idleSec: _idleTimeout.inMicroseconds / 1e6,
+        connAgeSec: connTrace.lastConnAgeSec,
+        localPort: connTrace.lastLocalPort,
+      );
       // Abandon before cancelling so the byte sink swallows the dying
       // link's error, and quiet-cancel: the cancel future rides that
       // dying pipeline and may itself fail (issue #921).

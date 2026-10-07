@@ -166,6 +166,7 @@ export 'src/providers/chatgpt_codex_models.dart';
 export 'src/providers/chatgpt_oauth.dart';
 export 'src/providers/codex_transport.dart';
 export 'src/providers/codemie_sso.dart';
+export 'src/providers/conn_trace.dart';
 export 'src/providers/copilot.dart';
 export 'src/providers/copilot_device_flow.dart';
 export 'src/providers/copilot_oauth.dart';
