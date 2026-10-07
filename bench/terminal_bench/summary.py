@@ -17,6 +17,15 @@ FA_PROVIDER_CONFIG env), else the cost renders n/a — never a made-up
 price. Tokens estimated where a provider omitted usage (chars/4, done by
 fa_agent.py) are flagged in a note when > 0.
 
+Issue #1339: rows whose recorded totals were lost (tb's flat-cap timeout
+fabrication discards the adapter's fold — gh-1209) re-fold their usage
+from the synced session logs; an agent_timeout trial that did real work
+after a zero-byte takeover classifies as `recovered`, distinct from
+provider hang and cap exhaustion; a finished trial's terminal failure
+mode renders in the resolved column instead of `pending`; and the
+unpriced line names the model ids it could not price (or says the id is
+unknown).
+
 tb exits 0 even with unresolved tasks, so the exit code is the verdict on
 run COMPLETENESS only: 1 when nothing was produced or fewer than
 expected-count tasks were attempted (lost/killed shard). Unresolved or
@@ -98,7 +107,8 @@ def _parse_args(argv):
 
 
 def _session_facts(runs_dir: Path) -> dict:
-    """trial_name → {"model": str|None, "estimated": int} from synced sessions.
+    """trial_name → {"model": str|None, "estimated": int,
+    "input_tokens": int, "output_tokens": int} from synced sessions.
 
     tb ships each trial's fa sessions in the run artifacts. The glob is
     pinned to the two shipped layouts — <run>/<task>/<trial>/agent-logs/
@@ -130,17 +140,13 @@ def _session_facts(runs_dir: Path) -> dict:
             # One model per trial is the norm; mixed → None (cost n/a).
             "model": models[0] if len(models) == 1 else None,
             "estimated": usage.estimated_tokens,
+            # Issue #1339: the fold fa_agent.py writes into results.json
+            # can be discarded by tb's flat-cap timeout fabrication, so
+            # keep the session-side totals for the summary's re-fold.
+            "input_tokens": usage.input_tokens + usage.estimated_input_tokens,
+            "output_tokens": usage.output_tokens + usage.estimated_output_tokens,
         }
     return facts
-
-
-def _cost_cell(pricing, facts, trial, tin, tout, model_override):
-    """USD for one trial row; None renders n/a (unpriced/unknown model)."""
-    model = (facts.get(trial) or {}).get("model") or model_override
-    entry = fa_usage.price_entry(pricing, model) if model else None
-    if entry is None:
-        return None
-    return fa_usage.cost_usd(entry, tin or 0, tout or 0)
 
 
 def render(runs_dir: Path, expected=None, model_override=None):
@@ -157,20 +163,45 @@ def render(runs_dir: Path, expected=None, model_override=None):
 
     pricing = fa_usage.load_pricing(_PRICING_PATH)
     facts = _session_facts(runs_dir)
+    # task, trial, mark, mode, recorded in/out, effective in/out, cost.
     rows = []
+    unpriced_models = set()
+    unpriced_unknown = 0
     for p in paths:
         data = json.loads(Path(p).read_text())
         for r in data.get("results", []):
             resolved = r.get("is_resolved")
-            mark = {True: "yes", False: "no", None: "pending"}[resolved]
-            tin = r.get("total_input_tokens")
-            tout = r.get("total_output_tokens")
-            cost = _cost_cell(
-                pricing, facts, r.get("trial_name", "?"), tin, tout, model_override
-            )
+            mode = r.get("failure_mode") or ""
+            # Issue #1339 AC2: a finished trial's terminal failure mode
+            # must never read as the non-terminal `pending`.
+            if resolved is True:
+                mark = "yes"
+            elif resolved is False:
+                mark = "no"
+            else:
+                mark = f"no ({mode})" if mode else "pending"
+            fact = facts.get(r.get("trial_name", "?")) or {}
+            rec_in = r.get("total_input_tokens")
+            rec_out = r.get("total_output_tokens")
+            # Issue #1339 AC1: tb's flat-cap timeout fabrication discards
+            # the adapter's usage fold (gh-1209) — the trial's real usage
+            # then only survives in the synced fa session logs; re-fold.
+            tin = rec_in if rec_in else (fact.get("input_tokens") or rec_in)
+            tout = rec_out if rec_out else (fact.get("output_tokens") or rec_out)
+            model = fact.get("model") or model_override
+            entry = fa_usage.price_entry(pricing, model) if model else None
+            cost = fa_usage.cost_usd(entry, tin or 0, tout or 0) if entry else None
+            if (tin or tout) and cost is None:
+                # Only rows that recorded tokens but carry no price count;
+                # zero-token rows render n/a but are not unpriced spend.
+                # Issue #1339 AC3: the warning names the ids (or their absence).
+                if model:
+                    unpriced_models.add(model)
+                else:
+                    unpriced_unknown += 1
             rows.append((
                 r.get("task_id", "?"), r.get("trial_name", "?"), mark,
-                r.get("failure_mode") or "", tin, tout, cost,
+                mode, rec_in, rec_out, tin, tout, cost,
             ))
     n_resolved = sum(1 for r in rows if r[2] == "yes")
     accuracy = n_resolved / len(rows) if rows else 0.0
@@ -194,39 +225,63 @@ def render(runs_dir: Path, expected=None, model_override=None):
     # doing real work. The explicit count is the provider-health
     # regression guard across bench runs.
     modes = {}
-    hang = work = 0
-    for _, _, mark, mode, tin, tout, _ in rows:
+    hang = work = recovered = 0
+    for _, _, mark, mode, rec_in, rec_out, tin, tout, _ in rows:
         key = mode or "unset"
         if key == "agent_timeout":
-            if not tin and not tout:
-                key = "agent_timeout (0 tokens — provider hang)"
-                hang += 1
-            else:
+            if rec_in or rec_out:
                 key = "agent_timeout (real work, cap exhausted)"
                 work += 1
+            elif tin or tout:
+                # Recorded 0/0 but the session logs carry real usage: the
+                # zero-byte attempt was recovered by replay/takeover
+                # (#1311) — neither a provider hang nor cap exhaustion.
+                key = "agent_timeout (recovered — replay/takeover)"
+                recovered += 1
+            else:
+                key = "agent_timeout (0 tokens — provider hang)"
+                hang += 1
         modes[(key, mark)] = modes.get((key, mark), 0) + 1
     lines.append("Failure families (mode x resolved):")
     for (mode, mark), n in sorted(modes.items()):
         lines.append(f"- {mode or 'unset'} / {mark}: {n}")
-    if hang or work:
+    if hang or work or recovered:
         lines.append(
             f"**zero-token timeouts (provider hang): {hang}**"
             f" — agent_timeout split: {hang} with 0 tokens (provider hang),"
+            f" {recovered} recovered after zero-byte takeover (usage folded"
+            f" from fa session logs),"
             f" {work} with real work (cap exhausted)"
         )
     lines.append("")
 
     # Token/cost totals (issue #1123): sums over exactly the rows above.
-    total_in = sum(r[4] or 0 for r in rows)
-    total_out = sum(r[5] or 0 for r in rows)
-    priced = [r[6] for r in rows if r[6] is not None]
+    total_in = sum(r[6] or 0 for r in rows)
+    total_out = sum(r[7] or 0 for r in rows)
+    priced = [r[8] for r in rows if r[8] is not None]
     # Same unpriced rule as the harbor summary: only rows that recorded
     # tokens but carry no price count. Zero-token rows render n/a but are
     # not unpriced spend.
-    unpriced = sum(1 for r in rows if (r[4] or r[5]) and r[6] is None)
-    if any(r[4] or r[5] for r in rows):
+    unpriced = sum(1 for r in rows if (r[6] or r[7]) and r[8] is None)
+    if any(r[6] or r[7] for r in rows):
         cost_total = f"${sum(priced):.4f}" if priced else "n/a"
-        suffix = f" — {unpriced} trial(s) unpriced (model missing from pricing.json)" if unpriced else ""
+        suffix = ""
+        if unpriced:
+            # Issue #1339 AC3: name the ids with no price entry; when even
+            # the id is unknown, say that instead of a bare count.
+            if unpriced_models and unpriced_unknown:
+                detail = (
+                    "no pricing.json entry for "
+                    f"{', '.join(sorted(unpriced_models))} + "
+                    f"{unpriced_unknown} with unknown model id"
+                )
+            elif unpriced_models:
+                detail = (
+                    f"no pricing.json entry for {', '.join(sorted(unpriced_models))}"
+                )
+            else:
+                detail = "model id unknown (no fa session logs, no --model)"
+            suffix = f" — {unpriced} trial(s) unpriced: {detail}"
         lines.append(f"**tokens in/out: {total_in}/{total_out} — est. cost: {cost_total}{suffix}**")
         estimated = sum((facts.get(r[1]) or {}).get("estimated", 0) for r in rows)
         if estimated:
@@ -235,7 +290,7 @@ def render(runs_dir: Path, expected=None, model_override=None):
             )
     lines.append("| task | trial | resolved | failure mode | tokens in/out | est cost |")
     lines.append("|---|---|---|---|---|---|")
-    for task, trial, mark, mode, tin, tout, cost in rows:
+    for task, trial, mark, mode, _rec_in, _rec_out, tin, tout, cost in rows:
         tokens = f"{tin}/{tout}" if tin is not None or tout is not None else ""
         cost_cell = "n/a" if cost is None else f"${cost:.4f}"
         lines.append(f"| {task} | {trial} | {mark} | {mode} | {tokens} | {cost_cell} |")

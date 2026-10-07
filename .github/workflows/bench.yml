@@ -277,6 +277,12 @@ jobs:
       # job's, over all shards.
       - name: Shard accuracy summary
         if: always()
+        env:
+          # Issue #1339 AC3: cost needs the model id, and a trial's id only
+          # surfaces from its fa session logs — when those never reach the
+          # artifact every row prices n/a. The bench model is run-static
+          # (FA_PROVIDER_CONFIG above), so give the summary the same pin.
+          MODEL: glm-5.3-flash
         run: |
           python bench/terminal_bench/summary.py --no-fail tb-runs
 
@@ -315,5 +321,8 @@ jobs:
         if: always()
         env:
           EXPECTED: ${{ needs.setup.outputs.count }}
+          # Issue #1339 AC3: same pin as the shard summary — price every
+          # trial even when its fa session logs are absent.
+          MODEL: glm-5.3-flash
         run: |
           python bench/terminal_bench/summary.py tb-runs "$EXPECTED"
