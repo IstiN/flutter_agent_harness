@@ -25,11 +25,14 @@ const _screenReads = [
 ];
 
 /// Wait/settle calls that end the danger window after a bare waitForScreen.
+/// `waitForRaw` is raw-stream-only but waits all the same — a capture-then-
+/// screen-read sequence after it gets the same anchored-capture enforcement.
 const _windowEnders = [
   'waitForScreen(',
   'waitForText(',
   'waitForOutput(',
   'waitForBoot(',
+  'waitForRaw(',
 ];
 
 /// The primitive itself: its internal `screenText` polls ARE the wait.

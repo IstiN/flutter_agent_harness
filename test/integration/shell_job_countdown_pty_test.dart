@@ -15,7 +15,11 @@
 /// no fixed sleeps beyond the harness settle windows.
 @TestOn('vm')
 @Tags(['io', 'integration'])
-@Timeout(Duration(minutes: 5))
+// 8 min, not 5: the stage ceilings sum to ~7 min in the everything-times-
+// out path (gh-1337 review) — at 5 the generic per-test abort would eat
+// waitForRaw's diagnostic-rich TimeoutException (screen + raw tail) in
+// exactly the slow-runner hang case this suite is hardened against.
+@Timeout(Duration(minutes: 8))
 library;
 
 import 'dart:convert';
@@ -53,160 +57,149 @@ final _turns = [
 /// The live collapsed board row: ten started, nothing settled yet.
 const _allRunning = 'Background jobs (10) · 10 running · 0 done · 0 lost';
 
-/// The drained collapsed board row — the completion marker every job's
-/// settle notice hangs off (all ten done, none lost).
-const _drainedRow = 'Background jobs (10) · 0 running · 10 done · 0 lost';
-
-/// One settle notice per finished job (`[bash] sh-… exited(0)`); exactly
-/// ten of these prove every command started AND finished.
-final _settleNotice = RegExp(r'\[bash\] sh-(\S+) exited\(0\)');
-
-/// The same row mid-drain — the countdown segment this test photographs.
+/// One settle notice per finished job (`[bash] sh-… exited(code)`); exactly
+/// ten of these prove every command started AND finished — the proof set
+/// lives in the harness as [shellJobSettleNotice] / `settledJobNumbers`
+/// (top-level, unit-provable without a PTY).
 final _liveBoard = RegExp(r'Background jobs \(10\) · (\d+) running');
 
 /// Any live running count above zero — forbidden on the final frame.
 final _stuckRunning = RegExp(r'[1-9]\d* running');
 
 void main() {
-  test('ten background bash jobs start, count down on camera, drain to '
-      '0 running (#573 review)', () async {
-    // Unique SHORT dirs (the #936/#938 class — fixed /tmp paths race
-    // concurrent suite copies on the shared minis). The classic
-    // status-row tail ('· ctx', ' · turn ') is truncated by long macOS
-    // temp paths, so the roots stay under /tmp.
-    final home = Directory('/tmp').createTempSync('fa573h');
-    final project = Directory('/tmp').createTempSync('fa573p');
-    addTearDown(() => home.delete(recursive: true));
-    addTearDown(() => project.delete(recursive: true));
-    // Pin the classic chrome: this suite asserts the pre-#805 classic
-    // grid; the band redesign (#805-#807) has its own surface. The
-    // provider comes from env vars only, so the pin is a tiny config.
-    File('${home.path}/.fah/config.yaml')
-      ..createSync(recursive: true)
-      ..writeAsStringSync('tui:\n  classic: true\n');
-    final turnsFile = File('${home.path}/fa_573_turns.json')
-      ..writeAsStringSync(jsonEncode(_turns));
+  test(
+    'ten background bash jobs start, count down on camera, drain to '
+    '0 running (#573 review)',
+    () async {
+      // Unique SHORT dirs (the #936/#938 class — fixed /tmp paths race
+      // concurrent suite copies on the shared minis). The classic
+      // status-row tail ('· ctx', ' · turn ') is truncated by long macOS
+      // temp paths, so the roots stay under /tmp.
+      final home = Directory('/tmp').createTempSync('fa573h');
+      final project = Directory('/tmp').createTempSync('fa573p');
+      addTearDown(() => home.delete(recursive: true));
+      addTearDown(() => project.delete(recursive: true));
+      // Pin the classic chrome: this suite asserts the pre-#805 classic
+      // grid; the band redesign (#805-#807) has its own surface. The
+      // provider comes from env vars only, so the pin is a tiny config.
+      File('${home.path}/.fah/config.yaml')
+        ..createSync(recursive: true)
+        ..writeAsStringSync('tui:\n  classic: true\n');
+      final turnsFile = File('${home.path}/fa_573_turns.json')
+        ..writeAsStringSync(jsonEncode(_turns));
 
-    final harness = await FaCliHarness.spawn(
-      workingDirectory: project.path,
-      extraEnv: {
-        'HOME': home.path,
-        'FA_TEST_STREAM_SCRIPT': turnsFile.path,
-        'FA_PROVIDER_TYPE': 'openai',
-        'FA_PROVIDER_CONFIG': jsonEncode({
-          'baseUrl': 'http://127.0.0.1:9', // never dialed — the script
-          'model': 'pty-scripted',
-        }),
-      },
-      args: ['--session', 'pty573-countdown'],
-      columns: 80,
-      rows: 24,
-    );
-    addTearDown(harness.close);
-    await harness.waitForBoot();
+      final harness = await FaCliHarness.spawn(
+        workingDirectory: project.path,
+        extraEnv: {
+          'HOME': home.path,
+          'FA_TEST_STREAM_SCRIPT': turnsFile.path,
+          'FA_PROVIDER_TYPE': 'openai',
+          'FA_PROVIDER_CONFIG': jsonEncode({
+            'baseUrl': 'http://127.0.0.1:9', // never dialed — the script
+            'model': 'pty-scripted',
+          }),
+        },
+        args: ['--session', 'pty573-countdown'],
+        columns: 80,
+        rows: 24,
+      );
+      addTearDown(harness.close);
+      await harness.waitForBoot();
 
-    // ── all ten START: the live board peaks at `10 running` ───────────
-    harness.sendText('run the countdown');
-    harness.sendEnter();
-    await harness.waitForScreen(
-      _allRunning,
-      timeout: const Duration(seconds: 60),
-    );
-    await harness.waitForOutput(settleMs: 200);
-    final peak = harness.viewportLines;
-    expectComposerReserved(peak, 80);
-    _writeShot(harness, '300_shell_job_countdown_10_running');
+      // ── all ten START: the live board peaks at `10 running` ───────────
+      harness.sendText('run the countdown');
+      harness.sendEnter();
+      await harness.waitForScreen(
+        _allRunning,
+        timeout: const Duration(seconds: 60),
+      );
+      await harness.waitForOutput(settleMs: 200);
+      final peak = harness.viewportLines;
+      expectComposerReserved(peak, 80);
+      _writeShot(harness, '300_shell_job_countdown_10_running');
 
-    // ── MID-FLIGHT SCREEN: the count strictly between 10 and 0 ────────
-    final deadline = DateTime.now().add(const Duration(seconds: 60));
-    int? mid;
-    while (DateTime.now().isBefore(deadline)) {
-      final match = _liveBoard.firstMatch(harness.screenText);
-      final count = match == null ? null : int.parse(match.group(1)!);
-      if (count != null && count >= 1 && count <= 9) {
-        mid = count;
-        break;
+      // ── MID-FLIGHT SCREEN: the count strictly between 10 and 0 ────────
+      final deadline = DateTime.now().add(const Duration(seconds: 60));
+      int? mid;
+      while (DateTime.now().isBefore(deadline)) {
+        final match = _liveBoard.firstMatch(harness.screenText);
+        final count = match == null ? null : int.parse(match.group(1)!);
+        if (count != null && count >= 1 && count <= 9) {
+          mid = count;
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 50));
       }
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-    }
-    expect(
-      mid,
-      isNotNull,
-      reason:
-          'the board must be photographed mid-countdown — every '
-          'frame showed 10 or 0 running:\n${harness.screenText}',
-    );
-    await harness.waitForOutput(settleMs: 200);
-    expectComposerReserved(harness.viewportLines, 80);
-    _writeShot(harness, '301_shell_job_countdown_mid_$mid');
+      expect(
+        mid,
+        isNotNull,
+        reason: 'the board must be photographed mid-countdown — every '
+            'frame showed 10 or 0 running:\n${harness.screenText}',
+      );
+      await harness.waitForOutput(settleMs: 200);
+      expectComposerReserved(harness.viewportLines, 80);
+      _writeShot(harness, '301_shell_job_countdown_mid_$mid');
 
-    // ── all ten FINISH: anchor on the drained board, never a quiet gap ─
-    // gh-1250 family, this file's run 37521987367 (PTY shard 2/3): the
-    // staggered sleeps settle ~1 s apart and waitForOutput's quiet
-    // detector (2×settleMs of raw-buffer silence) early-returns on ANY
-    // ≥1 s output lull — a CI-load stall between frame repaints is
-    // enough — so the harvest saw only {1..5} of 10. The board's drained
-    // row is the completion marker: by the time it paints, every job has
-    // settled and its notice is already in the raw buffer (each settle
-    // prints once, repaints re-emit), so a short fixed settle is all the
-    // harvest needs.
-    await harness.waitForText(
-      _drainedRow,
-      timeout: const Duration(seconds: 90),
-    );
-    // Post-anchor settle: flush the drain frame's notice re-emissions,
-    // then read the raw buffer for the per-job harvest below.
-    await harness.waitForOutput(settleMs: 300);
-    final drained = harness.rawOutput;
-    // Frame repaints re-emit notices into the raw stream — the start/
-    // finish proof is the set of DISTINCT settled job numbers, not the
-    // raw match count. Match on the NUMBER PREFIX, never the full id:
-    // a repaint can interleave cursor-move escapes mid-id (observed
-    // under CI load: `sh-10-…xqo<esc>[11;29H5<esc>[11;31H exited(0)`),
-    // and a fragmented re-emit would otherwise inflate the distinct-id
-    // set with a corrupt entry. The number is the first token written,
-    // so it survives any such fragmentation.
-    final settledNumbers = _settleNotice
-        .allMatches(drained)
-        .map((m) => m.group(1)!.split('-').first)
-        .toSet();
-    expect(
-      settledNumbers,
-      {for (var i = 1; i <= 10; i++) '$i'},
-      reason:
-          'ten background bash commands must start and finish: '
-          '$settledNumbers',
-    );
+      // ── all ten FINISH: one settle notice per job, exactly ────────────
+      // gh-1337 (CI v1.0.520): this was a silence settle —
+      // `waitForOutput(settleMs: 500)` returns once ~1 s of raw-stream
+      // quiet passes. But this scenario staggers its sleeps exactly 1 s
+      // apart (3..12 s), so the gaps BETWEEN settle notices sit right on
+      // that threshold; one stretched gap on a loaded runner (job 7 → 8)
+      // returned mid-drain with the tail jobs unlanded and the capture
+      // held only {1..7}. The wait is now anchored on the proof data
+      // itself — all ten DISTINCT settle numbers present in the raw
+      // buffer — with a generous ceiling for slow runners; expiry throws
+      // with diagnostics instead of silently truncating.
+      final drained = await harness.waitForRaw(
+        (raw) => settledJobNumbers(raw).length == 10,
+        what: 'all ten distinct shell-job settle notices in raw output',
+        timeout: const Duration(seconds: 120),
+      );
+      // Frame repaints re-emit notices into the raw stream — the start/
+      // finish proof is the set of DISTINCT settled job numbers, not the
+      // raw match count (fragmented-id tolerance lives inside
+      // settledJobNumbers).
+      final settledNumbers = settledJobNumbers(drained);
+      expect(
+        settledNumbers,
+        {for (var i = 1; i <= 10; i++) '$i'},
+        reason:
+            'ten background bash commands must start and finish: '
+            '$settledNumbers',
+      );
 
-    // ── THE DRAIN: `0 running`, one terminal card, no live row ────────
-    await harness.waitForScreen(
-      '0 running',
-      timeout: const Duration(seconds: 30),
-    );
-    await harness.waitForOutput(settleMs: 300);
-    final after = harness.viewportLines;
-    expectComposerReserved(after, 80);
-    _writeShot(harness, '302_shell_job_countdown_0_running');
-    final screen = after.join('\n');
-    expect(
-      screen,
-      contains(_drainedRow),
-      reason:
-          'the settled collapsed turn hands ONE terminal summary '
-          'card to the transcript, drained:\n$screen',
-    );
-    expect(
-      _stuckRunning.allMatches(screen),
-      isEmpty,
-      reason: 'no live job remains — the count drained to zero:\n$screen',
-    );
+      // ── THE DRAIN: `0 running`, one terminal card, no live row ────────
+      await harness.waitForScreen(
+        '0 running',
+        timeout: const Duration(seconds: 30),
+      );
+      await harness.waitForOutput(settleMs: 300);
+      final after = harness.viewportLines;
+      expectComposerReserved(after, 80);
+      _writeShot(harness, '302_shell_job_countdown_0_running');
+      final screen = after.join('\n');
+      expect(
+        screen,
+        contains(
+          'Background jobs (10) · 0 running · 10 done · 0 lost',
+        ),
+        reason: 'the settled collapsed turn hands ONE terminal summary '
+            'card to the transcript, drained:\n$screen',
+      );
+      expect(
+        _stuckRunning.allMatches(screen),
+        isEmpty,
+        reason: 'no live job remains — the count drained to zero:\n$screen',
+      );
 
-    await harness.runSlashCommand('/exit');
-    await harness.pty.exitCode.timeout(
-      const Duration(seconds: 15),
-      onTimeout: () => -1,
-    );
-  });
+      await harness.runSlashCommand('/exit');
+      await harness.pty.exitCode.timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => -1,
+      );
+    },
+  );
 }
 
 /// The composer's reserved bottom rows. When a turn is live, the status
@@ -239,8 +232,7 @@ void expectComposerReserved(List<String> viewport, int columns) {
     expect(
       viewport.last.trimRight(),
       startsWith('╰─'),
-      reason:
-          'idle chrome collapses to the composer prompt row:\n'
+      reason: 'idle chrome collapses to the composer prompt row:\n'
           '${viewport.join('\n')}',
     );
   }
@@ -253,3 +245,4 @@ void _writeShot(FaCliHarness harness, String name) {
   Directory(dir).createSync(recursive: true);
   File('$dir/$name.txt').writeAsStringSync(harness.screenText);
 }
+

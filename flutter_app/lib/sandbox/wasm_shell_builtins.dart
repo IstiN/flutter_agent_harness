@@ -684,13 +684,20 @@ final class TestEvaluator {
   return (assignments: assignments, remaining: remaining);
 }
 
-/// Applies `export` operands to [env]: `NAME=value` assigns, a bare `NAME`
-/// marks it exported with an empty value only when not already present.
+/// Valid shell/WASI environment variable names. Special shell parameters
+/// like `'?'` are expansion-only: exports must not shadow them.
+final RegExp exportEnvVarName = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$');
+
+/// Applies `export NAME=value` arguments to [env]. Names that are not valid
+/// environment variables (e.g. the special `'?'` parameter) are ignored —
+/// `$?` is shell-owned (issue #1335).
 void applyExportArgs(Map<String, String> env, List<String> args) {
   for (final arg in args) {
     final idx = arg.indexOf('=');
     if (idx > 0) {
-      env[arg.substring(0, idx)] = arg.substring(idx + 1);
+      final name = arg.substring(0, idx);
+      if (!exportEnvVarName.hasMatch(name)) continue;
+      env[name] = arg.substring(idx + 1);
     } else {
       env.putIfAbsent(arg, () => '');
     }
@@ -728,3 +735,78 @@ String sandboxRelativePath(String from, String start) => p.relative(
   from == '/' ? '/' : from.substring(1),
   from: start == '/' ? '/' : start.substring(1),
 );
+
+/// Commands whose positional arguments are file paths and therefore get
+/// rewritten relative to the shell's current directory by
+/// `WasiSandboxShell._rewriteRelativeArgs` (issue #558 family: pure operand
+/// classification data, kept beside the other parse helpers).
+const Set<String> pathPositionalCommands = {
+  'basename',
+  'cat',
+  'cksum',
+  'comm',
+  'cp',
+  'csplit',
+  'cut',
+  'dir',
+  'dirname',
+  'du',
+  'expand',
+  'fmt',
+  'fold',
+  'gzip',
+  'head',
+  'install',
+  'join',
+  'link',
+  'ln',
+  'ls',
+  'md5sum',
+  'mkdir',
+  'mv',
+  'nl',
+  'od',
+  'paste',
+  'readlink',
+  'realpath',
+  'relpath',
+  'rm',
+  'rmdir',
+  'sha1sum',
+  'sha224sum',
+  'sha256sum',
+  'sha384sum',
+  'sha512sum',
+  'b2sum',
+  'shred',
+  'sort',
+  'split',
+  'stat',
+  'sum',
+  'tac',
+  'tail',
+  'tar',
+  'tee',
+  'touch',
+  'truncate',
+  'tsort',
+  'unexpand',
+  'uniq',
+  'unlink',
+  'vdir',
+  'wc',
+};
+
+/// Flags whose following argument is NOT a path, per command. Used by the
+/// positional-arg rewrite to avoid rewriting flag values.
+const Map<String, Set<String>> nonPathFlagValues = {
+  'cut': {'-b', '-c', '-d', '-f'},
+  'head': {'-c', '-n'},
+  'join': {'-1', '-2', '-e', '-t'},
+  'rg': {'-A', '-B', '-C', '-e', '-g', '-m', '-t', '-T'},
+  'sort': {'-k', '-t'},
+  'split': {'-a', '-b', '-l', '-n'},
+  'tail': {'-c', '-n'},
+  'find': {'-iname', '-mmin', '-mtime', '-name', '-size', '-type'},
+  'mktemp': {'-t'},
+};
