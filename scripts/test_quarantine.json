@@ -99,7 +99,17 @@
       ]
     },
     {
-      "file": "test/integration/subagent_integration_test.dart",
+      "file": "test/integration/wire_serve_cli_test.dart",
+      "test": "E4 + authn-lite: bad token is rejected; token stays out of records",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1360",
+      "since": "2026-10-07",
+      "runs": [
+        37552613207,
+        37459648403
+      ]
+    },
+    {
+            "file": "test/integration/subagent_integration_test.dart",
       "test": "memory_add and memory_search tools are available",
       "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1372",
       "since": "2026-10-07",
