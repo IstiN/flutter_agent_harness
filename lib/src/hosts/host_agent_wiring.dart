@@ -1,6 +1,7 @@
 /// Live agent-stack wiring through the builder (issue #1079, slice 2 —
 /// the CLI converts to this as the first host shell; slice 3 — the
-/// fabric/subagent/task complex joins the builder-owned set).
+/// fabric/subagent/task complex joins the builder-owned set; slice 4 —
+/// host extensions become builder-gated, declared surface).
 ///
 /// [wireAgentCore] consumes a [HostCapabilityProfile] plus the host's
 /// typed [AgentCoreServices] and returns a [WiredAgentCore]: the
@@ -90,6 +91,7 @@ import '../tools/sqlite/sqlite_reader.dart';
 import '../tools/transcribe_audio.dart';
 import '../web_search/web_search_tool.dart';
 import 'host_capability_profile.dart';
+import 'host_extension_api.dart';
 import 'host_wiring_builder.dart';
 
 /// The sandbox facility a process-capable host provides: the builder
@@ -263,9 +265,13 @@ final class AgentCoreServices {
   final Future<String> Function(ExecutionEnv coreEnv, Uint8List png)?
   saveBrowserScreenshot;
 
-  /// Host-extension tools (the CLI's plugin surface — the public shape
-  /// of what `FahPlugin` registers, issue #1079 HostExtensionApi).
-  final List<AgentTool> hostTools;
+  /// The host's declared extensions (issue #1079 slice 4 — the
+  /// `HostExtensionApi`): named tool contributions with an explicit
+  /// per-profile matrix (E6). The builder gates them: tool-id collisions
+  /// rejected at build time with both registrants named (E7), and a
+  /// profile-off extension hides with its reason surfaced on
+  /// [WiredAgentCore.extensions] (E8). See [HostExtension].
+  final List<HostExtension> extensions;
 
   /// Lifecycle telemetry for in-process hosts (issue #1322 Gap 3). When
   /// present, `buildAgentStack` attaches the sink to the built agent and
@@ -339,7 +345,7 @@ final class AgentCoreServices {
     this.media,
     this.browserController,
     this.saveBrowserScreenshot,
-    this.hostTools = const [],
+    this.extensions = const [],
     this.hubFabric,
     this.mainMailbox,
     this.subagents,
@@ -446,8 +452,8 @@ final class WiredAgentCore {
 
   /// The capability-gated core tools, in the canonical registration
   /// order (builtins → memory → schedule → ask → secret → vision →
-  /// transcribe → media → browser → host tools). Set at construction by
-  /// [wireAgentCore] — a wired core ALWAYS carries its tools (no
+  /// transcribe → media → browser → host extensions). Set at
+  /// construction by [wireAgentCore] — a wired core ALWAYS carries its tools (no
   /// post-hoc assignment that a refactor could orphan). Child-safe: the
   /// task executor strips only `task` itself, so the gated task surface
   /// below never rides in this list.
@@ -477,6 +483,11 @@ final class WiredAgentCore {
   /// of [tools] so child tool pools never draw it.
   final List<AgentTool> taskSurface;
 
+  /// The wired extension surface (slice 4): per-extension outcome — the
+  /// tools that reached the stack, or the profile's off reason (E8) for
+  /// the host's UI.
+  final List<WiredHostExtension> extensions;
+
   Agent? _agent;
 
   WiredAgentCore._({
@@ -495,6 +506,7 @@ final class WiredAgentCore {
     required this.subagentHeartbeat,
     required this.taskConfig,
     required this.taskSurface,
+    required this.extensions,
   });
 
   /// Assembles the [ToolRegistry] (core tools first, then the gated task
@@ -649,7 +661,6 @@ List<AgentTool> _buildCoreTools({
             ),
           ],
     ...?browser,
-    ...services.hostTools,
   ];
 }
 
@@ -688,7 +699,11 @@ final class _WiredTaskSurface {
 ///
 /// File-less shapes keep their wired hub: a hub-only (mobile) profile
 /// gets the hub repository itself as the fabric — the file transport's
-/// absence discards only the file layer, never the whole fabric.
+/// absence discards only the file layer, never the whole fabric. A
+/// transport state can ALSO survive on transports that declare no host
+/// service (a2a rides the subagent bundle's gateway, not a repository):
+/// hub-less + file-less then composes nothing — null is the honest
+/// answer, the a2a mail path rides the subagent complex directly.
 ({
   MessagingRepository fabric,
   SwappableMessagingRepository? fileFabric,
@@ -723,10 +738,16 @@ _wireFabric({
   }
   if (!wantFile) {
     // File-less (hub-only/mobile) profile: the wired hub IS the fabric —
-    // no file layer to swap and no root to name. Null never rides here:
-    // run-narrowing dropped the hub transport when hubFabric was absent,
-    // so a hub-only shape means the hub is present.
-    return (fabric: services.hubFabric!, fileFabric: null, messagesRoot: null);
+    // no file layer to swap and no root to name. Narrowing drops the hub
+    // transport when hubFabric is absent, BUT a transport with no
+    // declared service (a2a) survives unconditionally — so a file-less
+    // state here does NOT prove the hub is present. Hub-less means there
+    // is no repository to compose: return null (never a null-deref; the
+    // E1 guard above still fires for a hub that DID survive without a
+    // mainMailbox resolver).
+    final hub = services.hubFabric;
+    if (hub == null) return null;
+    return (fabric: hub, fileFabric: null, messagesRoot: null);
   }
   return buildAgentFabric(
     env: services.baseEnv,
@@ -908,11 +929,36 @@ WiredAgentCore wireAgentCore({
       ? shellJobs
       : null;
 
+  // ---- host extensions (slice 4, HostExtensionApi) ----
+  // The surface RIDES the hostExtensionApi capability cell: a profile
+  // declaring it off hides every declared extension with the cell's
+  // reason — the same hide-with-reason contract as any off capability
+  // (E8). Declared-but-unenforced would make the cell decorative (E2:
+  // silence is not a declaration). E6 was enforced at construction
+  // (every built-in profile declared); below, the builder resolves each
+  // extension against the profile the host actually wires (custom
+  // profiles included — a missing state is a wire-time E6 violation).
+  // The E7 collision check runs after the task complex assembles.
+  final extensionCell = plan.planFor(HostCapability.hostExtensionApi);
+  final extensionWiring = extensionCell is WiredCapability
+      ? _wireExtensions(
+          profileName: profile.name,
+          extensions: services.extensions,
+        )
+      : [
+          for (final extension in services.extensions)
+            WiredHostExtension(
+              extension: extension,
+              tools: const [],
+              hiddenReason: (extensionCell as HiddenCapability).reason,
+            ),
+        ];
+
   // Tools first, core second: the list rides the constructor so a wired
   // core can never exist without its tools. The agent closures read the
   // late-bound agent through the (already-assigned by first use) core.
   late final WiredAgentCore core;
-  final tools = _buildCoreTools(
+  final sdkTools = _buildCoreTools(
     plan: plan,
     env: env,
     networkGate: networkGate,
@@ -921,6 +967,12 @@ WiredAgentCore wireAgentCore({
     configService: configService,
     currentAgent: () => core._agent,
   );
+  // The wired extension tools splice after the SDK core — the canonical
+  // tail position the raw hostTools list occupied (slice 4).
+  final tools = [
+    ...sdkTools,
+    for (final wired in extensionWiring) ...wired.tools,
+  ];
   // The task/subagent complex (slice 3) assembles after the core list —
   // children draw it as their tool pool — and reads the late-bound agent
   // through the same closure. The fabric assembles independently: the
@@ -933,6 +985,14 @@ WiredAgentCore wireAgentCore({
     coreTools: tools,
     currentAgent: () => core._agent,
   );
+  // E7, over every statically assembled surface — AFTER the complex so
+  // its gated surface joins the check, BEFORE anything reaches a registry.
+  _rejectToolIdCollisions({
+    'the SDK core': sdkTools,
+    if (taskComplex != null) 'the task surface': taskComplex.tools,
+    for (final wired in extensionWiring.where((w) => !w.isHidden))
+      'extension "${wired.extension.name}"': wired.tools,
+  });
   core = WiredAgentCore._(
     plan: plan,
     services: services,
@@ -949,8 +1009,65 @@ WiredAgentCore wireAgentCore({
     subagentHeartbeat: taskComplex?.subagentHeartbeat,
     taskConfig: taskComplex?.taskConfig,
     taskSurface: taskComplex?.tools ?? const [],
+    extensions: extensionWiring,
   );
   return core;
+}
+
+/// Resolves each declared extension against the profile the host wires
+/// (slice 4): `on` → its tools wire; `off` → hidden with the reason (E8);
+/// a custom profile without a state → wire-time E6 violation. The base
+/// profile name drives the lookup — run-narrowing renames the profile
+/// (`cli.run`) but an extension's matrix is declared per base profile.
+List<WiredHostExtension> _wireExtensions({
+  required String profileName,
+  required List<HostExtension> extensions,
+}) => [
+  for (final extension in extensions)
+    switch (extension.stateFor(profileName)) {
+      null => throw HostWiringException(
+        'HostExtension "${extension.name}" declares no state for profile '
+        '"$profileName" — declare every profile the host can wire (E6: '
+        'built-ins at construction, customs before wiring).',
+      ),
+      final CapabilityOffState off => WiredHostExtension(
+        extension: extension,
+        tools: const [],
+        hiddenReason: off.reason,
+      ),
+      _ => WiredHostExtension(
+        extension: extension,
+        tools: List.unmodifiable(extension.tools),
+      ),
+    },
+];
+
+/// E7, builder edition: tool-id collisions across the statically
+/// assembled surfaces are rejected at build time with both registrants
+/// named. The [ToolRegistry]'s own replace-and-note leniency stays for
+/// the child-pool contract (issue #862) and the per-run
+/// `buildAgentStack(additionalTools:)` surface — the STATIC host/SDK
+/// wiring gets the loud check instead, because an extension id colliding
+/// with a core tool would silently override SDK behavior.
+void _rejectToolIdCollisions(Map<String, List<AgentTool>> groups) {
+  final owner = <String, String>{};
+  void claim(String registrant, Iterable<AgentTool> tools) {
+    for (final tool in tools) {
+      final previous = owner[tool.name];
+      if (previous != null) {
+        throw HostWiringException(
+          'Tool-id collision at build time (E7): "${tool.name}" is '
+          'registered by both $previous and $registrant — the builder '
+          'never silently replaces a tool; rename one of the two.',
+        );
+      }
+      owner[tool.name] = registrant;
+    }
+  }
+
+  for (final MapEntry(key: registrant, value: tools) in groups.entries) {
+    claim(registrant, tools);
+  }
 }
 
 /// Run-narrows [profile] against the service names the host provided:
