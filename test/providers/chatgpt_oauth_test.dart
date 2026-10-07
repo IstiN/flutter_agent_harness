@@ -399,4 +399,42 @@ void main() {
       },
     );
   });
+
+  group('jwtEmailClaim', () {
+    String token(Map<String, Object?> payload) {
+      String part(Map<String, Object?> json) =>
+          base64Url.encode(utf8.encode(jsonEncode(json))).replaceAll('=', '');
+      return '${part({'alg': 'RS256'})}.${part(payload)}.sig';
+    }
+
+    test('decodes the email claim', () {
+      expect(
+        jwtEmailClaim(token({'email': 'dev@acme.com', 'sub': 'u1'})),
+        'dev@acme.com',
+      );
+      expect(jwtEmailClaim(token({'email': 'dev@acme.com'})), 'dev@acme.com');
+    });
+
+    test('returns null without a usable email claim', () {
+      expect(jwtEmailClaim(token({'sub': 'u1'})), isNull);
+      expect(jwtEmailClaim(token({'email': ''})), isNull);
+      expect(jwtEmailClaim(token({'email': 42})), isNull);
+    });
+
+    test('returns null for malformed tokens', () {
+      expect(jwtEmailClaim('not-a-jwt'), isNull);
+      expect(jwtEmailClaim('header.only-two'), isNull);
+      // A four-segment token is not the three-segment JWS shape the
+      // readers accept.
+      expect(jwtEmailClaim('a.b.c.d'), isNull);
+      // The middle segment must be base64url JSON — a valid base64 of
+      // non-JSON text decodes to no claim.
+      expect(
+        jwtEmailClaim('a.${base64Url.encode(utf8.encode('hi'))}.c'),
+        isNull,
+      );
+      // Invalid base64 (bad padding) decodes to no claim, never throws.
+      expect(jwtEmailClaim('a.%%% b}).c'), isNull);
+    });
+  });
 }
