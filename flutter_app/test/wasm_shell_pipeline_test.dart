@@ -666,7 +666,17 @@ void main() {
       instance.out.add(utf8.encode('needle line\n'));
       final r = await future;
       expect(r.isOk, isTrue);
-      expect(rec.configs.single.args, ['rg', '-i', '-e', 'needle', '/hay.txt']);
+      // gh-1393: GNU grep -r semantics via rg — hidden files searched,
+      // ignore files not honored (--no-ignore --hidden).
+      expect(rec.configs.single.args, [
+        'rg',
+        '-i',
+        '--no-ignore',
+        '--hidden',
+        '-e',
+        'needle',
+        '/hay.txt',
+      ]);
       expect(r.valueOrNull!.stdout, 'needle line\n');
     });
 
@@ -686,8 +696,15 @@ void main() {
       instance.out.add(utf8.encode('needle\n'));
       final r = await future;
       expect(r.isOk, isTrue);
-      expect(rec.configs.single.args, hasLength(4));
-      expect(rec.configs.single.args.take(3), ['rg', '-e', 'needle']);
+      // gh-1393: grep-parity flags + `-e` pattern (position-safe).
+      expect(rec.configs.single.args, [
+        'rg',
+        '--no-ignore',
+        '--hidden',
+        '-e',
+        'needle',
+        '/in.txt',
+      ]);
       expect(r.valueOrNull!.stdout, 'needle\n');
     });
 
