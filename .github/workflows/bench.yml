@@ -154,7 +154,11 @@ jobs:
             --test-timeout-floor "$TEST_TIMEOUT_FLOOR"
 
   bench:
-    name: fa on terminal-bench, shard ${{ matrix.i }} (${{ env.BENCH_MODEL }})
+    # Note: the display name cannot read ${{ env.BENCH_MODEL }} — the env
+    # context is not available in job names (run 37580748776 died at
+    # workflow startup on that). Cosmetic-only anyway; the functional
+    # reads (provider config, summary MODEL pins) all resolve BENCH_MODEL.
+    name: fa on terminal-bench, shard ${{ matrix.i }}
     needs: setup
     runs-on: ubuntu-latest
     # Worst case per shard (LPT balance at multiplier 2) is ~4.5 h; 355 min
