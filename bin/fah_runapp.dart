@@ -1038,322 +1038,331 @@ Future<void> _runApp(List<String> args) async {
         env: Platform.environment,
       );
 
-  cli = AgentCli(
-    // Same source of truth as the palette (issue #778 round 2): chrome
-    // (status line, keyhints, warnings) styles iff the resolved theme
-    // profile exists — NO_COLOR / TERM=dumb degrade the whole session,
-    // not just the markdown.
-    useColor: headlessPrompt == null && markdownSurface.profile != null,
-    environment: Platform.environment,
-    useTui: useTui,
-    version: packageVersion,
-    // The double-press Ctrl+C window (issue #830): the 3 s contract, or
-    // the kSigintWindowEnvVar test-seam override resolved HERE (the only
-    // dart:io context — lib/src stays pure). One instance for both input
-    // paths (ACX.5) rides the cli into the TUI.
-    sigintPolicy: SigintPolicy(
-      window:
-          resolveSigintWindowOverride(env: Platform.environment) ??
-          kSigintPressWindow,
-    ),
-    // Markdown parity (issue #774): every non-TUI surface renders
-    // assistant markdown through ONE policy — resolveMarkdownSurface
-    // above (pipes stay byte-identical raw; NO_COLOR / TERM=dumb degrade
-    // to plain; --no-format / FA_NO_FORMAT (truthy values, like
-    // FA_PI_MODE) force raw; width is the stdout terminal width at
-    // process start, irrelevant in raw mode).
-    markdownSurface: markdownSurface,
-    config: AgentCliConfig(
-      wakeExecutable: wakeExecutable(),
-      // The dispatch below: a prompt argument is a headless run (autonomous
-      // supervision default); an interactive REPL/TUI session defaults to
-      // advisory — a human is present (gh-1054 review).
-      headlessRun: headlessPrompt != null,
-      // Marathon-session resume parses its multi-hundred-MB tail off the
-      // UI isolate (issue #503); the isolate executor is IO-only.
-      parseExecutor: const IsolateSessionParseExecutor(),
-      // The folder state's saved provider entry (gh-1000 AC1): the CLI
-      // starts with that entry active — its key slot serves the restored
-      // model and its name shows in the status bar.
-      activeCustomName: folderPinnedEntry?.name,
-      model: model,
-      apiKey: apiKey,
-      providerKind: provider,
-      redactionPipeline: redactionPipeline,
-      spills: spillsConfig,
-      // Shared by the env config and the presence store below.
-      env: cliEnv,
-      // fa_cube sandbox profile (Phase 1): clamps fs + shell ops to the
-      // cube's policies; `/cube` inspects and switches it live. The OS
-      // name feeds the backend description (lib/src stays dart:io-free).
-      cubeSpec: cubeSpec,
-      cubeSource: cubeSource,
-      osName: Platform.operatingSystem,
-      // Real-symlink resolution for the cube fs guard (lib/src stays
-      // dart:io-free; the executable owns the probe).
-      fsProbe: const LocalCubeFsProbe(),
-      // The banner names the key env var in play (name only, never the
-      // value); the catalog maps the effective provider to its var names.
-      // A name counts as set when the environment OR the secure store has
-      // it; the value resolves env-first.
-      envVarIsSet: (name) =>
-          (Platform.environment[name] ?? '').isNotEmpty ||
-          keyCache.read(name) != null,
-      // `/provider` resolves the target provider's key from the environment
-      // (or the secure store) when no explicit token is passed.
-      envVarValue: (name) {
-        final value = Platform.environment[name];
-        if (value != null && value.isNotEmpty) return value;
-        return keyCache.read(name);
-      },
-      // `/key` manages the platform secure store; `/provider ... <token>`
-      // persists the token there.
-      secureKeys: keyCache,
-      // Saved custom providers (`customProviders:` config section): the
-      // picker lists them first, the wizard appends, /model rewrites the
-      // active entry's last-used model — all persisted via persistConfig.
-      // The registry folds same-auth-domain duplicates onto one record
-      // (#706); each merge surfaces as a named boot note. stderr, never
-      // stdout: in --output events mode stdout is the strict-JSONL HEP
-      // stream, and headless answers read it too — a plain-text note
-      // there corrupts the channel (same rule as [CliIO.writeln]'s
-      // headless branch).
-      customProviders: CustomProviderRegistry(saved.customProviders)
-        ..mergeNotes.forEach(stderr.writeln)
-        // gh-1226 AC3: key slots an older build doubled (an entry named
-        // `z.ai` on host `api.z.ai` persisted `FA_KEY_API_Z_AI_Z_AI`):
-        // resolution still probes the stored slot, so nothing breaks —
-        // the note names the canonical slot to move the value to.
-        ..keyNameMigrationNotes.forEach(stderr.writeln),
-      freshInstallProviderFlow: freshInstallProviderFlow,
-      sessionRoot: sessionRoot,
-      // Backend agent mode (issue #155): a graceful SIGTERM/SIGINT
-      // cancel leaves a resumable partial transcript.
-      persistAbortedPartials: eventsMode,
-      // The same launch-pin rule the boot restore used: explicit
-      // --model/--provider/--base-url or an FA_PROVIDER_* preconfig wins
-      // over per-folder memory, including later session switches.
-      folderModelStateApplies: applyFolderState || folderState == null,
-      // Live-session presence: the running CLI heartbeats its session so
-      // the Fa app (sharing the sessions root on macOS) marks it live and
-      // can attach. Null where the root is process-local (tests).
-      presenceStore: FileSessionPresenceStore(env: cliEnv, root: sessionRoot),
-      processId: pid,
-      // Sleep prevention (issue #325, oh-my-pi port): one assertion for
-      // the whole session — caffeinate on macOS (bound to our pid by
-      // `-w`), systemd-inhibit on Linux, a clean no-op elsewhere. The
-      // runner is the injection seam: tests never get one, so no unit
-      // test spawns a real helper.
-      powerSleepPrevention:
-          saved.powerSleepPrevention ?? PowerAssertionLevel.idle,
-      powerRunner: hostPowerRunner(pid: pid),
-      // Provider quota monitoring (issue #823): badge opt-in (default off)
-      // + cache TTL; the http client stays the shared provider keep-alive.
-      quotaBadge: saved.quota.badge,
-      quotaTtl: Duration(minutes: saved.quota.ttlMinutes),
-      sessionName: effective.session,
-      visionConfig: visionConfig,
-      transcribeConfig: transcribeConfig,
-      webSearchConfig: WebSearchConfig(secrets: webSearch),
-      sqliteEngine: const Sqlite3Engine(),
-      // The lsp tool: the io-side process transport spawns `dart
-      // language-server` (and any server from .fah/lsp.json); the host pid
-      // lets servers exit when this process dies.
-      lspConfig: LspToolConfig(
-        transportFactory: ioLspTransportFactory,
+  // Plugin/extension wiring failures (the E6/E7 extension guards over
+  // .fah/packages.yaml) are user-config errors: they ride the friendly
+  // _fail channel like every other boot-path ConfigException — never the
+  // zone crash handler (review #1390: duplicate plugin tool ids were
+  // landing as "fa crashed" + a crash.log append).
+  try {
+    cli = AgentCli(
+      // Same source of truth as the palette (issue #778 round 2): chrome
+      // (status line, keyhints, warnings) styles iff the resolved theme
+      // profile exists — NO_COLOR / TERM=dumb degrade the whole session,
+      // not just the markdown.
+      useColor: headlessPrompt == null && markdownSurface.profile != null,
+      environment: Platform.environment,
+      useTui: useTui,
+      version: packageVersion,
+      // The double-press Ctrl+C window (issue #830): the 3 s contract, or
+      // the kSigintWindowEnvVar test-seam override resolved HERE (the only
+      // dart:io context — lib/src stays pure). One instance for both input
+      // paths (ACX.5) rides the cli into the TUI.
+      sigintPolicy: SigintPolicy(
+        window:
+            resolveSigintWindowOverride(env: Platform.environment) ??
+            kSigintPressWindow,
+      ),
+      // Markdown parity (issue #774): every non-TUI surface renders
+      // assistant markdown through ONE policy — resolveMarkdownSurface
+      // above (pipes stay byte-identical raw; NO_COLOR / TERM=dumb degrade
+      // to plain; --no-format / FA_NO_FORMAT (truthy values, like
+      // FA_PI_MODE) force raw; width is the stdout terminal width at
+      // process start, irrelevant in raw mode).
+      markdownSurface: markdownSurface,
+      config: AgentCliConfig(
+        wakeExecutable: wakeExecutable(),
+        // The dispatch below: a prompt argument is a headless run (autonomous
+        // supervision default); an interactive REPL/TUI session defaults to
+        // advisory — a human is present (gh-1054 review).
+        headlessRun: headlessPrompt != null,
+        // Marathon-session resume parses its multi-hundred-MB tail off the
+        // UI isolate (issue #503); the isolate executor is IO-only.
+        parseExecutor: const IsolateSessionParseExecutor(),
+        // The folder state's saved provider entry (gh-1000 AC1): the CLI
+        // starts with that entry active — its key slot serves the restored
+        // model and its name shows in the status bar.
+        activeCustomName: folderPinnedEntry?.name,
+        model: model,
+        apiKey: apiKey,
+        providerKind: provider,
+        redactionPipeline: redactionPipeline,
+        spills: spillsConfig,
+        // Shared by the env config and the presence store below.
+        env: cliEnv,
+        // fa_cube sandbox profile (Phase 1): clamps fs + shell ops to the
+        // cube's policies; `/cube` inspects and switches it live. The OS
+        // name feeds the backend description (lib/src stays dart:io-free).
+        cubeSpec: cubeSpec,
+        cubeSource: cubeSource,
+        osName: Platform.operatingSystem,
+        // Real-symlink resolution for the cube fs guard (lib/src stays
+        // dart:io-free; the executable owns the probe).
+        fsProbe: const LocalCubeFsProbe(),
+        // The banner names the key env var in play (name only, never the
+        // value); the catalog maps the effective provider to its var names.
+        // A name counts as set when the environment OR the secure store has
+        // it; the value resolves env-first.
+        envVarIsSet: (name) =>
+            (Platform.environment[name] ?? '').isNotEmpty ||
+            keyCache.read(name) != null,
+        // `/provider` resolves the target provider's key from the environment
+        // (or the secure store) when no explicit token is passed.
+        envVarValue: (name) {
+          final value = Platform.environment[name];
+          if (value != null && value.isNotEmpty) return value;
+          return keyCache.read(name);
+        },
+        // `/key` manages the platform secure store; `/provider ... <token>`
+        // persists the token there.
+        secureKeys: keyCache,
+        // Saved custom providers (`customProviders:` config section): the
+        // picker lists them first, the wizard appends, /model rewrites the
+        // active entry's last-used model — all persisted via persistConfig.
+        // The registry folds same-auth-domain duplicates onto one record
+        // (#706); each merge surfaces as a named boot note. stderr, never
+        // stdout: in --output events mode stdout is the strict-JSONL HEP
+        // stream, and headless answers read it too — a plain-text note
+        // there corrupts the channel (same rule as [CliIO.writeln]'s
+        // headless branch).
+        customProviders: CustomProviderRegistry(saved.customProviders)
+          ..mergeNotes.forEach(stderr.writeln)
+          // gh-1226 AC3: key slots an older build doubled (an entry named
+          // `z.ai` on host `api.z.ai` persisted `FA_KEY_API_Z_AI_Z_AI`):
+          // resolution still probes the stored slot, so nothing breaks —
+          // the note names the canonical slot to move the value to.
+          ..keyNameMigrationNotes.forEach(stderr.writeln),
+        freshInstallProviderFlow: freshInstallProviderFlow,
+        sessionRoot: sessionRoot,
+        // Backend agent mode (issue #155): a graceful SIGTERM/SIGINT
+        // cancel leaves a resumable partial transcript.
+        persistAbortedPartials: eventsMode,
+        // The same launch-pin rule the boot restore used: explicit
+        // --model/--provider/--base-url or an FA_PROVIDER_* preconfig wins
+        // over per-folder memory, including later session switches.
+        folderModelStateApplies: applyFolderState || folderState == null,
+        // Live-session presence: the running CLI heartbeats its session so
+        // the Fa app (sharing the sessions root on macOS) marks it live and
+        // can attach. Null where the root is process-local (tests).
+        presenceStore: FileSessionPresenceStore(env: cliEnv, root: sessionRoot),
         processId: pid,
-      ),
-      // MCP servers (`mcp:` config section): the io-side factory spawns
-      // stdio servers; remote (HTTP) servers work everywhere. Servers
-      // connect in the background and register mcp__<server>__<tool> tools.
-      mcpConfig: saved.mcp == null
-          ? null
-          : McpToolConfig(
-              config: saved.mcp!,
-              transportFactory: ioMcpTransportFactory,
+        // Sleep prevention (issue #325, oh-my-pi port): one assertion for
+        // the whole session — caffeinate on macOS (bound to our pid by
+        // `-w`), systemd-inhibit on Linux, a clean no-op elsewhere. The
+        // runner is the injection seam: tests never get one, so no unit
+        // test spawns a real helper.
+        powerSleepPrevention:
+            saved.powerSleepPrevention ?? PowerAssertionLevel.idle,
+        powerRunner: hostPowerRunner(pid: pid),
+        // Provider quota monitoring (issue #823): badge opt-in (default off)
+        // + cache TTL; the http client stays the shared provider keep-alive.
+        quotaBadge: saved.quota.badge,
+        quotaTtl: Duration(minutes: saved.quota.ttlMinutes),
+        sessionName: effective.session,
+        visionConfig: visionConfig,
+        transcribeConfig: transcribeConfig,
+        webSearchConfig: WebSearchConfig(secrets: webSearch),
+        sqliteEngine: const Sqlite3Engine(),
+        // The lsp tool: the io-side process transport spawns `dart
+        // language-server` (and any server from .fah/lsp.json); the host pid
+        // lets servers exit when this process dies.
+        lspConfig: LspToolConfig(
+          transportFactory: ioLspTransportFactory,
+          processId: pid,
+        ),
+        // MCP servers (`mcp:` config section): the io-side factory spawns
+        // stdio servers; remote (HTTP) servers work everywhere. Servers
+        // connect in the background and register mcp__<server>__<tool> tools.
+        mcpConfig: saved.mcp == null
+            ? null
+            : McpToolConfig(
+                config: saved.mcp!,
+                transportFactory: ioMcpTransportFactory,
+              ),
+        // A2A remote agents (`a2a:` config section, Phase 5a): pure-Dart HTTP
+        // client, connects lazily per server.
+        a2aConfig: saved.a2a,
+        // JS extensions (#32): per-extension isolated QuickJS engines — the
+        // io-side runtime spawns `qjs` (FA_QJS_BIN override) speaking the
+        // stdio transport. Engine absence degrades per-extension (E1), never
+        // blocks boot.
+        extRuntimeFactory: (_) => QjsProcessRuntime(),
+        // `/browser connect` + the browser tools' controller: one handle
+        // owning the loopback bridge over the launch-cwd fabric (both
+        // implemented above).
+        browserBridgeHandle: bridgeHandle,
+        browserController: bridgeHandle.browserController,
+        plugins: resolved.plugins,
+        pluginConfig: resolved.config,
+        hubFabric: resolved.hubFabric,
+        // Fabric discovery (issue #27 phase 2): capabilities from the
+        // `fabric:` config section; the OS hostname enables `name@machine`
+        // addressing (null when the platform cannot name the host).
+        agentCapabilities: saved.fabric?.capabilities ?? const [],
+        machineName: _localMachineName(),
+        promptTemplateDirs: promptTemplateDirs,
+        initialMode: effective.mode!,
+        systemPrompt: flagSystemPrompt,
+        promptOverrides: promptOverrides,
+        approvalMode:
+            approvalModeFromLabel(saved.approvalMode) ?? ApprovalMode.yolo,
+        alwaysAllowTools: saved.allowedTools.toSet(),
+        runtimeTools: runtimeTools,
+        agentMode: harnessMode,
+        loadMode: loadMode,
+        misuseBreaker: saved.misuseBreaker,
+        compactionEngine: compactionEngine,
+        compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
+        wireDump: wireDump,
+        contextWindowCap: saved.contextWindowCap,
+        stuckTool: saved.stuckTool,
+        subagents: saved.subagents,
+        jobs: saved.jobs,
+        // The gh-1198 thinking stream: the `--stream-thinking` flag wins
+        // over the `output.streamThinking` config for this run.
+        streamThinking: resolveStreamThinking(
+          flag: parsed.streamThinking,
+          configValue: saved.streamThinking,
+        ),
+        modelRolesResolver: rolesResolver,
+        providersQueueRuntime: queueRuntime,
+        // The live models config (`models:` section): `/models set`/`remove`
+        // mutate its media slot overrides and `/model <name>` resolves its
+        // custom model definitions — persisted via persistConfig. An absent
+        // section starts as an empty config so the commands always work.
+        modelsConfig: saved.models ?? ModelsConfig(),
+        onModelsConfigChanged: () async => persistConfig(),
+        homeDir: home,
+        tuiTheme: saved.tuiTheme,
+        // TTSR stream rules: user config (~/.fah/config.yaml `ttsr:`) merged
+        // with project rules (.fah/rules.yaml), project first.
+        ttsr: _resolveTtsr(saved, cwd),
+        // Project-level .fah/config.yaml memory: wins over the user one.
+        memoryConfig: loadProjectMemoryConfig(cwd) ?? saved.memory,
+        // The saved cube default (the `cube:` section): the settings-hub
+        // Cube sandbox flow rewrites it — persisted via persistConfig.
+        cubeSettings: saved.cube,
+        onCubeSettingsChanged: () async => persistConfig(),
+        // DAP / Hub settings flow: the snapshot seam resolves the effective
+        // config (env > `hub:` section > `~/.dap/config.json` > defaults)
+        // through the hub client and overlays the live plugin status — local
+        // reads only, never a network dial. A missing/failed probe keeps the
+        // flow honest about the state.
+        dapHubState: () async {
+          // Single parse source: the same loaded packages.yaml map the
+          // plugin system consumes (loadPackagesConfig already flattened
+          // the yaml tree to plain Dart values).
+          final hubSection = resolved.config['hub'];
+          final settings = resolveDapSettings(
+            config: HubConfig.fromMap(
+              hubSection is Map<String, dynamic> ? hubSection : const {},
+              Platform.environment,
             ),
-      // A2A remote agents (`a2a:` config section, Phase 5a): pure-Dart HTTP
-      // client, connects lazily per server.
-      a2aConfig: saved.a2a,
-      // JS extensions (#32): per-extension isolated QuickJS engines — the
-      // io-side runtime spawns `qjs` (FA_QJS_BIN override) speaking the
-      // stdio transport. Engine absence degrades per-extension (E1), never
-      // blocks boot.
-      extRuntimeFactory: (_) => QjsProcessRuntime(),
-      // `/browser connect` + the browser tools' controller: one handle
-      // owning the loopback bridge over the launch-cwd fabric (both
-      // implemented above).
-      browserBridgeHandle: bridgeHandle,
-      browserController: bridgeHandle.browserController,
-      plugins: resolved.plugins,
-      pluginConfig: resolved.config,
-      hubFabric: resolved.hubFabric,
-      // Fabric discovery (issue #27 phase 2): capabilities from the
-      // `fabric:` config section; the OS hostname enables `name@machine`
-      // addressing (null when the platform cannot name the host).
-      agentCapabilities: saved.fabric?.capabilities ?? const [],
-      machineName: _localMachineName(),
-      promptTemplateDirs: promptTemplateDirs,
-      initialMode: effective.mode!,
-      systemPrompt: flagSystemPrompt,
-      promptOverrides: promptOverrides,
-      approvalMode:
-          approvalModeFromLabel(saved.approvalMode) ?? ApprovalMode.yolo,
-      alwaysAllowTools: saved.allowedTools.toSet(),
-      runtimeTools: runtimeTools,
-      agentMode: harnessMode,
-      loadMode: loadMode,
-      misuseBreaker: saved.misuseBreaker,
-      compactionEngine: compactionEngine,
-      compactionJudgeBudgetSeconds: compactionJudgeBudgetSeconds,
-      wireDump: wireDump,
-      contextWindowCap: saved.contextWindowCap,
-      stuckTool: saved.stuckTool,
-      subagents: saved.subagents,
-      jobs: saved.jobs,
-      // The gh-1198 thinking stream: the `--stream-thinking` flag wins
-      // over the `output.streamThinking` config for this run.
-      streamThinking: resolveStreamThinking(
-        flag: parsed.streamThinking,
-        configValue: saved.streamThinking,
-      ),
-      modelRolesResolver: rolesResolver,
-      providersQueueRuntime: queueRuntime,
-      // The live models config (`models:` section): `/models set`/`remove`
-      // mutate its media slot overrides and `/model <name>` resolves its
-      // custom model definitions — persisted via persistConfig. An absent
-      // section starts as an empty config so the commands always work.
-      modelsConfig: saved.models ?? ModelsConfig(),
-      onModelsConfigChanged: () async => persistConfig(),
-      homeDir: home,
-      tuiTheme: saved.tuiTheme,
-      // TTSR stream rules: user config (~/.fah/config.yaml `ttsr:`) merged
-      // with project rules (.fah/rules.yaml), project first.
-      ttsr: _resolveTtsr(saved, cwd),
-      // Project-level .fah/config.yaml memory: wins over the user one.
-      memoryConfig: loadProjectMemoryConfig(cwd) ?? saved.memory,
-      // The saved cube default (the `cube:` section): the settings-hub
-      // Cube sandbox flow rewrites it — persisted via persistConfig.
-      cubeSettings: saved.cube,
-      onCubeSettingsChanged: () async => persistConfig(),
-      // DAP / Hub settings flow: the snapshot seam resolves the effective
-      // config (env > `hub:` section > `~/.dap/config.json` > defaults)
-      // through the hub client and overlays the live plugin status — local
-      // reads only, never a network dial. A missing/failed probe keeps the
-      // flow honest about the state.
-      dapHubState: () async {
-        // Single parse source: the same loaded packages.yaml map the
-        // plugin system consumes (loadPackagesConfig already flattened
-        // the yaml tree to plain Dart values).
-        final hubSection = resolved.config['hub'];
-        final settings = resolveDapSettings(
-          config: HubConfig.fromMap(
-            hubSection is Map<String, dynamic> ? hubSection : const {},
-            Platform.environment,
-          ),
-          environment: Platform.environment,
-        );
-        try {
-          final status = await hubPlugin.status();
-          return DapHubSnapshot(
-            supported: true,
-            url: status.url ?? settings.url,
-            name: status.name ?? settings.name,
-            agentId: status.agentId,
-            channels: status.channels,
-            connected: status.connected,
+            environment: Platform.environment,
           );
-        } on Object {
-          // The plugin never started (opted out, or the connect failed):
-          // report the resolved config without a live connection.
-          return DapHubSnapshot(
-            supported: true,
-            url: settings.url,
-            name: settings.name,
-            channels: const [],
-            connected: false,
-          );
-        }
-      },
-      onDapHubConfigChanged: ({url, name}) =>
-          persistDapConfig(url: url, name: name, file: defaultDapConfigFile()),
-      onModelChanged: (_) async {
-        await persistConfig();
-        await persistFolderModelState();
-      },
-      // `/provider` switches: redact an explicitly passed session token so
-      // it cannot leak into tool results or session files, then persist the
-      // new provider/model/baseUrl triple (never the key itself).
-      onProviderChanged: (kind, key) async {
-        if (key.isNotEmpty) {
-          redactor.register('/provider token', key);
-          redactionPipeline?.registerSecret(key);
-          // A keyless startup never attached the redactor; a runtime token
-          // still gets masked from here on.
-          if (!redactorAttached) {
+          try {
+            final status = await hubPlugin.status();
+            return DapHubSnapshot(
+              supported: true,
+              url: status.url ?? settings.url,
+              name: status.name ?? settings.name,
+              agentId: status.agentId,
+              channels: status.channels,
+              connected: status.connected,
+            );
+          } on Object {
+            // The plugin never started (opted out, or the connect failed):
+            // report the resolved config without a live connection.
+            return DapHubSnapshot(
+              supported: true,
+              url: settings.url,
+              name: settings.name,
+              channels: const [],
+              connected: false,
+            );
+          }
+        },
+        onDapHubConfigChanged: ({url, name}) =>
+            persistDapConfig(url: url, name: name, file: defaultDapConfigFile()),
+        onModelChanged: (_) async {
+          await persistConfig();
+          await persistFolderModelState();
+        },
+        // `/provider` switches: redact an explicitly passed session token so
+        // it cannot leak into tool results or session files, then persist the
+        // new provider/model/baseUrl triple (never the key itself).
+        onProviderChanged: (kind, key) async {
+          if (key.isNotEmpty) {
+            redactor.register('/provider token', key);
+            redactionPipeline?.registerSecret(key);
+            // A keyless startup never attached the redactor; a runtime token
+            // still gets masked from here on.
+            if (!redactorAttached) {
+              attachSecretRedactor(cli.agent, redactor);
+              redactorAttached = true;
+            }
+          }
+          await persistConfig();
+          await persistFolderModelState();
+        },
+        // `/key set` stored a secret: mask it from here on (same lazy attach).
+        onSecretStored: (name, value) {
+          redactor.register(name, value);
+          redactionPipeline?.registerSecret(value);
+          if (!redactorAttached && !redactor.isEmpty) {
             attachSecretRedactor(cli.agent, redactor);
             redactorAttached = true;
           }
-        }
-        await persistConfig();
-        await persistFolderModelState();
-      },
-      // `/key set` stored a secret: mask it from here on (same lazy attach).
-      onSecretStored: (name, value) {
-        redactor.register(name, value);
-        redactionPipeline?.registerSecret(value);
-        if (!redactorAttached && !redactor.isEmpty) {
-          attachSecretRedactor(cli.agent, redactor);
-          redactorAttached = true;
-        }
-      },
-      // `request_secret` tool granted a secret: same redactor lazy attach.
-      onSecretGranted: (name, value) {
-        redactor.register(name, value);
-        redactionPipeline?.registerSecret(value);
-        if (!redactorAttached && !redactor.isEmpty) {
-          attachSecretRedactor(cli.agent, redactor);
-          redactorAttached = true;
-        }
-      },
-      onModeChanged: (_) async => persistConfig(),
-      onApprovalChanged: () async => persistConfig(),
-      // Global `tools:` toggles (`/tools <id> global`): the CLI owns the
-      // live scope; persistConfig writes it back (see below).
-      onToolsConfigChanged: () async => persistConfig(),
-      // Third-party skills consent (`skills:` config section): the startup
-      // dialog and `/skills access` set it; shell `!`cmd`` injections in
-      // skill bodies follow `disableShellExecution`.
-      skillsAccess: saved.skillsAccess,
-      skillsDisableShellExecution: saved.skillsDisableShellExecution,
-      // Global per-skill toggles (`skills:` config section, issue #1151):
-      // the CLI owns the live view; persistConfig writes it back.
-      skillToggles: saved.skillToggles,
-      onSkillsAccessChanged: (access) async {
-        skillsAccess = access;
-        await persistConfig();
-      },
-      onSkillTogglesChanged: () async => persistConfig(),
-      // Shift+Enter in the TUI: HID polling when the startup gate allows
-      // it (issue #355) — null over SSH, under FA_TUI_SHIFT_HID=0, after
-      // a probe timeout, and on non-macOS hosts.
-      isShiftPressed: hidShiftPressed,
-      // Mouse capture is ON by default (wheel scrolls the session view —
-      // in the alternate screen the terminal has no native scrollback, so
-      // without capture two-finger scroll does nothing). FA_TUI_MOUSE=0
-      // opts out for always-on native select-to-copy.
-      tuiMouseCapture: _envNotFalsy('FA_TUI_MOUSE'),
-      // DEC 2026 synchronized output: auto-detect by default; FA_TUI_SYNC
-      // forces it on (terminals without DECRQM answers) or off (fallback).
-      tuiSyncOutput: _envTristate('FA_TUI_SYNC'),
-      // The omp band composer (#806): on unless `tui.classic: true` pins
-      // the legacy chrome byte-identically.
-      tuiClassic: saved.tuiClassic,
-      statusLine: saved.statusLine,
-      agentLoadMode: saved.agentLoadMode,
-    ),
-    io: io,
-  );
+        },
+        // `request_secret` tool granted a secret: same redactor lazy attach.
+        onSecretGranted: (name, value) {
+          redactor.register(name, value);
+          redactionPipeline?.registerSecret(value);
+          if (!redactorAttached && !redactor.isEmpty) {
+            attachSecretRedactor(cli.agent, redactor);
+            redactorAttached = true;
+          }
+        },
+        onModeChanged: (_) async => persistConfig(),
+        onApprovalChanged: () async => persistConfig(),
+        // Global `tools:` toggles (`/tools <id> global`): the CLI owns the
+        // live scope; persistConfig writes it back (see below).
+        onToolsConfigChanged: () async => persistConfig(),
+        // Third-party skills consent (`skills:` config section): the startup
+        // dialog and `/skills access` set it; shell `!`cmd`` injections in
+        // skill bodies follow `disableShellExecution`.
+        skillsAccess: saved.skillsAccess,
+        skillsDisableShellExecution: saved.skillsDisableShellExecution,
+        // Global per-skill toggles (`skills:` config section, issue #1151):
+        // the CLI owns the live view; persistConfig writes it back.
+        skillToggles: saved.skillToggles,
+        onSkillsAccessChanged: (access) async {
+          skillsAccess = access;
+          await persistConfig();
+        },
+        onSkillTogglesChanged: () async => persistConfig(),
+        // Shift+Enter in the TUI: HID polling when the startup gate allows
+        // it (issue #355) — null over SSH, under FA_TUI_SHIFT_HID=0, after
+        // a probe timeout, and on non-macOS hosts.
+        isShiftPressed: hidShiftPressed,
+        // Mouse capture is ON by default (wheel scrolls the session view —
+        // in the alternate screen the terminal has no native scrollback, so
+        // without capture two-finger scroll does nothing). FA_TUI_MOUSE=0
+        // opts out for always-on native select-to-copy.
+        tuiMouseCapture: _envNotFalsy('FA_TUI_MOUSE'),
+        // DEC 2026 synchronized output: auto-detect by default; FA_TUI_SYNC
+        // forces it on (terminals without DECRQM answers) or off (fallback).
+        tuiSyncOutput: _envTristate('FA_TUI_SYNC'),
+        // The omp band composer (#806): on unless `tui.classic: true` pins
+        // the legacy chrome byte-identically.
+        tuiClassic: saved.tuiClassic,
+        statusLine: saved.statusLine,
+        agentLoadMode: saved.agentLoadMode,
+      ),
+      io: io,
+    );
+  } on ConfigException catch (error) {
+    _fail(error.message);
+  }
   if (redactorAttached) attachSecretRedactor(cli.agent, redactor);
 
   // Issue #823: boot builds the queue runtime before the CLI (and its
