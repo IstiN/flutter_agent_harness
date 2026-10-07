@@ -20,6 +20,7 @@ import 'package:fa_ui/src/providers/openrouter_oauth_button.dart';
 import 'package:fa_ui/src/providers/provider_editor_page.dart';
 import 'package:fa_ui/src/providers/provider_marks.dart';
 import 'package:fa_ui/src/providers/provider_preset.dart';
+import 'package:fa_ui/src/providers/sso_flows.dart';
 import 'package:fa_ui/src/providers/quota_gauge.dart';
 import 'package:fa_ui/src/stores/provider_registry.dart';
 import 'package:fa_ui/src/strings/fa_ui_strings.dart';
@@ -50,6 +51,7 @@ class ProvidersSection extends StatelessWidget {
     this.onChatGptOAuth,
     this.onAiinConnect,
     this.onCopilotConnect,
+    this.sso,
     this.onProviderReauthenticate,
     this.modelsFetcher,
     this.quotas,
@@ -101,6 +103,12 @@ class ProvidersSection extends StatelessWidget {
   /// picker. When null, Copilot is not offered. The host should run the
   /// GitHub Copilot connect flow.
   final VoidCallback? onCopilotConnect;
+
+  /// Ready-made SSO/OAuth/device-flow flows (issue #1321) forwarded to
+  /// the add-provider picker: enables the four sign-in tiles without the
+  /// per-provider callbacks above. An explicit callback wins over the
+  /// default for its provider.
+  final FaUiSso? sso;
 
   /// Re-authentication for SSO-backed providers (CodeMie) in the edit
   /// editor: the host re-runs the sign-in flow for [provider] (refreshing
@@ -470,6 +478,7 @@ class ProvidersSection extends StatelessWidget {
         onAiinConnect: onAiinConnect,
         openRouterOAuthCallbackUrl: openRouterOAuthCallbackUrl,
         openRouterOAuthCapture: openRouterOAuthCapture,
+        sso: sso,
         onDeviceRoutes: onDeviceProviders,
         onOnDeviceConnected: onDeviceConnected,
         modelsFetcher: modelsFetcher,
