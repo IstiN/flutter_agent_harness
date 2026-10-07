@@ -98,6 +98,8 @@ import '../env/cwd_override_env.dart';
 import '../env/execution_env.dart';
 import '../env/session_vars_execution_env.dart';
 import '../hosts/host_agent_wiring.dart';
+import '../hosts/host_capability_profile.dart';
+import '../hosts/host_extension_api.dart';
 import '../hosts/host_wiring_builder.dart';
 import '../exceptions.dart';
 import '../js_ext/ext_bootstrap_js.dart';
@@ -438,7 +440,26 @@ class AgentCli {
         // Builder hands the decorated env (review #1230) — screenshot
         // saves clamp like every other fs-touching tool.
         saveBrowserScreenshot: saveBrowserScreenshot,
-        hostTools: pluginTools,
+        // The CLI's plugin tools ride the declared extension surface
+        // (issue #1079 slice 4): on for this shell's profile, off with a
+        // named reason everywhere else — a host adopting another profile
+        // declares its own extensions.
+        extensions: [
+          HostExtension(
+            name: 'cli-plugins',
+            tools: pluginTools,
+            profileStates: {
+              for (final profile in builtInProfiles.keys)
+                profile: profile == cliProfile.name
+                    ? const CapabilityOnState()
+                    : const CapabilityOffState(
+                        'plugin registration is a CLI-shell surface '
+                        '(.fah/packages.yaml / --plugin); declare your own '
+                        'extension for this host',
+                      ),
+            },
+          ),
+        ],
         obligationsClose: (id, status) => closeObligation(id, status),
         hubFabric: config.hubFabric,
         // Hub mail merges into the MAIN inbox — lazily, so the manager
