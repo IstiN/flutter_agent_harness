@@ -1777,7 +1777,19 @@ builder. The task/subagent complex (fabric → manager → heartbeat →
 task/monitoring tools, slice 3) is builder-owned the same way: hosts pass
 shell glue as `SubagentServices` callbacks and keep handles from
 `WiredAgentCore` — a host never hand-assembles the manager or registers
-`task` outside the gated surface.
+`task` outside the gated surface. Host EXTENSIONS are declared surface
+too (slice 4, `HostExtensionApi`, lib/src/hosts/host_extension_api.dart):
+a `HostExtension` carries its tools plus an explicit state for every
+built-in profile at birth (E6 — no implicit default; a custom profile
+needs its state before wiring), the builder rejects tool-id collisions
+across the core/task/extension surfaces at build time naming both
+registrants (E7 — an extension id colliding with a core tool would
+silently override SDK behavior, so the loud check lives in the builder,
+not the child-lenient `ToolRegistry`), and an extension `off` on the
+wired profile hides from the registry with its reason surfaced on
+`WiredAgentCore.extensions` (E8). The extension surface is additive-only:
+memory, context management, compaction, the JSONL tool session and
+trajectory are SDK invariants with no override point (AC9).
 
 ## Commits and releases
 
