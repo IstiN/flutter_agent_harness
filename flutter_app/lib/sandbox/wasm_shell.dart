@@ -1145,82 +1145,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   String _toGuestPath(String path) =>
       _sandboxHostRoot?.stripToSandboxPath(path) ?? path;
 
-  /// Commands whose positional arguments are file paths and therefore get
-  /// rewritten relative to the shell's current directory.
-  static const Set<String> _pathPositionalCommands = {
-    'basename',
-    'cat',
-    'cksum',
-    'comm',
-    'cp',
-    'csplit',
-    'cut',
-    'dir',
-    'dirname',
-    'du',
-    'expand',
-    'fmt',
-    'fold',
-    'gzip',
-    'head',
-    'install',
-    'join',
-    'link',
-    'ln',
-    'ls',
-    'md5sum',
-    'mkdir',
-    'mv',
-    'nl',
-    'od',
-    'paste',
-    'readlink',
-    'realpath',
-    'relpath',
-    'rm',
-    'rmdir',
-    'sha1sum',
-    'sha224sum',
-    'sha256sum',
-    'sha384sum',
-    'sha512sum',
-    'b2sum',
-    'shred',
-    'sort',
-    'split',
-    'stat',
-    'sum',
-    'tac',
-    'tail',
-    'tar',
-    'tee',
-    'touch',
-    'truncate',
-    'tsort',
-    'unexpand',
-    'uniq',
-    'unlink',
-    'vdir',
-    'wc',
-  };
-
-  /// Flags whose following argument is NOT a path, per command. Used by
-  /// [_rewritePositionalArgs] to avoid rewriting flag values.
-  static const Map<String, Set<String>> _nonPathFlagValues = {
-    'cut': {'-b', '-c', '-d', '-f'},
-    'head': {'-c', '-n'},
-    'join': {'-1', '-2', '-e', '-t'},
-    'rg': {'-A', '-B', '-C', '-e', '-g', '-m', '-t', '-T'},
-    'sort': {'-k', '-t'},
-    'split': {'-a', '-b', '-l', '-n'},
-    'tail': {'-c', '-n'},
-    'find': {'-iname', '-mmin', '-mtime', '-name', '-size', '-type'},
-    'mktemp': {'-t'},
-  };
-
   /// Rewrites relative path arguments to absolute sandbox paths based on
   /// [cwd]. The WASI guest is rooted at `/`, so `cat file.txt` run after
-  /// `cd /work` would otherwise look for `/file.txt`.
+  /// `cd /work` would otherwise look for `/file.txt`. Operand classification
+  /// routes through [pathPositionalCommands] / [nonPathFlagValues]
+  /// (wasm_shell_builtins.dart, issue #558 family).
   List<String> _rewriteRelativeArgs(
     String command,
     List<String> args,
@@ -1239,7 +1168,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     List<String> args,
     String cwd,
   ) {
-    final skipFlags = _nonPathFlagValues[command] ?? const <String>{};
+    final skipFlags = nonPathFlagValues[command] ?? const <String>{};
     final result = <String>[];
     var positionalIndex = 0;
     for (var i = 0; i < args.length; i++) {
@@ -1260,7 +1189,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   }
 
   /// Whether args[i] is a positional operand: not a flag and not the value
-  /// of a flag listed in [_nonPathFlagValues] for this command.
+  /// of a flag listed in [nonPathFlagValues] for this command.
   bool _isPathArg(List<String> args, int i, Set<String> skipFlags) {
     final arg = args[i];
     if (arg.startsWith('-') && arg != '-') return false;
@@ -1301,7 +1230,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (arg.startsWith('./') || arg.startsWith('../')) {
       return _resolveSandboxPath(arg, cwd);
     }
-    if (_pathPositionalCommands.contains(command)) {
+    if (pathPositionalCommands.contains(command)) {
       return _resolveSandboxPath(arg, cwd);
     }
     return _rewriteExistingPath(command, arg, cwd);
