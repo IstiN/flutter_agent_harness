@@ -11,7 +11,7 @@ library;
 /// - AC3: `task_send` → running child mid foreground wait: the wait yields
 ///   to background (the job is NOT killed), the message is consumed at the
 ///   boundary ≤2s, the wait's work continues detached (exit captured).
-/// - AC4: the owner experiment stretched: `sleep 120` backgrounded by the
+/// - AC4: the owner experiment stretched: `make release` backgrounded by the
 ///   yield; `task_send` "stop the job, echo hello" stops the job mid-flight
 ///   via bash_job stop and the round trip lands ≤30s.
 
@@ -211,7 +211,7 @@ final class _ChildStream {
 
   final String taskMarker;
 
-  /// Whether the task turn issues the foreground `sleep 120` bash call
+  /// Whether the task turn issues the foreground `make release` bash call
   /// (AC3/AC4). AC2's child just answers and completes.
   final bool spawnSleepTool;
 
@@ -265,7 +265,7 @@ final class _ChildStream {
               const ToolCall(
                 id: 'c1',
                 name: 'bash',
-                arguments: {'command': 'sleep 120'},
+                arguments: {'command': 'make release'},
               ),
             ])
           : _textTurn('done');
@@ -545,7 +545,7 @@ void main() {
   );
 
   test(
-    'AC4: sleep 120 backgrounded by the yield; task_send "stop the job, '
+    'AC4: make release backgrounded by the yield; task_send "stop the job, '
     'echo hello" stops it mid-flight; round trip ≤30s',
     timeout: const Timeout(Duration(seconds: 90)),
     () async {

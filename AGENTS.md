@@ -1157,8 +1157,11 @@ factual: paths, commands, invariants — no essays.
   (`~/Library/Group Containers/group.dev.fa1.shared/fa/sessions`) so the Fa
   CLI and the sandboxed Fa macOS app see the same workspace-scoped sessions.
 - `flutter_app/lib/apps/` — JS apps platform on `package:js_widget_runtime`
-  (`^0.4.154`, git-pinned to IstiN/flutter_js_widget_runtime@bd1e7c2 until the
-  hosted 0.4.154+ lands — ships `jsr.openUrl` + the `webView` node;
+  (`^0.4.156` hosted — ships `jsr.openUrl` + the `webView` node and, since
+  0.4.156 = upstream 9d57570 (gh-1341), the flutter_js bridge registers
+  EVERY `__jsr_*` channel (`JsWidgetBridge.handledChannels` is the source
+  of truth), so `jsr.hostCall`/`jsr.capture` no longer hang forever on JSC
+  builds; the git pin convention is drop-the-override-once-hosted-lands;
   `js_app_engine.dart` wires `openUrlHandler` over `url_launcher`
   (LaunchMode.externalApplication, {'__error': ...} rejections) and passes a
   `JsWebViewHost` (fa_webview_host.dart, `flutter_inappwebview` over the

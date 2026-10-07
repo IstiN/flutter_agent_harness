@@ -180,7 +180,9 @@ void main() {
       tracker.callStarted('t1', 'bash', 'sleep 500');
       now = now.add(const Duration(seconds: 120));
       tracker.tick();
-      expect(reminds, ['⏳ [bash] sleep 500 — running 120s']);
+      expect(reminds, [
+        '⏳ [bash] sleep 500 — running 120s · $toolLivenessForegroundHint',
+      ]);
       expect(escalates, isEmpty);
       // The state carries the same clock's start — one clock, no second
       // source for the elapsed value (AC5).
@@ -194,8 +196,8 @@ void main() {
       now = now.add(const Duration(seconds: 60));
       tracker.tick();
       expect(reminds, [
-        '⏳ [bash] sleep 500 — running 60s',
-        '⏳ [bash] sleep 500 — running 120s',
+        '⏳ [bash] sleep 500 — running 60s · $toolLivenessForegroundHint',
+        '⏳ [bash] sleep 500 — running 120s · $toolLivenessForegroundHint',
       ]);
     });
 
@@ -247,8 +249,8 @@ void main() {
       now = now.add(const Duration(seconds: 60));
       tracker.tick();
       expect(reminds, [
-        '⏳ [bash] sleep 1 — running 70s',
-        '⏳ [bash] sleep 2 — running 60s',
+        '⏳ [bash] sleep 1 — running 70s · $toolLivenessForegroundHint',
+        '⏳ [bash] sleep 2 — running 60s · $toolLivenessForegroundHint',
       ]);
       // Both escalate at their own threshold, one line each this tick.
       now = now.add(const Duration(seconds: 240));
@@ -405,10 +407,24 @@ void main() {
           startedAt: start,
         );
 
-    test('the reminder line is single-line, tool + detail + elapsed', () {
+    test(
+      'the reminder line is single-line, tool + detail + elapsed + hint',
+      () {
+        final line = toolLivenessReminderLine(call('sleep 500'), at120);
+        expect(line, startsWith('⏳ [bash] sleep 500 — running 120s'));
+        expect(line, contains(toolLivenessForegroundHint));
+        expect(line.contains('\n'), isFalse);
+      },
+    );
+
+    test('issue #1349: every periodic reminder names the background escape '
+        'before the escalation threshold', () {
+      // A long quiet LEGIT command (a slow build) keeps running untouched —
+      // but its 60s-tick reminder now carries the hint.
+      final line = toolLivenessReminderLine(call('make release'), at120);
       expect(
-        toolLivenessReminderLine(call('sleep 500'), at120),
-        '⏳ [bash] sleep 500 — running 120s',
+        line,
+        '⏳ [bash] make release — running 120s · $toolLivenessForegroundHint',
       );
     });
 
@@ -452,7 +468,7 @@ void main() {
     test('an empty detail degrades to glyph + tool + elapsed', () {
       expect(
         toolLivenessReminderLine(call(''), at120),
-        '⏳ [bash] running 120s',
+        '⏳ [bash] running 120s · $toolLivenessForegroundHint',
       );
       expect(
         toolLivenessEscalationLine(call(''), at120),
@@ -465,7 +481,10 @@ void main() {
         call('sleep 500'),
         start.add(const Duration(milliseconds: 59900)),
       );
-      expect(line, '⏳ [bash] sleep 500 — running 59s');
+      expect(
+        line,
+        '⏳ [bash] sleep 500 — running 59s · $toolLivenessForegroundHint',
+      );
     });
   });
 
