@@ -679,7 +679,7 @@ packages:
       path: ".."
       relative: true
     source: path
-    version: "1.0.522"
+    version: "1.0.523"
   flutter_agent_memory:
     dependency: "direct overridden"
     description:
@@ -1132,12 +1132,11 @@ packages:
   js_widget_runtime:
     dependency: "direct main"
     description:
-      path: "."
-      ref: bd1e7c22fb4c4d217fdf5fbf73225dcb1f488bd0
-      resolved-ref: bd1e7c22fb4c4d217fdf5fbf73225dcb1f488bd0
-      url: "https://github.com/IstiN/flutter_js_widget_runtime.git"
-    source: git
-    version: "0.4.154"
+      name: js_widget_runtime
+      sha256: "18f7e97dde661fbdcc20db071735ab3dc2978cfdaa98db034f9e6730c02ee92a"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.4.156"
   json_annotation:
     dependency: transitive
     description:

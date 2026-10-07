@@ -3,7 +3,7 @@ description: >-
   Fa — the Flutter Agent app: a chat UI that runs the agent with a mobile
   ExecutionEnv backed by path_provider and Process.run.
 publish_to: 'none'
-version: 1.0.522+1
+version: 1.0.523+1
 
 environment:
   sdk: ^3.12.2
@@ -59,9 +59,13 @@ dependencies:
   # 0.4.154 ships the bridge-side voxel renderer (`voxel.attach`, >=
   # 0.4.127) that fa-craft 0.2.x probes for — older runtimes fall back to
   # the legacy scene3d path (slower, and not what fa-craft field testing
-  # exercises) — plus jsr.openUrl + the webView node (gh-1235, git-pinned
-  # below until the hosted 0.4.154+ lands).
-  js_widget_runtime: ^0.4.154
+  # exercises) — plus jsr.openUrl + the webView node (gh-1235). 0.4.156
+  # (gh-1341) carries upstream 9d57570: the flutter_js engine derives its
+  # setupBridge channel list from JsWidgetBridge.handledChannels instead of
+  # a hand-maintained copy, so `jsr.hostCall`/`jsr.capture` no longer hang
+  # forever on JSC builds (voxel.attach probes → infinite spinner,
+  # fa-craft → permanent legacy scene3d fallback at ~2 FPS).
+  js_widget_runtime: ^0.4.156
 
   # The fa_widgets catalog validator — the SAME rule engine the catalog CI
   # runs (issue #1045): publish pre-flight imports it so a manifest that
@@ -245,14 +249,9 @@ dependency_overrides:
       # with the wrong JSContext — SIGSEGV in JSC::JSLock::lock once one of
       # them is disposed (TestFlight feedback-7).
       ref: 74a11bf6e7ab2721146cdc4a80e225115a8ccfe3
-  # js_widget_runtime 0.4.154 (jsr.openUrl + the JsRuntimeConfig.webViewHost
-  # seam, commit bd1e7c2) was still in publishing when this landed — pin the
-  # exact upstream commit until the hosted 0.4.154+ is out, then drop the
-  # override and let the ^0.4.154 constraint resolve hosted.
-  js_widget_runtime:
-    git:
-      url: https://github.com/IstiN/flutter_js_widget_runtime.git
-      ref: bd1e7c22fb4c4d217fdf5fbf73225dcb1f488bd0
+  # gh-1341: the js_widget_runtime git override (bd1e7c2) is gone —
+  # hosted 0.4.156 (= upstream 9d57570, the flutter_js hostCall/capture
+  # channel fix) is published, and the ^0.4.156 constraint resolves it.
   # flutter_inappwebview_macos 1.2.0-beta.3 declares a macOS 10.14 floor in
   # both its Package.swift and podspec, but its Swift marks
   # presentationAnchor(for:) @available(macOS 10.15, *) — the plugin fails to
