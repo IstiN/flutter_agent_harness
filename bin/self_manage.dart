@@ -10,13 +10,20 @@ library;
 import 'dart:convert';
 import 'dart:ffi' show Abi;
 import 'dart:io';
+import 'dart:typed_data' show Uint8List;
 
 import 'package:http/http.dart' as http;
 
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart' show sha256;
-import 'package:cryptography/cryptography.dart'
-    show RsaPublicKey, RsaSsaPkcs1v15, Signature;
+import 'package:cryptography/cryptography.dart' show RsaPublicKey;
+import 'package:pointycastle/export.dart'
+    show
+        PublicKeyParameter,
+        RSAPublicKey,
+        RSASigner,
+        RSASignature,
+        SHA256Digest;
 
 const _repo = 'IstiN/flutter_agent_harness';
 
@@ -233,6 +240,12 @@ const _rsaEncryptionOid = [
 List<int> _unsignedInteger(List<int> bytes) =>
     bytes.length > 1 && bytes.first == 0 ? bytes.sublist(1) : bytes;
 
+/// Reads an unsigned big-endian byte list (DER INTEGER content) as a
+/// [BigInt] for pointycastle's RSA key.
+BigInt _bytesToBigInt(List<int> bytes) => BigInt.parse(
+    bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join(),
+    radix: 16);
+
 /// Parses a PEM `BEGIN PUBLIC KEY` (SPKI) RSA public key into its
 /// modulus/exponent bytes. Public for the provenance tests.
 RsaPublicKey rsaPublicKeyFromPem(String pem) {
@@ -299,9 +312,21 @@ Future<bool> verifyReleaseProvenance({
         .get(sumsUri.replace(path: '${sumsUri.path}.sig'))
         .timeout(kFaUpdateNetworkTimeout);
     if (sums.statusCode != 200 || sig.statusCode != 200) return false;
-    final verified = await RsaSsaPkcs1v15.sha256().verify(
-      sums.bodyBytes,
-      signature: Signature(sig.bodyBytes, publicKey: rsaPublicKeyFromPem(pem)),
+    // package:cryptography's RsaSsaPkcs1v15 throws UnimplementedError on
+    // the VM (only WebCrypto backs it) — verify with pointycastle's pure
+    // Dart RSA instead (issue #1377 review r7). PKCS#1 v1.5 + SHA-256,
+    // the exact scheme `openssl dgst -sha256 -verify` checks.
+    final key = rsaPublicKeyFromPem(pem);
+    final signer = RSASigner(SHA256Digest(), '0609608648016503040201');
+    signer.init(
+      false,
+      PublicKeyParameter<RSAPublicKey>(
+        RSAPublicKey(_bytesToBigInt(key.n), _bytesToBigInt(key.e)),
+      ),
+    );
+    final verified = signer.verifySignature(
+      Uint8List.fromList(sums.bodyBytes),
+      RSASignature(Uint8List.fromList(sig.bodyBytes)),
     );
     if (!verified) return false;
     final expected = _manifestDigest(sums.body, archiveName);
