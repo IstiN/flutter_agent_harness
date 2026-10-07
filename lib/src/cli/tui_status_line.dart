@@ -812,13 +812,7 @@ StatusLineConfig parseStatusLineConfig(Object? node) {
     'nerdSymbols',
   });
   final preset = _statusLinePreset(node['preset']);
-  final optionsNode = node['segmentOptions'];
-  if (optionsNode != null && optionsNode is! YamlMap) {
-    throw ConfigException(
-      '"tui.statusLine.segmentOptions" must be a map, got: $optionsNode',
-    );
-  }
-  final transparent = _statusLineBoolFlag(node, 'transparent');
+  final optionsNode = _statusLineOptionsNode(node);
   final separator = node['separator'];
   return StatusLineConfig(
     preset: preset,
@@ -830,7 +824,7 @@ StatusLineConfig parseStatusLineConfig(Object? node) {
     segmentOptions: optionsNode == null
         ? null
         : parseSegmentOptions(optionsNode),
-    transparent: transparent ?? false,
+    transparent: _statusLineBoolFlag(node, 'transparent') ?? false,
     nerdSymbols: _statusLineBoolFlag(node, 'nerdSymbols'),
   );
 }
@@ -843,6 +837,17 @@ bool? _statusLineBoolFlag(YamlMap node, String key) {
     throw ConfigException('"tui.statusLine.$key" must be a boolean');
   }
   return value as bool?;
+}
+
+/// Reads and validates the `segmentOptions:` node; `null` when unset.
+YamlMap? _statusLineOptionsNode(YamlMap node) {
+  final optionsNode = node['segmentOptions'];
+  if (optionsNode != null && optionsNode is! YamlMap) {
+    throw ConfigException(
+      '"tui.statusLine.segmentOptions" must be a map, got: $optionsNode',
+    );
+  }
+  return optionsNode as YamlMap?;
 }
 
 /// Strict-key guard for the `tui` section family: any key outside
