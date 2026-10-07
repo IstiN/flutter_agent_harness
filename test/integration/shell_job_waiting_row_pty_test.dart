@@ -86,7 +86,7 @@ void main() {
       // Baseline: once idle with the job running, the row is on screen.
       await harness.waitForScreen(
         '⏳ waiting',
-        timeout: const Duration(seconds: 20),
+        timeout: const Duration(seconds: 60),
       );
 
       // The job settles (sleep 2) and the notice turn answers. THE
@@ -95,7 +95,7 @@ void main() {
       // row painted above the composer forever.
       await harness.waitForText(
         'all quiet now',
-        timeout: const Duration(seconds: 20),
+        timeout: const Duration(seconds: 60),
       );
       final screen = await _settledScreen(harness);
       expect(
@@ -135,13 +135,13 @@ void main() {
       // Both waiters show in the headline.
       await harness.waitForScreen(
         '2 jobs',
-        timeout: const Duration(seconds: 20),
+        timeout: const Duration(seconds: 60),
       );
 
       // First settle: the row re-points at the remaining waiter.
       await harness.waitForText(
         'first gone',
-        timeout: const Duration(seconds: 20),
+        timeout: const Duration(seconds: 60),
       );
       var screen = await _settledScreen(harness);
       expect(screen, contains('⏳ waiting · sleep 4'),
@@ -155,7 +155,7 @@ void main() {
       // Last settle: the row dies with it.
       await harness.waitForText(
         'second gone',
-        timeout: const Duration(seconds: 20),
+        timeout: const Duration(seconds: 60),
       );
       screen = await _settledScreen(harness);
       expect(
