@@ -302,9 +302,8 @@ Future<void> _runApp(List<String> args) async {
           break; // The engine swapped and printed the restart hint.
         case ApplyUpdateOutcome.convergenceGuard:
           stderr.writeln(
-            'fa: auto update paused — the same release was already '
-            'attempted and is still not resolving; continuing on '
-            'v$packageVersion',
+            'fa: auto update paused — the release is not resolving '
+            'through this channel yet; continuing on v$packageVersion',
           );
         case _:
           // Never crash the boot: one warn, then continue on the current

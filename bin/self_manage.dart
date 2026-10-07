@@ -26,6 +26,13 @@ const _repo = 'IstiN/flutter_agent_harness';
 /// links). Anything exceeding its bound aborts the update — fail-closed,
 /// never a hang (issue #1377 review r4).
 
+/// Metadata answers (latest tag, manifest, signature) must land within
+/// this bound; slower means the update aborts, fail-closed.
+const Duration kFaUpdateNetworkTimeout = Duration(seconds: 15);
+
+/// The archive body bound (tens of MB on slow links).
+const Duration kFaUpdateArchiveTimeout = Duration(minutes: 2);
+
 void _say(String text) => stdout.writeln(text);
 void _warn(String text) => stderr.writeln('fa: $text');
 
@@ -675,9 +682,13 @@ Future<int> fallbackZipUpdate(
     return 1;
   }
   _say('extracting $zipAsset…');
-  final bytes = await streamed.stream
-      .toBytes()
-      .timeout(kFaUpdateArchiveTimeout);
+  final List<int> bytes;
+  try {
+    bytes = await streamed.stream.toBytes().timeout(kFaUpdateArchiveTimeout);
+  } on Exception catch (error) {
+    _warn('download failed (network): $error');
+    return 1;
+  }
   if (!await verifyReleaseProvenance(
     client: client,
     tag: tag,
