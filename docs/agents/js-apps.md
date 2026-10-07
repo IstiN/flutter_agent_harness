@@ -1,6 +1,6 @@
 # JS apps platform
 
-`flutter_app/lib/apps/` runs on `package:js_widget_runtime` (git-pinned; SIGSEGV guards are not in pub yet). Apps live in env-shared `apps/<id>/{manifest.json, widget.js}`; the `js-apps` skill seeds into `.fah/skills/` on startup.
+`flutter_app/lib/apps/` runs on `package:js_widget_runtime` (hosted `^0.4.156`; the git pin convention ended with gh-1341 — drop the override once the needed version is on pub). Apps live in env-shared `apps/<id>/{manifest.json, widget.js}`; the `js-apps` skill seeds into `.fah/skills/` on startup.
 
 **Manifest i18n** (`flutter_app/lib/apps/manifest_i18n.dart`): `name`/`description` stay scalar strings (the JSR runtime casts them strictly — a key's TYPE must never change). Localization is additive via `nameI18n`/`descriptionI18n` maps: each locale (`en`, `ru`, `pt-BR`) maps to an inline string or a `{"file": "./i18n/<locale>.md"}` ref inside the widget package. `installWidget` rejects packages with dangling refs before writing; `listApps` loads ref contents so tiles/sheets resolve synchronously. Display sites (apps grid, catalog sheet, launcher, apps panel) call `JsAppInfo.displayName/displayDescription(locale)` / `CatalogEntry` equivalents; resolution order: device locale → language tag → `en` → scalar → first declared entry. Parser is lenient (bad locale keys/unsafe paths skipped with a log note) so third-party widgets never brick the launcher.
 
