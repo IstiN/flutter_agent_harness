@@ -38,6 +38,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 _BENCH_DIR = str(Path(__file__).resolve().parent.parent)
 if _BENCH_DIR not in sys.path:
@@ -45,6 +46,26 @@ if _BENCH_DIR not in sys.path:
 import fa_usage
 
 _PRICING_PATH = Path(_BENCH_DIR) / "pricing.json"
+
+
+class Row(NamedTuple):
+    """One summary row.
+
+    rec_in/rec_out: totals as recorded in results.json (0/None when tb's
+    flat-cap fabrication discarded the adapter's fold). tin/tout:
+    effective totals — recorded, else re-folded from the synced session
+    logs (issue #1339 AC1).
+    """
+
+    task: str
+    trial: str
+    mark: str
+    mode: str
+    rec_in: object
+    rec_out: object
+    tin: object
+    tout: object
+    cost: object
 
 
 def _parse_args(argv):
@@ -163,7 +184,6 @@ def render(runs_dir: Path, expected=None, model_override=None):
 
     pricing = fa_usage.load_pricing(_PRICING_PATH)
     facts = _session_facts(runs_dir)
-    # task, trial, mark, mode, recorded in/out, effective in/out, cost.
     rows = []
     unpriced_models = set()
     unpriced_unknown = 0
@@ -172,14 +192,19 @@ def render(runs_dir: Path, expected=None, model_override=None):
         for r in data.get("results", []):
             resolved = r.get("is_resolved")
             mode = r.get("failure_mode") or ""
-            # Issue #1339 AC2: a finished trial's terminal failure mode
-            # must never read as the non-terminal `pending`.
+            # Issue #1339 AC2: a finished trial must never read as the
+            # non-terminal bare `pending`. Only test_timeout speaks to a
+            # verdict (the verify phase ran and burned its budget —
+            # gh-1206); other None-resolved modes stay honest: pending,
+            # named — not claimed as no.
             if resolved is True:
                 mark = "yes"
             elif resolved is False:
                 mark = "no"
+            elif mode == "test_timeout":
+                mark = "no (test_timeout)"
             else:
-                mark = f"no ({mode})" if mode else "pending"
+                mark = f"pending ({mode})" if mode else "pending"
             fact = facts.get(r.get("trial_name", "?")) or {}
             rec_in = r.get("total_input_tokens")
             rec_out = r.get("total_output_tokens")
@@ -199,11 +224,12 @@ def render(runs_dir: Path, expected=None, model_override=None):
                     unpriced_models.add(model)
                 else:
                     unpriced_unknown += 1
-            rows.append((
-                r.get("task_id", "?"), r.get("trial_name", "?"), mark,
-                mode, rec_in, rec_out, tin, tout, cost,
+            rows.append(Row(
+                task=r.get("task_id", "?"), trial=r.get("trial_name", "?"),
+                mark=mark, mode=mode,
+                rec_in=rec_in, rec_out=rec_out, tin=tin, tout=tout, cost=cost,
             ))
-    n_resolved = sum(1 for r in rows if r[2] == "yes")
+    n_resolved = sum(1 for row in rows if row.mark == "yes")
     accuracy = n_resolved / len(rows) if rows else 0.0
     missing = expected - len(rows) if expected is not None else 0
     note = (
@@ -226,13 +252,13 @@ def render(runs_dir: Path, expected=None, model_override=None):
     # regression guard across bench runs.
     modes = {}
     hang = work = recovered = 0
-    for _, _, mark, mode, rec_in, rec_out, tin, tout, _ in rows:
-        key = mode or "unset"
+    for row in rows:
+        key = row.mode or "unset"
         if key == "agent_timeout":
-            if rec_in or rec_out:
+            if row.rec_in or row.rec_out:
                 key = "agent_timeout (real work, cap exhausted)"
                 work += 1
-            elif tin or tout:
+            elif row.tin or row.tout:
                 # Recorded 0/0 but the session logs carry real usage: the
                 # zero-byte attempt was recovered by replay/takeover
                 # (#1311) — neither a provider hang nor cap exhaustion.
@@ -241,7 +267,7 @@ def render(runs_dir: Path, expected=None, model_override=None):
             else:
                 key = "agent_timeout (0 tokens — provider hang)"
                 hang += 1
-        modes[(key, mark)] = modes.get((key, mark), 0) + 1
+        modes[(key, row.mark)] = modes.get((key, row.mark), 0) + 1
     lines.append("Failure families (mode x resolved):")
     for (mode, mark), n in sorted(modes.items()):
         lines.append(f"- {mode or 'unset'} / {mark}: {n}")
@@ -256,14 +282,16 @@ def render(runs_dir: Path, expected=None, model_override=None):
     lines.append("")
 
     # Token/cost totals (issue #1123): sums over exactly the rows above.
-    total_in = sum(r[6] or 0 for r in rows)
-    total_out = sum(r[7] or 0 for r in rows)
-    priced = [r[8] for r in rows if r[8] is not None]
+    total_in = sum(row.tin or 0 for row in rows)
+    total_out = sum(row.tout or 0 for row in rows)
+    priced = [row.cost for row in rows if row.cost is not None]
     # Same unpriced rule as the harbor summary: only rows that recorded
     # tokens but carry no price count. Zero-token rows render n/a but are
     # not unpriced spend.
-    unpriced = sum(1 for r in rows if (r[6] or r[7]) and r[8] is None)
-    if any(r[6] or r[7] for r in rows):
+    unpriced = sum(
+        1 for row in rows if (row.tin or row.tout) and row.cost is None
+    )
+    if any(row.tin or row.tout for row in rows):
         cost_total = f"${sum(priced):.4f}" if priced else "n/a"
         suffix = ""
         if unpriced:
@@ -283,17 +311,23 @@ def render(runs_dir: Path, expected=None, model_override=None):
                 detail = "model id unknown (no fa session logs, no --model)"
             suffix = f" — {unpriced} trial(s) unpriced: {detail}"
         lines.append(f"**tokens in/out: {total_in}/{total_out} — est. cost: {cost_total}{suffix}**")
-        estimated = sum((facts.get(r[1]) or {}).get("estimated", 0) for r in rows)
+        estimated = sum((facts.get(row.trial) or {}).get("estimated", 0) for row in rows)
         if estimated:
             lines.append(
                 f"includes ~{estimated} estimated tokens (chars/4 where the provider omitted usage)"
             )
     lines.append("| task | trial | resolved | failure mode | tokens in/out | est cost |")
     lines.append("|---|---|---|---|---|---|")
-    for task, trial, mark, mode, _rec_in, _rec_out, tin, tout, cost in rows:
-        tokens = f"{tin}/{tout}" if tin is not None or tout is not None else ""
-        cost_cell = "n/a" if cost is None else f"${cost:.4f}"
-        lines.append(f"| {task} | {trial} | {mark} | {mode} | {tokens} | {cost_cell} |")
+    for row in rows:
+        tokens = (
+            f"{row.tin}/{row.tout}"
+            if row.tin is not None or row.tout is not None else ""
+        )
+        cost_cell = "n/a" if row.cost is None else f"${row.cost:.4f}"
+        lines.append(
+            f"| {row.task} | {row.trial} | {row.mark} | {row.mode}"
+            f" | {tokens} | {cost_cell} |"
+        )
 
     if missing > 0:
         problems.append(f"only {len(rows)}/{expected} expected tasks attempted")

@@ -81,6 +81,12 @@ concurrency:
   group: bench
   cancel-in-progress: false
 
+# One source of truth for the bench model id (PR #1351 review): the run
+# config, the job name and both summary steps must never drift apart — a
+# stale copy is exactly the silent mispricing AC3 of issue #1339 fixes.
+env:
+  BENCH_MODEL: glm-5.3-flash
+
 jobs:
   setup:
     name: Build bundle & resolve shards
@@ -148,7 +154,7 @@ jobs:
             --test-timeout-floor "$TEST_TIMEOUT_FLOOR"
 
   bench:
-    name: fa on terminal-bench, shard ${{ matrix.i }} (glm-5.3-flash)
+    name: fa on terminal-bench, shard ${{ matrix.i }} (${{ env.BENCH_MODEL }})
     needs: setup
     runs-on: ubuntu-latest
     # Worst case per shard (LPT balance at multiplier 2) is ~4.5 h; 355 min
@@ -200,7 +206,7 @@ jobs:
           FA_BUNDLE_TARBALL: ${{ github.workspace }}/fa-bundle.tar.gz
           PYTHONPATH: ${{ github.workspace }}/bench/terminal_bench
           FA_PROVIDER_TYPE: zai
-          FA_PROVIDER_CONFIG: '{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"glm-5.3-flash","apiKeyEnvVar":"FA_KEY_API_Z_AI_Z_AI"}'
+          FA_PROVIDER_CONFIG: '{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"${{ env.BENCH_MODEL }}","apiKeyEnvVar":"FA_KEY_API_Z_AI_Z_AI"}'
           FA_KEY_API_Z_AI_Z_AI: ${{ secrets.FA_BENCH_ZAI_KEY }}
           DATASET: ${{ inputs.dataset }}
           AGENT_TIMEOUT: ${{ inputs.agent-timeout }}
@@ -280,9 +286,8 @@ jobs:
         env:
           # Issue #1339 AC3: cost needs the model id, and a trial's id only
           # surfaces from its fa session logs — when those never reach the
-          # artifact every row prices n/a. The bench model is run-static
-          # (FA_PROVIDER_CONFIG above), so give the summary the same pin.
-          MODEL: glm-5.3-flash
+          # artifact every row prices n/a. Pinned to the run's own model.
+          MODEL: ${{ env.BENCH_MODEL }}
         run: |
           python bench/terminal_bench/summary.py --no-fail tb-runs
 
@@ -323,6 +328,6 @@ jobs:
           EXPECTED: ${{ needs.setup.outputs.count }}
           # Issue #1339 AC3: same pin as the shard summary — price every
           # trial even when its fa session logs are absent.
-          MODEL: glm-5.3-flash
+          MODEL: ${{ env.BENCH_MODEL }}
         run: |
           python bench/terminal_bench/summary.py tb-runs "$EXPECTED"
