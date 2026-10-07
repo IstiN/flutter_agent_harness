@@ -4688,4 +4688,11 @@
 - fix(1349): deny bare long foreground sleeps; enrich liveness reminders with the background hint (#1355)
 - fix(1293): dap start exit-0 guarantees the dial credential is durably on disk (#1354)
 
+## 1.0.524
+
+- ci(quarantine): skip shell_job_countdown_pty_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1365) (#1347)
+- fix(1368): pub.dev publish — push-tag-only OIDC path, dart-only gate, verify waits instead of false-alarming (#1370)
+- fix(1339): review hardening — session-archive traversal guard on every branch (#1369)
+- fix(1323): live thinking streams in the TUI — reasoning deltas commit the transient-retry attempt (#1325)
+
 ## Unreleased
