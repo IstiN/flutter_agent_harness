@@ -15,7 +15,11 @@
 /// no fixed sleeps beyond the harness settle windows.
 @TestOn('vm')
 @Tags(['io', 'integration'])
-@Timeout(Duration(minutes: 5))
+// 8 min, not 5: the stage ceilings sum to ~7 min in the everything-times-
+// out path (gh-1337 review) — at 5 the generic per-test abort would eat
+// waitForRaw's diagnostic-rich TimeoutException (screen + raw tail) in
+// exactly the slow-runner hang case this suite is hardened against.
+@Timeout(Duration(minutes: 8))
 library;
 
 import 'dart:convert';
@@ -53,15 +57,10 @@ final _turns = [
 /// The live collapsed board row: ten started, nothing settled yet.
 const _allRunning = 'Background jobs (10) · 10 running · 0 done · 0 lost';
 
-/// The drained collapsed board row — the completion marker every job's
-/// settle notice hangs off (all ten done, none lost).
-const _drainedRow = 'Background jobs (10) · 0 running · 10 done · 0 lost';
-
-/// One settle notice per finished job (`[bash] sh-… exited(0)`); exactly
-/// ten of these prove every command started AND finished.
-final _settleNotice = RegExp(r'\[bash\] sh-(\S+) exited\(0\)');
-
-/// The same row mid-drain — the countdown segment this test photographs.
+/// One settle notice per finished job (`[bash] sh-… exited(code)`); exactly
+/// ten of these prove every command started AND finished — the proof set
+/// lives in the harness as [shellJobSettleNotice] / `settledJobNumbers`
+/// (top-level, unit-provable without a PTY).
 final _liveBoard = RegExp(r'Background jobs \(10\) · (\d+) running');
 
 /// Any live running count above zero — forbidden on the final frame.
@@ -141,36 +140,27 @@ void main() {
       expectComposerReserved(harness.viewportLines, 80);
       _writeShot(harness, '301_shell_job_countdown_mid_$mid');
 
-      // ── all ten FINISH: anchor on the drained board, never a quiet gap ─
-      // gh-1250 family, this file's run 37555363161 (PTY shard 2/3): the
-      // staggered sleeps settle ~1 s apart and waitForOutput's quiet
-      // detector (2×settleMs of raw-buffer silence) early-returns on ANY
-      // ≥1 s output lull — a CI-load stall between frame repaints is
-      // enough — so the harvest cut off at {1..8} of 10. The board's
-      // drained row is the completion marker: by the time it paints, every
-      // job has settled and its notice is already in the raw buffer (each
-      // settle prints once, repaints re-emit), so a short fixed settle is
-      // all the harvest needs.
-      await harness.waitForText(
-        _drainedRow,
-        timeout: const Duration(seconds: 90),
+      // ── all ten FINISH: one settle notice per job, exactly ────────────
+      // gh-1337 (CI v1.0.520): this was a silence settle —
+      // `waitForOutput(settleMs: 500)` returns once ~1 s of raw-stream
+      // quiet passes. But this scenario staggers its sleeps exactly 1 s
+      // apart (3..12 s), so the gaps BETWEEN settle notices sit right on
+      // that threshold; one stretched gap on a loaded runner (job 7 → 8)
+      // returned mid-drain with the tail jobs unlanded and the capture
+      // held only {1..7}. The wait is now anchored on the proof data
+      // itself — all ten DISTINCT settle numbers present in the raw
+      // buffer — with a generous ceiling for slow runners; expiry throws
+      // with diagnostics instead of silently truncating.
+      final drained = await harness.waitForRaw(
+        (raw) => settledJobNumbers(raw).length == 10,
+        what: 'all ten distinct shell-job settle notices in raw output',
+        timeout: const Duration(seconds: 120),
       );
-      // Post-anchor settle: flush the drain frame's notice re-emissions,
-      // then read the raw buffer for the per-job harvest below.
-      await harness.waitForOutput(settleMs: 300);
-      final drained = harness.rawOutput;
       // Frame repaints re-emit notices into the raw stream — the start/
       // finish proof is the set of DISTINCT settled job numbers, not the
-      // raw match count. Match on the NUMBER PREFIX, never the full id:
-      // a repaint can interleave cursor-move escapes mid-id (observed
-      // under CI load: `sh-10-…xqo<esc>[11;29H5<esc>[11;31H exited(0)`),
-      // and a fragmented re-emit would otherwise inflate the distinct-id
-      // set with a corrupt entry. The number is the first token written,
-      // so it survives any such fragmentation.
-      final settledNumbers = _settleNotice
-          .allMatches(drained)
-          .map((m) => m.group(1)!.split('-').first)
-          .toSet();
+      // raw match count (fragmented-id tolerance lives inside
+      // settledJobNumbers).
+      final settledNumbers = settledJobNumbers(drained);
       expect(
         settledNumbers,
         {for (var i = 1; i <= 10; i++) '$i'},
@@ -191,7 +181,9 @@ void main() {
       final screen = after.join('\n');
       expect(
         screen,
-        contains(_drainedRow),
+        contains(
+          'Background jobs (10) · 0 running · 10 done · 0 lost',
+        ),
         reason: 'the settled collapsed turn hands ONE terminal summary '
             'card to the transcript, drained:\n$screen',
       );
