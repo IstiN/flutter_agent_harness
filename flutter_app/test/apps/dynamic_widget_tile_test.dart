@@ -127,6 +127,25 @@ void main() {
       expect(find.textContaining('SyntaxError'), findsOneWidget);
     });
 
+    testWidgets('an engine that booted but never renders shows the boot '
+        'error tile, not a spinner (gh-1336)', (tester) async {
+      final dm = service();
+      final def = definition('dm-1');
+      final booted = engine(def);
+      // The engine-level watchdog verdict (the canvas surfaces it even
+      // when the service has no cached boot failure).
+      booted.bootError.value =
+          "widget 'dm-1' (widget.js) produced no UI tree within 10s of "
+          'engine start — the app source likely fails to parse (syntax '
+          'error); fix the widget source and retry';
+      dm.debugAdd(def, engine: booted);
+      await pumpTile(tester, dm, 'dm-1');
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.text('Widget error'), findsOneWidget);
+      expect(find.textContaining('produced no UI tree'), findsOneWidget);
+      expect(find.textContaining("'dm-1'"), findsOneWidget);
+    });
+
     testWidgets('error detail collapses and re-expands', (tester) async {
       final dm = service();
       final def = definition('dm-1');

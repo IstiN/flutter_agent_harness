@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:fa/apps/app_icon.dart';
 import 'package:fa/apps/app_tile_host.dart';
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
@@ -21,9 +22,14 @@ final class _FakeTileEngine extends JsAppEngine {
     required super.permissions,
     super.initialTheme,
     required this.fixedTree,
+    this.stalled = false,
   });
 
   final Map<String, dynamic> fixedTree;
+
+  /// gh-1336: the boot resolves but the eval never renders — the exact
+  /// spinner shape, with the watchdog verdict pre-recorded.
+  final bool stalled;
   final receivedEvents = <String>[];
   final hostPayloads = <String, Map<String, dynamic>>{};
   var startCount = 0;
@@ -36,6 +42,13 @@ final class _FakeTileEngine extends JsAppEngine {
   @override
   Future<void> start() async {
     startCount++;
+    if (stalled) {
+      bootError.value =
+          "widget 'weather' (apps/weather/widget_tile.js) produced no UI "
+          'tree within 10s of engine start — the app source likely fails '
+          'to parse (syntax error); fix the widget source and retry';
+      return;
+    }
     tree.value = fixedTree;
   }
 
@@ -130,10 +143,13 @@ class _Harness {
           permissions: permissions,
           initialTheme: initialTheme,
           fixedTree: _tree,
+          stalled: stalled,
         );
         engines.add(engine);
         return engine;
       };
+
+  bool stalled = false;
 }
 
 Future<_Harness> _pumpHost(
@@ -141,8 +157,9 @@ Future<_Harness> _pumpHost(
   int? refreshSeconds,
   bool interactive = false,
   ValueNotifier<int>? fsRevision,
+  bool stalled = false,
 }) async {
-  final harness = _Harness(MemoryExecutionEnv(), []);
+  final harness = _Harness(MemoryExecutionEnv(), [])..stalled = stalled;
   await tester.pumpWidget(
     MaterialApp(
       theme: buildFahTheme(),
@@ -176,6 +193,13 @@ void main() {
       await _pumpHost(tester);
       expect(find.text('21°'), findsOneWidget);
       expect(find.text('Minsk'), findsOneWidget);
+    });
+
+    testWidgets('a booted engine that never renders shows the icon '
+        'fallback, not a spinner (gh-1336)', (tester) async {
+      await _pumpHost(tester, stalled: true);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byType(AppIcon), findsOneWidget);
     });
 
     testWidgets('reports the tile size as a viewport host event', (

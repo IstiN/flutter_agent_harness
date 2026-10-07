@@ -315,6 +315,9 @@ class DynamicMessagesService extends ChangeNotifier {
   /// (malformed script — the runtime logs syntax errors instead of
   /// failing the boot) records the boot error and frees the engine, so
   /// the tile renders the AC9 error tile instead of spinning forever.
+  /// The engine's own gh-1336 watchdog usually fires first (~µs earlier
+  /// inside `start()`); when it did, record ITS message — one verdict,
+  /// one wording, on every surface.
   Future<void> _failNoUi(
     DynamicMessageDefinition definition,
     JsAppEngine engine,
@@ -326,6 +329,7 @@ class DynamicMessagesService extends ChangeNotifier {
     _engines.remove(definition.id);
     _bootFailed.add(definition.id);
     _bootErrors[definition.id] =
+        engine.bootError.value ??
         'Widget produced no UI — the script may be invalid or empty.';
     await engine.dispose();
     notifyListeners();
