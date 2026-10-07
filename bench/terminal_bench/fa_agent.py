@@ -32,7 +32,6 @@ import logging
 import os
 import shlex
 import sys
-import tarfile
 import threading
 import time
 from pathlib import Path
