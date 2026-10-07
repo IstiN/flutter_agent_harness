@@ -1,0 +1,1 @@
+{"ts":"2026-10-07T03:25:17.351422Z","event":"scheduled","id":"1791343517350566_0000_1p56jvc","dueMs":1791344597350,"to":"01a112c4-9a05-79b2-b7d5-da9fde11b4c7/main","text":"Check /tmp/gh1341_full_test.log (detached full dart test run for gh-1341): if finished and all passed — amend nothing, write outputs/response.md and finish; if failures — investigate; if still running"}
