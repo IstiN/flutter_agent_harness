@@ -110,6 +110,9 @@ const _nonSettingsCommands = <String, String>{
   '/usage':
       'read-only token-usage ledger view + rebuild (gh-1241), writes '
       'usage.json next to the session, never config.yaml',
+  '/update':
+      'binary self-update + successor restart (issue #1377), changes no '
+      'persisted setting',
 };
 
 /// The commands the skill's parity marker documents.

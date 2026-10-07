@@ -231,6 +231,61 @@ Future<void> _runApp(List<String> args) async {
   } on ConfigException catch (error) {
     _fail(error.message);
   }
+
+  // Auto-update boot hook (issue #1377, `auto_update:` config): `off` is
+  // zero network; `notify` runs one bounded check and prints a
+  // once-per-process banner; `on` applies + restarts into the successor
+  // BEFORE the session boots — applied → exit(0), the successor inherits
+  // stdio + this argv and resumes the session through its own --session
+  // flag. Help/version and the update/uninstall quick commands exited
+  // above; serve/wire-daemon runs are skipped (a daemon must not restart
+  // itself under connected clients), and `fa config export-providers`
+  // (intercepted below) is not a session boot either.
+  final autoUpdateNotify = AutoUpdateNotify();
+  switch (bootUpdateAction(
+    mode: saved.autoUpdate,
+    serveOrDaemon:
+        serve.serveA2a ||
+        serve.serveBridge ||
+        wireServe.wireServe ||
+        parsed.config != null,
+  )) {
+    case BootUpdateAction.none:
+      break;
+    case BootUpdateAction.notifyCheck:
+      // Bounded: a dead endpoint must never stall the boot past ~3 s;
+      // failures (network) stay silent. stderr — the same pre-TUI boot
+      // notice channel as the config warnings above.
+      final latest = await fetchLatestTag().timeout(
+        const Duration(seconds: 3),
+        onTimeout: () => null,
+      );
+      if (latest != null && compareVersions(latest, packageVersion) > 0) {
+        final banner = autoUpdateNotify.banner(latest);
+        if (banner != null) stderr.writeln(banner);
+      }
+    case BootUpdateAction.applyAndExit:
+      final outcome = await applyUpdate(
+        currentVersion: packageVersion,
+        launchArgs: args,
+      );
+      switch (outcome) {
+        case ApplyUpdateOutcome.applied:
+          exit(0);
+        case ApplyUpdateOutcome.upToDate:
+          break;
+        case ApplyUpdateOutcome.refusedDevRun:
+          stderr.writeln('fa: auto update unavailable for source runs');
+        case _:
+          // Never crash the boot: one warn, then continue on the current
+          // binary (restartFailed keeps the already-swapped new binary).
+          stderr.writeln(
+            'fa: auto update failed (${outcome.name}) — '
+            'continuing on v$packageVersion',
+          );
+      }
+  }
+
   // Session image registry (`images:` section, issue #171): process-wide,
   // read inside the agent loop's request build. Default: on.
   imageRegistryConfig = saved.images ?? const ImageRegistryConfig();
@@ -1351,6 +1406,18 @@ Future<void> _runApp(List<String> args) async {
       tuiClassic: saved.tuiClassic,
       statusLine: saved.statusLine,
       agentLoadMode: saved.agentLoadMode,
+      // `/update` (issue #1377): the engine lives in bin/self_manage.dart
+      // and lib stays dart:io-free, so the command calls back into this
+      // closure — check, apply, spawn the successor, exit(0) on success;
+      // print + stay alive on any failure.
+      updateCommand: () => _runSlashUpdate(
+        currentVersion: packageVersion,
+        launchArgs: args,
+        writeln: io.writeln,
+      ),
+      // The settings-hub row reads the live policy (slice B): seed it from
+      // the loaded `auto_update:` section.
+      autoUpdate: saved.autoUpdate,
     ),
     io: io,
   );
@@ -1603,4 +1670,34 @@ Future<void> _runApp(List<String> args) async {
   // (?1002l ?1006l) arrives too late or is lost. Write them again here with
   await resetTerminalForShell();
   exit(0);
+}
+
+/// The `/update` slash-command body (issue #1377): the same verified
+/// engine path as the boot hook and `fa update` — check, download+verify,
+/// swap, spawn the successor with the ORIGINAL argv (the session resume
+/// flag is already in it), then exit(0) to hand it the terminal. Any
+/// failure prints one line and stays alive on the current version;
+/// `unsupportedPlatform` is silent here — the engine already printed the
+/// restart prompt after the swap.
+Future<void> _runSlashUpdate({
+  required String currentVersion,
+  required List<String> launchArgs,
+  required void Function(String line) writeln,
+}) async {
+  final outcome = await applyUpdate(
+    currentVersion: currentVersion,
+    launchArgs: launchArgs,
+  );
+  switch (outcome) {
+    case ApplyUpdateOutcome.applied:
+      exit(0);
+    case ApplyUpdateOutcome.upToDate:
+      writeln('already up to date (v$currentVersion)');
+    case ApplyUpdateOutcome.unsupportedPlatform:
+      break;
+    case ApplyUpdateOutcome.refusedDevRun:
+      writeln('update unavailable for source runs');
+    case _:
+      writeln('update failed (${outcome.name}) — staying on v$currentVersion');
+  }
 }

@@ -97,6 +97,12 @@ const configTopLevelKeys = <String>{
   // Console-output behavior flags (gh-1198): the opt-in live thinking
   // stream (`output.streamThinking`).
   'output',
+
+  // The self-update policy (issue #1377): the `auto_update` scalar
+  // (`true`/`false`/`"notify"`), read by CliConfig.fromYaml and validated
+  // by the strict scalar mirror below (this file cannot import
+  // cli_config.dart — it uses dart:io).
+  'auto_update',
 };
 
 /// Top-level keys that carry a plain string value.
@@ -1147,7 +1153,25 @@ final _sectionValidators = <String, void Function(dynamic value, String label)>{
   // The output section (gh-1198) delegates to the SAME pure strict
   // parser CliConfig.fromYaml uses — no mirror to keep in sync.
   'output': (value, _) => parseOutputSection(value),
+  // The self-update policy (issue #1377) mirrors cli_config.dart's strict
+  // scalar parser (no import — dart:io); pinned to it by unit test.
+  'auto_update': (value, _) => validateAutoUpdateScalar(value),
 };
+
+/// The `auto_update` scalar validator (issue #1377): `true`, `false` or
+/// the `"notify"` string are legal; anything else throws — the same rule
+/// `CliConfig.fromYaml` applies at boot (`autoUpdateModeFromYaml`, which
+/// this file cannot import — it uses `dart:io`). Pinned to it by unit
+/// test (the `pins against cli_config.dart` group).
+void validateAutoUpdateScalar(Object? value) {
+  // The yaml package hands back plain scalars (older versions wrap them
+  // in YamlScalar) — accept both, like the `_scalarKeys` branch above.
+  final scalar = value is YamlScalar ? value.value : value;
+  if (scalar is bool || scalar == 'notify' || scalar == null) return;
+  throw ConfigException(
+    '"auto_update" must be true, false, or "notify", got: $scalar',
+  );
+}
 
 void _validateTuiSection(Object? node, String label) {
   if (node is! YamlMap) {

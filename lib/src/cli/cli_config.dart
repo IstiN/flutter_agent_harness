@@ -191,6 +191,37 @@ QuotaSection parseQuotaSection(Object? node) {
   return QuotaSection(badge: badge, ttlMinutes: ttlMinutes);
 }
 
+/// The self-update policy (issue #1377): `notify` checks at boot for a
+/// newer release and prints once, `on` downloads and restarts onto it,
+/// `off` touches no update host at all.
+enum AutoUpdateMode {
+  notify,
+  on,
+  off;
+
+  /// The yaml spelling persisted under `auto_update`: the booleans
+  /// verbatim; `notify` is the default and is never written.
+  String get yamlValue => switch (this) {
+    AutoUpdateMode.notify => 'notify',
+    AutoUpdateMode.on => 'true',
+    AutoUpdateMode.off => 'false',
+  };
+}
+
+/// Parses the `auto_update` yaml scalar (issue #1377). Absent →
+/// [AutoUpdateMode.notify] (the default is never written, so an absent
+/// key and an explicit `"notify"` are the same policy). Strict like every
+/// scalar: anything but `true`, `false` or the `"notify"` string throws
+/// [ConfigException].
+AutoUpdateMode autoUpdateModeFromYaml(Object? node) => switch (node) {
+  null || 'notify' => AutoUpdateMode.notify,
+  true => AutoUpdateMode.on,
+  false => AutoUpdateMode.off,
+  _ => throw ConfigException(
+    '"auto_update" must be true, false, or "notify", got: $node',
+  ),
+};
+
 /// Validates one `agent.mode` value (issues #679/#680): the shared rule
 /// lives in [agentLoadModeValidationError] (load_modes.dart) — this
 /// parser and the settings validator (config_service.dart) throw its
@@ -389,6 +420,7 @@ final class CliConfig {
     this.statusLine,
     this.links = const LinksConfig(),
     this.streamThinking = false,
+    this.autoUpdate = AutoUpdateMode.notify,
   });
 
   factory CliConfig.fromYaml(YamlMap map) {
@@ -542,6 +574,9 @@ final class CliConfig {
       // line-mode/headless runs into the live dimmed thinking stream;
       // absent = false = the byte-identical legacy output.
       streamThinking: _outputStreamThinking(map['output']),
+      // The self-update policy (issue #1377) is one strict scalar:
+      // `true`/`false`/`"notify"` — anything else throws.
+      autoUpdate: autoUpdateModeFromYaml(map['auto_update']),
     );
   }
 
@@ -821,6 +856,12 @@ final class CliConfig {
   /// byte-identical legacy output (machine consumers, AC3).
   final bool streamThinking;
 
+  /// The self-update policy (issue #1377, `auto_update` yaml key):
+  /// [AutoUpdateMode.notify] (the never-written default) checks at boot
+  /// and prints once, `on` downloads + restarts onto the new release,
+  /// `off` touches no update host at all.
+  final AutoUpdateMode autoUpdate;
+
   /// Returns a copy with [entries] as the custom-providers list; every
   /// other field carries over. [saveCliConfig] uses it for its
   /// merge-before-write union (issue #221) — keep this field list in sync
@@ -863,6 +904,7 @@ final class CliConfig {
       tuiClassic: tuiClassic,
       statusLine: statusLine,
       links: links,
+      autoUpdate: autoUpdate,
     );
   }
 
@@ -873,11 +915,19 @@ final class CliConfig {
       ..write('baseUrl: $baseUrl\n')
       ..write('mode: $mode\n')
       ..write('approvalMode: $approvalMode\n')
+      ..write(_autoUpdateYaml())
       ..write(_allowedToolsYaml())
       ..write(_promptOverridesYaml())
       ..write(_optionalSectionsYaml())
       ..write(_tuiSectionYaml());
     return buffer.toString();
+  }
+
+  /// The `auto_update` scalar (issue #1377), only when non-default; the
+  /// file stays minimal (defaults are never written).
+  String _autoUpdateYaml() {
+    if (autoUpdate == AutoUpdateMode.notify) return '';
+    return 'auto_update: ${autoUpdate.yamlValue}\n';
   }
 
   /// The optional config sections, only when explicitly configured; the

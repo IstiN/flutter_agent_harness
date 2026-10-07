@@ -212,6 +212,9 @@ void main() {
       '/tools',
       // Config file.
       '~/.fah/config.yaml',
+      // Auto-update (`auto_update:` section + /update, issue #1377).
+      'auto_update:',
+      '/update',
     ];
     for (final keyword in keywords) {
       test('mentions $keyword', () {

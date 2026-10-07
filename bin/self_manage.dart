@@ -14,6 +14,9 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import 'package:archive/archive.dart';
+import 'package:crypto/crypto.dart' show hex, sha256;
+import 'package:cryptography/cryptography.dart'
+    show RsaPublicKey, RsaSsaPkcs1v15, Signature;
 
 const _repo = 'IstiN/flutter_agent_harness';
 
@@ -21,8 +24,12 @@ void _say(String text) => stdout.writeln(text);
 void _warn(String text) => stderr.writeln('fa: $text');
 
 /// The host OS/arch pair as used in the release asset names.
-String? _archiveName() {
-  final abi = Abi.current().toString(); // e.g. windows_x64, macos_arm64
+String? _archiveName() => archiveNameFor(Abi.current().toString());
+
+/// The release asset name for an OS/arch pair (`windows_x64`, `macos_arm64`,
+/// … as `Abi.current()` reports them), or null when there is no prebuilt
+/// archive for the platform.
+String? archiveNameFor(String abi) {
   return switch (abi) {
     'windows_x64' => 'fa-windows-x64.zip',
     'macos_x64' => 'fa-macos-x64.tar.gz',
@@ -105,26 +112,36 @@ Install _detectInstall() => classifyInstall(
 
 /// Fetches the latest release tag (e.g. `v0.1.44`). The HTML permalink's
 /// 302 is tried first (the API's unauthenticated rate limit is easy to hit
-/// on shared IPs); the JSON API is the fallback.
-Future<String?> _latestTag(http.Client client) async {
-  final permalink = Uri.parse('https://github.com/$_repo/releases/latest');
-  final request = http.Request('GET', permalink)..followRedirects = false;
-  final redirected = await client.send(request);
-  final location = redirected.headers['location'];
-  if (location != null) {
-    final match = RegExp(r'/releases/tag/([^/]+)').firstMatch(location);
-    if (match != null) return match.group(1);
+/// on shared IPs); the JSON API is the fallback. Null when neither works.
+///
+/// [client] defaults to a fresh [http.Client] (closed before returning).
+Future<String?> fetchLatestTag({http.Client? client}) async {
+  final own = client ?? http.Client();
+  try {
+    final permalink = Uri.parse('https://github.com/$_repo/releases/latest');
+    final request = http.Request('GET', permalink)..followRedirects = false;
+    final redirected = await own.send(request);
+    final location = redirected.headers['location'];
+    if (location != null) {
+      final match = RegExp(r'/releases/tag/([^/]+)').firstMatch(location);
+      if (match != null) return match.group(1);
+    }
+    final response = await own.get(
+      Uri.parse('https://api.github.com/repos/$_repo/releases/latest'),
+      headers: {'Accept': 'application/vnd.github+json'},
+    );
+    if (response.statusCode != 200) return null;
+    final body = jsonDecode(response.body);
+    return body is Map<String, dynamic> ? body['tag_name'] as String? : null;
+  } finally {
+    if (client == null) own.close();
   }
-  final response = await client.get(
-    Uri.parse('https://api.github.com/repos/$_repo/releases/latest'),
-    headers: {'Accept': 'application/vnd.github+json'},
-  );
-  if (response.statusCode != 200) return null;
-  final body = jsonDecode(response.body);
-  return body is Map<String, dynamic> ? body['tag_name'] as String? : null;
 }
 
-int _compareVersions(String a, String b) {
+/// Compares two dotted version strings (`v` prefix ignored, missing
+/// components are zero): negative when [a] is older than [b], positive
+/// when newer, zero when equal.
+int compareVersions(String a, String b) {
   List<int> parts(String v) => [
     for (final piece in v.replaceFirst(RegExp('^v'), '').split('.'))
       int.tryParse(piece) ?? 0,
@@ -139,6 +156,150 @@ int _compareVersions(String a, String b) {
   return 0;
 }
 
+/// The pinned release trust anchor — byte-identical to
+/// TRUSTED_SIGNING_PEM in site/install.sh. Archives are only applied when
+/// their signed SHA256SUMS verifies against this key.
+const String kFaReleaseSigningPem = '-----BEGIN PUBLIC KEY-----\n'
+    'MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA/F/wk8xOz9U/sjsGJKn2\n'
+    'sDuqF3KxG8UXJsC95fSp6Bpm3hjPEVF1wsYycEy4KeCRpKBeyJGqhIoiEBeQBUgz\n'
+    'NKEOjEoGuZxLgtOL2/0OkDVLpXA/q5gmdey0yWx+P5I9ShDMuQWgbG1wR55ti6lD\n'
+    '0b/jhG9OUVTDjSDG2jvbxx27gAx1NMX6IgMAx6u3djYKyRMdj/DRqZXkv2cUO8RS\n'
+    'elhwcSChDKrVjrIaFru8iw7eBS0c5SNV1D9qLESNklFR5tTf9R4Uv1/ixTIN56tk\n'
+    'j8l7HrWT0NmFNU5d2sy33pbbsACqqGHSeCVnAEZmrn0vzZ25onFQbr68qIhPCQUq\n'
+    'z7DTlxKxdRViEkZwRGpKTSWnS5stu/Y+ReD/XeZgKFduje98kcVvHFyyfaQt6Wee\n'
+    '6ZO/s6AMByqPTI1eJCkxe53LkIiQs5py3a5whKrkPy99/C1uOrmGiJurA3luAbhD\n'
+    'guzhAH54jqj2XuzD8HQujgq+5Edt80HK4jvfbzN3XQE+XQB7s10KAvAcmhoPONn3\n'
+    'JctJXd6etpAaHg56YciFqzOa+/oyE4sgjunGqq0s4hx0ROHIhLC2almcekZFLEit\n'
+    '+GmhARJnFP2Nem6owJ1PSYzIWT5zVjrA4pK4VJGA6EC2H2poBq4x7tkDugQYxdgC\n'
+    'P2gLH2uyw0KaQBQa1CQVCnUCAwEAAQ==\n'
+    '-----END PUBLIC KEY-----';
+
+/// Whether two byte lists are identical.
+bool _listEquals(List<int> a, List<int> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+/// Minimal DER reader: hands out the value octets of consecutive
+/// tag-length-value elements.
+final class _DerReader {
+  _DerReader(this.bytes);
+
+  final List<int> bytes;
+  var pos = 0;
+
+  /// Reads the next element — which must carry [tag] — and returns its
+  /// value octets.
+  List<int> take(int tag) {
+    if (pos >= bytes.length || bytes[pos++] != tag) {
+      throw const FormatException('unexpected DER tag');
+    }
+    var length = bytes[pos++];
+    if (length & 0x80 != 0) {
+      final count = length & 0x7f;
+      length = 0;
+      for (var i = 0; i < count; i++) {
+        length = (length << 8) | bytes[pos++];
+      }
+    }
+    final value = bytes.sublist(pos, pos + length);
+    pos += length;
+    return value;
+  }
+}
+
+/// The rsaEncryption OID (1.2.840.113549.1.1.1) in DER form.
+const _rsaEncryptionOid = [
+  0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
+];
+
+/// Drops the sign padding of a DER positive INTEGER (one leading 0x00).
+List<int> _unsignedInteger(List<int> bytes) =>
+    bytes.length > 1 && bytes.first == 0 ? bytes.sublist(1) : bytes;
+
+/// Parses a PEM `BEGIN PUBLIC KEY` (SPKI) RSA public key into its
+/// modulus/exponent bytes. Public for the provenance tests.
+RsaPublicKey rsaPublicKeyFromPem(String pem) {
+  final base64Body = pem
+      .split('\n')
+      .where((line) => !line.startsWith('-----'))
+      .join();
+  final der = base64Decode(base64Body.replaceAll(RegExp(r'\s'), ''));
+  final spki = _DerReader(der);
+  // spki content: SEQUENCE{OID rsaEncryption, NULL}, BIT STRING{key}.
+  final content = _DerReader(spki.take(0x30));
+  final algorithm = _DerReader(content.take(0x30)); // AlgorithmIdentifier
+  if (!_listEquals(algorithm.take(0x06), _rsaEncryptionOid)) {
+    throw const FormatException('not an rsaEncryption SPKI');
+  }
+  // BIT STRING: one unused-bits octet, then SEQUENCE{INTEGER n, INTEGER e}.
+  final rsa = _DerReader(
+    _DerReader(content.take(0x03).sublist(1)).take(0x30),
+  );
+  return RsaPublicKey(
+    n: _unsignedInteger(rsa.take(0x02)), // INTEGER modulus
+    e: _unsignedInteger(rsa.take(0x02)), // INTEGER exponent
+  );
+}
+
+/// The hex digest [archiveName] is listed with in a sha256sum-style
+/// [manifest] (`<hex>  <name>`, the `*` binary-mode marker tolerated), or
+/// null when it is not listed.
+String? _manifestDigest(String manifest, String archiveName) {
+  for (final line in manifest.split('\n')) {
+    // sha256sum text mode emits TWO spaces between digest and name; the
+    // `*` binary-mode marker is tolerated. Whitespace around the name is
+    // never part of it.
+    final match = RegExp(
+      r'^([0-9a-fA-F]{64})[ \t]+\*?(.+?)[ \t]*$',
+    ).firstMatch(line.trim());
+    if (match != null && match.group(2) == archiveName) return match.group(1);
+  }
+  return null;
+}
+
+/// Verifies the release provenance of [archiveBytes]: fetches the
+/// SHA256SUMS manifest of [tag] and its signature, checks the RSA
+/// PKCS#1 v1.5 SHA-256 signature against the [pem] trust anchor, and
+/// compares the manifest digest for [archiveName] with the archive.
+/// False — never a throw — on ANY failure (missing assets, bad signature,
+/// unlisted or mismatched digest), so a broken release is just an aborted
+/// update.
+Future<bool> verifyReleaseProvenance({
+  required http.Client client,
+  required String tag,
+  required String archiveName,
+  required List<int> archiveBytes,
+  String pem = kFaReleaseSigningPem,
+}) async {
+  try {
+    final sumsUri = Uri.parse(
+      'https://github.com/$_repo/releases/download/$tag/SHA256SUMS',
+    );
+    final sums = await client.get(sumsUri);
+    final sig = await client.get(
+      sumsUri.replace(path: '${sumsUri.path}.sig'),
+    );
+    if (sums.statusCode != 200 || sig.statusCode != 200) return false;
+    final verified = await RsaSsaPkcs1v15.sha256().verify(
+      sums.bodyBytes,
+      signature: Signature(sig.bodyBytes, publicKey: rsaPublicKeyFromPem(pem)),
+    );
+    if (!verified) return false;
+    final expected = _manifestDigest(sums.body, archiveName);
+    if (expected == null) return false;
+    return _listEquals(
+      sha256.convert(archiveBytes).bytes,
+      hex.decode(expected),
+    );
+  } catch (_) {
+    return false;
+  }
+}
+
 /// `fa update`: downloads the latest release binary for this platform and
 /// swaps it in (atomic rename on Unix; rename-aside of the locked exe on
 /// Windows). Pub-global installs re-activate; dev runs are refused.
@@ -150,6 +311,7 @@ Future<int> runSelfUpdate({
   Install Function() detectInstall = _detectInstall,
   http.Client Function() newClient = http.Client.new,
   Future<ProcessResult> Function(String, List<String>) runProcess = Process.run,
+  String pem = kFaReleaseSigningPem,
 }) async {
   final install = detectInstall();
   if (install.kind == InstallKind.devRun) {
@@ -160,14 +322,14 @@ Future<int> runSelfUpdate({
   final client = newClient();
   try {
     _say('current version: $currentVersion');
-    final tag = await _latestTag(client);
+    final tag = await fetchLatestTag(client: client);
     if (tag == null) {
       _warn('cannot reach GitHub Releases (network or rate limit)');
       return 1;
     }
     final latest = tag.replaceFirst('v', '');
     _say('latest release:  $latest');
-    if (_compareVersions(latest, currentVersion) <= 0) {
+    if (compareVersions(latest, currentVersion) <= 0) {
       _say('already up to date.');
       return 0;
     }
@@ -180,7 +342,7 @@ Future<int> runSelfUpdate({
       );
     }
 
-    return await _binaryUpdate(client, install, tag, latest, runProcess);
+    return await _binaryUpdate(client, install, tag, latest, runProcess, pem);
   } finally {
     client.close();
   }
@@ -203,7 +365,7 @@ Future<int> _pubGlobalUpdate({
     r'flutter_agent_harness\s+(\d+\.\d+\.\d+)',
   ).firstMatch('${listed.stdout}${listed.stderr}')?.group(1);
   if (activeVersion != null &&
-      _compareVersions(activeVersion, currentVersion) > 0) {
+      compareVersions(activeVersion, currentVersion) > 0) {
     _say(
       'rebuilding the activated snapshot '
       '(spec $activeVersion, running $currentVersion)…',
@@ -226,7 +388,7 @@ Future<int> _pubGlobalUpdate({
   stdout.write(result.stdout);
   stderr.write(result.stderr);
   if (result.exitCode == 0 &&
-      _compareVersions(latest, activeVersion ?? currentVersion) > 0) {
+      compareVersions(latest, activeVersion ?? currentVersion) > 0) {
     _say(
       'note: pub.dev lags behind GitHub ($latest available as a binary) — '
       'curl -fsSL https://fa1.dev/install.sh | sh',
@@ -235,15 +397,16 @@ Future<int> _pubGlobalUpdate({
   return result.exitCode;
 }
 
-/// Binary update path: download the release archive for this platform and
-/// swap in the new binary + dylibs. Falls back to the macOS `.zip` asset
-/// when the archive is missing from the release.
+/// Binary update path: download the release archive for this platform,
+/// verify its provenance, and swap in the new binary + dylibs. Falls back
+/// to the macOS `.zip` asset when the archive is missing from the release.
 Future<int> _binaryUpdate(
   http.Client client,
   Install install,
   String tag,
   String latest,
   Future<ProcessResult> Function(String, List<String>) runProcess,
+  String pem,
 ) async {
   final archive = _archiveName();
   if (archive == null) {
@@ -258,6 +421,16 @@ Future<int> _binaryUpdate(
   final streamed = await client.send(request);
   if (streamed.statusCode == 200) {
     final bytes = await streamed.stream.toBytes();
+    if (!await verifyReleaseProvenance(
+      client: client,
+      tag: tag,
+      archiveName: archive,
+      archiveBytes: bytes,
+      pem: pem,
+    )) {
+      _warn('update aborted: release provenance check failed for $archive');
+      return 1;
+    }
     return _extractAndSwap(
       bytes,
       archive,
@@ -326,6 +499,10 @@ Future<void> _atomicSwap(
     File(target).renameSync(aside);
     File(staging).renameSync(target);
   } else {
+    if (File(target).existsSync()) {
+      // One-generation rollback copy, overwritten on every update.
+      await File(target).copy('$target.bak');
+    }
     await File(staging).rename(target);
     await runProcess('chmod', ['+x', target]);
   }
@@ -460,8 +637,9 @@ Future<int> fallbackZipUpdate(
   String zipAsset,
   String target,
   String latest,
-  Future<ProcessResult> Function(String, List<String>) runProcess,
-) async {
+  Future<ProcessResult> Function(String, List<String>) runProcess, {
+  String pem = kFaReleaseSigningPem,
+}) async {
   final zipUrl = 'https://github.com/$_repo/releases/download/$tag/$zipAsset';
   final request = http.Request('GET', Uri.parse(zipUrl));
   final streamed = await client.send(request);
@@ -471,6 +649,16 @@ Future<int> fallbackZipUpdate(
   }
   _say('extracting $zipAsset…');
   final bytes = await streamed.stream.toBytes();
+  if (!await verifyReleaseProvenance(
+    client: client,
+    tag: tag,
+    archiveName: zipAsset,
+    archiveBytes: bytes,
+    pem: pem,
+  )) {
+    _warn('update aborted: release provenance check failed for $zipAsset');
+    return 1;
+  }
   final archive = ZipDecoder().decodeBytes(bytes.toList());
   final data = _extractMacBinary(archive);
   if (data == null) {
@@ -482,6 +670,214 @@ Future<int> fallbackZipUpdate(
   await _atomicSwap(staging, target, runProcess);
   _say('updated to $latest — restart fa to use it.');
   return 0;
+}
+
+/// The result of [applyUpdate], the autonomous update path
+/// (`auto_update: on` at boot, `/update` in a session).
+enum ApplyUpdateOutcome {
+  applied,
+  upToDate,
+  refusedDevRun,
+  provenanceFailed,
+  downloadFailed,
+  unsupportedPlatform,
+  restartFailed,
+}
+
+/// Updates fa autonomously: fetch the latest tag, download and VERIFY the
+/// release archive, swap it in, and spawn the successor with [launchArgs]
+/// (the ORIGINAL argv, so the session resumes through the new process).
+/// Never throws; every failure is an outcome and the current binary keeps
+/// running. A restart failure leaves the new binary in place, with
+/// `<target>.bak` for manual rollback.
+///
+/// [detectInstall], [newClient], [runProcess], [spawn], [pem],
+/// [settleDelay], and [logLine] are test seams; the defaults are the real
+/// platform behavior.
+Future<ApplyUpdateOutcome> applyUpdate({
+  required String currentVersion,
+  required List<String> launchArgs,
+  Install Function()? detectInstall,
+  http.Client Function()? newClient,
+  Future<ProcessResult> Function(String, List<String>)? runProcess,
+  Future<bool> Function(String, List<String>)? spawn,
+  String pem = kFaReleaseSigningPem,
+  Duration settleDelay = const Duration(seconds: 2),
+  void Function(String message)? logLine,
+}) async {
+  final install = (detectInstall ?? _detectInstall)();
+  if (install.kind == InstallKind.devRun) {
+    return ApplyUpdateOutcome.refusedDevRun;
+  }
+  final log = logLine ?? logUpdateLine;
+  final client = (newClient ?? http.Client.new)();
+  try {
+    final tag = await fetchLatestTag(client: client);
+    if (tag == null) return ApplyUpdateOutcome.downloadFailed;
+    final latest = tag.replaceFirst('v', '');
+    if (compareVersions(latest, currentVersion) <= 0) {
+      return ApplyUpdateOutcome.upToDate;
+    }
+
+    if (install.kind == InstallKind.pubGlobal) {
+      final code = await _pubGlobalUpdate(
+        currentVersion: currentVersion,
+        latest: latest,
+        runProcess: runProcess ?? Process.run,
+      );
+      if (code != 0) return ApplyUpdateOutcome.downloadFailed;
+      log('fa update applied: v$currentVersion -> v$latest');
+      final restarted = await _restartAfterUpdate(
+        install,
+        launchArgs,
+        spawn: spawn,
+        settleDelay: settleDelay,
+        logLine: log,
+      );
+      return restarted
+          ? ApplyUpdateOutcome.applied
+          : ApplyUpdateOutcome.restartFailed;
+    }
+
+    final archive = _archiveName();
+    if (archive == null) return ApplyUpdateOutcome.unsupportedPlatform;
+    final url = 'https://github.com/$_repo/releases/download/$tag/$archive';
+    final streamed = await client.send(http.Request('GET', Uri.parse(url)));
+    if (streamed.statusCode != 200) {
+      return ApplyUpdateOutcome.downloadFailed;
+    }
+    final bytes = await streamed.stream.toBytes();
+    if (!await verifyReleaseProvenance(
+      client: client,
+      tag: tag,
+      archiveName: archive,
+      archiveBytes: bytes,
+      pem: pem,
+    )) {
+      return ApplyUpdateOutcome.provenanceFailed;
+    }
+    final swapCode = await _extractAndSwap(
+      bytes,
+      archive,
+      install.executable,
+      File(install.executable).parent,
+      latest,
+      runProcess ?? Process.run,
+    );
+    if (swapCode != 0) return ApplyUpdateOutcome.downloadFailed;
+    log('fa update applied: v$currentVersion -> v$latest');
+    if (Platform.isWindows) {
+      // The locked exe cannot relaunch the session here; the swap already
+      // printed the restart hint.
+      return ApplyUpdateOutcome.unsupportedPlatform;
+    }
+    final restarted = await _restartAfterUpdate(
+      install,
+      launchArgs,
+      spawn: spawn,
+      settleDelay: settleDelay,
+      logLine: log,
+    );
+    return restarted
+        ? ApplyUpdateOutcome.applied
+        : ApplyUpdateOutcome.restartFailed;
+  } catch (_) {
+    // The update must never crash the boot: any surprise (socket reset,
+    // file error) is just a failed update.
+    return ApplyUpdateOutcome.downloadFailed;
+  } finally {
+    client.close();
+  }
+}
+
+/// Restarts fa after a successful update: the injected [spawn] seam for
+/// binary installs, [spawnSuccessor] (which detects the install kind)
+/// otherwise. A false result is logged and warned about exactly once —
+/// the new binary stays installed.
+Future<bool> _restartAfterUpdate(
+  Install install,
+  List<String> launchArgs, {
+  Future<bool> Function(String, List<String>)? spawn,
+  required Duration settleDelay,
+  required void Function(String) logLine,
+}) async {
+  var restarted = false;
+  if (spawn != null && install.kind == InstallKind.binary) {
+    restarted = await spawn(Platform.resolvedExecutable, launchArgs);
+  } else {
+    restarted = await spawnSuccessor(
+      launchArgs: launchArgs,
+      settleDelay: settleDelay,
+    );
+  }
+  if (restarted) return true;
+  logLine('fa update restart failed');
+  _warn('installed the new fa but the restart failed — start fa manually.');
+  return false;
+}
+
+/// Starts [exe] with [args], inheriting this process's stdio.
+Future<Process> _startInherited(String exe, List<String> args) {
+  return Process.start(exe, args, mode: ProcessStartMode.inheritedStdio);
+}
+
+/// Spawns the freshly installed fa over this one. [launchArgs] is the
+/// ORIGINAL argv, so the successor resumes the same session (the session
+/// flag rides along). Binary installs exec the swapped binary directly;
+/// pub-global installs exec the `fa` shim from PATH, which now points at
+/// the re-activated snapshot (a plain `'fa'` when PATH has no shim). After
+/// [settleDelay], a successor that already exited non-zero counts as a
+/// failed restart; anything still running counts as started.
+Future<bool> spawnSuccessor({
+  required List<String> launchArgs,
+  Future<Process> Function(String, List<String>)? spawn,
+  Duration settleDelay = const Duration(seconds: 2),
+}) async {
+  final exe = _detectInstall().kind == InstallKind.binary
+      ? Platform.resolvedExecutable
+      : (_whichFa() ?? 'fa');
+  try {
+    final process = await (spawn ?? _startInherited)(exe, launchArgs);
+    await Future<void>.delayed(settleDelay);
+    final exitCode = await process.exitCode
+        .then<int?>((code) => code)
+        .timeout(Duration.zero, onTimeout: () => null);
+    return exitCode == null || exitCode == 0;
+  } catch (_) {
+    return false; // Nothing was spawned.
+  }
+}
+
+/// Locates the `fa` launcher on PATH (the pub-global shim), or null.
+String? _whichFa() {
+  final path = Platform.environment['PATH'] ?? '';
+  for (final rawEntry in path.split(Platform.isWindows ? ';' : ':')) {
+    final entry = rawEntry.trim();
+    if (entry.isEmpty) continue;
+    final candidate = File('$entry/fa${Platform.isWindows ? '.exe' : ''}');
+    if (candidate.existsSync()) return candidate.path;
+  }
+  return null;
+}
+
+/// Appends `<ISO timestamp> <message>` to `~/.fah/logs/fa.log`, creating
+/// `~/.fah/logs` on the way — the same file and line format the CLI's
+/// diagnostic log uses. Never throws: the log must not break the CLI.
+void logUpdateLine(String message, {String? home}) {
+  try {
+    final root =
+        home ??
+        Platform.environment['HOME'] ??
+        Platform.environment['USERPROFILE'];
+    if (root == null || root.isEmpty) return;
+    final dir = Directory('$root/.fah/logs')..createSync(recursive: true);
+    File('${dir.path}/fa.log').writeAsStringSync(
+      '${DateTime.now().toIso8601String()} $message\n',
+      mode: FileMode.append,
+    );
+  } catch (_) {
+    // Diagnostics must never break the CLI.
+  }
 }
 
 /// Whether a terminal answer is an affirmative `y`/`yes` (any casing,

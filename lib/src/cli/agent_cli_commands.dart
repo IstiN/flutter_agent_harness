@@ -506,6 +506,8 @@ extension SlashCommandDispatch on AgentCli {
         _approvalSlash(rest);
       case '/settings':
         await _settingsSlash(rest);
+      case '/update':
+        await _updateSlash();
       case '/code' || '/architect' || '/review':
         await _switchMode(command.substring(1));
       default:
@@ -522,6 +524,26 @@ extension SlashCommandDispatch on AgentCli {
     } else {
       await _handleMode(rest);
     }
+  }
+
+  /// The update command: settles an active run first (a binary swap must
+  /// never happen under a streaming turn), then delegates to the
+  /// host-injected engine closure — bin owns the self-update engine and
+  /// lib stays dart:io-free, so the applied path exits inside the closure
+  /// after the successor spawn.
+  Future<void> _updateSlash() async {
+    await _settled;
+    // Queued drafts survive the restart: they run to completion now (the
+    // same post-submit drain the composer uses), so the successor resumes
+    // a fully-recorded session.
+    final controller = _tuiController;
+    if (controller != null) await _drainTuiQueue(controller);
+    final update = config.updateCommand;
+    if (update == null) {
+      io.writeln('update: unavailable in this host');
+      return;
+    }
+    await update();
   }
 
   /// `/approval`: a bare command opens the TUI picker; anything else sets
