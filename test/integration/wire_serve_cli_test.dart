@@ -125,7 +125,7 @@ void main() {
         'versions': [1],
       }),
     );
-    await gotFrame.future.timeout(const Duration(seconds: 10));
+    await gotFrame.future.timeout(const Duration(seconds: 20));
     final welcome = lines.single;
     expect(welcome['kind'], 'welcome');
     expect(welcome['v'], 1);
@@ -152,7 +152,7 @@ void main() {
         'versions': [1],
       }),
     );
-    await gotSecond.future.timeout(const Duration(seconds: 10));
+    await gotSecond.future.timeout(const Duration(seconds: 20));
     expect(second.single['kind'], 'error');
     expect(second.single['code'], 'already_attached');
     await ws2.close();
@@ -179,7 +179,7 @@ void main() {
         'versions': [1],
       }),
     );
-    await gotReplay.future.timeout(const Duration(seconds: 10));
+    await gotReplay.future.timeout(const Duration(seconds: 20));
     final replay = third.lastWhere((f) => f['kind'] == 'approval_request');
     expect(replay['id'], requestId, reason: 'E1: re-delivery is idempotent');
 
@@ -524,7 +524,13 @@ void main() {
           'ws://127.0.0.1:${http.port}?token=wrong',
         ).then<void>((_) {}),
         throwsA(anything),
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 20));
+      // 20s, not 10s: these waits are one-shot deadlines on scheduler-bound
+      // round-trips with no SLA — on a saturated runner (flake, heads
+      // 4a25f2de + 235eeb36, PTY shard 2/3) a HEALTHY handshake missed 10s.
+      // This file's load-tolerant budget is 20s (#1311); unlike the
+      // countdown family (#1345) the predicate is already exact — welcome
+      // is the one legal first server frame — only the budget was tight.
       // The right token works: handshake (hello -> welcome), like any v1
       // client — the server never speaks before the client's hello.
       final ws = await connect(http.port, token: 'sekrit-token');
