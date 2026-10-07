@@ -142,12 +142,14 @@ class FaAgent(AbstractInstalledAgent):
         key_var = json.loads(os.environ["FA_PROVIDER_CONFIG"]).get("apiKeyEnvVar")
         if key_var and os.environ.get(key_var):
             env[f"{key_var}_BASE64"] = _b64(os.environ[key_var])
-        # Round 3 (issue #1392): ConnTrace flags ride into the container so
-        # fa's connection forensics reaches the pane/trace file.
+        # Round 3 (issue #1392): ConnTrace flags ride into the container
+        # so fa's connection forensics reaches the pane/trace file. They
+        # are non-secret booleans/paths — plain values (the base64 twins
+        # were never decoded Dart-side and left ConnTrace dark).
         for name in _CONN_ENV_KEYS:
             value = os.environ.get(name)
             if value:
-                env[f"{name}_BASE64"] = _b64(value)
+                env[name] = value
         return env
 
     @property

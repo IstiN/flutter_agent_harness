@@ -378,17 +378,15 @@ class Round3AdapterTest(unittest.TestCase):
         )
         with mock.patch.dict(os.environ, env, clear=False):
             payload = agent._env
-        self.assertEqual(
-            base64.b64decode(payload["FA_CONN_DEBUG_BASE64"]).decode(), "1"
-        )
-        self.assertEqual(
-            base64.b64decode(payload["FA_CONN_TRACE_FILE_BASE64"]).decode(),
-            "/tmp/fa-conn-trace.jsonl",
-        )
-        self.assertEqual(
-            base64.b64decode(payload["FA_BENCH_CONCURRENCY_BASE64"]).decode(),
-            "2",
-        )
+        # Round-3 review: the six ConnTrace knobs are non-secret
+        # booleans/paths — they must ride PLAINLY (the base64 twins were
+        # never decoded Dart-side, leaving ConnTrace dark).
+        self.assertEqual(payload["FA_CONN_DEBUG"], "1")
+        self.assertEqual(payload["FA_CONN_TRACE_FILE"], "/tmp/fa-conn-trace.jsonl")
+        self.assertEqual(payload["FA_BENCH_CONCURRENCY"], "2")
+        self.assertNotIn("FA_CONN_DEBUG_BASE64", payload)
+        # The genuinely secret values keep their base64 transport.
+        self.assertIn("FA_PROVIDER_CONFIG_BASE64", payload)
 
 
 if __name__ == "__main__":

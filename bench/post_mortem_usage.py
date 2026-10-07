@@ -127,6 +127,25 @@ def _fold_row(row, session_dirs):
     )
 
 
+# Kills the watch itself decided — the same audit-justified contract as
+# summary.py (issue #1392 round-3 review): their long inter-assistant
+# gaps are the legitimate byproduct of a deadline kill, not a fabricated
+# score.
+_AUDIT_JUSTIFIED = ("stall", "hard-ceiling", "abs_ceiling")
+
+
+def _audit_justified(trial_dir):
+    """True when the trial's fa-agent-timeout.json names a watch kill."""
+    audit = trial_dir / "fa-agent-timeout.json"
+    if not audit.exists():
+        return False
+    try:
+        outcome = json.loads(audit.read_text()).get("outcome")
+    except (json.JSONDecodeError, OSError):
+        return False
+    return outcome in _AUDIT_JUSTIFIED
+
+
 def _export_guard(trial_dir, row):
     """ExportGuard gap row (AC7) for one trial, or None.
 
@@ -203,8 +222,12 @@ def post_mortem(runs_dir, stall_gap_sec=240.0):
             mode = (row.get("failure_mode") or "").lower()
             session_dirs = trial_session_dirs(run_dir, task_id, trial_name)
             if has_totals or mode in _NEVER_STARTED_MODES:
-                if session_dirs:
-                    # AC8 cross-check on rows that recorded spend.
+                if session_dirs and not _audit_justified(trial_dir):
+                    # AC8 cross-check on rows that recorded spend — same
+                    # audit-justified contract as summary.py: a kill the
+                    # watch itself decided (stall / hard-ceiling /
+                    # abs_ceiling) legitimately shows long gaps and is
+                    # NOT a score honesty violation.
                     text = _dedup_session_text(session_dirs)
                     max_gap = bench_metrics.max_session_gap(text)
                     if bench_metrics.score_honesty_violation(

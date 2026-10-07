@@ -71,8 +71,6 @@ final class ConnTrace {
 
   /// Force-enable (bench workflows set the env and let
   /// [configureFromEnv] do this; tests may call it directly).
-  /// Force-enable (bench workflows set the env and let
-  /// [configureFromEnv] do this; tests may call it directly).
   ///
   /// The payload snapshot is STRICTLY OPT-IN ([payloadSnapshotPath] only
   /// when FA_CONN_PAYLOAD_SNAPSHOT is set — review round 2: capturing the
@@ -171,6 +169,9 @@ final class ConnTrace {
         key == 'signature' ||
         key == 'sig' ||
         key == 'secret' ||
+        key == 'clientsecret' ||
+        key == 'auth' ||
+        key == 'oauthtoken' ||
         key == 'password';
   }
 

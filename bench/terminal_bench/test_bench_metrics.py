@@ -103,6 +103,27 @@ class SummarizeTrialTest(unittest.TestCase):
         self.assertEqual(metrics["latency"]["first_byte"], None)
         self.assertEqual(metrics["requests"], [])
 
+    def test_connect_failed_events_are_not_dropped(self):
+        # Round-3 review: connect_failed (origin-aware stale attribution,
+        # AC9) must fold into watchdog_events — dropping it blinds the
+        # discrimination metric exactly when a fresh connect refuses.
+        events = [
+            {"event": "connect_failed", "error": "Connection refused",
+             "fresh": True, "attempt": 0, "wallSec": 0.1},
+        ]
+        metrics = bench_metrics.summarize_trial("t", events)
+        self.assertEqual(len(metrics["watchdog_events"]), 1)
+        self.assertEqual(metrics["watchdog_events"][0]["event"], "connect_failed")
+
+    def test_live_line_renders_connect_failed(self):
+        line = bench_metrics.live_progress_line(
+            {"event": "connect_failed", "error": "Connection refused",
+             "fresh": True, "attempt": 1}
+        )
+        self.assertIn("[fa-bench] connect failed", line)
+        self.assertIn("Connection refused", line)
+        self.assertIn("attempt 1", line)
+
 
 class LiveProgressTest(unittest.TestCase):
     def test_live_line_format_contract(self):

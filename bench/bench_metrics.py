@@ -111,6 +111,7 @@ def summarize_trial(trial_name, events, concurrency_level=None, stall=None):
             "stale_socket",
             "retry",
             "stream_error",
+            "connect_failed",
         ):
             watchdog.append(event)
     metrics = {
@@ -180,6 +181,12 @@ def live_progress_line(event):
             f"[fa-bench] connect-watchdog FIRED after "
             f"{_fmt_sec(event.get('timeoutSec'))}s "
             f"(attempt {event.get('attempt')})"
+        )
+    if kind == "connect_failed":
+        state = "fresh" if event.get("fresh") else "pooled"
+        return (
+            f"[fa-bench] connect failed ({state}, "
+            f"attempt {event.get('attempt')}): {event.get('error')}"
         )
     if kind == "retry":
         return (

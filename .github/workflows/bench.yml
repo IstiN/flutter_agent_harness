@@ -118,6 +118,22 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Round-3 review: validate max-concurrent like its siblings — 0 or
+      # negative would spin the whole matrix as effectively unbounded
+      # (and poison FA_BENCH_CONCURRENCY / the packing budget); fail the
+      # dispatch BEFORE any bundle is built. (A non-integer value still
+      # dies at workflow-graph parse — strategy.max-parallel fromJSON —
+      # before any job starts; this guard catches everything numeric.)
+      - name: Validate max-concurrent
+        run: |
+          case "${{ inputs.max-concurrent }}" in
+            ''|*[!0-9]*)
+              echo "::error::max-concurrent must be a positive integer, got '${{ inputs.max-concurrent }}'"; exit 1 ;;
+          esac
+          if [ "$((10#${{ inputs.max-concurrent }}))" -lt 1 ] || [ "$((10#${{ inputs.max-concurrent }}))" -gt 8 ]; then
+            echo "::error::max-concurrent must be between 1 and 8 (the split count), got '${{ inputs.max-concurrent }}'"; exit 1
+          fi
+
       # stable satisfies the repo SDK constraint (>=3.12.0 <4.0.0).
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
@@ -306,6 +322,11 @@ jobs:
           fi
           if [ -n "$PROGRESS_EXTENSION_ON" ]; then
             export FA_PROGRESS_EXTENSION=1
+            # Round-3 review: extension on ALONE leaves the legacy x4
+            # ladder deciding (TimeoutKnobs.watch_active keys on a watch
+            # knob). Export the abs ceiling — default 3600s — so the
+            # progress watch, not the ladder, decides every kill.
+            export FA_AGENT_TIMEOUT_ABS_CEILING_SEC="${FA_AGENT_TIMEOUT_ABS_CEILING_SEC:-3600}"
             # Issue #1392: with the progress watch on, the ladder's
             # ceiling is the ABS ceiling (default 3600s) — the old 4x+180
             # pin would guillotine an extended-but-progressing trial

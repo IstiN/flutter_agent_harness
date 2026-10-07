@@ -76,6 +76,7 @@ tb() {
   echo "TB_END"
   echo "FA_AGENT_TIMEOUT_SEC=${FA_AGENT_TIMEOUT_SEC-__unset__}"
   echo "FA_PROGRESS_EXTENSION=${FA_PROGRESS_EXTENSION-__unset__}"
+  echo "FA_AGENT_TIMEOUT_ABS_CEILING_SEC=${FA_AGENT_TIMEOUT_ABS_CEILING_SEC-__unset__}"
 }
 """
 
@@ -345,6 +346,27 @@ class AbsCeilingHarnessCapTest(unittest.TestCase):
             "3780",  # 3600 abs ceiling + 180 slack
         )
         self.assertEqual(_env_value(proc.stdout, "FA_PROGRESS_EXTENSION"), "1")
+
+    def test_extension_on_exports_the_watch_knob(self):
+        # Round-3 review blocker: FA_PROGRESS_EXTENSION alone leaves the
+        # LEGACY x4 ladder deciding (watch_active needs a watch knob) —
+        # extension on must export the abs-ceiling knob so the watch,
+        # not the ladder, decides every kill.
+        proc = self._run(progress_extension="true")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            _env_value(proc.stdout, "FA_AGENT_TIMEOUT_ABS_CEILING_SEC"), "3600"
+        )
+        # An override moves BOTH the exported knob and the harness cap,
+        # so they can never drift apart.
+        proc2 = self._run(progress_extension="true", abs_ceiling="5400")
+        self.assertEqual(
+            _env_value(proc2.stdout, "FA_AGENT_TIMEOUT_ABS_CEILING_SEC"), "5400"
+        )
+        self.assertEqual(
+            _flag_value(_tb_args(proc2.stdout), "--global-agent-timeout-sec"),
+            "5580",
+        )
 
     def test_extension_on_honors_abs_ceiling_override(self):
         proc = self._run(progress_extension="true", abs_ceiling="5400")

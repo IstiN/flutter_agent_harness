@@ -186,6 +186,68 @@ class PostMortemUsageTest(unittest.TestCase):
         finally:
             run.cleanup()
 
+    def test_audit_justified_kill_is_no_honesty_violation(self):
+        # Round-3 review: the post-mortem AC8 scan must honor the same
+        # audit contract as summary.py — an fa-agent-timeout.json whose
+        # outcome is a watch-decided kill (stall / hard-ceiling /
+        # abs_ceiling) is a legitimate long-gap kill, not a score
+        # honesty violation.
+        spent = dict(KILLED_ROW, total_input_tokens=400, total_output_tokens=50)
+        run = _Run([spent])
+        trial_dir = run.shard / "train-fasttext" / "train-fasttext-1"
+        (trial_dir / "fa-agent-timeout.json").write_text(
+            json.dumps({"outcome": "abs_ceiling", "policy": "progress-watch"})
+        )
+        try:
+            run.add_session(
+                "train-fasttext",
+                "train-fasttext-1",
+                [
+                    _assistant_record("r1", "2026-01-01T00:00:10Z", 1000, 200),
+                    # 50s gap: SUB-threshold — exactly the legitimate
+                    # abs-ceiling kill shape (E2: killed while
+                    # progressing) that must NOT read as a violation.
+                    _assistant_record("r2", "2026-01-01T00:01:00Z", 1200, 300),
+                ],
+            )
+            report = pmu.post_mortem(run.root)
+            self.assertEqual(report["honesty_violations"], [])
+        finally:
+            run.cleanup()
+
+    def test_unaudited_or_unjustified_subthreshold_still_violates(self):
+        # The control (summary.py parity): an agent_timeout row whose
+        # session shows only SUB-threshold gaps is the round-2
+        # contradiction — with no audit, and with an audit that does NOT
+        # name a watch kill, the scan must still fire.
+        for audit_outcome in (None, "completed"):
+            run = _Run([dict(KILLED_ROW,
+                             total_input_tokens=400, total_output_tokens=50)])
+            trial_dir = run.shard / "train-fasttext" / "train-fasttext-1"
+            if audit_outcome is not None:
+                (trial_dir / "fa-agent-timeout.json").write_text(
+                    json.dumps({"outcome": audit_outcome})
+                )
+            try:
+                run.add_session(
+                    "train-fasttext",
+                    "train-fasttext-1",
+                    [
+                        _assistant_record("r1", "2026-01-01T00:00:10Z", 1000, 200),
+                        # 50s gap: sub-threshold (240s) contradiction.
+                        _assistant_record("r2", "2026-01-01T00:01:00Z", 1200, 300),
+                    ],
+                )
+                report = pmu.post_mortem(run.root)
+                self.assertEqual(len(report["honesty_violations"]), 1,
+                                 audit_outcome)
+                self.assertEqual(
+                    report["honesty_violations"][0]["trial"], "train-fasttext-1"
+                )
+            finally:
+                run.cleanup()
+
+
 
 class ExportGuardTest(unittest.TestCase):
     def test_sabotaged_export_names_the_trial(self):
