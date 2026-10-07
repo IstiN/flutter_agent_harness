@@ -9,11 +9,12 @@ import 'package:fa/services/provider_registry.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa_llm/fa_llm.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show CustomProviderRegistry, copilotDispatchHint, fetchModelsForEndpoint;
+    show fetchModelsForEndpoint;
 import 'package:fa_ui/fa_ui.dart'
     show
         CopilotConnectCallbacks,
         CopilotConnectResult,
+        FaUiSso,
         showCopilotConnectSheet,
         showFahErrorSnack;
 
@@ -82,41 +83,23 @@ Future<bool> runCopilotConnectFlow({
   final connect = result;
   if (connect == null) return false;
 
+  // The landing (re-auth match, `kind: copilot` add, rememberKey, the
+  // Keychain-first/saved-keys-fallback entry-scoped persist) is fa_ui's
+  // shared `FaUiSso.landCopilotConnect` — one implementation for every
+  // host, no app-side fork of the security-adjacent store writes
+  // (issue #1326 review, the #1194 drift class).
+  final provider = await FaUiSso.landCopilotConnect(
+    registry,
+    connect,
+    keychain: keychain,
+    sessionKeys: sessionKeys,
+  );
+  if (provider == null) return false;
+
   final baseUrl = copilotBaseUrl(
     accountType: connect.accountType,
     baseUrlOverride: connect.baseUrlOverride,
   );
-
-  // Re-auth updates only that entry (matched by entry name + endpoint);
-  // a new login/plan creates a new entry. Multiple accounts are
-  // first-class, like the CLI.
-  final existing = registry.providers
-      .where((p) => p.name == connect.entryName && p.baseUrl == baseUrl)
-      .firstOrNull;
-  final provider =
-      existing ??
-      await registry.add(
-        name: connect.entryName,
-        baseUrl: baseUrl,
-        modelId: connect.modelId,
-        // Persist the provider identity so the model-list dispatch rides
-        // the Copilot wire (token exchange) even if the URL is edited.
-        kind: copilotDispatchHint,
-      );
-
-  // Session key for the running app (Keychain-backed when available).
-  registry.rememberKey(provider.id, connect.githubToken);
-  // Entry-scoped secure persistence (the CLI contract): Keychain first,
-  // saved-keys store as the portable fallback.
-  final keyName = CustomProviderRegistry.copilotEntryKeyName(connect.entryName);
-  var persisted = false;
-  if (await keychain.isAvailable()) {
-    persisted = await keychain.set(keyName, connect.githubToken);
-  }
-  if (!persisted) {
-    await sessionKeys?.set(keyName, connect.githubToken);
-  }
-
   final config = AgentConfig(
     providerKind: 'copilot',
     modelId: provider.modelId,
