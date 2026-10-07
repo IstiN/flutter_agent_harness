@@ -70,6 +70,18 @@ StreamFunction _scriptedTurns(List<List<AssistantMessageEvent>> turns) {
   };
 }
 
+/// The [AssistantMessageEvent] LIST behind [_textTurn] — the scripted
+/// multi-turn helper composes turns as lists.
+List<AssistantMessageEvent> _textTurnEvents() {
+  final empty = _assistant();
+  final partial = _assistant(content: [const TextContent(text: 'hi')]);
+  return [
+    StartEvent(partial: empty),
+    TextDeltaEvent(contentIndex: 0, delta: 'hi', partial: partial),
+    DoneEvent(reason: StopReason.stop, message: partial),
+  ];
+}
+
 List<AssistantMessageEvent> _toolTurn(List<ToolCall> calls) {
   final empty = _assistant();
   final partial = _assistant(content: calls, stopReason: StopReason.toolUse);
@@ -85,9 +97,11 @@ List<AssistantMessageEvent> _toolTurn(List<ToolCall> calls) {
   return events;
 }
 
-const _bashCall = ToolCall(id: 'c1', name: 'bash', arguments: {
-  'command': 'long-thing',
-});
+const _bashCall = ToolCall(
+  id: 'c1',
+  name: 'bash',
+  arguments: {'command': 'long-thing'},
+);
 
 Tool _bashTool() =>
     Tool(name: 'bash', description: 'bash tool', parameters: const {});
@@ -280,7 +294,7 @@ void main() {
         streamFunction: telemetry.wrapStreamFunction(
           _scriptedTurns([
             _toolTurn([_bashCall]),
-            _textTurn().map((e) => e).toList(),
+            _textTurnEvents(),
           ]),
         ),
       );
@@ -289,10 +303,13 @@ void main() {
       await agent.prompt('run the thing');
 
       final kinds = sink.events.map((e) => e.kind).toList();
-      expect(kinds, containsAll([
-        AgentTelemetryEventKind.toolStart,
-        AgentTelemetryEventKind.toolEnd,
-      ]));
+      expect(
+        kinds,
+        containsAll([
+          AgentTelemetryEventKind.toolStart,
+          AgentTelemetryEventKind.toolEnd,
+        ]),
+      );
       final start = sink.events.firstWhere(
         (e) => e.kind == AgentTelemetryEventKind.toolStart,
       );
@@ -304,8 +321,14 @@ void main() {
       expect(end.toolName, 'bash');
       expect(end.isError, isFalse);
       // The tool phase sits between its turn's start and end records.
-      expect(kinds.indexOf(AgentTelemetryEventKind.turnStart), lessThan(kinds.indexOf(AgentTelemetryEventKind.toolStart)));
-      expect(kinds.indexOf(AgentTelemetryEventKind.toolEnd), lessThan(kinds.indexOf(AgentTelemetryEventKind.turnEnd)));
+      expect(
+        kinds.indexOf(AgentTelemetryEventKind.turnStart),
+        lessThan(kinds.indexOf(AgentTelemetryEventKind.toolStart)),
+      );
+      expect(
+        kinds.indexOf(AgentTelemetryEventKind.toolEnd),
+        lessThan(kinds.indexOf(AgentTelemetryEventKind.turnEnd)),
+      );
     });
 
     test(
@@ -314,6 +337,7 @@ void main() {
       () async {
         final sink = InMemoryTelemetrySink();
         final telemetry = AgentTelemetry(sink);
+        var hungOnce = false;
         final agent = Agent(
           model: _model,
           systemPrompt: 's',
@@ -328,9 +352,8 @@ void main() {
             // captured-output size) and ignores the cancel token — the
             // supervisor cancels + retries; attempt 2 answers.
             onUpdate?.call(ToolExecutionResult.text('0123456789'));
-            if ((toolCall.id, toolCall.name) == ('c1', 'bash') &&
-                _attempts.putIfAbsent(toolCall.id, () => 0) == 0) {
-              _attempts[toolCall.id] = 1;
+            if (!hungOnce) {
+              hungOnce = true;
               await Completer<void>().future;
               throw StateError('hangs forever');
             }
@@ -339,7 +362,7 @@ void main() {
           streamFunction: telemetry.wrapStreamFunction(
             _scriptedTurns([
               _toolTurn([_bashCall]),
-              _textTurn().map((e) => e).toList(),
+              _textTurnEvents(),
             ]),
           ),
         );
@@ -348,10 +371,13 @@ void main() {
         await agent.prompt('run the long thing');
 
         final kinds = sink.events.map((e) => e.kind).toList();
-        expect(kinds, containsAll([
-          AgentTelemetryEventKind.toolHeartbeat,
-          AgentTelemetryEventKind.toolStuck,
-        ]));
+        expect(
+          kinds,
+          containsAll([
+            AgentTelemetryEventKind.toolHeartbeat,
+            AgentTelemetryEventKind.toolStuck,
+          ]),
+        );
         final heartbeat = sink.events.firstWhere(
           (e) => e.kind == AgentTelemetryEventKind.toolHeartbeat,
         );

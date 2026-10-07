@@ -182,16 +182,17 @@ final class AgentTelemetry {
     }
   }
 
-  void _record(AgentEvent event) {
-    // Tool supervision events are a family of their own (and the switch
-    // below stays under the CRAP ratchet by keeping them out).
-    if (event is ToolExecutionStartEvent ||
-        event is ToolExecutionEndEvent ||
-        event is ToolCallHeartbeatEvent ||
-        event is ToolCallStuckEvent) {
-      _recordToolEvent(event);
-      return;
-    }
+  void _record(AgentEvent event) => switch (event) {
+    // Tool supervision events are a family of their own (and the run-phase
+    // switch below stays under the CRAP ratchet by keeping them out).
+    ToolExecutionStartEvent() ||
+    ToolExecutionEndEvent() ||
+    ToolCallHeartbeatEvent() ||
+    ToolCallStuckEvent() => _recordToolEvent(event),
+    _ => _recordRunPhase(event),
+  };
+
+  void _recordRunPhase(AgentEvent event) {
     switch (event) {
       case AgentStartEvent():
         _runStart = DateTime.now();

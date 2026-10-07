@@ -83,17 +83,41 @@ String? resolveEndpointKeyName({
     final genuine = _firstGenuineEnvName(envNames, envRead, storeRead);
     if (genuine != null) return genuine;
   }
-  if (!defaultEndpoint && activeCustomKeyName != null) {
-    if (_hasStoreValue(activeCustomKeyName, storeRead)) {
-      return activeCustomKeyName;
-    }
-  }
+  final pinned = _pinnedSlotName(
+    defaultEndpoint,
+    activeCustomKeyName,
+    storeRead,
+  );
+  if (pinned != null) return pinned;
   final scoped = CustomProviderRegistry.keyNameFor(baseUrl);
   if (_hasStoreValue(scoped, storeRead)) return scoped;
-  if (defaultEndpoint) {
-    for (final name in envNames) {
-      if (_hasStoreValue(name, storeRead)) return name;
-    }
+  if (defaultEndpoint) return _legacyEnvSlotName(envNames, storeRead);
+  return null;
+}
+
+/// The active custom registry entry's own pinned slot — non-default
+/// endpoints only (a catalog env name must never hijack a custom one, and
+/// on the default endpoint the entry's slot IS the host-scoped probe that
+/// follows).
+String? _pinnedSlotName(
+  bool defaultEndpoint,
+  String? activeCustomKeyName,
+  String? Function(String name)? storeRead,
+) {
+  if (defaultEndpoint || activeCustomKeyName == null) return null;
+  return _hasStoreValue(activeCustomKeyName, storeRead)
+      ? activeCustomKeyName
+      : null;
+}
+
+/// The first legacy env-name store entry holding a value (default
+/// endpoint only — written by older versions).
+String? _legacyEnvSlotName(
+  List<String> envNames,
+  String? Function(String name)? storeRead,
+) {
+  for (final name in envNames) {
+    if (_hasStoreValue(name, storeRead)) return name;
   }
   return null;
 }
