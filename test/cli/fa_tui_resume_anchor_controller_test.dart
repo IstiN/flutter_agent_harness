@@ -76,7 +76,8 @@ const _banner = [
   '  pty446',
 ];
 
-const _summary = '✗ 1 background task lost on restart '
+const _summary =
+    '✗ 1 background task lost on restart '
     '(process gone, no exit reported): sh-1-stale503';
 
 // No blank spacers: the restored region must fit the smallest resumed
@@ -119,7 +120,8 @@ Future<String> _resumedScreen({
     FaTuiController,
     StreamController<List<int>>,
     _FrameSink,
-  )? afterBoot,
+  )?
+  afterBoot,
 }) async {
   final frames = _FrameSink();
   final keys = StreamController<List<int>>();
@@ -158,8 +160,11 @@ void main() {
     test('resumed boot at $width x $height keeps the summary and the WHOLE '
         'replayed tail on the first glass (wave-14 AC1)', () async {
       final screen = await _resumedScreen(width: width, height: height);
-      expect(screen, contains('lost on restart'),
-          reason: 'the #503 summary must stay on the first resumed glass');
+      expect(
+        screen,
+        contains('lost on restart'),
+        reason: 'the #503 summary must stay on the first resumed glass',
+      );
       for (final row in [
         'restored session: pty446',
         'run the pinned probes',
@@ -168,20 +173,26 @@ void main() {
         'PTY equivalence probe',
         'done — the probes settled',
       ]) {
-        expect(screen, contains(row),
-            reason: 'the replayed tail must not lose its head ($row)');
+        expect(
+          screen,
+          contains(row),
+          reason: 'the replayed tail must not lose its head ($row)',
+        );
       }
       // The banner above the fold is named, not lost (#827): the hint
       // count is the banner's wrapped row count — exactly the 13 boot
       // chrome rows — and scroll-up still reaches them (pinned at model
       // level in the fold suite).
-      expect(_hintN(screen), 13,
-          reason: 'the folded banner rows carry the indicator');
+      expect(
+        _hintN(screen),
+        13,
+        reason: 'the folded banner rows carry the indicator',
+      );
     }, timeout: const Timeout(Duration(seconds: 60)));
   }
 
-  test('the first LIVE submit dissolves the boot anchor — the window pins '
-      'at the new echo', () async {
+  test('the first LIVE submit dissolves the boot anchor — the window rides '
+      'the bottom (#1348)', () async {
     final screen = await _resumedScreen(
       afterBoot: (controller, keys, frames) async {
         keys.add('next turn'.codeUnits);
@@ -189,18 +200,27 @@ void main() {
         await waitForIt(() => frames.text.contains('next turn'));
       },
     );
-    expect(screen, contains('next turn'),
-        reason: 'the new echo is on the glass');
-    // The turn boundary re-armed at the new echo: pre-echo replay rows
-    // fold again (the live-submit semantics are unchanged by the anchor).
-    // frames.text accumulates every glass, so scope to the post-submit
-    // frames (everything after the last boot-tail paint).
-    final afterSubmit =
-        screen.substring(screen.lastIndexOf('probes settled'));
-    expect(afterSubmit, contains('next turn'),
-        reason: 'the new echo is on the post-submit glass');
-    expect(afterSubmit, isNot(contains('run the pinned probes')),
-        reason: 'the boot anchor dissolved — turn N+1 owns the window');
+    expect(
+      screen,
+      contains('next turn'),
+      reason: 'the new echo is on the glass',
+    );
+    // The boot anchor dissolved and the window returned to the live edge:
+    // the echo sits at the bottom above the composer and the early replay
+    // rows fold above it (#1348). frames.text accumulates every glass, so
+    // scope to the post-submit frames (everything after the last
+    // boot-tail paint).
+    final afterSubmit = screen.substring(screen.lastIndexOf('probes settled'));
+    expect(
+      afterSubmit,
+      contains('next turn'),
+      reason: 'the new echo is on the post-submit glass',
+    );
+    expect(
+      afterSubmit,
+      isNot(contains('run the pinned probes')),
+      reason: 'the boot anchor dissolved — the live edge owns the window',
+    );
   }, timeout: const Timeout(Duration(seconds: 60)));
 
   test('a boot whose transcript fits the glass NEVER folds the banner '
@@ -230,11 +250,18 @@ void main() {
     final run = controller.run();
     await waitForIt(() => frames.text.contains('lost on restart'));
     final screen = stripAnsi(frames.text);
-    expect(screen, contains('[Model]'),
-        reason: 'the banner paints when everything fits (waitForBoot '
-            'sentinel — its absence timed out every PTY suite)');
-    expect(_hintN(screen), isNull,
-        reason: 'nothing may fold while the transcript fits the glass');
+    expect(
+      screen,
+      contains('[Model]'),
+      reason:
+          'the banner paints when everything fits (waitForBoot '
+          'sentinel — its absence timed out every PTY suite)',
+    );
+    expect(
+      _hintN(screen),
+      isNull,
+      reason: 'nothing may fold while the transcript fits the glass',
+    );
     keys.add([0x03]);
     keys.add([0x03]);
     await run;
@@ -258,7 +285,10 @@ void main() {
     controller.sendOutput('boot brand row', newline: true);
     controller.markReplayAnchor();
     controller.sendOutput(_summary, newline: true);
-    controller.sendOutput('─── restored session: big (2 messages)', newline: true);
+    controller.sendOutput(
+      '─── restored session: big (2 messages)',
+      newline: true,
+    );
     for (var i = 0; i < 60; i++) {
       controller.sendOutput('marathon row $i', newline: true);
     }
@@ -266,14 +296,23 @@ void main() {
     await waitForIt(() => frames.text.contains('marathon row 59'));
     await Future<void>.delayed(const Duration(milliseconds: 120));
     final screen = stripAnsi(frames.text);
-    expect(screen, contains('marathon row 59'),
-        reason: 'the tail is the final paint');
+    expect(
+      screen,
+      contains('marathon row 59'),
+      reason: 'the tail is the final paint',
+    );
     // Bottom-riding: the newest vh-1 rows fill the glass (row 41+ visible,
     // the head folded under the indicator).
-    expect(screen, contains('marathon row 45'),
-        reason: 'the bottom ride keeps the deepest tail rows');
-    expect(screen, isNot(contains('marathon row 10 ')),
-        reason: 'the head rides the fold on a marathon transcript');
+    expect(
+      screen,
+      contains('marathon row 45'),
+      reason: 'the bottom ride keeps the deepest tail rows',
+    );
+    expect(
+      screen,
+      isNot(contains('marathon row 10 ')),
+      reason: 'the head rides the fold on a marathon transcript',
+    );
     keys.add([0x03]);
     keys.add([0x03]);
     await run;

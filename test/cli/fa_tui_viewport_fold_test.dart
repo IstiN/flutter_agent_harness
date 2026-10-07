@@ -587,6 +587,68 @@ void main() {
         );
       },
     );
+
+    test('a trim during queue drain shifts the pinned sticky index', () {
+      final lines = [for (var i = 0; i < 2399; i++) 'pad $i', 'ECHO-PIN'];
+      final model = _build().copyWith(
+        outputLines: lines,
+        busy: true,
+        stickyLines: const ['ECHO-PIN'],
+        stickyIndex: 2399,
+        stickyEchoLineCount: 1,
+        queue: const [QueuedMessage('drained text')],
+      );
+      final drained = _send(model, DrainQueueMsg(Completer<List<String>>()));
+      // The drained echo bubble adds 3 lines over the cap: 2403 -> cut
+      // 403, 2000 retained. The pin must ride its own line into the
+      // retained region — an unshifted index points 403 lines too deep at
+      // a foreign row and corrupts the #917 dedupe geometry.
+      expect(drained.stickyIndex, 1996, reason: '2399 - 403 cut');
+      expect(
+        stripAnsi(drained.outputLines[1996]),
+        'ECHO-PIN',
+        reason: 'the shifted pin still names its own line',
+      );
+    });
+
+    test(
+      'a trim during steering shifts the sticky pin and the boot anchor',
+      () {
+        final lines = [for (var i = 0; i < 2399; i++) 'pad $i', 'ECHO-PIN'];
+        final model = _build().copyWith(
+          outputLines: lines,
+          busy: true,
+          stickyLines: const ['ECHO-PIN'],
+          stickyIndex: 2399,
+          stickyEchoLineCount: 1,
+          bootAnchorLine: 500,
+          queue: const [QueuedMessage('steered text')],
+        );
+        final steered = _send(
+          model,
+          KeyPressMsg(
+            const TeaKey(
+              code: KeyCode.rune,
+              text: 's',
+              modifiers: {KeyMod.ctrl},
+            ),
+          ),
+        );
+        // 2400 + 3 echo lines = 2403 -> cut 403, 2000 retained; the receipt
+        // append rides the slack (2001). Both anchored indices shift by the
+        // cut: an unshifted boot anchor could re-qualify for the boot park
+        // at a foreign row and park the follow window off the live edge.
+        expect(steered.stickyIndex, 1996, reason: '2399 - 403 cut');
+        expect(steered.bootAnchorLine, 97, reason: '500 - 403 cut');
+        expect(
+          stripAnsi(steered.outputLines[97]),
+          'pad 500',
+          reason:
+              'the shifted boot anchor still names its own row '
+              '(retained 97 = original 500)',
+        );
+      },
+    );
   });
 
   group('AC7 — byte-identical rendering where the feature is inert', () {

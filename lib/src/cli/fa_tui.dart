@@ -1026,15 +1026,19 @@ final class FaTuiModel extends Model {
     msg.completer.complete([for (final m in queued) m.text]);
     if (queued.isEmpty) return (this, null);
     var lines = outputLines;
+    var echoCut = 0;
     for (final message in queued) {
-      final (appended, _) = _echoAppend(lines, message.text);
+      final (appended, cut) = _echoAppend(lines, message.text);
       lines = appended;
+      echoCut += cut;
     }
     final cleared = copyWith(
       queue: const [],
       outputLines: lines,
-      // A live submit/drain dissolves the boot anchor: the window returns
-      // to the live edge (#1348).
+      // Echo-time head trims shift every anchored index (#827 review): the
+      // sticky pin from the running turn survives the drain. The boot
+      // anchor dissolves either way.
+      stickyIndex: _stickyShiftedBy(echoCut),
       bootAnchorLine: 0,
     );
     final next = cleared.copyWith(
@@ -1972,19 +1976,22 @@ final class FaTuiModel extends Model {
     ];
     if (messages.isEmpty) return (this, null);
     var lines = outputLines;
+    var echoCut = 0;
     for (final message in messages) {
-      final (appended, _) = _echoAppend(lines, message);
+      final (appended, cut) = _echoAppend(lines, message);
       lines = appended;
+      echoCut += cut;
     }
     // A visible receipt: an echoed-but-unanswered message otherwise reads
     // as "sent into the void" while the turn runs (or wedges on a dead
     // endpoint).
-    final (receipted, _) = _appendOutput(
+    final (receipted, receiptCut) = _appendOutput(
       lines,
       _dim('⤷ steered into the running turn — esc aborts'),
       true,
     );
     lines = receipted;
+    echoCut += receiptCut;
     // Steered messages are sent for real — they join the input history.
     var history = inputHistory;
     for (final message in messages) {
@@ -2004,6 +2011,12 @@ final class FaTuiModel extends Model {
       historyIndex: -1,
       historyDraft: null,
       outputLines: lines,
+      // Echo/receipt-time head trims shift every anchored index
+      // (#827 review): a boot anchor trimmed mid-region would re-qualify
+      // for the boot park at a foreign row; the running turn's sticky pin
+      // drifts the same way.
+      stickyIndex: _stickyShiftedBy(echoCut),
+      bootAnchorLine: _bootAnchorShiftedBy(echoCut),
     );
     return (
       cleared.copyWith(
@@ -2078,9 +2091,9 @@ final class FaTuiModel extends Model {
     // A following tail rides the CURRENT bottom (issue #496): when the
     // frame squeezes, the viewport shrinks without any history append —
     // only re-clamping here keeps the live edge (the sent echo) on screen
-    // instead of stranding the window at a stale offset. Issue #827: the
-    // ride floors at the current turn's first row, so a fresh prompt's
-    // window starts at its echo (fold indicator explains the rest).
+    // instead of stranding the window at a stale offset. Issue #1348: the
+    // ride IS the live edge — the window pins to the bottom, so a fresh
+    // prompt lands above the composer with prior history above it.
     final offset = followTail
         ? _followOffset(wrapped)
         : _clampScroll(scrollOffset, wrapped);
@@ -2250,8 +2263,9 @@ final class FaTuiModel extends Model {
   /// number of lines every stored transcript index must shift by after
   /// the bounded-history trim dropped lines from the head (one less when
   /// the synthetic fence-repair line was prepended, since it occupies the
-  /// first retained slot), 0 when no trim fired. Issue #827's turn start
-  /// is the one such index today.
+  /// first retained slot), 0 when no trim fired. Every append path must
+  /// shift the anchored indices by it — the pinned sticky echo and the
+  /// boot anchor today (issue #827 review; #1348 retired the turn start).
   static (List<String>, int) _appendOutput(
     List<String> lines,
     String text,
