@@ -31,5 +31,6 @@ export 'src/lsp/io_lsp_transport.dart';
 export 'src/mcp/io_mcp_transport.dart';
 export 'src/power/io_power_runner.dart';
 export 'src/secrets/secure_key_store_io.dart';
+export 'src/telemetry/file_agent_telemetry_sink.dart';
 export 'src/tools/sqlite/sqlite3_engine_stub.dart'
     if (dart.library.io) 'src/tools/sqlite/sqlite3_engine.dart';
