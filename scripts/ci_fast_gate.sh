@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  SHARED FAST GATE — DO NOT LOWER THESE THRESHOLDS WITHOUT TEAM APPROVAL   ║
-# ║  size ≤ 2800 lines · analyze · tests · coverage ≥ 80% · CRAP ratchet ·    ║
+# ║  loc ≤ 2800 lines (crap4dart) · analyze · tests · coverage ≥ 80% ·        ║
 # ║  duplication < 1% (flutter_app < 3.7%) · cross-module < 0.31%             ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 #
@@ -23,15 +23,15 @@
 #                   `git diff --name-only $BASE_REF...$HEAD_REF`;
 #                 - otherwise: "all" (safe default).
 #   --scope all   Run every stage.
-#   --scope core  size + analyze + test-core + coverage + crap + dup + dupx.
-#   --scope app   size + analyze + dup + dupx + flutter.
-#   --scope docs  size + analyze only.
+#   --scope core  analyze + test-core + coverage + crap + dup + dupx.
+#   --scope app   analyze + dup + dupx + flutter.
+#   --scope docs  analyze only.
 #   --stages l    Comma-separated stage list; overrides the scope-derived set.
-#                 Known stages: size,analyze,test-core,coverage,crap,dup,dupx,flutter,integration-mock
+#                 Known stages: analyze,test-core,coverage,crap,dup,dupx,flutter,integration-mock
 #
 #
 # Path rules (union logic, E1; test/** counts as core, E6):
-#   docs/ | *.md | prompts/ .................. size + analyze
+#   docs/ | *.md | prompts/ .................. analyze
 #   lib/ | bin/ | test/ | pubspec.* .......... + test-core, coverage, crap, dup, dupx
 #   test/integration/** ...................... + integration-mock (no-key legs,
 #                                              MockLlmServer; issue #551)
@@ -86,9 +86,8 @@ DUP_THRESHOLD_APP=3.7
 # % of the combined surface. Baseline 0.3013% measured at #487; only
 # allowed DOWN from the pinned 0.31 (scripts/check_dup_cross_module.sh).
 DUP_THRESHOLD_XMOD=0.31
-MAX_LINES=2800
 
-ALL_STAGES="size analyze test-core coverage crap dup dupx flutter integration-mock"
+ALL_STAGES="analyze test-core coverage crap dup dupx flutter integration-mock"
 
 # ── Load-aware test concurrency (copied from scripts/pre-commit) ───────────
 # A busy box (other agents, IDE builds) makes widget tests' runAsync() flake
@@ -127,7 +126,7 @@ add_stages() {
 classify_path() {
   # Echoes the stage group contributed by one changed path (union logic).
   case "$1" in
-    scripts/*|.github/*|crap4dart.yaml) echo "all" ;;
+    scripts/*|.github/*|crap4dart.yaml|crap4dart.loc-scope.yaml) echo "all" ;;
     test/integration/*) echo "integ" ;;
     lib/*|bin/*|test/*|example/*|pubspec.yaml|pubspec.*) echo "core" ;;
     flutter_app/*|packages/*) echo "app" ;;
@@ -139,10 +138,10 @@ classify_path() {
 resolve_scope() {
   case "$SCOPE" in
     all) add_stages "$ALL_STAGES"; APP_IN_SCOPE=1 ;;
-    core) add_stages "size analyze test-core coverage crap dup dupx" ;;
-    integ) add_stages "size analyze test-core coverage crap dup dupx integration-mock" ;;
-    app) add_stages "size analyze dup dupx flutter"; APP_IN_SCOPE=1 ;;
-    docs) add_stages "size analyze" ;;
+    core) add_stages "analyze test-core coverage crap dup dupx" ;;
+    integ) add_stages "analyze test-core coverage crap dup dupx integration-mock" ;;
+    app) add_stages "analyze dup dupx flutter"; APP_IN_SCOPE=1 ;;
+    docs) add_stages "analyze" ;;
     auto)
       local files=""
       if [ "$HOOK_MODE" -eq 1 ]; then
@@ -161,10 +160,10 @@ resolve_scope() {
         g=$(classify_path "$f")
         case "$g" in
           all) add_stages "$ALL_STAGES"; APP_IN_SCOPE=1 ;;
-          core) add_stages "size analyze test-core coverage crap dup dupx" ;;
-          app) add_stages "size analyze dup dupx flutter"; APP_IN_SCOPE=1 ;;
-          integ) add_stages "size analyze test-core coverage crap dup dupx integration-mock" ;;
-          docs) add_stages "size analyze" ;;
+          core) add_stages "analyze test-core coverage crap dup dupx" ;;
+          app) add_stages "analyze dup dupx flutter"; APP_IN_SCOPE=1 ;;
+          integ) add_stages "analyze test-core coverage crap dup dupx integration-mock" ;;
+          docs) add_stages "analyze" ;;
         esac
       done <<EOF
 $files
@@ -203,51 +202,6 @@ ensure_app_placeholders() {
 FLUTTER_ANALYZED=0
 
 # ── Stage implementations ───────────────────────────────────────────────────
-stage_size() {
-  # Hook mode scopes the guard to the STAGED Dart files: the guard ratchets
-  # what a commit touches, so a pre-existing oversized file elsewhere (e.g.
-  # flutter_app/lib/services/agent_service.dart, which ci.yml's guard never
-  # measures — it scans lib/test/example only) cannot block an unrelated
-  # commit. Non-hook runs keep the whole-tree scan below.
-  if [ "$HOOK_MODE" -eq 1 ]; then
-    local violations
-    violations=$(git diff --cached --name-only --diff-filter=ACM \
-      | grep '\.dart$' \
-      | grep -vE '\.g\.dart$|\.freezed\.dart$|\.mocks\.dart$|bridge_generated|app_localizations|localizations_' \
-      | while IFS= read -r f; do
-          [ -f "$f" ] || continue
-          lines=$(wc -l < "$f")
-          if [ "$lines" -gt "$MAX_LINES" ]; then echo "$f: $lines lines"; fi
-        done || true)
-    if [ -n "$violations" ]; then
-      echo "❌ QUALITY GATE FAILED — FILE SIZE (max $MAX_LINES lines)" >&2
-      echo "$violations" >&2
-      exit 1
-    fi
-    return 0
-  fi
-  # Same find-exec guard as ci.yml / pre-commit: no dart file over MAX_LINES.
-  local dirs=""
-  local d
-  for d in lib test example bin; do
-    [ -d "$d" ] && dirs="$dirs $d"
-  done
-  if [ "$APP_IN_SCOPE" -eq 1 ] && [ -d flutter_app/lib ]; then
-    dirs="$dirs flutter_app/lib"
-  fi
-  local violations
-  violations=$(find $dirs -name '*.dart' \
-    ! -name '*.g.dart' ! -name '*.freezed.dart' ! -name '*.mocks.dart' \
-    ! -name '*bridge_generated*.dart' ! -name '*app_localizations*.dart' \
-    ! -name '*localizations_*.dart' \
-    -exec sh -c 'lines=$(wc -l < "$1"); if [ "$lines" -gt '"$MAX_LINES"' ]; then echo "$1: $lines lines"; fi' _ {} \;)
-  if [ -n "$violations" ]; then
-    echo "❌ QUALITY GATE FAILED — FILE SIZE (max $MAX_LINES lines)" >&2
-    echo "$violations" >&2
-    exit 1
-  fi
-}
-
 stage_analyze() {
   echo "🔍 Running dart analyze..."
   dart analyze
@@ -479,7 +433,6 @@ for stage in $ALL_STAGES; do
     continue
   fi
   case "$stage" in
-    size) stage_size ;;
     analyze) stage_analyze ;;
     test-core) stage_test_core ;;
     integration-mock) stage_integration_mock ;;
