@@ -179,6 +179,8 @@ void main() {
         final expected = oracle.valueOrNull!;
 
         final wasi = await _runWasi(row);
+        // ignore: avoid_print
+        print('[conf-debug2] cmd=<${row.command}> ok=${wasi.isOk} exit=${wasi.valueOrNull?.exitCode} out=${wasi.valueOrNull?.stdout}');
         expect(wasi.isOk, isTrue, reason: '${wasi.errorOrNull}');
         _assertSame(
           expected,
@@ -263,6 +265,9 @@ Future<Result<ShellExecResult, ExecutionError>> _runWasi(
       lua: _NoWasmModule(),
       sandboxHostPath: dir.path,
     );
+    final probe = await shell.exec('test -f in.txt');
+    // ignore: avoid_print
+    print('[conf-debug] probe exit=${probe.valueOrNull?.exitCode} err=${probe.valueOrNull?.stderr} dir=$dir');
     return shell.exec(row.command);
   } finally {
     await dir.delete(recursive: true);
