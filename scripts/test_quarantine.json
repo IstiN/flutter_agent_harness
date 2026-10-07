@@ -117,6 +117,16 @@
         37587759589,
         37581400031
       ]
+    },
+    {
+      "file": "test/integration/steering_persistence_pty_test.dart",
+      "test": "steering lifecycle + restart recovery over a real PTY (issue #437 AC2, AC5, E1)",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1385",
+      "since": "2026-10-07",
+      "runs": [
+        37624414995,
+        37562422053
+      ]
     }
   ]
 }
