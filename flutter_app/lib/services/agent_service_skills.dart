@@ -16,8 +16,10 @@ part of 'agent_service.dart';
 /// `fa-platforms` markers or `{{FA_PLATFORM}}`, so the seeder wrote
 /// these bytes verbatim on every platform). Only SKILL.md goes — the
 /// seeder never wrote anything else into those dirs, so a user-dropped
-/// supporting file (script, prompt) survives (review -HUjo); an empty
-/// leftover dir is invisible to discovery. Anything else is a deliberate
+/// supporting file (script, prompt) survives (review -HUjo); a dir the
+/// removal leaves empty is pruned too (issue #1334: an empty leftover
+/// dir is invisible to discovery but reads as broken materialization to
+/// an exploring agent). Anything else is a deliberate
 /// project override and stays — a customized create-goal keeps
 /// shadowing the builtin (issue non-goal: migrating existing
 /// overrides), an orphaned fa-self-config stops haunting every session
@@ -50,34 +52,41 @@ const _staleBundledSeedFingerprints = <String, Set<String>>{
   },
 };
 
+/// Removes one retired app-seeded `<name>/SKILL.md` — and, issue #1334, the
+/// skill directory itself when it is left EMPTY: an empty `<name>/` under
+/// `.fah/skills` is invisible to discovery but loudly visible to an
+/// exploring agent, reading as "skills materialize as empty directories".
+/// The empty-dir prune also fires when the copy is already gone, so
+/// devices retired by older builds (which left the ghost dirs behind)
+/// repair on their next launch. A dir with surviving user files
+/// (review -HUjo) stays.
+Future<void> _retireSeededCopy(
+  ExecutionEnv env,
+  String name,
+  bool Function(String sha256) isStale,
+) async {
+  try {
+    final dir = '${env.cwd}/.fah/skills/$name';
+    final body = (await env.readTextFile('$dir/SKILL.md')).valueOrNull;
+    if (body != null) {
+      if (!isStale(sha256.convert(utf8.encode(body)).toString())) return;
+      await env.remove('$dir/SKILL.md');
+    }
+    final leftovers = await env.listDir(dir);
+    if (leftovers.isOk && leftovers.valueOrNull!.isEmpty) {
+      await env.remove(dir);
+    }
+  } on Object {
+    // best-effort cleanup
+  }
+}
+
 Future<void> _seedBundledSkills(ExecutionEnv env) async {
   for (final entry in _staleBundledSeedFingerprints.entries) {
-    try {
-      final body = (await env.readTextFile(
-        '${env.cwd}/.fah/skills/${entry.key}/SKILL.md',
-      )).valueOrNull;
-      if (body == null) continue;
-      if (!entry.value.contains(sha256.convert(utf8.encode(body)).toString())) {
-        continue;
-      }
-      await env.remove('${env.cwd}/.fah/skills/${entry.key}/SKILL.md');
-    } on Object {
-      // best-effort cleanup
-    }
+    await _retireSeededCopy(env, entry.key, entry.value.contains);
   }
   for (final entry in _staleSeedFingerprints.entries) {
-    try {
-      final body = (await env.readTextFile(
-        '${env.cwd}/.fah/skills/${entry.key}/SKILL.md',
-      )).valueOrNull;
-      if (body == null) continue;
-      if (sha256.convert(utf8.encode(body)).toString() != entry.value) {
-        continue;
-      }
-      await env.remove('${env.cwd}/.fah/skills/${entry.key}/SKILL.md');
-    } on Object {
-      // best-effort cleanup
-    }
+    await _retireSeededCopy(env, entry.key, (sha) => sha == entry.value);
   }
   // gh-1164 Part A: the bundled asset is gone — js-apps is a package
   // builtin now (builtinSkills(), merged by discoverSkills), so there is

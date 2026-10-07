@@ -63,7 +63,11 @@ const expectedUsesPerWorkflow = {
   // tag_release.sh's own enforce-lockfile smoke. The smoke stays in the
   // script (release_hygiene_test.dart NG2/AC3 pins it) but no longer
   // cold-clones the git deps unretried on the release path.
-  '.github/workflows/ci.yml': 11,
+  // 11 + 1 (issue #1267 N1, review round 3): the new flutter-app-exzone leg
+  // resolves flutter_app through the shared action (bounded retry + skew
+  // fail-fast) before its macOS `flutter test test/apps` run — a bare pub
+  // get there would be exactly the network roulette AC2 exists to stop.
+  '.github/workflows/ci.yml': 12,
   '.github/workflows/nightly.yml': 4,
   '.github/workflows/build-mobile.yml': 4,
   '.github/workflows/build-macos.yml': 1,

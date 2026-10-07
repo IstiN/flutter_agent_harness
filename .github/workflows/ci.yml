@@ -60,6 +60,10 @@ concurrency:
 #   flutter-tests → flutter_app tests sharded ×2 on ubuntu   (app/core/shared;
 #                   golden suite stays in build-macos.yml — goldens are
 #                   host-locked, see issue #177 E5 discussion)
+#   flutter-app-exzone → JS-engine exclusion-zone tests on macOS (issue
+#               #1267 N1; runs in every SM validation dispatch — path-blind
+#               under dispatch-only CI, gh-1280 idiom; the nightly macos leg
+#               stays the main/tag backstop)
 #   test-faui → packages/fa_ui tests sharded ×3 by manifest   (app/core/shared;
 #               issue #283 — same template as test-core: manifest assert,
 #               per-shard coverage merged to ONE report, junit durations
@@ -98,6 +102,12 @@ jobs:
       # PR-only (gh-1241 REG-1): a trajectory/session/usage-touching diff
       # runs the usage-fold suite per-merge.
       usagefold: ${{ steps.paths.outputs.usagefold }}
+      # Issue #1267 N1: the macOS exclusion-zone path set. Reserve only —
+      # ci.yml has no pull_request trigger (dispatch-only CI); the
+      # flutter-app-exzone leg gates on the SM validation dispatch itself
+      # (gh-1280 idiom) and consults this output only if a real
+      # pull_request trigger ever lands.
+      exzone: ${{ steps.paths.outputs.exzone }}
       # PR-only (issue #551): test/integration/** changes run the no-key
       # mock-LLM integration legs per-PR instead of at tag time only.
       intmock: ${{ steps.paths.outputs.intmock }}
@@ -162,6 +172,23 @@ jobs:
           if git diff --name-only "$BASE_REF" "$HEAD_REF" |
               grep -qE '(^lib/src/trajectory/|^lib/src/session/|^lib/src/usage/|^test/usage/|^lib/src/cli/agent_cli_usage_ledger\.dart$)'; then
             echo "usagefold=true" >> "$GITHUB_OUTPUT"
+          fi
+          # Issue #1267 N1: the macOS exclusion-zone path set. NOTE the
+          # trigger model: ci.yml has NO pull_request trigger (dispatch-only
+          # CI, see the flutter-app-exzone job comment) — this step runs only
+          # on a real pull_request event, so today it is path-narrowing
+          # RESERVE, exactly like the perf/usagefold/intmock greps above
+          # (documented pending in issue #303); the flutter-app-exzone leg
+          # actually gates via its workflow_dispatch arm (gh-1280 idiom).
+          # Context: the ubuntu flutter-tests leg runs this family but every
+          # engine-dependent test SKIPS there (native_test_guard.dart finds
+          # no QuickJS .so on a bare runner); they truly execute only on
+          # macOS — the hole #1309 escaped through (gh-1307). The issue's
+          # packages/js_widget_runtime/** is an EXTERNAL repo now, so its
+          # bumps arrive via the flutter_app/pubspec.yaml pin.
+          if git diff --name-only "$BASE_REF" "$HEAD_REF" |
+              grep -qE '(^flutter_app/lib/apps/|^lib/src/js_ext/|^flutter_app/test/apps/|^flutter_app/test/native_test_guard\.dart$|^flutter_app/pubspec\.yaml$)'; then
+            echo "exzone=true" >> "$GITHUB_OUTPUT"
           fi
 
   # ─────────────────────────────────────────────────────────────────────────
@@ -1396,6 +1423,59 @@ jobs:
             echo "::endgroup::"
           done
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # Issue #1267 N1 — the macOS exclusion-zone leg. By #177 design the ubuntu
+  # PR leg never EXERCISES the JS-engine suites: flutter_app/test/apps/**
+  # skip their engine-dependent tests on ubuntu (native_test_guard.dart
+  # finds no QuickJS .so on a bare runner), so that surface ran only in the
+  # nightly macOS leg — the hole #1309 escaped through (gh-1307: an
+  # apps/engine regression merged green and went red the same night).
+  #
+  # Trigger model (dispatch-only CI, gh-1280 binaries-pr idiom): ci.yml has
+  # NO pull_request trigger — PR validation arrives as an SM
+  # workflow_dispatch on the head SHA (machine-sm.yml), where the paths
+  # classifier cannot run (no pull_request event diff). The leg is
+  # therefore path-BLIND on dispatches: it runs in EVERY SM validation
+  # (one hosted-macOS leg beside the build-macos/build-ios legs already
+  # paid there), and the exzone path set only narrows a future real
+  # pull_request trigger. Main/tag/schedule/release runs skip it — the
+  # nightly flutter-app-macos leg stays the full-suite backstop there.
+  # ─────────────────────────────────────────────────────────────────────────
+  flutter-app-exzone:
+    name: Exclusion zone (macOS JS-engine tests)
+    runs-on: macos-latest
+    needs: changes
+    if: >-
+      (github.event_name == 'pull_request' && needs.changes.outputs.exzone == 'true') ||
+      github.event_name == 'workflow_dispatch'
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Same SDK incantation as the nightly flutter-app-macos leg.
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          cache: true
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+      - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+      - uses: ./.github/actions/flutter-pub-get
+      # The guard resolves true on macOS (JavaScriptCore), so the
+      # engine-dependent tests RUN here instead of skipping as on ubuntu.
+      - name: flutter test test/apps (JS engine live)
+        working-directory: flutter_app
+        run: flutter test --exclude-tags integration test/apps
+
   # Issue #433: flutter_app CRAP ratchet — the app's beasts were never
   # gated (the root crap4dart.yaml covers core lib/bin only). The 2
   # flutter-tests shards above now emit --coverage; this job merges them
@@ -2295,7 +2375,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify, install-pin-gate]
+    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify, install-pin-gate, flutter-app-exzone]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -2335,6 +2415,7 @@ jobs:
           echo "dep-audit     = ${{ needs.dep-audit.result }}"
           echo "installer-it = ${{ needs.installer-verify.result }}"
           echo "pin-gate    = ${{ needs.install-pin-gate.result }}"
+          echo "exzone      = ${{ needs.flutter-app-exzone.result }}"
       - name: Fail on any real failure (skipped security = dodge = FAIL)
         id: gate
         env:
@@ -2365,6 +2446,7 @@ jobs:
           R_PTY_VISUAL: ${{ needs.pty-visual.result }}
           R_INSTALLER_VERIFY: ${{ needs.installer-verify.result }}
           R_INSTALL_PIN_GATE: ${{ needs.install-pin-gate.result }}
+          R_EXZONE: ${{ needs.flutter-app-exzone.result }}
         run: |
           fail() { echo "Quality gate FAILED: $1"; exit 1; }
           # Verdict pass collects blockers WITHOUT exiting, so dart_ok is
@@ -2405,7 +2487,8 @@ jobs:
                     "integration-mock:$R_INTEG" "hostile-env:$R_HOSTILE" \
                     "fa-aot-build:$R_FA_AOT" \
                     "pty-integration-linux:$R_PTY_LINUX" "pty-coverage-gate:$R_PTY_GATES" "pty-visual:$R_PTY_VISUAL" \
-                    "installer-verify:$R_INSTALLER_VERIFY" "install-pin-gate:$R_INSTALL_PIN_GATE"; do
+                    "installer-verify:$R_INSTALLER_VERIFY" "install-pin-gate:$R_INSTALL_PIN_GATE" \
+                    "flutter-app-exzone:$R_EXZONE"; do
             name="${kv%%:*}"; r="${kv#*:}"
             case "$name" in
               build-web|build-android|build-ios|build-macos|fa-aot-build|installer-verify|install-pin-gate|cube-kernel-live|cli-visual-settings|pty-integration-linux|pty-coverage-gate|pty-visual)
