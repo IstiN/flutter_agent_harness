@@ -785,7 +785,7 @@ void main() {
           ),
           'Tool error (weather): total 12\nCommand exited with code 2\n'
           'This is an uncaught exception inside the harness tool '
-          'implementation — not a command failure. The tool may be '
+          'implementation - not a command failure. The tool may be '
           'unavailable in this environment; skip it or use a different '
           'approach.',
         );
