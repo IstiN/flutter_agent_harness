@@ -119,6 +119,23 @@ void main() {
   });
 
   group('run-narrowing (AC7 — hiding, off means absent everywhere)', () {
+    test('a2a-only fabric shape (no sessionRoot, no hub) wires clean — '
+        'no repository composes, the plan keeps a2a (regression: the '
+        'file-less fast path used to null-deref hubFabric)', () {
+      final wired = wireAgentCore(
+        profile: cliProfile,
+        services: AgentCoreServices(baseEnv: MemoryExecutionEnv(cwd: '/w')),
+      );
+      expect(wired.fabric, isNull);
+      expect(wired.extensions, isEmpty);
+      final fabricPlan = wired.plan.planFor(HostCapability.messagingFabric);
+      expect(fabricPlan, isA<WiredCapability>());
+      expect(
+        (fabricPlan as WiredCapability).transports,
+        {'a2a'},
+      );
+    });
+
     test('absent web search config hides the family from tools AND tokens', () {
       final services = AgentCoreServices(
         baseEnv: MemoryExecutionEnv(cwd: '/w'),

@@ -699,7 +699,11 @@ final class _WiredTaskSurface {
 ///
 /// File-less shapes keep their wired hub: a hub-only (mobile) profile
 /// gets the hub repository itself as the fabric — the file transport's
-/// absence discards only the file layer, never the whole fabric.
+/// absence discards only the file layer, never the whole fabric. A
+/// transport state can ALSO survive on transports that declare no host
+/// service (a2a rides the subagent bundle's gateway, not a repository):
+/// hub-less + file-less then composes nothing — null is the honest
+/// answer, the a2a mail path rides the subagent complex directly.
 ({
   MessagingRepository fabric,
   SwappableMessagingRepository? fileFabric,
@@ -734,10 +738,16 @@ _wireFabric({
   }
   if (!wantFile) {
     // File-less (hub-only/mobile) profile: the wired hub IS the fabric —
-    // no file layer to swap and no root to name. Null never rides here:
-    // run-narrowing dropped the hub transport when hubFabric was absent,
-    // so a hub-only shape means the hub is present.
-    return (fabric: services.hubFabric!, fileFabric: null, messagesRoot: null);
+    // no file layer to swap and no root to name. Narrowing drops the hub
+    // transport when hubFabric is absent, BUT a transport with no
+    // declared service (a2a) survives unconditionally — so a file-less
+    // state here does NOT prove the hub is present. Hub-less means there
+    // is no repository to compose: return null (never a null-deref; the
+    // E1 guard above still fires for a hub that DID survive without a
+    // mainMailbox resolver).
+    final hub = services.hubFabric;
+    if (hub == null) return null;
+    return (fabric: hub, fileFabric: null, messagesRoot: null);
   }
   return buildAgentFabric(
     env: services.baseEnv,
