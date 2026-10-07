@@ -54,13 +54,15 @@ void main() {
   );
 
   /// The stuck-call scenario: one bash call the mock shell holds until the
-  /// test releases it, then the run wraps up.
+  /// test releases it, then the run wraps up. A slow build — issue #1349
+  /// denies a bare long foreground `sleep` at validation, so the stand-in
+  /// for a long-running call must be legitimate work.
   FakeStreamFunction stuckCallFake() => FakeStreamFunction([
     toolTurn([
       const ToolCall(
         id: 't1',
         name: 'bash',
-        arguments: {'command': 'sleep 500'},
+        arguments: {'command': 'make release'},
       ),
     ]),
     textTurn('done'),
@@ -78,11 +80,17 @@ void main() {
 
       now = now.add(const Duration(seconds: 120));
       cli.toolLivenessTickForTest();
-      expect(io.out.toString(), contains('⏳ [bash] sleep 500 — running 120s'));
+      expect(
+        io.out.toString(),
+        contains('⏳ [bash] make release — running 120s'),
+      );
 
       now = now.add(const Duration(seconds: 60));
       cli.toolLivenessTickForTest();
-      expect(io.out.toString(), contains('⏳ [bash] sleep 500 — running 180s'));
+      expect(
+        io.out.toString(),
+        contains('⏳ [bash] make release — running 180s'),
+      );
 
       shell.release();
       await run;
@@ -144,7 +152,10 @@ void main() {
         hasLength(1),
       );
       expect('cancel:'.allMatches(io.out.toString()), hasLength(1));
-      expect(io.out.toString(), contains('⏳ [bash] sleep 500 — running 360s'));
+      expect(
+        io.out.toString(),
+        contains('⏳ [bash] make release — running 360s'),
+      );
 
       shell.release();
       await run;
@@ -168,7 +179,7 @@ void main() {
       // one clock, one source of truth.
       expect(
         toolLivenessReminderLine(call, now),
-        '⏳ [bash] sleep 500 — running 150s',
+        '⏳ [bash] make release — running 150s · $toolLivenessForegroundHint',
       );
 
       shell.release();
@@ -230,8 +241,8 @@ void main() {
     final headless = await drive(headless: true);
     final lineMode = await drive(headless: false);
     expect(headless, [
-      '⏳ [bash] sleep 500 — running 120s',
-      '⏳ [bash] sleep 500 — running 300s · background candidate: '
+      '⏳ [bash] make release — running 120s · $toolLivenessForegroundHint',
+      '⏳ [bash] make release — running 300s · background candidate: '
           'bash background: true, job board /tasks, --wait-for-jobs · '
           'cancel: fa bash_job stop <id> once backgrounded; '
           'Ctrl+C / inbox steering takes effect once the call unwinds '
@@ -279,14 +290,14 @@ void main() {
         const ToolCall(
           id: 't1',
           name: 'bash',
-          arguments: {'command': 'sleep 500'},
+          arguments: {'command': 'make release'},
         ),
       ]),
       toolTurn([
         const ToolCall(
           id: 't2',
           name: 'bash',
-          arguments: {'command': 'sleep 900'},
+          arguments: {'command': 'make docker-pull'},
         ),
       ]),
       textTurn('done'),
@@ -326,7 +337,7 @@ void main() {
       final nudges = nudgeTexts(fake.contexts.last);
       expect(nudges, hasLength(1));
       expect(nudges.single, contains('`bash`'));
-      expect(nudges.single, contains('"sleep 500"'));
+      expect(nudges.single, contains('"make release"'));
       expect(nudges.single, contains('running 300s'));
       // The turn BEFORE the drain must not carry the nudge: it delivered
       // at the boundary, not retroactively into the tool-result turn.
@@ -396,7 +407,7 @@ void main() {
       expect(cli.toolNudgesSentForTest, 2, reason: 'a new call nudges afresh');
       expect(
         io.out.toString(),
-        contains('⏳ [bash] sleep 900 — running 300s'),
+        contains('⏳ [bash] make docker-pull — running 300s'),
         reason: 'the second call escalates on the same console channel',
       );
       shell.releaseNext();
@@ -409,8 +420,11 @@ void main() {
         final shell = PerCallGatedShell();
         final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
         final io = FakeCliIO();
-        ToolCall call(String id) =>
-            ToolCall(id: id, name: 'bash', arguments: {'command': 'sleep 500'});
+        ToolCall call(String id) => ToolCall(
+          id: id,
+          name: 'bash',
+          arguments: {'command': 'make release'},
+        );
         final fake = FakeStreamFunction([
           toolTurn([call('t1')]),
           toolTurn([call('t2')]),
@@ -487,7 +501,7 @@ void main() {
             const ToolCall(
               id: 't1',
               name: 'bash',
-              arguments: {'command': 'sleep 500'},
+              arguments: {'command': 'make release'},
             ),
           ]),
           textTurn('done'),
