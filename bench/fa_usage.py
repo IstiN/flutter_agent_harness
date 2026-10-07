@@ -24,9 +24,12 @@ callers render ``n/a``, never a made-up 0.00.
 """
 from __future__ import annotations
 
+import io
 import json
 import math
-from pathlib import Path
+import sys
+import tarfile
+from pathlib import Path, PurePosixPath
 
 # Same chars-per-token rate as lib/src/compaction/token_estimation.dart.
 _CHARS_PER_TOKEN = 4
@@ -171,7 +174,6 @@ def extract_from_text(text: str, usage: SessionUsage = None) -> SessionUsage:
 
 def extract_from_dir(sessions_dir, usage: SessionUsage = None) -> SessionUsage:
     """Sum usage over every *.jsonl under the trial's fah-sessions dir.
-
     rglob covers retries (multiple sessions per trial) and subagent
     sessions — all of it is the trial's real spend (issue #1123 E1/E2).
     """
@@ -186,6 +188,44 @@ def extract_from_dir(sessions_dir, usage: SessionUsage = None) -> SessionUsage:
         except OSError as exc:
             usage.warnings.append(f"unreadable session log {path}: {exc}")
     return usage
+
+
+def extract_session_archive(tar_bytes: bytes, dest) -> int:
+    """Unpack a docker get_archive tarball of the container's session root
+    into the trial's host agent-logs dir (issue #1339 AC4). Returns the
+    extracted file count.
+
+    The archive originates from a container path the model's own bash tool
+    can write, so the data filter's traversal rules are re-asserted
+    manually on EVERY interpreter BEFORE anything is extracted — a guard
+    that vanishes on a TypeError fallback is not a guard (PR #1351
+    review): only regular files and directories, no absolute paths, no
+    `..` members, nothing resolving outside dest. Violations fail loud;
+    the tarfile data filter is then applied where the interpreter has it.
+    """
+    root = Path(dest).resolve()
+    with tarfile.open(fileobj=io.BytesIO(tar_bytes)) as tar:
+        members = tar.getmembers()
+        for member in members:
+            if not (member.isfile() or member.isdir()):
+                raise ValueError(
+                    f"non-regular member in session archive: {member.name!r}"
+                )
+            if member.name.startswith("/") or ".." in PurePosixPath(member.name).parts:
+                raise ValueError(f"unsafe path in session archive: {member.name!r}")
+            if not (root / member.name).resolve().is_relative_to(root):
+                raise ValueError(f"path escapes the trial dir: {member.name!r}")
+        try:
+            tar.extractall(dest, members=members, filter="data")
+        except TypeError:  # pre-backport interpreter: no filter kwarg
+            print(
+                "[fa_agent] warning: this Python lacks the tarfile data "
+                "filter; extracting the manually screened session archive "
+                "without it",
+                file=sys.stderr,
+            )
+            tar.extractall(dest, members=members)
+        return sum(1 for member in members if member.isfile())
 
 
 def load_pricing(path) -> dict:

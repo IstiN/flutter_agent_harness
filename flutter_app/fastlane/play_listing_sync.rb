@@ -394,9 +394,13 @@ module PlayListingSync
     JSON.parse(res[:body]).fetch("images", [])
   end
 
+  # Google no longer auto-sends edits for review: the commit must opt out via
+  # the changesNotSentForReview query param, else the API rejects with 400
+  # INVALID_ARGUMENT. Review is triggered from the Play Console UI instead.
   def commit_edit!(http, package_name, edit_id, auth)
-    res = http.request(:Post, "#{API_ROOT}/#{package_name}/edits/#{edit_id}:commit",
-                       headers: auth)
+    res = http.request(:Post,
+                       "#{API_ROOT}/#{package_name}/edits/#{edit_id}:commit" \
+                       "?changesNotSentForReview=true", headers: auth)
     return if res[:status] == 200
 
     raise "edits.commit failed (HTTP #{res[:status]}): #{api_error_message(res[:body])}"

@@ -32,7 +32,6 @@ import logging
 import os
 import shlex
 import sys
-import tarfile
 import threading
 import time
 from pathlib import Path
@@ -76,8 +75,10 @@ _VERSION = "0.1.0"
 _PROGRESS_LOG = "/tmp/fa-progress.log"
 _POLL_SEC = 5.0
 # fa writes its session JSONL here inside the container (--session-root in
-# _run_agent_commands); tb syncs /agent-logs to the host trial dir only
-# after perform_task returns, so the container is the only read point.
+# _run_agent_commands); _export_sessions copies it to the trial's host
+# agent-logs dir at fold time, since the task compose template's volume
+# cannot be relied on (issue #1339 — datasets without it archived zero
+# session logs).
 _CONTAINER_SESSION_ROOT = "/agent-logs/fah-sessions"
 
 
@@ -142,7 +143,7 @@ class FaAgent(AbstractInstalledAgent):
             # folding a ran-but-empty trial is always safe.
             if result.failure_mode in _NEVER_STARTED_MODES:
                 return result
-            return self._fold_session_usage(session, result)
+            return self._fold_session_usage(session, result, logging_dir)
         return self._perform_task_with_deadline(
             knobs, instruction, session, logging_dir
         )
@@ -228,6 +229,7 @@ class FaAgent(AbstractInstalledAgent):
                     failure_mode=FailureMode.AGENT_TIMEOUT,
                     timestamped_markers=[(0.0, f"agent_timeout({outcome})")],
                 ),
+                logging_dir,
             )
         if crashed:
             raise box["error"]
@@ -235,6 +237,7 @@ class FaAgent(AbstractInstalledAgent):
             session,
             box.get("result")
             or AgentResult(total_input_tokens=0, total_output_tokens=0),
+            logging_dir,
         )
 
     @staticmethod
@@ -269,13 +272,14 @@ class FaAgent(AbstractInstalledAgent):
         path.write_text(json.dumps(_timeout.audit_dict(knobs, ladder, outcome)))
 
     @staticmethod
-    def _fold_session_usage(session, result):
+    def _fold_session_usage(session, result, logging_dir=None):
         """Issue #1123: tb's AbstractInstalledAgent hardcodes
         AgentResult(total_input_tokens=0, total_output_tokens=0) — the
         source of the all-zero token columns. Fold fa's real session
         usage in after the run; tokens are measurement, so extraction
         fails soft (zeros + a warning, never a failed trial).
         """
+        _export_sessions(session, logging_dir)
         try:
             exit_code, output = session.container.exec_run(
                 [
@@ -322,6 +326,36 @@ class FaAgent(AbstractInstalledAgent):
                 append_enter=True,
             ),
         ]
+
+
+def _export_sessions(session, logging_dir) -> None:
+    """Issue #1339 AC4: copy the container's fa session logs into the
+    trial's host agent-logs dir (tb passes it as logging_dir). The task
+    compose template's /agent-logs volume was the only archive path, and
+    datasets whose compose files skip it archived zero session logs (run
+    37495405735: every shard's summary priced n/a and the recovered
+    trial's real usage was unverifiable). Fail-soft by contract: a broken
+    export degrades to the old volume-dependent behavior, never a failed
+    trial.
+    """
+    if logging_dir is None:
+        return
+    try:
+        bits, _ = session.container.get_archive(_CONTAINER_SESSION_ROOT)
+        dest = Path(logging_dir)
+        dest.mkdir(parents=True, exist_ok=True)
+        n = fa_usage.extract_session_archive(b"".join(bits), dest)
+        if n:
+            print(
+                f"[fa_agent] exported {n} fa session file(s) to {dest}",
+                file=sys.stderr,
+            )
+    except Exception as exc:  # noqa: BLE001 — fail-soft by contract
+        print(
+            f"[fa_agent] warning: fa session export failed ({exc}); "
+            "relying on the task compose /agent-logs volume",
+            file=sys.stderr,
+        )
 
 
 def _b64(value: str) -> str:
