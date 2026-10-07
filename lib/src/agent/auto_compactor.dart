@@ -1001,6 +1001,7 @@ final class _StructuredHooksAdapter implements StructuredCompactorHooks {
         fallback: switch (pass.kind) {
           'checkpoint' => 'structured·ckpt',
           'hide-fallback' => 'structured·hide-fallback',
+          'hide-lru' => 'structured·hide-lru',
           _ => 'structured·hide',
         },
         ok: pass.ok,

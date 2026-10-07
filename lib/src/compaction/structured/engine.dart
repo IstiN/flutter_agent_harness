@@ -95,6 +95,20 @@ final class StructuredCompactionPass {
   final String? summary;
 }
 
+/// Rebuilds [state.messages] from the session projection, zeroing usage
+/// anchors on rebuilt transcripts (rebuilt messages carry no trustworthy
+/// usage). The ONE refresh both the engine passes and the agent-initiated
+/// hide use (issue #1379 tier 2) — a single contract, not two copies.
+Future<void> refreshAgentState(Session session, AgentState state) async {
+  final rebuilt = await session.buildContextMessages();
+  state.messages = [
+    for (final message in rebuilt)
+      message is AssistantMessage
+          ? message.copyWith(usage: Usage.zero)
+          : message,
+  ];
+}
+
 /// The structured compaction engine.
 final class StructuredCompactor {
   /// Creates a compactor over [session]/[state].
@@ -236,14 +250,7 @@ final class StructuredCompactor {
     if (view == null) return;
     final ledger = view.ledger;
     final byId = {for (final record in view.path) record.id: record};
-    final protectedTail = <String>{
-      for (final entry in ledger.entries.skip(
-        ledger.entries.length - protectLastN < 0
-            ? 0
-            : ledger.entries.length - protectLastN,
-      ))
-        entry.recordId,
-    };
+    final protectedTail = protectedTailIds(ledger, protectLastN);
     // Expand artifacts, oldest first: every visible assistant carrier of
     // a compact_expand call, whole pair group. The LAST (newest) group is
     // never an eviction candidate (AC2: newest kept).
@@ -434,26 +441,26 @@ final class StructuredCompactor {
     final ledger = view.ledger;
     final before = _requestTokens();
     final over = before - trigger;
-    final tailStart = ledger.entries.length - protectLastN < 0
-        ? 0
-        : ledger.entries.length - protectLastN;
-    final indexById = <String, int>{
-      for (var i = 0; i < ledger.entries.length; i++)
-        ledger.entries[i].recordId: i,
+    final protectedTail = protectedTailIds(ledger, protectLastN);
+    final tokensById = {
+      for (final entry in ledger.entries) entry.recordId: entry.tokens,
     };
     final ids = <String>{};
     var freed = 0;
-    for (var i = 0; i < tailStart && freed < over; i++) {
-      final entry = ledger.entries[i];
-      if (entry.exempt || ids.contains(entry.recordId)) continue;
+    for (final entry in ledger.entries) {
+      if (freed >= over) break;
+      if (entry.exempt ||
+          ids.contains(entry.recordId) ||
+          protectedTail.contains(entry.recordId)) {
+        continue;
+      }
       // Pair integrity (#85/D6): a group hides whole or never — the
       // veto lives in the token helper below.
       final group = ledger.groupOf(entry.recordId);
       final groupTokens = _hideableGroupTokens(
-        ledger,
+        tokensById,
         group,
-        indexById,
-        tailStart,
+        protectedTail,
       );
       if (groupTokens == null) continue;
       // Tier 2 pin (issue #1379): the fallback never hides a pinned group.
@@ -505,16 +512,14 @@ final class StructuredCompactor {
 
   /// Returns the group's token weight, or null when vetoed.
   int? _hideableGroupTokens(
-    ContextLedger ledger,
+    Map<String, int> tokensById,
     Iterable<String> group,
-    Map<String, int> indexById,
-    int tailStart,
+    Set<String> protectedTail,
   ) {
     var groupTokens = 0;
     for (final id in group) {
-      final idx = indexById[id];
-      if (idx == null || idx >= tailStart) return null;
-      groupTokens += ledger.entries[idx].tokens;
+      if (protectedTail.contains(id)) return null;
+      groupTokens += tokensById[id] ?? 0;
     }
     return groupTokens;
   }
@@ -605,13 +610,7 @@ final class StructuredCompactor {
   /// anchors on rebuilt transcripts (the classic engine's convention —
   /// rebuilt messages carry no trustworthy usage).
   Future<int> _refreshState() async {
-    final rebuilt = await session.buildContextMessages();
-    state.messages = [
-      for (final message in rebuilt)
-        message is AssistantMessage
-            ? message.copyWith(usage: Usage.zero)
-            : message,
-    ];
+    await refreshAgentState(session, state);
     return _requestTokens();
   }
 
@@ -650,30 +649,39 @@ final class StructuredCompactor {
     final projected = _projectedEntries(view);
     if (projected.isEmpty) return null;
 
-    // The protected tail: newest projected bytes totalling the keep-recent
-    // budget never enter a range (issue #388 keep-recent floor).
+    // The foldable prefix: pins and their whole pair groups drop out
+    // BEFORE the keep-recent walk (issue #1379 tier 2 rework). They
+    // can never fold, so they consume no keep-recent budget and never
+    // clamp the window — the walk measures foldable bytes only. A deep
+    // pin cannot starve checkpointing: every pass still folds the
+    // oldest unpinned content wherever the pin sits, while pinned
+    // records keep rendering at their positions, unswallowed and
+    // unsummarized. The only stall left is an empty foldable prefix —
+    // the same honest nothing-to-fold an exempt range gives, never a
+    // pin-induced fallback to the lossy classic path (the judge,
+    // deterministic and LRU passes still run).
+    final foldable = [
+      for (final entry in projected)
+        if (!view.ledger
+            .groupOf(entry.recordId)
+            .any(view.state.pinnedRecordIds.contains))
+          entry,
+    ];
+    if (foldable.isEmpty) return null;
     var tailBudget = settings.keepRecentTokens;
-    var cut = projected.length;
-    for (var i = projected.length - 1; i >= 0; i--) {
-      tailBudget -= projected[i].tokens;
+    var cut = foldable.length;
+    for (var i = foldable.length - 1; i >= 0; i--) {
+      tailBudget -= foldable[i].tokens;
       if (tailBudget <= 0) {
         cut = i;
         break;
       }
     }
     // Snap inward at group boundaries: a range never splits a pair.
-    while (cut > 1 && _sharesGroup(projected, cut, view.ledger)) {
+    while (cut > 1 && _sharesGroup(foldable, cut, view.ledger)) {
       cut--;
     }
-    // Tier 2 pin (issue #1379): a range never swallows a pinned record —
-    // the cut clamps to before the oldest pinned entry inside the
-    // candidate range (a pin deeper than the cut is unaffected).
-    final pinnedCut = projected.indexWhere(
-      (entry) => view.state.pinnedRecordIds.contains(entry.recordId),
-    );
-    if (pinnedCut >= 0 && pinnedCut < cut) cut = pinnedCut;
-    if (cut <= 0) return null;
-    final members = projected.take(cut).toList();
+    final members = foldable.take(cut).toList();
     if (members.isEmpty) return null;
 
     final coveredIds = <String>{};
@@ -681,10 +689,6 @@ final class StructuredCompactor {
       coveredIds.add(member.recordId);
       coveredIds.addAll(view.ledger.groupOf(member.recordId));
     }
-    // Tier 2 pin (issue #1379): a pin vetoes membership even when a pair
-    // group would snap it in — the pinned record stays unswallowed and
-    // keeps rendering on its own.
-    coveredIds.removeAll(view.state.pinnedRecordIds);
     return _CkptRange(
       firstRecordId: members.first.recordId,
       lastRecordId: members.last.recordId,

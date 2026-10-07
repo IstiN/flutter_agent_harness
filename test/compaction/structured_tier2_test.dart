@@ -416,6 +416,47 @@ void main() {
       }
     });
 
+    test('a deep pin cannot starve checkpointing (foldable walk)', () async {
+      final (session, state) = await bugSession(repo);
+      final compactor = StructuredCompactor(
+        session: session,
+        state: state,
+        window: 8000,
+        settings: _settings,
+        protectLastN: 2,
+        judge: (ledgerText) async => '[]',
+        summarize: (request) async => SummarizationResult.success(
+          'Earlier work: a login crash investigation across a read pair '
+          'and a bash pair. Both tool outputs were consumed.',
+        ),
+        checkpointPrompt: 'P',
+      );
+      // Pin the EARLIEST hideable record: under the old cut-clamp the
+      // pin sat inside every candidate range and clamped the cut to
+      // zero — no checkpoint ever formed. The foldable walk drops the
+      // pin out of the candidate set BEFORE the keep-recent walk, so
+      // checkpointing still makes progress behind it.
+      await callTool(controllerFor(session, agentFor()), {
+        'action': 'pin',
+        'target': '4',
+      });
+      await compactor.run(force: true);
+      final pinnedId = (await session.getEntries())[2].id;
+      final checkpoints = [
+        for (final record in await session.getBranch())
+          if (record is CompactCheckpointRecord) record,
+      ];
+      expect(checkpoints, isNotEmpty, reason: 'deep pin must not starve');
+      for (final record in checkpoints) {
+        expect(record.coversRecordIds, isNotEmpty);
+        expect(
+          record.coversRecordIds,
+          isNot(contains(pinnedId)),
+          reason: 'progress without swallowing the pin',
+        );
+      }
+    });
+
     test('pins survive session reload', () async {
       final (session, _) = await bugSession(repo);
       final controller = controllerFor(session, agentFor());

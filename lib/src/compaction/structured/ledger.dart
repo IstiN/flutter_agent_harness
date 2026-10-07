@@ -291,3 +291,16 @@ String _clip(String text) {
   if (flat.length <= 110) return flat;
   return '${flat.substring(0, 107)}…';
 }
+
+/// The live-edge floor shared by every hide path (issue #1379 tier 2):
+/// the ids of the newest [protectLastN] ledger entries — the working set
+/// no hide may fold, whoever asks (judge picks, deterministic fallback,
+/// LRU re-hide, agent hide). The ONE computation; every consumer calls
+/// this so the invariant cannot drift between copies.
+Set<String> protectedTailIds(ContextLedger ledger, int protectLastN) {
+  final start = ledger.entries.length - protectLastN;
+  return {
+    for (final entry in ledger.entries.skip(start < 0 ? 0 : start))
+      entry.recordId,
+  };
+}

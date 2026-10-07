@@ -23,7 +23,6 @@
 /// the same records raw.
 library;
 
-import 'dart:math' show min;
 import '../../agent/agent.dart' show Agent;
 import '../../agent/agent_loop.dart'
     show AgentEvent, MessageStartEvent, ToolExecutionResult, ToolUpdateCallback;
@@ -35,7 +34,7 @@ import '../../prompts/prompts.g.dart' show compactExpandToolDescriptionPrompt;
 import '../../session/session_record.dart';
 import '../../session/session_tree.dart' show Session;
 import '../../types.dart';
-import 'engine.dart' show classicTransform;
+import 'engine.dart' show classicTransform, refreshAgentState;
 import '../compaction.dart' show isSyntheticUserText;
 import 'judge.dart' show hideProtectTailEntries;
 import 'ledger.dart';
@@ -340,13 +339,7 @@ final class CompactExpandController {
       visiblePath: visibleStructuredPath(path, viewState),
       seqs: seqs,
     );
-    final tailCount = min(hideProtectTailEntries, ledger.entries.length);
-    final protectedTail = <String>{
-      for (final entry in ledger.entries.skip(
-        ledger.entries.length - tailCount,
-      ))
-        entry.recordId,
-    };
+    final protectedTail = protectedTailIds(ledger, hideProtectTailEntries);
     // Whole pair groups or never (D6 / #85): the hide snaps OUTWARD, and
     // any group member in the protected tail or pinned set vetoes the
     // whole ask with one honest message.
@@ -374,13 +367,7 @@ final class CompactExpandController {
       if (seq != null) freedTokens += ledger.entryAtSeq(seq)?.tokens ?? 0;
     }
     await live.appendHiddenRange(recordIds: ids.toList()..sort());
-    final rebuilt = await live.buildContextMessages();
-    _agent.state.messages = [
-      for (final message in rebuilt)
-        message is AssistantMessage
-            ? message.copyWith(usage: Usage.zero)
-            : message,
-    ];
+    await refreshAgentState(live, _agent.state);
     final seqsOf = [for (final id in ids) seqs.seqOf(id) ?? 0]..sort();
     final groupLabel = _rangeLabel(seqsOf.first, seqsOf.last);
     return ToolExecutionResult.text(

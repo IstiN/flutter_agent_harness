@@ -85,14 +85,7 @@ Set<String> validateHidePicks(
   int protectLastN = hideProtectTailEntries,
   Set<String> pinnedRecordIds = const {},
 }) {
-  final protected = <String>{
-    for (final entry in ledger.entries.skip(
-      ledger.entries.length - protectLastN < 0
-          ? 0
-          : ledger.entries.length - protectLastN,
-    ))
-      entry.recordId,
-  };
+  final protected = protectedTailIds(ledger, protectLastN);
   final result = <String>{};
   for (final pick in picks) {
     final entry = ledger.entryAtSeq(pick);
