@@ -6,10 +6,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_agent_harness/src/providers/conn_trace_io.dart';
 import 'package:flutter_agent_harness/src/providers/provider_common.dart';
 import 'package:http/http.dart';
 
 Future<void> main() async {
+  installProviderStallForensics(); // io seams: env + stderr + observed client
   providerTimeoutsOverride = const ProviderTimeoutsOverride(
     connect: Duration(milliseconds: 800),
     streamIdle: Duration(milliseconds: 400),

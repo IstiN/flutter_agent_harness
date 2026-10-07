@@ -12,6 +12,8 @@ import 'package:flutter_agent_harness/src/event_stream.dart';
 import 'package:flutter_agent_harness/src/model.dart';
 import 'package:flutter_agent_harness/src/providers/silent_stream_policy.dart';
 import 'package:flutter_agent_harness/src/providers/stall_taxonomy.dart';
+import 'package:flutter_agent_harness/src/providers/transient_retry_stream.dart'
+    show zeroByteStallTag;
 import 'package:flutter_agent_harness/src/types.dart';
 import 'package:test/test.dart';
 
@@ -580,4 +582,93 @@ void main() {
       );
     },
   );
+
+  group('review round 1 regressions (UT)', () {
+    AssistantMessage partial() => AssistantMessage(
+      content: const [],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: Usage.zero,
+      stopReason: StopReason.stop,
+      timestamp: DateTime.now(),
+    );
+
+    test('BLOCKING: a laddered replay emits exactly ONE StartEvent — no '
+        'phantom assistant message in the transcript', () async {
+      // Inner: start frame, then a pre-commit stall; the takeover serves
+      // with its own start frame. Every attempt emits StartEvent, but the
+      // host must receive it exactly once per call.
+      StreamFunction startThenStall() => (m, c, {cancelToken}) {
+        final out = AssistantMessageEventStream();
+        unawaited(() async {
+          out.push(StartEvent(partial: partial()));
+          out.push(
+            ErrorEvent(reason: StopReason.error, error: _error(idleError)),
+          );
+          out.end();
+        }());
+        return out;
+      };
+      final policy = SilentStreamPolicy(
+        innerBuilder: startThenStall,
+        hooks: SilentStreamPolicyHooks(
+          buildTakeover: startThenStall, // even the takeover start-suppresses
+        ),
+        sleeper: (_, _) async => true,
+      );
+      final events = await policy
+          .call(model, const Context(messages: []))
+          .toList();
+      expect(
+        events.whereType<StartEvent>(),
+        hasLength(1),
+        reason:
+            'duplicate start frames corrupt the transcript (the agent '
+            'loop records an assistant message per StartEvent)',
+      );
+      expect(events.last, isA<ErrorEvent>());
+    });
+
+    test('BLOCKING: the stood stall error carries the zero-byte verdict '
+        'tag — the roles fallback advances instead of re-windowing', () async {
+      final policy = SilentStreamPolicy(
+        innerBuilder: () => stallInner(99), // every attempt stalls
+        sleeper: (_, _) async => true,
+        hooks: const SilentStreamPolicyHooks(), // no escalation at all
+      );
+      final events = await policy
+          .call(model, const Context(messages: []))
+          .toList();
+      final last = events.last as ErrorEvent;
+      expect(
+        last.error.errorMessage,
+        contains(zeroByteStallTag),
+        reason:
+            '_nonQueueRetryable sends a zero-byte-tagged error to the '
+            'next chain entry at once (gh-1308) instead of an in-place '
+            'transport retry costing another idle window',
+      );
+      expect(
+        last.error.errorMessage,
+        contains(idleError),
+        reason: 'the original diagnostics stay verbatim',
+      );
+    });
+
+    test('BLOCKING: the ledger sweeps cancelled-run keys (no token '
+        'retention across a session)', () {
+      final ledger = ProviderStallLedger();
+      final dead = _tokenSource..cancel();
+      ledger.recordStall(dead.token);
+      expect(ledger.count(dead.token), 1, reason: 'the live record stands');
+      final fresh = CancelTokenSource();
+      ledger.recordStall(fresh.token); // the sweep point
+      expect(
+        ledger.count(dead.token),
+        0,
+        reason: "an abandoned run's key is swept on the next record",
+      );
+    });
+  });
 }

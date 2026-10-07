@@ -4,24 +4,41 @@
 /// silent on (the bench's post-mortem needs the payload, not a timeout
 /// line).
 ///
+/// PURE Dart (barrel-exported; the dart2js web build pulls it): this file
+/// decides WHAT to dump — the allowlist-redacted meta, the real SHA-256,
+/// the per-process dump budget — and hands it to the injected
+/// [stallDumpSink]. The disk writer lives in `stall_sentinel_io.dart`
+/// (reachable only through `lib/io.dart`) and is installed at the host
+/// boundary by `installProviderStallForensics()`; an unset sink means
+/// dumps are dropped (the web build never dumps).
+///
+/// Gated by [stallSentinelEnabled] (`FA_STALL_SENTINEL=0` opts out —
+/// `conn_trace.dart` owns the knob): with the sentinel off, requests are
+/// not recorded with their bodies (no `Expando` retention) and no dump is
+/// attempted.
+///
 /// Best-effort by contract: a dump failure must never delay or break the
 /// abort path — the watchdog's error delivery is the priority; the dump is
 /// initiated synchronously at fire time (before the abort completes) and
 /// finishes on its own.
 ///
-/// Dump layout (one directory per dump):
+/// Dump layout (one directory per dump; produced by the io sink):
 /// ```
 /// <trial>/stall-<stamp>-<watchdog>/
 ///   payload.bin   — the outbound body, byte-identical to what was sent
-///   meta.json     — method, url, REDACTED headers, watchdog, idle budget,
-///                   bodySha256 (the replay integrity check)
+///   meta.json     — method, url, REDACTED headers (ALLOWLIST: only
+///                   non-credential headers survive), watchdog, idle
+///                   budget, bodySha256 (the replay integrity check)
 /// ```
 ///
-/// Hygiene (issue open question 2, lean: redact): the auth material is
-/// masked in meta.json (`REDACTED:<scheme>` — the replayer re-injects live
-/// credentials from the environment); the payload itself stays raw because
-/// a byte-identical replay is the point of the capture. Archiving into
-/// bench artifacts stays with the bench's own redact pass (#1392).
+/// Header redaction is an ALLOWLIST (review round 1, blocking): credential
+/// carriers differ per provider (`authorization`, `x-api-key`,
+/// `x-goog-api-key`, user-configured `authHeader` names, cookies) and a
+/// blocklist always lags the producers — only headers on
+/// [safeForensicHeaders] reach meta.json, everything else is masked to
+/// `REDACTED:<name>`. The payload itself stays raw because a
+/// byte-identical replay is the point of the capture; `scripts/
+/// replay_hang.sh` re-injects live credentials from the environment.
 ///
 /// The replay half is `scripts/replay_hang.sh <meta.json>`: re-sends the
 /// dumped payload with the same method/headers against the (live)
@@ -31,101 +48,175 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:http/http.dart' as http;
 
 import 'conn_trace.dart';
 
 /// Where dumps go: the trial dir env override, else a system-temp
-/// `stall-dumps` root.
+/// `stall-dumps` root. (Read by the io sink.)
 const String stallDumpDirEnvVar = 'FA_TRIAL_DIR';
 
-/// Test/process override for the dump root (wins over the env).
+/// Test/process override for the dump root (wins over the env). Read by
+/// the io sink.
 String? stallDumpDirectoryOverride;
 
-/// The dump root: [stallDumpDirectoryOverride], then `FA_TRIAL_DIR`, then
-/// `<systemTemp>/stall-dumps`.
-Directory stallDumpDirectory() {
-  final override = stallDumpDirectoryOverride;
-  if (override != null && override.isNotEmpty) return Directory(override);
-  final env = Platform.environment[stallDumpDirEnvVar];
-  if (env != null && env.isNotEmpty) return Directory(env);
-  return Directory.systemTemp.createTempSync('fa-stall-root');
-}
-
-/// Headers whose VALUES never reach meta.json raw.
-const List<String> _redactedHeaders = [
-  'authorization',
-  'proxy-authorization',
-  'cookie',
-  'set-cookie',
-  'x-api-key',
-  'api-key',
+/// Headers that carry NO credential material and may reach meta.json
+/// verbatim. The allowlist is the security boundary — a header not listed
+/// here is masked even if a future provider ships its auth in a new name.
+const List<String> safeForensicHeaders = [
+  'accept',
+  'accept-encoding',
+  'accept-language',
+  'cache-control',
+  'content-type',
+  'user-agent',
 ];
 
-Map<String, String> _redactHeaders(Map<String, String> headers) {
+/// Builds the REDACTED header map for meta.json: allowlisted headers keep
+/// their values, everything else becomes `REDACTED:<name>` (case kept).
+Map<String, String> redactHeadersForMeta(Map<String, String> headers) {
+  final allowed = safeForensicHeaders.toSet();
   return {
     for (final entry in headers.entries)
-      entry.key: _redactedHeaders.contains(entry.key.toLowerCase())
-          ? 'REDACTED:${entry.key.toLowerCase()}'
-          : entry.value,
+      entry.key: allowed.contains(entry.key.toLowerCase())
+          ? entry.value
+          : 'REDACTED:${entry.key.toLowerCase()}',
   };
 }
 
-/// SHA-256 of the payload (the replay's byte-identity check).
-String _sha256Of(Uint8List bytes) {
-  // dart:convert sha? sha256 lives in package:crypto — avoid the dep in a
-  // leaf file: the replay integrity check hashes via the script instead
-  // when crypto is absent. We still record the LENGTH (the byte count the
-  // replay must reproduce) and keep the name bodySha256 for the script's
-  // optional verification when package:crypto is available to it.
-  return 'len:${bytes.length}';
+/// SHA-256 of the payload (the replay's byte-identity check) — the real
+/// digest: `crypto` is already a direct dependency.
+String stallPayloadSha256(Uint8List bytes) =>
+    crypto.sha256.convert(bytes).toString();
+
+/// One pending dump, fully redacted and payload-ready: the sink's input.
+final class StallDump {
+  const StallDump({
+    required this.watchdog,
+    required this.idleTimeout,
+    required this.dumpedAt,
+    required this.method,
+    required this.url,
+    required this.redactedHeaders,
+    required this.payloadBytes,
+  });
+
+  /// Which watchdog fired (`stream-idle` / `connect`).
+  final String watchdog;
+
+  /// The watchdog budget in effect (the replay's bound).
+  final Duration idleTimeout;
+
+  /// When the dump was initiated.
+  final DateTime dumpedAt;
+
+  /// HTTP method of the stalled request.
+  final String method;
+
+  /// The request URL (verbatim; the io sink writes it as-is).
+  final String url;
+
+  /// The ALLOWLIST-redacted headers (credential carriers masked).
+  final Map<String, String> redactedHeaders;
+
+  /// The outbound payload bytes, when captured (null = unavailable).
+  final Uint8List? payloadBytes;
 }
 
-/// Dumps the stalled request. Returns the meta.json file, or null when the
-/// dump could not be written (best-effort — never throws).
-Future<File?> dumpStalledRequest({
+/// The dump sink: writes the dump and returns the artifact path (for the
+/// trace line), or null when it could not be written. Null sink = dumps
+/// are dropped (the pure/web default).
+typedef StallDumpSink = Future<String?> Function(StallDump dump);
+
+/// The io-installed disk writer (`stall_sentinel_io.dart`); null keeps the
+/// capture decision pure and drops the dump.
+StallDumpSink? stallDumpSink;
+
+/// The per-process dump budget (review round 1: a black-holed endpoint
+/// must not fill the disk — after this many dumps the sentinel stops
+/// writing and says so once on the trace board).
+const int maxStallDumpsPerProcess = 8;
+
+int _dumpsWritten = 0;
+bool _budgetSpent = false;
+
+/// Test hook: resets the dump budget counters.
+void resetStallDumpBudgetForTest() {
+  _dumpsWritten = 0;
+  _budgetSpent = false;
+}
+
+/// Dumps the stalled request. Returns the meta.json path, or null when the
+/// dump was skipped (sentinel off, budget spent, no sink) or could not be
+/// written (best-effort — never throws).
+Future<String?> dumpStalledRequest({
   required StallRequestRecord? record,
   required String watchdog,
   required Duration idleTimeout,
 }) async {
-  try {
-    final root = stallDumpDirectory();
-    final stamp = DateTime.now().toUtc().toIso8601String().replaceAll(
-      RegExp('[:.]'),
-      '-',
-    );
-    final dir = Directory(
-      '${root.path}${Platform.pathSeparator}stall-$stamp-$watchdog',
-    );
-    dir.createSync(recursive: true);
-    final meta = <String, dynamic>{
-      'watchdog': watchdog,
-      'idleSeconds': idleTimeout.inSeconds,
-      'dumpedAt': DateTime.now().toUtc().toIso8601String(),
-      'method': record?.method ?? 'POST',
-      'url': record?.url.toString() ?? 'unavailable',
-      'headers': record == null
-          ? <String, String>{}
-          : _redactHeaders(record.headers),
-      'payload': record?.bodyBytes == null ? 'unavailable' : 'payload.bin',
-    };
-    if (record?.bodyBytes != null) {
-      meta['bodySha256'] = _sha256Of(record!.bodyBytes!);
-      File(
-        '${dir.path}${Platform.pathSeparator}payload.bin',
-      ).writeAsBytesSync(record.bodyBytes!, flush: true);
+  if (!stallSentinelEnabled) return null;
+  if (_dumpsWritten >= maxStallDumpsPerProcess) {
+    if (!_budgetSpent) {
+      _budgetSpent = true;
+      emitConnTrace(
+        ConnTraceKind.stallDumped,
+        'stall dump budget spent ($maxStallDumpsPerProcess dumps) — '
+        'further payloads skipped this process',
+        always: true,
+      );
     }
-    final metaFile = File('${dir.path}${Platform.pathSeparator}meta.json');
-    metaFile.writeAsStringSync(jsonEncode(meta), flush: true);
-    _emitStallDump(metaFile.path);
-    return metaFile;
+    return null;
+  }
+  final sink = stallDumpSink;
+  if (sink == null) return null;
+  try {
+    final bytes = record?.bodyBytes;
+    final path = await sink(
+      StallDump(
+        watchdog: watchdog,
+        idleTimeout: idleTimeout,
+        dumpedAt: DateTime.now().toUtc(),
+        method: record?.method ?? 'POST',
+        url: record?.url.toString() ?? 'unavailable',
+        redactedHeaders: record == null
+            ? <String, String>{}
+            : redactHeadersForMeta(record.headers),
+        payloadBytes: bytes,
+      ),
+    );
+    if (path == null) return null;
+    _dumpsWritten++;
+    _emitStallDump(path);
+    return path;
   } on Object {
     return null; // best-effort: the abort path outranks the capture.
   }
 }
+
+/// Builds the meta.json map (the io sink serializes it verbatim; exposed
+/// for the contract test that pins the redaction + integrity fields).
+Map<String, dynamic> buildStallMeta(StallDump dump) {
+  final meta = <String, dynamic>{
+    'watchdog': dump.watchdog,
+    'idleSeconds': dump.idleTimeout.inSeconds,
+    'dumpedAt': dump.dumpedAt.toIso8601String(),
+    'method': dump.method,
+    'url': dump.url,
+    'headers': dump.redactedHeaders,
+    'payload': dump.payloadBytes == null ? 'unavailable' : 'payload.bin',
+  };
+  if (dump.payloadBytes != null) {
+    meta['bodySha256'] = stallPayloadSha256(dump.payloadBytes!);
+  }
+  return meta;
+}
+
+/// The meta.json serializer (jsonEncode of [buildStallMeta]) — pure, so
+/// the contract test can pin the exact on-disk bytes.
+String serializeStallMeta(StallDump dump) => jsonEncode(buildStallMeta(dump));
 
 void _emitStallDump(String path) {
   // The capture line is emitted even with the trace off (AC3's ops
@@ -196,7 +287,12 @@ bool? poolEvictionOverride;
 bool get poolEvictionEnabled {
   final override = poolEvictionOverride;
   if (override != null) return override;
-  final raw = Platform.environment[poolEvictionEnvVar];
+  final lookup = providerStackEnvLookup;
+  if (lookup == null) return false;
+  return _flagValue(lookup(poolEvictionEnvVar));
+}
+
+bool _flagValue(String? raw) {
   if (raw == null) return false;
   final value = raw.trim().toLowerCase();
   return value == '1' || value == 'true';

@@ -153,4 +153,61 @@ void main() {
     expect(slept, isEmpty);
     expect(events.last, isA<DoneEvent>());
   });
+
+  test('E5 IT: a single-key ring SKIPS rotation (logged) and still '
+      'escalates to the smol takeover — the value-vs-name rotation anchor '
+      'cannot false-positive a rotate (review round 1)', () async {
+    final log = <String>[];
+    final notes = <String>[];
+    final savedNotice = transientRetryNotice;
+    transientRetryNotice = (attempt, max, delay, reason) => notes.add(reason);
+    addTearDown(() => transientRetryNotice = savedNotice);
+    final slept = <Duration>[];
+    final config = ModelRolesConfig(
+      roles: {
+        'default': [ModelRef(provider: 'anthropic', modelId: 'claude-main')],
+        'smol': [ModelRef(provider: 'anthropic', modelId: 'claude-smol')],
+      },
+    );
+    final resolver = ModelRolesResolver(
+      config: config,
+      secrets: const {'ANTHROPIC_API_KEY': 'key-1'},
+      sleeper: (delay, _) async {
+        slept.add(delay);
+        return true;
+      },
+      streamFactory: recordingFactory(log, stallsTotal: 3),
+    );
+    final wrapper = resolver.streamForRole('default');
+    final events = await wrapper
+        .call(wrapper.currentModel, const Context(messages: []))
+        .toList();
+    expect(
+      log.take(3),
+      everyElement('key-1'),
+      reason: 'no phantom rotation: one key, the same credential retries',
+    );
+    expect(
+      notes.any((m) => m.contains('rotation unavailable')),
+      isTrue,
+      reason: 'E5: the skip is logged, not silent',
+    );
+    expect(
+      events.last,
+      isA<DoneEvent>(),
+      reason: 'the smol takeover still serves the turn',
+    );
+    expect(
+      slept,
+      [
+        const Duration(seconds: 5),
+        const Duration(seconds: 10),
+        const Duration(seconds: 20),
+      ],
+      reason:
+          'the ladder escalates across calls (the policy is '
+          'session-scoped per chain entry — review round 1: not reset '
+          'per fallback attempt)',
+    );
+  });
 }

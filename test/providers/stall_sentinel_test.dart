@@ -7,8 +7,11 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/src/providers/conn_trace.dart';
+import 'package:flutter_agent_harness/src/providers/conn_trace_io.dart';
 import 'package:flutter_agent_harness/src/providers/provider_common.dart';
 import 'package:flutter_agent_harness/src/providers/stall_sentinel.dart';
+import 'package:flutter_agent_harness/src/providers/stall_sentinel_io.dart';
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:http/http.dart' as http;
 import 'package:test/test.dart';
 
@@ -19,6 +22,9 @@ void main() {
       trial = Directory.systemTemp.createTempSync('sentinel-ut');
       stallDumpDirectoryOverride = trial.path;
       connTraceOverride = false;
+      stallSentinelOverride = true; // the suite IS the sentinel's contract
+      resetStallDumpBudgetForTest(); // the cap must not leak across tests
+      installProviderStallForensics(); // io seams: env + disk sink
       resetConnTraceForTest();
     });
     tearDown(() {
@@ -42,7 +48,7 @@ void main() {
         idleTimeout: const Duration(seconds: 300),
       );
       expect(file, isNotNull);
-      final metaFile = file!;
+      final metaFile = File(file!);
       // The dump carries payload.bin (byte-identical body) + meta.json.
       final payload = File(
         '${metaFile.parent.path}${Platform.pathSeparator}payload.bin',
@@ -70,7 +76,8 @@ void main() {
         );
         expect(file, isNotNull);
         final meta =
-            jsonDecode(await file!.readAsString()) as Map<String, dynamic>;
+            jsonDecode(await File(file!).readAsString())
+                as Map<String, dynamic>;
         expect(meta['payload'], 'unavailable');
         expect(meta['watchdog'], 'stream-idle');
       },
@@ -93,9 +100,129 @@ void main() {
         connTraceSink = null;
       },
     );
+
+    test(
+      'BLOCKING (security): the allowlist masks EVERY credential '
+      'carrier — x-goog-api-key and custom authHeader names included',
+      () async {
+        final file = await dumpStalledRequest(
+          record: stallRecordOfRequest(
+            http.Request('POST', Uri.parse('https://gw.test/v1/chat'))
+              ..headers['x-goog-api-key'] = 'AIzaSyGOOGLE-RAW-KEY'
+              ..headers['x-custom-auth'] = 'Bearer CUSTOM-RAW-KEY'
+              ..headers['x-api-key'] = 'sk-anthropic-raw'
+              ..headers['cookie'] = 'session=raw'
+              ..headers['content-type'] = 'application/json'
+              ..headers['accept'] = 'text/event-stream',
+          ),
+          watchdog: 'stream-idle',
+          idleTimeout: const Duration(seconds: 300),
+        );
+        final root =
+            jsonDecode(await File(file!).readAsString())
+                as Map<String, dynamic>;
+        final meta = (root['headers'] as Map).cast<String, dynamic>();
+        expect(meta['x-goog-api-key'], 'REDACTED:x-goog-api-key');
+        expect(meta['x-custom-auth'], 'REDACTED:x-custom-auth');
+        expect(meta['x-api-key'], 'REDACTED:x-api-key');
+        expect(meta['cookie'], 'REDACTED:cookie');
+        expect((meta['content-type'] as String), isNot(contains('REDACTED')));
+        expect((meta['accept'] as String), isNot(contains('REDACTED')));
+        final serialized = await File(file).readAsString();
+        for (final secret in [
+          'AIzaSyGOOGLE-RAW-KEY',
+          'CUSTOM-RAW-KEY',
+          'sk-anthropic-raw',
+          'session=raw',
+        ]) {
+          expect(
+            serialized.contains(secret),
+            isFalse,
+            reason: 'no raw credential may reach the disk artifact',
+          );
+        }
+      },
+    );
+
+    test('bodySha256 is the real SHA-256 digest (the replay integrity '
+        'check verifies bytes, not a length)', () async {
+      final body = utf8.encode('{"model":"digest","stream":true}');
+      final file = await dumpStalledRequest(
+        record: stallRecordOfRequest(
+          http.Request('POST', Uri.parse('https://gw.test/v1'))
+            ..bodyBytes = body,
+        ),
+        watchdog: 'stream-idle',
+        idleTimeout: const Duration(seconds: 5),
+      );
+      final meta =
+          jsonDecode(await File(file!).readAsString()) as Map<String, dynamic>;
+      expect(
+        meta['bodySha256'],
+        sha256.convert(body).toString(),
+        reason:
+            'an operator must be able to verify a replay payload '
+            'byte-for-byte against the capture',
+      );
+    });
+
+    test('the per-process dump budget caps the writes (a black-holed '
+        'endpoint cannot fill the disk); the sentinel opt-out skips dumps '
+        'AND body retention', () async {
+      StallRequestRecord? seen;
+      stallDumpSink = (dump) async => '/tmp/fake-meta.json';
+      addTearDown(() {
+        stallDumpSink = null; // drop the fake, then re-install the writer
+        installStallSentinelDiskSink();
+      });
+      for (var i = 0; i < maxStallDumpsPerProcess; i++) {
+        expect(
+          await dumpStalledRequest(
+            record: null,
+            watchdog: 'connect',
+            idleTimeout: const Duration(seconds: 1),
+          ),
+          '/tmp/fake-meta.json',
+        );
+      }
+      expect(
+        await dumpStalledRequest(
+          record: null,
+          watchdog: 'connect',
+          idleTimeout: const Duration(seconds: 1),
+        ),
+        isNull,
+        reason: 'dump ${maxStallDumpsPerProcess + 1} is over budget',
+      );
+
+      // Opt-out: no dump, and the recorder holds no body bytes.
+      stallSentinelOverride = false;
+      addTearDown(() => stallSentinelOverride = true);
+      final request = http.Request('POST', Uri.parse('https://gw.test/v1'))
+        ..bodyBytes = utf8.encode('{"sensitive":"turn"}');
+      seen = stallRecordOfRequest(request);
+      expect(
+        seen.bodyBytes,
+        isNull,
+        reason: 'opted out: no payload retention via the Expando',
+      );
+      expect(
+        await dumpStalledRequest(
+          record: seen,
+          watchdog: 'connect',
+          idleTimeout: const Duration(seconds: 1),
+        ),
+        isNull,
+        reason: 'opted out: no dump at all',
+      );
+    });
   });
 
   group('AC3 IT — dump before abort on the production stack', () {
+    setUp(() {
+      installProviderStallForensics(); // idempotent; restores the real sink
+      resetStallDumpBudgetForTest();
+    });
     late HttpServer server;
     late Directory trial;
     late Completer<void> holdOpen;
@@ -166,6 +293,10 @@ void main() {
   });
 
   group('replay script — byte-identical replay, same stall signature', () {
+    setUp(() {
+      installProviderStallForensics(); // idempotent; restores the real sink
+      resetStallDumpBudgetForTest();
+    });
     late Directory trial;
     setUp(() {
       trial = Directory.systemTemp.createTempSync('sentinel-replay');
@@ -207,11 +338,13 @@ void main() {
         idleTimeout: const Duration(seconds: 1),
       );
       // Point the meta at the live server before replaying.
+      final metaPath = file!;
       final meta =
-          jsonDecode(await file!.readAsString()) as Map<String, dynamic>;
+          jsonDecode(await File(metaPath).readAsString())
+              as Map<String, dynamic>;
       meta['url'] = url.toString();
-      await file.writeAsString(jsonEncode(meta));
-      return (file, url);
+      await File(metaPath).writeAsString(jsonEncode(meta));
+      return (File(metaPath), url);
     }
 
     test('wedged endpoint → exit 2 (stall signature)', () async {

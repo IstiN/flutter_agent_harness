@@ -20,6 +20,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/src/providers/conn_trace.dart';
+import 'package:flutter_agent_harness/src/providers/conn_trace_io.dart';
 import 'package:flutter_agent_harness/src/providers/provider_common.dart';
 import 'package:flutter_agent_harness/src/providers/stall_sentinel.dart'
     show maybeEvictProviderPool, poolEvictionOverride;
@@ -244,6 +245,7 @@ void main() {
   group('AC2 — FA_CONN_DEBUG trace order', () {
     test('structured events in order: conn open (fresh) → first byte → '
         'idle watchdog FIRED (conn age, port)', () async {
+      installProviderStallForensics(); // the io seams: observed client + stderr
       connTraceOverride = true;
       resetConnTraceForTest(); // fresh board
       resetSharedProviderHttpClient(); // rebuild the singleton WITH tracing

@@ -295,6 +295,16 @@ factual: paths, commands, invariants — no essays.
   rotation after the 2nd stall of the run, smol-role takeover attempt
   after the 3rd, counter reset on success — wired into every
   `ModelRolesResolver` chain entry, pre-commit stalls only, #964 kept).
+  Purity split (gh-1395 review round 1): the four provider-forensics
+  contracts are pure Dart and barrel-exported; every platform surface
+  (env-knob lookup, the `[conn-trace]` stderr lines, the observed dart:io
+  client, the sentinel's disk sink) is an injected seam installed at the
+  host boundary by `installProviderStallForensics()` from
+  `conn_trace_io.dart`/`stall_sentinel_io.dart` — reachable ONLY through
+  `lib/io.dart`. Dumps are allowlist-redacted (credential carriers —
+  `x-goog-api-key`, custom `authHeader` names included — never reach
+  meta.json; only `safeForensicHeaders` survive) and carry a real SHA-256;
+  the dump budget is 8 per process, `FA_STALL_SENTINEL=0` opts out.
   The shared client also carries `resetSharedProviderHttpClient()` behind
   the `FA_POOL_EVICTION` flag — pool hygiene, not a correctness fix (the
   keep-alive pool is test-exonerated for every watchdog-window class).

@@ -16,9 +16,16 @@
 ///   ([SilentStreamPolicyHooks.buildTakeover] — the roles fallback chain
 ///   already exists; the stall counter hands it a bounded turn);
 /// - a successful response RESETS the stall counter (AC4);
-/// - past the budget the stall error STANDS — the roles ladder's existing
-///   transport classification takes over from there (unchanged behavior,
-///   REG-safe).
+/// - past the budget the stall error STANDS, TAGGED with the gh-1308
+///   zero-byte verdict tag — the roles fallback then advances to the next
+///   chain entry AT ONCE instead of paying more same-entry idle-watchdog
+///   windows re-proving the same wedged upstream (the policy IS the
+///   entry's silent-replay budget).
+///
+/// Replay idempotence: the assistant-message [StartEvent] is forwarded at
+/// most ONCE per call — replays and the takeover attempt suppress their
+/// own start frames, so the agent loop never records a phantom second
+/// assistant message (duplicate `MessageStartEvent`s downstream).
 ///
 /// Discipline kept from the transient ladder (#964): a stream that already
 /// emitted observable content is never replayed from scratch — a POST-commit
@@ -42,7 +49,8 @@ import '../event_stream.dart';
 import '../model.dart';
 import '../types.dart';
 import 'stall_taxonomy.dart';
-import 'transient_retry_stream.dart' show transientRetrySleeper;
+import 'transient_retry_stream.dart'
+    show transientRetrySleeper, zeroByteStallTag;
 
 /// The stall backoff ladder (AC4): `min(base * 2^(n-1), max)` with base
 /// 5 s and cap 60 s — delays 5 s, 10 s, 20 s, 40 s, 60 s, 60 s, … Every
@@ -69,8 +77,15 @@ final class ProviderStallLedger {
   final _consecutive = <Object?, int>{};
 
   /// Records a stall for [runKey], returning the consecutive-stall count
-  /// (1 = the first).
+  /// (1 = the first). Dead runs never linger: keys whose [CancelToken] is
+  /// already cancelled are swept on every record (an abandoned run's stall
+  /// count has no recovery value, and the token would otherwise be
+  /// retained for the session).
   int recordStall(Object? runKey) {
+    _consecutive.removeWhere((key, _) {
+      final token = key is CancelToken ? key : null;
+      return token != null && token.isCancelled;
+    });
     final next = (_consecutive[runKey] ?? 0) + 1;
     _consecutive[runKey] = next;
     return next;
@@ -184,6 +199,7 @@ final class SilentStreamPolicy {
   ) async {
     final runKey = cancelToken; // E3: the run identity
     var stallInCall = 0;
+    var startForwarded = false; // replay idempotence: ONE start frame/call
     while (true) {
       final inner = _innerBuilder();
       final (:terminal, :events) = await _runAttempt(
@@ -192,8 +208,8 @@ final class SilentStreamPolicy {
         context,
         out,
         cancelToken,
+        forwardStart: !startForwarded,
       );
-      final eventsBefore = events;
       if (terminal is DoneEvent) {
         ledger.reset(runKey); // AC4: success resets the counter
         return;
@@ -201,75 +217,138 @@ final class SilentStreamPolicy {
       if (terminal is! ErrorEvent) {
         return; // no terminal — the defensive catch already handled it
       }
-      final message = terminal.error;
       final stall = classifyProviderStall(
-        message.errorMessage,
-        eventsSeen: eventsBefore,
+        terminal.error.errorMessage,
+        eventsSeen: events,
       );
       // Only a PRE-commit idle stall ladders (#964: post-commit content is
       // never replayed from scratch; connect stalls replay in place in the
       // send layer — E1's distinct policy entries).
-      if (stall == null ||
-          stall.kind == ProviderStallKind.connectStall ||
-          eventsBefore > 0) {
+      if (!_ladderEligible(stall, events)) {
         out.push(terminal); // stands — the roles ladder classifies as today
         return;
       }
+      startForwarded = true; // any further attempt suppresses its start frame
+      final stood = _taggedStallTerminal(terminal);
       stallInCall++;
       final runStallNumber = ledger.recordStall(runKey);
-      final delay = stallBackoffDelay(runStallNumber);
-      hooks.onNotice?.call(
-        '[stall] ${stall.label}: retrying in ${delay.inSeconds}s '
-        '(stall $runStallNumber of the run)',
-      );
-      final survived = await (sleeper ?? transientRetrySleeper)(
-        delay,
-        cancelToken,
-      );
+      final survived = await _backoff(stall!, runStallNumber, cancelToken);
       if (!survived) {
         cancelToken?.throwIfCancelled();
-        out.push(terminal); // the user abort outranks the ladder
+        out.push(stood); // the user abort outranks the ladder
         return;
       }
-      if (stallInCall == 2) {
-        final rotated = hooks.rotateKey?.call() ?? false;
-        hooks.onNotice?.call(
-          rotated
-              ? '[stall] rotating API key after the 2nd stall'
-              : '[stall] rotation unavailable (single key on the ring) — '
-                    'retrying the same credential',
-        );
-      }
-      if (stallInCall == maxStallEscalations) {
-        final takeover = hooks.buildTakeover?.call();
-        if (takeover == null) {
-          hooks.onNotice?.call(
-            '[stall] no smol takeover target configured — standing the '
-            'error for the roles ladder',
-          );
-          out.push(terminal);
-          return;
-        }
-        hooks.onNotice?.call(
-          '[stall] 3rd stall of the run — attempting the smol-role takeover',
-        );
-        final takeoverOutcome = await _runAttempt(
-          takeover,
-          model,
-          context,
-          out,
-          cancelToken,
-        );
-        final takeoverTerminal = takeoverOutcome.terminal;
-        if (takeoverTerminal is DoneEvent) {
-          ledger.reset(runKey);
-        } else if (takeoverTerminal is ErrorEvent) {
-          out.push(takeoverTerminal); // the takeover's own failure stands
-        } else if (takeoverTerminal == null) {
-          out.push(terminal); // the takeover died silently — stand the stall
-        }
-        return; // the takeover attempt is the ladder's last word
-      }
+      _maybeRotate(stallInCall);
+      if (stallInCall < maxStallEscalations) continue;
+      await _attemptTakeover(out, model, context, cancelToken, runKey, stood);
+      return; // the takeover attempt is the ladder's last word
+    }
+  }
+
+  /// Whether the classified stall enters THIS ladder: an actual idle-stall
+  /// class on a PRE-commit stream (#964: post-commit content is never
+  /// replayed from scratch; connect stalls replay in place in the send
+  /// layer — E1's distinct policy entries).
+  static bool _ladderEligible(ProviderStallEvent? stall, int eventsBefore) {
+    if (stall == null) return false;
+    if (stall.kind == ProviderStallKind.connectStall) return false;
+    return eventsBefore == 0;
+  }
+
+  /// The error the ladder STANDS: the stall error verbatim PLUS the gh-1308
+  /// zero-byte verdict tag, so the roles fallback advances to the next
+  /// chain entry at once (the policy is the entry's silent-replay budget —
+  /// an untagged stand would re-enter the transport ladder and pay more
+  /// same-entry idle-watchdog windows re-proving the same fact).
+  static ErrorEvent _taggedStallTerminal(ErrorEvent terminal) {
+    final message = terminal.error;
+    final base = message.errorMessage ?? '';
+    final tagged = base.contains(zeroByteStallTag)
+        ? base
+        : '$base $zeroByteStallTag';
+    return ErrorEvent(
+      reason: terminal.reason,
+      error: AssistantMessage(
+        content: message.content,
+        api: message.api,
+        provider: message.provider,
+        model: message.model,
+        usage: message.usage,
+        stopReason: message.stopReason,
+        errorMessage: tagged,
+        timestamp: message.timestamp,
+      ),
+    );
+  }
+
+  /// Announces and runs the backoff sleep for stall [n]; `false` = the
+  /// sleep was abandoned (cancel/abort).
+  Future<bool> _backoff(
+    ProviderStallEvent stall,
+    int n,
+    CancelToken? cancelToken,
+  ) {
+    final delay = stallBackoffDelay(n);
+    hooks.onNotice?.call(
+      '[stall] ${stall.label}: retrying in ${delay.inSeconds}s '
+      '(stall $n of the run)',
+    );
+    return (sleeper ?? transientRetrySleeper)(delay, cancelToken);
+  }
+
+  /// The stall-2 escalation: API-key rotation on the ring (E5: a single-key
+  /// ring logs the skip via the `false` return and retries the credential).
+  void _maybeRotate(int stallInCall) {
+    if (stallInCall != 2) return;
+    final rotated = hooks.rotateKey?.call() ?? false;
+    hooks.onNotice?.call(
+      rotated
+          ? '[stall] rotating API key after the 2nd stall'
+          : '[stall] rotation unavailable (single key on the ring) — '
+                'retrying the same credential',
+    );
+  }
+
+  /// The stall-3 escalation: one smol-role takeover attempt, then the
+  /// ladder's last word — the takeover's [DoneEvent] resets the counter,
+  /// its own failure stands verbatim, and a silent death stands the
+  /// [stood] (tagged) stall error.
+  Future<void> _attemptTakeover(
+    AssistantMessageEventStream out,
+    Model model,
+    Context context,
+    CancelToken? cancelToken,
+    Object? runKey,
+    ErrorEvent stood,
+  ) async {
+    final takeover = hooks.buildTakeover?.call();
+    if (takeover == null) {
+      hooks.onNotice?.call(
+        '[stall] no smol takeover target configured — standing the '
+        'error for the roles ladder',
+      );
+      out.push(stood);
+      return;
+    }
+    hooks.onNotice?.call(
+      '[stall] 3rd stall of the run — attempting the smol-role takeover',
+    );
+    // The takeover NEVER re-sends the start frame: the host already holds
+    // this call's assistant-message start.
+    final (:terminal, :events) = await _runAttempt(
+      takeover,
+      model,
+      context,
+      out,
+      cancelToken,
+      forwardStart: false,
+    );
+    if (terminal is DoneEvent) {
+      ledger.reset(runKey);
+    } else if (terminal is ErrorEvent) {
+      out.push(terminal); // the takeover's own failure stands
+    } else {
+      out.push(stood); // the takeover died silently — stand the stall
     }
   }
 
@@ -280,6 +359,11 @@ final class SilentStreamPolicy {
   /// completes on its first terminal, so forwarding a stall error early
   /// would deadlock the escalation).
   ///
+  /// [forwardStart] gates the assistant-message [StartEvent]: only the
+  /// call's FIRST attempt forwards it — a replayed or takeover attempt
+  /// suppresses its own start frame so the agent loop never records a
+  /// phantom second assistant message (review round 1, blocking).
+  ///
   /// Returns the terminal event (or null when the stream ended without
   /// one) and how many CONTENT-bearing events were observed before it
   /// (the #964 commit guard + the taxonomy's first-byte / mid-stream
@@ -289,8 +373,9 @@ final class SilentStreamPolicy {
     Model model,
     Context context,
     AssistantMessageEventStream out,
-    CancelToken? cancelToken,
-  ) async {
+    CancelToken? cancelToken, {
+    required bool forwardStart,
+  }) async {
     var seen = 0;
     await for (final event in inner(model, context, cancelToken: cancelToken)) {
       if (event is DoneEvent) {
@@ -300,6 +385,7 @@ final class SilentStreamPolicy {
       if (event is ErrorEvent) {
         return (terminal: event, events: seen); // held for the ladder
       }
+      if (event is StartEvent && !forwardStart) continue;
       out.push(event);
       if (_isCommitEvent(event)) seen++;
     }

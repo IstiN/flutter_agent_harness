@@ -30,7 +30,6 @@ import 'roles_config.dart';
 import 'provider_catalog.dart';
 import '../providers/silent_stream_policy.dart';
 import '../providers/transient_retry_stream.dart' show transientRetryNotice;
-import '../exceptions.dart' show ConfigException;
 
 /// gh-760 (review): the role's chain has NO usable entry AND the skip
 /// reasons include unknown providers — a config written by a newer
@@ -207,6 +206,34 @@ final class ModelRolesResolver {
       keyBase,
       () => ApiKeyRing.fromSecrets(_secrets, keyBase, now: _now)!,
     );
+    // gh-1395 review round 1: ONE policy per chain entry (session-scoped).
+    // streamForKey is invoked per fallback ATTEMPT; building the policy
+    // inside it would mint a fresh ledger every attempt and AC4/E3's
+    // cross-call escalation (5→10→20 s, rotation, takeover) could never
+    // happen. Memoized here: the ledger survives across attempts AND
+    // calls; `currentKey` re-binds on every streamForKey so the fallback's
+    // own credential choice (affinity/rate-limit rotation) is honored,
+    // and [buildRouted] re-reads it per attempt so a rotation rebinds.
+    SilentStreamPolicy? entryPolicy;
+    var currentKey = ring.currentCredential.value;
+
+    StreamFunction buildRouted() {
+      final inner = _streamFactory(spec.kind, currentKey);
+      return (model, context, {cancelToken}) {
+        // An explicit per-call override (the compaction bypass) wins
+        // over the resolver's bound session id.
+        if (StreamCacheRouting.current != null) {
+          return inner(model, context, cancelToken: cancelToken);
+        }
+        return StreamCacheRouting.runWith(
+          () => inner(model, context, cancelToken: cancelToken),
+          // Read the mutable field lazily: hosts learn the session id
+          // after the resolver (and its chains) were built.
+          sessionId: sessionId?.call(),
+        );
+      };
+    }
+
     return ChainEntry(
       // Build from the RESOLVED spec's name: a kind-named ref
       // (`chatgpt-codex`) is not itself a catalog key.
@@ -222,41 +249,18 @@ final class ModelRolesResolver {
       ),
       keyRing: ring,
       streamForKey: (apiKey) {
-        // gh-1395 (AC4): every chain entry's stream rides the
-        // SilentStreamPolicy — a PRE-commit idle stall gets the bounded,
-        // escalating ladder (backoff 5→60s, key rotation on the ring after
-        // the 2nd stall of the run, smol-role takeover attempt after the
-        // 3rd) instead of a blind same-upstream replay (bench recovery
-        // 1/13). Non-stall classes pass through untouched: transport
-        // failures still replay in the transient ladder, rate limits still
-        // rotate in the roles ladder, and the policy never replays
-        // post-commit content (#964).
-        var currentKey = apiKey;
-        StreamFunction buildRouted() {
-          final inner = _streamFactory(spec.kind, currentKey);
-          return (model, context, {cancelToken}) {
-            // An explicit per-call override (the compaction bypass) wins
-            // over the resolver's bound session id.
-            if (StreamCacheRouting.current != null) {
-              return inner(model, context, cancelToken: cancelToken);
-            }
-            return StreamCacheRouting.runWith(
-              () => inner(model, context, cancelToken: cancelToken),
-              // Read the mutable field lazily: hosts learn the session id
-              // after the resolver (and its chains) were built.
-              sessionId: sessionId?.call(),
-            );
-          };
-        }
-
-        return silentStreamPolicyFunction(
-          buildRouted,
+        currentKey = apiKey;
+        final policy = entryPolicy ??= SilentStreamPolicy(
+          innerBuilder: buildRouted,
           hooks: SilentStreamPolicyHooks(
             rotateKey: () {
-              final next = ring.rotate(currentKey);
-              if (next == null) return false;
-              currentKey = next.value;
-              return true;
+              final rotated = rotateRingPast(ring, currentKey);
+              if (rotated) {
+                // rotate() advanced the ring's affinity — the new
+                // current credential is the one the next attempt uses.
+                currentKey = ring.currentCredential.value;
+              }
+              return rotated;
             },
             buildTakeover: role == smolModelRole
                 ? null
@@ -275,8 +279,30 @@ final class ModelRolesResolver {
           ),
           sleeper: sleeper,
         );
+        // gh-1395 (AC4): every chain entry's stream rides the
+        // SilentStreamPolicy — a PRE-commit idle stall gets the bounded,
+        // escalating ladder (backoff 5→60s, key rotation on the ring after
+        // the 2nd stall of the run, smol-role takeover attempt after the
+        // 3rd) instead of a blind same-upstream replay (bench recovery
+        // 1/13). Non-stall classes pass through untouched: transport
+        // failures still replay in the transient ladder, rate limits still
+        // rotate in the roles ladder, and the policy never replays
+        // post-commit content (#964).
+        return policy.call;
       },
     );
+  }
+
+  /// Rotates [ring] past the credential whose VALUE is [currentValue] —
+  /// translated to its secrets-store NAME first, because `ApiKeyRing
+  /// .rotate` matches by name and a raw value never matches (review round
+  /// 1). `false` for a single-key ring (E5: the policy logs the skip and
+  /// retries the same credential) or when every key is benched.
+  static bool rotateRingPast(ApiKeyRing ring, String currentValue) {
+    if (ring.length <= 1) return false;
+    final current = ring.credentialByValue(currentValue);
+    final next = ring.rotate(current?.name ?? ring.currentCredential.name);
+    return next != null;
   }
 
   /// The key base name for [ref]: its explicit `apiKeyName`, else — for a

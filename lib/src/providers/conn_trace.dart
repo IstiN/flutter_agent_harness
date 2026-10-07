@@ -4,21 +4,29 @@
 /// port P) at t0, first byte at t1, idle watchdog FIRED after 300 s (conn
 /// age, port P)".
 ///
-/// Gated by the `FA_CONN_DEBUG` env knob ([connTraceEnabled]): with the
-/// knob off the traced client is a pass-through — the caller gets the
-/// IDENTICAL [http.StreamedResponse] object, no stream wrapping, no timer
-/// churn (E4, asserted by a no-op test). With the knob on, lines go to
-/// stderr (prefixed `[conn-trace] `) AND into the structured event board
-/// ([connTraceEvents] / [connTraceSink]) that the bench's LatencyMeter
-/// aggregation consumes unchanged (#1392 owns that wiring).
+/// PURE Dart (barrel-exported; the dart2js web build pulls it): every
+/// platform surface is an injected seam — the env knob reads through
+/// [providerStackEnvLookup], trace lines leave through
+/// [connTraceStderrSink], and the observed dart:io client is built by
+/// [connTraceObservedClientFactory]. All three are installed by the io
+/// composition root (`installProviderStallForensics()` in
+/// `conn_trace_io.dart`, reached only through `lib/io.dart`); unset seams
+/// mean the knob reads off and lines go nowhere — zero overhead (E4).
+///
+/// With the knob off the traced client is a pass-through — the caller gets
+/// the IDENTICAL [http.StreamedResponse] object, no stream wrapping, no
+/// timer churn (E4, asserted by a no-op test). With the knob on, lines go
+/// to the stderr sink (prefixed `[conn-trace] `) AND into the structured
+/// event board ([connTraceEvents] / [connTraceSink]) that the bench's
+/// LatencyMeter aggregation consumes unchanged (#1392 owns that wiring).
 ///
 /// The client wrapper ALSO records every in-flight request against its
-/// response (always, knob or not — the sentinel needs the payload on
-/// watchdog fire); the association lives in an `Expando`, so it cannot
-/// outlive the response object.
+/// response (the sentinel needs the payload on watchdog fire; gated by
+/// [stallSentinelEnabled]); the association lives in an `Expando`, so it
+/// cannot outlive the response object.
 ///
 /// The observed dart:io client (fresh-vs-reused classification + local
-/// port) is only built when the host did NOT inject its own
+/// port) is only used when the host did NOT inject its own
 /// [providerHttpClientFactory] product: a native-stack client cannot be
 // ignore: comment_references
 /// re-opened through `HttpClient.connectionFactory`, so on such hosts the
@@ -27,26 +35,52 @@
 library;
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart' show IOClient;
 
 /// The debug knob: `FA_CONN_DEBUG=1` (or `true`) turns the trace on.
 const String connTraceEnvVar = 'FA_CONN_DEBUG';
 
-/// Test override for [connTraceEnabled] (null = read the env).
+/// The sentinel capture knob: `FA_STALL_SENTINEL=0` (or `false`) turns the
+/// outbound-payload recording + dumping off (hygiene opt-out — retention
+/// is real: the record keeps the body bytes alive via the response
+/// `Expando`). Default ON: the forensics are the point (AC3).
+const String stallSentinelEnvVar = 'FA_STALL_SENTINEL';
+
+/// The provider stack's environment seam (pure/web-safe): installed by the
+/// io composition root; null = every knob reads as its default (trace off,
+/// sentinel on, eviction off).
+String? Function(String name)? providerStackEnvLookup;
+
+bool _envFlag(String name, {required bool dflt}) {
+  final lookup = providerStackEnvLookup;
+  if (lookup == null) return dflt;
+  final raw = lookup(name);
+  if (raw == null) return dflt;
+  final value = raw.trim().toLowerCase();
+  if (value.isEmpty) return dflt;
+  return value == '1' || value == 'true';
+}
+
+/// Test override for [connTraceEnabled] (null = read the env seam).
 bool? connTraceOverride;
 
 /// Whether the connection trace is on.
 bool get connTraceEnabled {
   final override = connTraceOverride;
   if (override != null) return override;
-  final raw = Platform.environment[connTraceEnvVar];
-  if (raw == null) return false;
-  final value = raw.trim().toLowerCase();
-  return value == '1' || value == 'true';
+  return _envFlag(connTraceEnvVar, dflt: false);
+}
+
+/// Test override for [stallSentinelEnabled] (null = read the env seam).
+bool? stallSentinelOverride;
+
+/// Whether the stall sentinel records + dumps outbound payloads (AC3).
+bool get stallSentinelEnabled {
+  final override = stallSentinelOverride;
+  if (override != null) return override;
+  return _envFlag(stallSentinelEnvVar, dflt: true);
 }
 
 /// The structured trace event kinds, in the order a healthy request can
@@ -123,6 +157,16 @@ const int _connTraceBoardCap = 512;
 /// The structured-event consumer (bench/LatencyMeter). Null keeps the
 /// board-only behavior.
 void Function(ConnTraceEvent event)? connTraceSink;
+
+/// The stderr surface (the io composition root installs `stderr.writeln`;
+/// null = no live lines — the pure/web default). Each call receives the
+/// FULL prefixed line.
+void Function(String line)? connTraceStderrSink;
+
+/// Builds the observed dart:io client (the io side installs
+/// `() => IOClient(observeHttpClient())`); null = no conn-open port/fresh
+/// classification — lines degrade to `conn open (reused)`.
+http.Client Function()? connTraceObservedClientFactory;
 
 /// Clears the board and the sink (tests).
 void resetConnTraceForTest() {
@@ -213,7 +257,11 @@ void emitConnTrace(
   } on Object {
     // A broken consumer must never break the request path.
   }
-  stderr.writeln('[conn-trace] $line');
+  try {
+    connTraceStderrSink?.call('[conn-trace] $line');
+  } on Object {
+    // Same contract for the live stderr surface.
+  }
 }
 
 void _emit(ConnTraceEvent event, {bool always = false}) {
@@ -242,34 +290,6 @@ void connObserverNote({required int port, required Duration openedAfter}) {
   _openCount++;
   _lastLocalPort = port;
   _lastOpenedAt = DateTime.now().subtract(openedAfter);
-}
-
-/// A dart:io [HttpClient] whose connections funnel through the observer
-/// above. Debug-only: the factory override re-implements the connect leg
-/// (`Socket.startConnect`, TLS via `SecureSocket.startConnect`); proxy
-/// connections are traced at the proxy endpoint. Only ever installed when
-/// the trace is ON.
-HttpClient observeHttpClient() {
-  final client = HttpClient();
-  client.connectionFactory = (uri, proxyHost, proxyPort) async {
-    final host = proxyHost ?? uri.host;
-    final fallbackPort = uri.scheme == 'https' ? 443 : 80;
-    final port = proxyPort ?? (uri.port != 0 ? uri.port : fallbackPort);
-    final secure = uri.scheme == 'https' && proxyHost == null;
-    final watch = Stopwatch()..start();
-    final task = secure
-        ? await SecureSocket.startConnect(host, port)
-        : await Socket.startConnect(host, port);
-    unawaited(
-      task.socket.then(
-        (socket) =>
-            connObserverNote(port: socket.port, openedAfter: watch.elapsed),
-        onError: (Object _) {},
-      ),
-    );
-    return task;
-  };
-  return client;
 }
 
 /// The outbound-payload record the sentinel reads on watchdog fire: what
@@ -326,10 +346,12 @@ StallRequestRecord? stallRequestRecordFor(http.StreamedResponse response) =>
     _responseRecords[response];
 
 /// Captures the outbound identity + payload of [request] (the sentinel's
-/// evidence record; also used by the registry).
+/// evidence record; also used by the registry). Gated by
+/// [stallSentinelEnabled]: with the sentinel opted out the body is NOT
+/// held (no `Expando` retention of the payload) — metadata only.
 StallRequestRecord stallRecordOfRequest(http.BaseRequest request) {
   Uint8List? body;
-  if (request is http.Request) {
+  if (stallSentinelEnabled && request is http.Request) {
     try {
       body = request.bodyBytes;
     } on Object {
@@ -424,12 +446,13 @@ final class ConnTracedClient extends http.BaseClient {
 }
 
 /// Wraps the provider stack's HTTP client. [canInstallObserver] tells the
-/// wrapper it may replace the client with an observed dart:io one — true
-/// only when the caller built a plain default client (no host-injected
-/// factory product).
+/// wrapper it may swap in the observed dart:io client — true only when the
+/// caller built a plain default client (no host-injected factory product).
 ///
-/// Always returns a client whose requests are REGISTERED for the sentinel;
-/// the trace lines only appear while [connTraceEnabled].
+/// Always returns a client whose requests are REGISTERED for the sentinel
+/// (while [stallSentinelEnabled]); the trace lines only appear while
+/// [connTraceEnabled]. Pure: the observed client comes from the injected
+/// [connTraceObservedClientFactory] (io side), never built here.
 http.Client connTraceWrapProviderClient(
   http.Client inner, {
   required bool canInstallObserver,
@@ -438,7 +461,10 @@ http.Client connTraceWrapProviderClient(
     return ConnTracedClient._(inner, tracing: false);
   }
   if (canInstallObserver) {
-    return ConnTracedClient._(IOClient(observeHttpClient()), tracing: true);
+    final observed = connTraceObservedClientFactory?.call();
+    if (observed != null) {
+      return ConnTracedClient._(observed, tracing: true);
+    }
   }
   return ConnTracedClient._(inner, tracing: true);
 }
