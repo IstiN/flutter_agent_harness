@@ -100,7 +100,17 @@ coverage:
 # (CI app-crap-gate job, pre-commit core hook): 0.9.5 default-enables ALL
 # built-in gates, so everything not enforced below is disabled explicitly.
 gates:
-  loc: {enabled: false} # own ≤2800 gate (scripts/ci_fast_gate.sh)
+  # Issue #1234: whole-tree ≤2800-line guard (was scripts/ci_fast_gate.sh
+  # stage_size + the ci.yml shell guard). agent_service.dart and
+  # wasm_shell.dart sit under 2800 today; the app_localizations*.dart
+  # pattern covers ALL gen-l10n output (base + every locale variant —
+  # en/ru today, future locales automatically): generated files no human
+  # edits, excluded here, not baselined.
+  loc:
+    enabled: true
+    max_lines: 2800
+    exclude:
+      - 'lib/l10n/app_localizations*.dart'
   test_coverage: {enabled: false} # own ≥80% coverage-gate job
   complexity: {enabled: false} # CRAP ratchet below already covers it
   method_size: {enabled: false}
