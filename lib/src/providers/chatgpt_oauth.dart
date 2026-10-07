@@ -187,18 +187,19 @@ Future<ChatGptOAuthCredentials> _tokenRequest(
     // Issue #1036: ride the shared fetch watchdogs (connect 30s / read
     // 120s, FA_PROVIDER_TIMEOUT_SECONDS overrides the read leg) instead of
     // a hard-coded 30s — token refresh is on the agent's critical path.
-    final request = http.Request('POST', Uri.parse('$chatGptIssuer/oauth/token'))
-      ..headers['Content-Type'] = jsonBody
-          ? 'application/json'
-          : 'application/x-www-form-urlencoded'
-      ..body = jsonBody
-          ? jsonEncode(fields)
-          : fields.entries
-                .map(
-                  (e) =>
-                      '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}',
-                )
-                .join('&');
+    final request =
+        http.Request('POST', Uri.parse('$chatGptIssuer/oauth/token'))
+          ..headers['Content-Type'] = jsonBody
+              ? 'application/json'
+              : 'application/x-www-form-urlencoded'
+          ..body = jsonBody
+              ? jsonEncode(fields)
+              : fields.entries
+                    .map(
+                      (e) =>
+                          '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}',
+                    )
+                    .join('&');
     final response = await sendProviderFetch(
       httpClient,
       request,
@@ -244,6 +245,30 @@ Map<String, dynamic> _jsonObject(String body) {
   } on Object {
     return const {};
   }
+}
+
+/// The `email` claim of a JWT payload's middle segment, or null when the
+/// token is not a three-segment JWT, the payload is not a JSON object, or
+/// the claim is absent/empty/non-string. The ONE claim reader behind the
+/// account-identity entry naming (ChatGPT hosts via [ChatGptOAuthCredentials.idToken],
+/// AIIN via `aiinJwtEmail`, fa_ui's SSO bundle) — a single parser so the
+/// copies cannot drift (issue #1326 review, thread 10).
+String? jwtEmailClaim(String idToken) {
+  final parts = idToken.split('.');
+  if (parts.length != 3) return null;
+  final Object? claims;
+  try {
+    claims = jsonDecode(
+      utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
+    );
+  } on FormatException {
+    return null;
+  } on ArgumentError {
+    return null;
+  }
+  if (claims is! Map) return null;
+  final email = claims['email'];
+  return email is String && email.isNotEmpty ? email : null;
 }
 
 String? _accountIdFromJwt(String jwt) {
