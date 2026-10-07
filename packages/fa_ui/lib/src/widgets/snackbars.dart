@@ -144,13 +144,23 @@ void showFahSnack(
   BuildContext context,
   String message, {
   Duration duration = const Duration(seconds: 4),
+  bool hideCurrent = false,
 }) {
-  _showSnack(context, SnackBar(content: Text(message), duration: duration));
+  _showSnack(
+    context,
+    SnackBar(content: Text(message), duration: duration),
+    hideCurrent: hideCurrent,
+  );
 }
 
-void _showSnack(BuildContext context, SnackBar snack) {
+void _showSnack(
+  BuildContext context,
+  SnackBar snack, {
+  bool hideCurrent = false,
+}) {
   final messenger = ScaffoldMessenger.maybeOf(context);
   if (messenger == null) return;
+  if (hideCurrent) messenger.hideCurrentSnackBar();
   try {
     messenger.showSnackBar(snack);
   } on AssertionError catch (error) {
