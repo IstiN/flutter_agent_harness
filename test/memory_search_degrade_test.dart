@@ -20,46 +20,25 @@ import 'package:test/test.dart';
 /// An LLM provider whose calls blow up with the crash-of-record: the
 /// stale-core failure seen on iOS when a new session reads older session
 /// state. Any non-StateError exception reproduces the defect.
-class _BrokenCoreProvider implements LlmProvider {
+class _BrokenCoreProvider extends LlmProvider {
   @override
-  Future<String> chat(
-    String prompt, {
-    String? system,
-    double? temperature,
-    int? maxTokens,
-  }) async =>
-      throw Exception('Invalid core: OLDER session state read on a NEW '
-          'session');
+  final String defaultModel = 'broken-model';
+
+  @override
+  Future<String> chat(String prompt, {String? model, void Function()? onCancel}) =>
+      throw Exception(
+        'Invalid core: OLDER session state read on a NEW session',
+      );
 
   @override
   Future<String> chatMessages(
-    List<LlmChatMessage> messages, {
-    double? temperature,
-    int? maxTokens,
-  }) async =>
-      throw Exception('Invalid core: OLDER session state read on a NEW '
-          'session');
-
-  @override
-  Stream<String> chatStream(
-    String prompt, {
-    String? system,
-    double? temperature,
-    int? maxTokens,
-  }) async* {
-    throw Exception('Invalid core: OLDER session state read on a NEW '
-        'session');
-  }
-
-  @override
-  Stream<String> chatMessagesStream(
-    List<LlmChatMessage> messages, {
-    double? temperature,
-    int? maxTokens,
-  }) async* {
-    throw Exception('Invalid core: OLDER session state read on a NEW '
-        'session');
-  }
+    List<LlmMessage> messages, {
+    String? model,
+    void Function()? onCancel,
+  }) =>
+      throw Exception(
+        'Invalid core: OLDER session state read on a NEW session',
+      );
 }
 
 void main() {

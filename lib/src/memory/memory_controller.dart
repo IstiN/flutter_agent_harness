@@ -111,6 +111,8 @@ final class MemoryController {
   ExecutionEnvKbStorage? _userStorage;
   KBMemoryStore? _projectStore;
   KBMemoryStore? _userStore;
+  KBMemoryStore? _projectPlainStore;
+  KBMemoryStore? _userPlainStore;
   KBSearchEngine? _projectSearch;
   KBSearchEngine? _userSearch;
 
@@ -227,12 +229,12 @@ final class MemoryController {
         scope: scope,
       );
     }
-    final record = await store.addNote(
+    final record = await _addNoteAnyhow(
+      store,
+      scope: scope,
       text: text,
       tags: tags,
-      area: scope,
       importance: importance,
-      author: 'agent',
     );
     return MemoryEntry(
       id: record.id,
@@ -242,6 +244,40 @@ final class MemoryController {
       importance: importance,
       scope: scope,
     );
+  }
+
+  /// gh-1393: an LLM-backed enrichment failure (the iOS "Invalid core"
+  /// crash family) must not lose a memory — the raw text is the payload,
+  /// enrichment only adds area/topic/tag metadata. Retry through a
+  /// provider-less view of the same storage (enrichment no-ops), so the
+  /// save lands with keyword-only metadata.
+  Future<MemoryRecord> _addNoteAnyhow(
+    KBMemoryStore store, {
+    required String scope,
+    required String text,
+    required List<String> tags,
+    required double importance,
+  }) async {
+    try {
+      return await store.addNote(
+        text: text,
+        tags: tags,
+        area: scope,
+        importance: importance,
+        author: 'agent',
+      );
+    } on Object {
+      final plain = scope == 'user'
+          ? (_userPlainStore ??= KBMemoryStore(_userStorage!))
+          : (_projectPlainStore ??= KBMemoryStore(_projectStorage!));
+      return plain.addNote(
+        text: text,
+        tags: tags,
+        area: scope,
+        importance: importance,
+        author: 'agent',
+      );
+    }
   }
 
   /// Deletes a memory entry by id. With no explicit [scope], scans project
@@ -310,15 +346,25 @@ final class MemoryController {
     List<MemoryEntry> results,
   ) async {
     if (engine == null) return;
+    // gh-1393: a memory tool NEVER throws. The LLM-backed path can fail
+    // with more than a StateError (the iOS "Invalid core: OLDER session
+    // state read on a NEW session" crash family) — every failure degrades
+    // to keyword-only search for this scope; a broken keyword path skips
+    // the scope instead of crashing the session.
     try {
       final found = await engine.searchByText(query);
       results.addAll(
         found.results.take(limit).map((r) => _fromSearchResult(r, scope)),
       );
-    } on StateError {
-      // No LLM provider — fall back to keyword-only search.
+      return;
+    } on Object {
+      // fall through to keyword-only search below
+    }
+    try {
       final found = await engine.searchByKeywords(query);
       results.addAll(found.take(limit).map((r) => _fromSearchResult(r, scope)));
+    } on Object {
+      // scope unusable — skip it, the other scope may still answer
     }
   }
 
