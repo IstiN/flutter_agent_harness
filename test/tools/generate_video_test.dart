@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show MemoryExecutionEnv;
+import 'package:flutter_agent_harness/src/model_roles/media_model_slots.dart';
+import 'package:flutter_agent_harness/src/model_roles/models_config.dart';
 import 'package:flutter_agent_harness/src/tools/generate_video.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -463,6 +465,70 @@ void main() {
           ),
         ),
       );
+    });
+  });
+
+  group('resolveVideoGenerationEndpoint', () {
+    test('null models config resolves to no endpoint', () async {
+      expect(await resolveVideoGenerationEndpoint(null), isNull);
+    });
+
+    test('no videoGeneration slot override resolves to no endpoint', () async {
+      final config = ModelsConfig();
+      expect(await resolveVideoGenerationEndpoint(config), isNull);
+    });
+
+    test('slot override without a key name resolves with an empty key', () async {
+      final config = ModelsConfig(
+        slots: {
+          'videoGeneration': MediaSlotModelConfig(
+            providerKind: 'openai-completions',
+            baseUrl: 'https://api.minimax.io/v1',
+            modelId: 'MiniMax-H3',
+          ),
+        },
+      );
+      final endpoint = await resolveVideoGenerationEndpoint(config);
+      expect(endpoint, isNotNull);
+      expect(endpoint!.baseUrl, 'https://api.minimax.io/v1');
+      expect(endpoint.modelId, 'MiniMax-H3');
+      expect(endpoint.apiKey, isEmpty);
+    });
+
+    test('slot override with apiKeyName resolves the key via the seam', () async {
+      final config = ModelsConfig(
+        slots: {
+          'videoGeneration': MediaSlotModelConfig(
+            providerKind: 'openai-completions',
+            baseUrl: 'https://api.minimax.io/v1',
+            modelId: 'MiniMax-H3',
+            apiKeyName: 'MINIMAX_API_KEY',
+          ),
+        },
+      );
+      final endpoint = await resolveVideoGenerationEndpoint(
+        config,
+        resolveKey: (name) async => name == 'MINIMAX_API_KEY' ? 'sk-test' : null,
+      );
+      expect(endpoint!.apiKey, 'sk-test');
+    });
+
+    test('missing key resolution falls back to an empty key', () async {
+      final config = ModelsConfig(
+        slots: {
+          'videoGeneration': MediaSlotModelConfig(
+            providerKind: 'openai-completions',
+            baseUrl: 'https://api.minimax.io/v1',
+            modelId: 'MiniMax-H3',
+            apiKeyName: 'MINIMAX_API_KEY',
+          ),
+        },
+      );
+      final endpoint = await resolveVideoGenerationEndpoint(
+        config,
+        resolveKey: (name) async => null,
+      );
+      expect(endpoint!.apiKey, isEmpty);
     });
   });
 }

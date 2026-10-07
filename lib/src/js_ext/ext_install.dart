@@ -371,6 +371,15 @@ ExtensionManifest _parseManifest(Map<String, String> files, String label) {
   if (text == null) {
     throw ExtInstallException('$label: archive misses manifest.json/main.js');
   }
+  try {
+    return ExtensionManifest.fromJson(_decodeManifestJson(text, label));
+  } on ExtManifestException catch (error) {
+    throw ExtInstallException('$label: $error');
+  }
+}
+
+/// Decodes the raw manifest text and asserts it is a JSON object.
+Map<String, dynamic> _decodeManifestJson(String text, String label) {
   final Object? decoded;
   try {
     decoded = jsonDecode(text);
@@ -382,11 +391,7 @@ ExtensionManifest _parseManifest(Map<String, String> files, String label) {
   if (decoded is! Map<String, dynamic>) {
     throw ExtInstallException('$label: manifest.json must be a JSON object');
   }
-  try {
-    return ExtensionManifest.fromJson(decoded);
-  } on ExtManifestException catch (error) {
-    throw ExtInstallException('$label: $error');
-  }
+  return decoded;
 }
 
 /// GETs [uri] and decodes the JSON object body; non-200 or a non-object

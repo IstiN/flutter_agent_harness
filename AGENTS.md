@@ -14,8 +14,13 @@ factual: paths, commands, invariants — no essays.
   No per-subsystem mini-barrels, no re-sorting of existing lines — append
   only, so parallel edits almost never touch the same line.
 - God-file ceiling (gh-1232): no Dart file over 2800 lines anywhere
-  (`scripts/ci_fast_gate.sh` stage_size + ci.yml guard, both covering
-  `lib test example bin flutter_app/lib`). Target < 2000 for primary
+  (crap4dart `loc` gate, `max_lines: 2800` — issue #1234 migrated the
+  shell guards; enforced whole-tree in CI and on staged files by the
+  pre-commit hook. Scope: core `lib bin` via `crap4dart.yaml` +
+  `test example` via the `crap4dart.loc-scope.yaml` companion config
+  (0.11.0 has no per-gate sources override), flutter_app/lib via
+  `flutter_app/crap4dart.yaml`).
+  Target < 2000 for primary
   files; when a file approaches it, split by concern into `part` files
   (the established pattern: `agent_cli.dart`, `builtin_tools.dart`,
   `bin/fah.dart` → `bin/fah_*.dart`, `agent_service.dart` →
@@ -1651,15 +1656,19 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   `ci_fast_gate.sh` (ratchet — only tighten; the per-package gates above
   cannot see across module boundaries).
 - CRAP ratchet (`crap4dart analyze`, tool pinned as
-  `dart pub global activate crap4dart ">=0.10.0 <0.11.0"` — gh-1061;
-  bounded so a future 0.11.0+ is adopted deliberately, never
-  auto-floating), one config per package, thresholds are the current
-  per-package max — only down from here:
-  - core (`crap4dart.yaml`, sources `[lib, bin]`): **12.0** — three
-    TUI-only dispatchers at CC 3 / 0% cov pending PTY tests (documented
-    exception).
+  `dart pub global activate crap4dart ">=0.11.0 <0.12.0"` — gh-1106
+  superseded the old 0.10 bound; gates/baselines need 0.11), one config
+  per package, thresholds are the current per-package max — only down
+  from here:
+  - core (`crap4dart.yaml`, sources `[lib, bin]`): **12.0** (issue #1234:
+    the named census offenders moved — CC-12 trio + readPasteboardImage
+    16.32 split, the 0%-cov CC-3 quartet and the named CC-9 tier covered
+    or split, `_listModels` covered — but the first whole-tree
+    measurement showed the 8.0 repin unearned: 54 methods at 12.00
+    (CC-3@0% tier + covered CC-12 dispatchers) and 83 at 9.00. Threshold
+    stays at the measured max; the tier is the next ladder card).
   - flutter_app (`flutter_app/crap4dart.yaml`, sources `[lib]`,
-    issue #433/#475): **210.0** — measured by the SAME pipeline the CI gate
+    issue #433/#475): **30.0** — measured by the SAME pipeline the CI gate
     uses (the two `flutter-tests` shards emit `--coverage`; the
     `app-crap-gate` job merges the lcovs and runs the pinned analyzer —
     widget-test coverage differs from the core's dart lcov, E2).
@@ -1683,7 +1692,8 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
     threshold for BOTH packages, generated-exclude parity between the
     two configs, and `--only-down` (a PR that raises any threshold vs
     the merge base is rejected in CI).
-- Max 2800 lines per `.dart` file (`*.g.dart` exempt).
+- Max 2800 lines per `.dart` file (crap4dart `loc` gate, issue #1234 —
+  generated output excluded in the gate configs; `*.g.dart` exempt).
 - CI layout: `changes` (path filter) → parallel `static`, `test-core`
   (3 duration-balanced shards, `scripts/test_shards.json`, rebalanced
   weekly from junit durations; shard jobs emit junit-shard-N artifacts and
