@@ -141,15 +141,20 @@ hostCapabilityCatalog = Map.unmodifiable({
   HostCapability.messagingFabric: CapabilitySpec(
     capability: HostCapability.messagingFabric,
     title: 'Messaging fabric',
-    note: 'Transports: file + hub (FallbackMessagingRepository) + a2a. The '
-        'file transport needs no host service; hub rides the hub plugin '
-        '(slice-2 run-narrowing drops the hub transport when the plugin is '
-        'absent — the file fabric keeps working).',
+    note:
+        'Transports: file + hub (FallbackMessagingRepository) + a2a. The '
+        'file transport needs no host service beyond the session root it '
+        'writes under; hub rides the hub plugin (slice-2 run-narrowing '
+        'drops the hub transport when the plugin is absent — the file '
+        'fabric keeps working).',
     cliWiringSites: [
       'lib/src/messaging/agent_fabric.dart (buildAgentFabric)',
       'bin/fah.dart (a2aConfig, hubFabric)',
     ],
-    requiredServicesByTransport: {'hub': {'hubFabric'}},
+    requiredServicesByTransport: {
+      'hub': {'hubFabric'},
+      'file': {'sessionRoot'},
+    },
     surface: CapabilitySurface(
       tokens: {'schedule_message', 'agent_message', 'a2a'},
     ),
@@ -209,7 +214,8 @@ hostCapabilityCatalog = Map.unmodifiable({
   HostCapability.sqliteLspDap: CapabilitySpec(
     capability: HostCapability.sqliteLspDap,
     title: 'sqlite / lsp / dap',
-    note: 'FFI sqlite reader, process lsp transport, dap_* via the hub plugin. '
+    note:
+        'FFI sqlite reader, process lsp transport, dap_* via the hub plugin. '
         'Per-transport services: the sqlite reader rides the ffi transport, '
         'the lsp tool the process transport — a host without one keeps the '
         'other (the base file tools never depend on this row).',
@@ -304,12 +310,15 @@ hostCapabilityCatalog = Map.unmodifiable({
     title: 'Subagents + task system',
     note:
         'Inventory-driven (AC10): subagents: config, SubagentManager, '
-        'task/agent tools, heartbeat.',
+        'task/agent tools, heartbeat. Slice 3: the builder assembles the '
+        'complex (fabric → manager → heartbeat → task/monitoring tools) '
+        'from the typed SubagentServices bundle — absent from the run, '
+        'the capability narrows off like any missing platform service.',
     cliWiringSites: [
       'bin/fah.dart (subagents)',
       'lib/src/cli/agent_cli.dart (SubagentManager, taskTool)',
     ],
-    requiredServices: {'sessionRoot'},
+    requiredServices: {'sessionRoot', 'subagentServices'},
     surface: CapabilitySurface(tokens: {'task', 'agent_directory', 'subagent'}),
   ),
   HostCapability.browserBridge: CapabilitySpec(

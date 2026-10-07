@@ -132,11 +132,14 @@ extension AgentServiceHistory on AgentService {
   /// to the full length (nothing re-appends on the next persist).
   Future<void> _reprojectLoadedWindow(Session session) async {
     final context = await session.buildContext();
-    _agent.state.messages = context.messages;
-    _persistedCount = context.messages.length;
+    // Full-open external reload — same stale-anchor reset as [loadSession]
+    // (issue #1332): disk records still carry generation-time usage.
+    final projected = resetLoadedUsageAnchors(context.messages);
+    _agent.state.messages = projected;
+    _persistedCount = projected.length;
     messages
       ..clear()
-      ..addAll(context.messages.map(_toChatMessage));
+      ..addAll(projected.map(_toChatMessage));
     await _rebuildTrajectory();
     _notify();
   }
