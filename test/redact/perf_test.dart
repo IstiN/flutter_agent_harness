@@ -37,7 +37,13 @@ String buildWithTokens(int size, int count) {
 void main() {
   final pipeline = RedactionPipeline(registeredSecrets: const []);
 
-  test('100 KB clean text redacts in < 50ms (generous CI bound)', () {
+  test('100 KB clean text redacts in < 100ms (generous CI bound)', () {
+    // gh-1357 class (run 37550915894, core shard 1/4): the arm64 runner
+    // measured EXACTLY 50ms against the old `lessThan(50)` bound — the
+    // clean-text pass sits at the bound on that hardware, so any shard
+    // load tips it red. Headroom, not a pipeline regression: the same
+    // run's 1000-token test passed with 3x margin, and the gate still
+    // catches the order-of-magnitude regression it exists for.
     final plain = buildPlain(100 * 1024);
     // JIT warm-up, not counted.
     pipeline.redact(plain.substring(0, 512));
@@ -46,7 +52,7 @@ void main() {
     sw.stop();
     expect(
       sw.elapsedMilliseconds,
-      lessThan(50),
+      lessThan(100),
       reason: 'took ${sw.elapsedMilliseconds}ms',
     );
   });
