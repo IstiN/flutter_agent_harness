@@ -54,27 +54,53 @@ Future<AgentDiscoveryResult> discoverTaskAgents(
   final seen = <String>{};
   for (final roots in [projectRoots, userRoots]) {
     for (final root in roots) {
-      if (allowedSources != null && !allowedSources.contains(root.source)) {
-        continue;
-      }
-      final dirResult = await env.listDir(root.path);
-      final entries = dirResult.valueOrNull;
-      if (entries == null) continue;
-      for (final entry in entries) {
-        if (entry.kind != FileKind.file) continue;
-        final name = _agentNameFromFile(entry.name);
-        if (name == null) continue;
-        if (!seen.add(name.toLowerCase())) continue;
-        final textResult = await env.readTextFile(entry.path);
-        final text = textResult.valueOrNull;
-        if (text == null) continue;
-        final parsed = _parseAgentFile(name, text);
-        notes.addAll(parsed.notes);
-        if (parsed.definition != null) agents.add(parsed.definition!);
-      }
+      await _scanAgentRoot(env, root, allowedSources, seen, agents, notes);
     }
   }
   return AgentDiscoveryResult(agents: agents, notes: notes);
+}
+
+/// Scans one discovery root's directory entries into [agents]/[notes].
+/// Missing roots are silently skipped; [seen] dedupes names
+/// case-insensitively across roots (project wins — it scans first).
+Future<void> _scanAgentRoot(
+  ExecutionEnv env,
+  AgentRoot root,
+  Set<SkillSource>? allowedSources,
+  Set<String> seen,
+  List<TaskAgentDefinition> agents,
+  List<String> notes,
+) async {
+  if (allowedSources != null && !allowedSources.contains(root.source)) {
+    return;
+  }
+  final dirResult = await env.listDir(root.path);
+  final entries = dirResult.valueOrNull;
+  if (entries == null) return;
+  for (final entry in entries) {
+    await _ingestAgentEntry(env, entry, seen, agents, notes);
+  }
+}
+
+/// Reads and parses one candidate agent file. Non-markdown entries,
+/// duplicate names, and unreadable files are silently skipped.
+Future<void> _ingestAgentEntry(
+  ExecutionEnv env,
+  FileInfo entry,
+  Set<String> seen,
+  List<TaskAgentDefinition> agents,
+  List<String> notes,
+) async {
+  if (entry.kind != FileKind.file) return;
+  final name = _agentNameFromFile(entry.name);
+  if (name == null) return;
+  if (!seen.add(name.toLowerCase())) return;
+  final textResult = await env.readTextFile(entry.path);
+  final text = textResult.valueOrNull;
+  if (text == null) return;
+  final parsed = _parseAgentFile(name, text);
+  notes.addAll(parsed.notes);
+  if (parsed.definition != null) agents.add(parsed.definition!);
 }
 
 /// The fallback agent type name from a file name: `<name>.md` or Copilot's

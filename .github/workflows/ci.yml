@@ -246,18 +246,12 @@ jobs:
 
       - run: dart pub get
 
-      # gh-1232 AC2: `bin` was missing here — bin/fah.dart sailed past 2800
-      # unnoticed because this guard only scanned lib/test/example. The dir
-      # list and generated-file exclusions mirror scripts/ci_fast_gate.sh's
-      # stage_size (the canonical guard).
-      - name: File size guard (no dart file over 2800 lines)
-        run: |
-          violations=$(find lib test example bin -name '*.dart' \
-            ! -name '*.g.dart' ! -name '*.freezed.dart' ! -name '*.mocks.dart' \
-            ! -name '*bridge_generated*.dart' ! -name '*app_localizations*.dart' \
-            ! -name '*localizations_*.dart' \
-            -exec sh -c 'lines=$(wc -l < "$1"); if [ "$lines" -gt 2800 ]; then echo "$1: $lines lines"; fi' _ {} \;)
-          if [ -n "$violations" ]; then echo "$violations"; exit 1; fi
+      # Issue #1234: the ≤2800-line file guard MOVED into crap4dart's loc
+      # gate (crap4dart.yaml, wc -l parity verified by the maintainer
+      # recipe in the issue) — enforced whole-tree by the
+      # `crap4dart check --baseline` Quality-gates step below. The shell
+      # find-exec guard (gh-1232 AC2) is gone: one enforcement point, no
+      # drifted exclusions.
 
       # Issue #1100: the fa-web-spa.zip packaging guard (base-tag patch +
       # absolute-/app/ grep) must stay functional on every PR — a release
@@ -1149,6 +1143,17 @@ jobs:
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: dart pub global run crap4dart check --baseline
 
+      # Issue #1234 rework: 0.11.0 has no per-gate sources override (a
+      # gates.loc.sources key is a ConfigException — caught here on
+      # 019ede65), and the package config's sources drive the CRAP census
+      # too, so test/ + example/ get the SAME loc gate from the companion
+      # config (crap4dart.loc-scope.yaml) — the scope the retired shell
+      # guards (gh-1232) scanned there. No baseline: nothing exceeds 2800
+      # today, and the ceiling itself is the point.
+      - name: Loc scope gate (test/ + example/, gh-1232 whole-tree ceiling)
+        if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
+        run: dart pub global run crap4dart check --config crap4dart.loc-scope.yaml --only loc
+
       - name: Duplication guard (lib/ < 1%)
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         run: |
@@ -1281,18 +1286,11 @@ jobs:
       - name: Lockfile pod-sync gate (gh-1296 NG1)
         run: bash scripts/check_lockfiles.sh pod-sync
 
-      # gh-1232 AC2: the core static-gates size guard only scans
-      # lib/test/example/bin — flutter_app/lib was never measured in CI
-      # (scripts/ci_fast_gate.sh measures it only when APP_IN_SCOPE). Same
-      # generated-file exclusions as the core guard.
-      - name: File size guard (flutter_app, no dart file over 2800 lines)
-        run: |
-          violations=$(find flutter_app/lib -name '*.dart' \
-            ! -name '*.g.dart' ! -name '*.freezed.dart' ! -name '*.mocks.dart' \
-            ! -name '*bridge_generated*.dart' ! -name '*app_localizations*.dart' \
-            ! -name '*localizations_*.dart' \
-            -exec sh -c 'lines=$(wc -l < "$1"); if [ "$lines" -gt 2800 ]; then echo "$1: $lines lines"; fi' _ {} \;)
-          if [ -n "$violations" ]; then echo "$violations"; exit 1; fi
+      # Issue #1234: the flutter_app ≤2800-line guard moved into the app
+      # crap4dart.yaml loc gate — enforced whole-tree by the app-crap-gate
+      # job's `crap4dart check --baseline` (app_localizations.dart is
+      # gen-l10n output, excluded in the gate config). The shell find-exec
+      # guard (gh-1232 AC2) is gone.
 
       - name: flutter analyze
         run: cd flutter_app && flutter analyze --no-fatal-infos --no-fatal-warnings
