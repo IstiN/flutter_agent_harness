@@ -177,7 +177,7 @@ jobs:
           # trigger model: ci.yml has NO pull_request trigger (dispatch-only
           # CI, see the flutter-app-exzone job comment) — this step runs only
           # on a real pull_request event, so today it is path-narrowing
-          # RESERVE, exactly like the perf/usagefold/intmock greps below
+          # RESERVE, exactly like the perf/usagefold/intmock greps above
           # (documented pending in issue #303); the flutter-app-exzone leg
           # actually gates via its workflow_dispatch arm (gh-1280 idiom).
           # Context: the ubuntu flutter-tests leg runs this family but every
