@@ -281,8 +281,8 @@ void main() {
       },
     );
 
-    test('AC9b: a send failure with a pooled keep-alive socket emits '
-        'stale_socket naming it', () async {
+    test('AC9b: a send-phase failure on a REUSED same-origin socket emits '
+        'stale_socket naming + evicting it', () async {
       connTrace.resetForTest();
       final lines = <String>[];
       connTrace.emitSink = lines.add;
@@ -293,8 +293,8 @@ void main() {
       final server = await _keepAliveServer();
       addTearDown(server.close);
       final client = connTrace.tracedClient()!;
-      final good = 'http://127.0.0.1:${server.port}/v1';
-      final r1 = await client.send(_post(good));
+      final good = Uri.parse('http://127.0.0.1:${server.port}/v1');
+      final r1 = await client.send(_post(good.toString()));
       await r1.stream.drain<void>();
       final port1 =
           (_events(
@@ -303,11 +303,49 @@ void main() {
               as int;
       expect(port1, isNotNull);
 
-      // dart:io transparently reconnects when a POOLED socket is found
-      // dead, so the observable stale-socket failure is the next send
-      // erroring while a pooled connection exists: a closed port refuses
-      // the connection and the traced client names the socket it had been
-      // keeping alive (local port + age) before evicting it.
+      // The silent keep-alive close dies on the NEXT request that reuses
+      // the socket (issue #1392 AC9): same origin + send phase => the
+      // pooled socket is named (local port + age) and evicted. Driven via
+      // the decision hook — a real server that RSTs mid-reuse races
+      // dart:io's transparent reconnect and cannot be pinned
+      // deterministically.
+      (client as TracedProviderClient).blameSendFailureForTest(
+        good,
+        'Connection closed while sending',
+      );
+      final stale = _events(
+        lines,
+      ).where((e) => e['event'] == 'stale_socket').toList();
+      expect(stale, hasLength(1));
+      expect(stale.single['localPort'], port1);
+      expect(stale.single['ageSec'], isNotNull);
+      // Evicted: the pool snapshot must stop counting the dead socket.
+      expect(client.poolSizeForTest, 0);
+    });
+
+    test('AC9b hardening: a fresh-connect refusal is connect_failed, '
+        'never a stale_socket — the pool is left alone', () async {
+      connTrace.resetForTest();
+      final lines = <String>[];
+      connTrace.emitSink = lines.add;
+      addTearDown(connTrace.resetForTest);
+      connTrace.enable();
+
+      // Seed the pool with a healthy socket, then fail a fresh connect to
+      // a DIFFERENT origin (a freshly-closed port) — exactly the
+      // misattribution case: the old code named the healthy pooled socket
+      // as stale and evicted it.
+      final server = await _keepAliveServer();
+      addTearDown(server.close);
+      final client = connTrace.tracedClient()!;
+      final r1 = await client.send(_post('http://127.0.0.1:${server.port}/v1'));
+      await r1.stream.drain<void>();
+      final port1 =
+          (_events(
+                lines,
+              ).where((e) => e['event'] == 'first_byte').single)['localPort']
+              as int;
+
       final dead = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
       final deadPort = dead.port;
       await dead.close();
@@ -316,12 +354,72 @@ void main() {
         client.send(_post('http://127.0.0.1:$deadPort/v1')),
         throwsA(isA<http.ClientException>()),
       );
+      final kinds = _events(lines).map((e) => e['event']).toList();
+      expect(
+        kinds,
+        contains('connect_failed'),
+        reason: 'a refused fresh connect is a connect failure',
+      );
+      expect(
+        kinds,
+        isNot(contains('stale_socket')),
+        reason: 'a fresh connect never touched the pooled socket',
+      );
+      // The healthy pooled socket survives the misattribution fix.
+      final ok = await client.send(_post('http://127.0.0.1:${server.port}/v1'));
+      await ok.stream.drain<void>();
+      final reused =
+          (_events(lines).where((e) => e['event'] == 'first_byte').last) as Map;
+      expect(
+        reused['fresh'],
+        isFalse,
+        reason: 'the pooled socket was NOT evicted',
+      );
+      expect(reused['localPort'], port1);
+    });
+
+    test('AC9b: same-origin endpoint-down after a pooled reuse emits '
+        'stale_socket — dart:io dials lazily, so the pooled socket is '
+        'what died', () async {
+      connTrace.resetForTest();
+      final lines = <String>[];
+      connTrace.emitSink = lines.add;
+      addTearDown(connTrace.resetForTest);
+      connTrace.enable();
+
+      // Closed in-body (no addTearDown): the second close would throw.
+      final server = await _keepAliveServer();
+      final port = server.port;
+      final client = connTrace.tracedClient()!;
+      final r1 = await client.send(_post('http://127.0.0.1:$port/v1'));
+      await r1.stream.drain<void>();
+      await server.close();
+
+      await expectLater(
+        client.send(_post('http://127.0.0.1:$port/v1')),
+        throwsA(isA<http.ClientException>()),
+      );
+      // HttpClient.openUrl is lazy: the request writes into the POOLED
+      // socket, which the server just closed — the textbook silent
+      // keep-alive close, correctly named and evicted (same origin).
       final stale = _events(
         lines,
       ).where((e) => e['event'] == 'stale_socket').toList();
       expect(stale, hasLength(1));
-      expect(stale.single['localPort'], port1);
-      expect(stale.single['ageSec'], isNotNull);
+      expect(stale.single['localPort'], isNotNull);
+    });
+
+    test('blame hook: a cross-origin send-phase failure never evicts the '
+        'pooled socket', () {
+      connTrace.resetForTest();
+      addTearDown(connTrace.resetForTest);
+      connTrace.enable();
+      final client = connTrace.tracedClient()! as TracedProviderClient;
+      client.blameSendFailureForTest(
+        Uri.parse('http://127.0.0.1:1/v1'),
+        'boom',
+      );
+      expect(client.poolSizeForTest, 0);
     });
   });
 

@@ -1912,7 +1912,14 @@ from any machine with `scripts/replay_hang.sh <file> [url]`.
 `FA_CONN_DEBUG=1` (also under `FA_PROVIDER_DEBUG`) turns on the
 connection lifecycle trace in `sharedProviderHttpClient()`; live
 `[fa-bench]` lines stream per-request progress to stderr while the run
-is still going. The run report (`summary.py`) is green-with-note on
+is still going. URLs in trace lines have their query string stripped
+and snapshot URLs mask credential-looking params (key-in-query
+providers must not leak into logs); the payload snapshot is strictly
+opt-in — set `FA_CONN_PAYLOAD_SNAPSHOT=<path>` to capture (the bench
+workflow does, deliberately; nothing else should by default). A
+stale-socket event fires only for a failure on a REUSED same-origin
+pooled socket — a fresh-connect refusal is `connect_failed` and never
+evicts the pool. The run report (`summary.py`) is green-with-note on
 cancelled shards (`coverage: X/N`), splits latency p50/p95 by
 concurrency level, and names any `agent_timeout` trial whose session
 gaps never reached the stall threshold (score honesty).

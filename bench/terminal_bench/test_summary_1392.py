@@ -20,6 +20,9 @@ summary = importlib.util.module_from_spec(spec)
 sys.modules["summary_r3"] = summary
 spec.loader.exec_module(summary)
 
+import bench_metrics
+from bench_metrics import summarize_trial
+
 
 def _results(run_dir, rows):
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -94,18 +97,26 @@ class LatencyReportTest(unittest.TestCase):
     def _trial_metrics(self, task, trial, level, first_bytes):
         trial_dir = self.runs / "shard-0" / task / trial
         trial_dir.mkdir(parents=True)
+        # The EXACT shape bench_metrics.summarize_trial writes (the writer
+        # the adapter calls); a fixture that invents keys would pass while
+        # the real report stays empty.
         (trial_dir / "bench_metrics.json").write_text(
             json.dumps(
-                {
-                    "trial": trial,
-                    "concurrency_level": level,
-                    "requests": [
-                        {"seq": i + 1, "first_byte": fb, "wall": fb * 2}
+                summarize_trial(
+                    trial,
+                    [
+                        {
+                            "event": "first_byte",
+                            "seq": i + 1,
+                            "wallSec": fb,
+                            "fresh": i % 2 == 0,
+                            "localPort": 40000 + i,
+                            "poolSize": 2,
+                        }
                         for i, fb in enumerate(first_bytes)
                     ],
-                    "latency": {"first_byte": {"max": max(first_bytes)}},
-                    "watchdog_events": [],
-                }
+                    concurrency_level=level,
+                )
             )
         )
 
@@ -119,10 +130,12 @@ class LatencyReportTest(unittest.TestCase):
         self.assertIn("Request latency by concurrency level", block)
         self.assertIn("concurrency 2", block)
         self.assertIn("concurrency 1", block)
-        # p50 of 1..10 is 5.5; p95 ~ 9.5 (interpolated).
-        self.assertIn("first-byte p50=5.5s", block)
-        self.assertIn("p95=9.5s", block)
-        self.assertIn("first-byte p50=250.0s", block)
+        # Nearest-rank percentiles (bench_metrics.percentile — the same
+        # implementation the writer uses): p50 of 1..10 = 5.0, p95 = 10.0;
+        # p50 of 100..400 = 200.0, p95 = 400.0.
+        self.assertIn("first-byte p50=5.0s", block)
+        self.assertIn("p95=10.0s", block)
+        self.assertIn("first-byte p50=200.0s", block)
 
     def test_no_metrics_no_block(self):
         _results(self.runs / "shard-0", [_row("t1", "t1__t", mode="unset")])

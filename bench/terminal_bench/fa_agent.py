@@ -179,6 +179,9 @@ class FaAgent(AbstractInstalledAgent):
             if result.failure_mode in _NEVER_STARTED_MODES:
                 return result
             return self._fold_session_usage(session, result, logging_dir)
+        # test_budget_sec stays 0: the agent phase does not consume the
+        # verifier's budget — tb enforces the test phase separately, so
+        # the abs ceiling is flat.
         return self._perform_task_with_deadline(
             knobs, instruction, session, logging_dir
         )
@@ -224,19 +227,38 @@ class FaAgent(AbstractInstalledAgent):
 
         live = _bench_metrics.LiveProgress()
         pane_offset = 0
+        # Bytes of a line that has not seen its newline yet: an FA_CONN
+        # record flushed across two polls would otherwise parse as nothing
+        # (no prefix) and be dropped from the live view AND the pane
+        # fallback metrics (issue #1392 review — ~720 slices per hour).
+        pane_tail = b""
         conn_events = []
         start = time.monotonic()
         outcome = None
+
+        def _feed_complete_lines():
+            nonlocal pane_tail, pane_offset
+            new_bytes, pane_offset = self._read_pane_increment(
+                session, pane_offset
+            )
+            if not new_bytes:
+                return
+            pane_tail += new_bytes
+            cut = pane_tail.rfind(b"\n")
+            if cut < 0:
+                return
+            text = pane_tail[: cut + 1].decode("utf-8", errors="replace")
+            pane_tail = pane_tail[cut + 1 :]
+            # LiveProgress: per-request/per-turn lines flushed as they
+            # happen, so a stall is visible forming in the live log.
+            live.feed(text)
+            conn_events.extend(_bench_metrics.parse_conn_events(text))
+
         while worker.is_alive():
             remaining = decider.kill_at - (time.monotonic() - start)
             time.sleep(min(_POLL_SEC, max(remaining, 0.05)))
             elapsed = time.monotonic() - start
-            new_text, pane_offset = self._read_pane_increment(session, pane_offset)
-            if new_text:
-                # LiveProgress: per-request/per-turn lines flushed as they
-                # happen, so a stall is visible forming in the live log.
-                live.feed(new_text)
-                conn_events.extend(_bench_metrics.parse_conn_events(new_text))
+            _feed_complete_lines()
             outcome = decider.evaluate(elapsed, self._progress_bytes(session))
             if outcome:
                 if outcome == "stall":
@@ -256,6 +278,12 @@ class FaAgent(AbstractInstalledAgent):
                     worker.join(30)
                 break
 
+        # Final partial line (no trailing newline at kill time): still an
+        # event worth folding into the post-mortem.
+        if pane_tail:
+            tail_text = pane_tail.decode("utf-8", errors="replace")
+            live.feed(tail_text)
+            conn_events.extend(_bench_metrics.parse_conn_events(tail_text))
         self._tap_pane(session, on=False)
         self._write_trial_metrics(session, logging_dir, conn_events)
         crashed = "error" in box
@@ -329,8 +357,11 @@ class FaAgent(AbstractInstalledAgent):
     def _read_pane_increment(session, offset):
         """(new_pane_bytes, new_offset) since `offset` — the LiveProgress feed.
 
-        Fail-soft: a broken exec returns ("", offset) and the poll loop
-        keeps running; the byte counter remains the progress signal.
+        Returns BYTES; the offset is a raw byte count, so a partial
+        multi-byte character at the slice boundary survives (the caller
+        decodes only complete newline-terminated lines). Fail-soft: a
+        broken exec returns (b"", offset) and the poll loop keeps
+        running; the byte counter remains the progress signal.
         """
         try:
             result = session.container.exec_run(
@@ -339,11 +370,15 @@ class FaAgent(AbstractInstalledAgent):
             if result.exit_code == 0 and result.output:
                 data = result.output
                 if isinstance(data, str):
-                    data = data.encode(errors="replace")
-                return data.decode("utf-8", errors="replace"), offset + len(data)
+                    # surrogateescape round-trips invalid bytes so the
+                    # OFFSET stays byte-true (errors="replace" would inflate
+                    # one bad byte to three U+FFFD bytes and the next tail
+                    # would skip content).
+                    data = data.encode("utf-8", errors="surrogateescape")
+                return data, offset + len(data)
         except Exception:
             pass
-        return "", offset
+        return b"", offset
 
     @staticmethod
     def _capture_stall(session, logging_dir, decider, conn_events, elapsed):

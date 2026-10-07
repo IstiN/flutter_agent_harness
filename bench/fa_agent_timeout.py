@@ -17,7 +17,9 @@ with a GAP-aware one: a trial counts as progressing while
 inter-assistant-record gaps stay under FA_STALL_GAP_SEC (default 240s —
 round-2 healthy max gap was ~200s, class-B gaps start ~240s); a
 progressing trial dies only at FA_AGENT_TIMEOUT_ABS_CEILING_SEC (default
-3600s + the task's test budget). A gap >= the threshold marks the trial
+3600s, flat — the agent phase does NOT consume the verifier's test
+budget; tb enforces the test phase separately, and the adapter never
+folds a test budget in). A gap >= the threshold marks the trial
 stalled and the ladder resumes counting (last progress + idle window) —
 a genuinely stuck agent still dies, and a class-C catastrophic stall now
 dies at the gap boundary instead of burning the whole ladder.
@@ -36,8 +38,8 @@ default workflow run keeps today's byte-for-byte behavior):
   FA_STALL_GAP_SEC             progress-watch: inter-record gap that marks a
                                stall (default 240 in watch mode)
   FA_AGENT_TIMEOUT_ABS_CEILING_SEC  progress-watch: absolute kill ceiling the
-                               extension can never pass (default 3600; the
-                               caller folds the task's test budget in)
+                               extension can never pass (default 3600, flat;
+                               the ADAPTER does not fold a test budget in)
 
 Extension signal (E1): the counters fed to ProgressLadder measure the
 agent process's own output bytes. The harness itself emits nothing into
@@ -243,7 +245,10 @@ class ProgressWatch:
 
     - bytes growing and inter-sample gap < stall-gap: the trial is
       PROGRESSING — the only kill is the absolute ceiling
-      (watch_abs_ceiling_sec + test_budget_sec). The legacy ×4 ceiling no
+      watch_abs_ceiling_sec (+ test_budget_sec — a DECISION-OBJECT knob
+      only: the bench adapter leaves it 0.0 because tb enforces the
+      verifier phase separately; the shipped ceiling is flat 3600s). The
+      legacy ×4 ceiling no
       longer guillotines productive runs.
     - a sample whose gap (elapsed - last progress) >= stall-gap marks the
       trial STALLED (sticky): the ladder resumes counting and the kill

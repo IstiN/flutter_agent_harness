@@ -71,12 +71,17 @@ final class ConnTrace {
 
   /// Force-enable (bench workflows set the env and let
   /// [configureFromEnv] do this; tests may call it directly).
+  /// Force-enable (bench workflows set the env and let
+  /// [configureFromEnv] do this; tests may call it directly).
+  ///
+  /// The payload snapshot is STRICTLY OPT-IN ([payloadSnapshotPath] only
+  /// when FA_CONN_PAYLOAD_SNAPSHOT is set — review round 2: capturing the
+  /// whole conversation body to a predictable /tmp path must never be a
+  /// silent side effect of turning tracing on).
   void enable() {
     _enabled = true;
     _traceFilePath = Platform.environment['FA_CONN_TRACE_FILE'];
-    payloadSnapshotPath =
-        Platform.environment['FA_CONN_PAYLOAD_SNAPSHOT'] ??
-        '/tmp/fa-conn-snapshot.json';
+    payloadSnapshotPath = Platform.environment['FA_CONN_PAYLOAD_SNAPSHOT'];
     keepAuthInSnapshots = _flag(
       Platform.environment['FA_CONN_PAYLOAD_KEEP_AUTH'],
     );
@@ -115,12 +120,58 @@ final class ConnTrace {
       'event': 'request_start',
       'seq': seq,
       'method': method,
-      'url': url,
+      // Query stripped: key-in-query providers would leak the credential
+      // into every run log (issue #1392 review).
+      'url': redactUrlForLog(url),
       'fresh': fresh,
       'localPort': ?localPort,
       'poolSize': ?poolSize,
       'connAgeSec': ?_round2(connAgeSec),
     });
+  }
+
+  /// A fresh connect that never came up (refused / DNS / no route).
+  /// Deliberately NOT a [staleSocket] — blaming the previously pooled
+  /// socket for every outage made the stale-connection metric
+  /// meaningless (issue #1392 review, AC9 discrimination).
+  void connectFailed({required String error}) {
+    emit({'event': 'connect_failed', 'error': error});
+  }
+
+  /// The URL as it may appear in LOG lines: query stripped entirely —
+  /// key-in-query providers (Google-style ?key=…) would otherwise leak
+  /// live credentials into run logs and artifacts (issue #1392 review).
+  static String redactUrlForLog(String raw) {
+    final uri = Uri.tryParse(raw);
+    if (uri == null || !uri.hasQuery) return raw;
+    return uri.replace(query: null).toString();
+  }
+
+  /// The URL as it may land in the payload SNAPSHOT (replayable): query
+  /// KEPT (a replay needs the request shape) but credential-looking
+  /// values masked — bench flows are header-auth and unaffected.
+  static String redactUrlForSnapshot(String raw) {
+    final uri = Uri.tryParse(raw);
+    if (uri == null || !uri.hasQuery) return raw;
+    final masked = <String, String>{
+      for (final entry in uri.queryParameters.entries)
+        entry.key: _sensitiveQueryParam(entry.key)
+            ? '**redacted**'
+            : entry.value,
+    };
+    return uri.replace(queryParameters: masked).toString();
+  }
+
+  static bool _sensitiveQueryParam(String name) {
+    final key = name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+    return key == 'key' ||
+        key == 'apikey' ||
+        key == 'token' ||
+        key == 'accesstoken' ||
+        key == 'signature' ||
+        key == 'sig' ||
+        key == 'secret' ||
+        key == 'password';
   }
 
   void firstByte({
@@ -224,7 +275,7 @@ final class ConnTrace {
             jsonEncode({
               'capturedAtSec': DateTime.now().millisecondsSinceEpoch / 1000.0,
               'method': method,
-              'url': url,
+              'url': redactUrlForSnapshot(url),
               'headers': sanitized,
               'body': body,
             }),
@@ -268,9 +319,18 @@ final class TracedProviderClient extends http.BaseClient {
   /// posts): the SAME HttpClient, so the pool is shared and honest.
   late final IOClient _plain;
 
-  /// local port -> first-seen instant: the keep-alive reuse map.
-  final Map<int, DateTime> _ports = {};
+  /// local port -> first-seen record: the keep-alive reuse map.
+  ///
+  /// [poolSize] on the emitted events counts FIRST-SEEN ports, not live
+  /// sockets: a socket the server closes silently between requests
+  /// lingers here until a failing reuse evicts it (the [staleSocket]
+  /// path), so over a long run the count drifts above the true pool.
+  final Map<int, _PortRecord> _ports = {};
   int? _lastUsedPort;
+
+  /// Origin of [_lastUsedPort]: stale-keep-alive attribution is only
+  /// meaningful for the origin the pooled socket actually served.
+  String? _lastUsedOrigin;
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest baseRequest) async {
@@ -284,22 +344,37 @@ final class TracedProviderClient extends http.BaseClient {
     final stopwatch = Stopwatch()..start();
     var reused = false;
     var localPort = 0;
+    final origin = '${request.url.scheme}://${request.url.authority}';
+    ConnTrace.instance.requestStart(
+      seq: seq,
+      method: request.method,
+      url: request.url.toString(),
+      // Fresh-vs-reused is only knowable once headers arrive; the
+      // first_byte event carries the definitive flag.
+      fresh: null,
+    );
+    ConnTrace.instance.payloadSnapshot(
+      method: request.method,
+      url: request.url.toString(),
+      headers: request.headers,
+      body: request.body,
+    );
+    HttpClientRequest? ioRequest;
     try {
-      ConnTrace.instance.requestStart(
-        seq: seq,
-        method: request.method,
-        url: request.url.toString(),
-        // Fresh-vs-reused is only knowable once headers arrive; the
-        // first_byte event carries the definitive flag.
-        fresh: null,
-      );
-      ConnTrace.instance.payloadSnapshot(
-        method: request.method,
-        url: request.url.toString(),
-        headers: request.headers,
-        body: request.body,
-      );
-      final ioRequest = await _inner.openUrl(request.method, request.url);
+      ioRequest = await _inner.openUrl(request.method, request.url);
+    } on SocketException catch (error) {
+      // The CONNECT phase never picked a pooled socket for THIS origin
+      // (dart:io dials fresh): a refusal here is a connect failure, not a
+      // stale keep-alive — blaming the previously pooled socket would
+      // fabricate a stale-connection signal for every outage (issue
+      // #1392 review, AC9's discrimination contract).
+      ConnTrace.instance.connectFailed(error: error.message);
+      throw http.ClientException(error.message, request.url);
+    }
+    try {
+      // Send + first-byte phase: the pooled keep-alive socket the server
+      // closed silently dies exactly here (issue #1392 AC9); failures are
+      // attributed by [_blameSendFailure].
       ioRequest.followRedirects = request.followRedirects;
       ioRequest.maxRedirects = request.maxRedirects;
       request.headers.forEach(ioRequest.headers.set);
@@ -311,11 +386,15 @@ final class TracedProviderClient extends http.BaseClient {
       final firstSeen = _ports[localPort];
       if (localPort != 0) {
         if (firstSeen == null) {
-          _ports[localPort] = DateTime.now();
+          _ports[localPort] = _PortRecord(
+            since: DateTime.now(),
+            origin: origin,
+          );
         } else {
           reused = true;
         }
         _lastUsedPort = localPort;
+        _lastUsedOrigin = origin;
       }
       final firstByteSec = stopwatch.elapsedMicroseconds / 1e6;
       ConnTrace.instance.firstByte(
@@ -345,38 +424,88 @@ final class TracedProviderClient extends http.BaseClient {
       );
       return response;
     } on SocketException catch (error) {
-      // A pooled keep-alive socket the server closed silently dies exactly
-      // here — on the NEXT request that tries to reuse it (issue #1392
-      // AC9). Name the socket so the stale-keep-alive hypothesis becomes
-      // data, then evict so the pool snapshot stops counting it.
-      final ageSec = _ageOf(_lastUsedPort);
-      ConnTrace.instance.staleSocket(
-        localPort: _lastUsedPort,
-        ageSec: ageSec,
-        error: error.message,
-      );
-      _ports.remove(_lastUsedPort);
+      _blameSendFailure(request.url, error.message, connectPhase: false);
+      throw http.ClientException(error.message, request.url);
+    } on HttpException catch (error) {
+      // dart:io's "Connection closed before response" surfaces as
+      // HttpException, not SocketException — same transport-failure class;
+      // the traced client must never leak a dart:io exception type.
+      _blameSendFailure(request.url, error.message, connectPhase: false);
       throw http.ClientException(error.message, request.url);
     } on http.ClientException catch (error) {
       // IOClient-style wrapped transport failures ("Connection closed
-      // while receiving data") are the same stale-keep-alive class.
-      if (_ports.isEmpty || _lastUsedPort == null) rethrow;
-      final ageSec = _ageOf(_lastUsedPort);
-      ConnTrace.instance.staleSocket(
-        localPort: _lastUsedPort,
-        ageSec: ageSec,
-        error: error.message,
-      );
-      _ports.remove(_lastUsedPort);
+      // while receiving data") are the same transport-failure class.
+      _blameSendFailure(request.url, error.message, connectPhase: false);
       rethrow;
     }
   }
 
-  double? _ageOf(int? port) {
-    final firstSeen = port == null ? null : _ports[port];
-    if (firstSeen == null) return null;
-    return DateTime.now().difference(firstSeen).inMicroseconds / 1e6;
+  /// Attributes a send-phase transport failure WITHOUT fabricating stale
+  /// connections (issue #1392 review): only a failure on a request whose
+  /// origin matches a pooled socket we have actually used is the silent
+  /// keep-alive close signature (AC9) — that socket is named and evicted.
+  /// Anything else is recorded (connect_failed / stream_error) and the
+  /// pool map is left alone.
+  void _blameSendFailure(
+    Uri url,
+    String message, {
+    required bool connectPhase,
+  }) {
+    final origin = '${url.scheme}://${url.authority}';
+    final port = _lastUsedPort;
+    if (!connectPhase && port != null && _lastUsedOrigin == origin) {
+      ConnTrace.instance.staleSocket(
+        localPort: port,
+        ageSec: _ageOf(port),
+        error: message,
+      );
+      _ports.remove(port);
+      _lastUsedPort = null;
+      _lastUsedOrigin = null;
+      return;
+    }
+    if (connectPhase) {
+      ConnTrace.instance.connectFailed(error: message);
+    } else {
+      ConnTrace.instance.streamError(error: message);
+    }
   }
+
+  /// First-seen pool entries (tests): see the [_ports] doc on why this is
+  /// not the live-socket count.
+  int get poolSizeForTest => _ports.length;
+
+  /// The stale-keep-alive decision, exposed for the AC9 unit tests: a
+  /// same-origin send-phase failure with a pooled socket must name and
+  /// evict that socket; a fresh-connect refusal or a different-origin
+  /// failure must not touch the pool.
+  void blameSendFailureForTest(
+    Uri url,
+    String message, {
+    bool connectPhase = false,
+  }) => _blameSendFailure(url, message, connectPhase: connectPhase);
+
+  double? _ageOf(int? port) {
+    final record = port == null ? null : _ports[port];
+    if (record == null) return null;
+    return DateTime.now().difference(record.since).inMicroseconds / 1e6;
+  }
+
+  @override
+  void close() {
+    // BaseClient.close() is a no-op; without this the inner HttpClient —
+    // the owner of the keep-alive pool — leaks for every traced-client
+    // owner. force:false lets in-flight responses finish.
+    _inner.close(force: false);
+  }
+}
+
+/// First-seen record for a pooled local port.
+class _PortRecord {
+  _PortRecord({required this.since, required this.origin});
+
+  final DateTime since;
+  final String origin;
 }
 
 bool _flag(String? raw) {

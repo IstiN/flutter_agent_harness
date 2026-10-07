@@ -245,12 +245,13 @@ class BenchWorkflowRound3ShapeTest(unittest.TestCase):
         )
         self.assertNotIn("max-parallel: 5", text)
 
-    def test_shard_packing_wired_to_cap_minus_headroom(self):
-        # 355-min job cap − 15 min headroom = 340 (issue #1392 ShardPacker;
-        # round 2 lost shard-0 by ~1 min with zero headroom).
+    def test_shard_packing_wired_to_raw_cap(self):
+        # 355-min job cap passed RAW: shard_tasks.check_cap subtracts its
+        # own 15-min headroom (355 - 15 = 340 min usable — the AC5
+        # contract; round 2 lost shard-0 by ~1 min with zero headroom).
         text = _yml_text()
         self.assertIn("--job-cap-seconds", text)
-        self.assertIn("--job-cap-seconds 340", text)
+        self.assertIn('--job-cap-seconds "$((355 * 60))"', text)
 
     def test_merge_report_tags_concurrency(self):
         text = _yml_text()
@@ -266,6 +267,33 @@ class BenchWorkflowRound3ShapeTest(unittest.TestCase):
             text.index("Post-mortem attribution pass"),
             text.index("Accuracy summary & verdict"),
         )
+
+    def test_merged_artifact_uploads_the_patched_rows(self):
+        # Review: the post-mortem pass patches results.json in place — the
+        # durable tb-runs-merged artifact must carry the PATCHED rows, so
+        # the upload step runs after the pass.
+        text = _yml_text()
+        self.assertLess(
+            text.index("Post-mortem attribution pass"),
+            text.index("Upload merged tb runs"),
+        )
+
+    def test_bench_step_enables_the_conn_forensics(self):
+        # The dispatched run IS the instrumented experiment: without these
+        # exports the adapter forwards nothing into the container and
+        # bench_metrics.json ships requests: [] with hang payloads null.
+        run_block = _shard_run_block()
+        text = _yml_text()
+        for var in (
+            "FA_CONN_DEBUG",
+            "FA_CONN_TRACE_FILE",
+            "FA_CONN_PAYLOAD_SNAPSHOT",
+            "FA_BENCH_CONCURRENCY",
+        ):
+            self.assertIn(f"{var}:", text)
+        self.assertIn("FA_BENCH_CONCURRENCY: ${{ inputs.max-concurrent }}", text)
+        # The run block itself must not unset them.
+        self.assertNotIn("unset FA_CONN_DEBUG", run_block)
 
     def test_extension_on_pins_harness_cap_above_abs_ceiling(self):
         # Round 3: with the progress watch on, the ladder ceiling is the

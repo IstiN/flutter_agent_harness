@@ -134,6 +134,17 @@ final class TracedProviderClient extends http.BaseClient {
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) =>
       _inner.send(request);
+
+  /// Web surface parity with the io implementation (the analyzer resolves
+  /// the seam's first branch for member lookup): never constructed here —
+  /// tracing never enables on web.
+  int get poolSizeForTest => 0;
+
+  void blameSendFailureForTest(
+    Uri url,
+    String message, {
+    bool connectPhase = false,
+  }) {}
 }
 
 /// Call-side handle ([provider_common.dart] and tests): the seam picks

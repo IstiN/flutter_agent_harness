@@ -778,9 +778,10 @@ class ProgressWatchTest(unittest.TestCase):
         self.assertEqual(watch.evaluate(360.0, 10**9), "stall")
 
     def test_abs_ceiling_includes_test_budget(self):
-        # The abs ceiling is 3600s + the task's test budget; the adapter
-        # passes the folded budget at construction (bench.yml folds the
-        # test-timeout-floor in env-side).
+        # test_budget_sec is a DECISION-OBJECT knob (generic ceiling math),
+        # NOT an adapter behavior: the bench adapter constructs the watch
+        # without it (flat 3600s) because tb enforces the verifier phase
+        # separately. This pins the knob math only.
         env = clean_env_all(FA_PROGRESS_EXTENSION="1", FA_STALL_GAP_SEC="240")
         knobs = TimeoutKnobs.from_env(env)
         watch = fa_agent_timeout.ProgressWatch(knobs, test_budget_sec=240.0)

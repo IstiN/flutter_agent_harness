@@ -294,6 +294,37 @@ class Round3AdapterTest(unittest.TestCase):
         self.assertEqual(len(metrics["requests"]), 1)
         self.assertEqual(metrics["latency"]["first_byte"]["max"], 213.0)
 
+    def test_fa_conn_line_split_across_polls_still_parses(self):
+        # The pane reader must carry a partial line across polls: an
+        # FA_CONN record flushed in two chunks straddling a poll boundary
+        # parses as nothing on the first chunk and has no prefix on the
+        # second — dropped from the live view AND the fallback metrics
+        # without the pending-tail buffer (issue #1392 review).
+        session = FakeSession()
+        logging_dir = Path(self.tmpdir.name) / "trial-dir"
+        full = (
+            'FA_CONN {"event":"first_byte","seq":5,"wallSec":7.5,'
+            '"slow":false,"fresh":true,"localPort":999,"poolSize":1,'
+            '"connAgeSec":0.0}\n'
+        )
+
+        def stock(session):
+            # Half a line, then a >2-poll silence, then the rest.
+            session.container.pane.append(full[:20])
+            time.sleep(0.35)
+            session.container.pane.append(full[20:])
+            time.sleep(0.1)
+            return "stock-result"
+
+        env = clean_env(
+            FA_AGENT_TIMEOUT_SEC="0.5",
+            FA_STALL_GAP_SEC="240",
+        )
+        _, stderr = self._run(session, stock, logging_dir, env)
+        metrics = json.loads((logging_dir / "bench_metrics.json").read_text())
+        self.assertEqual(len(metrics["requests"]), 1, stderr)
+        self.assertEqual(metrics["requests"][0]["local_port"], 999)
+
     def test_container_trace_file_wins_over_pane_events(self):
         # The cleaner container-side ConnTrace file is preferred; the pane
         # parse is the fallback.

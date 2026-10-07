@@ -172,10 +172,11 @@ jobs:
           python bench/terminal_bench/shard_tasks.py \
             --dataset-dir "$RUNNER_TEMP/ds" --shards "$SHARDS" --tasks "$TASKS" \
             --test-timeout-floor "$TEST_TIMEOUT_FLOOR" \
-            --job-cap-seconds 340
-          # --job-cap-seconds 340 = the 355-min job cap minus 15 min
-          # headroom (issue #1392 ShardPacker: round 2 lost shard-0 by
-          # ~1 min with zero headroom; LPT now packs worst cases under it).
+            --job-cap-seconds "$((355 * 60))"
+          # --job-cap-seconds takes the RAW job cap (355 min): the packer
+          # subtracts its own 15-min headroom (shard_tasks.HEADROOM_SEC),
+          # so the packed worst case lands at 340 min usable. Round 2 lost
+          # shard-0 by ~1 min with zero headroom.
 
   bench:
     # Note: the display name cannot read ${{ env.BENCH_MODEL }} — the env
@@ -245,6 +246,20 @@ jobs:
           PROGRESS_EXTENSION: ${{ inputs.progress-extension }}
           # dataset task dir names: no whitespace, safe to word-split.
           SHARD_TASKS: ${{ matrix.tasks }}
+          # Issue #1392: the forensics layer is opt-in by env — this run IS
+          # the instrumented experiment, so it opts in deliberately (the
+          # adapter forwards these into the container base64-encoded via
+          # _CONN_ENV_KEYS). ConnTrace gives every trial's bench_metrics.json
+          # its per-request/watchdog events and the [fa-bench] live lines;
+          # the payload snapshot is what StallSentinel's hang-*.json
+          # captures (see FA_CONN_PAYLOAD_KEEP_AUTH — the snapshot redacts
+          # auth unless that is set, which bench never does).
+          FA_CONN_DEBUG: '1'
+          FA_CONN_TRACE_FILE: /tmp/fa-conn-trace.jsonl
+          FA_CONN_PAYLOAD_SNAPSHOT: /tmp/fa-conn-snapshot.json
+          # The concurrency level lands in every trial's bench_metrics.json
+          # (concurrency_level) and the report's per-level latency block.
+          FA_BENCH_CONCURRENCY: ${{ inputs.max-concurrent }}
         run: |
           set -euo pipefail
           [ -n "$FA_KEY_API_Z_AI_Z_AI" ] || { echo '::error::FA_BENCH_ZAI_KEY secret is not set'; exit 1; }
@@ -352,6 +367,18 @@ jobs:
         with:
           python-version: '3.13'
 
+      # Issue #1392 AC4/AC7: re-own attribution after the fact — rows that
+      # recorded 0/0 (tb's flat-cap fabrication discards the adapter's
+      # fold) get their totals summed from the exported fa session JSONL,
+      # ExportGuard gaps and AC8 score-honesty violations print loudly.
+      # Runs BEFORE the merged upload so tb-runs-merged is the patched,
+      # analysis-ready record — the durable artifact must not carry the
+      # 0/0 rows this pass exists to fix.
+      - name: Post-mortem attribution pass
+        if: always()
+        run: |
+          python bench/post_mortem_usage.py tb-runs || true
+
       # tb exits 0 even with unresolved tasks; the verdict here (via
       # summary.py) covers run completeness — every expected task attempted
       # — after the merged artifact below is uploaded.
@@ -361,16 +388,6 @@ jobs:
         with:
           name: tb-runs-merged
           path: tb-runs/
-
-      # Issue #1392 AC4/AC7: re-own attribution after the fact — rows that
-      # recorded 0/0 (tb's flat-cap fabrication discards the adapter's
-      # fold) get their totals summed from the exported fa session JSONL,
-      # ExportGuard gaps and AC8 score-honesty violations print loudly,
-      # and results.json is patched before summary.py prices it.
-      - name: Post-mortem attribution pass
-        if: always()
-        run: |
-          python bench/post_mortem_usage.py tb-runs || true
 
       - name: Accuracy summary & verdict
         if: always()

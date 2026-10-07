@@ -43,7 +43,6 @@ max-concurrent input).
 """
 import glob
 import json
-import math
 import os
 import sys
 from pathlib import Path
@@ -180,30 +179,16 @@ def _session_facts(runs_dir: Path) -> dict:
     return facts
 
 
-def _percentile(values, q):
-    """Linear-interpolated percentile (numpy 'linear' semantics, stdlib).
-
-    Empty input -> None. Deterministic and dependency-free.
-    """
-    if not values:
-        return None
-    ordered = sorted(values)
-    if len(ordered) == 1:
-        return float(ordered[0])
-    idx = (len(ordered) - 1) * q
-    lo = math.floor(idx)
-    hi = math.ceil(idx)
-    if lo == hi:
-        return float(ordered[lo])
-    return float(ordered[lo] + (ordered[hi] - ordered[lo]) * (idx - lo))
-
-
 def _latency_facts(runs_dir: Path) -> dict:
-    """concurrency level -> {"requests": [first_byte...], "wall": [...]}.
+    """concurrency level -> [first_byte_sec, ...] (raw per-request samples).
 
-    Reads every trial's bench_metrics.json (issue #1392 AC2). Trials
-    without the file (older artifacts) contribute nothing; corrupt files
-    degrade to a warning, never a crash.
+    Reads every trial's bench_metrics.json, consuming the keys
+    bench_metrics.summarize_trial actually writes (`first_byte_sec` — the
+    same writer the adapter calls from _write_trial_metrics; AC2).
+    Percentiles are computed with bench_metrics.percentile, so the report
+    and the per-trial `latency.first_byte` block share one semantics.
+    Trials without the file (older artifacts) contribute nothing; corrupt
+    files degrade to a warning, never a crash.
     """
     levels = {}
     for path in sorted(glob.glob(str(runs_dir / "*" / "*" / "*" / "bench_metrics.json"))):
@@ -216,15 +201,13 @@ def _latency_facts(runs_dir: Path) -> dict:
             continue
         if not isinstance(data, dict):
             continue
-        level = data.get("concurrency_level")
-        bucket = levels.setdefault(level, {"first_byte": [], "wall": []})
+        bucket = levels.setdefault(data.get("concurrency_level"), [])
         for req in data.get("requests") or []:
             if not isinstance(req, dict):
                 continue
-            for key in ("first_byte", "wall"):
-                value = req.get(key)
-                if isinstance(value, (int, float)) and value >= 0:
-                    bucket[key].append(float(value))
+            value = req.get("first_byte_sec")
+            if isinstance(value, (int, float)) and value >= 0:
+                bucket.append(float(value))
     return levels
 
 
@@ -239,20 +222,15 @@ def _render_latency_block(runs_dir: Path, lines) -> None:
         return f"concurrency {level}" if level is not None else "concurrency default"
 
     for level in sorted(levels, key=lambda v: (v is None, v)):
-        bucket = levels[level]
-        if not bucket["first_byte"] and not bucket["wall"]:
+        values = levels[level]
+        if not values:
             continue
-        parts = [label(level) + ":"]
-        for key, title in (("first_byte", "first-byte"), ("wall", "wall")):
-            values = bucket[key]
-            if not values:
-                continue
-            parts.append(
-                f"{title} p50={_percentile(values, 0.5):.1f}s"
-                f" p95={_percentile(values, 0.95):.1f}s"
-            )
-        parts.append(f"requests={max(len(bucket['first_byte']), len(bucket['wall']))}")
-        lines.append("- " + " ".join(parts))
+        lines.append(
+            f"- {label(level)}: first-byte"
+            f" p50={bench_metrics.percentile(values, 50):.1f}s"
+            f" p95={bench_metrics.percentile(values, 95):.1f}s"
+            f" requests={len(values)}"
+        )
 
 
 def _trial_dirs(runs_dir: Path) -> dict:
@@ -303,6 +281,13 @@ def _score_honesty(runs_dir: Path, rows) -> list:
                 outcome = json.loads(audit.read_text()).get("outcome")
             except (OSError, json.JSONDecodeError):
                 outcome = None
+            # The audit IS the round-3 contract: the watch itself decided
+            # the kill (stall at the 240s gap, or a ceiling), so its
+            # verdict justifies the row and the legacy gap cross-check is
+            # intentionally skipped — a legitimate abs-ceiling kill has
+            # sub-threshold gaps BY DESIGN (E2) and must not read as a
+            # contradiction. The gap scan below remains for artifacts
+            # WITHOUT an audit (round-2 runs / tb flat-cap fabrication).
             if outcome in _AUDIT_JUSTIFIED:
                 continue
             contradictions.append(row.trial)
