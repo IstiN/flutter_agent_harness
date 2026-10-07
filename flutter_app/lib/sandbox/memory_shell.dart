@@ -22,6 +22,7 @@ import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/sandbox/shell_job.dart';
 import 'package:fa/sandbox/shell_parser.dart';
 import 'package:fa/sandbox/shell_script.dart';
+import 'package:fa/sandbox/wasm_shell_builtins.dart' show exportEnvVarName;
 import 'package:fa/sandbox/web_git.dart';
 import 'package:fa/sandbox/web_interpreters_stub.dart'
     if (dart.library.html) 'web_interpreters_web.dart';
@@ -81,6 +82,11 @@ final class MemoryShell implements Shell, BackgroundShell {
 
   String _currentDir = '/';
   final Map<String, String> _shellEnv = {};
+
+  /// Exit code of the last completed pipeline stage (POSIX `$?`, issue
+  /// #1335). Assignment-only statements keep the previous value — a
+  /// documented subset divergence.
+  int _lastExitCode = 0;
 
   String? _lastStdout;
   String? _lastStderr;
@@ -284,6 +290,7 @@ final class MemoryShell implements Shell, BackgroundShell {
             stderr: utf8.encode('sh: $stdinFile: No such file or directory\n'),
             exitCode: 1,
           );
+          _lastExitCode = stageResult.exitCode;
           _lastStderr = (_lastStderr ?? '') + utf8.decode(stageResult.stderr);
           pipeInput = null;
           continue;
@@ -300,6 +307,7 @@ final class MemoryShell implements Shell, BackgroundShell {
         cwd,
         stdinText,
       );
+      _lastExitCode = stageResult.exitCode;
 
       if (stdoutFile != null) {
         await _writeRedirect(stdoutFile, stageResult.stdout, appendStdout, cwd);
@@ -1002,6 +1010,8 @@ final class MemoryShell implements Shell, BackgroundShell {
       'USER': 'Fa',
       ..._shellEnv,
       ...?options?.env,
+      // POSIX `$?` (issue #1335); the `env` builtin filters it from output.
+      '?': '$_lastExitCode',
     };
   }
 
@@ -1680,13 +1690,13 @@ final class MemoryShell implements Shell, BackgroundShell {
         return _error('env: running commands is not supported\n');
       }
     }
-    final names = env.keys.toList()..sort();
+    final names = env.keys.where((n) => n != '?').toList()..sort();
     return _text('${names.map((n) => '$n=${env[n]}').join('\n')}\n');
   }
 
   _StageResult _export(List<String> args) {
     if (args.isEmpty) {
-      final names = _shellEnv.keys.toList()..sort();
+      final names = _shellEnv.keys.where((n) => n != '?').toList()..sort();
       final lines = names
           .map((n) => 'declare -x $n="${_shellEnv[n]}"')
           .toList();
@@ -1695,7 +1705,10 @@ final class MemoryShell implements Shell, BackgroundShell {
     for (final arg in args) {
       final idx = arg.indexOf('=');
       if (idx > 0) {
-        _shellEnv[arg.substring(0, idx)] = arg.substring(idx + 1);
+        final name = arg.substring(0, idx);
+        // Special parameters (`$?`) are shell-owned (issue #1335).
+        if (!exportEnvVarName.hasMatch(name)) continue;
+        _shellEnv[name] = arg.substring(idx + 1);
       } else {
         _shellEnv.putIfAbsent(arg, () => '');
       }

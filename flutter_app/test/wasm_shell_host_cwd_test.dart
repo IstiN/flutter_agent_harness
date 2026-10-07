@@ -298,4 +298,97 @@ void main() {
       expect(r.valueOrNull!.stdout, contains('"a": 1'));
     });
   });
+
+  group(
+    'host-projection paths never split the guest namespace (issue #1335)',
+    () {
+      test(
+        'cat with the absolute host path reads the sandbox-root file',
+        () async {
+          // AC1: the `write` tool lands files at the host projection (the env
+          // cwd shape); a later `cat` of that exact string must reach the same
+          // file through the guest's `/`.
+          io.File('${sandbox.path}/hello.py').writeAsStringSync('print(1)\n');
+          rec.next = _ScriptedInstance();
+          final r = await shell().exec(
+            'cat ${hostCwd.single}/hello.py',
+            options: ShellExecOptions(cwd: hostCwd.single),
+          );
+          expect(r.isOk, isTrue, reason: r.errorOrNull?.message);
+          expect(rec.configs.single.args, ['cat', '/hello.py']);
+        },
+      );
+
+      test('ls with the absolute host path lists the sandbox root', () async {
+        rec.next = _ScriptedInstance();
+        await shell().exec(
+          'ls ${hostCwd.single}',
+          options: ShellExecOptions(cwd: hostCwd.single),
+        );
+        expect(rec.configs.single.args, ['ls', '/']);
+      });
+
+      test(
+        'redirect target with the absolute host path stays in the sandbox',
+        () async {
+          final r = await shell().exec(
+            'pwd > ${hostCwd.single}/out.txt',
+            options: ShellExecOptions(cwd: hostCwd.single),
+          );
+          expect(r.isOk, isTrue, reason: r.errorOrNull?.message);
+          expect(io.File('${sandbox.path}/out.txt').readAsStringSync(), '/\n');
+          // No nested mirror of the host path inside the sandbox.
+          expect(io.Directory('${sandbox.path}/var').existsSync(), isFalse);
+        },
+      );
+
+      test(
+        'rg operand with the absolute host path maps through the heuristic',
+        () async {
+          io.File('${sandbox.path}/hay.txt').writeAsStringSync('needle\n');
+          rec.next = _ScriptedInstance();
+          await shell().exec(
+            'rg -e needle ${hostCwd.single}/hay.txt',
+            options: ShellExecOptions(cwd: hostCwd.single),
+          );
+          expect(rec.configs.single.args, ['rg', '-e', 'needle', '/hay.txt']);
+        },
+      );
+
+      test(
+        'cd with the absolute host path lands at the guest subdir',
+        () async {
+          io.Directory('${sandbox.path}/work').createSync();
+          final session = shell();
+          final cd = await session.exec(
+            'cd ${hostCwd.single}/work',
+            options: ShellExecOptions(cwd: hostCwd.single),
+          );
+          expect(cd.isOk, isTrue, reason: cd.errorOrNull?.message);
+          final pwd = await session.exec('pwd');
+          expect(pwd.valueOrNull!.stdout, '/work\n');
+        },
+      );
+
+      test(
+        'dd output file with the absolute host path stays in the sandbox',
+        () async {
+          rec.next = _ScriptedInstance();
+          final r = await shell().exec(
+            'dd of=${hostCwd.single}/dd.out',
+            options: ShellExecOptions(cwd: hostCwd.single),
+          );
+          expect(r.isOk, isTrue, reason: r.errorOrNull?.message);
+          expect(rec.configs.single.args, ['dd', 'of=/dd.out']);
+        },
+      );
+
+      test('guest-side absolute paths pass through unchanged', () async {
+        io.File('${sandbox.path}/t.txt').writeAsStringSync('hello\n');
+        rec.next = _ScriptedInstance();
+        await shell().exec('cat /t.txt');
+        expect(rec.configs.single.args, ['cat', '/t.txt']);
+      });
+    },
+  );
 }
