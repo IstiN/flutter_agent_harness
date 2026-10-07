@@ -1053,9 +1053,10 @@ final class FaTuiModel extends Model {
     // kKaomojiSwapTicks ticks (~0.9 s at the 100 ms chain) the face is
     // re-picked — randomly, and never to the face already showing. The
     // chain itself dies with the busy bracket, so an idle row never
-    // animates (AC4).
+    // animates (AC4). A FA_KAOMOJI_FACE pin freezes the face entirely —
+    // deterministic frames for the visual fixtures.
     final frame = spinnerFrame + 1;
-    final face = frame % kKaomojiSwapTicks == 0
+    final face = frame % kKaomojiSwapTicks == 0 && _kaomojiFacePin == null
         ? _nextKaomojiIndex(kaomojiPick, kaomojiFace)
         : kaomojiFace;
     return (
@@ -1243,6 +1244,26 @@ final class FaTuiModel extends Model {
       pickerRevealDelayMsOverride ??
       int.tryParse(Platform.environment['FA_TUI_PICKER_REVEAL_MS'] ?? '') ??
       0;
+
+  /// gh-1374 test hook: pin the kaomoji face the busy row shows, read
+  /// from `FA_KAOMOJI_FACE`. Absent/invalid = the production random pick
+  /// (a random face opens each busy bracket and swaps every ~0.9 s); a
+  /// valid index freezes that face for the whole session — the
+  /// deterministic-frame seam the cli_visual screenshot pipeline renders
+  /// fixtures through.
+  ///
+  /// Unit-test seam: `Platform.environment` is immutable in-process, so
+  /// model-level tests inject [kaomojiPick] instead; null falls through
+  /// to the env var (the production default).
+  @visibleForTesting
+  static int? kaomojiFacePinOverride;
+
+  static int? get _kaomojiFacePin {
+    final override = kaomojiFacePinOverride;
+    if (override != null) return override;
+    final pin = int.tryParse(Platform.environment['FA_KAOMOJI_FACE'] ?? '');
+    return pin == null ? null : pin.clamp(0, kKaomojiFaces.length - 1);
+  }
 
   (Model, Cmd?) _handleOpenPicker(OpenPickerMsg msg) {
     final reveal = _pickerRevealOpen(msg);

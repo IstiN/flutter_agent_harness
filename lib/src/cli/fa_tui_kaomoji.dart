@@ -80,8 +80,13 @@ const kKaomojiAsciiMinWidth = 36;
 /// deterministic function instead.
 final _kaomojiRandom = math.Random();
 
-/// The default face picker: uniform over `0…max-1`.
-int _defaultKaomojiPick(int max) => _kaomojiRandom.nextInt(max);
+/// The default face picker: the `FA_KAOMOJI_FACE` pin when set (the
+/// visual-fixture seam — every pick returns the pinned index), else a
+/// uniform process-random pick.
+int _defaultKaomojiPick(int max) {
+  final pin = FaTuiModel._kaomojiFacePin;
+  return pin == null ? _kaomojiRandom.nextInt(max) : pin.clamp(0, max - 1);
+}
 
 /// Uniform over every face EXCEPT [current]: a swap that lands back on
 /// the same face reads as a frozen row, so the raw pick in `0…len-2`

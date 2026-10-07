@@ -173,6 +173,38 @@ void main() {
     },
   );
 
+  test('FA_KAOMOJI_FACE pin: deterministic frames — the face never swaps', () {
+    FaTuiModel.kaomojiFacePinOverride = 3;
+    addTearDown(() => FaTuiModel.kaomojiFacePinOverride = null);
+    // No injected picker: the DEFAULT picker honors the pin (that is the
+    // out-of-process seam the cli_visual pipeline renders fixtures with).
+    var m = model();
+    m = m.update(BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+    expect(m.kaomojiFace, 3, reason: 'busy start opens on the pinned face');
+    for (var i = 0; i < 3 * kKaomojiSwapTicks; i++) {
+      m = m.update(SpinnerTickMsg()).$1 as FaTuiModel;
+    }
+    expect(
+      m.kaomojiFace,
+      3,
+      reason: 'the pin freezes the face across swap boundaries',
+    );
+    expect(busyRowOf(m), startsWith('>_< '), reason: 'face 3 renders >_<');
+  });
+
+  test('the pin clamps out-of-range values into the face set', () {
+    FaTuiModel.kaomojiFacePinOverride = 99;
+    addTearDown(() => FaTuiModel.kaomojiFacePinOverride = null);
+    var m = model();
+    m = m.update(BusyMsg(true, source: 'run')).$1 as FaTuiModel;
+    expect(m.kaomojiFace, 7);
+    expect(
+      coloredBusyRowOf(m),
+      contains('\x1b[38;2;112;160;224m?'),
+      reason: 'face 7 = o_o? — the curious mouth stays blue',
+    );
+  });
+
   test('herdr contract: every face matches the shipped busy_row regex', () {
     // The manifest is the canonical fa-side source of herdr's upstream
     // detection rule (issue #818) — the busy_row rule keys on the face
