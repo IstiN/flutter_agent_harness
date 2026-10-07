@@ -814,11 +814,21 @@ void main() {
 
       final events = await stream.toList();
       final end = events.whereType<ToolExecutionEndEvent>().single;
-      // "Invalid argument(s): Bad state: boom" — both prefixes go.
-      expect((end.result.content.single as TextContent).text, 'boom');
+      // "Invalid argument(s): Bad state: boom" — both prefixes go, and the
+      // result is STRUCTURED (gh-1393 AC9): tool name + stripped message +
+      // the uncaught-exception hint, never a bare leaked exception string.
+      expect(
+        (end.result.content.single as TextContent).text,
+        startsWith('Tool error (weather): boom\n'),
+      );
+      expect(
+        (end.result.content.single as TextContent).text,
+        contains('uncaught exception'),
+      );
     });
 
-    test('an empty error message stays empty after stripping', () async {
+    test('an empty error message still renders the structured wrapper',
+        () async {
       final fake = _FakeStreamFunction([
         _toolTurn([_call('call-1', 'weather')]),
         _textTurn('handled'),
@@ -834,17 +844,18 @@ void main() {
       final events = await stream.toList();
       final end = events.whereType<ToolExecutionEndEvent>().single;
       expect(end.isError, isTrue);
-      expect((end.result.content.single as TextContent).text, isEmpty);
+      final text = (end.result.content.single as TextContent).text;
+      expect(text, startsWith('Tool error (weather): <no error message>'));
     });
 
-    test('errors with clean toString pass through untouched', () async {
+    test('errors with clean toString are wrapped, not leaked bare', () async {
       final fake = _FakeStreamFunction([
-        _toolTurn([_call('call-1', 'weather')]),
+        _toolTurn([_call('call-1', 'memory_search')]),
         _textTurn('handled'),
       ]);
       final stream = agentLoop(
         prompts: [UserMessage.text('hi')],
-        context: Context(messages: [], tools: [_tool('weather')]),
+        context: Context(messages: [], tools: [_tool('memory_search')]),
         config: const AgentLoopConfig(model: _model),
         streamFunction: fake.call,
         toolExecutor: (_, _, _) async =>
@@ -853,7 +864,13 @@ void main() {
 
       final events = await stream.toList();
       final end = events.whereType<ToolExecutionEndEvent>().single;
-      expect((end.result.content.single as TextContent).text, 'rewind blocked');
+      // gh-1393 AC9: the clean message survives verbatim inside the
+      // structured wrapper (name + hint) — the memory_search iOS crash
+      // shape (`Isolate.resolvePackageUriSync …`) can never reach the
+      // model as a bare exception string again.
+      final text = (end.result.content.single as TextContent).text;
+      expect(text, startsWith('Tool error (memory_search): rewind blocked'));
+      expect(text, contains('not a command failure'));
     });
 
     test(

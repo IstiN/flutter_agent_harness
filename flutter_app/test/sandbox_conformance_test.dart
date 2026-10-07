@@ -79,13 +79,17 @@ final conformanceTable = <ConformanceRow>[
     'AC3 /dev/null stdout sink discards and does not leak',
     'tr a b < in.txt > /dev/null',
   ),
+  // `cat` rides coreutils.wasm on the WASI shell — see the skip list; the
+  // WASI twins of these rows run on `expr` in sandbox_shell_parity_test.
   ConformanceRow(
     'AC3 /dev/null stderr sink keeps the exit code',
     'cat nope.txt 2> /dev/null',
+    wasi: false,
   ),
   ConformanceRow(
     'AC3 2>&1 folds stderr into stdout',
     'cat nope.txt 2>&1',
+    wasi: false,
   ),
   ConformanceRow(
     'AC2 cd inside one command line redirects later stages',
@@ -110,17 +114,22 @@ final conformanceTable = <ConformanceRow>[
     'tr a b < in.txt > out.txt; tr a b < in.txt >> out.txt; tr x y < out.txt',
   ),
   const ConformanceRow('pipe chains two stages', 'tr a b < in.txt | tr b c'),
+  // `cat` rides coreutils.wasm on the WASI shell — see the skip list; the
+  // WASI twins of these rows run on `expr` in sandbox_shell_parity_test.
   const ConformanceRow(
     'stderr redirect captures tool errors',
     'cat nope.txt 2> err.txt; cat err.txt',
+    wasi: false,
   ),
-  const ConformanceRow(
+  ConformanceRow(
     '&& short-circuits on failure',
-    'cat nope.txt && tac < in.txt',
+    'cat nope.txt && tr a b < in.txt',
+    wasi: false,
   ),
-  const ConformanceRow(
+  ConformanceRow(
     '|| fallback runs on failure',
     'cat nope.txt || tr a b < in.txt',
+    wasi: false,
   ),
   const ConformanceRow(
     'exit code is the last stage',
@@ -179,8 +188,6 @@ void main() {
         final expected = oracle.valueOrNull!;
 
         final wasi = await _runWasi(row);
-        // ignore: avoid_print
-        print('[conf-debug2] cmd=<${row.command}> ok=${wasi.isOk} exit=${wasi.valueOrNull?.exitCode} out=${wasi.valueOrNull?.stdout}');
         expect(wasi.isOk, isTrue, reason: '${wasi.errorOrNull}');
         _assertSame(
           expected,
@@ -265,10 +272,10 @@ Future<Result<ShellExecResult, ExecutionError>> _runWasi(
       lua: _NoWasmModule(),
       sandboxHostPath: dir.path,
     );
-    final probe = await shell.exec('test -f in.txt');
-    // ignore: avoid_print
-    print('[conf-debug] probe exit=${probe.valueOrNull?.exitCode} err=${probe.valueOrNull?.stderr} dir=$dir');
-    return shell.exec(row.command);
+    // `return await` — a bare `return` would start the exec and race the
+    // finally's dir.delete (the fixture vanishing mid-exec made rows fail
+    // nondeterministically).
+    return await shell.exec(row.command);
   } finally {
     await dir.delete(recursive: true);
   }
