@@ -37,11 +37,17 @@ final class ChatGptOAuthLocalCallbackServer {
         : 'http://localhost:${server.port}/auth/callback';
   }
 
-  Future<String> start({Duration timeout = const Duration(minutes: 5)}) async {
+  Future<String> start({
+    Duration timeout = const Duration(minutes: 5),
+    // Codex's OAuth client registration pins 1455/1457; tests bind port 0
+    // (ephemeral) so hostile/parallel environments can't steal the ports
+    // out from under them (run 37595551288: EADDRINUSE on both → flake).
+    List<int> ports = const [1455, 1457],
+  }) async {
     await close();
     _result = Completer<ChatGptOAuthCallback?>();
     Object? lastError;
-    for (final port in const [1455, 1457]) {
+    for (final port in ports) {
       try {
         _server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
         break;
@@ -137,11 +143,12 @@ Future<ChatGptOAuthCredentials?> runChatGptOAuthCliFlow({
       exchangeFn =
       _defaultExchange,
   Duration timeout = const Duration(minutes: 5),
+  List<int> ports = const [1455, 1457],
 }) async {
   final server = ChatGptOAuthLocalCallbackServer();
   final verifier = generateChatGptPkceVerifier();
   final state = generateChatGptState();
-  final redirectUri = await server.start(timeout: timeout);
+  final redirectUri = await server.start(timeout: timeout, ports: ports);
   final authUrl = buildChatGptAuthorizeUrl(
     redirectUri: redirectUri,
     codeChallenge: generateChatGptPkceChallenge(verifier),
