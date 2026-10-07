@@ -1,0 +1,1 @@
+{"ts":"2026-10-07T01:51:38.622714Z","event":"scheduled","id":"1791337898621935_0000_1udun31","dueMs":1791341198621,"to":"main","text":"PR #1326 rework follow-up: the rework head a0c9a6353 (branch feat/1321-thin-client-protocol) was pushed to arm validation after fixes — (1) shell_job_countdown_pty_test quarantined in scripts/test_qua"}
