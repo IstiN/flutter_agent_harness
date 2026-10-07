@@ -42,7 +42,13 @@ void main() {
             await harness.close();
             tempHome.deleteSync(recursive: true);
           });
-          await harness.waitForBoot();
+          // fa#1254 (runs 37236232271/37211438713): this is the FIRST test
+          // in the file, so it pays the whole shard's cold start (first PTY
+          // spawn, cold CLI JIT) while the 30k-record perf gate runs in the
+          // same shard; under that steal the boot banner painted at ~90s —
+          // the thrown dump literally shows `[Model]` on screen at expiry.
+          // Headroom, not a product bug: nord/ohmypi-light passed both runs.
+          await harness.waitForBoot(timeout: const Duration(minutes: 3));
 
           // Scenario 1: mid-session theme switch (E1 — the switch repaints
           // the live session; every LATER row uses the new palette).
@@ -56,9 +62,16 @@ void main() {
           // second fails (exit 7) — then the closing text answer.
           harness.sendText('run the theme scenarios');
           harness.sendEnter();
+          // fa#1254: on the starved shard the scripted turn (3 mock
+          // roundtrips + 2 echo spawns) passed 60s mid-flight — dump shows
+          // tool-0 already settled `exit 0` with the spinner still running.
+          // 150s covers the loaded-host envelope (per-test @Timeout stays
+          // 10 min: 180 + 15 + 150 + 30 + 5, plus ~20s bounded
+          // settle/slash overhead — waitForBoot's settle wait and the
+          // runSlashCommand key delays — < 600 total).
           await harness.waitForText(
             'scenario-complete',
-            timeout: const Duration(seconds: 60),
+            timeout: const Duration(seconds: 150),
           );
 
           final t = kBuiltInTuiThemes[theme]!;
