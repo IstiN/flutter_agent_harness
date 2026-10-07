@@ -90,6 +90,42 @@ void main() {
       await server.close();
     });
 
+    test('binds the first available port and falls back to the next', () async {
+      Future<int> freePort() async {
+        final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+        final port = socket.port;
+        await socket.close();
+        return port;
+      }
+
+      final first = await freePort();
+      final second = await freePort();
+
+      // Both free → the first listed port wins (the Codex-registered
+      // order: 1455 preferred, 1457 fallback).
+      final firstServer = ChatGptOAuthLocalCallbackServer();
+      var url = await firstServer.start(
+        timeout: const Duration(seconds: 5),
+        ports: [first, second],
+      );
+      expect(Uri.parse(url).port, first);
+      await firstServer.close();
+
+      // First occupied → the next listed port serves the callback.
+      final occupant = await HttpServer.bind(
+        InternetAddress.loopbackIPv4,
+        first,
+      );
+      final secondServer = ChatGptOAuthLocalCallbackServer();
+      url = await secondServer.start(
+        timeout: const Duration(seconds: 5),
+        ports: [first, second],
+      );
+      expect(Uri.parse(url).port, second);
+      await secondServer.close();
+      await occupant.close();
+    });
+
     test('throws when both callback ports are occupied', () async {
       HttpServer first;
       try {

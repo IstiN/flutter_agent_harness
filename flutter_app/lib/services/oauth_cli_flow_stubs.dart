@@ -54,8 +54,10 @@ class ChatGptOAuthCallback {
 /// the web surface before any hop runs).
 class ChatGptOAuthLocalCallbackServer {
   /// Always throws on the web.
-  Future<String> start({Duration timeout = const Duration(minutes: 5)}) =>
-      throw UnsupportedError('Local servers are not supported on the web.');
+  Future<String> start({
+    Duration timeout = const Duration(minutes: 5),
+    List<int> ports = const [1455, 1457],
+  }) => throw UnsupportedError('Local servers are not supported on the web.');
 
   /// Always throws on the web.
   Future<ChatGptOAuthCallback?> waitForCallback() =>
@@ -76,6 +78,7 @@ Never runChatGptOAuthCliFlow({
   })?
   exchangeFn,
   Duration? timeout,
+  List<int> ports = const [1455, 1457],
 }) => throw UnsupportedError(
   'ChatGPT sign-in is not supported on the web platform.',
 );
