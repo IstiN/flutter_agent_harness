@@ -1704,9 +1704,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       final value = await TestEvaluator(
         fileExists: (path) async {
           try {
-            return await io.File(
-              _hostFile(_resolveSandboxPath(path, _currentDir)).path,
-            ).exists();
+            final resolved = _hostFile(_resolveSandboxPath(path, _currentDir)).path;
+            final exists = await io.File(resolved).exists();
+            // ignore: avoid_print
+            print('[fileExists] resolved=$resolved exists=$exists sync=${io.File(resolved).existsSync()} hostStill=${io.Directory(_hostPath('/')).existsSync()}');
+            return exists;
           } on Object {
             return false;
           }

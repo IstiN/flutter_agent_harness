@@ -34,11 +34,11 @@ Future<Result<ShellExecResult, ExecutionError>> runWasi(String command) async {
     final probe = await shell.exec('test -f in.txt');
     // ignore: avoid_print
     print('[probe] exit=${probe.valueOrNull!.exitCode}');
-    for (var i = 2; i <= 8; i++) {
+    for (var i = 2; i <= 9; i++) {
       final r = await shell.exec(command);
-      final exists = io.File('$dir/in.txt').existsSync();
+      final fds = io.Directory('/proc/self/fd').listSync().length;
       // ignore: avoid_print
-      print('[exec-$i] exit=${r.valueOrNull!.exitCode} fileExists=$exists');
+      print('[exec-$i] exit=${r.valueOrNull!.exitCode} fds=$fds');
     }
     return shell.exec(command);
   } finally {
@@ -47,7 +47,6 @@ Future<Result<ShellExecResult, ExecutionError>> runWasi(String command) async {
 }
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
   test('probe exact runner', () async {
     final r = await runWasi('test -f in.txt');
     // ignore: avoid_print
