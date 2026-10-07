@@ -216,8 +216,7 @@ void main() {
       expect(outcome.tools, isEmpty);
     });
 
-    test('an on extension wires its tools in the canonical tail position',
-        () {
+    test('an on extension wires its tools in the canonical tail position', () {
       final wired = wireAgentCore(
         profile: cliProfile,
         services: AgentCoreServices(
@@ -246,11 +245,8 @@ void main() {
         name: 'locked-embed',
         states: {
           for (final capability in HostCapability.values)
-            capability:
-                capability == HostCapability.hostExtensionApi
-                ? const CapabilityOffState(
-                    'no third-party tools in this embed',
-                  )
+            capability: capability == HostCapability.hostExtensionApi
+                ? const CapabilityOffState('no third-party tools in this embed')
                 : const CapabilityOnState(),
         },
       );
@@ -274,13 +270,19 @@ void main() {
       expect(outcome.hiddenReason, 'no third-party tools in this embed');
     });
 
-    test('a custom profile without a state is a wire-time E6 violation',
-        () {
+    test('a custom profile without a state is a wire-time E6 violation', () {
+      // The cell rides ON: E6 binds when the extension surface wires —
+      // a profile that turns the CELL off hides the surface wholesale
+      // with the cell reason (E8, the test above) and the per-extension
+      // matrix is never consulted, so this profile keeps the cell on
+      // (everything else off) to exercise the wire-time half of E6.
       final custom = HostCapabilityProfile(
         name: 'yoclip-host',
         states: {
           for (final capability in HostCapability.values)
-            capability: const CapabilityOffState('custom embed floor'),
+            capability: capability == HostCapability.hostExtensionApi
+                ? const CapabilityOnState()
+                : const CapabilityOffState('custom embed floor'),
         },
       );
       expect(
@@ -322,19 +324,16 @@ void main() {
         tools: [_tool('yoclip_cut')],
         profileStates: _states(),
       );
-      final plain = wireAgentCore(
-        profile: cliProfile,
-        services: services(),
-      );
+      final plain = wireAgentCore(profile: cliProfile, services: services());
       final extended = wireAgentCore(
         profile: cliProfile,
         services: services(extension: yoclip),
       );
       // Core tool list identical; the extension appends exactly itself.
-      expect(
-        extended.tools.map((t) => t.name),
-        [...plain.tools.map((t) => t.name), 'yoclip_cut'],
-      );
+      expect(extended.tools.map((t) => t.name), [
+        ...plain.tools.map((t) => t.name),
+        'yoclip_cut',
+      ]);
       // Same env-chain shape (base → sandbox → session vars).
       expect(extended.env.runtimeType, plain.env.runtimeType);
       // Same per-capability plan (capability, wired/hidden, transports).
@@ -355,24 +354,25 @@ void main() {
         spec: AgentWiringSpec(model: _model, systemPrompt: 's'),
         streamFunction: _fakeStream,
       );
-      expect(
-        extendedStack.registry.names,
-        [...plainStack.registry.names, 'yoclip_cut'],
-      );
+      expect(extendedStack.registry.names, [
+        ...plainStack.registry.names,
+        'yoclip_cut',
+      ]);
     });
 
-    test('extension tools ride the child tool pool like the core surface',
-        () {
-      final wired = wireAgentCore(profile: cliProfile, services:
-          _subagentServices(
-        extensions: [
-          HostExtension(
-            name: 'yoclip',
-            tools: [_tool('yoclip_cut')],
-            profileStates: _states(),
-          ),
-        ],
-      ));
+    test('extension tools ride the child tool pool like the core surface', () {
+      final wired = wireAgentCore(
+        profile: cliProfile,
+        services: _subagentServices(
+          extensions: [
+            HostExtension(
+              name: 'yoclip',
+              tools: [_tool('yoclip_cut')],
+              profileStates: _states(),
+            ),
+          ],
+        ),
+      );
       expect(
         wired.taskConfig!.childTools.map((t) => t.name),
         contains('yoclip_cut'),
