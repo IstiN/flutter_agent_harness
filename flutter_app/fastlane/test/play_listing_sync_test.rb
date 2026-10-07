@@ -91,7 +91,7 @@ if $PROGRAM_NAME == __FILE__
         # finishes processing the just-uploaded bytes.
         images = images.map { |img| { sha256: nil } } if @hide_shas_until_list_no && @list_reads[key] <= @hide_shas_until_list_no
         { status: 200, body: { images: images }.to_json }
-      when method == :Post && url.end_with?(":commit")
+      when method == :Post && url.include?(":commit")
         return @commit_error if @commit_error
         @committed << url
         { status: 200, body: { id: "edit1" }.to_json }
@@ -219,7 +219,12 @@ if $PROGRAM_NAME == __FILE__
     ok("all committed goldens uploaded (en-US 5, ru-RU 2)")
 
     raise "FAIL: commit missing" unless http.committed.size == 1
-    commit_index = http.calls.index { |m, u| m == :Post && u.end_with?(":commit") }
+    # Play began rejecting auto-review commits (HTTP 400 INVALID_ARGUMENT,
+    # run 37576738205 job 112650057915): the commit URL must carry the opt-out.
+    unless http.committed.first.end_with?(":commit?changesNotSentForReview=true")
+      raise "FAIL: commit must set changesNotSentForReview=true, got: #{http.committed.first}"
+    end
+    commit_index = http.calls.index { |m, u| m == :Post && u.include?(":commit") }
     last_upload_index = http.calls.rindex { |m, u| m == :Post && u.include?("uploadType=media") }
     raise "FAIL: commit must come after every upload" unless commit_index > last_upload_index
     ok("single commit strictly after the last upload")
