@@ -24,8 +24,10 @@ callers render ``n/a``, never a made-up 0.00.
 """
 from __future__ import annotations
 
+import io
 import json
 import math
+import tarfile
 from pathlib import Path
 
 # Same chars-per-token rate as lib/src/compaction/token_estimation.dart.
@@ -171,7 +173,6 @@ def extract_from_text(text: str, usage: SessionUsage = None) -> SessionUsage:
 
 def extract_from_dir(sessions_dir, usage: SessionUsage = None) -> SessionUsage:
     """Sum usage over every *.jsonl under the trial's fah-sessions dir.
-
     rglob covers retries (multiple sessions per trial) and subagent
     sessions — all of it is the trial's real spend (issue #1123 E1/E2).
     """
@@ -186,6 +187,24 @@ def extract_from_dir(sessions_dir, usage: SessionUsage = None) -> SessionUsage:
         except OSError as exc:
             usage.warnings.append(f"unreadable session log {path}: {exc}")
     return usage
+
+
+def extract_session_archive(tar_bytes: bytes, dest) -> int:
+    """Unpack a docker get_archive tarball of the container's session root
+    into the trial's host agent-logs dir (issue #1339 AC4). Returns the
+    extracted file count. The task compose template's /agent-logs volume
+    is the only other archive path and datasets whose compose files skip
+    it lose the logs entirely; the archive comes from fa's own session
+    files, and the data filter keeps path traversal out regardless.
+    """
+    extracted = 0
+    with tarfile.open(fileobj=io.BytesIO(tar_bytes)) as tar:
+        extracted = sum(1 for member in tar.getmembers() if member.isfile())
+        try:
+            tar.extractall(dest, filter="data")
+        except TypeError:  # Python < 3.12 (CI pins 3.13)
+            tar.extractall(dest)
+    return extracted
 
 
 def load_pricing(path) -> dict:
