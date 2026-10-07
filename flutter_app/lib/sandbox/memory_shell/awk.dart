@@ -19,8 +19,7 @@ typedef AwkInvocation = ({
 });
 
 /// Parses the `awk` argument list (pure).
-AwkInvocation parseAwkArgs(List<String> args) {
-  // crap:ignore: argv-scan loop skeleton twinned with sandbox_builtins parseUnzipArgs — different option semantics; a generic scanner would obscure both — gh-1106.
+AwkInvocation parseAwkArgs(List<String> args) { // crap:ignore: argv-scan loop skeleton twinned with sandbox_builtins parseUnzipArgs — different option semantics; a generic scanner would obscure both — gh-1106.
   String? fieldSeparator;
   final positionals = <String>[];
   for (var i = 0; i < args.length; i++) {

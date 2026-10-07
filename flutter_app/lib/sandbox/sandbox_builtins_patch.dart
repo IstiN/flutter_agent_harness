@@ -273,7 +273,6 @@ final class _PatchHunk {
   final int newCount;
   final List<String> body;
 }
-
 /// Reads one hunk body of [oldCount]/[newCount] lines from [lines]
 /// starting at [i] (hunk-header already consumed). Returns the body lines
 /// (including `\ No newline` markers) and the index after the body, or
@@ -384,7 +383,12 @@ String _stripPath(String name, int strip) {
 /// the no-newline markers: a `\ No newline` marker after `-` applies to
 /// the old file, after `+` to the new file, after ` ` (or an empty
 /// previous context) to both.
-({List<String> oldPart, List<String> newPart, bool markerOld, bool markerNew})
+({
+  List<String> oldPart,
+  List<String> newPart,
+  bool markerOld,
+  bool markerNew,
+})
 _hunkParts(List<String> body) {
   final oldPart = <String>[];
   final newPart = <String>[];

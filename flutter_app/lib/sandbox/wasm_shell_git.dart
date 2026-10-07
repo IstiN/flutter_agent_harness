@@ -418,6 +418,7 @@ final class GitSandboxCommands {
     );
   }
 
+
   /// PEM body of the SSH key the git SSH transport should present:
   /// `GIT_SSH_KEY` (inline) or `GIT_SSH_KEY_PATH` from [env] then the
   /// process environment, then the sandbox defaults `/.ssh/id_ed25519` and
@@ -430,7 +431,8 @@ final class GitSandboxCommands {
   }) {
     final inline = env?['GIT_SSH_KEY'] ?? platformEnv['GIT_SSH_KEY'];
     if (inline != null && inline.contains('PRIVATE KEY')) return inline;
-    final keyPath = env?['GIT_SSH_KEY_PATH'] ?? platformEnv['GIT_SSH_KEY_PATH'];
+    final keyPath =
+        env?['GIT_SSH_KEY_PATH'] ?? platformEnv['GIT_SSH_KEY_PATH'];
     final candidates = <String>[?keyPath, '/.ssh/id_ed25519', '/.ssh/id_rsa'];
     for (final candidate in candidates) {
       final pem = _pemAt(hostPathOf(candidate));
@@ -819,8 +821,7 @@ final class GitSandboxCommands {
   static String? resolvePushToken(
     Map<String, String>? env,
     Map<String, String> platformEnv,
-  ) =>
-      _firstDefined(env, _pushTokenVars) ??
+  ) => _firstDefined(env, _pushTokenVars) ??
       _firstDefined(platformEnv, _pushTokenVars);
 
   static String? _firstDefined(Map<String, String>? env, List<String> names) {
@@ -1160,13 +1161,7 @@ final class GitSandboxCommands {
         'fatal: no URL configured for remote ${targets.remoteName}',
       );
     }
-    return _pushToRemote(
-      repo,
-      targets.remoteName,
-      remote.url,
-      targets.branch!,
-      env,
-    );
+    return _pushToRemote(repo, targets.remoteName, remote.url, targets.branch!, env);
   }
 
   /// Pushes [branch] to the guarded remote URL and updates the local

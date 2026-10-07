@@ -66,6 +66,7 @@ final class CurlArgs {
   /// `-w`/`--write-out` template; printed to stdout after the transfer
   /// (even with `-o`), like real curl.
   String? writeOut;
+
 }
 
 /// Parsed `jq`/`yq` command line; see [SandboxBuiltins.parseJqArgs].
@@ -288,11 +289,7 @@ final class SandboxBuiltins {
   /// Builds the `package:http` request from parsed curl arguments: a data
   /// argument implies POST unless `-X` says otherwise (an explicit
   /// `-X GET -d ...` sends GET with a body).
-  static http.Request _curlRequest(
-    CurlArgs parsed,
-    Uri uri,
-    List<int>? bodyBytes,
-  ) {
+  static http.Request _curlRequest(CurlArgs parsed, Uri uri, List<int>? bodyBytes) {
     final method = !parsed.explicitMethod && parsed.dataArgs.isNotEmpty
         ? 'POST'
         : parsed.method;
@@ -408,7 +405,6 @@ final class SandboxBuiltins {
     }
     return out.toString();
   }
-
   /// Pure `wget` → `curl` argument translation: `-O f`/`--output-document=f`
   /// become `-o f` (a missing value drops the flag), `-q`/`--quiet` become
   /// `-s`, and `--no-check-certificate` is dropped (TLS verification is not
@@ -468,10 +464,7 @@ final class SandboxBuiltins {
   static (String, String)? _curlHeaderPair(String header) {
     final idx = header.indexOf(':');
     if (idx > 0) {
-      return (
-        header.substring(0, idx).trim(),
-        header.substring(idx + 1).trim(),
-      );
+      return (header.substring(0, idx).trim(), header.substring(idx + 1).trim());
     }
     return null;
   }
@@ -664,6 +657,7 @@ final class SandboxBuiltins {
         .join('\n');
     return _ok(utf8.encode(output.isNotEmpty ? '$output\n' : ''));
   }
+
 
   /// Pure `jq`/`yq` argument pre-scan: leading flags (any `-x` before the
   /// first positional) are accepted; only `-r`/`--raw-output` and
@@ -1158,12 +1152,7 @@ final class SandboxBuiltins {
   /// optional record TYPE (defaults to A; a second TYPE is a usage error).
   /// `-x` converts an IPv4 literal to its PTR name. Table-tested; see
   /// [dig].
-  static ({
-    bool reverse,
-    String? name,
-    String type,
-    SandboxBuiltinResult? error,
-  })
+  static ({bool reverse, String? name, String type, SandboxBuiltinResult? error})
   parseDigArgs(List<String> args) {
     var reverse = false;
     String? name;
@@ -1576,7 +1565,6 @@ final class SandboxBuiltins {
     if (out.isNotEmpty) return out.toString();
     return '${const JsonEncoder.withIndent('  ').convert(doc)}\n';
   }
-
   /// Extracts the display name (`fn`) from an RDAP entity's vCard, falling
   /// back to the entity handle.
   static String? _rdapEntityName(Map<String, dynamic> entity) {
@@ -1749,14 +1737,10 @@ final class SandboxBuiltins {
         );
       }
       return (depth, 1, null);
-    }
+  }
     final depth = int.tryParse(arg.substring(2));
     if (depth == null || depth < 1) {
-      return (
-        null,
-        0,
-        _error('tree: Invalid level, must be greater than 0.\n', 2),
-      );
+      return (null, 0, _error('tree: Invalid level, must be greater than 0.\n', 2));
     }
     return (depth, 0, null);
   }
@@ -1764,12 +1748,7 @@ final class SandboxBuiltins {
   /// Pure `tree` argument parser: `-a`, `-L n`/`-Ln`, one optional root,
   /// `--help`. [early] carries the `--help` output or the usage error and
   /// ends the command. Table-tested; see [tree].
-  static ({
-    bool showHidden,
-    int? maxDepth,
-    String? root,
-    SandboxBuiltinResult? early,
-  })
+  static ({bool showHidden, int? maxDepth, String? root, SandboxBuiltinResult? early})
   parseTreeArgs(List<String> args) {
     var showHidden = false;
     int? maxDepth;
@@ -1797,12 +1776,7 @@ final class SandboxBuiltins {
         early = _error('tree: too many arguments\n', 2);
       }
     }
-    return (
-      showHidden: showHidden,
-      maxDepth: maxDepth,
-      root: root,
-      early: early,
-    );
+    return (showHidden: showHidden, maxDepth: maxDepth, root: root, early: early);
   }
 
   /// Draws the recursive `tree` listing into [out], counting directories
@@ -2064,7 +2038,6 @@ final class SandboxBuiltins {
       error: null,
     );
   }
-
   Future<SandboxBuiltinResult> _decompress(
     String name,
     List<String> args, {
@@ -2125,13 +2098,13 @@ final class SandboxBuiltins {
   // base64
   // ---------------------------------------------------------------------------
 
+
   /// Resolves a `-w`/`--wrap`/`--wrap=`/`-wN` flag. Returns the columns
   /// string (null for the bare `-w`/`--wrap` form) and whether the next
   /// argument was consumed, or null when [arg] is not a wrap flag.
   static (String?, bool)? _base64WrapFlag(String arg) {
     if (arg == '-w' || arg == '--wrap') return (null, true);
-    if (arg.startsWith('--wrap='))
-      return (arg.substring('--wrap='.length), false);
+    if (arg.startsWith('--wrap=')) return (arg.substring('--wrap='.length), false);
     if (arg.startsWith('-w') && arg.length > 2) {
       return (arg.substring(2), false);
     }
@@ -2165,10 +2138,7 @@ final class SandboxBuiltins {
         // The bare flag form consumed its value above via ++i.
         if (!consumed) continue;
       } else if (arg.startsWith('-') && arg != '-') {
-        b.error = _error(
-          "base64: invalid option -- '${arg.substring(1)}'\n",
-          2,
-        );
+        b.error = _error("base64: invalid option -- '${arg.substring(1)}'\n", 2);
         return b;
       } else if (b.inputFile == null) {
         b.inputFile = arg;
@@ -2327,12 +2297,15 @@ final class SandboxBuiltins {
       exitCode: failed ? 1 : 0,
     );
   }
-
   /// Pure `unzip` argument parser: `-d dir` (target directory), `-q`/`-o`
   /// accepted as no-ops (quiet/overwrite are the defaults), archive
   /// operands. Any other option is an error (exit code 1, matching the
   /// sandbox unzip's convention). Table-tested; see [unzip].
-  static ({String? destDir, List<String> archives, SandboxBuiltinResult? error})
+  static ({
+    String? destDir,
+    List<String> archives,
+    SandboxBuiltinResult? error,
+  })
   parseUnzipArgs(List<String> args) {
     String? destDir;
     final archives = <String>[];
