@@ -379,72 +379,19 @@ _Attachment _attachResults(
       rebuilt.add(message);
       continue;
     }
-    var assistant = message as AssistantMessage;
-    var changed = false;
-    final content = <ContentBlock>[];
-    for (final block in assistant.content) {
-      var call = switch (block) {
-        ToolCall() => block,
-        _ => null,
-      };
-      if (call == null) {
-        content.add(block);
-        continue;
-      }
-      // Find this block's slot (byMessage order matches content order).
-      final slot = slots.firstWhere(
-        (s) => identical(index.slots[s].call, call),
-      );
-      final newId = renames.slotNewIds[slot];
-      if (newId != null) {
-        call = call.copyWith(id: newId);
-        changed = true;
-      }
-      content.add(call);
-    }
-    if (changed) assistant = assistant.copyWith(content: content);
-    rebuilt.add(assistant);
-
-    // Results (and synthetic interrupted ones) sit DIRECTLY after their
-    // assistant message — results first, before any interleaved user text.
-    for (final slot in slots) {
-      final call = index.slots[slot].call;
-      final id = renames.slotNewIds[slot] ?? call.id;
-      final resultIndex = attachment.resultForSlot[slot];
-      if (resultIndex != null) {
-        final result = messages[resultIndex] as ToolResultMessage;
-        rebuilt.add(
-          id == result.toolCallId
-              ? result
-              : ToolResultMessage(
-                  toolCallId: id,
-                  toolName: result.toolName,
-                  content: result.content,
-                  isError: result.isError,
-                  timestamp: result.timestamp,
-                ),
-        );
-        emittedResults.add(resultIndex);
-      } else {
-        rebuilt.add(
-          ToolResultMessage(
-            toolCallId: id,
-            toolName: call.name,
-            content: [
-              TextContent(
-                text:
-                    'Tool call "${call.name}" did not produce a result: '
-                    'the run was interrupted before the tool finished. '
-                    'Re-issue the tool call if it is still needed.',
-              ),
-            ],
-            isError: true,
-            timestamp: DateTime.now(),
-          ),
-        );
-        synthesized.add(id);
-      }
-    }
+    rebuilt.add(
+      _rewriteAssistantCallIds(messages, i, slots, index, renames),
+    );
+    _emitSlotResults(
+      messages,
+      slots,
+      index,
+      renames,
+      attachment,
+      rebuilt,
+      emittedResults,
+      synthesized,
+    );
   }
 
   // Dropped orphans are replaced by ONE visible note so the model knows the
@@ -465,6 +412,96 @@ _Attachment _attachResults(
       renamedIds: renames.entries,
     ),
   );
+}
+
+/// The assistant message at [i] with its tool-call ids renamed per
+/// [renames] (identity-copied when nothing changed).
+AssistantMessage _rewriteAssistantCallIds(
+  List<Message> messages,
+  int i,
+  List<int> slots,
+  _CallIndex index,
+  _Renames renames,
+) {
+  var assistant = messages[i] as AssistantMessage;
+  var changed = false;
+  final content = <ContentBlock>[];
+  for (final block in assistant.content) {
+    var call = switch (block) {
+      ToolCall() => block,
+      _ => null,
+    };
+    if (call == null) {
+      content.add(block);
+      continue;
+    }
+    // Find this block's slot (byMessage order matches content order).
+    final slot = slots.firstWhere(
+      (s) => identical(index.slots[s].call, call),
+    );
+    final newId = renames.slotNewIds[slot];
+    if (newId != null) {
+      call = call.copyWith(id: newId);
+      changed = true;
+    }
+    content.add(call);
+  }
+  if (changed) assistant = assistant.copyWith(content: content);
+  return assistant;
+}
+
+/// Emits each slot's tool result DIRECTLY after its assistant message —
+/// results first, before any interleaved user text. A slot with no result
+/// gets ONE synthetic interrupted note; its index lands in [emitted] /
+/// [synthesized] for the report.
+void _emitSlotResults(
+  List<Message> messages,
+  List<int> slots,
+  _CallIndex index,
+  _Renames renames,
+  _Attachment attachment,
+  List<Message> rebuilt,
+  Set<int> emitted,
+  List<String> synthesized,
+) {
+  for (final slot in slots) {
+    final call = index.slots[slot].call;
+    final id = renames.slotNewIds[slot] ?? call.id;
+    final resultIndex = attachment.resultForSlot[slot];
+    if (resultIndex != null) {
+      final result = messages[resultIndex] as ToolResultMessage;
+      rebuilt.add(
+        id == result.toolCallId
+            ? result
+            : ToolResultMessage(
+                toolCallId: id,
+                toolName: result.toolName,
+                content: result.content,
+                isError: result.isError,
+                timestamp: result.timestamp,
+              ),
+      );
+      emitted.add(resultIndex);
+    } else {
+      rebuilt.add(
+        ToolResultMessage(
+          toolCallId: id,
+          toolName: call.name,
+          content: [
+            TextContent(
+              text:
+                  'Tool call "${call.name}" did not produce a result: '
+                  'the run was interrupted before the tool finished. '
+                  'Re-issue the tool call if it is still needed.',
+            ),
+          ],
+          isError: true,
+          timestamp: DateTime.now(),
+        ),
+      );
+      synthesized.add(id);
+    }
+  }
 }
 
 String _dropNote(List<ToolResultMessage> orphans) {
