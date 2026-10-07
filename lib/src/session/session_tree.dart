@@ -14,6 +14,7 @@ import '../compaction/summary_sanitizer.dart';
 import '../context.dart';
 import '../exceptions.dart';
 import '../types.dart';
+import 'obligations_ledger.dart';
 import 'session_record.dart';
 import 'session_storage.dart';
 import 'windowed_session_storage.dart';
@@ -516,21 +517,43 @@ final class Session {
     );
     if (!hasStructured) {
       if (classicHidden.isEmpty) {
-        return [for (final entry in path) ..._entryToMessages(entry)];
+        return _withObligationsBlock([
+          for (final entry in path) ..._entryToMessages(entry),
+        ]);
       }
       final seqs = RecordSeqIndex(await getEntries());
-      return [
+      return _withObligationsBlock([
         for (final entry in path)
           ..._entryToMessages(entry, classicHidden: classicHidden, seqs: seqs),
-      ];
+      ]);
     }
-    final seqs = RecordSeqIndex(await getEntries());
-    return renderStructuredMessages(
-      path: path,
-      seqs: seqs,
-      projectEntry: (record) =>
-          _entryToMessages(record, classicHidden: classicHidden, seqs: seqs),
+    final entries = await getEntries();
+    final seqs = RecordSeqIndex(entries);
+    return _withObligationsBlock(
+      renderStructuredMessages(
+        path: path,
+        seqs: seqs,
+        projectEntry: (record) =>
+            _entryToMessages(record, classicHidden: classicHidden, seqs: seqs),
+      ),
+      entries: entries,
     );
+  }
+
+  /// Appends the obligations ledger block (issue #1380 A1) at level 0 —
+  /// after every projected message, outside any hidden range or checkpoint
+  /// span, so compaction at any depth can never sink it. Presence-gated on
+  /// the session's latest `obligations_ledger` snapshot: a session without
+  /// one (classic engine, E3) projects exactly as before.
+  Future<List<Message>> _withObligationsBlock(
+    List<Message> messages, {
+    List<SessionRecord>? entries,
+  }) async {
+    final ledger = latestObligationsLedgerIn(entries ?? await getEntries());
+    if (ledger == null || ledger.isEmpty) return messages;
+    final block = renderObligationsBlock(ledger);
+    if (block.isEmpty) return messages;
+    return [...messages, UserMessage.text(block)];
   }
 
   ({

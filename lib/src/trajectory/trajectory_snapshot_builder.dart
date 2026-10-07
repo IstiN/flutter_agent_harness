@@ -34,6 +34,9 @@ const hiddenCustomRecordTypes = {
   // gh-1241: the usage ledger's segment boundary (gh-1241) — bookkeeping
   // for the usage fold, not a ledger row.
   usageSegmentStartCustomType,
+  // Issue #1380 A1: engine-maintained snapshot ledger — the obligations
+  // surface in model context is the rendered block, not trajectory rows.
+  'obligations_ledger',
 };
 
 /// Walks session records and live agent events, projecting them into

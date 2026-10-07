@@ -38,6 +38,9 @@ const Set<String> repairDropCustomTypes = {
 const Set<String> repairKeepLatestCustomTypes = {
   'shell_job_registry',
   'subagent_registry',
+  // Issue #1380 A1: the obligations ledger — every mutation appends a
+  // fresh full snapshot; only the newest one feeds the projection.
+  'obligations_ledger',
 };
 
 /// Severity of a [SessionRepairException].

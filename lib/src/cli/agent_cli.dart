@@ -168,6 +168,7 @@ import 'folder_model_state.dart';
 import 'provider_flow.dart';
 import '../session/session_storage.dart';
 import '../session/ledger_caps.dart';
+import '../session/obligations_ledger.dart';
 import '../session/session_tree.dart';
 import 'session_tree.dart';
 import '../trajectory/trajectory_snapshot.dart';
@@ -1143,6 +1144,13 @@ class AgentCli {
   /// gh-1073: suppresses byte-identical `shell_job_registry` snapshot
   /// appends (reset in `_rehydrateJobBoard` on every session load).
   final LedgerSnapshotDeduper _jobBoardPersistDeduper = LedgerSnapshotDeduper();
+
+  /// The obligations ledger writer (issue #1380 A1) and the session it was
+  /// rehydrated from: cumulative in-memory state reloaded from the
+  /// session's latest `obligations_ledger` snapshot, swapped lazily when
+  /// the session switches (see `_obligationsWriterFor`).
+  ObligationsLedgerWriter? _obligationsWriter;
+  Session? _obligationsWriterSession;
 
   /// Registry-persist serialization tail (issue #539; see `_persistJobBoard` in the driver).
   Future<void> _persistChain = Future.value();

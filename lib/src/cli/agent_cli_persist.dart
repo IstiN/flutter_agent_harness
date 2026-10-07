@@ -38,8 +38,59 @@ extension AgentCliPersist on AgentCli {
     }
     final messages = _agent.state.messages;
     if (_persistedCount >= messages.length) return;
-    await session.appendMessage(message);
+    final recordId = await session.appendMessage(message);
     _persistedCount++;
+    if (message is UserMessage) {
+      await _ingestObligations(message, recordId);
+    }
+  }
+
+  /// Classifies a persisted real-user message into the obligations ledger
+  /// and appends the snapshot (issue #1380 A1, rule-based v1 per Q1).
+  /// Structured-engine sessions only — a classic session never grows
+  /// ledger records, so its projection stays byte-identical (E3).
+  /// Persistence failures swallow: one missed classification must never
+  /// break message persistence, and the writer's cumulative state rides
+  /// the next successful snapshot.
+  Future<void> _ingestObligations(UserMessage message, String recordId) async {
+    if ((config.compactionEngine ?? CompactionEngine.structured) ==
+        CompactionEngine.classic) {
+      return;
+    }
+    final session = _session;
+    if (session == null) return;
+    final writer = await _obligationsWriterFor(session);
+    final payload = writer.ingest(
+      text: obligationsUserText(message.content),
+      sourceRecordId: recordId,
+      at: message.timestamp,
+    );
+    if (payload == null) return;
+    try {
+      await session.appendCustomEntry(
+        customType: obligationsLedgerRecordType,
+        data: payload,
+      );
+    } on Object {
+      // Swallowed deliberately (LedgerSnapshotDeduper protocol note): a
+      // failed append must not poison every later write.
+    }
+  }
+
+  /// The writer for [session], rehydrated from its latest
+  /// `obligations_ledger` snapshot; rebuilt lazily when the session
+  /// switches.
+  Future<ObligationsLedgerWriter> _obligationsWriterFor(Session session) async {
+    final existing = _obligationsWriter;
+    if (existing != null && identical(_obligationsWriterSession, session)) {
+      return existing;
+    }
+    final ledger =
+        latestObligationsLedgerIn(await session.getEntries()) ??
+        const ObligationsLedger([]);
+    final writer = ObligationsLedgerWriter(initial: ledger);
+    _obligationsWriterSession = session;
+    return _obligationsWriter = writer;
   }
 
   /// Handles a CodeMie auth-session expiry if [message] matches one. Returns
