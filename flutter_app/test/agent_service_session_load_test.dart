@@ -312,4 +312,337 @@ void main() {
       reason: 'cleared (empty last name) and anonymous contribute no entry',
     );
   });
+
+  // -- Issue #1332: resume of a compacted session must not force-compact --
+  // (helpers for these tests live at the bottom of the file, top-level,
+  // matching the file's `_`-prefixed convention)
+
+  test('resume of a compacted session re-anchors stale usage — no phantom '
+      'force-compact (issue #1332)', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_1332');
+    addTearDown(() => tmp.delete(recursive: true));
+    // The exact #1332 shape: a session whose last live run ended AT the
+    // compaction trigger (the auto-compact appended the boundary record
+    // right after the run's final assistant message), then suspended.
+    // The final assistant's usage anchor reports the PRE-compaction
+    // request (~102% of the window); the projection after the boundary
+    // is tiny.
+    const staleAnchorTokens = 102000; // 102% of the 100000 window
+    await io.File('${tmp.path}/big.jsonl').writeAsString(
+      _header('big', '2026-01-01T00:00:00.000Z') +
+          _chainedUser('u1', 'root', 'old big question one') +
+          _assistantLine('a1', 'u1', 'old big answer one') +
+          _chainedUser('u2', 'a1', 'recent question') +
+          _assistantLine('a2', 'u2', 'recent answer',
+              totalTokens: staleAnchorTokens) +
+          _compactionLine('c1', 'a2', 'u2', staleAnchorTokens),
+    );
+    final (agent, service) = _compactionFixture(tmp);
+    addTearDown(service.dispose);
+    await service.initialize();
+
+    final big =
+        (await service.listSessions()).where((m) => m.id == 'big').single;
+    await service.loadSession(big);
+
+    // The phantom basis WOULD force-compact: 102000 > 83613.
+    final settings = CompactionSettings.forWindow(99997);
+    expect(
+      shouldCompact(staleAnchorTokens, 99997, settings),
+      isTrue,
+      reason: 'fixture sanity: the stale anchor reads over the trigger',
+    );
+
+    // The resumed meter reads the REAL projected context: the stale
+    // anchor is gone, the estimate sits below the trigger — no
+    // compaction fires on resume or on the first turn's gate.
+    final meter = estimateRequestTokens(
+      agent.state.messages,
+      systemPrompt: agent.state.systemPrompt,
+      tools: agent.state.tools,
+    );
+    expect(
+      meter,
+      lessThan(staleAnchorTokens),
+      reason: 'the meter must not anchor at the phantom pre-compaction size',
+    );
+    expect(
+      shouldCompact(meter, 99997, settings),
+      isFalse,
+      reason: 'a session that fit when suspended must resume under the trigger',
+    );
+    // The projection is exactly summary + kept region: the folded
+    // records (u1/a1) never replay (a length pin — 3 rows, not a
+    // replayed 5 — plus the summary opening with the compaction prefix).
+    expect(agent.state.messages, hasLength(3));
+    expect(agent.state.messages.first, isA<UserMessage>());
+    expect(
+      _textOf(agent.state.messages.first),
+      startsWith('The conversation history before this point'),
+    );
+    expect(
+      agent.state.messages.whereType<AssistantMessage>().last.usage
+          .totalTokens,
+      0,
+      reason: 'loaded anchors are re-anchored at zero (CLI resume parity)',
+    );
+
+    // End to end: the first turn after resume must NOT compact — the run
+    // completes, and no new compaction record lands in the session file.
+    await service.sendText('next turn please');
+    await service.waitForIdle();
+    final fileText = await io.File('${tmp.path}/big.jsonl').readAsString();
+    expect(
+      'type":"compaction'.allMatches(fileText).length,
+      1,
+      reason: 'exactly the fixture compaction — resume + one turn added none',
+    );
+  });
+
+  test('a session genuinely over-window on resume still reads over the '
+      'trigger (issue #1332 AC3)', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_1332_over');
+    addTearDown(() => tmp.delete(recursive: true));
+    // Kept region (~85k chars/4 tokens, u2+a2) genuinely exceeds the
+    // trigger (83613) with NO stale anchor inflating it — the resume must
+    // still read over-window so the compaction path stays armed.
+    final bigText = 'x' * 170000;
+    await io.File('${tmp.path}/over.jsonl').writeAsString(
+      _header('over', '2026-01-01T00:00:00.000Z') +
+          _chainedUser('u1', 'root', 'old big question one') +
+          _assistantLine('a1', 'u1', 'old big answer one') +
+          _chainedUser('u2', 'a1', bigText) +
+          _assistantLine('a2', 'u2', bigText) +
+          _compactionLine('c1', 'a2', 'u2', 200000),
+    );
+    final (agent, service) = _compactionFixture(tmp);
+    addTearDown(service.dispose);
+    await service.initialize();
+
+    final over =
+        (await service.listSessions()).where((m) => m.id == 'over').single;
+    await service.loadSession(over);
+
+    final meter = estimateRequestTokens(
+      agent.state.messages,
+      systemPrompt: agent.state.systemPrompt,
+      tools: agent.state.tools,
+    );
+    expect(
+      shouldCompact(meter, 99997, CompactionSettings.forWindow(99997)),
+      isTrue,
+      reason: 'a genuinely over-window resume still trips the compaction gate',
+    );
+  });
+
+  test('structured projection does not double-count the hidden region on '
+      'resume (issue #1332 candidate 2)', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_1332_struct');
+    addTearDown(() => tmp.delete(recursive: true));
+    // A structured-compacted branch: the big source records are hidden in
+    // place. The resume must project MARKERS for them, not replay the
+    // source region under the checkpoint.
+    final bigText = 'y' * 100000;
+    await io.File('${tmp.path}/struct.jsonl').writeAsString(
+      _header('struct', '2026-01-01T00:00:00.000Z') +
+          _chainedUser('u1', 'root', bigText) +
+          _assistantLine('a1', 'u1', bigText) +
+          _hiddenRangeLine('h1', 'a1', ['u1', 'a1']) +
+          _chainedUser('u2', 'h1', 'recent question') +
+          _assistantLine('a2', 'u2', 'recent answer'),
+    );
+    final (agent, service) = _compactionFixture(tmp);
+    addTearDown(service.dispose);
+    await service.initialize();
+
+    final struct =
+        (await service.listSessions()).where((m) => m.id == 'struct').single;
+    await service.loadSession(struct);
+
+    // The hidden_range record MUST have parsed: the projection carries
+    // the two marker rows (one per hidden record) BESIDE the live tail —
+    // a torn record would sever the parent chain and drop u1/a1 entirely
+    // (leaving 2 rows), which this length pin turns into a failure.
+    expect(agent.state.messages, hasLength(4));
+    final meter = estimateRequestTokens(
+      agent.state.messages,
+      systemPrompt: agent.state.systemPrompt,
+      tools: agent.state.tools,
+    );
+    // Raw replay of u1+a1 would price ~50k tokens; the marker projection
+    // prices a few dozen.
+    expect(meter, lessThan(1000));
+    // The two hidden records project as MARKER rows (typed size reads:
+    // a marker is a one-liner; the source region was 200k chars).
+    expect(_textOf(agent.state.messages[0]).length, lessThan(300));
+    expect(_textOf(agent.state.messages[1]).length, lessThan(300));
+  });
+
+  test('external watch ingest after a compaction re-anchors stale usage '
+      'too (issue #1332 review thread)', () async {
+    final tmp = await io.Directory.systemTemp.createTemp('fa_1332_watch');
+    addTearDown(() => tmp.delete(recursive: true));
+    // A session the app is FOLLOWING while a CLI drives it. The CLI then
+    // auto-compacts (appends the boundary record). The app's watch ingest
+    // must re-anchor the re-projected context, or the meter jumps back to
+    // the phantom pre-compaction size and the next app-side message
+    // force-compacts a second time.
+    const staleAnchorTokens = 102000;
+    final file = io.File('${tmp.path}/watched.jsonl');
+    await file.writeAsString(
+      _header('watched', '2026-01-01T00:00:00.000Z') +
+          _chainedUser('u1', 'root', 'old big question one') +
+          _assistantLine('a1', 'u1', 'old big answer one',
+              totalTokens: staleAnchorTokens),
+    );
+    final (agent, service) = _compactionFixture(tmp);
+    addTearDown(service.dispose);
+    // watchExternalSessions stays at its PRODUCTION default (true) — the
+    // 2s watch timer is the driver under test.
+    await service.initialize();
+
+    final watched =
+        (await service.listSessions()).where((m) => m.id == 'watched').single;
+    await service.loadSession(watched);
+    expect(
+      agent.state.messages.whereType<AssistantMessage>().last.usage
+          .totalTokens,
+      0,
+      reason: 'sanity: loadSession itself re-anchors',
+    );
+
+    // Let one watch tick pass first: tick 1 records the size baseline,
+    // and an append that lands before it is invisible to the growth
+    // detector (the delta must arrive AFTER the baseline to be ingested).
+    await Future<void>.delayed(const Duration(seconds: 3));
+
+    // (1) The CLI appends a plain user turn through its own repo handle.
+    // The ingest must grow the PROVIDER context (a regression pin: the
+    // old addAll on the unmodifiable state.messages getter threw and was
+    // swallowed by the watcher's catch — the chat list grew while the
+    // next request never saw the appended turn).
+    final cliRepo = JsonlSessionRepo(
+      fs: LocalFileSystem(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+    );
+    final cliSession = await cliRepo.open(watched);
+    await cliSession.appendMessage(UserMessage.text('appended by the cli'));
+    var grew = false;
+    for (var i = 0; i < 80 && !grew; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      grew = agent.state.messages.length == 3;
+    }
+    expect(
+      grew,
+      isTrue,
+      reason: 'a plain external append reaches the provider context '
+          'within the watch window',
+    );
+
+    // (2) The CLI's auto-compaction lands (the boundary record appended
+    // at the leaf). Its hasCompaction branch re-projects the whole view —
+    // which must re-anchor: without the reset a1's stale 102000 anchor
+    // re-arms and the meter jumps back over the trigger.
+    await cliSession.appendCompaction(
+      summary: 'checkpoint of the earlier work',
+      firstKeptEntryId: 'u1',
+      tokensBefore: staleAnchorTokens,
+    );
+    var reprojected = false;
+    for (var i = 0; i < 80 && !reprojected; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      reprojected = agent.state.messages.length == 4; // summary + u1 + a1 + u2
+    }
+    expect(
+      reprojected,
+      isTrue,
+      reason: 'the compaction delta was ingested within the watch window',
+    );
+    expect(
+      agent.state.messages.whereType<AssistantMessage>().last.usage
+          .totalTokens,
+      0,
+      reason: 'the ingest re-projection must re-anchor, not re-arm the '
+          'stale generation-time usage',
+    );
+    final meter = estimateRequestTokens(
+      agent.state.messages,
+      systemPrompt: agent.state.systemPrompt,
+      tools: agent.state.tools,
+    );
+    expect(
+      shouldCompact(meter, 99997, CompactionSettings.forWindow(99997)),
+      isFalse,
+      reason: 'the followed session must not phantom-report after the '
+          'CLI-side compaction lands',
+    );
+  });
+}
+
+// -- Issue #1332 fixture helpers (top-level, file convention) --
+
+const _zeroUsage =
+    '{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,'
+    '"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}';
+
+String _usageJson(int totalTokens) =>
+    '{"input":${totalTokens - 4000},"output":4000,"cacheRead":0,"cacheWrite":0,'
+    '"totalTokens":$totalTokens,'
+    '"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}}';
+
+/// An assistant message record with optional provider usage (the
+/// generation-time anchor the resume path must re-anchor).
+String _assistantLine(String id, String parentId, String text,
+        {int? totalTokens}) =>
+    '{"type":"message","id":"$id","parentId":"$parentId","timestamp":"$_iso",'
+    '"message":{"role":"assistant","content":[{"type":"text","text":"$text"}],'
+    '"api":"test-api","provider":"test","model":"test-model",'
+    '"usage":${totalTokens == null ? _zeroUsage : _usageJson(totalTokens)},'
+    '"stopReason":"stop","timestamp":1767225600000}}\n';
+
+String _compactionLine(String id, String parentId, String firstKeptEntryId,
+        int tokensBefore) =>
+    '{"type":"compaction","id":"$id","parentId":"$parentId","timestamp":"$_iso",'
+    '"summary":"structured checkpoint of the earlier work",'
+    '"firstKeptEntryId":"$firstKeptEntryId","tokensBefore":$tokensBefore}\n';
+
+String _chainedUser(String id, String parentId, String text) =>
+    '{"type":"message","id":"$id","parentId":"$parentId","timestamp":"$_iso",'
+    '"message":{"role":"user","content":[{"type":"text","text":"$text"}]}}\n';
+
+String _hiddenRangeLine(String id, String parentId, List<String> recordIds) =>
+    '{"type":"hidden_range","id":"$id","parentId":"$parentId","timestamp":"$_iso",'
+    '"recordIds":[${recordIds.map((r) => '"$r"').join(',')}]}\n';
+
+/// Visible text of a projected message (typed field reads — the basis for
+/// the no-double-count assertions).
+String _textOf(Message m) => switch (m) {
+      final UserMessage u =>
+        u.content is String ? u.content as String : _blocksText(u.content),
+      final AssistantMessage a => a.content
+          .whereType<TextContent>()
+          .map((t) => t.text)
+          .join(),
+      _ => '',
+    };
+
+String _blocksText(Object content) => content is List<ContentBlock>
+    ? content.whereType<TextContent>().map((t) => t.text).join()
+    : '';
+
+/// The shared #1332 fixture: a fresh service over [tmp] holding a test
+/// agent (the caller keeps the agent for state assertions). The external
+/// watch stays at its production default.
+(Agent, AgentService) _compactionFixture(io.Directory tmp) {
+  final agent = _createAgent();
+  final service = AgentService(
+    agent: agent,
+    env: LocalExecutionEnv(cwd: tmp.path),
+    sessionsRoot: tmp.path,
+    repo: JsonlSessionRepo(
+      fs: LocalFileSystem(cwd: tmp.path),
+      sessionsRoot: tmp.path,
+    ),
+  );
+  return (agent, service);
 }
