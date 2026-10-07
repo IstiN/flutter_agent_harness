@@ -85,6 +85,8 @@ class DapHubController {
     DapSpawnSeam? spawnHub,
     DapTerminateSeam? terminateHub,
     this.secretPrompt,
+    this.credentialDurableCheck,
+    this.enrollPollBudget = const Duration(seconds: 10),
     void Function(String line)? out,
   }) : environment = environment ?? Platform.environment,
        url = url ?? resolveDapLocalHubUrl(environment ?? Platform.environment),
@@ -109,6 +111,21 @@ class DapHubController {
 
   /// Hidden master-key prompt; null on non-interactive hosts.
   final DapSecretPrompt? secretPrompt;
+
+  /// Durability seam (issue #1293): verifies the dial credential survived
+  /// on disk, repairing from the captured secret; defaults to
+  /// [dapCredentialDurable]. Tests force the verdict to pin the exit-1
+  /// propagation.
+  final Future<bool> Function(
+    String configPath, {
+    String? url,
+    String? capturedSecret,
+  })?
+  credentialDurableCheck;
+
+  /// How long the enroll persistence poll waits for the hub-issued
+  /// secret to reach the config (issue #1293); tests shrink it.
+  final Duration enrollPollBudget;
 
   final DapSpawnSeam _spawnHub;
   final DapTerminateSeam _terminateHub;
@@ -259,11 +276,18 @@ class DapHubController {
   /// persists the hub-issued clientSecret (never a master key), 0600.
   Future<bool> _ensureCredential({String? knownMaster}) async {
     final cached = client.readDapConfig(_configPath)['clientSecret'];
-    final cachedEnrolled = await _tryCredentialAttempts(
+    final outcome = await _tryCredentialAttempts(
       _credentialAttempts(cachedSecret: cached, knownMaster: knownMaster),
       cached,
     );
-    if (cachedEnrolled || await _promptMasterCredential()) return true;
+    if (outcome.durable) return true;
+    if (outcome.dialed) {
+      // The dial succeeded but the credential could not be made durable:
+      // re-prompting the master key cannot fix a config-write failure, so
+      // fail with the durability hint only (PR #1354 review).
+      return false;
+    }
+    if (await _promptMasterCredential()) return true;
     say(
       'could not enroll with this hub — manual recovery: set the hub '
       'password in ~/.dap/hub.json (masterSecret), or export '
@@ -289,14 +313,19 @@ class DapHubController {
 
   /// Runs the attempts in order until one dials; drops a stale cached
   /// clientSecret the hub 401-rejects ([cachedSecret], by identity) so
-  /// it cannot win precedence forever.
-  Future<bool> _tryCredentialAttempts(
+  /// it cannot win precedence forever. The outcome distinguishes "a
+  /// dial worked but the credential could not be made durable" from
+  /// "no dial worked" (PR #1354 review) so the caller can skip the
+  /// master-key prompt in the first case.
+  Future<({bool dialed, bool durable})> _tryCredentialAttempts(
     List<(String?, bool)> attempts,
     Object? cachedSecret,
   ) async {
     for (final (secret, enroll) in attempts) {
       final outcome = await _tryDial(secret, enroll: enroll);
-      if (outcome.ok) return _finishCredential();
+      if (outcome.ok) {
+        return (dialed: true, durable: await _finishCredential());
+      }
       if (outcome.unauthorized && identical(secret, cachedSecret)) {
         await client.persistDapConfig(
           clearClientSecret: true,
@@ -304,7 +333,7 @@ class DapHubController {
         );
       }
     }
-    return false;
+    return (dialed: false, durable: false);
   }
 
   /// The interactive last resort: the user knows the hub's master key
@@ -348,7 +377,7 @@ class DapHubController {
     } on Object {
       // Best-effort; the credential itself is already persisted.
     }
-    if (!await dapCredentialDurable(
+    if (!await (credentialDurableCheck ?? dapCredentialDurable)(
       _configPath,
       url: url,
       capturedSecret: _issuedSecret,
@@ -396,11 +425,12 @@ class DapHubController {
       await hubClient.connect().timeout(const Duration(seconds: 8));
       if (enroll) {
         // The enrolled frame lands right after the welcome; wait for the
-        // issued secret to reach the config. The budget matches the
-        // client's own round trip (connect cap 8s, enroll request 5s): a
-        // smaller window can expire on a loaded runner while the
-        // persistence is still legitimately in flight (issue #1293).
-        final deadline = DateTime.now().add(const Duration(seconds: 10));
+        // issued secret to reach the config. The poll starts after
+        // connect resolves; the enroll request itself is capped at 5s
+        // (requestTimeout), so the default budget covers the request
+        // plus the persist write with headroom on a loaded runner
+        // (issue #1293).
+        final deadline = DateTime.now().add(enrollPollBudget);
         while (DateTime.now().isBefore(deadline)) {
           final stored = client.readDapConfig(_configPath)['clientSecret'];
           if (stored is String && stored.isNotEmpty && stored != secret) {
@@ -1038,11 +1068,27 @@ Future<bool> dapCredentialDurable(
 
   if (secretOnDisk()) return true;
   if (capturedSecret == null || capturedSecret.isEmpty) return false;
-  await client.persistDapConfig(
-    url: url,
-    clientSecret: capturedSecret,
-    file: configPath,
-  );
+  try {
+    await client.persistDapConfig(
+      url: url,
+      clientSecret: capturedSecret,
+      file: configPath,
+    );
+  } on Object {
+    // The repair write failed (read-only dir, disk full, a locked or
+    // recreated file): honor the contract — false, and the caller fails
+    // the start loudly instead of this escaping as a crash.
+    return false;
+  }
+  try {
+    // The repair may have (re)created the file at the umask mode —
+    // re-assert 0600 so the secret never sits world-readable (the
+    // writeSecretFile0600 discipline; best-effort where chmod is
+    // absent).
+    await Process.run('chmod', ['600', configPath]);
+  } on Object {
+    // No chmod here: keep the content, keep the umask mode.
+  }
   return secretOnDisk();
 }
 

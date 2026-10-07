@@ -72,6 +72,13 @@ void main() {
     int port, {
     SecretPrompt? prompt,
     Future<bool> Function(int pid)? terminator,
+    Duration? enrollPollBudget,
+    Future<bool> Function(
+      String configPath, {
+      String? url,
+      String? capturedSecret,
+    })?
+    credentialDurableCheck,
   }) {
     return DapHubController(
       home: tempHome.path,
@@ -83,6 +90,8 @@ void main() {
       },
       terminateHub: terminator ?? (_) async => true,
       secretPrompt: prompt,
+      enrollPollBudget: enrollPollBudget ?? const Duration(seconds: 10),
+      credentialDurableCheck: credentialDurableCheck,
     );
   }
 
@@ -314,6 +323,77 @@ void main() {
         isFalse,
       );
     });
+
+    test('a failing repair write is false, never a throw', () async {
+      // A directory at the config path: every write throws.
+      final path = configPath();
+      await Directory(path).create(recursive: true);
+      expect(
+        await dapCredentialDurable(path, capturedSecret: 'sec'),
+        isFalse,
+        reason: 'the repair failure must honor the contract, not crash',
+      );
+    });
+
+    test('poll expiry is a failed dial: exit 1 + the recovery hint, '
+        'no success lines (issue #1293)', () async {
+      final port = await freePort();
+      final hub = LocalHub(port: port, stateFile: stateFileFor());
+      addTearDown(() => hub.stop());
+      // The client's enroll persist cannot land: the config file is
+      // read-only. The dial itself succeeds; the (shrunk) poll must not
+      // turn that into a silent exit 0.
+      await Directory('${tempHome.path}/.dap').create(recursive: true);
+      final config = File(configPath());
+      await config.writeAsString('{}\n');
+      if (!Platform.isWindows) {
+        await Process.run('chmod', ['444', config.path]);
+      }
+      final controller = controllerFor(
+        hub,
+        port,
+        enrollPollBudget: const Duration(milliseconds: 300),
+      );
+      final code = await controller.start();
+      final out = sinkOf(controller).join('\n');
+      expect(code, 1, reason: out);
+      expect(out, contains('could not enroll with this hub'));
+      expect(out, isNot(contains('fabric enabled')));
+      expect(out, isNot(contains('enrolled — client secret saved')));
+      expect(
+        client.readDapConfig(configPath())['clientSecret'],
+        isNull,
+        reason: 'no secret persisted behind the failed start',
+      );
+    }, timeout: timeout);
+
+    test('a failed durability check flips the exit and suppresses the '
+        'success lines (issue #1293)', () async {
+      final port = await freePort();
+      final hub = LocalHub(port: port, stateFile: stateFileFor());
+      addTearDown(() => hub.stop());
+      final checks = <String>[];
+      final controller = controllerFor(
+        hub,
+        port,
+        credentialDurableCheck: (configPath, {url, capturedSecret}) async {
+          checks.add(configPath);
+          return false;
+        },
+      );
+      final code = await controller.start();
+      final out = sinkOf(controller).join('\n');
+      expect(checks, hasLength(1), reason: 'the verdict is consulted once');
+      expect(code, 1, reason: out);
+      expect(out, contains('the dial credential did not survive'));
+      expect(out, isNot(contains('fabric enabled')));
+      expect(out, isNot(contains('enrolled — client secret saved')));
+      expect(
+        out,
+        isNot(contains('could not enroll with this hub')),
+        reason: 'the dial worked; the master-key prompt loop is skipped',
+      );
+    }, timeout: timeout);
   });
 
   group('E1: foreign server on the port', () {
