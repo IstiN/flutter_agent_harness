@@ -259,13 +259,23 @@ Future<void> _runApp(List<String> args) async {
       // TUI). stderr — the same pre-TUI boot-notice channel as the
       // config warnings above.
       unawaited(() async {
-        final latest = await fetchLatestTag().timeout(
-          const Duration(seconds: 3),
-          onTimeout: () => null,
-        );
-        if (latest != null && compareVersions(latest, packageVersion) > 0) {
-          final banner = autoUpdateNotify.banner(latest);
-          if (banner != null) stderr.writeln(banner);
+        // The probe OWNS its client: `.timeout` abandons the in-flight
+        // request at the bound, and closing here (finally, always) is
+        // what actually releases the socket — not the inner finally,
+        // which only runs when the abandoned fetch itself settles.
+        final probe = http.Client();
+        try {
+          final latest = await fetchLatestTag(client: probe).timeout(
+            const Duration(seconds: 3),
+            onTimeout: () => null,
+          );
+          if (latest != null &&
+              compareVersions(latest, packageVersion) > 0) {
+            final banner = autoUpdateNotify.banner(latest);
+            if (banner != null) stderr.writeln(banner);
+          }
+        } finally {
+          probe.close();
         }
       }());
     case BootUpdateAction.applyAndExit:

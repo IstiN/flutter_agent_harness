@@ -825,7 +825,16 @@ Future<ApplyUpdateOutcome> applyUpdate({
     }
 
     final archive = _archiveName();
-    if (archive == null) return ApplyUpdateOutcome.unsupportedPlatform;
+    if (archive == null) {
+      // Unspawned, unprompted and UNPRINTED otherwise: say why nothing
+      // happened (unknown linux arch, freebsd, …) instead of a silent
+      // no-op.
+      _warn(
+        'no prebuilt fa archive for this platform — install via '
+        '`dart pub global activate flutter_agent_harness` instead',
+      );
+      return ApplyUpdateOutcome.unsupportedPlatform;
+    }
     final url = 'https://github.com/$_repo/releases/download/$tag/$archive';
     final streamed = await client.send(http.Request('GET', Uri.parse(url)));
     if (streamed.statusCode != 200) {
