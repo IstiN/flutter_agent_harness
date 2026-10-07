@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  QUALITY GATE — DO NOT LOWER THESE THRESHOLDS WITHOUT TEAM APPROVAL       ║
-# ║  Every commit must pass: file size, analyze, tests, coverage ≥ 80%,       ║
-# ║  CRAP ratchet (crap4dart.yaml), duplication < 1%.                         ║
+# ║  Every commit must pass: file size (crap4dart loc), analyze, tests,       ║
+# ║  coverage ≥ 80%, CRAP ratchet (crap4dart.yaml), duplication < 1%.         ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 #
 # Pre-commit hook for flutter_agent_harness (pure Dart package).
@@ -72,6 +72,14 @@ if command -v dart >/dev/null 2>&1; then
       # NEW duplication, same contract as CI.
       if ! dart pub global run crap4dart check --staged --baseline; then
         echo "❌ QUALITY GATE FAILED — crap4dart gates" >&2
+        exit 1
+      fi
+      # Issue #1234 rework: the ≤2800 ceiling over test/ + example/ via
+      # the loc-scope companion config (the package config's sources are
+      # [lib, bin]; 0.11.0 has no per-gate sources override). No-ops
+      # unless a staged file lives under test/ or example/.
+      if ! dart pub global run crap4dart check --staged --config crap4dart.loc-scope.yaml --only loc; then
+        echo "❌ QUALITY GATE FAILED — loc scope (test/example)" >&2
         exit 1
       fi
       ;;

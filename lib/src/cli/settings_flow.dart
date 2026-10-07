@@ -812,6 +812,34 @@ extension SettingsFlow on AgentCli {
     return TtsrRule(name: name, patterns: [pattern], body: body, scope: scope);
   }
 
+  /// The current file source, `''` when the file doesn't exist yet;
+  /// `null` = unreadable (the caller reports and aborts).
+  Future<String?> _readTtsrSource(String path) async {
+    switch (await _env.readTextFile(path)) {
+      case Ok(:final value):
+        return value;
+      case Err(:final error) when error.code == FileErrorCode.notFound:
+        return '';
+      case Err(:final error):
+        io.writeln('ttsr: cannot read $path: $error — not saved');
+        return null;
+    }
+  }
+
+  /// Round-trips [edited] through the real parser BEFORE the write; false
+  /// = the next boot would reject it (reported).
+  bool _validateTtsrEdit(String path, String edited) {
+    final doc = loadYaml(edited);
+    final node = doc is YamlMap ? doc['ttsr'] : null;
+    try {
+      TtsrConfig.fromYaml(node, sourcePath: path);
+    } on Object catch (error) {
+      io.writeln('ttsr: not saved: $error');
+      return false;
+    }
+    return true;
+  }
+
   /// The surgical `ttsr:` write shared by every action: block replace in
   /// [path] (absent block appends), validated with the real parser BEFORE
   /// the write, then the same diff applied to the live rule engine when
@@ -830,26 +858,11 @@ extension SettingsFlow on AgentCli {
           rule.path == path ? _withoutImpliedTtsrPath(rule) : rule,
       ],
     );
-    final String source;
-    switch (await _env.readTextFile(path)) {
-      case Ok(:final value):
-        source = value;
-      case Err(:final error) when error.code == FileErrorCode.notFound:
-        source = '';
-      case Err(:final error):
-        io.writeln('ttsr: cannot read $path: $error — not saved');
-        return false;
-    }
+    final source = await _readTtsrSource(path);
+    if (source == null) return false;
     final edited = _replaceTopLevelYamlBlock(source, 'ttsr', section.toYaml());
     // Never persist a file the next boot would reject.
-    final doc = loadYaml(edited);
-    final node = doc is YamlMap ? doc['ttsr'] : null;
-    try {
-      TtsrConfig.fromYaml(node, sourcePath: path);
-    } on Object catch (error) {
-      io.writeln('ttsr: not saved: $error');
-      return false;
-    }
+    if (!_validateTtsrEdit(path, edited)) return false;
     if (await _env.writeFile(path, edited) is Err) {
       io.writeln('ttsr: could not write $path');
       return false;
