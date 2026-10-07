@@ -50,15 +50,15 @@ void main() {
   });
 
   test('an empty leftover directory is filled with the pointer', () async {
-    await env.createDir('/.fah/skills/fa-self-config');
+    await env.createDir('/.fah/skills/js-apps');
 
     await seedBuiltinSkillPointers(env);
 
     expect(
       (await env.readTextFile(
-        '/.fah/skills/fa-self-config/SKILL.md.pointer',
+        '/.fah/skills/js-apps/SKILL.md.pointer',
       )).valueOrNull,
-      'builtin://skills/fa-self-config/SKILL.md\n',
+      'builtin://skills/js-apps/SKILL.md\n',
     );
   });
 
