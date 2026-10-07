@@ -280,6 +280,19 @@ void main() {
       expect(settleNotifications, [env.jobs.single.id]);
     });
 
+    // In a jobs-capable host the denial's escape advice is background: true
+    // (the no-jobs fallback lives in the plain-shellTool tests).
+    test('an unbounded bare long sleep is denied with the background advice',
+        () async {
+      final result = await tool.execute({'command': 'sleep 300'}, null, null);
+      final text = _text(result);
+      expect(text, contains('Denied: a bare foreground sleep of 300s'));
+      expect(text, contains('background: true'));
+      expect(text, contains('bash_job'));
+      expect(text, contains('Never poll in the foreground'));
+      expect(env.jobs, isEmpty);
+    });
+
     test('background on an unsupported env answers a clean note', () async {
       final plainEnv = MemoryExecutionEnv(cwd: '/work');
       final plainRegistry = ShellJobRegistry(env: plainEnv);

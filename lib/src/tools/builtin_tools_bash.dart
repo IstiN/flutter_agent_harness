@@ -41,6 +41,11 @@ final RegExp _sleepDurationArg = RegExp(
 /// else null. Deliberately conservative (issue #1349): sleeps wrapped in
 /// shell constructs are phase 2 — extend detection only if the deny data
 /// shows the class survives.
+///
+/// Known false negatives — intentional phase-1 bypasses, recorded where
+/// the deny data is collected (phase 2 candidates, dmtools-agents#767):
+/// quoted durations (`sleep "300"`), env prefixes (`FOO=1 sleep 300`),
+/// case variants (`SLEEP 300`), and trailing separators (`sleep 300;`).
 double? bareForegroundSleepSeconds(String command) {
   final words = command.trim().split(RegExp(r'\s+'));
   if (words.first != 'sleep' || words.length < 2) return null;
@@ -60,19 +65,28 @@ double? bareForegroundSleepSeconds(String command) {
 }
 
 /// The instructive validation denial for a bare long foreground `sleep`,
-/// or null when the command may run in the foreground.
-String? foregroundSleepDenial(String command) {
+/// or null when the command may run in the foreground. The caller gates on
+/// `timeout == null` (an explicit timeout is a deliberate bail cap — the
+/// call unwinds there, steering and cancel included) and passes [canJob]
+/// so the escape advice matches what the environment actually offers —
+/// background advice would dead-end in a no-jobs host.
+String? foregroundSleepDenial(String command, {required bool canJob}) {
   final seconds = bareForegroundSleepSeconds(command);
   if (seconds == null || seconds <= maxForegroundSleepSeconds) return null;
   final label = seconds == seconds.truncateToDouble()
       ? '${seconds.truncate()}'
       : '$seconds';
+  final escape = canJob
+      ? 'Re-run it with background: true: the command keeps running as a '
+            'job, the job id returns immediately, and a settle notification '
+            'wakes you when it finishes; collect progress with bash_job '
+            '(action: output).'
+      : 'Background jobs are not supported in this environment; bound the '
+            'wait with an explicit timeout (seconds) instead — the call '
+            'unwinds at the cap, so steering and cancel can reach you.';
   return 'Denied: a bare foreground sleep of ${label}s parks the whole '
       'turn — owner steering and cancel cannot reach the agent while the '
-      'call stays open. Re-run it with background: true: the command keeps '
-      'running as a job, the job id returns immediately, and a settle '
-      'notification wakes you when it finishes; collect progress with '
-      'bash_job (action: output). Never poll in the foreground.';
+      'call stays open. $escape Never poll in the foreground.';
 }
 
 /// Creates the `bash` tool: executes a shell command via [ExecutionEnv.exec]
@@ -155,9 +169,11 @@ AgentTool shellTool(
       final canJob = jobs != null && jobs.isSupported;
 
       // Issue #1349: a bare long foreground sleep is rejected at call
-      // validation — it parks the turn; background: true is the fix.
-      if (!background) {
-        final sleepDenial = foregroundSleepDenial(command);
+      // validation — it parks the turn; background: true is the fix. An
+      // explicit `timeout` is a deliberate bail cap (the call unwinds at
+      // the cap, so steering and cancel reach the agent), not a park.
+      if (!background && timeout == null) {
+        final sleepDenial = foregroundSleepDenial(command, canJob: canJob);
         if (sleepDenial != null) return ToolExecutionResult.text(sleepDenial);
       }
 
