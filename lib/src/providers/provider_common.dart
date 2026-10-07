@@ -23,6 +23,8 @@ import '../model.dart';
 import '../rate_limit_info.dart';
 import '../sse_decoder.dart';
 import '../types.dart';
+import 'provider_tuning.dart'
+    show providerConnectTimeoutForUrl, providerStreamIdleTimeoutForUrl;
 import 'transient_retry_stream.dart';
 
 /// Placeholder substituted for user-message images when the target model has
@@ -638,6 +640,10 @@ Future<http.StreamedResponse> _sendWatchedOnce(
   CancelToken? cancelToken,
   int attempt,
 ) async {
+  // Issue #1398: the per-provider connect watchdog — a tuning-table read
+  // by request URL, falling through to the global effective value. One
+  // additive value read; the watchdog mechanics below are untouched.
+  final connectTimeout = providerConnectTimeoutForUrl(request.url);
   // Re-pin the runtime type parameter BEFORE the watchdog: IOClient.send's
   // future is reified as package:http's internal IOStreamedResponse, and
   // `.timeout` runtime-checks its value-returning onTimeout closure against
@@ -683,7 +689,7 @@ Future<http.StreamedResponse> _sendWatchedOnce(
     );
     throw TimeoutException(
       'provider stream request to ${redactProviderUrl(request.url)} timed out: '
-      'no response headers within ${effectiveProviderConnectTimeout.inSeconds}s '
+      'no response headers within ${connectTimeout.inSeconds}s '
       // The classifier consumes [connectWatchdogTag] (transient_retry_
       // stream.dart): one constant keeps the wording and the retry
       // classification pinned together (issue #1121, review r1).
@@ -692,17 +698,14 @@ Future<http.StreamedResponse> _sendWatchedOnce(
   }
 
   if (cancelToken == null) {
-    return responseFuture.timeout(
-      effectiveProviderConnectTimeout,
-      onTimeout: watchdogTimedOut,
-    );
+    return responseFuture.timeout(connectTimeout, onTimeout: watchdogTimedOut);
   }
   return Future.any([
     responseFuture,
     cancelToken.onCancel.then<http.StreamedResponse>(
       (_) => throw const AbortedError(),
     ),
-  ]).timeout(effectiveProviderConnectTimeout, onTimeout: watchdogTimedOut);
+  ]).timeout(connectTimeout, onTimeout: watchdogTimedOut);
 }
 
 /// The terminal-hop validations: non-200 statuses and the 200 answers
@@ -993,8 +996,10 @@ StreamIterator<ServerSentEvent> createSseIterator(
   CancelToken? cancelToken, {
   Duration? idleTimeout,
 }) {
-  final effectiveIdleTimeout =
-      idleTimeout ?? effectiveProviderStreamIdleTimeout;
+  // Issue #1398: an explicit override wins, then the per-provider entry
+  // (registry table lookup by request URL), then the global effective
+  // value — one additive read, the watchdog mechanics are untouched.
+  final effectiveIdleTimeout = idleTimeout ?? _tunedIdleTimeout(response);
   var abandoned = false;
   void abandon() => abandoned = true;
   StreamSubscription<List<int>>? rawSub;
@@ -1039,6 +1044,16 @@ StreamIterator<ServerSentEvent> createSseIterator(
     );
   }
   return iterator;
+}
+
+/// The per-provider stream-idle watchdog for one response (issue #1398):
+/// the tuning table lookup by the request URL, falling through to the
+/// global effective value when no entry matches. Additive read — the
+/// registry is empty on un-tuned runs and this returns today's value.
+Duration _tunedIdleTimeout(http.StreamedResponse response) {
+  final url = response.request?.url;
+  if (url == null) return effectiveProviderStreamIdleTimeout;
+  return providerStreamIdleTimeoutForUrl(url);
 }
 
 /// [StreamIterator] wrapper that fails `moveNext` with a [TimeoutException]
