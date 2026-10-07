@@ -97,7 +97,9 @@ class QuotaStore extends ChangeNotifier {
     return null;
   }
 
-  /// Endpoint mark -> quota service id (the two quota-marked endpoints).
+  /// Endpoint mark -> quota service id — the ADAPTER-backed ids only
+  /// (`dial` is unmetered, never probed; the fa_ui `quotaMarkIds` gauge
+  /// set is deliberately broader and documents the difference).
   static const _markToQuotaId = {
     'openrouter': 'openrouter',
     'codemie': 'codemie',
