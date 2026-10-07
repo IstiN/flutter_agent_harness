@@ -61,8 +61,9 @@ concurrency:
 #                   golden suite stays in build-macos.yml — goldens are
 #                   host-locked, see issue #177 E5 discussion)
 #   flutter-app-exzone → JS-engine exclusion-zone tests on macOS (issue
-#               #1267 N1; only when the diff touches the exclusion zone —
-#               the surface the ubuntu leg skips, otherwise nightly-only)
+#               #1267 N1; runs in every SM validation dispatch — path-blind
+#               under dispatch-only CI, gh-1280 idiom; the nightly macos leg
+#               stays the main/tag backstop)
 #   test-faui → packages/fa_ui tests sharded ×3 by manifest   (app/core/shared;
 #               issue #283 — same template as test-core: manifest assert,
 #               per-shard coverage merged to ONE report, junit durations
@@ -101,9 +102,11 @@ jobs:
       # PR-only (gh-1241 REG-1): a trajectory/session/usage-touching diff
       # runs the usage-fold suite per-merge.
       usagefold: ${{ steps.paths.outputs.usagefold }}
-      # PR-only (issue #1267 N1): a diff touching the macOS exclusion zone
-      # runs the JS-engine test family pre-merge on macos (the surface the
-      # ubuntu leg skips and otherwise only nightly exercises).
+      # Issue #1267 N1: the macOS exclusion-zone path set. Reserve only —
+      # ci.yml has no pull_request trigger (dispatch-only CI); the
+      # flutter-app-exzone leg gates on the SM validation dispatch itself
+      # (gh-1280 idiom) and consults this output only if a real
+      # pull_request trigger ever lands.
       exzone: ${{ steps.paths.outputs.exzone }}
       # PR-only (issue #551): test/integration/** changes run the no-key
       # mock-LLM integration legs per-PR instead of at tag time only.
@@ -170,14 +173,19 @@ jobs:
               grep -qE '(^lib/src/trajectory/|^lib/src/session/|^lib/src/usage/|^test/usage/|^lib/src/cli/agent_cli_usage_ledger\.dart$)'; then
             echo "usagefold=true" >> "$GITHUB_OUTPUT"
           fi
-          # Issue #1267 N1: the macOS exclusion zone. The ubuntu flutter-tests
-          # leg runs this family but every engine-dependent test SKIPS there
-          # (native_test_guard.dart finds no QuickJS .so on a bare runner);
-          # the tests truly execute only in the nightly macOS leg — the hole
-          # #1309 escaped through (gh-1307: an apps/engine regression merged
-          # green, went red the same night). The issue's packages/
-          # js_widget_runtime/** is an EXTERNAL repo now, so its bumps arrive
-          # via the flutter_app/pubspec.yaml pin.
+          # Issue #1267 N1: the macOS exclusion-zone path set. NOTE the
+          # trigger model: ci.yml has NO pull_request trigger (dispatch-only
+          # CI, see the flutter-app-exzone job comment) — this step runs only
+          # on a real pull_request event, so today it is path-narrowing
+          # RESERVE, exactly like the perf/usagefold/intmock greps below
+          # (documented pending in issue #303); the flutter-app-exzone leg
+          # actually gates via its workflow_dispatch arm (gh-1280 idiom).
+          # Context: the ubuntu flutter-tests leg runs this family but every
+          # engine-dependent test SKIPS there (native_test_guard.dart finds
+          # no QuickJS .so on a bare runner); they truly execute only on
+          # macOS — the hole #1309 escaped through (gh-1307). The issue's
+          # packages/js_widget_runtime/** is an EXTERNAL repo now, so its
+          # bumps arrive via the flutter_app/pubspec.yaml pin.
           if git diff --name-only "$BASE_REF" "$HEAD_REF" |
               grep -qE '(^flutter_app/lib/apps/|^lib/src/js_ext/|^flutter_app/test/apps/|^flutter_app/test/native_test_guard\.dart$|^flutter_app/pubspec\.yaml$)'; then
             echo "exzone=true" >> "$GITHUB_OUTPUT"
@@ -1423,20 +1431,25 @@ jobs:
   # skip their engine-dependent tests on ubuntu (native_test_guard.dart
   # finds no QuickJS .so on a bare runner), so that surface ran only in the
   # nightly macOS leg — the hole #1309 escaped through (gh-1307: an
-  # apps/engine regression merged green and went red the same night). When
-  # a PR touches the exclusion zone (flutter_app/lib/apps/**,
-  # lib/src/js_ext/**, the guarded family, the guard itself, or the external
-  # js_widget_runtime pin in flutter_app/pubspec.yaml), this macos leg runs
-  # the family pre-merge, where JavaScriptCore actually loads. Rare paths →
-  # one cheap runner; every other PR pays nothing. Nightly keeps the
-  # full-suite macOS backstop; merge-blocking flows through the aggregate
-  # Quality gate (a red exzone = red gate, AC1's required-and-green).
+  # apps/engine regression merged green and went red the same night).
+  #
+  # Trigger model (dispatch-only CI, gh-1280 binaries-pr idiom): ci.yml has
+  # NO pull_request trigger — PR validation arrives as an SM
+  # workflow_dispatch on the head SHA (machine-sm.yml), where the paths
+  # classifier cannot run (no pull_request event diff). The leg is
+  # therefore path-BLIND on dispatches: it runs in EVERY SM validation
+  # (one hosted-macOS leg beside the build-macos/build-ios legs already
+  # paid there), and the exzone path set only narrows a future real
+  # pull_request trigger. Main/tag/schedule/release runs skip it — the
+  # nightly flutter-app-macos leg stays the full-suite backstop there.
   # ─────────────────────────────────────────────────────────────────────────
   flutter-app-exzone:
     name: Exclusion zone (macOS JS-engine tests)
     runs-on: macos-latest
     needs: changes
-    if: needs.changes.outputs.exzone == 'true'
+    if: >-
+      (github.event_name == 'pull_request' && needs.changes.outputs.exzone == 'true') ||
+      github.event_name == 'workflow_dispatch'
     timeout-minutes: 25
     permissions:
       contents: read
