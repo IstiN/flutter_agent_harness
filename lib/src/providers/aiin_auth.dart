@@ -25,6 +25,7 @@ library;
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter_agent_harness/src/providers/chatgpt_oauth.dart';
 import 'package:flutter_agent_harness/src/providers/provider_common.dart';
 import 'package:http/http.dart' as http;
 
@@ -47,23 +48,9 @@ bool isAiinBaseUrl(String baseUrl) {
 
 /// The `email` claim of an AIIN JWT payload, or null when the token carries
 /// none or is not a JWT. Used to name provider entries after the account.
-String? aiinJwtEmail(String token) {
-  final parts = token.split('.');
-  if (parts.length != 3) return null;
-  final Object? claims;
-  try {
-    claims = jsonDecode(
-      utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
-    );
-  } on FormatException {
-    return null;
-  } on ArgumentError {
-    return null;
-  }
-  if (claims is! Map) return null;
-  final email = claims['email'];
-  return email is String && email.isNotEmpty ? email : null;
-}
+/// Delegates to the shared [jwtEmailClaim] — one claim reader for every
+/// host (issue #1326 review, thread 10).
+String? aiinJwtEmail(String token) => jwtEmailClaim(token);
 
 /// A setup-flow failure talking to the AIIN auth or API service.
 ///
@@ -105,7 +92,10 @@ Future<List<String>> fetchAiinOAuthProviders({
   final body = _decode(response);
   final providers = body['providers'];
   if (providers is! List) return const [];
-  return [for (final p in providers) if (p is String && p.isNotEmpty) p];
+  return [
+    for (final p in providers)
+      if (p is String && p.isNotEmpty) p,
+  ];
 }
 
 /// The result of [initiateAiinOAuth]: the URL to open in the browser plus
@@ -184,7 +174,10 @@ Future<AiinOAuthInitiate> initiateAiinOAuth({
   final parsed = _decode(response);
   final authUrl = parsed['auth_url'];
   final state = parsed['state'];
-  if (authUrl is! String || authUrl.isEmpty || state is! String || state.isEmpty) {
+  if (authUrl is! String ||
+      authUrl.isEmpty ||
+      state is! String ||
+      state.isEmpty) {
     throw AiinAuthException(
       'AIIN sign-in initiation returned no auth URL/state',
       code: 'invalid_response',
