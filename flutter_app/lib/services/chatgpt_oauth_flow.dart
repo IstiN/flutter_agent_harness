@@ -1,6 +1,5 @@
 // l10n:ignore-file — OAuth flow screens — en-only by design
 import 'dart:async';
-import 'dart:convert' show base64Url, jsonDecode, utf8;
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -371,7 +370,7 @@ Future<CustomProvider> _saveCredentials(
   // identity is unknown — a name match is never treated as re-auth.
   // Otherwise a new account gets a de-duplicated name (-2…), so two
   // accounts never share one entry.
-  final email = _chatGptEmail(credentials.idToken);
+  final email = jwtEmailClaim(credentials.idToken);
   final identity = email ?? 'ChatGPT';
   final provider =
       _existingEntry(registry, email, identity) ??
@@ -466,26 +465,4 @@ String chatgptEntryKeyName(String entryName) {
   return sanitized.isEmpty || sanitized == host
       ? 'FA_KEY_$host'
       : 'FA_KEY_${host}_$sanitized';
-}
-
-/// The `email` claim of the OAuth id_token JWT payload, or null when the
-/// token carries none (the fallback name keeps the flow usable).
-String? _chatGptEmail(String idToken) {
-  final parts = idToken.split('.');
-  if (parts.length != 3) return null;
-  final String payload;
-  try {
-    payload = utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
-  } on FormatException {
-    return null;
-  } on ArgumentError {
-    return null;
-  }
-  try {
-    final claims = jsonDecode(payload);
-    final email = claims is Map<String, Object?> ? claims['email'] : null;
-    return email is String && email.isNotEmpty ? email : null;
-  } on FormatException {
-    return null;
-  }
 }
