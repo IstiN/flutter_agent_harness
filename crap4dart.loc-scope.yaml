@@ -1,0 +1,69 @@
+# crap4dart loc-scope companion configuration for flutter_agent_harness.
+# https://github.com/IstiN/crap4dart
+#
+# WHY THIS FILE EXISTS (issue #1234 rework): crap4dart 0.11.0 has no
+# per-gate `sources` override — `gates.loc.sources` is rejected as an
+# unknown key (ConfigException; caught by CI on 019ede65). The package
+# config's top-level `sources` drives the CRAP census too, so it must
+# stay [lib, bin]. This companion config runs the SAME loc gate over the
+# one slice the package config cannot express: test/ + example/ — the
+# exact scope the retired shell guards (gh-1232 stage_size + the ci.yml
+# find-exec jobs) scanned there. flutter_app/lib stays under
+# flutter_app/crap4dart.yaml.
+#
+# RATCHET: max_lines mirrors both package configs (2800, wc -l
+# semantics, generated output excluded); max_lines only DOWN.
+# Enforcement: whole-tree in CI (guards job, `check --config` step) and
+# staged files in scripts/pre-commit — the same two points as the
+# package configs.
+
+sources: [test, example]
+
+exclude:
+  - '**.g.dart'
+  - '**.freezed.dart'
+  - '**.mocks.dart'
+  - 'build/**'
+  - 'vendor/**'
+
+# CRAP analysis is the package config's job (threshold pinned there);
+# this config is loc-only, so no coverage input is read.
+crap:
+  enabled: false
+
+coverage:
+  required: false
+  run_tests: false
+  branch_coverage: false
+
+# 0.9.5 default-enables ALL built-in gates; only loc is enforced here,
+# everything else disabled explicitly so a bare `check` means exactly
+# the ≤2800-line ceiling over test/ + example/.
+gates:
+  loc:
+    enabled: true
+    max_lines: 2800
+    exclude:
+      - '**.g.dart'
+      - '**.freezed.dart'
+      - '**.mocks.dart'
+  test_coverage: {enabled: false}
+  complexity: {enabled: false}
+  method_size: {enabled: false}
+  nesting: {enabled: false}
+  class_size: {enabled: false}
+  weight_of_class: {enabled: false}
+  unused_code: {enabled: false}
+  unused_files: {enabled: false}
+  banned_imports: {enabled: false}
+  duplication: {enabled: false}
+  file_naming: {enabled: false}
+  magic_constants: {enabled: false}
+  test_assertions: {enabled: false}
+  folder_structure: {enabled: false}
+  external: {enabled: false}
+  public_docs: {enabled: false}
+  golden: {enabled: false} # flutter-only gate (core is not a Flutter project)
+  accessibility: {enabled: false}
+  hardcoded_strings: {enabled: false}
+  broken_goldens: {enabled: false}
