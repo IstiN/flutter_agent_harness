@@ -77,9 +77,11 @@ String hiddenMarker({
   required String kind,
   required int tokens,
   String? preview,
+  bool pinned = false,
 }) {
+  final pin = pinned ? '·pinned' : '';
   final tail = preview == null || preview.isEmpty ? '' : '·"$preview"';
-  return '[$seq:hidden·$kind·${formatMarkerTokens(tokens)}$tail]';
+  return '[$seq:hidden·$kind·${formatMarkerTokens(tokens)}$pin$tail]';
 }
 
 /// The marker header for a compact checkpoint:

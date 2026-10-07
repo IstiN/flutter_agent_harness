@@ -275,6 +275,26 @@ final class Session {
   }
 
   /// Appends a thinking-level change. Returns the new record id.
+
+  /// Appends a segment pin event (issue #1379 tier 2): the records in
+  /// [recordIds] become immune to every hide/compact path until an unpin
+  /// event names them again. Recorded over stable record ids — replay
+  /// applies pin records in file order, last one wins.
+  Future<String> appendSegmentPin({
+    required List<String> recordIds,
+    required bool pinned,
+  }) {
+    return _append(
+      (id, parentId) => SegmentPinRecord(
+        id: id,
+        parentId: parentId,
+        timestamp: DateTime.now(),
+        recordIds: recordIds,
+        pinned: pinned,
+      ),
+    );
+  }
+
   Future<String> appendThinkingLevelChange(String thinkingLevel) {
     return _append(
       (id, parentId) => ThinkingLevelChangeRecord(

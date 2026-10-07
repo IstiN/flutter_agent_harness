@@ -29,6 +29,7 @@ import '../../agent/agent.dart' show AgentState;
 import '../../cancel_token.dart' show CancelToken, CancelTokenSource;
 import '../../session/session_record.dart';
 import '../../session/session_tree.dart';
+import '../../context.dart';
 import '../../types.dart';
 import '../compaction.dart';
 import '../summary_sanitizer.dart';
@@ -108,7 +109,7 @@ final class StructuredCompactor {
     this.hooks,
     this.maxHidePasses = 3,
     this.maxCheckpointPasses = 4,
-    this.protectLastN = 8,
+    this.protectLastN = hideProtectTailEntries,
     this.depthCap = 4,
     this.summarizerWindow,
     this.cancelToken,
@@ -210,9 +211,95 @@ final class StructuredCompactor {
     if (!force && _requestTokens() <= trigger) {
       return true;
     }
+    // Tier 2 LRU re-hide (issue #1379): evict least-recently-used
+    // expansion artifacts first — the oldest expand call/result pairs
+    // re-fold into markers before the judge ever sees the ledger.
+    await _runLruRehidePasses(trigger);
     if (!await _runHidePasses(trigger)) return false;
     if (!await _runCheckpointPasses(trigger)) return false;
     return _requestTokens() <= trigger;
+  }
+
+  /// Tier 2 LRU re-hide (issue #1379): after an expand storm, the oldest
+  /// expand call/result pairs re-fold into markers at the next pressure
+  /// event — the newest expansion is always kept. LRU order is derived
+  /// from file order alone (an expansion's recency IS its record position;
+  /// nothing extra is stored), so replay is deterministic. The re-hidden
+  /// segments themselves never left hidden-but-expandable state — their
+  /// markers stay in the session — so the lossless invariant (#148 AC2)
+  /// is untouched.
+  Future<void> _runLruRehidePasses(int trigger) async {
+    final before = _requestTokens();
+    final over = before - trigger;
+    if (over <= 0) return;
+    final view = await _buildView();
+    if (view == null) return;
+    final ledger = view.ledger;
+    final byId = {for (final record in view.path) record.id: record};
+    final protectedTail = <String>{
+      for (final entry in ledger.entries.skip(
+        ledger.entries.length - protectLastN < 0
+            ? 0
+            : ledger.entries.length - protectLastN,
+      ))
+        entry.recordId,
+    };
+    // Expand artifacts, oldest first: every visible assistant carrier of
+    // a compact_expand call, whole pair group. The LAST (newest) group is
+    // never an eviction candidate (AC2: newest kept).
+    final groups = <(int, Set<String>, int)>[];
+    for (final record in view.path) {
+      final message = record is MessageRecord ? record.message : null;
+      if (message is! AssistantMessage) continue;
+      if (view.state.hiddenRecordIds.contains(record.id)) continue;
+      if (view.state.isCovered(record.id)) continue;
+      final isExpandCarrier = message.content.any(
+        (block) => block is ToolCall && block.name == compactExpandToolName,
+      );
+      if (!isExpandCarrier) continue;
+      final group = ledger.groupOf(record.id);
+      var tokens = 0;
+      var hasResult = false;
+      for (final id in group) {
+        final other = byId[id];
+        if (other is MessageRecord && other.message is ToolResultMessage) {
+          hasResult = true;
+        }
+        final seq = view.seqs.seqOf(id);
+        if (seq != null) tokens += ledger.entryAtSeq(seq)?.tokens ?? 0;
+      }
+      // An unanswered carrier (no result yet) is not an expansion —
+      // hiding it would orphan a live tool call on the wire (#85).
+      if (!hasResult) continue;
+      groups.add((view.seqs.seqOf(record.id) ?? 0, group, tokens));
+    }
+    groups.sort((a, b) => a.$1.compareTo(b.$1));
+    if (groups.length <= 1) return;
+    final ids = <String>{};
+    var freed = 0;
+    for (final (_, group, tokens) in groups.take(groups.length - 1)) {
+      if (freed >= over) break;
+      // The protected tail holds here exactly as in the judge path, and a
+      // pinned expansion stays on the wire (AC3).
+      if (group.any(protectedTail.contains)) continue;
+      if (group.any(view.state.pinnedRecordIds.contains)) continue;
+      ids.addAll(group);
+      freed += tokens;
+    }
+    if (ids.isEmpty) return;
+    await session.appendHiddenRange(recordIds: ids.toList()..sort());
+    final after = await _refreshState();
+    hooks?.onPass(
+      StructuredCompactionPass(
+        kind: 'hide-lru',
+        pass: ++_pass,
+        tokensBefore: before,
+        tokensAfter: after,
+        ok: true,
+        judgeCalls: 0,
+        hiddenCount: ids.length,
+      ),
+    );
   }
 
   /// Cancels the budget token — the factory's total-budget race calls
@@ -263,6 +350,7 @@ final class StructuredCompactor {
         picks,
         view.ledger,
         protectLastN: protectLastN,
+        pinnedRecordIds: view.state.pinnedRecordIds,
       );
       if (ids.isEmpty) break;
       await session.appendHiddenRange(recordIds: ids.toList()..sort());
@@ -368,6 +456,8 @@ final class StructuredCompactor {
         tailStart,
       );
       if (groupTokens == null) continue;
+      // Tier 2 pin (issue #1379): the fallback never hides a pinned group.
+      if (group.any(view.state.pinnedRecordIds.contains)) continue;
       ids.addAll(group);
       freed += groupTokens;
     }
@@ -499,7 +589,7 @@ final class StructuredCompactor {
   Future<_LedgerView?> _buildView() async {
     final path = classicTransform(await session.getBranch());
     final viewState = buildStructuredViewState(path);
-    final visible = _visiblePath(path, viewState);
+    final visible = visibleStructuredPath(path, viewState);
     if (visible.isEmpty) return null;
     final seqs = RecordSeqIndex(await session.getEntries());
     return _LedgerView(
@@ -510,25 +600,6 @@ final class StructuredCompactor {
       path,
     );
   }
-
-  List<SessionRecord> _visiblePath(
-    List<SessionRecord> transformed,
-    StructuredViewState viewState,
-  ) => [
-    for (final record in transformed)
-      if (!viewState.isCovered(record.id) &&
-          record is! HiddenRangeRecord &&
-          !viewState.hiddenRecordIds.contains(record.id) &&
-          _projects(record))
-        record,
-  ];
-
-  bool _projects(SessionRecord record) =>
-      record is MessageRecord ||
-      record is CustomMessageRecord ||
-      record is CompactionRecord ||
-      record is BranchSummaryRecord ||
-      record is CompactCheckpointRecord;
 
   /// Rebuilds `state.messages` from the session projection, zeroing usage
   /// anchors on rebuilt transcripts (the classic engine's convention —
@@ -550,7 +621,7 @@ final class StructuredCompactor {
   List<_ProjectedEntry> _projectedEntries(_LedgerView view) {
     final projected = <_ProjectedEntry>[];
     for (final record in view.path) {
-      if (!view.state.isCovered(record.id) && _projects(record)) {
+      if (!view.state.isCovered(record.id) && projectsStructured(record)) {
         final seq = view.seqs.seqOf(record.id) ?? 0;
         final hidden = view.state.hiddenRecordIds.contains(record.id);
         projected.add(
@@ -594,6 +665,13 @@ final class StructuredCompactor {
     while (cut > 1 && _sharesGroup(projected, cut, view.ledger)) {
       cut--;
     }
+    // Tier 2 pin (issue #1379): a range never swallows a pinned record —
+    // the cut clamps to before the oldest pinned entry inside the
+    // candidate range (a pin deeper than the cut is unaffected).
+    final pinnedCut = projected.indexWhere(
+      (entry) => view.state.pinnedRecordIds.contains(entry.recordId),
+    );
+    if (pinnedCut >= 0 && pinnedCut < cut) cut = pinnedCut;
     if (cut <= 0) return null;
     final members = projected.take(cut).toList();
     if (members.isEmpty) return null;
@@ -603,6 +681,10 @@ final class StructuredCompactor {
       coveredIds.add(member.recordId);
       coveredIds.addAll(view.ledger.groupOf(member.recordId));
     }
+    // Tier 2 pin (issue #1379): a pin vetoes membership even when a pair
+    // group would snap it in — the pinned record stays unswallowed and
+    // keeps rendering on its own.
+    coveredIds.removeAll(view.state.pinnedRecordIds);
     return _CkptRange(
       firstRecordId: members.first.recordId,
       lastRecordId: members.last.recordId,
@@ -698,8 +780,14 @@ final class StructuredCompactor {
         if (record.message.role == 'user') record.message: record.id,
     };
     List<String> asksFor(List<Message> chunk) => userRequestCandidateLines(
-      [for (final m in chunk) if (askIdOf.containsKey(m)) m],
-      recordIds: [for (final m in chunk) if (askIdOf.containsKey(m)) askIdOf[m]!],
+      [
+        for (final m in chunk)
+          if (askIdOf.containsKey(m)) m,
+      ],
+      recordIds: [
+        for (final m in chunk)
+          if (askIdOf.containsKey(m)) askIdOf[m]!,
+      ],
     );
 
     String build(String conversation, List<String> asks, String? priorFold) {
@@ -764,8 +852,12 @@ final class StructuredCompactor {
   /// summary. A summarizer failure mid-fold is failure-safe (`null`).
   Future<String?> _chunkedFold(
     List<Message> messages, {
-    required String Function(String conversation, List<String> asks,
-        String? priorFold) build,
+    required String Function(
+      String conversation,
+      List<String> asks,
+      String? priorFold,
+    )
+    build,
     required List<String> Function(List<Message> chunk) asksFor,
     required int budget,
   }) async {
@@ -784,7 +876,11 @@ final class StructuredCompactor {
         envelopeChars: envelopeChars,
       );
       final text = await _callSummarizer(
-        build(conversation, asksFor(chunk), priorFold.isEmpty ? null : priorFold),
+        build(
+          conversation,
+          asksFor(chunk),
+          priorFold.isEmpty ? null : priorFold,
+        ),
       );
       if (text == null) return null;
       priorFold = text;
@@ -798,10 +894,7 @@ final class StructuredCompactor {
     try {
       final result =
           await summarize(
-            SummarizationRequest(
-              prompt: prompt,
-              cancelToken: _effectiveToken,
-            ),
+            SummarizationRequest(prompt: prompt, cancelToken: _effectiveToken),
           ).timeout(
             attemptBudget,
             onTimeout: () {
