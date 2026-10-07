@@ -57,7 +57,17 @@ per-PR `gh workflow run ci.yml --ref <branch>`) arm nothing. The daily:
   (`gh release create` attaches to an existing tag rather than moving it);
 - never publishes to pub.dev itself (see the pub.dev row above) — pub.dev
   movement stays 100% in the auto_release → ci.yml tag job path, with the
-  daily as verifier and rerun-recovery.
+  daily as verifier and rerun-recovery;
+- keeps NO daily-side wedge alarm for a tag that is never cut (#1368): the
+  old 1h `tag_cut_grace` horizon false-alarmed «never triggered» on a
+  10.5h-old bump that self-healed 3 minutes later, so an untagged bump now
+  reads `release-in-flight` ⏭️ in the daily for as long as it takes. The
+  remaining tripwires for a genuinely stuck release: `auto_release.sh`'s
+  one-time «pushed but untagged … proceeding so the next range absorbs it»
+  log, the plan job's release-unresolved re-arm (every daily re-verifies
+  while pub.dev is behind), and the tag-run selector in
+  `scripts/verify_pubdev_release.sh`, which alarms `only non-push run(s)`
+  once a tag exists but only release-event runs registered.
 
 **Change baseline**: legs run only when `main` moved since the last green
 daily **that ran all legs** (schedule runs, or `legs=all` dispatches). A
