@@ -153,9 +153,19 @@ process_leg() {
   local prefix="Leg: $2" icon status
   case "$result" in
     success)
-      icon="✅"
-      status="${override:-success}"
-      close_if_open "$id"
+      # A neutral-skip override («skipped: …») marks an UNOBSERVED outcome
+      # (#1368 false green: release-in-flight rendered ✅ and auto-closed the
+      # leg's stuck-release issue without ever seeing the publish). Render it
+      # as a skip — never ✅ — and keep any open leg issue open; only a
+      # verified outcome (up-to-date/recovered/private) closes it.
+      if [[ "$override" == "skipped:"* ]]; then
+        icon="⏭️"
+        status="$override"
+      else
+        icon="✅"
+        status="${override:-success}"
+        close_if_open "$id"
+      fi
       ;;
     failure)
       icon="❌"; status="failure"; failed_legs+="$id "
@@ -202,8 +212,10 @@ case "${LEG_PUBDEV_STATUS:-}" in
   private)    pubdev_override="private (publish_to: none)";;
   recovered)  pubdev_override="recovered — tag-publish rerun, pub.dev serves ${LEG_PUBDEV_PUBLISHED:-?}";;
   up-to-date) pubdev_override="up-to-date (pub.dev serves ${LEG_PUBDEV_PUBLISHED:-?})";;
-  # gh-1192: the tag-publish is still executing — neutral, no issue filed.
-  release-in-flight) pubdev_override="skipped: release in flight (tag-publish still executing; the next daily re-verifies)";;
+  # gh-1192/#1368: the tag-publish outcome is UNOBSERVED (still executing or
+  # the bounded wait lapsed) — neutral, no issue filed, none closed, and the
+  # summary renders it as a skip, never a ✅.
+  release-in-flight) pubdev_override="skipped: release in flight (tag-publish outcome unobserved this run; the next daily re-verifies)";;
 esac
 
 process_leg testflight "TestFlight" "${LEG_TESTFLIGHT:-}" "${LEG_TESTFLIGHT_URL:-}" \
