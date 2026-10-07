@@ -883,8 +883,12 @@ void main() {
         () {
       // The old release arm: the release twin attempted the publish pub.dev
       // OIDC always rejects. Its failure must read as never-published, and
-      // recovery must never rerun THAT twin.
+      // recovery must never rerun THAT twin. The tag is aged past the 900s
+      // grace (20 min) — INSIDE the grace the selection correctly keeps the
+      // leg in the neutral in-flight class (pinned by the young-tag
+      // companion case below); the alarm branch is grace-expired only.
       final r = runVerify('release-twin-only',
+          tagAge: const Duration(minutes: 20),
           runsJson:
               '[{"databaseId":77,"status":"completed","conclusion":"failure","event":"release"}]');
       expect(r.exitCode, isNot(0), reason: r.output);
@@ -898,8 +902,10 @@ void main() {
     test('young tag with release-only runs visible -> grace skip, never alarms', () {
       // #1370 review: release-tag cuts the GitHub Release concurrently with
       // the tag push — the release twin registers while the push twin has
-      // not. Within the grace window this is release-in-flight, not
-      // «never triggered» (the #1189 false-alarm class).
+      // not. Within the grace window (60s-old tag < 900s) this is
+      // release-in-flight, NOT «never triggered» (the #1189 false-alarm
+      // class). Companion to the grace-expired alarm case above: both
+      // branches pinned.
       final r = runVerify('young-release-twin',
           runsJson:
               '[{"databaseId":77,"status":"queued","conclusion":null,"event":"release"}]');
