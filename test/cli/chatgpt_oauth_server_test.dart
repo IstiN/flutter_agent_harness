@@ -13,7 +13,10 @@ void main() {
   group('ChatGptOAuthLocalCallbackServer', () {
     test('completes with code and state on the callback', () async {
       final server = ChatGptOAuthLocalCallbackServer();
-      final url = await server.start(timeout: const Duration(seconds: 5));
+      final url = await server.start(
+        timeout: const Duration(seconds: 5),
+        ports: const [0],
+      );
       expect(url, startsWith('http://localhost:'));
       expect(url, endsWith('/auth/callback'));
 
@@ -35,7 +38,10 @@ void main() {
 
     test('answers 400 with the error page when the code is missing', () async {
       final server = ChatGptOAuthLocalCallbackServer();
-      final url = await server.start(timeout: const Duration(seconds: 5));
+      final url = await server.start(
+        timeout: const Duration(seconds: 5),
+        ports: const [0],
+      );
 
       final requestFuture = _httpGet(Uri.parse(url));
       final callbackFuture = server.waitForCallback();
@@ -52,7 +58,10 @@ void main() {
 
     test('answers 400 with the provider error description', () async {
       final server = ChatGptOAuthLocalCallbackServer();
-      final url = await server.start(timeout: const Duration(seconds: 5));
+      final url = await server.start(
+        timeout: const Duration(seconds: 5),
+        ports: const [0],
+      );
 
       final uri = Uri.parse(url).replace(
         queryParameters: {
@@ -70,12 +79,51 @@ void main() {
 
     test('answers 404 for other paths', () async {
       final server = ChatGptOAuthLocalCallbackServer();
-      final url = await server.start(timeout: const Duration(seconds: 5));
+      final url = await server.start(
+        timeout: const Duration(seconds: 5),
+        ports: const [0],
+      );
 
       final base = Uri.parse(url);
       final response = await _httpGet(base.replace(path: '/other'));
       expect(response.statusCode, 404);
       await server.close();
+    });
+
+    test('binds the first available port and falls back to the next', () async {
+      Future<int> freePort() async {
+        final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+        final port = socket.port;
+        await socket.close();
+        return port;
+      }
+
+      final first = await freePort();
+      final second = await freePort();
+
+      // Both free → the first listed port wins (the Codex-registered
+      // order: 1455 preferred, 1457 fallback).
+      final firstServer = ChatGptOAuthLocalCallbackServer();
+      var url = await firstServer.start(
+        timeout: const Duration(seconds: 5),
+        ports: [first, second],
+      );
+      expect(Uri.parse(url).port, first);
+      await firstServer.close();
+
+      // First occupied → the next listed port serves the callback.
+      final occupant = await HttpServer.bind(
+        InternetAddress.loopbackIPv4,
+        first,
+      );
+      final secondServer = ChatGptOAuthLocalCallbackServer();
+      url = await secondServer.start(
+        timeout: const Duration(seconds: 5),
+        ports: [first, second],
+      );
+      expect(Uri.parse(url).port, second);
+      await secondServer.close();
+      await occupant.close();
     });
 
     test('throws when both callback ports are occupied', () async {
@@ -111,6 +159,7 @@ void main() {
       );
 
       final flowFuture = runChatGptOAuthCliFlow(
+        ports: const [0],
         onStatus: (status) => driver.record(statuses, status),
         openBrowserFn: (_) async => false,
         exchangeFn:
@@ -145,6 +194,7 @@ void main() {
       var exchangeCalled = false;
 
       final flowFuture = runChatGptOAuthCliFlow(
+        ports: const [0],
         onStatus: (status) => driver.record(statuses, status),
         openBrowserFn: (_) async => true,
         exchangeFn:
@@ -183,6 +233,7 @@ void main() {
       final driver = _FlowDriver();
 
       final flowFuture = runChatGptOAuthCliFlow(
+        ports: const [0],
         onStatus: (status) => driver.record(statuses, status),
         openBrowserFn: (_) async => false,
         exchangeFn:
@@ -211,6 +262,7 @@ void main() {
       final statuses = <String>[];
 
       final result = await runChatGptOAuthCliFlow(
+        ports: const [0],
         onStatus: statuses.add,
         openBrowserFn: (_) async => false,
         timeout: const Duration(milliseconds: 50),
@@ -234,6 +286,7 @@ void main() {
       final driver = _FlowDriver();
 
       final flowFuture = runChatGptOAuthCliFlow(
+        ports: const [0],
         onStatus: (status) => driver.record(statuses, status),
         openBrowserFn: (_) async => false,
         exchangeFn:
