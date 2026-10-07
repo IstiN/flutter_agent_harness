@@ -85,7 +85,8 @@
       "test/integration/fa_cli_integration_test.dart",
       "test/integration/trajectory/cli_integration_test.dart",
       "test/integration/trajectory/perf_open_gate_test.dart",
-      "test/integration/fa_cli_thinking_abort_test.dart"
+      "test/integration/fa_cli_thinking_abort_test.dart",
+      "test/integration/fa_cli_thinking_livestream_pty_test.dart"
     ]
   ],
   "meta": {
@@ -120,6 +121,7 @@
       "test/integration/fa_cli_integration_test.dart": 87.5,
       "test/integration/fa_cli_newline_wires_test.dart": 25.0,
       "test/integration/fa_cli_thinking_abort_test.dart": 12.5,
+      "test/integration/fa_cli_thinking_livestream_pty_test.dart": 12.5,
       "test/integration/fa_cube_integration_test.dart": 100.0,
       "test/integration/fa_llm_mock_config_test.dart": 100.0,
       "test/integration/frame_budget_pty_test.dart": 100.0,
