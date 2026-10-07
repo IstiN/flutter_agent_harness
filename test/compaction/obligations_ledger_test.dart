@@ -138,6 +138,43 @@ void main() {
       );
       expect(deriveObligations('from agent-x: can you help'), isEmpty);
     });
+
+    test('oversized messages never classify (paste guard)', () {
+      // A 10 KB paste that happens to contain "please" is content, not an
+      // obligation.
+      final paste = '${'x' * 5000} please look at this';
+      expect(paste.length, greaterThan(maxClassifiedUserTextChars));
+      expect(deriveObligations(paste), isEmpty);
+      // Just under the guard still classifies.
+      final near = '${'x' * (maxClassifiedUserTextChars - 60)} please look';
+      expect(deriveObligations(near), hasLength(1));
+    });
+
+    test('PARITY: the classifier and the canonical synthetic predicate '
+        'agree on shared fixtures', () {
+      const fixtures = [
+        '<system-notice>can you close the loop</system-notice>',
+        'leading whitespace <system-notice> body',
+        '[widget Run] could you rerun it',
+        '[ext:cube] always refresh the cube',
+        '<system-interrupt rule=r> please comply',
+        'from\tagent-x:  could you also fix it',
+        'from agent-x: always push to green',
+        'The following is a summary of a branch: please read',
+        '  the following is a summary of a branch: please read  ',
+        'a genuine rule: always run tests',
+        'could you fix the flake, please',
+      ];
+      for (final text in fixtures) {
+        if (isSyntheticUserText(text)) {
+          expect(
+            deriveObligations(text),
+            isEmpty,
+            reason: 'synthetic text must never open obligations: $text',
+          );
+        }
+      }
+    });
   });
 
   group('ledger model', () {
@@ -257,6 +294,28 @@ void main() {
       expect(ObligationsLedger.fromPayload(null).isEmpty, isTrue);
     });
 
+    test('id-less entries get a DETERMINISTIC id (addressable, round-trip '
+        'stable)', () {
+      const payload = [
+        {'text': 'legacy entry'},
+      ];
+      final first = ObligationsLedger.fromPayload(payload);
+      final second = ObligationsLedger.fromPayload(payload);
+      // Two parses agree — the id is a content hash, not a fresh uuid.
+      expect(first.entries.single.id, second.entries.single.id);
+      expect(first.entries.single.id, startsWith('obl-'));
+      // And the round-trip payload is byte-stable.
+      expect(
+        ObligationsLedger.fromPayload(first.toPayload()).toPayload(),
+        first.toPayload(),
+      );
+      // Distinct entries hash apart.
+      final other = ObligationsLedger.fromPayload([
+        {'text': 'a different entry'},
+      ]);
+      expect(other.entries.single.id, isNot(first.entries.single.id));
+    });
+
     test('budget: closed entries evict oldest-first, open never drop (E1)', () {
       ObligationEntry seed(String id, ObligationStatus status, String text) =>
           ObligationEntry(
@@ -297,14 +356,38 @@ void main() {
       expect(block, isNot(contains('middle closed')));
       expect(block, contains('newest closed'));
 
-      // An over-budget OPEN set still renders in full — an obligation is
-      // never sunk by the budget.
+      // Budget bound: with only closed entries over budget, the render
+      // never exceeds maxChars (the envelope is counted, not assumed).
+      final closedOnly = ObligationsLedger([
+        for (var i = 0; i < 10; i++)
+          seed('c$i', ObligationStatus.done, 'closed entry $i ${'y' * 80}'),
+      ]);
+      final bounded = renderObligationsBlock(closedOnly, maxChars: 900);
+      expect(bounded.length, lessThanOrEqualTo(900));
+      expect(bounded, contains('closed entry 9'));
+      expect(bounded, isNot(contains('closed entry 0')));
+
+      // Open entries render newest-last, capped at maxRenderedOpenEntries
+      // with an honest counting tail — never silently dropped (review
+      // round-2 guardrail).
       final manyOpen = ObligationsLedger([
         for (var i = 0; i < 20; i++)
-          seed('o$i', ObligationStatus.open, longOpen),
+          seed('o$i', ObligationStatus.open, 'open obligation number $i'),
       ]);
-      final overBudget = renderObligationsBlock(manyOpen, maxChars: 100);
-      expect(overBudget.contains(longOpen), isTrue);
+      final capped = renderObligationsBlock(manyOpen, maxChars: 100);
+      expect(capped, contains('open obligation number 19'));
+      expect(capped, isNot(contains('open obligation number 7 (')));
+      expect(capped, contains('… and 8 more open obligations'));
+
+      // Per-entry display clip: a giant verbatim span renders clipped —
+      // the full span stays on the record (AC2 at record level).
+      final giant = ObligationsLedger([
+        seed('g1', ObligationStatus.open, 'giant rule ${'z' * 500}'),
+      ]);
+      final clipped = renderObligationsBlock(giant);
+      expect(clipped, isNot(contains('z' * 400)));
+      expect(clipped, contains('…'));
+      expect(clipped, contains('record r-g1)'));
     });
 
     test('empty ledger renders no block', () {
@@ -339,7 +422,7 @@ void main() {
         expect(block, contains(_askText));
         expect(
           block,
-          contains('(record ${ids[0]})'),
+          contains('record ${ids[0]})'),
           reason: 'pointer to the source record id',
         );
         // Wire stays valid with the appended user message (issue #85).
@@ -370,6 +453,84 @@ void main() {
         expect(messages.where(_isBlock), hasLength(1));
         final block = (messages.last as UserMessage).content as String;
         expect(block, contains(_ruleText));
+        expect(validateToolPairing(messages), isEmpty);
+      },
+    );
+
+    test(
+      'WINDOWED REGRESSION (review-blocking): a snapshot below the '
+      'windowed tail still renders, and the scan finds the latest state',
+      () async {
+        final session = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        final ids = await _seedSession(session);
+        final writer = ObligationsLedgerWriter();
+        // Snapshot 1: rule + ask open.
+        final p1 = writer.ingest(
+          text: _ruleText,
+          sourceRecordId: ids[0],
+          at: DateTime.utc(2026),
+        )!;
+        await session.appendCustomEntry(
+          customType: obligationsLedgerRecordType,
+          data: p1,
+        );
+        final p2 = writer.ingest(
+          text: _askText,
+          sourceRecordId: 'r-ask',
+          at: DateTime.utc(2026),
+        )!;
+        await session.appendCustomEntry(
+          customType: obligationsLedgerRecordType,
+          data: p2,
+        );
+        // Snapshot 2: the ask closes. LATEST-WINS state: rule open, ask done.
+        final p3 = writer.markStatus(
+          writer.ledger.entries.last.id,
+          ObligationStatus.done,
+        )!;
+        await session.appendCustomEntry(
+          customType: obligationsLedgerRecordType,
+          data: p3,
+        );
+
+        // Fill past the residency cap (defaultResidentRecords = 600): all
+        // three snapshots now lie BELOW the windowed tail — the exact #488
+        // shape where the resident view silently loses the ledger.
+        for (var i = 0; i < 650; i++) {
+          await session.appendMessage(UserMessage.text('filler $i'));
+        }
+        final meta = await session.getMetadata();
+        final windowed = await repo.open(meta, windowed: true);
+
+        // Sanity: the resident view has NO ledger snapshot at all.
+        expect(latestObligationsLedgerIn(await windowed.getEntries()), isNull);
+
+        // The projection still renders the block — raw-scan fallback — and
+        // from the LATEST snapshot's state (ask done), not snapshot 1's.
+        final messages = await windowed.buildContextMessages();
+        expect(_isBlock(messages.last), isTrue);
+        final block = (messages.last as UserMessage).content as String;
+        expect(block, contains(_ruleText));
+        expect(block, contains('[done]'));
+        expect(block, contains(_askText));
+
+        // The writer-side rehydration mechanism: the raw scan sees the full
+        // chain and the latest snapshot wins — a writer built from this
+        // never erases the earlier entries.
+        final records = await repo.readCustomRecordsOfType(meta, {
+          obligationsLedgerRecordType,
+        });
+        expect(records, hasLength(3));
+        final latest = ObligationsLedger.fromPayload(records.last.data);
+        expect(latest.entries, hasLength(2));
+        // Only the rule is still open; the ask closed in the latest state.
+        expect(latest.open.single.text, _ruleText);
+        expect(
+          latest.entries.firstWhere((e) => e.text == _askText).status,
+          ObligationStatus.done,
+        );
         expect(validateToolPairing(messages), isEmpty);
       },
     );
@@ -469,10 +630,7 @@ void main() {
           expect(record, isA<MessageRecord>());
           final message = (record as MessageRecord).message;
           expect(message, isA<UserMessage>());
-          expect(
-            obligationsUserText((message as UserMessage).content),
-            entry.text,
-          );
+          expect(userMessageText((message as UserMessage).content), entry.text);
         }
       },
     );

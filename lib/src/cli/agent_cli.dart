@@ -439,6 +439,7 @@ class AgentCli {
         // saves clamp like every other fs-touching tool.
         saveBrowserScreenshot: saveBrowserScreenshot,
         hostTools: pluginTools,
+        obligationsClose: (id, status) => closeObligation(id, status),
         hubFabric: config.hubFabric,
         // Hub mail merges into the MAIN inbox — lazily, so the manager
         // (constructed inside the builder) may not exist yet.

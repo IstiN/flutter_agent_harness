@@ -38,6 +38,7 @@ import '../context.dart';
 import '../prompts/prompts.g.dart';
 import '../session/session_tree.dart';
 import '../types.dart';
+import '../user_text.dart';
 
 /// The `checkpoint` tool name.
 const checkpointToolName = 'checkpoint';
@@ -245,28 +246,14 @@ final class CheckpointRewindController {
     return null;
   }
 
-  /// User-role texts that are machine injections, never the user's turn:
-  /// widget interactions (`[widget <title>] …`, the dynamic_message
-  /// contract), extension follow-ups (`[ext:<name>] …`), harness
-  /// `<system-notice>` envelopes (background-job completions and friends),
-  /// TTSR `<system-interrupt …>` rule injections, agent mail
-  /// (`from <id>: …`), and compaction's projected branch summaries.
-  static final RegExp _syntheticUserTextPattern = RegExp(
-    r'^\[(widget|ext:)|^<system-notice>|^<system-interrupt'
-    r'|^from \S+: |^The following is a summary of a branch',
-  );
-
   /// Whether [message] is a real user turn (the user's own words) rather
-  /// than a synthetic user-role injection.
+  /// than a synthetic user-role injection. The predicate is the ONE copy
+  /// in `../user_text.dart` (issue #1380 review consolidation — this used
+  /// to be a drifted local regex); it subsumes the historical
+  /// widget/extension/TTSR prefixes, whitespace-tolerant agent mail, and
+  /// system-notice envelopes anywhere in the text.
   static bool _isRealUserTurn(UserMessage message) {
-    final content = message.content;
-    final text = content is String
-        ? content
-        : (content as List<Object?>)
-              .whereType<TextContent>()
-              .map((block) => block.text)
-              .join(' ');
-    return !_syntheticUserTextPattern.hasMatch(text.trim());
+    return !isSyntheticUserText(userMessageText(message.content));
   }
 
   /// Auto-closes the active checkpoint: clears it and writes the

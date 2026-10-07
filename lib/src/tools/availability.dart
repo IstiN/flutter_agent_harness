@@ -56,6 +56,7 @@ const knownToolIds = <String>{
   'schedule_message',
   'ask',
   'request_secret',
+  'obligations',
   'task',
   'checkpoint',
   'rewind',
@@ -123,6 +124,7 @@ const coreToolFamilies = <String, Set<String>>{
   'schedule_message': {'schedule_message'},
   'ask': {'ask'},
   'request_secret': {'request_secret'},
+  'obligations': {'obligation_mark_done'},
   'task': {
     'task',
     'task_cancel',
