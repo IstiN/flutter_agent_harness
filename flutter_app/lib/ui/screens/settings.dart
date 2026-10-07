@@ -1943,6 +1943,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (result.apiKey.isNotEmpty) {
       registry.rememberKey(provider.id, result.apiKey);
+      // gh-1378 AC3: a manual add runs the same endpoint confirmation the
+      // connect flows' quota tiles read from — the probe fires now, not
+      // at the next pull-to-refresh.
+      QuotaStore.instance.confirmEndpoint(provider.baseUrl);
     }
     AppAnalytics.instance.providerSaved('add');
   }

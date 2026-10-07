@@ -20,7 +20,8 @@
 library;
 
 import 'dart:async';
-import 'dart:convert' show jsonEncode;
+import 'dart:convert' show jsonEncode, utf8;
+import 'dart:io' show Socket;
 
 import 'package:fa/services/aiin_connect_flow.dart';
 import 'package:fa/services/agent_service.dart';
@@ -234,6 +235,103 @@ void main() {
     await tester.pump(const Duration(seconds: 5)); // expire status snacks
     // Restore before postTest: flutter_test's foundation-var check runs
     // when the BODY completes — before the package-level tearDown.
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('gh-1378: a callback that lands on the loopback leg completes '
+      'even when the sheet never settles — a dead sheet must not hold the '
+      'flow (no stuck latch, no dead air)', (tester) async {
+    // The build-211 device repro: scheme interception is dead for `http`,
+    // so the redirect loads the loopback server for real (the fallback
+    // leg wins), the flow fires its dismissal (`cancel`) — and the
+    // sheet's completion NEVER fires, so the old post-callback
+    // `await opened` hung forever: no exchange log, no completion, the
+    // provider-add latch stuck "in progress". The flow must bound that
+    // wait and proceed to the exchange.
+    final argsSeen = <Map<Object?, Object?>>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('fah/web_auth_session'), (
+          call,
+        ) async {
+          if (call.method == 'authenticate') {
+            final args = call.arguments as Map<Object?, Object?>;
+            argsSeen.add(args);
+            // The dead sheet: the authenticate call never resolves —
+            // no interception, and `cancel` (below) settles nothing.
+            return Completer<Object?>().future;
+          }
+          // `cancel` resolves nothing: the dismissal is lost, exactly
+          // like the device log (no "sign-in sheet resolved" line).
+          return null;
+        });
+    final registry = ProviderRegistry.inMemory();
+    final context = await _pumpHost(tester);
+
+    var modelsFetched = false;
+    Object? flowError;
+    await tester.runAsync(() async {
+      unawaited(
+        runAiinMobileConnect(
+          context: context,
+          registry: registry,
+          service: null,
+          lastConnectionStore: LastConnectionStore.inMemory(),
+          aiinHttpClient: _mockBackend(),
+          aiinModelsFetcher: (baseUrl, {required apiKey}) async {
+            modelsFetched = true;
+            return ['moonshotai/kimi-k2'];
+          },
+        ).then(
+          (_) {},
+          onError: (Object e, StackTrace s) {
+            flowError = e;
+          },
+        ),
+      );
+      for (var i = 0; i < 100 && argsSeen.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      // The fallback leg: the redirect loads the loopback server for
+      // real — code + our state, the same query the sheet would have
+      // intercepted.
+      final login = Uri.parse(argsSeen.single['url'] as String);
+      final redirect = Uri.parse(login.queryParameters['client_redirect_uri']!);
+      final callback = redirect.replace(
+        queryParameters: {
+          'code': 'c-1378',
+          'state': login.queryParameters['state']!,
+        },
+      );
+      // The binding's _MockHttpOverrides answers EVERY HttpClient with an
+      // empty 400, and an escape-hatch client cannot be built without
+      // recursing into the overrides — so the one real loopback hit rides
+      // a raw socket (no HttpClient stack at all), still inside runAsync.
+      final statusLine = await _realLoopbackGet(callback);
+      expect(
+        statusLine,
+        contains(' 200'),
+        reason: 'the loopback callback leg must answer 200',
+      );
+      // The settle grace expires (the sheet is dead), the exchange runs
+      // off the mocked backend, and the model picker opens.
+      for (var i = 0; i < 400 && !modelsFetched; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      }
+    });
+    expect(
+      modelsFetched,
+      isTrue,
+      reason:
+          'the landed callback must settle the flow without the sheet '
+          'ever resolving',
+    );
+    expect(flowError, isNull, reason: 'flow error: $flowError');
+    for (var i = 0; i < 30 && find.text('AIIN model').evaluate().isEmpty; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    await tester.pumpAndSettle();
+    expect(find.text('AIIN model'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5)); // expire status snacks
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -472,4 +570,27 @@ StreamFunction _singleTextResponse() {
     stream.end();
     return stream;
   };
+}
+
+/// One real HTTP GET over a raw socket (the test binding's
+/// `_MockHttpOverrides` owns every HttpClient; a raw socket bypasses it).
+/// Returns the response status line.
+Future<String> _realLoopbackGet(Uri url) async {
+  final socket = await Socket.connect('127.0.0.1', url.port);
+  final head = StringBuffer();
+  try {
+    socket.write(
+      'GET ${url.path}?${url.query} HTTP/1.1\r\n'
+      'Host: 127.0.0.1:${url.port}\r\n'
+      'Connection: close\r\n'
+      '\r\n',
+    );
+    await socket.flush();
+    await socket
+        .listen((chunk) => head.write(utf8.decode(chunk)))
+        .asFuture<void>();
+  } finally {
+    socket.destroy();
+  }
+  return head.toString().split('\r\n').first;
 }

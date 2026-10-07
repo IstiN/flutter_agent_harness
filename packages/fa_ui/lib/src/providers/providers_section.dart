@@ -242,8 +242,9 @@ class ProvidersSection extends StatelessWidget {
     );
   }
 
-  /// Quota marks the gauge renders for (everything else stays gauge-free).
-  static const _quotaMarks = {'openrouter', 'codemie', 'dial'};
+  /// Quota marks the gauge renders for (everything else stays gauge-free)
+  /// — the shared [quotaMarkIds].
+  static const _quotaMarks = quotaMarkIds;
 
   /// The trailing gauge for a row identified by its provider mark, or null
   /// when the row has no quota surface (no store wired, a non-quota mark,
@@ -482,6 +483,7 @@ class ProvidersSection extends StatelessWidget {
         onDeviceRoutes: onDeviceProviders,
         onOnDeviceConnected: onDeviceConnected,
         modelsFetcher: modelsFetcher,
+        quotas: quotas,
       ),
     );
   }

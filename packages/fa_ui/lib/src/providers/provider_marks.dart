@@ -44,6 +44,11 @@ String providerMarkKeyForBaseUrl(String baseUrl) {
   return 'custom';
 }
 
+/// The marks that carry a quota gauge (the quota service ids — one id per
+/// mark). The providers list renders gauges for these and the add flow's
+/// endpoint-confirmation probe (gh-1378) refreshes them at add time.
+const quotaMarkIds = {'openrouter', 'codemie', 'dial'};
+
 /// Brand marks for the provider list (onboarding page 2). Real brand SVGs
 /// where a permissive source exists (simple-icons.org, CC0) plus the
 /// official in-house marks (CodeMie — auth.codemie.lab.epam.com, DIAL —
