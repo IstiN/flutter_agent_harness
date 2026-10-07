@@ -355,46 +355,58 @@ class _AppTileHostState extends State<AppTileHost> {
         ),
       );
     }
-    return ValueListenableBuilder<Map<String, dynamic>?>(
-      valueListenable: engine.tree,
-      builder: (context, tree, _) {
-        if (tree == null) {
-          return const Center(
-            child: SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
+    // Issue #1336: an engine that booted but never rendered must not spin
+    // forever — same fallback as a failed boot: the app icon.
+    return ValueListenableBuilder<String?>(
+      valueListenable: engine.bootError,
+      builder: (context, bootError, _) {
+        if (bootError != null) {
+          return Center(
+            child: AppIcon(app: widget.app, env: widget.env, size: 32),
           );
         }
-        final renderer = JsonWidgetRenderer(
-          theme: JsonWidgetTheme.fromAccent(
-            theme.colorScheme.primary,
-            brightness: theme.brightness,
-          ),
-          mapTileProvider: widget.mapTileProvider,
-          // 3D scenes render in tiles too (display-only — no tap picking:
-          // any tap opens the full app).
-          js3dHost: createFaJs3dHost(widget.env),
-          // Without a media host the renderer falls back to a placeholder
-          // for video/audio nodes — live tiles with media need it too.
-          mediaHost: const FaMediaHost(),
-          // Display-only tile (default): any UI event opens the full app.
-          // An interactive tile (`"widget": {"interactive": true}`) gets
-          // its taps routed to the tile engine's jsr.onEvent instead —
-          // the app opens via the tile menu (long-press / right-click).
-          onEvent: widget.app.tileWidget?.interactive == true
-              ? (actionId, payload) {
-                  unawaited(engine.callEvent(actionId, payload));
-                }
-              : (actionId, payload) => widget.onOpen(),
-        );
-        return ViewportReporter(
-          onSize: (size) => engine.dispatchHostEvent('viewport', {
-            'width': size.width,
-            'height': size.height,
-          }),
-          child: renderer.build(tree, context),
+        return ValueListenableBuilder<Map<String, dynamic>?>(
+          valueListenable: engine.tree,
+          builder: (context, tree, _) {
+            if (tree == null) {
+              return const Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              );
+            }
+            final renderer = JsonWidgetRenderer(
+              theme: JsonWidgetTheme.fromAccent(
+                theme.colorScheme.primary,
+                brightness: theme.brightness,
+              ),
+              mapTileProvider: widget.mapTileProvider,
+              // 3D scenes render in tiles too (display-only — no tap picking:
+              // any tap opens the full app).
+              js3dHost: createFaJs3dHost(widget.env),
+              // Without a media host the renderer falls back to a placeholder
+              // for video/audio nodes — live tiles with media need it too.
+              mediaHost: const FaMediaHost(),
+              // Display-only tile (default): any UI event opens the full app.
+              // An interactive tile (`"widget": {"interactive": true}`) gets
+              // its taps routed to the tile engine's jsr.onEvent instead —
+              // the app opens via the tile menu (long-press / right-click).
+              onEvent: widget.app.tileWidget?.interactive == true
+                  ? (actionId, payload) {
+                      unawaited(engine.callEvent(actionId, payload));
+                    }
+                  : (actionId, payload) => widget.onOpen(),
+            );
+            return ViewportReporter(
+              onSize: (size) => engine.dispatchHostEvent('viewport', {
+                'width': size.width,
+                'height': size.height,
+              }),
+              child: renderer.build(tree, context),
+            );
+          },
         );
       },
     );
