@@ -80,6 +80,16 @@
         37517510546,
         37482587645
       ]
+    },
+    {
+      "file": "test/integration/wire_serve_cli_test.dart",
+      "test": "E4 + authn-lite: bad token is rejected; token stays out of records",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1360",
+      "since": "2026-10-07",
+      "runs": [
+        37552613207,
+        37459648403
+      ]
     }
   ]
 }
