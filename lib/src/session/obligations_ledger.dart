@@ -112,16 +112,26 @@ enum ObligationStatus {
   };
 }
 
-/// FNV-1a over the UTF-16 code units — stable across processes and
-/// versions (String.hashCode is not), so a legacy id-less entry keeps ONE
-/// addressable id for its lifetime.
+/// FNV-1a (32-bit) over the UTF-16 code units — stable across processes
+/// and versions (String.hashCode is not), so a legacy id-less entry keeps
+/// ONE addressable id for its lifetime.
+///
+/// WEB-SAFE (validation_failed: dart2js rejects 64-bit literals —
+/// "integer literal can't be represented exactly in JavaScript"): the
+/// multiply is split hi/lo so every intermediate stays below 2^53 and is
+/// bit-exact on BOTH the VM and dart2js — no 64-bit literals, no
+/// platform-dependent wraparound.
 String _fnv1a(String input) {
-  var hash = 0xcbf29ce484222325;
+  const offsetBasis = 0x811c9dc5;
+  const prime = 0x01000193;
+  var hash = offsetBasis;
   for (var i = 0; i < input.length; i++) {
     hash ^= input.codeUnitAt(i);
-    hash = (hash * 0x100000001b3) & 0x7fffffffffffffff;
+    final lo = (hash & 0xffff) * prime; // < 2^40 — exact everywhere
+    final hi = (hash >>> 16) * prime; // < 2^40 — exact everywhere
+    hash = (lo + ((hi & 0xffff) << 16)) & 0x7fffffff;
   }
-  return hash.toRadixString(16).padLeft(16, '0');
+  return hash.toRadixString(16).padLeft(8, '0');
 }
 
 /// Deterministic fallback id for a legacy entry missing its `id` field:
