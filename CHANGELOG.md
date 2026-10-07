@@ -4692,4 +4692,10 @@
 - fix(1339): surface recovered trials, terminal failure modes, and model ids in the bench summary (#1351)
 - feat(1331): iOS size diet — IPA dSYM strip + never-loaded fixture prune + ratchet (#1333)
 
+## 1.0.523
+
+- gh-1341 Bump js_widget_runtime pin to 9d57570 / ^0.4.156 — flutter_js hostCall/capture channel fix (fa-craft lag, voxel-sandbox spinner) (#1366)
+- fix(1349): deny bare long foreground sleeps; enrich liveness reminders with the background hint (#1355)
+- fix(1293): dap start exit-0 guarantees the dial credential is durably on disk (#1354)
+
 ## Unreleased
