@@ -662,6 +662,43 @@ jobs:
       - name: Install Flutter dependencies
         uses: ./.github/actions/flutter-pub-get
 
+      # #1331 size diet: js_widget_runtime declares `test/assets/` as a
+      # package asset DIRECTORY, so its 5.6 MB coach_anny.glb test fixture
+      # rides every app bundle. Nothing in the app references it (the #1227
+      # mac pass verified by grep over flutter_app/lib, packages, lib and
+      # the bundled JS apps — only the package's own tests load it, and
+      # those live in the package repo). Removing the file is safe: the
+      # pubspec declares the directory, not individual files.
+      - name: Prune never-loaded package test fixture (#1331)
+        run: |
+          set -euo pipefail
+          # NOTE: no percent-decoding of the file: URI — pub-cache paths on
+          # this runner carry no URI escapes; add unquoting if that changes.
+          JS_WR=$(python3 -c '
+            import json, pathlib
+            cfg = json.loads(pathlib.Path("flutter_app/.dart_tool/package_config.json").read_text())
+            p = next((q for q in cfg["packages"] if q["name"] == "js_widget_runtime"), None)
+            print(p["rootUri"] if p else "")
+          ')
+          if [ -z "$JS_WR" ]; then
+            echo "::warning::js_widget_runtime not in package_config.json — no fixture to prune, skipping"
+            exit 0
+          fi
+          case "$JS_WR" in
+            file://*) JS_WR=${JS_WR#file://} ;;
+          esac
+          case "$JS_WR" in
+            /*) ;;
+            *) JS_WR="$GITHUB_WORKSPACE/$JS_WR" ;;
+          esac
+          GLB="$JS_WR/test/assets/coach_anny.glb"
+          if [ -f "$GLB" ]; then
+            rm -f "$GLB"
+            echo "pruned coach_anny.glb (5.6 MB never-loaded test fixture, #1331) from $JS_WR"
+          else
+            echo "coach_anny.glb already absent — nothing to prune"
+          fi
+
       # The workspace is re-cloned every run, which wipes Pods/ and forces a
       # full pod install. Cache it keyed by the lockfile; $HOME-level caches
       # (pub-cache, CocoaPods download cache, Ruby gems, Flutter SDK) already
@@ -827,6 +864,38 @@ jobs:
           IOS_SIGNING_IDENTITY="iPhone Distribution" \
           bundle exec fastlane ios build_only
 
+      # #1331 size diet: the exported IPA ships ~99 MB (uncompressed) of
+      # debug dSYMs under Symbols/. App Store Connect strips that directory
+      # from device delivery anyway (TestFlight reports ~157 MB — the
+      # payload WITHOUT Symbols), so it is dead weight in the artifact.
+      # Repack without it: Payload/ is untouched (codesign validity lives
+      # inside the bundle), zip -y preserves the framework symlinks so the
+      # manifest shape is unchanged. Idempotent — a future export that
+      # omits Symbols/ skips straight through.
+      - name: Strip debug symbols from IPA (#1331)
+        run: |
+          set -euo pipefail
+          IPA_PATH=$(find flutter_app/build/ios -name "*.ipa" -type f | head -1)
+          if [ -z "$IPA_PATH" ]; then
+            echo "::error::IPA file not found in flutter_app/build/ios"
+            exit 1
+          fi
+          if ! unzip -l "$IPA_PATH" "Symbols/*" | grep -q "Symbols/"; then
+            echo "no Symbols/ in the IPA — nothing to strip"
+            exit 0
+          fi
+          STRIP=$(mktemp -d)
+          trap 'rm -rf "$STRIP"' EXIT
+          unzip -q "$IPA_PATH" -d "$STRIP"
+          rm -rf "$STRIP/Symbols"
+          BEFORE=$(stat -f%z "$IPA_PATH")
+          # Atomic swap: the original IPA survives a failed rezip (the
+          # un-stripped copy still beats no artifact for debugging).
+          (cd "$STRIP" && find . -mindepth 1 -maxdepth 1 -exec zip -qyr9 "$IPA_PATH.stripped" {} +)
+          mv -f "$IPA_PATH.stripped" "$IPA_PATH"
+          AFTER=$(stat -f%z "$IPA_PATH")
+          echo "IPA stripped: $BEFORE -> $AFTER bytes ($((BEFORE - AFTER)) saved compressed)"
+
       - name: Upload IPA Artifact
         # Uploaded before the symbol gate so a failed gate still leaves the
         # IPA available for debugging.
@@ -835,6 +904,41 @@ jobs:
           name: ios-ipa
           path: flutter_app/build/ios/ipa/*.ipa
           retention-days: 14
+
+      # #1331 ratchet: per-file uncompressed floor seeded from the last
+      # release-shape CI artifact (run 37495702186 fa.ipa) with the diet
+      # applied. Growth >5% on any line or TOTAL fails the leg — same gate
+      # family as the macOS pass (#1227). Eviction is pinned separately by
+      # the --forbid deny-list: the NEW-line guard alone only catches
+      # re-adds above 5% of TOTAL (Symbols/ qualifies at 99 MB; the 5.6 MB
+      # glb does not — +3.8% TOTAL, sub-share NEW), so a returning evicted
+      # artifact fails via --forbid in the same step. Also pins the owner
+      # hard constraint: the js-apps WASM runtime and LiteRT LM always ship.
+      - name: Size manifest ratchet + wasm keep-set (#1331)
+        run: |
+          set -euo pipefail
+          IPA_PATH=$(find flutter_app/build/ios -name "*.ipa" -type f | head -1)
+          MANIFEST=$(mktemp)
+          trap 'rm -f "$MANIFEST"' EXIT
+          python3 scripts/size_manifest.py check "$IPA_PATH" \
+            --baseline scripts/size_budget/fa-ios.tsv \
+            --forbid '^Symbols/' --forbid 'coach_anny\.glb$' \
+            --manifest-out "$MANIFEST"
+          for ASSET in \
+            flutter_assets/assets/wasm/python.wasm \
+            flutter_assets/assets/wasm/qjs.wasm \
+            flutter_assets/assets/wasm/coreutils.wasm \
+            flutter_assets/assets/wasm/lua.wasm; do
+            grep -q "$ASSET" "$MANIFEST" || {
+              echo "::error::$ASSET missing from the IPA — the js-apps WASM runtime must always ship (owner directive, #1331)"
+              exit 1
+            }
+          done
+          grep -q "LiteRtLm.framework/LiteRtLm" "$MANIFEST" || {
+            echo "::error::LiteRtLm.framework missing from the IPA — on-device LLM stack must always ship (owner directive, #1331)"
+            exit 1
+          }
+          echo "✅ wasm runtime + LiteRT keep-set present; iOS size ratchet green"
 
       - name: Verify IPA and FFI symbols
         run: |
