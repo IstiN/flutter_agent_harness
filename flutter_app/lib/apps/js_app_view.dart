@@ -780,26 +780,50 @@ class _JsAppViewState extends State<JsAppView> {
     );
   }
 
+  /// The shared start/boot error card: one message style for a failed
+  /// start and a never-rendered boot (gh-1336 review).
+  Widget _errorCard(ThemeData theme, Object error) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Text(
+        context.l10n.appsStartError('$error', widget.app.name),
+        textAlign: TextAlign.center,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: theme.colorScheme.error,
+        ),
+      ),
+    ),
+  );
+
   Widget _buildBody(ThemeData theme) {
     final error = _startError;
     if (error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            context.l10n.appsStartError('$error', widget.app.name),
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.error,
-            ),
-          ),
-        ),
-      );
+      return _errorCard(theme, error);
     }
     final engine = _engine;
     if (engine == null) {
       return const Center(child: CircularProgressIndicator());
     }
+    // Issue #1336: an engine that booted but never rendered (eval failed
+    // before the first render) must not spin forever — same error card
+    // as a failed start.
+    return ValueListenableBuilder<String?>(
+      valueListenable: engine.bootError,
+      builder: (context, bootError, _) {
+        if (bootError != null) {
+          return _errorCard(theme, bootError);
+        }
+        return _treeView(theme, engine);
+      },
+    );
+  }
+
+  /// The app tree once the boot is trusted (gh-1336): a spinner until the
+  /// first render lands, then the JSON widget tree. Extracted from
+  /// [_buildBody] to keep both halves under the CRAP ratchet — the lines
+  /// here are covered by the native-bridge suites, which skip on hosted
+  /// Linux, so the CI analyzer measures ~0% widget-test coverage.
+  Widget _treeView(ThemeData theme, JsAppEngine engine) {
     return ValueListenableBuilder<Map<String, dynamic>?>(
       valueListenable: engine.tree,
       builder: (context, tree, _) {
