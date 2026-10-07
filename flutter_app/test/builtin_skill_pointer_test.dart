@@ -7,10 +7,10 @@
 // served by the read tool). `.fah/skills/<name>/` gets a pointer file —
 // only when the directory is empty or missing, never next to a real copy.
 
+import 'package:fa/sandbox/memory_shell.dart';
+import 'package:fa/services/agent_service.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:fa/services/agent_service.dart';
 
 void main() {
   late MemoryShell shell;
@@ -44,14 +44,8 @@ void main() {
     await seedBuiltinSkillPointers(env);
 
     expect(
-      await env.listDir('/.fah/skills/create-goal'),
-      emitsInOrder([
-        predicate<List<FileInfo>>(
-          (files) => files.single.name == 'SKILL.md',
-          'only the real SKILL.md',
-        ),
-        emitsDone,
-      ]),
+      (await env.listDir('/.fah/skills/create-goal')).valueOrNull!.single.name,
+      'SKILL.md',
     );
   });
 

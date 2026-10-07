@@ -82,6 +82,34 @@ Future<void> _seedBundledSkills(ExecutionEnv env) async {
   // gh-1164 Part A: the bundled asset is gone — js-apps is a package
   // builtin now (builtinSkills(), merged by discoverSkills), so there is
   // nothing left to seed, only the retired copies above to clean up.
+  await seedBuiltinSkillPointers(env);
+}
+
+/// gh-1393 AC7: make the compiled-in skills visible to agents that browse
+/// the filesystem on hosts where the compiled-in SKILL.md text is only
+/// reachable through the read tool (`builtin://skills/<name>/SKILL.md`).
+/// Each builtin name gets `<env.cwd>/.fah/skills/<name>/SKILL.md.pointer`
+/// whose body is the builtin read path — but ONLY when the directory is
+/// missing or empty. A directory holding any real file is a deliberate
+/// project copy and stays untouched (same contract as the cleanup above:
+/// real skills always shadow builtins, and the discovery list merges the
+/// builtins last anyway).
+Future<void> seedBuiltinSkillPointers(ExecutionEnv env) async {
+  for (final skill in builtinSkills()) {
+    final dir = '${env.cwd}/.fah/skills/${skill.name}';
+    try {
+      await env.createDir(dir); // recursive; existing dir is not an error
+      final entries = await env.listDir(dir);
+      if ((entries.valueOrNull ?? const <FileInfo>[]).isNotEmpty) continue;
+      await env.writeFile(
+        '$dir/SKILL.md.pointer',
+        '${builtinSkillPath(skill.name)}\n',
+      );
+    } on Object {
+      // Pointer seeding is best-effort — a read-only or broken workspace
+      // must not block startup.
+    }
+  }
 }
 
 /// Discovers agent skills + project context files (AGENTS.md & friends)
