@@ -53,6 +53,10 @@ final _turns = [
 /// The live collapsed board row: ten started, nothing settled yet.
 const _allRunning = 'Background jobs (10) · 10 running · 0 done · 0 lost';
 
+/// The drained collapsed board row — the completion marker every job's
+/// settle notice hangs off (all ten done, none lost).
+const _drainedRow = 'Background jobs (10) · 0 running · 10 done · 0 lost';
+
 /// One settle notice per finished job (`[bash] sh-… exited(0)`); exactly
 /// ten of these prove every command started AND finished.
 final _settleNotice = RegExp(r'\[bash\] sh-(\S+) exited\(0\)');
@@ -137,11 +141,24 @@ void main() {
       expectComposerReserved(harness.viewportLines, 80);
       _writeShot(harness, '301_shell_job_countdown_mid_$mid');
 
-      // ── all ten FINISH: one settle notice per job, exactly ────────────
-      final drained = await harness.waitForOutput(
-        settleMs: 500,
-        timeout: const Duration(seconds: 60),
+      // ── all ten FINISH: anchor on the drained board, never a quiet gap ─
+      // gh-1250 family, this file's run 37555363161 (PTY shard 2/3): the
+      // staggered sleeps settle ~1 s apart and waitForOutput's quiet
+      // detector (2×settleMs of raw-buffer silence) early-returns on ANY
+      // ≥1 s output lull — a CI-load stall between frame repaints is
+      // enough — so the harvest cut off at {1..8} of 10. The board's
+      // drained row is the completion marker: by the time it paints, every
+      // job has settled and its notice is already in the raw buffer (each
+      // settle prints once, repaints re-emit), so a short fixed settle is
+      // all the harvest needs.
+      await harness.waitForText(
+        _drainedRow,
+        timeout: const Duration(seconds: 90),
       );
+      // Post-anchor settle: flush the drain frame's notice re-emissions,
+      // then read the raw buffer for the per-job harvest below.
+      await harness.waitForOutput(settleMs: 300);
+      final drained = harness.rawOutput;
       // Frame repaints re-emit notices into the raw stream — the start/
       // finish proof is the set of DISTINCT settled job numbers, not the
       // raw match count. Match on the NUMBER PREFIX, never the full id:
@@ -174,9 +191,7 @@ void main() {
       final screen = after.join('\n');
       expect(
         screen,
-        contains(
-          'Background jobs (10) · 0 running · 10 done · 0 lost',
-        ),
+        contains(_drainedRow),
         reason: 'the settled collapsed turn hands ONE terminal summary '
             'card to the transcript, drained:\n$screen',
       );

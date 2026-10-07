@@ -18,9 +18,9 @@
 #      locale (repo locales ∪ locales live on the Play listing), then
 #      upload the committed goldens (sorted — file name order is the
 #      listing order), checking each stored sha256 against the local file
-#      (gh-1328: a nil stored sha means Play is still processing — the
-#      read is retried with backoff, and an unreadable remote aborts with
-#      its own "remote unreadable" class, never as a byte mismatch);
+#      (gh-1328: a nil/blank stored sha means Play is still processing —
+#      the read is retried with backoff, and an unreadable remote aborts
+#      with its own "remote unreadable" class, never as a byte mismatch);
 #   2. commit — a failed upload aborts BEFORE the commit, so the live
 #      listing keeps its previous state;
 #   3. a fresh read-only edit re-reads edits.images.list and fails the job
@@ -146,8 +146,9 @@ module PlayListingSync
         local_images(metadata_dir, locale, type).each do |path|
           local = sha256(path)
           stored = upload_image!(http, package_name, edit_id, locale, type, path, auth)
-          if stored.nil?
-            # gh-1328: Play answered the upload without a usable sha256 —
+          if stored.to_s.strip.empty?
+            # gh-1328: Play answered the upload without a usable sha256
+            # (nil, or a blank string — same unreadable payload shape) —
             # the remote is UNREADABLE (usually still processing), never a
             # byte mismatch. Poll edits.images.list across the processing
             # window before classifying.
@@ -336,20 +337,32 @@ module PlayListingSync
   end
 
   # gh-1328: edits.images.upload may answer 200 WITHOUT a usable sha256
-  # while Play is still processing the image. nil is UNREADABLE, never a
-  # byte mismatch — poll edits.images.list across the processing window
-  # (attempts × backoff seconds) and only then classify:
+  # (an omitted field → nil, or a blank string) while Play is still
+  # processing the image. An unreadable sha is UNREADABLE, never a byte
+  # mismatch — poll edits.images.list across the processing window
+  # ((attempts - 1) sleeps of `backoff` between `attempts` reads) and only
+  # then classify:
   #   returns the verified sha of the just-uploaded image once the readable
   #   set equals the goldens uploaded so far;
   #   raises "remote sha mismatch" on readable bytes contradicting the
   #   goldens (a real byte/ordering mismatch);
   #   returns nil when still unreadable after `attempts` — the caller
   #   aborts with the distinct "remote unreadable" class.
+  #
+  # Assumption (gh-1328 review): multi-slot sets are cleared first, so
+  # during the processing window their list can only hold missing entries
+  # or nil/blank shas — both retry. Single-slot types (icon/featureGraphic)
+  # are NOT cleared (console-only locales keep theirs), so the poll relies
+  # on Play serving a nil/blank entry — not the PREVIOUS image's sha —
+  # while a replacement processes. A readable set contradicting the goldens
+  # still classifies "remote sha mismatch" by design (the issue's
+  # foreign-sha → mismatch table); if a daily leg ever reds on a single-slot
+  # replace serving the old sha, treat that as unreadable here.
   def poll_stored_sha!(http, package_name, edit_id, locale, type, expected_prefix, auth,
                        attempts: 5, backoff: 30)
     attempts.times do |attempt|
       readable = list_images!(http, package_name, edit_id, locale, type, auth)
-                 .map { |image| image["sha256"] }.compact
+                 .map { |image| image["sha256"] }.reject { |sha| sha.to_s.strip.empty? }
       return expected_prefix.last if readable == expected_prefix
 
       if readable.any? { |sha| !expected_prefix.include?(sha) } ||

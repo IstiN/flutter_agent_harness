@@ -295,6 +295,26 @@ if $PROGRAM_NAME == __FILE__
   raise "FAIL: an unreadable-after-window poll must return nil, got #{verdict.inspect}" unless verdict.nil?
   ok("gh-1328: unreadable after the window yields the distinct unreadable verdict")
 
+  # gh-1328 rework (review thread 1): an EMPTY-STRING sha256 is the same
+  # unreadable payload shape as an omitted field — on the list side it must
+  # count as unreadable (retry), never as a readable foreign sha.
+  poll = PollHttp.new([[{ "sha256" => "" }], [{ "sha256" => "" }], [{ "sha256" => "" }]])
+  verdict = PlayListingSync.poll_stored_sha!(poll, "dev.fa1.app", "edit1", "en-US", "phoneScreenshots",
+                                             [sha1, sha2], poll_auth, attempts: 3, backoff: 0)
+  raise "FAIL: an empty-string list sha must stay in the retry window, got #{verdict.inspect}" unless verdict.nil?
+  ok("gh-1328 rework: empty-string list sha is unreadable, never a foreign-sha mismatch")
+
+  # gh-1328 rework (review thread 4): a PARTIAL readable set in the wrong
+  # order (expected [sha1, sha2], readable [sha2]) is known-but-incomplete —
+  # the conservative verdict is the retry window, and if it never resolves,
+  # the DISTINCT unreadable class. Pinned so no refactor reclassifies it as
+  # a mismatch (or a prefix-match) untested.
+  poll = PollHttp.new([[{ "sha256" => sha2 }]] * 3)
+  verdict = PlayListingSync.poll_stored_sha!(poll, "dev.fa1.app", "edit1", "en-US", "phoneScreenshots",
+                                             [sha1, sha2], poll_auth, attempts: 3, backoff: 0)
+  raise "FAIL: partial out-of-order set must stay in the retry window, got #{verdict.inspect}" unless verdict.nil?
+  ok("gh-1328 rework: partial out-of-order readable set stays a retry, lands on unreadable")
+
   # End-to-end (never-again #3): a fake Play returning a DELAYED listing
   # must produce a green verify after the delay, not an abort.
   Dir.mktmpdir do |root|
@@ -329,6 +349,28 @@ if $PROGRAM_NAME == __FILE__
     end
     raise "FAIL: an unreadable remote must never commit" unless http.committed.empty?
     ok("gh-1328: still-unreadable aborts with 'remote unreadable', never a false mismatch")
+  end
+
+  # End-to-end (review thread 1): `{"sha256": ""}` on the upload response is
+  # the same UNREADABLE payload shape as an omitted field — it must abort
+  # with the DISTINCT unreadable class, never the byte-mismatch one.
+  Dir.mktmpdir do |root|
+    http = FakePlayHttp.new
+    http.upload_sha_override = ""         # {"sha256": ""} — present, unusable
+    http.hide_shas_until_list_no = 10_000 # still processing for the whole window
+    metadata_dir = metadata_dir_with_goldens(root)
+    begin
+      PlayListingSync.sync_and_verify!(metadata_dir: metadata_dir, json_key: service_account_json,
+                                       package_name: "dev.fa1.app", http: http,
+                                       sha_attempts: 2, sha_backoff: 0)
+      raise "FAIL: an empty-string upload sha must abort"
+    rescue RuntimeError => e
+      raise "FAIL: must name the unreadable class, got: #{e.message}" unless
+        e.message.include?("remote unreadable after 2 attempts")
+      raise "FAIL: must NOT claim a byte mismatch, got: #{e.message}" if e.message.include?("stored different bytes")
+    end
+    raise "FAIL: an unreadable remote must never commit" unless http.committed.empty?
+    ok("gh-1328 rework: empty-string upload sha routes to the unreadable class, never a mismatch")
   end
 
   # ── post-commit drift fails the job ─────────────────────────────────────
