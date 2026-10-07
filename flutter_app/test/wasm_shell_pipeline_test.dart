@@ -855,27 +855,36 @@ void main() {
       rec.next = _ScriptedInstance();
       final job = await startJob(sh, 'python3 -c "print(1)"');
       await job.settled;
-      expect(job.exitCode, 0, reason: 'job log: ${io.File(job.logPath).readAsStringSync()}');
+      expect(
+        job.exitCode,
+        0,
+        reason: 'job log: ${io.File(job.logPath).readAsStringSync()}',
+      );
       expect(loads, ['python.wasm']);
       expect(rec.configs.single.args, ['python', '-c', 'print(1)']);
     });
 
-    test('a module compiled by a job is reused by the foreground shell', () async {
-      final loads = <String>[];
-      final sh = jobShell(loads);
-      rec.next = _ScriptedInstance();
-      final job = await startJob(sh, 'python3 -c "print(1)"');
-      await job.settled;
-      expect(job.exitCode, 0);
-      // Foreground on the SAME shell: the compile from the job clone must
-      // be visible — no second 29 MB compile.
-      rec.next = _ScriptedInstance();
-      final r = await sh.exec('python -c "print(2)"');
-      expect(r.isOk, isTrue);
-      expect(r.valueOrNull!.exitCode, 0);
-      expect(loads, ['python.wasm'], reason: 'cache must be shared, not copied');
-      expect(rec.configs, hasLength(2));
-    });
+    test(
+      'a module compiled by a job is reused by the foreground shell',
+      () async {
+        final loads = <String>[];
+        final sh = jobShell(loads);
+        rec.next = _ScriptedInstance();
+        final job = await startJob(sh, 'python3 -c "print(1)"');
+        await job.settled;
+        expect(job.exitCode, 0);
+        // Foreground on the SAME shell: the compile from the job clone must
+        // be visible — no second 29 MB compile.
+        rec.next = _ScriptedInstance();
+        final r = await sh.exec('python -c "print(2)"');
+        expect(r.isOk, isTrue);
+        expect(r.valueOrNull!.exitCode, 0);
+        expect(loads, [
+          'python.wasm',
+        ], reason: 'cache must be shared, not copied');
+        expect(rec.configs, hasLength(2));
+      },
+    );
 
     test('sibling jobs reuse the module compiled by the first job', () async {
       final loads = <String>[];
@@ -889,6 +898,70 @@ void main() {
       expect(second.exitCode, 0);
       expect(loads, ['python.wasm']);
       expect(rec.configs, hasLength(2));
+    });
+  });
+
+  group('unknown commands fail loudly (issue #1335)', () {
+    test('node exits 127 with command not found, no guest is built', () async {
+      final r = await shell().exec('node -e "console.log(1)"');
+      expect(r.isOk, isTrue, reason: r.errorOrNull?.message);
+      expect(r.valueOrNull!.exitCode, 127);
+      expect(r.valueOrNull!.stdout, '');
+      expect(r.valueOrNull!.stderr, 'node: command not found\n');
+      // No WASM instance may be built for a command the registry does not
+      // advertise — the silent-empty-output path is the bug.
+      expect(rec.configs, isEmpty);
+    });
+
+    test('every advertised interpreter still resolves to a module', () async {
+      final sh =
+          shell(); // One instance: the python stdlib extraction memoizes.
+      for (final command in ['python3', 'qjs', 'js', 'sqlite3', 'lua']) {
+        rec.next = _ScriptedInstance();
+        final r = await sh.exec('$command --version');
+        expect(r.isOk, isTrue, reason: command);
+        expect(r.valueOrNull!.exitCode, 0, reason: command);
+        expect(rec.configs, hasLength(1), reason: command);
+        rec.configs.clear();
+      }
+    });
+  });
+
+  group(r'POSIX exit status $? (issue #1335)', () {
+    test(
+      'failure status reaches the next stage via the guest boundary',
+      () async {
+        // `test` is a Dart builtin (exit 1 without WASM); `echo` is a
+        // coreutils applet, so the expanded argv is asserted exactly where
+        // the WASI guest would see it.
+        rec.next = _ScriptedInstance();
+        final r = await shell().exec(r'test -f /nope; echo rc=$?');
+        expect(r.isOk, isTrue, reason: r.errorOrNull?.message);
+        expect(rec.configs.single.args, ['echo', 'rc=1']);
+      },
+    );
+
+    test('success status expands to 0', () async {
+      rec.next = _ScriptedInstance();
+      await shell().exec(r'test -d /; echo rc=$?');
+      expect(rec.configs.single.args, ['echo', 'rc=0']);
+    });
+
+    test('status persists across exec calls on the same shell', () async {
+      final sh = shell();
+      final failed = await sh.exec('test -f /nope');
+      expect(failed.valueOrNull!.exitCode, 1);
+      rec.next = _ScriptedInstance();
+      await sh.exec(r'echo rc=$?');
+      expect(rec.configs.single.args, ['echo', 'rc=1']);
+    });
+
+    test(r"'?' never leaks into the WASI process environment", () async {
+      rec.next = _ScriptedInstance();
+      await shell().exec('echo done');
+      final names = rec.configs.single.env.map((e) => e.name);
+      expect(names, isNot(contains('?')));
+      expect(names, contains('PATH'));
     });
   });
 }
