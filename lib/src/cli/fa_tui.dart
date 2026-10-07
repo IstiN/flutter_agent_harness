@@ -57,6 +57,7 @@ part 'fa_tui_picker.dart';
 part 'fa_tui_composer.dart';
 part 'fa_tui_viewport.dart';
 part 'fa_tui_kaomoji.dart';
+part 'fa_tui_busy.dart';
 
 /// Translates the (web-safe) headless test hooks into dart_tui program
 /// options: a scripted key byte stream replaces stdin, the rendered frames
@@ -779,6 +780,9 @@ final class FaTuiModel extends Model {
       forceSyncUpdates: forceSyncUpdates ?? this.forceSyncUpdates,
       spinnerFrame: spinnerFrame ?? this.spinnerFrame,
       kaomojiFace: kaomojiFace ?? this.kaomojiFace,
+      // copyWith cannot override the picker seam; this re-supplies the
+      // FIELD so an injected kaomojiPick survives every copy (dropping it
+      // would reset deterministic tests to the random default).
       kaomojiPick: kaomojiPick,
       stickyLines: stickyLines ?? this.stickyLines,
       stickyIndex: stickyIndex ?? this.stickyIndex,
@@ -823,13 +827,6 @@ final class FaTuiModel extends Model {
   @override
   Cmd? init() =>
       forceSyncUpdates ? () => ModeReportMsg(mode: 2026, value: 1) : null;
-
-  Cmd _scheduleSpinnerTick() {
-    return () async {
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-      return SpinnerTickMsg();
-    };
-  }
 
   /// Arms the one-shot minute-boundary repaint for the scheduled-follow-ups
   /// countdown (issue #213, fix option A): the ETA renders in whole minutes
@@ -947,123 +944,10 @@ final class FaTuiModel extends Model {
     return (next.copyWith(scrollOffset: nextOffset), null);
   }
 
-  (Model, Cmd?) _handleBusyMsg(BusyMsg msg) {
-    // An in-busy phase relabel (silent post-answer work like
-    // auto-compaction or durable-memory extraction) takes priority.
-    if (msg.busy && msg.phase != null) return _handlePhaseRelabel(msg);
-    // A raw re-start while ALREADY busy (a trigger that bypassed the
-    // controller's refcount): keep the elapsed window and the single tick
-    // chain instead of stacking another one.
-    if (msg.busy && busy) return _ignoreBusyRestart(msg);
-    return _applyBusyTransition(msg);
-  }
-
-  /// The wedge watchdog's liveness push (issue #514): flips the busy row's
-  /// label to `Stalled…` (and back) without touching the elapsed window —
-  /// the stall is a STATE, not a phase relabel.
-  (Model, Cmd?) _handleRunStalled(RunStalledMsg msg) =>
-      (copyWith(runStalled: msg.stalled), null);
-
-  /// A phase relabel on a BUSY model: swap the label over the SAME elapsed
-  /// window and never schedule another tick here — extra chains would
-  /// multiply repaint timers.
-  (Model, Cmd?) _handlePhaseRelabel(BusyMsg msg) {
-    final phase = msg.phase!;
-    if (!busy) {
-      // A relabel on an IDLE model is a post-run straggler (a compaction
-      // finally-branch landing after the bracket released): dropping it is
-      // the whole point — re-arming the spinner here wedged a session at
-      // "Working… Ns" burning 100% CPU for hours (each chain re-renders
-      // the full transcript every 100ms).
-      faTuiBusyDiagnostics?.call('busy relabel dropped (idle) phase=$phase');
-      return (this, null);
-    }
-    return (copyWith(busyPhase: phase), null);
-  }
-
-  (Model, Cmd?) _ignoreBusyRestart(BusyMsg msg) {
-    faTuiBusyDiagnostics?.call(
-      'busy re-start ignored (already busy) source=${msg.source}',
-    );
-    return (this, null);
-  }
-
-  /// The busy↔idle bracket itself. Kick the spinner loop when going busy;
-  /// the loop stops itself on the first tick that finds the model idle
-  /// again. Going idle also unpins the sticky user echo and clears any
-  /// phase, so the next run starts as plain "Working…".
-  (Model, Cmd?) _applyBusyTransition(BusyMsg msg) {
-    faTuiBusyDiagnostics?.call(
-      msg.busy
-          ? 'busy on source=${msg.source ?? '?'}'
-          : 'busy off source=${busySource.isEmpty ? '?' : busySource} '
-                'elapsed=${busyStartedAtMs < 0 ? 0 : (DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) ~/ 1000}s',
-    );
-    return (
-      copyWith(
-        busy: msg.busy,
-        busyStartedAtMs: msg.busy ? DateTime.now().millisecondsSinceEpoch : -1,
-        busyPhase: '',
-        busySource: msg.busy ? (msg.source ?? '') : '',
-        busyLastEventMs: msg.busy ? DateTime.now().millisecondsSinceEpoch : -1,
-        // A new bracket always starts unstalled: the host pushes the
-        // stall state per-episode, so a stale `Stalled…` must never
-        // leak into the next run (issue #514).
-        runStalled: msg.busy ? runStalled : false,
-        spinnerFrame: 0,
-        // A fresh run opens on a random face (issue #1374) — the same
-        // seam the swap cadence uses, so tests stay deterministic.
-        kaomojiFace: msg.busy ? kaomojiPick(kKaomojiFaces.length) : kaomojiFace,
-        stickyLines: msg.busy ? null : const [],
-        stickyIndex: msg.busy ? null : -1,
-      ),
-      msg.busy ? _scheduleSpinnerTick() : null,
-    );
-  }
-
   /// Last-resort busy bracket: a row with zero activity for this long is a
   /// wedge — every arm site has a matching release, so a fire means a bug.
   /// The diagnostic log names the last armer.
   static const busyWatchdogMs = 10 * 60 * 1000;
-
-  (Model, Cmd?) _handleSpinnerTick() {
-    if (!busy) return (this, null);
-    final now = DateTime.now().millisecondsSinceEpoch;
-    if (busyLastEventMs > 0 && now - busyLastEventMs > busyWatchdogMs) {
-      faTuiBusyDiagnostics?.call(
-        'busy watchdog release source='
-        '${busySource.isEmpty ? '?' : busySource} '
-        'elapsed=${busyStartedAtMs < 0 ? 0 : (now - busyStartedAtMs) ~/ 1000}s '
-        'quiet=${(now - busyLastEventMs) ~/ 1000}s',
-      );
-      return (
-        copyWith(
-          busy: false,
-          busyStartedAtMs: -1,
-          busyPhase: '',
-          busySource: '',
-          busyLastEventMs: -1,
-          stickyLines: const [],
-          stickyIndex: -1,
-        ),
-        null,
-      );
-    }
-    // The tick counter drives the kaomoji cadence (issue #1374): every
-    // kKaomojiSwapTicks ticks (~0.9 s at the 100 ms chain) the face is
-    // re-picked — randomly, and never to the face already showing. The
-    // chain itself dies with the busy bracket, so an idle row never
-    // animates (AC4). A FA_KAOMOJI_FACE pin freezes the face entirely —
-    // deterministic frames for the visual fixtures.
-    final frame = spinnerFrame + 1;
-    final face = frame % kKaomojiSwapTicks == 0 && _kaomojiFacePin == null
-        ? _nextKaomojiIndex(kaomojiPick, kaomojiFace)
-        : kaomojiFace;
-    return (
-      copyWith(spinnerFrame: frame, kaomojiFace: face),
-      _scheduleSpinnerTick(),
-    );
-  }
 
   (Model, Cmd?) _handleDrainQueue(DrainQueueMsg msg) {
     // The host drains queued messages as separate turns after the run
@@ -1245,25 +1129,12 @@ final class FaTuiModel extends Model {
       int.tryParse(Platform.environment['FA_TUI_PICKER_REVEAL_MS'] ?? '') ??
       0;
 
-  /// gh-1374 test hook: pin the kaomoji face the busy row shows, read
-  /// from `FA_KAOMOJI_FACE`. Absent/invalid = the production random pick
-  /// (a random face opens each busy bracket and swaps every ~0.9 s); a
-  /// valid index freezes that face for the whole session — the
-  /// deterministic-frame seam the cli_visual screenshot pipeline renders
-  /// fixtures through.
-  ///
-  /// Unit-test seam: `Platform.environment` is immutable in-process, so
-  /// model-level tests inject [kaomojiPick] instead; null falls through
-  /// to the env var (the production default).
+  /// gh-1374 test hook: the in-process override of the `FA_KAOMOJI_FACE`
+  /// pin (env is immutable in-process; resolution — override ?? env,
+  /// clamped — lives in [_kaomojiFacePin] in fa_tui_kaomoji.dart). Null =
+  /// the production random pick.
   @visibleForTesting
   static int? kaomojiFacePinOverride;
-
-  static int? get _kaomojiFacePin {
-    final override = kaomojiFacePinOverride;
-    if (override != null) return override;
-    final pin = int.tryParse(Platform.environment['FA_KAOMOJI_FACE'] ?? '');
-    return pin == null ? null : pin.clamp(0, kKaomojiFaces.length - 1);
-  }
 
   (Model, Cmd?) _handleOpenPicker(OpenPickerMsg msg) {
     final reveal = _pickerRevealOpen(msg);

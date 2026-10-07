@@ -84,8 +84,19 @@ final _kaomojiRandom = math.Random();
 /// visual-fixture seam — every pick returns the pinned index), else a
 /// uniform process-random pick.
 int _defaultKaomojiPick(int max) {
-  final pin = FaTuiModel._kaomojiFacePin;
+  final pin = _kaomojiFacePin();
   return pin == null ? _kaomojiRandom.nextInt(max) : pin.clamp(0, max - 1);
+}
+
+/// The active `FA_KAOMOJI_FACE` pin: [FaTuiModel.kaomojiFacePinOverride]
+/// wins (env is immutable in-process, so tests override statically), then
+/// the env var, clamped into the face set; null = unpinned (the
+/// production random cadence).
+int? _kaomojiFacePin() {
+  final override = FaTuiModel.kaomojiFacePinOverride;
+  if (override != null) return override;
+  final pin = int.tryParse(Platform.environment['FA_KAOMOJI_FACE'] ?? '');
+  return pin?.clamp(0, kKaomojiFaces.length - 1);
 }
 
 /// Uniform over every face EXCEPT [current]: a swap that lands back on

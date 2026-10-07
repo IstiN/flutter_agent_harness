@@ -445,18 +445,19 @@ String _liveBusyLine({String phase = '', required int elapsed, int frame = 1}) {
       .trimRight();
 }
 
-/// The busy row opens with one of the eight kaomoji faces (issue #1374),
-/// padded into a fixed 4-cell zone — one or two spaces before the label
-/// (`  ?` in the manifest: the not-gate's inline extractor forbids brace
-/// quantifiers). The two ASCII fallback faces (`^.^`, `-_/-narrow`) are
-/// matched too.
-final _busyLineRe = RegExp(
-  r'^(>_o|-_-|o_o|>_<|o_<|◕‿◕|¬_¬|o_o\?|\^\.\^|-_/)  ?',
+/// The busy-line contract regex, DERIVED from the shipped manifest's
+/// busy_row rule — a face-set change edits the manifest + kKaomojiFaces
+/// (already cross-tested), never a third synchronized copy here. The row
+/// opens with one of the eight kaomoji faces (issue #1374) padded into a
+/// fixed 4-cell zone (`  ?`: the not-gate's inline extractor forbids
+/// brace quantifiers); the ASCII fallback faces are matched too.
+RegExp _busyLineRe(_Manifest manifest) => RegExp(
+  manifest.rules.firstWhere((r) => r.id == 'busy_row').gate.lineRegex.first,
 );
 
-String _fixtureBusyLine(String name) => File(
+String _fixtureBusyLine(_Manifest manifest, String name) => File(
   '$_fixturesDir/$name',
-).readAsStringSync().split('\n').firstWhere(_busyLineRe.hasMatch);
+).readAsStringSync().split('\n').firstWhere(_busyLineRe(manifest).hasMatch);
 
 void main() {
   final manifest = _parseFaManifest(File(_manifestPath).readAsStringSync());
@@ -537,7 +538,11 @@ void main() {
       ),
     };
     live.forEach((name, rendered) {
-      expect(_fixtureBusyLine(name), rendered, reason: '$name busy-row drift');
+      expect(
+        _fixtureBusyLine(manifest, name),
+        rendered,
+        reason: '$name busy-row drift',
+      );
     });
   });
 
