@@ -60,7 +60,19 @@ final class GrepArgs {
 }
 
 /// Single-letter flags forwarded to rg under the same letter.
-const _rgSameLetterFlags = {'i', 'v', 'w', 'x', 'F', 'n', 'c', 'l', 'o', 'P', 'a'};
+const _rgSameLetterFlags = {
+  'i',
+  'v',
+  'w',
+  'x',
+  'F',
+  'n',
+  'c',
+  'l',
+  'o',
+  'P',
+  'a',
+};
 
 /// Long flags → the rg-forwardable token(s) they translate to.
 const _longFlagTranslations = <String, List<String>>{

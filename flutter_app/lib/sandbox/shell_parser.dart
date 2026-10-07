@@ -275,8 +275,10 @@ ShellCommand parseCommandLine(String input) {
 /// `done` keywords, or invalid `for` syntax.
 ShellScript parseShellScript(String input, {bool allowFdDuplication = false}) {
   final tokens = _tokenize(input);
-  return _ScriptParser(tokens, allowFdDuplication: allowFdDuplication)
-      .parseScript();
+  return _ScriptParser(
+    tokens,
+    allowFdDuplication: allowFdDuplication,
+  ).parseScript();
 }
 
 /// Exception thrown by [parseCommandLine] for invalid syntax.

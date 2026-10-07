@@ -118,7 +118,8 @@ final class FaHttpBridge {
     // (`https://host:port`), so TLS endpoints stay TLS on the host side.
     final uri = target.startsWith('/')
         ? Uri.parse(
-            authority.contains('://') ? '$authority$target'
+            authority.contains('://')
+                ? '$authority$target'
                 : 'http://$authority$target',
           )
         : Uri.parse(target);

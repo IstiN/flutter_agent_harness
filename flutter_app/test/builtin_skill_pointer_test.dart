@@ -22,17 +22,22 @@ void main() {
     shell.attach(env);
   });
 
-  test('every builtin skill gets a pointer file in a fresh workspace',
-      () async {
-    await seedBuiltinSkillPointers(env);
+  test(
+    'every builtin skill gets a pointer file in a fresh workspace',
+    () async {
+      await seedBuiltinSkillPointers(env);
 
-    for (final skill in builtinSkills()) {
-      final path = '/.fah/skills/${skill.name}/SKILL.md.pointer';
-      final body = await env.readTextFile(path);
-      expect(body.valueOrNull, 'builtin://skills/${skill.name}/SKILL.md\n',
-          reason: 'missing pointer at $path');
-    }
-  });
+      for (final skill in builtinSkills()) {
+        final path = '/.fah/skills/${skill.name}/SKILL.md.pointer';
+        final body = await env.readTextFile(path);
+        expect(
+          body.valueOrNull,
+          'builtin://skills/${skill.name}/SKILL.md\n',
+          reason: 'missing pointer at $path',
+        );
+      }
+    },
+  );
 
   test('a directory holding a real skill is never touched', () async {
     await env.createDir('/.fah/skills/create-goal');

@@ -98,35 +98,33 @@ Future<List<String>?> expandGlobPattern(
         if (last) {
           final parent = candidate.path.isEmpty ? '/' : candidate.path;
           final entries = await listDir(parent);
-          if (entries == null ||
-              !entries.any((e) => e.name == segment)) {
+          if (entries == null || !entries.any((e) => e.name == segment)) {
             continue;
           }
         }
-        next.add(
-          _Candidate(_join(candidate.path, segment), keep: !last),
-        );
+        next.add(_Candidate(_join(candidate.path, segment), keep: !last));
       }
     }
     candidates = next;
     if (candidates.isEmpty) return null;
   }
 
-  final matches = candidates
-      .where((c) => c.path.isNotEmpty && c.path != '/')
-      .map((c) {
-        var path = c.path;
-        if (!absolute) {
-          // Output in the pattern's shape: relative matches are relative to
-          // [cwd] (bash emits `apps/x/app.json`, not the absolute path).
-          final prefix = cwd == '/' ? '/' : '$cwd/';
-          if (path.startsWith(prefix)) path = path.substring(prefix.length);
-        }
-        return path;
-      })
-      .toSet()
-      .toList()
-    ..sort();
+  final matches =
+      candidates
+          .where((c) => c.path.isNotEmpty && c.path != '/')
+          .map((c) {
+            var path = c.path;
+            if (!absolute) {
+              // Output in the pattern's shape: relative matches are relative to
+              // [cwd] (bash emits `apps/x/app.json`, not the absolute path).
+              final prefix = cwd == '/' ? '/' : '$cwd/';
+              if (path.startsWith(prefix)) path = path.substring(prefix.length);
+            }
+            return path;
+          })
+          .toSet()
+          .toList()
+        ..sort();
   return matches.isEmpty ? null : matches;
 }
 

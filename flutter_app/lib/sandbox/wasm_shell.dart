@@ -1157,8 +1157,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     final root = _sandboxHostRoot;
     final requested = options?.cwd;
     if (requested != null) {
-      final mapped =
-          root?.stripToSandboxPath(requested) ?? requested;
+      final mapped = root?.stripToSandboxPath(requested) ?? requested;
       if (mapped != '/') cwd = mapped;
     }
     return cwd;

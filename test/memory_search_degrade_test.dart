@@ -25,36 +25,43 @@ class _BrokenCoreProvider extends LlmProvider {
   final String defaultModel = 'broken-model';
 
   @override
-  Future<String> chat(String prompt, {String? model, void Function()? onCancel}) =>
-      throw Exception(
-        'Invalid core: OLDER session state read on a NEW session',
-      );
+  Future<String> chat(
+    String prompt, {
+    String? model,
+    void Function()? onCancel,
+  }) => throw Exception(
+    'Invalid core: OLDER session state read on a NEW session',
+  );
 
   @override
   Future<String> chatMessages(
     List<LlmMessage> messages, {
     String? model,
     void Function()? onCancel,
-  }) =>
-      throw Exception(
-        'Invalid core: OLDER session state read on a NEW session',
-      );
+  }) => throw Exception(
+    'Invalid core: OLDER session state read on a NEW session',
+  );
 }
 
 void main() {
-  test('memory_search survives a broken LLM core via keyword fallback',
-      () async {
-    final controller = MemoryController(
-      env: MemoryExecutionEnv(),
-      llmProvider: _BrokenCoreProvider(),
-    );
-    await controller.add(text: 'durable keyword fact alpha', tags: ['t']);
+  test(
+    'memory_search survives a broken LLM core via keyword fallback',
+    () async {
+      final controller = MemoryController(
+        env: MemoryExecutionEnv(),
+        llmProvider: _BrokenCoreProvider(),
+      );
+      await controller.add(text: 'durable keyword fact alpha', tags: ['t']);
 
-    final results = await controller.search('alpha');
+      final results = await controller.search('alpha');
 
-    expect(results, isNotEmpty,
-        reason: 'the keyword fallback must still find stored entries');
-  });
+      expect(
+        results,
+        isNotEmpty,
+        reason: 'the keyword fallback must still find stored entries',
+      );
+    },
+  );
 
   test('memory_list survives a broken project store', () async {
     final controller = MemoryController(

@@ -7,6 +7,7 @@
 // channels.
 
 import 'package:fa/sandbox/memory_shell/awk.dart';
+import 'package:fa/sandbox/grep_args.dart';
 import 'package:fa/sandbox/memory_shell/grep.dart';
 import 'package:fa/sandbox/memory_shell/interpreters.dart';
 import 'package:fa/sandbox/memory_shell/pipeline.dart';
@@ -32,24 +33,26 @@ final class _TableFs implements TestFs {
 }
 
 void main() {
-
   group('snippetOutcome (issue #568)', () {
     test('unavailable interpreters answer 127 with the not-found line', () {
-      final out = snippetOutcome(
-        'python3',
-        (available: false, stdout: 'ignored', stderr: 'also ignored'),
-      );
-      expect(
-        out,
-        (stdout: '', stderr: 'python3: command not found\n', exitCode: 127),
-      );
+      final out = snippetOutcome('python3', (
+        available: false,
+        stdout: 'ignored',
+        stderr: 'also ignored',
+      ));
+      expect(out, (
+        stdout: '',
+        stderr: 'python3: command not found\n',
+        exitCode: 127,
+      ));
     });
 
     test('empty output stays empty and exits 0', () {
-      expect(
-        snippetOutcome('qjs', (available: true, stdout: '', stderr: '')),
-        (stdout: '', stderr: '', exitCode: 0),
-      );
+      expect(snippetOutcome('qjs', (available: true, stdout: '', stderr: '')), (
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+      ));
     });
 
     test('non-empty stdout gains the terminal newline', () {
@@ -66,14 +69,19 @@ void main() {
 
     test('non-empty stderr forces exit 1 and gains the newline', () {
       expect(
-        snippetOutcome(
-          'python3',
-          (available: true, stdout: 'partial', stderr: 'Traceback'),
-        ),
+        snippetOutcome('python3', (
+          available: true,
+          stdout: 'partial',
+          stderr: 'Traceback',
+        )),
         (stdout: 'partial\n', stderr: 'Traceback\n', exitCode: 1),
       );
       expect(
-        snippetOutcome('python3', (available: true, stdout: '', stderr: 'boom')),
+        snippetOutcome('python3', (
+          available: true,
+          stdout: '',
+          stderr: 'boom',
+        )),
         (stdout: '', stderr: 'boom\n', exitCode: 1),
       );
     });
@@ -358,9 +366,13 @@ void main() {
     });
 
     test('parse: missing pattern and -e without value are errors', () {
-      expect(parseGrepArgs([]).error, isNotNull);
-      expect(parseGrepArgs(['-e']).error, isNotNull);
-      expect(parseGrepArgs(['-e', 'p', 'f.txt']).error, isNull);
+      // gh-1393 contract (fa/sandbox/grep_args.dart): null = flag usage
+      // error, error != null = bad flag value, pattern == null = missing
+      // pattern — the caller renders the usage line for the latter two.
+      expect(parseGrepArgs(const []), isNotNull);
+      expect(parseGrepArgs(const [])!.pattern, isNull);
+      expect(parseGrepArgs(const ['-e']), isNull);
+      expect(parseGrepArgs(const ['-e', 'p', 'f.txt'])!.pattern, 'p');
     });
 
     test('compile: invalid regex is an error', () {

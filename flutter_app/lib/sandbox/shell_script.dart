@@ -591,9 +591,7 @@ Future<Result<Stage, ExecutionError>> expandShellStage(
 /// assignment builtin (`export A=*` keeps the literal — bash skips globbing
 /// in assignment context). A glob word as a plain ARGUMENT that merely
 /// looks like an assignment still expands, as in bash.
-final RegExp _assignmentWordShape = RegExp(
-  r'^[A-Za-z_][A-Za-z0-9_]*=',
-);
+final RegExp _assignmentWordShape = RegExp(r'^[A-Za-z_][A-Za-z0-9_]*=');
 
 /// In-place pathname expansion of the unquoted argv words (gh-1393 WS-1).
 /// No-match words keep the literal text — never an error.

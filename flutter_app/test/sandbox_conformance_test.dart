@@ -94,13 +94,11 @@ final conformanceTable = <ConformanceRow>[
   ConformanceRow(
     'AC2 cd inside one command line redirects later stages',
     'cd work && tr a b < notes.txt',
-    files: const {
-      'work/notes.txt': 'note one\nnote two\n',
-    },
+    files: const {'work/notes.txt': 'note one\nnote two\n'},
   ),
   ConformanceRow(
     'AC1 apps/ fixture paths resolve identically (glob expansion itself is '
-    'pinned at the argv layer in sandbox_shell_parity_test)',
+        'pinned at the argv layer in sandbox_shell_parity_test)',
     'tr a b < apps/2048/app.json',
   ),
   // ── core pipeline semantics ───────────────────────────────────────────
@@ -135,10 +133,7 @@ final conformanceTable = <ConformanceRow>[
     'exit code is the last stage',
     'tr a b < in.txt > /dev/null; test -f in.txt',
   ),
-  const ConformanceRow(
-    'test predicate exit codes match',
-    'test -f in.txt',
-  ),
+  const ConformanceRow('test predicate exit codes match', 'test -f in.txt'),
   const ConformanceRow(
     'missing file test fails identically',
     'test -f nope.txt',
@@ -148,9 +143,15 @@ final conformanceTable = <ConformanceRow>[
 void main() {
   test('the conformance table covers the gh-1393 evidence rows', () {
     final names = conformanceTable.map((r) => r.name).toSet();
-    expect(names, contains('AC3 /dev/null stdout sink discards and does not leak'));
+    expect(
+      names,
+      contains('AC3 /dev/null stdout sink discards and does not leak'),
+    );
     expect(names, contains('AC3 2>&1 folds stderr into stdout'));
-    expect(names, contains('AC2 cd inside one command line redirects later stages'));
+    expect(
+      names,
+      contains('AC2 cd inside one command line redirects later stages'),
+    );
   });
 
   group('conformance: MemoryShell vs LocalShell oracle', () {
@@ -161,8 +162,11 @@ void main() {
           return;
         }
         final oracle = await _runLocal(row);
-        expect(oracle.isOk, isTrue,
-            reason: 'oracle (sh -c) failed: ${oracle.errorOrNull}');
+        expect(
+          oracle.isOk,
+          isTrue,
+          reason: 'oracle (sh -c) failed: ${oracle.errorOrNull}',
+        );
         final expected = oracle.valueOrNull!;
 
         final memory = await _runMemory(row);
@@ -183,8 +187,11 @@ void main() {
       test('${row.name} — `${row.command.trim()}`', () async {
         if (io.Platform.isWindows) return;
         final oracle = await _runLocal(row);
-        expect(oracle.isOk, isTrue,
-            reason: 'oracle (sh -c) failed: ${oracle.errorOrNull}');
+        expect(
+          oracle.isOk,
+          isTrue,
+          reason: 'oracle (sh -c) failed: ${oracle.errorOrNull}',
+        );
         final expected = oracle.valueOrNull!;
 
         final wasi = await _runWasi(row);
@@ -291,10 +298,7 @@ void _assertSame(
   String shape(ShellExecResult r) {
     var stdout = r.stdout;
     if (normalize) {
-      final lines = stdout
-          .split('\n')
-          .where((l) => l.isNotEmpty)
-          .toList()
+      final lines = stdout.split('\n').where((l) => l.isNotEmpty).toList()
         ..sort();
       stdout = lines.join('\n');
     }

@@ -7,11 +7,13 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:flutter_agent_harness/src/utils/glob_match.dart' show globToRegExp;
+import 'package:flutter_agent_harness/src/utils/glob_match.dart'
+    show globToRegExp;
 import 'package:http/http.dart' as http;
 
 import 'package:fa/sandbox/memory_shell/awk.dart';
-import 'package:fa/sandbox/memory_shell/grep.dart' show GrepAccumulator, compileGrepQuery, grepText;
+import 'package:fa/sandbox/memory_shell/grep.dart'
+    show GrepAccumulator, compileGrepQuery, grepText;
 import 'package:fa/sandbox/memory_shell/interpreters.dart';
 import 'package:fa/sandbox/memory_shell/pipeline.dart';
 import 'package:fa/sandbox/memory_shell/paths.dart';
@@ -392,10 +394,7 @@ final class MemoryShell implements Shell, BackgroundShell {
     if (listing.isErr) return null;
     return [
       for (final entry in listing.valueOrNull!)
-        GlobEntry(
-          entry.name,
-          isDir: entry.kind == FileKind.directory,
-        ),
+        GlobEntry(entry.name, isDir: entry.kind == FileKind.directory),
     ];
   }
 
@@ -1445,7 +1444,9 @@ final class MemoryShell implements Shell, BackgroundShell {
     // clustered shorts); the Dart engine compiles the rest.
     final flags = <String>{
       for (final token in parsed.flags)
-        if (token.startsWith('-') && !token.startsWith('--') && token.length == 2)
+        if (token.startsWith('-') &&
+            !token.startsWith('--') &&
+            token.length == 2)
           token.substring(1),
       if (parsed.quiet) 'q',
     };

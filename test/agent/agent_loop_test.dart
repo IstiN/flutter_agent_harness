@@ -172,10 +172,7 @@ void main() {
       final stream = agentLoop(
         prompts: [prompt],
         context: const Context(messages: []),
-        config: AgentLoopConfig(
-          model: bigWindowModel,
-          contextWindowCap: 100,
-        ),
+        config: AgentLoopConfig(model: bigWindowModel, contextWindowCap: 100),
         streamFunction: fake.call,
         toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
       );
@@ -205,10 +202,7 @@ void main() {
       final stream = agentLoop(
         prompts: [prompt],
         context: const Context(messages: []),
-        config: AgentLoopConfig(
-          model: catalog200k,
-          contextWindowCap: 1000000,
-        ),
+        config: AgentLoopConfig(model: catalog200k, contextWindowCap: 1000000),
         streamFunction: fake.call,
         toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
       );
@@ -835,26 +829,28 @@ void main() {
       );
     });
 
-    test('an empty error message still renders the structured wrapper',
-        () async {
-      final fake = _FakeStreamFunction([
-        _toolTurn([_call('call-1', 'weather')]),
-        _textTurn('handled'),
-      ]);
-      final stream = agentLoop(
-        prompts: [UserMessage.text('hi')],
-        context: Context(messages: [], tools: [_tool('weather')]),
-        config: const AgentLoopConfig(model: _model),
-        streamFunction: fake.call,
-        toolExecutor: (_, _, _) async => throw StateError(''),
-      );
+    test(
+      'an empty error message still renders the structured wrapper',
+      () async {
+        final fake = _FakeStreamFunction([
+          _toolTurn([_call('call-1', 'weather')]),
+          _textTurn('handled'),
+        ]);
+        final stream = agentLoop(
+          prompts: [UserMessage.text('hi')],
+          context: Context(messages: [], tools: [_tool('weather')]),
+          config: const AgentLoopConfig(model: _model),
+          streamFunction: fake.call,
+          toolExecutor: (_, _, _) async => throw StateError(''),
+        );
 
-      final events = await stream.toList();
-      final end = events.whereType<ToolExecutionEndEvent>().single;
-      expect(end.isError, isTrue);
-      final text = (end.result.content.single as TextContent).text;
-      expect(text, startsWith('Tool error (weather): <no error message>'));
-    });
+        final events = await stream.toList();
+        final end = events.whereType<ToolExecutionEndEvent>().single;
+        expect(end.isError, isTrue);
+        final text = (end.result.content.single as TextContent).text;
+        expect(text, startsWith('Tool error (weather): <no error message>'));
+      },
+    );
 
     test('errors with clean toString are wrapped, not leaked bare', () async {
       final fake = _FakeStreamFunction([

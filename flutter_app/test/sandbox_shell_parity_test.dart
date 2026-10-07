@@ -86,10 +86,12 @@ void main() {
       addTearDown(() => sandbox.deleteSync(recursive: true));
       io.Directory('${sandbox.path}/apps/2048').createSync(recursive: true);
       io.Directory('${sandbox.path}/apps/notes').createSync(recursive: true);
-      io.File('${sandbox.path}/apps/2048/app.json')
-          .writeAsStringSync('{"tap":true}\n');
-      io.File('${sandbox.path}/apps/notes/app.json')
-          .writeAsStringSync('{"other":1}\n');
+      io.File(
+        '${sandbox.path}/apps/2048/app.json',
+      ).writeAsStringSync('{"tap":true}\n');
+      io.File(
+        '${sandbox.path}/apps/notes/app.json',
+      ).writeAsStringSync('{"other":1}\n');
       io.File('${sandbox.path}/in.txt').writeAsStringSync('abc\n');
     });
 
@@ -165,20 +167,22 @@ void main() {
       expect(rec.configs.single.args.last, '*.nomatch');
     });
 
-    test('AC1: `grep -rl счёт apps` reaches rg with pattern-first position',
-        () async {
-      rec.next = _ScriptedInstance();
-      await shell().exec('grep -rl счёт apps');
-      expect(rec.configs.single.args, [
-        'rg',
-        '-l',
-        '--no-ignore',
-        '--hidden',
-        '-e',
-        'счёт',
-        '/apps',
-      ]);
-    });
+    test(
+      'AC1: `grep -rl счёт apps` reaches rg with pattern-first position',
+      () async {
+        rec.next = _ScriptedInstance();
+        await shell().exec('grep -rl счёт apps');
+        expect(rec.configs.single.args, [
+          'rg',
+          '-l',
+          '--no-ignore',
+          '--hidden',
+          '-e',
+          'счёт',
+          '/apps',
+        ]);
+      },
+    );
 
     test('--include=GLOB forwards as an rg -g filter', () async {
       rec.next = _ScriptedInstance();
@@ -216,8 +220,9 @@ void main() {
 
     test('AC2: `cd /sub && tac < in.txt` resolves from the new cwd', () async {
       io.Directory('${sandbox.path}/sub').createSync();
-      io.File('${sandbox.path}/sub/in.txt')
-          .writeAsStringSync('first\nsecond\n');
+      io.File(
+        '${sandbox.path}/sub/in.txt',
+      ).writeAsStringSync('first\nsecond\n');
       final r = await shell().exec('cd /sub && tac < in.txt');
       expect(r.valueOrNull!.stdout, 'second\nfirst\n');
     });
@@ -231,13 +236,15 @@ void main() {
       expect(r.valueOrNull!.stdout, '/elsewhere\n');
     });
 
-    test('AC3: redirect writes to /dev/null discard, nothing materializes',
-        () async {
-      final r = await shell().exec('tac < in.txt > /dev/null');
-      expect(r.valueOrNull!.exitCode, 0);
-      expect(io.File('${sandbox.path}/dev/null').existsSync(), isFalse);
-      expect(io.Directory('${sandbox.path}/dev').existsSync(), isFalse);
-    });
+    test(
+      'AC3: redirect writes to /dev/null discard, nothing materializes',
+      () async {
+        final r = await shell().exec('tac < in.txt > /dev/null');
+        expect(r.valueOrNull!.exitCode, 0);
+        expect(io.File('${sandbox.path}/dev/null').existsSync(), isFalse);
+        expect(io.Directory('${sandbox.path}/dev').existsSync(), isFalse);
+      },
+    );
 
     test('AC3: `expr 1 / 0 2> /dev/null` — no file, clean stderr', () async {
       final r = await shell().exec('expr 1 / 0 2> /dev/null');
@@ -286,22 +293,23 @@ void main() {
       expect(r.stderr, isEmpty);
     });
 
-    test('AC3: `> f 2>&1` folds both streams into the file in order',
-        () async {
+    test('AC3: `> f 2>&1` folds both streams into the file in order', () async {
       final r = await run('echo out > /f.txt 2>&1; echo err2 1>&2');
       final content = await run('cat /f.txt');
       expect(content.stdout, 'out\n');
       expect(r.exitCode, 0);
     });
 
-    test('AC3: redirect writes to /dev/null discard, nothing materializes',
-        () async {
-      final r = await run('echo x > /dev/null 2> /dev/null');
-      expect(r.exitCode, 0);
-      final listing = await env.listDir('/');
-      final names = listing.valueOrNull!.map((e) => e.name).toSet();
-      expect(names.contains('dev'), isFalse);
-    });
+    test(
+      'AC3: redirect writes to /dev/null discard, nothing materializes',
+      () async {
+        final r = await run('echo x > /dev/null 2> /dev/null');
+        expect(r.exitCode, 0);
+        final listing = await env.listDir('/');
+        final names = listing.valueOrNull!.map((e) => e.name).toSet();
+        expect(names.contains('dev'), isFalse);
+      },
+    );
 
     test('AC3: failing command with 2>/dev/null has clean stderr', () async {
       final r = await run('cat /missing 2> /dev/null');
@@ -318,19 +326,27 @@ void main() {
       expect(r.stdout, isEmpty);
     });
 
-    test('AC2: cd persists for subsequent execs (harness anchors at /)',
-        () async {
-      await run('mkdir -p /w/sub');
-      await run('cd /w/sub');
-      final r = await run('pwd');
-      expect(r.stdout, '/w/sub\n');
-      // The harness anchor (env cwd `/`) does NOT reset the tracked cwd…
-      final anchored = await run('pwd', options: const ShellExecOptions(cwd: '/'));
-      expect(anchored.stdout, '/w/sub\n');
-      // …but an explicit different directory wins.
-      final explicit = await run('pwd', options: const ShellExecOptions(cwd: '/w'));
-      expect(explicit.stdout, '/w\n');
-    });
+    test(
+      'AC2: cd persists for subsequent execs (harness anchors at /)',
+      () async {
+        await run('mkdir -p /w/sub');
+        await run('cd /w/sub');
+        final r = await run('pwd');
+        expect(r.stdout, '/w/sub\n');
+        // The harness anchor (env cwd `/`) does NOT reset the tracked cwd…
+        final anchored = await run(
+          'pwd',
+          options: const ShellExecOptions(cwd: '/'),
+        );
+        expect(anchored.stdout, '/w/sub\n');
+        // …but an explicit different directory wins.
+        final explicit = await run(
+          'pwd',
+          options: const ShellExecOptions(cwd: '/w'),
+        );
+        expect(explicit.stdout, '/w\n');
+      },
+    );
 
     test('AC2: `cd /w && cat rel.txt` resolves from the new cwd', () async {
       await run('mkdir -p /w');
@@ -358,8 +374,7 @@ void main() {
       expect(proof.stdout, '/b\n');
     });
 
-    test('AC1: `grep -rl счёт apps` walks the directory with labels',
-        () async {
+    test('AC1: `grep -rl счёт apps` walks the directory with labels', () async {
       await run('mkdir -p /apps/one /apps/two');
       await run('echo "счёт один" > /apps/one/a.txt');
       await run('echo "nothing" > /apps/two/b.txt');
@@ -388,12 +403,14 @@ void main() {
       expect(noMatch.stderr, contains('missing.txt'));
     });
 
-    test('E2: unknown flags error POSIX-style, never silently diverge',
-        () async {
-      final r = await run('grep -Z x /etc');
-      expect(r.exitCode, 2);
-      expect(r.stderr, contains("invalid option -- 'Z'"));
-    });
+    test(
+      'E2: unknown flags error POSIX-style, never silently diverge',
+      () async {
+        final r = await run('grep -Z x /etc');
+        expect(r.exitCode, 2);
+        expect(r.stderr, contains("invalid option -- 'Z'"));
+      },
+    );
 
     test('\\| alternation matches either side', () async {
       await run('echo foo > /alt.txt');

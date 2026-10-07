@@ -24,7 +24,6 @@ export 'package:fa/sandbox/grep_args.dart';
 bool isNullDevicePath(String sandboxPath) =>
     normalizeLexicalPath(sandboxPath) == '/dev/null';
 
-
 /// Redirect targets resolved for one pipeline stage.
 final class StageRedirects {
   /// Creates the resolved targets.

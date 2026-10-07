@@ -23,14 +23,16 @@ void main() {
       expect(r.isUsable, isTrue);
     });
 
-    test('clustered shorts split per letter (was: `-rl` became the pattern)',
-        () {
-      final r = parseGrepArgs(['-rl', 'счёт', 'apps'])!;
-      expect(r.recursive, isTrue);
-      expect(r.flags, ['-l']);
-      expect(r.pattern, 'счёт');
-      expect(r.files, ['apps']);
-    });
+    test(
+      'clustered shorts split per letter (was: `-rl` became the pattern)',
+      () {
+        final r = parseGrepArgs(['-rl', 'счёт', 'apps'])!;
+        expect(r.recursive, isTrue);
+        expect(r.flags, ['-l']);
+        expect(r.pattern, 'счёт');
+        expect(r.files, ['apps']);
+      },
+    );
 
     test('clustered shorts combine quiet/count/line-number', () {
       final r = parseGrepArgs(['-rnc', 'p'])!;
