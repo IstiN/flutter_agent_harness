@@ -356,46 +356,57 @@ class _DynamicWidgetCanvasState extends State<DynamicWidgetCanvas> {
             // the content inside is free to be taller and scroll.
             child: SingleChildScrollView(
               controller: _scroll,
-              child: ValueListenableBuilder<Map<String, dynamic>?>(
-                valueListenable: engine.tree,
-                builder: (context, tree, _) {
-                  if (tree == null) {
-                    return const Center(child: CircularProgressIndicator());
+              child: ValueListenableBuilder<String?>(
+                // Issue #1336: an engine that booted but never rendered
+                // (eval failed before the first render) shows the error
+                // tile — never an infinite spinner.
+                valueListenable: engine.bootError,
+                builder: (context, bootError, _) {
+                  if (bootError != null) {
+                    return _errorTile(context, bootError);
                   }
-                  final scheme = Theme.of(context).colorScheme;
-                  final brightness = Theme.of(context).brightness;
-                  final renderer = JsonWidgetRenderer(
-                    theme: JsonWidgetTheme.fromAccent(
-                      scheme.primary,
-                      brightness: brightness,
-                    ),
-                    mediaHost: const FaMediaHost(),
-                    js3dHost: createFaJs3dHost(widget.service.env),
-                    onScene3dTap: (sceneId, payload) => engine
-                        .dispatchHostEvent('scene3d.tap:$sceneId', payload),
-                    onEvent: (actionId, payload) =>
-                        unawaited(engine.callEvent(actionId, payload)),
-                  );
-                  Widget body;
-                  try {
-                    body = renderer.build(tree, context);
-                  } on Object catch (error) {
-                    // A tree the renderer cannot draw (replayed E6
-                    // definition, new renderer against old node kinds) —
-                    // error tile, never a crash.
-                    return _errorTile(context, '$error');
-                  }
-                  // Issue #692 C: the runtime overflow backstop — content
-                  // painting wider than the viewport reports to the
-                  // service, which notes the agent (one-shot per widget).
-                  return WidgetOverflowWatch(
-                    onOverflow: (overflowPx, viewportWidth) =>
-                        widget.service.noteViewportOverflow(
-                          widget.definition,
-                          overflowPx,
-                          viewportWidth,
+                  return ValueListenableBuilder<Map<String, dynamic>?>(
+                    valueListenable: engine.tree,
+                    builder: (context, tree, _) {
+                      if (tree == null) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      final scheme = Theme.of(context).colorScheme;
+                      final brightness = Theme.of(context).brightness;
+                      final renderer = JsonWidgetRenderer(
+                        theme: JsonWidgetTheme.fromAccent(
+                          scheme.primary,
+                          brightness: brightness,
                         ),
-                    child: body,
+                        mediaHost: const FaMediaHost(),
+                        js3dHost: createFaJs3dHost(widget.service.env),
+                        onScene3dTap: (sceneId, payload) => engine
+                            .dispatchHostEvent('scene3d.tap:$sceneId', payload),
+                        onEvent: (actionId, payload) =>
+                            unawaited(engine.callEvent(actionId, payload)),
+                      );
+                      Widget body;
+                      try {
+                        body = renderer.build(tree, context);
+                      } on Object catch (error) {
+                        // A tree the renderer cannot draw (replayed E6
+                        // definition, new renderer against old node kinds) —
+                        // error tile, never a crash.
+                        return _errorTile(context, '$error');
+                      }
+                      // Issue #692 C: the runtime overflow backstop — content
+                      // painting wider than the viewport reports to the
+                      // service, which notes the agent (one-shot per widget).
+                      return WidgetOverflowWatch(
+                        onOverflow: (overflowPx, viewportWidth) =>
+                            widget.service.noteViewportOverflow(
+                              widget.definition,
+                              overflowPx,
+                              viewportWidth,
+                            ),
+                        child: body,
+                      );
+                    },
                   );
                 },
               ),
