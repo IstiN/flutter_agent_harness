@@ -39,6 +39,7 @@ library;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
+import 'package:fa/sandbox/glob_expand.dart';
 import 'package:fa/sandbox/shell_parser.dart';
 
 /// Maximum nesting depth for command substitution (`$(echo $(echo ...))`).
@@ -504,30 +505,56 @@ int _expandPlainAt(
   return j;
 }
 
+/// Expands one post-substitution word against the shell filesystem,
+/// returning the matched paths, or `null` when nothing matched (the word
+/// passes through literally — bash's no-`nullglob` default). The shells
+/// inject this with their own fs + cwd; the walker itself is
+/// `expandGlobPattern` (glob_expand.dart).
+typedef GlobExpander = Future<List<String>?> Function(String word);
+
 /// Applies `$VAR`/`$(...)` expansion to a parsed [stage] using [env],
 /// honoring the per-word `expandable` and `quoted` flags set by the parser.
 /// Unquoted words containing a substitution are word-split afterwards;
 /// redirect targets are expanded but never split.
+///
+/// [expandGlobs] (gh-1393 WS-1) adds pathname expansion AFTER substitution
+/// and word splitting — the POSIX ordering. Only UNQUOTED words expand;
+/// every matched word joins argv sorted; a no-match word stays literal, so
+/// a glob is never a parse error and never an error by itself. Assignment
+/// arguments to `export`/`unset`/`declare` never expand (bash skips
+/// globbing in assignment context).
 Future<Result<Stage, ExecutionError>> expandShellStage(
   Stage stage,
   Map<String, String> env,
-  SubstitutionRunner substitute,
-) async {
+  SubstitutionRunner substitute, {
+  GlobExpander? expandGlobs,
+}) async {
   final argv = <String>[];
+  // Per-argv-piece quoting, parallel to [argv]: a quoted (or escaped,
+  // non-expandable) word never pathname-expands.
+  final quotedFlags = <bool>[];
   for (var k = 0; k < stage.argv.length; k++) {
     final word = stage.argv[k];
     if (!stage.isExpandable(k)) {
       argv.add(word);
+      quotedFlags.add(true); // escaped word: literal, never a glob
       continue;
     }
     final expanded = await expandShellWord(word, env, substitute);
     if (expanded.isErr) return Err(expanded.errorOrNull!);
     final result = expanded.valueOrNull!;
-    if (result.hadSubstitution && !stage.isQuoted(k)) {
-      argv.addAll(splitSubstitutionFields(result.text));
+    final quoted = stage.isQuoted(k);
+    if (result.hadSubstitution && !quoted) {
+      final pieces = splitSubstitutionFields(result.text);
+      argv.addAll(pieces);
+      quotedFlags.addAll(List<bool>.filled(pieces.length, false));
     } else {
       argv.add(result.text);
+      quotedFlags.add(quoted);
     }
+  }
+  if (expandGlobs != null) {
+    await _expandGlobArgs(argv, quotedFlags, expandGlobs);
   }
   if (argv.isEmpty) argv.add(''); // degenerate: substitution ate every word
   final redirects = <Redirect>[];
@@ -558,4 +585,48 @@ Future<Result<Stage, ExecutionError>> expandShellStage(
   return Ok(
     Stage(command: argv.first, args: argv.sublist(1), redirects: redirects),
   );
+}
+
+/// Assignment-shaped words never pathname-expand when the command is an
+/// assignment builtin (`export A=*` keeps the literal — bash skips globbing
+/// in assignment context). A glob word as a plain ARGUMENT that merely
+/// looks like an assignment still expands, as in bash.
+final RegExp _assignmentWordShape = RegExp(
+  r'^[A-Za-z_][A-Za-z0-9_]*=',
+);
+
+/// In-place pathname expansion of the unquoted argv words (gh-1393 WS-1).
+/// No-match words keep the literal text — never an error.
+Future<void> _expandGlobArgs(
+  List<String> argv,
+  List<bool> quotedFlags,
+  GlobExpander expandGlobs,
+) async {
+  final assignmentsAreLiteral =
+      argv.isNotEmpty &&
+      (argv.first == 'export' ||
+          argv.first == 'unset' ||
+          argv.first == 'declare' ||
+          argv.first == 'local');
+  final expanded = <String>[];
+  for (var i = 0; i < argv.length; i++) {
+    final word = argv[i];
+    if (quotedFlags[i] || !isGlobWord(word)) {
+      expanded.add(word);
+      continue;
+    }
+    if (assignmentsAreLiteral && i > 0 && _assignmentWordShape.hasMatch(word)) {
+      expanded.add(word);
+      continue;
+    }
+    final matches = await expandGlobs(word);
+    if (matches == null) {
+      expanded.add(word);
+    } else {
+      expanded.addAll(matches);
+    }
+  }
+  argv
+    ..clear()
+    ..addAll(expanded);
 }

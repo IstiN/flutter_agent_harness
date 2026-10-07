@@ -49,14 +49,15 @@ Future<List<String>?> expandGlobPattern(
 ) async {
   if (!isGlobWord(pattern)) return null;
   final absolute = pattern.startsWith('/');
-  final base = absolute ? '/' : (cwd == '/' ? '' : cwd);
   final body = absolute ? pattern.substring(1) : pattern;
   final segments = body.split('/').where((s) => s.isNotEmpty).toList();
   if (segments.isEmpty) return null;
 
-  // Working set: candidate paths matched so far. A trailing true flag says
-  // the candidate is a directory listing root for the NEXT segment.
-  var candidates = <_Candidate>[_Candidate('$base${base.isEmpty ? '' : ''}')];
+  // Working set: candidate paths matched so far, always ABSOLUTE sandbox
+  // paths (relative patterns are rooted at [cwd] and re-relativized on the
+  // way out). A trailing true flag says the candidate is a directory
+  // listing root for the NEXT segment.
+  var candidates = <_Candidate>[_Candidate(cwd)];
   for (var i = 0; i < segments.length; i++) {
     final segment = segments[i];
     final last = i == segments.length - 1;
@@ -64,9 +65,17 @@ Future<List<String>?> expandGlobPattern(
     if (segment == '**') {
       for (final candidate in candidates) {
         // `**` matches zero or more directory levels (globstar): keep the
-        // candidate itself plus every descendant directory, depth-capped.
+        // candidate itself plus every descendant directory — and, when it
+        // is the last segment, every file too (bash `dir/**` lists the
+        // whole subtree).
         next.add(_Candidate(candidate.path, dir: true, keep: true));
-        await _descend(next, candidate.path, listDir, _globstarDepthCap);
+        await _descend(
+          next,
+          candidate.path,
+          listDir,
+          _globstarDepthCap,
+          includeFiles: last,
+        );
       }
     } else if (isGlobWord(segment)) {
       final matcher = globToRegExp(segment);
@@ -104,10 +113,15 @@ Future<List<String>?> expandGlobPattern(
   }
 
   final matches = candidates
-      .where((c) => c.path.isNotEmpty)
+      .where((c) => c.path.isNotEmpty && c.path != '/')
       .map((c) {
         var path = c.path;
-        if (!absolute && path.startsWith('/')) path = path.substring(1);
+        if (!absolute) {
+          // Output in the pattern's shape: relative matches are relative to
+          // [cwd] (bash emits `apps/x/app.json`, not the absolute path).
+          final prefix = cwd == '/' ? '/' : '$cwd/';
+          if (path.startsWith(prefix)) path = path.substring(prefix.length);
+        }
         return path;
       })
       .toSet()
@@ -137,22 +151,29 @@ String _join(String base, String name) {
   return '$base/$name';
 }
 
-/// Collects [out] with every directory under [dir] (breath-first,
-/// depth-capped). Best-effort: unreadable dirs are skipped.
+/// Collects [out] with every entry under [dir] (depth-first, depth-capped);
+/// directories always descend, and with [includeFiles] plain files are
+/// added too (trailing `**`). Best-effort: unreadable dirs are skipped;
+/// hidden dirs are traversed (globstar semantics — a leading `.` hides a
+/// name from `*` patterns, not from traversal).
 Future<void> _descend(
   List<_Candidate> out,
   String dir,
   GlobDirList listDir,
-  int depth,
-) async {
+  int depth, {
+  required bool includeFiles,
+}) async {
   if (depth <= 0) return;
   final entries = await listDir(dir);
   if (entries == null) return;
   for (final entry in entries) {
-    if (!entry.isDir) continue;
     if (entry.name == '.' || entry.name == '..') continue;
     final path = _join(dir, entry.name);
-    out.add(_Candidate(path, dir: true, keep: true));
-    await _descend(out, path, listDir, depth - 1);
+    if (entry.isDir) {
+      out.add(_Candidate(path, dir: true, keep: true));
+      await _descend(out, path, listDir, depth - 1, includeFiles: true);
+    } else if (includeFiles) {
+      out.add(_Candidate(path));
+    }
   }
 }

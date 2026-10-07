@@ -85,9 +85,11 @@ void main() {
 
     test('hidden entries stay hidden unless the segment starts with a dot',
         () async {
-      expect(await expandGlobPattern('.hidden', '/', fs), ['.hidden']);
-      expect(await expandGlobPattern('apps/2048/.fah', '/', fs), [
-        'apps/2048/.fah',
+      expect(await expandGlobPattern('.*', '/', fs), ['.hidden']);
+      // `*` alone never matches dot names (bash dotglob off).
+      expect(await expandGlobPattern('apps/2048/*', '/', fs), [
+        'apps/2048/app.json',
+        'apps/2048/widget.js',
       ]);
     });
 
@@ -114,11 +116,12 @@ void main() {
       );
     });
 
-    test('doublestar as the last segment lists files and dirs recursively',
+    test('doublestar as the last segment lists the subtree (dir itself too)',
         () async {
       expect(
         await expandGlobPattern('apps/2048/**', '/', fs),
         [
+          'apps/2048',
           'apps/2048/.fah',
           'apps/2048/app.json',
           'apps/2048/widget.js',
