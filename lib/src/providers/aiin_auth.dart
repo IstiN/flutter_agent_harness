@@ -92,7 +92,10 @@ Future<List<String>> fetchAiinOAuthProviders({
   final body = _decode(response);
   final providers = body['providers'];
   if (providers is! List) return const [];
-  return [for (final p in providers) if (p is String && p.isNotEmpty) p];
+  return [
+    for (final p in providers)
+      if (p is String && p.isNotEmpty) p,
+  ];
 }
 
 /// The result of [initiateAiinOAuth]: the URL to open in the browser plus
@@ -171,7 +174,10 @@ Future<AiinOAuthInitiate> initiateAiinOAuth({
   final parsed = _decode(response);
   final authUrl = parsed['auth_url'];
   final state = parsed['state'];
-  if (authUrl is! String || authUrl.isEmpty || state is! String || state.isEmpty) {
+  if (authUrl is! String ||
+      authUrl.isEmpty ||
+      state is! String ||
+      state.isEmpty) {
     throw AiinAuthException(
       'AIIN sign-in initiation returned no auth URL/state',
       code: 'invalid_response',

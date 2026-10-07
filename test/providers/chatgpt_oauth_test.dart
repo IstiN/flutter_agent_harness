@@ -429,7 +429,10 @@ void main() {
       expect(jwtEmailClaim('a.b.c.d'), isNull);
       // The middle segment must be base64url JSON — a valid base64 of
       // non-JSON text decodes to no claim.
-      expect(jwtEmailClaim('a.${base64Url.encode(utf8.encode('hi'))}.c'), isNull);
+      expect(
+        jwtEmailClaim('a.${base64Url.encode(utf8.encode('hi'))}.c'),
+        isNull,
+      );
       // Invalid base64 (bad padding) decodes to no claim, never throws.
       expect(jwtEmailClaim('a.%%% b}).c'), isNull);
     });

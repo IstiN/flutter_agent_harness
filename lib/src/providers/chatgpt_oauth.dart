@@ -187,18 +187,19 @@ Future<ChatGptOAuthCredentials> _tokenRequest(
     // Issue #1036: ride the shared fetch watchdogs (connect 30s / read
     // 120s, FA_PROVIDER_TIMEOUT_SECONDS overrides the read leg) instead of
     // a hard-coded 30s — token refresh is on the agent's critical path.
-    final request = http.Request('POST', Uri.parse('$chatGptIssuer/oauth/token'))
-      ..headers['Content-Type'] = jsonBody
-          ? 'application/json'
-          : 'application/x-www-form-urlencoded'
-      ..body = jsonBody
-          ? jsonEncode(fields)
-          : fields.entries
-                .map(
-                  (e) =>
-                      '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}',
-                )
-                .join('&');
+    final request =
+        http.Request('POST', Uri.parse('$chatGptIssuer/oauth/token'))
+          ..headers['Content-Type'] = jsonBody
+              ? 'application/json'
+              : 'application/x-www-form-urlencoded'
+          ..body = jsonBody
+              ? jsonEncode(fields)
+              : fields.entries
+                    .map(
+                      (e) =>
+                          '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}',
+                    )
+                    .join('&');
     final response = await sendProviderFetch(
       httpClient,
       request,
