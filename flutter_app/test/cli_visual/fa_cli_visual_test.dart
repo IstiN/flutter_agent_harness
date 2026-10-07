@@ -1124,8 +1124,11 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
 
     testWidgets('ctrl+s during a long bash moves it to a background job '
         'untouched and answers right away', (tester) async {
-      // The canned endpoint answers a `sleep 300` tool call to the first
-      // user message and a text answer once the user steers mid-tool.
+      // The canned endpoint answers a `tail -f /dev/null` tool call to the
+      // first user message (a long blocker — issue #1349 denies a bare
+      // foreground `sleep` at validation, so the stand-in for a long-running
+      // call must be legitimate work) and a text answer once the user steers
+      // mid-tool.
       // Ephemeral port + addTearDown leak guard (gh-781), same as the
       // other answer-server tests in this file.
       final port = await _freeLoopbackPort(tester);
@@ -1142,7 +1145,7 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
       await harness.settle(settleMs: 300);
       harness.sendEnter();
       await harness.liveWaitForText(
-        'sleep 300',
+        'tail -f /dev/null',
         timeout: const Duration(seconds: 30),
       );
 
@@ -1170,7 +1173,7 @@ http.server.HTTPServer(("127.0.0.1", $port), H).serve_forever()
         timeout: const Duration(seconds: 15),
       );
       await harness.screenshot(shotsDir, '102_tasks_shell_job');
-      expect(harness.screenText, contains('sleep 300'));
+      expect(harness.screenText, contains('tail -f /dev/null'));
 
       // Job ids carry a unique suffix (sh-1-<uniq>) — cancel the EXACT id
       // the listing shows.
@@ -1815,7 +1818,8 @@ allowedTools: []
 
 /// A canned OpenAI-SSE endpoint for visual tests: with [answer] it always
 /// replies with that text; without it (steer mode) the first user message
-/// gets a `sleep 300` bash tool call and every later request a text answer.
+/// gets a `tail -f /dev/null` bash tool call and every later request a text
+/// answer.
 const _answerServerPy = r'''
 import http.server, json, sys
 
@@ -1844,7 +1848,7 @@ class H(http.server.BaseHTTPRequestHandler):
                     {'choices': [{'delta': {'tool_calls': [
                         {'index': 0, 'id': 'call_1', 'function': {
                             'name': 'bash',
-                            'arguments': '{"command":"sleep 300"}'}}]}}]},
+                            'arguments': '{"command":"tail -f /dev/null"}'}}]}}]},
                     {'choices': [{'delta': {}, 'finish_reason': 'tool_calls'}]},
                 ]
             elif ('deploy the app' in last_user
