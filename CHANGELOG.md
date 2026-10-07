@@ -4695,4 +4695,11 @@
 - fix(1339): review hardening — session-archive traversal guard on every branch (#1369)
 - fix(1323): live thinking streams in the TUI — reasoning deltas commit the transient-retry attempt (#1325)
 
+## 1.0.525
+
+- ci(quarantine): skip subagent_integration_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1372) (#1373)
+- fix(1254): quarantine dracula theme-flake + wait headroom for starved shard (#1288)
+- fix(1234): whole-tree CRAP ratchet 12→8, loc-gate migration, all top offenders fixed (#1291)
+- fix(1252): widen scheduled-indicator reminder window past loaded-runner pre-check (#1290)
+
 ## Unreleased
