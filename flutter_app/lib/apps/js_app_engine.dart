@@ -280,6 +280,20 @@ class JsAppEngine {
   final ValueNotifier<Map<String, dynamic>?> tree =
       ValueNotifier<Map<String, dynamic>?>(null);
 
+  /// Set when the engine started but produced no UI tree within
+  /// [uiTreeWarnAfter] — the eval died before the first render (issue
+  /// #1336). The runtime swallows widget-eval failures: a syntax error
+  /// aborts the whole script parse, so neither the wrapper's inner JS
+  /// try/catch nor the host's can see it (the backend only debugPrints
+  /// the eval error). The views render this as an error card instead of
+  /// an infinite spinner. A plain display String — no error type, so no
+  /// `Bad state:` prefix leaks into user-facing cards.
+  final ValueNotifier<String?> bootError = ValueNotifier<String?>(null);
+
+  /// How long after [start] a null [tree] turns into [bootError].
+  @visibleForTesting
+  static Duration uiTreeWarnAfter = const Duration(seconds: 10);
+
   /// Whether the running app registered a `jsr.onBack` handler — pushed by
   /// the bootstrap (`back.handler` bridge) every time the app assigns it.
   /// The view uses it for PopScope.canPop: with a handler, back gestures
@@ -387,7 +401,14 @@ class JsAppEngine {
       initialTheme: initialTheme,
       initialStorage: storage,
       hostBootstrapJs: faBootstrapJsFor(hostLocale),
-      onRender: (t) => tree.value = t,
+      onRender: (t) {
+        // A late render (slow device, bootstrap that fetches before its
+        // first jsr.render) proves the boot was fine — clear the
+        // watchdog's stale verdict so the widget surfaces instead of
+        // hiding behind a permanent error card (gh-1336 review).
+        bootError.value = null;
+        tree.value = t;
+      },
       onSetTitle: (_) {},
       onStorageUpdate: _persistStorage,
       onLog: _handleEngineLog,
@@ -424,6 +445,34 @@ class JsAppEngine {
     // replay the drift into THIS engine as `state.sync` events — the widget
     // adopts them through the same path as live broadcasts.
     await _replayStorageDrift();
+    // Issue #1336: a healthy widget renders within a frame or two; a
+    // broken one (source fails to parse/eval) never renders at all —
+    // arm the null-tree watchdog so the failure surfaces as an error
+    // card instead of an infinite spinner.
+    unawaited(_watchUiTree(_engine));
+  }
+
+  /// Issue #1336: logs a first-class warning and sets [bootError] when
+  /// the widget eval produced no UI tree within [uiTreeWarnAfter] of
+  /// start. [armed] pins the verdict to THIS run — a restart or dispose
+  /// cancels it.
+  Future<void> _watchUiTree(JsWidgetEngine? armed) async {
+    await Future<void>.delayed(uiTreeWarnAfter);
+    // A disposed engine's notifiers throw on read — check liveness first.
+    if (!identical(_engine, armed)) return;
+    if (tree.value != null) return;
+    final waited = uiTreeWarnAfter.inSeconds >= 1
+        ? '${uiTreeWarnAfter.inSeconds}s'
+        : '${uiTreeWarnAfter.inMilliseconds}ms';
+    bootError.value =
+        "widget '${app.id}' ($entryFile) produced no UI tree within $waited "
+        'of engine start — the app source likely fails to parse (syntax '
+        'error); fix the widget source and retry';
+    AppLog.i(
+      'apps',
+      'WARNING: ${app.id}/$entryFile: uiTree not set $waited after '
+          'engine start — eval failed before the first render',
+    );
   }
 
   Future<void> callEvent(String actionId, [Map<String, dynamic>? payload]) {
@@ -570,6 +619,7 @@ class JsAppEngine {
     }
     if (engine != null) await engine.dispose();
     tree.dispose();
+    bootError.dispose();
     backHandlerRegistered.dispose();
   });
 
