@@ -10,16 +10,19 @@ import '../cli/agent_cli_test_support.dart';
 void main() {
   late Future<bool> Function(Duration, CancelToken?) savedSleeper;
   late TransientRetryNotice? savedNotice;
+  late bool savedBufferThinking;
 
   setUp(() {
     savedSleeper = transientRetrySleeper;
     savedNotice = transientRetryNotice;
+    savedBufferThinking = transientRetryBufferThinking;
     transientRetrySleeper = (delay, token) async => true;
     transientRetryNotice = null;
   });
   tearDown(() {
     transientRetrySleeper = savedSleeper;
     transientRetryNotice = savedNotice;
+    transientRetryBufferThinking = savedBufferThinking;
   });
 
   group('isTransientNetworkError', () {
@@ -331,10 +334,17 @@ void main() {
       expect(events.whereType<ErrorEvent>(), hasLength(1));
     });
 
-    test(
-      'a thinking-only drop replays — nothing user-visible was emitted '
-      '(issue #964)',
-      () async {
+    // The #964 replayable-reasoning contract, preserved verbatim under the
+    // escape hatch (issue #1323 AC4): pre-commit thinking buffers in
+    // silence, so a mid-reasoning drop replays with no trace and a
+    // thinking-only success flushes the reasoning at Done.
+    group('transientRetryBufferThinking (the #964 escape hatch)', () {
+      setUp(() => transientRetryBufferThinking = true);
+
+      test(
+        'a thinking-only drop replays — nothing user-visible was emitted '
+        '(issue #964)',
+        () async {
         var calls = 0;
         final wrapped = transientRetryStreamFunction((
           model,
@@ -456,6 +466,7 @@ void main() {
       );
       expect(events.last, isA<DoneEvent>());
       expect(events.whereType<ErrorEvent>(), isEmpty);
+      });
     });
 
     test('a drop after visible content still stands despite thinking deltas '
@@ -859,6 +870,240 @@ void main() {
         terminal.error.errorMessage,
         'Request was aborted',
         reason: 'non-error terminals skip the mid-answer wrap',
+      );
+    });
+  });
+  group('issue #1323 — live thinking: the first reasoning delta commits', () {
+    AssistantMessage errorMsg(
+      String text, {
+      List<ContentBlock> content = const [],
+    }) => AssistantMessage(
+      content: content,
+      api: 'test-api',
+      provider: 'test-provider',
+      model: 'test-model',
+      usage: Usage.zero,
+      stopReason: StopReason.error,
+      errorMessage: text,
+      timestamp: DateTime.utc(2026),
+    );
+
+    const ownerTimeout =
+        'SocketException: Connection failed (OS Error: Operation timed out, '
+        'errno = 60), address = api.example.com, port = 443';
+
+    test('thinking deltas stream live before any text exists', () async {
+      // The #1323 regression pin: #964's buffering withheld every thinking
+      // event until the first visible delta committed — a pure-reasoning
+      // phase rendered as a silent «Working…», then one bulk dump. The
+      // delta must reach the host WHILE the stream is still open.
+      final inner = AssistantMessageEventStream();
+      final events = <AssistantMessageEvent>[];
+      final thinkingArrived = Completer<void>();
+      final wrapped = transientRetryStreamFunction(
+        (model, context, {cancelToken}) => inner,
+      );
+      final drained = wrapped(testModel, const Context(messages: [])).forEach((
+        event,
+      ) {
+        events.add(event);
+        if (event is ThinkingDeltaEvent && !thinkingArrived.isCompleted) {
+          thinkingArrived.complete();
+        }
+      });
+      scheduleMicrotask(() {
+        inner
+          ..push(StartEvent(partial: testAssistant()))
+          ..push(ThinkingStartEvent(contentIndex: 0, partial: testAssistant()))
+          ..push(
+            ThinkingDeltaEvent(
+              contentIndex: 0,
+              delta: 'pondering',
+              partial: testAssistant(
+                content: const [ThinkingContent(thinking: 'pondering')],
+              ),
+            ),
+          );
+      });
+      await thinkingArrived.future.timeout(const Duration(seconds: 30));
+      expect(
+        events.whereType<TextDeltaEvent>(),
+        isEmpty,
+        reason: 'the reasoning streamed while no text existed',
+      );
+      expect(
+        events.whereType<DoneEvent>(),
+        isEmpty,
+        reason: '…before the terminal — not flushed as one bulk dump',
+      );
+      final full = testAssistant(
+        content: const [ThinkingContent(thinking: 'pondering')],
+      );
+      inner
+        ..push(DoneEvent(reason: StopReason.stop, message: full))
+        ..end();
+      await drained;
+    });
+
+    test('a mid-reasoning transport death resumes from the streamed '
+        'thinking — the tail continues it, never duplicates it', () async {
+      var calls = 0;
+      final notices = <String>[];
+      transientRetryNotice = (a, m, d, r) => notices.add(r);
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        final n = ++calls;
+        final stream = AssistantMessageEventStream();
+        scheduleMicrotask(() {
+          if (n == 1) {
+            final partial = testAssistant(
+              content: const [ThinkingContent(thinking: 'deep thought so fa')],
+            );
+            stream
+              ..push(StartEvent(partial: testAssistant()))
+              ..push(
+                ThinkingStartEvent(contentIndex: 0, partial: testAssistant()),
+              )
+              ..push(
+                ThinkingDeltaEvent(
+                  contentIndex: 0,
+                  delta: 'deep thought so fa',
+                  partial: partial,
+                ),
+              )
+              ..push(
+                ErrorEvent(
+                  reason: StopReason.error,
+                  error: errorMsg(ownerTimeout, content: partial.content),
+                ),
+              );
+          } else {
+            final mid = testAssistant(
+              content: const [ThinkingContent(thinking: 'r continues')],
+            );
+            final tail = testAssistant(
+              content: const [
+                ThinkingContent(thinking: 'r continues'),
+                TextContent(text: 'done'),
+              ],
+            );
+            stream
+              ..push(StartEvent(partial: testAssistant()))
+              ..push(
+                ThinkingStartEvent(contentIndex: 0, partial: testAssistant()),
+              )
+              ..push(
+                ThinkingDeltaEvent(
+                  contentIndex: 0,
+                  delta: 'r continues',
+                  partial: mid,
+                ),
+              )
+              ..push(
+                ThinkingEndEvent(
+                  contentIndex: 0,
+                  content: 'r continues',
+                  partial: mid,
+                ),
+              )
+              ..push(TextStartEvent(contentIndex: 1, partial: mid))
+              ..push(
+                TextDeltaEvent(contentIndex: 1, delta: 'done', partial: tail),
+              )
+              ..push(
+                TextEndEvent(contentIndex: 1, content: 'done', partial: tail),
+              )
+              ..push(DoneEvent(reason: StopReason.stop, message: tail));
+          }
+          stream.end();
+        });
+        return stream;
+      });
+
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).toList();
+
+      expect(calls, 2, reason: 'the cut transport resumed — never replayed');
+      expect(events.whereType<ErrorEvent>(), isEmpty);
+      // One logical message: the streamed reasoning survives exactly once,
+      // the tail continues it.
+      final done = events.whereType<DoneEvent>().single;
+      expect(
+        done.message.content
+            .whereType<ThinkingContent>()
+            .map((b) => b.thinking)
+            .toList(),
+        ['deep thought so fa', 'r continues'],
+      );
+      expect(done.message.content.whereType<TextContent>().single.text, 'done');
+      // The dead attempt is not replayed on top of its own deltas, and the
+      // tail's events shifted past the kept thinking block.
+      expect(
+        events.whereType<ThinkingDeltaEvent>().map((e) => e.delta).toList(),
+        ['deep thought so fa', 'r continues'],
+      );
+      expect(events.whereType<ThinkingDeltaEvent>().last.contentIndex, 1);
+      expect(events.whereType<TextDeltaEvent>().single.contentIndex, 2);
+      expect(notices.single, contains('resuming from 1 completed block(s)'));
+    });
+
+    test('a mid-reasoning auth failure stands verbatim — the streamed '
+        'thinking and the error surface', () async {
+      var calls = 0;
+      final wrapped = transientRetryStreamFunction((
+        model,
+        context, {
+        cancelToken,
+      }) {
+        calls++;
+        final stream = AssistantMessageEventStream();
+        scheduleMicrotask(() {
+          final partial = testAssistant(
+            content: const [ThinkingContent(thinking: 'hmm')],
+          );
+          stream
+            ..push(StartEvent(partial: testAssistant()))
+            ..push(
+              ThinkingStartEvent(contentIndex: 0, partial: testAssistant()),
+            )
+            ..push(
+              ThinkingDeltaEvent(
+                contentIndex: 0,
+                delta: 'hmm',
+                partial: partial,
+              ),
+            )
+            ..push(
+              ErrorEvent(
+                reason: StopReason.error,
+                error: errorMsg(
+                  '401 unauthorized: invalid API key',
+                  content: partial.content,
+                ),
+              ),
+            );
+          stream.end();
+        });
+        return stream;
+      });
+
+      final events = await wrapped(
+        testModel,
+        const Context(messages: []),
+      ).toList();
+
+      expect(calls, 1, reason: 'an auth error never retries');
+      final terminal = events.whereType<ErrorEvent>().single;
+      expect(terminal.error.errorMessage, '401 unauthorized: invalid API key');
+      // The thinking streamed live; the truthful terminal carries it.
+      expect(
+        terminal.error.content.whereType<ThinkingContent>().single.thinking,
+        'hmm',
       );
     });
   });

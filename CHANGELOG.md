@@ -4676,4 +4676,16 @@
 - fix(1248): dart_tui guard misfires ghost mail-wake turns — log-and-keep-running (#1289)
 - gh-1257 [FLAKE] PTY integration: convert the 5 residual exact-bullet-count anchors (secret_sheet_residual_test / password_prompt_pty_test) to the gh-1244 property anchor (#1287)
 
+## 1.0.522
+
+- fix(ci): play edit-commit sets changesNotSentForReview (#1367)
+- fix(1339): surface recovered trials, terminal failure modes, and model ids in the bench summary (#1351)
+- feat(1331): iOS size diet — IPA dSYM strip + never-loaded fixture prune + ratchet (#1333)
+
+## 1.0.523
+
+- gh-1341 Bump js_widget_runtime pin to 9d57570 / ^0.4.156 — flutter_js hostCall/capture channel fix (fa-craft lag, voxel-sandbox spinner) (#1366)
+- fix(1349): deny bare long foreground sleeps; enrich liveness reminders with the background hint (#1355)
+- fix(1293): dap start exit-0 guarantees the dial credential is durably on disk (#1354)
+
 ## Unreleased
