@@ -2212,9 +2212,13 @@ gh release create "v9.9.9" \
       'NG1 — a failed `flutter pub get` aborts the release BEFORE the push (origin/main unchanged)',
       () {
         final r = runAutoReleaseDirect('pubget-fail', flutterFails: true);
-        expect(r.exitCode, 1, reason:
-            'a release whose lockfile refresh fails must fail loud: '
-            '${r.output}');
+        expect(
+          r.exitCode,
+          1,
+          reason:
+              'a release whose lockfile refresh fails must fail loud: '
+              '${r.output}',
+        );
         expect(r.output, contains('flutter pub get failed'));
         expect(
           r.originHeadAfter,
@@ -2303,7 +2307,8 @@ gh release create "v9.9.9" \
         expect(
           dirtyGate,
           greaterThan(add),
-          reason: 'the dirty-tree gate consumes the ONE inventory ('
+          reason:
+              'the dirty-tree gate consumes the ONE inventory ('
               'scripts/check_lockfiles.sh) after staging — never a '
               'duplicated list',
         );
@@ -2315,7 +2320,11 @@ gh release create "v9.9.9" \
       () {
         final script = read('scripts/tag_release.sh');
         final smoke = script.indexOf('pub get --enforce-lockfile');
-        expect(smoke, greaterThan(0), reason: 'the post-release smoke must exist');
+        expect(
+          smoke,
+          greaterThan(0),
+          reason: 'the post-release smoke must exist',
+        );
         final tag = script.indexOf('git tag -a');
         final create = script.indexOf('gh release create');
         expect(
@@ -2336,40 +2345,43 @@ gh release create "v9.9.9" \
       },
     );
 
-    test('AC3 — the release workflow jobs that run the gates get flutter on PATH', () {
-      final jobs = jobsOf('.github/workflows/ci.yml');
-      for (final name in ['release', 'release-tag']) {
-        final steps = jobs[name]['steps'] as YamlList;
-        final flutterSteps = steps
-            .whereType<YamlMap>()
-            .where(
-              (s) => (s['uses']?.toString() ?? '').startsWith(
-                'subosito/flutter-action',
-              ),
-            )
-            .toList();
-        expect(
-          flutterSteps,
-          isNotEmpty,
-          reason:
-              'job $name runs a gh-1299 lockfile gate — it needs flutter '
-              'installed (hosted stable, same pin as every other leg)',
-        );
-        // PR #1304 rework thread 8: these jobs AUTHOR flutter_app/pubspec.lock
-        // for every future release — the authoring SDK must be pinned to the
-        // same 3.47.x the consuming (`--enforce-lockfile`) build legs pin,
-        // closing the author/consumer SDK drift class for one line per step.
-        for (final s in flutterSteps) {
+    test(
+      'AC3 — the release workflow jobs that run the gates get flutter on PATH',
+      () {
+        final jobs = jobsOf('.github/workflows/ci.yml');
+        for (final name in ['release', 'release-tag']) {
+          final steps = jobs[name]['steps'] as YamlList;
+          final flutterSteps = steps
+              .whereType<YamlMap>()
+              .where(
+                (s) => (s['uses']?.toString() ?? '').startsWith(
+                  'subosito/flutter-action',
+                ),
+              )
+              .toList();
           expect(
-            (s['with'] as YamlMap?)?['flutter-version']?.toString(),
-            '3.47.x',
+            flutterSteps,
+            isNotEmpty,
             reason:
-                'job $name authors flutter_app/pubspec.lock — its SDK must '
-                'be pinned to the same 3.47.x the consuming build legs use',
+                'job $name runs a gh-1299 lockfile gate — it needs flutter '
+                'installed (hosted stable, same pin as every other leg)',
           );
+          // PR #1304 rework thread 8: these jobs AUTHOR flutter_app/pubspec.lock
+          // for every future release — the authoring SDK must be pinned to the
+          // same 3.47.x the consuming (`--enforce-lockfile`) build legs pin,
+          // closing the author/consumer SDK drift class for one line per step.
+          for (final s in flutterSteps) {
+            expect(
+              (s['with'] as YamlMap?)?['flutter-version']?.toString(),
+              '3.47.x',
+              reason:
+                  'job $name authors flutter_app/pubspec.lock — its SDK must '
+                  'be pinned to the same 3.47.x the consuming build legs use',
+            );
+          }
         }
-      }
-    });
+      },
+    );
   });
 
   // ── gh-995 — artifact action pins + PTY shard pipeline coherence ────────
