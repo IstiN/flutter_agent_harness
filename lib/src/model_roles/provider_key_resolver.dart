@@ -214,11 +214,22 @@ final class HostKeyResolver {
       storeRead: storeRead,
       activeCustomKeyName: activeCustomKeyName,
     );
-    // The registry leg: a known pinned twin holding a value keeps winning
-    // while the chain landed on the canonical (or nothing) — the same
-    // precedence the CLI's saved entries get from their own keyName
-    // probes. This is what turns the issue's kimi trap into a working
-    // binding plus a visible warning.
+    final name = _effectiveSlotName(canonical, chained);
+    return HostKeyResolution(
+      slotName: name,
+      fromEnv: _isEnvResolution(name, chained, envNames),
+      canonicalName: canonical,
+      driftHint: _driftHint(name, canonical),
+      missingKeyHint: _missingKeyHint(name, provider, baseUrl, canonical),
+    );
+  }
+
+  /// The chain result, unless a KNOWN pinned twin of the canonical holds a
+  /// value — the registry leg. A pinned twin keeps winning while the chain
+  /// landed on the canonical (or nothing), exactly like the CLI's saved
+  /// entries pin their own slots — this is what turns the issue's kimi
+  /// trap into a working binding plus a visible warning.
+  String? _effectiveSlotName(String canonical, String? chained) {
     final pinnedTwin = knownSlotNames.firstWhere(
       (slot) =>
           slot != canonical &&
@@ -226,39 +237,44 @@ final class HostKeyResolver {
           _hasStoreValue(slot, storeRead),
       orElse: () => '',
     );
-    final name =
-        pinnedTwin.isNotEmpty && (chained == null || chained == canonical)
-        ? pinnedTwin
-        : chained;
-    final fromEnv =
-        name != null &&
-        name == chained &&
-        envNames.contains(name) &&
-        _isGenuineEnv(name, envRead, storeRead);
-    String? driftHint;
-    if (name != null && name != canonical && name.startsWith('${canonical}_')) {
-      final twin = _hasStoreValue(canonical, storeRead);
-      driftHint =
-          'key slot for this endpoint is "$name"; the canonical slot is '
-          '"$canonical"'
-          '${twin ? ' — a same-endpoint entry already uses "$canonical"' : ' — move the value with /key set $canonical <value>'}'
-          '; then /key delete $name (the pinned slot keeps winning '
-          'while it holds a value)';
-    }
-    String? missingKeyHint;
-    if (name == null) {
-      missingKeyHint =
-          'no key resolved for '
-          '${provider == null ? baseUrl : 'provider "$provider"'} — set it '
-          'with /key set $canonical <value>';
-    }
-    return HostKeyResolution(
-      slotName: name,
-      fromEnv: fromEnv,
-      canonicalName: canonical,
-      driftHint: driftHint,
-      missingKeyHint: missingKeyHint,
-    );
+    final twinWins =
+        pinnedTwin.isNotEmpty && (chained == null || chained == canonical);
+    return twinWins ? pinnedTwin : chained;
+  }
+
+  /// Whether [name] was resolved from the process environment (the env
+  /// leg of the chain — a genuine env value, not a store echo).
+  bool _isEnvResolution(String? name, String? chained, List<String> envNames) =>
+      name != null &&
+      name == chained &&
+      envNames.contains(name) &&
+      _isGenuineEnv(name, envRead, storeRead);
+
+  /// The CLI's pinned-slot drift hint, non-null when [name] is a pinned
+  /// twin of the canonical (`<canonical>_…`).
+  String? _driftHint(String? name, String canonical) {
+    if (name == null || name == canonical) return null;
+    if (!name.startsWith('${canonical}_')) return null;
+    final twin = _hasStoreValue(canonical, storeRead);
+    return 'key slot for this endpoint is "$name"; the canonical slot is '
+        '"$canonical"'
+        '${twin ? ' — a same-endpoint entry already uses "$canonical"' : ' — move the value with /key set $canonical <value>'}'
+        '; then /key delete $name (the pinned slot keeps winning '
+        'while it holds a value)';
+  }
+
+  /// The missing-key guidance, non-null when nothing resolved: names the
+  /// slot a key should be stored into (mirrors the CLI's fallback hint).
+  String? _missingKeyHint(
+    String? name,
+    String? provider,
+    String baseUrl,
+    String canonical,
+  ) {
+    if (name != null) return null;
+    return 'no key resolved for '
+        '${provider == null ? baseUrl : 'provider "$provider"'} — set it '
+        'with /key set $canonical <value>';
   }
 
   static bool _isGenuineEnv(

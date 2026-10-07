@@ -56,6 +56,42 @@ AssistantMessageEventStream _errorTurn(String message) {
   return stream;
 }
 
+/// A scripted MULTI-turn stream function: one pushed turn per call (the
+/// tool-use flow needs a tool turn followed by the answer turn).
+StreamFunction _scriptedTurns(List<List<AssistantMessageEvent>> turns) {
+  var next = 0;
+  return (model, context, {cancelToken}) {
+    final stream = AssistantMessageEventStream();
+    for (final event in turns[next++]) {
+      stream.push(event);
+    }
+    stream.end();
+    return stream;
+  };
+}
+
+List<AssistantMessageEvent> _toolTurn(List<ToolCall> calls) {
+  final empty = _assistant();
+  final partial = _assistant(content: calls, stopReason: StopReason.toolUse);
+  final events = <AssistantMessageEvent>[StartEvent(partial: empty)];
+  for (var i = 0; i < calls.length; i++) {
+    events
+      ..add(ToolCallStartEvent(contentIndex: i, partial: empty))
+      ..add(
+        ToolCallEndEvent(contentIndex: i, toolCall: calls[i], partial: partial),
+      );
+  }
+  events.add(DoneEvent(reason: StopReason.toolUse, message: partial));
+  return events;
+}
+
+const _bashCall = ToolCall(id: 'c1', name: 'bash', arguments: {
+  'command': 'long-thing',
+});
+
+Tool _bashTool() =>
+    Tool(name: 'bash', description: 'bash tool', parameters: const {});
+
 void main() {
   group('AgentTelemetry (the agent → sink adapter)', () {
     test(
@@ -231,6 +267,103 @@ void main() {
         agent.abort();
         neverAnswered.end();
         await agent.waitForIdle();
+      },
+    );
+
+    test('tool execution lands as toolStart/toolEnd records', () async {
+      final sink = InMemoryTelemetrySink();
+      final telemetry = AgentTelemetry(sink);
+      final agent = Agent(
+        model: _model,
+        systemPrompt: 's',
+        toolExecutor: _okExecutor,
+        streamFunction: telemetry.wrapStreamFunction(
+          _scriptedTurns([
+            _toolTurn([_bashCall]),
+            _textTurn().map((e) => e).toList(),
+          ]),
+        ),
+      );
+      agent.state.tools = [_bashTool()];
+      telemetry.attach(agent);
+      await agent.prompt('run the thing');
+
+      final kinds = sink.events.map((e) => e.kind).toList();
+      expect(kinds, containsAll([
+        AgentTelemetryEventKind.toolStart,
+        AgentTelemetryEventKind.toolEnd,
+      ]));
+      final start = sink.events.firstWhere(
+        (e) => e.kind == AgentTelemetryEventKind.toolStart,
+      );
+      expect(start.toolName, 'bash');
+      expect(start.toolCallId, 'c1');
+      final end = sink.events.firstWhere(
+        (e) => e.kind == AgentTelemetryEventKind.toolEnd,
+      );
+      expect(end.toolName, 'bash');
+      expect(end.isError, isFalse);
+      // The tool phase sits between its turn's start and end records.
+      expect(kinds.indexOf(AgentTelemetryEventKind.turnStart), lessThan(kinds.indexOf(AgentTelemetryEventKind.toolStart)));
+      expect(kinds.indexOf(AgentTelemetryEventKind.toolEnd), lessThan(kinds.indexOf(AgentTelemetryEventKind.turnEnd)));
+    });
+
+    test(
+      'stuck-tool supervision lands as heartbeat and stuck records',
+      timeout: const Timeout(Duration(seconds: 30)),
+      () async {
+        final sink = InMemoryTelemetrySink();
+        final telemetry = AgentTelemetry(sink);
+        final agent = Agent(
+          model: _model,
+          systemPrompt: 's',
+          stuckTool: const StuckToolConfig(
+            floor: Duration(milliseconds: 300),
+            declaredTimeoutFactor: 2,
+            heartbeatInterval: Duration(milliseconds: 60),
+            cancelGrace: Duration(milliseconds: 100),
+          ),
+          toolExecutor: (toolCall, cancelToken, onUpdate) async {
+            // The wedged exec reports a partial output (the heartbeat's
+            // captured-output size) and ignores the cancel token — the
+            // supervisor cancels + retries; attempt 2 answers.
+            onUpdate?.call(ToolExecutionResult.text('0123456789'));
+            if ((toolCall.id, toolCall.name) == ('c1', 'bash') &&
+                _attempts.putIfAbsent(toolCall.id, () => 0) == 0) {
+              _attempts[toolCall.id] = 1;
+              await Completer<void>().future;
+              throw StateError('hangs forever');
+            }
+            return ToolExecutionResult.text('retry output');
+          },
+          streamFunction: telemetry.wrapStreamFunction(
+            _scriptedTurns([
+              _toolTurn([_bashCall]),
+              _textTurn().map((e) => e).toList(),
+            ]),
+          ),
+        );
+        agent.state.tools = [_bashTool()];
+        telemetry.attach(agent);
+        await agent.prompt('run the long thing');
+
+        final kinds = sink.events.map((e) => e.kind).toList();
+        expect(kinds, containsAll([
+          AgentTelemetryEventKind.toolHeartbeat,
+          AgentTelemetryEventKind.toolStuck,
+        ]));
+        final heartbeat = sink.events.firstWhere(
+          (e) => e.kind == AgentTelemetryEventKind.toolHeartbeat,
+        );
+        expect(heartbeat.toolName, 'bash');
+        expect(heartbeat.attempt, 1);
+        expect(heartbeat.outputBytes, greaterThanOrEqualTo(10));
+        expect(heartbeat.detail, startsWith('elapsed='));
+        final stuck = sink.events.firstWhere(
+          (e) => e.kind == AgentTelemetryEventKind.toolStuck,
+        );
+        expect(stuck.toolName, 'bash');
+        expect(stuck.detail, contains('action='));
       },
     );
 

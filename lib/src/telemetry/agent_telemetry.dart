@@ -183,6 +183,15 @@ final class AgentTelemetry {
   }
 
   void _record(AgentEvent event) {
+    // Tool supervision events are a family of their own (and the switch
+    // below stays under the CRAP ratchet by keeping them out).
+    if (event is ToolExecutionStartEvent ||
+        event is ToolExecutionEndEvent ||
+        event is ToolCallHeartbeatEvent ||
+        event is ToolCallStuckEvent) {
+      _recordToolEvent(event);
+      return;
+    }
     switch (event) {
       case AgentStartEvent():
         _runStart = DateTime.now();
@@ -198,6 +207,23 @@ final class AgentTelemetry {
           AgentTelemetryEventKind.firstToken,
           detail: _modelDetail(_agent?.state.model),
         );
+      case TurnEndEvent(:final message):
+        _emit(
+          AgentTelemetryEventKind.turnEnd,
+          stopReason: message.stopReason.name,
+        );
+      case AgentEndEvent():
+        _recordAgentEnd(event);
+      default:
+      // MessageStart/End, ModelRequest, pairing repair, partial
+      // updates — per-message detail the CLI also keeps out of fa.log.
+    }
+  }
+
+  /// The four tool-execution phases the CLI logs (`tool start`/`tool end`/
+  /// heartbeat/stuck), one record each.
+  void _recordToolEvent(AgentEvent event) {
+    switch (event) {
       case ToolExecutionStartEvent(:final toolCallId, :final toolName):
         _emit(
           AgentTelemetryEventKind.toolStart,
@@ -242,28 +268,26 @@ final class AgentTelemetry {
           toolName: toolName,
           detail: 'action=${action.name} elapsed=${elapsed.inSeconds}s',
         );
-      case TurnEndEvent(:final message):
-        _emit(
-          AgentTelemetryEventKind.turnEnd,
-          stopReason: message.stopReason.name,
-        );
-      case AgentEndEvent():
-        final error = agentErrorMessage(event);
-        if (error != null) {
-          _emit(
-            AgentTelemetryEventKind.error,
-            httpStatus: _lastHttpStatus,
-            detail: error,
-          );
-        }
-        // Aborted runs (user stop, watchdog fire) are NOT errors — the
-        // CLI's fa.log records them as a plain `run end` with the turn's
-        // `stop=aborted` carrying the distinction; mirror that.
-        _emit(AgentTelemetryEventKind.runEnd);
       default:
-      // MessageStart/End, ModelRequest, pairing repair, partial
-      // updates — per-message detail the CLI also keeps out of fa.log.
+        break; // Not a tool event — unreachable through _record.
     }
+  }
+
+  /// The run terminal: a provider failure emits the `error` record first
+  /// (with the captured HTTP status); every run then closes with `run end`.
+  void _recordAgentEnd(AgentEndEvent event) {
+    final error = agentErrorMessage(event);
+    if (error != null) {
+      _emit(
+        AgentTelemetryEventKind.error,
+        httpStatus: _lastHttpStatus,
+        detail: error,
+      );
+    }
+    // Aborted runs (user stop, watchdog fire) are NOT errors — the
+    // CLI's fa.log records them as a plain `run end` with the turn's
+    // `stop=aborted` carrying the distinction; mirror that.
+    _emit(AgentTelemetryEventKind.runEnd);
   }
 
   /// The terminal PROVIDER error of a finished run, or null. Only a
