@@ -19,8 +19,14 @@ import 'package:test/test.dart';
 
 /// Minimal full-CLI service bundle: every optional facility provided so
 /// the run profile equals [cliProfile] (the CLI boots exactly this when
-/// every config section is present).
-AgentCoreServices fullServices(ExecutionEnv env) => AgentCoreServices(
+/// every config section is present). The #1322 seams default to absent —
+/// pass them to exercise the wired path.
+AgentCoreServices fullServices(
+  ExecutionEnv env, {
+  AgentTelemetrySink? telemetry,
+  HostKeyResolver? keyResolver,
+  void Function(String hint)? onKeySlotDrift,
+}) => AgentCoreServices(
   baseEnv: env,
   sessionEnvVars: () => {},
   sandbox: const SandboxServices(),
@@ -42,6 +48,9 @@ AgentCoreServices fullServices(ExecutionEnv env) => AgentCoreServices(
   mainMailbox: () => 'main',
   extRuntimeFactory: Object(),
   sessionRoot: '/tmp/fah-test',
+  telemetry: telemetry,
+  keyResolver: keyResolver,
+  onKeySlotDrift: onKeySlotDrift,
   subagents: SubagentServices(
     homeDir: '/tmp/fah-test',
     machineName: 'test-machine',
@@ -285,6 +294,102 @@ void main() {
         wired.plan.planFor(HostCapability.visionTranscribe),
         isA<WiredCapability>(),
       );
+    });
+  });
+
+  group('issue #1322 host seams (telemetry + key resolution)', () {
+    test('services.telemetry wires the sink in one field', () async {
+      final sink = InMemoryTelemetrySink();
+      final wired = wireAgentCore(
+        profile: cliProfile,
+        services: fullServices(MemoryExecutionEnv(cwd: '/w'), telemetry: sink),
+      );
+      final stack = wired.buildAgentStack(
+        spec: AgentWiringSpec(model: _model, systemPrompt: 's'),
+        streamFunction: _textTurnStream,
+      );
+      await stack.agent.prompt('hi');
+      expect(
+        sink.events.map((e) => e.kind),
+        containsAll([
+          AgentTelemetryEventKind.requestStart,
+          AgentTelemetryEventKind.firstToken,
+          AgentTelemetryEventKind.runEnd,
+        ]),
+      );
+      // The agent runs through the WRAPPED stream function — the host's
+      // own function still receives the call underneath.
+      expect(_textTurnCalls, 1);
+    });
+
+    test('a pinned key slot fires the drift warning at stack build', () {
+      final hints = <String>[];
+      final wired = wireAgentCore(
+        profile: cliProfile,
+        services: fullServices(
+          MemoryExecutionEnv(cwd: '/w'),
+          keyResolver: HostKeyResolver(
+            envRead: (name) => null,
+            storeRead: (name) =>
+                name == 'FA_KEY_API_KIMI_COM_IRA_1' ? 'sk-ira' : null,
+            knownSlotNames: const ['FA_KEY_API_KIMI_COM_IRA_1'],
+          ),
+          onKeySlotDrift: hints.add,
+        ),
+      );
+      wired.buildAgentStack(
+        spec: AgentWiringSpec(
+          model: const Model(
+            id: 'kimi-k2',
+            api: 'openai-completions',
+            provider: 'kimi',
+            baseUrl: 'https://api.kimi.com',
+            contextWindow: 8192,
+            maxTokens: 1024,
+          ),
+          systemPrompt: 's',
+        ),
+        streamFunction: _fakeStream,
+      );
+      expect(hints, hasLength(1));
+      expect(
+        hints.single,
+        allOf(
+          contains('FA_KEY_API_KIMI_COM_IRA_1'),
+          contains('/key set FA_KEY_API_KIMI_COM <value>'),
+        ),
+      );
+    });
+
+    test('no resolver, no telemetry → byte-identical legacy wiring', () {
+      final wired = wireAgentCore(
+        profile: cliProfile,
+        services: fullServices(MemoryExecutionEnv(cwd: '/w')),
+      );
+      final stack = wired.buildAgentStack(
+        spec: AgentWiringSpec(model: _model, systemPrompt: 's'),
+        streamFunction: _fakeStream,
+      );
+      // Same surface as before #1322: the host's stream function rides
+      // the agent unwrapped, no telemetry attached.
+      expect(identical(stack.agent.streamFunction, _fakeStream), isTrue);
+    });
+
+    test('services.resolveKey answers before the session binds', () {
+      final services = fullServices(
+        MemoryExecutionEnv(cwd: '/w'),
+        keyResolver: HostKeyResolver(
+          envRead: (name) => null,
+          storeRead: (name) =>
+              name == 'FA_KEY_API_KIMI_COM' ? 'sk-canonical' : null,
+        ),
+      );
+      final resolution = services.resolveKey(
+        provider: 'kimi',
+        baseUrl: 'https://api.kimi.com',
+      );
+      expect(resolution!.slotName, 'FA_KEY_API_KIMI_COM');
+      expect(resolution.driftHint, isNull);
     });
   });
 
@@ -566,6 +671,30 @@ AssistantMessageEventStream _fakeStream(
   Context context, {
   CancelToken? cancelToken,
 }) => AssistantMessageEventStream();
+
+/// A scripted completed text turn — counts the calls so the telemetry
+/// wrap provably delegates to the host's own stream function.
+var _textTurnCalls = 0;
+AssistantMessageEventStream _textTurnStream(
+  Model model,
+  Context context, {
+  CancelToken? cancelToken,
+}) {
+  _textTurnCalls++;
+  final stream = AssistantMessageEventStream();
+  final partial = AssistantMessage(
+    content: const [TextContent(text: 'hi')],
+    api: 'test-api',
+    provider: 'test-provider',
+    model: 'test-model',
+    usage: Usage.zero,
+    stopReason: StopReason.stop,
+    timestamp: DateTime.utc(2026),
+  );
+  stream.push(StartEvent(partial: partial));
+  stream.push(DoneEvent(reason: StopReason.stop, message: partial));
+  return stream;
+}
 
 AgentTool _namedTool(String name) => AgentTool(
   name: name,

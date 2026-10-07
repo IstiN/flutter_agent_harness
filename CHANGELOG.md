@@ -3,6 +3,16 @@
 ## 1.0.508
 
 
+- feat(hosts): gh-1322 — the wireAgentCore host-adoption gaps: an embed
+  guide (`docs/embedding.md`, with the explicit "hosts ride wireAgentCore,
+  never adk_dart" rule), the host-facing key-slot resolver
+  (`AgentCoreServices.resolveKey` + `HostKeyResolver` — the effective slot
+  NAME, pinned-twin drift hints identical to the CLI's migration notes,
+  registry-leg `knownSlotNames`, injected env/store readers only), and
+  lifecycle telemetry for in-process hosts (`AgentCoreServices.telemetry`:
+  the pure interface + in-memory ring in core, the fa.log file sink behind
+  `lib/io.dart`; requestStart/firstToken/turn/tool/run records with
+  durations and the provider HTTP status).
 - chore(ci): document the sm-kicker head-completeness codeless-head crash
   (upstream awf#15) — the factory job's `gh api` calls put `--jq` before
   `--arg`/`--argjson`, so a CODELESS branch head (2 parents, 0 changed
