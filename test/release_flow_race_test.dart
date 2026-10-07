@@ -70,9 +70,18 @@ StubEnv _installStubs(String dir) {
   final bin = Directory('$dir/bin')..createSync(recursive: true);
   final realGit = _resolveRealGit(bin.path);
 
-  File('${bin.path}/git').writeAsStringSync('''
+  File('${bin.path}/git').writeAsStringSync(r'''
 #!/usr/bin/env bash
-exec "\$FA_REAL_GIT" "\$@"
+# #1368 fixture seam: a planted lsremote-fail-first marker makes the FIRST
+# `git ls-remote --tags` fail (tag not visible yet) while later calls pass
+# through — the tag «appears» during the appear-wait loop.
+if [ "$1" = "ls-remote" ] && [ -n "$GH_STUB_DIR" ] \
+    && [ -f "$GH_STUB_DIR/lsremote-fail-first" ]; then
+  c="$GH_STUB_DIR/lsremote-count"
+  n=$(cat "$c" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$c"
+  [ "$n" -eq 1 ] && exit 1
+fi
+exec "$FA_REAL_GIT" "$@"
 ''');
 
   // gh-1299 flutter stub — cwd is always flutter_app/ (tag_release.sh does
@@ -159,7 +168,13 @@ case "$cmd" in
         while [ $# -gt 0 ]; do
           case "$1" in --jq) jqf="$2"; shift 2 ;; *) shift ;; esac
         done
-        f="$GH_STUB_DIR/run-$id.json"
+        # Nth read of the same run: run-<id>.N.json overrides the base
+        # fixture when present — the terminal-wait tests plant a queued
+        # first read and a completed later one (#1368).
+        cf="$GH_STUB_DIR/view-count-$id"
+        n=$(cat "$cf" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$cf"
+        f="$GH_STUB_DIR/run-$id.$n.json"
+        [ -f "$f" ] || f="$GH_STUB_DIR/run-$id.json"
         if [ -f "$GH_STUB_DIR/rerun-done" ] && [ -f "$GH_STUB_DIR/run-$id-post.json" ]; then
           f="$GH_STUB_DIR/run-$id-post.json"
         fi
@@ -244,6 +259,12 @@ VerifyRun runVerify(
   String? secondReadJson,
   String conclusion = 'success',
   bool rerunToSuccess = false,
+  // #1368 fixture seams: the FIRST `git ls-remote --tags` fails (the tag is
+  // not visible yet) while later calls see the tag; the run-view Nth-read
+  // override (run-<id>.1.json) serves a queued status before the base
+  // completed one — the terminal-wait flip.
+  bool lsremoteFailFirst = false,
+  String? firstViewJson,
   Map<String, String> extraEnv = const {},
 }) {
   final dir = Directory(
@@ -290,17 +311,45 @@ VerifyRun runVerify(
   if (secondReadJson != null) {
     File('${dir.path}/runs-v$version.2.json').writeAsStringSync(secondReadJson);
   }
-  if (runsJson != null && runsJson != '[]') {
-    final id = RegExp(r'"databaseId":\s*(\d+)').firstMatch(runsJson)?.group(1);
-    if (id != null) {
-      File('${dir.path}/run-$id.json').writeAsStringSync(
-          '{"status":"completed","conclusion":"$conclusion"}');
+  if (lsremoteFailFirst) {
+    File('${dir.path}/lsremote-fail-first').writeAsStringSync('');
+  }
+
+  // The run-view fixture mirrors EVERY listed run's status: a queued/
+  // in_progress entry stays pending on `run view` (the terminal-wait polls
+  // it); a completed one serves [conclusion]. With [firstViewJson] the FIRST
+  // entry's first view serves that (still queued) and the base flips to
+  // completed — the «reaches terminal within the wait» shape. Post-rerun,
+  // the stub serves the -post.json success when [rerunToSuccess].
+  void plantRun(String listJson) {
+    if (listJson.isEmpty || listJson == '[]') return;
+    final objs = RegExp(r'\{[^}]*\}')
+        .allMatches(listJson)
+        .map((m) => m.group(0)!)
+        .toList();
+    var first = true;
+    for (final obj in objs) {
+      final id = RegExp(r'"databaseId":\s*(\d+)').firstMatch(obj)?.group(1);
+      if (id == null) continue;
+      final listed =
+          RegExp(r'"status":\s*"([^"]+)"').firstMatch(obj)?.group(1) ??
+              'completed';
+      final base = (firstViewJson != null && first) || listed == 'completed'
+          ? '{"status":"completed","conclusion":"$conclusion"}'
+          : '{"status":"$listed","conclusion":null}';
+      File('${dir.path}/run-$id.json').writeAsStringSync(base);
       if (rerunToSuccess) {
         File('${dir.path}/run-$id-post.json')
             .writeAsStringSync('{"status":"completed","conclusion":"success"}');
       }
+      if (firstViewJson != null && first) {
+        File('${dir.path}/run-$id.1.json').writeAsStringSync(firstViewJson!);
+      }
+      first = false;
     }
   }
+  if (runsJson != null) plantRun(runsJson);
+  if (secondReadJson != null) plantRun(secondReadJson);
 
   final outPath = '${dir.path}/github_output';
   final res = Process.runSync(
@@ -657,7 +706,9 @@ void main() {
     test('tag-run queued or in_progress -> skip, run linked', () {
       for (final status in ['queued', 'in_progress']) {
         final r = runVerify('run-$status',
-            runsJson: '[{"databaseId":4242,"status":"$status","conclusion":null}]');
+            runsJson:
+                '[{"databaseId":4242,"status":"$status","conclusion":null,"event":"push"}]',
+            extraEnv: const {'PUBDEV_MAX_POLLS': '2'});
         expect(r.exitCode, 0, reason: r.output);
         expect(r.inFlight, isTrue, reason: r.output);
         expect(r.errored, isFalse, reason: r.output);
@@ -670,7 +721,9 @@ void main() {
         () {
       final r = runVerify('starved-run',
           tagAge: const Duration(hours: 3),
-          runsJson: '[{"databaseId":4242,"status":"queued","conclusion":null}]');
+          runsJson:
+              '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
+          extraEnv: const {'PUBDEV_MAX_POLLS': '2'});
       expect(r.exitCode, 0, reason: r.output);
       expect(r.inFlight, isTrue, reason: r.output);
       expect(r.errored, isFalse, reason: r.output);
@@ -714,8 +767,9 @@ void main() {
   // ── AC2 — genuine trigger failure still alarms, unchanged text ──────────
   group('AC2 — genuine failures keep the existing alarm', () {
     const expectedError = 'v0.1.497 has no ci.yml run — the tag-publish never '
-        'triggered. Manual fix: re-push the tag (git push origin v0.1.497 '
-        '--force) or run ci.yml on the tag ref.';
+        'triggered (no run registered past the 900s grace window). Manual '
+        'fix: re-push the tag (git push origin v0.1.497 --force) or run '
+        'ci.yml on the tag ref.';
 
     test('tag past grace with NO run -> the exact current error text', () {
       final r = runVerify('expired-no-run',
@@ -742,7 +796,8 @@ void main() {
         tagAge: const Duration(hours: 2),
         runsJson: '[]',
         secondReadJson:
-            '[{"databaseId":4242,"status":"queued","conclusion":null}]',
+            '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
+        extraEnv: const {'PUBDEV_MAX_POLLS': '2'},
       );
       expect(r.exitCode, 0, reason: r.output);
       expect(r.inFlight, isTrue, reason: r.output);
@@ -756,15 +811,19 @@ void main() {
       );
     });
 
-    test('tag never cut + bump wedged past the horizon -> same alarm', () {
-      // auto_release.sh declares release-tag wedged after 1h; the daily
-      // must alarm too or the next bump silently absorbs a never-published
-      // release.
-      final r = runVerify('wedged-untagged',
-          tagPresent: false, bumpAge: const Duration(hours: 2));
-      expect(r.exitCode, isNot(0), reason: r.output);
-      expect(r.errored, isTrue);
-      expect(r.output, contains(expectedError));
+    test('#1368: tag not cut + HOURS-old bump -> still pending, never «never triggered»', () {
+      // The 2026-10-07 incident: the verify read a 10.5h-old bump at
+      // 05:31:55 and false-errored «never triggered»; release-tag cut the
+      // tag at 05:35:13. The ≥1h untagged state is auto-release's own
+      // «proceed, the next range absorbs it» self-heal, not a wedged
+      // publish — the old 1h horizon is gone; a bump (any age) is pending.
+      final r = runVerify('old-bump-pending',
+          tagPresent: false, bumpAge: const Duration(hours: 10, minutes: 33));
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.inFlight, isTrue, reason: r.output);
+      expect(r.errored, isFalse, reason: 'the #1368 false-alarm class');
+      expect(r.output, contains('release-tag has not cut v0.1.497 yet'));
+      expect(r.output, isNot(contains('never triggered')));
     });
 
     test('tag never cut + no bump commit on main at all -> alarm', () {
@@ -774,14 +833,15 @@ void main() {
           bumpAge: const Duration(seconds: 60));
       expect(r.exitCode, isNot(0), reason: r.output);
       expect(r.errored, isTrue);
-      expect(r.output, contains(expectedError));
+      expect(r.output,
+          contains('never triggered (no tag and no chore(release) bump on main)'));
     });
 
     test('completed run succeeded but pub.dev behind -> publish-did-not-upload alarm',
         () {
       final r = runVerify('success-but-behind',
           runsJson:
-              '[{"databaseId":4242,"status":"completed","conclusion":"success"}]');
+              '[{"databaseId":4242,"status":"completed","conclusion":"success","event":"push"}]');
       expect(r.exitCode, isNot(0), reason: r.output);
       expect(r.errored, isTrue);
       expect(r.output, contains('publish did not upload'));
@@ -792,7 +852,7 @@ void main() {
     test('completed run failed -> the existing rerun recovery path fires', () {
       final r = runVerify('rerun-recovers',
           runsJson:
-              '[{"databaseId":4242,"status":"completed","conclusion":"failure"}]',
+              '[{"databaseId":4242,"status":"completed","conclusion":"failure","event":"push"}]',
           conclusion: 'failure',
           rerunToSuccess: true);
       expect(r.exitCode, 0, reason: r.output);
@@ -807,11 +867,110 @@ void main() {
         () {
       final r = runVerify('repushed-old-tag',
           tagAge: const Duration(hours: 2),
-          runsJson: '[{"databaseId":4242,"status":"queued","conclusion":null}]');
+          runsJson:
+              '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
+          extraEnv: const {'PUBDEV_MAX_POLLS': '2'});
       expect(r.exitCode, 0, reason: r.output);
       expect(r.errored, isFalse, reason: r.output);
       expect(r.output, isNot(contains('never triggered')),
           reason: 'the re-push manual fix path must keep working (E4)');
+    });
+  });
+
+  // ── #1368 — twin-run selection, bounded waits, true-state errors ─────────
+  group('#1368 — push-twin selection and the bounded waits', () {
+    test('release-event-only runs -> «never triggered», the exit-65 arm named',
+        () {
+      // The old release arm: the release twin attempted the publish pub.dev
+      // OIDC always rejects. Its failure must read as never-published, and
+      // recovery must never rerun THAT twin.
+      final r = runVerify('release-twin-only',
+          runsJson:
+              '[{"databaseId":77,"status":"completed","conclusion":"failure","event":"release"}]');
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(r.errored, isTrue);
+      expect(r.output, contains(
+          'never triggered (only release-event run(s) exist and pub.dev OIDC accepts push-event runs only)'));
+      expect(r.ghLog.where((l) => l.contains('run rerun')), isEmpty,
+          reason: 'rerunning the release twin can never publish');
+    });
+
+    test('twin runs: recovery targets the PUSH twin, never the release twin',
+        () {
+      final r = runVerify('twin-runs',
+          runsJson: '[{"databaseId":55,"status":"completed","conclusion":"failure","event":"release"},'
+              '{"databaseId":4242,"status":"completed","conclusion":"failure","event":"push"}]',
+          conclusion: 'failure',
+          rerunToSuccess: true);
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.status, 'recovered');
+      expect(r.outputs['run_url'],
+          'https://github.com/OWNER/REPO/actions/runs/4242',
+          reason: 'the push twin is the only OIDC-valid publisher');
+      expect(
+        r.ghLog.where((l) => l.contains('run rerun 4242') && l.contains('--failed')),
+        hasLength(1),
+      );
+      expect(r.ghLog.where((l) => l.contains('run rerun 55')), isEmpty);
+    });
+
+    test('pending push run reaches terminal within the wait -> classified', () {
+      final r = runVerify('terminal-flip',
+          runsJson:
+              '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
+          firstViewJson: '{"status":"queued","conclusion":null}',
+          conclusion: 'failure',
+          rerunToSuccess: true,
+          extraEnv: const {'PUBDEV_MAX_POLLS': '4'});
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.status, 'recovered', reason: r.output);
+      expect(
+        r.ghLog.where((l) => l.contains('run rerun 4242') && l.contains('--failed')),
+        hasLength(1),
+      );
+    });
+
+    test('pending push run past the terminal-wait budget -> neutral skip, no error', () {
+      // Acceptance 3: a simulated slow tag-ci (queued) must NOT fail the
+      // verify with the «never triggered» message — the outcome is merely
+      // unobserved.
+      final r = runVerify('terminal-budget-lapse',
+          runsJson:
+              '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
+          extraEnv: const {'PUBDEV_MAX_POLLS': '2'});
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.inFlight, isTrue, reason: r.output);
+      expect(r.errored, isFalse, reason: r.output);
+      expect(r.output, contains('unobserved'));
+      expect(r.output, isNot(contains('never triggered')));
+    });
+
+    test('tag appears during the appear-wait -> classified off its run', () {
+      // The 2026-10-07 shape: the verify read no tag at 05:31:55; the tag
+      // landed 05:35:13. The bounded wait must catch it instead of alarming.
+      final r = runVerify('tag-appears-mid-wait',
+          runsJson:
+              '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
+          lsremoteFailFirst: true,
+          extraEnv: const {'PUBDEV_MAX_POLLS': '2'});
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.inFlight, isTrue, reason: r.output);
+      expect(r.errored, isFalse, reason: r.output);
+      expect(r.output, contains('appeared after the wait'));
+      expect(r.outputs['run_url'],
+          'https://github.com/OWNER/REPO/actions/runs/4242');
+    });
+
+    test('bump present, tag absent past the appear-wait -> pending, not failed',
+        () {
+      final r = runVerify('appear-wait-lapse',
+          tagPresent: false,
+          bumpAge: const Duration(seconds: 90),
+          extraEnv: const {'PUBDEV_MAX_POLLS': '2'});
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.inFlight, isTrue, reason: r.output);
+      expect(r.errored, isFalse, reason: r.output);
+      expect(r.output, contains('publish pending, not failed'));
     });
   });
 
@@ -1004,6 +1163,65 @@ void main() {
             'head_commit.id is frozen at push time — the checkout/github.sha '
             'can drift to a main that moved (the #1178 interloper capture)',
       );
+    });
+
+    test('#1368: publish gates on dart_ok and PUSH-event tags only', () {
+      final ci = read('.github/workflows/ci.yml');
+      expect(
+          ci,
+          contains(
+              "!cancelled() && needs.quality-gate.outputs.dart_ok == 'true' &&"),
+          reason: 'a red native/PTY leg must never block the Dart publish');
+      expect(
+          ci,
+          contains("needs.integration.result == 'success' &&"),
+          reason: 'the Provider smoke stays a hard publish gate (#551)');
+      expect(
+        ci,
+        isNot(contains(
+            "(github.event_name == 'release' && startsWith(github.ref, 'refs/tags/v')))")),
+        reason:
+            'the release arm is gone — pub.dev OIDC accepts push/workflow_'
+            'dispatch events only; its attempts were the exit-65 failures',
+      );
+    });
+
+    test('#1368: quality-gate exports dart_ok; platform legs cannot redden it',
+        () {
+      final ci = read('.github/workflows/ci.yml');
+      expect(ci, contains('dart_ok: \${{ steps.gate.outputs.dart_ok }}'),
+          reason: 'publish consumes the output');
+      // The exclusion list inside the gate step: the full platform case
+      // pattern, verbatim.
+      expect(
+          ci,
+          contains('build-web|build-android|build-ios|build-macos|fa-aot-build|'
+              'installer-verify|install-pin-gate|cube-kernel-live|'
+              'cli-visual-settings|pty-integration-linux|pty-coverage-gate|'
+              'pty-visual)'),
+          reason: 'every platform/native/PTY leg must be publish-exempt');
+    });
+
+    test('#1368: the Provider smoke runs off dart_ok, not the aggregate result',
+        () {
+      final ci = read('.github/workflows/ci.yml');
+      expect(
+          ci,
+          contains(
+              "!cancelled() && needs.quality-gate.outputs.dart_ok != 'false' &&"),
+          reason:
+              'a platform-only red must not transitively skip the smoke and '
+              'with it the publish');
+    });
+
+    test('#1368: report renders release-in-flight as a skip, never ✅', () {
+      final report = read('scripts/daily_publish_report.sh');
+      expect(report, contains('release-in-flight'));
+      expect(report, contains('skipped: release in flight'));
+      expect(report, contains('== "skipped:"*'),
+          reason: 'the neutral-skip override must downgrade ✅ to ⏭️ and '
+              'keep the leg issue open');
+      expect(report, contains('outcome unobserved'));
     });
 
     test('report script renders the release-in-flight override neutrally', () {

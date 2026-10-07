@@ -2302,6 +2302,11 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+    # #1368: the publish job consumes dart_ok — the pure-Dart package verdict
+    # — instead of this aggregate's result. The aggregate itself stays the
+    # single required check: any red leg (platform included) still fails it.
+    outputs:
+      dart_ok: ${{ steps.gate.outputs.dart_ok }}
     steps:
       - name: Report leg results
         run: |
@@ -2333,6 +2338,7 @@ jobs:
           echo "installer-it = ${{ needs.installer-verify.result }}"
           echo "pin-gate    = ${{ needs.install-pin-gate.result }}"
       - name: Fail on any real failure (skipped security = dodge = FAIL)
+        id: gate
         env:
           R_CHANGES: ${{ needs.changes.result }}
           R_SUPPLY_CHAIN: ${{ needs.supply-chain.result }}
@@ -2379,6 +2385,16 @@ jobs:
           # check (AGENTS.md "one aggregate Quality gate"), so every needs
           # leg must land here — a red platform build must never yield a
           # green required check.
+          # #1368: two verdicts in one pass. Package legs (analyze/test/
+          # coverage/security — everything NOT platform) fail the aggregate
+          # immediately AND redden dart_ok. Platform/native/PTY legs
+          # (build-web/android/ios/macos, fa-aot-build, installer-verify,
+          # install-pin-gate, cube-kernel-live, cli-visual-settings, pty-*)
+          # only redden dart_ok here and fail the aggregate after the loop —
+          # a red Windows build must never gate the pure-Dart package publish
+          # (the v1.0.519-521 starvation), but it must still redden this
+          # required check.
+          dart_ok=true
           for kv in "static:$R_STATIC" "flutter-analyze:$R_FLUTTER_ANALYZE" "test-core:$R_TEST_CORE" "coverage-gate:$R_COVERAGE" \
                     "guards:$R_GUARDS" "flutter-tests:$R_FLUTTER" "app-crap-gate:$R_CRAP" \
                     "test-faui:$R_FAUI" "perf-gate:$R_PERF" "usage-fold:$R_USAGE_FOLD" "cube-kernel-live:$R_CUBE" \
@@ -2389,10 +2405,23 @@ jobs:
                     "pty-integration-linux:$R_PTY_LINUX" "pty-coverage-gate:$R_PTY_GATES" "pty-visual:$R_PTY_VISUAL" \
                     "installer-verify:$R_INSTALLER_VERIFY" "install-pin-gate:$R_INSTALL_PIN_GATE"; do
             name="${kv%%:*}"; r="${kv#*:}"
-            if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
-              fail "a leg is $r ($name)"
-            fi
+            case "$name" in
+              build-web|build-android|build-ios|build-macos|fa-aot-build|installer-verify|install-pin-gate|cube-kernel-live|cli-visual-settings|pty-integration-linux|pty-coverage-gate|pty-visual)
+                if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
+                  dart_ok=false
+                fi
+                ;;
+              *)
+                if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
+                  fail "a leg is $r ($name)"
+                fi
+                ;;
+            esac
           done
+          echo "dart_ok=$dart_ok" >> "$GITHUB_OUTPUT"
+          if [ "$dart_ok" != "true" ]; then
+            fail "a platform/native leg is red — the aggregate is red; dart_ok=$dart_ok (publish gate), see the leg results above"
+          fi
           echo "Quality gate OK"
 
   # Issue #303 (the #262 DoD): the perf-tagged e2e gate must red-block the
@@ -2596,11 +2625,14 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-    # Same !cancelled() pattern as the release/binaries jobs (fa#456):
-    # break the transitive skip through always()-quality-gate, then require
-    # the gate to have actually passed before publishing.
+    # Same !cancelled() pattern as the release/binaries jobs (fa#456).
+    # #1368: the gate check reads the dart_ok OUTPUT, not the aggregate
+    # result — a platform-only red (Windows build, PTY leg) used to skip this
+    # smoke transitively and with it the publish job (the v1.0.519-521
+    # starvation). dart_ok=false (a red package leg) still skips it: the
+    # publish it gates cannot run anyway.
     if: >-
-      !cancelled() && needs.quality-gate.result == 'success' &&
+      !cancelled() && needs.quality-gate.outputs.dart_ok != 'false' &&
       github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -2667,22 +2699,35 @@ jobs:
     timeout-minutes: 20
     # !cancelled() + explicit gate check — the fa#456 class: GitHub propagates
     # "skipped" TRANSITIVELY through the always()-quality-gate's needs graph.
-    # Path-gated legs (perf-gate is PR-only) skip on EVERY tag run, so this
-    # job's implicit success() condition force-skipped publish on every tag
-    # since the gate graph grew — quality-gate showed green, publish never
-    # ran, and pub.dev stalled at v0.1.369 for 35 releases (#554). Same fix
-    # pattern as the release/integration/binaries jobs. The release arm
-    # covers tags that only ever fire a release event (the v0.1.370-402 era:
-    # API-created lightweight tags produce no push event, so publish never
-    # even triggered there).
+    #
+    # #1368, two changes:
+    # 1. PUSH-EVENT TAGS ONLY. pub.dev trusted publishing accepts OIDC tokens
+    #    from push and workflow_dispatch events ONLY — there is no
+    #    release-event option (owner verified the pub.dev console). The old
+    #    release arm made the release-event twin of every tag ATTEMPT the
+    #    publish whenever the push twin had not uploaded — pub.dev rejected
+    #    the token's event claim and the leg died "Authentication failed!"
+    #    (exit 65) on every release since the gate graph grew legs that can
+    #    redden the push twin. The v0.1.370-402 era this arm once covered
+    #    (API-created lightweight tags with no push event) is gone: every tag
+    #    is PAT-pushed annotated (release-tag/auto_release), so the push twin
+    #    always exists. A release-only tag would now skip publish and the
+    #    daily verifyPubDev leg alarms «only release-event run(s)» loudly.
+    # 2. The gate is dart_ok — the pure-Dart package verdict quality-gate
+    #    exports — NOT the aggregate result. A red native binary/PTY leg must
+    #    never hold a Dart package hostage (v1.0.520's push twin: publish
+    #    skipped off a red pty-integration shard). The Provider smoke stays a
+    #    hard gate (#551): needs.integration.result == 'success'.
     if: >-
-      !cancelled() && needs.quality-gate.result == 'success' &&
-      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
-      (github.event_name == 'release' && startsWith(github.ref, 'refs/tags/v')))
+      !cancelled() && needs.quality-gate.outputs.dart_ok == 'true' &&
+      needs.integration.result == 'success' &&
+      github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     concurrency:
       # push + release events both fire for PAT-pushed tags; serialize the
       # double-fire so the loser no-ops on the already-published guard below
       # instead of racing dart pub publish (version already exists → red).
+      # #1368: only the push twin can publish now — the group stays as a
+      # belt-and-suspenders guard for re-pushed tags.
       group: publish-${{ github.ref }}
       cancel-in-progress: false
     permissions:
