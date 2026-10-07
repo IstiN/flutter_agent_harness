@@ -80,9 +80,14 @@
     {
       "file": "test/integration/shell_job_countdown_pty_test.dart",
       "test": "ten background bash jobs start, count down on camera, drain to 0 running (#573 review)",
-      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1357",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1365",
       "since": "2026-10-06",
       "runs": [
+        37561842069,
+        37555841005,
+        37555363161,
+        37552613207,
+        37550915894,
         37544337587,
         37532356260,
         37530466261,
