@@ -17,13 +17,14 @@
 ///   COMPLETED blocks resumes from that prefix instead of standing
 ///   (issue #1168: the same resume machinery as the abort class), and a
 ///   non-connection post-commit failure (auth, validation, rate limit)
-///   still stands. Thinking-only streams still replay: thinking deltas
-///   buffer until the first visible event commits the attempt, so a drop
-///   mid-reasoning leaves no trace and the retry regenerates the reasoning
-///   (re-billed reasoning accepted, same as any retry). The buffering is
-///   withheld from the host until commit/Done — a pure-reasoning phase
-///   renders as silence, the price of replayability (forwarding an event
-///   is committing it).
+///   still stands. Since issue #1323 the first THINKING delta commits too:
+///   reasoning streams live (the TUI's progress signal for reasoning
+///   models), and a mid-reasoning transport death resumes from the prefix
+///   the host already saw — the still-open thinking block rides the anchor,
+///   never a from-scratch replay over deltas already on screen. The #964
+///   replayable-reasoning tradeoff (thinking buffers in silence until the
+///   first visible delta) remains available through
+///   [transientRetryBufferThinking].
 /// - Providers-never-throw is preserved: a defensive catch converts a
 ///   throwing inner stream into an error event.
 library;
@@ -195,6 +196,17 @@ TransientRetryNotice? transientRetryNotice;
 /// false when the wait was cancelled (the retry is abandoned).
 Future<bool> Function(Duration delay, CancelToken? cancelToken)
 transientRetrySleeper = _realTransientSleep;
+
+/// The #964 escape hatch (issue #1323): when true, PRE-commit thinking
+/// deltas buffer like the start event until the first visible delta (or
+/// the terminal) commits — a pure-reasoning phase renders as silence and a
+/// mid-reasoning drop replays with no trace. Default false: the first
+/// thinking delta commits the attempt, reasoning streams live, and a
+/// mid-reasoning transport death resumes from the streamed prefix (never a
+/// from-scratch replay — that would duplicate thinking the host already
+/// rendered). Global like [transientRetryNotice]: the wrap happens deep
+/// inside [providerStreamFunction], far from any host io.
+bool transientRetryBufferThinking = false;
 
 Future<bool> _realTransientSleep(Duration delay, CancelToken? token) async {
   if (token == null) {
@@ -808,7 +820,8 @@ final class _AttemptRun {
   /// rewritten onto the anchor.
   final _ResumeState? resume;
 
-  /// Events withheld until the attempt commits (issue #964) or ends.
+  /// Events withheld until the attempt commits (the start event always;
+  /// thinking deltas only under [transientRetryBufferThinking]) or ends.
   final buffer = <AssistantMessageEvent>[];
 
   /// Set by the first user-visible content event; from there a failure
@@ -848,6 +861,22 @@ final class _AttemptRun {
     committed = true;
     flushBuffer();
     forward(event);
+  }
+
+  /// The prefix a resumable mid-stream failure keeps (issue #1126): every
+  /// COMPLETED block, plus — since issue #1323 — a still-open THINKING
+  /// block. Live streaming (issue #1323) put those reasoning deltas on the
+  /// host's screen; the resume anchor must carry them, or the tail attempt
+  /// regenerates the reasoning over deltas already rendered — duplicate
+  /// thinking in the transcript. An in-flight TEXT or TOOL-CALL block
+  /// keeps the drop rule (issue #1126 E1): a truncated call must never
+  /// execute, and a truncated block is better regenerated than resumed.
+  int resumeKeptBlocks(AssistantMessage snapshot) {
+    final kept = lastEnded + 1;
+    final inFlight = kept < snapshot.content.length
+        ? snapshot.content[kept]
+        : null;
+    return inFlight is ThinkingContent ? kept + 1 : kept;
   }
 }
 
@@ -897,8 +926,13 @@ _AttemptOutcome? _committedOutcome(
       final resumable =
           _resumableAbort(event, cancelToken) ||
           _resumableTransportFailure(event, cancelToken);
-      if (resumable && run.lastEnded >= 0) {
-        return _AbortedPartial(event.error, run.lastEnded + 1, event.reason);
+      if (resumable) {
+        final keptBlocks = run.resumeKeptBlocks(event.error);
+        if (keptBlocks > 0) {
+          return _AbortedPartial(event.error, keptBlocks, event.reason);
+        }
+        // Nothing survived to anchor a resume (a snapshotless fake): the
+        // mid-answer wrap stands — truthful, never a from-scratch replay.
       }
       // The #290 hygiene wrap applies on the resume path too (issue
       // #1132 review): non-retryable wordings pass through unchanged,
@@ -949,23 +983,22 @@ _AttemptOutcome? _bufferedOutcome(
       run.forward(event);
       return const _Forwarded();
     case ThinkingStartEvent() || ThinkingDeltaEvent() || ThinkingEndEvent():
-      // Issue #964: thinking deltas are not user-visible content — they
-      // buffer like the start event, so a stream that dies mid-reasoning
-      // (minutes of thinking, zero visible deltas) is retried under the
-      // existing policy with no trace of the dead attempt. The buffered
-      // reasoning flushes in order when the attempt commits or ends.
-      //
-      // Visibility tradeoff (issue #964 review): until the first visible
-      // delta (or the terminal event) the host sees NOTHING of the
-      // reasoning — a thinking-only phase renders as silence, where the
-      // pre-#964 behavior showed it live. That is the price of
-      // replayability, not an oversight: forwarding an event IS
-      // committing it (the host may have rendered it), and a committed
-      // stream can never be replayed — the same reason omp's original
-      // guard withheld all content. Providers that emit visible content
-      // early are unaffected; pure-reasoning marathons are the case this
-      // retry exists for.
-      run.buffer.add(event);
+      // Issue #1323, default: the first thinking delta COMMITS the attempt
+      // (omp semantics) — reasoning streams live, restoring the pre-#964
+      // TUI liveness for reasoning models whose thinking runs minutes
+      // ahead of the first text delta. A mid-reasoning transport death
+      // then cannot replay from scratch (that would duplicate the deltas
+      // already on screen): `resumeKeptBlocks` keeps the streamed thinking
+      // in the resume anchor. The #964 replayable-reasoning tradeoff stays
+      // one knob away (issue #1323 AC4): with [transientRetryBufferThinking]
+      // the deltas buffer in silence until a visible delta commits, so a
+      // mid-reasoning drop leaves no trace and the retry regenerates the
+      // reasoning (re-billed reasoning accepted, same as any retry).
+      if (transientRetryBufferThinking) {
+        run.buffer.add(event);
+        return null;
+      }
+      run.commitWith(event);
       return null;
     case StartEvent():
       run.buffer.add(event);
