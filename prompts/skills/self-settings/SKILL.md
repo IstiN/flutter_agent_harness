@@ -685,3 +685,27 @@ byte-identical to the legacy UI. The section is user-file only (like
 `tui:`/`fabric:`) and applies at next boot for the in-app banner; the
 site renders the committed defaults (regen:
 `dart run scripts/regen_site_store_block.dart`).
+
+## Auto update
+
+<!-- parity: /update, settings hub -->
+
+User file top-level key (issue #1377). The self-update policy — a
+tri-state, because the honest default is neither silent-off nor
+unattended-on:
+
+```yaml
+auto_update: true # true | false | "notify" (default notify)
+```
+
+`notify` (the default) checks the release feed once at boot and prints
+when a newer version exists — nothing is downloaded. `true` is the
+unattended arm: at boot a newer release is downloaded, provenance
+verified and installed, and the session restarts onto the new binary.
+`false` touches no update host at all. An absent key and an explicit
+`"notify"` are the same policy — the default is never written. Strict
+parse: anything but `true`, `false` or `"notify"` is a
+`ConfigException`. Applies at next boot. `/update` runs a check-and-apply
+immediately regardless of the policy; the settings hub exposes the same
+tri-state.
+
