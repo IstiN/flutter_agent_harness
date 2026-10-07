@@ -140,6 +140,39 @@ void main() {
     );
     expect(connected, isFalse);
     expect(registry.providers, isEmpty);
+    // Mobile (the widget-test default platform): a null here came from a
+    // HOST-provided flow (the default hops refuse synchronously), so the
+    // terminal-snack surface stays desktop-only — no dangling snack.
+    expect(find.textContaining('did not complete'), findsNothing);
+  });
+
+  testWidgets('a cancelled desktop sign-in ends with a terminal snack — '
+      'never in silence', (tester) async {
+    // The core flows report cancel/timeout exclusively through onStatus
+    // (debug-only in fa_ui) and return null — without the terminal snack
+    // the picker looks frozen after the waiting hint expires (issue
+    // #1326 review, thread 9). Desktop target: the platform the default
+    // hops serve.
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    try {
+      final registry = ProviderRegistry.inMemory();
+      final sso = FaUiSso(
+        registry: registry,
+        chatGptOAuthFn: (onStatus) async => null,
+      );
+      final connected = await _run(
+        tester,
+        (context) => sso.connectChatGpt(context),
+      );
+      expect(connected, isFalse);
+      expect(registry.providers, isEmpty);
+      await _pumpUntilFound(
+        tester,
+        find.textContaining('ChatGPT sign-in did not complete'),
+      );
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   testWidgets('connectChatGpt lands a chatgpt-codex entry named after the '

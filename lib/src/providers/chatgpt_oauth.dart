@@ -246,6 +246,30 @@ Map<String, dynamic> _jsonObject(String body) {
   }
 }
 
+/// The `email` claim of a JWT payload's middle segment, or null when the
+/// token is not a three-segment JWT, the payload is not a JSON object, or
+/// the claim is absent/empty/non-string. The ONE claim reader behind the
+/// account-identity entry naming (ChatGPT hosts via [ChatGptOAuthCredentials.idToken],
+/// AIIN via `aiinJwtEmail`, fa_ui's SSO bundle) — a single parser so the
+/// copies cannot drift (issue #1326 review, thread 10).
+String? jwtEmailClaim(String idToken) {
+  final parts = idToken.split('.');
+  if (parts.length != 3) return null;
+  final Object? claims;
+  try {
+    claims = jsonDecode(
+      utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
+    );
+  } on FormatException {
+    return null;
+  } on ArgumentError {
+    return null;
+  }
+  if (claims is! Map) return null;
+  final email = claims['email'];
+  return email is String && email.isNotEmpty ? email : null;
+}
+
 String? _accountIdFromJwt(String jwt) {
   final parts = jwt.split('.');
   if (parts.length < 2) return null;

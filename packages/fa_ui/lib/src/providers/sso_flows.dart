@@ -4,8 +4,6 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-import 'dart:convert';
-
 import 'package:fa_llm/fa_llm.dart';
 import 'package:flutter/foundation.dart'
     show TargetPlatform, debugPrint, defaultTargetPlatform, kDebugMode, kIsWeb;
@@ -180,7 +178,7 @@ class FaUiSso {
       () => chatGptOAuthFn(_logStatus),
     );
     if (credentials == null) return false;
-    final identity = _chatGptEmail(credentials.idToken) ?? 'ChatGPT';
+    final identity = jwtEmailClaim(credentials.idToken) ?? 'ChatGPT';
     final name = _uniqueEntryName(registry, identity, chatGptCodexBaseUrl);
     final provider = await _landEntry(
       registry,
@@ -423,13 +421,7 @@ Future<T?> _runDesktopFlow<T>(
   String provider,
   Future<T?> Function() flow,
 ) async {
-  if (context.mounted &&
-      !kIsWeb &&
-      const {
-        TargetPlatform.macOS,
-        TargetPlatform.linux,
-        TargetPlatform.windows,
-      }.contains(defaultTargetPlatform)) {
+  if (context.mounted && _isDesktopTarget) {
     // Desktop-only: the hop can legitimately wait minutes for the browser
     // callback — give the picker user visible in-flight feedback (the
     // status lines themselves stay debug-only diagnostics). Mobile/web
@@ -442,7 +434,22 @@ Future<T?> _runDesktopFlow<T>(
     );
   }
   try {
-    return await flow();
+    final result = await flow();
+    if (result == null && context.mounted && _isDesktopTarget) {
+      // The terminal half of "never end in silence" (issue #1326 review,
+      // thread 9): the core flows report cancel/timeout/no-callback
+      // exclusively through the debug-only status channel and return
+      // null — without this the picker looks frozen after the waiting
+      // hint expires. Mobile/web nulls come from host-provided flows
+      // (the default hops refuse synchronously), so the surface stays
+      // desktop-only.
+      showFahSnack(
+        context,
+        '$provider sign-in did not complete — cancelled or timed out.',
+        hideCurrent: true,
+      );
+    }
+    return result;
   } on UnsupportedError {
     if (context.mounted) {
       showFahSnack(
@@ -464,6 +471,20 @@ Future<T?> _runDesktopFlow<T>(
     return null;
   }
 }
+
+/// Whether the current [defaultTargetPlatform] is a desktop target — the
+/// platform class the default sign-in hops serve (a browser + a loopback
+/// callback server). Web is excluded (the conditional import serves the
+/// refusing stub), and so is mobile ([TargetPlatform.android] /
+/// [TargetPlatform.iOS] / [TargetPlatform.fuchsia] — the io variant
+/// refuses before any server bind).
+bool get _isDesktopTarget =>
+    !kIsWeb &&
+    const {
+      TargetPlatform.macOS,
+      TargetPlatform.linux,
+      TargetPlatform.windows,
+    }.contains(defaultTargetPlatform);
 
 /// Status lines from the core flows: diagnostics only — the browser page
 /// itself is the user-facing progress surface.
@@ -535,22 +556,6 @@ Future<CustomProvider> _landEntry(
     modelId: modelId,
     kind: kind,
   );
-}
-
-/// The `email` claim of a JWT payload, or null when absent/malformed —
-/// the account identity seeding ChatGPT/AIIN entry names.
-String? _chatGptEmail(String idToken) {
-  final parts = idToken.split('.');
-  if (parts.length != 3) return null;
-  try {
-    final payload = jsonDecode(
-      utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
-    );
-    final email = payload['email'];
-    return email is String && email.isNotEmpty ? email : null;
-  } on Object {
-    return null;
-  }
 }
 
 /// Pushes the model pick for the CodeMie/AIIN flows: the fetched list,
