@@ -9,7 +9,7 @@ Usage:
   size_manifest.py emit   <artifact> [--min-bytes N]        # TSV to stdout
   size_manifest.py check  <artifact> --baseline FILE
                           [--budget-pct 5] [--init-if-missing]
-                          [--manifest-out FILE]
+                          [--manifest-out FILE] [--forbid REGEX]...
   size_manifest.py selftest
 
 `<artifact>` is a zip-family file (.zip/.ipa/.aab — uncompressed entry sizes
@@ -33,12 +33,21 @@ Gate semantics (`check`):
   - --reseed: overwrite an EXISTING baseline from this artifact and pass
     with a notice — the escape hatch for intentional growth; commit the
     rewritten file to make the new shape the floor
+  - --forbid REGEX (repeatable): any manifest row whose path matches
+    REGEX fails the check immediately, regardless of the +5% budget or
+    the NEW-line share — the deny-list for evicted artifacts (a re-added
+    5.6 MB fixture slips under both: NEW share is 5% of TOTAL). Enforced
+    on check, --init-if-missing AND --reseed: re-admitting an artifact
+    means dropping its --forbid flag, a conscious ack. The deny-list
+    floor equals the tracking floor: sub-MIN_BYTES rows never enter the
+    manifest.
 
 CI escape hatch for intentional growth: re-run locally with the same
 artifact and `--reseed`, commit the rewritten baseline.
 """
 
 import argparse
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -104,10 +113,24 @@ def write_baseline(path: Path, manifest: "dict[str, int]") -> None:
 
 def check(artifact: Path, baseline_path: Path, budget_pct: float,
           init_if_missing: bool = False, reseed: bool = False,
-          manifest_out=None) -> int:
+          manifest_out=None, forbid=None) -> int:
     manifest = build_manifest(artifact, MIN_BYTES)
     if manifest_out:
         write_baseline(manifest_out, manifest)
+
+    # Deny-list (gh-1331 review): a returning evicted artifact fails the
+    # gate in every mode — budget and NEW-line share both miss sub-5%
+    # re-adds, so eviction is pinned by pattern, not by the floor.
+    forbid_res = [re.compile(p) for p in forbid or []]
+    if forbid_res:
+        banned = [name for name in sorted(manifest)
+                  if name != "TOTAL" and any(r.search(name) for r in forbid_res)]
+        if banned:
+            for name in banned:
+                print(f"::error::size_manifest: FORBIDDEN row in {artifact}: "
+                      f"{name} ({manifest[name]} bytes) — matches --forbid; "
+                      "the artifact was evicted and must not return")
+            return 1
 
     if not baseline_path.exists():
         if init_if_missing:
@@ -239,6 +262,24 @@ def selftest() -> int:
         (tree / "index.html").write_bytes(b"\0" * (220 * 1024))  # +10%
         expect("dir over-budget fails", check(tree, dir_base, 5.0), 1)
 
+        # Deny-list (gh-1331 review): a re-added evicted row below the
+        # NEW-line share (5% of TOTAL) passes the plain gate — only
+        # --forbid catches it. Floor: 8 MiB TOTAL -> NEW share ~410 KB;
+        # the re-added 100 KB row is tracked (> 64 KB) but sub-share.
+        deny_zip, deny_base = td / "deny.zip", td / "deny.tsv"
+        make_zip(deny_zip, 100 * 1024, {"bin/big.bin": 8 * 1024 * 1024})
+        expect("deny floor seeds", check(deny_zip, deny_base, 5.0, init_if_missing=True), 0)
+        make_zip(cur_zip, 100 * 1024,
+                 {"bin/big.bin": 8 * 1024 * 1024, "evicted/gone.dat": 100 * 1024})
+        expect("re-added sub-NEW-share row passes without --forbid",
+               check(cur_zip, deny_base, 5.0), 0)
+        expect("re-added row fails with --forbid",
+               check(cur_zip, deny_base, 5.0, forbid=["^evicted/"]), 1)
+        expect("clean artifact passes with --forbid",
+               check(deny_zip, deny_base, 5.0, forbid=["^evicted/"]), 0)
+        expect("--forbid blocks reseeding the banned shape",
+               check(cur_zip, deny_base, 5.0, reseed=True, forbid=["^evicted/"]), 1)
+
     print("selftest:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 
@@ -261,6 +302,9 @@ def main() -> int:
                             "artifact and pass (intentional-growth escape "
                             "hatch; commit the rewritten file)")
     p_chk.add_argument("--manifest-out", type=Path)
+    p_chk.add_argument("--forbid", action="append", default=[], metavar="REGEX",
+                       help="deny-list: fail if any manifest row path matches "
+                            "REGEX (repeatable; enforced on check/init/reseed)")
 
     sub.add_parser("selftest", help="synthetic end-to-end assertions")
 
@@ -273,7 +317,7 @@ def main() -> int:
     if args.cmd == "check":
         return check(args.artifact, args.baseline, args.budget_pct,
                      args.init_if_missing, reseed=args.reseed,
-                     manifest_out=args.manifest_out)
+                     manifest_out=args.manifest_out, forbid=args.forbid)
     return selftest()
 
 
