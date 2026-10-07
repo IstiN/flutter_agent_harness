@@ -5,7 +5,6 @@
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:fa/sandbox/grep_args.dart';
 import 'package:fa/sandbox/shell_parser.dart';
 import 'package:path/path.dart' as p;
 
@@ -17,6 +16,13 @@ export 'package:fa/sandbox/grep_args.dart';
 /// Every function here is synchronous, allocation-only, and side-effect
 /// free; the WASM shell owns the I/O around them. Behavior is IDENTICAL to
 /// the inline code it replaced.
+
+/// Whether [sandboxPath] is the null device after lexical normalization —
+/// the redirect sink that discards bytes and never materializes a file
+/// (gh-1393 WS-1). Shared by the WASI shell and the web MemoryShell so the
+/// conformance table can pin one behavior.
+bool isNullDevicePath(String sandboxPath) =>
+    normalizeLexicalPath(sandboxPath) == '/dev/null';
 
 
 /// Redirect targets resolved for one pipeline stage.

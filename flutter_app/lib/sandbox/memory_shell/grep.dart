@@ -2,63 +2,11 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-/// The parsed `grep` command line: flag set, pattern, and input files.
-typedef GrepInvocation = ({
-  Set<String> flags,
-  String? pattern,
-  List<String> files,
-  ({String message, int exitCode})? error,
-});
-
-/// Parses the `grep`/`rg` argument list (pure).
-GrepInvocation parseGrepArgs(List<String> args) {
-  final flags = <String>{};
-  String? pattern;
-  final files = <String>[];
-  var noMoreFlags = false;
-
-  for (var i = 0; i < args.length; i++) {
-    final arg = args[i];
-    if (arg == '--' && !noMoreFlags) {
-      noMoreFlags = true;
-      continue;
-    }
-    if (!noMoreFlags && arg == '-e') {
-      if (i + 1 >= args.length) {
-        return (
-          flags: flags,
-          pattern: pattern,
-          files: files,
-          error: (
-            message: 'grep: option requires an argument -- e\n',
-            exitCode: 2,
-          ),
-        );
-      }
-      pattern = args[++i];
-      continue;
-    }
-    if (!noMoreFlags && arg.startsWith('-') && arg.length > 1) {
-      flags.addAll(arg.substring(1).split(''));
-      continue;
-    }
-    if (pattern == null) {
-      pattern = arg;
-    } else {
-      files.add(arg);
-    }
-  }
-
-  if (pattern == null) {
-    return (
-      flags: flags,
-      pattern: null,
-      files: files,
-      error: (message: 'grep: missing pattern\n', exitCode: 2),
-    );
-  }
-  return (flags: flags, pattern: pattern, files: files, error: null);
-}
+/// The portable Dart grep engine (web MemoryShell, gh-1393 WS-1): pattern
+/// compilation and per-content-block matching only. The command line is
+/// parsed by the SHARED parser (`grep_args.dart`/`parseGrepArgs`), so both
+/// shells speak one grep dialect.
+library;
 
 /// The match options compiled from the grep flag set.
 typedef GrepQuery = ({
