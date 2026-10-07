@@ -41,6 +41,7 @@ export 'src/providers/provider_editor_page.dart';
 export 'src/providers/provider_preset.dart';
 export 'src/providers/providers_section.dart';
 export 'src/providers/quota_gauge.dart';
+export 'src/providers/sso_flows.dart';
 export 'src/providers/task_models_section.dart';
 export 'src/providers/unified_model_picker.dart';
 export 'src/providers/voice_presets.dart';

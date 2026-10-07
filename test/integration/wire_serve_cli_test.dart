@@ -531,7 +531,6 @@ void main() {
       // This file's load-tolerant budget is 20s (#1311); unlike the
       // countdown family (#1345) the predicate is already exact — welcome
       // is the one legal first server frame — only the budget was tight.
-      // The same budget applies to every wire frame wait in this file.
       // The right token works: handshake (hello -> welcome), like any v1
       // client — the server never speaks before the client's hello.
       final ws = await connect(http.port, token: 'sekrit-token');
@@ -542,7 +541,12 @@ void main() {
           'versions': [1],
         }),
       );
-      final first = await ws.first.timeout(const Duration(seconds: 20));
+      // 30s, not 10s: the shard runs 4 suites on 4 arm64 cores and a
+      // loaded event loop once starved the welcome past 10s (run
+      // 37552613207 — the only red of this test, no product path
+      // involved). The budget matches this file's other handshake waits
+      // (20s settle / 20s serve shutdown); the assertion is unchanged.
+      final first = await ws.first.timeout(const Duration(seconds: 30));
       expect(decodeLine(first as String)['kind'], 'welcome');
       await ws.close();
       await http.close(force: true);
