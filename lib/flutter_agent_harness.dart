@@ -259,6 +259,8 @@ export 'src/parity/settings_registry.dart';
 export 'src/hosts/host_capability_profile.dart';
 export 'src/hosts/host_wiring_builder.dart';
 export 'src/hosts/host_agent_wiring.dart';
+// ── telemetry ──
+export 'src/telemetry/agent_telemetry.dart';
 export 'src/types.dart';
 export 'src/usage/usage_chain.dart';
 export 'src/usage/usage_fold.dart';
