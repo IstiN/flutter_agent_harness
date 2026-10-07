@@ -185,7 +185,8 @@ final class TrajectorySnapshotBuilder {
       case CompactionRecord() ||
           BranchSummaryRecord() ||
           HiddenRangeRecord() ||
-          CompactCheckpointRecord():
+          CompactCheckpointRecord() ||
+          SegmentPinRecord():
         _appendCompacted(record);
       case ModelChangeRecord() ||
           ActiveToolsChangeRecord() ||
@@ -507,6 +508,8 @@ final class TrajectorySnapshotBuilder {
       BranchSummaryRecord() => record.summary,
       CompactCheckpointRecord() => record.text,
       HiddenRangeRecord() => 'hidden ${record.recordIds.length} records',
+      SegmentPinRecord() =>
+          '${record.pinned ? 'pin' : 'unpin'} ${record.recordIds.length} records',
       _ => '',
     };
     final hiddenRecordIds = record is HiddenRangeRecord

@@ -55,7 +55,6 @@ final class RecordSeqIndex {
 }
 
 /// Derived, immutable view of the structured state on a branch path.
-/// Derived, immutable view of the structured state on a branch path.
 final class StructuredViewState {
   const StructuredViewState._({
     required this.hiddenRecordIds,
