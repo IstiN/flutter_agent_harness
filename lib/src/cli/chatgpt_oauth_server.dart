@@ -37,11 +37,25 @@ final class ChatGptOAuthLocalCallbackServer {
         : 'http://localhost:${server.port}/auth/callback';
   }
 
-  Future<String> start({Duration timeout = const Duration(minutes: 5)}) async {
+  /// Starts listening and returns the callback redirect URL.
+  ///
+  /// [ports] lists loopback ports to try in order — the first successful
+  /// bind serves the callback. Defaults to the Codex-registered pair
+  /// `[1455, 1457]` (`auth.openai.com` rejects off-list redirect hosts);
+  /// tests pass `const [0]` (ephemeral) to stay hermetic where the
+  /// registered pair is transiently occupied (PR #1375: EADDRINUSE on
+  /// both ports flaked main twice).
+  Future<String> start({
+    Duration timeout = const Duration(minutes: 5),
+    List<int> ports = const [1455, 1457],
+  }) async {
+    if (ports.isEmpty) {
+      throw ArgumentError.value(ports, 'ports', 'must not be empty');
+    }
     await close();
     _result = Completer<ChatGptOAuthCallback?>();
     Object? lastError;
-    for (final port in const [1455, 1457]) {
+    for (final port in ports) {
       try {
         _server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
         break;
@@ -126,6 +140,12 @@ String _callbackPage(ChatGptOAuthCallback callback) {
       '<h1>$title</h1><p>$message</p>';
 }
 
+/// Runs the interactive ChatGPT OAuth sign-in: binds the local callback
+/// server, opens the authorize URL, and exchanges the callback code.
+///
+/// [ports] forwards to [ChatGptOAuthLocalCallbackServer.start] — the
+/// loopback candidates tried in order; the first successful bind serves
+/// the callback.
 Future<ChatGptOAuthCredentials?> runChatGptOAuthCliFlow({
   required void Function(String) onStatus,
   Future<bool> Function(String) openBrowserFn = openBrowser,
@@ -137,11 +157,12 @@ Future<ChatGptOAuthCredentials?> runChatGptOAuthCliFlow({
       exchangeFn =
       _defaultExchange,
   Duration timeout = const Duration(minutes: 5),
+  List<int> ports = const [1455, 1457],
 }) async {
   final server = ChatGptOAuthLocalCallbackServer();
   final verifier = generateChatGptPkceVerifier();
   final state = generateChatGptState();
-  final redirectUri = await server.start(timeout: timeout);
+  final redirectUri = await server.start(timeout: timeout, ports: ports);
   final authUrl = buildChatGptAuthorizeUrl(
     redirectUri: redirectUri,
     codeChallenge: generateChatGptPkceChallenge(verifier),
