@@ -13,6 +13,7 @@ import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/screens/skills_toggles_section.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/tools/builtin_tools.dart' as bt;
 import 'package:flutter_test/flutter_test.dart';
 
 AgentConfig _config() => AgentConfig(
@@ -153,6 +154,57 @@ void main() {
         contains('<location>builtin://skills/create-goal/SKILL.md</location>'),
       );
       expect(prompt, isNot(contains('fa-self-config')));
+    });
+
+    test('upgrade path prunes skill directories the cleanup empties — '
+        'no ghost empty skill dirs (issue #1334)', () async {
+      final env = MemoryExecutionEnv();
+      // What earlier app versions seeded: the last seeded create-goal
+      // bytes and the retired fa-self-config orphan. js-apps simulates a
+      // device that ALREADY ran the retirement (files gone, ghost dir
+      // left behind — the exact state #1334 was filed from).
+      final stale = await File(
+        '../.fah/skills/create-goal/SKILL.md',
+      ).readAsString();
+      await env.writeFile('${env.cwd}/.fah/skills/create-goal/SKILL.md', stale);
+      final orphan = await File(
+        '../.fah/skills/fa-self-config/SKILL.md',
+      ).readAsString();
+      await env.writeFile(
+        '${env.cwd}/.fah/skills/fa-self-config/SKILL.md',
+        orphan,
+      );
+      await env.createDir('${env.cwd}/.fah/skills/js-apps');
+      // A user-dropped supporting file keeps its directory alive (-HUjo).
+      await env.writeFile(
+        '${env.cwd}/.fah/skills/create-goal/notes.md',
+        'user notes',
+      );
+      final service = await AgentService.create(config: _config(), env: env);
+      addTearDown(service.dispose);
+
+      // #1334: the cleanup-emptied directories are GONE — .fah/skills no
+      // longer ghosts three empty skill dirs an exploring agent reads as
+      // broken materialization. Only the dir with a surviving user file
+      // remains.
+      final remaining = (await env.listDir(
+        '${env.cwd}/.fah/skills',
+      )).valueOrNull!;
+      expect(remaining.map((e) => e.name), ['create-goal']);
+
+      // AC: every advertised skill's body loads via read on the
+      // mobile-shaped env — the prompt points at builtin://, the read
+      // tool serves the embedded copy with zero filesystem access.
+      final result = await bt
+          .readFileTool(env)
+          .execute({'path': 'builtin://skills/js-apps/SKILL.md'}, null, null);
+      expect(
+        [
+          for (final block in result.content)
+            if (block is TextContent) block.text,
+        ].join(),
+        contains('name: js-apps'),
+      );
     });
 
     test('a fresh env resolves the builtins without any seeded copy', () async {
