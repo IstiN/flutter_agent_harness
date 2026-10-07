@@ -742,9 +742,10 @@ void main() {
       final events = await stream.toList();
       final end = events.whereType<ToolExecutionEndEvent>().single;
       expect(end.isError, isTrue);
+      // gh-1393 AC9: structured, never a bare leaked exception string.
       expect(
         (end.result.content.single as TextContent).text,
-        equals('disk exploded'),
+        startsWith('Tool error (weather): disk exploded\n'),
       );
       final toolResult = events
           .whereType<MessageEndEvent>()
@@ -781,19 +782,26 @@ void main() {
         }
 
         // StateError is the bash tool's non-zero-exit carrier (issue #118).
+        // The stripped message rides INSIDE the structured wrapper
+        // (gh-1393 AC9) — `startsWith` asserts the wrapper, the message
+        // body keeps its exact shape.
         expect(
           await textOf(
             () => StateError('total 12\nCommand exited with code 2'),
           ),
-          'total 12\nCommand exited with code 2',
+          'Tool error (weather): total 12\nCommand exited with code 2\n'
+          'This is an uncaught exception inside the harness tool '
+          'implementation — not a command failure. The tool may be '
+          'unavailable in this environment; skip it or use a different '
+          'approach.',
         );
         expect(
           await textOf(() => ArgumentError('args must be a map')),
-          'args must be a map',
+          startsWith('Tool error (weather): args must be a map\n'),
         );
         expect(
           await textOf(() => const FormatException('unexpected character')),
-          'unexpected character',
+          startsWith('Tool error (weather): unexpected character\n'),
         );
       },
     );
