@@ -277,6 +277,10 @@ void main() {
           'status': 'brand-new-status',
         },
         {'kind': 'pending-wait', 'text': 'armed watch', 'status': 'open'},
+        // Junk maps: no text AND no source pointer — skipped, never
+        // permanent level-0 garbage lines (review round 2).
+        {},
+        {'kind': 'x'},
       ]);
       expect(ledger.entries, hasLength(3));
       final legacy = ledger.entries[0];

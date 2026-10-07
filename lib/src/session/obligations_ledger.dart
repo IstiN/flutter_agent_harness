@@ -230,13 +230,19 @@ final class ObligationsLedger {
 
   /// Parses the snapshot payload of an `obligations_ledger` record
   /// (tolerantly — E6). Anything that is not an entry list parses as an
-  /// empty ledger.
+  /// empty ledger; junk maps (empty text AND empty sourceRecordId —
+  /// `{}`, `{'kind': 'x'}`) are SKIPPED, not defaulted: they would parse
+  /// as permanent, unclosable garbage lines at level 0 (review round 2).
   factory ObligationsLedger.fromPayload(Object? data) {
     if (data is! List) return const ObligationsLedger([]);
-    return ObligationsLedger([
-      for (final item in data)
-        if (item is Map) ObligationEntry.fromJson(item),
-    ]);
+    final entries = <ObligationEntry>[];
+    for (final item in data) {
+      if (item is! Map) continue;
+      final entry = ObligationEntry.fromJson(item);
+      if (entry.text.isEmpty && entry.sourceRecordId.isEmpty) continue;
+      entries.add(entry);
+    }
+    return ObligationsLedger(entries);
   }
 
   /// The snapshot payload for [appendCustomEntry].

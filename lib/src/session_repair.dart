@@ -21,6 +21,7 @@ library;
 import 'dart:convert';
 
 import 'env/execution_env.dart';
+import 'session/obligations_ledger.dart' show obligationsLedgerRecordType;
 import 'session_line_scanner.dart';
 import 'session/session_storage.dart' show shallowCustomHeader;
 
@@ -40,7 +41,7 @@ const Set<String> repairKeepLatestCustomTypes = {
   'subagent_registry',
   // Issue #1380 A1: the obligations ledger — every mutation appends a
   // fresh full snapshot; only the newest one feeds the projection.
-  'obligations_ledger',
+  obligationsLedgerRecordType,
 };
 
 /// Severity of a [SessionRepairException].

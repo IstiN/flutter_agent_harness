@@ -13,6 +13,7 @@ import 'dart:collection';
 import 'dart:convert';
 import '../agent/agent_loop.dart';
 import '../context.dart';
+import '../session/obligations_ledger.dart' show obligationsLedgerRecordType;
 import '../session/session_record.dart';
 import '../tools/checkpoint_tool.dart';
 import '../types.dart';
@@ -36,7 +37,7 @@ const hiddenCustomRecordTypes = {
   usageSegmentStartCustomType,
   // Issue #1380 A1: engine-maintained snapshot ledger — the obligations
   // surface in model context is the rendered block, not trajectory rows.
-  'obligations_ledger',
+  obligationsLedgerRecordType,
 };
 
 /// Walks session records and live agent events, projecting them into
