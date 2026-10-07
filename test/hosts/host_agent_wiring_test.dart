@@ -43,7 +43,6 @@ AgentCoreServices fullServices(
   onAsk: (questions) async => null,
   onRequestSecret: (name, reason) async => null,
   media: MediaToolServices(mainApiKey: () => 'key'),
-  hostTools: const [],
   hubFabric: const _HubRepo(),
   mainMailbox: () => 'main',
   extRuntimeFactory: Object(),
