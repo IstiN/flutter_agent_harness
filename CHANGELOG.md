@@ -4712,4 +4712,9 @@
 - fix(1234): whole-tree CRAP ratchet 12→8, loc-gate migration, all top offenders fixed (#1291)
 - fix(1252): widen scheduled-indicator reminder window past loaded-runner pre-check (#1290)
 
+## 1.0.526
+
+- feat(1322): wireAgentCore host-adoption gaps — embed guide, host key resolver, lifecycle telemetry (#1327)
+- fix(1319): route paging history notifies through the guarded bridge (follow-up to #1320) (#1324)
+
 ## Unreleased
