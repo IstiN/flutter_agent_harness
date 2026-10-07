@@ -138,9 +138,14 @@ class SummaryRenderTest(unittest.TestCase):
         self.assertEqual(problems, ["no results.json produced"])
 
     def test_expected_count_shortfall_flags(self):
+        # Issue #1392 AC6 retired the red-on-shortfall verdict: a lost or
+        # cancelled shard is a `coverage: X/N` note in the report (the
+        # aggregate stays green so partial data still ships), not a
+        # problem. See test_summary_1392.CoverageNotRedTest.
         self.write_run([trial("task-a", "t.1-of-1.shard-1", True, 0, 0)])
         lines, problems = summary.render(self.runs, expected=5)
-        self.assertIn("only 1/5 expected tasks attempted", problems)
+        self.assertTrue(any("coverage: 1/5" in line for line in lines))
+        self.assertEqual(problems, [])
 
 
 class ParseArgsTest(unittest.TestCase):

@@ -1898,3 +1898,21 @@ trajectory are SDK invariants with no override point (AC9).
   the committed goldens against `edits.images.list`. The daily
   `daily-publish.yml` play leg dispatches `build-mobile.yml` with
   `android_content=all`, so every release train redeploys the listing.
+
+## Bench round 3 knobs (issue #1392)
+
+The bench agent-timeout is no longer a wall-clock class: with
+`FA_PROGRESS_EXTENSION=1` a trial only dies by verdict — stall (a
+≥240s inter-record gap, `FA_STALL_GAP_SEC`), or the absolute ceiling
+(`FA_AGENT_TIMEOUT_ABS_CEILING_SEC`, default 3600s; bench.yml pins the
+tb harness cap above it, not 4x base). Every trial dir carries
+`bench_metrics.json` (per-request wall/first-byte, ConnTrace socket
+events, watchdog fires) and, on a stall, `hang-*.json` — replay one
+from any machine with `scripts/replay_hang.sh <file> [url]`.
+`FA_CONN_DEBUG=1` (also under `FA_PROVIDER_DEBUG`) turns on the
+connection lifecycle trace in `sharedProviderHttpClient()`; live
+`[fa-bench]` lines stream per-request progress to stderr while the run
+is still going. The run report (`summary.py`) is green-with-note on
+cancelled shards (`coverage: X/N`), splits latency p50/p95 by
+concurrency level, and names any `agent_timeout` trial whose session
+gaps never reached the stall threshold (score honesty).

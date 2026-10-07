@@ -1,0 +1,228 @@
+#!/usr/bin/env python3
+"""Issue #1392 round-3 summary contract: coverage-not-red (AC6), latency
+p50/p95 per concurrency level (AC2), concurrency tag, and the AC8
+score-honesty scan (an agent_timeout whose session shows steady <240s
+gaps is a contradiction, never silent).
+
+Run: python3 -m unittest discover -s bench/terminal_bench
+"""
+import importlib.util
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location(
+    "summary_r3", Path(__file__).resolve().parent / "summary.py"
+)
+summary = importlib.util.module_from_spec(spec)
+sys.modules["summary_r3"] = summary
+spec.loader.exec_module(summary)
+
+
+def _results(run_dir, rows):
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "results.json").write_text(json.dumps({"results": rows}))
+
+
+def _row(task, name, resolved=None, mode="agent_timeout"):
+    return {
+        "task_id": task,
+        "trial_name": name,
+        "is_resolved": resolved,
+        "failure_mode": mode,
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+    }
+
+
+def _session(run_dir, task, trial, gaps):
+    """Write one assistant session whose inter-record gaps are `gaps`."""
+    sessions = run_dir / "shard-0" / task / trial / "agent-logs" / "fah-sessions"
+    sessions.mkdir(parents=True)
+    lines = []
+    t = 0
+    for gap in gaps:
+        t += gap
+        stamp = f"2026-02-13T12:{t // 60:02d}:{t % 60:02d}Z"
+        lines.append(
+            json.dumps(
+                {"message": {"role": "assistant"}, "timestamp": stamp}
+            )
+        )
+    (sessions / "session.jsonl").write_text("\n".join(lines) + "\n")
+
+
+class CoverageNotRedTest(unittest.TestCase):
+    """AC6: a cancelled shard degrades to a coverage note, not a failure."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.runs = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_missing_tasks_are_a_coverage_line_not_a_problem(self):
+        _results(self.runs / "shard-0", [_row("t1", "t1__trial")])
+        lines, problems = summary.render(self.runs, expected=8)
+        self.assertTrue(
+            any("coverage: 1/8" in line for line in lines), lines
+        )
+        self.assertFalse(
+            any("expected tasks" in p for p in problems), problems
+        )
+
+    def test_full_coverage_has_no_coverage_note(self):
+        _results(self.runs / "shard-0", [_row("t1", "t1__trial")])
+        lines, problems = summary.render(self.runs, expected=1)
+        self.assertFalse(any("coverage:" in line for line in lines), lines)
+        self.assertEqual(problems, [])
+
+    def test_zero_results_still_a_problem(self):
+        lines, problems = summary.render(self.runs, expected=8)
+        self.assertTrue(problems)
+
+
+class LatencyReportTest(unittest.TestCase):
+    """AC2: the run report carries p50/p95 per concurrency level."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.runs = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def _trial_metrics(self, task, trial, level, first_bytes):
+        trial_dir = self.runs / "shard-0" / task / trial
+        trial_dir.mkdir(parents=True)
+        (trial_dir / "bench_metrics.json").write_text(
+            json.dumps(
+                {
+                    "trial": trial,
+                    "concurrency_level": level,
+                    "requests": [
+                        {"seq": i + 1, "first_byte": fb, "wall": fb * 2}
+                        for i, fb in enumerate(first_bytes)
+                    ],
+                    "latency": {"first_byte": {"max": max(first_bytes)}},
+                    "watchdog_events": [],
+                }
+            )
+        )
+
+    def test_p50_p95_per_concurrency_level(self):
+        _results(self.runs / "shard-0", [_row("t1", "t1__t", mode="unset")])
+        _results(self.runs / "shard-1", [_row("t2", "t2__t", mode="unset")])
+        self._trial_metrics("t1", "t1__t", 2, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        self._trial_metrics("t2", "t2__t", 1, [100, 200, 300, 400])
+        lines, _ = summary.render(self.runs)
+        block = "\n".join(lines)
+        self.assertIn("Request latency by concurrency level", block)
+        self.assertIn("concurrency 2", block)
+        self.assertIn("concurrency 1", block)
+        # p50 of 1..10 is 5.5; p95 ~ 9.5 (interpolated).
+        self.assertIn("first-byte p50=5.5s", block)
+        self.assertIn("p95=9.5s", block)
+        self.assertIn("first-byte p50=250.0s", block)
+
+    def test_no_metrics_no_block(self):
+        _results(self.runs / "shard-0", [_row("t1", "t1__t", mode="unset")])
+        lines, _ = summary.render(self.runs)
+        self.assertFalse(
+            any("latency by concurrency" in line for line in lines), lines
+        )
+
+
+class ConcurrencyTagTest(unittest.TestCase):
+    """AC5/AC2: the report tags the run's concurrency level."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.runs = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        _results(self.runs / "shard-0", [_row("t1", "t1__t", mode="unset")])
+
+    def test_render_tags_concurrency(self):
+        lines, _ = summary.render(self.runs, concurrency=2)
+        self.assertTrue(any("concurrency 2" in line for line in lines[:3]))
+
+    def test_main_reads_env_tag(self):
+        import os
+        from unittest import mock
+
+        with mock.patch.dict(
+            os.environ, {"BENCH_CONCURRENCY": "1"}
+        ), mock.patch.object(
+            summary.sys, "argv", ["summary.py", "--no-fail", str(self.runs)]
+        ):
+            code = None
+            try:
+                summary.main()
+            except SystemExit as exc:
+                code = exc.code
+            self.assertEqual(code, 0)
+
+
+class ScoreHonestyTest(unittest.TestCase):
+    """AC8: an agent_timeout whose gaps are all <240s is a contradiction."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.runs = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_steady_gap_kill_is_a_contradiction(self):
+        _results(
+            self.runs / "shard-0",
+            [_row("t1", "t1__trial", mode="agent_timeout")],
+        )
+        _session(self.runs, "t1", "t1__trial", [60, 120, 90])
+        lines, problems = summary.render(self.runs)
+        self.assertTrue(
+            any("score honesty" in line and "1" in line for line in lines),
+            lines,
+        )
+        self.assertTrue(
+            any("t1__trial" in p for p in problems), problems
+        )
+
+    def test_stalled_kill_is_justified(self):
+        _results(
+            self.runs / "shard-0",
+            [_row("t1", "t1__trial", mode="agent_timeout")],
+        )
+        _session(self.runs, "t1", "t1__trial", [60, 300, 60])
+        lines, problems = summary.render(self.runs)
+        self.assertFalse(
+            any("contradiction" in line and "1" in line for line in lines),
+            lines,
+        )
+        self.assertEqual(problems, [])
+
+    def test_audit_outcome_justifies_the_kill(self):
+        # Round-3 audits: a stall/ceiling kill carries its reason; only a
+        # missing or contradicting audit trips the honesty scan.
+        _results(
+            self.runs / "shard-0",
+            [_row("t1", "t1__trial", mode="agent_timeout")],
+        )
+        _session(self.runs, "t1", "t1__trial", [60, 90])
+        trial_dir = self.runs / "shard-0" / "t1" / "t1__trial"
+        (trial_dir / "fa-agent-timeout.json").write_text(
+            json.dumps({"outcome": "abs_ceiling"})
+        )
+        _, problems = summary.render(self.runs)
+        self.assertEqual(problems, [])
+
+    def test_missing_session_data_degrades_silently(self):
+        # E4: no session logs at all -> no crash, no contradiction claim.
+        _results(
+            self.runs / "shard-0",
+            [_row("t1", "t1__trial", mode="agent_timeout")],
+        )
+        lines, problems = summary.render(self.runs)
+        self.assertEqual(problems, [])
+        self.assertTrue(any("score honesty" in line for line in lines))
+
+
+if __name__ == "__main__":
+    unittest.main()
