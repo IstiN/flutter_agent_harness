@@ -242,25 +242,35 @@ final class FaHubState {
   }
 
   (FaHubState, FaHubAction) _handleTreeKey(String key) {
-    switch (key) {
-      case 'up':
-      case 'k':
-        return (moveSelection(-1), FaHubAction.none);
-      case 'down':
-      case 'j':
-        return (moveSelection(1), FaHubAction.none);
-      case 'left':
-      case 'h':
-      case 'right':
-      case 'l':
-        return (toggleCollapseSelected(), FaHubAction.none);
-      case 'enter':
-        return (this, FaHubAction.enter);
-      case 'esc':
-      case 'q':
-        return (this, FaHubAction.close);
-    }
-    return (this, FaHubAction.none);
+    final move = _treeMoveKey(key);
+    if (move != null) return move;
+    final collapse = _treeCollapseKey(key);
+    if (collapse != null) return collapse;
+    return switch (key) {
+      'enter' => (this, FaHubAction.enter),
+      'esc' || 'q' => (this, FaHubAction.close),
+      _ => (this, FaHubAction.none),
+    };
+  }
+
+  /// Tree cursor movement: `up`/`k` one row up, `down`/`j` one row down.
+  /// `null` = not a movement key.
+  (FaHubState, FaHubAction)? _treeMoveKey(String key) {
+    return switch (key) {
+      'up' || 'k' => (moveSelection(-1), FaHubAction.none),
+      'down' || 'j' => (moveSelection(1), FaHubAction.none),
+      _ => null,
+    };
+  }
+
+  /// Tree expand/collapse: `left`/`h` and `right`/`l` toggle the selected
+  /// node. `null` = not a collapse key.
+  (FaHubState, FaHubAction)? _treeCollapseKey(String key) {
+    return switch (key) {
+      'left' || 'h' || 'right' || 'l' =>
+        (toggleCollapseSelected(), FaHubAction.none),
+      _ => null,
+    };
   }
 
   (FaHubState, FaHubAction) _handleTranscriptKey(

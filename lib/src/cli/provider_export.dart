@@ -429,25 +429,39 @@ Future<String?> _readPassphrase(
   Future<String> Function()? readPassphrase,
 }) async {
   if (cmd.passphraseStdin) {
-    if (readPassphrase == null) {
-      io.writeln('fa: --passphrase-stdin needs a stdin reader');
-      return null;
-    }
-    final value = await readPassphrase();
-    if (value.isEmpty) {
-      io.writeln('fa: passphrase must not be empty');
-      return null;
-    }
-    return value;
+    return _readPassphraseStdin(io, readPassphrase: readPassphrase);
   }
+  return _readPassphrasePrompt(io, readPassphrase: readPassphrase);
+}
+
+/// The `--passphrase-stdin` mode: one line from the injected reader.
+Future<String?> _readPassphraseStdin(
+  CliIO io, {
+  required Future<String> Function()? readPassphrase,
+}) async {
+  if (readPassphrase == null) {
+    io.writeln('fa: --passphrase-stdin needs a stdin reader');
+    return null;
+  }
+  final value = await readPassphrase();
+  if (value.isEmpty) {
+    io.writeln('fa: passphrase must not be empty');
+    return null;
+  }
+  return value;
+}
+
+/// The interactive double prompt: empty or mismatched pair → null.
+Future<String?> _readPassphrasePrompt(
+  CliIO io, {
+  required Future<String> Function()? readPassphrase,
+}) async {
+  Future<String> readLine() =>
+      readPassphrase != null ? readPassphrase() : io.lines.first;
   io.writeln('enter passphrase:');
-  final first = readPassphrase != null
-      ? await readPassphrase()
-      : await io.lines.first;
+  final first = await readLine();
   io.writeln('confirm passphrase:');
-  final second = readPassphrase != null
-      ? await readPassphrase()
-      : await io.lines.first;
+  final second = await readLine();
   if (first.isEmpty) {
     io.writeln('fa: passphrase must not be empty');
     return null;
