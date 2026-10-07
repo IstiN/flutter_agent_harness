@@ -343,7 +343,7 @@ VerifyRun runVerify(
             .writeAsStringSync('{"status":"completed","conclusion":"success"}');
       }
       if (firstViewJson != null && first) {
-        File('${dir.path}/run-$id.1.json').writeAsStringSync(firstViewJson!);
+        File('${dir.path}/run-$id.1.json').writeAsStringSync(firstViewJson);
       }
       first = false;
     }
@@ -894,7 +894,7 @@ void main() {
       expect(r.exitCode, isNot(0), reason: r.output);
       expect(r.errored, isTrue);
       expect(r.output, contains(
-          'never triggered (only release-event run(s) exist — pub.dev OIDC accepts push/workflow_dispatch runs only)'));
+          'never triggered (only non-push run(s) exist — the publish job fires on push-event tag runs only)'));
       expect(r.ghLog.where((l) => l.contains('run rerun')), isEmpty,
           reason: 'rerunning the release twin can never publish');
     });
@@ -924,7 +924,7 @@ void main() {
               '[{"databaseId":77,"status":"completed","conclusion":"failure","event":"release"}]');
       expect(r.exitCode, isNot(0), reason: r.output);
       expect(r.errored, isTrue);
-      expect(r.output, contains('only release-event run(s) exist'));
+      expect(r.output, contains('only non-push run(s) exist'));
     });
 
     test('twin runs: recovery targets the PUSH twin, never the release twin',
