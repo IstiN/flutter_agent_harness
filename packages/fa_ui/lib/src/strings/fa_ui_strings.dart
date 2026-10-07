@@ -40,6 +40,11 @@ abstract class FaUiStrings {
   /// The "Add provider" row/button label.
   String get settingsAddProvider;
 
+  /// Tooltip on an SSO/OAuth add-provider tile whose sign-in flow is not
+  /// wired in this host app (shown disabled instead of hidden, issue
+  /// #1321 option C).
+  String get ssoFlowUnavailableTooltip;
+
   /// App bar title of the provider editor in edit mode.
   String get settingsEditProviderTitle;
 
@@ -329,6 +334,11 @@ class FaUiStringsEn extends FaUiStrings {
   String get settingsLocalProvidersSectionTitle => 'Local models';
   @override
   String get settingsAddProvider => 'Add provider';
+
+  @override
+  String get ssoFlowUnavailableTooltip =>
+      'Sign-in flow not available in this app';
+
   @override
   String get settingsEditProviderTitle => 'Edit provider';
   @override
@@ -564,6 +574,11 @@ class FaUiStringsRu extends FaUiStrings {
   String get settingsLocalProvidersSectionTitle => 'Локальные модели';
   @override
   String get settingsAddProvider => 'Добавить провайдера';
+
+  @override
+  String get ssoFlowUnavailableTooltip =>
+      'Вход через провайдера недоступен в этом приложении';
+
   @override
   String get settingsEditProviderTitle => 'Изменить провайдера';
   @override
