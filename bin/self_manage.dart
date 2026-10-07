@@ -755,7 +755,8 @@ void _writeConvergence(String? statePath, String tag) {
   if (statePath == null) return;
   try {
     final previous = _readConvergence(statePath);
-    final attempts = previous?.tag == tag ? previous.attempts + 1 : 1;
+    final attempts =
+        previous != null && previous.tag == tag ? previous.attempts + 1 : 1;
     final file = File(statePath);
     file.parent.createSync(recursive: true);
     file.writeAsStringSync(jsonEncode({'tag': tag, 'attempts': attempts}));

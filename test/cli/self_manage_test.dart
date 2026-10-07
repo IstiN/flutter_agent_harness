@@ -1139,7 +1139,7 @@ void main() {
         detectInstall: binaryInstall,
         newClient: countingClient,
         runProcess: extractingRunProcess,
-        spawn: (String _, List<String> __) async => true,
+        spawn: (_, _) async => true,
         pem: _testPem,
         logLine: (String _) {},
         statePath: statePath,

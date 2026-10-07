@@ -210,7 +210,7 @@ void main() {
       expect(readBack.display, 'true');
       expect(readBack.scope, 'global');
       // The yaml boolean persists verbatim — the next boot parses `on`.
-      final text = await (await env.readTextFile(_globalConfig)).getOrThrow();
+      final text = (await env.readTextFile(_globalConfig)).getOrThrow();
       expect(text, contains('auto_update: true\n'));
       final report = await service.check();
       expect(report.errors, isEmpty);
