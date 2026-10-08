@@ -62,7 +62,7 @@ String _marathonJsonl() {
   String message(String id, String parent, String text) =>
       '{"type":"message","id":"$id","parentId":$parent,"timestamp":"$iso",'
       '"message":{"role":"user","content":[{"type":"text","text":'
-      '${jsonEncode(text)}]}}\n';
+      '${jsonEncode(text)}}]}}\n';
 
   for (var i = 0; i < count; i++) {
     if (i == boundary) {
@@ -79,6 +79,11 @@ String _marathonJsonl() {
             ? 'null'
             : i == boundary
             ? '"c$i"'
+            // The fold records chain off the live leaf when appended (the
+            // leaf moves to each fold record); the next message parents on
+            // the last fold record so the folds sit ON the active branch.
+            : i == 600
+            ? '"cc603"'
             : '"e${i - 1}"',
         'body $i ${'a' * 40}',
       ),
@@ -346,3 +351,6 @@ void main() {
     });
   });
 }
+
+/// Debug exposure (removed with the debug test).
+String marathonJsonlPublic() => _marathonJsonl();
