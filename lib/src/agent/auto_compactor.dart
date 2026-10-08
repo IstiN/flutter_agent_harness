@@ -21,6 +21,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math' as math;
 import '../cancel_token.dart';
 import '../compaction/compaction.dart';
 import '../compaction/token_estimation.dart';
@@ -429,7 +430,23 @@ final class AutoCompactor {
   ({List<Message> messages, int dropped})? _localTrimFallback() {
     final messages = state.messages;
     if (messages.isEmpty) return null;
-    final budget = settings.keepRecentTokens;
+    // gh-1425: the valve must land UNDER the compaction trigger, not
+    // merely at keepRecentTokens — a keepRecent-sized tail plus the
+    // system-prompt/tool-schema overhead can sit above
+    // `window - reserveTokens`, so the next turn's auto-compact re-fires
+    // immediately and, with both summarizers still down, the session is
+    // stuck again (the exact marathon-resume cliff this valve exists
+    // for). Clamp the kept budget to the trigger minus the per-request
+    // overhead; keepRecentTokens still wins when it is smaller.
+    final overhead = estimateRequestTokens(
+      const [],
+      systemPrompt: state.systemPrompt,
+      tools: state.tools,
+    );
+    final budget = math.min(
+      settings.keepRecentTokens,
+      math.max(0, window - settings.reserveTokens - overhead),
+    );
     var cut = 0; // first kept index
     var accumulated = 0;
     for (var i = messages.length - 1; i >= 0; i--) {

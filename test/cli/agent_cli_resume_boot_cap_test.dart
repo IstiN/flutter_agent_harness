@@ -4,8 +4,6 @@
 // 143% and waited"). Degradation (AC5): a dead summarizer degrades to the
 // existing local-trim valve with a visible note — the boot survives and the
 // next request is still ≤ window.
-import 'dart:math' as math;
-
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -105,11 +103,15 @@ void main() {
         () => stream.calls >= 1 && !agent.isBusy,
         reason: 'the boot cap compaction runs before any user message',
       );
-      expect(stream.calls, 1, reason: 'exactly the cap pass ran at boot');
+      // ONE forced pass — which may legitimately issue several LLM calls
+      // (chunked summarization over the smol window). What matters for the
+      // AC: the calls happen at IDLE BOOT, before any user input exists.
+      final callsAtBoot = stream.calls;
+      expect(callsAtBoot, greaterThanOrEqualTo(1));
 
       io.sendLine('go');
       await waitForIt(
-        () => stream.calls >= 2 && !agent.isBusy,
+        () => stream.calls > callsAtBoot && !agent.isBusy,
         reason: 'the first user turn answers on the capped context',
       );
       io.sendLine('/exit');
@@ -119,7 +121,7 @@ void main() {
       expect(output, contains('auto-compacted'));
       // The turn's request rides the CAPPED context: at/below the
       // compaction threshold (meter parity with the pre-cap number).
-      final turnContext = stream.contexts[1];
+      final turnContext = stream.contexts.last;
       expect(requestTokensOf(turnContext), lessThanOrEqualTo(_threshold));
       // The cap genuinely folded: the kept messages the summary replaced
       // no longer ride the request.
