@@ -10,6 +10,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/cli/subagent_board.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart';
 import 'package:test/test.dart';
 
@@ -152,8 +153,10 @@ void main() {
         expect(rows.single.text, isNot(contains(' 1s ')));
         expect(rows.single.bright, isTrue, reason: 'a live row renders bright');
 
-        // SETTLE: the terminal record flashes bright (still pushed) but is
-        // no longer live — the ticker disarms.
+        // SETTLE: the terminal record flashes bright (still pushed) and
+        // the ticker STAYS ARMED — the flash's dim collapse still has to
+        // ship (review thread 1: the old wiring disarmed here, so a lone
+        // settled agent stayed bright forever).
         await cli.subagentManager.update(
           'scout#1',
           status: SubagentStatus.completed,
@@ -164,8 +167,41 @@ void main() {
         );
         expect(
           cli.subagentBoardTickerArmedForTest,
+          isTrue,
+          reason:
+              'a flashing row keeps the 1 Hz ticker armed — '
+              'the dim collapse must ship',
+        );
+        final pushBeforeDim = cli.subagentBoardLastPushForTest;
+
+        // FLASH END: past the settle-flash window one tick re-renders the
+        // row DIM and the push DELIVERS the collapse (a text-only dedupe
+        // key would suppress it — the dim render is the same text), then
+        // nothing is live or flashing and the ticker disarms.
+        now = now.add(kSubagentSettleFlash + const Duration(seconds: 1));
+        cli.subagentBoardTickForTest();
+        final settledRows = cli.subagentBoardRowsForTest();
+        expect(settledRows, hasLength(1));
+        expect(
+          settledRows.single.bright,
           isFalse,
-          reason: 'no live row — the ticker disarms',
+          reason: 'past the flash window the summary renders dim',
+        );
+        expect(
+          identical(cli.subagentBoardLastPushForTest, pushBeforeDim),
+          isFalse,
+          reason:
+              'the dim render shipped as a NEW push — '
+              'the old text-only dedupe never delivered it',
+        );
+        expect(
+          cli.subagentBoardLastPushForTest.join('\n'),
+          contains('done scout'),
+        );
+        expect(
+          cli.subagentBoardTickerArmedForTest,
+          isFalse,
+          reason: 'nothing live or flashing — the ticker disarms',
         );
 
         keys.add([0x03]); // ctrl+c press 1: abort + armed window, stays

@@ -18,6 +18,7 @@
 library;
 
 import '../task/subagent.dart';
+import 'tui_repl.dart' show stripAnsi;
 import 'tui_text_width.dart';
 
 /// The widest line the renderer targets (AC1's budget); hosts pass the live
@@ -91,7 +92,13 @@ SubagentStatusRecord subagentRecordOf(
   String? task,
 }) {
   final total = handle.tokens + handle.liveTokens;
-  final previewSource = (task ?? handle.task).replaceAll('\n', ' ').trim();
+  // The preview is pre-rendered host-side: strip ANSI/control sequences so
+  // the frame buffer stays plain text (review thread 3 — the source is
+  // model-authored `task` text; escapes measure zero-width and would ride
+  // the row raw).
+  final previewSource = stripAnsi(
+    (task ?? handle.task).replaceAll('\n', ' ').trim(),
+  );
   return SubagentStatusRecord(
     id: handle.id,
     name: handle.name,
@@ -210,8 +217,9 @@ String subagentStatusLine(
 
 /// The age field: elapsed since [spawnedAt], recomputed from timestamps on
 /// every render (E3 — clock jumps self-correct, nothing accumulates).
-/// Fixed ≤ 4 cells: `42s`, `12m`, `2h15`, capped at `99h+`; `–` when the
-/// spawn time is unknown (E5).
+/// Fixed ≤ 4 cells — `42s`, `12m`, `1h30` (2 h 15 m → `2h15`), `12h`
+/// (hours-only from 10 h: `12h34` would be 5 cells), capped at `99h+`; `–`
+/// when the spawn time is unknown (E5).
 String subagentAgeLabel(DateTime? spawnedAt, DateTime now) {
   if (spawnedAt == null) return '–';
   final seconds = now.difference(spawnedAt).inSeconds;
@@ -223,25 +231,35 @@ String subagentAgeLabel(DateTime? spawnedAt, DateTime now) {
   // ponytail: stable cells beat honest digits past 99 h (the busy-row cap
   // precedent) — a multi-day agent freezes the field instead of reflowing.
   if (hours > 99) return '99h+';
-  return '${hours}h${(minutes % 60).toString().padLeft(2, '0')}m';
+  // The 4-cell budget binds (review thread 2): `2h15` keeps the minutes
+  // while the hour is one digit; `12h34` would overflow, so from 10 h the
+  // field carries hours only.
+  if (hours >= 10) return '${hours}h';
+  return '${hours}h${(minutes % 60).toString().padLeft(2, '0')}';
 }
 
 /// The cost field: compact token count ≤ 4 cells (delta 5 — a number, not
-/// a sentence): `999`, `9.9k`, `41k`, `999k`, `9.9m`, capped at `999m`;
-/// `–` when absent/zero (E5 — a child with no provider requests yet).
+/// a sentence): `999`, `9.9k`, `12k`, `999k`, `9.9m`, `12m`, capped at
+/// `999m`; `–` when absent/zero (E5 — a child with no provider requests
+/// yet). One decimal only while the unit is single-digit (`4.1k`, `9.9m`);
+/// from 10 up the integer form keeps the 4-cell budget (`12.3k` would
+/// overflow it — review thread 2).
 String subagentCompactTokens(int? tokens) {
   if (tokens == null || tokens <= 0) return '–';
   if (tokens < 1000) return '$tokens';
-  if (tokens < 100000) {
-    final k = tokens / 1000;
-    final fixed = k.toStringAsFixed(1);
-    return '${fixed.endsWith('.0') ? fixed.substring(0, fixed.length - 2) : fixed}k';
+  // One decimal, `.0`-stripped (`4.1k`, `10k`) — below 10 units only.
+  String oneDecimal(double unit) {
+    final fixed = unit.toStringAsFixed(1);
+    return fixed.endsWith('.0') ? fixed.substring(0, fixed.length - 2) : fixed;
   }
-  if (tokens < 1000000) return '${tokens ~/ 1000}k';
+
+  if (tokens < 1000000) {
+    final k = tokens / 1000;
+    return k < 10 ? '${oneDecimal(k)}k' : '${tokens ~/ 1000}k';
+  }
   if (tokens < 100000000) {
     final m = tokens / 1000000;
-    final fixed = m.toStringAsFixed(1);
-    return '${fixed.endsWith('.0') ? fixed.substring(0, fixed.length - 2) : fixed}m';
+    return m < 10 ? '${oneDecimal(m)}m' : '${tokens ~/ 1000000}m';
   }
   final m = tokens ~/ 1000000;
   return m > 999 ? '999m' : '${m}m';

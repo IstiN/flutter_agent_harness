@@ -146,4 +146,47 @@ void main() {
       expect(tuiTextWidth(r), lessThanOrEqualTo(80));
     }
   });
+
+  test('squeeze: live rows win, settled summaries yield oldest-first '
+      '(review thread 4)', () {
+    // A long-lived child that spawned BEFORE later, already-settled
+    // siblings: newest-kept drops the live row and keeps only dim
+    // summaries. The ranked yield keeps the live row first, then the
+    // settled summaries newest-first (the oldest summary folds first).
+    // 12 rows against a 10-row terminal guarantees the squeeze fires.
+    final rows = [
+      row('live-old'),
+      for (var i = 1; i <= 11; i++)
+        row(
+          'yield-done-${i.toString().padLeft(2, '0')}',
+          bright: false,
+          state: SubagentDisplayState.completed,
+        ),
+    ];
+    final model = build(termHeight: 10, busy: true, subagents: rows);
+    final frame = rowsOf(model);
+    expect(frame, hasLength(10));
+    final plain = frame.map(plainRow).toList();
+    // THE invariant: the live row survives the squeeze (newest-kept kept
+    // only settled summaries here — the exact leak the comment promised
+    // against).
+    expect(
+      plain.where((r) => r.contains('live-old')),
+      isNotEmpty,
+      reason: 'a live row is never yielded while dim summaries persist',
+    );
+    // Settled summaries yield oldest-first: the oldest summary may only
+    // paint once the newest one does.
+    final oldest = plain.indexWhere((r) => r.contains('yield-done-01'));
+    if (oldest >= 0) {
+      expect(
+        plain.indexWhere((r) => r.contains('yield-done-11')),
+        greaterThanOrEqualTo(0),
+        reason: 'oldest settled visible ⇒ newest settled visible too',
+      );
+    }
+    for (final r in plain) {
+      expect(tuiTextWidth(r), lessThanOrEqualTo(80));
+    }
+  });
 }

@@ -128,6 +128,80 @@ void main() {
     });
   });
 
+  group('fixed-width fields — age and cost never overflow their 4 cells', () {
+    // gh-1415 review thread 2 (BLOCKING): `1h30m` / `12.3k` / `12.3m`
+    // rendered 5 cells in 4-cell fields — rows exceeded the width budget
+    // (102 cells at width 100) and the fixed rail misaligned whenever
+    // neighbors straddled the 1 h / 10 k / 10 m bounds.
+    test('age: ≥1 h collapses into ≤4 cells (1h30 / 12h / 99h+)', () {
+      String age(int seconds) => subagentAgeLabel(at(0), at(seconds));
+      expect(age(59), '59s');
+      expect(age(60), '1m');
+      expect(age(3599), '59m');
+      expect(age(3600), '1h00');
+      expect(age(5400), '1h30'); // was `1h30m` — 5 cells, the reported form
+      expect(age(36000), '10h'); // ≥10 h: hours only (12h34 would be 5 cells)
+      expect(age(45840), '12h'); // 12 h 34 m → 12h
+      expect(age(356400), '99h');
+      expect(age(360000), '99h+');
+      for (final s in [59, 60, 3599, 3600, 5400, 36000, 45840, 356400, 360000]) {
+        expect(tuiTextWidth(age(s)), lessThanOrEqualTo(4), reason: '${s}s');
+      }
+    });
+
+    test('cost: one decimal only below 10 units (4.1k / 12k / 9.9m / 12m)', () {
+      expect(subagentCompactTokens(1), '1');
+      expect(subagentCompactTokens(999), '999');
+      expect(subagentCompactTokens(4100), '4.1k');
+      expect(subagentCompactTokens(9999), '10k');
+      expect(subagentCompactTokens(12345), '12k'); // was 12.3k — 5 cells
+      expect(subagentCompactTokens(41000), '41k');
+      expect(subagentCompactTokens(999949), '999k');
+      expect(subagentCompactTokens(1234567), '1.2m');
+      expect(subagentCompactTokens(12345678), '12m'); // was 12.3m — 5 cells
+      expect(subagentCompactTokens(41000000), '41m');
+      expect(subagentCompactTokens(1234567890), '999m');
+      const cases = [
+        1, 999, 4100, 9999, 12345, 41000, 999949, //
+        1234567, 12345678, 41000000, 1234567890,
+      ];
+      for (final t in cases) {
+        expect(
+          tuiTextWidth(subagentCompactTokens(t)),
+          lessThanOrEqualTo(4),
+          reason: '$t',
+        );
+      }
+    });
+
+    test('a ≥1 h record with a full preview still fills exactly the width '
+        '(AC1 — the review reproducer measured 102 at width 100)', () {
+      final line = subagentStatusLine(
+        rec('watcher', tokens: 12345, preview: 'w' * 100),
+        now: at(5400),
+        width: 100,
+      );
+      expect(tuiTextWidth(line), 100);
+    });
+
+    test('the rail stays aligned when neighbors straddle the 1 h / 10 k '
+        'bounds', () {
+      final young = subagentStatusLine(
+        rec('young', spawnedAt: at(0), tokens: 41000, preview: 'P1'),
+        now: at(120),
+        width: 120,
+      );
+      final senior = subagentStatusLine(
+        rec('senior', spawnedAt: at(0), tokens: 12345, preview: 'P2'),
+        now: at(5400),
+        width: 120,
+      );
+      int previewCell(String line, String marker) =>
+          tuiTextWidth(line.substring(0, line.indexOf(marker)));
+      expect(previewCell(senior, 'P2'), previewCell(young, 'P1'));
+    });
+  });
+
   group('UT-2 / AC2 — the region stacks N rows in order', () {
     test('10 simultaneous subagents render as 10 stacked rows, same order', () {
       final region = TaskBoardRegion(now: () => t0);
@@ -457,6 +531,14 @@ void main() {
       expect(record.preview, 'first line second line');
       final line = subagentStatusLine(record, now: t0, width: 100);
       expect(line.contains('\n'), isFalse);
+    });
+
+    test('the preview strips ANSI escapes (host-side plain-text, thread 3)', () {
+      final record = subagentRecordOf(
+        handle('i', task: '\x1b[31mred\x1b[0m and plain'),
+      );
+      expect(record.preview, 'red and plain');
+      expect(record.preview!.contains('\x1b'), isFalse);
     });
   });
 }
