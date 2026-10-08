@@ -48,21 +48,24 @@ void main() {
         providerKind: 'openai-completions',
       ),
       io: io,
-      streamFunction: FakeStreamFunction([
-        textTurn('ok'),
-        textTurn('ok'),
-      ]).call,
+      streamFunction: FakeStreamFunction([textTurn('ok')]).call,
     );
     final run = cli.run();
     final flow = cli.startModelCapsFlow();
     await waitForIt(() => io.out.toString().contains('model capabilities'));
     io.sendLine('1');
+    // ignore: avoid_print
+    print('S1<<<${_tail()}>>>');
     await waitForIt(() => io.out.toString().contains('provider'));
     io.sendLine('12');
+    // ignore: avoid_print
+    print('S2<<<${_tail()}>>>');
     await waitForIt(
       () => io.out.toString().contains('model id (empty keeps'),
     );
     io.sendLine('glm-5.3-flash');
+    // ignore: avoid_print
+    print('S3<<<${_tail()}>>>');
     await waitForIt(
       () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
     );
