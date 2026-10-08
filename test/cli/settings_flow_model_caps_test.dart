@@ -243,4 +243,222 @@ models:
     // section or empty overrides both read as "nothing pinned".
     expect(parsed.models?.overrides.isEmpty ?? true, isTrue);
   });
+
+  test('unpinning thinkingLevel (off) removes ONLY that field', () async {
+    const seed = '''
+provider: openrouter
+models:
+  overrides:
+    zai:
+      glm-5.3-flash:
+        maxTokens: 65536
+        thinkingLevel: high
+''';
+    await env.writeFile('/home/u/.fah/config.yaml', seed);
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(
+      fake.call,
+      homeDir: '/home/u',
+      modelsConfig: ModelsConfig.fromYaml(
+        (loadYaml(seed) as Map)['models'],
+      ),
+    );
+    final run = cli.run();
+
+    final flow = cli.startModelCapsFlow();
+    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    io.sendLine('2'); // the zai/glm-5.3-flash entry row
+    await waitForIt(
+      () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
+    );
+    io.sendLine('3'); // thinking level
+    await waitForIt(() => io.out.toString().contains('thinking level'));
+    io.sendLine('1'); // off → the FIELD remove (the entry survives)
+    await waitForIt(
+      () => io.out.toString().contains(
+        'models.overrides.zai.glm-5.3-flash.thinkingLevel removed',
+      ),
+    );
+    // The caps menu re-renders with the field shown unpinned.
+    await waitForIt(
+      () => io.out.toString().contains(
+        'Thinking level — not pinned (no thinking requested)',
+      ),
+    );
+    io.sendLine('6'); // done (caps loop)
+    await waitForCount('Pin or edit', 2);
+    io.sendLine('3'); // done (flow menu)
+    await flow;
+    io.sendLine('/exit');
+    await run;
+
+    final written = (await env.readTextFile(
+      '/home/u/.fah/config.yaml',
+    )).valueOrNull;
+    expect(written, isNotNull);
+    // The surgical field remove: maxTokens survives, thinkingLevel is gone.
+    expect(written, contains('maxTokens: 65536'));
+    expect(written, isNot(contains('thinkingLevel')));
+    final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
+    final pinned = parsed.models!.overrides.lookup('zai', 'glm-5.3-flash');
+    expect(pinned?.maxTokens, 65536);
+    expect(pinned?.thinkingLevel, isNull);
+    // The live layer picked the unpin up (E6 reload-after-write).
+    final live = modelCapabilityOverrides?.lookup('zai', 'glm-5.3-flash');
+    expect(live?.maxTokens, 65536);
+    expect(live?.thinkingLevel, isNull);
+    // AC3 survival: the rebuilt model keeps the surviving cap and drops
+    // the unpinned level (the zai catalog has no thinking default).
+    final model = buildCatalogModel('zai', 'glm-5.3-flash');
+    expect(model.maxTokens, 65536);
+    expect(model.thinkingLevel, isNull);
+  });
+
+  test('unpinning on a host without a user config prints and writes nothing',
+      () async {
+    const seed = '''
+models:
+  overrides:
+    zai:
+      glm-5.3-flash:
+        thinkingLevel: high
+''';
+    final memoryModels = ModelsConfig.fromYaml(
+      (loadYaml(seed) as Map)['models'],
+    );
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call, modelsConfig: memoryModels); // no homeDir
+    final run = cli.run();
+
+    final flow = cli.startModelCapsFlow();
+    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    io.sendLine('2'); // the entry row
+    await waitForIt(
+      () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
+    );
+    io.sendLine('3'); // thinking level
+    await waitForIt(() => io.out.toString().contains('thinking level'));
+    io.sendLine('1'); // off → the remove hits the missing config path
+    await waitForIt(
+      () => io.out.toString().contains(
+        'model capabilities: no user config on this host — not saved',
+      ),
+    );
+    io.sendLine('6'); // done (caps loop — the pin is still there)
+    await waitForCount('Pin or edit', 2);
+    io.sendLine('3'); // done (flow menu)
+    await flow;
+    io.sendLine('/exit');
+    await run;
+
+    // Nothing changed in memory either.
+    final pinned = memoryModels.overrides.lookup('zai', 'glm-5.3-flash');
+    expect(pinned?.thinkingLevel, 'high');
+  });
+
+  test('unpinning with an unreadable config file prints and writes nothing',
+      () async {
+    const seed = '''
+models:
+  overrides:
+    zai:
+      glm-5.3-flash:
+        thinkingLevel: high
+''';
+    // homeDir set but NO config.yaml on disk → the read fails.
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(
+      fake.call,
+      homeDir: '/home/u',
+      modelsConfig: ModelsConfig.fromYaml(
+        (loadYaml(seed) as Map)['models'],
+      ),
+    );
+    final run = cli.run();
+
+    final flow = cli.startModelCapsFlow();
+    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    io.sendLine('2'); // the entry row
+    await waitForIt(
+      () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
+    );
+    io.sendLine('3'); // thinking level
+    await waitForIt(() => io.out.toString().contains('thinking level'));
+    io.sendLine('1'); // off → the read error path
+    await waitForIt(
+      () => io.out.toString().contains(
+        'cannot read /home/u/.fah/config.yaml',
+      ),
+    );
+    io.sendLine('6'); // done (caps loop)
+    await waitForCount('Pin or edit', 2);
+    io.sendLine('3'); // done (flow menu)
+    await flow;
+    io.sendLine('/exit');
+    await run;
+  });
+
+  test('unpinning that would leave an invalid models block saves NOTHING',
+      () async {
+    // The FILE carries an invalid sibling field (maxTokens below the
+    // answer floor) next to the pinned level; the in-memory model is the
+    // valid twin so the flow renders. Removing the level must leave the
+    // invalid block — the boot validator rejects it, nothing is written.
+    const fileSeed = '''
+provider: openrouter
+models:
+  overrides:
+    zai:
+      glm-5.3-flash:
+        maxTokens: -5
+        thinkingLevel: high
+''';
+    await env.writeFile('/home/u/.fah/config.yaml', fileSeed);
+    const memorySeed = '''
+models:
+  overrides:
+    zai:
+      glm-5.3-flash:
+        maxTokens: 65536
+        thinkingLevel: high
+''';
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(
+      fake.call,
+      homeDir: '/home/u',
+      modelsConfig: ModelsConfig.fromYaml(
+        (loadYaml(memorySeed) as Map)['models'],
+      ),
+    );
+    final run = cli.run();
+
+    final flow = cli.startModelCapsFlow();
+    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    io.sendLine('2'); // the entry row
+    await waitForIt(
+      () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
+    );
+    io.sendLine('3'); // thinking level
+    await waitForIt(() => io.out.toString().contains('thinking level'));
+    io.sendLine('1'); // off → the post-remove validation rejects the file
+    await waitForIt(
+      () => io.out.toString().contains('not saved:'),
+    );
+    // The caps menu re-renders with the level STILL pinned.
+    await waitForIt(
+      () => io.out.toString().contains('Thinking level — high'),
+    );
+    io.sendLine('6'); // done (caps loop)
+    await waitForCount('Pin or edit', 2);
+    io.sendLine('3'); // done (flow menu)
+    await flow;
+    io.sendLine('/exit');
+    await run;
+
+    // Byte-identical file: the failed remove wrote nothing.
+    final written = (await env.readTextFile(
+      '/home/u/.fah/config.yaml',
+    )).valueOrNull;
+    expect(written, fileSeed);
+  });
 }

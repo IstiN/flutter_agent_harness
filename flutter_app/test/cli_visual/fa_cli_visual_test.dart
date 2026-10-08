@@ -701,8 +701,9 @@ void main() {
         timeout: const Duration(seconds: 15),
       );
 
-      // Navigate to "Media models" (fourth entry) and open it.
-      for (var i = 0; i < 3; i++) {
+      // Navigate to "Media models" (fifth entry — after the gh-1426
+      // "Model capabilities" row) and open it.
+      for (var i = 0; i < 4; i++) {
         harness.sendArrowDown();
       }
       harness.sendEnter();
