@@ -282,7 +282,32 @@ factual: paths, commands, invariants — no essays.
   fold) when the dropped region exceeds it, explicit truncation note for a
   single oversized message; the smol summarizer's own window governs (never
   the main model's); overflow-classified compaction failures route straight
-  to the next summarizer/local trim with zero backoff retries.
+  to the next summarizer/local trim with zero backoff retries. Stall
+  surface (gh-1395): a stream the idle watchdog kills is NAMED
+  (`stall_taxonomy.dart`: connect / first-byte / mid-stream idle), traced
+  under `FA_CONN_DEBUG=1` (`conn_trace.dart`: `conn open (fresh, port P)`
+  → `first byte after Ns` → `idle watchdog FIRED after Ns (conn age,
+  port P)` on stderr + the structured `connTraceEvents` board/sink the
+  bench consumes), captured (`stall_sentinel.dart`: the outbound payload
+  dumps to the trial dir before the abort; `scripts/replay_hang.sh`
+  replays it byte-identically), and recovered with bounded cost
+  (`silent_stream_policy.dart`: codex-style backoff 5→60s, `ApiKeyRing`
+  rotation after the 2nd stall of the run, smol-role takeover attempt
+  after the 3rd, counter reset on success — wired into every
+  `ModelRolesResolver` chain entry, pre-commit stalls only, #964 kept).
+  Purity split (gh-1395 review round 1): the four provider-forensics
+  contracts are pure Dart and barrel-exported; every platform surface
+  (env-knob lookup, the `[conn-trace]` stderr lines, the observed dart:io
+  client, the sentinel's disk sink) is an injected seam installed at the
+  host boundary by `installProviderStallForensics()` from
+  `conn_trace_io.dart`/`stall_sentinel_io.dart` — reachable ONLY through
+  `lib/io.dart`. Dumps are allowlist-redacted (credential carriers —
+  `x-goog-api-key`, custom `authHeader` names included — never reach
+  meta.json; only `safeForensicHeaders` survive) and carry a real SHA-256;
+  the dump budget is 8 per process, `FA_STALL_SENTINEL=0` opts out.
+  The shared client also carries `resetSharedProviderHttpClient()` behind
+  the `FA_POOL_EVICTION` flag — pool hygiene, not a correctness fix (the
+  keep-alive pool is test-exonerated for every watchdog-window class).
 - `lib/src/ttsr/` — time-traveling stream rules: regex matched against
   streaming deltas; on match abort, inject rule bodies as hidden
   `<system-interrupt>` message, retry after 50ms. Persisted via
