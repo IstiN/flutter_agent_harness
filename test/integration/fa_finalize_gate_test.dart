@@ -69,6 +69,9 @@ void main() {
       io: _HeadlessIo(),
     );
     final run = cli.run();
+    // Drive the fixture prompt once the REPL is reading, then exit after
+    // the script's last assistant turn has landed (each scripted POST
+    // advances the mock's cursor).
     unawaited(
       Future<void>.delayed(const Duration(milliseconds: 300)).then((_) {
         _HeadlessIo.last?.sendLine(
@@ -76,6 +79,13 @@ void main() {
         );
       }),
     );
+    final deadline = DateTime.now().add(const Duration(seconds: 60));
+    while (mock.bodies.length < script.length &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    _HeadlessIo.last?.sendLine('/exit');
     await run.timeout(const Duration(seconds: 90));
     final lines = <String>[];
     final root = Directory(sessionRoot);
@@ -89,7 +99,7 @@ void main() {
     return lines;
   }
 
-  List<Map<String, dynamic>> _records(List<String> lines) => [
+  List<Map<String, dynamic>> recordsOf(List<String> lines) => [
     for (final line in lines)
       if (jsonDecode(line) case final Map<String, dynamic> record) record,
   ];
@@ -141,7 +151,7 @@ void main() {
           '```\n',
         ),
       ]);
-      final records = _records(lines);
+      final records = recordsOf(lines);
 
       // AC3: the verification commands ACTUALLY executed — the session's
       // tool records show the check failing, the fix landing, and the
@@ -152,7 +162,7 @@ void main() {
       expect(transcript, contains('exit code 1'));
 
       // The produced state is correct: the fix landed on disk.
-      final mode = File('${tempDir.path}/script.py').statSync().mode.valueString;
+      final mode = File('${tempDir.path}/script.py').statSync().modeString();
       expect(mode.contains('x'), isTrue, reason: 'script.py mode $mode');
 
       // AC2: exactly one hidden task_ledger record; the checklist covers
@@ -168,11 +178,10 @@ void main() {
       expect(ledgerRecords, hasLength(1));
       final items = (ledgerRecords.single['data'] as Map)['items'] as List;
       expect(items, hasLength(3));
-      expect([for (final item in items) (item as Map)['status']], [
-        'pass',
-        'fixed',
-        'pass',
-      ]);
+      expect(
+        [for (final item in items) (item as Map)['status']],
+        ['pass', 'fixed', 'pass'],
+      );
       expect(
         transcript.contains('create script.py with a shebang'),
         isTrue,
@@ -191,7 +200,7 @@ void main() {
         ]),
         const _Turn.text('done — no checklist'),
       ]);
-      final records = _records(lines);
+      final records = recordsOf(lines);
       expect(
         records.where(
           (record) =>
@@ -263,7 +272,7 @@ final class _ScriptedMock {
     await request.response.close();
   }
 
-  static List<String> _chunks(_Turn turn) {
+  List<String> _chunks(_Turn turn) {
     if (turn.text != null) {
       return [
         jsonEncode({
@@ -290,7 +299,7 @@ final class _ScriptedMock {
       chunks
         ..add(
           jsonEncode({
-            'id': 'chatcmpl-$n',
+            'id': 'chatcmpl-tool',
             'object': 'chat.completion.chunk',
             'choices': [
               {
@@ -320,7 +329,9 @@ final class _ScriptedMock {
                   'tool_calls': [
                     {
                       'index': i,
-                      'function': {'arguments': jsonEncode(call.arguments)},
+                      'function': {
+                        'arguments': jsonEncode({'command': call.arguments}),
+                      },
                     },
                   ],
                 },
@@ -356,7 +367,7 @@ class _HeadlessIo implements CliIO {
   }
 
   @override
-  bool get isInteractive => false;
+  bool get isInteractive => true;
 
   @override
   int columns = 80;
@@ -371,7 +382,7 @@ class _HeadlessIo implements CliIO {
   Stream<void> get interrupts => const Stream<void>.empty();
 
   @override
-  Stream<void> get keys => const Stream<void>.empty();
+  Stream<KeyEvent> get keys => const Stream<KeyEvent>.empty();
 
   @override
   bool get supportsRawMode => false;
