@@ -663,6 +663,72 @@ NEW_KNOB_NAMES = (
 )
 
 
+class HarnessArtifactIsolationTest(unittest.TestCase):
+    """Issue #1408 AC1: the bench adapters relocate fa's bash-job logs
+    OUTSIDE the task workspace via FAH_JOB_LOG_DIR.
+
+    The r3 autopsy (run 37736364517, sanitize-git-repo ×2): fa's
+    .fah/bash_jobs/ logs sat inside the graded workspace, captured raw
+    secret values from the agent's own greps, and the agent's cleanup of
+    its own harness logs flipped test_no_other_files_changed. The session
+    root was already relocated (--session-root); the job logs now follow.
+    """
+
+    def _load(self, name, relpath):
+        import importlib.util
+
+        root = Path(__file__).resolve().parents[2]
+        spec = importlib.util.spec_from_file_location(name, root / relpath)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def _tarball(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        tarball = Path(tmpdir.name) / "fa-bundle.tar.gz"
+        tarball.write_bytes(b"")
+        return str(tarball)
+
+    def test_terminal_bench_env_relocates_job_logs(self):
+        if not TB_AVAILABLE:
+            self.skipTest("terminal_bench not installed")
+        legacy = self._load(
+            "legacy_fa_agent_env", "bench/terminal_bench/fa_agent.py"
+        )
+        with mock.patch.dict(
+            os.environ,
+            clean_env(
+                FA_BUNDLE_TARBALL=self._tarball(),
+                FA_PROVIDER_CONFIG="{}",
+            ),
+        ):
+            agent = legacy.FaAgent()
+            self.assertEqual(
+                agent._env.get("FAH_JOB_LOG_DIR"),
+                "/tmp/fa-harness-artifacts/bash_jobs",
+            )
+
+    def test_harbor_provider_env_relocates_job_logs(self):
+        if not HARBOR_AVAILABLE:
+            self.skipTest("harbor not installed")
+        harbor_fa = self._load(
+            "harbor_fa_agent_env", "bench/harbor_fa/fa_agent.py"
+        )
+        with mock.patch.dict(
+            os.environ,
+            clean_env(
+                FA_BUNDLE_TARBALL=self._tarball(),
+                FA_PROVIDER_CONFIG="{}",
+            ),
+        ):
+            agent = harbor_fa.FaAgent(Path(self._tarball()).parent / "logs")
+            self.assertEqual(
+                agent._provider_env.get("FAH_JOB_LOG_DIR"),
+                "/tmp/fa-harness-artifacts/bash_jobs",
+            )
+
+
 def clean_env_all(**overrides):
     env = {
         name: value
