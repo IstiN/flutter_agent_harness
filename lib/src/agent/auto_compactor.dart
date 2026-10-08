@@ -194,17 +194,8 @@ final class AutoCompactor {
 
   /// The pinned-operative payload derived from [operativeSkills] (null
   /// when the skills declare no operative lines).
-  PinnedOperativePayload? get pinnedOperative {
-    if (operativeSkills.isEmpty) return null;
-    final registry = SkillOperativePins.build(operativeSkills);
-    if (registry.isEmpty) return null;
-    final block = pinnedOperativePromptBlock(registry);
-    if (block == null) return null;
-    return PinnedOperativePayload(
-      block: block,
-      lines: {for (final pin in registry.pins) pin.line},
-    );
-  }
+  PinnedOperativePayload? get pinnedOperative =>
+      pinnedOperativePayloadOf(operativeSkills);
 
   /// Upper bound on pass count per [run]. Picked so a 1M→200k session
   /// compacts down in 2-3 passes; deep enough for the worst case but
@@ -788,8 +779,25 @@ class AutoCompactorSources {
   final Model mainModel;
 }
 
-/// Hosts plug in their own [AutoCompactorSources], hooks, and settings;
-/// the factory wires the smol/main summarizers with the configured
+/// Builds the gh-1409 summarization payload for [skills]: the rendered
+/// verbatim-preserve block plus the raw pin lines for the sanitizer's
+/// exemption. `null` when the skills declare no operative lines (the
+/// ONE derivation shared by [AutoCompactor] and [AutoCompactorFactory]).
+PinnedOperativePayload? pinnedOperativePayloadOf(List<Skill> skills) {
+  if (skills.isEmpty) return null;
+  final registry = SkillOperativePins.build(skills);
+  if (registry.isEmpty) return null;
+  final block = pinnedOperativePromptBlock(registry);
+  if (block == null) return null;
+  return PinnedOperativePayload(
+    block: block,
+    lines: {for (final pin in registry.pins) pin.line},
+  );
+}
+
+/// Compact helper that owns the multi-pass + retry + smol→main logic for
+/// hosts that build their compactor through the factory: the factory
+/// wires the smol/main summarizers with the configured
 /// [CompactionPrompts] and optional memory hook, then runs the loop.
 ///
 /// When [force] is `true` the compactor skips [shouldCompact] — used by
@@ -849,17 +857,8 @@ class AutoCompactorFactory {
 
   /// The pinned-operative payload derived from [operativeSkills] (null
   /// when the skills declare no operative lines).
-  PinnedOperativePayload? get pinnedOperative {
-    if (operativeSkills.isEmpty) return null;
-    final registry = SkillOperativePins.build(operativeSkills);
-    if (registry.isEmpty) return null;
-    final block = pinnedOperativePromptBlock(registry);
-    if (block == null) return null;
-    return PinnedOperativePayload(
-      block: block,
-      lines: {for (final pin in registry.pins) pin.line},
-    );
-  }
+  PinnedOperativePayload? get pinnedOperative =>
+      pinnedOperativePayloadOf(operativeSkills);
 
   /// Per-attempt wall-clock budget, forwarded to the built [AutoCompactor].
   final Duration attemptBudget;
