@@ -71,6 +71,9 @@ extension AgentCliLifecycle on AgentCli {
   ) async {
     _cancelPendingAnswers();
     _hubTeardown();
+    unawaited(_subagentBoardSub?.cancel());
+    _subagentBoardSub = null;
+    _subagentBoard.dispose();
     await releasePowerAssertions();
     final exitSpec = _cubeEnv.activeSpec;
     if (exitSpec != null) {

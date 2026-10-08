@@ -153,8 +153,13 @@ void main() {
         );
         expect(
           frames.plain.substring(closedMark),
-          isNot(contains('scout#1')),
-          reason: 'no overlay content leaked into the chat view',
+          isNot(contains('scout#1 (explore)')),
+          reason:
+              'no overlay tree content leaked into the chat view — the '
+              'name alone is NOT a leak marker since gh-1415 (the compact '
+              'subagent status row legitimately paints `run scout#1` in '
+              'the chat view); anchor on the hub-only tree row form '
+              '`name (type) · status`',
         );
 
         // The user opens the hub again: bare /agents still opens (AC5) and
@@ -167,7 +172,9 @@ void main() {
         }, reason: '/agents still opens the hub and the tree has the child');
 
         keys.add([0x03]); // ctrl+c press 1: abort + armed window, stays (#830)
-        keys.add([0x03]); // press 2 within the window quits (outranks the modal)
+        keys.add([
+          0x03,
+        ]); // press 2 within the window quits (outranks the modal)
         await run;
       } finally {
         await io.close();
