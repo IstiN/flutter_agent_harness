@@ -1,5 +1,5 @@
 // gh-1403: the release-hygiene suite grew past the gh-1232 god-file
-// ceiling (2800 lines) when the IPA strip-step coverage landed here, so
+// ceiling (2800 lines) when the IPA strip-step coverage landed there, so
 // the strip-step concern moved to this sibling file (the established
 // split-by-concern pattern: agent_cli_test.dart → agent_cli_*_test.dart).
 //
@@ -148,8 +148,9 @@ ${runBlockOf(buildMobile, stripStep)}
             ]),
           );
           // The diet is real and reported.
-          final m = RegExp(r'IPA stripped: (\d+) -> (\d+)')
-              .firstMatch(proc.stdout as String);
+          final m = RegExp(
+            r'IPA stripped: (\d+) -> (\d+)',
+          ).firstMatch(proc.stdout as String);
           expect(
             m,
             isNotNull,
@@ -181,8 +182,9 @@ ${runBlockOf(buildMobile, stripStep)}
       test('missing IPA fails loudly with the ::error:: annotation', () {
         // The reachable real-world state: the build step ran and produced no
         // IPA (the dir exists, find matches nothing).
-        Directory('${sandbox.path}/flutter_app/build/ios/ipa')
-            .createSync(recursive: true);
+        Directory(
+          '${sandbox.path}/flutter_app/build/ios/ipa',
+        ).createSync(recursive: true);
         final proc = runStripStep();
         expect(proc.exitCode, 1);
         expect(

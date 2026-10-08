@@ -60,8 +60,9 @@ List<CreateBlock> extractCreates(String runText) {
 
     // tag = first positional argument on the create line itself.
     final createLine = stripComment(cmdLines.first).trim();
-    final tagMatch = RegExp(r'gh\s+release\s+create\s+("[^"]*"|\S+)')
-        .firstMatch(createLine);
+    final tagMatch = RegExp(
+      r'gh\s+release\s+create\s+("[^"]*"|\S+)',
+    ).firstMatch(createLine);
     final tag = tagMatch?.group(1);
 
     var title = <String?>[]; // collect from any line
@@ -301,10 +302,12 @@ fi
   git(['config', 'user.name', 't']);
   Directory('$seed/flutter_app').createSync();
   File('$seed/pubspec.yaml').writeAsStringSync('version: 0.1.495\n');
-  File('$seed/flutter_app/pubspec.yaml')
-      .writeAsStringSync('version: 0.1.495+1\n');
-  File('$seed/CHANGELOG.md')
-      .writeAsStringSync('# Changelog\n\n## Unreleased\n');
+  File(
+    '$seed/flutter_app/pubspec.yaml',
+  ).writeAsStringSync('version: 0.1.495+1\n');
+  File(
+    '$seed/CHANGELOG.md',
+  ).writeAsStringSync('# Changelog\n\n## Unreleased\n');
   // gh-1299: the seed ships the committed-lockfile shape of the real repo —
   // a STALE pubspec.lock (pins the PRE-bump parent version, exactly the
   // v1.0.515 drift) plus the tracked Podfile.lock inventory sibling.
@@ -318,15 +321,17 @@ fi
     '    version: "0.1.495"\n',
   );
   Directory('$seed/flutter_app/ios').createSync();
-  File('$seed/flutter_app/ios/Podfile.lock')
-      .writeAsStringSync('PODS:\n  - Flutter (3.47.6)\n');
+  File(
+    '$seed/flutter_app/ios/Podfile.lock',
+  ).writeAsStringSync('PODS:\n  - Flutter (3.47.6)\n');
   // The release script consumes the REAL lockfile inventory
   // (scripts/check_lockfiles.sh) for its dirty-tree gate — ship the real
   // gate script so the sandbox exercises the production list, not a copy.
   Directory('$seed/scripts').createSync();
   File('$seed/scripts/check_lockfiles.sh').writeAsStringSync(
-    File('${Directory.current.path}/scripts/check_lockfiles.sh')
-        .readAsStringSync(),
+    File(
+      '${Directory.current.path}/scripts/check_lockfiles.sh',
+    ).readAsStringSync(),
   );
   if (brokenInventory) {
     // PR #1304 rework threads 1+5: model a BROKEN inventory source — a bad
@@ -862,25 +867,28 @@ jobs:
       },
     );
 
-    test('AC6: ci.yml tag-publish path stays untouched (its creates are not draft-capable)', () {
-      final jobs = jobsOf('.github/workflows/ci.yml');
-      var creates = 0;
-      jobs.forEach((_, job) => creates += jobCreates(job).length);
-      expect(
-        creates,
-        greaterThan(0),
-        reason: 'ci.yml tag release create must still exist',
-      );
-      jobs.forEach((_, job) {
-        for (final c in jobCreates(job)) {
-          expect(
-            c.carriesAssets,
-            isFalse,
-            reason: 'ci.yml create must stay asset-free (AC6)',
-          );
-        }
-      });
-    });
+    test(
+      'AC6: ci.yml tag-publish path stays untouched (its creates are not draft-capable)',
+      () {
+        final jobs = jobsOf('.github/workflows/ci.yml');
+        var creates = 0;
+        jobs.forEach((_, job) => creates += jobCreates(job).length);
+        expect(
+          creates,
+          greaterThan(0),
+          reason: 'ci.yml tag release create must still exist',
+        );
+        jobs.forEach((_, job) {
+          for (final c in jobCreates(job)) {
+            expect(
+              c.carriesAssets,
+              isFalse,
+              reason: 'ci.yml create must stay asset-free (AC6)',
+            );
+          }
+        });
+      },
+    );
 
     test(
       'guard script: deletes own draft, spares published/missing releases',
@@ -908,35 +916,38 @@ jobs:
       },
     );
 
-    test('ownership: a failed leg cannot delete the sibling leg\'s mid-upload draft', () {
-      // daily-publish runs the macOS and mobile legs concurrently on the
-      // same derived tag: build-mobile run 999 is mid-upload (its draft is
-      // stamped run/999/job/release-mobile) when build-macos run 111 fails
-      // and its guard fires — it must refuse, not destroy the sibling.
-      final run = runGuard(
-        'sibling',
-        'true',
-        body: '<!-- release-draft-owner: run/999/job/release-mobile -->',
-        runId: '111',
-        job: 'release-macos',
-      );
-      expect(
-        run.log.where((l) => l.contains('release delete')),
-        isEmpty,
-        reason: 'a draft owned by another run+job must never be deleted',
-      );
-      expect(run.exitCode, 0, reason: 'refusal is a warning, not a failure');
-      expect(
-        run.out,
-        contains('refusing'),
-        reason: 'the refusal must be visible in the job log',
-      );
-      expect(
-        run.out,
-        contains('run/999/job/release-mobile'),
-        reason: 'the warning must name the actual owner',
-      );
-    });
+    test(
+      'ownership: a failed leg cannot delete the sibling leg\'s mid-upload draft',
+      () {
+        // daily-publish runs the macOS and mobile legs concurrently on the
+        // same derived tag: build-mobile run 999 is mid-upload (its draft is
+        // stamped run/999/job/release-mobile) when build-macos run 111 fails
+        // and its guard fires — it must refuse, not destroy the sibling.
+        final run = runGuard(
+          'sibling',
+          'true',
+          body: '<!-- release-draft-owner: run/999/job/release-mobile -->',
+          runId: '111',
+          job: 'release-macos',
+        );
+        expect(
+          run.log.where((l) => l.contains('release delete')),
+          isEmpty,
+          reason: 'a draft owned by another run+job must never be deleted',
+        );
+        expect(run.exitCode, 0, reason: 'refusal is a warning, not a failure');
+        expect(
+          run.out,
+          contains('refusing'),
+          reason: 'the refusal must be visible in the job log',
+        );
+        expect(
+          run.out,
+          contains('run/999/job/release-mobile'),
+          reason: 'the warning must name the actual owner',
+        );
+      },
+    );
 
     test(
       'ownership: a cross-job draft within the same run is still refused',
@@ -966,7 +977,8 @@ jobs:
         expect(
           run.log.where((l) => l.contains('release delete')),
           isEmpty,
-          reason: 'no marker, no proof of ownership — only the >24h sweeper may reclaim',
+          reason:
+              'no marker, no proof of ownership — only the >24h sweeper may reclaim',
         );
         expect(run.out, contains('refusing'));
       },
@@ -999,8 +1011,9 @@ jobs:
         '${_fixtureRoot.path}/attach-$name-${DateTime.now().microsecondsSinceEpoch}',
       )..createSync(recursive: true);
       final bin = stubGh(dir.path);
-      File('${dir.path}/view-seq.txt')
-          .writeAsStringSync('${viewSeq.join('\n')}\n');
+      File(
+        '${dir.path}/view-seq.txt',
+      ).writeAsStringSync('${viewSeq.join('\n')}\n');
       if (createFails) File('${dir.path}/create-fails').writeAsStringSync('');
       File('${dir.path}/a.zip').writeAsStringSync('asset-a');
       File('${dir.path}/b.zip').writeAsStringSync('asset-b');
@@ -1034,79 +1047,88 @@ jobs:
       );
     }
 
-    test('release exists → attach: upload every asset --clobber, re-assert --latest, no create', () {
-      final run = runAttach('exists', ['exists']);
-      expect(run.exitCode, 0);
-      expect(
-        run.log.where((l) => l.contains('release create')),
-        isEmpty,
-        reason: 'the release already exists — only attach',
-      );
-      expect(
-        run.log,
-        contains('release upload v1.2.3 a.zip --clobber --repo OWNER/REPO'),
-      );
-      expect(
-        run.log,
-        contains('release upload v1.2.3 b.zip --clobber --repo OWNER/REPO'),
-      );
-      expect(
-        run.log,
-        contains('release edit v1.2.3 --latest --repo OWNER/REPO'),
-      );
-    });
+    test(
+      'release exists → attach: upload every asset --clobber, re-assert --latest, no create',
+      () {
+        final run = runAttach('exists', ['exists']);
+        expect(run.exitCode, 0);
+        expect(
+          run.log.where((l) => l.contains('release create')),
+          isEmpty,
+          reason: 'the release already exists — only attach',
+        );
+        expect(
+          run.log,
+          contains('release upload v1.2.3 a.zip --clobber --repo OWNER/REPO'),
+        );
+        expect(
+          run.log,
+          contains('release upload v1.2.3 b.zip --clobber --repo OWNER/REPO'),
+        );
+        expect(
+          run.log,
+          contains('release edit v1.2.3 --latest --repo OWNER/REPO'),
+        );
+      },
+    );
 
-    test('missing → create: bare-tag title, --latest, assets ride the create, body carries the ownership marker', () {
-      final run = runAttach('create', ['missing']);
-      expect(run.exitCode, 0);
-      final createLine = run.log.firstWhere(
-        (l) => l.contains('release create'),
-      );
-      expect(createLine, contains('v1.2.3'));
-      expect(createLine, contains('--title v1.2.3'));
-      expect(createLine, contains('--latest'));
-      expect(createLine, contains('a.zip'));
-      expect(createLine, contains('b.zip'));
-      expect(run.createdNotes, isNotNull);
-      expect(
-        run.createdNotes,
-        contains('curated notes'),
-        reason: 'the prepared notes must stay the body',
-      );
-      expect(
-        run.createdNotes,
-        contains('release-draft-owner: run/111/job/release-macos'),
-        reason:
-            'the draft body must stamp its owner so the guard can verify it',
-      );
-    });
+    test(
+      'missing → create: bare-tag title, --latest, assets ride the create, body carries the ownership marker',
+      () {
+        final run = runAttach('create', ['missing']);
+        expect(run.exitCode, 0);
+        final createLine = run.log.firstWhere(
+          (l) => l.contains('release create'),
+        );
+        expect(createLine, contains('v1.2.3'));
+        expect(createLine, contains('--title v1.2.3'));
+        expect(createLine, contains('--latest'));
+        expect(createLine, contains('a.zip'));
+        expect(createLine, contains('b.zip'));
+        expect(run.createdNotes, isNotNull);
+        expect(
+          run.createdNotes,
+          contains('curated notes'),
+          reason: 'the prepared notes must stay the body',
+        );
+        expect(
+          run.createdNotes,
+          contains('release-draft-owner: run/111/job/release-macos'),
+          reason:
+              'the draft body must stamp its owner so the guard can verify it',
+        );
+      },
+    );
 
-    test('E3 race: create loses to a concurrent winner → attach idempotently, exit 0', () {
-      // The view said "missing", another job/run created the release
-      // before our create landed. Old code failed here — and the failing
-      // job's guard then deleted the WINNER's in-flight draft.
-      final run = runAttach('race', ['missing', 'exists'], createFails: true);
-      expect(
-        run.exitCode,
-        0,
-        reason: 'a lost create race must not fail the job',
-      );
-      expect(
-        run.log.where((l) => l.contains('release create')).length,
-        1,
-        reason: 'the create was attempted exactly once',
-      );
-      expect(
-        run.log,
-        contains('release upload v1.2.3 a.zip --clobber --repo OWNER/REPO'),
-        reason: 'the loser must attach to the winner\'s release',
-      );
-      expect(
-        run.log,
-        contains('release edit v1.2.3 --latest --repo OWNER/REPO'),
-      );
-      expect(run.out.toLowerCase(), contains('race'));
-    });
+    test(
+      'E3 race: create loses to a concurrent winner → attach idempotently, exit 0',
+      () {
+        // The view said "missing", another job/run created the release
+        // before our create landed. Old code failed here — and the failing
+        // job's guard then deleted the WINNER's in-flight draft.
+        final run = runAttach('race', ['missing', 'exists'], createFails: true);
+        expect(
+          run.exitCode,
+          0,
+          reason: 'a lost create race must not fail the job',
+        );
+        expect(
+          run.log.where((l) => l.contains('release create')).length,
+          1,
+          reason: 'the create was attempted exactly once',
+        );
+        expect(
+          run.log,
+          contains('release upload v1.2.3 a.zip --clobber --repo OWNER/REPO'),
+          reason: 'the loser must attach to the winner\'s release',
+        );
+        expect(
+          run.log,
+          contains('release edit v1.2.3 --latest --repo OWNER/REPO'),
+        );
+        expect(run.out.toLowerCase(), contains('race'));
+      },
+    );
 
     test(
       'create fails and nothing exists → loud failure (not a silent || true)',
@@ -1124,44 +1146,47 @@ jobs:
       },
     );
 
-    test('workflows route draft-capable creates through the script (one race-safe path)', () {
-      final script = File('scripts/release_attach_or_create.sh');
-      expect(
-        script.existsSync(),
-        isTrue,
-        reason: 'release_attach_or_create.sh must exist',
-      );
-      for (final wf in [
-        '.github/workflows/build-macos.yml',
-        '.github/workflows/build-mobile.yml',
-      ]) {
+    test(
+      'workflows route draft-capable creates through the script (one race-safe path)',
+      () {
+        final script = File('scripts/release_attach_or_create.sh');
         expect(
-          read(wf),
-          contains('release_attach_or_create.sh'),
-          reason:
-              '$wf must route its asset-carrying create through the shared script',
+          script.existsSync(),
+          isTrue,
+          reason: 'release_attach_or_create.sh must exist',
         );
-        jobsOf(wf).forEach((jobId, job) {
-          for (final c in jobCreates(job)) {
-            expect(
-              c.carriesAssets,
-              isFalse,
-              reason:
-                  '$wf job "$jobId": asset-carrying creates must live in '
-                  'release_attach_or_create.sh (race-idempotent, marker-stamped)',
-            );
-          }
-        });
-      }
-      final creates = extractCreates(
-        read('scripts/release_attach_or_create.sh'),
-      );
-      expect(creates, hasLength(1));
-      expect(creates.single.carriesAssets, isTrue);
-      expect(creates.single.hasTitle, isTrue);
-      expect(creates.single.title, creates.single.tag);
-      expect(creates.single.text, contains('--latest'));
-    });
+        for (final wf in [
+          '.github/workflows/build-macos.yml',
+          '.github/workflows/build-mobile.yml',
+        ]) {
+          expect(
+            read(wf),
+            contains('release_attach_or_create.sh'),
+            reason:
+                '$wf must route its asset-carrying create through the shared script',
+          );
+          jobsOf(wf).forEach((jobId, job) {
+            for (final c in jobCreates(job)) {
+              expect(
+                c.carriesAssets,
+                isFalse,
+                reason:
+                    '$wf job "$jobId": asset-carrying creates must live in '
+                    'release_attach_or_create.sh (race-idempotent, marker-stamped)',
+              );
+            }
+          });
+        }
+        final creates = extractCreates(
+          read('scripts/release_attach_or_create.sh'),
+        );
+        expect(creates, hasLength(1));
+        expect(creates.single.carriesAssets, isTrue);
+        expect(creates.single.hasTitle, isTrue);
+        expect(creates.single.title, creates.single.tag);
+        expect(creates.single.text, contains('--latest'));
+      },
+    );
   });
 
   // ── AC3 — one naming scheme: bare vX.Y.Z (UT-naming) ────────────────────
@@ -1296,18 +1321,13 @@ gh release create "v9.9.9" \
     });
 
     test('fallback: conventional commits since the previous tag, grouped', () {
-      final repo = fixtureRepo(
-        'notes-group',
-        ['chore: seed'],
-        ['v2.0.0'],
-        null,
-        [
-          'feat(cli): shiny new thing',
-          'fix: crash on start',
-          'chore: deps bump',
-          'docs: readme',
-        ],
-      );
+      final repo =
+          fixtureRepo('notes-group', ['chore: seed'], ['v2.0.0'], null, [
+            'feat(cli): shiny new thing',
+            'fix: crash on start',
+            'chore: deps bump',
+            'docs: readme',
+          ]);
       final out = notes(repo, ['2.0.1']);
       expect(out, contains('Features'));
       expect(out, contains('shiny new thing'));
@@ -1362,81 +1382,88 @@ gh release create "v9.9.9" \
           .toList(),
     );
 
-    test('old bot draft deleted, fresh untouched, human kept; issue filed naming the run', () {
-      final freshDate = DateTime.now()
-          .toUtc()
-          .subtract(const Duration(hours: 1))
-          .toIso8601String()
-          .substring(0, 19);
-      final run = runSweeper('one', {
-        'releases.json': releasesJson([
-          {
-            'tag': 'v0.1.190',
-            'id': 111,
-            'created': oldDate,
-            'author': 'github-actions[bot]',
-            'type': 'Bot',
-          },
-          {
-            'tag': 'v9.9.9',
-            'id': 222,
-            'created': '${freshDate}Z',
-            'author': 'github-actions[bot]',
-            'type': 'Bot',
-          },
-          {
-            'tag': 'v0.2.0',
-            'id': 333,
-            'created': oldDate,
-            'author': 'somehuman',
-            'type': 'User',
-          },
-        ]),
-        'issues.tsv': '',
-        'runs.tsv': 'https://github.com/OWNER/REPO/actions/runs/9999\n',
-      });
-      expect(
-        run.log,
-        contains('api -X DELETE repos/OWNER/REPO/releases/111'),
-        reason: 'stale bot draft must be deleted by release id',
-      );
-      expect(
-        run.log,
-        isNot(contains('releases/222')),
-        reason: 'fresh (<24h) draft must be untouched',
-      );
-      expect(
-        run.log,
-        isNot(contains('releases/333')),
-        reason: 'human draft must never be deleted (E1)',
-      );
-      expect(
-        run.log,
-        anyElement(contains('issue create')),
-        reason: 'dedup issue must be filed',
-      );
-      expect(run.body, isNotNull, reason: 'an issue body must have been filed');
-      expect(
-        run.body,
-        contains('v0.1.190'),
-        reason: 'deleted draft must be named in the issue',
-      );
-      expect(
-        run.body,
-        contains('actions/runs/9999'),
-        reason: 'the creating run must be named in the issue',
-      );
-      expect(
-        run.body,
-        contains('v0.2.0'),
-        reason: 'human draft must be listed in the issue',
-      );
-      expect(
-        run.stdoutText,
-        contains('v0.1.190'),
-        reason: 'deleted draft must be named in the report',
-      );
-    });
+    test(
+      'old bot draft deleted, fresh untouched, human kept; issue filed naming the run',
+      () {
+        final freshDate = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(hours: 1))
+            .toIso8601String()
+            .substring(0, 19);
+        final run = runSweeper('one', {
+          'releases.json': releasesJson([
+            {
+              'tag': 'v0.1.190',
+              'id': 111,
+              'created': oldDate,
+              'author': 'github-actions[bot]',
+              'type': 'Bot',
+            },
+            {
+              'tag': 'v9.9.9',
+              'id': 222,
+              'created': '${freshDate}Z',
+              'author': 'github-actions[bot]',
+              'type': 'Bot',
+            },
+            {
+              'tag': 'v0.2.0',
+              'id': 333,
+              'created': oldDate,
+              'author': 'somehuman',
+              'type': 'User',
+            },
+          ]),
+          'issues.tsv': '',
+          'runs.tsv': 'https://github.com/OWNER/REPO/actions/runs/9999\n',
+        });
+        expect(
+          run.log,
+          contains('api -X DELETE repos/OWNER/REPO/releases/111'),
+          reason: 'stale bot draft must be deleted by release id',
+        );
+        expect(
+          run.log,
+          isNot(contains('releases/222')),
+          reason: 'fresh (<24h) draft must be untouched',
+        );
+        expect(
+          run.log,
+          isNot(contains('releases/333')),
+          reason: 'human draft must never be deleted (E1)',
+        );
+        expect(
+          run.log,
+          anyElement(contains('issue create')),
+          reason: 'dedup issue must be filed',
+        );
+        expect(
+          run.body,
+          isNotNull,
+          reason: 'an issue body must have been filed',
+        );
+        expect(
+          run.body,
+          contains('v0.1.190'),
+          reason: 'deleted draft must be named in the issue',
+        );
+        expect(
+          run.body,
+          contains('actions/runs/9999'),
+          reason: 'the creating run must be named in the issue',
+        );
+        expect(
+          run.body,
+          contains('v0.2.0'),
+          reason: 'human draft must be listed in the issue',
+        );
+        expect(
+          run.stdoutText,
+          contains('v0.1.190'),
+          reason: 'deleted draft must be named in the report',
+        );
+      },
+    );
 
     test(
       'idempotent re-run: comments on the open issue instead of duplicating',
@@ -1557,54 +1584,143 @@ gh release create "v9.9.9" \
       }
     });
 
-    test('release flow is direct-push: auto_release.sh pushes the bump to main as the App, tag_release.sh cuts tag+release', () {
-      // gh-1172: the fa-release-bot GitHub App is the only bypass actor on
-      // the main ruleset, so the bump commit pushes directly (the 2026-09-29
-      // PR stopgap is retired — it burned a full CI queue cycle + machine
-      // review round per chore bump). The release-tag job cuts the tag +
-      // GitHub Release from the pushed bump commit; the tag rides the same
-      // App token so the tag-scoped binaries/publish jobs fire.
-      final auto = read('scripts/auto_release.sh');
-      expect(
-        auto,
-        contains('git push origin HEAD:main'),
-        reason: 'the bump pushes straight to main (App bypass) — no PR',
-      );
-      expect(
-        auto,
-        isNot(contains('gh pr create')),
-        reason: 'release PRs are retired (gh-1172)',
-      );
-      expect(
-        auto,
-        isNot(contains('chore/release-v')),
-        reason: 'no release branch is created anymore',
-      );
-      expect(
-        auto,
-        isNot(contains('git tag -a')),
-        reason: 'tagging moved to tag_release.sh (tag rides the App token)',
-      );
-      expect(
-        auto,
-        contains('RELEASE_DRY_RUN'),
-        reason: 'AC1: the dry-run switch must gate the push',
-      );
-      final tagScript = read('scripts/tag_release.sh');
-      expect(tagScript, contains(r'git tag -a "$tag"'));
-      expect(tagScript, contains(r'git push origin "$tag"'));
-    });
+    test(
+      'release flow is direct-push: auto_release.sh pushes the bump to main as the App, tag_release.sh cuts tag+release',
+      () {
+        // gh-1172: the fa-release-bot GitHub App is the only bypass actor on
+        // the main ruleset, so the bump commit pushes directly (the 2026-09-29
+        // PR stopgap is retired — it burned a full CI queue cycle + machine
+        // review round per chore bump). The release-tag job cuts the tag +
+        // GitHub Release from the pushed bump commit; the tag rides the same
+        // App token so the tag-scoped binaries/publish jobs fire.
+        final auto = read('scripts/auto_release.sh');
+        expect(
+          auto,
+          contains('git push origin HEAD:main'),
+          reason: 'the bump pushes straight to main (App bypass) — no PR',
+        );
+        expect(
+          auto,
+          isNot(contains('gh pr create')),
+          reason: 'release PRs are retired (gh-1172)',
+        );
+        expect(
+          auto,
+          isNot(contains('chore/release-v')),
+          reason: 'no release branch is created anymore',
+        );
+        expect(
+          auto,
+          isNot(contains('git tag -a')),
+          reason: 'tagging moved to tag_release.sh (tag rides the App token)',
+        );
+        expect(
+          auto,
+          contains('RELEASE_DRY_RUN'),
+          reason: 'AC1: the dry-run switch must gate the push',
+        );
+        final tagScript = read('scripts/tag_release.sh');
+        expect(tagScript, contains(r'git tag -a "$tag"'));
+        expect(tagScript, contains(r'git push origin "$tag"'));
+      },
+    );
 
-    test('release jobs authenticate via the fa-release-bot App token (mint step + checkout + GH_TOKEN)', () {
-      // gh-1172 fix-contract item 1: both release jobs mint a job-scoped
-      // installation token via actions/create-github-app-token from
-      // RELEASE_APP_ID / RELEASE_APP_PRIVATE_KEY and use it for checkout
-      // (push auth) — and release-tag additionally exports it as GH_TOKEN
-      // for `gh release create` (the #1093 BLOCK finding: without an
-      // explicit token the create was a guaranteed silent no-op).
-      final ci = jobsOf('.github/workflows/ci.yml');
-      for (final jobName in ['release', 'release-tag']) {
-        final job = ci[jobName] as YamlMap;
+    test(
+      'release jobs authenticate via the fa-release-bot App token (mint step + checkout + GH_TOKEN)',
+      () {
+        // gh-1172 fix-contract item 1: both release jobs mint a job-scoped
+        // installation token via actions/create-github-app-token from
+        // RELEASE_APP_ID / RELEASE_APP_PRIVATE_KEY and use it for checkout
+        // (push auth) — and release-tag additionally exports it as GH_TOKEN
+        // for `gh release create` (the #1093 BLOCK finding: without an
+        // explicit token the create was a guaranteed silent no-op).
+        final ci = jobsOf('.github/workflows/ci.yml');
+        for (final jobName in ['release', 'release-tag']) {
+          final job = ci[jobName] as YamlMap;
+          final steps = job['steps'] as YamlList;
+          final mint = steps
+              .map((s) => s as YamlMap)
+              .firstWhere(
+                (s) =>
+                    s['uses']?.toString().startsWith(
+                      'actions/create-github-app-token@',
+                    ) ??
+                    false,
+                orElse: () => throw TestFailure(
+                  '$jobName must mint the fa-release-bot token via '
+                  'actions/create-github-app-token',
+                ),
+              );
+          expect(
+            mint['id']?.toString(),
+            'app-token',
+            reason:
+                '$jobName token step id must be app-token for the wiring below',
+          );
+          expect(
+            mint['with']['app-id']?.toString(),
+            equals(r'${{ secrets.RELEASE_APP_ID }}'),
+          );
+          expect(
+            mint['with']['private-key']?.toString(),
+            equals(r'${{ secrets.RELEASE_APP_PRIVATE_KEY }}'),
+          );
+          expect(
+            mint['with']['permissions']?.toString(),
+            'contents:write',
+            reason:
+                '$jobName mint must scope the token to contents:write — the App '
+                'is the ruleset bypass actor, so an unscoped token carries every '
+                'permission the installation has (gh-1172 round-2 review, least privilege)',
+          );
+          final checkout = steps
+              .map((s) => s as YamlMap)
+              .firstWhere(
+                (s) =>
+                    s['uses']?.toString().startsWith('actions/checkout') ??
+                    false,
+              );
+          expect(
+            checkout['with']['token']?.toString(),
+            jobName == 'release'
+                ? equals(
+                    r'${{ steps.app-token.outputs.token || github.token }}',
+                  )
+                : equals(r'${{ steps.app-token.outputs.token }}'),
+            reason:
+                '$jobName checkout must ride the App token — GITHUB_TOKEN '
+                'tags/pushes never fire tag-scoped jobs (release additionally '
+                'falls back to github.token when the dry-run gate skips the mint)',
+          );
+        }
+        final tagSteps = ci['release-tag']['steps'] as YamlList;
+        final tagStep = tagSteps
+            .map((s) => s as YamlMap)
+            .firstWhere(
+              (s) => s['run']?.toString().contains('tag_release.sh') ?? false,
+            );
+        expect(
+          (tagStep['env'] as YamlMap)['GH_TOKEN']?.toString(),
+          equals(r'${{ steps.app-token.outputs.token }}'),
+          reason: 'gh release create needs GH_TOKEN=App token (#1093 review)',
+        );
+      },
+    );
+    test(
+      'dry-run dispatch carries no bypass credential (mint gated, checkout falls back, job reads)',
+      () {
+        // gh-1172 round-3 BLOCK: the AC1 dry-run arm fires on ANY ref, so the
+        // dispatched (PR-head) auto_release.sh must never hold the bypass App
+        // token — "never pushes" would otherwise be enforced only by the very
+        // script under test (a PR can edit it to ignore the flag, or spend
+        // the checkout-stored token directly: push HEAD to main, push a v*
+        // tag → the OIDC publish job → attacker-controlled pub.dev package).
+        // A dry-run needs no push credential at all: the mint is gated off on
+        // dry-run, checkout falls back to the plain GITHUB_TOKEN, and the job
+        // token itself stays read-only so no write-capable second credential
+        // exists on an untrusted ref.
+        final ci = jobsOf('.github/workflows/ci.yml');
+        final job = ci['release'] as YamlMap;
         final steps = job['steps'] as YamlList;
         final mint = steps
             .map((s) => s as YamlMap)
@@ -1614,32 +1730,14 @@ gh release create "v9.9.9" \
                     'actions/create-github-app-token@',
                   ) ??
                   false,
-              orElse: () => throw TestFailure(
-                '$jobName must mint the fa-release-bot token via '
-                'actions/create-github-app-token',
-              ),
             );
         expect(
-          mint['id']?.toString(),
-          'app-token',
+          mint['if']?.toString(),
+          equals('inputs.releaseDryRun != true'),
           reason:
-              '$jobName token step id must be app-token for the wiring below',
-        );
-        expect(
-          mint['with']['app-id']?.toString(),
-          equals(r'${{ secrets.RELEASE_APP_ID }}'),
-        );
-        expect(
-          mint['with']['private-key']?.toString(),
-          equals(r'${{ secrets.RELEASE_APP_PRIVATE_KEY }}'),
-        );
-        expect(
-          mint['with']['permissions']?.toString(),
-          'contents:write',
-          reason:
-              '$jobName mint must scope the token to contents:write — the App '
-              'is the ruleset bypass actor, so an unscoped token carries every '
-              'permission the installation has (gh-1172 round-2 review, least privilege)',
+              'dry-run never pushes — mint NO bypass credential on untrusted '
+              'refs (the real arms — push, schedule, releaseDispatch — all see '
+              'a non-true releaseDryRun and still mint)',
         );
         final checkout = steps
             .map((s) => s as YamlMap)
@@ -1649,100 +1747,45 @@ gh release create "v9.9.9" \
             );
         expect(
           checkout['with']['token']?.toString(),
-          jobName == 'release'
-              ? equals(r'${{ steps.app-token.outputs.token || github.token }}')
-              : equals(r'${{ steps.app-token.outputs.token }}'),
+          equals(r'${{ steps.app-token.outputs.token || github.token }}'),
           reason:
-              '$jobName checkout must ride the App token — GITHUB_TOKEN '
-              'tags/pushes never fire tag-scoped jobs (release additionally '
-              'falls back to github.token when the dry-run gate skips the mint)',
+              'with the mint skipped, checkout must fall back to the plain '
+              'GITHUB_TOKEN (a skipped step emits empty outputs, falsy in GHA)',
         );
-      }
-      final tagSteps = ci['release-tag']['steps'] as YamlList;
-      final tagStep = tagSteps
-          .map((s) => s as YamlMap)
-          .firstWhere(
-            (s) => s['run']?.toString().contains('tag_release.sh') ?? false,
-          );
-      expect(
-        (tagStep['env'] as YamlMap)['GH_TOKEN']?.toString(),
-        equals(r'${{ steps.app-token.outputs.token }}'),
-        reason: 'gh release create needs GH_TOKEN=App token (#1093 review)',
-      );
-    });
-    test('dry-run dispatch carries no bypass credential (mint gated, checkout falls back, job reads)', () {
-      // gh-1172 round-3 BLOCK: the AC1 dry-run arm fires on ANY ref, so the
-      // dispatched (PR-head) auto_release.sh must never hold the bypass App
-      // token — "never pushes" would otherwise be enforced only by the very
-      // script under test (a PR can edit it to ignore the flag, or spend
-      // the checkout-stored token directly: push HEAD to main, push a v*
-      // tag → the OIDC publish job → attacker-controlled pub.dev package).
-      // A dry-run needs no push credential at all: the mint is gated off on
-      // dry-run, checkout falls back to the plain GITHUB_TOKEN, and the job
-      // token itself stays read-only so no write-capable second credential
-      // exists on an untrusted ref.
-      final ci = jobsOf('.github/workflows/ci.yml');
-      final job = ci['release'] as YamlMap;
-      final steps = job['steps'] as YamlList;
-      final mint = steps
-          .map((s) => s as YamlMap)
-          .firstWhere(
-            (s) =>
-                s['uses']?.toString().startsWith(
-                  'actions/create-github-app-token@',
-                ) ??
-                false,
-          );
-      expect(
-        mint['if']?.toString(),
-        equals('inputs.releaseDryRun != true'),
-        reason:
-            'dry-run never pushes — mint NO bypass credential on untrusted '
-            'refs (the real arms — push, schedule, releaseDispatch — all see '
-            'a non-true releaseDryRun and still mint)',
-      );
-      final checkout = steps
-          .map((s) => s as YamlMap)
-          .firstWhere(
-            (s) =>
-                s['uses']?.toString().startsWith('actions/checkout') ?? false,
-          );
-      expect(
-        checkout['with']['token']?.toString(),
-        equals(r'${{ steps.app-token.outputs.token || github.token }}'),
-        reason:
-            'with the mint skipped, checkout must fall back to the plain '
-            'GITHUB_TOKEN (a skipped step emits empty outputs, falsy in GHA)',
-      );
-      expect(
-        (job['permissions'] as YamlMap)['contents'].toString(),
-        'read',
-        reason:
-            'the push rides the checkout App token exclusively — the job '
-            'GITHUB_TOKEN never needs write, so a dry-run dispatch of a PR '
-            'head holds no write-capable credential at all',
-      );
-    });
+        expect(
+          (job['permissions'] as YamlMap)['contents'].toString(),
+          'read',
+          reason:
+              'the push rides the checkout App token exclusively — the job '
+              'GITHUB_TOKEN never needs write, so a dry-run dispatch of a PR '
+              'head holds no write-capable credential at all',
+        );
+      },
+    );
 
-    test('auto_release.sh untagged guard keys on pubspec version with a wedge escape', () {
-      // IMPORTANT finding on PR #1093 (2026-09-30): subject-keying wedged
-      // auto-release forever when release-tag missed (any non-squash or
-      // interleaved merge changes the subject, not the version). Keyed on
-      // the pubspec version with a 1h escape hatch instead.
-      final auto = read('scripts/auto_release.sh');
-      expect(
-        auto,
-        contains(
-          r'''head_version=$(git show origin/main:pubspec.yaml | sed -n 's/^version: //p')''',
-        ),
-        reason: 'the untagged guard must key on the pubspec version',
-      );
-      expect(
-        auto,
-        contains('-lt 3600'),
-        reason: 'after 1h untagged the guard must let the next bump absorb the range (no indefinite wedge)',
-      );
-    });
+    test(
+      'auto_release.sh untagged guard keys on pubspec version with a wedge escape',
+      () {
+        // IMPORTANT finding on PR #1093 (2026-09-30): subject-keying wedged
+        // auto-release forever when release-tag missed (any non-squash or
+        // interleaved merge changes the subject, not the version). Keyed on
+        // the pubspec version with a 1h escape hatch instead.
+        final auto = read('scripts/auto_release.sh');
+        expect(
+          auto,
+          contains(
+            r'''head_version=$(git show origin/main:pubspec.yaml | sed -n 's/^version: //p')''',
+          ),
+          reason: 'the untagged guard must key on the pubspec version',
+        );
+        expect(
+          auto,
+          contains('-lt 3600'),
+          reason:
+              'after 1h untagged the guard must let the next bump absorb the range (no indefinite wedge)',
+        );
+      },
+    );
 
     test(
       'daily-publish.yml carries the sweeper job, ungated by leg results',
@@ -1763,190 +1806,200 @@ gh release create "v9.9.9" \
       },
     );
 
-    test('sweep-drafts grants actions:read — gh run list 403s without it (review of #294)', () {
-      // The sweeper names each swept draft's creating run via `gh run list`;
-      // without actions:read GitHub answers 403 and the script's || true
-      // hides it, silently degrading every sweep issue to "no run on ref".
-      // The stub enforces the YAML-declared scopes on every AC2 run above;
-      // this pins the grant explicitly.
-      final perms =
-          jobsOf(
-                '.github/workflows/daily-publish.yml',
-              )['sweep-drafts']['permissions']
-              as YamlMap;
-      expect(
-        perms.containsKey('actions'),
-        isTrue,
-        reason: 'sweep-drafts must grant actions:read for gh run list',
-      );
-      expect(perms['actions'].toString(), 'read');
-      expect(
-        sweepPermissions().split(RegExp(r'\s+')),
-        contains('actions'),
-        reason: 'the stub-enforced scope list must include actions',
-      );
-    });
-    test('release job never fires from a bare workflow_dispatch (SM validation dispatches pass no inputs)', () {
-      // gh-1172 round-2 BLOCK: ci.yml is the repo's dispatch-only CI —
-      // machine-sm.yml -> smAgent.js dispatchCiWorkflow() runs
-      // `gh workflow run ci.yml --ref <pr-branch>` with NO inputs, and
-      // sm-kicker / machine-merge dispatch it the same way. An ungated
-      // `|| github.event_name == 'workflow_dispatch'` arm makes every green
-      // validation dispatch execute the dispatched (PR-head) ref's
-      // auto_release.sh with the bypass App's push credentials — an
-      // accidental release and a privilege-escalation path in one. Every
-      // dispatch arm must be conjunctive with an explicit inputs.release*
-      // opt-in, and the real-push arm must additionally be ref-restricted
-      // to main.
-      final ci = jobsOf('.github/workflows/ci.yml');
-      final releaseIf = (ci['release'] as YamlMap)['if'].toString();
+    test(
+      'sweep-drafts grants actions:read — gh run list 403s without it (review of #294)',
+      () {
+        // The sweeper names each swept draft's creating run via `gh run list`;
+        // without actions:read GitHub answers 403 and the script's || true
+        // hides it, silently degrading every sweep issue to "no run on ref".
+        // The stub enforces the YAML-declared scopes on every AC2 run above;
+        // this pins the grant explicitly.
+        final perms =
+            jobsOf(
+                  '.github/workflows/daily-publish.yml',
+                )['sweep-drafts']['permissions']
+                as YamlMap;
+        expect(
+          perms.containsKey('actions'),
+          isTrue,
+          reason: 'sweep-drafts must grant actions:read for gh run list',
+        );
+        expect(perms['actions'].toString(), 'read');
+        expect(
+          sweepPermissions().split(RegExp(r'\s+')),
+          contains('actions'),
+          reason: 'the stub-enforced scope list must include actions',
+        );
+      },
+    );
+    test(
+      'release job never fires from a bare workflow_dispatch (SM validation dispatches pass no inputs)',
+      () {
+        // gh-1172 round-2 BLOCK: ci.yml is the repo's dispatch-only CI —
+        // machine-sm.yml -> smAgent.js dispatchCiWorkflow() runs
+        // `gh workflow run ci.yml --ref <pr-branch>` with NO inputs, and
+        // sm-kicker / machine-merge dispatch it the same way. An ungated
+        // `|| github.event_name == 'workflow_dispatch'` arm makes every green
+        // validation dispatch execute the dispatched (PR-head) ref's
+        // auto_release.sh with the bypass App's push credentials — an
+        // accidental release and a privilege-escalation path in one. Every
+        // dispatch arm must be conjunctive with an explicit inputs.release*
+        // opt-in, and the real-push arm must additionally be ref-restricted
+        // to main.
+        final ci = jobsOf('.github/workflows/ci.yml');
+        final releaseIf = (ci['release'] as YamlMap)['if'].toString();
 
-      // Dispatch arms are the parenthesized `(...)` groups whose condition
-      // STARTS with the workflow_dispatch check — balanced-paren scan so a
-      // nested `chore(release):` string can never confuse the split.
-      const wd = "github.event_name == 'workflow_dispatch'";
-      final dispatchArms = <String>[];
-      for (var i = 0; i < releaseIf.length; i++) {
-        if (releaseIf[i] != '(') continue;
-        var depth = 0;
-        for (var j = i; j < releaseIf.length; j++) {
-          if (releaseIf[j] == '(') {
-            depth++;
-          } else if (releaseIf[j] == ')') {
-            depth--;
-            if (depth == 0) {
-              final inner = releaseIf.substring(i + 1, j).trim();
-              if (inner.startsWith(wd)) dispatchArms.add(inner);
-              break;
+        // Dispatch arms are the parenthesized `(...)` groups whose condition
+        // STARTS with the workflow_dispatch check — balanced-paren scan so a
+        // nested `chore(release):` string can never confuse the split.
+        const wd = "github.event_name == 'workflow_dispatch'";
+        final dispatchArms = <String>[];
+        for (var i = 0; i < releaseIf.length; i++) {
+          if (releaseIf[i] != '(') continue;
+          var depth = 0;
+          for (var j = i; j < releaseIf.length; j++) {
+            if (releaseIf[j] == '(') {
+              depth++;
+            } else if (releaseIf[j] == ')') {
+              depth--;
+              if (depth == 0) {
+                final inner = releaseIf.substring(i + 1, j).trim();
+                if (inner.startsWith(wd)) dispatchArms.add(inner);
+                break;
+              }
             }
           }
         }
-      }
-      // The invariant itself: EVERY occurrence of the workflow_dispatch
-      // check must live inside a gated arm. A bare `|| workflow_dispatch`
-      // arm shows up as an occurrence no arm accounts for.
-      final armOccurrences = dispatchArms.fold<int>(
-        0,
-        (n, a) => n + a.split(wd).length - 1,
-      );
-      expect(
-        releaseIf.split(wd).length - 1,
-        armOccurrences,
-        reason:
-            'a bare `|| github.event_name == \'workflow_dispatch\'` arm must '
-            'never return — SM validation dispatches (machine-sm.yml -> '
-            'smAgent.js dispatchCiWorkflow, sm-kicker, machine-merge) pass NO '
-            'inputs, so an ungated arm auto-releases from any dispatched ref',
-      );
-      expect(
-        dispatchArms.length,
-        2,
-        reason:
-            'exactly two dispatch arms: the AC1 dry-run (releaseDryRun) and '
-            'the manual catch-up release (releaseDispatch on main)',
-      );
-      for (final arm in dispatchArms) {
+        // The invariant itself: EVERY occurrence of the workflow_dispatch
+        // check must live inside a gated arm. A bare `|| workflow_dispatch`
+        // arm shows up as an occurrence no arm accounts for.
+        final armOccurrences = dispatchArms.fold<int>(
+          0,
+          (n, a) => n + a.split(wd).length - 1,
+        );
         expect(
-          RegExp(r"inputs\.release[A-Za-z]*\s*==\s*true").hasMatch(arm),
+          releaseIf.split(wd).length - 1,
+          armOccurrences,
+          reason:
+              'a bare `|| github.event_name == \'workflow_dispatch\'` arm must '
+              'never return — SM validation dispatches (machine-sm.yml -> '
+              'smAgent.js dispatchCiWorkflow, sm-kicker, machine-merge) pass NO '
+              'inputs, so an ungated arm auto-releases from any dispatched ref',
+        );
+        expect(
+          dispatchArms.length,
+          2,
+          reason:
+              'exactly two dispatch arms: the AC1 dry-run (releaseDryRun) and '
+              'the manual catch-up release (releaseDispatch on main)',
+        );
+        for (final arm in dispatchArms) {
+          expect(
+            RegExp(r"inputs\.release[A-Za-z]*\s*==\s*true").hasMatch(arm),
+            isTrue,
+            reason:
+                'every workflow_dispatch arm must be conjunctive with an explicit '
+                'inputs.release* opt-in — a bare dispatch (no inputs) arms nothing; '
+                'got: $arm',
+          );
+          if (!arm.contains('inputs.releaseDryRun')) {
+            expect(
+              arm.contains("github.ref == 'refs/heads/main'"),
+              isTrue,
+              reason:
+                  'the real-push dispatch arm must be ref-restricted to main — a '
+                  'PR-head dispatch must never reach the bump push; got: $arm',
+            );
+            expect(
+              arm.contains('inputs.releaseDispatch'),
+              isTrue,
+              reason:
+                  'the real-push dispatch arm must require the explicit '
+                  'releaseDispatch opt-in; got: $arm',
+            );
+          }
+        }
+
+        // The typed opt-in input must exist (boolean, default false) so the
+        // gate above is satisfiable without accidents.
+        final ciRaw = read('.github/workflows/ci.yml');
+        expect(
+          RegExp(
+            r'^\s*releaseDispatch:\n\s+description:[^\n]*\n\s+required: false\n\s+type: boolean\n\s+default: false$',
+            multiLine: true,
+          ).hasMatch(ciRaw),
           isTrue,
           reason:
-              'every workflow_dispatch arm must be conjunctive with an explicit '
-              'inputs.release* opt-in — a bare dispatch (no inputs) arms nothing; '
-              'got: $arm',
+              'releaseDispatch must be a typed boolean input defaulting to false',
         );
-        if (!arm.contains('inputs.releaseDryRun')) {
+        // The dry-run env must normalize through == 'true' — the bare
+        // `inputs.releaseDryRun || '0'` fallback is dead code (a typed boolean
+        // input always arrives as 'true'/'false', and 'false' is truthy in
+        // GitHub expressions), so it must never return (gh-1172 round-2 thread 3).
+        expect(
+          ciRaw,
+          isNot(contains('inputs.releaseDryRun ||')),
+          reason:
+              "the dead `inputs.releaseDryRun || '0'` fallback must not return",
+        );
+        final steps = (ci['release'] as YamlMap)['steps'] as YamlList;
+        final bumpStep = steps
+            .map((s) => s as YamlMap)
+            .firstWhere(
+              (s) => s['run']?.toString().contains('auto_release.sh') ?? false,
+            );
+        expect(
+          (bumpStep['env'] as YamlMap)['RELEASE_DRY_RUN']?.toString(),
+          equals(
+            r"${{ github.event.inputs.releaseDryRun == 'true' && '1' || '0' }}",
+          ),
+          reason:
+              "RELEASE_DRY_RUN must normalize via == 'true' to a literal 1/0",
+        );
+      },
+    );
+
+    test(
+      'release-tag contract comment documents the direct-push mechanism, not the retired PR path',
+      () {
+        // gh-1172 round-2 IMPORTANT: the block comment above `release-tag:`
+        // still described the retired release-PR mechanism (merged release PR,
+        // RELEASE_PAT, "bump PR job") and contradicted the job it documents.
+        // This repo treats CI comments as binding contract docs — pin the
+        // rewrite so the retired text cannot return.
+        final lines = read('.github/workflows/ci.yml').split('\n');
+        final jobLine = lines.indexWhere((l) => l == '  release-tag:');
+        expect(jobLine, greaterThan(0), reason: 'release-tag job must exist');
+        var start = jobLine - 1;
+        while (start >= 0 && lines[start].trimLeft().startsWith('#')) {
+          start--;
+        }
+        final comment = lines.sublist(start + 1, jobLine).join('\n');
+        for (final retired in [
+          'RELEASE_PAT',
+          'merged release PR',
+          'bump PR job',
+          'rejects direct bot pushes',
+        ]) {
           expect(
-            arm.contains("github.ref == 'refs/heads/main'"),
-            isTrue,
+            comment,
+            isNot(contains(retired)),
             reason:
-                'the real-push dispatch arm must be ref-restricted to main — a '
-                'PR-head dispatch must never reach the bump push; got: $arm',
-          );
-          expect(
-            arm.contains('inputs.releaseDispatch'),
-            isTrue,
-            reason:
-                'the real-push dispatch arm must require the explicit '
-                'releaseDispatch opt-in; got: $arm',
+                'retired PR-path text "$retired" must not return above release-tag',
           );
         }
-      }
-
-      // The typed opt-in input must exist (boolean, default false) so the
-      // gate above is satisfiable without accidents.
-      final ciRaw = read('.github/workflows/ci.yml');
-      expect(
-        RegExp(
-          r'^\s*releaseDispatch:\n\s+description:[^\n]*\n\s+required: false\n\s+type: boolean\n\s+default: false$',
-          multiLine: true,
-        ).hasMatch(ciRaw),
-        isTrue,
-        reason:
-            'releaseDispatch must be a typed boolean input defaulting to false',
-      );
-      // The dry-run env must normalize through == 'true' — the bare
-      // `inputs.releaseDryRun || '0'` fallback is dead code (a typed boolean
-      // input always arrives as 'true'/'false', and 'false' is truthy in
-      // GitHub expressions), so it must never return (gh-1172 round-2 thread 3).
-      expect(
-        ciRaw,
-        isNot(contains('inputs.releaseDryRun ||')),
-        reason:
-            "the dead `inputs.releaseDryRun || '0'` fallback must not return",
-      );
-      final steps = (ci['release'] as YamlMap)['steps'] as YamlList;
-      final bumpStep = steps
-          .map((s) => s as YamlMap)
-          .firstWhere(
-            (s) => s['run']?.toString().contains('auto_release.sh') ?? false,
-          );
-      expect(
-        (bumpStep['env'] as YamlMap)['RELEASE_DRY_RUN']?.toString(),
-        equals(
-          r"${{ github.event.inputs.releaseDryRun == 'true' && '1' || '0' }}",
-        ),
-        reason: "RELEASE_DRY_RUN must normalize via == 'true' to a literal 1/0",
-      );
-    });
-
-    test('release-tag contract comment documents the direct-push mechanism, not the retired PR path', () {
-      // gh-1172 round-2 IMPORTANT: the block comment above `release-tag:`
-      // still described the retired release-PR mechanism (merged release PR,
-      // RELEASE_PAT, "bump PR job") and contradicted the job it documents.
-      // This repo treats CI comments as binding contract docs — pin the
-      // rewrite so the retired text cannot return.
-      final lines = read('.github/workflows/ci.yml').split('\n');
-      final jobLine = lines.indexWhere((l) => l == '  release-tag:');
-      expect(jobLine, greaterThan(0), reason: 'release-tag job must exist');
-      var start = jobLine - 1;
-      while (start >= 0 && lines[start].trimLeft().startsWith('#')) {
-        start--;
-      }
-      final comment = lines.sublist(start + 1, jobLine).join('\n');
-      for (final retired in [
-        'RELEASE_PAT',
-        'merged release PR',
-        'bump PR job',
-        'rejects direct bot pushes',
-      ]) {
         expect(
           comment,
-          isNot(contains(retired)),
-          reason:
-              'retired PR-path text "$retired" must not return above release-tag',
+          contains('fa-release-bot'),
+          reason: 'the comment must name the App the tag rides',
         );
-      }
-      expect(
-        comment,
-        contains('fa-release-bot'),
-        reason: 'the comment must name the App the tag rides',
-      );
-      expect(
-        comment,
-        contains('direct push'),
-        reason: 'the comment must describe the direct-push contract',
-      );
-    });
+        expect(
+          comment,
+          contains('direct push'),
+          reason: 'the comment must describe the direct-push contract',
+        );
+      },
+    );
   });
 
   // ── gh-1172 — direct-push behavioral coverage ────────────────────────────
@@ -1957,10 +2010,10 @@ gh release create "v9.9.9" \
   // `git push origin HEAD:main` genuinely executes; a git shim races the push
   // by advancing origin/main from a second clone between the script's fetch
   // and its push (E1).
-  group(
-    'gh-1172 — direct-push behavioral coverage (dry-run, coalesce, E1 race)',
-    () {
-      test('AC1 — dry-run commits the bump locally, exits before the push, origin/main unchanged', () {
+  group('gh-1172 — direct-push behavioral coverage (dry-run, coalesce, E1 race)', () {
+    test(
+      'AC1 — dry-run commits the bump locally, exits before the push, origin/main unchanged',
+      () {
         final r = runAutoReleaseDirect('dry-run', dryRun: true);
         expect(r.exitCode, 0, reason: r.output);
         expect(r.output, contains('DRY-RUN: would push'));
@@ -1976,24 +2029,24 @@ gh release create "v9.9.9" \
           'chore(release): v0.1.496',
           reason: 'the would-be commit+tag are computed and committed locally',
         );
-      });
+      },
+    );
 
-      test('coalesce guard — a tag younger than 2h skips the run entirely', () {
-        final r = runAutoReleaseDirect('coalesce', tagAgeHours: 1);
-        expect(r.exitCode, 0, reason: r.output);
-        expect(r.output, contains('coalesced'));
-        expect(
-          r.originHeadAfter,
-          r.originHeadBefore,
-          reason: 'no bump may land inside the coalesce window',
-        );
-        expect(
-          r.originSubjects(1),
-          isNot(contains('chore(release): v0.1.496')),
-        );
-      });
+    test('coalesce guard — a tag younger than 2h skips the run entirely', () {
+      final r = runAutoReleaseDirect('coalesce', tagAgeHours: 1);
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.output, contains('coalesced'));
+      expect(
+        r.originHeadAfter,
+        r.originHeadBefore,
+        reason: 'no bump may land inside the coalesce window',
+      );
+      expect(r.originSubjects(1), isNot(contains('chore(release): v0.1.496')));
+    });
 
-      test('E1 race — a main that advanced mid-run rejects the push; the bump recomputes on the fresh head and lands', () {
+    test(
+      'E1 race — a main that advanced mid-run rejects the push; the bump recomputes on the fresh head and lands',
+      () {
         final r = runAutoReleaseDirect('race-retry', raceMode: 'once');
         expect(r.exitCode, 0, reason: r.output);
         expect(r.output, contains('Main push raced, retrying'));
@@ -2001,13 +2054,15 @@ gh release create "v9.9.9" \
         expect(
           subjects.where((s) => s.startsWith('chore(release):')),
           hasLength(1),
-          reason: 'exactly one bump lands — the raced attempt is discarded, not stacked',
+          reason:
+              'exactly one bump lands — the raced attempt is discarded, not stacked',
         );
         expect(subjects.first, 'chore(release): v0.1.496');
         expect(
           subjects,
           contains('raced commit'),
-          reason: 'the bump must sit on top of the raced main — recomputed, never a blind push',
+          reason:
+              'the bump must sit on top of the raced main — recomputed, never a blind push',
         );
         expect(
           r.originHeadAuthor(),
@@ -2015,9 +2070,12 @@ gh release create "v9.9.9" \
           reason:
               'the bump commit is authored by the App (auditability contract)',
         );
-      });
+      },
+    );
 
-      test('E1 exhaustion — a main that advances on every attempt exits 1 after 3 tries without landing a bump', () {
+    test(
+      'E1 exhaustion — a main that advances on every attempt exits 1 after 3 tries without landing a bump',
+      () {
         final r = runAutoReleaseDirect('race-exhaust', raceMode: 'always');
         expect(r.exitCode, 1, reason: 'exhaustion must fail loud: ${r.output}');
         expect(r.output, contains('failed after 3 attempts'));
@@ -2027,9 +2085,12 @@ gh release create "v9.9.9" \
           reason: 'a raced-out run must never land a bump',
         );
         expect(r.originSubjects(6), contains('raced commit'));
-      });
+      },
+    );
 
-      test("CHANGELOG '## Unreleased' dedupe — a second release never stacks duplicate sections", () {
+    test(
+      "CHANGELOG '## Unreleased' dedupe — a second release never stacks duplicate sections",
+      () {
         // Round-4 review: the dedupe side-fix (append a fresh empty
         // Unreleased exactly once) shipped untested. Drive TWO real releases
         // through the sandbox: after the first push, play the release-tag
@@ -2089,9 +2150,12 @@ gh release create "v9.9.9" \
           hasLength(1),
           reason: 'repeated runs must not stack duplicate Unreleased sections',
         );
-      });
+      },
+    );
 
-      test('suite git resolution is host-independent — no session shim decides fixture behavior', () {
+    test(
+      'suite git resolution is host-independent — no session shim decides fixture behavior',
+      () {
         // gh-1172 round-3 suggestion: the pre-existing fixture helpers called
         // bare `Process.runSync('git', ...)`, inheriting whatever git sat first
         // on PATH — on shim-hostile hosts that was a broken git-push-guard copy
@@ -2108,9 +2172,9 @@ gh release create "v9.9.9" \
         final r = Process.runSync(git, ['--version']);
         expect(r.exitCode, 0, reason: r.stderr.toString());
         expect(r.stdout.toString(), startsWith('git version'));
-      });
-    },
-  );
+      },
+    );
+  });
 
   // ── gh-1299 — release lockfile gates (NG1 refresh, NG2 tag smoke) ──────
   // v1.0.515: auto_release.sh bumped both pubspecs but committed only
@@ -2122,168 +2186,202 @@ gh release create "v9.9.9" \
   // release, and the tag/publish path must smoke the enforce-lockfile gate
   // on the release commit BEFORE tagging.
   group('gh-1299 — release lockfile gates (NG1 refresh, NG2 tag smoke)', () {
-    test('NG1 — the bump commit carries flutter_app/pubspec.lock refreshed to the NEW version', () {
-      final r = runAutoReleaseDirect('lockfile-refresh');
-      expect(r.exitCode, 0, reason: r.output);
-      expect(r.originSubjects(1).single, 'chore(release): v0.1.496');
-      final lock = r.originFile('flutter_app/pubspec.lock');
-      expect(
-        lock,
-        contains('version: "0.1.496"'),
-        reason:
-            'the shipped lockfile must pin the NEW parent version — '
-            'a stale pin is exactly the v1.0.515 13-leg red',
-      );
-      expect(
-        lock,
-        isNot(contains('version: "0.1.495"')),
-        reason: 'the pre-bump pin must be gone from the release commit',
-      );
-    });
-
-    test('NG1 — a failed `flutter pub get` aborts the release BEFORE the push (origin/main unchanged)', () {
-      final r = runAutoReleaseDirect('pubget-fail', flutterFails: true);
-      expect(
-        r.exitCode,
-        1,
-        reason:
-            'a release whose lockfile refresh fails must fail loud: '
-            '${r.output}',
-      );
-      expect(r.output, contains('flutter pub get failed'));
-      expect(
-        r.originHeadAfter,
-        r.originHeadBefore,
-        reason: 'never push a bump that leaves pubspec.lock stale',
-      );
-      expect(r.originSubjects(1), isNot(contains('chore(release): v0.1.496')));
-    });
-
-    test('NG1 — a committed lockfile still dirty after the refresh aborts the release (pod-install-only drift)', () {
-      final r = runAutoReleaseDirect('dirty-pod', flutterDirty: true);
-      expect(r.exitCode, 1, reason: r.output);
-      expect(r.output, contains('still dirty'));
-      expect(
-        r.originHeadAfter,
-        r.originHeadBefore,
-        reason:
-            'a release that leaves the tree --enforce-lockfile-dirty '
-            'is a failed release (gh-1299 NG1)',
-      );
-      expect(r.originSubjects(1), isNot(contains('chore(release): v0.1.496')));
-    });
-
-    test('NG1 — an EMPTY lockfile inventory (broken `check_lockfiles.sh list`) refuses to release — the dirty gate must never silently no-op', () {
-      // PR #1304 rework threads 1+5: the inventory is consumed inside a
-      // process substitution whose exit status `set -euo pipefail` cannot
-      // observe — a `check_lockfiles.sh list` that fails or prints nothing
-      // left `lockfiles` empty and degenerated `git status --porcelain --`
-      // into an unrestricted whole-tree scan (clean right after the
-      // commit), shipping releases with zero lockfile protection. The
-      // precondition must be explicit: no inventory, no release.
-      final r = runAutoReleaseDirect('empty-inventory', brokenInventory: true);
-      expect(r.exitCode, 1, reason: r.output);
-      expect(r.output, contains('lockfile inventory is EMPTY'));
-      expect(
-        r.originHeadAfter,
-        r.originHeadBefore,
-        reason: 'refusing to release without the dirty-tree gate (gh-1299 NG1)',
-      );
-      expect(r.originSubjects(1), isNot(contains('chore(release): v0.1.496')));
-    });
-
-    test('NG1 — auto_release.sh refreshes the lockfile, stages it IN the bump commit, then runs the dirty gate', () {
-      final script = read('scripts/auto_release.sh');
-      expect(
-        script,
-        contains('flutter pub get'),
-        reason: 'the bump must regenerate flutter_app/pubspec.lock (gh-1299)',
-      );
-      final refresh = script.indexOf('flutter pub get');
-      final add = script.indexOf('git add');
-      expect(refresh, greaterThan(0));
-      expect(
-        add,
-        greaterThan(refresh),
-        reason: 'the regenerated lockfile is staged after the refresh',
-      );
-      expect(
-        RegExp(r'git add[^\n]*flutter_app/pubspec\.lock').hasMatch(script),
-        isTrue,
-        reason: 'the lockfile rides the SAME commit as the bump (NG1)',
-      );
-      final dirtyGate = script.indexOf('check_lockfiles.sh list');
-      expect(
-        dirtyGate,
-        greaterThan(add),
-        reason:
-            'the dirty-tree gate consumes the ONE inventory ('
-            'scripts/check_lockfiles.sh) after staging — never a '
-            'duplicated list',
-      );
-    });
-
-    test('NG2/AC3 — tag_release.sh asserts --enforce-lockfile on the bump tree BEFORE tagging/publishing', () {
-      final script = read('scripts/tag_release.sh');
-      final smoke = script.indexOf('pub get --enforce-lockfile');
-      expect(
-        smoke,
-        greaterThan(0),
-        reason: 'the post-release smoke must exist',
-      );
-      final tag = script.indexOf('git tag -a');
-      final create = script.indexOf('gh release create');
-      expect(
-        tag,
-        greaterThan(smoke),
-        reason: 'a red enforce-lockfile bump must never be tagged',
-      );
-      expect(
-        create,
-        greaterThan(smoke),
-        reason: '... nor published (the tag fires the publish jobs)',
-      );
-      expect(
-        script,
-        contains('refusing to tag'),
-        reason: 'the refusal is loud, never a silent skip',
-      );
-    });
-
-    test('AC3 — the release workflow jobs that run the gates get flutter on PATH', () {
-      final jobs = jobsOf('.github/workflows/ci.yml');
-      for (final name in ['release', 'release-tag']) {
-        final steps = jobs[name]['steps'] as YamlList;
-        final flutterSteps = steps
-            .whereType<YamlMap>()
-            .where(
-              (s) => (s['uses']?.toString() ?? '').startsWith(
-                'subosito/flutter-action',
-              ),
-            )
-            .toList();
+    test(
+      'NG1 — the bump commit carries flutter_app/pubspec.lock refreshed to the NEW version',
+      () {
+        final r = runAutoReleaseDirect('lockfile-refresh');
+        expect(r.exitCode, 0, reason: r.output);
+        expect(r.originSubjects(1).single, 'chore(release): v0.1.496');
+        final lock = r.originFile('flutter_app/pubspec.lock');
         expect(
-          flutterSteps,
-          isNotEmpty,
+          lock,
+          contains('version: "0.1.496"'),
           reason:
-              'job $name runs a gh-1299 lockfile gate — it needs flutter '
-              'installed (hosted stable, same pin as every other leg)',
+              'the shipped lockfile must pin the NEW parent version — '
+              'a stale pin is exactly the v1.0.515 13-leg red',
         );
-        // PR #1304 rework thread 8: these jobs AUTHOR flutter_app/pubspec.lock
-        // for every future release — the authoring SDK must be pinned to the
-        // same 3.47.x the consuming (`--enforce-lockfile`) build legs pin,
-        // closing the author/consumer SDK drift class for one line per step.
-        for (final s in flutterSteps) {
+        expect(
+          lock,
+          isNot(contains('version: "0.1.495"')),
+          reason: 'the pre-bump pin must be gone from the release commit',
+        );
+      },
+    );
+
+    test(
+      'NG1 — a failed `flutter pub get` aborts the release BEFORE the push (origin/main unchanged)',
+      () {
+        final r = runAutoReleaseDirect('pubget-fail', flutterFails: true);
+        expect(
+          r.exitCode,
+          1,
+          reason:
+              'a release whose lockfile refresh fails must fail loud: '
+              '${r.output}',
+        );
+        expect(r.output, contains('flutter pub get failed'));
+        expect(
+          r.originHeadAfter,
+          r.originHeadBefore,
+          reason: 'never push a bump that leaves pubspec.lock stale',
+        );
+        expect(
+          r.originSubjects(1),
+          isNot(contains('chore(release): v0.1.496')),
+        );
+      },
+    );
+
+    test(
+      'NG1 — a committed lockfile still dirty after the refresh aborts the release (pod-install-only drift)',
+      () {
+        final r = runAutoReleaseDirect('dirty-pod', flutterDirty: true);
+        expect(r.exitCode, 1, reason: r.output);
+        expect(r.output, contains('still dirty'));
+        expect(
+          r.originHeadAfter,
+          r.originHeadBefore,
+          reason:
+              'a release that leaves the tree --enforce-lockfile-dirty '
+              'is a failed release (gh-1299 NG1)',
+        );
+        expect(
+          r.originSubjects(1),
+          isNot(contains('chore(release): v0.1.496')),
+        );
+      },
+    );
+
+    test(
+      'NG1 — an EMPTY lockfile inventory (broken `check_lockfiles.sh list`) refuses to release — the dirty gate must never silently no-op',
+      () {
+        // PR #1304 rework threads 1+5: the inventory is consumed inside a
+        // process substitution whose exit status `set -euo pipefail` cannot
+        // observe — a `check_lockfiles.sh list` that fails or prints nothing
+        // left `lockfiles` empty and degenerated `git status --porcelain --`
+        // into an unrestricted whole-tree scan (clean right after the
+        // commit), shipping releases with zero lockfile protection. The
+        // precondition must be explicit: no inventory, no release.
+        final r = runAutoReleaseDirect(
+          'empty-inventory',
+          brokenInventory: true,
+        );
+        expect(r.exitCode, 1, reason: r.output);
+        expect(r.output, contains('lockfile inventory is EMPTY'));
+        expect(
+          r.originHeadAfter,
+          r.originHeadBefore,
+          reason:
+              'refusing to release without the dirty-tree gate (gh-1299 NG1)',
+        );
+        expect(
+          r.originSubjects(1),
+          isNot(contains('chore(release): v0.1.496')),
+        );
+      },
+    );
+
+    test(
+      'NG1 — auto_release.sh refreshes the lockfile, stages it IN the bump commit, then runs the dirty gate',
+      () {
+        final script = read('scripts/auto_release.sh');
+        expect(
+          script,
+          contains('flutter pub get'),
+          reason: 'the bump must regenerate flutter_app/pubspec.lock (gh-1299)',
+        );
+        final refresh = script.indexOf('flutter pub get');
+        final add = script.indexOf('git add');
+        expect(refresh, greaterThan(0));
+        expect(
+          add,
+          greaterThan(refresh),
+          reason: 'the regenerated lockfile is staged after the refresh',
+        );
+        expect(
+          RegExp(r'git add[^\n]*flutter_app/pubspec\.lock').hasMatch(script),
+          isTrue,
+          reason: 'the lockfile rides the SAME commit as the bump (NG1)',
+        );
+        final dirtyGate = script.indexOf('check_lockfiles.sh list');
+        expect(
+          dirtyGate,
+          greaterThan(add),
+          reason:
+              'the dirty-tree gate consumes the ONE inventory ('
+              'scripts/check_lockfiles.sh) after staging — never a '
+              'duplicated list',
+        );
+      },
+    );
+
+    test(
+      'NG2/AC3 — tag_release.sh asserts --enforce-lockfile on the bump tree BEFORE tagging/publishing',
+      () {
+        final script = read('scripts/tag_release.sh');
+        final smoke = script.indexOf('pub get --enforce-lockfile');
+        expect(
+          smoke,
+          greaterThan(0),
+          reason: 'the post-release smoke must exist',
+        );
+        final tag = script.indexOf('git tag -a');
+        final create = script.indexOf('gh release create');
+        expect(
+          tag,
+          greaterThan(smoke),
+          reason: 'a red enforce-lockfile bump must never be tagged',
+        );
+        expect(
+          create,
+          greaterThan(smoke),
+          reason: '... nor published (the tag fires the publish jobs)',
+        );
+        expect(
+          script,
+          contains('refusing to tag'),
+          reason: 'the refusal is loud, never a silent skip',
+        );
+      },
+    );
+
+    test(
+      'AC3 — the release workflow jobs that run the gates get flutter on PATH',
+      () {
+        final jobs = jobsOf('.github/workflows/ci.yml');
+        for (final name in ['release', 'release-tag']) {
+          final steps = jobs[name]['steps'] as YamlList;
+          final flutterSteps = steps
+              .whereType<YamlMap>()
+              .where(
+                (s) => (s['uses']?.toString() ?? '').startsWith(
+                  'subosito/flutter-action',
+                ),
+              )
+              .toList();
           expect(
-            (s['with'] as YamlMap?)?['flutter-version']?.toString(),
-            '3.47.x',
+            flutterSteps,
+            isNotEmpty,
             reason:
-                'job $name authors flutter_app/pubspec.lock — its SDK must '
-                'be pinned to the same 3.47.x the consuming build legs use',
+                'job $name runs a gh-1299 lockfile gate — it needs flutter '
+                'installed (hosted stable, same pin as every other leg)',
           );
+          // PR #1304 rework thread 8: these jobs AUTHOR flutter_app/pubspec.lock
+          // for every future release — the authoring SDK must be pinned to the
+          // same 3.47.x the consuming (`--enforce-lockfile`) build legs pin,
+          // closing the author/consumer SDK drift class for one line per step.
+          for (final s in flutterSteps) {
+            expect(
+              (s['with'] as YamlMap?)?['flutter-version']?.toString(),
+              '3.47.x',
+              reason:
+                  'job $name authors flutter_app/pubspec.lock — its SDK must '
+                  'be pinned to the same 3.47.x the consuming build legs use',
+            );
+          }
         }
-      }
-    });
+      },
+    );
   });
 
   // ── gh-995 — artifact action pins + PTY shard pipeline coherence ────────
@@ -2317,107 +2415,118 @@ gh release create "v9.9.9" \
       },
     );
 
-    test('upload-artifact is pinned to the current digest-validating line everywhere', () {
-      expect(
-        usesByAction()['actions/upload-artifact'],
-        {'043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'},
-        reason:
-            'pty-coverage-gate downloads with download-artifact v8 '
-            '(strict SHA256 digest validation); every upload must come '
-            'from the same current action line or the download '
-            'digest-mismatches and the shard merge loses a report',
-      );
-    });
+    test(
+      'upload-artifact is pinned to the current digest-validating line everywhere',
+      () {
+        expect(
+          usesByAction()['actions/upload-artifact'],
+          {'043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'},
+          reason:
+              'pty-coverage-gate downloads with download-artifact v8 '
+              '(strict SHA256 digest validation); every upload must come '
+              'from the same current action line or the download '
+              'digest-mismatches and the shard merge loses a report',
+        );
+      },
+    );
 
-    test('pty shard coverage artifacts: upload name, download pattern and count check agree', () {
-      // gh-1005: the consolidated leg is pty-integration-linux (the former
-      // mac `pty-integration` shards merged in; there is no mac leg anymore).
-      final jobs = jobsOf('.github/workflows/ci.yml');
-      final integration = jobs['pty-integration-linux'] as YamlMap;
-      final gate = jobs['pty-coverage-gate'] as YamlMap;
+    test(
+      'pty shard coverage artifacts: upload name, download pattern and count check agree',
+      () {
+        // gh-1005: the consolidated leg is pty-integration-linux (the former
+        // mac `pty-integration` shards merged in; there is no mac leg anymore).
+        final jobs = jobsOf('.github/workflows/ci.yml');
+        final integration = jobs['pty-integration-linux'] as YamlMap;
+        final gate = jobs['pty-coverage-gate'] as YamlMap;
 
-      // The matrix width is the source of truth for the expected report count.
-      final shardCount =
-          ((integration['strategy'] as YamlMap)['matrix'] as YamlMap)['shard']
-              as YamlList;
-      expect(shardCount.length, 3, reason: 'the leg is documented as 3 shards');
+        // The matrix width is the source of truth for the expected report count.
+        final shardCount =
+            ((integration['strategy'] as YamlMap)['matrix'] as YamlMap)['shard']
+                as YamlList;
+        expect(
+          shardCount.length,
+          3,
+          reason: 'the leg is documented as 3 shards',
+        );
 
-      // Exactly one coverage upload per shard leg, named pty-coverage-shard-N.
-      final uploadNames = <String>[];
-      for (final step in integration['steps'] as YamlList) {
-        if (step is YamlMap &&
-            step['uses'].toString().startsWith('actions/upload-artifact')) {
-          uploadNames.add(((step['with'] as YamlMap)['name']).toString());
+        // Exactly one coverage upload per shard leg, named pty-coverage-shard-N.
+        final uploadNames = <String>[];
+        for (final step in integration['steps'] as YamlList) {
+          if (step is YamlMap &&
+              step['uses'].toString().startsWith('actions/upload-artifact')) {
+            uploadNames.add(((step['with'] as YamlMap)['name']).toString());
+          }
         }
-      }
-      final coverageUploads = uploadNames
-          .where((n) => n.startsWith('pty-coverage-shard-'))
-          .toList();
-      expect(
-        coverageUploads,
-        hasLength(1),
-        reason: 'exactly one pty-coverage-shard artifact per shard leg',
-      );
+        final coverageUploads = uploadNames
+            .where((n) => n.startsWith('pty-coverage-shard-'))
+            .toList();
+        expect(
+          coverageUploads,
+          hasLength(1),
+          reason: 'exactly one pty-coverage-shard artifact per shard leg',
+        );
 
-      // The gate downloads the pattern; every uploaded shard name matches it.
-      String? pattern;
-      for (final step in gate['steps'] as YamlList) {
-        if (step is YamlMap &&
-            step['uses'].toString().startsWith('actions/download-artifact') &&
-            step['with'] is YamlMap &&
-            ((step['with'] as YamlMap)['pattern'] ?? '').toString().startsWith(
-              'pty-coverage-shard-',
-            )) {
-          pattern = ((step['with'] as YamlMap)['pattern']).toString();
+        // The gate downloads the pattern; every uploaded shard name matches it.
+        String? pattern;
+        for (final step in gate['steps'] as YamlList) {
+          if (step is YamlMap &&
+              step['uses'].toString().startsWith('actions/download-artifact') &&
+              step['with'] is YamlMap &&
+              ((step['with'] as YamlMap)['pattern'] ?? '')
+                  .toString()
+                  .startsWith('pty-coverage-shard-')) {
+            pattern = ((step['with'] as YamlMap)['pattern']).toString();
+          }
         }
-      }
-      expect(
-        pattern,
-        isNotNull,
-        reason: 'the gate must download pty-coverage-shard-*',
-      );
-      final concreteName = coverageUploads.single.replaceAll(
-        r'${{ matrix.shard }}',
-        '0',
-      );
-      expect(
-        globToRegExp(pattern!).hasMatch(concreteName),
-        isTrue,
-        reason:
-            'upload name "${coverageUploads.single}" must match '
-            'download pattern "$pattern"',
-      );
+        expect(
+          pattern,
+          isNotNull,
+          reason: 'the gate must download pty-coverage-shard-*',
+        );
+        final concreteName = coverageUploads.single.replaceAll(
+          r'${{ matrix.shard }}',
+          '0',
+        );
+        expect(
+          globToRegExp(pattern!).hasMatch(concreteName),
+          isTrue,
+          reason:
+              'upload name "${coverageUploads.single}" must match '
+              'download pattern "$pattern"',
+        );
 
-      // The merge step's hard count check must expect the matrix width.
-      final mergeRuns = <String>[];
-      for (final step in gate['steps'] as YamlList) {
-        if (step is YamlMap &&
-            step['run'].toString().contains('pty shard coverage reports')) {
-          mergeRuns.add(step['run'].toString());
+        // The merge step's hard count check must expect the matrix width.
+        final mergeRuns = <String>[];
+        for (final step in gate['steps'] as YamlList) {
+          if (step is YamlMap &&
+              step['run'].toString().contains('pty shard coverage reports')) {
+            mergeRuns.add(step['run'].toString());
+          }
         }
-      }
-      expect(mergeRuns, hasLength(1));
-      final expected = RegExp(r'expected (\d+) pty shard coverage reports')
-          .firstMatch(mergeRuns.single);
-      expect(expected, isNotNull);
-      expect(
-        int.parse(expected!.group(1)!),
-        shardCount.length,
-        reason:
-            'the count check must expect exactly the configured shard count',
-      );
+        expect(mergeRuns, hasLength(1));
+        final expected = RegExp(
+          r'expected (\d+) pty shard coverage reports',
+        ).firstMatch(mergeRuns.single);
+        expect(expected, isNotNull);
+        expect(
+          int.parse(expected!.group(1)!),
+          shardCount.length,
+          reason:
+              'the count check must expect exactly the configured shard count',
+        );
 
-      // A shard report that downloads but carries no SF: records (empty or
-      // truncated upload) must fail the merge LOUDLY — the 2026-09-27
-      // outage also showed a partial merge reading 7.95% against the
-      // 11.00% baseline because a hollow report still satisfied the count.
-      expect(
-        mergeRuns.single,
-        contains("'^SF:'"),
-        reason:
-            'merge must reject hollow per-shard lcov reports before merging',
-      );
-    });
+        // A shard report that downloads but carries no SF: records (empty or
+        // truncated upload) must fail the merge LOUDLY — the 2026-09-27
+        // outage also showed a partial merge reading 7.95% against the
+        // 11.00% baseline because a hollow report still satisfied the count.
+        expect(
+          mergeRuns.single,
+          contains("'^SF:'"),
+          reason:
+              'merge must reject hollow per-shard lcov reports before merging',
+        );
+      },
+    );
   });
 
   // ── gh-1005 — PTY legs are hosted-linux-only, fa-m5-1 never on the PR path
