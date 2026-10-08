@@ -446,7 +446,10 @@ SESSIONS AND COMPACTION
   Compaction engine (issue #148, default flip #287): compaction.engine =
   structured (default — hide → checkpoint + expand; markers like
   [3:hidden·tool_result·4.2k] replace hidden content and compact_expand
-  restores it by id) or classic (legacy 1.0 — lossy prefix summary, the
+  restores it by id). Tier 2 (issue #1379): compact_expand also takes
+  action=hide|pin|unpin — the agent can fold a dead segment into its
+  marker on demand and shield segments from every hide/compact path.
+  Engines: structured (above) or classic (legacy 1.0 — lossy prefix summary, the
   supported rollback). Scope: --compaction-engine flag > project
   .fah/config.yaml compaction: > ~/.fah/config.yaml compaction:.
 

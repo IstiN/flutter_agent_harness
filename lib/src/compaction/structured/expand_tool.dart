@@ -34,8 +34,12 @@ import '../../prompts/prompts.g.dart' show compactExpandToolDescriptionPrompt;
 import '../../session/session_record.dart';
 import '../../session/session_tree.dart' show Session;
 import '../../types.dart';
-import 'engine.dart' show classicTransform;
-import 'markers.dart' show hiddenMarker, idsToRanges, markerPreview;
+import 'engine.dart' show classicTransform, refreshAgentState;
+import '../compaction.dart' show isSyntheticUserText;
+import 'judge.dart' show hideProtectTailEntries;
+import 'ledger.dart';
+import 'markers.dart'
+    show formatMarkerTokens, hiddenMarker, idsToRanges, markerPreview;
 import 'projection.dart'
     show
         RecordSeqIndex,
@@ -43,7 +47,8 @@ import 'projection.dart'
         hiddenIndexHeading,
         markerKindFor,
         recordPreviewSource,
-        recordTokens;
+        recordTokens,
+        visibleStructuredPath;
 
 // ignore_for_file: prefer_initializing_formals
 
@@ -137,6 +142,15 @@ final class CompactExpandController {
               'Numeric id or range from a context marker, '
               'e.g. "5" or "2-6". Omit to list the hidden-segment index.',
         },
+        'action': {
+          'type': 'string',
+          'description':
+              'Tier 2 segment management (issue #1379). With a target: '
+              '"hide" folds a dead-weight segment into its expandable '
+              'marker right now, without waiting for pressure; "pin" '
+              'shields a segment from every hide/compact path; "unpin" '
+              'releases it. Omit to expand the target.',
+        },
         'query': {
           'type': 'string',
           'description':
@@ -183,6 +197,11 @@ final class CompactExpandController {
     final seqs = RecordSeqIndex(entries);
     final validIds = expandValidIds(entries.length);
 
+    final action = (args['action'] as String?)?.trim();
+    if (action != null && action.isNotEmpty) {
+      return _segmentAction(live, seqs, validIds, action, args['target']);
+    }
+
     final (range, parseError) = _parseRangeArg(args['target']);
     if (parseError != null) return ToolExecutionResult.text(parseError);
     if (range == null) {
@@ -192,7 +211,7 @@ final class CompactExpandController {
       );
     }
 
-    final expandable = await _expandabilityOf(live);
+    final (expandable, _) = await _expandabilityOf(live);
     final (blocks, skipped, blocked, label) = _gatherBlocks(
       seqs,
       range.$1,
@@ -205,6 +224,228 @@ final class CompactExpandController {
       );
     }
     return _paged(args, blocks, skipped, blocked, label);
+  }
+
+  /// Tier 2 (issue #1379): agent-initiated hide / pin / unpin over the
+  /// same validated surface the judge hides through — ids exist, pairs
+  /// snap whole, pins and the protected tail hold — but every rejection
+  /// is a structured error, never a silent narrowing (AC1).
+  Future<ToolExecutionResult> _segmentAction(
+    Session live,
+    RecordSeqIndex seqs,
+    String validIds,
+    String action,
+    Object? rawTarget,
+  ) async {
+    final unknown = _unknownActionError(action);
+    if (unknown != null) return unknown;
+    final (target, targetError) = _actionTarget(action, rawTarget);
+    if (targetError != null) return targetError;
+    final (start, end, label) = target!;
+    final (targets, resolveError) = _resolveRangeTargets(
+      seqs,
+      start,
+      end,
+      label,
+      validIds,
+    );
+    if (resolveError != null) return resolveError;
+    // Real user turns are exempt from every path (F8) — say so instead
+    // of silently no-oping.
+    final pinning = action == 'pin' || action == 'unpin';
+    final userTurnError = _realUserTurnRejection(targets, label, pinning);
+    if (userTurnError != null) return userTurnError;
+    if (pinning) return _pinAction(live, targets, label, action == 'pin');
+    return _hideAction(live, seqs, targets, label);
+  }
+
+  /// The structured rejection for an unrecognized action name (AC1) —
+  /// null when [action] is one of "hide", "pin", "unpin".
+  ToolExecutionResult? _unknownActionError(String action) {
+    final pinning = action == 'pin' || action == 'unpin';
+    if (!pinning && action != 'hide') {
+      return ToolExecutionResult.text(
+        'unknown action "$action" — use "hide", "pin" or "unpin"',
+      );
+    }
+    return null;
+  }
+
+  /// The validated target of a segment action, flattened to
+  /// `(start, end, label)` — or the structured rejection: an unparsable
+  /// target names the parse error, a missing target asks for one (AC1).
+  ((int, int, String)?, ToolExecutionResult?) _actionTarget(
+    String action,
+    Object? rawTarget,
+  ) {
+    final (range, parseError) = _parseRangeArg(rawTarget);
+    if (parseError != null) {
+      return (null, ToolExecutionResult.text(parseError));
+    }
+    if (range == null) {
+      return (
+        null,
+        ToolExecutionResult.text(
+          'action "$action" requires a target id or range',
+        ),
+      );
+    }
+    return ((range.$1, range.$2, _rangeLabel(range.$1, range.$2)), null);
+  }
+
+  /// The target records of the validated seq range in order — or the
+  /// structured rejection when a seq has no record (AC1). The records
+  /// companion is unused whenever the error is non-null.
+  (List<SessionRecord>, ToolExecutionResult?) _resolveRangeTargets(
+    RecordSeqIndex seqs,
+    int start,
+    int end,
+    String label,
+    String validIds,
+  ) {
+    final targets = <SessionRecord>[];
+    for (var seq = start; seq <= end; seq++) {
+      final record = seqs.recordAt(seq);
+      if (record == null) {
+        return (
+          targets,
+          ToolExecutionResult.text(expandNoRecordMsg(label, validIds)),
+        );
+      }
+      targets.add(record);
+    }
+    return (targets, null);
+  }
+
+  /// The structured rejection when any target is a real user turn (F8:
+  /// exempt from every path) — say so instead of silently no-oping.
+  /// Null when none is.
+  ToolExecutionResult? _realUserTurnRejection(
+    List<SessionRecord> targets,
+    String label,
+    bool pinning,
+  ) {
+    for (final record in targets) {
+      if (record is MessageRecord && _realUserTurn(record)) {
+        return ToolExecutionResult.text(
+          'records $label are real user turns — always exempt, '
+          '${pinning ? 'pinning changes nothing' : 'never hidden'}',
+        );
+      }
+    }
+    return null;
+  }
+
+  /// Pin / unpin: appends a [SegmentPinRecord] (replay: last one wins).
+  Future<ToolExecutionResult> _pinAction(
+    Session live,
+    List<SessionRecord> targets,
+    String label,
+    bool pinned,
+  ) async {
+    final viewState = buildStructuredViewState(
+      classicTransform(await live.getBranch()),
+    );
+    final allSet = targets.every(
+      (record) => viewState.pinnedRecordIds.contains(record.id) == pinned,
+    );
+    if (allSet) {
+      return ToolExecutionResult.text(
+        pinned
+            ? 'records $label are already pinned'
+            : 'records $label are not pinned',
+      );
+    }
+    await live.appendSegmentPin(
+      recordIds: [for (final record in targets) record.id]..sort(),
+      pinned: pinned,
+    );
+    return ToolExecutionResult.text(
+      pinned
+          ? 'pinned records $label — judge, pressure, LRU re-hide and '
+                'compact_expand hide can no longer touch them'
+          : 'unpinned records $label — hide and compaction may process '
+                'them again',
+    );
+  }
+
+  /// The agent-initiated hide (AC1): the engine's validation class,
+  /// structured errors, then a state refresh so the very next request of
+  /// this turn renders the new markers (the host's per-message
+  /// persistence keeps session and state in sync — the same contract the
+  /// engine's state refresh relies on).
+  Future<ToolExecutionResult> _hideAction(
+    Session live,
+    RecordSeqIndex seqs,
+    List<SessionRecord> targets,
+    String label,
+  ) async {
+    final path = classicTransform(await live.getBranch());
+    final viewState = buildStructuredViewState(path);
+    final pathIds = {for (final record in path) record.id};
+    for (final record in targets) {
+      if (!pathIds.contains(record.id)) {
+        return ToolExecutionResult.text(
+          'records $label are off the active branch — nothing to hide',
+        );
+      }
+    }
+    final visibleTargets = [
+      for (final record in targets)
+        if (!viewState.hiddenRecordIds.contains(record.id)) record,
+    ];
+    if (visibleTargets.isEmpty) {
+      return ToolExecutionResult.text('records $label are already hidden');
+    }
+    final ledger = buildContextLedger(
+      visiblePath: visibleStructuredPath(path, viewState),
+      seqs: seqs,
+    );
+    final protectedTail = protectedTailIds(ledger, hideProtectTailEntries);
+    // Whole pair groups or never (D6 / #85): the hide snaps OUTWARD, and
+    // any group member in the protected tail or pinned set vetoes the
+    // whole ask with one honest message.
+    final ids = <String>{};
+    for (final record in visibleTargets) {
+      final group = ledger.groupOf(record.id);
+      for (final id in group) {
+        if (protectedTail.contains(id)) {
+          return ToolExecutionResult.text(
+            'records $label touch the protected recent tail '
+            '(last $hideProtectTailEntries entries) — not hidden',
+          );
+        }
+        if (viewState.pinnedRecordIds.contains(id)) {
+          return ToolExecutionResult.text(
+            'records $label are pinned — unpin first (action "unpin")',
+          );
+        }
+      }
+      ids.addAll(group);
+    }
+    var freedTokens = 0;
+    for (final id in ids) {
+      final seq = seqs.seqOf(id);
+      if (seq != null) freedTokens += ledger.entryAtSeq(seq)?.tokens ?? 0;
+    }
+    await live.appendHiddenRange(recordIds: ids.toList()..sort());
+    await refreshAgentState(live, _agent.state);
+    final seqsOf = [for (final id in ids) seqs.seqOf(id) ?? 0]..sort();
+    final groupLabel = _rangeLabel(seqsOf.first, seqsOf.last);
+    return ToolExecutionResult.text(
+      'hid records $groupLabel (~${formatMarkerTokens(freedTokens)}tok) — '
+      'they render as markers now; compact_expand reopens them',
+    );
+  }
+
+  /// Whether [record] is a real user turn (F8 exempt): a UserMessage
+  /// whose content is not a synthetic system marker. Block-list content
+  /// is never synthetic — always a real user turn.
+  bool _realUserTurn(MessageRecord record) {
+    final message = record.message;
+    if (message is! UserMessage) return false;
+    final content = message.content;
+    return content is! String || !isSyntheticUserText(content);
   }
 
   /// Parses + validates the `target` arg: `(null, null)` = discovery mode,
@@ -228,7 +469,12 @@ final class CompactExpandController {
 
   /// The F2 predicate: hidden, checkpoint-covered, folded away by a
   /// classic summary, or off-branch → expandable (visible is not).
-  Future<bool Function(String id)> _expandabilityOf(Session live) async {
+  /// The F2 predicate (expandable ids) plus the pinned id set — discovery
+  /// marks pinned rows and hides must never target them (issue #1379
+  /// tier 2).
+  Future<(bool Function(String id), Set<String>)> _expandabilityOf(
+    Session live,
+  ) async {
     final path = classicTransform(await live.getBranch());
     final state = buildStructuredViewState(path);
     final pathIds = {for (final record in path) record.id};
@@ -236,7 +482,7 @@ final class CompactExpandController {
         !pathIds.contains(id) ||
         state.hiddenRecordIds.contains(id) ||
         state.isCovered(id);
-    return expandable;
+    return (expandable, state.pinnedRecordIds);
   }
 
   /// One honest message per empty-gather failure class (AC3).
@@ -311,12 +557,17 @@ final class CompactExpandController {
     String validIds, {
     String? query,
   }) async {
-    final expandable = await _expandabilityOf(live);
+    final (expandable, pinnedIds) = await _expandabilityOf(live);
     final rows = <(int, int, String)>[];
     for (var seq = 2; seq <= seqs.entries.length + 1; seq++) {
       final record = seqs.recordAt(seq)!;
       if (!expandable(record.id)) continue; // renders in context
-      final row = _discoverRow(seq, record, query);
+      final row = _discoverRow(
+        seq,
+        record,
+        query,
+        pinned: pinnedIds.contains(record.id),
+      );
       if (row != null) rows.add(row);
     }
     // seq is the tiebreak so equal ranks stay in file order regardless
@@ -330,8 +581,9 @@ final class CompactExpandController {
   (int, int, String)? _discoverRow(
     int seq,
     SessionRecord record,
-    String? query,
-  ) {
+    String? query, {
+    required bool pinned,
+  }) {
     final content = recordPreviewSource(record);
     final block = _renderRecord(seq, record) ?? content;
     final pages = (block.length / pageChars).ceil();
@@ -343,6 +595,7 @@ final class CompactExpandController {
       kind: markerKindFor(record),
       tokens: recordTokens(record),
       preview: preview,
+      pinned: pinned,
     );
     if (pages > 1) {
       marker = '${marker.substring(0, marker.length - 1)}·pages:$pages]';
