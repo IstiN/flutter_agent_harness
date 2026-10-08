@@ -63,6 +63,7 @@ import '../task/task.dart';
 import 'agent_tree.dart';
 import 'agent_hub_panel.dart';
 import 'shell_job_board.dart';
+import 'subagent_board.dart';
 import 'agent_hub_projection.dart';
 import 'agent_hub_tui.dart';
 import 'waiting_heartbeat.dart';
@@ -274,6 +275,7 @@ part 'agent_cli_io.dart';
 part 'agent_cli_hep_io.dart';
 part 'agent_cli_banner.dart';
 part 'agent_cli_waiting.dart';
+part 'agent_cli_subagent_board.dart';
 part 'agent_cli_mcp_print.dart';
 part 'agent_cli_commands.dart';
 part 'agent_cli_ext.dart';
@@ -1086,6 +1088,13 @@ class AgentCli {
   /// row push, waiting heartbeat, restart honesty, headless semantics.
   late final _WaitingCoordinator _waiting = _WaitingCoordinator(this);
 
+  /// The subagent status board (gh-1415): composes the retained-subagent
+  /// handles into [SubagentStatusRecord]s, keeps the [TaskBoardRegion]
+  /// lifecycle, and pushes the TUI's live rows (1 Hz ticker while a row is
+  /// live). TUI-only — headless/line mode stay untouched.
+  late final _SubagentBoardCoordinator _subagentBoard =
+      _SubagentBoardCoordinator(this);
+
   /// Clock seam for the waiting layer (issue #450 tests): the heartbeat
   /// cadence, the waiting-since elapsed, and the `--wait-for-jobs` loop
   /// read this instead of [DateTime.now] directly.
@@ -1188,6 +1197,10 @@ class AgentCli {
   Timer? _hubFollowTimer;
   StreamSubscription<dynamic>? _hubSubagentEventsSub;
   StreamSubscription<dynamic>? _hubTaskStartsSub;
+
+  /// The subagent status board's registry-event subscription (gh-1415);
+  /// cancelled in [_teardownAfterRepl] with the ticker's dispose.
+  StreamSubscription<dynamic>? _subagentBoardSub;
 
   /// Hub tree `mail:N` marker counts (async peek → refresh-only re-push
   /// by the driver extension, which cannot hold fields — state here).
@@ -1534,6 +1547,11 @@ class AgentCli {
     });
     final taskSub = _taskConfig.jobManager.completions.listen(
       _onTaskJobCompleted,
+    );
+    // Subagent status board (gh-1415): every registry event refreshes the
+    // TUI's live rows (spawn → row appears; settle → flash + collapse).
+    _subagentBoardSub = _subagentManager.events.listen(
+      (_) => _subagentBoard.refresh(),
     );
     _hubEnsureEventSubs();
     final inboxTimer = _startInboxWatcher();
