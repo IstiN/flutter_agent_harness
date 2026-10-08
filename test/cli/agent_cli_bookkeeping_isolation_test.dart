@@ -68,7 +68,12 @@ void main() {
       );
 
       final exit = await cli.runHeadless('start a background echo job');
-      expect(exit, 0, reason: 'the run completes with the job detached');
+      expect(
+        exit,
+        0,
+        reason: 'the run completes with the job detached\n'
+            '--- captured CLI output ---\n${io.out}',
+      );
 
       // The job's artifacts land OUTSIDE the task workspace.
       await waitForIt(
