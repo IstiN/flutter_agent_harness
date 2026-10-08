@@ -402,6 +402,3 @@ void main() {
     });
   });
 }
-
-/// Debug exposure (removed with the debug test).
-String marathonJsonlPublic() => _marathonJsonl();

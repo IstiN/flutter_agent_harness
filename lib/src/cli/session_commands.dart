@@ -609,14 +609,6 @@ extension on AgentCli {
     // fire a no-op compaction on every resume. Re-anchor at chars/4.
     _agent.state.messages = resetLoadedUsageAnchors(messages);
     _persistedCount = messages.length;
-    // gh-1425 AC3 (the resume boot cap): a resume that lands over the
-    // compaction trigger is capped HERE — one forced pass at idle boot,
-    // before any user message — so the meter renders a post-cap number
-    // instead of idling above 100% until the first pre-flight. The
-    // boundary walk above bounds residency, but a reachable boundary
-    // whose kept-path projection is over the window (or a giant tail
-    // record the budget trim floors at) still boots over-window.
-    await _capResumedContext(session);
     // Issue #437: persisted-but-unconsumed steering from a crashed
     // session re-enters the queue and wakes the idle agent (E1: one
     // record, consumed once — restart-safe).
@@ -643,6 +635,20 @@ extension on AgentCli {
     // session reopened as copilot). Re-apply the session folder's saved
     // triple.
     await _applySessionFolderModelState(session, leafModel: context.model);
+    // gh-1425 AC3 (the resume boot cap): a resume that lands over the
+    // compaction trigger is capped HERE — one forced pass at idle boot,
+    // before any user message — so the meter renders a post-cap number
+    // instead of idling above 100% until the first pre-flight. The
+    // boundary walk above bounds residency, but a reachable boundary
+    // whose kept-path projection is over the window (or a giant tail
+    // record the budget trim floors at) still boots over-window.
+    //
+    // Ordered AFTER the gh-1000 binding restore (gh-1425 review): the
+    // cap's summarizer requests must ride the session's OWN
+    // provider/model binding, not the launch default — otherwise every
+    // boot of a non-default-provider session bills (or 401s against) the
+    // wrong endpoint before the restore lands.
+    await _capResumedContext(session);
     return session;
   }
 

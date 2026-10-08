@@ -128,10 +128,7 @@ final class ResolvedFolds {
 /// seq alias keeps the exempt classification quiet under a classic
 /// boundary, issue #266 F1a). Both rendered identically before this
 /// resolver existed (REG-1).
-ResolvedFolds resolveStructuredFolds(
-  List<SessionRecord> path, {
-  RecordSeqIndex? seqs,
-}) {
+ResolvedFolds resolveStructuredFolds(List<SessionRecord> path) {
   final hidden = <String>{};
   final checkpoints = <CompactCheckpointRecord>[];
   final covered = <String, CompactCheckpointRecord>{};
@@ -271,7 +268,7 @@ List<Message> renderStructuredMessages({
   required RecordSeqIndex seqs,
   required List<Message> Function(SessionRecord record) projectEntry,
 }) {
-  final resolution = resolveStructuredFolds(path, seqs: seqs);
+  final resolution = resolveStructuredFolds(path);
   final state = resolution.state;
   final droppedById = {for (final drop in resolution.dropped) drop.record.id: drop};
   final byId = {for (final record in path) record.id: record};

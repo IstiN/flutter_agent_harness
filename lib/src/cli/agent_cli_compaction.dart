@@ -364,7 +364,10 @@ extension AgentCliCompactionRun on AgentCli {
   /// summarizer failure falls to the existing local-trim valve with its
   /// visible `[context trimmed]` note, so the next request is still ≤
   /// window and the boot survives any failure — the catch below only
-  /// backstops unexpected throws (a broken session must still boot).
+  /// backstops unexpected throws (a broken session must still boot), and
+  /// it notes the crash VISIBLY (dim, transcript-diagnosable) instead of
+  /// only in the diagnostic log: a silently crashed cap reads exactly like
+  /// the pre-fix over-window idle state.
   /// Idempotent (kill/resume mid-pass): a failed pass appends nothing, so
   /// the next boot re-runs the gate from the same state.
   Future<void> _capResumedContext(Session session) async {
@@ -386,6 +389,78 @@ extension AgentCliCompactionRun on AgentCli {
       rethrow;
     } on Object catch (error) {
       _logDiagnostic('resume boot cap failed sid=$_logSid: $error');
+      io.writeln(
+        _style.dim(
+          '[resume] boot compaction failed: $error — the session stayed '
+          'over-window; compaction retries before the next turn',
+        ),
+      );
+    } finally {
+      _pushBusyPhase('');
+    }
+  }
+
+  /// gh-1425 AC4 (the budget-guarded restore at checkpoint auto-close): a
+  /// real user turn ends a checkpoint detour WITHOUT a rewind — the full
+  /// detour history stays live, and the next `checkpoint` call auto-closes
+  /// the stale mark mid-run. Whatever that restored context now carries
+  /// must respect the same budget the boot cap gates on: when the live
+  /// request sits over the compaction trigger (window − reserve), the
+  /// remainder is compacted HERE — mid-run, inside the auto-closing tool
+  /// call — and the loop adopts the capped transcript at the next turn
+  /// boundary ([CheckpointRewindController.requestContextResync]), so no
+  /// request ever rides the uncapped restore. Degradation (AC5) rides the
+  /// same pipeline as everywhere else: summarizer failure → local-trim
+  /// valve → `[context trimmed]`; an unexpected throw still boots/keeps
+  /// the run alive with a visible dim note (the pre-flight re-fires before
+  /// the next turn either way).
+  Future<void> _guardCheckpointRestoreBudget(
+    CheckpointAutoCloseReason reason,
+    CheckpointState checkpoint,
+  ) async {
+    // Only the user-turn close restores an unpruned detour; an anchorGone
+    // close means the transcript was ALREADY rebuilt (reload/compaction).
+    if (reason != CheckpointAutoCloseReason.userTurn) return;
+    if (_session == null) return;
+    if (_agent.state.messages.isEmpty) return;
+    if (_runAbortRequested) return;
+    final tokens = _liveRequestTokens();
+    if (!shouldCompact(
+      tokens,
+      _effectiveContextWindow,
+      _effectiveCompactionSettings,
+    )) {
+      return;
+    }
+    _pushBusyPhase('Compacting context…');
+    _logDiagnostic(
+      'checkpoint restore budget guard start sid=$_logSid tokens=$tokens',
+    );
+    try {
+      await _runAutoCompact('[auto-compacted]');
+      // The compaction replaced state.messages MID-RUN: arm the resync so
+      // the next turn boundary swaps the loop's stale context for the
+      // capped one — the remainder rides no over-budget request.
+      _checkpoints.requestContextResync();
+      io.writeln(
+        _style.dim(
+          '[checkpoint] detour closed over the compaction trigger '
+          '($tokens tokens) — context auto-compacted before the next '
+          'request',
+        ),
+      );
+    } on CancelledException {
+      rethrow;
+    } on Object catch (error) {
+      _logDiagnostic(
+        'checkpoint restore budget guard failed sid=$_logSid: $error',
+      );
+      io.writeln(
+        _style.dim(
+          '[checkpoint] restore compaction failed: $error — compaction '
+          'retries before the next turn',
+        ),
+      );
     } finally {
       _pushBusyPhase('');
     }

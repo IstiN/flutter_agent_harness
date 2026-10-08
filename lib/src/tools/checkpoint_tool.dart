@@ -72,6 +72,14 @@ enum CheckpointAutoCloseReason {
   final String label;
 }
 
+/// Host notification for a checkpoint auto-close (gh-1425 AC4): the reason
+/// plus the checkpoint that closed. Fired after the audit record persisted.
+typedef CheckpointAutoCloseCallback =
+    Future<void> Function(
+      CheckpointAutoCloseReason reason,
+      CheckpointState checkpoint,
+    );
+
 /// The captured checkpoint mark (omp's `CheckpointState`).
 final class CheckpointState {
   /// Creates a [CheckpointState].
@@ -170,13 +178,21 @@ final class CheckpointRewindController {
   /// [onRewindApplied] fires after each applied rewind with the new
   /// in-memory message count, so the host can realign its persistence cursor
   /// (the pruned detour and the report are already persisted by then).
+  ///
+  /// [onAutoClose] fires after each auto-close, with the reason and the
+  /// closed checkpoint — the audit record is already persisted. The host
+  /// hooks its budget guard here (gh-1425 AC4: a user turn that ends a
+  /// detour leaves the FULL detour history live; the host caps it against
+  /// its compaction budget before the next request).
   CheckpointRewindController({
     required Agent agent,
     required CheckpointSessionSink sink,
     void Function(int messageCount)? onRewindApplied,
+    CheckpointAutoCloseCallback? onAutoClose,
   }) : _agent = agent,
        _sink = sink,
-       _onRewindApplied = onRewindApplied {
+       _onRewindApplied = onRewindApplied,
+       _onAutoClose = onAutoClose {
     _unsubscribe = _agent.subscribe(_onAgentEvent);
     _wrapPrepareNextTurn();
   }
@@ -184,6 +200,7 @@ final class CheckpointRewindController {
   final Agent _agent;
   final CheckpointSessionSink _sink;
   final void Function(int messageCount)? _onRewindApplied;
+  final CheckpointAutoCloseCallback? _onAutoClose;
 
   CheckpointState? _active;
   CompletedRewind? _lastCompleted;
@@ -217,6 +234,15 @@ final class CheckpointRewindController {
     _pendingReport = null;
     _contextSwapPending = false;
   }
+
+  /// gh-1425 AC4: arms a context resync at the next turn boundary — the
+  /// loop's live context is stale because the host replaced
+  /// `state.messages` MID-RUN (the restore-budget compaction after a
+  /// user-turn checkpoint auto-close), so the next `prepareNextTurn` must
+  /// swap in the authoritative transcript. The same adoption the rewind
+  /// rides; the run continues on the capped context without re-sending an
+  /// over-budget request.
+  void requestContextResync() => _contextSwapPending = true;
 
   /// Whether [checkpoint] outlived its detour scope: the transcript no
   /// longer matches the span it anchored. Evaluated lazily at the next
@@ -294,6 +320,13 @@ final class CheckpointRewindController {
         },
       );
     }
+    // gh-1425 AC4: the host learns about every close AFTER the audit
+    // record persisted (the tree mirrors the close; the host's budget
+    // guard can act on it — the CLI caps the restored context there).
+    final onAutoClose = _onAutoClose;
+    if (onAutoClose != null) {
+      await onAutoClose(reason, checkpoint);
+    }
     return note;
   }
 
@@ -321,9 +354,10 @@ final class CheckpointRewindController {
     _wrappedPrepareNextTurn = (nextTurn) async {
       if (_contextSwapPending) {
         _contextSwapPending = false;
-        // The rewind pruned the transcript; the loop's context still holds
-        // the dropped messages, so swap in the pruned one — the model
-        // continues with the checkpoint prefix plus the retained report.
+        // The live transcript was replaced under the loop (a rewind's
+        // pruning, or the AC4 restore-budget compaction): the loop's
+        // context still holds the pre-replacement messages, so swap in the
+        // authoritative one — the run continues from `state.messages`.
         // The copy matters: AgentState.messages is an unmodifiable view,
         // and the loop appends tool results to its context list.
         return AgentLoopTurnUpdate(

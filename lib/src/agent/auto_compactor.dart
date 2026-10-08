@@ -437,15 +437,24 @@ final class AutoCompactor {
     // immediately and, with both summarizers still down, the session is
     // stuck again (the exact marathon-resume cliff this valve exists
     // for). Clamp the kept budget to the trigger minus the per-request
-    // overhead; keepRecentTokens still wins when it is smaller.
+    // overhead; keepRecentTokens still wins when it is smaller. Two edge
+    // guards (gh-1425 review):
+    // - reserve the [context trimmed] marker's own tokens (~64) so the
+    //   kept region plus marker still lands under the trigger;
+    // - floor the clamp at the newest message's tokens — a degenerate
+    //   overhead (≥ the trigger) must still trim SOMETHING, never return
+    //   an empty window (the projectedBranchBudgetCut rule).
     final overhead = estimateRequestTokens(
       const [],
       systemPrompt: state.systemPrompt,
       tools: state.tools,
     );
-    final budget = math.min(
-      settings.keepRecentTokens,
-      math.max(0, window - settings.reserveTokens - overhead),
+    final budget = math.max(
+      estimateTokens(messages.last), // never an empty window
+      math.min(
+        settings.keepRecentTokens,
+        math.max(0, window - settings.reserveTokens - overhead - 64),
+      ),
     );
     var cut = 0; // first kept index
     var accumulated = 0;

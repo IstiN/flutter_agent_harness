@@ -395,7 +395,7 @@ void main() {
     // would trim NOTHING (kept comes back empty → null).
     final state = AgentState(
       model: _model,
-      systemPrompt: 'a' * 200,
+      systemPrompt: 'a' * 4000,
       messages: await session.buildContextMessages(),
     );
 
