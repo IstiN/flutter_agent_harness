@@ -50,6 +50,16 @@ final class TuiTheme {
     /// Failed tool row tint (subtle background).
     this.toolErrorBg = const Style(),
 
+    /// Kaomoji thinking-indicator eye/face-stroke tone (issue #1374).
+    /// The boot palette pins the launcher-icon brand teal; palettes
+    /// without a kaomoji tone leave it unset — it renders plain, never
+    /// a fallback color (issue #444 role-table rule).
+    this.kaomojiEye = const Style(),
+
+    /// Kaomoji thinking-indicator mouth tone (issue #1374): the boot
+    /// palette's brand blue, two-tone against [kaomojiEye].
+    this.kaomojiMouth = const Style(),
+
     // ── issue #804 (omp S1): the token families the follow-up stories
     // consume, token-for-token from omp `dark.json`/`light.json` (pinned
     // df624f5). Roles a palette leaves unset render plain — never a
@@ -186,6 +196,12 @@ final class TuiTheme {
 
   /// Failed tool row tint (subtle background).
   final Style toolErrorBg;
+
+  /// Kaomoji thinking-indicator eye/face-stroke tone (issue #1374).
+  final Style kaomojiEye;
+
+  /// Kaomoji thinking-indicator mouth tone (issue #1374).
+  final Style kaomojiMouth;
 
   // ── issue #804 (omp S1) ──────────────────────────────────────────────────
 

@@ -56,6 +56,8 @@ part 'fa_tui_controller_io.dart';
 part 'fa_tui_picker.dart';
 part 'fa_tui_composer.dart';
 part 'fa_tui_viewport.dart';
+part 'fa_tui_kaomoji.dart';
+part 'fa_tui_busy.dart';
 
 /// Translates the (web-safe) headless test hooks into dart_tui program
 /// options: a scripted key byte stream replaces stdin, the rendered frames
@@ -200,9 +202,6 @@ final class FaTuiCallbacks {
   final Future<void> Function(String action, String? key)? onHubAction;
 }
 
-/// The braille spinner frames cycled while [FaTuiModel.busy] is set.
-const _spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
 /// Memoized markdown+wrap pass over [FaTuiModel.outputLines]. Formatting is
 /// O(transcript) (regex-heavy markdown plus ANSI-safe wrapping) and used to
 /// run two to four times PER event (update handler, `_echoEndRow`, view),
@@ -280,6 +279,8 @@ final class FaTuiModel extends Model {
     this.mouseCapture = true,
     this.forceSyncUpdates = false,
     this.spinnerFrame = 0,
+    this.kaomojiFace = 0,
+    int Function(int max)? kaomojiPick,
     this.stickyLines = const [],
     this.stickyIndex = -1,
     this.stickyEchoLineCount = 0,
@@ -303,6 +304,7 @@ final class FaTuiModel extends Model {
     this.ctrlCGeneration = 0,
     DateTime Function()? now,
   }) : nowFn = now ?? DateTime.now,
+       kaomojiPick = kaomojiPick ?? _defaultKaomojiPick,
        sigintPolicy = sigintPolicy ?? SigintPolicy(),
        editor = editor ?? const TuiLineEditor.empty();
 
@@ -461,7 +463,23 @@ final class FaTuiModel extends Model {
   /// package and the vendored fork alike, replacing the fork-only
   /// `withSyncUpdates` ProgramOption (issue #613).
   final bool forceSyncUpdates;
+
+  /// The busy-row tick counter: +1 per [SpinnerTickMsg] (100 ms apart).
+  /// No longer a frame index — the face lives in [kaomojiFace]; this
+  /// counter only drives the swap cadence ([kKaomojiSwapTicks], #1374).
   final int spinnerFrame;
+
+  /// Index into [kKaomojiFaces] — the face the busy row shows. Picked
+  /// randomly at busy start and re-picked (never the same face) every
+  /// [kKaomojiSwapTicks] ticks (~0.9 s) while the run streams (issue
+  /// #1374). Not a rotation: the pick is random via [kaomojiPick].
+  final int kaomojiFace;
+
+  /// The face-picker seam (issue #1374 tests): returns an index in
+  /// `0…max-1`. Defaults to a process-random pick; tests inject a
+  /// deterministic function instead of seeding [math.Random] at the
+  /// call sites.
+  final int Function(int max) kaomojiPick;
 
   /// The last submitted user echo (rule + first input line), pinned to the
   /// top of the viewport while a run streams and the echo itself has
@@ -692,6 +710,7 @@ final class FaTuiModel extends Model {
     bool? mouseCapture,
     bool? forceSyncUpdates,
     int? spinnerFrame,
+    int? kaomojiFace,
     List<String>? stickyLines,
     int? stickyIndex,
     int? stickyEchoLineCount,
@@ -751,6 +770,11 @@ final class FaTuiModel extends Model {
       mouseCapture: mouseCapture ?? this.mouseCapture,
       forceSyncUpdates: forceSyncUpdates ?? this.forceSyncUpdates,
       spinnerFrame: spinnerFrame ?? this.spinnerFrame,
+      kaomojiFace: kaomojiFace ?? this.kaomojiFace,
+      // copyWith cannot override the picker seam; this re-supplies the
+      // FIELD so an injected kaomojiPick survives every copy (dropping it
+      // would reset deterministic tests to the random default).
+      kaomojiPick: kaomojiPick,
       stickyLines: stickyLines ?? this.stickyLines,
       stickyIndex: stickyIndex ?? this.stickyIndex,
       stickyEchoLineCount: stickyEchoLineCount ?? this.stickyEchoLineCount,
@@ -793,13 +817,6 @@ final class FaTuiModel extends Model {
   @override
   Cmd? init() =>
       forceSyncUpdates ? () => ModeReportMsg(mode: 2026, value: 1) : null;
-
-  Cmd _scheduleSpinnerTick() {
-    return () async {
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-      return SpinnerTickMsg();
-    };
-  }
 
   /// Arms the one-shot minute-boundary repaint for the scheduled-follow-ups
   /// countdown (issue #213, fix option A): the ETA renders in whole minutes
@@ -916,107 +933,10 @@ final class FaTuiModel extends Model {
     return (next.copyWith(scrollOffset: nextOffset), null);
   }
 
-  (Model, Cmd?) _handleBusyMsg(BusyMsg msg) {
-    // An in-busy phase relabel (silent post-answer work like
-    // auto-compaction or durable-memory extraction) takes priority.
-    if (msg.busy && msg.phase != null) return _handlePhaseRelabel(msg);
-    // A raw re-start while ALREADY busy (a trigger that bypassed the
-    // controller's refcount): keep the elapsed window and the single tick
-    // chain instead of stacking another one.
-    if (msg.busy && busy) return _ignoreBusyRestart(msg);
-    return _applyBusyTransition(msg);
-  }
-
-  /// The wedge watchdog's liveness push (issue #514): flips the busy row's
-  /// label to `Stalled…` (and back) without touching the elapsed window —
-  /// the stall is a STATE, not a phase relabel.
-  (Model, Cmd?) _handleRunStalled(RunStalledMsg msg) =>
-      (copyWith(runStalled: msg.stalled), null);
-
-  /// A phase relabel on a BUSY model: swap the label over the SAME elapsed
-  /// window and never schedule another tick here — extra chains would
-  /// multiply repaint timers.
-  (Model, Cmd?) _handlePhaseRelabel(BusyMsg msg) {
-    final phase = msg.phase!;
-    if (!busy) {
-      // A relabel on an IDLE model is a post-run straggler (a compaction
-      // finally-branch landing after the bracket released): dropping it is
-      // the whole point — re-arming the spinner here wedged a session at
-      // "Working… Ns" burning 100% CPU for hours (each chain re-renders
-      // the full transcript every 100ms).
-      faTuiBusyDiagnostics?.call('busy relabel dropped (idle) phase=$phase');
-      return (this, null);
-    }
-    return (copyWith(busyPhase: phase), null);
-  }
-
-  (Model, Cmd?) _ignoreBusyRestart(BusyMsg msg) {
-    faTuiBusyDiagnostics?.call(
-      'busy re-start ignored (already busy) source=${msg.source}',
-    );
-    return (this, null);
-  }
-
-  /// The busy↔idle bracket itself. Kick the spinner loop when going busy;
-  /// the loop stops itself on the first tick that finds the model idle
-  /// again. Going idle also unpins the sticky user echo and clears any
-  /// phase, so the next run starts as plain "Working…".
-  (Model, Cmd?) _applyBusyTransition(BusyMsg msg) {
-    faTuiBusyDiagnostics?.call(
-      msg.busy
-          ? 'busy on source=${msg.source ?? '?'}'
-          : 'busy off source=${busySource.isEmpty ? '?' : busySource} '
-                'elapsed=${busyStartedAtMs < 0 ? 0 : (DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) ~/ 1000}s',
-    );
-    return (
-      copyWith(
-        busy: msg.busy,
-        busyStartedAtMs: msg.busy ? DateTime.now().millisecondsSinceEpoch : -1,
-        busyPhase: '',
-        busySource: msg.busy ? (msg.source ?? '') : '',
-        busyLastEventMs: msg.busy ? DateTime.now().millisecondsSinceEpoch : -1,
-        // A new bracket always starts unstalled: the host pushes the
-        // stall state per-episode, so a stale `Stalled…` must never
-        // leak into the next run (issue #514).
-        runStalled: msg.busy ? runStalled : false,
-        spinnerFrame: 0,
-        stickyLines: msg.busy ? null : const [],
-        stickyIndex: msg.busy ? null : -1,
-      ),
-      msg.busy ? _scheduleSpinnerTick() : null,
-    );
-  }
-
   /// Last-resort busy bracket: a row with zero activity for this long is a
   /// wedge — every arm site has a matching release, so a fire means a bug.
   /// The diagnostic log names the last armer.
   static const busyWatchdogMs = 10 * 60 * 1000;
-
-  (Model, Cmd?) _handleSpinnerTick() {
-    if (!busy) return (this, null);
-    final now = DateTime.now().millisecondsSinceEpoch;
-    if (busyLastEventMs > 0 && now - busyLastEventMs > busyWatchdogMs) {
-      faTuiBusyDiagnostics?.call(
-        'busy watchdog release source='
-        '${busySource.isEmpty ? '?' : busySource} '
-        'elapsed=${busyStartedAtMs < 0 ? 0 : (now - busyStartedAtMs) ~/ 1000}s '
-        'quiet=${(now - busyLastEventMs) ~/ 1000}s',
-      );
-      return (
-        copyWith(
-          busy: false,
-          busyStartedAtMs: -1,
-          busyPhase: '',
-          busySource: '',
-          busyLastEventMs: -1,
-          stickyLines: const [],
-          stickyIndex: -1,
-        ),
-        null,
-      );
-    }
-    return (copyWith(spinnerFrame: spinnerFrame + 1), _scheduleSpinnerTick());
-  }
 
   (Model, Cmd?) _handleDrainQueue(DrainQueueMsg msg) {
     // The host drains queued messages as separate turns after the run
@@ -1197,6 +1117,13 @@ final class FaTuiModel extends Model {
       pickerRevealDelayMsOverride ??
       int.tryParse(Platform.environment['FA_TUI_PICKER_REVEAL_MS'] ?? '') ??
       0;
+
+  /// gh-1374 test hook: the in-process override of the `FA_KAOMOJI_FACE`
+  /// pin (env is immutable in-process; resolution — override ?? env,
+  /// clamped — lives in [_kaomojiFacePin] in fa_tui_kaomoji.dart). Null =
+  /// the production random pick.
+  @visibleForTesting
+  static int? kaomojiFacePinOverride;
 
   (Model, Cmd?) _handleOpenPicker(OpenPickerMsg msg) {
     final reveal = _pickerRevealOpen(msg);
