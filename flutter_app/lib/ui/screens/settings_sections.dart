@@ -1022,3 +1022,29 @@ class _QueueEntryTile extends StatelessWidget {
     );
   }
 }
+
+/// The small "tools via prompt" chip shown next to every preset in the
+/// on-device (WebLLM) model picker: tool calling works for all presets
+/// through the harness's prompt-tools wrapper (fenced `tool_call` blocks),
+/// not the engine's native function calling.
+class _ToolsBadge extends StatelessWidget {
+  const _ToolsBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        context.l10n.settingsToolsBadge,
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onPrimaryContainer,
+        ),
+      ),
+    );
+  }
+}
