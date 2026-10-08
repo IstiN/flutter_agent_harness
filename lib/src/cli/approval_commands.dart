@@ -1090,6 +1090,7 @@ extension ApprovalCommands on AgentCli {
       onToolExecutionEnd: _onToolExecutionEnd,
       onTurnEnd: (message) => _usage.add(message.usage),
       onModelRequest: _onModelRequest,
+      onTaskLedger: _onTaskLedger,
     );
   }
 

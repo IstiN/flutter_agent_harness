@@ -47,6 +47,7 @@ import 'key_status.dart';
 import 'provider_error_text.dart';
 import 'sigint_action.dart';
 import '../agent/agent_loop.dart';
+import '../agent/finalize_gate.dart';
 import '../session/windowed_session_storage.dart' show WindowedSessionStorage;
 import '../trajectory/event_projection.dart'
     show TrajectoryHiddenRecordPreview, projectHiddenRecordPreviews;
@@ -84,7 +85,11 @@ import '../skills/skill_availability.dart';
 import '../skills/skills.dart';
 import '../skills/skill_renderer.dart';
 import '../prompts/prompts.g.dart'
-    show cliMessagingSectionPrompt, readSqliteSectionPrompt, cliPiModePrompt;
+    show
+        cliMessagingSectionPrompt,
+        readSqliteSectionPrompt,
+        cliPiModePrompt,
+        finalizeGateContractPrompt;
 import '../prompts/project_context.dart';
 import '../approval/approval.dart';
 import '../wire/wire_serve.dart';
@@ -433,6 +438,10 @@ class AgentCli {
         scheduleSenderMailbox: _childSenderMailbox,
         onAsk: io.isInteractive ? _answerAskQuestions : null,
         onRequestSecret: io.isInteractive ? _answerSecretRequest : null,
+        // gh-1412: the request_secret decline path keys its credential-hunt
+        // nudge on the LIVE approval mode (a runtime `/approval` switch
+        // flips it without a restart).
+        isUnattended: () => _approval.mode == ApprovalMode.unattended,
         vision: config.visionConfig,
         transcribe: config.transcribeConfig,
         media: MediaToolServices(
@@ -607,6 +616,12 @@ class AgentCli {
     );
     _toolRegistry = stack.registry;
     _agent = stack.agent;
+    // The FinalizeGate (gh-1412): unattended sessions (the bench / headless
+    // autopilot mode) emit the task ledger — the loop parses the final
+    // answer's `task-ledger` block and the CLI persists it as a hidden
+    // `task_ledger` session record. Interactive sessions stay off
+    // (byte-identical, no prompt noise).
+    _agent.finalizeGate = config.approvalMode == ApprovalMode.unattended;
     // The main agent's inbox in the messaging fabric: messages from
     // children (agent_message to "main") and from other Fa instances
     // sharing the messaging root arrive at turn boundaries.
