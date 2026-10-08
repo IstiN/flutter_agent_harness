@@ -15,6 +15,7 @@ import '../session/uuid.dart';
 import '../types.dart';
 import 'chatgpt_oauth.dart';
 import 'codex_transport.dart';
+import 'stall_sentinel.dart' show providerIdleStallFired;
 import 'provider_common.dart';
 
 typedef ChatGptCredentialsPersist = FutureOr<void> Function(String encoded);
@@ -313,10 +314,16 @@ final class _ChatGptCodexSession {
     try {
       while (await lines.moveNext().timeout(
         idle,
-        onTimeout: () => throw TimeoutException(
-          'chatgpt-codex ${redactProviderUrl(_endpoint)} stalled: no SSE '
-          'bytes for ${idle.inSeconds}s (stream idle timeout)',
-        ),
+        onTimeout: () {
+          // gh-1395 review round 1: the codex bypass's idle watchdog must
+          // name the stall like every other watchdog — the pinned trace
+          // line + the payload dump (the evidence stays replayable).
+          providerIdleStallFired(response, idle);
+          throw TimeoutException(
+            'chatgpt-codex ${redactProviderUrl(_endpoint)} stalled: no SSE '
+            'bytes for ${idle.inSeconds}s (stream idle timeout)',
+          );
+        },
       )) {
         cancelToken?.throwIfCancelled();
         _sse.add(lines.current, _handleEvent);

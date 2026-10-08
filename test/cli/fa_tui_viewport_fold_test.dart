@@ -1,6 +1,11 @@
-// Viewport never loses shown content (issue #827): the tail-follow hint
-// (`^ N lines above fold - PgUp`), the clean turn-boundary anchor, and the
-// unified above/below fold accounting.
+// Viewport tail-follow (issues #827 + #1348): the viewport pins to the
+// BOTTOM — a submitted message lands at the bottom above the composer with
+// the prior history directly above it (no blank void), streaming scrolls up
+// line by line, and a user scroll-up releases the pin (the detached percent
+// rule is the jump-to-bottom affordance). The tail-follow hint
+// (`^ N lines above fold - PgUp`) and the unified above/below fold
+// accounting ride the same window. #1348 supersedes #827's turn-start
+// anchor: the window never parks at the turn's first row.
 //
 // Pure render tests — fake terminal, no IO. Frames are read straight off
 // `model.view()`; the AC7 goldens go through the real CellRenderer over an
@@ -37,13 +42,15 @@ FaTuiModel _build({
   int termHeight = 24,
   bool busy = false,
   bool mouseCapture = true,
-}) => FaTuiModel(
-  callbacks: _callbacks(),
-  isExited: () => false,
-  termWidth: termWidth,
-  termHeight: termHeight,
-  mouseCapture: mouseCapture,
-).update(BusyMsg(busy)).$1 as FaTuiModel;
+}) =>
+    FaTuiModel(
+          callbacks: _callbacks(),
+          isExited: () => false,
+          termWidth: termWidth,
+          termHeight: termHeight,
+          mouseCapture: mouseCapture,
+        ).update(BusyMsg(busy)).$1
+        as FaTuiModel;
 
 FaTuiModel _send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
 
@@ -81,21 +88,23 @@ void main() {
 
     test('N counts WRAPPED rows, not logical lines (CJK-safe)', () {
       // 10 lines of 90 cells each wrap to 2 rows at width 80 → 20 wrapped
-      // rows; turn starts at logical line 5 = wrapped row 10 (short turn,
-      // anchor = 10) — the hint names 10 hidden WRAPPED rows, not 5 lines.
+      // rows; the bottom-riding window shows the last 19, so the hint
+      // names 1 hidden WRAPPED row (logical counting would say 0).
       final wide = '要約' * 22 + 'x'; // 44 wide glyphs (88 cells) + 1 = 89 cells
       final model = _build().copyWith(
         outputLines: [for (var i = 0; i < 10; i++) '$wide $i'],
-        turnStartLine: 5,
       );
       final rows = _rowsOf(model);
-      expect(_hintN(rows), 10, reason: 'N counts wrapped rows');
+      expect(_hintN(rows), 1, reason: 'N counts wrapped rows (20 - 19 vh)');
     });
 
     test('no hint at offset 0 and none when the tail latch is detached', () {
       final short = _build().copyWith(outputLines: ['just one row']);
-      expect(_hintN(_rowsOf(short)), isNull,
-          reason: 'E3: one-row response, zero hidden rows');
+      expect(
+        _hintN(_rowsOf(short)),
+        isNull,
+        reason: 'E3: one-row response, zero hidden rows',
+      );
 
       final long = _build().copyWith(
         outputLines: [for (var i = 0; i < 40; i++) 'row $i'],
@@ -110,62 +119,43 @@ void main() {
     });
   });
 
-  group('AC2 — scrolling interacts with the hint count', () {
-    // Short current turn: the window anchors at the turn start (row 35)
-    // above the live edge (bottom = 21) — the pad zone. Wheel-ups ride
-    // down WITHOUT detaching (the live edge stays on the glass) and the
-    // hint count visibly decrements.
-    FaTuiModel padZone() => _build().copyWith(
+  group('AC2 — user scroll releases the pin, bottom re-latches (#1348)', () {
+    FaTuiModel atBottom() => _build().copyWith(
       outputLines: [for (var i = 0; i < 40; i++) 'row $i'],
-      turnStartLine: 35,
-      scrollOffset: 35, // parked at the anchor, as every follow path keeps it
+      scrollOffset: 21, // the live edge (40 - 19 vh)
     );
 
-    test('wheel-up decrements N while the latch holds', () {
-      expect(_hintN(_rowsOf(padZone())), 35);
-      final up3 = _send(
-        padZone(),
+    test('a wheel-up releases the pin; the percent rule owns the row', () {
+      final up = _send(
+        atBottom(),
         MouseWheelMsg(const Mouse(x: 0, y: 0, button: MouseButton.wheelUp)),
       );
-      expect(up3.followTail, isTrue, reason: 'live edge still on glass');
-      expect(_hintN(_rowsOf(up3)), 32);
+      expect(up.followTail, isFalse, reason: 'user scroll-up releases the pin');
+      expect(up.scrollOffset, 18, reason: 'bottom 21 - 3');
+      final rows = _rowsOf(up);
+      expect(_hasPercent(rows), isTrue);
+      expect(_hintN(rows), isNull, reason: 'detached: percent, never both');
     });
 
-    test('scrolling past the fold detaches, offset 0 has no hint, '
-        'scrolling back restores tail-follow', () {
-      var model = padZone();
-      for (var i = 0; i < 5; i++) {
-        model = _send(
-          model,
-          MouseWheelMsg(const Mouse(x: 0, y: 0, button: MouseButton.wheelUp)),
-        );
-      }
-      expect(model.followTail, isFalse, reason: '35 - 15 = 20 < bottom 21');
-      expect(_hasPercent(_rowsOf(model)), isTrue);
-
-      model = _send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageUp)));
-      var top = _rowsOf(model);
-      expect(model.scrollOffset, 1, reason: '35 - 19 vh, clamped');
-      expect(_hintN(top), isNull, reason: 'detached: no hint at the top');
-      expect(_hasPercent(top), isTrue, reason: 'percent shown, detached');
-
-      // Page back down: landing on/below the bottom re-latches follow,
-      // the percent rule clears and the hint returns with the anchor N.
-      model = _send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageDown)));
-      expect(model.followTail, isFalse, reason: '20 still above bottom 21');
-      model = _send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageDown)));
-      top = _rowsOf(model);
-      expect(model.followTail, isTrue);
-      expect(_hasPercent(top), isFalse);
-      expect(_hintN(top), 35);
-    });
-
-    test('long turn: page-down past the fold restores tail-follow', () {
-      var model = _build().copyWith(
-        outputLines: [for (var i = 0; i < 40; i++) 'row $i'],
-        scrollOffset: 21, // anchor = bottom = 40 - 19 vh
+    test('detached, new activity never moves the window — the percent '
+        'rule is the jump-to-bottom affordance', () {
+      var model = atBottom();
+      model = _send(
+        model,
+        MouseWheelMsg(const Mouse(x: 0, y: 0, button: MouseButton.wheelUp)),
       );
-      expect(_hintN(_rowsOf(model)), 21);
+      final parked = _send(model, OutputMsg('late arrival', newline: true));
+      expect(parked.followTail, isFalse);
+      expect(
+        parked.scrollOffset,
+        model.scrollOffset,
+        reason: 'a detached window never moves under the stream',
+      );
+      expect(_hasPercent(_rowsOf(parked)), isTrue);
+    });
+
+    test('page-down to the exact bottom re-latches tail-follow', () {
+      var model = atBottom();
       model = _send(
         model,
         MouseWheelMsg(const Mouse(x: 0, y: 0, button: MouseButton.wheelUp)),
@@ -173,23 +163,21 @@ void main() {
       expect(model.followTail, isFalse);
       model = _send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageDown)));
       expect(model.followTail, isTrue);
-      expect(_hintN(_rowsOf(model)), 21, reason: 're-anchored at the fold');
+      expect(_hintN(_rowsOf(model)), 21);
       expect(_hasPercent(_rowsOf(model)), isFalse);
     });
   });
 
-  group('AC3 — clean turn boundary, no cross-turn bleed', () {
-    test('a two-turn scripted session never shows turn N-1 after submit',
-        () async {
+  group('AC3 — submit lands at the bottom, no blank void (#1348 AC1)', () {
+    test('a submitted message rides the bottom with prior history directly '
+        'above it', () async {
       const turnOne = 'TURN-ONE-MARKER explain the bug';
       const turnTwo = 'TURN-TWO-MARKER now fix it';
       var model = _build(termHeight: 12);
 
       // Turn 1: submit, stream past the viewport, settle.
       model = model.copyWith(inputText: turnOne);
-      var result = model.update(
-        KeyPressMsg(const TeaKey(code: KeyCode.enter)),
-      );
+      var result = model.update(KeyPressMsg(const TeaKey(code: KeyCode.enter)));
       model = result.$1 as FaTuiModel;
       await result.$2?.call();
       model = _send(model, const BusyMsg(true, source: 'run'));
@@ -214,32 +202,73 @@ void main() {
       model = _send(model, const BusyMsg(false));
       frames.add(_rowsOf(model));
 
-      // The very first frame after submit anchors at turn 2's echo.
-      expect(frames.first.any((r) => r.contains('TURN-TWO-MARKER')), isTrue,
-          reason: 'the fresh prompt is on the glass immediately');
-      for (final frame in frames) {
-        expect(frame, isNot(anyOf([
-          contains('TURN-ONE-MARKER'),
-          contains('alpha answer'),
-        ])), reason: 'turn N-1 residue above the prompt line');
-      }
+      // The submitted prompt is at the BOTTOM of the history zone, with
+      // the previous turn's tail DIRECTLY above it — standard terminal
+      // semantics (#1348 AC1). The pre-#1348 turn-start anchor pinned the
+      // echo to the TOP and padded the window below with blanks.
+      final first = frames.first.take(7).toList(); // history zone, vh 7
+      final lastContent = first.lastWhere((r) => r.trim().isNotEmpty);
+      expect(
+        lastContent,
+        contains('TURN-TWO-MARKER'),
+        reason: 'the fresh prompt is on the glass, at the bottom',
+      );
+      final aboveEcho = first
+          .takeWhile((r) => !r.contains('TURN-TWO'))
+          .lastWhere((r) => r.trim().isNotEmpty);
+      expect(
+        aboveEcho,
+        contains('alpha answer 29'),
+        reason: 'prior history sits directly above the new message',
+      );
+      // Streaming keeps the growing tail pinned to the bottom (#1348 AC2).
+      expect(
+        frames.last.join('\n'),
+        contains('beta answer 29'),
+        reason: 'the viewport tracks the growing tail',
+      );
     });
 
-    test('a short turn pads blanks below instead of showing turn N-1', () {
-      // 40 rows on glass, current turn starts at row 35: the window is
-      // rows 35..39 plus blank padding — nothing from rows 0..34.
-      final model = _build().copyWith(
+    test('a short turn into a long transcript shows NO blank void below '
+        'the echo (the reported symptom)', () {
+      // 40 rows on glass + a 1-line submit: the window is the LAST 19
+      // wrapped rows — history above, echo bubble at the bottom, nothing
+      // blank-padded between them and the composer.
+      var model = _build().copyWith(
         outputLines: [for (var i = 0; i < 40; i++) 'row $i'],
-        turnStartLine: 35,
+        inputText: 'hello',
       );
+      final result = model.update(
+        KeyPressMsg(const TeaKey(code: KeyCode.enter)),
+      );
+      model = result.$1 as FaTuiModel;
       final rows = _rowsOf(model);
       final history = rows.take(19).toList();
-      expect(history.first, contains('row 35'));
-      expect(history[4], contains('row 39'));
       expect(
-        history.skip(5).any((r) => r.trim().isNotEmpty),
-        isFalse,
-        reason: 'pad zone must be blank, not turn N-1 text',
+        history.first,
+        contains('row 25'),
+        reason: 'the window is the last vh rows (44 total - 19)',
+      );
+      expect(
+        history[14],
+        contains('row 39'),
+        reason: 'prior history runs right up to the echo',
+      );
+      final lastContent = history.lastWhere((r) => r.trim().isNotEmpty);
+      expect(
+        lastContent,
+        contains('hello'),
+        reason: 'the echo is the last content above the composer',
+      );
+      final trailingBlanks = history.reversed
+          .takeWhile((r) => r.trim().isEmpty)
+          .length;
+      expect(
+        trailingBlanks,
+        lessThan(4),
+        reason:
+            'only the bubble padding may sit under the echo — '
+            'a blank void is the bug',
       );
     });
   });
@@ -248,33 +277,40 @@ void main() {
     test('one-row viewport history still paints the hint without stealing '
         'the prompt chrome', () {
       // termHeight 6: legacy fixed chrome 5 → history 1 → 39 rows hide.
-      final model = _build(termHeight: 6).copyWith(
-        outputLines: [for (var i = 0; i < 40; i++) 'row $i'],
-      );
+      final model = _build(
+        termHeight: 6,
+      ).copyWith(outputLines: [for (var i = 0; i < 40; i++) 'row $i']);
       final rows = _rowsOf(model);
       expect(rows, hasLength(6), reason: 'frame exactly fits the glass');
       expect(_hintN(rows), 39);
-      expect(rows.last, contains('test-model'),
-          reason: 'status/prompt rows untouched');
+      expect(
+        rows.last,
+        contains('test-model'),
+        reason: 'status/prompt rows untouched',
+      );
       expect(rows[0], contains('row 39'), reason: 'live edge still on glass');
     });
 
     test('zero-history viewport yields the hint entirely (E2)', () {
       // termHeight 5: chrome alone fills the glass, history = 0.
-      final model = _build(termHeight: 5).copyWith(
-        outputLines: [for (var i = 0; i < 40; i++) 'row $i'],
-      );
+      final model = _build(
+        termHeight: 5,
+      ).copyWith(outputLines: [for (var i = 0; i < 40; i++) 'row $i']);
       final rows = _rowsOf(model);
       expect(rows, hasLength(5));
-      expect(_hintN(rows), isNull,
-          reason: 'a window that shows no rows announces nothing');
-      expect(rows.last, contains('test-model'),
-          reason: 'prompt row never moves for the hint');
+      expect(
+        _hintN(rows),
+        isNull,
+        reason: 'a window that shows no rows announces nothing',
+      );
+      expect(
+        rows.last,
+        contains('test-model'),
+        reason: 'prompt row never moves for the hint',
+      );
 
       // The composer tail is identical whether or not rows hide above.
-      final calm = _build(
-        termHeight: 5,
-      ).copyWith(outputLines: ['tiny']);
+      final calm = _build(termHeight: 5).copyWith(outputLines: ['tiny']);
       expect(
         _rowsOf(model).skip(1),
         _rowsOf(calm).skip(1),
@@ -286,7 +322,7 @@ void main() {
   group('AC5 — reset-to-bottom paths re-evaluate the hint', () {
     List<String> longHistory() => [for (var i = 0; i < 40; i++) 'row $i'];
 
-    test('submit re-anchors the hint at the new turn', () async {
+    test('submit re-anchors the window at the live edge', () async {
       var model = _build(termHeight: 12).copyWith(outputLines: longHistory());
       expect(_hintN(_rowsOf(model)), 33, reason: '40 - 7 vh');
 
@@ -297,13 +333,16 @@ void main() {
       model = result.$1 as FaTuiModel;
       await result.$2?.call();
 
-      // The echo lands at wrapped row 40 (every line is one row); the
-      // hint names it, not the stale pre-submit fold count.
-      expect(_hintN(_rowsOf(model)), 40,
-          reason: 'window anchored at the new echo');
+      // The echo bubble adds 4 wrapped rows (44 total); the window rides
+      // the live edge, not the echo row (#1348).
+      expect(
+        _hintN(_rowsOf(model)),
+        37,
+        reason: '44 - 7 vh: the window is pinned to the bottom',
+      );
     });
 
-    test('steering re-anchors the hint at the steered echo', () {
+    test('steering re-anchors the window at the live edge', () {
       var model = _build().copyWith(
         outputLines: longHistory(),
         busy: true,
@@ -317,18 +356,27 @@ void main() {
       );
       expect(model.queue, isEmpty, reason: 'fixture: ctrl+s flushed');
       final n = _hintN(_rowsOf(model));
-      expect(n, 40, reason: 'window anchored at the steered echo row');
+      expect(
+        n,
+        27,
+        reason:
+            '40 + 4 echo + 1 receipt = 45; busy vh 18: the window rides '
+            'the bottom',
+      );
     });
 
-    test('queue drain re-anchors the hint at the drained echo', () {
+    test('queue drain re-anchors the window at the live edge', () {
       var model = _build().copyWith(
         outputLines: longHistory(),
         busy: true,
         queue: const [QueuedMessage('drained text')],
       );
       model = _send(model, DrainQueueMsg(Completer<List<String>>()));
-      expect(_hintN(_rowsOf(model)), 40,
-          reason: 'fresh fold count for the drained turn');
+      expect(
+        _hintN(_rowsOf(model)),
+        26,
+        reason: '44 lines, busy vh 18: fresh fold count at the live edge',
+      );
     });
   });
 
@@ -345,14 +393,17 @@ void main() {
       expect(scrolled.scrollOffset, 18, reason: 'bottom 21 - 3');
       expect(scrolled.followTail, isFalse);
       expect(_hasPercent(_rowsOf(scrolled)), isTrue);
-      expect(_hintN(_rowsOf(scrolled)), isNull,
-          reason: 'detached: percent rule, never both at once');
+      expect(
+        _hintN(_rowsOf(scrolled)),
+        isNull,
+        reason: 'detached: percent rule, never both at once',
+      );
     });
 
     test('native wheel does not repaint or move the viewport', () {
-      final model = _build(mouseCapture: false).copyWith(
-        outputLines: [for (var i = 0; i < 40; i++) 'row $i'],
-      );
+      final model = _build(
+        mouseCapture: false,
+      ).copyWith(outputLines: [for (var i = 0; i < 40; i++) 'row $i']);
       final after = _send(
         model,
         MouseWheelMsg(const Mouse(x: 0, y: 0, button: MouseButton.wheelUp)),
@@ -365,9 +416,9 @@ void main() {
 
   group('Edge cases', () {
     test('E1: resize mid-stream recomputes the hint, latch survives', () {
-      var model = _build(termHeight: 24).copyWith(
-        outputLines: [for (var i = 0; i < 60; i++) 'row $i'],
-      );
+      var model = _build(
+        termHeight: 24,
+      ).copyWith(outputLines: [for (var i = 0; i < 60; i++) 'row $i']);
       expect(_hintN(_rowsOf(model)), 41, reason: '60 - 19 vh');
 
       model = _send(model, WindowSizeMsg(80, 12));
@@ -381,9 +432,7 @@ void main() {
 
     test('E3: one-row response never shows the hint (idle and busy)', () {
       for (final busy in [false, true]) {
-        final model = _build(busy: busy).copyWith(
-          outputLines: ['single line'],
-        );
+        final model = _build(busy: busy).copyWith(outputLines: ['single line']);
         expect(_hintN(_rowsOf(model)), isNull, reason: 'busy=$busy');
       }
     });
@@ -398,8 +447,11 @@ void main() {
       // rows hidden already.
       final rows = _rowsOf(model);
       expect(_hintN(rows), 2, reason: 'symptom 1 verbatim');
-      expect(rows.first, contains('stream 2'),
-          reason: 'the hidden head is named, not lost');
+      expect(
+        rows.first,
+        contains('stream 2'),
+        reason: 'the hidden head is named, not lost',
+      );
     });
 
     test('E6: exactly one hidden row pluralizes correctly', () {
@@ -423,51 +475,62 @@ void main() {
         outputLines: [for (var i = 0; i < 40; i++) 'row $i'],
       );
       final hintRow = _rowsOf(model).firstWhere(_hint.hasMatch);
-      expect(hintRow.startsWith('────'), isTrue,
-          reason: 'rule prefix keeps the row chrome');
-      expect(hintRow.trimRight().endsWith('─'), isTrue,
-          reason: 'rule padding, never spaces — stale cells cannot survive');
-      expect(hintRow, isNot(startsWith(' ')),
-          reason: 'a leading gap would break rule-row grammars');
+      expect(
+        hintRow.startsWith('────'),
+        isTrue,
+        reason: 'rule prefix keeps the row chrome',
+      );
+      expect(
+        hintRow.trimRight().endsWith('─'),
+        isTrue,
+        reason: 'rule padding, never spaces — stale cells cannot survive',
+      );
+      expect(
+        hintRow,
+        isNot(startsWith(' ')),
+        reason: 'a leading gap would break rule-row grammars',
+      );
     });
   });
 
-  group('head-trim keeps the turn anchor honest', () {
+  group('head-trim keeps the pinned echo honest', () {
     // 2401 lines: the first append crosses maxLines(2000) + slack(400),
     // the amortized trim cuts result.length - 2000 = 403 head lines.
-    FaTuiModel trimmed({
-      required int turnStartLine,
-      bool openFence = false,
-    }) {
+    FaTuiModel trimmed({bool openFence = false}) {
       final lines = [
         if (openFence) '```dart',
         for (var i = 0; i < 2400; i++) 'pad $i',
         'TURN-ECHO-MARK',
       ];
-      return _build().copyWith(outputLines: lines, turnStartLine: turnStartLine);
+      return _build().copyWith(outputLines: lines);
     }
 
-    test('a partial trim shifts turnStartLine — the anchor keeps naming '
-        'the echo', () {
-      final model = trimmed(turnStartLine: 2400);
-      final streamed = _send(model, OutputMsg('tick', newline: true));
+    test('a trim keeps the window on the live edge — the tail stays on the '
+        'glass', () {
+      final streamed = _send(trimmed(), OutputMsg('tick', newline: true));
       // The append merges into the echo line and adds the trailing blank:
-      // 2401 + 1 = 2402 lines -> cut 402, 2000 retained; the echo lands
-      // at 2400 - 402 = 1998 — above vh-bottom 1981, so the window pins
-      // at the echo, not at the bottom.
-      expect(streamed.turnStartLine, 1998);
-      expect(_rowsOf(streamed).first, contains('TURN-ECHO-MARK'),
-          reason: 'the anchor still names the echo after the trim');
+      // 2401 + 1 = 2402 lines -> cut 402, 2000 retained; the window rides
+      // the bottom (2000 - 19 vh = 1981 -> retained index 1981 = original
+      // line 2383).
+      expect(
+        _rowsOf(streamed).first,
+        contains('pad 2383'),
+        reason: 'rides the global bottom',
+      );
     });
 
-    test('a trim that swallows the echo degrades to the pre-#827 bottom '
-        'follow', () {
-      final model = trimmed(turnStartLine: 5);
+    test('a trim shifts the pinned sticky index by the cut', () {
+      // The sticky pins at submit; the stream then crosses the cap and
+      // the append fires the trim. The pinned echo is a transcript index
+      // like any other — it shifts with the cut instead of pointing at a
+      // foreign line (issue #827 review).
+      final model = trimmed().copyWith(
+        stickyLines: const ['pinned echo'],
+        stickyIndex: 2400,
+        stickyEchoLineCount: 1,
+      );
       final streamed = _send(model, OutputMsg('tick', newline: true));
-      expect(streamed.turnStartLine, -1, reason: 'the documented fallback');
-      expect(_rowsOf(streamed).first, contains('pad 2383'),
-          reason: 'rides the global bottom (2000 - 19 vh = 1981 -> '
-              'retained index 1981 = original line 1981 + 402)');
+      expect(streamed.stickyIndex, 1998, reason: '2400 - 402 cut');
     });
 
     test('a trim landing in an open code fence shifts by cut - 1', () {
@@ -475,60 +538,117 @@ void main() {
       // fence line that occupies index 0, so retained lines sit one slot
       // lower than a plain cut — shift = 403 - 1 = 402. The echo is the
       // last line (2401) of the 2402-line fixture.
-      final model = trimmed(turnStartLine: 2401, openFence: true);
-      final streamed = _send(model, OutputMsg('tick', newline: true));
-      expect(streamed.turnStartLine, 1999);
-      expect(_rowsOf(streamed).first, contains('TURN-ECHO-MARK'),
-          reason: 'the anchor still names the echo after the repair');
-    });
-
-    test('a mid-stream trim shifts the pinned sticky index too', () {
-      // The sticky pins at submit; the stream then crosses the cap and
-      // the append fires the trim. The pinned echo is a transcript index
-      // like any other — it shifts with the cut instead of pointing at a
-      // foreign line (issue #827 review).
-      final model = trimmed(turnStartLine: 2399).copyWith(
+      final model = trimmed(openFence: true).copyWith(
         stickyLines: const ['pinned echo'],
-        stickyIndex: 2399,
+        stickyIndex: 2401,
         stickyEchoLineCount: 1,
       );
       final streamed = _send(model, OutputMsg('tick', newline: true));
-      expect(streamed.stickyIndex, 1997,
-          reason: '2399 - 402 cut = the same line the anchor names');
-      expect(streamed.turnStartLine, 1997,
-          reason: 'the fixture pinned anchor and echo on one index');
+      expect(streamed.stickyIndex, 1999, reason: '2401 - (403 - 1)');
     });
 
     test('a trim that swallows the pinned echo drops the pin', () {
-      final model = trimmed(turnStartLine: 5).copyWith(
+      final model = trimmed().copyWith(
         stickyLines: const ['pinned echo'],
         stickyIndex: 5,
         stickyEchoLineCount: 1,
       );
       final streamed = _send(model, OutputMsg('tick', newline: true));
-      expect(streamed.stickyIndex, -1,
-          reason: 'a stale pin aimed at a foreign line is worse than '
-              'no pin');
-    });
-
-    test('the submit echo trim lands sticky and anchor on one index',
-        () async {
-      var submitted = _build()
-          .copyWith(outputLines: [for (var i = 0; i < 2400; i++) 'pad $i'])
-          .copyWith(inputText: 'SUBMIT-TRIM-MARK');
-      final result = submitted.update(
-        KeyPressMsg(const TeaKey(code: KeyCode.enter)),
+      expect(
+        streamed.stickyIndex,
+        -1,
+        reason:
+            'a stale pin aimed at a foreign line is worse than '
+            'no pin',
       );
-      submitted = result.$1 as FaTuiModel;
-      await result.$2?.call();
-
-      expect(submitted.turnStartLine, submitted.stickyIndex,
-          reason: 'the pinned echo and the turn anchor are the same '
-              'echo index — the trim shifts both');
-      // The trimmed transcript keeps the echo on the glass from its own
-      // row (window anchored at the turn start).
-      expect(_rowsOf(submitted).first, contains('SUBMIT-TRIM-MARK'));
     });
+
+    test(
+      'the submit echo trim keeps the echo on the glass at the bottom',
+      () async {
+        var submitted = _build()
+            .copyWith(outputLines: [for (var i = 0; i < 2400; i++) 'pad $i'])
+            .copyWith(inputText: 'SUBMIT-TRIM-MARK');
+        final result = submitted.update(
+          KeyPressMsg(const TeaKey(code: KeyCode.enter)),
+        );
+        submitted = result.$1 as FaTuiModel;
+        await result.$2?.call();
+
+        // The echo bubble adds 3 lines over the cap: 2403 -> cut 403,
+        // 2000 retained; the tail append rides the slack (2001 total).
+        // The echo text survives at retained index 2400 - 403 = 1997,
+        // inside the bottom-riding window (1982..2000).
+        expect(submitted.stickyIndex, 1997);
+        expect(
+          _rowsOf(submitted).first,
+          contains('pad 2385'),
+          reason: 'the window rides the bottom, not the echo row',
+        );
+      },
+    );
+
+    test('a trim during queue drain shifts the pinned sticky index', () {
+      final lines = [for (var i = 0; i < 2399; i++) 'pad $i', 'ECHO-PIN'];
+      final model = _build().copyWith(
+        outputLines: lines,
+        busy: true,
+        stickyLines: const ['ECHO-PIN'],
+        stickyIndex: 2399,
+        stickyEchoLineCount: 1,
+        queue: const [QueuedMessage('drained text')],
+      );
+      final drained = _send(model, DrainQueueMsg(Completer<List<String>>()));
+      // The drained echo bubble adds 3 lines over the cap: 2403 -> cut
+      // 403, 2000 retained. The pin must ride its own line into the
+      // retained region — an unshifted index points 403 lines too deep at
+      // a foreign row and corrupts the #917 dedupe geometry.
+      expect(drained.stickyIndex, 1996, reason: '2399 - 403 cut');
+      expect(
+        stripAnsi(drained.outputLines[1996]),
+        'ECHO-PIN',
+        reason: 'the shifted pin still names its own line',
+      );
+    });
+
+    test(
+      'a trim during steering shifts the sticky pin and the boot anchor',
+      () {
+        final lines = [for (var i = 0; i < 2399; i++) 'pad $i', 'ECHO-PIN'];
+        final model = _build().copyWith(
+          outputLines: lines,
+          busy: true,
+          stickyLines: const ['ECHO-PIN'],
+          stickyIndex: 2399,
+          stickyEchoLineCount: 1,
+          bootAnchorLine: 500,
+          queue: const [QueuedMessage('steered text')],
+        );
+        final steered = _send(
+          model,
+          KeyPressMsg(
+            const TeaKey(
+              code: KeyCode.rune,
+              text: 's',
+              modifiers: {KeyMod.ctrl},
+            ),
+          ),
+        );
+        // 2400 + 3 echo lines = 2403 -> cut 403, 2000 retained; the receipt
+        // append rides the slack (2001). Both anchored indices shift by the
+        // cut: an unshifted boot anchor could re-qualify for the boot park
+        // at a foreign row and park the follow window off the live edge.
+        expect(steered.stickyIndex, 1996, reason: '2399 - 403 cut');
+        expect(steered.bootAnchorLine, 97, reason: '500 - 403 cut');
+        expect(
+          stripAnsi(steered.outputLines[97]),
+          'pad 500',
+          reason:
+              'the shifted boot anchor still names its own row '
+              '(retained 97 = original 500)',
+        );
+      },
+    );
   });
 
   group('AC7 — byte-identical rendering where the feature is inert', () {
@@ -569,37 +689,47 @@ void main() {
 
       var short = _build();
       short = _send(short, OutputMsg('hello world', newline: true));
-      expect(render(short), golden(goldens, 'F1'),
-          reason: 'F1: bare frame, offset 0 — no hint row content');
+      expect(
+        render(short),
+        golden(goldens, 'F1'),
+        reason: 'F1: bare frame, offset 0 — no hint row content',
+      );
 
       var long = _build();
       for (var i = 0; i < 60; i++) {
         long = _send(long, OutputMsg('stream line $i', newline: true));
       }
-      var up = _send(
-        long,
-        KeyPressMsg(const TeaKey(code: KeyCode.pageUp)),
-      );
+      var up = _send(long, KeyPressMsg(const TeaKey(code: KeyCode.pageUp)));
       up = _send(up, KeyPressMsg(const TeaKey(code: KeyCode.pageUp)));
-      expect(render(up), golden(goldens, 'F3'),
-          reason: 'F3: detached percent frame — legacy bytes untouched');
+      expect(
+        render(up),
+        golden(goldens, 'F3'),
+        reason: 'F3: detached percent frame — legacy bytes untouched',
+      );
     });
 
-    test('anchored multi-turn frame snapshot (drift guard)', () {
+    test('follow frame after a live submit (drift guard)', () {
       final goldens = loadGoldens();
       var long = _build();
       for (var i = 0; i < 60; i++) {
         long = _send(long, OutputMsg('stream line $i', newline: true));
       }
-      final turned = long.copyWith(turnStartLine: 10);
+      final result = long
+          .copyWith(inputText: 'F4-TURN')
+          .update(KeyPressMsg(const TeaKey(code: KeyCode.enter)));
+      final turned = result.$1 as FaTuiModel;
       // The snapshot pins the hint row AND every stable region; any
       // accidental layout drift fails here (REG blocks merge).
       expect(_hintN(_rowsOf(turned)), isNotNull);
-      expect(render(turned), golden(goldens, 'F4'), reason: 'F4 canonical frame');
+      expect(
+        render(turned),
+        golden(goldens, 'F4'),
+        reason: 'F4 canonical frame',
+      );
     });
   });
 
-  group('resume rides the closed moment (bottom); live pins the echo', () {
+  group('resume rides the closed moment (bottom); live rides the bottom', () {
     // The replayed stream: 40 old rows, the last prompt echo (rule + text
     // + blank = lines 40..42), a 12-row reply. All short lines — wrapped
     // rows equal logical lines, so indices are inspectable.
@@ -624,8 +754,11 @@ void main() {
         ],
       );
       final rows = _rowsOf(model);
-      expect(_hintN(rows), isNull,
-          reason: 'nothing is hidden when the transcript fits the glass');
+      expect(
+        _hintN(rows),
+        isNull,
+        reason: 'nothing is hidden when the transcript fits the glass',
+      );
       expect(rows.join('\n'), contains('lost on restart'));
       expect(rows.join('\n'), contains('RESUMED-PROMPT'));
     });
@@ -639,9 +772,13 @@ void main() {
       // close (#446 1:1), with the #827 indicator owning the explanation.
       expect(rows.join('\n'), contains('RESUMED-PROMPT'));
       expect(rows.join('\n'), contains('resumed answer 11'));
-      expect(_hintN(rows), 36,
-          reason: 'the hint names the 55 - 19 wrapped rows above the '
-              'bottom-riding window');
+      expect(
+        _hintN(rows),
+        36,
+        reason:
+            'the hint names the 55 - 19 wrapped rows above the '
+            'bottom-riding window',
+      );
       expect(
         rows.join('\n').contains('old row 0 '),
         isFalse,
@@ -649,22 +786,37 @@ void main() {
       );
     });
 
-    test('the first LIVE submit after a resume pins at its own echo',
-        () async {
+    test('the first LIVE submit after a resume rides the bottom', () async {
       // Resume itself never anchors (the boot glass must keep the
-      // reconciliation notices) — the turn-boundary invariant returns
-      // with the user's next submit.
+      // reconciliation notices) — and the user's next submit keeps the
+      // standard terminal semantics: the echo lands at the BOTTOM above
+      // the composer, prior replay tail directly above it (#1348).
       final resumed = _build().copyWith(outputLines: replayed());
-      final result = resumed.copyWith(inputText: 'next turn').update(
-        KeyPressMsg(const TeaKey(code: KeyCode.enter)),
-      );
+      final result = resumed
+          .copyWith(inputText: 'next turn')
+          .update(KeyPressMsg(const TeaKey(code: KeyCode.enter)));
       final model = result.$1 as FaTuiModel;
       await result.$2?.call();
-      expect(model.turnStartLine, 55,
-          reason: 'the new echo lands right after the 55 replayed rows');
-      expect(_rowsOf(model).first, contains('next turn'),
-          reason: 'the window pins at the NEW turn boundary');
+      final rows = _rowsOf(model).take(19).toList();
+      final lastContent = rows.lastWhere((r) => r.trim().isNotEmpty);
+      expect(
+        lastContent,
+        contains('next turn'),
+        reason: 'the new echo is the last content above the composer',
+      );
+      final aboveEcho = rows
+          .takeWhile((r) => !r.contains('next turn'))
+          .lastWhere((r) => r.trim().isNotEmpty);
+      expect(
+        aboveEcho,
+        contains('resumed answer 11'),
+        reason: 'the replayed tail sits directly above the echo',
+      );
+      expect(
+        _hintN(_rowsOf(model)),
+        40,
+        reason: '55 replayed + 4 echo rows = 59 - 19 vh',
+      );
     });
   });
-
 }
