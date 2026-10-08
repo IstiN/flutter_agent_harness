@@ -109,7 +109,7 @@
       ]
     },
     {
-            "file": "test/integration/subagent_integration_test.dart",
+      "file": "test/integration/subagent_integration_test.dart",
       "test": "memory_add and memory_search tools are available",
       "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1372",
       "since": "2026-10-07",
@@ -126,6 +126,16 @@
       "runs": [
         37624414995,
         37562422053
+      ]
+    },
+    {
+      "file": "test/integration/composer_echo_pty_test.dart",
+      "test": "composer echo stays out of the input row at 100 x40",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1413",
+      "since": "2026-10-08",
+      "runs": [
+        37774628085,
+        37711572647
       ]
     }
   ]
