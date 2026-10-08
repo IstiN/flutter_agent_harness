@@ -135,6 +135,7 @@ export 'src/env/session_vars_execution_env.dart';
 export 'src/event_stream.dart';
 export 'src/exceptions.dart';
 export 'src/hashline/hashline.dart';
+export 'src/kaomoji_faces.dart';
 export 'src/lsp/lsp.dart';
 export 'src/mcp/mcp.dart';
 export 'src/memory/harness_llm_provider.dart';
