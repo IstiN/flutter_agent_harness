@@ -63,8 +63,8 @@ final class ConnTrace {
   void configureFromEnv() {
     if (_configured) return;
     _configured = true;
-    if (_flag(Platform.environment['FA_CONN_DEBUG']) ||
-        _flag(Platform.environment['FA_PROVIDER_DEBUG'])) {
+    if (envFlagEnabled(Platform.environment['FA_CONN_DEBUG']) ||
+        envFlagEnabled(Platform.environment['FA_PROVIDER_DEBUG'])) {
       enable();
     }
   }
@@ -80,7 +80,7 @@ final class ConnTrace {
     _enabled = true;
     _traceFilePath = Platform.environment['FA_CONN_TRACE_FILE'];
     payloadSnapshotPath = Platform.environment['FA_CONN_PAYLOAD_SNAPSHOT'];
-    keepAuthInSnapshots = _flag(
+    keepAuthInSnapshots = envFlagEnabled(
       Platform.environment['FA_CONN_PAYLOAD_KEEP_AUTH'],
     );
     _keepAuth = keepAuthInSnapshots;
@@ -160,19 +160,25 @@ final class ConnTrace {
     return uri.replace(queryParameters: masked).toString();
   }
 
+  /// Query-param names whose values must never reach a trace line or a
+  /// snapshot (CRAP gate: a flat set, not an || chain).
+  static const _sensitiveQueryParams = {
+    'key',
+    'apikey',
+    'token',
+    'accesstoken',
+    'signature',
+    'sig',
+    'secret',
+    'clientsecret',
+    'auth',
+    'oauthtoken',
+    'password',
+  };
+
   static bool _sensitiveQueryParam(String name) {
     final key = name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
-    return key == 'key' ||
-        key == 'apikey' ||
-        key == 'token' ||
-        key == 'accesstoken' ||
-        key == 'signature' ||
-        key == 'sig' ||
-        key == 'secret' ||
-        key == 'clientsecret' ||
-        key == 'auth' ||
-        key == 'oauthtoken' ||
-        key == 'password';
+    return _sensitiveQueryParams.contains(key);
   }
 
   void firstByte({
@@ -509,10 +515,15 @@ class _PortRecord {
   final String origin;
 }
 
-bool _flag(String? raw) {
+/// The bench-knob truthy set (CRAP gate: a flat set, not an || chain).
+const _truthyFlags = {'1', 'true', 'yes', 'on'};
+
+/// Parses a bench knob's raw env value. Public (not barrel-exported) so
+/// the branch table is unit-testable; callers pass
+/// `Platform.environment[name]`.
+bool envFlagEnabled(String? raw) {
   if (raw == null) return false;
-  final value = raw.trim().toLowerCase();
-  return value == '1' || value == 'true' || value == 'yes' || value == 'on';
+  return _truthyFlags.contains(raw.trim().toLowerCase());
 }
 
 bool _sensitive(String header) {

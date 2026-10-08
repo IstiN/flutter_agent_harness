@@ -49,6 +49,60 @@ Future<HttpServer> _keepAliveServer() async {
 }
 
 void main() {
+  group('bench knob + redaction branch tables (CRAP gate)', () {
+    test('envFlagEnabled truthy table', () {
+      expect(envFlagEnabled(null), isFalse);
+      expect(envFlagEnabled(''), isFalse);
+      expect(envFlagEnabled('0'), isFalse);
+      expect(envFlagEnabled('false'), isFalse);
+      expect(envFlagEnabled('off'), isFalse);
+      expect(envFlagEnabled('junk'), isFalse);
+      for (final truthy in const ['1', 'true', 'yes', 'on']) {
+        expect(envFlagEnabled(truthy), isTrue, reason: truthy);
+        expect(envFlagEnabled('  $truthy '), isTrue, reason: truthy);
+        expect(envFlagEnabled(truthy.toUpperCase()), isTrue, reason: truthy);
+      }
+    });
+
+    test('redactUrlForSnapshot masks every sensitive query param', () {
+      for (final sensitive in const [
+        'key',
+        'api_key',
+        'apiKey',
+        'token',
+        'access_token',
+        'signature',
+        'sig',
+        'secret',
+        'client_secret',
+        'auth',
+        'oauth_token',
+        'password',
+      ]) {
+        final out = ConnTrace.redactUrlForSnapshot(
+          'https://api.example.com/v1?$sensitive=hunter2&x=1',
+        );
+        expect(out, isNot(contains('hunter2')), reason: sensitive);
+        expect(out, contains('x=1'), reason: sensitive);
+      }
+    });
+
+    test('redactUrlForSnapshot leaves harmless URLs byte-identical', () {
+      expect(
+        ConnTrace.redactUrlForSnapshot('https://api.example.com/v1?x=1&y=2'),
+        'https://api.example.com/v1?x=1&y=2',
+      );
+      expect(
+        ConnTrace.redactUrlForSnapshot('https://api.example.com/v1'),
+        'https://api.example.com/v1',
+      );
+      expect(
+        ConnTrace.redactUrlForSnapshot('not a url at all'),
+        'not a url at all',
+      );
+    });
+  });
+
   final savedShared = providerHttpClientFactory;
   tearDownAll(() => providerHttpClientFactory = savedShared);
 
