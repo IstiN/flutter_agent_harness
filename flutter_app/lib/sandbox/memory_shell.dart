@@ -1485,7 +1485,7 @@ final class MemoryShell implements Shell, BackgroundShell {
     final flags = <String>{if (parsed.quiet) 'q'};
     int? maxCount;
     for (var i = 0; i < parsed.flags.length; i++) {
-      final token = [REDACTED:Sensitive Value];
+      final token = parsed.flags.elementAt(i);
       if (token.startsWith('-') && token.startsWith('-m')) {
         // `-m5` attached or `-m 5` detached — the count rides the next
         // token for the detached shape.
@@ -1529,10 +1529,10 @@ final class MemoryShell implements Shell, BackgroundShell {
   /// count (null when malformed), the POSIX error message for that case,
   /// and the index of the last token the flag consumed.
   (int?, String?, int) _grepMaxCountAt(List<String> flags, int i) {
-    final token = [REDACTED:Sensitive Value];
+    final token = flags.elementAt(i);
     final value = token.length > 2
         ? token.substring(2)
-        : (i + 1 < flags.length ? flags[i + 1] : null);
+        : (i + 1 < flags.length ? flags.elementAt(i + 1) : null);
     final count = value == null ? null : int.tryParse(value);
     if (count == null) {
       return (null, 'grep: option requires a numeric argument -- m\n', i);
