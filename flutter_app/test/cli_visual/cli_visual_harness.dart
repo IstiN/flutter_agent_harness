@@ -128,6 +128,10 @@ final class CliVisualHarness {
     final env = <String, String>{
       'TERM': 'xterm-256color',
       'COLORTERM': 'truecolor',
+      // Deterministic kaomoji frames (issue #1374): the busy row's face
+      // is production-random; fixtures must capture ONE deterministic
+      // frame, so the pipeline pins face 0 for every spawn.
+      'FA_KAOMOJI_FACE': '0',
       // `dart` resolves packages from the pub cache, which lives under the
       // REAL home; pty2 only forwards a fixed env whitelist, so pass it
       // explicitly. Without this a HOME override breaks package resolution.
