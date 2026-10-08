@@ -18,6 +18,7 @@ import 'package:fa/apps/dynamic_widget_tile.dart';
 import 'package:fa/apps/dynamic_widget_graduation.dart';
 import 'package:fa/apps/fa_work_bar.dart';
 import 'package:fa/ui/widgets/media_player.dart';
+import 'package:fa_ui/fa_ui.dart' show liveThinkingMessage;
 
 /// Expanded in-place Fa chat panel for a JS app view: anchored to the bottom
 /// of the view's stack (full width, ~92% of its height), it shows the bound
@@ -291,6 +292,9 @@ class _FaChatOverlayState extends State<FaChatOverlay> {
             ),
           );
         }
+        // Only the LIVE thinking block animates (issue #1374 AC4) —
+        // computed once per transcript pass, identity-matched per tile.
+        final liveThinking = liveThinkingMessage(widget.service);
         return ListView.builder(
           controller: _scrollController,
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
@@ -298,7 +302,8 @@ class _FaChatOverlayState extends State<FaChatOverlay> {
           // viewport instead of popping in while scrolling.
           scrollCacheExtent: const ScrollCacheExtent.pixels(1200),
           itemCount: messages.length,
-          itemBuilder: (context, index) => _messageTile(messages[index]),
+          itemBuilder: (context, index) =>
+              _messageTile(messages[index], liveThinking),
         );
       },
     );
@@ -308,7 +313,7 @@ class _FaChatOverlayState extends State<FaChatOverlay> {
   // ChatMessageTile the full chat screen uses (compact spacing for the
   // panel), so tool tiles, thinking bubbles, sandbox images and inline
   // media players look identical in both.
-  Widget _messageTile(FahChatMessage m) {
+  Widget _messageTile(FahChatMessage m, FahChatMessage? liveThinking) {
     return ChatMessageTile(
       message: m,
       images: _images,
@@ -316,9 +321,11 @@ class _FaChatOverlayState extends State<FaChatOverlay> {
       messageFontSize: ChatTextScope.maybeOf(context)?.fontSize,
       audioControllerFactory: widget.audioControllerFactory,
       videoControllerFactory: widget.videoControllerFactory,
-      // The live thinking block animates (issue #1374); finished
-      // thinking notes freeze their face.
-      thinkingLive: widget.service.isStreaming,
+      // Only the LIVE thinking block animates (issue #1374 AC4): the
+      // transcript's NEWEST thinking message; finished thinking notes
+      // keep a frozen face. Identity holds — m IS a service.messages
+      // element (no rebuild mapping on this surface).
+      thinkingLive: identical(m, liveThinking),
       // The overlay lives inside app views, far from any ChatScreen, so it
       // wires its own widget-tile builder (issue #336): without one the
       // live widget degrades to the plain tool card.

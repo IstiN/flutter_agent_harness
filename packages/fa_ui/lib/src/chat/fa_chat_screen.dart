@@ -1085,6 +1085,11 @@ class _FaChatScreenState extends State<FaChatScreen>
             'content': chat.content,
             'isError': chat.isError,
             'data': chat.data,
+            // The transcript position (issue #1374): the thinking tile's
+            // live gate identifies the streaming block by index — the
+            // tile rebuilds a fresh FaChatMessage, so message identity
+            // cannot survive this mapping.
+            'transcriptIndex': index,
           },
         );
       default:
@@ -1178,9 +1183,13 @@ class _FaChatScreenState extends State<FaChatScreen>
         videoControllerFactory: widget.videoControllerFactory,
         imageCacheWidth: widget.imagePreviewCacheWidth,
         dynamicWidgetTileBuilder: widget.dynamicWidgetTileBuilder,
-        // The live thinking block animates (issue #1374); finished
-        // thinking notes freeze their face.
-        thinkingLive: widget.service.isStreaming,
+        // Only the LIVE thinking block animates (issue #1374 AC4): the
+        // transcript's NEWEST thinking message, matched by its index —
+        // finished thinking notes (every earlier turn) keep a frozen
+        // face. The global isStreaming flag animated all of them.
+        thinkingLive:
+            (metadata['transcriptIndex'] as int?) ==
+            liveThinkingMessageIndex(widget.service),
       ),
     );
     // Issue #379 AC3: a touch anywhere on a live widget row is an

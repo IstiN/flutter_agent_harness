@@ -113,7 +113,11 @@ class KaomojiThinkingIcon extends StatelessWidget {
   const KaomojiThinkingIcon({
     super.key,
     this.size = 16,
-    this.active = true,
+    // Default FROZEN (PR #1419 re-review round 2): this widget is in the
+    // public barrel, and the one configuration AC4 forbids is a call
+    // site that forgets `active:` and silently gets an endless ticker.
+    // Callers pass `active: isLive` explicitly — ChatMessageTile does.
+    this.active = false,
     this.random,
   });
 
@@ -155,6 +159,20 @@ class KaomojiFaceText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final base = style ?? DefaultTextStyle.of(context).style;
+    final text = face.text;
+    // Degenerate-input guard (PR #1419 re-review round 2): a face with
+    // no visible glyphs (empty/whitespace runs) must never crash the
+    // status row — fall back to a plain span. Real faces always carry
+    // non-empty runs, so production never takes this branch.
+    if (text.trim().isEmpty) {
+      return Text(
+        text,
+        style: base,
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.visible,
+      );
+    }
     return Text.rich(
       TextSpan(
         children: [
