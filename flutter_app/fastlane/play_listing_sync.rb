@@ -59,6 +59,18 @@ module PlayListingSync
   # types, or the new types will be rejected pre-flight.
   MANAGED_TYPES = (SCREENSHOT_TYPES + SINGLE_IMAGE_TYPES).freeze
 
+  # Play-mandatory listing TEXT fields per language (gh-1402). Google
+  # rejects the WHOLE listing edit at commit time — HTTP 403
+  # PERMISSION_DENIED "This app has no title for language <lang>" (runs
+  # 37732646663 / 37732832488) — when a language the edit touches has no
+  # title; a listing is only complete with short + full descriptions too.
+  # All three are checkable locally, before any network call.
+  MANDATORY_LISTING_FIELDS = {
+    "title" => "title.txt",
+    "short_description" => "short_description.txt",
+    "full_description" => "full_description.txt"
+  }.freeze
+
   module_function
 
   # ── pure helpers (unit-tested, no I/O beyond the metadata dir) ──────────
@@ -92,12 +104,18 @@ module PlayListingSync
     Digest::SHA256.file(path).hexdigest
   end
 
+  # The screenshot sets to clear for an EXPLICIT locale list (gh-1402:
+  # callers pass only the locales the sync may manage — titled ones).
+  def clear_sets(locales)
+    locales.sort.flat_map do |locale|
+      SCREENSHOT_TYPES.map { |type| { locale: locale, type: type } }
+    end
+  end
+
   # The screenshot sets to clear: every listing locale (repo ∪ live on the
   # console) × every multi-slot type.
   def clear_plan(metadata_dir, remote_locales)
-    all_locales(metadata_dir, remote_locales).flat_map do |locale|
-      SCREENSHOT_TYPES.map { |type| { locale: locale, type: type } }
-    end
+    clear_sets(all_locales(metadata_dir, remote_locales))
   end
 
   # The post-sync state the listing must have: sha256 SEQUENCES per
@@ -110,9 +128,9 @@ module PlayListingSync
   # does NOT ship they are "don't care": a console-created locale keeps
   # its icon/feature graphic (the sync only clears + enforces the
   # screenshot sets there — issue #947 review).
-  def expected_state(metadata_dir, remote_locales)
+  def expected_state(metadata_dir, locales)
     repo = repo_locales(metadata_dir)
-    all_locales(metadata_dir, remote_locales).to_h do |locale|
+    locales.sort.to_h do |locale|
       types = repo.include?(locale) ? MANAGED_TYPES : SCREENSHOT_TYPES
       [locale, types.to_h { |type|
         [type, local_images(metadata_dir, locale, type).map { |path| sha256(path) }]
@@ -124,85 +142,177 @@ module PlayListingSync
     (repo_locales(metadata_dir) + remote_locales.to_a).uniq.sort
   end
 
+  # gh-1402 pre-flight language gate: every repo listing locale must carry
+  # ALL Play-mandatory text fields, present and non-empty. Violations name
+  # language + field + path and fail BEFORE any network call — Google
+  # never gets to say it first at commit time (the 05:46Z incident: the
+  # whole edit died on 403 "This app has no title for language ru-RU").
+  # Returns true; raises one report listing every violation.
+  def validate_listing_completeness!(metadata_dir)
+    problems = []
+    repo_locales(metadata_dir).each do |locale|
+      MANDATORY_LISTING_FIELDS.each do |field, filename|
+        path = File.join(metadata_dir, locale, filename)
+        next if File.exist?(path) && !File.read(path).to_s.strip.empty?
+
+        problems << "  #{locale}: mandatory Play listing field '#{field}' is missing or empty (#{path})"
+      end
+    end
+    return true if problems.empty?
+
+    raise "Play listing metadata is INCOMPLETE — a listing edit touching these " \
+          "languages would be rejected at commit (HTTP 403 'This app has no " \
+          "title for language <lang>'):\n#{problems.join("\n")}"
+  end
+
+  # gh-1402: the languages this sync may manage — store-side listings with
+  # a NON-EMPTY title (repo-backed or console-created alike; a repo locale
+  # with no store listing yet is also untouchable, the upload would draft
+  # it title-less). A language outside this set must not be part of an
+  # image edit: any clear/upload drafts it and Google rejects the WHOLE
+  # edit at commit (HTTP 403 "This app has no title for language <lang>").
+  # The listing-texts deploy in the same lane (supply) creates/completes
+  # those listings; their images sync on a later run. skip_untitled: false
+  # restores full management ("unless explicitly adding one").
+  def managed_locales(metadata_dir, listings, skip_untitled: true)
+    all = all_locales(metadata_dir, listings.map { |listing| listing.fetch("language") })
+    return all unless skip_untitled
+
+    titled = listings.reject { |listing| listing["title"].to_s.strip.empty? }
+                     .map { |listing| listing.fetch("language") }
+    all & titled
+  end
+
+  def untitled_locales(listings)
+    listings.select { |listing| listing["title"].to_s.strip.empty? }
+            .map { |listing| listing.fetch("language") }
+  end
+
   # ── orchestration ───────────────────────────────────────────────────────
 
   # Replace the listing images with the committed goldens and verify the
   # committed state (edits.images.list). Raises on any mismatch — the
   # fastlane lane turns that into a red job. Returns a summary line.
+  #
+  # gh-1402: runs the LOCAL language-completeness gate before any network
+  # call, manages only TITLED Play listings (untitled ones are skipped,
+  # never touched — a touch would 403 the whole edit at commit), and
+  # discards the open edit (best-effort edits.delete) on ANY failure so a
+  # failed commit never leaves stuck-edit drift behind.
   def sync_and_verify!(metadata_dir:, json_key:, package_name:, http: Http.new, now: Time.now,
-                       sha_attempts: 5, sha_backoff: 30)
+                       sha_attempts: 5, sha_backoff: 30, skip_untitled: true)
+    validate_listing_completeness!(metadata_dir)
+
     auth = bearer!(json_key, http: http, now: now)
-
     edit_id = begin_edit!(http, package_name, auth)
-    remote_locales = list_locales!(http, package_name, edit_id, auth)
+    begin
+      listings = list_listings!(http, package_name, edit_id, auth)
+      managed = managed_locales(metadata_dir, listings, skip_untitled: skip_untitled)
+      skipped = all_locales(metadata_dir, listings.map { |l| l.fetch("language") }) - managed
+      skipped.each do |locale|
+        warn "play_listing_sync: skipping #{locale} — no title on the Play listing " \
+             "(gh-1402: an image edit would be rejected at commit, HTTP 403 'This " \
+             "app has no title for language #{locale}'). The listing-texts deploy " \
+             "creates or completes it; its images sync on a later run."
+      end
 
-    uploaded = 0
-    clear_plan(metadata_dir, remote_locales).each do |entry|
-      clear_images!(http, package_name, edit_id, entry[:locale], entry[:type], auth)
-    end
-    repo_locales(metadata_dir).each do |locale|
-      MANAGED_TYPES.each do |type|
-        verified_prefix = [] # golden shas already confirmed for this set
-        local_images(metadata_dir, locale, type).each do |path|
-          local = sha256(path)
-          stored = upload_image!(http, package_name, edit_id, locale, type, path, auth)
-          if stored.to_s.strip.empty?
-            # gh-1328: Play answered the upload without a usable sha256
-            # (nil, or a blank string — same unreadable payload shape) —
-            # the remote is UNREADABLE (usually still processing), never a
-            # byte mismatch. Poll edits.images.list across the processing
-            # window before classifying.
-            stored = poll_stored_sha!(http, package_name, edit_id, locale, type,
-                                      verified_prefix + [local], auth,
-                                      attempts: sha_attempts, backoff: sha_backoff)
-            if stored.nil?
-              raise "remote unreadable after #{sha_attempts} attempts for " \
-                    "#{locale}/#{type}/#{File.basename(path)} — Play never " \
-                    "returned a usable sha256 for the just-uploaded image — " \
-                    "aborting before commit, listing untouched"
+      uploaded = 0
+      clear_sets(managed).each do |entry|
+        clear_images!(http, package_name, edit_id, entry[:locale], entry[:type], auth)
+      end
+      (repo_locales(metadata_dir) & managed).each do |locale|
+        MANAGED_TYPES.each do |type|
+          verified_prefix = [] # golden shas already confirmed for this set
+          local_images(metadata_dir, locale, type).each do |path|
+            local = sha256(path)
+            stored = upload_image!(http, package_name, edit_id, locale, type, path, auth)
+            if stored.to_s.strip.empty?
+              # gh-1328: Play answered the upload without a usable sha256
+              # (nil, or a blank string — same unreadable payload shape) —
+              # the remote is UNREADABLE (usually still processing), never a
+              # byte mismatch. Poll edits.images.list across the processing
+              # window before classifying.
+              stored = poll_stored_sha!(http, package_name, edit_id, locale, type,
+                                        verified_prefix + [local], auth,
+                                        attempts: sha_attempts, backoff: sha_backoff)
+              if stored.nil?
+                raise "remote unreadable after #{sha_attempts} attempts for " \
+                      "#{locale}/#{type}/#{File.basename(path)} — Play never " \
+                      "returned a usable sha256 for the just-uploaded image — " \
+                      "aborting before commit, listing untouched"
+              end
             end
+            unless stored == local
+              raise "remote sha mismatch: Play stored different bytes for " \
+                    "#{locale}/#{type}/#{File.basename(path)} (sha256 " \
+                    "#{stored.inspect} != local #{local}) — aborting before " \
+                    "commit, listing untouched"
+            end
+            verified_prefix << local
+            uploaded += 1
           end
-          unless stored == local
-            raise "remote sha mismatch: Play stored different bytes for " \
-                  "#{locale}/#{type}/#{File.basename(path)} (sha256 " \
-                  "#{stored.inspect} != local #{local}) — aborting before " \
-                  "commit, listing untouched"
-          end
-          verified_prefix << local
-          uploaded += 1
         end
       end
+      commit_edit!(http, package_name, edit_id, auth)
+    rescue StandardError
+      # gh-1402 edit hygiene: a failed commit (e.g. HTTP 403 "This app has
+      # no title for language <lang>") leaves the edit OPEN on Play —
+      # discard it best-effort so the next run starts clean, then re-raise
+      # the original error.
+      begin
+        delete_edit!(http, package_name, edit_id, auth)
+      rescue StandardError
+        nil
+      end
+      raise
     end
-    commit_edit!(http, package_name, edit_id, auth)
 
     verify_committed!(metadata_dir: metadata_dir, json_key: json_key,
-                      package_name: package_name, http: http, now: now)
-    "Play listing images replaced per locale + device type and verified " \
-    "(#{uploaded} image(s), locales: #{all_locales(metadata_dir, remote_locales).join(', ')})"
+                      package_name: package_name, http: http, now: now,
+                      skip_untitled: skip_untitled)
+    summary = "Play listing images replaced per locale + device type and verified " \
+              "(#{uploaded} image(s), locales: #{managed.join(', ')})"
+    unless skipped.empty?
+      summary += "; skipped untitled Play listing(s) (images sync after the texts " \
+                 "deploy creates them): #{skipped.join(', ')}"
+    end
+    summary
   end
 
   # Post-commit gate: edits.images.list must equal the repo goldens for
   # every managed locale/type — including the empty sets (a stale shot on
   # a device type or locale the repo no longer ships fails the job).
-  def verify_committed!(metadata_dir:, json_key:, package_name:, http: Http.new, now: Time.now)
+  # gh-1402: untitled Play listings are NOT managed (never touched by the
+  # sync edit) and are skipped here too — and the read-only edit is
+  # discarded even when the gate fails, so no stuck-edit drift.
+  def verify_committed!(metadata_dir:, json_key:, package_name:, http: Http.new, now: Time.now,
+                        skip_untitled: true)
     auth = bearer!(json_key, http: http, now: now)
     edit_id = begin_edit!(http, package_name, auth)
-    remote_locales = list_locales!(http, package_name, edit_id, auth)
-
     problems = []
-    expected_state(metadata_dir, remote_locales).each do |locale, by_type|
-      by_type.each do |type, want|
-        # Sequence compare (no sort): uploads go out in listing order, so
-        # a Play-side reordering (02_… shown before 01_…) must fail too.
-        got = list_images!(http, package_name, edit_id, locale, type, auth)
-              .map { |image| image["sha256"] }.compact
-        next if got == want
+    begin
+      listings = list_listings!(http, package_name, edit_id, auth)
+      managed = managed_locales(metadata_dir, listings, skip_untitled: skip_untitled)
 
-        problems << "  #{locale}/#{type}: remote has #{got.size} image(s), " \
-                    "expected #{want.size} (sha256 or listing-order mismatch)"
+      expected_state(metadata_dir, managed).each do |locale, by_type|
+        by_type.each do |type, want|
+          # Sequence compare (no sort): uploads go out in listing order, so
+          # a Play-side reordering (02_… shown before 01_…) must fail too.
+          got = list_images!(http, package_name, edit_id, locale, type, auth)
+                .map { |image| image["sha256"] }.compact
+          next if got == want
+
+          problems << "  #{locale}/#{type}: remote has #{got.size} image(s), " \
+                      "expected #{want.size} (sha256 or listing-order mismatch)"
+        end
+      end
+    ensure
+      begin
+        delete_edit!(http, package_name, edit_id, auth) # read-only edit — discard
+      rescue StandardError
+        nil
       end
     end
-    delete_edit!(http, package_name, edit_id, auth) # read-only edit — discard
 
     return true if problems.empty?
 
@@ -293,14 +403,21 @@ module PlayListingSync
     JSON.parse(res[:body]).fetch("id")
   end
 
-  def list_locales!(http, package_name, edit_id, auth)
+  # gh-1402: the FULL listings payload (language + title + descriptions) —
+  # the store-side surface the untitled-language gate reads. list_locales!
+  # stays for locale-only callers.
+  def list_listings!(http, package_name, edit_id, auth)
     res = http.request(:Get, "#{API_ROOT}/#{package_name}/edits/#{edit_id}/listings",
                        headers: auth)
     unless res[:status] == 200
       raise "edits.listings.list failed (HTTP #{res[:status]}): #{api_error_message(res[:body])}"
     end
 
-    JSON.parse(res[:body]).fetch("listings", []).map { |l| l.fetch("language") }
+    JSON.parse(res[:body]).fetch("listings", [])
+  end
+
+  def list_locales!(http, package_name, edit_id, auth)
+    list_listings!(http, package_name, edit_id, auth).map { |l| l.fetch("language") }
   end
 
   # Deletes the WHOLE image set of a locale/type. 404 = nothing to clear.
