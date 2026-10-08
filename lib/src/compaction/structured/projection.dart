@@ -88,6 +88,151 @@ final class StructuredViewState {
   bool isCovered(String recordId) => coveredRecordIds.containsKey(recordId);
 }
 
+/// One fold record the replay dropped WHOLE (gh-1425 AC2): its referenced
+/// ids did not all resolve on the projected path, or its id list was empty
+/// (a shape an incompatible writer produced). All-or-note resolution means
+/// none of its ids enter the derived state — [unresolved] names the
+/// references that could not be resolved (empty for the empty-shape case).
+final class DroppedFold {
+  const DroppedFold({
+    required this.record,
+    required this.unresolved,
+    required this.emptyShape,
+  });
+
+  /// The fold record itself (hidden range / compact checkpoint /
+  /// segment pin).
+  final SessionRecord record;
+
+  /// The referenced ids that do not resolve on the projected path.
+  final Set<String> unresolved;
+
+  /// Whether the fold was dropped for carrying NO references at all (the
+  /// version-skew shape: an older build wrote ids under keys this build
+  /// does not read).
+  final bool emptyShape;
+}
+
+/// The [StructuredViewState] a fold-aware replay produced plus the folds
+/// it had to drop whole.
+final class ResolvedFolds {
+  const ResolvedFolds({required this.state, required this.dropped});
+
+  final StructuredViewState state;
+
+  /// The dropped fold records, in path order — the renderer surfaces one
+  /// visible resume note per entry.
+  final List<DroppedFold> dropped;
+}
+
+/// Resolves the structured fold chain over a branch [path] with ALL-OR-NOTE
+/// semantics (gh-1425 AC2): a fold record whose referenced ids do not all
+/// resolve on the path — or that carries no ids at all (the record-shape
+/// skew a newer binary can hit replaying an older build's folds) — is
+/// dropped WHOLE. Applied-set ⊆ resolvable-set by construction; a partial
+/// silent application is impossible. Every dropped fold is reported so the
+/// renderer can surface a visible resume note naming the dropped
+/// generation; the records the fold referenced render unfolded (nothing is
+/// lost — the session file keeps every record).
+///
+/// [seqs] refines the classic-prefix exemption: a path headed by a classic
+/// [CompactionRecord] drops everything below its kept start by design, and
+/// references into that dropped prefix never rendered in either view —
+/// they stay exempt from the loud note (issue #266 F1a legacy silence).
+/// References without a seq alias (below a windowed resume's resident
+/// window) under a compaction-headed path are equally exempt: the kept
+/// path above them is guaranteed resident by the resume walk's
+/// kept-path-completeness rule.
+ResolvedFolds resolveStructuredFolds(
+  List<SessionRecord> path, {
+  RecordSeqIndex? seqs,
+}) {
+  final pathIds = {for (final record in path) record.id};
+  final classicPrefixExempt = path.isNotEmpty && path.first is CompactionRecord;
+  final boundarySeq = classicPrefixExempt && seqs != null && path.isNotEmpty
+      ? seqs.seqOf(path.first.id)
+      : null;
+
+  bool exempt(String referenceId) {
+    if (!classicPrefixExempt) return false;
+    if (seqs == null) return true; // cannot classify — legacy silence
+    final seq = seqs.seqOf(referenceId);
+    if (seq == null) return true; // below the resident window
+    final boundary = boundarySeq;
+    return boundary != null && seq < boundary;
+  }
+
+  final hidden = <String>{};
+  final checkpoints = <CompactCheckpointRecord>[];
+  final covered = <String, CompactCheckpointRecord>{};
+  final pinnedIds = <String>{};
+  final dropped = <DroppedFold>[];
+  void apply(SessionRecord record, void Function() applyEffect) {
+    final refs = _foldReferences(record);
+    final emptyShape = refs.isEmpty;
+    final unresolved = {
+      for (final ref in refs)
+        if (!pathIds.contains(ref) && !exempt(ref)) ref,
+    };
+    if (emptyShape || unresolved.isNotEmpty) {
+      dropped.add(
+        DroppedFold(
+          record: record,
+          unresolved: unresolved,
+          emptyShape: emptyShape,
+        ),
+      );
+      return;
+    }
+    applyEffect();
+  }
+
+  for (final record in path) {
+    switch (record) {
+      case HiddenRangeRecord(:final recordIds):
+        apply(record, () => hidden.addAll(recordIds));
+      case SegmentPinRecord(:final recordIds, :final pinned):
+        apply(record, () {
+          pinned ? pinnedIds.addAll(recordIds) : pinnedIds.removeAll(recordIds);
+        });
+      case CompactCheckpointRecord checkpoint:
+        apply(record, () {
+          checkpoints.add(checkpoint);
+          for (final id in checkpoint.coversRecordIds) {
+            covered[id] = checkpoint;
+          }
+          // The range itself is swallowed even when covers is partial.
+          covered[checkpoint.firstRecordId] = checkpoint;
+          covered[checkpoint.lastRecordId] = checkpoint;
+        });
+      default:
+        break;
+    }
+  }
+  return ResolvedFolds(
+    state: StructuredViewState._(
+      hiddenRecordIds: hidden,
+      checkpoints: checkpoints,
+      coveredRecordIds: covered,
+      pinnedRecordIds: pinnedIds,
+    ),
+    dropped: dropped,
+  );
+}
+
+/// Every record id a fold record references, for the all-or-note check.
+Set<String> _foldReferences(SessionRecord record) => switch (record) {
+  HiddenRangeRecord(:final recordIds) => recordIds.toSet(),
+  SegmentPinRecord(:final recordIds) => recordIds.toSet(),
+  CompactCheckpointRecord(
+    :final coversRecordIds,
+    :final firstRecordId,
+    :final lastRecordId,
+  ) =>
+    {...coversRecordIds, firstRecordId, lastRecordId},
+  _ => const {},
+};
+
 /// Derives the structured view over a branch [path] (post-classic-transform).
 StructuredViewState buildStructuredViewState(List<SessionRecord> path) {
   final hidden = <String>{};
@@ -152,12 +297,20 @@ bool projectsStructured(SessionRecord record) =>
 /// wire-safe by construction: hidden tool results stay tool results, and
 /// hidden assistant carriers become plain user-role markers, so no tool
 /// call is ever orphaned (issue #85).
+///
+/// The fold chain resolves with ALL-OR-NOTE semantics (gh-1425 AC2): a
+/// fold record whose referenced ids do not resolve on the path — or that
+/// carries none at all (an older build's shape) — is dropped whole and a
+/// visible `[resume]` note renders at its position naming the dropped
+/// generation; none of its ids half-apply.
 List<Message> renderStructuredMessages({
   required List<SessionRecord> path,
   required RecordSeqIndex seqs,
   required List<Message> Function(SessionRecord record) projectEntry,
 }) {
-  final state = buildStructuredViewState(path);
+  final resolution = resolveStructuredFolds(path, seqs: seqs);
+  final state = resolution.state;
+  final droppedById = {for (final drop in resolution.dropped) drop.record.id: drop};
   final byId = {for (final record in path) record.id: record};
   // Tool calls whose assistant carrier is itself hidden: hiding the
   // carrier downgrades its results to user-role markers too, or the wire
@@ -167,6 +320,13 @@ List<Message> renderStructuredMessages({
   final messages = <Message>[];
   final emitted = <String>{};
   for (final record in path) {
+    final drop = droppedById[record.id];
+    if (drop != null) {
+      // The dropped fold's own marker/text never renders — the note
+      // replaces it and the span it named renders unfolded.
+      messages.add(_droppedFoldNote(drop, seqs));
+      continue;
+    }
     messages.addAll(
       _projectRecord(
         record,
@@ -180,6 +340,34 @@ List<Message> renderStructuredMessages({
     );
   }
   return messages;
+}
+
+/// The visible resume note for a dropped fold (gh-1425 AC2): names the
+/// dropped generation — fold kind, file position, why it dropped — so a
+/// version-skewed fold can never vanish silently. Plain text, one wire
+/// message at the fold's position.
+Message _droppedFoldNote(DroppedFold drop, RecordSeqIndex seqs) {
+  final record = drop.record;
+  final seq = seqs.seqOf(record.id);
+  final kind = switch (record) {
+    HiddenRangeRecord() => 'hidden_range',
+    CompactCheckpointRecord() => 'compact_checkpoint',
+    SegmentPinRecord() => 'segment_pin',
+    _ => record.type,
+  };
+  final what = drop.emptyShape
+      ? 'it carries no record ids (a shape an older build wrote — '
+            'the fields this build reads are empty)'
+      : '${drop.unresolved.length} of its referenced records no longer '
+            'resolve in this session '
+            '(${drop.unresolved.take(3).join(', ')}'
+            '${drop.unresolved.length > 3 ? ', …' : ''})';
+  return UserMessage.text(
+    '[resume] structured fold #${seq ?? '?'} ($kind) dropped: $what — '
+    'its span renders unfolded and no part of the fold was applied. '
+    'The session file keeps every record.',
+    timestamp: record.timestamp,
+  );
 }
 
 /// Tool-call ids on hidden (or checkpoint-covered) assistant carriers —
