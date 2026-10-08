@@ -159,6 +159,29 @@ void main() {
     },
   );
 
+  test('user-scope add survives a broken LLM core via the plain fallback',
+      () async {
+    // The user-scope half of the `_addNoteAnyhow` fallback: the storage is
+    // rebuilt from the resolved user path when needed (no force-unwrap),
+    // and the note still saves with keyword-only metadata.
+    final env = MemoryExecutionEnv();
+    final controller = MemoryController(
+      env: env,
+      userRoot: '/user-home',
+      llmProvider: _BrokenCoreProvider(),
+    );
+    await controller.add(text: 'user scope fact', scope: 'user');
+
+    final noteIds =
+        (await env.listDir('/user-home/.fah/memory/note')).valueOrNull ?? const [];
+    final texts = <String>{
+      for (final id in noteIds)
+        (await env.readTextFile('/user-home/.fah/memory/note/${id.name}'))
+            .valueOrNull!,
+    };
+    expect(texts.join('\n'), contains('user scope fact'));
+  });
+
   test('search/add degrades are observable through onDegrade', () async {
     // gh-1393 rework: the `on Object {}` swallows are the ticket's intent,
     // but silent — field regressions need a breadcrumb. The injectable
