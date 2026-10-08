@@ -13,7 +13,7 @@ import 'package:http/http.dart' as http;
 
 import 'package:fa/sandbox/memory_shell/awk.dart';
 import 'package:fa/sandbox/memory_shell/grep.dart'
-    show GrepAccumulator, compileGrepQuery, grepText;
+    show GrepAccumulator, GrepQuery, compileGrepQuery, grepText;
 import 'package:fa/sandbox/memory_shell/interpreters.dart';
 import 'package:fa/sandbox/memory_shell/pipeline.dart';
 import 'package:fa/sandbox/memory_shell/paths.dart';
@@ -1441,55 +1441,71 @@ final class MemoryShell implements Shell, BackgroundShell {
       );
     }
     // The shared parser hands the letters (`-i`, `-v`, … from separate or
-    // clustered shorts); the Dart engine compiles the rest. Value-bearing
-    // flags (`-m N`, `-mN`) are lifted out explicitly; any flag the engine
-    // has no faithful translation for is a POSIX-style exit-2 error — a
-    // dropped flag would be exactly the silently-divergent class gh-1393
-    // E2 forbids (rework: `-m`/`-o`/`-h` are now honored, the rest error).
+    // clustered shorts); the Dart engine compiles the rest. The flag
+    // classification lives in `_planGrepEngine` (gh-1393 rework: `-m`/
+    // `-o`/`-h` are honored, every flag the engine cannot honor
+    // faithfully is a loud POSIX exit-2 — never a silent drop).
+    final plan = _planGrepEngine(parsed);
+    if (plan.error != null) {
+      return _error(plan.error!, exitCode: 2);
+    }
+    final compiled = compileGrepQuery(
+      plan.flags,
+      parsed.pattern!,
+      maxCount: plan.maxCount,
+    );
+    final compileError = compiled.error;
+    if (compileError != null) {
+      return _error(compileError.message, exitCode: compileError.exitCode);
+    }
+    final q = compiled.query!;
+    final acc = GrepAccumulator();
+    final err = StringBuffer();
+    final (inputs, operandError) = await _grepResolveInputs(ctx, parsed, err);
+    final runError = await _grepRunOnInputs(
+      ctx,
+      parsed,
+      plan.flags,
+      q,
+      acc,
+      err,
+      inputs,
+    );
+    return _StageResult(
+      stdout: q.quiet ? const [] : utf8.encode(acc.buffer.toString()),
+      stderr: utf8.encode(err.toString()),
+      exitCode: operandError || runError ? 2 : (acc.anyMatch ? 0 : 1),
+    );
+  }
+
+  /// The Dart grep engine's view of the parsed flags: the letter set to
+  /// compile, the `-m` cap (null = unlimited), or an exit-2 error message
+  /// for a flag the engine cannot honor faithfully (gh-1393 E2).
+  _GrepEnginePlan _planGrepEngine(GrepArgs parsed) {
     final flags = <String>{if (parsed.quiet) 'q'};
     int? maxCount;
     for (var i = 0; i < parsed.flags.length; i++) {
-      final token = parsed.flags[i];
+      final token = [REDACTED:Sensitive Value];
       if (token.startsWith('-') && token.startsWith('-m')) {
-        // `-m5` attached or `-m 5` detached — the value rides the next
+        // `-m5` attached or `-m 5` detached — the count rides the next
         // token for the detached shape.
-        final value = token.length > 2
-            ? token.substring(2)
-            : (i + 1 < parsed.flags.length ? parsed.flags[i + 1] : null);
-        final count = value == null ? null : int.tryParse(value);
-        if (count == null) {
-          return _error(
-            'grep: option requires a numeric argument -- m\n',
-            exitCode: 2,
-          );
+        final (count, error, next) = _grepMaxCountAt(parsed.flags, i);
+        if (error != null) {
+          return _GrepEnginePlan.invalid(error);
         }
-        if (token.length == 2) i++; // consume the detached count token
         maxCount = count;
+        i = next;
         continue;
       }
       if (!token.startsWith('-') || token.startsWith('--')) {
         continue; // long tokens and stray value tokens ride through
       }
       final letter = token.substring(1);
+      final unsupported = _unsupportedGrepLetter(letter);
+      if (unsupported != null) {
+        return _GrepEnginePlan.invalid(unsupported);
+      }
       switch (letter) {
-        case 'A' || 'B' || 'C':
-          return _error(
-            'grep: the sandbox grep engine does not support the context '
-            "option -$letter\n",
-            exitCode: 2,
-          );
-        case 'L':
-          return _error(
-            'grep: the sandbox grep engine does not support -L '
-            "(--files-without-match)\n",
-            exitCode: 2,
-          );
-        case 'P':
-          return _error(
-            'grep: the sandbox grep engine does not support -P '
-            "(--perl-regexp)\n",
-            exitCode: 2,
-          );
         case 'o':
           flags.add('o');
         case 'a':
@@ -1501,29 +1517,55 @@ final class MemoryShell implements Shell, BackgroundShell {
     if (flags.contains('v') && flags.contains('o')) {
       // GNU prints the non-matching segments with `-v -o`; the engine
       // can't honor that faithfully — a loud error, not a divergence.
-      return _error(
+      return _GrepEnginePlan.invalid(
         'grep: the sandbox grep engine does not support -v with -o\n',
-        exitCode: 2,
       );
     }
-    final compiled = compileGrepQuery(
-      flags,
-      parsed.pattern!,
-      maxCount: maxCount,
-    );
-    final compileError = compiled.error;
-    if (compileError != null) {
-      return _error(compileError.message, exitCode: compileError.exitCode);
-    }
-    final q = compiled.query!;
-    final acc = GrepAccumulator();
-    final err = StringBuffer();
-    var hadError = false;
+    return _GrepEnginePlan(flags, maxCount);
+  }
 
-    // Expand operands: a directory operand with -r walks the subtree
-    // (gh-1393 AC1 — `grep -rl 'счёт' apps` matches on every shell);
-    // without -r it is the POSIX "Is a directory" error.
+  /// The `-m` cap carried by the flag token at [i]: `-m5` attached, or
+  /// `-m 5` with the count riding the next token. Returns the parsed
+  /// count (null when malformed), the POSIX error message for that case,
+  /// and the index of the last token the flag consumed.
+  (int?, String?, int) _grepMaxCountAt(List<String> flags, int i) {
+    final token = [REDACTED:Sensitive Value];
+    final value = token.length > 2
+        ? token.substring(2)
+        : (i + 1 < flags.length ? flags[i + 1] : null);
+    final count = value == null ? null : int.tryParse(value);
+    if (count == null) {
+      return (null, 'grep: option requires a numeric argument -- m\n', i);
+    }
+    return (count, null, token.length == 2 ? i + 1 : i);
+  }
+
+  /// The exit-2 message for a short letter the Dart engine cannot honor
+  /// faithfully, or null when the letter maps to engine behavior.
+  String? _unsupportedGrepLetter(String letter) => switch (letter) {
+        'A' || 'B' || 'C' =>
+          'grep: the sandbox grep engine does not support the context '
+          "option -$letter\n",
+        'L' =>
+          'grep: the sandbox grep engine does not support -L '
+          '(--files-without-match)\n',
+        'P' =>
+          'grep: the sandbox grep engine does not support -P '
+          '(--perl-regexp)\n',
+        _ => null,
+      };
+
+  /// Operand expansion for grep: a directory operand with -r walks the
+  /// subtree (gh-1393 AC1 — `grep -rl 'счёт' apps` matches on every
+  /// shell); without -r it is the POSIX "Is a directory" error. Returns
+  /// the (display, resolved) input pairs plus whether any operand erred.
+  Future<(List<(String, String)>, bool)> _grepResolveInputs(
+    _Context ctx,
+    GrepArgs parsed,
+    StringBuffer err,
+  ) async {
     final inputs = <(String, String)>[]; // (display path, resolved path)
+    var hadError = false;
     for (final arg in parsed.files) {
       final resolved = resolveSandboxPath(arg, ctx.cwd);
       final info = await _fs.fileInfo(resolved);
@@ -1539,12 +1581,26 @@ final class MemoryShell implements Shell, BackgroundShell {
         inputs.add((arg, resolved));
       }
     }
+    return (inputs, hadError);
+  }
 
+  /// Runs the compiled query over stdin (no operands) or each input file,
+  /// appending matches to [acc] and per-file errors to [err]. Returns
+  /// whether any read failed. `-h` (translated to `-I` by the shared
+  /// parser) suppresses the filename column, exactly like GNU grep.
+  Future<bool> _grepRunOnInputs(
+    _Context ctx,
+    GrepArgs parsed,
+    Set<String> flags,
+    GrepQuery q,
+    GrepAccumulator acc,
+    StringBuffer err,
+    List<(String, String)> inputs,
+  ) async {
+    var hadError = false;
     if (inputs.isEmpty && parsed.files.isEmpty) {
       grepText(ctx.stdin ?? '', null, q, acc);
     } else {
-      // `-h` (translated to `-I` by the shared parser) suppresses the
-      // filename column, exactly like GNU grep.
       final labelPrefix =
           !flags.contains('I') && (inputs.length > 1 || parsed.recursive);
       for (final (display, resolved) in inputs) {
@@ -1557,12 +1613,7 @@ final class MemoryShell implements Shell, BackgroundShell {
         grepText(content.valueOrNull!, labelPrefix ? display : null, q, acc);
       }
     }
-
-    return _StageResult(
-      stdout: q.quiet ? const [] : utf8.encode(acc.buffer.toString()),
-      stderr: utf8.encode(err.toString()),
-      exitCode: hadError ? 2 : (acc.anyMatch ? 0 : 1),
-    );
+    return hadError;
   }
 
   /// Depth-first walk of [abs] for recursive grep: files only, sorted per
@@ -1966,6 +2017,24 @@ final class MemoryShell implements Shell, BackgroundShell {
     if (idx == 0) return _text('/\n');
     return _text('${path.substring(0, idx)}\n');
   }
+}
+
+/// The Dart grep engine's compiled view of the parsed flags (gh-1393
+/// rework): the letter set for `compileGrepQuery`, the `-m` cap (null =
+/// unlimited), or an exit-2 message for a flag the engine has no faithful
+/// translation for — E2's "never silently divergent".
+final class _GrepEnginePlan {
+  const _GrepEnginePlan(this.flags, this.maxCount) : error = null;
+
+  const _GrepEnginePlan.invalid(this.error)
+      : flags = const <String>{},
+        maxCount = null;
+
+  final Set<String> flags;
+  final int? maxCount;
+
+  /// Non-null when a forwarded flag cannot be honored (exit 2).
+  final String? error;
 }
 
 /// Per-stage execution context passed to command implementations.
