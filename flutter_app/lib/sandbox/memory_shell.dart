@@ -1441,16 +1441,76 @@ final class MemoryShell implements Shell, BackgroundShell {
       );
     }
     // The shared parser hands the letters (`-i`, `-v`, … from separate or
-    // clustered shorts); the Dart engine compiles the rest.
-    final flags = <String>{
-      for (final token in parsed.flags)
-        if (token.startsWith('-') &&
-            !token.startsWith('--') &&
-            token.length == 2)
-          token.substring(1),
-      if (parsed.quiet) 'q',
-    };
-    final compiled = compileGrepQuery(flags, parsed.pattern!);
+    // clustered shorts); the Dart engine compiles the rest. Value-bearing
+    // flags (`-m N`, `-mN`) are lifted out explicitly; any flag the engine
+    // has no faithful translation for is a POSIX-style exit-2 error — a
+    // dropped flag would be exactly the silently-divergent class gh-1393
+    // E2 forbids (rework: `-m`/`-o`/`-h` are now honored, the rest error).
+    final flags = <String>{if (parsed.quiet) 'q'};
+    int? maxCount;
+    for (var i = 0; i < parsed.flags.length; i++) {
+      final token = parsed.flags[i];
+      if (token.startsWith('-') && token.startsWith('-m')) {
+        // `-m5` attached or `-m 5` detached — the value rides the next
+        // token for the detached shape.
+        final value = token.length > 2
+            ? token.substring(2)
+            : (i + 1 < parsed.flags.length ? parsed.flags[i + 1] : null);
+        final count = value == null ? null : int.tryParse(value);
+        if (count == null) {
+          return _error(
+            'grep: option requires a numeric argument -- m\n',
+            exitCode: 2,
+          );
+        }
+        if (token.length == 2) i++; // consume the detached count token
+        maxCount = count;
+        continue;
+      }
+      if (!token.startsWith('-') || token.startsWith('--')) {
+        continue; // long tokens and stray value tokens ride through
+      }
+      final letter = token.substring(1);
+      switch (letter) {
+        case 'A' || 'B' || 'C':
+          return _error(
+            'grep: the sandbox grep engine does not support the context '
+            "option -$letter\n",
+            exitCode: 2,
+          );
+        case 'L':
+          return _error(
+            'grep: the sandbox grep engine does not support -L '
+            "(--files-without-match)\n",
+            exitCode: 2,
+          );
+        case 'P':
+          return _error(
+            'grep: the sandbox grep engine does not support -P '
+            "(--perl-regexp)\n",
+            exitCode: 2,
+          );
+        case 'o':
+          flags.add('o');
+        case 'a':
+          break; // text-only engine: operands are read as text anyway
+        default:
+          flags.add(letter);
+      }
+    }
+    if (flags.contains('v') && flags.contains('o')) {
+      // GNU prints the non-matching segments with `-v -o`; the engine
+      // can't honor that faithfully — a loud error, not a divergence.
+      return _error(
+        'grep: the sandbox grep engine does not support -v with -o\n',
+        exitCode: 2,
+      );
+    }
+    final compiled = compileGrepQuery(
+      flags,
+      parsed.pattern!,
+      maxCount: maxCount,
+    );
     final compileError = compiled.error;
     if (compileError != null) {
       return _error(compileError.message, exitCode: compileError.exitCode);
@@ -1483,7 +1543,10 @@ final class MemoryShell implements Shell, BackgroundShell {
     if (inputs.isEmpty && parsed.files.isEmpty) {
       grepText(ctx.stdin ?? '', null, q, acc);
     } else {
-      final labelPrefix = inputs.length > 1 || parsed.recursive;
+      // `-h` (translated to `-I` by the shared parser) suppresses the
+      // filename column, exactly like GNU grep.
+      final labelPrefix =
+          !flags.contains('I') && (inputs.length > 1 || parsed.recursive);
       for (final (display, resolved) in inputs) {
         final content = await _fs.readTextFile(resolved);
         if (content.isErr) {

@@ -16,23 +16,36 @@ typedef GrepQuery = ({
   bool countOnly,
   bool filesOnly,
   bool quiet,
+
+  /// `-m N`: stop emitting after N selected lines per file (with `-o`:
+  /// N matches). Null = unbounded.
+  int? maxCount,
+
+  /// `-o`: print each match on its own line instead of the whole line.
+  bool onlyMatching,
 });
 
 /// Compiles the flag set into a [RegExp] plus the per-line match options.
 /// Throws [FormatException]-wrapped [ArgumentError]-free: returns the error
-/// message via the record when the pattern is invalid.
+/// message via the record when the pattern is invalid. [maxCount] carries
+/// the parsed `-m N` value (the flag set has no room for values).
 typedef GrepCompiled = ({
   GrepQuery? query,
   ({String message, int exitCode})? error,
 });
 
-GrepCompiled compileGrepQuery(Set<String> flags, String pattern) {
+GrepCompiled compileGrepQuery(
+  Set<String> flags,
+  String pattern, {
+  int? maxCount,
+}) {
   final ignoreCase = flags.contains('i');
   final invert = flags.contains('v');
   final lineNumber = flags.contains('n');
   final countOnly = flags.contains('c');
   final filesOnly = flags.contains('l');
   final quiet = flags.contains('q');
+  final onlyMatching = flags.contains('o');
 
   var source = pattern;
   if (flags.contains('F')) source = RegExp.escape(source);
@@ -55,6 +68,8 @@ GrepCompiled compileGrepQuery(Set<String> flags, String pattern) {
       countOnly: countOnly,
       filesOnly: filesOnly,
       quiet: quiet,
+      maxCount: maxCount,
+      onlyMatching: onlyMatching,
     ),
     error: null,
   );
@@ -67,25 +82,46 @@ final class GrepAccumulator {
 }
 
 /// Greps one content block into [acc] (pure): label-prefixed and
-/// line-numbered matches, `-c` counts, `-l` file names, `-q` silence.
+/// line-numbered matches, `-c` counts, `-l` file names, `-q` silence,
+/// `-m N` max-count bounds, `-o` match-only output (gh-1393 rework —
+/// the flags GNU semantics the shared parser forwards).
 void grepText(String content, String? label, GrepQuery q, GrepAccumulator acc) {
   final lines = content.split('\n');
   if (lines.isNotEmpty && lines.last.isEmpty) lines.removeLast();
   var count = 0;
+  var selected = 0;
   var reportedFile = false;
   for (var i = 0; i < lines.length; i++) {
     final found = q.regex.hasMatch(lines[i]);
     if (q.invert ? found : !found) continue;
-    acc.anyMatch = true;
-    count++;
-    if (q.quiet) return;
     if (q.filesOnly) {
+      acc.anyMatch = true;
+      if (q.quiet) return;
       if (label != null && !reportedFile) {
         acc.buffer.writeln(label);
         reportedFile = true;
       }
       return;
     }
+    if (q.onlyMatching && !q.invert) {
+      for (final match in q.regex.allMatches(lines[i])) {
+        if (match.start == match.end) continue; // GNU skips empty matches
+        if (q.maxCount != null && selected >= q.maxCount!) return;
+        acc.anyMatch = true;
+        count++;
+        selected++;
+        if (q.quiet) return;
+        if (label != null) acc.buffer.write('$label:');
+        if (q.lineNumber) acc.buffer.write('${i + 1}:');
+        acc.buffer.writeln(match.group(0));
+      }
+      continue;
+    }
+    if (q.maxCount != null && selected >= q.maxCount!) return;
+    acc.anyMatch = true;
+    count++;
+    selected++;
+    if (q.quiet) return;
     if (q.countOnly) continue;
     if (label != null) acc.buffer.write('$label:');
     if (q.lineNumber) acc.buffer.write('${i + 1}:');

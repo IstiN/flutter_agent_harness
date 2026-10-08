@@ -121,6 +121,81 @@ void main() {
     expect(r.stdout, isEmpty);
   });
 
+  test('grep -m/-o/-h behave like GNU grep (gh-1393 rework)', () async {
+    await run('echo -e "aa\nba\nca" > /m.txt');
+    await run('echo -e "ad" > /n.txt');
+
+    // -m N caps the selected lines per file.
+    var r = await run('grep -m1 a /m.txt');
+    expect(r.exitCode, 0);
+    expect(r.stdout, 'aa\n');
+
+    // -m5 (attached value) and `grep -m 5` (detached) are the same flag.
+    r = await run('grep -m2 a /m.txt');
+    expect(r.stdout, 'aa\nba\n');
+    r = await run('grep -m 2 a /m.txt');
+    expect(r.stdout, 'aa\nba\n');
+
+    // --max-count=N reaches the Dart engine too.
+    r = await run('grep --max-count=2 a /m.txt');
+    expect(r.stdout, 'aa\nba\n');
+
+    // -o prints each match on its own line.
+    r = await run('grep -o a /m.txt');
+    expect(r.stdout, 'a\na\na\n');
+
+    // -h suppresses the filename column over multiple files.
+    r = await run('grep -h a /m.txt /n.txt');
+    expect(r.stdout, 'aa\nba\nca\nad\n');
+
+    // -m bounds -o.
+    r = await run('grep -o -m2 a /m.txt');
+    expect(r.stdout, 'a\na\n');
+
+    // -m interacts with the exit code like GNU grep: a match within the
+    // cap is exit 0, no match is 1.
+    r = await run('grep -m1 missing /m.txt');
+    expect(r.exitCode, 1);
+
+    // -a (treat binary as text) is a faithful no-op in the text-only
+    // engine, not a silent divergence.
+    r = await run('grep -a a /m.txt');
+    expect(r.exitCode, 0);
+    expect(r.stdout, 'aa\nba\nca\n');
+  });
+
+  test(
+    'grep flags the Dart engine cannot honor fail POSIX-style, never silently',
+    () async {
+      // gh-1393 E2: never silently divergent semantics. The shared parser
+      // forwards these to rg on WASI; the MemoryShell engine has no
+      // faithful translation for them, so they are a loud exit-2 error.
+      await run('echo -e "aa\nba" > /c.txt');
+
+      for (final argv in const [
+        'grep -C2 a /c.txt',
+        'grep -C 2 a /c.txt',
+        'grep -B1 a /c.txt',
+        'grep -A1 a /c.txt',
+        'grep -A2 a /c.txt',
+        'grep -L a /c.txt',
+        'grep -P a /c.txt',
+      ]) {
+        final r = await run(argv);
+        expect(r.exitCode, 2, reason: '$argv must exit 2');
+        expect(r.stdout, isEmpty, reason: '$argv must print nothing');
+        expect(r.stderr, contains('grep:'), reason: '$argv');
+        expect(r.stderr, isNot(isEmpty));
+      }
+
+      // A dangling -m with no count is a usage error, not a silent
+      // "no max".
+      final r = await run('grep -m a /c.txt');
+      expect(r.exitCode, 2);
+      expect(r.stderr, contains('grep:'));
+    },
+  );
+
   test('head/tail/wc/sort/tr/basename/dirname utilities', () async {
     await run('echo -e "b\na\nc\nd" > /u.txt');
     var r = await run('head -n 2 /u.txt');
