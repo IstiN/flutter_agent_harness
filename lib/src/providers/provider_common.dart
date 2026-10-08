@@ -28,6 +28,7 @@ import 'provider_tuning.dart'
     show providerConnectTimeoutForUrl, providerStreamIdleTimeoutForUrl;
 import 'stall_sentinel.dart'
     show providerConnectStallFired, providerIdleStallFired;
+import 'conn_trace_bench.dart';
 import 'transient_retry_stream.dart';
 
 /// Placeholder substituted for user-message images when the target model has
@@ -626,6 +627,11 @@ Future<http.StreamedResponse> sendWatchedProviderRequest(
       );
       // Bounded backoff; the sleeper races the cancel token, so a user
       // abort during the wait wins over the pending retry.
+      connTrace.retryScheduled(
+        attempt: attempt + 1,
+        delaySec: delay.inMicroseconds / 1e6,
+        reason: 'connect stall: no response bytes',
+      );
       final survived = await transientRetrySleeper(delay, cancelToken);
       if (!survived) {
         cancelToken?.throwIfCancelled(); // the abort propagates
@@ -680,6 +686,10 @@ Future<http.StreamedResponse> _sendWatchedOnce(
     // handler, never the zone (issue #921 discipline). The retry cap
     // bounds the abandoned-attempt multiplication at
     // providerConnectRetries + 1 per stalled turn.
+    connTrace.connectWatchdogFired(
+      timeoutSec: effectiveProviderConnectTimeout.inMicroseconds / 1e6,
+      attempt: attempt,
+    );
     unawaited(
       responseFuture.then<Object?>((late) {
         transientRetryNotice?.call(
@@ -856,6 +866,11 @@ http.Client Function()? providerHttpClientFactory;
 
 http.Client? _sharedProviderClient;
 
+/// Test/ops seam: drops the cached shared client so the next
+/// [sharedProviderHttpClient] call rebuilds it (ConnTrace toggling and
+/// factory swaps in tests, issue #1392).
+void debugResetSharedProviderHttpClient() => _sharedProviderClient = null;
+
 /// The shared keep-alive HTTP client for provider streams.
 ///
 /// Streaming adapters use it when the caller injects no client: a fresh
@@ -867,15 +882,28 @@ http.Client? _sharedProviderClient;
 ///
 /// If [providerHttpClientFactory] is set, its product is used and cached
 /// instead of the default [http.Client].
-http.Client sharedProviderHttpClient() => _sharedProviderClient ??=
-    // gh-1395: the wrapper is a pass-through recorder with FA_CONN_DEBUG
-    // off (E4: identical response objects); with the knob on it adds the
-    // conn-open/first-byte trace lines (AC2). The pool semantics are
-    // unchanged — I1392 builds on this seam.
-    connTraceWrapProviderClient(
-      providerHttpClientFactory?.call() ?? http.Client(),
-      canInstallObserver: providerHttpClientFactory == null,
-    );
+///
+/// Issue #1392 (bench round 3): with `FA_CONN_DEBUG=1` (or
+/// `FA_PROVIDER_DEBUG`) the inner product is the bench-traced client —
+/// every send/first-byte/watchdog event lands as a structured `FA_CONN`
+/// line on stderr (and `FA_CONN_TRACE_FILE`), so a bench stall is
+/// diagnosable from the live run log. Without the flag the chain is
+/// byte-for-byte what it was.
+http.Client sharedProviderHttpClient() {
+  connTrace.configureFromEnv();
+  return _sharedProviderClient ??=
+      // gh-1395: the wrapper is a pass-through recorder with FA_CONN_DEBUG
+      // off (E4: identical response objects); with the knob on it adds the
+      // conn-open/first-byte trace lines (AC2). The pool semantics are
+      // unchanged — the bench trace rides the same seam as the innermost
+      // product.
+      connTraceWrapProviderClient(
+        providerHttpClientFactory?.call() ??
+            connTrace.tracedClient() ??
+            http.Client(),
+        canInstallObserver: providerHttpClientFactory == null,
+      );
+}
 
 /// Drops the shared keep-alive client: the NEXT [sharedProviderHttpClient]
 /// call builds a fresh client and pool (gh-1395 AC5). Hygiene, not a
@@ -1133,6 +1161,15 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
       // gh-1395: capture first — the dump is initiated while the request
       // state is still in scope, before the abort completes.
       onStall?.call();
+      // Issue #1392 ConnTrace: the idle-watchdog fire is invisible today —
+      // exactly why class-B's ~300s gaps are a guess. Name the idle span
+      // and the current connection (single-flight bench contract) before
+      // the abort lands.
+      connTrace.idleWatchdogFired(
+        idleSec: _idleTimeout.inMicroseconds / 1e6,
+        connAgeSec: connTrace.lastConnAgeSec,
+        localPort: connTrace.lastLocalPort,
+      );
       // Abandon before cancelling so the byte sink swallows the dying
       // link's error, and quiet-cancel: the cancel future rides that
       // dying pipeline and may itself fail (issue #921).
