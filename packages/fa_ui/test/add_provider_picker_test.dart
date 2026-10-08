@@ -231,6 +231,84 @@ void main() {
     // TextField.enabled is nullable: null means enabled.
     expect(urlField.enabled ?? true, isTrue);
   });
+
+  testWidgets('gh-1378 AC3: a manual add on a quota-marked endpoint runs '
+      'the endpoint-confirmation probe at add time', (tester) async {
+    // The manual-code path (Custom tile → editor → save) lands the entry
+    // with a stored key — the row's gauge must be confirmed by a live
+    // fetch NOW, not at the next pull-to-refresh.
+    final codemie = _CountingQuotaAdapter();
+    final registry = ProviderRegistry.inMemory();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AddProviderPresetPickerPage(
+            registry: registry,
+            quotas: ProviderQuotaService(adapters: {'codemie': codemie}),
+          ),
+        ),
+      ),
+    );
+    // Custom is the last tile — below the fold in the test viewport.
+    await tester.scrollUntilVisible(
+      find.text('Custom'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Custom'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(ProviderEditorPage),
+        matching: find.widgetWithText(TextField, 'Name'),
+      ),
+      'CodeMie Lab',
+    );
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(ProviderEditorPage),
+        matching: find.widgetWithText(TextField, 'Base URL'),
+      ),
+      'https://codemie.lab.example/code-assistant-api/v1',
+    );
+    await tester.enterText(
+      find.descendant(
+        of: find.byType(ProviderEditorPage),
+        matching: find.widgetWithText(TextField, 'API key (optional)'),
+      ),
+      'k-codemie',
+    );
+    await tester.scrollUntilVisible(
+      find.text('Save'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+    // The probe is unawaited — pump once so its microtask chain drains,
+    // then hold the contract.
+    await tester.pump();
+    expect(
+      codemie.fetches,
+      1,
+      reason: 'the manual add must schedule the confirmation probe',
+    );
+    expect(registry.providers, hasLength(1));
+  });
+}
+
+/// A quota adapter that counts its fetches (the probe contract).
+class _CountingQuotaAdapter implements QuotaAdapter {
+  var fetches = 0;
+
+  @override
+  Future<QuotaFetchResult> fetch() async {
+    fetches++;
+    return const QuotaFetchResult.unknown('probe');
+  }
 }
 
 void _noop() {}
