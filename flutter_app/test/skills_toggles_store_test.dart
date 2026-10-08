@@ -9,7 +9,6 @@ import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/services/skills_toggles_store.dart';
 import 'package:fa/ui/app_theme.dart';
-import 'package:fa/ui/screens/settings.dart';
 import 'package:fa/ui/screens/skills_toggles_section.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -183,14 +182,57 @@ void main() {
       final service = await AgentService.create(config: _config(), env: env);
       addTearDown(service.dispose);
 
-      // #1334: the cleanup-emptied directories are GONE — .fah/skills no
-      // longer ghosts three empty skill dirs an exploring agent reads as
-      // broken materialization. Only the dir with a surviving user file
-      // remains.
+      // #1334 + gh-1393 AC7: the cleanup-emptied directories do not stay
+      // ghost. The retired non-builtin (fa-self-config) has no pointer and
+      // stays gone; the retired BUILTIN names (js-apps) and the fresh
+      // builtins (self-settings) are refilled by the pointer seeder with
+      // SKILL.md.pointer — never a re-materialized SKILL.md, so the
+      // copy-shadowing class stays dead — and create-goal keeps its
+      // surviving user file (no pointer next to real content). An
+      // exploring agent finds content everywhere: no empty dir reading as
+      // broken materialization.
       final remaining = (await env.listDir(
         '${env.cwd}/.fah/skills',
       )).valueOrNull!;
-      expect(remaining.map((e) => e.name), ['create-goal']);
+      expect(
+        remaining.map((e) => e.name),
+        unorderedEquals(['create-goal', 'js-apps', 'self-settings']),
+      );
+
+      // The literal #1334 invariant: no EMPTY skill dir survives boot.
+      for (final entry in remaining) {
+        if (entry.kind != FileKind.directory) continue;
+        final entries =
+            (await env.listDir(
+              '${env.cwd}/.fah/skills/${entry.name}',
+            )).valueOrNull!;
+        expect(entries, isNotEmpty, reason: '${entry.name}/ is a ghost dir');
+      }
+
+      // Pointer dirs hold exactly the pointer, pointing at the builtin
+      // read path.
+      for (final name in ['js-apps', 'self-settings']) {
+        expect(
+          (await env.listDir(
+            '${env.cwd}/.fah/skills/$name',
+          )).valueOrNull!.map((e) => e.name),
+          ['SKILL.md.pointer'],
+        );
+        expect(
+          (await env.readTextFile(
+            '${env.cwd}/.fah/skills/$name/SKILL.md.pointer',
+          )).valueOrNull,
+          'builtin://skills/$name/SKILL.md\n',
+        );
+      }
+
+      // create-goal: only the user-dropped supporting file survived.
+      expect(
+        (await env.listDir(
+          '${env.cwd}/.fah/skills/create-goal',
+        )).valueOrNull!.map((e) => e.name),
+        ['notes.md'],
+      );
 
       // AC: every advertised skill's body loads via read on the
       // mobile-shaped env — the prompt points at builtin://, the read

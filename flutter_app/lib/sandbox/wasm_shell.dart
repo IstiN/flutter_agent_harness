@@ -17,6 +17,7 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:wasm_run/wasm_run.dart';
 
+import 'package:fa/sandbox/glob_expand.dart';
 import 'package:fa/sandbox/sandbox_builtins.dart';
 import 'package:fa/sandbox/sandbox_host_paths.dart';
 import 'package:fa/sandbox/sandbox_pip.dart';
@@ -29,6 +30,7 @@ import 'package:fa/sandbox/wasm_shell_builtins.dart';
 import 'package:fa/sandbox/wasm_shell_git.dart';
 import 'package:fa/sandbox/wasm_shell_ssh.dart';
 
+part 'wasm_shell_grep.dart';
 part 'wasm_shell_stages.dart';
 
 /// A [Shell] backed by a sandbox of permissive WASI binaries.
@@ -815,12 +817,16 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   }) async {
     // Expand `$VAR`/`$(...)` references at execution time so earlier
     // statements in the same command line (e.g. `export A=1 && echo $A`)
-    // are visible.
+    // are visible, then pathname-expand unquoted glob words against the
+    // sandbox fs (gh-1393 WS-1: bash-identical globbing — no match keeps
+    // the literal word).
     final stageEnv = _effectiveEnv(options);
+    final cwd = _effectiveCwd(options);
     final expansion = await expandShellStage(
       stage,
       stageEnv,
       (source) => _scriptRunner.substitute(source, options, depth),
+      expandGlobs: (word) => expandGlobPattern(word, cwd, _globListDir),
     );
     if (expansion.isErr) {
       return Err(expansion.errorOrNull!);
@@ -832,6 +838,9 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     // (gh-1086) lands in a temp file — stdin flows by sandbox path here —
     // and outranks a `< file` redirect / pipe input by POSIX last-wins
     // (the collector already cleared [StageRedirects.stdinFile]).
+    // `< /dev/null` (gh-1393 WS-1) is an empty stream, not a file: since
+    // the null sink no longer materializes `/dev/null`, an empty pipe file
+    // stands in (EOF, never ENOENT, never inherited pipe input).
     String? input = inputSource;
     if (redirects.stdinBody != null) {
       await _writePipeFile(
@@ -841,6 +850,12 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         pipeDir,
       );
       input = '$pipeDir/pipe_heredoc_$index';
+    } else if (redirects.stdinFile != null &&
+        isNullDevicePath(
+          _resolveSandboxPath(redirects.stdinFile!, _effectiveCwd(options)),
+        )) {
+      await _writePipeFile(const [], 'devnull_$index', tempFiles, pipeDir);
+      input = '$pipeDir/pipe_devnull_$index';
     } else if (redirects.stdinFile != null) {
       input = _resolveSandboxPath(redirects.stdinFile!, _effectiveCwd(options));
     }
@@ -986,14 +1001,38 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     }
   }
 
+  /// Directory lister for glob expansion (gh-1393 WS-1): a guest sandbox
+  /// path in, its entries out; `null` when the path is not a directory (or
+  /// is unreadable — the walker treats that as "no candidates").
+  Future<List<GlobEntry>?> _globListDir(String guestPath) async {
+    final dir = io.Directory(_hostPath(guestPath));
+    try {
+      final entries = <GlobEntry>[];
+      await for (final entity in dir.list(followLinks: true)) {
+        final name = p.basename(entity.path);
+        if (name == '.' || name == '..') continue;
+        entries.add(GlobEntry(name, isDir: entity is io.Directory));
+      }
+      return entries;
+    } on Object {
+      return null;
+    }
+  }
+
   /// Writes [bytes] to a redirect target inside the sandbox. I/O failures
   /// surface as [_RedirectWriteError] carrying a clean, sandbox-path-only
   /// message (issue #1156 E2/E4).
+  ///
+  /// `/dev/null` is a null sink (gh-1393 WS-1): bytes are discarded and
+  /// NOTHING materializes — the redirect writer used to create a real
+  /// `/dev/null` file (plus its `dev/` parent) in the sandbox root, which
+  /// then showed up in listings.
   Future<void> _writeRedirectBytes(
     List<int> bytes,
     String sandboxFile, {
     required bool append,
   }) async {
+    if (isNullDevicePath(sandboxFile)) return;
     final file = _hostFile(sandboxFile);
     try {
       await file.parent.create(recursive: true);
@@ -1098,26 +1137,31 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// returns an absolute path starting at the sandbox root `/`.
   String _normalizeSandboxPath(String path) => normalizeLexicalPath(path);
 
-  /// Effective guest cwd for an exec: [ShellExecOptions.cwd] when given,
-  /// else the shell's own [_currentDir] (already guest-side).
+  /// Effective guest cwd for an exec: the shell-tracked [_currentDir],
+  /// unless the caller explicitly asked for a DIFFERENT cwd.
   ///
   /// The harness layer reports the *host* sandbox directory as the env cwd
-  /// (`/var/mobile/Containers/…/fah_sandbox` on iOS — gh-1274) and callers
-  /// pass it straight into [ShellExecOptions]. Used verbatim as a guest
-  /// path it resolves every relative argument against a nested mirror that
-  /// does not exist under the preopened sandbox root, so
-  /// `echo hello > t.txt && cat t.txt` fails with ENOENT. A cwd inside
-  /// [sandboxHostPath] is therefore mapped back to its sandbox-absolute
-  /// form (`<host>` → `/`, `<host>/work` → `/work`); anything outside the
-  /// sandbox is left unchanged. The membership test is the shared
-  /// [SandboxHostRoot] convention — hardened against trailing separators
-  /// and symlink/case spelling variants (gh-1274 review) — so it cannot
-  /// drift from `SandboxedExecutionEnv._map`.
+  /// (`/var/mobile/Containers/…/fah_sandbox` on iOS — gh-1274) and passes
+  /// it into EVERY `ShellExecOptions` as the exec anchor. Treating that
+  /// anchor as a per-exec cwd reset made `cd` a silent no-op across execs
+  /// (gh-1393 WS-1): `cd /tmp && qjs run.js` ran the next exec back at the
+  /// root. A cwd that maps to the sandbox root `/` IS that anchor — it
+  /// keeps the shell-tracked directory (which starts at `/`, so a fresh
+  /// shell behaves identically). Any other cwd is an explicit per-exec
+  /// request and wins verbatim (mapped host→sandbox when inside the root).
+  /// A cwd inside [sandboxHostPath] is mapped back to its sandbox-absolute
+  /// form via the shared [SandboxHostRoot] convention — hardened against
+  /// trailing separators and symlink/case spelling variants (gh-1274
+  /// review); anything outside the sandbox is left unchanged.
   String _effectiveCwd(ShellExecOptions? options) {
-    final cwd = options?.cwd ?? _currentDir;
+    var cwd = _currentDir;
     final root = _sandboxHostRoot;
-    if (root == null) return cwd;
-    return root.stripToSandboxPath(cwd) ?? cwd;
+    final requested = options?.cwd;
+    if (requested != null) {
+      final mapped = root?.stripToSandboxPath(requested) ?? requested;
+      if (mapped != '/') cwd = mapped;
+    }
+    return cwd;
   }
 
   /// Resolves [path] against [cwd] inside the sandbox, returning an absolute
@@ -2235,68 +2279,6 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     }
     applyExportArgs(_shellEnv, stage.args);
     return Ok(const StageResult(stdout: [], stderr: [], exitCode: 0));
-  }
-
-  Future<Result<StageResult, ExecutionError>> _grepBuiltin(
-    Stage stage,
-    ShellExecOptions? options,
-    String? inputSource,
-  ) async {
-    final parsed = parseGrepArgs(stage.args);
-    if (parsed == null) {
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode('grep: option requires an argument -- e\n'),
-          exitCode: 2,
-        ),
-      );
-    }
-    final pattern = parsed.pattern;
-    final quiet = parsed.quiet;
-
-    if (pattern == null) {
-      return Ok(
-        StageResult(
-          stdout: const [],
-          stderr: utf8.encode(
-            'usage: grep [-ivwxFcclnq] [-m N] pattern [file...]\n',
-          ),
-          exitCode: 2,
-        ),
-      );
-    }
-    final files = _grepInputFiles(parsed, inputSource, _effectiveCwd(options));
-
-    final rgResult = await _runStage(
-      command: 'rg',
-      args: [...parsed.flags, '-e', pattern, ...files],
-      options: options,
-      captureStdout: true,
-      captureStderr: true,
-    );
-    if (rgResult.isErr) return rgResult;
-    final data = rgResult.valueOrNull!;
-    return Ok(
-      StageResult(
-        stdout: quiet ? const [] : data.stdout,
-        stderr: data.stderr,
-        exitCode: data.exitCode,
-      ),
-    );
-  }
-
-  /// Assembles grep's file operand list: the parsed operands, plus the
-  /// piped input when no file was given; every operand is rewritten
-  /// against [cwd] the way `rg` positional paths are.
-  List<String> _grepInputFiles(
-    GrepArgs parsed,
-    String? inputSource,
-    String cwd,
-  ) {
-    final files = List<String>.of(parsed.files);
-    if (files.isEmpty && inputSource != null) files.add(inputSource);
-    return [for (final file in files) _maybeRewritePath('rg', file, cwd)];
   }
 
   Future<Result<StageResult, ExecutionError>> _wgetBuiltin(

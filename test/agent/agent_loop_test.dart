@@ -172,10 +172,7 @@ void main() {
       final stream = agentLoop(
         prompts: [prompt],
         context: const Context(messages: []),
-        config: AgentLoopConfig(
-          model: bigWindowModel,
-          contextWindowCap: 100,
-        ),
+        config: AgentLoopConfig(model: bigWindowModel, contextWindowCap: 100),
         streamFunction: fake.call,
         toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
       );
@@ -205,10 +202,7 @@ void main() {
       final stream = agentLoop(
         prompts: [prompt],
         context: const Context(messages: []),
-        config: AgentLoopConfig(
-          model: catalog200k,
-          contextWindowCap: 1000000,
-        ),
+        config: AgentLoopConfig(model: catalog200k, contextWindowCap: 1000000),
         streamFunction: fake.call,
         toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
       );
@@ -742,9 +736,10 @@ void main() {
       final events = await stream.toList();
       final end = events.whereType<ToolExecutionEndEvent>().single;
       expect(end.isError, isTrue);
+      // gh-1393 AC9: structured, never a bare leaked exception string.
       expect(
         (end.result.content.single as TextContent).text,
-        equals('disk exploded'),
+        startsWith('Tool error (weather): disk exploded\n'),
       );
       final toolResult = events
           .whereType<MessageEndEvent>()
@@ -781,20 +776,83 @@ void main() {
         }
 
         // StateError is the bash tool's non-zero-exit carrier (issue #118).
+        // The stripped message rides INSIDE the structured wrapper
+        // (gh-1393 AC9) — `startsWith` asserts the wrapper, the message
+        // body keeps its exact shape. A routine non-zero exit is a REAL
+        // command failure, so the uncaught-harness-exception hint must
+        // NOT ride along (gh-1393 rework: the hint is reserved for errors
+        // that are not the harness's own operational carriers).
         expect(
           await textOf(
             () => StateError('total 12\nCommand exited with code 2'),
           ),
-          'total 12\nCommand exited with code 2',
+          'Tool error (weather): total 12\nCommand exited with code 2',
         );
         expect(
+          await textOf(
+            () => StateError('partial output\nCommand aborted'),
+          ),
+          'Tool error (weather): partial output\nCommand aborted',
+        );
+        // A genuinely uncaught exception keeps the hint.
+        final genericState = await textOf(
+          () => StateError('disk exploded'),
+        );
+        expect(genericState, startsWith('Tool error (weather): disk exploded'));
+        expect(genericState, contains('uncaught exception'));
+        expect(
           await textOf(() => ArgumentError('args must be a map')),
-          'args must be a map',
+          startsWith('Tool error (weather): args must be a map\n'),
         );
         expect(
           await textOf(() => const FormatException('unexpected character')),
-          'unexpected character',
+          startsWith('Tool error (weather): unexpected character\n'),
         );
+      },
+    );
+
+    test(
+      'operational carriers never carry the uncaught-exception hint',
+      () async {
+        Future<String> textOf(Object Function() makeError) async {
+          final fake = _FakeStreamFunction([
+            _toolTurn([_call('call-1', 'weather')]),
+            _textTurn('handled'),
+          ]);
+          final stream = agentLoop(
+            prompts: [UserMessage.text('hi')],
+            context: Context(messages: [], tools: [_tool('weather')]),
+            config: const AgentLoopConfig(model: _model),
+            streamFunction: fake.call,
+            toolExecutor: (_, _, _) async => throw makeError(),
+          );
+          final events = await stream.toList();
+          return (events
+                      .whereType<ToolExecutionEndEvent>()
+                      .single
+                      .result
+                      .content
+                      .single
+                  as TextContent)
+              .text;
+        }
+
+        // ToolValidationException / ToolNotFoundException rejections are
+        // the registry's own operational shape errors — the model must
+        // hear "your arguments are wrong", not "the tool may be
+        // unavailable; skip it" (gh-1393 rework).
+        final validation = await textOf(
+          () => const ToolValidationException('weather', 'args must be a map'),
+        );
+        expect(validation, startsWith('Tool error (weather): '));
+        expect(validation, contains('args must be a map'));
+        expect(validation, isNot(contains('uncaught exception')));
+
+        final notFound = await textOf(
+          () => ToolNotFoundException('weather'),
+        );
+        expect(notFound, startsWith('Tool error (weather): '));
+        expect(notFound, isNot(contains('uncaught exception')));
       },
     );
 
@@ -814,37 +872,50 @@ void main() {
 
       final events = await stream.toList();
       final end = events.whereType<ToolExecutionEndEvent>().single;
-      // "Invalid argument(s): Bad state: boom" — both prefixes go.
-      expect((end.result.content.single as TextContent).text, 'boom');
-    });
-
-    test('an empty error message stays empty after stripping', () async {
-      final fake = _FakeStreamFunction([
-        _toolTurn([_call('call-1', 'weather')]),
-        _textTurn('handled'),
-      ]);
-      final stream = agentLoop(
-        prompts: [UserMessage.text('hi')],
-        context: Context(messages: [], tools: [_tool('weather')]),
-        config: const AgentLoopConfig(model: _model),
-        streamFunction: fake.call,
-        toolExecutor: (_, _, _) async => throw StateError(''),
+      // "Invalid argument(s): Bad state: boom" — both prefixes go, and the
+      // result is STRUCTURED (gh-1393 AC9): tool name + stripped message +
+      // the uncaught-exception hint, never a bare leaked exception string.
+      expect(
+        (end.result.content.single as TextContent).text,
+        startsWith('Tool error (weather): boom\n'),
       );
-
-      final events = await stream.toList();
-      final end = events.whereType<ToolExecutionEndEvent>().single;
-      expect(end.isError, isTrue);
-      expect((end.result.content.single as TextContent).text, isEmpty);
+      expect(
+        (end.result.content.single as TextContent).text,
+        contains('uncaught exception'),
+      );
     });
 
-    test('errors with clean toString pass through untouched', () async {
+    test(
+      'an empty error message still renders the structured wrapper',
+      () async {
+        final fake = _FakeStreamFunction([
+          _toolTurn([_call('call-1', 'weather')]),
+          _textTurn('handled'),
+        ]);
+        final stream = agentLoop(
+          prompts: [UserMessage.text('hi')],
+          context: Context(messages: [], tools: [_tool('weather')]),
+          config: const AgentLoopConfig(model: _model),
+          streamFunction: fake.call,
+          toolExecutor: (_, _, _) async => throw StateError(''),
+        );
+
+        final events = await stream.toList();
+        final end = events.whereType<ToolExecutionEndEvent>().single;
+        expect(end.isError, isTrue);
+        final text = (end.result.content.single as TextContent).text;
+        expect(text, startsWith('Tool error (weather): <no error message>'));
+      },
+    );
+
+    test('errors with clean toString are wrapped, not leaked bare', () async {
       final fake = _FakeStreamFunction([
-        _toolTurn([_call('call-1', 'weather')]),
+        _toolTurn([_call('call-1', 'memory_search')]),
         _textTurn('handled'),
       ]);
       final stream = agentLoop(
         prompts: [UserMessage.text('hi')],
-        context: Context(messages: [], tools: [_tool('weather')]),
+        context: Context(messages: [], tools: [_tool('memory_search')]),
         config: const AgentLoopConfig(model: _model),
         streamFunction: fake.call,
         toolExecutor: (_, _, _) async =>
@@ -853,7 +924,13 @@ void main() {
 
       final events = await stream.toList();
       final end = events.whereType<ToolExecutionEndEvent>().single;
-      expect((end.result.content.single as TextContent).text, 'rewind blocked');
+      // gh-1393 AC9: the clean message survives verbatim inside the
+      // structured wrapper (name + hint) — the memory_search iOS crash
+      // shape (`Isolate.resolvePackageUriSync …`) can never reach the
+      // model as a bare exception string again.
+      final text = (end.result.content.single as TextContent).text;
+      expect(text, startsWith('Tool error (memory_search): rewind blocked'));
+      expect(text, contains('not a command failure'));
     });
 
     test(

@@ -7,22 +7,28 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/utils/glob_match.dart'
+    show globToRegExp;
 import 'package:http/http.dart' as http;
 
 import 'package:fa/sandbox/memory_shell/awk.dart';
-import 'package:fa/sandbox/memory_shell/grep.dart';
+import 'package:fa/sandbox/memory_shell/grep.dart'
+    show GrepAccumulator, GrepQuery, compileGrepQuery, grepText;
 import 'package:fa/sandbox/memory_shell/interpreters.dart';
 import 'package:fa/sandbox/memory_shell/pipeline.dart';
 import 'package:fa/sandbox/memory_shell/paths.dart';
 import 'package:fa/sandbox/memory_shell/sed.dart';
 import 'package:fa/sandbox/memory_shell/tar.dart';
 import 'package:fa/sandbox/memory_shell/test_expr.dart';
+import 'package:fa/sandbox/glob_expand.dart';
+import 'package:fa/sandbox/grep_args.dart';
 import 'package:fa/sandbox/sandbox_builtins.dart';
 import 'package:fa/sandbox/sandbox_registry.dart';
 import 'package:fa/sandbox/shell_job.dart';
 import 'package:fa/sandbox/shell_parser.dart';
 import 'package:fa/sandbox/shell_script.dart';
-import 'package:fa/sandbox/wasm_shell_builtins.dart' show exportEnvVarName;
+import 'package:fa/sandbox/wasm_shell_builtins.dart'
+    show exportEnvVarName, isNullDevicePath;
 import 'package:fa/sandbox/web_git.dart';
 import 'package:fa/sandbox/web_interpreters_stub.dart'
     if (dart.library.html) 'web_interpreters_web.dart';
@@ -118,7 +124,10 @@ final class MemoryShell implements Shell, BackgroundShell {
 
     late final ShellScript script;
     try {
-      script = parseShellScript(command);
+      // fd duplication opted in (gh-1393 WS-1 / AC3): `2>&1`/`>&2` parse
+      // and fold exactly as the WASI tokenizer always has — the web shell
+      // no longer rejects them outright.
+      script = parseShellScript(command, allowFdDuplication: true);
     } on ShellParseException catch (e) {
       return Err(ExecutionError(ExecutionErrorCode.unknown, 'parse error: $e'));
     }
@@ -261,15 +270,19 @@ final class MemoryShell implements Shell, BackgroundShell {
       final isLastStage = i == pipeline.stages.length - 1;
       // Expand `$VAR`/`$(...)` references at execution time so earlier
       // statements in the same command line (e.g. `export A=1 && echo $A`)
-      // are visible.
+      // are visible, then pathname-expand unquoted glob words against the
+      // in-memory fs (gh-1393 WS-1 — same walker, same semantics as the
+      // WASI shell).
       final expansion = await expandShellStage(
         pipeline.stages[i],
         _effectiveEnv(options),
         (source) => _scriptRunner.substitute(source, options, depth),
+        expandGlobs: (word) =>
+            expandGlobPattern(word, _effectiveCwd(options), _globListDir),
       );
       if (expansion.isErr) return Err(expansion.errorOrNull!);
       final stage = expansion.valueOrNull!;
-      final cwd = options?.cwd ?? _currentDir;
+      final cwd = _effectiveCwd(options);
 
       final redirects = parseStageRedirects(stage.redirects);
       final stdoutFile = redirects.stdoutFile;
@@ -282,6 +295,11 @@ final class MemoryShell implements Shell, BackgroundShell {
       String? stdinText;
       if (stdinBody != null) {
         stdinText = stdinBody;
+      } else if (stdinFile != null &&
+          isNullDevicePath(resolveSandboxPath(stdinFile, cwd))) {
+        // `< /dev/null` is an empty stream (gh-1393 WS-1): the null sink
+        // never materializes the file, so reads answer EOF directly.
+        stdinText = '';
       } else if (stdinFile != null) {
         final read = await _fs.readTextFile(resolveSandboxPath(stdinFile, cwd));
         if (read.isErr) {
@@ -309,10 +327,25 @@ final class MemoryShell implements Shell, BackgroundShell {
       );
       _lastExitCode = stageResult.exitCode;
 
+      // fd duplication (gh-1393 WS-1, WASI parity): `2>&1` folds stderr
+      // into stdout's destination (file, pipe, capture); `>&2` the reverse.
+      // collectStageRedirects already routes a file-destination dup onto
+      // the same target with append mode (POSIX ordering); only the
+      // capture/pipe destinations merge here.
+      var outBytes = stageResult.stdout;
+      var errBytes = stageResult.stderr;
+      if (redirects.dupStderrIntoStdout && stdoutFile == null) {
+        outBytes = [...outBytes, ...errBytes];
+        errBytes = const [];
+      } else if (redirects.dupStdoutIntoStderr && stderrFile == null) {
+        errBytes = [...errBytes, ...outBytes];
+        outBytes = const [];
+      }
+
       if (stdoutFile != null) {
-        await _writeRedirect(stdoutFile, stageResult.stdout, appendStdout, cwd);
+        await _writeRedirect(stdoutFile, outBytes, appendStdout, cwd);
       } else {
-        final text = utf8.decode(stageResult.stdout, allowMalformed: true);
+        final text = utf8.decode(outBytes, allowMalformed: true);
         // Only the LAST stage's stdout leaves the pipeline (the rest goes
         // into the pipe) — intermediate stages must not leak into command
         // substitution captures or the exec accumulator.
@@ -324,19 +357,45 @@ final class MemoryShell implements Shell, BackgroundShell {
       }
 
       if (stderrFile != null) {
-        await _writeRedirect(stderrFile, stageResult.stderr, appendStderr, cwd);
+        await _writeRedirect(stderrFile, errBytes, appendStderr, cwd);
       } else {
-        final text = utf8.decode(stageResult.stderr, allowMalformed: true);
+        final text = utf8.decode(errBytes, allowMalformed: true);
         if (isLastStage && text.isNotEmpty) {
           _lastStderr = (_lastStderr ?? '') + text;
           if (!_capture.isActive) options?.onStderr?.call(text);
         }
       }
 
-      pipeInput = stageResult.stdout;
+      pipeInput = outBytes;
     }
 
     return Ok(stageResult);
+  }
+
+  /// Effective cwd for an exec (gh-1393 WS-1): the shell-tracked
+  /// [_currentDir], unless the caller explicitly asked for a directory
+  /// other than the sandbox root `/`. The harness anchors every exec at
+  /// the env cwd (`/` here) — treating that anchor as a per-exec cwd reset
+  /// made `cd` a no-op across execs; an explicit non-root cwd still wins.
+  String _effectiveCwd(ShellExecOptions? options) {
+    final requested = options?.cwd;
+    if (requested == null || requested == '/') return _currentDir;
+    return requested;
+  }
+
+  /// Directory lister for glob expansion (gh-1393 WS-1): sandbox path in,
+  /// entries out; `null` when the path is not a directory.
+  Future<List<GlobEntry>?> _globListDir(String path) async {
+    final info = await _fs.fileInfo(path);
+    if (info.isErr || info.valueOrNull!.kind != FileKind.directory) {
+      return null;
+    }
+    final listing = await _fs.listDir(path);
+    if (listing.isErr) return null;
+    return [
+      for (final entry in listing.valueOrNull!)
+        GlobEntry(entry.name, isDir: entry.kind == FileKind.directory),
+    ];
   }
 
   Future<void> _writeRedirect(
@@ -345,6 +404,10 @@ final class MemoryShell implements Shell, BackgroundShell {
     bool append,
     String cwd,
   ) async {
+    if (isNullDevicePath(resolveSandboxPath(target, cwd))) {
+      // The null sink discards and materializes nothing (gh-1393 WS-1).
+      return;
+    }
     final path = resolveSandboxPath(target, cwd);
     if (append) {
       await _fs.appendFile(path, utf8.decode(bytes, allowMalformed: true));
@@ -1364,11 +1427,33 @@ final class MemoryShell implements Shell, BackgroundShell {
 
   Future<_StageResult> _grep(_Context ctx) async {
     final parsed = parseGrepArgs(ctx.args);
-    final parseError = parsed.error;
-    if (parseError != null) {
-      return _error(parseError.message, exitCode: parseError.exitCode);
+    if (parsed == null) {
+      return _error('grep: option requires an argument -- e\n', exitCode: 2);
     }
-    final compiled = compileGrepQuery(parsed.flags, parsed.pattern!);
+    if (!parsed.isUsable) {
+      return _error(parsed.error!, exitCode: 2);
+    }
+    if (parsed.pattern == null) {
+      return _error(
+        'usage: grep [-ivwxFcclnq] [-m N] [-A N] [-B N] [-C N] '
+        '[--include=GLOB] [--exclude=GLOB] pattern [file...]\n',
+        exitCode: 2,
+      );
+    }
+    // The shared parser hands the letters (`-i`, `-v`, … from separate or
+    // clustered shorts); the Dart engine compiles the rest. The flag
+    // classification lives in `_planGrepEngine` (gh-1393 rework: `-m`/
+    // `-o`/`-h` are honored, every flag the engine cannot honor
+    // faithfully is a loud POSIX exit-2 — never a silent drop).
+    final plan = _planGrepEngine(parsed);
+    if (plan.error != null) {
+      return _error(plan.error!, exitCode: 2);
+    }
+    final compiled = compileGrepQuery(
+      plan.flags,
+      parsed.pattern!,
+      maxCount: plan.maxCount,
+    );
     final compileError = compiled.error;
     if (compileError != null) {
       return _error(compileError.message, exitCode: compileError.exitCode);
@@ -1376,29 +1461,207 @@ final class MemoryShell implements Shell, BackgroundShell {
     final q = compiled.query!;
     final acc = GrepAccumulator();
     final err = StringBuffer();
-    var hadError = false;
-
-    if (parsed.files.isEmpty) {
-      grepText(ctx.stdin ?? '', null, q, acc);
-    } else {
-      final labelPrefix = parsed.files.length > 1;
-      for (final arg in parsed.files) {
-        final resolved = resolveSandboxPath(arg, ctx.cwd);
-        final content = await _fs.readTextFile(resolved);
-        if (content.isErr) {
-          hadError = true;
-          err.write('grep: $arg: No such file or directory\n');
-          continue;
-        }
-        grepText(content.valueOrNull!, labelPrefix ? arg : null, q, acc);
-      }
-    }
-
+    final (inputs, operandError) = await _grepResolveInputs(ctx, parsed, err);
+    final runError = await _grepRunOnInputs(
+      ctx,
+      parsed,
+      plan.flags,
+      q,
+      acc,
+      err,
+      inputs,
+    );
     return _StageResult(
       stdout: q.quiet ? const [] : utf8.encode(acc.buffer.toString()),
       stderr: utf8.encode(err.toString()),
-      exitCode: hadError ? 2 : (acc.anyMatch ? 0 : 1),
+      exitCode: operandError || runError ? 2 : (acc.anyMatch ? 0 : 1),
     );
+  }
+
+  /// The Dart grep engine's view of the parsed flags: the letter set to
+  /// compile, the `-m` cap (null = unlimited), or an exit-2 error message
+  /// for a flag the engine cannot honor faithfully (gh-1393 E2).
+  _GrepEnginePlan _planGrepEngine(GrepArgs parsed) {
+    final flags = <String>{if (parsed.quiet) 'q'};
+    int? maxCount;
+    for (var i = 0; i < parsed.flags.length; i++) {
+      final token = parsed.flags.elementAt(i);
+      if (token.startsWith('-') && token.startsWith('-m')) {
+        // `-m5` attached or `-m 5` detached — the count rides the next
+        // token for the detached shape.
+        final (count, error, next) = _grepMaxCountAt(parsed.flags, i);
+        if (error != null) {
+          return _GrepEnginePlan.invalid(error);
+        }
+        maxCount = count;
+        i = next;
+        continue;
+      }
+      if (!token.startsWith('-') || token.startsWith('--')) {
+        continue; // long tokens and stray value tokens ride through
+      }
+      final letter = token.substring(1);
+      final unsupported = _unsupportedGrepLetter(letter);
+      if (unsupported != null) {
+        return _GrepEnginePlan.invalid(unsupported);
+      }
+      switch (letter) {
+        case 'o':
+          flags.add('o');
+        case 'a':
+          break; // text-only engine: operands are read as text anyway
+        default:
+          flags.add(letter);
+      }
+    }
+    if (flags.contains('v') && flags.contains('o')) {
+      // GNU prints the non-matching segments with `-v -o`; the engine
+      // can't honor that faithfully — a loud error, not a divergence.
+      return _GrepEnginePlan.invalid(
+        'grep: the sandbox grep engine does not support -v with -o\n',
+      );
+    }
+    return _GrepEnginePlan(flags, maxCount);
+  }
+
+  /// The `-m` cap carried by the flag token at [i]: `-m5` attached, or
+  /// `-m 5` with the count riding the next token. Returns the parsed
+  /// count (null when malformed), the POSIX error message for that case,
+  /// and the index of the last token the flag consumed.
+  (int?, String?, int) _grepMaxCountAt(List<String> flags, int i) {
+    final token = flags.elementAt(i);
+    final value = token.length > 2
+        ? token.substring(2)
+        : (i + 1 < flags.length ? flags.elementAt(i + 1) : null);
+    final count = value == null ? null : int.tryParse(value);
+    if (count == null) {
+      return (null, 'grep: option requires a numeric argument -- m\n', i);
+    }
+    return (count, null, token.length == 2 ? i + 1 : i);
+  }
+
+  /// The exit-2 message for a short letter the Dart engine cannot honor
+  /// faithfully, or null when the letter maps to engine behavior.
+  String? _unsupportedGrepLetter(String letter) => switch (letter) {
+        'A' || 'B' || 'C' =>
+          'grep: the sandbox grep engine does not support the context '
+          "option -$letter\n",
+        'L' =>
+          'grep: the sandbox grep engine does not support -L '
+          '(--files-without-match)\n',
+        'P' =>
+          'grep: the sandbox grep engine does not support -P '
+          '(--perl-regexp)\n',
+        _ => null,
+      };
+
+  /// Operand expansion for grep: a directory operand with -r walks the
+  /// subtree (gh-1393 AC1 — `grep -rl 'счёт' apps` matches on every
+  /// shell); without -r it is the POSIX "Is a directory" error. Returns
+  /// the (display, resolved) input pairs plus whether any operand erred.
+  Future<(List<(String, String)>, bool)> _grepResolveInputs(
+    _Context ctx,
+    GrepArgs parsed,
+    StringBuffer err,
+  ) async {
+    final inputs = <(String, String)>[]; // (display path, resolved path)
+    var hadError = false;
+    for (final arg in parsed.files) {
+      final resolved = resolveSandboxPath(arg, ctx.cwd);
+      final info = await _fs.fileInfo(resolved);
+      final isDir = info.valueOrNull?.kind == FileKind.directory;
+      if (isDir && !parsed.recursive) {
+        hadError = true;
+        err.write('grep: $arg: Is a directory\n');
+        continue;
+      }
+      if (isDir) {
+        inputs.addAll(await _walkGrepDir(resolved, arg, parsed));
+      } else {
+        inputs.add((arg, resolved));
+      }
+    }
+    return (inputs, hadError);
+  }
+
+  /// Runs the compiled query over stdin (no operands) or each input file,
+  /// appending matches to [acc] and per-file errors to [err]. Returns
+  /// whether any read failed. `-h` (translated to `-I` by the shared
+  /// parser) suppresses the filename column, exactly like GNU grep.
+  Future<bool> _grepRunOnInputs(
+    _Context ctx,
+    GrepArgs parsed,
+    Set<String> flags,
+    GrepQuery q,
+    GrepAccumulator acc,
+    StringBuffer err,
+    List<(String, String)> inputs,
+  ) async {
+    var hadError = false;
+    if (inputs.isEmpty && parsed.files.isEmpty) {
+      grepText(ctx.stdin ?? '', null, q, acc);
+    } else {
+      final labelPrefix =
+          !flags.contains('I') && (inputs.length > 1 || parsed.recursive);
+      for (final (display, resolved) in inputs) {
+        final content = await _fs.readTextFile(resolved);
+        if (content.isErr) {
+          hadError = true;
+          err.write('grep: $display: No such file or directory\n');
+          continue;
+        }
+        grepText(content.valueOrNull!, labelPrefix ? display : null, q, acc);
+      }
+    }
+    return hadError;
+  }
+
+  /// Depth-first walk of [abs] for recursive grep: files only, sorted per
+  /// directory for deterministic output, `--include=`/`--exclude=` basename
+  /// globs applied (gh-1393 WS-1). Display paths join the OPERAND spelling
+  /// with the walked names, exactly as GNU grep prints them.
+  Future<List<(String, String)>> _walkGrepDir(
+    String abs,
+    String display,
+    GrepArgs parsed,
+  ) async {
+    final include = [
+      for (final glob in parsed.includeGlobs) globToRegExp(glob),
+    ];
+    final exclude = [
+      for (final glob in parsed.excludeGlobs) globToRegExp(glob),
+    ];
+    bool basenameMatches(String name, List<RegExp> patterns) =>
+        patterns.any((r) => r.hasMatch(name));
+    final out = <(String, String)>[];
+    Future<void> walk(String absDir, String displayDir, int depth) async {
+      if (depth > 24) return;
+      final listing = await _fs.listDir(absDir);
+      if (listing.isErr) return;
+      final entries = listing.valueOrNull!.toList()
+        ..sort((a, b) => a.name.compareTo(b.name));
+      for (final entry in entries) {
+        if (entry.kind == FileKind.directory) {
+          await walk(
+            '${absDir == '/' ? '' : absDir}/${entry.name}',
+            '$displayDir/${entry.name}',
+            depth + 1,
+          );
+          continue;
+        }
+        if (exclude.any((r) => r.hasMatch(entry.name))) continue;
+        if (include.isNotEmpty && !basenameMatches(entry.name, include)) {
+          continue;
+        }
+        out.add((
+          '$displayDir/${entry.name}',
+          '${absDir == '/' ? '' : absDir}/${entry.name}',
+        ));
+      }
+    }
+
+    await walk(abs, display, 0);
+    return out;
   }
 
   Future<_StageResult> _headTail(_Context ctx, {required bool head}) async {
@@ -1754,6 +2017,24 @@ final class MemoryShell implements Shell, BackgroundShell {
     if (idx == 0) return _text('/\n');
     return _text('${path.substring(0, idx)}\n');
   }
+}
+
+/// The Dart grep engine's compiled view of the parsed flags (gh-1393
+/// rework): the letter set for `compileGrepQuery`, the `-m` cap (null =
+/// unlimited), or an exit-2 message for a flag the engine has no faithful
+/// translation for — E2's "never silently divergent".
+final class _GrepEnginePlan {
+  const _GrepEnginePlan(this.flags, this.maxCount) : error = null;
+
+  const _GrepEnginePlan.invalid(this.error)
+      : flags = const <String>{},
+        maxCount = null;
+
+  final Set<String> flags;
+  final int? maxCount;
+
+  /// Non-null when a forwarded flag cannot be honored (exit 2).
+  final String? error;
 }
 
 /// Per-stage execution context passed to command implementations.
