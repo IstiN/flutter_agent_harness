@@ -213,22 +213,27 @@ void main() {
 
   test('P1: the carrier is payload-only — Agent transcript state is never '
       'mutated', () async {
+    Future<ToolExecutionResult> unusedExecutor(_, _, _) async {
+      return ToolExecutionResult.text('unused');
+    }
+
     final agent = Agent(
       model: _model,
       streamFunction: _FakeStreamFunction([
         _textTurn('ok'),
       ]).call,
+      toolExecutor: unusedExecutor,
       operativeSkills: skills,
     );
     agent.state.systemPrompt = 'test';
-    agent.state.messages
-      ..add(_user('old user turn, folded'))
-      ..add(
-        _user(
-          '$compactionSummaryPrefix\nThe folded checkpoint body.\n'
-          '$compactionSummarySuffix',
-        ),
-      );
+    final foldedWindow = <Message>[
+      _user('old user turn, folded'),
+      _user(
+        '$compactionSummaryPrefix\nThe folded checkpoint body.\n'
+        '$compactionSummarySuffix',
+      ),
+    ];
+    agent.state.messages = List.of(foldedWindow);
     final before = List.of(agent.state.messages);
     await agent.prompt('continue the sweep');
     expect(agent.state.messages.length, before.length + 2); // prompt + reply

@@ -20,6 +20,8 @@ library;
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/compaction/structured/engine.dart';
+import 'package:test/test.dart';
 import 'package:test/test.dart';
 
 Skill _skill(String name, List<String> operative) {
@@ -144,16 +146,31 @@ void main() {
       expect(prompt, contains('<previous-checkpoint>'));
     });
 
-    test('turn prefix path carries block + duty (E7)', () async {
-      final fake = _FakeSummarizer([SummarizationResult.success('prefix')]);
-      final prompts = defaultCompactionPrompts;
-      // Direct call through the private path is not possible; exercise
-      // via split-turn compaction below. Here: the payload shape is what
-      // the turn-prefix builder renders.
-      expect(pinnedOperativePromptBlock(
-        SkillOperativePins.build([_skill('fleet', [_pin])]),
-      ), isNotNull);
-      expect(prompts.turnPrefix, isNotEmpty);
+    test('turn prefix path carries block + duty (E7, split turn)', () async {
+      final fake = _FakeSummarizer([
+        SummarizationResult.success('history checkpoint'),
+        SummarizationResult.success('turn prefix checkpoint'),
+      ]);
+      final manager = CompactionManager(
+        summarize: fake.call,
+        pinnedOperative: _payload(),
+      );
+      final preparation = CompactionPreparation(
+        firstKeptEntryId: 'e2',
+        messagesToSummarize: [UserMessage.text('old history')],
+        turnPrefixMessages: [UserMessage.text('prefix of a split turn')],
+        isSplitTurn: true,
+        tokensBefore: 100,
+      );
+      final result = await manager.compact(preparation);
+      // Both calls of the split turn carry the block + the duty.
+      expect(fake.prompts, hasLength(2));
+      for (final prompt in fake.prompts) {
+        expect(prompt.contains('PINNED OPERATIVE LINES'), isTrue);
+        expect(prompt.contains('"$_pin"'), isTrue);
+        expect(prompt.contains('PINNED SKILL DIRECTIVES'), isTrue);
+      }
+      expect(result.summary, contains('turn prefix checkpoint'));
     });
 
     test('F4 compat: no pins → prompts byte-identical to the pre-pin '
@@ -355,5 +372,125 @@ void main() {
       expect(jsonDecode(bytesOn.trim().split('\n').first), isA<Map>());
       expect(normalize(bytesOn), contains('"type":"compaction"'));
     });
+  });
+  structuredCheckpointTests();
+}
+
+/// E7 — the structured-engine checkpoint path carries the pinned block
+/// too (window 8000, reserve 2000 → trigger 6000, keep-recent 2000).
+const _structuredSettings = CompactionSettings(
+  enabled: true,
+  reserveTokens: 2000,
+  keepRecentTokens: 2000,
+);
+
+AssistantMessage _structuredAssistant(String text, {List<ToolCall>? calls}) {
+  return AssistantMessage(
+    content: [TextContent(text: text), ...?calls],
+    api: 'anthropic-messages',
+    provider: 'p',
+    model: 'm1',
+    usage: Usage.zero,
+    stopReason: StopReason.stop,
+    timestamp: DateTime.utc(2026),
+  );
+}
+
+ToolResultMessage _structuredResult(String callId, String name, String text) {
+  return ToolResultMessage(
+    toolCallId: callId,
+    toolName: name,
+    content: [TextContent(text: text)],
+    isError: false,
+    timestamp: DateTime.utc(2026),
+  );
+}
+
+
+void structuredCheckpointTests() {
+  group('E7 — the structured checkpoint carries the pinned block', () {
+  test('checkpoint prompt carries the pin block + duty; pin survives in '
+      'the persisted checkpoint', () async {
+    final repo = JsonlSessionRepo(
+      fs: MemoryExecutionEnv(),
+      sessionsRoot: '/sessions',
+    );
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
+    await session.appendMessage(UserMessage.text('fix the login crash'));
+    await session.appendMessage(
+      _structuredAssistant(
+        'looking',
+        calls: [ToolCall(id: 'c1', name: 'read', arguments: const {})],
+      ),
+    );
+    await session.appendMessage(_structuredResult('c1', 'read', 'x' * 16000));
+    await session.appendMessage(
+      _structuredAssistant(
+        'running tests',
+        calls: [ToolCall(id: 'c2', name: 'bash', arguments: const {})],
+      ),
+    );
+    await session.appendMessage(_structuredResult('c2', 'bash', 'y' * 12000));
+    for (var i = 0; i < 6; i++) {
+      await session.appendMessage(
+        _structuredAssistant('filler analysis $i'),
+      );
+    }
+    final messages = await session.buildContextMessages();
+    final state = AgentState(
+      model: Model(
+        id: 'm1',
+        name: 'm1',
+        api: 'anthropic-messages',
+        provider: 'p',
+        baseUrl: 'http://localhost:1',
+        contextWindow: 8000,
+        maxTokens: 4096,
+      ),
+      messages: messages,
+    );
+    final pins = _payload();
+    final promptsSeen = <String>[];
+    final compactor = StructuredCompactor(
+      session: session,
+      state: state,
+      window: 8000,
+      settings: _structuredSettings,
+      // An empty hide list ends the hide loop without failure — the run
+      // proceeds to the checkpoint pass while still over the trigger.
+      judge: (ledger) async => '[]',
+      summarize: (request) async {
+        promptsSeen.add(request.prompt);
+        // The summarizer copies the pin verbatim (obedient case).
+        return SummarizationResult.success('## Goal\nfixed\n\n"$_pin"\n');
+      },
+      checkpointPrompt:
+          'CHECKPOINT INSTRUCTIONS '
+          '\n${defaultCompactionPrompts.pinnedOperative}',
+      pinnedOperativeBlock: pins.block,
+      pinnedLines: pins.lines,
+    );
+    final hid = await compactor.run();
+    expect(hid, isTrue);
+    expect(promptsSeen, isNotEmpty);
+    for (final prompt in promptsSeen) {
+      expect(prompt.contains('PINNED OPERATIVE LINES'), isTrue);
+      expect(prompt.contains('"$_pin"'), isTrue);
+      // The block rides BEFORE the checkpoint instruction tail.
+      expect(
+        prompt.indexOf('PINNED OPERATIVE LINES'),
+        lessThan(prompt.indexOf('CHECKPOINT INSTRUCTIONS')),
+      );
+    }
+    // The persisted checkpoint keeps the pin verbatim
+    // (sanitizer-protected, AC4 on the structured path).
+    final entries = await session.getEntries();
+    final checkpointText = entries
+        .whereType<CompactCheckpointRecord>()
+        .map((record) => record.text)
+        .join('\n');
+    expect(checkpointText, isNotEmpty);
+    expect(checkpointText.contains('"$_pin"'), isTrue);
+  });
   });
 }
