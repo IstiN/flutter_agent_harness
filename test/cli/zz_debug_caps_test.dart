@@ -5,6 +5,8 @@ import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
 
+void _p(String tag, String body) => print('$tag<<<$body>>>');
+
 Future<bool> _poll(FutureOr<bool> Function() condition) async {
   for (var i = 0; i < 4000; i++) {
     if (await condition()) return true;
@@ -15,7 +17,7 @@ Future<bool> _poll(FutureOr<bool> Function() condition) async {
 
 String _tail() {
   final out = io.out.toString();
-  return out.substring(out.length - 600 < 0 ? 0 : out.length - 600);
+  return out.substring(out.length - 2000 < 0 ? 0 : out.length - 2000);
 }
 
 late MemoryExecutionEnv env;
@@ -53,27 +55,27 @@ void main() {
     final run = cli.run();
     final flow = cli.startModelCapsFlow();
     if (!await _poll(() => io.out.toString().contains('model capabilities'))) {
-      print('F0<<<${_tail()}>>>'); return;
+      _p('F0', _tail()); return;
     }
     io.sendLine('1');
     if (!await _poll(() => io.out.toString().contains('— provider'))) {
-      print('F1<<<${_tail()}>>>'); return;
+      _p('F1', _tail()); return;
     }
     io.sendLine('12');
     if (!await _poll(() => io.out.toString().contains('model id (empty keeps'))) {
-      print('F2<<<${_tail()}>>>'); return;
+      _p('F2', _tail()); return;
     }
     io.sendLine('glm-5.3-flash');
     if (!await _poll(() => io.out.toString().contains('capabilities — zai/glm-5.3-flash'))) {
-      print('F3<<<${_tail()}>>>'); return;
+      _p('F3', _tail()); return;
     }
     io.sendLine('2');
     if (!await _poll(() => io.out.toString().contains('maxTokens in tokens'))) {
-      print('F4<<<${_tail()}>>>'); return;
+      _p('F4', _tail()); return;
     }
     io.sendLine('65536');
     if (!await _poll(() => io.out.toString().contains('models.overrides.zai.glm-5.3-flash'))) {
-      print('F5<<<${_tail()}>>>'); return;
+      _p('F5', _tail()); return;
     }
     io.sendLine('3');
     if (!await _poll(
@@ -95,7 +97,15 @@ void main() {
       print('OUT5<<<tail: ${_tail()}>>>');
     }
     io.sendLine('3');
-    await flow;
+    try {
+      await flow.timeout(const Duration(seconds: 15));
+      print('FLOWDONE<<<');
+    } catch (e) {
+      print('FLOWHANG<<<${_tail()}>>>');
+      io.sendLine('/exit');
+      await run.timeout(const Duration(seconds: 10));
+      return;
+    }
     io.sendLine('/exit');
     await run;
     // ignore: avoid_print
