@@ -145,6 +145,13 @@
       "prompt": 44235,
       "completion": 10036,
       "total": 54271
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-08T16:50:50Z",
+      "prompt": 73408,
+      "completion": 16837,
+      "total": 90245
     }
   ]
 }
