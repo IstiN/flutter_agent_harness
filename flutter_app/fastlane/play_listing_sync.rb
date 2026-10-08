@@ -55,8 +55,8 @@ module PlayListingSync
   # image call against this list BEFORE any HTTP request — it is a
   # module-local guard, NOT the full AppImageType enum (tvScreenshots,
   # wearScreenshots, promo graphics, …). EXTEND THIS LIST (in lock-step
-  # with clear_plan/expected_state/sync_and_verify!) when adding managed
-  # types, or the new types will be rejected pre-flight.
+  # with expected_state/sync_and_verify!) when adding managed types, or
+  # the new types will be rejected pre-flight.
   MANAGED_TYPES = (SCREENSHOT_TYPES + SINGLE_IMAGE_TYPES).freeze
 
   # Play-mandatory listing TEXT fields per language (gh-1402). Google
@@ -106,16 +106,11 @@ module PlayListingSync
 
   # The screenshot sets to clear for an EXPLICIT locale list (gh-1402:
   # callers pass only the locales the sync may manage — titled ones).
+  # The production plan (sync_and_verify!) is clear_sets(managed locales).
   def clear_sets(locales)
     locales.sort.flat_map do |locale|
       SCREENSHOT_TYPES.map { |type| { locale: locale, type: type } }
     end
-  end
-
-  # The screenshot sets to clear: every listing locale (repo ∪ live on the
-  # console) × every multi-slot type.
-  def clear_plan(metadata_dir, remote_locales)
-    clear_sets(all_locales(metadata_dir, remote_locales))
   end
 
   # The post-sync state the listing must have: sha256 SEQUENCES per
