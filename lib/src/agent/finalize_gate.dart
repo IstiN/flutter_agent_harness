@@ -26,6 +26,10 @@ library;
 /// The `custom` record type of the TaskLedger session record.
 const String taskLedgerRecordType = 'task_ledger';
 
+/// The fenced-block info string the FinalizeGate contract mandates for the
+/// final answer's ledger (`​```task-ledger … `​`` `).
+const String taskLedgerFence = 'task-ledger';
+
 /// Per-item verification outcome. `fixed` = failed, then fixed and
 /// re-verified — counts as verified (the fix loop is the contract's point).
 enum TaskLedgerItemStatus {
@@ -198,7 +202,7 @@ String? _lastLedgerBlock(String text) {
     final info = match.group(2)!.trim();
     if (inside) {
       inside = false; // Closing fence — the block is complete.
-    } else if (info == taskLedgerRecordType) {
+    } else if (info == taskLedgerFence) {
       inside = true;
       last = null;
     }

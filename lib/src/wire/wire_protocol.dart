@@ -468,6 +468,9 @@ class AgentWireProtocol {
         'report': _encodeRepairReport(report),
         'providerError': ?providerError,
       },
+      TaskLedgerEvent(:final ledger) => {
+        'ledger': ledger.toJson(),
+      },
       // gh-1054 liveness: heartbeats and stuck-call follow-ups ride the
       // wire so external hosts see alive-busy vs dead mid-run, same as
       // the session ledger and the HEP frames do.
@@ -597,6 +600,7 @@ class AgentWireProtocol {
     'tool_execution_end': _decodeToolExecutionEnd,
     'model_request': _decodeModelRequest,
     'tool_pairing_repair': _decodeToolPairingRepair,
+    'task_ledger': _decodeTaskLedger,
     'tool_call_heartbeat': _decodeToolCallHeartbeat,
     'tool_call_stuck': _decodeToolCallStuck,
     'approval_request': _decodeApprovalRequest,
@@ -753,6 +757,15 @@ class AgentWireProtocol {
       ),
       frame,
     );
+  }
+
+  static KnownWireEvent _decodeTaskLedger(Map<String, dynamic> frame) {
+    _requireKind(frame, 'task_ledger');
+    final ledger = TaskLedger.fromJson(_requireMap(frame['ledger'], 'ledger'));
+    if (ledger == null) {
+      throw const FormatException('task_ledger.ledger has no items');
+    }
+    return KnownWireEvent(TaskLedgerEvent(ledger), frame);
   }
 
   /// Optional blob field: absent stays null, present-and-object decodes,
@@ -1167,6 +1180,7 @@ class AgentWireProtocol {
     ToolExecutionEndEvent() => 'tool_execution_end',
     ModelRequestEvent() => 'model_request',
     ToolPairingRepairEvent() => 'tool_pairing_repair',
+    TaskLedgerEvent() => 'task_ledger',
     ToolCallHeartbeatEvent() => 'tool_call_heartbeat',
     ToolCallStuckEvent() => 'tool_call_stuck',
   };
