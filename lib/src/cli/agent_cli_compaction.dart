@@ -442,11 +442,23 @@ extension AgentCliCompactionRun on AgentCli {
       // the next turn boundary swaps the loop's stale context for the
       // capped one — the remainder rides no over-budget request.
       _checkpoints.requestContextResync();
+      // Honest receipt: name the outcome, not the intent — a pass that
+      // stayed over the trigger (huge keep region, degenerate overhead)
+      // must not read as capped.
+      final after = _liveRequestTokens();
       io.writeln(
         _style.dim(
-          '[checkpoint] detour closed over the compaction trigger '
-          '($tokens tokens) — context auto-compacted before the next '
-          'request',
+          shouldCompact(
+            after,
+            _effectiveContextWindow,
+            _effectiveCompactionSettings,
+          )
+              ? '[checkpoint] detour closed over the compaction trigger '
+                  '($tokens tokens) — compaction ran but the context stayed '
+                  'over the trigger ($after); it retries before the next turn'
+              : '[checkpoint] detour closed over the compaction trigger '
+                  '($tokens tokens) — context auto-compacted before the '
+                  'next request',
         ),
       );
     } on CancelledException {

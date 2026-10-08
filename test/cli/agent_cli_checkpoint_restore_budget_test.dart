@@ -41,15 +41,43 @@ void main() {
   });
   tearDown(() => io.close());
 
+  /// Seeds the resumed session with a base transcript just UNDER the
+  /// compaction trigger (11 × ~1k-token messages + the ~10k request
+  /// overhead ≈ 21k of a 24,576 trigger): no boot cap, no pre-flight
+  /// compaction — the ONLY thing that pushes the context over the trigger
+  /// is the mid-run restore in run 3. The post-read transcript (~17k)
+  /// also stays under the summarizer's single-chunk payload budget
+  /// (window − reserve = 24,576), so the forced pass makes exactly ONE
+  /// summarizer call.
+  Future<void> seedBaseTranscript() async {
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+    final seed = await repo.create(
+      JsonlSessionCreateOptions(cwd: '/work', metadata: {'agent': 'cli'}),
+    );
+    await seed.appendSessionName('restore-budget-target');
+    for (var i = 0; i < 11; i++) {
+      await seed.appendMessage(UserMessage.text('seed$i ${'a' * 4000}'));
+    }
+  }
+
   AgentCli cli(FakeStreamFunction stream) => AgentCli(
     config: AgentCliConfig(
       model: _model,
       apiKey: '[REDACTED:Sensitive Value]',
       env: env,
       sessionRoot: '/sessions',
+      sessionName: 'restore-budget-target',
       providerKind: 'openai-completions',
       skillsAccess: SkillsAccess.granted,
       compactionEngine: CompactionEngine.classic,
+      // Keep region small enough that ONE pass clears the trigger: the
+      // default keep (window ~/ 2 = 16384) plus the ~10k request overhead
+      // would sit over the 24,576 trigger and re-fire the pass loop.
+      compactionSettings: const CompactionSettings(
+        enabled: true,
+        reserveTokens: 8192,
+        keepRecentTokens: 4096,
+      ),
     ),
     io: io,
     streamFunction: stream.call,
@@ -64,6 +92,7 @@ void main() {
     'the remainder compacted before the next request (window − reserve)',
     timeout: const Timeout(Duration(minutes: 5)),
     () async {
+      await seedBaseTranscript();
       final stream = FakeStreamFunction([
         // Run 1 ("start the detour"): the model marks a checkpoint.
         toolTurn([
