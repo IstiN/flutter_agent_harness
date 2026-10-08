@@ -14,6 +14,7 @@ import '../compaction/summary_sanitizer.dart';
 import '../context.dart';
 import '../exceptions.dart';
 import '../types.dart';
+import 'obligations_ledger.dart';
 import 'session_record.dart';
 import 'session_storage.dart';
 import 'windowed_session_storage.dart';
@@ -85,10 +86,40 @@ final class SessionContext {
 /// Ported from pi's `Session` class. All reads go through the storage's
 /// in-memory index; all writes append to the underlying JSONL file.
 final class Session {
-  /// Creates a [Session] over [storage].
-  const Session(this._storage);
+  /// Creates a [Session] over [storage]. [customRecordScan], when given
+  /// (the JSONL repo injects itself), lets the session read `custom`
+  /// records RESIDENCY can hide — the windowed tail drops side-leaf and
+  /// below-tail records from `getEntries()` (issue #488 class), while the
+  /// raw scan streams the whole file chain. The obligations ledger's
+  /// projection fallback is the consumer.
+  Session(this._storage, {this.customRecordScan});
 
   final SessionStorage _storage;
+
+  /// Raw `custom`-record scan over the full session file chain, keyed by
+  /// record type. Null when the session was built without a repo behind
+  /// it (direct constructions in tools/tests) — consumers then degrade to
+  /// the resident view only.
+  final Future<List<CustomRecord>> Function(Set<String> types)?
+      customRecordScan;
+
+  /// Cached result of the one-time obligations scan fallback (null =
+  /// not scanned yet; a scanned-empty result is cached too). Resident
+  /// appends always win over it, so no invalidation is needed.
+  ObligationsLedger? _obligationsFromScan;
+
+  /// The obligations ledger from the raw scan fallback, or null when no
+  /// scan hook exists / was already consulted and found nothing new.
+  /// Runs at most once per session instance.
+  Future<ObligationsLedger?> _scanObligationsLedger() async {
+    if (_obligationsFromScan != null) return _obligationsFromScan;
+    final scan = customRecordScan;
+    if (scan == null) return null;
+    final records = await scan({obligationsLedgerRecordType});
+    return _obligationsFromScan = records.isEmpty
+        ? const ObligationsLedger([])
+        : ObligationsLedger.fromPayload(records.last.data);
+  }
 
   /// The session metadata (from the file header).
   Future<SessionMetadata> getMetadata() => _storage.getMetadata();
@@ -535,21 +566,52 @@ final class Session {
     );
     if (!hasStructured) {
       if (classicHidden.isEmpty) {
-        return [for (final entry in path) ..._entryToMessages(entry)];
+        return _withObligationsBlock([
+          for (final entry in path) ..._entryToMessages(entry),
+        ]);
       }
       final seqs = RecordSeqIndex(await getEntries());
-      return [
+      return _withObligationsBlock([
         for (final entry in path)
           ..._entryToMessages(entry, classicHidden: classicHidden, seqs: seqs),
-      ];
+      ]);
     }
-    final seqs = RecordSeqIndex(await getEntries());
-    return renderStructuredMessages(
-      path: path,
-      seqs: seqs,
-      projectEntry: (record) =>
-          _entryToMessages(record, classicHidden: classicHidden, seqs: seqs),
+    final entries = await getEntries();
+    final seqs = RecordSeqIndex(entries);
+    return _withObligationsBlock(
+      renderStructuredMessages(
+        path: path,
+        seqs: seqs,
+        projectEntry: (record) =>
+            _entryToMessages(record, classicHidden: classicHidden, seqs: seqs),
+      ),
+      entries: entries,
     );
+  }
+
+  /// Appends the obligations ledger block (issue #1380 A1) at level 0 —
+  /// after every projected message, outside any hidden range or checkpoint
+  /// span, so compaction at any depth can never sink it. Presence-gated on
+  /// the session's latest `obligations_ledger` snapshot: a session without
+  /// one (classic engine, E3) projects exactly as before.
+  ///
+  /// The resident lookup first; when residency shows NO snapshot and the
+  /// storage is windowed, the raw-scan fallback runs once (cached) — the
+  /// latest snapshot routinely lies below a windowed tail, and dropping
+  /// the block there would sink every obligation under it (#488 class).
+  /// A full-open storage's resident view is the whole file — no scan.
+  Future<List<Message>> _withObligationsBlock(
+    List<Message> messages, {
+    List<SessionRecord>? entries,
+  }) async {
+    var ledger = latestObligationsLedgerIn(entries ?? await getEntries());
+    if (ledger == null && _storage is WindowedSessionStorage) {
+      ledger = await _scanObligationsLedger();
+    }
+    if (ledger == null || ledger.isEmpty) return messages;
+    final block = renderObligationsBlock(ledger);
+    if (block.isEmpty) return messages;
+    return [...messages, UserMessage.text(block)];
   }
 
   ({

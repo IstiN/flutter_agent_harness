@@ -84,6 +84,7 @@ import '../tools/builtin_tools.dart';
 import '../tools/generate_image.dart';
 import '../tools/generate_video.dart';
 import '../tools/inspect_image.dart';
+import '../tools/obligation_tool.dart';
 import '../tools/password_prompt.dart';
 import '../tools/request_secret_tool.dart';
 import '../tools/shell_jobs.dart';
@@ -252,6 +253,12 @@ final class AgentCoreServices {
   /// The `request_secret` host prompt. Null = headless host: same
   /// always-registered graceful-failure contract as [onAsk].
   final RequestSecretCallback? onRequestSecret;
+
+  /// The obligations-ledger close callback (`obligation_mark_done`,
+  /// issue #1380 lifecycle). Null = the host does not maintain the
+  /// ledger: the tool still registers and answers gracefully in-tool —
+  /// the same always-registered contract as [onAsk].
+  final ObligationClose? obligationsClose;
   final InspectImageConfig? vision;
   final TranscribeAudioConfig? transcribe;
   final MediaToolServices? media;
@@ -340,6 +347,7 @@ final class AgentCoreServices {
     this.scheduleSenderMailbox,
     this.onAsk,
     this.onRequestSecret,
+    this.obligationsClose,
     this.vision,
     this.transcribe,
     this.media,
@@ -626,6 +634,9 @@ List<AgentTool> _buildCoreTools({
     // would surface a bare "Tool ask not found" instead.
     askTool(callback: services.onAsk),
     requestSecretTool(callback: services.onRequestSecret),
+    // The obligations close path (issue #1380 lifecycle): same
+    // always-registered graceful-null contract as ask/request_secret.
+    obligationMarkDoneTool(close: services.obligationsClose),
     // Deliberate env-chain change vs the pre-conversion CLI (review,
     // #1230): vision/transcribe/media used to ride the RAW base env and
     // bypassed the sandbox; they now take the decorated chain
