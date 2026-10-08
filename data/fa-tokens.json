@@ -58,6 +58,13 @@
       "prompt": 387575,
       "completion": 117526,
       "total": 505101
+    },
+    {
+      "leg": "dev",
+      "at": "2026-10-08T17:10:52Z",
+      "prompt": 107273,
+      "completion": 31340,
+      "total": 138613
     }
   ],
   "pr-1418": [
