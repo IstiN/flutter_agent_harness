@@ -229,18 +229,15 @@ void main() {
       '✓ done pty446             0s    – reply with the single word ok',
       '✗ fail pty446             0s    – reply with the single word ok',
     ]) {
-      expect(
-        transcriptOf(['>_Fa mid-turn row', row]),
-        ['>_Fa mid-turn row'],
-        reason: 'subagent board row leaked into the transcript: $row',
-      );
+      expect(transcriptOf(['>_Fa mid-turn row', row]), [
+        '>_Fa mid-turn row',
+      ], reason: 'subagent board row leaked into the transcript: $row');
     }
     // The settled band tool cards (✔/✘) are the ONLY tool-row grammar —
     // the new rule must not eat them (the #916 drift detection stays).
-    expect(
-      transcriptOf(['✔ bash: echo pinned-render-1']),
-      ['bash: echo pinned-render-1'],
-    );
+    expect(transcriptOf(['✔ bash: echo pinned-render-1']), [
+      'bash: echo pinned-render-1',
+    ]);
   });
 
   late Directory home;
