@@ -31,19 +31,37 @@ final class JobLogRedactor {
   /// The per-line sanitizer (typically `RedactionPipeline.redact`).
   final String Function(String text) transform;
 
+  /// The partial-line budget (issue #919 memory discipline, review
+  /// 5456649624): a job that emits one gigantic newline-free chunk
+  /// (`cat minified-2GB.json`, `base64 -w0 bigfile`) must not grow the fa
+  /// heap without bound. Past this budget the carry force-flushes through
+  /// [transform] — best-effort at-rest redaction — with an overflow
+  /// marker line, and buffering resumes. Exact redaction still holds for
+  /// every newline-terminated line and any final partial line within the
+  /// budget.
+  static const _maxCarryBytes = 1 << 20; // 1 MiB (UTF-16 code units ≈ bytes)
+
+  /// The marker line appended when the budget forces a flush.
+  static const _overflowMarker = '\n[… redaction buffer overflow …]\n';
+
   /// The trailing partial line, waiting for its newline.
   String _carry = '';
 
   /// Sanitizes [chunk]: complete lines through [transform] immediately,
   /// the trailing partial line held back until its newline arrives (or
-  /// [flush] runs at settle).
+  /// [flush] runs at settle) — unless it outgrows [_maxCarryBytes], when
+  /// it force-flushes sanitized with an overflow marker.
   String ingest(String chunk) {
     if (chunk.isEmpty) return '';
     final buffered = _carry + chunk;
     final cut = buffered.lastIndexOf('\n');
     if (cut < 0) {
-      _carry = buffered;
-      return '';
+      if (buffered.length <= _maxCarryBytes) {
+        _carry = buffered;
+        return '';
+      }
+      _carry = '';
+      return transform(buffered) + _overflowMarker;
     }
     _carry = buffered.substring(cut + 1);
     return transform(buffered.substring(0, cut + 1));

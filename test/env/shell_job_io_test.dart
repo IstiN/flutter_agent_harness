@@ -484,16 +484,49 @@ void main() {
         (text) => text.replaceAll('AKIAIOSFODNN7EXAMPLE', '[REDACTED]'),
       );
       // No newline yet: the partial line stays buffered, so no half-token
-      // can reach the disk and dodge the redaction.
+      // can reach the disk and dodge the redaction. The carry JOINS the
+      // spans before the next scan — the chunk boundary never splits a
+      // token away from its shape.
       expect(redactor.ingest('key AKIA'), isEmpty);
       expect(redactor.ingest('IOSFODNN7EXAMPLE\ndone'), '[REDACTED]\ndone');
-      expect(redactor.flush(), isEmpty);
+      // The trailing partial line ('done') is not trapped: flush() emits
+      // it sanitized at settle (validation 37778322435 — the original
+      // assertion wrongly pinned isEmpty).
+      expect(redactor.flush(), 'done');
     });
 
     test('flush() emits a trailing partial line', () {
       final redactor = JobLogRedactor((text) => text);
       expect(redactor.ingest('partial tail'), isEmpty);
       expect(redactor.flush(), 'partial tail');
+    });
+
+    test('an oversized newline-free chunk force-flushes instead of '
+        'buffering without bound (issue #919 memory discipline)', () {
+      final redactor = JobLogRedactor((text) => text);
+      // 2 MiB with no newline: past the 1 MiB partial-line budget this
+      // cannot sit on the fa heap — it flushes through the transform
+      // (best-effort at-rest redaction) with an overflow marker line.
+      final out = redactor.ingest('x' * (2 << 20));
+      expect(out, contains('xxxx'));
+      expect(out, contains('redaction buffer overflow'));
+      // The carry was reset: the next small chunk flows through normally.
+      expect(redactor.ingest('done\n'), 'done\n');
+      expect(redactor.flush(), isEmpty);
+    });
+
+    test('an oversized buffered partial line keeps best-effort redaction',
+        () {
+      final redactor = JobLogRedactor(
+        (text) => text.replaceAll('AKIAIOSFODNN7EXAMPLE', '[REDACTED]'),
+      );
+      // A partial line already holding the full token, then a 2 MiB
+      // newline-free chunk: the forced flush still passes through the
+      // transform, so what rests carries the marker, not the raw value.
+      expect(redactor.ingest('key AKIAIOSFODNN7EXAMPLE tail'), isEmpty);
+      final out = redactor.ingest('x' * (2 << 20));
+      expect(out, contains('[REDACTED]'));
+      expect(out, isNot(contains('AKIAIOSFODNN7EXAMPLE')));
     });
   });
 }

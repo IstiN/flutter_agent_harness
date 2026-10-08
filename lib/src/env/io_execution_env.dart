@@ -989,7 +989,9 @@ final class _LocalShellJob implements ShellJob {
     // values. The live `_output` stream stays raw (it feeds transient
     // consumers like the password detector; at-rest is the contract here).
     void fanOut(String chunk) {
-      final safe = _redactor?.ingest(chunk) ?? chunk;
+      // A broken log no longer ingests (review 5456649624): the carry
+      // would only grow for text that can never rest anywhere.
+      final safe = _logBroken ? chunk : (_redactor?.ingest(chunk) ?? chunk);
       if (!_logBroken && safe.isNotEmpty) {
         _writeChain = _writeChain
             .then((_) => _ceiling.ingest(safe))
