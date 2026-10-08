@@ -880,6 +880,13 @@ jobs:
             echo "::error::IPA file not found in flutter_app/build/ios"
             exit 1
           fi
+          # gh-1403: absolutize BEFORE the rezip — find yields a RELATIVE
+          # path, and the `(cd "$STRIP" && …)` subshell resolved
+          # "$IPA_PATH.stripped" against the mktemp dir (no flutter_app/
+          # ancestor) → "zip error: Could not create output file". The
+          # atomic-swap mv below carried the same hazard.
+          # (realpath: /usr/bin/realpath, macOS 13+ — the runner is newer.)
+          IPA_PATH=$(realpath "$IPA_PATH")
           if ! unzip -l "$IPA_PATH" "Symbols/*" | grep -q "Symbols/"; then
             echo "no Symbols/ in the IPA — nothing to strip"
             exit 0
