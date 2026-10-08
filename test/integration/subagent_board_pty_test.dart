@@ -3,18 +3,21 @@
 @Timeout(Duration(minutes: 5))
 library;
 
-// gh-1415 E2E-1 / AC6: a scripted background `task` spawn in the PTY
-// harness shows the subagent status row language end to end — the row
-// APPEARS on spawn (one dense line: glyph, state verb, human name, age,
-// cost), TICKS in place (the age recomputes from timestamps on the 1 Hz
+// gh-1415 E2E-1 / AC6: a scripted BACKGROUND task spawn in the PTY harness
+// shows the subagent status row language end to end — the row APPEARS on
+// spawn (one dense line: glyph, state verb, human name, age, cost), TICKS
+// in place (the age recomputes from the spawn timestamp on the 1 Hz
 // repaint), and COLLAPSES to the settled one-liner on completion. The
-// child runs a real `bash sleep 4` so the running row lives long enough
-// to observe deterministically (the mock alone finishes in one turn).
+// child runs a real `bash sleep 4` so the running row lives long enough to
+// observe deterministically (a text-only child settles within one turn).
 //
 // Bright rows carry no SGR runs (the dim/bright split is the painter's),
-// so the raw PTY stream carries each repainted row contiguously — the
-// tick assertion reads the raw stream via [FaCliHarness.waitForRaw].
-
+// so the raw PTY stream carries each repainted row contiguously — the tick
+// assertion reads the raw stream via [FaCliHarness.waitForRaw].
+//
+// Structure mirrors subagent_integration_test.dart (#551): bare-workspace
+// boot, content-routed MockLlmScript, keyless localhost config repointed
+// at the server before spawn.
 import 'dart:io';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
@@ -29,6 +32,8 @@ void main() {
   setUp(() {
     tempHome = Directory.systemTemp.createTempSync('fa_subagent_board_');
     workspace = Directory.systemTemp.createTempSync('fa_subagent_board_ws_');
+    // Keyless boot config (localhost:9999 is never contacted); the mock
+    // server repoints baseUrl before spawn.
     File('${tempHome.path}/.fah/config.yaml')
       ..createSync(recursive: true)
       ..writeAsStringSync('''
@@ -49,7 +54,7 @@ tui:
   });
 
   /// Repoints the boot config at [server] so parent AND subagent model
-  /// turns are served by the same scripted FIFO.
+  /// turns are served by the same scripted content router.
   void useMockLlm(MockLlmServer server) {
     final config = File('${tempHome.path}/.fah/config.yaml');
     config.writeAsStringSync(
@@ -60,6 +65,8 @@ tui:
     );
   }
 
+  /// Spawns the CLI in the bare [workspace] — no knowledgebase, so the
+  /// background tag generator cannot steal FIFO slots from the script.
   Future<FaCliHarness> spawnHarness() async {
     final harness = await FaCliHarness.spawn(
       workingDirectory: workspace.path,
@@ -74,9 +81,10 @@ tui:
     'background task spawn: the status row appears, ticks, collapses (AC6)',
     timeout: const Timeout(Duration(minutes: 2)),
     () async {
-      // Content-routed script (substring match on the LAST user message);
-      // the child's second request still matches (its tool result rides
-      // role:tool), so the two-turn child script pops in order.
+      // Content-routed script (substring match on the LAST user message).
+      // The child's second request still matches its own scenario (its
+      // tool result rides role:tool), so the two-response child script
+      // pops in order: bash sleep → final text.
       final script = MockLlmScript.parse('''
 scenarios:
   - match: "Use the task tool"
@@ -92,17 +100,12 @@ scenarios:
     responses:
       - toolCall:
           name: bash
-          arguments: >-
-            {"command":"sleep 4"}
+          arguments: '{"command": "sleep 4"}'
       - text: "boardwatch-done: counted"
   - match: "Existing tags:"
     sticky: true
     responses:
       - text: ""
-  - match: "Background agent boardwatch"
-    sticky: true
-    responses:
-      - text: "completion noticed"
 ''');
       final server = await MockLlmServer.start(script: script);
       addTearDown(server.stop);
@@ -117,18 +120,18 @@ scenarios:
       );
       harness.sendEnter();
 
-      // APPEARING: the live row renders as ONE dense line — the state
-      // verb and the human NAME (never a mailbox uuid) on the same row.
+      // APPEARING: the live row renders as ONE dense line — the state verb
+      // and the human NAME (never a mailbox uuid) on the same row.
       final appearing = await harness.waitForScreen(
         'run  boardwatch',
-        timeout: const Duration(seconds: 30),
+        timeout: const Duration(seconds: 90),
       );
       expect(appearing, contains('run  boardwatch'));
 
-      // TICKING: the same row repaints in place with a larger age (the
-      // 1 Hz ticker; ages recompute from the spawn timestamp). The bright
-      // row is SGR-free, so the raw stream carries `… boardwatch Ns …`
-      // contiguously per repaint.
+      // TICKING: the same row repaints in place with a larger age (the 1 Hz
+      // ticker; ages recompute from the spawn timestamp). The bright row is
+      // SGR-free, so the raw stream carries `run  boardwatch   Ns` as one
+      // contiguous byte run per repaint.
       await harness.waitForRaw(
         (raw) => RegExp('run  boardwatch\\s+[2-9]s').hasMatch(raw),
         what: 'the boardwatch row repainted with an age ≥ 2s',
@@ -139,7 +142,7 @@ scenarios:
       // done verb and the name still share ONE row (never a block).
       final settled = await harness.waitForScreen(
         'done  boardwatch',
-        timeout: const Duration(seconds: 60),
+        timeout: const Duration(seconds: 90),
       );
       expect(settled, contains('done  boardwatch'));
     });

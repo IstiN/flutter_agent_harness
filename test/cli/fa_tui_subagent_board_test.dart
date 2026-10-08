@@ -62,7 +62,7 @@ void main() {
 
   List<String> rowsOf(FaTuiModel m) => m.view().content.split('\n');
 
-  String _plain(String row) => stripAnsi(row);
+  String plainRow(String row) => stripAnsi(row);
 
   test('UT-4 / AC4: an empty board renders zero extra rows (quiet zero)',
       () {
@@ -81,7 +81,7 @@ void main() {
     final model = send(build(termHeight: 40, busy: true), SubagentBoardMsg(rows));
     final frame = rowsOf(model);
     expect(frame, hasLength(40));
-    final plain = frame.map(_plain).toList();
+    final plain = frame.map(plainRow).toList();
     // All 10 rows painted, in order, above the busy row.
     final busyIdx = plain.indexWhere((r) => r.contains('Working'));
     expect(busyIdx, greaterThanOrEqualTo(10));
@@ -114,7 +114,7 @@ void main() {
       board: board,
       subagents: [row('worker')],
     );
-    final plain = rowsOf(model).map(_plain).toList();
+    final plain = rowsOf(model).map(plainRow).toList();
     final boardIdx = plain.indexWhere((r) => r.contains('Background jobs'));
     final agentIdx = plain.indexWhere((r) => r.contains('worker'));
     final busyIdx = plain.indexWhere((r) => r.contains('Working'));
@@ -131,7 +131,7 @@ void main() {
     final model = build(termHeight: 10, busy: true, subagents: rows);
     final frame = rowsOf(model);
     expect(frame, hasLength(10));
-    final plain = frame.map(_plain).toList();
+    final plain = frame.map(plainRow).toList();
     // The newest row survives; somewhere the yield tail may hide the rest.
     expect(plain.where((r) => r.contains('agent-10')), isNotEmpty);
     for (final r in plain) {

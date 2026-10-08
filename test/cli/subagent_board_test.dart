@@ -467,6 +467,6 @@ void main() {
 /// timestamps, never from ticking the region).
 final class _ManualClock {
   _ManualClock(this._now);
-  DateTime _now;
+  final DateTime _now;
   DateTime now() => _now;
 }
