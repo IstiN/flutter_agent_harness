@@ -214,10 +214,11 @@ extension _TuiRowRenderers on FaTuiModel {
     return 1;
   }
 
-  /// The busy indicator line (one row): spinner + label + honesty
-  /// suffixes in FIXED cells (issue #365). The label zone and the elapsed
-  /// field hold a constant cell count, so digit growth at a power-of-ten
-  /// second, the 180 s quiet-threshold crossing and a mid-run phase swap
+  /// The busy indicator line (one row): two-tone kaomoji face + label +
+  /// honesty suffixes in FIXED cells (issue #365, faces #1374). The face
+  /// zone, the label zone and the elapsed field hold constant cell
+  /// counts, so digit growth at a power-of-ten second, the 180 s
+  /// quiet-threshold crossing, a mid-run phase swap AND a face swap
   /// never reflow the row — nothing right of a changing cell moves. The
   /// suffixes render provenance-first (a zone that appears or grows must
   /// never sit left of a stable one), and the row is fitted AND padded to
@@ -229,7 +230,17 @@ extension _TuiRowRenderers on FaTuiModel {
       // user's choice, not working.
       return _dim(tuiPadRight('waiting for your selection…', termWidth));
     }
-    final frame = _spinnerFrames[spinnerFrame % _spinnerFrames.length];
+    // Defensive index (herdr fixtures pin faces via copyWith): an
+    // out-of-range index must never crash the frame painter.
+    final faceIdx = kaomojiFace >= 0 && kaomojiFace < kKaomojiFaces.length
+        ? kaomojiFace
+        : 0;
+    final face = kKaomojiFaces[faceIdx];
+    // Narrow terminals get the ASCII-safe face set (issue #1374): below
+    // the fixed-layout width the unicode glyphs are also the likeliest
+    // to be missing from the font.
+    final ascii = termWidth < kKaomojiAsciiMinWidth;
+    final faceText = _kaomojiPlainText(face, ascii);
     final elapsedSeconds = busyStartedAtMs < 0
         ? 0
         : ((DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) / 1000)
@@ -254,12 +265,16 @@ extension _TuiRowRenderers on FaTuiModel {
     final elapsedCell = _formatBusyElapsed(
       elapsedSeconds,
     ).padLeft(_busyElapsedCells);
+    // The face pads into a FIXED zone (the widest face, `o_o?`, is 4
+    // cells), so a swap never moves a column right of it — the #365
+    // fixed-cell rule now covers face swaps, not just digit growth.
     final plain =
-        '$frame $labelCell $elapsedCell${suffix.isEmpty ? '' : ' $suffix'}';
+        '${faceText.padRight(kKaomojiFaceZoneCells)} '
+        '$labelCell $elapsedCell${suffix.isEmpty ? '' : ' $suffix'}';
     final padded = tuiPadRight(tuiFitWidth(plain, termWidth), termWidth);
-    if (padded.length <= frame.length + 1) return _dim(padded);
-    return '${_accent2Plain(frame)} '
-        '${_dim(padded.substring(frame.length + 1))}';
+    if (padded.length <= kKaomojiFaceZoneCells) return _dim(padded);
+    return '${_kaomojiColored(face, ascii)}'
+        '${_dim(padded.substring(faceText.length))}';
   }
 
   int _writeBusyAndQueue(StringBuffer b, int baseRow, _FramePlan plan) {
