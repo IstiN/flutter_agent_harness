@@ -29,10 +29,13 @@ def _importable(name: str) -> bool:
     # unittest discover does), find_spec("terminal_bench") matches the
     # DIRECTORY itself as a namespace package and false-positives.
     try:
-        importlib.import_module(name)
-        return True
+        module = importlib.import_module(name)
     except ImportError:
         return False
+    # test_progress_watch_adapter installs a stdlib stub package under the
+    # same name (so its ITs run where terminal-bench is not installed);
+    # a stub is not the real dependency.
+    return not getattr(module, "__fa_tb_stub__", False)
 
 
 TB_AVAILABLE = _importable("terminal_bench.agents.base_agent")
@@ -652,6 +655,169 @@ class HarborParityTest(unittest.TestCase):
             asyncio.run(agent.run("work", object(), object()))
         self.assertEqual(len(calls), 1)
         self.assertIn("fa --session-root", calls[0])
+
+
+NEW_KNOB_NAMES = (
+    "FA_STALL_GAP_SEC",
+    "FA_AGENT_TIMEOUT_ABS_CEILING_SEC",
+)
+
+
+def clean_env_all(**overrides):
+    env = {
+        name: value
+        for name, value in os.environ.items()
+        if name not in KNOB_NAMES + NEW_KNOB_NAMES
+    }
+    env.update(overrides)
+    return env
+
+
+class ProgressWatchKnobTest(unittest.TestCase):
+    """Round-3 knobs (issue #1392 AC1): stall gap + absolute ceiling."""
+
+    def test_new_knobs_absent_means_legacy_ladder_mode(self):
+        knobs = TimeoutKnobs.from_env(clean_env_all(FA_PROGRESS_EXTENSION="1"))
+        self.assertIsNone(knobs.stall_gap_sec)
+        self.assertIsNone(knobs.abs_ceiling_sec)
+        self.assertFalse(knobs.progress_watch)
+
+    def test_stall_gap_knob_activates_progress_watch_mode(self):
+        knobs = TimeoutKnobs.from_env(clean_env_all(FA_STALL_GAP_SEC="240"))
+        self.assertEqual(knobs.stall_gap_sec, 240.0)
+        self.assertTrue(knobs.progress_watch)
+        # The abs ceiling defaults to 3600s in watch mode (issue #1392
+        # open question 1 default) — still overridable explicitly.
+        self.assertEqual(knobs.watch_abs_ceiling_sec, 3600.0)
+
+    def test_abs_ceiling_knob_activates_progress_watch_mode(self):
+        knobs = TimeoutKnobs.from_env(
+            clean_env_all(FA_AGENT_TIMEOUT_ABS_CEILING_SEC="5400")
+        )
+        self.assertTrue(knobs.progress_watch)
+        self.assertEqual(knobs.abs_ceiling_sec, 5400.0)
+        self.assertEqual(knobs.watch_abs_ceiling_sec, 5400.0)
+        # The stall gap defaults to 240s in watch mode (round-2 healthy
+        # max gap ~200s; class-B gaps start ~240s).
+        self.assertEqual(knobs.watch_stall_gap_sec, 240.0)
+
+    def test_garbage_new_knob_fails_loud(self):
+        with self.assertRaises(ValueError):
+            TimeoutKnobs.from_env(clean_env_all(FA_STALL_GAP_SEC="soon"))
+        with self.assertRaises(ValueError):
+            TimeoutKnobs.from_env(clean_env_all(FA_AGENT_TIMEOUT_ABS_CEILING_SEC="0"))
+
+
+class ProgressWatchTest(unittest.TestCase):
+    """UT-* (AC1): the gap-aware kill decision, fake clock via push samples.
+
+    Semantics: while inter-record gaps stay < stall-gap the trial counts as
+    progressing and the ONLY kill is the absolute ceiling (3600s + test
+    budget default) — the ×4 ceiling no longer guillotines productive runs
+    (play-zork, 72 productive minutes, run 37609468473). A gap >= the
+    stall-gap threshold marks the trial stalled and the ladder resumes
+    counting: the kill deadline is last progress + the idle window.
+    """
+
+    def _watch(self, **knob_overrides):
+        env = clean_env_all(FA_PROGRESS_EXTENSION="1", **knob_overrides)
+        return fa_agent_timeout.ProgressWatch(TimeoutKnobs.from_env(env))
+
+    def test_progressing_trial_survives_past_legacy_ceiling(self):
+        # AC1 synthetic: steady 60s gaps and a 4000s workload must NOT die
+        # at the legacy ×4 ceiling (1440s at base 360) — only the abs
+        # ceiling (3600) can kill a progressing trial.
+        watch = self._watch()
+        for t in range(0, 3540, 60):
+            self.assertIsNone(watch.evaluate(float(t), t * 1000), f"died at {t}s")
+
+    def test_progressing_trial_dies_at_abs_ceiling_distinct_reason(self):
+        # E2: a legit 61+ min task dies with agent_timeout(abs_ceiling) —
+        # a distinct failure-mode string separating cap-kill from stall.
+        watch = self._watch()
+        for t in range(0, 3600, 60):
+            self.assertIsNone(watch.evaluate(float(t), t * 1000))
+        self.assertEqual(watch.evaluate(3660.0, 3660 * 1000), "abs_ceiling")
+
+    def test_single_stall_gap_gap_dies_at_ladder(self):
+        # AC1: one 240s+ gap and no progress after it -> the ladder resumes
+        # counting and the trial dies (last progress + idle window, which a
+        # 240s gap has already exceeded).
+        watch = self._watch()
+        for t in range(0, 600, 60):
+            self.assertIsNone(watch.evaluate(float(t), t * 1000))
+        # 300s of silence after the last progress at 540s.
+        self.assertEqual(watch.evaluate(840.0, None), "stall")
+        self.assertEqual(watch.evaluate(900.0, None), "stall")
+
+    def test_gap_exactly_at_threshold_is_stall_no_flap(self):
+        # E1: gap exactly at the 240s threshold counts as stalled (>=),
+        # and the verdict is sticky: it does not flap back without new
+        # progress bytes.
+        watch = self._watch()
+        self.assertIsNone(watch.evaluate(0.0, 10))
+        self.assertEqual(watch.evaluate(240.0, 10), "stall")
+        self.assertEqual(watch.evaluate(241.0, 10), "stall")
+
+    def test_progress_after_stall_refreezes_ladder(self):
+        # Hysteresis: new output after a stall detection re-enters
+        # progressing mode — only the abs ceiling can kill again.
+        watch = self._watch()
+        self.assertIsNone(watch.evaluate(0.0, 10))
+        self.assertEqual(watch.evaluate(300.0, 10), "stall")
+        self.assertIsNone(watch.evaluate(320.0, 20))  # progress resumes
+        self.assertIsNone(watch.evaluate(380.0, 30))
+        self.assertEqual(watch.evaluate(700.0, 30), "stall")
+
+    def test_extension_off_flat_cap_byte_identical(self):
+        # REG: with the extension off the watch is the flat cap, exactly
+        # the legacy ladder's regression pin.
+        env = clean_env_all(FA_STALL_GAP_SEC="240", FA_PROGRESS_EXTENSION="0")
+        watch = fa_agent_timeout.ProgressWatch(TimeoutKnobs.from_env(env))
+        self.assertIsNone(watch.evaluate(359.0, 10**9))
+        self.assertEqual(watch.evaluate(360.0, 10**9), "stall")
+
+    def test_abs_ceiling_includes_test_budget(self):
+        # test_budget_sec is a DECISION-OBJECT knob (generic ceiling math),
+        # NOT an adapter behavior: the bench adapter constructs the watch
+        # without it (flat 3600s) because tb enforces the verifier phase
+        # separately. This pins the knob math only.
+        env = clean_env_all(FA_PROGRESS_EXTENSION="1", FA_STALL_GAP_SEC="240")
+        knobs = TimeoutKnobs.from_env(env)
+        watch = fa_agent_timeout.ProgressWatch(knobs, test_budget_sec=240.0)
+        for t in range(0, 3840, 60):
+            self.assertIsNone(watch.evaluate(float(t), t * 1000), f"died at {t}s")
+        self.assertEqual(watch.evaluate(3900.0, 3900 * 1000), "abs_ceiling")
+
+    def test_watch_events_recorded_for_audit(self):
+        watch = self._watch()
+        watch.evaluate(0.0, 10)
+        watch.evaluate(300.0, 10)  # stall detected
+        watch.evaluate(320.0, 20)  # progress resumes
+        kinds = [event["kind"] for event in watch.events]
+        self.assertIn("stall_detected", kinds)
+        self.assertIn("progress_resumed", kinds)
+        stall = next(e for e in watch.events if e["kind"] == "stall_detected")
+        self.assertEqual(stall["gap_sec"], 300.0)
+
+
+class ProgressWatchAuditTest(unittest.TestCase):
+    def test_audit_names_progress_watch_policy_and_new_knobs(self):
+        env = clean_env_all(FA_PROGRESS_EXTENSION="1", FA_STALL_GAP_SEC="240")
+        knobs = TimeoutKnobs.from_env(env)
+        watch = fa_agent_timeout.ProgressWatch(knobs)
+        watch.evaluate(0.0, 10)
+        record = audit_dict(knobs, watch, "abs_ceiling")
+        self.assertEqual(record["policy"], "progress-watch")
+        self.assertEqual(record["knobs"]["stall_gap_sec"], 240.0)
+        self.assertEqual(record["knobs"]["abs_ceiling_sec"], 3600.0)
+        self.assertEqual(record["outcome"], "abs_ceiling")
+
+    def test_audit_keeps_flat_policy_for_legacy_ladder(self):
+        knobs = TimeoutKnobs(base_sec=120.0)
+        ladder = ProgressLadder(knobs)
+        record = audit_dict(knobs, ladder, "stall")
+        self.assertEqual(record["policy"], "flat-cap")
 
 
 if __name__ == "__main__":

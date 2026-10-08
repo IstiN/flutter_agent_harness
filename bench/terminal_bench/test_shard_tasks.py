@@ -2,10 +2,12 @@
 """Unit tests for shard_tasks.py (issue #142). Run: python3 -m unittest discover -s bench/terminal_bench"""
 import json
 import os
+import random
 import tempfile
 import unittest
 from pathlib import Path
 
+import shard_tasks
 from shard_tasks import resolve_task_ids, split_lpt, task_budget
 
 
@@ -212,6 +214,72 @@ class MatrixOutputTest(unittest.TestCase):
             os.unlink(out.name)
         finally:
             tmp.cleanup()
+
+
+class PackCapTest(unittest.TestCase):
+    """ShardPacker cap validation (issue #1392 AC5).
+
+    The packer must never hand a shard a worst case above the job cap's
+    usable budget (cap − 15 min headroom): round 2 lost shard-0 by ~1 min
+    with zero headroom. Over-cap is a loud ::error naming the numbers —
+    never a silent multi-hour over-run.
+    """
+
+    def test_split_within_cap_passes_and_respects_budget(self):
+        ids = [f"t{i}" for i in range(20)]
+        budgets = {t: 600.0 for t in ids}
+        shards = split_lpt(ids, budgets, 4)
+        loads = shard_tasks.check_cap(shards, budgets, 355 * 60.0)
+        # 20 tasks x 600s over 4 shards = 3000s per shard, far under the
+        # 340-min usable budget.
+        self.assertTrue(all(load <= 340 * 60.0 for load in loads))
+
+    def test_over_cap_raises_loud_error(self):
+        ids = [f"t{i}" for i in range(8)]
+        budgets = {t: 7200.0 for t in ids}  # 4 shards worth over 2 shards
+        shards = split_lpt(ids, budgets, 2)
+        with self.assertRaises(SystemExit) as ctx:
+            shard_tasks.check_cap(shards, budgets, 355 * 60.0)
+        self.assertIn("::error::", str(ctx.exception))
+        self.assertIn("shards", str(ctx.exception))
+
+    def test_zero_cap_disables_validation(self):
+        ids = [f"t{i}" for i in range(8)]
+        budgets = {t: 7200.0 for t in ids}
+        shards = split_lpt(ids, budgets, 2)
+        self.assertEqual(
+            len(shard_tasks.check_cap(shards, budgets, 0)), 2
+        )
+
+    def test_property_random_mixes_never_silently_exceed_cap(self):
+        # AC5 property: over seeded random task mixes, whenever the packer
+        # returns shards, every shard's worst case fits the usable budget
+        # (cap − 15 min); an infeasible mix fails LOUD via SystemExit.
+        rng = random.Random(1392)
+        for iteration in range(200):
+            n_tasks = rng.randint(1, 40)
+            n_shards = rng.randint(1, 8)
+            ids = [f"task-{i}" for i in range(n_tasks)]
+            budgets = {
+                t: rng.uniform(60.0, 4800.0) for t in ids
+            }
+            shards = split_lpt(ids, budgets, n_shards)
+            total = sum(budgets.values())
+            cap = rng.uniform(max(budgets.values()) + 60.0, 355.0 * 60.0)
+            try:
+                loads = shard_tasks.check_cap(shards, budgets, cap)
+            except SystemExit as exc:
+                # Loud failure is a legal outcome for an infeasible mix;
+                # the error must name the remedy either way.
+                self.assertIn("::error::", str(exc))
+                self.assertIn("shards", str(exc))
+                continue
+            for load in loads:
+                self.assertLessEqual(
+                    load,
+                    cap - shard_tasks.HEADROOM_SEC,
+                    f"iter {iteration}: shard load {load} > {cap} - headroom",
+                )
 
 
 if __name__ == "__main__":

@@ -28,11 +28,18 @@ unpriced line names the model ids it could not price (or says the id is
 unknown).
 
 tb exits 0 even with unresolved tasks, so the exit code is the verdict on
-run COMPLETENESS only: 1 when nothing was produced or fewer than
-expected-count tasks were attempted (lost/killed shard). Unresolved or
-pending tasks are the run's scoreboard, not an infra failure — they are
-reported in the table and accuracy line without failing the step.
+run COMPLETENESS only. Issue #1392 AC6: a lost/cancelled shard degrades
+to an explicit `coverage: X/N` note (green-with-note) — the red verdict
+is reserved for real defects: nothing produced at all, or the AC8
+score-honesty contradiction (an `agent_timeout` trial whose session
+shows steady sub-240s inter-record gaps, i.e. the round-2 "killed
+mid-work" class the progress-aware ladder was built to retire).
 --no-fail turns the verdict off (informational per-shard tallies).
+
+Issue #1392 AC2: the report also carries request-latency p50/p95 per
+concurrency level (from each trial's bench_metrics.json) and tags the
+run's concurrency level (BENCH_CONCURRENCY env, set by bench.yml's
+max-concurrent input).
 """
 import glob
 import json
@@ -44,6 +51,7 @@ from typing import NamedTuple
 _BENCH_DIR = str(Path(__file__).resolve().parent.parent)
 if _BENCH_DIR not in sys.path:
     sys.path.insert(0, _BENCH_DIR)
+import bench_metrics
 import fa_usage
 
 _PRICING_PATH = Path(_BENCH_DIR) / "pricing.json"
@@ -171,12 +179,137 @@ def _session_facts(runs_dir: Path) -> dict:
     return facts
 
 
-def render(runs_dir: Path, expected=None, model_override=None):
+def _latency_facts(runs_dir: Path) -> dict:
+    """concurrency level -> [first_byte_sec, ...] (raw per-request samples).
+
+    Reads every trial's bench_metrics.json, consuming the keys
+    bench_metrics.summarize_trial actually writes (`first_byte_sec` — the
+    same writer the adapter calls from _write_trial_metrics; AC2).
+    Percentiles are computed with bench_metrics.percentile, so the report
+    and the per-trial `latency.first_byte` block share one semantics.
+    Trials without the file (older artifacts) contribute nothing; corrupt
+    files degrade to a warning, never a crash.
+    """
+    levels = {}
+    for path in sorted(glob.glob(str(runs_dir / "*" / "*" / "*" / "bench_metrics.json"))):
+        try:
+            data = json.loads(Path(path).read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            print(
+                f"[summary] warning: unreadable {path}: {exc}", file=sys.stderr
+            )
+            continue
+        if not isinstance(data, dict):
+            continue
+        bucket = levels.setdefault(data.get("concurrency_level"), [])
+        for req in data.get("requests") or []:
+            if not isinstance(req, dict):
+                continue
+            value = req.get("first_byte_sec")
+            if isinstance(value, (int, float)) and value >= 0:
+                bucket.append(float(value))
+    return levels
+
+
+def _render_latency_block(runs_dir: Path, lines) -> None:
+    """AC2: 'Request latency by concurrency level' block (p50/p95)."""
+    levels = _latency_facts(runs_dir)
+    if not levels:
+        return
+    lines.append("Request latency by concurrency level:")
+
+    def label(level):
+        return f"concurrency {level}" if level is not None else "concurrency default"
+
+    for level in sorted(levels, key=lambda v: (v is None, v)):
+        values = levels[level]
+        if not values:
+            continue
+        lines.append(
+            f"- {label(level)}: first-byte"
+            f" p50={bench_metrics.percentile(values, 50):.1f}s"
+            f" p95={bench_metrics.percentile(values, 95):.1f}s"
+            f" requests={len(values)}"
+        )
+
+
+def _trial_dirs(runs_dir: Path) -> dict:
+    """trial_name -> trial dir, from the same layout _session_facts uses."""
+    dirs = {}
+    for pattern in ("*/*/*/agent-logs", "*/*/*/agent", "*/*/*/fa-agent-timeout.json"):
+        for path in glob.glob(str(runs_dir / pattern)):
+            trial_dir = Path(path).parent
+            dirs[trial_dir.name] = trial_dir
+    return dirs
+
+
+_AUDIT_JUSTIFIED = ("stall", "hard-ceiling", "abs_ceiling")
+
+
+def _trial_max_gap(trial_dir: Path):
+    """Max inter-assistant-record gap across the trial's session files."""
+    gaps = []
+    for sessions in sorted(trial_dir.glob("agent*/fah-sessions")):
+        for path in sorted(sessions.glob("*.jsonl")):
+            try:
+                text = path.read_text()
+            except OSError:
+                continue
+            gaps.extend(bench_metrics.session_assistant_gaps(text))
+    return max(gaps) if gaps else None
+
+
+def _score_honesty(runs_dir: Path, rows) -> list:
+    """AC8: agent_timeout trials killed while progressing are contradictions.
+
+    Justified kills: the trial's fa-agent-timeout.json audit names a stall
+    or ceiling outcome (round-3 adapters), or — legacy artifacts — the
+    session's max inter-record gap reached the 240s stall threshold.
+    Missing session data degrades to "unverifiable", never a contradiction.
+    """
+    contradictions = []
+    trial_dirs = _trial_dirs(runs_dir)
+    for row in rows:
+        if row.mode != "agent_timeout":
+            continue
+        trial_dir = trial_dirs.get(row.trial)
+        if trial_dir is None:
+            continue
+        audit = trial_dir / "fa-agent-timeout.json"
+        if audit.exists():
+            try:
+                outcome = json.loads(audit.read_text()).get("outcome")
+            except (OSError, json.JSONDecodeError):
+                outcome = None
+            # The audit IS the round-3 contract: the watch itself decided
+            # the kill (stall at the 240s gap, or a ceiling), so its
+            # verdict justifies the row and the legacy gap cross-check is
+            # intentionally skipped — a legitimate abs-ceiling kill has
+            # sub-threshold gaps BY DESIGN (E2) and must not read as a
+            # contradiction. The gap scan below remains for artifacts
+            # WITHOUT an audit (round-2 runs / tb flat-cap fabrication).
+            if outcome in _AUDIT_JUSTIFIED:
+                continue
+            contradictions.append(row.trial)
+            continue
+        max_gap = _trial_max_gap(trial_dir)
+        if max_gap is None:
+            continue  # E4: unverifiable, degrade silently
+        if max_gap < bench_metrics.DEFAULT_STALL_GAP_SEC:
+            contradictions.append(row.trial)
+    return contradictions
+
+
+def render(runs_dir: Path, expected=None, model_override=None, concurrency=None):
     """Build the summary (lines, problems) for a runs dir — pure, testable."""
     runs_dir = Path(runs_dir)
     paths = sorted(glob.glob(str(runs_dir / "*" / "results.json")))
     lines = ["### fa on terminal-bench", ""]
     problems = []
+    if concurrency is not None:
+        # Issue #1392: the report tags the run's concurrency level — the
+        # 8-shard/2-concurrent experiment is only comparable when tagged.
+        lines.append(f"Run at max-concurrency {concurrency} (issue #1392).")
 
     if not paths:
         lines.append("**No results.json produced — the tb run did not complete.**")
@@ -331,14 +464,46 @@ def render(runs_dir: Path, expected=None, model_override=None):
         )
 
     if missing > 0:
-        problems.append(f"only {len(rows)}/{expected} expected tasks attempted")
+        # Issue #1392 AC6: a lost/cancelled shard is a coverage note, not
+        # a failure — the report stays green-with-note so a partially
+        # completed experiment still ships its data.
+        lines.append(
+            f"coverage: {len(rows)}/{expected}"
+            f" ({missing} missing — shard lost, cancelled, or timed out)"
+        )
+    _render_latency_block(runs_dir, lines)
+    contradictions = _score_honesty(runs_dir, rows)
+    if contradictions:
+        # AC8: the round-2 contradiction (agent_timeout on steady gaps)
+        # must never recur silently.
+        lines.append(
+            f"score honesty: {len(contradictions)} contradiction(s) —"
+            " agent_timeout trials whose session gaps never reached the"
+            " stall threshold: " + ", ".join(sorted(contradictions))
+        )
+        problems.append(
+            "score-honesty contradictions: " + ", ".join(sorted(contradictions))
+        )
+    else:
+        lines.append("score honesty: 0 contradictions")
     return lines, problems
 
 
 def main():
     no_fail, runs_dir, expected, model = _parse_args(sys.argv[1:])
+    concurrency = None
+    raw = os.environ.get("BENCH_CONCURRENCY", "").strip()
+    if raw:
+        try:
+            concurrency = int(raw)
+        except ValueError:
+            print(
+                f"[summary] warning: BENCH_CONCURRENCY={raw!r} is not an"
+                " integer — ignoring the concurrency tag",
+                file=sys.stderr,
+            )
 
-    lines, problems = render(runs_dir, expected, model)
+    lines, problems = render(runs_dir, expected, model, concurrency)
 
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
