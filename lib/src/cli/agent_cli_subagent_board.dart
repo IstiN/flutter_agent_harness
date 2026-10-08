@@ -129,6 +129,5 @@ extension AgentCliSubagentBoardSeams on AgentCli {
 
   /// Test seam: the last push's rendered texts (the dedupe observable).
   @visibleForTesting
-  List<String> get subagentBoardLastPushForTest =>
-      _subagentBoard._lastPushed;
+  List<String> get subagentBoardLastPushForTest => _subagentBoard._lastPushed;
 }

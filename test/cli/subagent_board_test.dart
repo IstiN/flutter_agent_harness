@@ -144,7 +144,17 @@ void main() {
       expect(age(45840), '12h'); // 12 h 34 m → 12h
       expect(age(356400), '99h');
       expect(age(360000), '99h+');
-      for (final s in [59, 60, 3599, 3600, 5400, 36000, 45840, 356400, 360000]) {
+      for (final s in [
+        59,
+        60,
+        3599,
+        3600,
+        5400,
+        36000,
+        45840,
+        356400,
+        360000,
+      ]) {
         expect(tuiTextWidth(age(s)), lessThanOrEqualTo(4), reason: '${s}s');
       }
     });
@@ -533,13 +543,16 @@ void main() {
       expect(line.contains('\n'), isFalse);
     });
 
-    test('the preview strips ANSI escapes (host-side plain-text, thread 3)', () {
-      final record = subagentRecordOf(
-        handle('i', task: '\x1b[31mred\x1b[0m and plain'),
-      );
-      expect(record.preview, 'red and plain');
-      expect(record.preview!.contains('\x1b'), isFalse);
-    });
+    test(
+      'the preview strips ANSI escapes (host-side plain-text, thread 3)',
+      () {
+        final record = subagentRecordOf(
+          handle('i', task: '\x1b[31mred\x1b[0m and plain'),
+        );
+        expect(record.preview, 'red and plain');
+        expect(record.preview!.contains('\x1b'), isFalse);
+      },
+    );
   });
 }
 

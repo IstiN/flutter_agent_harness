@@ -87,10 +87,7 @@ final class SubagentBoardRow {
 /// Every lifecycle state maps onto the four display states; usage folds the
 /// in-flight `liveTokens` on top of the billed lifetime `tokens`; all
 /// timestamps parse tolerantly (a bad stamp degrades that column only).
-SubagentStatusRecord subagentRecordOf(
-  SubagentHandle handle, {
-  String? task,
-}) {
+SubagentStatusRecord subagentRecordOf(SubagentHandle handle, {String? task}) {
   final total = handle.tokens + handle.liveTokens;
   // The preview is pre-rendered host-side: strip ANSI/control sequences so
   // the frame buffer stays plain text (review thread 3 — the source is
@@ -142,15 +139,7 @@ const int _costCells = 4;
 /// Cells the rail needs with the name column at its 1-cell floor: glyph
 /// zone + state + name(1) + age + cost + the four separators.
 const int _railFloorCells =
-    _glyphZoneCells +
-    1 +
-    _stateCells +
-    1 +
-    1 +
-    1 +
-    _ageCells +
-    1 +
-    _costCells;
+    _glyphZoneCells + 1 + _stateCells + 1 + 1 + 1 + _ageCells + 1 + _costCells;
 
 /// The rendered head's cell count is `_railFloorCells + nameBudget - 1`
 /// (the name column grows past its floor cell); the preview plus its one
@@ -191,10 +180,7 @@ String subagentStatusLine(
   final nameBudget = (w - (_railFloorCells - 1)).clamp(1, _nameCells);
   final previewBudget = w - _railFloorCells - nameBudget;
 
-  final glyph = tuiPadRight(
-    subagentStateGlyph(record.state),
-    _glyphZoneCells,
-  );
+  final glyph = tuiPadRight(subagentStateGlyph(record.state), _glyphZoneCells);
   final state = tuiPadRight(subagentStateWord(record.state), _stateCells);
   final label = idSuffix == null || idSuffix.isEmpty
       ? record.name
@@ -375,7 +361,8 @@ final class TaskBoardRegion {
                 ? _idSuffix(entry.record.id)
                 : null,
           ),
-          bright: !entry.isTerminal ||
+          bright:
+              !entry.isTerminal ||
               entry.settledAt == null ||
               now.difference(entry.settledAt!) < settleFlash,
         ),
@@ -383,7 +370,8 @@ final class TaskBoardRegion {
   }
 
   /// The E2 disambiguator: the id's last 4 chars.
-  String _idSuffix(String id) => id.length <= 4 ? id : id.substring(id.length - 4);
+  String _idSuffix(String id) =>
+      id.length <= 4 ? id : id.substring(id.length - 4);
 
   /// Folds the OLDEST settled one-liners past the cap (open question 1's
   /// lean — persist a line, fold on pressure). Live rows never fold.
