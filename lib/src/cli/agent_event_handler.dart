@@ -1,5 +1,4 @@
 import '../agent/agent_loop.dart';
-import '../agent/finalize_gate.dart';
 import '../types.dart';
 
 /// Routes an [AgentEvent] to the appropriate UI callback.

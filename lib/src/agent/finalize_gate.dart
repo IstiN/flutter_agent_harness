@@ -135,8 +135,7 @@ final class TaskLedger {
     final raw = json['items'];
     if (raw is! List) return null;
     final items = [
-      for (final row in raw)
-        if (TaskLedgerItem.fromJson(row) case final item?) item,
+      for (final row in raw) ?TaskLedgerItem.fromJson(row),
     ];
     if (items.isEmpty) return null;
     return TaskLedger(items: items);
@@ -170,8 +169,7 @@ TaskLedger? parseTaskLedger(String text) {
           status: TaskLedgerItemStatus.fromName(current['status']),
         ),
       );
-    }
-    current = {};
+    }    current = {};
   }
 
   for (final line in block.split('\n')) {
@@ -207,7 +205,7 @@ String? _lastLedgerBlock(String text) {
       last = null;
     }
   }
-  return last == null ? null : last.trimRight();
+  return last?.trimRight();
 }
 
 /// Renders [ledger] back into the fenced `task-ledger` block the contract

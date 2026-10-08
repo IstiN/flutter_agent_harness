@@ -47,6 +47,7 @@ import 'key_status.dart';
 import 'provider_error_text.dart';
 import 'sigint_action.dart';
 import '../agent/agent_loop.dart';
+import '../agent/finalize_gate.dart';
 import '../session/windowed_session_storage.dart' show WindowedSessionStorage;
 import '../trajectory/event_projection.dart'
     show TrajectoryHiddenRecordPreview, projectHiddenRecordPreviews;
