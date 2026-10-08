@@ -193,8 +193,7 @@ String subagentStatusLine(
       ? record.name
       : // The suffix must stay visible: the NAME shrinks around it, the
         // ellipsis never eats the disambiguator (E2).
-        '${tuiFitWidth(record.name, (nameBudget - idSuffix.length - 1).clamp(1, nameBudget))}'
-            '·$idSuffix';
+        '${tuiFitWidth(record.name, (nameBudget - idSuffix.length - 1).clamp(1, nameBudget))}·$idSuffix';
   final name = tuiPadRight(tuiFitWidth(label, nameBudget), nameBudget);
   final age = subagentAgeLabel(record.spawnedAt, now).padLeft(_ageCells);
   final cost = subagentCompactTokens(record.tokens).padLeft(_costCells);
@@ -219,13 +218,12 @@ String subagentAgeLabel(DateTime? spawnedAt, DateTime now) {
   if (seconds < 0) return '0s'; // clock jump backwards clamps (E3)
   if (seconds < 60) return '${seconds}s';
   final minutes = seconds ~/ 60;
-  if (minutes < 60) return '$minutes m'.replaceAll(' ', '');
+  if (minutes < 60) return '${minutes}m';
   final hours = minutes ~/ 60;
   // ponytail: stable cells beat honest digits past 99 h (the busy-row cap
   // precedent) — a multi-day agent freezes the field instead of reflowing.
   if (hours > 99) return '99h+';
-  return '$hours h${(minutes % 60).toString().padLeft(2, '0')}m'
-      .replaceAll(' ', '');
+  return '${hours}h${(minutes % 60).toString().padLeft(2, '0')}m';
 }
 
 /// The cost field: compact token count ≤ 4 cells (delta 5 — a number, not
