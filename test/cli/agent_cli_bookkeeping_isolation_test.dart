@@ -26,7 +26,9 @@ void main() {
 
   setUp(() async {
     taskDir = await Directory.systemTemp.createTemp('fa_bookkeeping_task');
-    artifactsDir = await Directory.systemTemp.createTemp('fa_bookkeeping_art');
+    artifactsDir = await Directory.systemTemp.createTemp(
+      'fa_bookkeeping_art',
+    );
   });
 
   tearDown(() async {
@@ -62,10 +64,6 @@ void main() {
             ),
           ]),
           textTurn('started the background job'),
-          // The instant `echo` settles while the run is still live, so the
-          // settle notice injects a third model turn before headless exit —
-          // the script must cover it (leftover turns are simply unused).
-          textTurn('noted the background settle'),
         ]).call,
       );
 
@@ -79,9 +77,9 @@ void main() {
 
       // The job's artifacts land OUTSIDE the task workspace.
       await waitForIt(
-        () => Directory(
-          '${artifactsDir.path}/bash_jobs',
-        ).listSync().any((entry) => entry.path.endsWith('.log')),
+        () => Directory('${artifactsDir.path}/bash_jobs')
+            .listSync()
+            .any((entry) => entry.path.endsWith('.log')),
         reason: 'the job log is written under the override dir',
       );
 

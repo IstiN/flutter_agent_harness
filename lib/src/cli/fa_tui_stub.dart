@@ -18,6 +18,7 @@ library;
 import 'agent_hub_tui.dart';
 import 'paste_image.dart';
 import 'sigint_action.dart';
+import 'subagent_board.dart';
 import 'termios_guard.dart' show SttyRunner;
 import 'tui_prompt.dart';
 import 'tui_repl.dart' show MenuItem, TuiProgramHooks;
@@ -127,6 +128,7 @@ final class FaTuiController {
   /// wave-14); web never runs the controller.
   void markReplayAnchor() {}
 
+
   void sendBusy(bool busy, {String source = 'run'}) {}
 
   /// No-op on web: the stub controller renders nothing, so silent
@@ -145,6 +147,11 @@ final class FaTuiController {
   /// controller's method so agent_cli call sites compile for BOTH targets
   /// (issue #429 background-job board live region).
   void setJobBoard(List<String> lines) {}
+
+  /// No-op on web (the TUI never runs there). Mirrors the dart_tui
+  /// controller's method so the subagent status board's push (gh-1415)
+  /// compiles for BOTH targets.
+  void setSubagentBoard(List<SubagentBoardRow> rows) {}
 
   /// No-op on web (the TUI never runs there). Mirrors the dart_tui
   /// controller's method so the run-stall push (issue #514) compiles for

@@ -57,6 +57,7 @@ import '../trajectory/event_projection.dart' show textPayloadOf;
 import '../trajectory/trajectory_blobs.dart';
 import '../trajectory/trajectory_record.dart';
 import 'agent_tool.dart';
+import 'finalize_gate.dart';
 import 'image_registry.dart';
 import 'misuse_breaker.dart';
 import 'stuck_tool.dart';
@@ -411,6 +412,7 @@ final class AgentLoopConfig {
     this.wireDump = false,
     this.toolMisuseBreaker,
     this.stuckTool,
+    this.finalizeGate = false,
   });
 
   /// The model to call each turn.
@@ -500,6 +502,13 @@ final class AgentLoopConfig {
   /// `null` = unsupervised (byte-identical legacy behavior).
   final StuckToolConfig? stuckTool;
 
+  /// The FinalizeGate (gh-1412): when true (unattended/bench runs), the
+  /// loop parses the `task-ledger` fenced block out of the run's final
+  /// assistant message and emits [TaskLedgerEvent] so hosts persist the
+  /// hidden `task_ledger` session record. Default: false (interactive
+  /// runs are byte-identical — the contract is unattended-only).
+  final bool finalizeGate;
+
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
   AgentLoopConfig copyWith({Model? model}) {
     return AgentLoopConfig(
@@ -520,6 +529,7 @@ final class AgentLoopConfig {
       wireDump: wireDump,
       toolMisuseBreaker: toolMisuseBreaker,
       stuckTool: stuckTool,
+      finalizeGate: finalizeGate,
     );
   }
 }
@@ -681,6 +691,20 @@ final class ToolPairingRepairEvent extends AgentEvent {
   /// Raw provider error that triggered this pass, when it ran on the
   /// retry path; null for the pre-request repair.
   final String? providerError;
+}
+
+/// The FinalizeGate task ledger parsed from the run's final assistant
+/// message (gh-1412). Emitted once per run, right before [AgentEndEvent],
+/// when [AgentLoopConfig.finalizeGate] is on and the answer carries a
+/// `task-ledger` fenced block. Hosts persist it as a hidden
+/// `task_ledger` session record (the TaskLedger — post-mortems see WHAT
+/// was self-checked, the bench summary reports near-miss proximity); the
+/// trajectory snapshot builder folds persisted records back on replay.
+final class TaskLedgerEvent extends AgentEvent {
+  const TaskLedgerEvent(this.ledger);
+
+  /// The checklist the run finished with.
+  final TaskLedger ledger;
 }
 
 /// A tool reported a partial execution result.
@@ -1114,8 +1138,38 @@ Future<List<Message>> _runAgentLoop({
     break;
   }
 
+  // The FinalizeGate (gh-1412): unattended runs parse the task ledger out
+  // of the FINAL assistant message so hosts persist the hidden
+  // `task_ledger` record. No ledger in the answer (or the gate off) is
+  // not an error — legacy answers replay unchanged.
+  if (currentConfig.finalizeGate) {
+    final ledger = _finalTaskLedger(newMessages);
+    if (ledger != null) await emit(TaskLedgerEvent(ledger));
+  }
+
   await emit(AgentEndEvent(List.unmodifiable(newMessages)));
   return newMessages;
+}
+
+/// Parses the FinalizeGate ledger from the run's last assistant message
+/// (gh-1412). The run must END on that message — a ledger quoted in an
+/// earlier turn's text never satisfies the gate, and a run that stopped on
+/// tool calls (terminate batch, abort) has no terminal answer to gate on:
+/// the last self-check it quoted predates tool activity that may have
+/// changed the produced state.
+TaskLedger? _finalTaskLedger(List<Message> messages) {
+  for (final message in messages.reversed) {
+    // The run's final message decides: anything after the last assistant
+    // message (tool results) means the run never ended on an answer.
+    if (message is! AssistantMessage) return null;
+    for (final block in message.content.reversed) {
+      if (block is! TextContent) continue;
+      final ledger = parseTaskLedger(block.text);
+      if (ledger != null) return ledger;
+    }
+    return null;
+  }
+  return null;
 }
 
 /// Emits the run-start sequence: `agent_start`, the first `turn_start`, and

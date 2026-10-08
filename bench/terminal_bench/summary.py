@@ -63,7 +63,10 @@ class Row(NamedTuple):
     rec_in/rec_out: totals as recorded in results.json (0/None when tb's
     flat-cap fabrication discarded the adapter's fold). tin/tout:
     effective totals — recorded, else re-folded from the synced session
-    logs (issue #1339 AC1).
+    logs (issue #1339 AC1). checklist: the gh-1412 task-ledger coverage
+    cell ("checklist: V/T [ (N unmet)]" from the trial's last hidden
+    `task_ledger` record, "checklist: none" when the session carries no
+    ledger).
     """
 
     task: str
@@ -75,6 +78,7 @@ class Row(NamedTuple):
     tin: object
     tout: object
     cost: object
+    checklist: str = "checklist: none"
 
 
 def _parse_args(argv):
@@ -259,6 +263,80 @@ def _trial_max_gap(trial_dir: Path):
     return max(gaps) if gaps else None
 
 
+_LEDGER_VERIFIED = ("pass", "fixed")  # keep in lockstep with the Dart
+# `TaskLedgerItemStatus` enum and the SIBLING copy in bench/harbor_fa/summary.py
+# (the two summary scripts are standalone-by-design — different layout
+# roots — so this parser is duplicated; change both together).
+
+
+def _ledger_records(trial_dir: Path) -> list:
+    """Every hidden `task_ledger` custom record in the trial's synced fa
+    session logs, in file then line order."""
+    ledgers = []
+    for sessions in sorted(trial_dir.glob("agent*/fah-sessions")):
+        for path in sorted(sessions.glob("*.jsonl")):
+            try:
+                text = path.read_text()
+            except OSError:
+                continue
+            for line in text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (
+                    isinstance(record, dict)
+                    and record.get("type") == "custom"
+                    and record.get("customType") == "task_ledger"
+                ):
+                    ledgers.append(record)
+    return ledgers
+
+
+def _ledger_cell(trial_dir: Path) -> str:
+    """gh-1412: the trial's checklist-coverage cell.
+
+    The FinalizeGate contract makes the agent persist a hidden
+    `task_ledger` record (requirement, verify command, expected vs actual,
+    status) before its final answer; the LAST ledger wins — the agent
+    re-verifies after fixes, so the final state is the near-miss
+    telemetry. `pass`/`fixed` items count as verified; everything else
+    (fail/unverified) is unmet. A trial with no ledger (legacy sessions,
+    ledger-less tasks) renders `checklist: none`.
+
+    Tolerates the corrupt payloads the Dart fold deliberately tolerates
+    ("a corrupt ledger payload never throws"): a non-dict `data`, or an
+    `items` that is not a list, degrades to `checklist: none` — never an
+    AttributeError. An items-less ledger is `none` too: it verifies
+    nothing, and rendering 0/0 would count as fully verified downstream.
+    Duplicate of the sibling parser in bench/harbor_fa/summary.py (the
+    scripts are standalone-by-design) — change both together.
+    """
+    ledgers = _ledger_records(trial_dir)
+    if not ledgers:
+        return "checklist: none"
+    data = ledgers[-1].get("data")
+    rows = data.get("items") if isinstance(data, dict) else None
+    items = rows if isinstance(rows, list) else []
+    if not items:
+        return "checklist: none"
+    total = len(items)
+    verified = sum(
+        1
+        for item in items
+        if isinstance(item, dict)
+        and str(item.get("status") or "").lower() in _LEDGER_VERIFIED
+    )
+    unmet = total - verified
+    cell = f"checklist: {verified}/{total}"
+    if unmet:
+        cell += f" ({unmet} unmet)"
+    return cell
+
+
 def _score_honesty(runs_dir: Path, rows) -> list:
     """AC8: agent_timeout trials killed while progressing are contradictions.
 
@@ -318,6 +396,11 @@ def render(runs_dir: Path, expected=None, model_override=None, concurrency=None)
 
     pricing = fa_usage.load_pricing(_PRICING_PATH)
     facts = _session_facts(runs_dir)
+    # gh-1412: per-trial checklist coverage from the synced fa sessions.
+    checklist_facts = {
+        trial: _ledger_cell(trial_dir)
+        for trial, trial_dir in _trial_dirs(runs_dir).items()
+    }
     rows = []
     unpriced_models = set()
     unpriced_unknown = 0
@@ -362,6 +445,9 @@ def render(runs_dir: Path, expected=None, model_override=None, concurrency=None)
                 task=r.get("task_id", "?"), trial=r.get("trial_name", "?"),
                 mark=mark, mode=mode,
                 rec_in=rec_in, rec_out=rec_out, tin=tin, tout=tout, cost=cost,
+                checklist=checklist_facts.get(
+                    r.get("trial_name", "?"), "checklist: none"
+                ),
             ))
     n_resolved = sum(1 for row in rows if row.mark == "yes")
     accuracy = n_resolved / len(rows) if rows else 0.0
@@ -450,8 +536,8 @@ def render(runs_dir: Path, expected=None, model_override=None, concurrency=None)
             lines.append(
                 f"includes ~{estimated} estimated tokens (chars/4 where the provider omitted usage)"
             )
-    lines.append("| task | trial | resolved | failure mode | tokens in/out | est cost |")
-    lines.append("|---|---|---|---|---|---|")
+    lines.append("| task | trial | resolved | failure mode | checklist | tokens in/out | est cost |")
+    lines.append("|---|---|---|---|---|---|---|")
     for row in rows:
         tokens = (
             f"{row.tin}/{row.tout}"
@@ -460,7 +546,7 @@ def render(runs_dir: Path, expected=None, model_override=None, concurrency=None)
         cost_cell = "n/a" if row.cost is None else f"${row.cost:.4f}"
         lines.append(
             f"| {row.task} | {row.trial} | {row.mark} | {row.mode}"
-            f" | {tokens} | {cost_cell} |"
+            f" | {row.checklist} | {tokens} | {cost_cell} |"
         )
 
     if missing > 0:

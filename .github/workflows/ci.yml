@@ -822,29 +822,68 @@ jobs:
       # gate's download-artifact v8 digest-validates every download, so an
       # old-line upload digest-mismatches and the shard merge loses its
       # report (test/release_hygiene_test.dart pins the pin).
+      #
+      # gh-1412: each evidence upload carries a one-shot retry (the step
+      # right after it, same pinned action). The gh-1412 validation run
+      # 37807820733 red'd a shard whose 68 tests ALL passed on a single
+      # transient `Failed to FinalizeArtifact: ECONNRESET` from GitHub's
+      # blob storage — the aggregate gate followed and the merge aborted.
+      # The retry re-runs the SAME action with overwrite:true (a failed
+      # attempt leaves the artifact half-registered — without overwrite the
+      # retry dies on "already exists"); a genuinely dead endpoint still
+      # fails the shard loudly, and the retries stay if: always()-reachable
+      # so red legs keep their evidence. Guarded by
+      # test/ci_pty_artifact_upload_retry_guard_test.dart.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        id: upload_integration_json
         if: always()
         with:
           name: integration-json-shard-${{ matrix.shard }}
           path: test-results/integration-shard-${{ matrix.shard }}.json
           retention-days: 2
+      - name: Retry integration-json upload (transient blob-storage reset, gh-1412)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && steps.upload_integration_json.outcome == 'failure'
+        with:
+          name: integration-json-shard-${{ matrix.shard }}
+          path: test-results/integration-shard-${{ matrix.shard }}.json
+          retention-days: 2
+          overwrite: true
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        id: upload_integration_junit
         if: always()
         with:
           name: junit-integration-shard-${{ matrix.shard }}
           path: test-results/junit-integration-shard-${{ matrix.shard }}.xml
           retention-days: 7
+      - name: Retry junit upload (transient blob-storage reset, gh-1412)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && steps.upload_integration_junit.outcome == 'failure'
+        with:
+          name: junit-integration-shard-${{ matrix.shard }}
+          path: test-results/junit-integration-shard-${{ matrix.shard }}.xml
+          retention-days: 7
+          overwrite: true
       # coverage/ is written incrementally — a red leg still formats and
       # uploads so the gate below merges what ran.
       - name: Format coverage to lcov (shard ${{ matrix.shard }})
         if: always()
         run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        id: upload_pty_coverage
         if: always()
         with:
           name: pty-coverage-shard-${{ matrix.shard }}
           path: coverage/lcov.info
           retention-days: 2
+      - name: Retry coverage upload (transient blob-storage reset, gh-1412)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && steps.upload_pty_coverage.outcome == 'failure'
+        with:
+          name: pty-coverage-shard-${{ matrix.shard }}
+          path: coverage/lcov.info
+          retention-days: 2
+          overwrite: true
 
   # Coverage home for the SHARDED pty-integration-linux leg (mirrors
   # faui-coverage): the 3 shard lcovs merge into ONE report (union DA hits

@@ -47,6 +47,7 @@ import 'key_status.dart';
 import 'provider_error_text.dart';
 import 'sigint_action.dart';
 import '../agent/agent_loop.dart';
+import '../agent/finalize_gate.dart';
 import '../session/windowed_session_storage.dart' show WindowedSessionStorage;
 import '../trajectory/event_projection.dart'
     show TrajectoryHiddenRecordPreview, projectHiddenRecordPreviews;
@@ -57,12 +58,14 @@ import '../agent/auto_compactor.dart';
 import '../agent/stuck_tool.dart';
 import '../providers/models_for_endpoint.dart';
 import '../agent/tool_registry.dart';
+import '../utils/list_equals.dart';
 import '../a2a/a2a_config.dart';
 import '../a2a/a2a_manager.dart';
 import '../task/task.dart';
 import 'agent_tree.dart';
 import 'agent_hub_panel.dart';
 import 'shell_job_board.dart';
+import 'subagent_board.dart';
 import 'agent_hub_projection.dart';
 import 'agent_hub_tui.dart';
 import 'waiting_heartbeat.dart';
@@ -82,7 +85,11 @@ import '../skills/skill_availability.dart';
 import '../skills/skills.dart';
 import '../skills/skill_renderer.dart';
 import '../prompts/prompts.g.dart'
-    show cliMessagingSectionPrompt, readSqliteSectionPrompt, cliPiModePrompt;
+    show
+        cliMessagingSectionPrompt,
+        readSqliteSectionPrompt,
+        cliPiModePrompt,
+        finalizeGateContractPrompt;
 import '../prompts/project_context.dart';
 import '../approval/approval.dart';
 import '../wire/wire_serve.dart';
@@ -275,6 +282,7 @@ part 'agent_cli_io.dart';
 part 'agent_cli_hep_io.dart';
 part 'agent_cli_banner.dart';
 part 'agent_cli_waiting.dart';
+part 'agent_cli_subagent_board.dart';
 part 'agent_cli_mcp_print.dart';
 part 'agent_cli_commands.dart';
 part 'agent_cli_ext.dart';
@@ -437,8 +445,7 @@ class AgentCli {
         // config when redaction is on, a disabled config when it is off
         // (job logs raw ⇒ commands untouched). Registered secrets are
         // exempt from command rewriting so approved values materialize.
-        redactionConfig:
-            config.redactionPipeline?.config ??
+        redactionConfig: config.redactionPipeline?.config ??
             const RedactionConfig(enabled: false),
         approvedSecretLiterals: () =>
             config.redactionPipeline?.registeredSecrets.toSet() ?? const {},
@@ -628,8 +635,12 @@ class AgentCli {
     );
     _toolRegistry = stack.registry;
     _agent = stack.agent;
-    // (gh-1412 FinalizeGate wiring intentionally absent — that work rides
-    // its own PR (#1418); this branch is scoped to gh-1408 only.)
+    // The FinalizeGate (gh-1412): unattended sessions (the bench / headless
+    // autopilot mode) emit the task ledger — the loop parses the final
+    // answer's `task-ledger` block and the CLI persists it as a hidden
+    // `task_ledger` session record. Interactive sessions stay off
+    // (byte-identical, no prompt noise).
+    _agent.finalizeGate = config.approvalMode == ApprovalMode.unattended;
     // The main agent's inbox in the messaging fabric: messages from
     // children (agent_message to "main") and from other Fa instances
     // sharing the messaging root arrive at turn boundaries.
@@ -1112,8 +1123,12 @@ class AgentCli {
   /// row push, waiting heartbeat, restart honesty, headless semantics.
   late final _WaitingCoordinator _waiting = _WaitingCoordinator(this);
 
-  // (gh-1415 subagent board wiring intentionally absent — own PR #1420.)
   /// The subagent status board (gh-1415): composes the retained-subagent
+  /// handles into [SubagentStatusRecord]s, keeps the [TaskBoardRegion]
+  /// lifecycle, and pushes the TUI's live rows (1 Hz ticker while a row is
+  /// live). TUI-only — headless/line mode stay untouched.
+  late final _SubagentBoardCoordinator _subagentBoard =
+      _SubagentBoardCoordinator(this);
 
   /// Clock seam for the waiting layer (issue #450 tests): the heartbeat
   /// cadence, the waiting-since elapsed, and the `--wait-for-jobs` loop
@@ -1217,6 +1232,10 @@ class AgentCli {
   Timer? _hubFollowTimer;
   StreamSubscription<dynamic>? _hubSubagentEventsSub;
   StreamSubscription<dynamic>? _hubTaskStartsSub;
+
+  /// The subagent status board's registry-event subscription (gh-1415);
+  /// cancelled in [_teardownAfterRepl] with the ticker's dispose.
+  StreamSubscription<dynamic>? _subagentBoardSub;
 
   /// Hub tree `mail:N` marker counts (async peek → refresh-only re-push
   /// by the driver extension, which cannot hold fields — state here).
@@ -1563,6 +1582,11 @@ class AgentCli {
     });
     final taskSub = _taskConfig.jobManager.completions.listen(
       _onTaskJobCompleted,
+    );
+    // Subagent status board (gh-1415): every registry event refreshes the
+    // TUI's live rows (spawn → row appears; settle → flash + collapse).
+    _subagentBoardSub = _subagentManager.events.listen(
+      (_) => _subagentBoard.refresh(),
     );
     _hubEnsureEventSubs();
     final inboxTimer = _startInboxWatcher();
