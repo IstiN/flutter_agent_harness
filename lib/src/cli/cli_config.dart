@@ -1186,6 +1186,18 @@ final class CliConfig {
       if (authHeader != null) {
         buffer.write('    authHeader: ${_yamlScalar(authHeader)}\n');
       }
+      // Per-provider stall-recovery tuning (issue #1398) — optional keys,
+      // written back only when the entry declares them.
+      if (entry.connectTimeout != null) {
+        buffer.write(
+          '    connectTimeoutMs: ${entry.connectTimeout!.inMilliseconds}\n',
+        );
+      }
+      if (entry.streamIdleTimeout != null) {
+        buffer.write(
+          '    streamIdleTimeoutMs: ${entry.streamIdleTimeout!.inMilliseconds}\n',
+        );
+      }
       buffer.write('    modelId: ${_yamlScalar(entry.modelId)}\n');
     }
     return buffer.toString();
