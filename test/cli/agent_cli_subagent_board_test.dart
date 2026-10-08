@@ -57,7 +57,11 @@ void main() {
     'while a row is live, and disarms + clears on teardown (gh-1415)',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
-      var now = DateTime(2026, 1, 1, 12);
+      // The fake clock anchors at REAL now: a pinned past date pushes
+      // every waiting/scheduled timer into the overdue path and starves
+      // the REPL loop (the hub-overlay twin injects no clock for the same
+      // reason). Only the E3 tick below advances it.
+      var now = DateTime.now();
       final frames = _FrameSink();
       final keys = StreamController<List<int>>();
       final io = FakeCliIO();
