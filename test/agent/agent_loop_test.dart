@@ -778,17 +778,28 @@ void main() {
         // StateError is the bash tool's non-zero-exit carrier (issue #118).
         // The stripped message rides INSIDE the structured wrapper
         // (gh-1393 AC9) — `startsWith` asserts the wrapper, the message
-        // body keeps its exact shape.
+        // body keeps its exact shape. A routine non-zero exit is a REAL
+        // command failure, so the uncaught-harness-exception hint must
+        // NOT ride along (gh-1393 rework: the hint is reserved for errors
+        // that are not the harness's own operational carriers).
         expect(
           await textOf(
             () => StateError('total 12\nCommand exited with code 2'),
           ),
-          'Tool error (weather): total 12\nCommand exited with code 2\n'
-          'This is an uncaught exception inside the harness tool '
-          'implementation - not a command failure. The tool may be '
-          'unavailable in this environment; skip it or use a different '
-          'approach.',
+          'Tool error (weather): total 12\nCommand exited with code 2',
         );
+        expect(
+          await textOf(
+            () => StateError('partial output\nCommand aborted'),
+          ),
+          'Tool error (weather): partial output\nCommand aborted',
+        );
+        // A genuinely uncaught exception keeps the hint.
+        final genericState = await textOf(
+          () => StateError('disk exploded'),
+        );
+        expect(genericState, startsWith('Tool error (weather): disk exploded'));
+        expect(genericState, contains('uncaught exception'));
         expect(
           await textOf(() => ArgumentError('args must be a map')),
           startsWith('Tool error (weather): args must be a map\n'),
@@ -797,6 +808,51 @@ void main() {
           await textOf(() => const FormatException('unexpected character')),
           startsWith('Tool error (weather): unexpected character\n'),
         );
+      },
+    );
+
+    test(
+      'operational carriers never carry the uncaught-exception hint',
+      () async {
+        Future<String> textOf(Object Function() makeError) async {
+          final fake = _FakeStreamFunction([
+            _toolTurn([_call('call-1', 'weather')]),
+            _textTurn('handled'),
+          ]);
+          final stream = agentLoop(
+            prompts: [UserMessage.text('hi')],
+            context: Context(messages: [], tools: [_tool('weather')]),
+            config: const AgentLoopConfig(model: _model),
+            streamFunction: fake.call,
+            toolExecutor: (_, _, _) async => throw makeError(),
+          );
+          final events = await stream.toList();
+          return (events
+                      .whereType<ToolExecutionEndEvent>()
+                      .single
+                      .result
+                      .content
+                      .single
+                  as TextContent)
+              .text;
+        }
+
+        // ToolValidationException / ToolNotFoundException rejections are
+        // the registry's own operational shape errors — the model must
+        // hear "your arguments are wrong", not "the tool may be
+        // unavailable; skip it" (gh-1393 rework).
+        final validation = await textOf(
+          () => const ToolValidationException('weather', 'args must be a map'),
+        );
+        expect(validation, startsWith('Tool error (weather): '));
+        expect(validation, contains('args must be a map'));
+        expect(validation, isNot(contains('uncaught exception')));
+
+        final notFound = await textOf(
+          () => ToolNotFoundException('weather'),
+        );
+        expect(notFound, startsWith('Tool error (weather): '));
+        expect(notFound, isNot(contains('uncaught exception')));
       },
     );
 

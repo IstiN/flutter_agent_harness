@@ -75,6 +75,7 @@ final class MemoryController {
     this._userStoragePath,
     this.configSource,
     this.onConfigChanged,
+    this.onDegrade,
   }) : _env = env,
        _projectRoot = projectRoot ?? env.cwd;
 
@@ -89,6 +90,14 @@ final class MemoryController {
   /// Invoked after a config swap actually changed the resolved store
   /// paths (the host re-composes its `<memory>` prompt section here).
   final void Function()? onConfigChanged;
+
+  /// Observability breadcrumb for the gh-1393 degrade paths (LLM-backed
+  /// search falling back to keyword, an unusable scope skipped, an add
+  /// retrying through the provider-less plain store). The swallows are
+  /// the ticket's intent — memory tools NEVER throw — but they must not
+  /// be silent: the host (app `AppLog`, CLI diagnostics) wires its log
+  /// here; null keeps the historical quiet behavior.
+  final void Function(String message)? onDegrade;
 
   /// The config the current cached stores were built from (null =
   /// defaults). Only a RESOLVED-path difference triggers a swap.
@@ -186,7 +195,10 @@ final class MemoryController {
 
   /// Swaps to [next]: updates the raw paths, drops every cached store —
   /// the next access re-initializes at the new location — and notifies
-  /// the host.
+  /// the host. The plain (provider-less fallback) stores ride the same
+  /// reset: a stale `KBMemoryStore` over the previous storage root would
+  /// land the next fallback write in the abandoned location (gh-1393
+  /// rework).
   Future<void> _applyConfig(MemoryConfig next) async {
     _activeConfig = next;
     _projectStoragePath = next.projectPath;
@@ -194,9 +206,11 @@ final class MemoryController {
     _projectStorage = null;
     _projectStore = null;
     _projectSearch = null;
+    _projectPlainStore = null;
     _userStorage = null;
     _userStore = null;
     _userSearch = null;
+    _userPlainStore = null;
     onConfigChanged?.call();
   }
 
@@ -250,7 +264,11 @@ final class MemoryController {
   /// crash family) must not lose a memory — the raw text is the payload,
   /// enrichment only adds area/topic/tag metadata. Retry through a
   /// provider-less view of the same storage (enrichment no-ops), so the
-  /// save lands with keyword-only metadata.
+  /// save lands with keyword-only metadata. The storage fields are
+  /// REBUILT from the resolved paths when a config swap nulled them
+  /// mid-flight (never a force-unwrap crash on the never-throw path);
+  /// the plain stores are cached per config generation and reset by
+  /// [_applyConfig].
   Future<MemoryRecord> _addNoteAnyhow(
     KBMemoryStore store, {
     required String scope,
@@ -266,17 +284,39 @@ final class MemoryController {
         importance: importance,
         author: 'agent',
       );
-    } on Object {
-      final plain = scope == 'user'
-          ? (_userPlainStore ??= KBMemoryStore(_userStorage!))
-          : (_projectPlainStore ??= KBMemoryStore(_projectStorage!));
-      return plain.addNote(
-        text: text,
-        tags: tags,
-        area: scope,
-        importance: importance,
-        author: 'agent',
+    } on Object catch (error) {
+      onDegrade?.call(
+        'memory_add: LLM enrichment failed, saving without it '
+        '($scope): $error',
       );
+      final plain = scope == 'user'
+          ? (_userPlainStore ??= KBMemoryStore(
+              _userStorage ??= ExecutionEnvKbStorage(
+                _env,
+                _resolvedUserPath(),
+              ),
+            ))
+          : (_projectPlainStore ??= KBMemoryStore(
+              _projectStorage ??= ExecutionEnvKbStorage(
+                _env,
+                _resolvedProjectPath(),
+              ),
+            ));
+      try {
+        return await plain.addNote(
+          text: text,
+          tags: tags,
+          area: scope,
+          importance: importance,
+          author: 'agent',
+        );
+      } on Object catch (fallbackError) {
+        onDegrade?.call(
+          'memory_add: plain-store fallback failed too ($scope): '
+          '$fallbackError',
+        );
+        rethrow;
+      }
     }
   }
 
@@ -357,14 +397,16 @@ final class MemoryController {
         found.results.take(limit).map((r) => _fromSearchResult(r, scope)),
       );
       return;
-    } on Object {
-      // fall through to keyword-only search below
+    } on Object catch (error) {
+      // LLM-backed search unusable — fall through to keyword-only search.
+      onDegrade?.call('memory_search: $scope scope degraded to keywords: $error');
     }
     try {
       final found = await engine.searchByKeywords(query);
       results.addAll(found.take(limit).map((r) => _fromSearchResult(r, scope)));
-    } on Object {
+    } on Object catch (error) {
       // scope unusable — skip it, the other scope may still answer
+      onDegrade?.call('memory_search: $scope scope skipped: $error');
     }
   }
 

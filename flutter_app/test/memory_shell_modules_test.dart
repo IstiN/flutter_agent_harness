@@ -378,6 +378,70 @@ void main() {
     test('compile: invalid regex is an error', () {
       expect(compileGrepQuery(const <String>{}, '([)').error, isNotNull);
     });
+
+    test('-m stops after N matching lines (gh-1393 rework)', () {
+      final q = compileGrepQuery(const <String>{}, 'a', maxCount: 2).query!;
+      final acc = GrepAccumulator();
+      grepText('aa\nba\nca\nda\n', null, q, acc);
+      expect(acc.buffer.toString(), 'aa\nba\n');
+      expect(acc.anyMatch, isTrue);
+    });
+
+    test('-m counts SELECTED lines, and with -v the inverted ones', () {
+      final q = compileGrepQuery(
+        const {'v'},
+        'a',
+        maxCount: 1,
+      ).query!;
+      final acc = GrepAccumulator();
+      grepText('aa\nbx\ncx\ndx\n', null, q, acc);
+      expect(acc.buffer.toString(), 'bx\n');
+    });
+
+    test('-m does not count against -c beyond the max', () {
+      final q = compileGrepQuery(
+        const {'c'},
+        'a',
+        maxCount: 2,
+      ).query!;
+      final acc = GrepAccumulator();
+      grepText('aa\nba\nca\n', null, q, acc);
+      expect(acc.buffer.toString(), '2\n');
+    });
+
+    test('-o prints each match on its own line (gh-1393 rework)', () {
+      final q = compileGrepQuery(const <String>{}, 'an').query!;
+      expect(q.onlyMatching, isTrue);
+      final acc = GrepAccumulator();
+      grepText('banana\nbandana\n', null, q, acc);
+      expect(acc.buffer.toString(), 'an\nan\nan\nan\n');
+      expect(acc.anyMatch, isTrue);
+    });
+
+    test('-o rides with -n and labels like GNU grep', () {
+      final q = compileGrepQuery(const {'n'}, 'an').query!;
+      final acc = GrepAccumulator();
+      grepText('banana\n', 'f.txt', q, acc);
+      expect(acc.buffer.toString(), 'f.txt:1:an\nf.txt:1:an\n');
+    });
+
+    test('-o never emits empty matches', () {
+      final q = compileGrepQuery(const <String>{}, 'a*').query!;
+      final acc = GrepAccumulator();
+      grepText('bbb\n', null, q, acc);
+      expect(acc.buffer.toString(), isEmpty);
+    });
+
+    test('-m bounds -o matches too', () {
+      final q = compileGrepQuery(
+        const {'o'},
+        'a',
+        maxCount: 3,
+      ).query!;
+      final acc = GrepAccumulator();
+      grepText('aaaa\n', null, q, acc);
+      expect(acc.buffer.toString(), 'a\na\na\n');
+    });
   });
 
   group('test/[', () {

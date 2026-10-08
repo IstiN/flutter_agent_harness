@@ -2440,25 +2440,39 @@ String _toolErrorText(Object error) {
 /// Builds an error tool result. A [String] is taken as-is (authored
 /// messages are already structured); anything else is a caught error
 /// routed through the gh-1393 AC9 invariant — a tool result is NEVER a
-/// bare leaked exception string. The model always sees: the tool name,
-/// the stripped error message, and the hint that this is an uncaught
-/// harness exception, not a command failure.
+/// bare leaked exception string. The model always sees the tool name and
+/// the stripped error message; the "uncaught harness exception" hint is
+/// appended ONLY for errors that are not the harness's own operational
+/// carriers (gh-1393 rework): a bash `StateError("…Command exited with
+/// code N"/"…Command aborted")` (the issue-#118 non-zero-exit carrier)
+/// and `ToolValidationException`/`ToolNotFoundException` rejections ARE
+/// command/validation failures — labeling them "the tool may be
+/// unavailable; skip it" would push the model to route around a healthy
+/// tool. The no-bare-exception guarantee holds on every path; only the
+/// hint line is conditional.
 ToolExecutionResult _errorToolResult(Object message, {String? toolName}) {
   if (message is String) {
     return ToolExecutionResult(content: [TextContent(text: message)]);
   }
   final text = _toolErrorText(message);
   final name = toolName ?? 'unknown tool';
+  final isOperational =
+      message is ToolValidationException ||
+      message is ToolNotFoundException ||
+      (message is StateError &&
+          (text.contains('Command exited with code') ||
+              text.contains('Command aborted')));
   final rendered = text.isEmpty ? '<no error message>' : text;
   return ToolExecutionResult(
     content: [
       TextContent(
-        text:
-            'Tool error ($name): $rendered\n'
-            'This is an uncaught exception inside the harness tool '
-            'implementation - not a command failure. The tool may be '
-            'unavailable in this environment; skip it or use a different '
-            'approach.',
+        text: isOperational
+            ? 'Tool error ($name): $rendered'
+            : 'Tool error ($name): $rendered\n'
+                'This is an uncaught exception inside the harness tool '
+                'implementation - not a command failure. The tool may be '
+                'unavailable in this environment; skip it or use a different '
+                'approach.',
       ),
     ],
   );
