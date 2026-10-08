@@ -179,6 +179,39 @@ void main() {
     expect(result!.apiKey.raw, startsWith('sk-aiin-'));
   });
 
+  test('gh-1378: a dead sheet cannot hold the flow — the landed callback '
+      'proceeds after the settle grace with a visible status line', () async {
+    // The build-211 device repro at the layer where the fix lives: the
+    // redirect loads the loopback server for real (the fallback leg
+    // wins) while the sheet's completion NEVER fires, so the
+    // post-callback `await opened` would hang forever. With the grace
+    // (injected: zero, no real wall clock) the flow proceeds and says so.
+    final statuses = <String>[];
+    final result = await runAiinConnectCliFlow(
+      onStatus: statuses.add,
+      openBrowserFn: (url) {
+        // The fallback leg: the redirect loads the loopback server for
+        // real — while the sheet's open future stays pending forever.
+        unawaited(fakeBrowser(code: 'c-1378')(url));
+        return Completer<bool>().future;
+      },
+      client: mockAiinBackend(),
+      sheetSettleGrace: Duration.zero,
+      onCallback: () {},
+    ).timeout(const Duration(seconds: 10));
+    expect(result, isNotNull);
+    expect(
+      statuses,
+      containsAll(<String>[
+        'AIIN callback landed on the loopback server',
+        'the sign-in sheet did not close after the callback — '
+            'continuing without it',
+        'exchanging the AIIN authorization code...',
+        'AIIN authorized - registering an API key...',
+      ]),
+    );
+  });
+
   test('gh-1044 AC9: the intercepted callback wins the race against the '
       'same-resolution open settle', () async {
     // The mobile wrapper's exact wiring: the intercepted completer is fed

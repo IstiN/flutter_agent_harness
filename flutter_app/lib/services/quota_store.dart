@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async' show unawaited;
+
 import 'package:fa_ui/fa_ui.dart' show providerMarkKeyForBaseUrl;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -95,11 +97,29 @@ class QuotaStore extends ChangeNotifier {
     return null;
   }
 
-  /// Endpoint mark -> quota service id (the two quota-marked endpoints).
+  /// Endpoint mark -> quota service id — the ADAPTER-backed ids only
+  /// (`dial` is unmetered, never probed; the fa_ui `quotaMarkIds` gauge
+  /// set is deliberately broader and documents the difference).
   static const _markToQuotaId = {
     'openrouter': 'openrouter',
     'codemie': 'codemie',
   };
+
+  /// Kicks the endpoint-confirmation probe for a freshly added provider
+  /// (gh-1378 AC3): the same live check the row's gauge reads, run once
+  /// at add time so a new entry resolves from live data instead of
+  /// sitting on a cold/dark cache until the next pull-to-refresh.
+  /// No-op when the endpoint has no quota source. The fetch never throws
+  /// (the service's _fetchOnce catches and caches its unknown).
+  void confirmEndpoint(String baseUrl) {
+    final id = _markToQuotaId[providerMarkKeyForBaseUrl(baseUrl)];
+    if (id == null) return;
+    unawaited(
+      _service
+          .refresh(id)
+          .catchError((_) => const QuotaFetchResult.unknown('no quota source')),
+    );
+  }
 
   /// The header badge for the ACTIVE provider's endpoint: `[OR $48/$150 ·
   /// 11d]`, `[OR …]` while cold, null when the endpoint has no renderable
