@@ -125,6 +125,16 @@ final class ApiKeyRing {
   /// The credential at the current position, ignoring backoff.
   ApiKeyCredential get currentCredential => _credentials[_index];
 
+  /// The credential whose secret VALUE is [value], or null (the ring
+  /// matches rotations by NAME — the secrets-store slot — so callers
+  /// holding only a raw value translate it first; gh-1395 review round 1).
+  ApiKeyCredential? credentialByValue(String value) {
+    for (final credential in _credentials) {
+      if (credential.value == value) return credential;
+    }
+    return null;
+  }
+
   /// The affinity credential: the current position unless it is in backoff,
   /// in which case the next non-benched credential (round-robin order).
   /// `null` when every credential is benched.
