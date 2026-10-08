@@ -12,6 +12,7 @@ library;
 import 'dart:collection';
 import 'dart:convert';
 import '../agent/agent_loop.dart';
+import '../agent/finalize_gate.dart';
 import '../context.dart';
 import '../session/obligations_ledger.dart' show obligationsLedgerRecordType;
 import '../session/session_record.dart';
@@ -59,6 +60,7 @@ final class TrajectorySnapshotBuilder {
   /// Content-addressed blobs folded from the session's blob records
   /// (F1/F2/F5). The blob records themselves produce no ledger row.
   TrajectoryBlobTable _blobs = const TrajectoryBlobTable();
+  TaskLedger? _taskLedger;
 
   /// Unknown record kinds rendered as context rows (F6).
   int _unknownRecordCount = 0;
@@ -221,10 +223,18 @@ final class TrajectorySnapshotBuilder {
   }
 
   /// The custom-record payloads: request summaries, the issue #385 blob
-  /// table, other surfaces' hidden records, and unknown types.
+  /// table, the FinalizeGate task ledger (gh-1412), other surfaces'
+  /// hidden records, and unknown types.
   void _foldCustomRecord(CustomRecord record, String customType, Object? data) {
     if (customType == 'model_request_summary') {
       _applyRequestSummary(record, data);
+      return;
+    }
+    // The TaskLedger (gh-1412): hidden last-wins snapshot field, never a
+    // ledger row. Corrupt payloads degrade to "no ledger" (a post-mortem
+    // artifact must not break a replay).
+    if (customType == taskLedgerRecordType) {
+      _taskLedger = TaskLedger.fromJson(data);
       return;
     }
     if (_foldBlobRecord(customType, data)) return;
@@ -513,7 +523,7 @@ final class TrajectorySnapshotBuilder {
       CompactCheckpointRecord() => record.text,
       HiddenRangeRecord() => 'hidden ${record.recordIds.length} records',
       SegmentPinRecord() =>
-          '${record.pinned ? 'pin' : 'unpin'} ${record.recordIds.length} records',
+        '${record.pinned ? 'pin' : 'unpin'} ${record.recordIds.length} records',
       _ => '',
     };
     final hiddenRecordIds = record is HiddenRangeRecord
@@ -1037,6 +1047,7 @@ final class TrajectorySnapshotBuilder {
       recordLocations: Map.unmodifiable(locations),
       revision: _revision,
       blobs: _blobs,
+      taskLedger: _taskLedger,
       unknownRecordCount: _unknownRecordCount,
     );
   }
