@@ -219,6 +219,59 @@ void main() {
     expect(requestText.contains(pinBlockOpenTag), isFalse);
   });
 
+  test(
+    'E9: a tiny model window shrinks the pin budget proportionally',
+    () async {
+      // Under the 512-char parse cap, but the pair cannot fit the
+      // tiny window's shrunk budget.
+      final longA = 'A' * 450;
+      final longB = 'B' * 450;
+      final tinySkills = [
+        _skill('old', [longA]),
+        _skill('new', [longB]),
+      ];
+      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      final tinyModel = Model(
+        id: 'tiny',
+        api: 'test-api',
+        provider: 'test-provider',
+        baseUrl: 'https://example.test',
+        contextWindow: 4096,
+        maxTokens: 1024,
+      );
+      await agentLoop(
+        prompts: [UserMessage.text('continue')],
+        context: _foldedContext(),
+        config: AgentLoopConfig(model: tinyModel, operativeSkills: tinySkills),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      ).result;
+      final requestText = fake.contexts.single.messages
+          .whereType<UserMessage>()
+          .map((m) => m.content is String ? m.content as String : '')
+          .join('\n');
+      final carriesA = requestText.contains('"$longA"');
+      final carriesB = requestText.contains('"$longB"');
+      expect(carriesA || carriesB, isTrue, reason: 'at least one pin rides');
+      expect(carriesA && carriesB, isFalse, reason: 'E9: the pair never fits');
+      // Same window, no budget pressure: a 1M window carries both.
+      final big = _FakeStreamFunction([_textTurn('ok')]);
+      await agentLoop(
+        prompts: [UserMessage.text('continue')],
+        context: _foldedContext(),
+        config: AgentLoopConfig(model: _model, operativeSkills: tinySkills),
+        streamFunction: big.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      ).result;
+      final bigText = big.contexts.single.messages
+          .whereType<UserMessage>()
+          .map((m) => m.content is String ? m.content as String : '')
+          .join('\n');
+      expect(bigText.contains('"$longA"'), isTrue);
+      expect(bigText.contains('"$longB"'), isTrue);
+    },
+  );
+
   test('P1: the carrier is payload-only — Agent transcript state is never '
       'mutated', () async {
     Future<ToolExecutionResult> unusedExecutor(_, _, _) async {

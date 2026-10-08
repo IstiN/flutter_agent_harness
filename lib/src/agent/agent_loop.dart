@@ -34,6 +34,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math';
 import 'dart:convert';
 
 import '../cancel_token.dart';
@@ -54,7 +55,11 @@ import '../exceptions.dart';
 import '../model.dart';
 import '../skills/skills.dart' show Skill;
 import '../skills/operative_pins.dart'
-    show injectOperativePinCarriers, operativePinConfig, operativePinNotice;
+    show
+        defaultPinBudgetChars,
+        injectOperativePinCarriers,
+        operativePinConfig,
+        operativePinNotice;
 import '../types.dart';
 import '../trajectory/event_projection.dart' show textPayloadOf;
 import '../trajectory/trajectory_blobs.dart';
@@ -1727,9 +1732,25 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   // tool-pairing repair: the carrier is a standalone user message and can
   // never break a call/result run (it anchors outside them).
   if (config.operativeSkills.isNotEmpty && operativePinConfig.enabled) {
+    // E9: the pin budget shrinks proportionally on tiny windows so pins
+    // never crowd out the recent-token working set — an eighth of the
+    // effective window, floored at 1024 chars (one 512-char line plus
+    // envelope), capped at the configured budget.
+    final window = effectiveContextWindow(
+      config.model.contextWindow,
+      config.contextWindowCap,
+    );
+    final budgetChars = min(
+      operativePinConfig.budgetChars ?? defaultPinBudgetChars,
+      // E9: at most an eighth of the effective window, floored at 1024
+      // chars (one 512-char line plus envelope) — a large window keeps the
+      // full default budget, a tiny one shrinks the pins proportionally.
+      max(window ~/ 8, 1024),
+    );
     final injected = injectOperativePinCarriers(
       requestContext.messages,
       skills: config.operativeSkills,
+      budgetChars: budgetChars,
       onNotice: operativePinNotice,
     );
     if (!identical(injected, requestContext.messages)) {
