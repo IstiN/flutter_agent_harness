@@ -75,6 +75,9 @@ extension AgentCliSkillsExt on AgentCli {
       builtins: builtinSkills(),
     );
     await _resolveSkillAvailability();
+    // gh-1409: republish the operative-pin source set — the agent's next
+    // request rebuilds the pin registry from THIS list (derived state, P2).
+    _agent.operativeSkills = List.of(_enabledSkills);
     _applyPromptComposition();
   }
 

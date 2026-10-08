@@ -148,6 +148,9 @@ extension AgentCliLifecycle on AgentCli {
       builtins: builtinSkills(),
     );
     await _resolveSkillAvailability();
+    // gh-1409: publish the operative-pin source set at boot — the agent's
+    // requests rebuild the pin registry from THIS list (derived state, P2).
+    _agent.operativeSkills = List.of(_enabledSkills);
     _thirdPartySkillDirsPresent = await _detectThirdPartySkillDirs();
     // Line mode / headless: this print is visible as-is. TUI: the terminal
     // is not ours yet — the alternate screen would wipe this line, so

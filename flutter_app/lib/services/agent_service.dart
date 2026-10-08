@@ -380,12 +380,13 @@ class AgentService extends ChangeNotifier
     } on Object {
       // Best-effort seeding — continue without it.
     }
-    final promptSuffix = await _discoverPromptSuffix(
+    final promptSuffixResult = await _discoverPromptSuffix(
       resolvedEnv,
       savedSkillsAccess ?? SkillsAccess.granted,
       homeDir: desktopHomeDir(),
       skillToggles: savedSkillToggles,
     );
+    final promptSuffix = promptSuffixResult.$1;
     // Always wrap: the `request_secret` tool injects user-granted keys into
     // the LIVE env at runtime (see [_handleSecretRequest]), so the wrapper
     // must be in place even when the boot-time secret set is empty.
@@ -1314,7 +1315,7 @@ class AgentService extends ChangeNotifier
     if (store != null) unawaited(store.save(access));
     final config = _config;
     if (config == null) return;
-    final suffix = await _discoverPromptSuffix(
+    final (suffix, enabled) = await _discoverPromptSuffix(
       env,
       access,
       homeDir: _skillsHomeDir ?? desktopHomeDir(),
@@ -1322,6 +1323,8 @@ class AgentService extends ChangeNotifier
     // A newer choice made while discovery ran wins — don't clobber it.
     if (access != _skillsAccess) return;
     _promptSuffix = suffix;
+    // gh-1409: republish the operative-pin source set (derived state, P2).
+    _agent.operativeSkills = enabled;
     _agent.state.systemPrompt = _composeSystemPrompt(config);
   }
 
