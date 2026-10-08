@@ -24,6 +24,7 @@ import 'package:fa/services/last_connection.dart';
 import 'package:fa/services/ondevice_config_store.dart';
 import 'package:fa/services/openrouter_oauth_coordinator.dart';
 import 'package:fa/services/provider_registry.dart';
+import 'package:fa/services/quota_store.dart';
 import 'package:fa/services/session_keys_store.dart';
 import 'package:fa/transformers_js/transformers_js_types.dart';
 import 'package:fa/ui/screens/settings.dart';
@@ -137,6 +138,10 @@ class DefaultChatModelSection extends StatelessWidget {
       },
       addProviderPage: (context) => fa_ui.AddProviderPresetPickerPage(
         registry: reg,
+        // gh-1378 AC3: the Models-settings picker's manual adds run the
+        // same endpoint-confirmation probe the Providers-list surface
+        // wires — every add path probes.
+        quotas: QuotaStore.instance.service,
         onDeviceRoutes: buildOnDeviceProviderRoutes(
           context,
           registry: reg,

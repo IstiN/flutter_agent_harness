@@ -237,6 +237,10 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
   /// ambiguity) — other values only for tests.
   String callbackHost = '127.0.0.1',
 
+  /// How long an already-landed callback waits for the open surface to
+  /// settle (gh-1378) — injectable so tests pay no real wall clock.
+  Duration sheetSettleGrace = _sheetSettleGrace,
+
   /// The auth-session surface's completion value (gh-1044 AC9): resolves
   /// with the callback URL the native scheme interception caught
   /// (`callbackScheme: 'http'`), or null when the sheet closed without
@@ -315,7 +319,20 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
     }
     onCallback?.call();
     try {
-      await opened;
+      // gh-1378: once the callback has landed, the open surface's settle
+      // is cosmetic — the dismissal handing the user back to the app. It
+      // must never hold the flow unbounded: a sheet whose completion
+      // never fires (the deprecated-for-`http` interception dead, a lost
+      // dismissal) kept the latch "in progress" forever with NO log
+      // after the callback line. A short grace keeps the ordering (the
+      // sheet had its chance to close before the exchange starts); the
+      // timeout is a status line, never dead air.
+      await opened.timeout(sheetSettleGrace);
+    } on TimeoutException {
+      onStatus(
+        'the sign-in sheet did not close after the callback — '
+        'continuing without it',
+      );
     } on Object {
       // Late open failure after the callback won: the flow is settling
       // and the open surface is already gone (e.g. the native side fails
@@ -340,6 +357,12 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
 /// Where the winning callback came from — the gh-1044 AC2 discriminator
 /// (interception vs a real loopback hit).
 enum _AiinCallbackSource { loopbackServer, interceptedRedirect }
+
+/// How long the already-won callback waits for the browser/sheet surface
+/// to settle before the exchange proceeds (gh-1378). Long enough for a
+/// dismissal animation, short enough that a dead sheet cannot stall the
+/// flow past it.
+const _sheetSettleGrace = Duration(seconds: 3);
 
 /// Resolves with the first of [callbackFuture] (a landed callback or the
 /// timeout), an [intercepted] callback URL (gh-1044 AC9), an [opened]
@@ -490,6 +513,10 @@ Future<AiinConnectResult?> _settleAiinCallback(
     onStatus('AIIN sign-in callback was invalid (state mismatch)');
     return null;
   }
+  // gh-1378: the exchange is the first post-callback step with no
+  // status line before it — a slow or stalled exchange was
+  // indistinguishable from a hang in the log. Announce it.
+  onStatus('exchanging the AIIN authorization code...');
   return _finishAiinConnect(
     callback.code!,
     expectedState,
@@ -520,6 +547,7 @@ Future<AiinConnectResult?> _finishAiinConnect(
       accessToken: tokens.accessToken,
       client: client,
     );
+    onStatus('AIIN API key registered - finishing the connect');
     return AiinConnectResult(
       apiKey: apiKey,
       tokens: tokens,

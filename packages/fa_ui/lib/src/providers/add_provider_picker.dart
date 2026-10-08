@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+import 'dart:async' show unawaited;
+
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/material.dart';
 
@@ -194,6 +196,12 @@ Future<void> pushAddProviderFlow(
   ProviderRegistry? registry,
   harness.ModelsEndpointFetcher? modelsFetcher,
   List<FaOnDeviceRoute> onDeviceRoutes = const [],
+
+  /// The quota service, when the host has one: forwarded to the fallback
+  /// picker so its manual adds run the endpoint-confirmation probe
+  /// (gh-1378 AC3) the same way the direct constructions do. Host pages
+  /// wire their own.
+  harness.ProviderQuotaService? quotas,
 }) => Navigator.of(context).push(
   MaterialPageRoute<void>(
     builder: (routeContext) => hostPage != null
@@ -202,6 +210,7 @@ Future<void> pushAddProviderFlow(
             registry: registry,
             modelsFetcher: modelsFetcher,
             onDeviceRoutes: onDeviceRoutes,
+            quotas: quotas,
           ),
   ),
 );
@@ -235,10 +244,17 @@ class AddProviderPresetPickerPage extends StatelessWidget {
     this.onDeviceRoutes = const [],
     this.onOnDeviceConnected,
     this.modelsFetcher,
+    this.quotas,
   });
 
   /// The provider registry: needed so the editor can save the new provider.
   final ProviderRegistry? registry;
+
+  /// The quota service, when the host has one: a manual add on a
+  /// quota-marked endpoint runs its endpoint-confirmation probe at add
+  /// time (gh-1378 AC3) instead of sitting on a cold cache until the next
+  /// pull-to-refresh. Null (previews, tests) skips the probe.
+  final harness.ProviderQuotaService? quotas;
 
   /// `/models` fetch override (tests), forwarded to the provider editor's
   /// model selector.
@@ -445,15 +461,26 @@ class AddProviderPresetPickerPage extends StatelessWidget {
         await _runDefaultSsoFlow(context, sso!.connectCopilot);
         return;
       case 'custom':
-        await pushProviderEditor(
+        final reg = registry ?? ProviderRegistry.inMemory();
+        final landed = await pushProviderEditor(
           context,
-          registry ?? ProviderRegistry.inMemory(),
+          reg,
           title: FaUiStrings.of(context).settingsAddProvider,
           modelsFetcher: modelsFetcher,
           // Not a boarding context (issue #1020 gates onboarding only) —
           // the model stays optional here, as everywhere but onboarding.
           requireModel: false,
         );
+        // gh-1378 AC3: the manual add runs the same endpoint confirmation
+        // the row's gauge reads — the probe fires now, not at the next
+        // pull-to-refresh. Key-less adds stay probe-less (the gauge gates
+        // on connectivity the same way).
+        if (landed != null) {
+          _confirmQuotaFor(
+            landed.baseUrl,
+            keyed: (reg.keyFor(landed.id) ?? '').isNotEmpty,
+          );
+        }
         if (context.mounted) Navigator.of(context).pop(true);
         return;
       default:
@@ -502,8 +529,28 @@ class AddProviderPresetPickerPage extends StatelessWidget {
         if (reg != null) {
           await landProviderResult(reg, result);
         }
+        _confirmQuotaFor(result.baseUrl, keyed: result.apiKey.isNotEmpty);
         if (context.mounted) Navigator.of(context).pop(true);
     }
+  }
+
+  /// gh-1378 AC3: a manual add on a quota-marked endpoint runs the same
+  /// endpoint confirmation the row's gauge reads — at add time, not at
+  /// the next pull-to-refresh. Key-less adds stay probe-less (the gauge
+  /// gates on connectivity the same way). The catchError mirrors the
+  /// service's own `_kick`/`QuotaStore.confirmEndpoint` shape: a failed
+  /// probe must never surface as an unhandled async exception on a
+  /// fire-and-forget future.
+  void _confirmQuotaFor(String baseUrl, {required bool keyed}) {
+    final mark = providerMarkKeyForBaseUrl(baseUrl);
+    if (quotas == null || !keyed || !quotaMarkIds.contains(mark)) return;
+    unawaited(
+      quotas!
+          .refresh(mark)
+          .catchError(
+            (_) => const harness.QuotaFetchResult.unknown('no quota source'),
+          ),
+    );
   }
 
   /// Runs one of [FaUiSso]'s default flows with the picker's own context
