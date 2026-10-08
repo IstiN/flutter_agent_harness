@@ -108,45 +108,46 @@ UserMessage _user(String text) =>
 /// A post-compaction window: the projected compaction summary rides as a
 /// user message, then the live prompt.
 Context _foldedContext() {
-  return Context(messages: [
-    _user('old user turn, folded'),
-    _user(
-      '$compactionSummaryPrefix\nThe folded checkpoint body.\n'
-      '$compactionSummarySuffix',
-    ),
-  ]);
+  return Context(
+    messages: [
+      _user('old user turn, folded'),
+      _user(
+        '$compactionSummaryPrefix\nThe folded checkpoint body.\n'
+        '$compactionSummarySuffix',
+      ),
+    ],
+  );
 }
 
 void main() {
-  final skills = [_skill('fleet', [_pin])];
+  final skills = [
+    _skill('fleet', [_pin]),
+  ];
 
-  test('IT-PIN-1: the assembled request carries the verbatim pin block',
-      () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    await agentLoop(
-      prompts: [UserMessage.text('continue the sweep')],
-      context: _foldedContext(),
-      config: AgentLoopConfig(model: _model, operativeSkills: skills),
-      streamFunction: fake.call,
-      toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
-    ).result;
-    expect(fake.contexts, hasLength(1));
-    final texts = [
-      for (final message in fake.contexts.single.messages)
-        if (message is UserMessage && message.content is String)
-          message.content as String,
-    ];
-    expect(
-      texts.any(
-        (t) => t.contains(pinBlockOpenTag) && t.contains('"$_pin"'),
-      ),
-      isTrue,
-    );
-    expect(
-      texts.any((t) => t.contains('pinned from skill `fleet`')),
-      isTrue,
-    );
-  });
+  test(
+    'IT-PIN-1: the assembled request carries the verbatim pin block',
+    () async {
+      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      await agentLoop(
+        prompts: [UserMessage.text('continue the sweep')],
+        context: _foldedContext(),
+        config: AgentLoopConfig(model: _model, operativeSkills: skills),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      ).result;
+      expect(fake.contexts, hasLength(1));
+      final texts = [
+        for (final message in fake.contexts.single.messages)
+          if (message is UserMessage && message.content is String)
+            message.content as String,
+      ];
+      expect(
+        texts.any((t) => t.contains(pinBlockOpenTag) && t.contains('"$_pin"')),
+        isTrue,
+      );
+      expect(texts.any((t) => t.contains('pinned from skill `fleet`')), isTrue);
+    },
+  );
 
   test('IT-PIN-2: the carrier sits immediately after the compaction '
       'boundary', () async {
@@ -160,8 +161,9 @@ void main() {
     ).result;
     final messages = fake.contexts.single.messages;
     final boundaryIndex = messages.indexWhere(
-      (message) => message is UserMessage && (message.content as String)
-          .startsWith(compactionSummaryPrefix),
+      (message) =>
+          message is UserMessage &&
+          (message.content as String).startsWith(compactionSummaryPrefix),
     );
     final carrierIndex = messages.indexWhere(
       (message) =>
@@ -172,26 +174,30 @@ void main() {
     expect(carrierIndex, boundaryIndex + 1);
   });
 
-  test('IT-PIN-3/F2: body folded and summary oblivious — the pin still '
-      'rides verbatim (repaired from the registry, never the summary)',
-      () async {
-    final fake = _FakeStreamFunction([_textTurn('ok')]);
-    // The projected summary text makes no mention of the pin at all (the
-    // summarizer dropped it) — the carrier is the repair.
-    await agentLoop(
-      prompts: [UserMessage.text('continue the sweep')],
-      context: _foldedContext(),
-      config: AgentLoopConfig(model: _model, operativeSkills: skills),
-      streamFunction: fake.call,
-      toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
-    ).result;
-    final requestText = fake.contexts.single.messages
-        .map((message) => message is UserMessage && message.content is String
-            ? message.content as String
-            : '')
-        .join('\n');
-    expect(requestText.contains(_pin), isTrue);
-  });
+  test(
+    'IT-PIN-3/F2: body folded and summary oblivious — the pin still '
+    'rides verbatim (repaired from the registry, never the summary)',
+    () async {
+      final fake = _FakeStreamFunction([_textTurn('ok')]);
+      // The projected summary text makes no mention of the pin at all (the
+      // summarizer dropped it) — the carrier is the repair.
+      await agentLoop(
+        prompts: [UserMessage.text('continue the sweep')],
+        context: _foldedContext(),
+        config: AgentLoopConfig(model: _model, operativeSkills: skills),
+        streamFunction: fake.call,
+        toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
+      ).result;
+      final requestText = fake.contexts.single.messages
+          .map(
+            (message) => message is UserMessage && message.content is String
+                ? message.content as String
+                : '',
+          )
+          .join('\n');
+      expect(requestText.contains(_pin), isTrue);
+    },
+  );
 
   test('E6: a pre-boundary window (body still in context) renders no '
       'carrier', () async {
@@ -204,9 +210,11 @@ void main() {
       toolExecutor: (_, _, _) async => ToolExecutionResult.text('unused'),
     ).result;
     final requestText = fake.contexts.single.messages
-        .map((message) => message is UserMessage && message.content is String
-            ? message.content as String
-            : '')
+        .map(
+          (message) => message is UserMessage && message.content is String
+              ? message.content as String
+              : '',
+        )
         .join('\n');
     expect(requestText.contains(pinBlockOpenTag), isFalse);
   });
@@ -219,9 +227,7 @@ void main() {
 
     final agent = Agent(
       model: _model,
-      streamFunction: _FakeStreamFunction([
-        _textTurn('ok'),
-      ]).call,
+      streamFunction: _FakeStreamFunction([_textTurn('ok')]).call,
       toolExecutor: unusedExecutor,
       operativeSkills: skills,
     );
@@ -241,9 +247,11 @@ void main() {
       expect(identical(agent.state.messages[i], before[i]), isTrue);
     }
     final transcriptText = agent.state.messages
-        .map((message) => message is UserMessage && message.content is String
-            ? message.content as String
-            : '')
+        .map(
+          (message) => message is UserMessage && message.content is String
+              ? message.content as String
+              : '',
+        )
         .join('\n');
     expect(transcriptText.contains(pinBlockOpenTag), isFalse);
   });

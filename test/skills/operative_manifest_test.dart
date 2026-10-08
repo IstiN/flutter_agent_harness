@@ -54,13 +54,16 @@ void main() {
       );
     });
 
-    test('F4/REG-PIN-1: no operative key → empty list, zero pins downstream', () {
-      final skill = _skill(
-        '---\nname: plain\ndescription: Nothing special.\n---\nBody.\n',
-      );
-      expect(skill.manifest.operative, isEmpty);
-      expect(SkillOperativePins.build([skill]).pins, isEmpty);
-    });
+    test(
+      'F4/REG-PIN-1: no operative key → empty list, zero pins downstream',
+      () {
+        final skill = _skill(
+          '---\nname: plain\ndescription: Nothing special.\n---\nBody.\n',
+        );
+        expect(skill.manifest.operative, isEmpty);
+        expect(SkillOperativePins.build([skill]).pins, isEmpty);
+      },
+    );
 
     test('E1: empty operative list → zero pins', () {
       final skill = _skill(
@@ -89,10 +92,9 @@ void main() {
         isTrue,
       );
       // The rejected line yields no pin anywhere.
-      expect(
-        SkillOperativePins.build([skill]).pins.map((p) => p.line),
-        ['good line'],
-      );
+      expect(SkillOperativePins.build([skill]).pins.map((p) => p.line), [
+        'good line',
+      ]);
     });
 
     test('a 512-char line exactly at the cap is kept', () {

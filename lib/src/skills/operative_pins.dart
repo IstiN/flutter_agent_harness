@@ -111,8 +111,7 @@ class OperativePin {
   final List<PinProvenance> provenance;
 
   /// Content key: SHA-256 over the exact UTF-8 bytes of [line] (E10).
-  String get contentKey =>
-      sha256.convert(utf8.encode(line)).toString();
+  String get contentKey => sha256.convert(utf8.encode(line)).toString();
 
   /// Whether [skillName] is one of the owning skills.
   bool ownedBy(String skillName) =>
@@ -191,9 +190,8 @@ class SkillOperativePins {
     // declaration order (first-declared first) and the budget drops from
     // the tail of the LOWEST class (older non-read pins first — the
     // newest-survives semantics of the image cap).
-    bool isRead(OperativePin pin) => pin.provenance.any(
-      (p) => readSkillPaths.contains(p.skillPath),
-    );
+    bool isRead(OperativePin pin) =>
+        pin.provenance.any((p) => readSkillPaths.contains(p.skillPath));
     final readPins = [
       for (final pin in all)
         if (isRead(pin)) pin,
@@ -204,8 +202,8 @@ class SkillOperativePins {
     ];
     // Budget over the rendered block: measure the exact carrier text so
     // the cap tracks what the request actually pays.
-    final budget = budgetChars ?? operativePinConfig.budgetChars
-        ?? defaultPinBudgetChars;
+    final budget =
+        budgetChars ?? operativePinConfig.budgetChars ?? defaultPinBudgetChars;
     final dropped = <DroppedPin>[];
     var kept = [...readPins, ...otherPins];
     String render(List<OperativePin> pins) =>
@@ -241,7 +239,8 @@ class SkillOperativePins {
   OperativePinDiff diff(SkillOperativePins previous) {
     final currentKeys = pinByKey.keys.toSet();
     final currentSkills = {
-      for (final pin in pins) for (final p in pin.provenance) p.skillName,
+      for (final pin in pins)
+        for (final p in pin.provenance) p.skillName,
     };
     final superseded = <({OperativePin previous, OperativePin current})>[];
     final droppedPins = <OperativePin>[];
@@ -259,10 +258,7 @@ class SkillOperativePins {
         droppedPins.add(old);
       }
     }
-    return OperativePinDiff._(
-      superseded: superseded,
-      dropped: droppedPins,
-    );
+    return OperativePinDiff._(superseded: superseded, dropped: droppedPins);
   }
 }
 
@@ -283,11 +279,11 @@ class OperativePinDiff {
   List<String> notices() => [
     for (final change in superseded)
       'skill pin superseded: "${change.previous.line}" (skill '
-      '`${change.previous.provenance.first.skillName}`) → '
-      '"${change.current.line}"',
+          '`${change.previous.provenance.first.skillName}`) → '
+          '"${change.current.line}"',
     for (final pin in dropped)
       'skill pin dropped: "${pin.line}" — skill '
-      '`${pin.provenance.first.skillName}` no longer discoverable',
+          '`${pin.provenance.first.skillName}` no longer discoverable',
   ];
 }
 
@@ -317,14 +313,7 @@ String pinCarrierBlock(
   return '$pinBlockOpenTag\n'
       'Operative directives pinned verbatim from skill manifests — follow '
       'them even where the original skill text was compacted away:\n'
-      '${registry.pins
-          .map(
-            (pin) => _renderPinLine(
-              pin,
-              restored: restoredKeys.contains(pin.contentKey),
-            ),
-          )
-          .join('\n')}\n'
+      '${registry.pins.map((pin) => _renderPinLine(pin, restored: restoredKeys.contains(pin.contentKey))).join('\n')}\n'
       '$pinBlockCloseTag';
 }
 

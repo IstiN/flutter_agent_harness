@@ -126,30 +126,34 @@ void main() {
   });
 
   group('classic persist path (AC3)', () {
-    test('compact() strips ephemeral claims and logs them in details', () async {
-      const poisoned =
-          '## Progress\n- Your LAST tool call\'s RESULT was dropped from '
-          'context.\n- The login crash is fixed.\n';
-      final manager = CompactionManager(
-        summarize: _FakeSummarizer([
-          SummarizationResult.success(poisoned),
-        ]).call,
-      );
-      final result = await manager.compact(
-        CompactionPreparation(
-          firstKeptEntryId: 'r9',
-          messagesToSummarize: [UserMessage.text('u1'), _assistant('a1')],
-          turnPrefixMessages: const [],
-          isSplitTurn: false,
-          tokensBefore: 100,
-        ),
-      );
-      expect(result.summary, isNot(contains('was dropped')));
-      expect(result.summary, contains('The login crash is fixed.'));
-      final details = result.details! as Map;
-      final stripped = (details['sanitizedEphemeral'] as List).single as String;
-      expect(stripped, contains('was dropped'));
-    });
+    test(
+      'compact() strips ephemeral claims and logs them in details',
+      () async {
+        const poisoned =
+            '## Progress\n- Your LAST tool call\'s RESULT was dropped from '
+            'context.\n- The login crash is fixed.\n';
+        final manager = CompactionManager(
+          summarize: _FakeSummarizer([
+            SummarizationResult.success(poisoned),
+          ]).call,
+        );
+        final result = await manager.compact(
+          CompactionPreparation(
+            firstKeptEntryId: 'r9',
+            messagesToSummarize: [UserMessage.text('u1'), _assistant('a1')],
+            turnPrefixMessages: const [],
+            isSplitTurn: false,
+            tokensBefore: 100,
+          ),
+        );
+        expect(result.summary, isNot(contains('was dropped')));
+        expect(result.summary, contains('The login crash is fixed.'));
+        final details = result.details! as Map;
+        final stripped =
+            (details['sanitizedEphemeral'] as List).single as String;
+        expect(stripped, contains('was dropped'));
+      },
+    );
   });
 
   group('render path heals poisoned records (UT-1/AC1/E2)', () {
@@ -161,50 +165,47 @@ void main() {
       repo = JsonlSessionRepo(fs: fs, sessionsRoot: '/sessions');
     });
 
-    test('poisoned compaction record projects clean many turns later',
-        () async {
-      final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
-      final firstId = await session.appendMessage(
-        UserMessage.text('run the 968 sweep'),
-      );
-      await session.appendMessage(_assistant('sweeping'));
-      await session.appendCompaction(
-        summary:
-            '## Progress\n- Fixed the parser.\n$_incidentNote\n',
-        firstKeptEntryId: firstId,
-        tokensBefore: 100,
-      );
-      // Simulate 20 later turns of history after the poisoned record.
-      for (var i = 0; i < 20; i++) {
-        await session.appendMessage(UserMessage.text('turn $i'));
-      }
-      final messages = await session.buildContextMessages();
-      final summaryMessage = messages
-          .whereType<UserMessage>()
-          .singleWhere(
-            (m) => (m.content as String).contains(compactionSummaryPrefix),
-          );
-      final summaryText = summaryMessage.content as String;
-      expect(summaryText, startsWith(compactionSummaryPrefix));
-      expect(summaryText, contains(compactionSummarySuffix));
-      expect(summaryText, isNot(contains('was dropped')));
-      expect(summaryText, isNot(contains('mid-sweep')));
-      // Durable content of the same summary survives (E2: no JSONL rewrite,
-      // only ephemeral phrasing suppressed).
-      expect(summaryText, contains('Fixed the parser.'));
-      // The persisted record is untouched (byte-identical JSONL invariant).
-      final branch = await session.getBranch();
-      final record = branch.whereType<CompactionRecord>().single;
-      expect(record.summary, contains('was dropped'));
-    });
+    test(
+      'poisoned compaction record projects clean many turns later',
+      () async {
+        final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+        final firstId = await session.appendMessage(
+          UserMessage.text('run the 968 sweep'),
+        );
+        await session.appendMessage(_assistant('sweeping'));
+        await session.appendCompaction(
+          summary: '## Progress\n- Fixed the parser.\n$_incidentNote\n',
+          firstKeptEntryId: firstId,
+          tokensBefore: 100,
+        );
+        // Simulate 20 later turns of history after the poisoned record.
+        for (var i = 0; i < 20; i++) {
+          await session.appendMessage(UserMessage.text('turn $i'));
+        }
+        final messages = await session.buildContextMessages();
+        final summaryMessage = messages.whereType<UserMessage>().singleWhere(
+          (m) => (m.content as String).contains(compactionSummaryPrefix),
+        );
+        final summaryText = summaryMessage.content as String;
+        expect(summaryText, startsWith(compactionSummaryPrefix));
+        expect(summaryText, contains(compactionSummarySuffix));
+        expect(summaryText, isNot(contains('was dropped')));
+        expect(summaryText, isNot(contains('mid-sweep')));
+        // Durable content of the same summary survives (E2: no JSONL rewrite,
+        // only ephemeral phrasing suppressed).
+        expect(summaryText, contains('Fixed the parser.'));
+        // The persisted record is untouched (byte-identical JSONL invariant).
+        final branch = await session.getBranch();
+        final record = branch.whereType<CompactionRecord>().single;
+        expect(record.summary, contains('was dropped'));
+      },
+    );
   });
 
   group('branch summary persist path', () {
     test('generateBranchSummary sanitizes the LLM prose', () async {
       final fake = _FakeSummarizer([
-        SummarizationResult.success(
-          '## Goal\nFix the loop.\n$_incidentNote\n',
-        ),
+        SummarizationResult.success('## Goal\nFix the loop.\n$_incidentNote\n'),
       ]);
       final result = await generateBranchSummary([
         MessageRecord(
@@ -220,43 +221,43 @@ void main() {
   });
 
   group('structured checkpoint paths', () {
-    test('checkpoint render sanitizes poisoned text (E2 for old checkpoints)',
-        () {
-      final path = <SessionRecord>[
-        MessageRecord(
-          id: 'r1',
-          parentId: null,
-          timestamp: DateTime.utc(2026),
-          message: UserMessage.text('fix the loop'),
-        ),
-        CompactCheckpointRecord(
-          id: 'r2',
-          parentId: 'r1',
-          timestamp: DateTime.utc(2026),
-          firstRecordId: 'r1',
-          lastRecordId: 'r1',
-          text: 'Checkpoint: the loop was fixed. $_incidentNote',
-          coversRecordIds: const ['r1'],
-          flattenedRecordIds: const [],
-        ),
-      ];
-      final messages = renderStructuredMessages(
-        path: path,
-        seqs: RecordSeqIndex(path),
-        projectEntry: (record) =>
-            record is MessageRecord ? [record.message] : const [],
-      );
-      final checkpoint = messages
-          .whereType<UserMessage>()
-          .firstWhere(
-            (m) => (m.content as String).contains('Checkpoint:'),
-          );
-      final checkpointText = checkpoint.content as String;
-      expect(checkpointText, isNot(contains('was dropped')));
-      expect(checkpointText, contains('the loop was fixed'));
-      // The span stamp survives: structured checkpoints render covers-scoped.
-      expect(checkpointText, contains('covers:'));
-    });
+    test(
+      'checkpoint render sanitizes poisoned text (E2 for old checkpoints)',
+      () {
+        final path = <SessionRecord>[
+          MessageRecord(
+            id: 'r1',
+            parentId: null,
+            timestamp: DateTime.utc(2026),
+            message: UserMessage.text('fix the loop'),
+          ),
+          CompactCheckpointRecord(
+            id: 'r2',
+            parentId: 'r1',
+            timestamp: DateTime.utc(2026),
+            firstRecordId: 'r1',
+            lastRecordId: 'r1',
+            text: 'Checkpoint: the loop was fixed. $_incidentNote',
+            coversRecordIds: const ['r1'],
+            flattenedRecordIds: const [],
+          ),
+        ];
+        final messages = renderStructuredMessages(
+          path: path,
+          seqs: RecordSeqIndex(path),
+          projectEntry: (record) =>
+              record is MessageRecord ? [record.message] : const [],
+        );
+        final checkpoint = messages.whereType<UserMessage>().firstWhere(
+          (m) => (m.content as String).contains('Checkpoint:'),
+        );
+        final checkpointText = checkpoint.content as String;
+        expect(checkpointText, isNot(contains('was dropped')));
+        expect(checkpointText, contains('the loop was fixed'));
+        // The span stamp survives: structured checkpoints render covers-scoped.
+        expect(checkpointText, contains('covers:'));
+      },
+    );
   });
 
   group('round-1 review pins (#1133)', () {
@@ -297,8 +298,7 @@ void main() {
       expect(result.stripped, isEmpty);
     });
 
-    test('T4: a bare list marker left by a strip is dropped, not duplicated',
-        () {
+    test('T4: a bare list marker left by a strip is dropped, not duplicated', () {
       final result = sanitizeSummary(
         '## Next Steps\n1. Ship the release.\n2. You just ran the 968 sweep.\n',
       );
@@ -306,27 +306,29 @@ void main() {
       expect(result.stripped, hasLength(1));
     });
 
-    test('T3: generateSummary heals previousSummary before the prompt',
-        () async {
-      const poisoned =
-          '## Progress\n- Your LAST tool call\'s RESULT was dropped from '
-          'context.\n- The login crash is fixed.\n';
-      final fake = _FakeSummarizer([
-        SummarizationResult.success(
-          '## Progress\n- The login crash is fixed.',
-        ),
-      ]);
-      await generateSummary(
-        [UserMessage.text('u1'), _assistant('a1')],
-        summarize: fake.call,
-        previousSummary: poisoned,
-      );
-      final prompt = fake.prompts.single.prompt;
-      expect(prompt, contains('<previous-checkpoint>'));
-      // The healed checkpoint rides the prompt; the poison does not.
-      expect(prompt, isNot(contains('was dropped')));
-      expect(prompt, contains('The login crash is fixed.'));
-    });
+    test(
+      'T3: generateSummary heals previousSummary before the prompt',
+      () async {
+        const poisoned =
+            '## Progress\n- Your LAST tool call\'s RESULT was dropped from '
+            'context.\n- The login crash is fixed.\n';
+        final fake = _FakeSummarizer([
+          SummarizationResult.success(
+            '## Progress\n- The login crash is fixed.',
+          ),
+        ]);
+        await generateSummary(
+          [UserMessage.text('u1'), _assistant('a1')],
+          summarize: fake.call,
+          previousSummary: poisoned,
+        );
+        final prompt = fake.prompts.single.prompt;
+        expect(prompt, contains('<previous-checkpoint>'));
+        // The healed checkpoint rides the prompt; the poison does not.
+        expect(prompt, isNot(contains('was dropped')));
+        expect(prompt, contains('The login crash is fixed.'));
+      },
+    );
   });
 
   group('round-2 review pins (#1133)', () {
@@ -459,9 +461,11 @@ void main() {
   group('gh-1409 pin exemption (AC4/F6/UT-PIN-6)', () {
     // A pin-shaped line that would otherwise trip the sanitizer: second
     // person + a drop verb.
-    const pinLine = 'your last action before declaring done must be running '
+    const pinLine =
+        'your last action before declaring done must be running '
         'the suite, or the run is dropped from the report';
-    const ephemeralNeighbor = 'Your last tool call\'s result was dropped '
+    const ephemeralNeighbor =
+        'Your last tool call\'s result was dropped '
         'from context.';
 
     test('UT-PIN-6: pin-carrying lines are never stripped or rewritten', () {
@@ -494,7 +498,8 @@ void main() {
 
     test('envelope: lines inside <pinned-skill-directives> are structurally '
         'exempt (projection-path healing without a pin set)', () {
-      final summary = '$ephemeralNeighbor\n'
+      final summary =
+          '$ephemeralNeighbor\n'
           '$pinEnvelopeOpenTag\n'
           '- "$pinLine" (pinned from skill `guard`)\n'
           '$pinEnvelopeCloseTag\n';

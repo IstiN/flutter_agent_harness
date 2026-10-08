@@ -25,13 +25,13 @@ import 'package:test/test.dart';
 const _pin = 'use fleet_sweep.sh; never hand-roll the gh battery';
 
 Skill _skill() => skillFromText(
-      '---\nname: fleet\ndescription: Fleet sweeps.\n'
-      'operative:\n  - "$_pin"\n---\nBody.\n',
-      filePath: '/work/.fah/skills/fleet/SKILL.md',
-      fallbackName: 'fleet',
-      scope: SkillScope.project,
-      source: SkillSource.fah,
-    )!;
+  '---\nname: fleet\ndescription: Fleet sweeps.\n'
+  'operative:\n  - "$_pin"\n---\nBody.\n',
+  filePath: '/work/.fah/skills/fleet/SKILL.md',
+  fallbackName: 'fleet',
+  scope: SkillScope.project,
+  source: SkillSource.fah,
+)!;
 
 const _settings = CompactionSettings(
   enabled: true,
@@ -40,14 +40,14 @@ const _settings = CompactionSettings(
 );
 
 AssistantMessage _assistant(String text) => AssistantMessage(
-      content: [TextContent(text: text)],
-      api: 'openai-completions',
-      provider: 'openrouter',
-      model: 'm1',
-      usage: Usage.zero,
-      stopReason: StopReason.stop,
-      timestamp: DateTime.utc(2026),
-    );
+  content: [TextContent(text: text)],
+  api: 'openai-completions',
+  provider: 'openrouter',
+  model: 'm1',
+  usage: Usage.zero,
+  stopReason: StopReason.stop,
+  timestamp: DateTime.utc(2026),
+);
 
 /// The skill-read turn: an assistant `read` tool call answered with a body
 /// LARGER than the 2000-char summary-serialization cap (F2).
@@ -102,12 +102,10 @@ PinnedOperativePayload _payload() {
 
 /// Builds a session with the incident shape: user ask → skill read (big
 /// body) → several padded turns. Returns (session, repo, env).
-Future<(Session, JsonlSessionRepo, MemoryExecutionEnv)> _incidentSession() async {
+Future<(Session, JsonlSessionRepo, MemoryExecutionEnv)>
+_incidentSession() async {
   final env = MemoryExecutionEnv();
-  final repo = JsonlSessionRepo(
-    fs: env,
-    sessionsRoot: '/work/.fah/sessions',
-  );
+  final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/work/.fah/sessions');
   final session = await repo.create(JsonlSessionCreateOptions(cwd: '/work'));
   await session.appendMessage(UserMessage.text('sweep the board, u1'));
   for (final message in _skillReadTurn()) {
@@ -125,7 +123,10 @@ Future<(Session, JsonlSessionRepo, MemoryExecutionEnv)> _incidentSession() async
 
 /// The window a provider request would see: the projected context with the
 /// pin carriers injected (the loop's payload-only step).
-Future<List<Message>> _requestWindow(Session session, List<Skill> skills) async {
+Future<List<Message>> _requestWindow(
+  Session session,
+  List<Skill> skills,
+) async {
   final projected = await session.buildContextMessages();
   return injectOperativePinCarriers(projected, skills: skills);
 }
@@ -156,20 +157,17 @@ void main() {
       texts.any((t) => t.contains('"$_pin"') && t.contains(pinBlockOpenTag)),
       isTrue,
     );
-    expect(
-      texts.any((t) => t.contains('pinned from skill `fleet`')),
-      isTrue,
-    );
+    expect(texts.any((t) => t.contains('pinned from skill `fleet`')), isTrue);
     // AFTER the boundary — never inside the summarized range (IT-PIN-2 at
     // the session level).
     final boundary = window.indexWhere(
-      (m) => m is UserMessage && (m.content as String)
-          .startsWith(compactionSummaryPrefix),
+      (m) =>
+          m is UserMessage &&
+          (m.content as String).startsWith(compactionSummaryPrefix),
     );
     final carrier = window.indexWhere(
-      (m) => m is UserMessage && (m.content as String).contains(
-            pinBlockOpenTag,
-          ),
+      (m) =>
+          m is UserMessage && (m.content as String).contains(pinBlockOpenTag),
     );
     expect(boundary, greaterThanOrEqualTo(0));
     expect(carrier, boundary + 1);
@@ -197,11 +195,10 @@ void main() {
     final skillReads = [
       for (final record in resumedRecords)
         if (record is MessageRecord && record.message is AssistantMessage)
-          for (final block
-              in (record.message as AssistantMessage).content)
+          for (final block in (record.message as AssistantMessage).content)
             if (block is ToolCall &&
                 block.name == 'read' &&
-                '$block'.contains('SKILL.md'))
+                block.arguments['path'] == '/work/.fah/skills/fleet/SKILL.md')
               block,
     ];
     expect(skillReads, hasLength(1)); // only the ORIGINAL read — no re-read.
@@ -232,10 +229,7 @@ void main() {
           .whereType<UserMessage>()
           .where((m) => m.content is String)
           .map((m) => m.content as String)
-          .firstWhere(
-            (t) => t.contains(pinBlockOpenTag),
-            orElse: () => '',
-          );
+          .firstWhere((t) => t.contains(pinBlockOpenTag), orElse: () => '');
       expect(carrier, isNotEmpty, reason: 'generation $generation lost pins');
       carriers.add(carrier);
     }

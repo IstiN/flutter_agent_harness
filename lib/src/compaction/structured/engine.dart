@@ -884,7 +884,9 @@ final class StructuredCompactor {
           // Issue #1131: older persisted checkpoints re-enter this prompt
           // verbatim — heal them so poison cannot be paraphrased forward.
           // gh-1409: pins inside heal protected (AC4).
-          ..writeln(sanitizeSummary(folded.text, protectedLines: pinnedLines).text)
+          ..writeln(
+            sanitizeSummary(folded.text, protectedLines: pinnedLines).text,
+          )
           ..writeln('</folded-checkpoint>');
       }
       if (priorFold != null) {

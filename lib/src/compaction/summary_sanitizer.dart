@@ -120,8 +120,9 @@ String _stripContextNotes(String text, List<String> stripped) {
     if (match.start < start) continue; // opener inside a removed block
     final close = text.indexOf(']', match.end);
     final searchEnd = close < 0 ? text.length : close;
-    final newlines =
-        '\n'.allMatches(text.substring(match.end, searchEnd)).length;
+    final newlines = '\n'
+        .allMatches(text.substring(match.end, searchEnd))
+        .length;
     if (close < 0 || newlines > 2) continue;
     out.write(text.substring(start, match.start));
     var end = close + 1;
@@ -144,15 +145,19 @@ String _stripContextNotes(String text, List<String> stripped) {
 /// (the line carried only ephemeral content and is dropped whole). A line
 /// containing any of [protectedLines] verbatim (gh-1409 AC4: pinned skill
 /// directives) is returned unchanged.
-String? _sanitizeLine(String line, List<String> stripped,
-    Set<String> protectedLines) {
+String? _sanitizeLine(
+  String line,
+  List<String> stripped,
+  Set<String> protectedLines,
+) {
   for (final protected in protectedLines) {
     if (protected.isNotEmpty && line.contains(protected)) return line;
   }
   final sentences = line.split(RegExp(r'(?<=[.!?])\s+'));
   final kept = <String>[];
   for (final sentence in sentences) {
-    if (_secondPerson.hasMatch(sentence) && _ephemeralClaim.hasMatch(sentence)) {
+    if (_secondPerson.hasMatch(sentence) &&
+        _ephemeralClaim.hasMatch(sentence)) {
       if (sentence.trim().isNotEmpty) stripped.add(sentence.trim());
       continue;
     }

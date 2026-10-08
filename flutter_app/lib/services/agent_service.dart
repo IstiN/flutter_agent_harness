@@ -771,9 +771,7 @@ class AgentService extends ChangeNotifier
     // gh-1164 Part B: JS app render/runtime/load errors ride the shared
     // error channel — a gated notice re-enters the conversation the same
     // way (steered mid-run, a fresh system-notice turn while idle).
-    _jsAppErrorSub = JsAppErrorChannel.instance.onDeliver.listen(
-      _onJsAppError,
-    );
+    _jsAppErrorSub = JsAppErrorChannel.instance.onDeliver.listen(_onJsAppError);
     // Interactive dynamic messages (issue #102): the host machinery behind
     // the `dynamic_message` tool — session-scoped JS widgets rendered
     // inline in the transcript with the full installed-app engine surface.
@@ -1016,7 +1014,6 @@ class AgentService extends ChangeNotifier
       providerKind == gemmaProviderKind ||
       providerKind == transformersJsProviderKind;
 
-
   /// The system prompt composition lives in the
   /// `agent_service_prompt.dart` part (issue #692 B): `{{commands}}` is
   /// filled from the central sandbox registry for the current platform,
@@ -1040,9 +1037,6 @@ class AgentService extends ChangeNotifier
   List<String> get registeredToolNamesForTest => [
     for (final tool in _agent.state.tools) tool.name,
   ];
-
-
-
 
   /// The approval gate attached to the agent. Default mode is
   /// [ApprovalMode.write] — read-only tools run freely, mutating and shell
@@ -1186,7 +1180,6 @@ class AgentService extends ChangeNotifier
   /// Task tool config (child surface set after registry is built).
   TaskToolConfig? _taskConfig;
 
-
   /// The session's background shell jobs (bash background / steer-yield);
   /// null before the agent is built.
   ShellJobRegistry? _shellJobs;
@@ -1236,8 +1229,6 @@ class AgentService extends ChangeNotifier
       _agent.state.tools = tools;
     }
   }
-
-
 
   /// The merged host secrets the agent runs with (dotenv + saved keys +
   /// `request_secret` grants) — the read surface behind the JS apps'
@@ -1436,7 +1427,6 @@ class AgentService extends ChangeNotifier
     await _subagentManager!.update(id, status: SubagentStatus.running);
   }
 
-
   /// A follow-up message needs a live-or-idle child; failed/aborted
   /// children have no session to append to.
   static void ensureSendableSubagent(SubagentHandle handle, String id) {
@@ -1539,14 +1529,10 @@ class AgentService extends ChangeNotifier
   /// [setSkillsAccess] when the third-party consent changes).
   String _promptSuffix;
 
-
-
   /// The cached `<memory>` prompt section (durable facts from past
   /// sessions), refreshed asynchronously after create and on every
   /// `memory_add` — the prompt composition itself stays synchronous.
   String _memorySection = '';
-
-
 
   /// Recomposes the system prompt after the project-folder mount changes
   /// (the file browser's open/unmount flow).
@@ -1645,8 +1631,6 @@ class AgentService extends ChangeNotifier
   int? _backgroundTaskId;
   Timer? _liveActivityEndTimer;
 
-
-
   /// True under `flutter test` (binding class name; web-safe). False when
   /// no binding exists (plain dart tests — there the real event loop just
   /// runs the end timer out).
@@ -1659,8 +1643,6 @@ class AgentService extends ChangeNotifier
       return false;
     }
   }
-
-
 
   @override
   String? error;
@@ -1784,7 +1766,6 @@ class AgentService extends ChangeNotifier
   /// is a view concern, not a context concern). `null` for full-open
   /// sessions (rows come straight from the loaded context).
   List<SessionRecord>? _viewBranch;
-
 
   /// Pages one chunk of records above the window into the transcript
   /// ([FaChatService.loadOlderHistory]). Re-entrant taps are ignored, as
@@ -1932,12 +1913,6 @@ class AgentService extends ChangeNotifier
     return reached;
   }
 
-
-
-
-
-
-
   Session? _session;
   String? _sessionId;
   String? _sessionFile;
@@ -1961,7 +1936,6 @@ class AgentService extends ChangeNotifier
   /// dump is redacted under the config active at capture time (E1).
   TrajectoryBlobPersister? _trajectoryBlobPersister;
   Session? _trajectoryBlobPersisterSession;
-
 
   /// The producer behind [trajectory]: rebuilt from the active branch on
   /// session open/switch, mirrored live from agent events, and fed the
@@ -2046,8 +2020,6 @@ class AgentService extends ChangeNotifier
   /// machinery behind the `dynamic_message` tool. UI reads it for the
   /// ✦ list, the inline widget tiles, and save-as-app.
   late final DynamicMessagesService dynamicMessages;
-
-
 
   /// Sends a plain-text user message. While the agent is already running the
   /// message is queued as a steering message and the UI shows it as pending
@@ -2352,7 +2324,6 @@ class AgentService extends ChangeNotifier
     }
   }
 
-
   /// Add-provider-flow latch (gh-1044 I1/AC6): > 0 while a provider
   /// add/connect flow runs (AIIN sign-in and friends). While held,
   /// [reconfigure] refuses restore-shaped calls — the active connection
@@ -2416,10 +2387,6 @@ class AgentService extends ChangeNotifier
     return buffer.toString();
   }
 
-
-
-
-
   @override
   Stream<TrajectorySnapshot> get trajectory => _trajectory.stream;
 }
@@ -2437,5 +2404,4 @@ String appMemoryUserRoot({
   required String? configHomeDir,
   required String? desktopHome,
   required String envCwd,
-}) =>
-    configHomeDir ?? desktopHome ?? '$envCwd/home';
+}) => configHomeDir ?? desktopHome ?? '$envCwd/home';
