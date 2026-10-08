@@ -263,17 +263,24 @@ final class ProviderTuningRegistry {
 bool _matchesBaseUrl(Uri url, String baseUrl) {
   final base = Uri.tryParse(baseUrl);
   if (base == null || !base.hasScheme || !base.hasAuthority) return false;
-  if (url.scheme.toLowerCase() != base.scheme.toLowerCase()) return false;
-  final basePort = base.hasPort ? base.port : _defaultPort(base.scheme);
-  final urlPort = url.hasPort ? url.port : _defaultPort(url.scheme);
-  if (url.host.toLowerCase() != base.host.toLowerCase()) return false;
-  if (urlPort != basePort) return false;
+  if (!_sameAuthority(url, base)) return false;
   final basePath = base.path.endsWith('/')
       ? base.path.substring(0, base.path.length - 1)
       : base.path;
   final urlPath = url.path;
   if (basePath.isEmpty) return true;
   return urlPath == basePath || urlPath.startsWith('$basePath/');
+}
+
+/// Same scheme (case-insensitive), host, and effective port — an explicit
+/// port compares as-is, an implicit one compares via its scheme default
+/// (`https://x/v1` matches `https://x:443/v1`).
+bool _sameAuthority(Uri url, Uri base) {
+  if (url.scheme.toLowerCase() != base.scheme.toLowerCase()) return false;
+  final basePort = base.hasPort ? base.port : _defaultPort(base.scheme);
+  final urlPort = url.hasPort ? url.port : _defaultPort(url.scheme);
+  if (url.host.toLowerCase() != base.host.toLowerCase()) return false;
+  return urlPort == basePort;
 }
 
 int? _defaultPort(String scheme) => scheme.toLowerCase() == 'https'

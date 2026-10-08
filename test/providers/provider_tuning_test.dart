@@ -181,6 +181,39 @@ void main() {
         },
       );
 
+      test('malformed entry baseUrls never match any request URL', () {
+        // The guard arms of the base matcher: a config error that slips
+        // past the parsers must stay inert — never partially match, never
+        // throw from the wire seams.
+        providerTuningRegistry.clear();
+        addTearDown(providerTuningRegistry.clear);
+        const malformed = {
+          'unparseable': '::::',
+          'no-scheme': '//glm.example.com/v1',
+          'no-authority': 'https:',
+        };
+        for (final entry in malformed.entries) {
+          providerTuningRegistry.register(
+            name: entry.key,
+            baseUrl: entry.value,
+            streamIdle: const Duration(seconds: 1),
+          );
+        }
+        final url = Uri.parse('https://glm.example.com/v1/chat/completions');
+        for (final entry in malformed.keys) {
+          expect(
+            providerTuningRegistry.forName(entry),
+            isNotNull,
+            reason: '$entry: the row is registered (boot notices name it)',
+          );
+        }
+        expect(
+          resolveProviderTimeouts(url: url).streamIdle,
+          providerStreamIdleTimeout,
+          reason: 'no malformed base may match a well-formed request URL',
+        );
+      });
+
       test('explicit name lookup wins over baseUrl matching', () {
         providerTuningRegistry.clear();
         addTearDown(providerTuningRegistry.clear);
