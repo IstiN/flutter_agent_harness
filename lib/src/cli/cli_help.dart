@@ -406,6 +406,8 @@ PROMPTS
     compaction/turn_prefix    split-turn prefix instructions
     compaction/hide_judge     structured-engine hide-judge system prompt
     compaction/structured_checkpoint structured checkpoint instructions
+    compaction/pinned_operative pinned skill operative lines verbatim-preserve
+                               duty (gh-1409)
 
   Example:
 
