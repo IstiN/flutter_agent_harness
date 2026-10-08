@@ -84,6 +84,38 @@ def split_lpt(ids, budgets, n):
     return shards
 
 
+# Issue #1392 ShardPacker: the usable per-shard budget is the job cap minus
+# a 15-minute headroom — round 2 lost shard-0 by ~1 min with ZERO headroom.
+HEADROOM_SEC = 15 * 60.0
+
+
+def check_cap(shards, budgets, cap_seconds, headroom_seconds=HEADROOM_SEC):
+    """Per-shard worst-case loads under the job-cap budget; loud when over.
+
+    cap_seconds <= 0 disables the check (single-task smokes, local runs).
+    Returns the per-shard load list on success; raises SystemExit with a
+    ::error:: line naming the numbers and the remedy when the packed worst
+    case exceeds the usable budget — a silent over-run costs a multi-hour
+    shard that dies mid-run.
+    """
+    if not cap_seconds or cap_seconds <= 0:
+        return [sum(budgets[t] for t in shard) for shard in shards]
+    allowed = cap_seconds - headroom_seconds
+    loads = {i: sum(budgets[t] for t in shard) for i, shard in enumerate(shards)}
+    worst_index = max(loads, key=lambda i: loads[i])
+    worst = loads[worst_index]
+    if worst > allowed:
+        raise SystemExit(
+            f"::error::packed shard {worst_index} worst case is "
+            f"{worst / 60:.0f} min, above the usable job budget "
+            f"({allowed / 60:.0f} min = {cap_seconds / 60:.0f} min cap − "
+            f"{headroom_seconds / 60:.0f} min headroom). Raise the shards "
+            "input (the packer recomputes per shards=N) or lower the "
+            "per-task budgets; a shard over the cap dies mid-run."
+        )
+    return [loads[i] for i in sorted(loads)]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-dir", required=True)
@@ -97,12 +129,29 @@ def main():
             f"(default: ${FLOOR_ENV}; empty/0 = none)"
         ),
     )
+    parser.add_argument(
+        "--job-cap-seconds",
+        default="0",
+        help=(
+            "bench job cap in seconds; the packed worst case must fit "
+            f"{HEADROOM_SEC / 60:.0f} min under it (issue #1392 ShardPacker; "
+            "0 = no cap check)"
+        ),
+    )
     args = parser.parse_args()
 
     try:
         n = max(1, int(args.shards))
     except ValueError:
         raise SystemExit(f"::error::shards input must be an integer, got: {args.shards!r}")
+
+    try:
+        job_cap = float(args.job_cap_seconds)
+    except ValueError:
+        raise SystemExit(
+            f"::error::job-cap-seconds must be a number of seconds, got: "
+            f"{args.job_cap_seconds!r}"
+        )
 
     try:
         test_floor = resolve_floor(args.test_timeout_floor)
@@ -112,14 +161,24 @@ def main():
     ids = resolve_task_ids(Path(args.dataset_dir), args.tasks.split() or ["*"])
     dataset_dir = Path(args.dataset_dir)
     budgets = {tid: task_budget(dataset_dir, tid, test_floor) for tid in ids}
+    raw_shards = split_lpt(ids, budgets, n)
+    # Issue #1392 AC5: no shard's worst case may exceed the job cap minus
+    # headroom — a silent over-run costs a shard that dies mid-run.
+    loads = check_cap(raw_shards, budgets, job_cap)
     shards = []
-    for i, part in enumerate(s for s in split_lpt(ids, budgets, n) if s):
+    for i, part in enumerate(s for s in raw_shards if s):
         shards.append({"i": i, "tasks": " ".join(part)})
 
     with open(os.environ.get("GITHUB_OUTPUT", os.devnull), "a") as f:
         f.write(f"matrix={json.dumps({'include': shards})}\n")
         f.write(f"count={len(ids)}\n")
+        f.write(f"worst_shard_seconds={max(loads) if loads else 0}\n")
     print(f"{len(ids)} task(s) across {len(shards)} shard(s)")
+    if job_cap > 0:
+        print(
+            f"worst shard {max(loads) / 60:.0f} min "
+            f"(cap {job_cap / 60:.0f} min − {HEADROOM_SEC / 60:.0f} min headroom)"
+        )
     for s in shards:
         print(f"  shard {s['i']}: {s['tasks']}")
 

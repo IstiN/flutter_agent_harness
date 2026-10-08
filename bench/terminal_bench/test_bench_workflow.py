@@ -76,6 +76,7 @@ tb() {
   echo "TB_END"
   echo "FA_AGENT_TIMEOUT_SEC=${FA_AGENT_TIMEOUT_SEC-__unset__}"
   echo "FA_PROGRESS_EXTENSION=${FA_PROGRESS_EXTENSION-__unset__}"
+  echo "FA_AGENT_TIMEOUT_ABS_CEILING_SEC=${FA_AGENT_TIMEOUT_ABS_CEILING_SEC-__unset__}"
 }
 """
 
@@ -165,13 +166,12 @@ class BenchWorkflowShardStepTest(unittest.TestCase):
 
     def test_extension_without_timeout_pins_default_base_360(self):
         # gh-1209: extension on with no explicit base runs the ladder at its
-        # 360s default — the base AND the harness cap must agree on it.
+        # 360s default — the base must still be pinned explicitly so the
+        # ladder and the (round-3, abs-ceiling) harness cap agree on it.
         proc = _run_shard(progress_extension="true")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(_env_value(proc.stdout, "FA_AGENT_TIMEOUT_SEC"), "360")
         self.assertEqual(_env_value(proc.stdout, "FA_PROGRESS_EXTENSION"), "1")
-        args = _tb_args(proc.stdout)
-        self.assertEqual(_flag_value(args, "--global-agent-timeout-sec"), "1620")  # 360*4+180
 
     def test_extension_off_leaves_everything_stock(self):
         proc = _run_shard(progress_extension="false")
@@ -215,6 +215,176 @@ class BenchWorkflowShardStepTest(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("boolean", proc.stdout + proc.stderr)
         self.assertNotIn("TB_BEGIN", proc.stdout)
+
+
+def _yml_text() -> str:
+    return _BENCH_YML.read_text()
+
+
+@unittest.skipUnless(
+    _BENCH_YML.exists(), "bench.yml not found (standalone bench checkout)"
+)
+class BenchWorkflowRound3ShapeTest(unittest.TestCase):
+    """Issue #1392 AC5: split 8 / run at most 2 concurrently / pack to
+    cap-15min. The 'at most N in_progress' property IS GHA's
+    strategy.max-parallel semantics (the other shard jobs sit in queued
+    until a slot frees), so the workflow-level assertion pins that wiring
+    plus the packing argument the setup step feeds shard_tasks.py.
+    """
+
+    def test_inputs_split_eight_run_two(self):
+        text = _yml_text()
+        self.assertRegex(text, r"shards:\n(?:[^\n]*\n){1,4}\s+default: '8'")
+        self.assertRegex(
+            text, r"max-concurrent:\n(?:[^\n]*\n){1,4}\s+default: '2'"
+        )
+
+    def test_shard_matrix_capped_at_max_concurrent(self):
+        text = _yml_text()
+        self.assertIn(
+            "max-parallel: ${{ fromJSON(inputs.max-concurrent) }}", text
+        )
+        self.assertNotIn("max-parallel: 5", text)
+
+    def test_shard_packing_wired_to_raw_cap(self):
+        # 355-min job cap passed RAW: shard_tasks.check_cap subtracts its
+        # own 15-min headroom (355 - 15 = 340 min usable — the AC5
+        # contract; round 2 lost shard-0 by ~1 min with zero headroom).
+        text = _yml_text()
+        self.assertIn("--job-cap-seconds", text)
+        self.assertIn('--job-cap-seconds "$((355 * 60))"', text)
+
+    def test_merge_report_tags_concurrency(self):
+        text = _yml_text()
+        self.assertIn("BENCH_CONCURRENCY", text)
+
+    def test_merge_runs_post_mortem_before_summary(self):
+        # AC4/AC7/AC8 at run level: the post-mortem attribution pass folds
+        # session usage into results.json (and names export gaps /
+        # honesty violations) BEFORE the report prices the rows.
+        text = _yml_text()
+        self.assertIn("bench/post_mortem_usage.py tb-runs", text)
+        self.assertLess(
+            text.index("Post-mortem attribution pass"),
+            text.index("Accuracy summary & verdict"),
+        )
+
+    def test_merged_artifact_uploads_the_patched_rows(self):
+        # Review: the post-mortem pass patches results.json in place — the
+        # durable tb-runs-merged artifact must carry the PATCHED rows, so
+        # the upload step runs after the pass.
+        text = _yml_text()
+        self.assertLess(
+            text.index("Post-mortem attribution pass"),
+            text.index("Upload merged tb runs"),
+        )
+
+    def test_bench_step_enables_the_conn_forensics(self):
+        # The dispatched run IS the instrumented experiment: without these
+        # exports the adapter forwards nothing into the container and
+        # bench_metrics.json ships requests: [] with hang payloads null.
+        run_block = _shard_run_block()
+        text = _yml_text()
+        for var in (
+            "FA_CONN_DEBUG",
+            "FA_CONN_TRACE_FILE",
+            "FA_CONN_PAYLOAD_SNAPSHOT",
+            "FA_BENCH_CONCURRENCY",
+        ):
+            self.assertIn(f"{var}:", text)
+        self.assertIn("FA_BENCH_CONCURRENCY: ${{ inputs.max-concurrent }}", text)
+        # The run block itself must not unset them.
+        self.assertNotIn("unset FA_CONN_DEBUG", run_block)
+
+    def test_extension_on_pins_harness_cap_above_abs_ceiling(self):
+        # Round 3: with the progress watch on, the ladder ceiling is the
+        # abs ceiling (default 3600s) — the 4x+180 pin would guillotine
+        # an extended-but-progressing trial below our own decision point.
+        self.assertIn("${FA_AGENT_TIMEOUT_ABS_CEILING_SEC:-3600}", _yml_text())
+
+
+@unittest.skipUnless(
+    _BENCH_YML.exists(), "bench.yml not found (standalone bench checkout)"
+)
+@unittest.skipUnless(shutil.which("bash"), "bash not available")
+class AbsCeilingHarnessCapTest(unittest.TestCase):
+    """The run-block contract when the progress watch is on."""
+
+    def _run(self, agent_timeout="", progress_extension="", abs_ceiling=""):
+        env = dict(os.environ)
+        env.pop("FA_AGENT_TIMEOUT_ABS_CEILING_SEC", None)
+        env.update(
+            {
+                "DATASET": "/tmp/fa-bench-workflow-test-dataset",
+                "SHARD_TASKS": "task-0 task-1",
+                "FA_KEY_API_Z_AI_Z_AI": "test-key",
+                "AGENT_TIMEOUT": agent_timeout,
+                "PROGRESS_EXTENSION": progress_extension,
+            }
+        )
+        if abs_ceiling:
+            env["FA_AGENT_TIMEOUT_ABS_CEILING_SEC"] = abs_ceiling
+        with tempfile.TemporaryDirectory() as tmp:
+            driver = Path(tmp) / "shard_step.sh"
+            driver.write_text(
+                "#!/usr/bin/env bash\n" + _TB_STUB + "\n" + _shard_run_block() + "\n"
+            )
+            proc = subprocess.run(
+                ["bash", str(driver)],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        return proc
+
+    def test_extension_on_caps_at_abs_ceiling_plus_slack(self):
+        proc = self._run(progress_extension="true")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            _flag_value(_tb_args(proc.stdout), "--global-agent-timeout-sec"),
+            "3780",  # 3600 abs ceiling + 180 slack
+        )
+        self.assertEqual(_env_value(proc.stdout, "FA_PROGRESS_EXTENSION"), "1")
+
+    def test_extension_on_exports_the_watch_knob(self):
+        # Round-3 review blocker: FA_PROGRESS_EXTENSION alone leaves the
+        # LEGACY x4 ladder deciding (watch_active needs a watch knob) —
+        # extension on must export the abs-ceiling knob so the watch,
+        # not the ladder, decides every kill.
+        proc = self._run(progress_extension="true")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            _env_value(proc.stdout, "FA_AGENT_TIMEOUT_ABS_CEILING_SEC"), "3600"
+        )
+        # An override moves BOTH the exported knob and the harness cap,
+        # so they can never drift apart.
+        proc2 = self._run(progress_extension="true", abs_ceiling="5400")
+        self.assertEqual(
+            _env_value(proc2.stdout, "FA_AGENT_TIMEOUT_ABS_CEILING_SEC"), "5400"
+        )
+        self.assertEqual(
+            _flag_value(_tb_args(proc2.stdout), "--global-agent-timeout-sec"),
+            "5580",
+        )
+
+    def test_extension_on_honors_abs_ceiling_override(self):
+        proc = self._run(progress_extension="true", abs_ceiling="5400")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            _flag_value(_tb_args(proc.stdout), "--global-agent-timeout-sec"),
+            "5580",
+        )
+
+    def test_extension_off_keeps_the_4x_pin(self):
+        # REG (gh-1209): without the watch, the outer cap stays 4x+180.
+        proc = self._run(agent_timeout="300")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            _flag_value(_tb_args(proc.stdout), "--global-agent-timeout-sec"),
+            "1380",
+        )
+        self.assertEqual(_env_value(proc.stdout, "FA_PROGRESS_EXTENSION"), "__unset__")
 
 
 if __name__ == "__main__":
