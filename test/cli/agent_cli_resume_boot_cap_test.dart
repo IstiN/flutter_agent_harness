@@ -316,11 +316,12 @@ void main() {
       );
       expect(io.out.toString(), contains('Operation aborted'));
 
-      // /resume switches to the newest session — the over-window one —
-      // WITHOUT an intervening prompt run (the only place the stale flag
-      // used to be cleared): the boot cap must still run, at idle, before
-      // any user input.
-      io.sendLine('/resume');
+      // /session switches to the over-window session WITHOUT an
+      // intervening prompt run (the only place the stale flag used to be
+      // cleared): the boot cap must still run, at idle, before any user
+      // input. (/resume would pick the CURRENT session here — the aborted
+      // run made it the most recently ACTIVE one.)
+      io.sendLine('/session boot-cap-target');
       await waitForIt(
         () => cap.calls >= 1 && !agent.isBusy,
         reason: 'the boot cap runs on the resumed (over-window) session '
