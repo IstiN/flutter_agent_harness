@@ -355,6 +355,9 @@ final class JsonlSessionRepo implements SessionRepo {
               timingLog: timingLog,
               wholeFileOnly: wholeFileOnly,
             ),
+      // The repo backs the session's raw custom-record scan (the
+      // obligations ledger's below-the-tail fallback, #488 class).
+      customRecordScan: (types) => readCustomRecordsOfType(metadata, types),
     );
   }
 

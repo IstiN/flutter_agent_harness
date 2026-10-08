@@ -38,8 +38,127 @@ extension AgentCliPersist on AgentCli {
     }
     final messages = _agent.state.messages;
     if (_persistedCount >= messages.length) return;
-    await session.appendMessage(message);
+    final recordId = await session.appendMessage(message);
     _persistedCount++;
+    if (message is UserMessage) {
+      await _ingestObligations(message, recordId);
+    }
+  }
+
+  /// Classifies a persisted real-user message into the obligations ledger
+  /// and appends the snapshot (issue #1380 A1, rule-based v1 per Q1).
+  /// Structured-engine sessions only — a classic session never grows
+  /// ledger records, so its projection stays byte-identical (E3). The
+  /// engine resolves through the live settings override first (#288 chain
+  /// — the same expression the compaction driver uses). Persistence
+  /// failures swallow: one missed classification must never break message
+  /// persistence, and the writer's cumulative state rides the next
+  /// successful snapshot.
+  Future<void> _ingestObligations(UserMessage message, String recordId) async {
+    if (_effectiveCompactionEngine() == CompactionEngine.classic) {
+      return;
+    }
+    final session = _session;
+    if (session == null) return;
+    final writer = await _obligationsWriterFor(session);
+    final payload = writer.ingest(
+      text: userMessageText(message.content),
+      sourceRecordId: recordId,
+      at: message.timestamp,
+    );
+    if (payload == null) return;
+    try {
+      await session.appendCustomEntry(
+        customType: obligationsLedgerRecordType,
+        data: payload,
+      );
+    } on Object {
+      // Swallowed deliberately (LedgerSnapshotDeduper protocol note): a
+      // failed append must not poison every later write.
+    }
+  }
+
+  /// The `obligation_mark_done` close path (issue #1380 lifecycle): marks
+  /// an entry done/superseded and persists the snapshot. An empty [id] is
+  /// the discovery mode — returns the open-obligation listing (ids,
+  /// statuses, clipped quotes) without closing anything. Unlike the
+  /// passive ingest above, failures are RETURNED — the agent must see
+  /// that its close did not land.
+  Future<String> closeObligation(String id, String status) async {
+    final session = _session;
+    if (session == null) return 'no session is open — the ledger is empty';
+    final writer = await _obligationsWriterFor(session);
+    if (id.isEmpty) {
+      final open = writer.ledger.open;
+      if (open.isEmpty) return 'no open obligations.';
+      return [
+        'open obligations (close with {"id": "..."}):',
+        for (final e in open)
+          '- ${e.id} [${e.kind.jsonName}] '
+              '${capLedgerText(e.text) ?? ''}',
+      ].join('\n');
+    }
+    final parsed = switch (status) {
+      'done' => ObligationStatus.done,
+      'superseded' => ObligationStatus.superseded,
+      _ => null,
+    };
+    if (parsed == null) {
+      return 'unknown status "$status" (use done or superseded)';
+    }
+    final payload = writer.markStatus(id, parsed);
+    if (payload == null) {
+      final ids = writer.ledger.entries.map((e) => e.id).toList();
+      return 'no obligation carries id $id. Open ids: '
+          '${ids.isEmpty ? "(none)" : ids.join(", ")}';
+    }
+    try {
+      await session.appendCustomEntry(
+        customType: obligationsLedgerRecordType,
+        data: payload,
+      );
+    } on Object {
+      return 'marking $id ${parsed.jsonName} failed — the snapshot did not '
+          'persist; try again';
+    }
+    final openLeft = writer.ledger.open.length;
+    return '$id marked ${parsed.jsonName}. '
+        '$openLeft open obligation(s) remain.';
+  }
+
+  /// The writer for [session], rehydrated from its latest
+  /// `obligations_ledger` snapshot via the RAW FILE SCAN — never the
+  /// resident view: the latest snapshot routinely lies below a windowed
+  /// tail, and a resident-view rehydration would let the next snapshot
+  /// silently erase every entry under it (#488 class, review-blocking on
+  /// this slice). Rebuilt lazily when the session switches.
+  Future<ObligationsLedgerWriter> _obligationsWriterFor(
+    Session session,
+  ) async {
+    final existing = _obligationsWriter;
+    if (existing != null && identical(_obligationsWriterSession, session)) {
+      return existing;
+    }
+    final ledger = await _latestObligationsFromScan(session);
+    final writer = ObligationsLedgerWriter(initial: ledger);
+    _obligationsWriterSession = session;
+    return _obligationsWriter = writer;
+  }
+
+  /// The latest snapshot payload over the session's full file chain (the
+  /// repo's streamed, rotation-aware scan), or an empty ledger.
+  Future<ObligationsLedger> _latestObligationsFromScan(
+    Session session,
+  ) async {
+    final repo = _repo;
+    if (repo is! JsonlSessionRepo) return const ObligationsLedger([]);
+    final records = await repo.readCustomRecordsOfType(
+      await session.getMetadata(),
+      {obligationsLedgerRecordType},
+    );
+    return records.isEmpty
+        ? const ObligationsLedger([])
+        : ObligationsLedger.fromPayload(records.last.data);
   }
 
   /// Handles a CodeMie auth-session expiry if [message] matches one. Returns
