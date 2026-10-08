@@ -76,4 +76,68 @@ void main() {
       );
     });
   });
+
+  group('ShellJobRegistry jobLogRedactor (issue #1408 AC2)', () {
+    late Directory taskDir;
+    late Directory logDir;
+
+    setUp(() {
+      taskDir = Directory.systemTemp.createTempSync('fa-1408-task-');
+      logDir = Directory.systemTemp.createTempSync('fa-1408-logs-');
+    });
+
+    tearDown(() {
+      taskDir.deleteSync(recursive: true);
+      logDir.deleteSync(recursive: true);
+    });
+
+    test('job logs are secret-redacted at rest', () async {
+      final pipeline = RedactionPipeline(registeredSecrets: const []);
+      final registry = ShellJobRegistry(
+        env: LocalExecutionEnv(cwd: taskDir.path),
+        jobLogDir: logDir.path,
+        jobLogRedactor: pipeline.redact,
+      );
+      final entry = await registry.start(
+        "echo 'aws key AKIAIOSFODNN7EXAMPLE captured'",
+      );
+      await entry.settled;
+
+      final log = File('${logDir.path}/${entry.id}.log').readAsStringSync();
+      // The fixture AWS access key never reaches the disk; the redaction
+      // marker does.
+      expect(log, isNot(contains('AKIAIOSFODNN7EXAMPLE')));
+      expect(log, contains('[REDACTED:AWS Access Key]'));
+    });
+
+    test('registered (non-vendor-shaped) secrets are redacted too', () async {
+      final pipeline = RedactionPipeline(registeredSecrets: const [])
+        ..registerSecret('Zm9vQkFQQkFSU0VDUkVU');
+      final registry = ShellJobRegistry(
+        env: LocalExecutionEnv(cwd: taskDir.path),
+        jobLogDir: logDir.path,
+        jobLogRedactor: pipeline.redact,
+      );
+      final entry = await registry.start('echo Zm9vQkFQQkFSU0VDUkVU');
+      await entry.settled;
+
+      final log = File('${logDir.path}/${entry.id}.log').readAsStringSync();
+      expect(log, isNot(contains('Zm9vQkFQQkFSU0VDUkVU')));
+      expect(log, contains('[REDACTED:Registered Secret]'));
+    });
+
+    test('without a redactor the log keeps the raw bytes (compat)', () async {
+      final registry = ShellJobRegistry(
+        env: LocalExecutionEnv(cwd: taskDir.path),
+        jobLogDir: logDir.path,
+      );
+      final entry = await registry.start('echo AKIAIOSFODNN7EXAMPLE');
+      await entry.settled;
+
+      expect(
+        File('${logDir.path}/${entry.id}.log').readAsStringSync(),
+        contains('AKIAIOSFODNN7EXAMPLE'),
+      );
+    });
+  });
 }

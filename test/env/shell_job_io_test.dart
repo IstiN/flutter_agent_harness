@@ -460,6 +460,42 @@ void main() {
       expect(File(logPath).existsSync(), isFalse);
     });
   });
+
+  group('job log redaction at rest (issue #1408 AC2)', () {
+    test('a secret-shaped value never lands in the log file', () async {
+      final pipeline = RedactionPipeline(registeredSecrets: const []);
+      final started = await env.startShellJob(
+        "echo 'aws key AKIAIOSFODNN7EXAMPLE captured'",
+        id: 'sh-1408',
+        logPath: '${tempDir.path}/sh-1408.log',
+        options: ShellExecOptions(
+          jobLogRedactor: JobLogRedactor(pipeline.redact),
+        ),
+      );
+      final job = started.valueOrNull!;
+      await job.settled;
+      final log = File(job.logPath).readAsStringSync();
+      expect(log, isNot(contains('AKIAIOSFODNN7EXAMPLE')));
+      expect(log, contains('[REDACTED:AWS Access Key]'));
+    });
+
+    test('a secret split across chunks stays redacted (line buffering)', () {
+      final redactor = JobLogRedactor(
+        (text) => text.replaceAll('AKIAIOSFODNN7EXAMPLE', '[REDACTED]'),
+      );
+      // No newline yet: the partial line stays buffered, so no half-token
+      // can reach the disk and dodge the redaction.
+      expect(redactor.ingest('key AKIA'), isEmpty);
+      expect(redactor.ingest('IOSFODNN7EXAMPLE\ndone'), '[REDACTED]\ndone');
+      expect(redactor.flush(), isEmpty);
+    });
+
+    test('flush() emits a trailing partial line', () {
+      final redactor = JobLogRedactor((text) => text);
+      expect(redactor.ingest('partial tail'), isEmpty);
+      expect(redactor.flush(), 'partial tail');
+    });
+  });
 }
 
 /// Live `ps` rows matching [needle]; zombies and the scanner itself

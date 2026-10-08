@@ -125,6 +125,7 @@ export 'src/context.dart';
 export 'src/cube/cube.dart';
 export 'src/env/execution_env.dart';
 export 'src/env/job_log_ceiling.dart';
+export 'src/env/job_log_redaction.dart';
 export 'src/env/session_parse_executor.dart';
 export 'src/a2a/a2a_client.dart';
 export 'src/a2a/a2a_mail_gateway.dart';

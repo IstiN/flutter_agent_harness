@@ -8,7 +8,9 @@
 /// model (`bash_job output`, the `read` tool) and the user can inspect it
 /// while the job runs. Bench/unattended runs relocate the directory
 /// ([jobLogDir], env `FAH_JOB_LOG_DIR`) so the harness's own artifacts never
-/// land in the graded task workspace (issue #1408 AC1).
+/// land in the graded task workspace (issue #1408 AC1), and pipe the writes
+/// through a redactor ([jobLogRedactor]) so secret values never rest in the
+/// logs (issue #1408 AC2).
 ///
 /// When a job settles, [ShellJobRegistry.onSettled] fires — the host's
 /// terminal bookkeeping (the job board's Running count, the waiting row)
@@ -28,6 +30,7 @@ import 'package:meta/meta.dart';
 
 import '../env/execution_env.dart';
 import '../env/job_log_ceiling.dart';
+import '../env/job_log_redaction.dart';
 // The boot-sweep process-table probe is VM-only infrastructure (`ps` via
 // dart:io); web builds get a stub that always reports "no process table".
 import '../env/process_probe_stub.dart'
@@ -146,6 +149,7 @@ final class ShellJobRegistry {
     this.jobLogMaxBytes,
     this.onJobLogWarning,
     this.jobLogDir,
+    this.jobLogRedactor,
     DateTime? bootTime,
   }) : _bootTime = bootTime ?? DateTime.now();
 
@@ -180,6 +184,13 @@ final class ShellJobRegistry {
   /// task workspace (env `FAH_JOB_LOG_DIR`, e.g. the container's /tmp) so
   /// the graded diff never sees harness artifacts.
   final String? jobLogDir;
+
+  /// At-rest redaction merged into every job start (issue #1408 AC2) —
+  /// typically `RedactionPipeline.redact`. Secret-shaped output becomes
+  /// `[REDACTED:<kind>]` markers in the log FILE; null keeps raw bytes
+  /// (hosts that run no pipeline). A caller's per-call
+  /// [ShellExecOptions.jobLogRedactor] wins over this session default.
+  final String Function(String text)? jobLogRedactor;
 
   /// Registry creation time; old-format logs modified before it are
   /// historical debris, not a live stale instance.
@@ -231,7 +242,11 @@ final class ShellJobRegistry {
     unawaited(_checkStaleOldFormatJobLogs(dir));
     // Issue #919: the ceiling and its warning channel ride the options so
     // every BackgroundShell (local, sandboxed, WASI) enforces the same
-    // policy through the shared seam.
+    // policy through the shared seam. Issue #1408 AC2: the at-rest
+    // redactor rides the same seam, wrapped in the line-buffered
+    // [JobLogRedactor] so a secret split across stream chunks still masks.
+    final redactor = options?.jobLogRedactor ??
+        (jobLogRedactor == null ? null : JobLogRedactor(jobLogRedactor));
     final mergedOptions = ShellExecOptions(
       cwd: options?.cwd,
       env: options?.env,
@@ -245,6 +260,7 @@ final class ShellJobRegistry {
       // defaults, not a black hole for per-call overrides (issue #919).
       jobLogMaxBytes: options?.jobLogMaxBytes ?? jobLogMaxBytes,
       onJobLogWarning: options?.onJobLogWarning ?? onJobLogWarning,
+      jobLogRedactor: redactor,
     );
     final started = await bg.startShellJob(
       command,

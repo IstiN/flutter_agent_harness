@@ -423,6 +423,11 @@ class AgentCli {
           // FAH_JOB_LOG_DIR so nothing harness-owned lands in the graded
           // task workspace.
           jobLogDir: config.jobLogDir,
+          // Issue #1408 AC2: job logs are secret-redacted at rest with the
+          // same pipeline that masks tool results.
+          jobLogRedactor: config.redactionPipeline == null
+              ? null
+              : (String text) => config.redactionPipeline!.redact(text),
         ),
         onPasswordPrompt: io.isInteractive ? _answerPasswordPrompt : null,
         configServiceFactory: (coreEnv) =>
