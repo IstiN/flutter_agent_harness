@@ -93,6 +93,53 @@ void main() {
       expect(_text(result), 'The user declined to provide GITHUB_TOKEN.');
     });
 
+    test(
+      'unattended decline carries the credential-hunt nudge (gh-1412)',
+      () async {
+        final tool = requestSecretTool(
+          callback: (name, reason) async => null,
+          unattended: () => true,
+        );
+        final result = await tool.execute(_args, null, null);
+        final text = _text(result);
+        expect(text, startsWith('The user declined to provide GITHUB_TOKEN.'));
+        expect(text, contains(credentialHuntNudge));
+        // The nudge names the standard places and the real-command rule.
+        expect(text, contains('~/.aws'));
+        expect(text, contains('environment'));
+      },
+    );
+
+    test('interactive decline never carries the nudge', () async {
+      final tool = requestSecretTool(
+        callback: (name, reason) async => null,
+        unattended: () => false,
+      );
+      final result = await tool.execute(_args, null, null);
+      expect(_text(result), isNot(contains(credentialHuntNudge)));
+    });
+
+    test('no unattended getter behaves as interactive (default)', () async {
+      final tool = requestSecretTool(callback: (name, reason) async => null);
+      final result = await tool.execute(_args, null, null);
+      expect(_text(result), isNot(contains(credentialHuntNudge)));
+    });
+
+    test('a grant in unattended mode is unchanged', () async {
+      final tool = requestSecretTool(
+        callback: (name, reason) async => const RequestSecretResult(
+          name: 'GITHUB_TOKEN',
+          value: 'ghp_secret',
+        ),
+        unattended: () => true,
+      );
+      final result = await tool.execute(_args, null, null);
+      expect(
+        _text(result),
+        'Secret GITHUB_TOKEN saved and available as \$GITHUB_TOKEN.',
+      );
+    });
+
     test('null callback throws (host cannot prompt)', () {
       final tool = requestSecretTool();
       expect(

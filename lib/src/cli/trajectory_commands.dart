@@ -159,6 +159,24 @@ extension on AgentCli {
     }
   }
 
+  /// Persists the FinalizeGate task ledger (gh-1412): the hidden
+  /// `task_ledger` record post-mortems and the bench summary read. The
+  /// event fires once per run, right before the run ends; a persist
+  /// failure must never take the run down (best-effort, like the blob
+  /// records).
+  Future<void> _onTaskLedger(TaskLedgerEvent event) async {
+    final session = _session;
+    if (session == null) return;
+    try {
+      await session.appendCustomEntry(
+        customType: taskLedgerRecordType,
+        data: event.ledger.toJson(),
+      );
+    } on Object catch (error) {
+      io.writeln(tuiError('task ledger persist failed: $error'));
+    }
+  }
+
   int get _trajectoryWidth => io.columns > 0 ? io.columns : 80;
 }
 

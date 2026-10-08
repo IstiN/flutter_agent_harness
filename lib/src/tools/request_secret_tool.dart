@@ -51,6 +51,18 @@ final class RequestSecretResult {
 typedef RequestSecretCallback =
     Future<RequestSecretResult?> Function(String name, String reason);
 
+/// The unattended decline nudge (gh-1412 AC5): a declined secret in an
+/// unattended run means "hunt harder", not "give up". Names the standard
+/// credential places the agent must enumerate with real commands before
+/// reporting a credential as genuinely unavailable.
+const String credentialHuntNudge =
+    'No user is present in this unattended run — treat the decline as '
+    '"hunt harder", not "give up": before declaring the credential '
+    'missing, enumerate the standard places with real commands '
+    '(environment variables, ~/.aws/, ~/.config/, ~/.netrc, '
+    '~/.git-credentials, instance metadata when available, the task '
+    'directory and its dotfiles), then report exactly where you looked.';
+
 /// Creates the `request_secret` tool bound to [callback].
 ///
 /// When [callback] is `null` (headless/non-interactive host), executing the
@@ -58,11 +70,19 @@ typedef RequestSecretCallback =
 /// telling the model this host cannot prompt for secrets (the safe
 /// fallback).
 ///
+/// [unattended] reports whether the session runs unattended (approval mode
+/// `unattended`/autopilot — no user present). When it answers true, a
+/// decline carries [credentialHuntNudge] (gh-1412); interactive sessions
+/// keep the short decline text.
+///
 /// Approval tier is [ApprovalTier.read]: the tool mutates nothing by itself —
 /// the user confirms the value in the host's own prompt. Execution is forced
 /// to [ToolExecutionMode.sequential] (like `ask`): concurrent requests would
 /// clobber the host's single prompt surface.
-AgentTool requestSecretTool({RequestSecretCallback? callback}) {
+AgentTool requestSecretTool({
+  RequestSecretCallback? callback,
+  bool Function()? unattended,
+}) {
   return AgentTool(
     name: 'request_secret',
     label: 'request_secret',
@@ -100,7 +120,14 @@ AgentTool requestSecretTool({RequestSecretCallback? callback}) {
       }
       final result = await _awaitResult(request, name, reason, cancelToken);
       if (result == null) {
-        return ToolExecutionResult.text('The user declined to provide $name.');
+        final declined = 'The user declined to provide $name.';
+        // gh-1412 P4/AC5: in an unattended run (no user behind the
+        // decline) a decline must read as "hunt the standard places",
+        // never as a dead end — the create-bucket class died here.
+        if (unattended?.call() ?? false) {
+          return ToolExecutionResult.text('$declined\n$credentialHuntNudge');
+        }
+        return ToolExecutionResult.text(declined);
       }
       final saved = result.name;
       if (!result.persisted) {

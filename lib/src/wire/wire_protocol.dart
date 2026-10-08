@@ -29,6 +29,7 @@ library;
 import 'dart:convert';
 
 import '../agent/agent_loop.dart';
+import '../agent/finalize_gate.dart';
 import '../agent/tool_pairing.dart';
 import '../approval/approval.dart';
 import '../context.dart';

@@ -266,7 +266,11 @@ class Agent {
   /// assistant answer and emits [TaskLedgerEvent] for the host to persist
   /// as the hidden `task_ledger` session record. Off = interactive
   /// behavior is byte-identical.
-  final bool finalizeGate;
+  ///
+  /// Mutable: hosts that build the agent through `wireAgentCore` flip it
+  /// right after the stack lands (the builder's `AgentWiringSpec` has no
+  /// knob for it in v1).
+  bool finalizeGate;
 
   /// Provider adapter used for every model call. See [StreamFunction].
   StreamFunction streamFunction;

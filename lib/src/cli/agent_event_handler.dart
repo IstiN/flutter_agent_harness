@@ -1,4 +1,5 @@
 import '../agent/agent_loop.dart';
+import '../agent/finalize_gate.dart';
 import '../types.dart';
 
 /// Routes an [AgentEvent] to the appropriate UI callback.
@@ -25,6 +26,7 @@ Future<void> handleAgentEvent(
   onToolExecutionEnd,
   required void Function(AssistantMessage message) onTurnEnd,
   Future<void> Function(ModelRequestEvent event)? onModelRequest,
+  Future<void> Function(TaskLedgerEvent event)? onTaskLedger,
 }) async {
   switch (event) {
     case MessageStartEvent(:final message) || MessageEndEvent(:final message):
@@ -48,6 +50,8 @@ Future<void> handleAgentEvent(
       onTurnEnd(message);
     case ModelRequestEvent():
       await onModelRequest?.call(event);
+    case TaskLedgerEvent():
+      await onTaskLedger?.call(event);
     default:
   }
 }
