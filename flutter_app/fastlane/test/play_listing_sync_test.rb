@@ -167,15 +167,38 @@ if $PROGRAM_NAME == __FILE__
     raise "FAIL: missing dir must yield []" unless PlayListingSync.local_images(metadata_dir, "ru-RU", "tenInchScreenshots") == []
     ok("local image sets sorted; missing dirs yield an empty set")
 
-    # The #947 regression pin: the clear plan covers EVERY listing locale ×
-    # EVERY multi-slot type — including ru-RU tenInch (no longer generated)
-    # and sevenInch (never generated).
-    plan = PlayListingSync.clear_plan(metadata_dir, ["de-DE"])
+    # The #947 regression pin: the clear plan (clear_sets — the production
+    # plan is clear_sets(managed locales); the locale-union clear_plan
+    # wrapper is gone, gh-1405 review) covers EVERY locale × EVERY
+    # multi-slot type — including ru-RU tenInch (no longer generated) and
+    # sevenInch (never generated).
+    plan = PlayListingSync.clear_sets(%w[de-DE en-US ru-RU])
     expected = %w[de-DE en-US ru-RU].product(PlayListingSync::SCREENSHOT_TYPES).size
     raise "FAIL: clear plan size #{plan.size} != #{expected}" unless plan.size == expected
     raise "FAIL: ru-RU tenInch must be cleared" unless plan.any? { |e| e[:locale] == "ru-RU" && e[:type] == "tenInchScreenshots" }
     raise "FAIL: console-only locale must be cleared" unless plan.any? { |e| e[:locale] == "de-DE" }
-    ok("clear plan = every listing locale × every multi-slot type (#{expected} sets)")
+    ok("clear plan = every locale × every multi-slot type (#{expected} sets)")
+
+    # gh-1405 review: the managed/skipped partition — ONE union
+    # computation, managed = titled listings, skipped = the untitled
+    # remainder of the SAME union.
+    managed, skipped = PlayListingSync.managed_and_skipped(
+      metadata_dir,
+      [{ "language" => "en-US", "title" => "Fa" },
+       { "language" => "ru-RU", "title" => "Фа" },
+       { "language" => "de-DE", "title" => "" }]
+    )
+    raise "FAIL: managed #{managed.inspect}" unless managed == %w[en-US ru-RU]
+    raise "FAIL: skipped #{skipped.inspect}" unless skipped == %w[de-DE]
+    managed, skipped = PlayListingSync.managed_and_skipped(
+      metadata_dir,
+      [{ "language" => "en-US", "title" => "Fa" },
+       { "language" => "de-DE", "title" => "" }],
+      skip_untitled: false
+    )
+    raise "FAIL: override must manage the whole union, got #{managed.inspect}" unless managed == %w[de-DE en-US ru-RU]
+    raise "FAIL: override leaves nothing skipped, got #{skipped.inspect}" unless skipped == []
+    ok("managed_and_skipped partitions the union once (managed_locales stays its first half)")
 
     state = PlayListingSync.expected_state(metadata_dir, %w[en-US ru-RU])
     raise "FAIL: en-US tenInch expected non-empty" unless state["en-US"]["tenInchScreenshots"].size == 1
@@ -251,6 +274,31 @@ if $PROGRAM_NAME == __FILE__
     raise "FAIL: the real fastlane/metadata/android tree is incomplete"
   end
   ok("gh-1402: the real fastlane/metadata/android tree passes the gate")
+
+  # ── gh-1405 review: the gate runs BEFORE any network call ───────────────
+  # The headline gh-1402 guarantee was pinned only via the gate's own unit
+  # coverage — the SEQUENCE (no HTTP request precedes it inside
+  # sync_and_verify!) was not. An incomplete tree + a recording transport:
+  # the gate must raise with the transport never touched.
+  Dir.mktmpdir do |root|
+    metadata_dir = metadata_dir_with_goldens(root)
+    File.delete(File.join(metadata_dir, "ru-RU", "title.txt"))
+    http = FakePlayHttp.new
+    begin
+      PlayListingSync.sync_and_verify!(metadata_dir: metadata_dir,
+                                       json_key: service_account_json,
+                                       package_name: "dev.fa1.app", http: http)
+      raise "FAIL: the incomplete tree must abort the sync at the gate"
+    rescue RuntimeError => e
+      unless e.message.include?("INCOMPLETE") && e.message.include?("ru-RU")
+        raise "FAIL: the gate must raise its own report, got: #{e.message}"
+      end
+    end
+    unless http.calls.empty?
+      raise "FAIL: the gate must precede EVERY network call, got: #{http.calls.inspect}"
+    end
+    ok("gh-1405: the completeness gate runs before any network call (zero requests)")
+  end
 
   # ── gh-1402: store-side untitled languages are skipped, never touched ───
   # The sync discovers languages from repo dirs ∪ the Play listing. A
@@ -758,7 +806,7 @@ if $PROGRAM_NAME == __FILE__
   ok("gh-1261 rework: api_error_message falls back to code/ERROR/OAuth labels")
 
   # ── gh-1261 rework: sibling REST wrappers render readable failures ──────
-  # bearer!/begin_edit!/list_locales!/commit_edit! used to truncate-dump
+  # bearer!/begin_edit!/list_listings!/commit_edit! used to truncate-dump
   # raw JSON bodies — the same readability problem the image calls fixed.
   Dir.mktmpdir do |_root|
     http = FakePlayHttp.new
@@ -788,10 +836,10 @@ if $PROGRAM_NAME == __FILE__
     http.listings_error = { status: 403,
                             body: { error: { status: "PERMISSION_DENIED", message: "no access" } }.to_json }
     begin
-      PlayListingSync.list_locales!(http, "dev.fa1.app", "edit1", {})
+      PlayListingSync.list_listings!(http, "dev.fa1.app", "edit1", {})
       raise "FAIL: a 403 edits.listings.list must raise"
     rescue RuntimeError => e
-      raise "FAIL: list_locales! must render the status-labelled error, got: #{e.message}" unless
+      raise "FAIL: list_listings! must render the status-labelled error, got: #{e.message}" unless
         e.message.include?("edits.listings.list failed (HTTP 403): PERMISSION_DENIED: no access")
     end
 
@@ -805,7 +853,7 @@ if $PROGRAM_NAME == __FILE__
       raise "FAIL: commit_edit! must render the status-labelled error, got: #{e.message}" unless
         e.message.include?("edits.commit failed (HTTP 400): FAILED_PRECONDITION: edit expired")
     end
-    ok("gh-1261 rework: bearer!/begin_edit!/list_locales!/commit_edit! fail readably")
+    ok("gh-1261 rework: bearer!/begin_edit!/list_listings!/commit_edit! fail readably")
   end
 
   # ── gh-1261 rework: MANAGED_TYPES is the module-local enum guard ────────
