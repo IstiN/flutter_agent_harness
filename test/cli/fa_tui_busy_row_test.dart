@@ -1,11 +1,13 @@
 // Fixed-cell busy-row layout (issue #365): digit growth at a power-of-ten
-// second, the 180 s quiet-threshold crossing and mid-run phase swaps must
-// never move a column outside the changing cell — the row is laid out in
-// fixed zones and padded to the terminal width like the status row.
+// second, the 180 s quiet-threshold crossing, mid-run phase swaps AND
+// kaomoji face swaps (#1374) must never move a column outside the
+// changing cell — the row is laid out in fixed zones and padded to the
+// terminal width like the status row.
 //
-// Busy-row cell map (ANSI stripped): spinner [0,1), space, label zone
-// [2,26) (24 cells), space, elapsed field [27,33) (6 cells), then the
-// suffix zone from 34 ('· <source>' first, '· quiet Nm' last).
+// Busy-row cell map (ANSI stripped): face zone [0,4) (the widest face
+// `o_o?`), space, label zone [5,29) (24 cells), space, elapsed field
+// [30,36) (6 cells), then the suffix zone from 37 ('· <source>' first,
+// '· quiet Nm' last).
 library;
 
 import 'dart:async';
@@ -23,10 +25,10 @@ void main() {
   // visible character at its true column.
   final ansi = RegExp(r'\x1b\[[0-9;?]*[A-Za-z]');
 
-  const labelEnd = 26; // spinner + space + 24-cell label zone
-  const elapsedStart = 27;
-  const elapsedEnd = 33;
-  const hintCol = 34; // '· <source>' starts here whenever a source exists
+  const labelEnd = 29; // face zone + space + 24-cell label zone
+  const elapsedStart = 30;
+  const elapsedEnd = 36;
+  const hintCol = 37; // '· <source>' starts here whenever a source exists
 
   FaTuiCallbacks callbacks() => FaTuiCallbacks(
     onSubmit: (_, {images = const []}) async {},
@@ -38,7 +40,9 @@ void main() {
   );
 
   /// A busy model frozen at [elapsed] seconds (with [quiet] seconds of
-  /// silence) — deterministic frames without waiting on real time.
+  /// silence) — deterministic frames without waiting on real time. The
+  /// face picker is pinned so every model renders the SAME face (face
+  /// swaps are exercised in fa_tui_kaomoji_test.dart).
   FaTuiModel modelAt(
     int elapsed, {
     String source = 'run',
@@ -49,6 +53,7 @@ void main() {
       callbacks: callbacks(),
       isExited: () => false,
       termWidth: 80,
+      kaomojiPick: (_) => 0,
     );
     model = model.update(BusyMsg(true, source: source)).$1 as FaTuiModel;
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -200,6 +205,7 @@ void main() {
       callbacks: callbacks(),
       isExited: () => false,
       termWidth: 80,
+      kaomojiPick: (_) => 0,
     );
     model = model.update(BusyMsg(true, source: 'run')).$1 as FaTuiModel;
     model =
@@ -278,15 +284,16 @@ void main() {
   });
 
   test('prompt mode view crops to glass when lines exceed terminal height', () {
-    final model = FaTuiModel(
-      callbacks: callbacks(),
-      isExited: () => false,
-      termWidth: 80,
-      termHeight: 15,
-    ).copyWith(
-      jobBoardLines: List.generate(20, (i) => 'job-$i test'),
-      prompt: TuiPromptState(SecretPromptSpec(name: 'KEY', reason: 'r')),
-    );
+    final model =
+        FaTuiModel(
+          callbacks: callbacks(),
+          isExited: () => false,
+          termWidth: 80,
+          termHeight: 15,
+        ).copyWith(
+          jobBoardLines: List.generate(20, (i) => 'job-$i test'),
+          prompt: TuiPromptState(SecretPromptSpec(name: 'KEY', reason: 'r')),
+        );
     final lines = model.view().content.split('\n');
     expect(lines.length, lessThanOrEqualTo(15));
   });

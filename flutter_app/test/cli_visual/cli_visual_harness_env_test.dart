@@ -24,6 +24,9 @@ void main() {
       expect(sandbox, isNotNull);
       expect(sandbox!.path, home);
       expect(env['TERM'], 'xterm-256color');
+      // One deterministic busy-row frame (issue #1374): every spawn pins
+      // the kaomoji face so screenshot pairs are byte-reproducible.
+      expect(env['FA_KAOMOJI_FACE'], '0');
       Directory(home).deleteSync(recursive: true);
     });
 
