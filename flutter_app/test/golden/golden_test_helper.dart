@@ -13,6 +13,8 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show KaomojiFacePicker;
 import 'package:flutter_test/flutter_test.dart';
 
 /// Desktop frame for hero/marketing shots.
@@ -34,6 +36,10 @@ var _fontsLoaded = false;
 /// boxes. Fonts are loaded once per test process; safe to call from every
 /// `setUpAll`.
 Future<void> ensureGoldenFonts() async {
+  // The kaomoji indicator (issue #1374) picks its face randomly in
+  // production — goldens pin it (the CLI's FA_KAOMOJI_FACE seam
+  // mirrors this) so every frame is deterministic: `>_o`, everywhere.
+  KaomojiFacePicker.debugPin = 0;
   if (_fontsLoaded) return;
   final inter = FontLoader('Inter')
     ..addFont(rootBundle.load('assets/fonts/Inter-Regular.ttf'))

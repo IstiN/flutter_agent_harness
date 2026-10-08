@@ -1,0 +1,262 @@
+// Copyright (c) 2026, the Flutter Agent Harness authors.
+// Use of this source code is governed by a MIT license that can be found
+// in the LICENSE file.
+
+// The kaomoji thinking indicator's Flutter rendering (issue #1374): the
+// random-frame swap cadence, the thinking block's SVG sprite icon (the
+// head-with-gear is gone), and the status row's two-tone text spans —
+// all deterministic through the seeded [Random] seam.
+//
+// Both swap clocks are TICKERS on the fake frame clock — the indicator
+// owns no timer — so `tester.pump` drives the faces exactly like it
+// drives the status row's elapsed seconds, and no test can end with a
+// pending timer.
+library;
+
+import 'dart:math';
+
+import 'package:fa_ui/fa_ui.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show
+        KaomojiFace,
+        KaomojiFacePicker,
+        MemoryExecutionEnv,
+        kKaomojiSwapPeriod;
+import 'package:flutter_test/flutter_test.dart';
+
+import 'fake_chat_service.dart';
+
+/// The face the [KaomojiFacePicker] shows after [swaps] swaps from
+/// [seed] — the replay twin every cadence assertion compares against.
+KaomojiFace replayFace(int seed, int swaps) {
+  final picker = KaomojiFacePicker(Random(seed));
+  var face = picker.first();
+  for (var i = 0; i < swaps; i++) {
+    face = picker.next();
+  }
+  return face;
+}
+
+/// The face the mounted [KaomojiThinkingIcon] shows (keyed by face —
+/// see [KaomojiThinkingIcon.build]).
+KaomojiFace _shownFace(WidgetTester tester) =>
+    (tester.widget<SizedBox>(find.descendant(
+      of: find.byType(KaomojiThinkingIcon),
+      matching: find.byType(SizedBox),
+    )).key! as ValueKey<KaomojiFace>)
+        .value;
+
+Widget _tileWrap(Widget child) {
+  return FaUiThemeProvider(
+    data: const FaUiTheme(),
+    child: MaterialApp(
+      theme: buildFahTheme(),
+      home: Scaffold(body: Center(child: child)),
+    ),
+  );
+}
+
+/// The status row's service stand-in (same pattern as
+/// fa_run_status_row_test.dart).
+class _PhaseService extends FakeChatService {
+  final List<FaChatMessage> rows = [];
+  bool streaming = false;
+
+  @override
+  List<FaChatMessage> get messages => rows;
+  @override
+  bool get isStreaming => streaming;
+
+  void notify() => notifyListeners();
+}
+
+void main() {
+  testWidgets('KaomojiSwapper: random swap exactly on the ~0.9 s cadence',
+      (tester) async {
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: KaomojiSwapper(
+          random: Random(7),
+          builder: (_, face) => Text(face.text),
+        ),
+      ),
+    );
+    String shown() => tester.widget<Text>(find.byType(Text)).data!;
+
+    final first = shown();
+    expect(first, replayFace(7, 0).text);
+    await tester.pump(kKaomojiSwapPeriod - const Duration(milliseconds: 1));
+    expect(shown(), first, reason: 'no swap before the cadence boundary');
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(shown(), replayFace(7, 1).text);
+    expect(shown(), isNot(first), reason: 'a swap never repeats the face');
+    await tester.pump(kKaomojiSwapPeriod);
+    expect(shown(), replayFace(7, 2).text);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('KaomojiSwapper: active=false freezes the face (AC4)',
+      (tester) async {
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: KaomojiSwapper(
+          active: false,
+          random: Random(3),
+          builder: (_, face) => Text(face.text),
+        ),
+      ),
+    );
+    final frozen = tester.widget<Text>(find.byType(Text)).data!;
+    await tester.pump(const Duration(seconds: 3));
+    expect(
+      tester.widget<Text>(find.byType(Text)).data,
+      frozen,
+      reason: 'an inactive indicator never animates',
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('KaomojiSwapper: going inactive mid-run stops the swaps',
+      (tester) async {
+    Widget tree({required bool active}) => Directionality(
+          textDirection: TextDirection.ltr,
+          child: KaomojiSwapper(
+            active: active,
+            random: Random(7),
+            builder: (_, face) => Text(face.text),
+          ),
+        );
+    await tester.pumpWidget(tree(active: true));
+    await tester.pump(kKaomojiSwapPeriod);
+    final afterFirstSwap = tester.widget<Text>(find.byType(Text)).data!;
+    expect(afterFirstSwap, replayFace(7, 1).text);
+
+    // The phase ends: the same position in the tree flips inactive.
+    await tester.pumpWidget(tree(active: false));
+    await tester.pump(const Duration(seconds: 2));
+    expect(
+      tester.widget<Text>(find.byType(Text)).data,
+      afterFirstSwap,
+      reason: 'the swap clock stopped with the phase',
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('thinking tile: the kaomoji sprite replaces the '
+      'head-with-gear, frozen when the phase is over', (tester) async {
+    await tester.pumpWidget(
+      _tileWrap(
+        ChatMessageTile(
+          message: FaChatMessage(role: 'thinking', content: 'hmm'),
+          images: SandboxImageResolver(MemoryExecutionEnv()),
+        ),
+      ),
+    );
+    expect(find.byType(KaomojiThinkingIcon), findsOneWidget);
+    expect(find.byIcon(Icons.psychology_outlined), findsNothing);
+    expect(tester.takeException(), isNull);
+    final frozen = _shownFace(tester);
+    await tester.pump(const Duration(seconds: 2));
+    expect(_shownFace(tester), same(frozen),
+        reason: 'a finished thinking note keeps its frozen face');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('thinkingLive: the tile icon swaps on the ~0.9 s cadence',
+      (tester) async {
+    await tester.pumpWidget(
+      _tileWrap(
+        ChatMessageTile(
+          message: FaChatMessage(role: 'thinking', content: 'hmm'),
+          images: SandboxImageResolver(MemoryExecutionEnv()),
+          thinkingLive: true,
+        ),
+      ),
+    );
+    final before = _shownFace(tester);
+    await tester.pump(kKaomojiSwapPeriod - const Duration(milliseconds: 1));
+    expect(_shownFace(tester), same(before),
+        reason: 'no swap before the cadence boundary');
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(_shownFace(tester), isNot(same(before)),
+        reason: 'the live thinking block animates');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('idle: the status row mounts no face (AC4)', (tester) async {
+    final service = _PhaseService();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: FaRunStatusRow(service: service)),
+      ),
+    );
+    expect(find.byType(KaomojiFaceText), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('status row (web TUI Working…): two-tone face spans, '
+      'random swap on the shared cadence, gone with the phase',
+      (tester) async {
+    final service = _PhaseService()
+      ..rows.add(FaChatMessage(role: 'user', content: 'go'))
+      ..streaming = true
+      ..notify();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: FaRunStatusRow(service: service)),
+      ),
+    );
+    expect(find.textContaining('Thinking'), findsOneWidget);
+
+    const eye = Color(0xFF60D0D0);
+    const mouth = Color(0xFF70A0E0);
+    TextSpan root() => tester
+        .widget<RichText>(
+          find.descendant(
+            of: find.byType(KaomojiFaceText),
+            matching: find.byType(RichText),
+          ),
+        )
+        .text as TextSpan;
+    String shown() => [
+          for (final span in root().children!) (span as TextSpan).text!,
+        ].join();
+    Set<Color> tones() => {
+          for (final span in root().children!)
+            (span as TextSpan).style!.color!,
+        };
+
+    // First tick: the run opens on a random face.
+    await tester.pump(const Duration(milliseconds: 100));
+    final first = shown();
+    expect(first, isNotEmpty);
+    expect(
+      tones(),
+      containsAll({eye, mouth}),
+      reason: '$first renders two-tone: teal eyes/face strokes, blue mouth',
+    );
+    expect(
+      tones().every((tone) => tone == eye || tone == mouth),
+      isTrue,
+      reason: 'no color outside the brand palette',
+    );
+
+    // Sub-cadence ticks repaint nothing; the 0.9 s boundary swaps.
+    await tester.pump(const Duration(milliseconds: 800));
+    expect(shown(), first, reason: 'no swap before the cadence boundary');
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(shown(), isNot(first), reason: 'a swap never repeats the face');
+
+    // Phase end: the face (and the ticker driving it) stops with the row.
+    service
+      ..streaming = false
+      ..notify();
+    await tester.pump();
+    expect(find.byType(KaomojiFaceText), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+}

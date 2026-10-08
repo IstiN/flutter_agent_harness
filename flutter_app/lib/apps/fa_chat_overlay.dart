@@ -316,6 +316,9 @@ class _FaChatOverlayState extends State<FaChatOverlay> {
       messageFontSize: ChatTextScope.maybeOf(context)?.fontSize,
       audioControllerFactory: widget.audioControllerFactory,
       videoControllerFactory: widget.videoControllerFactory,
+      // The live thinking block animates (issue #1374); finished
+      // thinking notes freeze their face.
+      thinkingLive: widget.service.isStreaming,
       // The overlay lives inside app views, far from any ChatScreen, so it
       // wires its own widget-tile builder (issue #336): without one the
       // live widget degrades to the plain tool card.

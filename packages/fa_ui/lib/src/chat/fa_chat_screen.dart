@@ -1178,6 +1178,9 @@ class _FaChatScreenState extends State<FaChatScreen>
         videoControllerFactory: widget.videoControllerFactory,
         imageCacheWidth: widget.imagePreviewCacheWidth,
         dynamicWidgetTileBuilder: widget.dynamicWidgetTileBuilder,
+        // The live thinking block animates (issue #1374); finished
+        // thinking notes freeze their face.
+        thinkingLive: widget.service.isStreaming,
       ),
     );
     // Issue #379 AC3: a touch anywhere on a live widget row is an
