@@ -80,6 +80,8 @@ void main() {
           () => frames.text.contains('\x1b[?1049h'),
           reason: 'the boot reached the frame renderer',
         );
+        // ignore: avoid_print
+        print('DBG boot ok');
 
         // SPAWN: the registry event drives the refresh — the row renders
         // from the handle and the ticker arms (a live row exists).
@@ -89,11 +91,15 @@ void main() {
           agentType: 'explore',
           task: 'scout the workspace',
         );
+        // ignore: avoid_print
+        print('DBG registered');
         await cli.subagentManager.update(
           'scout#1',
           status: SubagentStatus.running,
           tokens: 512,
         );
+        // ignore: avoid_print
+        print('DBG updated; waiting for paint');
         await _waitFor(
           () => frames.plain.contains('run  scout'),
           reason: 'the spawn painted the one-line row',
