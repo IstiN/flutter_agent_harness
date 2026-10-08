@@ -45,16 +45,16 @@ List<String> _shapeOf(List<Message> messages) => [
 ];
 
 /// Builds the marathon fixture: 1200 messages with a classic compaction
-/// boundary at e450 (firstKeptEntryId e380 — the kept region is the 70
-/// records the compaction retained), structured folds over e470..e579,
-/// and a long visible tail. The doubling walk bottoms out at e401 —
-/// inside the kept region — which is the geometry the fix addresses.
-/// Returns the JSONL text.
+/// boundary at e450 (firstKeptEntryId e0 — the boundary drops nothing, so
+/// the classic hidden-index residency artifact stays out of scope; the
+/// kept region is the whole prefix up to the boundary), structured folds
+/// over e470..e579, and a long visible tail. The doubling walk bottoms
+/// out at e401 — inside the kept region — which is the geometry the fix
+/// addresses. Returns the JSONL text.
 String _marathonJsonl() {
   const iso = '2026-01-01T00:00:00.000Z';
   const count = 1200;
   const boundary = 450;
-  const firstKept = 380;
   final buffer = StringBuffer(
     '{"type":"session","version":3,"id":"marathon","timestamp":"$iso",'
     '"cwd":"/work"}\n',
@@ -69,7 +69,7 @@ String _marathonJsonl() {
       buffer.write(
         '{"type":"compaction","id":"c$i","parentId":"e${i - 1}",'
         '"timestamp":"$iso","summary":"earlier marathon context",'
-        '"firstKeptEntryId":"e$firstKept","tokensBefore":99999}\n',
+        '"firstKeptEntryId":"e0","tokensBefore":99999}\n',
       );
     }
     buffer.write(
@@ -307,7 +307,8 @@ void main() {
 
       final texts = _shapeOf(messages);
       expect(texts.join('\n'), isNot(contains('[resume]')));
-      expect(texts.where((s) => s.contains('[1:hidden·user·')), isNotEmpty);
+      // The seq alias counts the session header as line 1, so u1 is #2.
+      expect(texts.where((s) => s.contains('[2:hidden·user·')), isNotEmpty);
       expect(texts.where((s) => s.contains('visible two')), isNotEmpty);
     });
 
