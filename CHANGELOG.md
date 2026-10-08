@@ -4766,4 +4766,9 @@
 - gh-1403 [daily-publish] testflight leg failed (#1424)
 - feat(bench): per-task test-budget override table + planner fairness guard (gh-1407) (#1417)
 
+## 1.0.534
+
+- fix(1408): harness-induced bench failures — isolated job logs, redacted at rest, shape-only bash interceptor (AC1–AC3; AC4 documented) (#1410)
+- gh-1415 [GOAL] Subagent status line-language: one compact live row per subagent in the CLI TUI (omp-density, ten named deltas) (#1420)
+
 ## Unreleased
