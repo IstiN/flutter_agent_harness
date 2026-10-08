@@ -70,15 +70,24 @@ void main() {
     'inbox mail during pre-flight compaction never starts a parallel run',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
-      // Three ~10k-token answers in a 40k window: compaction only crosses
-      // the 16384-token reserve threshold after the third turn.
-      final big = 'x' * 40000;
+      // Three ~100k-token answers in a 400k window, compaction pinned by
+      // EXPLICIT settings (reserve 130k → trigger 270k): the transcript
+      // alone decides the fire turn — after the third one only, with ~50k
+      // tokens of margin on each edge. The former 40k/10k script rode the
+      // unanchored request estimate, which also prices the system-prompt +
+      // tool-schema overhead (~20k tokens that drift with every surface
+      // change); tier 2's larger compact_expand description + `action`
+      // schema tipped it over the trigger one turn early, the compaction's
+      // own summarizer call consumed this fake's gated slot (call 4) inside
+      // the second run's bracket, and that run busy-waited on the gate
+      // until the wait expired.
+      final big = 'x' * 400000;
       const tiny = Model(
-        id: 'tiny-window',
+        id: 'sized-window',
         api: 'test-api',
         provider: 'test-provider',
         baseUrl: 'https://example.test',
-        contextWindow: 40000,
+        contextWindow: 400000,
         maxTokens: 4096,
       );
       final stream = _GatedStream([
@@ -99,6 +108,11 @@ void main() {
           env: env,
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
+          compactionSettings: const CompactionSettings(
+            enabled: true,
+            reserveTokens: 130000,
+            keepRecentTokens: 20000,
+          ),
         ),
         io: io,
         streamFunction: stream.call,
