@@ -6,6 +6,7 @@
 library;
 
 import 'dart:core';
+import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
@@ -68,6 +69,50 @@ void main() {
       }
     });
 
+    test('values above the 1 h sanity bound are hard parse errors', () {
+      // Review r2: a fat-fingered 30-minute idle timeout would silently
+      // defeat the watchdog this config exists to tune.
+      for (final pair in const {
+        'connectTimeoutMs': 3600001,
+        'streamIdleTimeoutMs': 7200000,
+      }.entries) {
+        final doc =
+            loadYaml('''
+- name: fat-finger
+  apiType: openai
+  baseUrl: https://fat.example.com/v1
+  modelId: gpt-4o
+  ${pair.key}: ${pair.value}
+''')
+                as YamlList;
+        expect(
+          () => CustomProviderEntry.fromYaml(doc.first),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              allOf(contains(pair.key), contains('3600000')),
+            ),
+          ),
+          reason: '${pair.key}: ${pair.value} exceeds the 1 h sanity bound',
+        );
+      }
+      // The bound itself parses (boundary stays legal).
+      final doc =
+          loadYaml('''
+- name: bound
+  apiType: openai
+  baseUrl: https://bound.example.com/v1
+  modelId: gpt-4o
+  streamIdleTimeoutMs: 3600000
+''')
+              as YamlList;
+      expect(
+        CustomProviderEntry.fromYaml(doc.first).streamIdleTimeout,
+        const Duration(hours: 1),
+      );
+    });
+
     test('the yaml writer round-trips the keys', () {
       final doc =
           loadYaml('''
@@ -83,6 +128,40 @@ void main() {
       final yaml = entry.toYaml();
       expect(yaml['connectTimeoutMs'], 30000);
       expect(yaml['streamIdleTimeoutMs'], 1500);
+    });
+
+    test('the /provider edit wizard carries the hand-configured fields', () {
+      // Review r2: the wizard rebuilds the entry from its own answers —
+      // authMethod, authHeader and the tuning keys must survive the edit.
+      final existing = CustomProviderEntry(
+        name: 'glm-relay',
+        apiType: 'openai',
+        baseUrl: 'https://glm.example.com/v1',
+        modelId: 'glm-5.3-flash',
+        authMethod: CustomProviderAuthMethod.sso,
+        authHeader: 'x-api-key',
+        connectTimeout: const Duration(seconds: 30),
+        streamIdleTimeout: const Duration(milliseconds: 1500),
+      );
+      final updated = mergeEditedCustomProviderEntry(
+        existing: existing,
+        updated: CustomProviderEntry(
+          name: 'glm-relay',
+          apiType: 'openai',
+          baseUrl: 'https://glm.example.com/v2',
+          modelId: 'glm-5.4-flash',
+        ),
+      );
+      expect(updated.modelId, 'glm-5.4-flash', reason: 'wizard-owned');
+      expect(
+        updated.baseUrl,
+        'https://glm.example.com/v2',
+        reason: 'wizard-owned',
+      );
+      expect(updated.authMethod, CustomProviderAuthMethod.sso);
+      expect(updated.authHeader, 'x-api-key');
+      expect(updated.connectTimeout, const Duration(seconds: 30));
+      expect(updated.streamIdleTimeout, const Duration(milliseconds: 1500));
     });
   });
 
@@ -258,6 +337,87 @@ streamIdleTimeoutMs: 240000
       expect(
         providerTuningRegistry.forName('glm-relay')?.streamIdle,
         const Duration(seconds: 9),
+      );
+    });
+
+    test('reset: true clears removed entries (host reload semantics)', () {
+      providerTuningRegistry.clear();
+      addTearDown(providerTuningRegistry.clear);
+      seedProviderTuning(
+        customProviders: [
+          CustomProviderEntry(
+            name: 'glm-relay',
+            apiType: 'openai',
+            baseUrl: 'https://glm.example.com/v1',
+            modelId: 'glm-5.3-flash',
+            streamIdleTimeout: const Duration(seconds: 2),
+          ),
+        ],
+      );
+      // The reload pass names ONLY the surviving entry and resets first:
+      // a removed entry's row cannot survive the reload (E4).
+      seedProviderTuning(
+        reset: true,
+        customProviders: [
+          CustomProviderEntry(
+            name: 'other',
+            apiType: 'openai',
+            baseUrl: 'https://other.example.com/v1',
+            modelId: 'm',
+            connectTimeout: const Duration(seconds: 5),
+          ),
+        ],
+      );
+      expect(providerTuningRegistry.forName('glm-relay'), isNull);
+      expect(providerTuningRegistry.forName('other'), isNotNull);
+    });
+
+    test(
+      'queue-lane entries render boot notices (never a silent override)',
+      () {
+        providerTuningRegistry.clear();
+        addTearDown(providerTuningRegistry.clear);
+        seedProviderTuning(
+          queueEntries: [
+            ProviderQueueEntry(
+              providerType: 'openai-completions',
+              model: 'q',
+              baseUrl: 'https://queue.example.com/v1',
+              streamIdleTimeout: const Duration(milliseconds: 1500),
+            ),
+          ],
+        );
+        final notices = providerTuningBootNotices();
+        expect(notices, isNotEmpty, reason: 'AC1: every seeded entry prints');
+        expect(
+          notices.join('\n'),
+          contains('queue:'),
+          reason:
+              'the queue lane replaces main-model resolution — its '
+              'tuning entries must be loud like every other lane',
+        );
+        expect(notices.join('\n'), contains('idle 1.5s'));
+      },
+    );
+  });
+
+  group('boot wiring — runapp prints tuning notices AFTER queue seeding', () {
+    // Source-order pin (the bin_boot_restore_pin_test.dart pattern): the
+    // review's blocking bug — `providerTuningBootNotices()` captured before
+    // `seedProviderTuning(queueEntries:)` — is a boot-ORDER property only a
+    // full `fa` boot could exercise; the source order pins it cheaply.
+    test('fah_runapp.dart captures the notices after the queue pass', () {
+      final source = File('bin/fah_runapp.dart').readAsStringSync();
+      final queueSeed = source.indexOf('seedProviderTuning(queueEntries:');
+      final noticeCapture = source.indexOf('providerTuningBootNotices()');
+      expect(queueSeed, greaterThan(-1));
+      expect(noticeCapture, greaterThan(-1));
+      expect(
+        noticeCapture,
+        greaterThan(queueSeed),
+        reason:
+            'queue-carried tuning entries must be in the table BEFORE '
+            'the boot notices are captured, or they never print',
       );
     });
   });

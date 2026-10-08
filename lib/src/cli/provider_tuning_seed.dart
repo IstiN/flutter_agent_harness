@@ -7,10 +7,19 @@
 ///
 /// Resolution order (one, documented): **provider entry > the global
 /// `providerTimeouts:` section > the built-in defaults**, per field.
-/// Config reload re-runs the seeder (E4: the NEXT request recomputes; an
-/// in-flight request already resolved its values). Queue `ref` entries
-/// need no special handling — they materialize the referenced custom
-/// provider's `baseUrl`, so the URL-keyed lookup finds the entry.
+///
+/// Lifecycle (boot-scoped, review r2): the production seeder runs at
+/// BOOT only — the config pass in `bin/fah_runapp.dart` and, later, the
+/// queue pass (queue entries must be in the table before
+/// [providerTuningBootNotices] is captured, or they never print). A
+/// mid-session config edit does NOT re-seed by itself: E4's
+/// "recompute for the NEXT request" applies when a host re-runs
+/// [seedProviderTuning] — pass `reset: true` so entries REMOVED from the
+/// config also leave the table (without the reset, `register` only
+/// replaces/adds rows and a deleted entry would persist forever).
+/// Queue `ref` entries need no special handling — they materialize the
+/// referenced custom provider's `baseUrl`, so the URL-keyed lookup finds
+/// the entry.
 library;
 
 import '../model_roles/models_config.dart';
@@ -23,12 +32,19 @@ import 'custom_providers.dart';
 /// [providerTuningRegistry]. All parameters optional; entries without
 /// overrides never reach the table (the AC6 fast path: no entries → the
 /// wire seams keep today's exact values).
+///
+/// [reset] clears the table FIRST — the full-reload form (E4): boot's two
+/// passes run without it (the queue pass must ADD to the config pass),
+/// while a host applying a fresh config snapshot resets so removed
+/// entries cannot outlive their config.
 void seedProviderTuning({
   List<CustomProviderEntry>? customProviders,
   Map<String, CustomModelDefinition>? customModels,
   List<ModelRef>? roleRefs,
   List<ProviderQueueEntry>? queueEntries,
+  bool reset = false,
 }) {
+  if (reset) providerTuningRegistry.clear();
   final custom = customProviders ?? const [];
   for (final entry in custom) {
     if (entry.connectTimeout == null && entry.streamIdleTimeout == null) {
@@ -84,5 +100,5 @@ void seedProviderTuning({
 List<String> providerTuningBootNotices() => [
   for (final entry in providerTuningRegistry.entries)
     'provider tuning ${entry.name} (${entry.baseUrl}): '
-        '${describeProviderTimeouts(resolveProviderTimeouts(name: entry.name))}',
+        '${resolveProviderTimeouts(name: entry.name).describe()}',
 ];

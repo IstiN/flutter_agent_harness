@@ -119,6 +119,68 @@ void main() {
         );
       });
 
+      test(
+        'precedence: longest base path wins; same-baseUrl tie → last wins',
+        () {
+          // Two entries can cover the same host at different path depths;
+          // first-match-wins let insertion order shadow the more specific
+          // one (review: a queue entry's own tuning behind an earlier
+          // same-host catch-all). The SPECIFIC base wins regardless of
+          // registration order.
+          providerTuningRegistry.clear();
+          addTearDown(providerTuningRegistry.clear);
+          providerTuningRegistry.register(
+            name: 'host-catch-all',
+            baseUrl: 'https://api.kimi.example/v1',
+            streamIdle: const Duration(seconds: 30),
+          );
+          providerTuningRegistry.register(
+            name: 'specific-route',
+            baseUrl: 'https://api.kimi.example/v1beta',
+            streamIdle: const Duration(seconds: 3),
+          );
+          expect(
+            resolveProviderTimeouts(
+              url: Uri.parse(
+                'https://api.kimi.example/v1beta/chat/completions',
+              ),
+            ).streamIdle,
+            const Duration(seconds: 3),
+            reason: 'the longer (more specific) base path wins',
+          );
+          expect(
+            resolveProviderTimeouts(
+              url: Uri.parse('https://api.kimi.example/v1/chat/completions'),
+            ).streamIdle,
+            const Duration(seconds: 30),
+          );
+          // Identical baseUrls (two lanes seed the same endpoint — the
+          // review's concrete inversion): the LAST registration wins, so
+          // the queue pass (which runs after the config pass at boot)
+          // keeps its own tuning instead of being silently shadowed.
+          providerTuningRegistry.clear();
+          providerTuningRegistry.register(
+            name: 'customProviders:glm',
+            baseUrl: 'https://glm.example.com/v1',
+            streamIdle: const Duration(seconds: 30),
+          );
+          providerTuningRegistry.register(
+            name: 'queue:glm',
+            baseUrl: 'https://glm.example.com/v1',
+            streamIdle: const Duration(seconds: 7),
+          );
+          expect(
+            resolveProviderTimeouts(
+              url: Uri.parse('https://glm.example.com/v1/chat/completions'),
+            ).streamIdle,
+            const Duration(seconds: 7),
+            reason:
+                'last-registration-wins on equal bases — boot seeds the '
+                'queue pass last, so queue tuning cannot be shadowed',
+          );
+        },
+      );
+
       test('explicit name lookup wins over baseUrl matching', () {
         providerTuningRegistry.clear();
         addTearDown(providerTuningRegistry.clear);
@@ -298,12 +360,51 @@ void main() {
       });
 
       test('terminal story renders partial spend truthfully', () {
+        // Review r2: the story must not CLAIM exhaustion it cannot see.
         final ledger = RetryBudgetLedger();
         ledger.tryConsume(RetryBudgetClass.connection);
         final story = ledger.terminalStory();
         expect(story, contains('connection 1/4'));
         expect(story, contains('stream 0/3'));
+        expect(
+          story.contains('exhausted'),
+          isFalse,
+          reason:
+              '1/4 and 0/3 spent — no budget is exhausted, the story '
+              'must not say so',
+        );
       });
+
+      test('terminal story names WHICH budget exhausted on mixed spend', () {
+        final ledger = RetryBudgetLedger();
+        for (var i = 0; i < ledger.cap(RetryBudgetClass.connection); i++) {
+          ledger.tryConsume(RetryBudgetClass.connection);
+        }
+        ledger.tryConsume(RetryBudgetClass.stream);
+        final story = ledger.terminalStory();
+        expect(story, contains('connection 4/4 exhausted'));
+        expect(story, contains('stream 1/3'));
+        // Only the spent-out budget earns the word.
+        final exhaustedCount = 'exhausted'.allMatches(story).length;
+        expect(exhaustedCount, 1);
+      });
+
+      test(
+        'terminal story keeps the exhausted headline when BOTH are spent',
+        () {
+          final ledger = RetryBudgetLedger();
+          for (var i = 0; i < 4; i++) {
+            ledger.tryConsume(RetryBudgetClass.connection);
+          }
+          for (var i = 0; i < 3; i++) {
+            ledger.tryConsume(RetryBudgetClass.stream);
+          }
+          final story = ledger.terminalStory();
+          expect(story, startsWith('retry budgets exhausted'));
+          expect(story, contains('connection 4/4'));
+          expect(story, contains('stream 3/3'));
+        },
+      );
     },
   );
 
@@ -405,6 +506,28 @@ void main() {
           recorder.recordGap('m', Duration(seconds: s));
         }
         expect(recorder.summary('m')!.p50, const Duration(seconds: 20));
+      });
+
+      test('per-model samples are bounded (no unbounded process growth)', () {
+        // Review r2: a reasoning-heavy run records thousands of gaps per
+        // model into a process-global — the recorder keeps a bounded
+        // recent window instead of growing forever.
+        final recorder = InterChunkGapRecorder();
+        for (
+          var i = 0;
+          i < InterChunkGapRecorder.maxSamplesPerModel + 100;
+          i++
+        ) {
+          recorder.recordGap('m', Duration(milliseconds: i));
+        }
+        final summary = recorder.summary('m')!;
+        expect(summary.samples, InterChunkGapRecorder.maxSamplesPerModel);
+        // The window keeps the RECENT samples: the oldest 100 are gone,
+        // so the p95 reflects the tail of the run, not its head. Sorted
+        // window [100..2147], nearest-rank p95 = ceil(0.95·2048) = 1946th
+        // value = index 1945 → 100 + 1945 = 2045 ms (an unbounded or
+        // keep-oldest window would read 1945 ms instead).
+        expect(summary.p95, const Duration(milliseconds: 100 + 1945));
       });
     },
   );

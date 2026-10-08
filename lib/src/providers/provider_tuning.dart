@@ -40,9 +40,18 @@ import 'provider_common.dart'
 
 /// Parses one `connectTimeoutMs`/`streamIdleTimeoutMs` field from a
 /// registry-entry node (issue #1398): null/absent → null; a positive
-/// integer → the duration; anything else → [ConfigException] naming the
-/// field and the entry it lives on (strict, like every other config
-/// field — a typo must never silently keep the default).
+/// integer within the sanity bound → the duration; anything else →
+/// [ConfigException] naming the field and the entry it lives on (strict,
+/// like every other config field — a typo must never silently keep the
+/// default).
+///
+/// Upper bound ([maxProviderTimeoutMs], 1 h): a fat-fingered
+/// `streamIdleTimeoutMs: 1800000` would parse fine and quietly disable
+/// the watchdog this config exists to provide — healthy glm-5.3-flash
+/// inter-chunk gaps peak around 200 s, so anything past the bound can
+/// never fire and is a config error, not a tuning choice.
+const int maxProviderTimeoutMs = 3600000;
+
 Duration? parseProviderTimeoutMs(Object? node, String field, String where) {
   // ignore: avoid_dynamic_calls
   final value = node;
@@ -50,6 +59,13 @@ Duration? parseProviderTimeoutMs(Object? node, String field, String where) {
   if (value is! int || value <= 0) {
     throw ConfigException(
       '"$field" on $where must be a positive integer (milliseconds), '
+      'got: $value',
+    );
+  }
+  if (value > maxProviderTimeoutMs) {
+    throw ConfigException(
+      '"$field" on $where must be at most $maxProviderTimeoutMs ms (1 h) — '
+      'a larger value can never fire and silently disables the watchdog, '
       'got: $value',
     );
   }
@@ -157,8 +173,10 @@ final class ProviderTuningEntry {
 
 /// The process-wide per-provider tuning table: registry entries that
 /// declare `connectTimeoutMs`/`streamIdleTimeoutMs` are seeded here at
-/// boot (and re-seeded on config reload — E4: the NEXT request recomputes,
-/// an in-flight one already resolved its values).
+/// boot. Boot-scoped (review r2): a mid-session config edit does not
+/// re-seed by itself — a host applying a fresh config re-runs the seeder
+/// with `reset: true` (E4: the NEXT request recomputes; an in-flight one
+/// already resolved its values).
 final class ProviderTuningRegistry {
   final List<ProviderTuningEntry> _entries = [];
 
@@ -210,11 +228,26 @@ final class ProviderTuningRegistry {
   /// request's (entry `https://api.x/v1` matches
   /// `https://api.x/v1/chat/completions` and `https://api.x/v1`, never
   /// `https://api.x/v2` or another host/port).
+  ///
+  /// Precedence among matching entries (review r2): the LONGEST base path
+  /// wins — a specific route entry must never be shadowed by an earlier
+  /// same-host catch-all. Entries with the SAME base resolve
+  /// last-registration-wins: boot seeds the queue pass after the config
+  /// pass, so a queue entry's own tuning beats a same-endpoint
+  /// customProviders entry instead of the reverse.
   ProviderTuningEntry? forUrl(Uri url) {
+    ProviderTuningEntry? best;
+    var bestPathLength = -1;
     for (final entry in _entries) {
-      if (_matchesBaseUrl(url, entry.baseUrl)) return entry;
+      if (!_matchesBaseUrl(url, entry.baseUrl)) continue;
+      final length = _baseDepth(entry.baseUrl);
+      // `>=` — a later equal-depth match replaces the earlier one.
+      if (length >= bestPathLength) {
+        best = entry;
+        bestPathLength = length;
+      }
     }
-    return null;
+    return best;
   }
 
   /// The entry registered under an exact name (the AC1 startup log and the
@@ -248,6 +281,19 @@ int? _defaultPort(String scheme) => scheme.toLowerCase() == 'https'
     : scheme.toLowerCase() == 'http'
     ? 80
     : null;
+
+/// The normalized base-path depth used by the forUrl precedence: the
+/// segment count of the entry's base path (a deeper base is the more
+/// specific match).
+int _baseDepth(String baseUrl) {
+  final base = Uri.tryParse(baseUrl);
+  if (base == null) return 0;
+  final path = base.path.endsWith('/')
+      ? base.path.substring(0, base.path.length - 1)
+      : base.path;
+  if (path.isEmpty || path == '/') return 0;
+  return path.split('/').where((s) => s.isNotEmpty).length;
+}
 
 /// The process-wide tuning table (same pattern as
 /// `providerTimeoutsOverride`: read on every request, seeded at boot,
@@ -368,12 +414,18 @@ final class RetryBackoffDecision {
 }
 
 /// The doubling ladder for [attempt] (1-based): 5 → 10 → 20 → 40 s, then
-/// the 60 s ceiling holds (`stallBackoffCeiling`'s value — #1395's ladder
-/// consumes this step function so the source of truth stays here).
+/// the ceiling holds ([retryBackoffCeiling], 60 s — this module owns both
+/// the steps and the cap, so the pair cannot drift).
+///
+/// Coordination (#1395): the stall ladder runtime consumes this step
+/// function AND the ceiling — it must not re-derive either locally, or
+/// the two ladders drift apart. No `stall*` symbol is defined here on
+/// purpose: the naming/taxonomy surface is #1395's lane.
 Duration retryBackoffLadderStep(int attempt) {
   final clamped = attempt < 1 ? 1 : attempt;
   final seconds = 5 << (clamped - 1).clamp(0, 4);
-  return Duration(seconds: seconds > 60 ? 60 : seconds);
+  final ceiling = retryBackoffCeiling.inSeconds;
+  return Duration(seconds: seconds > ceiling ? ceiling : seconds);
 }
 
 /// Resolves ONE attempt's backoff delay (issue #1398 AC2):
@@ -484,14 +536,30 @@ final class RetryBudgetLedger {
   }
 
   /// E5: the terminal-error story fragment carrying BOTH counters, so a
-  /// dead run reports exactly what each budget spent:
-  /// `retry budgets exhausted (connection 4/4, stream 3/3)`.
-  String terminalStory() =>
-      'retry budgets exhausted '
-      '(connection ${used(RetryBudgetClass.connection)}/'
-      '${cap(RetryBudgetClass.connection)}, '
-      'stream ${used(RetryBudgetClass.stream)}/'
-      '${cap(RetryBudgetClass.stream)})';
+  /// dead run reports exactly what each budget spent — and says
+  /// "exhausted" only of the budgets that actually are (review r2):
+  ///
+  /// - both spent out: `retry budgets exhausted (connection 4/4, stream 3/3)`
+  /// - mixed:          `retry budgets spent (connection 4/4 exhausted, stream 1/3)`
+  /// - partial only:   `retry budgets spent (connection 1/4, stream 0/3)`
+  String terminalStory() {
+    final connection =
+        'connection ${used(RetryBudgetClass.connection)}/'
+        '${cap(RetryBudgetClass.connection)}';
+    final stream =
+        'stream ${used(RetryBudgetClass.stream)}/'
+        '${cap(RetryBudgetClass.stream)}';
+    String part(RetryBudgetClass kind, String label) =>
+        isExhausted(kind) ? '$label exhausted' : label;
+    final headline =
+        isExhausted(RetryBudgetClass.connection) &&
+            isExhausted(RetryBudgetClass.stream)
+        ? 'retry budgets exhausted'
+        : 'retry budgets spent';
+    return '$headline '
+        '(${part(RetryBudgetClass.connection, connection)}, '
+        '${part(RetryBudgetClass.stream, stream)})';
+  }
 }
 
 // ── AC4 — the retry trace line ────────────────────────────────────────────
@@ -569,13 +637,26 @@ final class GapSummary {
 /// (chunk timestamps) and the idle-watchdog fire sites feed it; the run
 /// report renders [renderTuningReport]. All methods are cheap (append +
 /// counter) and safe to call from stream paths.
+///
+/// Samples are BOUNDED per model ([maxSamplesPerModel], review r2): a
+/// reasoning-heavy run records thousands of gaps into a process-global,
+/// so the recorder keeps the most recent window — percentiles only need
+/// order statistics, and the recent tail is the behavior worth tuning
+/// against anyway.
 final class InterChunkGapRecorder {
+  /// The per-model sample window cap.
+  static const int maxSamplesPerModel = 2048;
+
   final Map<String, List<Duration>> _gaps = {};
   final Map<String, int> _fires = {};
 
   /// Records one gap between consecutive chunks for [model].
   void recordGap(String model, Duration gap) {
-    _gaps.putIfAbsent(model, () => []).add(gap);
+    final samples = _gaps.putIfAbsent(model, () => []);
+    samples.add(gap);
+    if (samples.length > maxSamplesPerModel) {
+      samples.removeAt(0);
+    }
   }
 
   /// Records one idle-watchdog fire for [model].

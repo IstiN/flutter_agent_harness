@@ -244,7 +244,6 @@ Future<void> _runApp(List<String> args) async {
         ...chain,
     ],
   );
-  final tuningNotices = providerTuningBootNotices();
   // Session image registry (`images:` section, issue #171): process-wide,
   // read inside the agent loop's request build. Default: on.
   imageRegistryConfig = saved.images ?? const ImageRegistryConfig();
@@ -650,6 +649,11 @@ Future<void> _runApp(List<String> args) async {
   } on ConfigException catch (error) {
     _fail(error.message);
   }
+  // The per-provider tuning boot notes (issue #1398, review r2): captured
+  // AFTER the queue pass above so queue-carried tuning entries are in the
+  // table — the queue lane replaces main-model resolution, its entries
+  // must print like every other lane's.
+  final tuningNotices = providerTuningBootNotices();
 
   // Redact the API keys this CLI knows about from tool results and the
   // provider context, so they cannot leak into the LLM conversation or the

@@ -273,6 +273,24 @@ bool sameEndpoint(String a, String b) {
   return norm(a) == norm(b);
 }
 
+/// Carries the hand-configured fields from [existing] onto [updated]
+/// (review r2): the `/provider` edit wizard rebuilds the entry from the
+/// wizard answers and would otherwise silently drop the fields it does
+/// not ask about — `authMethod` (the SSO/JWT routing signal), `authHeader`
+/// (issue #964), and the tuning keys `connectTimeoutMs`/`streamIdleTimeoutMs`
+/// (issue #1398). The wizard-owned identity fields (name, apiType,
+/// baseUrl, modelId, keyName) stay whatever the wizard produced.
+CustomProviderEntry mergeEditedCustomProviderEntry({
+  required CustomProviderEntry existing,
+  required CustomProviderEntry updated,
+}) {
+  return updated
+    ..authMethod = existing.authMethod
+    ..authHeader = existing.authHeader
+    ..connectTimeout = existing.connectTimeout
+    ..streamIdleTimeout = existing.streamIdleTimeout;
+}
+
 /// The `authHeader` of the saved entry serving [baseUrl], for the
 /// folder-model-state restores (boot in `bin/fah.dart` and session
 /// re-apply in `agent_cli.dart` — issue #964 review): a restored gateway
