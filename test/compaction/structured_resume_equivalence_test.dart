@@ -20,7 +20,6 @@ import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/compaction/structured/projection.dart';
-import 'package:flutter_agent_harness/src/session/windowed_session_storage.dart';
 import 'package:test/test.dart';
 
 /// Flattens raw message content (String or block list) to text.
@@ -193,8 +192,9 @@ void main() {
       return storage.getPathToRoot(await storage.getLeafId());
     }
 
-    test('a hidden range referencing a missing record is dropped WHOLE and '
-        'named by a resume note — no silent partial hide', () async {
+    test('an empty-shape hidden range (older writer put the ids under '
+        'keys this build does not read) is dropped WHOLE and named by a '
+        'resume note — no silent application', () async {
       const iso = '2026-01-01T00:00:00.000Z';
       final jsonl = StringBuffer(
         '{"type":"session","version":3,"id":"skew","timestamp":"$iso",'
@@ -205,8 +205,54 @@ void main() {
         '{"type":"message","id":"u2","parentId":"u1","timestamp":"$iso",'
         '"message":{"role":"user","content":[{"type":"text","text":'
         '"visible two"}]}}\n'
-        // Older-generation shape: hides u2 AND a record this file does
-        // not contain (rebuilt ids / partial write).
+        // Older-generation shape: the ids live under `legacy_ids`; the
+        // `recordIds` key this build reads is absent — the fold resolves
+        // to an EMPTY id list.
+        '{"type":"hidden_range","id":"h3","parentId":"u2","timestamp":"$iso",'
+        '"legacy_ids":["u2"]}\n',
+      ).toString();
+      final path = await pathOf(jsonl);
+      final seqs = RecordSeqIndex(path);
+
+      final messages = renderStructuredMessages(
+        path: path,
+        seqs: seqs,
+        projectEntry: (record) => switch (record) {
+          MessageRecord(:final message) => [message],
+          _ => const <Message>[],
+        },
+      );
+
+      final texts = _shapeOf(messages);
+      // All-or-note: the unresolvable fold applied NOTHING — u2 renders
+      // unfolded, no hidden marker anywhere.
+      expect(
+        texts.where((s) => s.contains(':hidden·')),
+        isEmpty,
+        reason: 'the unresolvable fold must not half-apply',
+      );
+      expect(texts.where((s) => s.contains('visible two')), isNotEmpty);
+      // The note names the dropped generation: fold kind and file position.
+      final note = texts.firstWhere((s) => s.contains('[resume]'));
+      expect(note, contains('hidden_range'));
+      expect(note, contains('carries no record ids'));
+    });
+
+    test('off-path references are not skew — a fold mixing on-path and '
+        'missing ids applies unchanged, with no note (REG-1)', () async {
+      const iso = '2026-01-01T00:00:00.000Z';
+      final jsonl = StringBuffer(
+        '{"type":"session","version":3,"id":"offpath","timestamp":"$iso",'
+        '"cwd":"/work"}\n'
+        '{"type":"message","id":"u1","parentId":null,"timestamp":"$iso",'
+        '"message":{"role":"user","content":[{"type":"text","text":'
+        '"visible one"}]}}\n'
+        '{"type":"message","id":"u2","parentId":"u1","timestamp":"$iso",'
+        '"message":{"role":"user","content":[{"type":"text","text":'
+        '"hidden two"}]}}\n'
+        // A healthy-shape range hiding u2 AND a record this file does not
+        // contain (rebuilt ids / an arc below a windowed resume). The
+        // resolvable refs apply; the off-path one is a no-op.
         '{"type":"hidden_range","id":"h3","parentId":"u2","timestamp":"$iso",'
         '"recordIds":["u2","ghost-9"]}\n',
       ).toString();
@@ -223,20 +269,18 @@ void main() {
       );
 
       final texts = _shapeOf(messages);
-      // All-or-note: NO id of the broken fold half-applied — u2 renders
-      // unfolded, no hidden marker for it anywhere.
+      // The fold applied: u2 renders as its one-line hidden marker, and
+      // its text appears NOWHERE else — the raw message is off the wire.
+      final markers = texts.where((s) => s.contains(':hidden·'));
+      expect(markers, hasLength(1));
       expect(
-        texts.where((s) => s.contains(':hidden·')),
+        texts.where(
+          (s) => s.contains('hidden two') && !s.contains(':hidden·'),
+        ),
         isEmpty,
-        reason: 'the broken fold must not partially apply',
       );
-      expect(texts.where((s) => s.contains('visible two')), isNotEmpty);
-      // The note names the dropped generation: fold kind, position, and
-      // the unresolved count.
-      final note = texts.firstWhere((s) => s.contains('[resume]'));
-      expect(note, contains('hidden_range'));
-      expect(note, contains('1'));
-      expect(note, contains('no longer resolve'));
+      // …and it was NOT treated as version skew: no note.
+      expect(texts.where((s) => s.contains('[resume]')), isEmpty);
     });
 
     test('an empty-shape checkpoint (covers lost in an older format) is '
