@@ -265,7 +265,7 @@ void main() {
       injectOperativePinCarriers(
         messages,
         skills: skills,
-        budgetChars: 1100,
+        budgetChars: 900,
         onNotice: notices.add,
       );
       expect(notices.where((n) => n.contains('budget')), hasLength(1));

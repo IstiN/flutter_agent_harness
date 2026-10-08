@@ -74,17 +74,39 @@ final RegExp _ephemeralClaim = RegExp(
 /// always the stale-re-render class). Then any sentence that both addresses
 /// the reader in the second person and claims recency or a drop is removed.
 /// Everything else survives byte-identical.
-SanitizedSummary sanitizeSummary(String summary) {
+///
+/// gh-1409 pin exemption (AC4/F6): a sentence containing any of
+/// [protectedLines] verbatim is never stripped or rewritten — these are
+/// compaction-pinned skill directives riding the summary, and the
+/// sanitizer must not mangle them while stripping ephemeral claims around
+/// them. Lines inside a `<pinned-skill-directives>` envelope are
+/// structurally exempt too (the pin block framing is harness-generated),
+/// which protects pins in summaries healed on the projection path, where
+/// the pin set is not known.
+SanitizedSummary sanitizeSummary(
+  String summary, {
+  Set<String> protectedLines = const {},
+}) {
   if (summary.isEmpty) return (text: summary, stripped: const []);
   final stripped = <String>[];
   final text = _stripContextNotes(summary, stripped);
   final keptLines = <String>[];
+  var insidePinEnvelope = false;
   for (final line in text.split('\n')) {
-    final keptLine = _sanitizeLine(line, stripped);
+    if (line.contains(pinEnvelopeOpenTag)) insidePinEnvelope = true;
+    final keptLine = insidePinEnvelope
+        ? line
+        : _sanitizeLine(line, stripped, protectedLines);
     if (keptLine != null) keptLines.add(keptLine);
+    if (line.contains(pinEnvelopeCloseTag)) insidePinEnvelope = false;
   }
   return (text: keptLines.join('\n'), stripped: stripped);
 }
+
+/// The pin-block envelope tags (gh-1409) — lines between them are
+/// harness-framed pin renderings and are exempt from sanitization.
+const pinEnvelopeOpenTag = '<pinned-skill-directives>';
+const pinEnvelopeCloseTag = '</pinned-skill-directives>';
 
 /// Removes every `[context note …]` block — opened by a real bracket and
 /// closed by a `]` within the same line or the two lines after it (LLM
@@ -119,8 +141,14 @@ String _stripContextNotes(String text, List<String> stripped) {
 }
 
 /// Strips ephemeral sentences from one [line]; `null` when nothing survives
-/// (the line carried only ephemeral content and is dropped whole).
-String? _sanitizeLine(String line, List<String> stripped) {
+/// (the line carried only ephemeral content and is dropped whole). A line
+/// containing any of [protectedLines] verbatim (gh-1409 AC4: pinned skill
+/// directives) is returned unchanged.
+String? _sanitizeLine(String line, List<String> stripped,
+    Set<String> protectedLines) {
+  for (final protected in protectedLines) {
+    if (protected.isNotEmpty && line.contains(protected)) return line;
+  }
   final sentences = line.split(RegExp(r'(?<=[.!?])\s+'));
   final kept = <String>[];
   for (final sentence in sentences) {

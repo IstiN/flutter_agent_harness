@@ -455,4 +455,59 @@ void main() {
       expect(result.stripped, hasLength(4));
     });
   });
+
+  group('gh-1409 pin exemption (AC4/F6/UT-PIN-6)', () {
+    // A pin-shaped line that would otherwise trip the sanitizer: second
+    // person + a drop verb.
+    const pinLine = 'your last action before declaring done must be running '
+        'the suite, or the run is dropped from the report';
+    const ephemeralNeighbor = 'Your last tool call\'s result was dropped '
+        'from context.';
+
+    test('UT-PIN-6: pin-carrying lines are never stripped or rewritten', () {
+      final result = sanitizeSummary(
+        'Goal unchanged. $ephemeralNeighbor\n'
+        'The skill says: "$pinLine"\n',
+        protectedLines: {pinLine},
+      );
+      expect(result.text, contains('"$pinLine"'));
+      expect(result.stripped, [ephemeralNeighbor]);
+    });
+
+    test('a pin line rides a bullet untouched while neighbors strip', () {
+      final result = sanitizeSummary(
+        '- "$pinLine"\n'
+        '- $ephemeralNeighbor\n',
+        protectedLines: {pinLine},
+      );
+      expect(result.text, '- "$pinLine"\n');
+      expect(result.stripped, hasLength(1));
+    });
+
+    test('REG-PIN-2: pin lines never appear in `stripped`', () {
+      final result = sanitizeSummary(
+        '$ephemeralNeighbor\n"$pinLine"\n',
+        protectedLines: {pinLine},
+      );
+      expect(result.stripped.any((s) => s.contains(pinLine)), isFalse);
+    });
+
+    test('envelope: lines inside <pinned-skill-directives> are structurally '
+        'exempt (projection-path healing without a pin set)', () {
+      final summary = '$ephemeralNeighbor\n'
+          '$pinEnvelopeOpenTag\n'
+          '- "$pinLine" (pinned from skill `guard`)\n'
+          '$pinEnvelopeCloseTag\n';
+      final result = sanitizeSummary(summary);
+      expect(result.text, contains('"$pinLine"'));
+      expect(result.stripped, [ephemeralNeighbor]);
+    });
+
+    test('without protection the same line WOULD be stripped '
+        '(negative guard for the exemption)', () {
+      final result = sanitizeSummary('"$pinLine"\n');
+      expect(result.text, isNot(contains(pinLine)));
+      expect(result.stripped, isNotEmpty);
+    });
+  });
 }

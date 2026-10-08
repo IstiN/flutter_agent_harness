@@ -85,6 +85,7 @@ final class CompactionPrompts {
     this.turnPrefix = turnPrefixSummarizationPrompt,
     this.hideJudgeSystem = hideJudgeSystemPrompt,
     this.structuredCheckpoint = structuredCheckpointPrompt,
+    this.pinnedOperative = pinnedOperativePrompt,
   });
 
   /// Resolves the bundle against CLI prompt [overrides] (names mirror the
@@ -116,6 +117,10 @@ final class CompactionPrompts {
         'compaction/structured_checkpoint',
         structuredCheckpointPrompt,
       ),
+      pinnedOperative: overrides.resolve(
+        'compaction/pinned_operative',
+        pinnedOperativePrompt,
+      ),
     );
   }
 
@@ -136,6 +141,13 @@ final class CompactionPrompts {
 
   /// Instruction tail of the structured-engine checkpoint call (#148).
   final String structuredCheckpoint;
+
+  /// gh-1409 verbatim-preserve duty (AC3): appended to every
+  /// summarization call whose input carries the pinned-operative block.
+  /// The prompt is belt — the fold carrier (the pin registry) is the
+  /// boundary; a summary that drops a pinned line is repaired from the
+  /// registry at request assembly, never trusted from summary text.
+  final String pinnedOperative;
 }
 
 /// The built-in compaction prompts (no overrides).
@@ -826,6 +838,23 @@ Future<String> _runSummarization({
   return text;
 }
 
+/// gh-1409: the compaction-pinned skill operative lines threaded into
+/// every summarization call — the rendered prompt [block] (the PINNED
+/// OPERATIVE LINES section) plus the raw verbatim [lines] for the
+/// sanitizer's pin exemption (AC4). Null/absent when the session carries
+/// no pins.
+final class PinnedOperativePayload {
+  const PinnedOperativePayload({required this.block, required this.lines});
+
+  /// The rendered `PINNED OPERATIVE LINES` block (from
+  /// `pinnedOperativePromptBlock`).
+  final String block;
+
+  /// The raw verbatim pin lines (P3) — the sanitizer never strips or
+  /// rewrites a line containing one.
+  final Set<String> lines;
+}
+
 /// Generate (or update) a conversation summary for compaction.
 ///
 /// Ported from pi's `generateSummary`: serializes [messages] into
@@ -853,16 +882,27 @@ Future<String> generateSummary(
   CompactionPrompts prompts = defaultCompactionPrompts,
   String? userRequestCandidates,
   int? maxPromptTokens,
+  PinnedOperativePayload? pinnedOperative,
 }) async {
   // Issue #1131: the previous checkpoint re-enters this prompt verbatim —
   // heal it first so a poisoned old summary cannot be paraphrased forward
-  // into a fresh one (idempotent; clean records are unaffected).
+  // into a fresh one (idempotent; clean records are unaffected). gh-1409:
+  // pinned lines ride the heal protected (AC4) — a pin inside an old
+  // checkpoint survives sanitization byte-identical.
   previousSummary = previousSummary == null
       ? null
-      : sanitizeSummary(previousSummary).text;
+      : sanitizeSummary(
+          previousSummary,
+          protectedLines: pinnedOperative?.lines ?? const {},
+        ).text;
   var basePrompt = previousSummary != null
       ? prompts.summaryUpdate
       : prompts.summary;
+  // gh-1409 AC3: the verbatim-preserve duty rides the instruction tail of
+  // every call whose input carries the pinned block.
+  if (pinnedOperative != null) {
+    basePrompt = '$basePrompt\n\n${prompts.pinnedOperative}';
+  }
   if (customInstructions != null) {
     basePrompt = '$basePrompt\n\nAdditional focus: $customInstructions';
   }
@@ -879,6 +919,11 @@ Future<String> generateSummary(
     if (candidates != null) {
       prompt
         ..write(candidates)
+        ..write('\n\n');
+    }
+    if (pinnedOperative != null) {
+      prompt
+        ..write(pinnedOperative.block)
         ..write('\n\n');
     }
     if (prior != null) {
@@ -916,7 +961,12 @@ Future<String> generateSummary(
   );
   for (var i = 0; i < chunks.length; i++) {
     final candidates = userRequestCandidatesBlock(chunks[i]);
-    final instructions = i == 0 ? basePrompt : prompts.summaryUpdate;
+    final instructions = i == 0
+        ? basePrompt
+        : (pinnedOperative == null
+              ? prompts.summaryUpdate
+              // E7: the verbatim-preserve duty rides every chunk.
+              : '${prompts.summaryUpdate}\n\n${prompts.pinnedOperative}');
     final conversation = truncateForSummaryBudget(
       serializeConversation(chunks[i]),
       budgetTokens: maxPromptTokens,
@@ -987,11 +1037,17 @@ Future<String> _generateTurnPrefixSummary(
   CancelToken? cancelToken,
   CompactionPrompts prompts = defaultCompactionPrompts,
   int? maxPromptTokens,
+  PinnedOperativePayload? pinnedOperative,
 }) {
+  // E7: the split-turn prefix carries the verbatim-preserve duty too.
+  final duty = pinnedOperative == null
+      ? ''
+      : '\n\n${prompts.pinnedOperative}';
   var conversation = serializeConversation(messages);
   var prompt =
       '<conversation>\n$conversation\n</conversation>\n\n'
-      '${prompts.turnPrefix}';
+      '${pinnedOperative == null ? '' : '${pinnedOperative.block}\n\n'}'
+      '${prompts.turnPrefix}$duty';
   if (maxPromptTokens != null &&
       estimateStringTokens(prompt) > maxPromptTokens) {
     // Issue #729: the split-turn prefix never rides an over-window
@@ -1007,7 +1063,8 @@ Future<String> _generateTurnPrefixSummary(
     );
     prompt =
         '<conversation>\n$conversation\n</conversation>\n\n'
-        '${prompts.turnPrefix}';
+        '${pinnedOperative == null ? '' : '${pinnedOperative.block}\n\n'}'
+        '${prompts.turnPrefix}$duty';
   }
   return _runSummarization(
     prompt: prompt,
