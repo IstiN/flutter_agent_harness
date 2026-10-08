@@ -19,7 +19,7 @@ void main() {
   }) => AgentCli(
     config: AgentCliConfig(
       model: testModel,
-      apiKey: 'k',
+      apiKey: 'test-key',
       env: MemoryExecutionEnv(cwd: '/work'),
       sessionRoot: '/sessions',
       approvalMode: approvalMode,
