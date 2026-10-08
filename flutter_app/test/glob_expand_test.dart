@@ -167,6 +167,15 @@ void main() {
       expect(await expandGlobPattern('apps/[2048/app.json', '/', fs), isNull);
     });
 
+    test('an out-of-order range leaves the word literal (stat format words)',
+        () async {
+      // Regression (wasm_shell_stat_test): `stat --format=[%q-%s] f` must
+      // keep its format verbatim — bash leaves a malformed bracket
+      // expression (range q-% is out of order) unchanged.
+      expect(await expandGlobPattern('[%q-%s]', '/', fs), isNull);
+      expect(await expandGlobPattern('[z-a]', '/', fs), isNull);
+    });
+
     test('bracket words still hide dotfiles (the segment does not start .)',
         () async {
       expect(await expandGlobPattern('[.h]*', '/', fs), isNull);

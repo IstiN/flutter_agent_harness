@@ -169,7 +169,17 @@ RegExp _segmentToRegExp(String segment) {
     }
   }
   buffer.write(r'$');
-  return RegExp(buffer.toString());
+  final RegExp compiled;
+  try {
+    compiled = RegExp(buffer.toString());
+  } on Object {
+    // Bash's malformed-bracket rule: an invalid class (out-of-order range
+    // like `[%q-%s]` in a stat format word) is not a valid pattern — the
+    // word stays literal. A never-matching regex makes the walker report
+    // "no match", which is exactly that passthrough.
+    return RegExp(r'(?!)');
+  }
+  return compiled;
 }
 
 /// One compiled bracket expression: the regex class body (with `/`
