@@ -3,7 +3,7 @@
 
 Usage:
     shard_tasks.py --dataset-dir DIR [--shards N] [--tasks 'PATTERN [PATTERN...]']
-                   [--test-timeout-floor SEC]
+                   [--test-timeout-floor SEC] [--no-overrides] [--multiplier N]
 
 Resolves task ids exactly like `tb run -t`: the union of Path.glob matches
 per pattern against the dataset dir (empty pattern list = all tasks).
@@ -22,8 +22,20 @@ under-counted. --test-timeout-floor (default: $FA_TEST_TIMEOUT_FLOOR_SEC;
 absent/0 = no floor) raises the test-side share of each budget before
 balancing.
 
-Emits GitHub Actions outputs (matrix + count) on $GITHUB_OUTPUT: one
-matrix include entry per non-empty shard, tasks space-joined.
+gh-1407: the same budgets honor the per-task override table
+(test_budget_overrides.json, runner-measured test-phase p95 per
+repeat-offender task; --no-overrides disables, $FA_TEST_BUDGET_OVERRIDES
+merges an extra table). The planner is also the fairness guard's home:
+when a planned task's EFFECTIVE test budget (padded declared x
+--multiplier, default $FA_TEST_TIMEOUT_MULTIPLIER or 2) is still below
+its measured p95, it emits a ::warning:: naming both numbers — a
+structurally unpassable task must be caught at planning time, not after
+burning an agent run + test slot. The count lands in the
+fairness_warnings job output.
+
+Emits GitHub Actions outputs (matrix + count + fairness_warnings) on
+$GITHUB_OUTPUT: one matrix include entry per non-empty shard, tasks
+space-joined.
 """
 import argparse
 import heapq
@@ -32,7 +44,16 @@ import os
 import re
 from pathlib import Path
 
-from test_timeout_policy import FLOOR_ENV, TEST_TIMEOUT_RE, floored, resolve_floor
+from test_timeout_policy import (
+    FLOOR_ENV,
+    MULTIPLIER_ENV,
+    TEST_TIMEOUT_RE,
+    effective_test_seconds,
+    load_overrides,
+    override_declared,
+    resolve_floor,
+    resolve_multiplier,
+)
 
 
 def resolve_task_ids(dataset_dir, patterns):
@@ -47,24 +68,74 @@ def resolve_task_ids(dataset_dir, patterns):
     return sorted(ids)
 
 
-def task_budget(dataset_dir, task_id, test_floor=None):
+def task_agent_seconds(dataset_dir, task_id):
+    """The agent share of a task budget (tb default 360s when undeclared)."""
+    cfg = dataset_dir / task_id / "task.yaml"
+    if cfg.is_file():
+        m = re.search(
+            r"^\s*max_agent_timeout_sec:\s*([\d.]+)",
+            cfg.read_text(errors="replace"), re.M,
+        )
+        if m:
+            return float(m.group(1))
+    return 360.0  # tb TrialHandler default
+
+
+def task_test_seconds(dataset_dir, task_id):
+    """The declared test share of a task budget (tb default 60s)."""
+    cfg = dataset_dir / task_id / "task.yaml"
+    if cfg.is_file():
+        m = TEST_TIMEOUT_RE.search(cfg.read_text(errors="replace"))
+        if m:
+            return float(m.group(2))
+    return 60.0  # tb TrialHandler default
+
+
+def task_budget(dataset_dir, task_id, test_floor=None, override_p95=None,
+                multiplier: float = 2.0):
     """Declared wall-clock budget (agent + test seconds) for one task.
 
     test_floor (gh-1206) raises the test share to the same floor the
     dataset patcher applies, so shard sizing matches the padded task.yaml
-    files the bench job actually runs.
+    files the bench job actually runs. override_p95 (gh-1407) is the
+    task's runner-measured test-phase p95: the test share is padded so
+    the declared value x multiplier covers p95 x 1.5 — the same math
+    patch_test_timeouts.py writes into the dataset.
     """
-    agent, test = 360.0, 60.0  # tb TrialHandler defaults
-    cfg = dataset_dir / task_id / "task.yaml"
-    if cfg.is_file():
-        text = cfg.read_text(errors="replace")
-        m = re.search(r"^\s*max_agent_timeout_sec:\s*([\d.]+)", text, re.M)
-        if m:
-            agent = float(m.group(1))
-        m = TEST_TIMEOUT_RE.search(text)
-        if m:
-            test = float(m.group(2))
-    return agent + floored(test, test_floor)
+    return task_agent_seconds(dataset_dir, task_id) + override_declared(
+        task_test_seconds(dataset_dir, task_id),
+        test_floor, override_p95, multiplier,
+    )
+
+
+def check_fairness(effective_test_by_task, measured_p95_by_task):
+    """Planned tasks whose EFFECTIVE test budget is below their p95.
+
+    gh-1407 never-again guard: a task whose verifier phase has already
+    been observed to need more wall time than its budget buys can never
+    resolve — the verdict would measure runner luck, not agent capability.
+    Returns [(task_id, effective_seconds, measured_p95_seconds)] sorted by
+    task id; empty when every measured task is funded.
+    """
+    return sorted(
+        (tid, effective, measured_p95_by_task[tid])
+        for tid, effective in effective_test_by_task.items()
+        if tid in measured_p95_by_task
+        and effective < measured_p95_by_task[tid]
+    )
+
+
+def warn_fairness(offenders):
+    """Emit one ::warning:: annotation per under-funded task."""
+    for task_id, effective, p95 in offenders:
+        print(
+            f"::warning::gh-1407 fairness: task '{task_id}' effective test "
+            f"budget {effective:g}s < runner-measured test-phase p95 "
+            f"{p95:g}s — structurally unlikely to ever resolve "
+            "(the verdict would measure runner luck, not agent "
+            "capability). Fund it via test_budget_overrides.json or a "
+            "higher --test-timeout-floor."
+        )
 
 
 def split_lpt(ids, budgets, n):
@@ -130,6 +201,23 @@ def main():
         ),
     )
     parser.add_argument(
+        "--no-overrides",
+        action="store_true",
+        help=(
+            "size without the gh-1407 override table (floor-only "
+            "dispatch; the fairness guard then warns for every measured "
+            "task the budget under-funds)"
+        ),
+    )
+    parser.add_argument(
+        "--multiplier",
+        default="",
+        help=(
+            "tb --global-timeout-multiplier in force, for effective "
+            f"budgets (default: ${MULTIPLIER_ENV} or 2)"
+        ),
+    )
+    parser.add_argument(
         "--job-cap-seconds",
         default="0",
         help=(
@@ -155,12 +243,44 @@ def main():
 
     try:
         test_floor = resolve_floor(args.test_timeout_floor)
+        multiplier = resolve_multiplier(args.multiplier)
+        # The table is always the source of MEASURED p95s (the fairness
+        # guard exists precisely for --no-overrides dispatches); only the
+        # budget padding honors the opt-out.
+        measured = load_overrides()
     except ValueError as exc:
         raise SystemExit(f"::error::{exc}")
 
     ids = resolve_task_ids(Path(args.dataset_dir), args.tasks.split() or ["*"])
     dataset_dir = Path(args.dataset_dir)
-    budgets = {tid: task_budget(dataset_dir, tid, test_floor) for tid in ids}
+    budget_overrides = {} if args.no_overrides else measured
+    p95_by_task = {
+        tid: entry["measured_p95_sec"]
+        for tid, entry in measured.items()
+        if tid in set(ids)
+    }
+    budgets = {
+        tid: task_budget(
+            dataset_dir, tid, test_floor,
+            override_p95=p95_by_task.get(tid) if budget_overrides else None,
+            multiplier=multiplier,
+        )
+        for tid in ids
+    }
+    # gh-1407 never-again guard: a planned task whose effective test
+    # budget (the DISPATCHED declared test share x multiplier — floor
+    # and override as budgets[] computed them) is still below its
+    # runner-measured p95 can never resolve — say so at planning time.
+    fairness = check_fairness(
+        {
+            tid: effective_test_seconds(
+                budgets[tid] - task_agent_seconds(dataset_dir, tid), multiplier
+            )
+            for tid in ids
+        },
+        p95_by_task,
+    )
+    warn_fairness(fairness)
     raw_shards = split_lpt(ids, budgets, n)
     # Issue #1392 AC5: no shard's worst case may exceed the job cap minus
     # headroom — a silent over-run costs a shard that dies mid-run.
@@ -173,7 +293,9 @@ def main():
         f.write(f"matrix={json.dumps({'include': shards})}\n")
         f.write(f"count={len(ids)}\n")
         f.write(f"worst_shard_seconds={max(loads) if loads else 0}\n")
+        f.write(f"fairness_warnings={len(fairness)}\n")
     print(f"{len(ids)} task(s) across {len(shards)} shard(s)")
+    print(f"fairness warnings: {len(fairness)}")
     if job_cap > 0:
         print(
             f"worst shard {max(loads) / 60:.0f} min "

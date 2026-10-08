@@ -282,5 +282,153 @@ class PackCapTest(unittest.TestCase):
                 )
 
 
+class BudgetOverrideTest(unittest.TestCase):
+    """gh-1407: LPT budgets must see the override-padded test budgets."""
+
+    def test_task_budget_honors_override_p95(self):
+        tmp, root = make_dataset({
+            "jupyter-notebook-server":
+                "max_agent_timeout_sec: 360\nmax_test_timeout_sec: 180\n",
+        })
+        try:
+            self.assertEqual(
+                task_budget(root, "jupyter-notebook-server",
+                            override_p95=360.1, multiplier=2.0),
+                360.0 + 271,
+            )
+        finally:
+            tmp.cleanup()
+
+    def test_task_budget_floor_plus_override_together(self):
+        tmp, root = make_dataset({
+            "t": "max_agent_timeout_sec: 360\nmax_test_timeout_sec: 60\n",
+        })
+        try:
+            # floor wins over the small p95; override would only raise.
+            self.assertEqual(
+                task_budget(root, "t", test_floor=120.0,
+                            override_p95=100.0, multiplier=2.0),
+                480.0,
+            )
+            self.assertEqual(
+                task_budget(root, "t", test_floor=120.0,
+                            override_p95=360.1, multiplier=2.0),
+                360.0 + 271,
+            )
+        finally:
+            tmp.cleanup()
+
+
+class FairnessWarningTest(unittest.TestCase):
+    """gh-1407 AC2: never-again guard at planning time.
+
+    When a planned task's EFFECTIVE test budget (declared x multiplier,
+    after floor + override) is still below the runner-measured p95, the
+    planner emits a ::warning:: naming both numbers — a structurally
+    unpassable task must be caught before burning an agent run + test
+    slot, not in the post-mortem.
+    """
+
+    def test_check_fairness_reports_offender_with_numbers(self):
+        offenders = shard_tasks.check_fairness(
+            {"jupyter-notebook-server": 360.0, "fast": 120.0},
+            {"jupyter-notebook-server": 360.1},
+        )
+        self.assertEqual([(t, e, p) for t, e, p in offenders],
+                         [("jupyter-notebook-server", 360.0, 360.1)])
+
+    def test_check_fairness_silent_when_budget_covers_p95(self):
+        self.assertEqual(
+            shard_tasks.check_fairness(
+                {"jupyter-notebook-server": 542.0},
+                {"jupyter-notebook-server": 360.1},
+            ),
+            [],
+        )
+
+    def test_check_fairness_ignores_unmeasured_tasks(self):
+        self.assertEqual(shard_tasks.check_fairness({"a": 1.0}, {}), [])
+
+    def _run_planner(self, root, extra_args, out_path):
+        os.environ["GITHUB_OUTPUT"] = out_path
+        import runpy
+        import sys
+        sys.argv = ["shard_tasks.py", "--dataset-dir", str(root)] + extra_args
+        import io as _io
+        import contextlib as _contextlib
+        buf = _io.StringIO()
+        try:
+            with _contextlib.redirect_stdout(buf):
+                runpy.run_path(
+                    str(Path(__file__).parent / "shard_tasks.py"),
+                    run_name="__main__",
+                )
+        finally:
+            sys.argv = ["shard_tasks.py"]
+            del os.environ["GITHUB_OUTPUT"]
+        return buf.getvalue(), Path(out_path).read_text()
+
+    def test_floor_only_dispatch_warns_on_measured_offender(self):
+        """The r3 configuration (floor, no overrides) must scream."""
+        tmp, root = make_dataset({
+            "jupyter-notebook-server":
+                "max_agent_timeout_sec: 360\nmax_test_timeout_sec: 180\n",
+        })
+        try:
+            out = tempfile.NamedTemporaryFile("w", delete=False, suffix=".out")
+            out.close()
+            stdout, emitted = self._run_planner(
+                root,
+                ["--shards", "1", "--test-timeout-floor", "180",
+                 "--no-overrides"],
+                out.name,
+            )
+            self.assertIn("::warning::", stdout)
+            self.assertIn("jupyter-notebook-server", stdout)
+            self.assertIn("360", stdout)   # effective budget seconds
+            self.assertIn("360.1", stdout)  # measured p95 seconds
+            self.assertIn("fairness_warnings=1", emitted)
+            os.unlink(out.name)
+        finally:
+            tmp.cleanup()
+
+    def test_override_applied_dispatch_does_not_warn(self):
+        tmp, root = make_dataset({
+            "jupyter-notebook-server":
+                "max_agent_timeout_sec: 360\nmax_test_timeout_sec: 180\n",
+        })
+        try:
+            out = tempfile.NamedTemporaryFile("w", delete=False, suffix=".out")
+            out.close()
+            stdout, emitted = self._run_planner(
+                root, ["--shards", "1", "--test-timeout-floor", "180"], out.name
+            )
+            self.assertNotIn("::warning::", stdout)
+            self.assertIn("fairness_warnings=0", emitted)
+            os.unlink(out.name)
+        finally:
+            tmp.cleanup()
+
+    def test_planner_sizes_lpt_on_overridden_budget(self):
+        """The override must land in the emitted worst-shard math too."""
+        tmp, root = make_dataset({
+            "jupyter-notebook-server":
+                "max_agent_timeout_sec: 360\nmax_test_timeout_sec: 180\n",
+        })
+        try:
+            out = tempfile.NamedTemporaryFile("w", delete=False, suffix=".out")
+            out.close()
+            _, emitted = self._run_planner(
+                root, ["--shards", "1", "--test-timeout-floor", "180"], out.name
+            )
+            worst = float([l for l in emitted.splitlines()
+                           if l.startswith("worst_shard_seconds=")][0]
+                          .split("=", 1)[1])
+            self.assertEqual(worst, 360 + 271)
+            os.unlink(out.name)
+        finally:
+            tmp.cleanup()
+
+
 if __name__ == "__main__":
     unittest.main()
