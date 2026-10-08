@@ -20,6 +20,7 @@ void main() {
   test('probe', timeout: const Timeout(Duration(minutes: 5)), () async {
     final io = FakeCliIO();
     final env = MemoryExecutionEnv(cwd: '/work', shell: FakeShell());
+    await env.writeFile('/work/.fah/memory/.last_maintenance', '');
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
     final small = await repo.create(
       JsonlSessionCreateOptions(cwd: '/work', metadata: {'agent': 'cli'}),
@@ -95,7 +96,7 @@ void main() {
     print('=== after abort ===');
     // ignore: avoid_print
     print(io.out.toString());
-    io.sendLine('/resume');
+    io.sendLine('/session boot-cap-target');
     tries = 0;
     while (cap.calls < 1 && tries < 5000) {
       tries++;
@@ -103,12 +104,39 @@ void main() {
     }
     // ignore: avoid_print
     print('=== after resume (cap.calls=${cap.calls}) ===');
+    if (cap.contexts.isNotEmpty) {
+      for (var i = 0; i < cap.contexts.length; i++) {
+        final c = cap.contexts[i];
+        // ignore: avoid_print
+        print('--- cap call $i: sys=${c.systemPrompt?.length} msgs='
+            '\\${c.messages.length}');
+        for (final m in c.messages) {
+          final t = m.toString();
+          // ignore: avoid_print
+          print('    msg: \\${t.length > 200 ? t.substring(0, 200) : t}');
+        }
+        final sp = c.systemPrompt ?? '';
+        // ignore: avoid_print
+        print('    sys: \\${sp.length > 300 ? sp.substring(0, 300) : sp}');
+      }
+    }
     // ignore: avoid_print
     print(io.out.toString());
     io.sendLine('/exit');
     await run;
     // ignore: avoid_print
     print('=== final (cap.calls=${cap.calls}) ===');
+    try {
+      final log = (await env.readTextFile('/work/.fah/logs/fa.log'))
+          .getOrThrow();
+      // ignore: avoid_print
+      print('=== fa.log ===');
+      // ignore: avoid_print
+      print(log);
+    } catch (e) {
+      // ignore: avoid_print
+      print('no fa.log: $e');
+    }
     // ignore: avoid_print
     print(io.out.toString());
   });
