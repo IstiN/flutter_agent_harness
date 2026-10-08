@@ -21,6 +21,7 @@ import 'dart:convert';
 import 'package:yaml/yaml.dart';
 
 import '../exceptions.dart';
+import '../providers/provider_tuning.dart' show parseProviderTimeoutMs;
 
 /// The default cooldown when a 429 carries no `Retry-After` (issue #418
 /// open question 1: 60s proposed; one-line change if the owner prefers 30s).
@@ -65,6 +66,8 @@ final class ProviderQueueEntry {
     this.contextWindow,
     this.maxTokens,
     this.ref,
+    this.connectTimeout,
+    this.streamIdleTimeout,
   }) {
     if (!providerQueueKinds.contains(providerType)) {
       throw ArgumentError.value(
@@ -99,6 +102,16 @@ final class ProviderQueueEntry {
 
   /// only — the resolved fields are materialized at parse time).
   final String? ref;
+
+  /// Per-provider connect/first-headers watchdog override
+  /// (`provider_config.connectTimeoutMs`, issue #1398). Null keeps the
+  /// global `providerTimeouts:` value, then the 180 s default.
+  final Duration? connectTimeout;
+
+  /// Per-provider stream-idle watchdog override
+  /// (`provider_config.streamIdleTimeoutMs`, issue #1398). Null keeps the
+  /// global value, then the 300 s default.
+  final Duration? streamIdleTimeout;
 
   /// Parses one entry from a decoded JSON map (the env / `@file` form).
   /// Throws [ConfigException] with the 1-based [position] (entry index)
@@ -153,6 +166,8 @@ final class ProviderQueueEntry {
               'apiKeyEnv',
               'contextWindow',
               'maxTokens',
+              'connectTimeoutMs',
+              'streamIdleTimeoutMs',
             ].contains(key))
           key,
     ];
@@ -169,6 +184,8 @@ final class ProviderQueueEntry {
       apiKeyEnv: _optionalString(config, 'apiKeyEnv', where),
       contextWindow: _optionalInt(config, 'contextWindow', where),
       maxTokens: _optionalInt(config, 'maxTokens', where),
+      connectTimeout: _optionalTimeout(config, 'connectTimeoutMs', where),
+      streamIdleTimeout: _optionalTimeout(config, 'streamIdleTimeoutMs', where),
     );
   }
 
@@ -226,6 +243,10 @@ final class ProviderQueueEntry {
       if (apiKeyEnv != null) 'apiKeyEnv': apiKeyEnv,
       if (contextWindow != null) 'contextWindow': contextWindow,
       if (maxTokens != null) 'maxTokens': maxTokens,
+      if (connectTimeout != null)
+        'connectTimeoutMs': connectTimeout!.inMilliseconds,
+      if (streamIdleTimeout != null)
+        'streamIdleTimeoutMs': streamIdleTimeout!.inMilliseconds,
     },
   };
 
@@ -243,6 +264,13 @@ final class ProviderQueueEntry {
   @override
   int get hashCode => dedupKey.hashCode;
 }
+
+/// Optional positive-int-milliseconds field (issue #1398 watchdog keys).
+Duration? _optionalTimeout(
+  Map<Object?, Object?> map,
+  String key,
+  String where,
+) => parseProviderTimeoutMs(map[key], key, where);
 
 /// One parsed queue source: the entries plus whatever the parser wants the
 /// boot log to say (unknown-key warnings, dedup notes).
