@@ -23,6 +23,9 @@ import '../model.dart';
 import '../rate_limit_info.dart';
 import '../sse_decoder.dart';
 import '../types.dart';
+import 'conn_trace.dart' show connTraceWrapProviderClient;
+import 'stall_sentinel.dart'
+    show providerConnectStallFired, providerIdleStallFired;
 import 'transient_retry_stream.dart';
 
 /// Placeholder substituted for user-message images when the target model has
@@ -654,6 +657,10 @@ Future<http.StreamedResponse> _sendWatchedOnce(
   // the rendered "TimeoutException: …" text is the always-retryable contract
   // the failover/queue classifiers match on.
   http.StreamedResponse watchdogTimedOut() {
+    // gh-1395 (AC2/AC3, E1): name the connect stall and capture the
+    // never-started request's payload — distinct watchdog, distinct trace
+    // line, distinct policy entry.
+    providerConnectStallFired(request, effectiveProviderConnectTimeout);
     // The attempt is ABANDONED, not aborted: package:http cannot cancel a
     // pending send, and a slow-but-alive endpoint (reasoning model over
     // the first-byte budget) may still answer. Attach a janitor so the
@@ -858,7 +865,25 @@ http.Client? _sharedProviderClient;
 /// If [providerHttpClientFactory] is set, its product is used and cached
 /// instead of the default [http.Client].
 http.Client sharedProviderHttpClient() => _sharedProviderClient ??=
-    (providerHttpClientFactory?.call() ?? http.Client());
+    // gh-1395: the wrapper is a pass-through recorder with FA_CONN_DEBUG
+    // off (E4: identical response objects); with the knob on it adds the
+    // conn-open/first-byte trace lines (AC2). The pool semantics are
+    // unchanged — I1392 builds on this seam.
+    connTraceWrapProviderClient(
+      providerHttpClientFactory?.call() ?? http.Client(),
+      canInstallObserver: providerHttpClientFactory == null,
+    );
+
+/// Drops the shared keep-alive client: the NEXT [sharedProviderHttpClient]
+/// call builds a fresh client and pool (gh-1395 AC5). Hygiene, not a
+/// correctness fix — the eviction is flag-gated through
+/// [maybeEvictProviderPool] (`FA_POOL_EVICTION`) and every existing
+/// connection-level failure class already self-heals without it (the
+/// stale_keepalive exoneration).
+void resetSharedProviderHttpClient() {
+  _sharedProviderClient?.close();
+  _sharedProviderClient = null;
+}
 
 /// The effective connect watchdog: the config override or the default.
 Duration get effectiveProviderConnectTimeout =>
@@ -1028,6 +1053,10 @@ StreamIterator<ServerSentEvent> createSseIterator(
     inner,
     effectiveIdleTimeout,
     onAbandon: abandon,
+    // gh-1395 (AC2/AC3): at FIRE time — before the abort completes — name
+    // the idle stall (trace line) and dump the outbound payload
+    // (StallSentinel).
+    onStall: () => providerIdleStallFired(response, effectiveIdleTimeout),
   );
   if (cancelToken != null) {
     // cancel() is already quiet — no extra swallow needed here.
@@ -1045,7 +1074,12 @@ StreamIterator<ServerSentEvent> createSseIterator(
 /// after [idleTimeout] without a decoded SSE event, and cancels the inner
 /// subscription on fire so the dead connection is released.
 class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
-  _IdleWatchdogSseIterator(this._inner, this._idleTimeout, {this.onAbandon});
+  _IdleWatchdogSseIterator(
+    this._inner,
+    this._idleTimeout, {
+    this.onAbandon,
+    this.onStall,
+  });
 
   final StreamIterator<ServerSentEvent> _inner;
   final Duration _idleTimeout;
@@ -1053,6 +1087,11 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
   /// Called before any cancel so the byte sink starts swallowing late
   /// transport errors (issue #921).
   final void Function()? onAbandon;
+
+  /// gh-1395: called AT watchdog fire, before the abort lands — the hook
+  /// names the stall (ConnTrace) and dumps the outbound payload
+  /// (StallSentinel). Null keeps the watchdog silent and cheap.
+  final void Function()? onStall;
 
   Timer? _timer;
 
@@ -1076,6 +1115,9 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
     }
     _timer = Timer(_idleTimeout, () {
       if (completer.isCompleted) return;
+      // gh-1395: capture first — the dump is initiated while the request
+      // state is still in scope, before the abort completes.
+      onStall?.call();
       // Abandon before cancelling so the byte sink swallows the dying
       // link's error, and quiet-cancel: the cancel future rides that
       // dying pipeline and may itself fail (issue #921).
