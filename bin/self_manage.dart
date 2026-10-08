@@ -847,65 +847,29 @@ Future<ApplyUpdateOutcome> applyUpdate({
   final state = statePath ?? _convergenceStatePath();
   final client = (newClient ?? http.Client.new)();
   try {
-    final tag = await fetchLatestTag(
+    final target = await _resolveUpdateTarget(
       client: client,
-    ).timeout(networkTimeout, onTimeout: () => null);
-    if (tag == null) return ApplyUpdateOutcome.downloadFailed;
-    final latest = tag.replaceFirst('v', '');
-    if (compareVersions(latest, currentVersion) <= 0) {
-      // Up to date: the loop is closed — a future release gets its
-      // attempts back.
-      _clearConvergence(state);
-      return ApplyUpdateOutcome.upToDate;
-    }
-
-    // Convergence guard (issue #1377): auto_update:on + a channel that
-    // lags (pub.dev propagation, stale release assets) must not respawn
-    // forever. Two attempts per target tag; the state clears as soon as
-    // a boot reports up to date.
-    final convergence = _readConvergence(state);
-    if (convergence != null &&
-        convergence.tag == tag &&
-        convergence.attempts >= 2) {
-      log(
-        'fa update paused: v$latest attempted ${convergence.attempts}× '
-        'and still not resolving — not respawning again',
-      );
-      return ApplyUpdateOutcome.convergenceGuard;
-    }
-    _writeConvergence(state, tag);
+      currentVersion: currentVersion,
+      state: state,
+      log: log,
+      networkTimeout: networkTimeout,
+    );
+    final stop = target.stop;
+    if (stop != null) return stop;
+    final tag = target.tag!;
+    final latest = target.latest!;
 
     if (install.kind == InstallKind.pubGlobal) {
-      final pub = await _pubGlobalUpdate(
+      return await _applyPubGlobalUpdate(
+        install: install,
         currentVersion: currentVersion,
         latest: latest,
+        launchArgs: launchArgs,
         runProcess: runProcess ?? Process.run,
-      );
-      if (pub.$1 != 0) return ApplyUpdateOutcome.downloadFailed;
-      final activated = pub.$2;
-      if (activated != null &&
-          compareVersions(activated, currentVersion) > 0) {
-        log('fa update applied: v$currentVersion -> v$activated');
-      } else {
-        // pub exit 0 without an advance (propagation lag): a respawn
-        // would reboot the SAME binary — say so instead of lying about an
-        // applied version (issue #1377 review r4).
-        log(
-          'fa update: pub resolved v${activated ?? currentVersion} '
-          '(release v$latest not on pub.dev yet)',
-        );
-        return ApplyUpdateOutcome.convergenceGuard;
-      }
-      final restarted = await _restartAfterUpdate(
-        install,
-        launchArgs,
         spawn: spawn,
         settleDelay: settleDelay,
-        logLine: log,
+        log: log,
       );
-      return restarted
-          ? ApplyUpdateOutcome.applied
-          : ApplyUpdateOutcome.restartFailed;
     }
 
     final archive = _archiveName();
@@ -919,50 +883,27 @@ Future<ApplyUpdateOutcome> applyUpdate({
       );
       return ApplyUpdateOutcome.unsupportedPlatform;
     }
-    final url = 'https://github.com/$_repo/releases/download/$tag/$archive';
-    final streamed = await client
-        .send(http.Request('GET', Uri.parse(url)))
-        .timeout(networkTimeout);
-    if (streamed.statusCode != 200) {
-      return ApplyUpdateOutcome.downloadFailed;
-    }
-    final bytes = await streamed.stream
-        .toBytes()
-        .timeout(kFaUpdateArchiveTimeout);
-    if (!await verifyReleaseProvenance(
+    final download = await _downloadVerifiedArchive(
       client: client,
       tag: tag,
-      archiveName: archive,
-      archiveBytes: bytes,
+      archive: archive,
       pem: pem,
-    )) {
-      return ApplyUpdateOutcome.provenanceFailed;
-    }
-    final swapCode = await _extractAndSwap(
-      bytes,
-      archive,
-      install.executable,
-      File(install.executable).parent,
-      latest,
-      runProcess ?? Process.run,
+      networkTimeout: networkTimeout,
     );
-    if (swapCode != 0) return ApplyUpdateOutcome.downloadFailed;
-    log('fa update applied: v$currentVersion -> v$latest');
-    if (Platform.isWindows) {
-      // The locked exe cannot relaunch the session here; the swap already
-      // printed the restart hint.
-      return ApplyUpdateOutcome.unsupportedPlatform;
-    }
-    final restarted = await _restartAfterUpdate(
-      install,
-      launchArgs,
+    final failed = download.stop;
+    if (failed != null) return failed;
+    return await _swapAndRestartArchive(
+      bytes: download.bytes,
+      archive: archive,
+      install: install,
+      currentVersion: currentVersion,
+      latest: latest,
+      launchArgs: launchArgs,
+      runProcess: runProcess ?? Process.run,
       spawn: spawn,
       settleDelay: settleDelay,
-      logLine: log,
+      log: log,
     );
-    return restarted
-        ? ApplyUpdateOutcome.applied
-        : ApplyUpdateOutcome.restartFailed;
   } catch (_) {
     // The update must never crash the boot: any surprise (socket reset,
     // file error) is just a failed update.
@@ -970,6 +911,172 @@ Future<ApplyUpdateOutcome> applyUpdate({
   } finally {
     client.close();
   }
+}
+
+/// One resolved update candidate: [stop] non-null ends the update with
+/// that outcome; otherwise [tag]/[latest] name the release to apply.
+typedef _ResolvedUpdate = ({ApplyUpdateOutcome? stop, String? tag, String? latest});
+
+/// Fetches the latest tag and resolves it against the current version and
+/// the convergence ledger (issue #1377): up to date closes the loop (the
+/// attempts ledger clears), a twice-attempted tag pauses the respawn, a
+/// fresh tag arms the ledger and proceeds.
+Future<_ResolvedUpdate> _resolveUpdateTarget({
+  required http.Client client,
+  required String currentVersion,
+  required String? state,
+  required void Function(String message) log,
+  required Duration networkTimeout,
+}) async {
+  final tag = await fetchLatestTag(
+    client: client,
+  ).timeout(networkTimeout, onTimeout: () => null);
+  if (tag == null) {
+    return (stop: ApplyUpdateOutcome.downloadFailed, tag: null, latest: null);
+  }
+  final latest = tag.replaceFirst('v', '');
+  if (compareVersions(latest, currentVersion) <= 0) {
+    // Up to date: the loop is closed — a future release gets its
+    // attempts back.
+    _clearConvergence(state);
+    return (stop: ApplyUpdateOutcome.upToDate, tag: null, latest: null);
+  }
+
+  // Convergence guard (issue #1377): auto_update:on + a channel that
+  // lags (pub.dev propagation, stale release assets) must not respawn
+  // forever. Two attempts per target tag; the state clears as soon as
+  // a boot reports up to date.
+  final convergence = _readConvergence(state);
+  if (convergence != null &&
+      convergence.tag == tag &&
+      convergence.attempts >= 2) {
+    log(
+      'fa update paused: v$latest attempted ${convergence.attempts}× '
+      'and still not resolving — not respawning again',
+    );
+    return (
+      stop: ApplyUpdateOutcome.convergenceGuard,
+      tag: null,
+      latest: null,
+    );
+  }
+  _writeConvergence(state, tag);
+  return (stop: null, tag: tag, latest: latest);
+}
+
+/// The pub-global arm (issue #1377 review r4): run the update, verify the
+/// ACTIVATED version actually advanced — pub exit 0 without an advance is
+/// propagation lag, and respawning would reboot the SAME binary — then
+/// restart through the shared successor spawn.
+Future<ApplyUpdateOutcome> _applyPubGlobalUpdate({
+  required Install install,
+  required String currentVersion,
+  required String latest,
+  required List<String> launchArgs,
+  required Future<ProcessResult> Function(String, List<String>) runProcess,
+  required Future<bool> Function(String, List<String>)? spawn,
+  required Duration settleDelay,
+  required void Function(String message) log,
+}) async {
+  final pub = await _pubGlobalUpdate(
+    currentVersion: currentVersion,
+    latest: latest,
+    runProcess: runProcess,
+  );
+  if (pub.$1 != 0) return ApplyUpdateOutcome.downloadFailed;
+  final activated = pub.$2;
+  if (activated != null && compareVersions(activated, currentVersion) > 0) {
+    log('fa update applied: v$currentVersion -> v$activated');
+  } else {
+    log(
+      'fa update: pub resolved v${activated ?? currentVersion} '
+      '(release v$latest not on pub.dev yet)',
+    );
+    return ApplyUpdateOutcome.convergenceGuard;
+  }
+  final restarted = await _restartAfterUpdate(
+    install,
+    launchArgs,
+    spawn: spawn,
+    settleDelay: settleDelay,
+    logLine: log,
+  );
+  return restarted
+      ? ApplyUpdateOutcome.applied
+      : ApplyUpdateOutcome.restartFailed;
+}
+
+/// Downloads the prebuilt archive and verifies its provenance before any
+/// byte is trusted (issue #1377 round 7): a non-200 is a download
+/// failure, a failed signature check is a provenance failure.
+Future<({ApplyUpdateOutcome? stop, List<int> bytes})> _downloadVerifiedArchive({
+  required http.Client client,
+  required String tag,
+  required String archive,
+  required String pem,
+  required Duration networkTimeout,
+}) async {
+  final url = 'https://github.com/$_repo/releases/download/$tag/$archive';
+  final streamed = await client
+      .send(http.Request('GET', Uri.parse(url)))
+      .timeout(networkTimeout);
+  if (streamed.statusCode != 200) {
+    return (stop: ApplyUpdateOutcome.downloadFailed, bytes: const <int>[]);
+  }
+  final bytes = await streamed.stream
+      .toBytes()
+      .timeout(kFaUpdateArchiveTimeout);
+  if (!await verifyReleaseProvenance(
+    client: client,
+    tag: tag,
+    archiveName: archive,
+    archiveBytes: bytes,
+    pem: pem,
+  )) {
+    return (stop: ApplyUpdateOutcome.provenanceFailed, bytes: const <int>[]);
+  }
+  return (stop: null, bytes: bytes);
+}
+
+/// Extracts and swaps in the verified archive, then restarts onto it (the
+/// prebuilt-binary arm). A failed swap is a download outcome; the locked
+/// Windows exe cannot relaunch in-process (the swap already printed the
+/// restart hint).
+Future<ApplyUpdateOutcome> _swapAndRestartArchive({
+  required List<int> bytes,
+  required String archive,
+  required Install install,
+  required String currentVersion,
+  required String latest,
+  required List<String> launchArgs,
+  required Future<ProcessResult> Function(String, List<String>) runProcess,
+  required Future<bool> Function(String, List<String>)? spawn,
+  required Duration settleDelay,
+  required void Function(String message) log,
+}) async {
+  final swapCode = await _extractAndSwap(
+    bytes,
+    archive,
+    install.executable,
+    File(install.executable).parent,
+    latest,
+    runProcess,
+  );
+  if (swapCode != 0) return ApplyUpdateOutcome.downloadFailed;
+  log('fa update applied: v$currentVersion -> v$latest');
+  if (Platform.isWindows) {
+    return ApplyUpdateOutcome.unsupportedPlatform;
+  }
+  final restarted = await _restartAfterUpdate(
+    install,
+    launchArgs,
+    spawn: spawn,
+    settleDelay: settleDelay,
+    logLine: log,
+  );
+  return restarted
+      ? ApplyUpdateOutcome.applied
+      : ApplyUpdateOutcome.restartFailed;
 }
 
 /// Restarts fa after a successful update: the injected [spawn] seam for
