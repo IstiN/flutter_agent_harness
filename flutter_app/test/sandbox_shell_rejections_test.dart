@@ -35,8 +35,6 @@ void main() {
       // Same guard fires for here-strings — the named error must cover
       // both forms (gh-1086 review round 2).
       'X=1 <<<word': 'here-document/here-string on a bare assignment',
-      // Unquoted globs (were: passed literally, never expanded).
-      'ls *.dart': 'glob patterns',
       // Brace expansion.
       'echo {a,b}.txt': 'brace expansion',
       // Tilde expansion.
@@ -78,6 +76,10 @@ void main() {
       'echo "a*b"',
       "echo '{a,b}'",
       "echo '~'",
+      // Unquoted globs parse (they EXPAND at execution now — gh-1393 WS-1);
+      // matching itself is the execution layer's contract.
+      'ls *.dart',
+      'grep -rl TAP apps/*/app.json',
       // jq empty-bracket iteration is not a glob.
       'jq .tags.[] /data.json',
       // Bracket expressions pass literally (stat format / char classes).

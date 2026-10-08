@@ -7,6 +7,7 @@
 // channels.
 
 import 'package:fa/sandbox/memory_shell/awk.dart';
+import 'package:fa/sandbox/grep_args.dart';
 import 'package:fa/sandbox/memory_shell/grep.dart';
 import 'package:fa/sandbox/memory_shell/interpreters.dart';
 import 'package:fa/sandbox/memory_shell/pipeline.dart';
@@ -32,24 +33,26 @@ final class _TableFs implements TestFs {
 }
 
 void main() {
-
   group('snippetOutcome (issue #568)', () {
     test('unavailable interpreters answer 127 with the not-found line', () {
-      final out = snippetOutcome(
-        'python3',
-        (available: false, stdout: 'ignored', stderr: 'also ignored'),
-      );
-      expect(
-        out,
-        (stdout: '', stderr: 'python3: command not found\n', exitCode: 127),
-      );
+      final out = snippetOutcome('python3', (
+        available: false,
+        stdout: 'ignored',
+        stderr: 'also ignored',
+      ));
+      expect(out, (
+        stdout: '',
+        stderr: 'python3: command not found\n',
+        exitCode: 127,
+      ));
     });
 
     test('empty output stays empty and exits 0', () {
-      expect(
-        snippetOutcome('qjs', (available: true, stdout: '', stderr: '')),
-        (stdout: '', stderr: '', exitCode: 0),
-      );
+      expect(snippetOutcome('qjs', (available: true, stdout: '', stderr: '')), (
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+      ));
     });
 
     test('non-empty stdout gains the terminal newline', () {
@@ -66,14 +69,19 @@ void main() {
 
     test('non-empty stderr forces exit 1 and gains the newline', () {
       expect(
-        snippetOutcome(
-          'python3',
-          (available: true, stdout: 'partial', stderr: 'Traceback'),
-        ),
+        snippetOutcome('python3', (
+          available: true,
+          stdout: 'partial',
+          stderr: 'Traceback',
+        )),
         (stdout: 'partial\n', stderr: 'Traceback\n', exitCode: 1),
       );
       expect(
-        snippetOutcome('python3', (available: true, stdout: '', stderr: 'boom')),
+        snippetOutcome('python3', (
+          available: true,
+          stdout: '',
+          stderr: 'boom',
+        )),
         (stdout: '', stderr: 'boom\n', exitCode: 1),
       );
     });
@@ -358,13 +366,81 @@ void main() {
     });
 
     test('parse: missing pattern and -e without value are errors', () {
-      expect(parseGrepArgs([]).error, isNotNull);
-      expect(parseGrepArgs(['-e']).error, isNotNull);
-      expect(parseGrepArgs(['-e', 'p', 'f.txt']).error, isNull);
+      // gh-1393 contract (fa/sandbox/grep_args.dart): null = flag usage
+      // error, error != null = bad flag value, pattern == null = missing
+      // pattern — the caller renders the usage line for the latter two.
+      expect(parseGrepArgs(const []), isNotNull);
+      expect(parseGrepArgs(const [])!.pattern, isNull);
+      expect(parseGrepArgs(const ['-e']), isNull);
+      expect(parseGrepArgs(const ['-e', 'p', 'f.txt'])!.pattern, 'p');
     });
 
     test('compile: invalid regex is an error', () {
       expect(compileGrepQuery(const <String>{}, '([)').error, isNotNull);
+    });
+
+    test('-m stops after N matching lines (gh-1393 rework)', () {
+      final q = compileGrepQuery(const <String>{}, 'a', maxCount: 2).query!;
+      final acc = GrepAccumulator();
+      grepText('aa\nba\nca\nda\n', null, q, acc);
+      expect(acc.buffer.toString(), 'aa\nba\n');
+      expect(acc.anyMatch, isTrue);
+    });
+
+    test('-m counts SELECTED lines, and with -v the inverted ones', () {
+      final q = compileGrepQuery(
+        const {'v'},
+        'a',
+        maxCount: 1,
+      ).query!;
+      final acc = GrepAccumulator();
+      grepText('aa\nbx\ncx\ndx\n', null, q, acc);
+      expect(acc.buffer.toString(), 'bx\n');
+    });
+
+    test('-m does not count against -c beyond the max', () {
+      final q = compileGrepQuery(
+        const {'c'},
+        'a',
+        maxCount: 2,
+      ).query!;
+      final acc = GrepAccumulator();
+      grepText('aa\nba\nca\n', null, q, acc);
+      expect(acc.buffer.toString(), '2\n');
+    });
+
+    test('-o prints each match on its own line (gh-1393 rework)', () {
+      final q = compileGrepQuery(const {'o'}, 'an').query!;
+      expect(q.onlyMatching, isTrue);
+      final acc = GrepAccumulator();
+      grepText('banana\nbandana\n', null, q, acc);
+      expect(acc.buffer.toString(), 'an\nan\nan\nan\n');
+      expect(acc.anyMatch, isTrue);
+    });
+
+    test('-o rides with -n and labels like GNU grep', () {
+      final q = compileGrepQuery(const {'n', 'o'}, 'an').query!;
+      final acc = GrepAccumulator();
+      grepText('banana\n', 'f.txt', q, acc);
+      expect(acc.buffer.toString(), 'f.txt:1:an\nf.txt:1:an\n');
+    });
+
+    test('-o never emits empty matches', () {
+      final q = compileGrepQuery(const {'o'}, 'a*').query!;
+      final acc = GrepAccumulator();
+      grepText('bbb\n', null, q, acc);
+      expect(acc.buffer.toString(), isEmpty);
+    });
+
+    test('-m bounds -o matches too', () {
+      final q = compileGrepQuery(
+        const {'o'},
+        'a',
+        maxCount: 3,
+      ).query!;
+      final acc = GrepAccumulator();
+      grepText('aaaa\n', null, q, acc);
+      expect(acc.buffer.toString(), 'a\na\na\n');
     });
   });
 
