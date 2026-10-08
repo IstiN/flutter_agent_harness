@@ -2207,7 +2207,10 @@ Future<_ToolCallPreparation> _prepareToolCall(
       cancelToken,
     );
   } catch (error) {
-    return _ImmediateToolCall(_errorToolResult(error), true);
+    return _ImmediateToolCall(
+      _errorToolResult(error, toolName: toolCall.name),
+      true,
+    );
   }
 }
 
@@ -2321,7 +2324,7 @@ Future<_ExecutedToolCallOutcome> _executePreparedToolCall(
     acceptingUpdates = false;
     await Future.wait(updateEvents);
     return _ExecutedToolCallOutcome(
-      _errorToolResult(error),
+      _errorToolResult(error, toolName: toolCall.name),
       true,
       validationRejection:
           error is ToolValidationException || error is ToolNotFoundException,
@@ -2390,7 +2393,7 @@ Future<_FinalizedToolCall> _finalizeExecutedToolCall(
         isError = afterResult.isError ?? isError;
       }
     } catch (error) {
-      result = _errorToolResult(error);
+      result = _errorToolResult(error, toolName: toolCall.name);
       isError = true;
     }
   }
@@ -2434,13 +2437,43 @@ String _toolErrorText(Object error) {
   return text;
 }
 
-/// Builds an error tool result. A [String] is taken as-is; anything else is
-/// a caught error routed through [_toolErrorText] — the single choke point
-/// every thrown tool error flows through.
-ToolExecutionResult _errorToolResult(Object message) {
+/// Builds an error tool result. A [String] is taken as-is (authored
+/// messages are already structured); anything else is a caught error
+/// routed through the gh-1393 AC9 invariant — a tool result is NEVER a
+/// bare leaked exception string. The model always sees the tool name and
+/// the stripped error message; the "uncaught harness exception" hint is
+/// appended ONLY for errors that are not the harness's own operational
+/// carriers (gh-1393 rework): a bash `StateError("…Command exited with
+/// code N"/"…Command aborted")` (the issue-#118 non-zero-exit carrier)
+/// and `ToolValidationException`/`ToolNotFoundException` rejections ARE
+/// command/validation failures — labeling them "the tool may be
+/// unavailable; skip it" would push the model to route around a healthy
+/// tool. The no-bare-exception guarantee holds on every path; only the
+/// hint line is conditional.
+ToolExecutionResult _errorToolResult(Object message, {String? toolName}) {
+  if (message is String) {
+    return ToolExecutionResult(content: [TextContent(text: message)]);
+  }
+  final text = _toolErrorText(message);
+  final name = toolName ?? 'unknown tool';
+  final isOperational =
+      message is ToolValidationException ||
+      message is ToolNotFoundException ||
+      (message is StateError &&
+          (text.contains('Command exited with code') ||
+              text.contains('Command aborted')));
+  final rendered = text.isEmpty ? '<no error message>' : text;
   return ToolExecutionResult(
     content: [
-      TextContent(text: message is String ? message : _toolErrorText(message)),
+      TextContent(
+        text: isOperational
+            ? 'Tool error ($name): $rendered'
+            : 'Tool error ($name): $rendered\n'
+                'This is an uncaught exception inside the harness tool '
+                'implementation - not a command failure. The tool may be '
+                'unavailable in this environment; skip it or use a different '
+                'approach.',
+      ),
     ],
   );
 }

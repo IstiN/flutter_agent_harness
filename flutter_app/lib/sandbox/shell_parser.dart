@@ -275,8 +275,10 @@ ShellCommand parseCommandLine(String input) {
 /// `done` keywords, or invalid `for` syntax.
 ShellScript parseShellScript(String input, {bool allowFdDuplication = false}) {
   final tokens = _tokenize(input);
-  return _ScriptParser(tokens, allowFdDuplication: allowFdDuplication)
-      .parseScript();
+  return _ScriptParser(
+    tokens,
+    allowFdDuplication: allowFdDuplication,
+  ).parseScript();
 }
 
 /// Exception thrown by [parseCommandLine] for invalid syntax.
@@ -1093,17 +1095,13 @@ final class _ScriptParser {
           'use an absolute sandbox path',
         );
       }
-      // A bare `*` is allowed: it is the `expr` multiplication operand
-      // idiom the existing suites pin. `*` with other characters (`*.txt`,
-      // `src/*`) is a glob pattern — rejected (gh-1086 AC5). Bracket
-      // expressions pass literally: stat/jq idioms (`-c [%q-%s]`, `.[]`)
-      // need them, and a silent pass-through is their historical behavior.
-      if (word.contains('*') && word != '*') {
-        throw ShellParseException(
-          "glob patterns are not supported ('$word'): "
-          'quote the argument to pass it literally',
-        );
-      }
+      // Glob patterns are EXPANDED at execution (gh-1393 WS-1, replacing
+      // the gh-1086 parse-time rejection): `*.txt`, `apps/*/app.json` match
+      // workspace paths; no match → the literal word passes through, so
+      // quoting is only needed to keep glob metacharacters literal (the
+      // parser's per-word `quoted` flag drives that). Bracket expressions
+      // (`[a-z]`, `.[]`) are not glob syntax here and pass literally, as
+      // they always have.
       if (_braceExpansion.hasMatch(word)) {
         throw ShellParseException(
           "brace expansion is not supported ('$word'): "

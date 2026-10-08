@@ -707,6 +707,10 @@ class AgentService extends ChangeNotifier
       // task-model override (resolver is built below — the closure reads it
       // lazily), else the main model.
       llmProvider: HarnessLlmProvider(resolve: () => _resolveMemoryLlmSlot()),
+      // gh-1393: the degrade swallows (LLM search → keywords, plain-store
+      // add fallback) leave a breadcrumb in the app log — the iOS
+      // "Invalid core" family becomes diagnosable in the field.
+      onDegrade: (message) => AppLog.i('memory', message),
     );
     // Model-roles resolver backed by the TaskModelsStore: `smol` (compaction
     // + explore) and `subagent` (delegation) overrides resolve through it;

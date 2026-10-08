@@ -3,55 +3,14 @@
 // in the LICENSE file.
 
 import 'package:fa/sandbox/shell_parser.dart';
+import 'package:fa/sandbox/wasm_shell_builtins.dart'
+    show collectStageRedirects, StageRedirects;
 
-/// The file redirects of one pipeline stage.
-typedef StageRedirects = ({
-  String? stdinFile,
-  String? stdinBody,
-  String? stdoutFile,
-  String? stderrFile,
-  bool appendStdout,
-  bool appendStderr,
-});
-
-/// Classifies a stage's redirects (pure): `<` stdin, `<<`/`<<<` inline stdin
-/// body (gh-1086), `>`/`>>`/`&>` stdout, `2>`/`2>>` stderr. An fd of `-1`
-/// routes to stdout first, exactly as the original if-chain did. stdin
-/// follows POSIX last-wins: a later `< file` overrides an earlier heredoc
-/// and vice versa.
-StageRedirects parseStageRedirects(List<Redirect> redirects) {
-  String? stdoutFile;
-  String? stderrFile;
-  var appendStdout = false;
-  var appendStderr = false;
-  String? stdinFile;
-  String? stdinBody;
-
-  for (final redirect in redirects) {
-    if (redirect.fd == 0 && redirect.kind == RedirectKind.read) {
-      stdinFile = redirect.target;
-      stdinBody = null;
-    } else if (redirect.fd == 0 && redirect.kind == RedirectKind.heredoc) {
-      stdinBody = redirect.body ?? '';
-      stdinFile = null;
-    } else if (redirect.fd == 0 && redirect.kind == RedirectKind.hereString) {
-      // POSIX here-strings append a trailing newline after expansion.
-      stdinBody = '${redirect.target}\n';
-      stdinFile = null;
-    } else if (redirect.fd == 1 || redirect.fd == -1) {
-      stdoutFile = redirect.target;
-      appendStdout = redirect.kind == RedirectKind.append;
-    } else if (redirect.fd == 2 || redirect.fd == -1) {
-      stderrFile = redirect.target;
-      appendStderr = redirect.kind == RedirectKind.append;
-    }
-  }
-  return (
-    stdinFile: stdinFile,
-    stdinBody: stdinBody,
-    stdoutFile: stdoutFile,
-    stderrFile: stderrFile,
-    appendStdout: appendStdout,
-    appendStderr: appendStderr,
-  );
-}
+/// The redirect resolution of one pipeline stage (gh-1393 WS-1): a thin
+/// delegate onto the SHARED resolver ([collectStageRedirects]) so the web
+/// MemoryShell and the WASI shell cannot drift — `<`/`<<`/`<<<`, `>`/`>>`,
+/// `2>`/`2>>`, `&>` and the `2>&1`/`>&2` fd-duplication flags (the dup
+/// fields are what the local copy used to lack) resolve identically for
+/// both shells, under one conformance table.
+StageRedirects parseStageRedirects(List<Redirect> redirects) =>
+    collectStageRedirects(redirects);

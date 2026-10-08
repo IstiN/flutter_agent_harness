@@ -4,8 +4,11 @@
 
 import 'dart:convert';
 
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:fa/sandbox/shell_parser.dart';
 import 'package:path/path.dart' as p;
+
+export 'package:fa/sandbox/grep_args.dart';
 
 /// Pure, shell-semantics helpers extracted from [WasiSandboxShell] so the
 /// CRAP descent (#475) can unit test them without loading WASM cores.
@@ -14,76 +17,12 @@ import 'package:path/path.dart' as p;
 /// free; the WASM shell owns the I/O around them. Behavior is IDENTICAL to
 /// the inline code it replaced.
 
-/// Parsed `grep` argv: pass-through flags, pattern, and file operands.
-final class GrepArgs {
-  /// Creates the parse result.
-  const GrepArgs({
-    required this.flags,
-    required this.pattern,
-    required this.files,
-    required this.quiet,
-  });
-
-  /// Flags forwarded to `rg` verbatim (`-i`, `-v`, `-w`, `-x`, `-F`, `-n`,
-  /// `-c`, `-l`, `-m[ N]`).
-  final List<String> flags;
-
-  /// The pattern (positional or `-e`), or `null` when none was given.
-  final String? pattern;
-
-  /// File operands after the pattern.
-  final List<String> files;
-
-  /// `-q`/`--quiet`/`--silent` was given.
-  final bool quiet;
-}
-
-const _grepQuietFlags = {'-q', '--quiet', '--silent'};
-const _grepIgnoredFlags = {'--', '-r', '-R', '-E'};
-const _grepPassThroughFlags = {'-i', '-v', '-w', '-x', '-F', '-n', '-c', '-l'};
-
-/// Parses `grep` argv the way busybox grep does for the sandbox subset.
-///
-/// Returns `null` when `-e` is missing its value (grep exits 2 for that).
-/// `-r`/`-R`/`-E` are accepted and ignored — `rg` already searches
-/// recursively and uses regex syntax by default.
-GrepArgs? parseGrepArgs(List<String> args) {
-  final flags = <String>[];
-  String? pattern;
-  final files = <String>[];
-  var quiet = false;
-
-  for (var i = 0; i < args.length; i++) {
-    final arg = args[i];
-    if (arg == '-e') {
-      if (i + 1 >= args.length) return null;
-      pattern = args[++i];
-      continue;
-    }
-    if (_grepQuietFlags.contains(arg)) {
-      quiet = true;
-      continue;
-    }
-    if (_grepIgnoredFlags.contains(arg)) continue;
-    if (_grepPassThroughFlags.contains(arg)) {
-      flags.add(arg);
-      continue;
-    }
-    if (arg.startsWith('-m')) {
-      flags.add(arg);
-      if (arg == '-m' && i + 1 < args.length) {
-        flags.add(args[++i]);
-      }
-      continue;
-    }
-    if (pattern == null) {
-      pattern = arg;
-    } else {
-      files.add(arg);
-    }
-  }
-  return GrepArgs(flags: flags, pattern: pattern, files: files, quiet: quiet);
-}
+/// Whether [sandboxPath] is the null device after lexical normalization —
+/// the redirect sink that discards bytes and never materializes a file
+/// (gh-1393 WS-1). Shared by the WASI shell and the web MemoryShell so the
+/// conformance table can pin one behavior.
+bool isNullDevicePath(String sandboxPath) =>
+    normalizeLexicalPath(sandboxPath) == '/dev/null';
 
 /// Redirect targets resolved for one pipeline stage.
 final class StageRedirects {
