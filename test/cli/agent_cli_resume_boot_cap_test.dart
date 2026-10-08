@@ -40,8 +40,7 @@ void main() {
     String name, {
     MemoryExecutionEnv? into,
   }) async {
-    final env =
-        into ?? MemoryExecutionEnv(cwd: '/work', shell: FakeShell());
+    final env = into ?? MemoryExecutionEnv(cwd: '/work', shell: FakeShell());
     // Suppress session-start memory maintenance (same pattern as
     // agent_cli_test) so the scripted turns feed only the cap + the turn.
     await env.writeFile('/work/.fah/memory/.last_maintenance', '');
@@ -270,9 +269,17 @@ void main() {
       await seedOverWindow('boot-cap-target', into: env);
 
       // Turn 1 hangs until the interrupt cancels it (the Ctrl+C leg);
-      // the boot cap's summarizer call after the switch consumes the
-      // scripted turn.
-      final cap = FakeStreamFunction([textTurn('compacted boot summary')]);
+      // the boot cap's summarizer ladder after the switch consumes the
+      // scripted turns (chunked summarization issues several calls —
+      // script generously so the ladder never starves into local-trim).
+      final cap = FakeStreamFunction([
+        textTurn('compacted boot summary chunk one'),
+        textTurn('compacted boot summary chunk two'),
+        textTurn('compacted boot summary combined'),
+        textTurn('compacted boot summary retry'),
+        textTurn('compacted boot summary retry two'),
+        textTurn('compacted boot summary retry three'),
+      ]);
       final hang = AbortableStreamFunction();
       var hung = false;
       AssistantMessageEventStream streamCall(
@@ -310,10 +317,7 @@ void main() {
       );
       // Ctrl+C: _abortRunOrCompaction sets the CLI-lifetime flag.
       io.interrupt();
-      await waitForIt(
-        () => !agent.isBusy,
-        reason: 'the aborted turn settles',
-      );
+      await waitForIt(() => !agent.isBusy, reason: 'the aborted turn settles');
       expect(io.out.toString(), contains('Operation aborted'));
 
       // /session switches to the over-window session WITHOUT an
@@ -324,18 +328,30 @@ void main() {
       io.sendLine('/session boot-cap-target');
       await waitForIt(
         () => cap.calls >= 1 && !agent.isBusy,
-        reason: 'the boot cap runs on the resumed (over-window) session '
+        reason:
+            'the boot cap runs on the resumed (over-window) session '
             'despite the previous session\'s abort',
       );
       io.sendLine('/exit');
       await run;
 
       final output = io.out.toString();
+      // THE FIX: the cap's summarizer pass completed — the rendered
+      // 'auto-compacted' report (not the AC5 '[context trimmed]' valve,
+      // and never a silent skip).
       expect(output, contains('auto-compacted'));
-      // The resumed session's context was actually capped.
+      expect(output, isNot(contains('[context trimmed]')));
+      // THE SYMPTOM (review wording): the resumed meter must NOT idle
+      // over 100% — the last rendered ctx gauge after the switch is the
+      // capped context (pre-fix the skipped cap left it at ~154%).
+      final ctxMatches = RegExp(r'ctx (\d+)%').allMatches(output).toList();
+      expect(ctxMatches, isNotEmpty);
       expect(
-        requestTokensOf(cap.contexts.single),
-        lessThanOrEqualTo(_threshold),
+        int.parse(ctxMatches.last.group(1)!),
+        lessThanOrEqualTo(100),
+        reason:
+            'the resumed session boots with the meter at or below '
+            '100% — the stale abort must not skip the boot cap',
       );
     },
   );
