@@ -526,10 +526,13 @@ extension SettingsFlow on AgentCli {
       modelId,
       field,
     ]);
-    // Never persist a file the next boot would reject.
+    // Never persist a file the next boot would reject. A doc with no
+    // `models:` section left is valid — the models config is optional at
+    // boot, and removing the last pinned field drops the whole block.
+    final doc = loadYaml(edited);
+    final models = doc is YamlMap ? doc['models'] : null;
     try {
-      final doc = loadYaml(edited);
-      ModelsConfig.fromYaml(doc is YamlMap ? doc['models'] : null);
+      if (models != null) ModelsConfig.fromYaml(models);
     } on Object catch (error) {
       io.writeln('not saved: $error');
       return;
@@ -570,9 +573,12 @@ extension SettingsFlow on AgentCli {
       provider,
       modelId,
     ]);
+    // Same rule as the field remove: no `models:` section left is valid —
+    // the last override's removal drops the whole block.
+    final doc = loadYaml(edited);
+    final models = doc is YamlMap ? doc['models'] : null;
     try {
-      final doc = loadYaml(edited);
-      ModelsConfig.fromYaml(doc is YamlMap ? doc['models'] : null);
+      if (models != null) ModelsConfig.fromYaml(models);
     } on Object catch (error) {
       io.writeln('not saved: $error');
       return;

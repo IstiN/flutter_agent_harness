@@ -53,6 +53,18 @@ void main() {
   int providerRow(String name) =>
       enabledProviderNames().indexOf(name) + 1;
 
+  /// Occurrences of [needle] in the transcript. Re-rendered menus repeat
+  /// identical text, so the SECOND render is matched by count, not by
+  /// `contains` (which resolves on the stale first render).
+  int countOf(String needle) =>
+      io.out.toString().split(needle).length - 1;
+
+  /// Waits until [needle] has appeared [n] times in the transcript.
+  Future<void> waitForCount(String needle, int n) => waitForIt(
+    () => countOf(needle) >= n,
+    reason: '$needle ×$n',
+  );
+
   test('AC3: caps persist exactly the resolver override keys', () async {
     const seed = '# my config\nprovider: openrouter\nmodel: m1\n';
     await env.writeFile('/home/u/.fah/config.yaml', seed);
@@ -87,17 +99,26 @@ void main() {
     await waitForIt(
       () => io.out.toString().contains('models.overrides.zai.glm-5.3-flash'),
     );
+    // The caps menu re-renders with the pinned value shown in the row.
+    await waitForIt(
+      () => io.out.toString().contains('Max output tokens — 65536 tokens'),
+    );
     io.sendLine('3'); // thinking level
     await waitForIt(
       () => io.out.toString().contains('thinking level'),
     );
     io.sendLine('5'); // high
     await waitForIt(
-      () => io.out.toString().contains('thinkingLevel = high'),
+      () => io.out.toString().contains('models.overrides.'
+          'zai.glm-5.3-flash.thinkingLevel = high'),
     );
-    io.sendLine('5'); // done (caps loop)
-    await waitForIt(() => io.out.toString().contains('Pin or edit'));
-    io.sendLine('3'); // done (flow menu)
+    await waitForIt(
+      () => io.out.toString().contains('Thinking level — high'),
+    );
+    io.sendLine('6'); // done (caps loop — 5 is Remove now, Done shifted)
+    // The flow menu re-renders identical text: match the second render.
+    await waitForCount('Pin or edit', 2);
+    io.sendLine('2'); // done (flow menu)
     await flow;
     io.sendLine('/exit');
     await run;
@@ -158,9 +179,10 @@ void main() {
     );
     io.sendLine('100'); // below the 16384 reserve
     await waitForIt(() => io.out.toString().contains('not saved'));
-    io.sendLine('4'); // done (caps loop)
-    await waitForIt(() => io.out.toString().contains('Pin or edit'));
-    io.sendLine('3'); // done (flow menu)
+    io.sendLine('5'); // done (caps loop — no entry pinned, Done is row 5)
+    // The flow menu re-renders identical text: match the second render.
+    await waitForCount('Pin or edit', 2);
+    io.sendLine('2'); // done (flow menu)
     await flow;
     io.sendLine('/exit');
     await run;
@@ -203,9 +225,9 @@ models:
         'models.overrides.zai.glm-5.3-flash removed',
       ),
     );
-    io.sendLine('1'); // done (the override is gone — only Done remains)
-    await waitForIt(() => io.out.toString().contains('Pin or edit'));
-    io.sendLine('3'); // done (flow menu)
+    // The remove returns to the flow menu (second render of the title).
+    await waitForCount('Pin or edit', 2);
+    io.sendLine('2'); // done (flow menu — the entry row is gone)
     await flow;
     io.sendLine('/exit');
     await run;
@@ -218,6 +240,8 @@ models:
     expect(written, isNot(contains('glm-5.3-flash')));
     expect(written, contains('provider: openrouter'));
     final parsed = CliConfig.fromYaml(loadYaml(written!) as YamlMap);
-    expect(parsed.models!.overrides.isEmpty, isTrue);
+    // The whole `models:` block dropped with the last override — absent
+    // section or empty overrides both read as "nothing pinned".
+    expect(parsed.models?.overrides.isEmpty ?? true, isTrue);
   });
 }
