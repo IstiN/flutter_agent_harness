@@ -103,6 +103,14 @@ Future<void> _seedBundledSkills(ExecutionEnv env) async {
 /// project copy and stays untouched (same contract as the cleanup above:
 /// real skills always shadow builtins, and the discovery list merges the
 /// builtins last anyway).
+///
+/// Deliberate interplay with the #1334 empty-dir prune above: a directory
+/// the retirement cleanup pruned is refilled here with the pointer, so the
+/// #1334 invariant (no EMPTY skill dir under `.fah/skills` — an empty one
+/// reads as broken materialization to an exploring agent) holds by
+/// CONTENT after boot, not by absence. The pointer is never a
+/// re-materialized SKILL.md, so the retired copy cannot shadow the
+/// compiled-in builtin again.
 Future<void> seedBuiltinSkillPointers(ExecutionEnv env) async {
   for (final skill in builtinSkills()) {
     final dir = '${env.cwd}/.fah/skills/${skill.name}';
