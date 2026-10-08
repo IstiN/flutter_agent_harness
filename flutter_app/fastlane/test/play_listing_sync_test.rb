@@ -43,6 +43,7 @@ if $PROGRAM_NAME == __FILE__
     attr_accessor :upload_sha_override, :upload_omit_sha, :token_response, :remote_languages,
                   :post_commit_drift, :post_commit_reverse, :image_delete_error,
                   :edit_insert_error, :listings_error, :commit_error,
+                  :edit_delete_error, :untitled_languages,
                   :hide_shas_until_list_no
 
     def initialize
@@ -64,7 +65,11 @@ if $PROGRAM_NAME == __FILE__
         { status: 200, body: { id: "edit1" }.to_json }
       when method == :Get && url.end_with?("/listings")
         return @listings_error if @listings_error
-        { status: 200, body: { listings: @remote_languages.map { |l| { language: l } } }.to_json }
+        # gh-1402: Play answers edits.listings.list with language + title
+        # (among others) — the store-side title surface the sync gates on.
+        { status: 200, body: { listings: @remote_languages.map { |l|
+          { language: l, title: @untitled_languages.to_a.include?(l) ? "" : "Fa — Personal AI Agent" }
+        } }.to_json }
       when method == :Delete && (m = url.match(%r{/listings/([^/]+)/([^/]+)\z}))
         return @image_delete_error if @image_delete_error
         @store.delete([m[1], m[2]])
@@ -96,6 +101,7 @@ if $PROGRAM_NAME == __FILE__
         @committed << url
         { status: 200, body: { id: "edit1" }.to_json }
       when method == :Delete && url.end_with?("/edits/edit1")
+        return @edit_delete_error if @edit_delete_error
         { status: 200, body: "" }
       else
         raise "unexpected call: #{method} #{url}"
@@ -112,6 +118,8 @@ if $PROGRAM_NAME == __FILE__
   def metadata_dir_with_goldens(root)
     # Mirrors the real tree shape: en-US carries icon + featureGraphic +
     # phone + tenInch sets; ru-RU has NO tenInch set (falls back to phone).
+    # gh-1402: both locales carry the Play-mandatory listing texts (the
+    # pre-flight completeness gate runs inside sync_and_verify!).
     base = File.join(root, "android")
     write_png(File.join(base, "en-US/images/icon.png"), "icon-en")
     write_png(File.join(base, "en-US/images/featureGraphic.png"), "fg-en")
@@ -120,7 +128,20 @@ if $PROGRAM_NAME == __FILE__
     write_png(File.join(base, "en-US/images/tenInchScreenshots/01_store_chat.png"), "ten-en-1")
     write_png(File.join(base, "ru-RU/images/icon.png"), "icon-ru")
     write_png(File.join(base, "ru-RU/images/phoneScreenshots/01_store_chat.png"), "phone-ru-1")
+    write_listing_texts(base, "en-US")
+    write_listing_texts(base, "ru-RU")
     base
+  end
+
+  # gh-1402 fixture helper: Play-mandatory listing texts for a locale
+  # (title + short description + full description — all non-empty).
+  def write_listing_texts(metadata_dir, locale)
+    FileUtils.mkdir_p(File.join(metadata_dir, locale))
+    { "title.txt" => "Fa — Personal AI Agent",
+      "short_description.txt" => "Chat with any AI, privately",
+      "full_description.txt" => "Fa is a personal AI agent that lives on your phone." }.each do |name, content|
+      File.write(File.join(metadata_dir, locale, name), content)
+    end
   end
 
   def service_account_json
@@ -156,11 +177,165 @@ if $PROGRAM_NAME == __FILE__
     raise "FAIL: console-only locale must be cleared" unless plan.any? { |e| e[:locale] == "de-DE" }
     ok("clear plan = every listing locale × every multi-slot type (#{expected} sets)")
 
-    state = PlayListingSync.expected_state(metadata_dir, [])
+    state = PlayListingSync.expected_state(metadata_dir, %w[en-US ru-RU])
     raise "FAIL: en-US tenInch expected non-empty" unless state["en-US"]["tenInchScreenshots"].size == 1
     raise "FAIL: ru-RU tenInch expected EMPTY" unless state["ru-RU"]["tenInchScreenshots"] == []
     raise "FAIL: expected state must carry sha256 digests" unless state["en-US"]["icon"] == [Digest::SHA256.hexdigest("icon-en")]
     ok("expected state = repo goldens by sha256, empty where the repo ships none")
+  end
+
+  # ── gh-1402: pre-flight language-completeness gate (pure local) ─────────
+  # The incident: Google rejected the listing edit AT COMMIT —
+  # `edits.commit failed (HTTP 403): PERMISSION_DENIED: This app has no
+  # title for language ru-RU.` (runs 37732646663 / 37732832488) — because
+  # a language the edit touched had no title store-side. Title
+  # completeness is checkable locally before ANY network call; the gate
+  # must say it first, naming the language, the field, and the path.
+  Dir.mktmpdir do |root|
+    metadata_dir = metadata_dir_with_goldens(root)
+    write_listing_texts(metadata_dir, "en-US")
+    write_listing_texts(metadata_dir, "ru-RU")
+    File.delete(File.join(metadata_dir, "ru-RU", "title.txt")) # MISSING, not empty
+
+    begin
+      PlayListingSync.validate_listing_completeness!(metadata_dir)
+      raise "FAIL: a missing title.txt must fail the gate"
+    rescue RuntimeError => e
+      raise "FAIL: must name the language, got: #{e.message}" unless e.message.include?("ru-RU")
+      raise "FAIL: must name the field, got: #{e.message}" unless e.message.include?("title")
+      unless e.message.include?(File.join(metadata_dir, "ru-RU", "title.txt"))
+        raise "FAIL: must name the path, got: #{e.message}"
+      end
+    end
+    ok("gh-1402: a missing title.txt fails the gate naming language + field + path")
+
+    # An EMPTY (whitespace) title is the same violation.
+    File.write(File.join(metadata_dir, "ru-RU", "title.txt"), "  \n\t")
+    begin
+      PlayListingSync.validate_listing_completeness!(metadata_dir)
+      raise "FAIL: an empty title.txt must fail the gate"
+    rescue RuntimeError => e
+      unless e.message.include?("ru-RU") && e.message.include?("title")
+        raise "FAIL: empty title must name ru-RU + title, got: #{e.message}"
+      end
+    end
+    ok("gh-1402: an empty (whitespace) title.txt fails the gate the same way")
+
+    # full_description is Play-mandatory too ("title at minimum;
+    # full-description per Play requirements").
+    File.write(File.join(metadata_dir, "ru-RU", "title.txt"), "Fa — личный ИИ-агент")
+    File.delete(File.join(metadata_dir, "ru-RU", "full_description.txt"))
+    begin
+      PlayListingSync.validate_listing_completeness!(metadata_dir)
+      raise "FAIL: a missing full_description.txt must fail the gate"
+    rescue RuntimeError => e
+      unless e.message.include?("full_description") && e.message.include?("ru-RU")
+        raise "FAIL: must name field full_description for ru-RU, got: #{e.message}"
+      end
+    end
+    ok("gh-1402: a missing full_description.txt fails the gate per Play requirements")
+
+    File.write(File.join(metadata_dir, "ru-RU", "full_description.txt"), "Fa — личный ИИ-агент на вашем телефоне.")
+    unless PlayListingSync.validate_listing_completeness!(metadata_dir) == true
+      raise "FAIL: a complete tree must pass the gate"
+    end
+    ok("gh-1402: a complete metadata tree passes the gate")
+  end
+
+  # gh-1402 AC2: the REAL fastlane/metadata/android tree must always pass
+  # the gate (file-only check — runs in ci.yml's stock-ruby loop, no
+  # network, no credentials).
+  unless PlayListingSync.validate_listing_completeness!(
+    File.expand_path("../metadata/android", __dir__)
+  ) == true
+    raise "FAIL: the real fastlane/metadata/android tree is incomplete"
+  end
+  ok("gh-1402: the real fastlane/metadata/android tree passes the gate")
+
+  # ── gh-1402: store-side untitled languages are skipped, never touched ───
+  # The sync discovers languages from repo dirs ∪ the Play listing. A
+  # listing language with NO store-side title cannot be part of an image
+  # edit — any clear/upload drafts it and Google rejects the whole edit at
+  # commit (the 403 above). The sync must skip it (the listing-texts
+  # deploy in the same lane creates/completes it; images land next run),
+  # name the skip in the summary, and not fail the post-commit verify on
+  # the untouched locale.
+  Dir.mktmpdir do |root|
+    http = FakePlayHttp.new
+    http.untitled_languages = %w[ru-RU] # the incident's store state
+    metadata_dir = metadata_dir_with_goldens(root)
+    # Stale ru-RU shots on the store: if the verify did NOT skip the
+    # untitled locale it would demand the ru-RU goldens here — a false red.
+    http.store[["ru-RU", "phoneScreenshots"]] << Digest::SHA256.hexdigest("stale-ru-untitled")
+
+    summary = PlayListingSync.sync_and_verify!(
+      metadata_dir: metadata_dir, json_key: service_account_json,
+      package_name: "dev.fa1.app", http: http
+    )
+
+    ru_calls = http.calls.count { |_m, u| u.include?("/listings/ru-RU/") }
+    raise "FAIL: untitled ru-RU must never be touched, got #{ru_calls} call(s)" unless ru_calls.zero?
+    unless http.calls.any? { |m, u| m == :Post && u.include?("/listings/en-US/icon?uploadType=media") }
+      raise "FAIL: the titled en-US listing must still sync"
+    end
+    raise "FAIL: the edit must still commit" unless http.committed.size == 1
+    unless summary.include?("skipped") && summary.include?("ru-RU")
+      raise "FAIL: the summary must name the skipped locale, got: #{summary}"
+    end
+    ok("gh-1402: untitled store language skipped cleanly (no clear/upload/verify), named in the summary")
+
+    # "…unless explicitly adding one": the override restores full management.
+    http2 = FakePlayHttp.new
+    http2.untitled_languages = %w[ru-RU]
+    PlayListingSync.sync_and_verify!(metadata_dir: metadata_dir, json_key: service_account_json,
+                                     package_name: "dev.fa1.app", http: http2, skip_untitled: false)
+    unless http2.calls.any? { |m, u| m == :Post && u.include?("/listings/ru-RU/icon?uploadType=media") }
+      raise "FAIL: skip_untitled: false must manage ru-RU again"
+    end
+    ok("gh-1402: skip_untitled: false explicitly manages untitled languages")
+  end
+
+  # ── gh-1402 AC3: a commit-time 403 discards the open edit, then raises ──
+  # `commit_edit!` failing leaves the edit OPEN on Play — stuck-edit drift
+  # the next run must not inherit. The sync discards it best-effort
+  # (edits.delete) BEFORE re-raising the original error.
+  commit_403 = { status: 403, body: { error: { status: "PERMISSION_DENIED",
+                                               message: "This app has no title for language ru-RU." } }.to_json }
+  Dir.mktmpdir do |root|
+    http = FakePlayHttp.new
+    http.commit_error = commit_403
+    metadata_dir = metadata_dir_with_goldens(root)
+    begin
+      PlayListingSync.sync_and_verify!(metadata_dir: metadata_dir, json_key: service_account_json,
+                                       package_name: "dev.fa1.app", http: http)
+      raise "FAIL: a commit 403 must raise"
+    rescue RuntimeError => e
+      unless e.message.include?("edits.commit failed (HTTP 403)") &&
+             e.message.include?("no title for language ru-RU")
+        raise "FAIL: the 403 must re-raise readably, got: #{e.message}"
+      end
+    end
+    commit_at = http.calls.index { |m, u| m == :Post && u.include?(":commit") }
+    discard_at = http.calls.index { |m, u| m == :Delete && u.end_with?("/edits/edit1") }
+    raise "FAIL: the failed edit must be discarded (edits.delete missing)" unless discard_at
+    raise "FAIL: the discard must follow the failed commit" unless discard_at > commit_at
+    ok("gh-1402: commit-time 403 discards the open edit (edits.delete) before re-raising")
+
+    # The discard is BEST-EFFORT: a failing edits.delete must never mask
+    # the original commit error.
+    http2 = FakePlayHttp.new
+    http2.commit_error = commit_403
+    http2.edit_delete_error = { status: 500, body: "{}" }
+    begin
+      PlayListingSync.sync_and_verify!(metadata_dir: metadata_dir, json_key: service_account_json,
+                                       package_name: "dev.fa1.app", http: http2)
+      raise "FAIL: a commit 403 must raise"
+    rescue RuntimeError => e
+      unless e.message.include?("edits.commit failed (HTTP 403)")
+        raise "FAIL: the discard failure must not mask the commit error, got: #{e.message}"
+      end
+    end
+    ok("gh-1402: a failing edits.delete stays best-effort (original error preserved)")
   end
 
   # ── service-account JWT ─────────────────────────────────────────────────
