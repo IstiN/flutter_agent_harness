@@ -33,6 +33,7 @@ void main() {
     final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(io, fake, approvalMode: mode);
     final run = cli.run();
+    io.sendLine('anything');
     await waitForIt(() => fake.calls >= 1);
     final prompt = fake.contexts[0].systemPrompt ?? '';
     io.sendLine('/exit');
