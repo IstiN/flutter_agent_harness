@@ -137,6 +137,17 @@
         37774628085,
         37711572647
       ]
+    },
+    {
+      "file": "test/integration/pty_resume_equivalence_test.dart",
+      "test": "AC1: resume renders 1:1 with live (normalized diff empty)",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1422",
+      "since": "2026-10-08",
+      "runs": [
+        37802938457,
+        37798533323,
+        37774628085
+      ]
     }
   ]
 }
