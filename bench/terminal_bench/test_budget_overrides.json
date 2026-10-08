@@ -1,0 +1,13 @@
+{
+  "_format": "gh-1407 per-task test-budget override table. Keys are terminal-bench task ids; measured_p95_sec is the runner-measured test-phase wall-clock p95 (seconds, effective wall time at the dispatch's --global-timeout-multiplier). Effective budget applied by patch_test_timeouts.py: declared such that declared x multiplier >= measured_p95_sec x 1.5. Add an entry ONLY with run-artifact evidence (test_started_at/test_ended_at from the trial results.json); mark censored samples (the phase died at the cap, never completed) and keep the source naming the runs. FA_TEST_BUDGET_OVERRIDES can merge an extra table per run without editing this file.",
+  "jupyter-notebook-server": {
+    "measured_p95_sec": 360.1,
+    "censored": true,
+    "source": "gh-1407: test phase test_timeout at the cap in every round - r3 run 37736364517 shard 4 (360.1s), r2 run 37609468473 shard 1 (360.1s), r1 run 37144207185 shard 5 (120.1s); all samples censored by the phase cap, so this is a lower bound. Caveat from the r2/r3 panes: the pytest suite itself finished in ~1.1-1.4s; the wall was burned AFTER the suite (blocking command never returned). NEEDS-CI-RUN: a no-agent dry run must confirm the phase completes under this budget."
+  },
+  "build-initramfs-qemu": {
+    "measured_p95_sec": 360.1,
+    "censored": true,
+    "source": "gh-1407: r2 run 37609468473 shard 0 test phase test_timeout at the 360.1s cap with pytest still in 'collecting ...' (pane post-test); sample censored, lower bound. NEEDS-CI-RUN: no-agent dry run to see collection through."
+  }
+}
