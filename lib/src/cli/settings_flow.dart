@@ -605,9 +605,13 @@ extension SettingsFlow on AgentCli {
       switch (await _env.readTextFile(path)) {
         case Ok(:final value):
           final doc = loadYaml(value);
-          final models = ModelsConfig.fromYaml(
-            doc is YamlMap ? doc['models'] : null,
-          );
+          // The `models:` section is optional at boot: removing the last
+          // override drops the whole block, and the live layer must then
+          // reinstall EMPTY (nothing pinned), not throw.
+          final section = doc is YamlMap ? doc['models'] : null;
+          final models = section == null
+              ? ModelsConfig()
+              : ModelsConfig.fromYaml(section);
           modelCapabilityOverrides = models.overrides;
           config.modelsConfig?.overrides = models.overrides;
         case Err():
