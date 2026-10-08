@@ -26,6 +26,7 @@ export 'src/apps/js_app_errors.dart';
 export 'src/approval/approval.dart';
 export 'src/approval/approval_hook.dart';
 export 'src/approval/bash_interceptor.dart';
+export 'src/approval/bash_shape_redaction.dart';
 export 'src/browser/bridge_protocol.dart';
 export 'src/browser/llm_relay.dart';
 export 'src/browser/providers_sync.dart';

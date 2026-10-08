@@ -162,6 +162,14 @@ AgentTool shellTool(
     execute: (arguments, cancelToken, onUpdate) async {
       cancelToken?.throwIfCancelled();
       final command = arguments['command'] as String;
+      // Issue #1408 AC3: the shape interceptor rewrites recognized secret
+      // SHAPES (and only those — key-like-but-unmatched text, e.g. a
+      // filename the agent is creating, stays byte-identical) and the
+      // result notice names every rewrite so the agent sees what changed
+      // instead of discovering corruption by I/O error.
+      final rewrite = redactBashCommandSecretShapes(command);
+      final effectiveCommand = rewrite?.command ?? command;
+      final rewriteNotice = rewrite?.notice;
       final timeoutArg = arguments['timeout'] as num?;
       final timeout = timeoutArg == null ? null : _resolveTimeout(timeoutArg);
       final background = arguments['background'] as bool? ?? false;
@@ -185,7 +193,7 @@ AgentTool shellTool(
           );
         }
         final entry = await jobs.start(
-          command,
+          effectiveCommand,
           options: ShellExecOptions(
             cwd: env.cwd,
             timeout: timeout,
@@ -194,6 +202,7 @@ AgentTool shellTool(
           ),
         );
         return ToolExecutionResult.text(
+          '${rewriteNotice == null ? '' : '$rewriteNotice\n'}'
           'Started background job ${entry.id}.\n'
           'Log: ${entry.logPath}\n'
           'You will be notified when it finishes; check progress with '
@@ -209,7 +218,7 @@ AgentTool shellTool(
         return _shellViaJob(
           env,
           jobs,
-          command,
+          effectiveCommand,
           stdinData: stdinData,
           timeout: timeout,
           timeoutArg: timeoutArg,
@@ -217,17 +226,19 @@ AgentTool shellTool(
           yieldToken: currentYieldToken()!,
           onPasswordPrompt: onPasswordPrompt,
           passwordQuiet: passwordQuiet,
+          rewriteNotice: rewriteNotice,
         );
       }
 
       return _runForegroundBash(
         env,
-        command,
+        effectiveCommand,
         timeout: timeout,
         timeoutArg: timeoutArg,
         cancelToken: cancelToken,
         stdinData: stdinData,
         retryBackoff: retryBackoff,
+        rewriteNotice: rewriteNotice,
       );
     },
   );
@@ -249,8 +260,9 @@ Future<ToolExecutionResult> _runForegroundBash(
   required CancelToken? cancelToken,
   required String? stdinData,
   required Duration retryBackoff,
+  String? rewriteNotice,
 }) async {
-  final notices = <String>[];
+  final notices = <String>[if (rewriteNotice != null) rewriteNotice];
   for (var attempt = 1; ; attempt++) {
     final canRetry = attempt <= bashToolMaxRetries;
     final Result<ShellExecResult, ExecutionError> result;
@@ -386,6 +398,7 @@ Future<ToolExecutionResult> _shellViaJob(
   required CancelToken yieldToken,
   PasswordPromptCallback? onPasswordPrompt,
   required Duration passwordQuiet,
+  String? rewriteNotice,
 }) async {
   // Live stdin + password-ask detection (issue #367): the channel keeps
   // the pipe open so an answer reaches the RUNNING process; the detector
@@ -422,6 +435,7 @@ Future<ToolExecutionResult> _shellViaJob(
       entry,
       yieldToken,
       timeoutArg: timeoutArg,
+      rewriteNotice: rewriteNotice,
     );
   } finally {
     await outputSub?.cancel();
@@ -435,6 +449,7 @@ Future<ToolExecutionResult> _awaitJobOutcome(
   ShellJobEntry entry,
   CancelToken yieldToken, {
   required num? timeoutArg,
+  String? rewriteNotice,
 }) async {
   final finished = await Future.any<bool>([
     entry.settled.then((_) => true),
@@ -444,13 +459,14 @@ Future<ToolExecutionResult> _awaitJobOutcome(
   if (!finished) {
     final supervisorMoved = yieldToken.cancelReason is StuckCallFollowUp;
     final tail = await jobs.tail(entry.id, maxLines: 20);
+    final handback = stuckBackgroundHandbackText(
+      jobId: entry.id,
+      logPath: entry.logPath,
+      supervisorMoved: supervisorMoved,
+      partialOutput: tail,
+    );
     return ToolExecutionResult.text(
-      stuckBackgroundHandbackText(
-        jobId: entry.id,
-        logPath: entry.logPath,
-        supervisorMoved: supervisorMoved,
-        partialOutput: tail,
-      ),
+      rewriteNotice == null ? handback : '$rewriteNotice\n$handback',
     );
   }
 
@@ -463,6 +479,9 @@ Future<ToolExecutionResult> _awaitJobOutcome(
   if (rawOutput.endsWith('\n')) {
     rawOutput = rawOutput.substring(0, rawOutput.length - 1);
   }
+  // Issue #1408 AC3: the rewrite notice leads the result (the inline path
+  // throws on failures, so prefix before those wraps too).
+  if (rewriteNotice != null) rawOutput = '$rewriteNotice\n$rawOutput';
   final truncation = _truncateTail(rawOutput);
   final output = !truncation.truncated
       ? rawOutput

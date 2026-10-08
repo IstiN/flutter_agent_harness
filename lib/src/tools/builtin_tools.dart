@@ -46,6 +46,7 @@ import '../agent/agent_loop.dart';
 import '../agent/agent_tool.dart';
 import '../approval/approval.dart';
 import '../approval/bash_interceptor.dart';
+import '../approval/bash_shape_redaction.dart';
 import '../cancel_token.dart';
 import '../config/config_tool.dart';
 import '../config/config_service.dart';
