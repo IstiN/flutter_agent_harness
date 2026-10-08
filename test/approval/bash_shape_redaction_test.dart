@@ -15,7 +15,7 @@ import 'package:test/test.dart';
 /// every forced rewrite names exactly what changed in a tool-result
 /// notice.
 
-ToolExecutionResult _textOf(ToolExecutionResult result) {
+String _textOf(ToolExecutionResult result) {
   return result.content.whereType<TextContent>().map((b) => b.text).join();
 }
 
@@ -25,7 +25,9 @@ final class _RecordingShell implements Shell {
   _RecordingShell();
 
   String? lastCommand;
-  var result = const Ok(ShellExecResult(stdout: 'out', stderr: '', exitCode: 0));
+  Result<ShellExecResult, ExecutionError> result = const Ok(
+    ShellExecResult(stdout: 'out', stderr: '', exitCode: 0),
+  );
 
   @override
   Future<Result<ShellExecResult, ExecutionError>> exec(
