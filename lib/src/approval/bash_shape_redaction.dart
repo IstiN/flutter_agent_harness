@@ -69,7 +69,8 @@ final class BashCommandRewrite {
         '${n == 1 ? '' : 's'} in the command ($labels) — the executed '
         'command carries the [REDACTED:…] markers; agent-authored text '
         'that is not a recognized secret shape is never rewritten. Pass '
-        'the value as an env var (\$NAME) instead of literal text.]';
+        'the value as an env var (\$NAME) instead of literal text, or '
+        'register it with request_secret to have it passed verbatim.]';
   }
 }
 
@@ -78,13 +79,27 @@ final class BashCommandRewrite {
 /// text without a full shape (filenames, identifiers) is never rewritten.
 ///
 /// [config] selects the vendor layer (default: enabled, like the
-/// pipeline); a config with the vendor layer disabled yields null.
+/// pipeline); a master-disabled config (`redact.enabled: false`) or one
+/// with the vendor layer off yields null — the same `redact:` section
+/// steers command rewriting and result/job-log masking (review
+/// 5456649624).
+///
+/// [approvedLiterals] are values the host registered as secrets (the
+/// `request_secret` tool, preconfig API keys → the pipeline's
+/// `registeredSecrets`): a match whose original text is one of them is
+/// left byte-identical so an approved value still materializes (the
+/// pipeline already masks it in transcripts). Without this escape hatch a
+/// credential-setup task would have no bash path for its own token
+/// (review 5456649624).
 BashCommandRewrite? redactBashCommandSecretShapes(
   String command, {
   RedactionConfig config = const RedactionConfig(),
+  Set<String> approvedLiterals = const {},
 }) {
   final trimmed = command.trim();
-  if (trimmed.isEmpty || !config.isLayerEnabled(RedactionLayer.vendor)) {
+  if (trimmed.isEmpty ||
+      !config.enabled ||
+      !config.isLayerEnabled(RedactionLayer.vendor)) {
     return null;
   }
   // layerVendor returns non-overlapping matches, but grouped per pattern —
@@ -95,13 +110,21 @@ BashCommandRewrite? redactBashCommandSecretShapes(
   final matches = layerVendor(command, config);
   if (matches.isEmpty) return null;
   matches.sort((a, b) => a.start.compareTo(b.start));
+  if (approvedLiterals.isNotEmpty) {
+    matches.removeWhere(
+      (match) => approvedLiterals.contains(
+        command.substring(match.start, match.end),
+      ),
+    );
+    if (matches.isEmpty) return null;
+  }
   final buffer = StringBuffer();
   final changes = <BashCommandShapeChange>[];
   var cursor = 0;
   for (final match in matches) {
     buffer
       ..write(command.substring(cursor, match.start))
-      ..write('[REDACTED:${match.kindLabel}]');
+      ..write(redactionMarker(match.kindLabel));
     changes.add(
       BashCommandShapeChange(
         label: match.kindLabel,

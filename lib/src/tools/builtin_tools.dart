@@ -58,6 +58,7 @@ import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../prompts/prompts.g.dart';
 import '../skills/builtin_skills.dart';
+import '../redact/redaction_types.dart';
 import '../types.dart';
 import '../web_search/web_search.dart';
 import 'archive_reader.dart';
@@ -159,6 +160,8 @@ List<AgentTool> builtinTools(
   McpManager? mcp,
   ShellJobRegistry? shellJobs,
   PasswordPromptCallback? onPasswordPrompt,
+  RedactionConfig? redactionConfig,
+  Set<String> Function()? approvedSecretLiterals,
 }) {
   final store = snapshots ?? HashlineSnapshotStore();
   return [
@@ -166,7 +169,13 @@ List<AgentTool> builtinTools(
     writeFileTool(env),
     editFileTool(env, snapshots: store),
     listDirTool(env),
-    shellTool(env, jobs: shellJobs, onPasswordPrompt: onPasswordPrompt),
+    shellTool(
+      env,
+      jobs: shellJobs,
+      onPasswordPrompt: onPasswordPrompt,
+      redactionConfig: redactionConfig,
+      approvedSecretLiterals: approvedSecretLiterals,
+    ),
     if (shellJobs != null) bashJobTool(shellJobs),
     if (lsp != null) lspTool(env, config: lsp),
     if (webSearch != null) ...[

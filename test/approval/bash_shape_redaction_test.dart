@@ -69,7 +69,8 @@ void main() {
     });
 
     test('a true secret SHAPE IS rewritten and the notice names it', () {
-      const command = 'aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE';
+      const command =
+          'aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE';
       final rewrite = redactBashCommandSecretShapes(command)!;
 
       expect(
@@ -108,6 +109,64 @@ void main() {
       expect(redactBashCommandSecretShapes('ls -la /tmp'), isNull);
       expect(redactBashCommandSecretShapes(''), isNull);
     });
+
+    test('a master-disabled redaction config never rewrites', () {
+      // Review 5456649624 ⚠️: the same `redact:` section steers command
+      // rewriting and result/job-log masking. `redact.enabled: false`
+      // leaves job logs raw — it must leave commands untouched too.
+      const command =
+          'aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE';
+      expect(
+        redactBashCommandSecretShapes(
+          command,
+          config: const RedactionConfig(enabled: false),
+        ),
+        isNull,
+      );
+    });
+
+    test('a config with the vendor layer off never rewrites', () {
+      const command =
+          'aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE';
+      expect(
+        redactBashCommandSecretShapes(
+          command,
+          config: const RedactionConfig(
+            layerToggles: {RedactionLayer.vendor: false},
+          ),
+        ),
+        isNull,
+      );
+    });
+
+    test('a registered (approved) literal is exempt from rewriting', () {
+      // Review 5456649624 ⚠️ escape hatch: a value the host registered as
+      // a secret (request_secret / preconfig keys) is already masked in
+      // transcripts by the pipeline's exact-value layer — the command must
+      // still materialize it, or credential-setup tasks deterministically
+      // fail (the configure-git-webserver autopsy class).
+      const token = 'AKIAIOSFODNN7EXAMPLE';
+      const command = 'aws configure set aws_access_key_id $token';
+      expect(
+        redactBashCommandSecretShapes(
+          command,
+          approvedLiterals: {token},
+        ),
+        isNull,
+      );
+    });
+
+    test('an approved literal among other shapes rewrites only the rest', () {
+      const token = 'AKIAIOSFODNN7EXAMPLE';
+      final rewrite = redactBashCommandSecretShapes(
+        'use $token and ghp_${'C' * 36}',
+        approvedLiterals: {token},
+      )!;
+      expect(rewrite.changes.single.label, 'GitHub Token');
+      expect(rewrite.command, contains(token));
+      expect(rewrite.command, isNot(contains('$token and')));
+      expect(rewrite.command, contains('[REDACTED:GitHub Token]'));
+    });
   });
 
   group('bash tool applies the shape interceptor (issue #1408 AC3)', () {
@@ -145,6 +204,34 @@ void main() {
 
       expect(shell.lastCommand, command);
       expect(_textOf(result), isNot(contains('[bash interceptor rewrote')));
+    });
+
+    test('shellTool honors redactionConfig: disabled executes verbatim',
+        () async {
+      final shell = _RecordingShell();
+      final tool = bt.shellTool(
+        MemoryExecutionEnv(cwd: '/work', shell: shell),
+        retryBackoff: Duration.zero,
+        redactionConfig: const RedactionConfig(enabled: false),
+      );
+      const command =
+          'aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE';
+      await tool.execute({'command': command}, null, null);
+
+      expect(shell.lastCommand, command);
+    });
+
+    test('shellTool exempts host-registered secret literals', () async {
+      final shell = _RecordingShell();
+      const token = 'AKIAIOSFODNN7EXAMPLE';
+      final tool = bt.shellTool(
+        MemoryExecutionEnv(cwd: '/work', shell: shell),
+        retryBackoff: Duration.zero,
+        approvedSecretLiterals: () => {token},
+      );
+      await tool.execute({'command': 'echo $token'}, null, null);
+
+      expect(shell.lastCommand, 'echo $token');
     });
   });
 }

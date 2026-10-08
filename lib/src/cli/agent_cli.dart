@@ -203,6 +203,7 @@ import '../plugins/plugin.dart';
 import '../redact/redaction_cli.dart';
 import '../redact/redaction_hooks.dart';
 import '../redact/redaction_pipeline.dart';
+import '../redact/redaction_types.dart';
 import '../spill/spill.dart';
 import '../ttsr/ttsr.dart';
 import '../types.dart';
@@ -431,6 +432,15 @@ class AgentCli {
               : (String text) => config.redactionPipeline!.redact(text),
         ),
         onPasswordPrompt: io.isInteractive ? _answerPasswordPrompt : null,
+        // Issue #1408 AC3 (review 5456649624): the same `redact:` section
+        // steers the bash shape interceptor — the boot-resolved pipeline
+        // config when redaction is on, a disabled config when it is off
+        // (job logs raw ⇒ commands untouched). Registered secrets are
+        // exempt from command rewriting so approved values materialize.
+        redactionConfig: config.redactionPipeline?.config ??
+            const RedactionConfig(enabled: false),
+        approvedSecretLiterals: () =>
+            config.redactionPipeline?.registeredSecrets.toSet() ?? const {},
         configServiceFactory: (coreEnv) =>
             ConfigService(env: coreEnv, homeDir: config.homeDir),
         memory: _memory,

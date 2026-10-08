@@ -111,6 +111,17 @@ AgentTool shellTool(
   Duration retryBackoff = _bashRetryBackoff,
   PasswordPromptCallback? onPasswordPrompt,
   Duration passwordQuiet = _bashPasswordQuiet,
+  /// The host's resolved redaction config for the shape interceptor
+  /// (issue #1408 AC3, review 5456649624): the same `redact:` section
+  /// steers command rewriting and result/job-log masking. Null = the
+  /// default config (vendor shapes on) for direct tool users; the CLI
+  /// passes its boot-resolved config (disabled when redaction is off).
+  RedactionConfig? redactionConfig,
+  /// Live snapshot of the values the host registered as secrets
+  /// (`request_secret`, preconfig keys): those literals are EXEMPT from
+  /// command rewriting so an approved value still materializes while the
+  /// pipeline masks it in transcripts (review 5456649624).
+  Set<String> Function()? approvedSecretLiterals,
 }) {
   return AgentTool(
     name: bashToolName,
@@ -167,7 +178,11 @@ AgentTool shellTool(
       // filename the agent is creating, stays byte-identical) and the
       // result notice names every rewrite so the agent sees what changed
       // instead of discovering corruption by I/O error.
-      final rewrite = redactBashCommandSecretShapes(command);
+      final rewrite = redactBashCommandSecretShapes(
+        command,
+        config: redactionConfig ?? const RedactionConfig(),
+        approvedLiterals: approvedSecretLiterals?.call() ?? const {},
+      );
       final effectiveCommand = rewrite?.command ?? command;
       final rewriteNotice = rewrite?.notice;
       final timeoutArg = arguments['timeout'] as num?;
@@ -479,15 +494,17 @@ Future<ToolExecutionResult> _awaitJobOutcome(
   if (rawOutput.endsWith('\n')) {
     rawOutput = rawOutput.substring(0, rawOutput.length - 1);
   }
-  // Issue #1408 AC3: the rewrite notice leads the result (the inline path
-  // throws on failures, so prefix before those wraps too).
-  if (rewriteNotice != null) rawOutput = '$rewriteNotice\n$rawOutput';
+  // Issue #1408 AC3 (review 5456649624): the notice rides AFTER
+  // tail-truncation — _truncateTail keeps the TAIL, so a head-prefixed
+  // notice is cut exactly when the output is long enough to truncate,
+  // silently defeating the "the agent sees the rewrite" contract.
   final truncation = _truncateTail(rawOutput);
-  final output = !truncation.truncated
+  var output = !truncation.truncated
       ? rawOutput
       : '${truncation.content}\n\n[Showing lines '
             '${truncation.totalLines - truncation.outputLines + 1}-'
             '${truncation.totalLines} of ${truncation.totalLines}.]';
+  if (rewriteNotice != null) output = '$rewriteNotice\n$output';
   final exitCode = entry.exitCode ?? -1;
   if (entry.stopReason == 'timeout') {
     throw StateError(
