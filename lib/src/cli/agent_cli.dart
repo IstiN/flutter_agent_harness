@@ -132,6 +132,7 @@ import '../providers/copilot_oauth.dart';
 import '../providers/dial.dart';
 import '../providers/models_endpoint.dart';
 import '../providers/openrouter_oauth.dart';
+import '../providers/thinking.dart';
 import '../agent/image_registry.dart'
     show ImageRegistryConfig, imageDropNotice, imageRegistryConfig;
 import '../providers/provider_common.dart'

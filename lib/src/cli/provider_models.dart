@@ -1285,16 +1285,48 @@ extension on AgentCli {
       .toList();
 
   /// Bare `/model-edit`: the active model's token limits and the setter
-  /// usage hint.
+  /// usage hint. gh-1426 (AC8): the RESOLVED capability triple is visible
+  /// here — thinking level, the omit flag, and the override provenance
+  /// (`models.overrides` pin vs catalog default).
   void _printModelLimits() {
     final current = _agent.state.model;
     io.writeln(
       'model ${current.id}: contextWindow ${current.contextWindow} · '
       'maxTokens ${current.maxTokens}',
     );
+    final caps = <String>[
+      'thinking ${current.thinkingLevel ?? 'off'}',
+      if (current.compat?.omitMaxOutputTokens ?? false)
+        'omit max-output field',
+    ];
+    io.writeln('capabilities: ${caps.join(' · ')}');
+    final pinned = modelCapabilityOverrides?.lookup(
+      current.provider,
+      current.id,
+    );
+    io.writeln(
+      _style.dim(
+        pinned == null
+            ? 'caps source: catalog defaults '
+                '(pin with /settings → Model capabilities)'
+            : 'caps source: models.overrides pin '
+                '(${_capabilitySummaryFor(pinned)})',
+      ),
+    );
     io.writeln(
       _style.dim('set with /model-edit <contextWindow|maxTokens> <n>'),
     );
+  }
+
+  /// The one-line summary of a pinned override (the status surface).
+  String _capabilitySummaryFor(ModelCapabilityOverride caps) {
+    final parts = <String>[
+      if (caps.contextWindow != null) 'ctx ${caps.contextWindow}',
+      if (caps.maxTokens != null) 'out ${caps.maxTokens}',
+      if (caps.thinkingLevel != null) 'thinking ${caps.thinkingLevel}',
+      if (caps.omitMaxOutputTokens ?? false) 'omit max-output field',
+    ];
+    return parts.isEmpty ? '(empty)' : parts.join(' · ');
   }
 
   /// Bare `/model-edit` in TUI mode: a two-step interactive picker —

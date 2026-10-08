@@ -313,8 +313,10 @@ final class ModelsConfig {
 
   /// Per-provider+model capability overrides (gh-1426): the resolver's
   /// top layer — survives every catalog refresh (the entries live HERE,
-  /// in the config file, never in catalog data).
-  final ModelCapabilityOverrides overrides;
+  /// in the config file, never in catalog data). Mutable like the rest of
+  /// [ModelsConfig]: the settings flows swap the live map after a
+  /// validated config write (reload-after-write, last writer wins).
+  ModelCapabilityOverrides overrides;
 
   /// True when neither section carries an entry (the config file then
   /// omits the whole `models:` section on save).
