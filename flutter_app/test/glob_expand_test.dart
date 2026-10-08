@@ -128,6 +128,49 @@ void main() {
         ]);
       },
     );
+
+    test('bracket character classes expand (gh-1393 rework)', () async {
+      // Range class over the directory name.
+      expect(await expandGlobPattern('apps/[0-9]*/app.json', '/', fs), [
+        'apps/2048/app.json',
+      ]);
+      // Set class.
+      expect(await expandGlobPattern('apps/[nr]otes/app.json', '/', fs), [
+        'apps/notes/app.json',
+      ]);
+      // Mixed class + glob star in the same word.
+      expect(await expandGlobPattern('[ar]*.txt', '/', fs), ['a.txt']);
+      expect(await expandGlobPattern('README.[mh]d', '/', fs), ['README.md']);
+    });
+
+    test('negated classes [!...] and [^...] exclude (never cross /)',
+        () async {
+      expect(await expandGlobPattern('[!n]*', '/', fs), [
+        'README.md',
+        'a.txt',
+        'apps',
+      ]);
+      expect(await expandGlobPattern('[^r]*.txt', '/', fs), ['a.txt']);
+    });
+
+    test('a leading ] inside a class is literal (bash []x] rule)', () async {
+      final bracketFs = fakeFs(const {
+        '/': [GlobEntry('x].txt'), GlobEntry('x.txt')],
+      });
+      expect(await expandGlobPattern('x[]].txt', '/', bracketFs), ['x].txt']);
+      expect(await expandGlobPattern('x[!]].txt', '/', bracketFs), ['x.txt']);
+    });
+
+    test('an unclosed [ is a literal character (no match → passthrough)',
+        () async {
+      expect(await expandGlobPattern('apps/[20', '/', fs), isNull);
+      expect(await expandGlobPattern('apps/[2048/app.json', '/', fs), isNull);
+    });
+
+    test('bracket words still hide dotfiles (the segment does not start .)',
+        () async {
+      expect(await expandGlobPattern('[.h]*', '/', fs), isNull);
+    });
   });
 
   group('isGlobWord', () {
@@ -136,6 +179,11 @@ void main() {
       expect(isGlobWord('apps/*/app.json'), isTrue);
       expect(isGlobWord('file?.txt'), isTrue);
       expect(isGlobWord('a*b'), isTrue);
+    });
+
+    test('bracket classes qualify (gh-1393 rework)', () {
+      expect(isGlobWord('apps/[0-9]*/app.json'), isTrue);
+      expect(isGlobWord('[!n]*'), isTrue);
     });
 
     test('plain words do not', () {

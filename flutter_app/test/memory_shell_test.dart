@@ -140,9 +140,10 @@ void main() {
     r = await run('grep --max-count=2 a /m.txt');
     expect(r.stdout, 'aa\nba\n');
 
-    // -o prints each match on its own line.
+    // -o prints each match on its own line (two for the `aa` line, like
+    // GNU grep).
     r = await run('grep -o a /m.txt');
-    expect(r.stdout, 'a\na\na\n');
+    expect(r.stdout, 'a\na\na\na\n');
 
     // -h suppresses the filename column over multiple files.
     r = await run('grep -h a /m.txt /n.txt');

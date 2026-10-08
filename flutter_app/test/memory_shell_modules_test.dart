@@ -410,7 +410,7 @@ void main() {
     });
 
     test('-o prints each match on its own line (gh-1393 rework)', () {
-      final q = compileGrepQuery(const <String>{}, 'an').query!;
+      final q = compileGrepQuery(const {'o'}, 'an').query!;
       expect(q.onlyMatching, isTrue);
       final acc = GrepAccumulator();
       grepText('banana\nbandana\n', null, q, acc);
@@ -419,14 +419,14 @@ void main() {
     });
 
     test('-o rides with -n and labels like GNU grep', () {
-      final q = compileGrepQuery(const {'n'}, 'an').query!;
+      final q = compileGrepQuery(const {'n', 'o'}, 'an').query!;
       final acc = GrepAccumulator();
       grepText('banana\n', 'f.txt', q, acc);
       expect(acc.buffer.toString(), 'f.txt:1:an\nf.txt:1:an\n');
     });
 
     test('-o never emits empty matches', () {
-      final q = compileGrepQuery(const <String>{}, 'a*').query!;
+      final q = compileGrepQuery(const {'o'}, 'a*').query!;
       final acc = GrepAccumulator();
       grepText('bbb\n', null, q, acc);
       expect(acc.buffer.toString(), isEmpty);

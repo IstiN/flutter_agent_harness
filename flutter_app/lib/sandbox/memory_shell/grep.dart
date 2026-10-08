@@ -91,6 +91,8 @@ void grepText(String content, String? label, GrepQuery q, GrepAccumulator acc) {
   var count = 0;
   var selected = 0;
   var reportedFile = false;
+  final capped = q.maxCount != null;
+  lineLoop:
   for (var i = 0; i < lines.length; i++) {
     final found = q.regex.hasMatch(lines[i]);
     if (q.invert ? found : !found) continue;
@@ -106,7 +108,7 @@ void grepText(String content, String? label, GrepQuery q, GrepAccumulator acc) {
     if (q.onlyMatching && !q.invert) {
       for (final match in q.regex.allMatches(lines[i])) {
         if (match.start == match.end) continue; // GNU skips empty matches
-        if (q.maxCount != null && selected >= q.maxCount!) return;
+        if (capped && selected >= q.maxCount!) break lineLoop;
         acc.anyMatch = true;
         count++;
         selected++;
@@ -117,7 +119,7 @@ void grepText(String content, String? label, GrepQuery q, GrepAccumulator acc) {
       }
       continue;
     }
-    if (q.maxCount != null && selected >= q.maxCount!) return;
+    if (capped && selected >= q.maxCount!) break lineLoop;
     acc.anyMatch = true;
     count++;
     selected++;

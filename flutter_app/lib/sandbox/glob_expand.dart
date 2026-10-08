@@ -2,17 +2,20 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
-import 'package:flutter_agent_harness/src/utils/glob_match.dart';
-
 /// Pathname (glob) expansion for the sandbox shells (gh-1393 WS-1).
 ///
 /// Pure logic over an injected directory lister, so both the WASI shell
 /// (host fs) and the web MemoryShell (in-memory fs) drive the same walker —
 /// one conformance table covers both. POSIX semantics: an unquoted word
-/// containing `*` or `?` expands to the matching paths sorted
+/// containing `*`, `?` or `[` expands to the matching paths sorted
 /// lexicographically; when nothing matches, the literal word passes
 /// through (bash default, no `nullglob`) — a glob is NEVER a parse error
 /// and never an execution error by itself.
+///
+/// Shipped surface (rework round 3): `*`, `**`, `?` and bracket classes
+/// `[...]`/`[!...]`/`[^...]` with ranges. Brace expansion (`{a,b}`) is NOT
+/// part of this surface — `shell_parser` reports it as a loud parse error
+/// (never a silent divergence).
 
 /// One directory entry handed to the walker by the shell's fs.
 final class GlobEntry {
@@ -30,8 +33,9 @@ final class GlobEntry {
 /// the path is not a directory (or not readable).
 typedef GlobDirList = Future<List<GlobEntry>?> Function(String path);
 
-/// Whether [word] is a glob candidate (unquoted `*`/`?` present).
-bool isGlobWord(String word) => word.contains('*') || word.contains('?');
+/// Whether [word] is a glob candidate (unquoted `*`/`?`/bracket present).
+bool isGlobWord(String word) =>
+    word.contains('*') || word.contains('?') || word.contains('[');
 
 /// Expands one glob [pattern] against [cwd] (both sandbox paths, `/`-separated).
 ///
@@ -78,7 +82,7 @@ Future<List<String>?> expandGlobPattern(
         );
       }
     } else if (isGlobWord(segment)) {
-      final matcher = globToRegExp(segment);
+      final matcher = _segmentToRegExp(segment);
       final matchDot = segment.startsWith('.');
       for (final candidate in candidates) {
         final entries = await listDir(candidate.path);
@@ -131,6 +135,97 @@ Future<List<String>?> expandGlobPattern(
 /// `**` recursion cap: enough for any real workspace, bounded enough that
 /// a symlink loop cannot spin the walker.
 const _globstarDepthCap = 24;
+
+/// Segment-level glob → anchored [RegExp] (gh-1393 rework). `*` matches
+/// any run of non-`/` (so `**` inside a segment degrades to it — segments
+/// never cross `/`), `?` one non-`/` char, and `[...]`/`[!...]`/`[^...]`
+/// bracket classes with ranges. Local to the expansion walker — the core
+/// `glob_match.dart` stays skill-activation-only (its doc contract
+/// promises "never need character classes", so it is not widened here).
+RegExp _segmentToRegExp(String segment) {
+  final buffer = StringBuffer('^');
+  var i = 0;
+  while (i < segment.length) {
+    final char = segment[i];
+    if (char == '*') {
+      buffer.write('[^/]*');
+      i++;
+    } else if (char == '?') {
+      buffer.write('[^/]');
+      i++;
+    } else if (char == '[') {
+      final klass = _bracketClass(segment, i);
+      if (klass == null) {
+        // Bash: a bracket that never closes is a literal `[`.
+        buffer.write(RegExp.escape(char));
+        i++;
+      } else {
+        buffer.write(klass.regex);
+        i = klass.next;
+      }
+    } else {
+      buffer.write(RegExp.escape(char));
+      i++;
+    }
+  }
+  buffer.write(r'$');
+  return RegExp(buffer.toString());
+}
+
+/// One compiled bracket expression: the regex class body (with `/`
+/// excluded for negated classes — segments never cross `/`) and the index
+/// AFTER the closing `]`.
+final class _BracketClass {
+  const _BracketClass(this.regex, this.next, {required this.negated});
+
+  final String regex;
+  final int next;
+  final bool negated;
+}
+
+/// Compiles the bracket expression whose `[` sits at [start] in
+/// [segment], or `null` when it never closes (the caller emits a literal
+/// `[`). Bash rules: a leading `!`/`^` negates; a `]` in first position
+/// is a literal class member; `x-y` spans a range; an unterminated
+/// expression is not a class at all.
+_BracketClass? _bracketClass(String segment, int start) {
+  var i = start + 1;
+  var negated = false;
+  if (i < segment.length && (segment[i] == '!' || segment[i] == '^')) {
+    negated = true;
+    i++;
+  }
+  final body = StringBuffer();
+  var first = true;
+  while (i < segment.length) {
+    final char = segment[i];
+    if (char == ']' && !first) {
+      // A negated class must not match `/` either.
+      final regex = '[${negated ? '^' : ''}$body${negated ? '/' : ''}]';
+      return _BracketClass(regex, i + 1, negated: negated);
+    }
+    first = false;
+    if (char == r'\' && i + 1 < segment.length) {
+      // An escaped char joins the class literally (bash fnmatch rule).
+      body.write(RegExp.escape(segment[i + 1]));
+      i += 2;
+      continue;
+    }
+    if (i + 2 < segment.length &&
+        segment[i + 1] == '-' &&
+        segment[i + 2] != ']') {
+      body
+        ..write(RegExp.escape(char))
+        ..write('-')
+        ..write(RegExp.escape(segment[i + 2]));
+      i += 3;
+      continue;
+    }
+    body.write(RegExp.escape(char));
+    i++;
+  }
+  return null;
+}
 
 /// One matched-or-candidate path during the segment walk.
 class _Candidate {
