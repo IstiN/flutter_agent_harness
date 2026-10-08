@@ -20,7 +20,16 @@
 ///       input: [text, image]        # optional
 ///       authHeader: x-api-key       # optional; sends `x-api-key: <key>`
 ///                                   # instead of `Authorization: Bearer`
+///       streamIdleTimeoutMs: 240000 # optional; per-provider watchdog
+///       connectTimeoutMs: 45000     #   tuning (issue #1398) — entry >
+///                                   #   `providerTimeouts:` > defaults
 /// ```
+///
+/// Stall-recovery tuning recipe (issue #1398): set `streamIdleTimeoutMs ≈
+/// 2× p95` of the model's measured inter-chunk gap (the tuning report
+/// prints the per-model p50/p95). Defaults stay conservative (300 s) —
+/// healthy reasoning gaps of ~200 s are on record; tuning is opt-in per
+/// entry.
 ///
 /// Parsed strictly like `roles:`/`ttsr:`: any schema error throws
 /// [ConfigException] at startup instead of silently dropping the section.
@@ -31,6 +40,7 @@ import 'dart:convert';
 import 'package:yaml/yaml.dart';
 
 import '../exceptions.dart';
+import '../providers/provider_tuning.dart' show parseProviderTimeoutMs;
 import 'media_model_slots.dart';
 import 'provider_catalog.dart';
 
@@ -47,6 +57,8 @@ final class CustomModelDefinition {
     this.maxTokens,
     this.input,
     this.authHeader,
+    this.connectTimeout,
+    this.streamIdleTimeout,
   });
 
   /// Parses one definition from yaml, strictly: [name] is the map key;
@@ -68,6 +80,8 @@ final class CustomModelDefinition {
       'maxTokens',
       'input',
       'authHeader',
+      'connectTimeoutMs',
+      'streamIdleTimeoutMs',
     ];
     for (final key in node.keys) {
       if (!knownFields.contains(key)) {
@@ -132,6 +146,18 @@ final class CustomModelDefinition {
       maxTokens: optionalInt('maxTokens'),
       input: input,
       authHeader: authHeader,
+      // Per-provider stall-recovery tuning (issue #1398): the watchdog
+      // knobs ride the registry entry, same place baseUrl/keys live.
+      connectTimeout: parseProviderTimeoutMs(
+        node['connectTimeoutMs'],
+        'connectTimeoutMs',
+        where,
+      ),
+      streamIdleTimeout: parseProviderTimeoutMs(
+        node['streamIdleTimeoutMs'],
+        'streamIdleTimeoutMs',
+        where,
+      ),
     );
   }
 
@@ -158,6 +184,15 @@ final class CustomModelDefinition {
   /// `Authorization: Bearer <key>`. Null keeps the Bearer default.
   final String? authHeader;
 
+  /// Per-provider connect/first-headers watchdog override
+  /// (`connectTimeoutMs`, issue #1398). Null keeps the global
+  /// `providerTimeouts:` value, then the 180 s default.
+  final Duration? connectTimeout;
+
+  /// Per-provider stream-idle watchdog override (`streamIdleTimeoutMs`,
+  /// issue #1398). Null keeps the global value, then the 300 s default.
+  final Duration? streamIdleTimeout;
+
   /// Writes the definition as yaml lines at [indent] (string values are
   /// JSON-quoted — valid yaml scalars that round-trip any url/model id).
   void writeYaml(StringBuffer buffer, String indent) {
@@ -176,6 +211,16 @@ final class CustomModelDefinition {
     final authName = authHeader;
     if (authName != null) {
       buffer.write('${indent}authHeader: ${jsonEncode(authName)}\n');
+    }
+    if (connectTimeout != null) {
+      buffer.write(
+        '${indent}connectTimeoutMs: ${connectTimeout!.inMilliseconds}\n',
+      );
+    }
+    if (streamIdleTimeout != null) {
+      buffer.write(
+        '${indent}streamIdleTimeoutMs: ${streamIdleTimeout!.inMilliseconds}\n',
+      );
     }
   }
 

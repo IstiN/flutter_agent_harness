@@ -231,6 +231,19 @@ Future<void> _runApp(List<String> args) async {
   } on ConfigException catch (error) {
     _fail(error.message);
   }
+  // Per-provider stall-recovery tuning (issue #1398): registry entries
+  // declaring `connectTimeoutMs`/`streamIdleTimeoutMs` seed the tuning
+  // table the watchdogs read per request URL. No entries → the table
+  // stays empty and every watchdog keeps today's exact value.
+  seedProviderTuning(
+    customProviders: saved.customProviders,
+    customModels: saved.models?.custom,
+    roleRefs: [
+      for (final chain
+          in saved.modelRoles?.roles.values ?? const <List<ModelRef>>[])
+        ...chain,
+    ],
+  );
 
   // Auto-update boot hook (issue #1377, `auto_update:` config): `off` is
   // zero network; `notify` runs one bounded check and prints a
@@ -708,6 +721,9 @@ Future<void> _runApp(List<String> args) async {
   try {
     final queue = resolveProviderQueueAtBoot(projectDir: cwd, homeDir: home);
     if (queue.entries.isNotEmpty) {
+      // Queue entries may carry their own watchdog tuning (issue #1398);
+      // they register by baseUrl like every other registry entry.
+      seedProviderTuning(queueEntries: queue.entries);
       queueRuntime = ProviderQueueRuntime.build(
         queue,
         secrets: collectQueueSecrets(queue.entries, keyCache),
@@ -717,6 +733,11 @@ Future<void> _runApp(List<String> args) async {
   } on ConfigException catch (error) {
     _fail(error.message);
   }
+  // The per-provider tuning boot notes (issue #1398, review r2): captured
+  // AFTER the queue pass above so queue-carried tuning entries are in the
+  // table — the queue lane replaces main-model resolution, its entries
+  // must print like every other lane's.
+  final tuningNotices = providerTuningBootNotices();
 
   // Redact the API keys this CLI knows about from tool results and the
   // provider context, so they cannot leak into the LLM conversation or the
@@ -876,6 +897,12 @@ Future<void> _runApp(List<String> args) async {
                   'model roles resolve to it unless roles: pins a chain',
       );
     }
+  }
+  // The per-provider tuning boot notes (issue #1398): one line per
+  // seeded entry naming the effective values and where each resolved —
+  // next to the model line, never a silent override.
+  for (final notice in tuningNotices) {
+    io.writeln(notice);
   }
   // The provider-queue boot notes: winning scope + shadowed scopes —
   // the loud handover, never a silent degrade (issue #418).
@@ -1368,8 +1395,11 @@ Future<void> _runApp(List<String> args) async {
             );
           }
         },
-        onDapHubConfigChanged: ({url, name}) =>
-            persistDapConfig(url: url, name: name, file: defaultDapConfigFile()),
+        onDapHubConfigChanged: ({url, name}) => persistDapConfig(
+          url: url,
+          name: name,
+          file: defaultDapConfigFile(),
+        ),
         onModelChanged: (_) async {
           await persistConfig();
           await persistFolderModelState();
