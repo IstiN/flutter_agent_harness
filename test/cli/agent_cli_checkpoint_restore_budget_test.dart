@@ -85,7 +85,10 @@ void main() {
 
   int requestTokensOf(Context context) =>
       estimateContextTokens(context.messages).tokens +
-      estimateRequestOverheadTokens(context.systemPrompt, context.tools ?? const []);
+      estimateRequestOverheadTokens(
+        context.systemPrompt,
+        context.tools ?? const [],
+      );
 
   test(
     'AC4: a user turn that auto-closes a checkpoint over the trigger gets '
@@ -93,7 +96,7 @@ void main() {
     timeout: const Timeout(Duration(minutes: 5)),
     () async {
       await seedBaseTranscript();
-      final stream = FakeStreamFunction([
+      final stream = _CyclingStreamFunction([
         // Run 1 ("start the detour"): the model marks a checkpoint.
         toolTurn([
           const ToolCall(
@@ -109,7 +112,11 @@ void main() {
         // Run 3 ("wrap it up"): first balloon the context past the
         // trigger with a real tool result…
         toolTurn([
-          const ToolCall(id: 't1', name: 'read', arguments: {'path': 'big.txt'}),
+          const ToolCall(
+            id: 't1',
+            name: 'read',
+            arguments: {'path': 'big.txt'},
+          ),
         ]),
         // …then close the stale checkpoint: the auto-close fires the AC4
         // restore-budget guard (over the trigger → forced pass).
@@ -143,7 +150,8 @@ void main() {
         () =>
             !agent.isBusy &&
             io.out.toString().contains('final answer after restore budget cap'),
-        reason: 'run 3: read → stale-checkpoint auto-close → guard cap → '
+        reason:
+            'run 3: read → stale-checkpoint auto-close → guard cap → '
             'final answer',
       );
       io.sendLine('/exit');
@@ -246,4 +254,30 @@ void main() {
       expect(output, contains('final answer, no cap needed'));
     },
   );
+}
+
+/// A [FakeStreamFunction] that replays its LAST turn when the script runs
+/// dry: a forced compaction pass legitimately issues a variable number of
+/// LLM calls (chunked summarization prices the payload at the request
+/// size, so an over-trigger transcript is multi-chunk by construction),
+/// and the memory-extraction hook may add one more. The scripted prefix
+/// stays exact; only the overflow repeats the final-answer turn.
+class _CyclingStreamFunction extends FakeStreamFunction {
+  _CyclingStreamFunction(super.turns);
+
+  List<AssistantMessageEvent>? _last;
+
+  @override
+  AssistantMessageEventStream call(
+    Model model,
+    Context context, {
+    CancelToken? cancelToken,
+  }) {
+    if (turns.isNotEmpty) {
+      _last = turns.first;
+    } else if (_last != null) {
+      turns.add(_last!);
+    }
+    return super.call(model, context, cancelToken: cancelToken);
+  }
 }

@@ -78,7 +78,10 @@ void main() {
 
   int requestTokensOf(Context context) =>
       estimateContextTokens(context.messages).tokens +
-      estimateRequestOverheadTokens(context.systemPrompt, context.tools ?? const []);
+      estimateRequestOverheadTokens(
+        context.systemPrompt,
+        context.tools ?? const [],
+      );
 
   test(
     'AC3: an over-window resume runs ONE forced compaction pass at idle '

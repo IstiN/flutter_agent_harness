@@ -86,7 +86,8 @@ String _marathonJsonl() {
             : '"e${i - 1}"',
         'body $i ${'a' * 40}',
       ),
-    );    if (i == 599) {
+    );
+    if (i == 599) {
       // The structured fold chain, appended after the records they fold
       // (the engine's real order): two hidden ranges + two nested
       // checkpoints covering e470..e579.
@@ -152,8 +153,7 @@ void main() {
     }
 
     test('byte-shape equality over the boundary fixture (the kept region '
-        'survives the walk; the fold chain applies identically)',
-        () async {
+        'survives the walk; the fold chain applies identically)', () async {
       final live = await liveProjection();
       final resumed = await resumedProjection();
 
@@ -179,7 +179,8 @@ void main() {
       expect(
         _shapeOf(resumed),
         liveTexts,
-        reason: 'the resumed projection must be byte-identical to the '
+        reason:
+            'the resumed projection must be byte-identical to the '
             'pre-close live projection',
       );
     });
@@ -274,9 +275,7 @@ void main() {
       final markers = texts.where((s) => s.contains(':hidden·'));
       expect(markers, hasLength(1));
       expect(
-        texts.where(
-          (s) => s.contains('hidden two') && !s.contains(':hidden·'),
-        ),
+        texts.where((s) => s.contains('hidden two') && !s.contains(':hidden·')),
         isEmpty,
       );
       // …and it was NOT treated as version skew: no note.

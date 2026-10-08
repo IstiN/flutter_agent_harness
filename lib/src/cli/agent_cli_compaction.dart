@@ -449,16 +449,16 @@ extension AgentCliCompactionRun on AgentCli {
       io.writeln(
         _style.dim(
           shouldCompact(
-            after,
-            _effectiveContextWindow,
-            _effectiveCompactionSettings,
-          )
+                after,
+                _effectiveContextWindow,
+                _effectiveCompactionSettings,
+              )
               ? '[checkpoint] detour closed over the compaction trigger '
-                  '($tokens tokens) — compaction ran but the context stayed '
-                  'over the trigger ($after); it retries before the next turn'
+                    '($tokens tokens) — compaction ran but the context stayed '
+                    'over the trigger ($after); it retries before the next turn'
               : '[checkpoint] detour closed over the compaction trigger '
-                  '($tokens tokens) — context auto-compacted before the '
-                  'next request',
+                    '($tokens tokens) — context auto-compacted before the '
+                    'next request',
         ),
       );
     } on CancelledException {
@@ -557,7 +557,11 @@ extension AgentCliCompactionRun on AgentCli {
       );
     }
     try {
-      return await _runAutoCompactWithToken(label, abort.token, session: session);
+      return await _runAutoCompactWithToken(
+        label,
+        abort.token,
+        session: session,
+      );
     } finally {
       _activeCompactionAbort = null;
       // Issue #1085 round-1 (review 🚨): a cancelled compaction must

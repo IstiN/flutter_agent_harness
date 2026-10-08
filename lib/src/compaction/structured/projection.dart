@@ -134,7 +134,11 @@ ResolvedFolds resolveStructuredFolds(List<SessionRecord> path) {
   final covered = <String, CompactCheckpointRecord>{};
   final pinnedIds = <String>{};
   final dropped = <DroppedFold>[];
-  void apply(SessionRecord record, bool emptyShape, void Function() applyEffect) {
+  void apply(
+    SessionRecord record,
+    bool emptyShape,
+    void Function() applyEffect,
+  ) {
     if (emptyShape) {
       dropped.add(DroppedFold(record: record));
       return;
@@ -151,15 +155,9 @@ ResolvedFolds resolveStructuredFolds(List<SessionRecord> path) {
           () => hidden.addAll(recordIds),
         );
       case SegmentPinRecord(:final recordIds, :final pinned):
-        apply(
-          record,
-          recordIds.where((id) => id.isNotEmpty).isEmpty,
-          () {
-            pinned
-                ? pinnedIds.addAll(recordIds)
-                : pinnedIds.removeAll(recordIds);
-          },
-        );
+        apply(record, recordIds.where((id) => id.isNotEmpty).isEmpty, () {
+          pinned ? pinnedIds.addAll(recordIds) : pinnedIds.removeAll(recordIds);
+        });
       case CompactCheckpointRecord checkpoint:
         apply(
           record,
@@ -270,7 +268,9 @@ List<Message> renderStructuredMessages({
 }) {
   final resolution = resolveStructuredFolds(path);
   final state = resolution.state;
-  final droppedById = {for (final drop in resolution.dropped) drop.record.id: drop};
+  final droppedById = {
+    for (final drop in resolution.dropped) drop.record.id: drop,
+  };
   final byId = {for (final record in path) record.id: record};
   // Tool calls whose assistant carrier is itself hidden: hiding the
   // carrier downgrades its results to user-role markers too, or the wire
