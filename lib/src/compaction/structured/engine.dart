@@ -248,53 +248,16 @@ final class StructuredCompactor {
     if (over <= 0) return;
     final view = await _buildView();
     if (view == null) return;
-    final ledger = view.ledger;
-    final byId = {for (final record in view.path) record.id: record};
-    final protectedTail = protectedTailIds(ledger, protectLastN);
-    // Expand artifacts, oldest first: every visible assistant carrier of
-    // a compact_expand call, whole pair group. The LAST (newest) group is
-    // never an eviction candidate (AC2: newest kept).
-    final groups = <(int, Set<String>, int)>[];
-    for (final record in view.path) {
-      final message = record is MessageRecord ? record.message : null;
-      if (message is! AssistantMessage) continue;
-      if (view.state.hiddenRecordIds.contains(record.id)) continue;
-      if (view.state.isCovered(record.id)) continue;
-      final isExpandCarrier = message.content.any(
-        (block) => block is ToolCall && block.name == compactExpandToolName,
-      );
-      if (!isExpandCarrier) continue;
-      final group = ledger.groupOf(record.id);
-      var tokens = 0;
-      var hasResult = false;
-      for (final id in group) {
-        final other = byId[id];
-        if (other is MessageRecord && other.message is ToolResultMessage) {
-          hasResult = true;
-        }
-        final seq = view.seqs.seqOf(id);
-        if (seq != null) tokens += ledger.entryAtSeq(seq)?.tokens ?? 0;
-      }
-      // An unanswered carrier (no result yet) is not an expansion —
-      // hiding it would orphan a live tool call on the wire (#85).
-      if (!hasResult) continue;
-      groups.add((view.seqs.seqOf(record.id) ?? 0, group, tokens));
-    }
-    groups.sort((a, b) => a.$1.compareTo(b.$1));
+    final groups = _rehideCandidates(view);
     if (groups.length <= 1) return;
-    final ids = <String>{};
-    var freed = 0;
-    for (final (_, group, tokens) in groups.take(groups.length - 1)) {
-      if (freed >= over) break;
-      // The protected tail holds here exactly as in the judge path, and a
-      // pinned expansion stays on the wire (AC3).
-      if (group.any(protectedTail.contains)) continue;
-      if (group.any(view.state.pinnedRecordIds.contains)) continue;
-      ids.addAll(group);
-      freed += tokens;
-    }
-    if (ids.isEmpty) return;
-    await session.appendHiddenRange(recordIds: ids.toList()..sort());
+    final evictions = _pickRehideEvictions(
+      groups,
+      over,
+      protectedTailIds(view.ledger, protectLastN),
+      view.state.pinnedRecordIds,
+    );
+    if (evictions.isEmpty) return;
+    await session.appendHiddenRange(recordIds: evictions.toList()..sort());
     final after = await _refreshState();
     hooks?.onPass(
       StructuredCompactionPass(
@@ -304,9 +267,96 @@ final class StructuredCompactor {
         tokensAfter: after,
         ok: true,
         judgeCalls: 0,
-        hiddenCount: ids.length,
+        hiddenCount: evictions.length,
       ),
     );
+  }
+
+  /// The visible expand-carrier groups oldest-first — the LRU eviction
+  /// candidates (issue #1379 tier 2): every visible assistant carrier of
+  /// a compact_expand call as its whole pair group, newest last.
+  List<(int, Set<String>, int)> _rehideCandidates(_LedgerView view) {
+    final byId = {for (final record in view.path) record.id: record};
+    final candidates = <(int, Set<String>, int)>[];
+    for (final record in view.path) {
+      final message = _rehideCandidateMessage(view, record);
+      if (message == null || !_isExpandCarrier(message)) continue;
+      final (group, tokens, hasResult) = _carrierGroupWeight(
+        view,
+        byId,
+        record.id,
+      );
+      // An unanswered carrier (no result yet) is not an expansion —
+      // hiding it would orphan a live tool call on the wire (#85).
+      if (!hasResult) continue;
+      candidates.add((view.seqs.seqOf(record.id) ?? 0, group, tokens));
+    }
+    candidates.sort((a, b) => a.$1.compareTo(b.$1));
+    return candidates;
+  }
+
+  /// The carrier [AssistantMessage] when [record] is a re-hide candidate
+  /// at all — a visible assistant record (never hidden, never
+  /// checkpoint-covered). Null otherwise.
+  AssistantMessage? _rehideCandidateMessage(
+    _LedgerView view,
+    SessionRecord record,
+  ) {
+    final message = record is MessageRecord ? record.message : null;
+    if (message is! AssistantMessage) return null;
+    if (view.state.hiddenRecordIds.contains(record.id)) return null;
+    if (view.state.isCovered(record.id)) return null;
+    return message;
+  }
+
+  /// Whether [message] carries a compact_expand tool call.
+  bool _isExpandCarrier(AssistantMessage message) => message.content.any(
+    (block) => block is ToolCall && block.name == compactExpandToolName,
+  );
+
+  /// The candidate's whole pair group with its token weight and whether a
+  /// result message rode along (#85 pair integrity).
+  (Set<String>, int, bool) _carrierGroupWeight(
+    _LedgerView view,
+    Map<String, SessionRecord> byId,
+    String carrierId,
+  ) {
+    final ledger = view.ledger;
+    final group = ledger.groupOf(carrierId);
+    var tokens = 0;
+    var hasResult = false;
+    for (final id in group) {
+      final other = byId[id];
+      if (other is MessageRecord && other.message is ToolResultMessage) {
+        hasResult = true;
+      }
+      final seq = view.seqs.seqOf(id);
+      if (seq != null) tokens += ledger.entryAtSeq(seq)?.tokens ?? 0;
+    }
+    return (group, tokens, hasResult);
+  }
+
+  /// The groups to re-fold now: oldest first until [over] tokens are
+  /// freed, never touching the newest group, the protected tail, or a
+  /// pinned expansion (AC3).
+  Set<String> _pickRehideEvictions(
+    List<(int, Set<String>, int)> groups,
+    int over,
+    Set<String> protectedTail,
+    Set<String> pinnedRecordIds,
+  ) {
+    final ids = <String>{};
+    var freed = 0;
+    for (final (_, group, tokens) in groups.take(groups.length - 1)) {
+      if (freed >= over) break;
+      // The protected tail holds here exactly as in the judge path, and a
+      // pinned expansion stays on the wire (AC3).
+      if (group.any(protectedTail.contains)) continue;
+      if (group.any(pinnedRecordIds.contains)) continue;
+      ids.addAll(group);
+      freed += tokens;
+    }
+    return ids;
   }
 
   /// Cancels the budget token — the factory's total-budget race calls
