@@ -61,5 +61,14 @@
       "completion": 27213,
       "total": 125333
     }
+  ],
+  "pr-1419": [
+    {
+      "leg": "review",
+      "at": "2026-10-08T14:42:51Z",
+      "prompt": 100675,
+      "completion": 38170,
+      "total": 138845
+    }
   ]
 }
