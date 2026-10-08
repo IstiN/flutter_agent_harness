@@ -523,7 +523,7 @@ final class TrajectorySnapshotBuilder {
       CompactCheckpointRecord() => record.text,
       HiddenRangeRecord() => 'hidden ${record.recordIds.length} records',
       SegmentPinRecord() =>
-          '${record.pinned ? 'pin' : 'unpin'} ${record.recordIds.length} records',
+        '${record.pinned ? 'pin' : 'unpin'} ${record.recordIds.length} records',
       _ => '',
     };
     final hiddenRecordIds = record is HiddenRangeRecord

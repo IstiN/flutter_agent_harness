@@ -154,5 +154,77 @@ class SummaryTest(unittest.TestCase):
         self.assertNotIn("Ledger row", out)
 
 
+def _write_ledger(trial_dir: Path, items: list[dict]) -> None:
+    """The hidden `task_ledger` session record exactly as the Dart side
+    persists it (gh-1412): a `custom` record, customType task_ledger."""
+    sessions = trial_dir / "agent" / "fah-sessions"
+    sessions.mkdir(parents=True)
+    record = {"type": "custom", "customType": "task_ledger", "data": {"items": items}}
+    (sessions / "session.jsonl").write_text(json.dumps(record) + "\n")
+
+
+_ITEM = {
+    "requirement": "index page content",
+    "command": "curl -s localhost:80",
+    "expected": "welcome",
+    "actual": "welcome",
+    "status": "pass",
+}
+
+
+class ChecklistCoverageTest(unittest.TestCase):
+    """gh-1412: the near-miss proximity block from hidden task ledgers."""
+
+    def setUp(self):
+        # Same hermetic setup as SummaryTest (no inheritance — the base
+        # suite must not double-run through a subclass).
+        self._summary_bak = os.environ.pop("GITHUB_STEP_SUMMARY", None)
+        self.addCleanup(self._restore_summary)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.jobs = Path(tmp.name)
+
+    def _restore_summary(self):
+        if self._summary_bak is not None:
+            os.environ["GITHUB_STEP_SUMMARY"] = self._summary_bak
+
+    def _run(self, *argv) -> tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = main(list(argv))
+        return rc, out.getvalue()
+
+    def _run_default(self) -> tuple[int, str]:
+        return self._run(str(self.jobs))
+
+    def test_no_ledgers_stay_silent(self):
+        make_jobs(self.jobs, "fa-4.0-docker-cpu-0", [{"resolved": True}])
+        rc, out = self._run_default()
+        self.assertEqual(rc, 0)
+        self.assertNotIn("Checklist coverage", out)
+
+    def test_proximity_block_lists_incomplete_trials(self):
+        make_jobs(
+            self.jobs,
+            "fa-4.0-docker-cpu-0",
+            [{"resolved": False}, {"resolved": True}],
+        )
+        job = self.jobs / "fa-4.0-docker-cpu-0"
+        _write_ledger(
+            job / "trial-0",
+            [dict(_ITEM) for _ in range(6)] + [dict(_ITEM, status="fail")],
+        )
+        _write_ledger(job / "trial-1", [dict(_ITEM)])
+        rc, out = self._run_default()
+        self.assertEqual(rc, 0)
+        self.assertIn(
+            "Checklist coverage (gh-1412): 1/2 ledgered trials fully verified",
+            out,
+        )
+        self.assertIn("- fa-4.0-docker-cpu-0/trial-0: checklist: 6/7 (1 unmet)", out)
+        # The fully-verified trial is counted, not listed.
+        self.assertNotIn("trial-1: checklist", out)
+
+
 if __name__ == "__main__":
     unittest.main()

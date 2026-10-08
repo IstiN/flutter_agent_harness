@@ -469,9 +469,7 @@ class AgentWireProtocol {
         'report': _encodeRepairReport(report),
         'providerError': ?providerError,
       },
-      TaskLedgerEvent(:final ledger) => {
-        'ledger': ledger.toJson(),
-      },
+      TaskLedgerEvent(:final ledger) => {'ledger': ledger.toJson()},
       // gh-1054 liveness: heartbeats and stuck-call follow-ups ride the
       // wire so external hosts see alive-busy vs dead mid-run, same as
       // the session ledger and the HEP frames do.

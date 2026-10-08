@@ -2518,10 +2518,10 @@ ToolExecutionResult _errorToolResult(Object message, {String? toolName}) {
         text: isOperational
             ? 'Tool error ($name): $rendered'
             : 'Tool error ($name): $rendered\n'
-                'This is an uncaught exception inside the harness tool '
-                'implementation - not a command failure. The tool may be '
-                'unavailable in this environment; skip it or use a different '
-                'approach.',
+                  'This is an uncaught exception inside the harness tool '
+                  'implementation - not a command failure. The tool may be '
+                  'unavailable in this environment; skip it or use a different '
+                  'approach.',
       ),
     ],
   );

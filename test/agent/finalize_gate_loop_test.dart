@@ -88,50 +88,61 @@ Task complete.
     return stream.toList();
   }
 
-  test('finalizeGate on + ledger in the final answer emits TaskLedgerEvent',
-      () async {
-    final events = await runTurns([
-      toolTurn([ToolCall(id: 't1', name: 'bash', arguments: const {})]),
-      textTurn(ledgerText),
-    ], finalizeGate: true);
-    final ledgerEvents = events.whereType<TaskLedgerEvent>().toList();
-    expect(ledgerEvents, hasLength(1));
-    final ledger = ledgerEvents.single.ledger;
-    expect(ledger.items, hasLength(2));
-    expect(ledger.verifiedCount, 2);
-    expect(ledger.items[1].status, TaskLedgerItemStatus.fixed);
-  });
+  test(
+    'finalizeGate on + ledger in the final answer emits TaskLedgerEvent',
+    () async {
+      final events = await runTurns([
+        toolTurn([ToolCall(id: 't1', name: 'bash', arguments: const {})]),
+        textTurn(ledgerText),
+      ], finalizeGate: true);
+      final ledgerEvents = events.whereType<TaskLedgerEvent>().toList();
+      expect(ledgerEvents, hasLength(1));
+      final ledger = ledgerEvents.single.ledger;
+      expect(ledger.items, hasLength(2));
+      expect(ledger.verifiedCount, 2);
+      expect(ledger.items[1].status, TaskLedgerItemStatus.fixed);
+    },
+  );
 
-  test('the event lands after the final message and before agent end',
-      () async {
-    final events = await runTurns([textTurn(ledgerText)], finalizeGate: true);
-    final types = events.map((event) => event.runtimeType).toList();
-    expect(types.last, AgentEndEvent);
-    expect(types[types.length - 2], TaskLedgerEvent);
-  });
+  test(
+    'the event lands after the final message and before agent end',
+    () async {
+      final events = await runTurns([textTurn(ledgerText)], finalizeGate: true);
+      final types = events.map((event) => event.runtimeType).toList();
+      expect(types.last, AgentEndEvent);
+      expect(types[types.length - 2], TaskLedgerEvent);
+    },
+  );
 
-  test('finalizeGate off: no TaskLedgerEvent even with a ledger present',
-      () async {
-    final events = await runTurns([textTurn(ledgerText)], finalizeGate: false);
-    expect(events.whereType<TaskLedgerEvent>(), isEmpty);
-  });
+  test(
+    'finalizeGate off: no TaskLedgerEvent even with a ledger present',
+    () async {
+      final events = await runTurns([
+        textTurn(ledgerText),
+      ], finalizeGate: false);
+      expect(events.whereType<TaskLedgerEvent>(), isEmpty);
+    },
+  );
 
-  test('finalizeGate on + no ledger in the answer: no event (degrades clean)',
-      () async {
-    final events = await runTurns(
-      [textTurn('plain answer, no ledger')],
-      finalizeGate: true,
-    );
-    expect(events.whereType<TaskLedgerEvent>(), isEmpty);
-  });
+  test(
+    'finalizeGate on + no ledger in the answer: no event (degrades clean)',
+    () async {
+      final events = await runTurns([
+        textTurn('plain answer, no ledger'),
+      ], finalizeGate: true);
+      expect(events.whereType<TaskLedgerEvent>(), isEmpty);
+    },
+  );
 
-  test('a run that ends on tool calls without a final answer emits nothing',
-      () async {
-    final events = await runTurns([
-      toolTurn([ToolCall(id: 't1', name: 'bash', arguments: const {})]),
-    ], finalizeGate: true);
-    // The run ends with tool results as the last messages; no assistant
-    // ledger answer ever arrived.
-    expect(events.whereType<TaskLedgerEvent>(), isEmpty);
-  });
+  test(
+    'a run that ends on tool calls without a final answer emits nothing',
+    () async {
+      final events = await runTurns([
+        toolTurn([ToolCall(id: 't1', name: 'bash', arguments: const {})]),
+      ], finalizeGate: true);
+      // The run ends with tool results as the last messages; no assistant
+      // ledger answer ever arrived.
+      expect(events.whereType<TaskLedgerEvent>(), isEmpty);
+    },
+  );
 }

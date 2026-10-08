@@ -83,7 +83,11 @@ import '../skills/skill_availability.dart';
 import '../skills/skills.dart';
 import '../skills/skill_renderer.dart';
 import '../prompts/prompts.g.dart'
-    show cliMessagingSectionPrompt, readSqliteSectionPrompt, cliPiModePrompt, finalizeGateContractPrompt;
+    show
+        cliMessagingSectionPrompt,
+        readSqliteSectionPrompt,
+        cliPiModePrompt,
+        finalizeGateContractPrompt;
 import '../prompts/project_context.dart';
 import '../approval/approval.dart';
 import '../wire/wire_serve.dart';

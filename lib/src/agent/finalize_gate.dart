@@ -134,9 +134,7 @@ final class TaskLedger {
     if (json is! Map) return null;
     final raw = json['items'];
     if (raw is! List) return null;
-    final items = [
-      for (final row in raw) ?TaskLedgerItem.fromJson(row),
-    ];
+    final items = [for (final row in raw) ?TaskLedgerItem.fromJson(row)];
     if (items.isEmpty) return null;
     return TaskLedger(items: items);
   }
@@ -169,7 +167,8 @@ TaskLedger? parseTaskLedger(String text) {
           status: TaskLedgerItemStatus.fromName(current['status']),
         ),
       );
-    }    current = {};
+    }
+    current = {};
   }
 
   for (final line in block.split('\n')) {

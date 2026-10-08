@@ -28,7 +28,10 @@ void main() {
       final ledger = parseTaskLedger('Preamble text.\n$ledgerBlock\nDone.');
       expect(ledger, isNotNull);
       expect(ledger!.items, hasLength(2));
-      expect(ledger.items[0].requirement, 'create script.py in the workspace root');
+      expect(
+        ledger.items[0].requirement,
+        'create script.py in the workspace root',
+      );
       expect(ledger.items[0].command, 'test -f script.py');
       expect(ledger.items[0].expected, 'exit 0');
       expect(ledger.items[0].actual, 'exit 0');
@@ -61,13 +64,9 @@ void main() {
     });
 
     test('tolerant status tokens: pass/fixed prefixes, junk is fail', () {
-      TaskLedgerItemStatus statusOf(String value) =>
-          parseTaskLedger(
-              '```task-ledger\n- requirement: r\n  status: $value\n```\n',
-            )!
-            .items
-            .single
-            .status;
+      TaskLedgerItemStatus statusOf(String value) => parseTaskLedger(
+        '```task-ledger\n- requirement: r\n  status: $value\n```\n',
+      )!.items.single.status;
       expect(statusOf('pass'), TaskLedgerItemStatus.pass);
       expect(statusOf('PASS ✅'), TaskLedgerItemStatus.pass);
       expect(statusOf('fixed (chmod applied)'), TaskLedgerItemStatus.fixed);

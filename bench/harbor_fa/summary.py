@@ -45,6 +45,58 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+def _ledger_records(trial_dir: Path) -> list:
+    """Every hidden `task_ledger` custom record in the trial's synced fa
+    session logs, in file then line order."""
+    ledgers = []
+    for sessions in sorted(trial_dir.glob("agent*/fah-sessions")):
+        for path in sorted(sessions.glob("*.jsonl")):
+            try:
+                text = path.read_text()
+            except OSError:
+                continue
+            for line in text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (
+                    isinstance(record, dict)
+                    and record.get("type") == "custom"
+                    and record.get("customType") == "task_ledger"
+                ):
+                    ledgers.append(record)
+    return ledgers
+
+
+_LEDGER_VERIFIED = ("pass", "fixed")
+
+
+def _ledger_cell(trial_dir: Path) -> str:
+    """gh-1412: the trial's checklist-coverage cell from its last hidden
+    `task_ledger` record — "checklist: V/T [(N unmet)]", "checklist: none"
+    when the session carries no ledger."""
+    ledgers = _ledger_records(trial_dir)
+    if not ledgers:
+        return "checklist: none"
+    items = ((ledgers[-1].get("data") or {}).get("items")) or []
+    total = len(items)
+    verified = sum(
+        1
+        for item in items
+        if isinstance(item, dict)
+        and str(item.get("status") or "").lower() in _LEDGER_VERIFIED
+    )
+    unmet = total - verified
+    cell = f"checklist: {verified}/{total}"
+    if unmet:
+        cell += f" ({unmet} unmet)"
+    return cell
+
+
 def _trial_rows(job_dir: Path) -> list[dict]:
     rows = []
     for path in sorted(glob.glob(str(job_dir / "*" / "result.json"))):
@@ -57,6 +109,7 @@ def _trial_rows(job_dir: Path) -> list[dict]:
         # populate_context_post_run time; absent (old runs) → zeros + n/a.
         agent = data.get("agent_result") or {}
         metadata = agent.get("metadata") or {}
+        trial_dir = Path(path).parent
         rows.append({
             "resolved": resolved,
             "exception": exception,
@@ -64,6 +117,8 @@ def _trial_rows(job_dir: Path) -> list[dict]:
             "tokens_out": agent.get("n_output_tokens") or 0,
             "cost": agent.get("cost_usd"),
             "estimated": metadata.get("estimated_tokens") or 0,
+            "checklist": _ledger_cell(trial_dir),
+            "trial": f"{job_dir.name}/{trial_dir.name}",
         })
     return rows
 
@@ -127,6 +182,28 @@ def render(splits: dict, expected=None, title=None, ledger=None):
             )
     lines.append("")
     lines.extend(table)
+
+    # gh-1412: near-miss proximity — per-trial checklist coverage from the
+    # hidden `task_ledger` records the FinalizeGate contract emits. Only
+    # trials WITH a ledger speak here (legacy runs stay silent), and the
+    # block lists the incomplete ones by name: "failed 1 of 7 checks,
+    # checklist verified 6" is the diagnostic the card exists for.
+    ledgered = [
+        (r["trial"], r["checklist"])
+        for rows in splits.values()
+        for r in rows
+        if r["checklist"] != "checklist: none"
+    ]
+    if ledgered:
+        fully = sum(1 for _, cell in ledgered if " unmet" not in cell)
+        lines.append("")
+        lines.append(
+            f"Checklist coverage (gh-1412): {fully}/{len(ledgered)}"
+            " ledgered trials fully verified"
+        )
+        for trial, cell in sorted(ledgered):
+            if " unmet" in cell:
+                lines.append(f"- {trial}: {cell}")
 
     exceptions: dict[str, int] = {}
     for rows in splits.values():

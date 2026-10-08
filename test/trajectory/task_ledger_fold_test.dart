@@ -21,21 +21,20 @@ void main() {
     message: UserMessage.text('fixture task'),
   );
 
-  MessageRecord assistantRecord(String id, {String? parentId}) =>
-      MessageRecord(
-        id: id,
-        parentId: parentId,
-        timestamp: base.add(const Duration(seconds: 1)),
-        message: AssistantMessage(
-          content: [TextContent(text: 'done — checklist verified')],
-          api: 'anthropic-messages',
-          provider: 'anthropic',
-          model: 'claude-test',
-          usage: Usage.zero,
-          stopReason: StopReason.stop,
-          timestamp: base.add(const Duration(seconds: 1)),
-        ),
-      );
+  MessageRecord assistantRecord(String id, {String? parentId}) => MessageRecord(
+    id: id,
+    parentId: parentId,
+    timestamp: base.add(const Duration(seconds: 1)),
+    message: AssistantMessage(
+      content: [TextContent(text: 'done — checklist verified')],
+      api: 'anthropic-messages',
+      provider: 'anthropic',
+      model: 'claude-test',
+      usage: Usage.zero,
+      stopReason: StopReason.stop,
+      timestamp: base.add(const Duration(seconds: 1)),
+    ),
+  );
 
   CustomRecord ledgerRecord(
     String id, {
@@ -66,9 +65,9 @@ void main() {
 
   test('a persisted task_ledger record folds onto the snapshot', () {
     final snapshot = TrajectorySnapshotBuilder()
-        ..append(userRecord('u1'))
-        ..append(assistantRecord('a1', parentId: 'u1'))
-        ..append(ledgerRecord('l1', parentId: 'a1', ledger: ledger));
+      ..append(userRecord('u1'))
+      ..append(assistantRecord('a1', parentId: 'u1'))
+      ..append(ledgerRecord('l1', parentId: 'a1', ledger: ledger));
     final state = snapshot.append(
       MessageRecord(
         id: 'a2',
