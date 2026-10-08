@@ -4737,4 +4737,8 @@
 - feat(1322): wireAgentCore host-adoption gaps — embed guide, host key resolver, lifecycle telemetry (#1327)
 - fix(1319): route paging history notifies through the guarded bridge (follow-up to #1320) (#1324)
 
+## 1.0.527
+
+- gh-1393 [GOAL] Mobile agent parity: bash-identical sandbox shell (glob/grep/cd/dev-null) + first-class jsr widget testing (jsr.test.*, check_app) (#1401)
+
 ## Unreleased
