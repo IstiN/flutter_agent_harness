@@ -75,6 +75,11 @@ part 'fah_runapp.dart';
 part 'fah_wire_host.dart';
 
 Future<void> main(List<String> args) async {
+  // Provider forensics composition root (gh-1395 review round 1): the
+  // pure barrel carries only the contracts; the io seams (env knob
+  // lookup, [conn-trace] stderr lines, the observed dart:io client, the
+  // sentinel's disk sink) install here — the ONE dart:io boundary.
+  installProviderStallForensics();
   // Session segment rotation warnings (fa gh-1077): the session layer has
   // no console dependency — the CLI surfaces hard-cap truncations and
   // rotation fallbacks on stderr.
