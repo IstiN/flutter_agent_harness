@@ -125,6 +125,13 @@ const TuiTheme kDefaultTuiTheme = TuiTheme(
   userMessageText: Style(foregroundRgb: RgbColor(0xE8, 0xEE, 0xF7)),
   toolSuccessBg: Style(backgroundRgb: RgbColor(20, 37, 27)),
   toolErrorBg: Style(backgroundRgb: RgbColor(42, 21, 24)),
+  // Kaomoji thinking indicator (issue #1374): the launcher-icon brand
+  // teal/blue as NAMED roles — the #444 sweep (AC1) forbids anonymous
+  // ANSI picks, so the face renders through the role table like every
+  // other colorized segment. Palettes that name no kaomoji tone render
+  // the face plain (role-table rule), never a hard-coded pick.
+  kaomojiEye: Style(foregroundRgb: RgbColor(0x60, 0xd0, 0xd0)), // #60D0D0
+  kaomojiMouth: Style(foregroundRgb: RgbColor(0x70, 0xa0, 0xe0)), // #70A0E0
   // The in-flight card tint: the historical `highlight` stand-in value,
   // now a named role (S1) — kept byte-stable so stored pre-#807 cards
   // still resolve their phase at repaint time.
@@ -382,6 +389,10 @@ const Set<String> kThemeRoleNames = {
   'userMessageText',
   'toolSuccessBg',
   'toolErrorBg',
+  // issue #1374: the kaomoji thinking-indicator tones (named roles —
+  // the #444 sweep forbids anonymous picks).
+  'kaomojiEye',
+  'kaomojiMouth',
   // issue #804: the omp token families (partial themes keep inheriting
   // per-role; built-in names stay unshadowable).
   'toolPendingBg',
@@ -556,6 +567,8 @@ TuiTheme parseUserTheme(String text, String fileName) {
     userMessageText: fg('userMessageText'),
     toolSuccessBg: bg('toolSuccessBg'),
     toolErrorBg: bg('toolErrorBg'),
+    kaomojiEye: fg('kaomojiEye'),
+    kaomojiMouth: fg('kaomojiMouth'),
     // issue #804 token families: same inheritance rules, no flags (omp
     // has none).
     toolPendingBg: bg('toolPendingBg'),
@@ -630,6 +643,8 @@ Style? _defaultRoleStyle(String role) => switch (role) {
   'userMessageText' => kDefaultTuiTheme.userMessageText,
   'toolSuccessBg' => kDefaultTuiTheme.toolSuccessBg,
   'toolErrorBg' => kDefaultTuiTheme.toolErrorBg,
+  'kaomojiEye' => kDefaultTuiTheme.kaomojiEye,
+  'kaomojiMouth' => kDefaultTuiTheme.kaomojiMouth,
   _ => null,
 };
 
@@ -818,7 +833,8 @@ final class FaThemeController {
 
   String toolPendingBg(String text) => _render(_current.toolPendingBg, text);
 
-  String customMessageBg(String text) => _render(_current.customMessageBg, text);
+  String customMessageBg(String text) =>
+      _render(_current.customMessageBg, text);
 
   String customMessageText(String text) =>
       _render(_current.customMessageText, text);
@@ -827,7 +843,8 @@ final class FaThemeController {
 
   String thinkingOff(String text) => _render(_current.thinkingOff, text);
 
-  String thinkingMinimal(String text) => _render(_current.thinkingMinimal, text);
+  String thinkingMinimal(String text) =>
+      _render(_current.thinkingMinimal, text);
 
   String thinkingLow(String text) => _render(_current.thinkingLow, text);
 
@@ -862,9 +879,11 @@ final class FaThemeController {
 
   String toolDiffAdded(String text) => _render(_current.toolDiffAdded, text);
 
-  String toolDiffRemoved(String text) => _render(_current.toolDiffRemoved, text);
+  String toolDiffRemoved(String text) =>
+      _render(_current.toolDiffRemoved, text);
 
-  String toolDiffContext(String text) => _render(_current.toolDiffContext, text);
+  String toolDiffContext(String text) =>
+      _render(_current.toolDiffContext, text);
 
   String syntaxComment(String text) => _render(_current.syntaxComment, text);
 
@@ -891,7 +910,8 @@ final class FaThemeController {
 
   String statusLineSep(String text) => _render(_current.statusLineSep, text);
 
-  String statusLineModel(String text) => _render(_current.statusLineModel, text);
+  String statusLineModel(String text) =>
+      _render(_current.statusLineModel, text);
 
   String statusLinePath(String text) => _render(_current.statusLinePath, text);
 
@@ -904,12 +924,14 @@ final class FaThemeController {
   String statusLineContext(String text) =>
       _render(_current.statusLineContext, text);
 
-  String statusLineSpend(String text) => _render(_current.statusLineSpend, text);
+  String statusLineSpend(String text) =>
+      _render(_current.statusLineSpend, text);
 
   String statusLineStaged(String text) =>
       _render(_current.statusLineStaged, text);
 
-  String statusLineDirty(String text) => _render(_current.statusLineDirty, text);
+  String statusLineDirty(String text) =>
+      _render(_current.statusLineDirty, text);
 
   String statusLineUntracked(String text) =>
       _render(_current.statusLineUntracked, text);
@@ -941,6 +963,16 @@ final class FaThemeController {
   /// First accent without bold (banner title, markdown markers).
   String accentSoft(String text) =>
       _render(Style(foregroundRgb: _current.accent.foregroundRgb), text);
+
+  /// The kaomoji thinking-indicator tones (issue #1374): the boot
+  /// palette's launcher-icon brand teal/blue, carried as NAMED roles
+  /// (`kaomojiEye`/`kaomojiMouth`) — the #444 sweep forbids anonymous
+  /// ANSI picks, and a user theme can now retint or unset the face.
+  /// Palettes without the roles render the face plain. Profile-aware
+  /// via [_render].
+  String kaomojiEye(String text) => _render(_current.kaomojiEye, text);
+
+  String kaomojiMouth(String text) => _render(_current.kaomojiMouth, text);
 
   String dim(String text) => _render(_current.muted, text);
 
@@ -1026,10 +1058,7 @@ final class FaThemeController {
     if (leadSgr.isEmpty) return null;
     final candidates = <String, List<Style>>{
       'bubble': [_current.userMessageBg, kDefaultTuiTheme.userMessageBg],
-      'success': [
-        _current.toolSuccessBg,
-        kDefaultTuiTheme.toolSuccessBg,
-      ],
+      'success': [_current.toolSuccessBg, kDefaultTuiTheme.toolSuccessBg],
       'error': [_current.toolErrorBg, kDefaultTuiTheme.toolErrorBg],
       'pending': [
         _current.toolPendingBg,
@@ -1074,6 +1103,12 @@ String tuiAccent2Soft(String s) => FaThemeController.instance.accent2Soft(s);
 
 /// Faint secondary text (rules, hints, separators).
 String tuiDim(String s) => FaThemeController.instance.dim(s);
+
+/// Kaomoji eye/face-stroke tone (issue #1374): brand teal #60d0d0.
+String tuiKaomojiEye(String s) => FaThemeController.instance.kaomojiEye(s);
+
+/// Kaomoji mouth tone (issue #1374): brand blue #70a0e0.
+String tuiKaomojiMouth(String s) => FaThemeController.instance.kaomojiMouth(s);
 
 /// Warning foreground (approval cautions, retry notices).
 String tuiWarning(String s) => FaThemeController.instance.warning(s);
