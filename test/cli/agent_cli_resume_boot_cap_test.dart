@@ -33,9 +33,15 @@ void main() {
 
   /// Seeds a session with a reachable classic compaction boundary whose
   /// post-walk projection is far over the 24,576-token threshold: 40 kept
-  /// messages priced ~1000 tokens each plus the summary.
-  Future<MemoryExecutionEnv> seedOverWindow(String name) async {
-    final env = MemoryExecutionEnv(cwd: '/work', shell: FakeShell());
+  /// messages priced ~1000 tokens each plus the summary. Pass [into] to
+  /// seed into an EXISTING env (a test that needs several sessions in one
+  /// repo, e.g. the stale-abort switch test).
+  Future<MemoryExecutionEnv> seedOverWindow(
+    String name, {
+    MemoryExecutionEnv? into,
+  }) async {
+    final env =
+        into ?? MemoryExecutionEnv(cwd: '/work', shell: FakeShell());
     // Suppress session-start memory maintenance (same pattern as
     // agent_cli_test) so the scripted turns feed only the cap + the turn.
     await env.writeFile('/work/.fah/memory/.last_maintenance', '');
@@ -238,6 +244,96 @@ void main() {
       // report render crashed).
       expect(
         requestTokensOf(stream.contexts.last),
+        lessThanOrEqualTo(_threshold),
+      );
+    },
+  );
+
+  test(
+    'AC3 stale-abort: an abort of the PREVIOUS session does not suppress '
+    'the next session\'s boot cap — _switchToMetadata clears the '
+    'CLI-lifetime _runAbortRequested (review: the flag is only reset at '
+    'the next prompt run, so abort → /resume skipped the cap and the '
+    'meter idled over 100% until the first prompt)',
+    timeout: const Timeout(Duration(minutes: 5)),
+    () async {
+      // Session A ('small-boot', created first): tiny, boots under-window.
+      // Session B ('boot-cap-target', created second): over-window — the
+      // /resume target (the repo lists sessions newest-first).
+      final env = MemoryExecutionEnv(cwd: '/work', shell: FakeShell());
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final small = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work', metadata: {'agent': 'cli'}),
+      );
+      await small.appendSessionName('small-boot');
+      await small.appendMessage(UserMessage.text('tiny'));
+      await seedOverWindow('boot-cap-target', into: env);
+
+      // Turn 1 hangs until the interrupt cancels it (the Ctrl+C leg);
+      // the boot cap's summarizer call after the switch consumes the
+      // scripted turn.
+      final cap = FakeStreamFunction([textTurn('compacted boot summary')]);
+      final hang = AbortableStreamFunction();
+      var hung = false;
+      AssistantMessageEventStream streamCall(
+        Model model,
+        Context context, {
+        CancelToken? cancelToken,
+      }) {
+        if (!hung) {
+          hung = true;
+          return hang.call(model, context, cancelToken: cancelToken);
+        }
+        return cap.call(model, context);
+      }
+
+      final agent = AgentCli(
+        config: AgentCliConfig(
+          model: _model,
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          sessionName: 'small-boot',
+          providerKind: 'openai-completions',
+          skillsAccess: SkillsAccess.granted,
+          compactionEngine: CompactionEngine.classic,
+        ),
+        io: io,
+        streamFunction: streamCall,
+      );
+
+      final run = agent.run();
+      io.sendLine('go');
+      await waitForIt(
+        () => agent.isBusy,
+        reason: 'the hanging turn is in flight',
+      );
+      // Ctrl+C: _abortRunOrCompaction sets the CLI-lifetime flag.
+      io.interrupt();
+      await waitForIt(
+        () => !agent.isBusy,
+        reason: 'the aborted turn settles',
+      );
+      expect(io.out.toString(), contains('Operation aborted'));
+
+      // /resume switches to the newest session — the over-window one —
+      // WITHOUT an intervening prompt run (the only place the stale flag
+      // used to be cleared): the boot cap must still run, at idle, before
+      // any user input.
+      io.sendLine('/resume');
+      await waitForIt(
+        () => cap.calls >= 1 && !agent.isBusy,
+        reason: 'the boot cap runs on the resumed (over-window) session '
+            'despite the previous session\'s abort',
+      );
+      io.sendLine('/exit');
+      await run;
+
+      final output = io.out.toString();
+      expect(output, contains('auto-compacted'));
+      // The resumed session's context was actually capped.
+      expect(
+        requestTokensOf(cap.contexts.single),
         lessThanOrEqualTo(_threshold),
       );
     },

@@ -112,6 +112,16 @@ extension on AgentCli {
     _agent.reset();
     _checkpoints.clear();
     _ttsr?.reset();
+    // gh-1425 review (stale-abort boot-cap skip): _runAbortRequested is
+    // CLI-lifetime state — without this clear, an abort of the PREVIOUS
+    // session's run survives the switch and `_capResumedContext` (which
+    // treats the flag as "a run is being aborted right now") skips the
+    // boot cap, so a resumed over-window session idles above 100% until
+    // the first prompt resets the flag. An abort of the previous run has
+    // no meaning for the session being booted — clear it with the other
+    // per-session resets (the next prompt's own reset at
+    // `_beginUserPrompt` is untouched).
+    _runAbortRequested = false;
     _env.cwd = metadata.cwd;
     _modes = builtInAgentModes(_env.cwd, overrides: config.promptOverrides);
     _currentMode = _modes[_currentMode.name] ?? _modes['code']!;
