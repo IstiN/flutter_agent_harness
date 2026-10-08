@@ -4741,4 +4741,10 @@
 
 - gh-1393 [GOAL] Mobile agent parity: bash-identical sandbox shell (glob/grep/cd/dev-null) + first-class jsr widget testing (jsr.test.*, check_app) (#1401)
 
+## 1.0.528
+
+- feat(1379): Compaction 2.0 second tier — agent-initiated hide, LRU re-hide, per-segment pins (#1383)
+- fix(1402): pre-flight Play listing language gate + edit-discard on commit failure (#1405)
+- feat(1380): obligations ledger substrate — verbatim entries + level-0 context block (A1 slice 1) (#1382)
+
 ## Unreleased
