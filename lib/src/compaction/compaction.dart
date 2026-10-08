@@ -55,6 +55,7 @@ export '../compaction/structured/expand_tool.dart'
 export '../prompts/prompts.g.dart'
     show
         hideJudgeSystemPrompt,
+        pinnedOperativePrompt,
         structuredCheckpointPrompt,
         summarizationPrompt,
         summarizationSystemPrompt,
