@@ -360,14 +360,24 @@ extension on AgentCli {
       registry.entries.removeWhere((e) => e.name == editName);
       io.writeln('renamed provider $editName to ${setup.name}');
     }
-    final entry = CustomProviderEntry(
+    // The wizard-owned fields (name/apiType/baseUrl/modelId/keyName) come
+    // from the setup; in edit mode the hand-configured ones (authMethod,
+    // authHeader, the issue #1398 tuning keys) carry over from the
+    // existing entry — the wizard does not ask about them and must not
+    // silently drop them.
+    var entry = CustomProviderEntry(
       name: setup.name,
       apiType: setup.spec.name,
       baseUrl: setup.baseUrl,
       modelId: modelId,
       keyName: keyName,
-      authMethod: existingEntry?.authMethod ?? CustomProviderAuthMethod.apiKey,
     );
+    if (existingEntry != null) {
+      entry = mergeEditedCustomProviderEntry(
+        existing: existingEntry,
+        updated: entry,
+      );
+    }
     // The wizard persists via its own switch-time fire (below); only the
     // extension flows use the persisting variant of the shared helper.
     await _saveCustomProviderEntry(entry, persist: false);

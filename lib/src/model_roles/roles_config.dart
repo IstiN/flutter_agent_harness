@@ -27,6 +27,7 @@ import 'dart:convert';
 import 'package:yaml/yaml.dart';
 
 import '../exceptions.dart';
+import '../providers/provider_tuning.dart' show parseProviderTimeoutMs;
 import '../providers/thinking.dart';
 import '../utils/path_text.dart';
 import 'provider_catalog.dart'
@@ -68,6 +69,8 @@ final class ModelRef {
     this.input,
     this.thinkingLevel,
     this.authHeader,
+    this.connectTimeout,
+    this.streamIdleTimeout,
   });
 
   /// Parses the string shorthand `provider/modelId`.
@@ -127,6 +130,18 @@ final class ModelRef {
           input: _optionalInput(entry, role),
           thinkingLevel: _optionalThinkingLevel(entry, role),
           authHeader: authHeader,
+          // Per-provider stall-recovery tuning (issue #1398): the watchdog
+          // knobs ride the chain entry, same place baseUrl/keys live.
+          connectTimeout: parseProviderTimeoutMs(
+            entry['connectTimeoutMs'],
+            'connectTimeoutMs',
+            where,
+          ),
+          streamIdleTimeout: parseProviderTimeoutMs(
+            entry['streamIdleTimeoutMs'],
+            'streamIdleTimeoutMs',
+            where,
+          ),
         );
       default:
         throw ConfigException(
@@ -243,6 +258,15 @@ final class ModelRef {
   /// Null keeps the Bearer default.
   final String? authHeader;
 
+  /// Per-provider connect/first-headers watchdog override
+  /// (`connectTimeoutMs`, issue #1398). Null keeps the global
+  /// `providerTimeouts:` value, then the 180 s default.
+  final Duration? connectTimeout;
+
+  /// Per-provider stream-idle watchdog override (`streamIdleTimeoutMs`,
+  /// issue #1398). Null keeps the global value, then the 300 s default.
+  final Duration? streamIdleTimeout;
+
   /// The `provider/modelId` display form.
   String get label => '$provider/$modelId';
 
@@ -266,6 +290,14 @@ final class ModelRef {
       // scalar would round-trip as a comment/alias. JSON quoting keeps the
       // round-trip lossless (issue #964 review).
       buffer.write('authHeader: ${jsonEncode(authHeader)}\n');
+    }
+    if (connectTimeout != null) {
+      buffer.write('connectTimeoutMs: ${connectTimeout!.inMilliseconds}\n');
+    }
+    if (streamIdleTimeout != null) {
+      buffer.write(
+        'streamIdleTimeoutMs: ${streamIdleTimeout!.inMilliseconds}\n',
+      );
     }
     return buffer.toString();
   }

@@ -3,6 +3,26 @@
 ## 1.0.508
 
 
+- feat(providers): issue #1398 — stall-recovery tuning becomes per-provider
+  and data-driven. Registry entries (`customProviders:`, `models.custom:`,
+  roles chain entries, `providersQueue:` entries) accept optional
+  `connectTimeoutMs`/`streamIdleTimeoutMs` (strict positive-int parsing);
+  resolution is **entry > the `providerTimeouts:` section > the 180 s/300 s
+  defaults**, per field, and every seeded entry prints its effective values
+  at boot. The wire seams (`sendWatchedProviderRequest` connect watchdog,
+  `createSseIterator` idle watchdog) resolve per request URL, so all
+  adapters inherit the tuning; runs without entries are byte-identical
+  (AC6). Also: the retry backoff contract — a parseable delta-seconds
+  `Retry-After` wins over the ladder for that attempt, hard-capped at the
+  60 s ceiling (the clamp names the advertised value; `0` counts as
+  absent, malformed/HTTP-date headers fall back to the ladder with a trace
+  note) — and the dual retry budgets (connection-class cap 4, stream-class
+  cap 3, independent counters, the terminal story carries both). Trace
+  lines pin the format `budget=<connection|stream> attempt=<n>/<cap>
+  delay=<ladder|server|clamp>`; the tuning report prints per-model
+  p50/p95 inter-chunk gap + watchdog-fire counts with the
+  `streamIdleTimeoutMs ≈ 2× p95` recipe (the production feeder lands with
+  #1392's LatencyMeter).
 - feat(hosts): gh-1322 — the wireAgentCore host-adoption gaps: an embed
   guide (`docs/embedding.md`, with the explicit "hosts ride wireAgentCore,
   never adk_dart" rule), the host-facing key-slot resolver
