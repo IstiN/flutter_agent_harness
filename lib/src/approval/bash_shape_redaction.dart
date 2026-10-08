@@ -88,10 +88,13 @@ BashCommandRewrite? redactBashCommandSecretShapes(
     return null;
   }
   // layerVendor returns non-overlapping matches, but grouped per pattern —
-  // sort by position before slicing.
-  final matches = layerVendor(command, config)
-    ..sort((a, b) => a.start.compareTo(b.start));
+  // sort by position before slicing. Copy-free: on a quick-screen miss the
+  // layer returns a CONST (unmodifiable) empty list, so the emptiness check
+  // must precede any sort (issue #1408 red-head: sorting the const list
+  // crashed every bash call without a vendor-shaped substring).
+  final matches = layerVendor(command, config);
   if (matches.isEmpty) return null;
+  matches.sort((a, b) => a.start.compareTo(b.start));
   final buffer = StringBuffer();
   final changes = <BashCommandShapeChange>[];
   var cursor = 0;
