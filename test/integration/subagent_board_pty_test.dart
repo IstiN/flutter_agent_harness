@@ -138,11 +138,13 @@ scenarios:
       );
 
       // COLLAPSING: the settle flash then the dim one-line summary — the
-      // done verb and the name still share ONE row (never a block).
+      // done verb and the name still share ONE row (never a block). The
+      // state field is 4 cells: `done` fills it exactly, so the name
+      // follows after ONE space (`run` pads to `run ` and shows two).
       final settled = await harness.waitForScreen(
-        'done  boardwatch',
+        RegExp('done\\s+boardwatch'),
         timeout: const Duration(seconds: 90),
       );
-      expect(settled, contains('done  boardwatch'));
+      expect(settled, contains('done boardwatch'));
     });
 }
