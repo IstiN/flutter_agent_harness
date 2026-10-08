@@ -1261,6 +1261,7 @@ final class CompactionManager {
     this.prompts = defaultCompactionPrompts,
     this.memoryExtractionHook,
     this.summarizerWindow,
+    this.pinnedOperative,
   });
 
   /// The summary LLM call used for every summarization.
@@ -1284,6 +1285,11 @@ final class CompactionManager {
   /// outbound summary request is chunked/truncated to
   /// [summarizationPayloadBudget] so it fits the summarizer's window.
   final int? summarizerWindow;
+
+  /// gh-1409: the session's compaction-pinned skill operative lines.
+  /// `null` (default) → every prompt is byte-identical to the pre-pin
+  /// pipeline (F4 compat guard).
+  final PinnedOperativePayload? pinnedOperative;
 
   /// The outbound payload budget for [summarizerWindow], or `null` when
   /// unbounded.
@@ -1392,6 +1398,7 @@ final class CompactionManager {
               prompts: prompts,
               userRequestCandidates: userRequests,
               maxPromptTokens: maxPromptTokens,
+              pinnedOperative: pinnedOperative,
             )
           : 'No prior history.';
       final turnPrefix = await _generateTurnPrefixSummary(
@@ -1400,6 +1407,7 @@ final class CompactionManager {
         cancelToken: cancelToken,
         prompts: prompts,
         maxPromptTokens: maxPromptTokens,
+        pinnedOperative: pinnedOperative,
       );
       summary =
           '$history\n\n---\n\n**Turn Context (split turn):**\n\n$turnPrefix';
@@ -1413,13 +1421,19 @@ final class CompactionManager {
         prompts: prompts,
         userRequestCandidates: userRequests,
         maxPromptTokens: maxPromptTokens,
+        pinnedOperative: pinnedOperative,
       );
     }
 
     // Issue #1131: a summary re-renders on every later turn, so ephemeral,
     // time-scoped claims ("your last tool call's result was dropped") are
     // stripped pre-persist; the fires are logged in the record details.
-    final sanitized = sanitizeSummary(summary);
+    // gh-1409 AC4: pinned lines are protected — the sanitizer strips the
+    // ephemeral claims AROUND them, never the pins themselves.
+    final sanitized = sanitizeSummary(
+      summary,
+      protectedLines: pinnedOperative?.lines ?? const {},
+    );
     summary = sanitized.text;
 
     summary += formatFileOperations(
