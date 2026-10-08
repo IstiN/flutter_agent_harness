@@ -40,23 +40,22 @@ Future<void> ensureGoldenFonts() async {
   // production — goldens pin it (the CLI's FA_KAOMOJI_FACE seam
   // mirrors this) so every frame is deterministic: `>_o`, everywhere.
   //
-  // PENDING MAC REGEN (PR #1419, issue #1374): this branch changes the
+  // MAC REGEN DONE (PR #1419, issue #1374): the branch swapped the
   // thinking tile (head-with-gear → KaomojiThinkingIcon) and the status
-  // row (spinner → KaomojiFaceText); the committed snapshots listed
-  // below still carry the pre-kaomoji pixels and MUST be regenerated
-  // on the host-locked mac runner (AGENTS.md: goldens stay host-locked
-  // in build-macos/nightly; eyes on every changed PNG, §Golden tests
-  // are MANDATORY). Exactly:
-  //   cd flutter_app && flutter test test/golden --update-goldens
-  // Frames expected to change (the pin above keeps them byte-stable
-  // across the regen):
+  // row (spinner → KaomojiFaceText); the affected snapshots were
+  // regenerated on the host-locked mac (the pin above keeps every
+  // frame byte-stable across the regen), with eyes on each diff:
   //   chat/run_status_empty_light, chat/run_status_empty_dark,
   //   chat/run_status_thinking_light, chat/run_status_tool_light,
   //   chat/run_status_tool_dark                       (status row)
+  //   launcher/sheet_session_streaming_dark            (status row)
   //   chat_conversation, apps_fa_chat_overlay,
   //   apps_fa_chat_overlay_light, apps_fa_chat_overlay_streaming,
-  //   apps_fa_chat_overlay_streaming_light, apps_fa_chat_overlay_rich,
-  //   apps_fa_chat_overlay_rich_ru                    (thinking tiles)
+  //   apps_fa_chat_overlay_streaming_light            (thinking tiles)
+  // apps_fa_chat_overlay_rich/_rich_ru stayed byte-identical (their
+  // thinking bubble renders collapsed — no icon), and unrelated frames
+  // carry a pre-existing ~0.5% host drift that also fails on main and
+  // waits on a separate host-wide regen pass.
   KaomojiFacePicker.debugPin = 0;
   if (_fontsLoaded) return;
   final inter = FontLoader('Inter')
