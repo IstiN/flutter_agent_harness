@@ -1825,7 +1825,11 @@ trajectory are SDK invariants with no override point (AC9).
   `scripts/auto_release.sh` are authored `fa-release-bot[bot]
   <fa-release-bot[bot]@users.noreply.github.com>` — the gh-1172 ruleset-
   bypass App pushes the bump straight to protected main, so the App identity
-  is what auditability hangs on.
+  is what auditability hangs on. gh-1402 rule: ANY automation that
+  commits/pushes release-path changes (store metadata fixes, version bumps,
+  changelogs) MUST use the fa-release-bot GitHub App token — never a PAT,
+  never the default `GITHUB_TOKEN` (main's required status checks reject
+  both, #1098).
 - Commit subjects: `type(scope): ...` (`feat:`, `fix:`, `fix(example):`,
   `ci:`, `test(providers):`, `refactor(prompts):`).
 - Every push to `main` auto-releases a patch to pub.dev
