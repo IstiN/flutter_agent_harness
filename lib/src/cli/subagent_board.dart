@@ -17,7 +17,7 @@
 ///   zero rows when no subagent is known (quiet zero).
 library;
 
-import 'task/subagent.dart';
+import '../task/subagent.dart';
 import 'tui_text_width.dart';
 
 /// The widest line the renderer targets (AC1's budget); hosts pass the live
@@ -132,7 +132,8 @@ const int _nameCells = 16;
 const int _ageCells = 4;
 const int _costCells = 4;
 
-/// Cells the rail needs when the name column is at its 1-cell floor.
+/// Cells the rail needs with the name column at its 1-cell floor: glyph
+/// zone + state + name(1) + age + cost + the four separators.
 const int _railFloorCells =
     _glyphZoneCells +
     1 +
@@ -144,8 +145,9 @@ const int _railFloorCells =
     1 +
     _costCells;
 
-/// Cells the rail needs at the full 16-cell name column.
-const int _railFullCells = _railFloorCells + _nameCells - 1;
+/// The rendered head's cell count is `_railFloorCells + nameBudget - 1`
+/// (the name column grows past its floor cell); the preview plus its one
+/// separator must fit in whatever is left.
 
 /// The state's glyph (delta 2): the vocabulary the task list and the tool
 /// rows already use — `⠿` running, `⏸` waiting (queued/idle), `✓` done,
@@ -177,10 +179,10 @@ String subagentStatusLine(
   String? idSuffix,
 }) {
   final w = width < 1 ? 1 : width;
-  final nameBudget = w >= _railFullCells
-      ? _nameCells
-      : (w - _railFloorCells).clamp(1, _nameCells);
-  final previewBudget = w - (_railFullCells - _nameCells) - nameBudget;
+  // E1 ladder: below the full rail the NAME shrinks first (floor 1 cell);
+  // the preview only exists while head + separator + text fit.
+  final nameBudget = (w - (_railFloorCells - 1)).clamp(1, _nameCells);
+  final previewBudget = w - _railFloorCells - nameBudget;
 
   final glyph = tuiPadRight(
     subagentStateGlyph(record.state),

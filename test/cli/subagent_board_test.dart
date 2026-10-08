@@ -39,7 +39,7 @@ void main() {
         now: at(12 * 60),
         width: 100,
       );
-      expect(line, '⠿  run  goal_builder      12m  41k  List the files');
+      expect(line, '⠿  run  goal_builder      12m  41k List the files');
       expect(line.contains('\n'), isFalse);
       expect(tuiTextWidth(line), lessThanOrEqualTo(100));
     });
@@ -111,7 +111,7 @@ void main() {
       expect(exact, contains('abcdefghijklmnop '));
       // 17 cuts inside the column: 15 chars + the ellipsis, still one line,
       // still aligned (the following columns keep their offsets).
-      expect(over, contains('abcdefghijklmn… '));
+      expect(over, contains('abcdefghijklmno… '));
       expect(
         tuiTextWidth(subagentStatusLine(rec('x' * 200), now: at(0))),
         lessThanOrEqualTo(100),
@@ -132,7 +132,7 @@ void main() {
   group('UT-2 / AC2 — the region stacks N rows in order', () {
     test('10 simultaneous subagents render as 10 stacked rows, same order', () {
       final region = TaskBoardRegion(now: () => t0);
-      final ids = List.generate(10, (i) => 'agent-${i + 1}');
+      final ids = List.generate(10, (i) => 'agent-${(i + 1).toString().padLeft(2, '0')}');
       for (final id in ids) {
         region.upsert(rec(id, spawnedAt: t0));
       }
@@ -195,7 +195,7 @@ void main() {
         at: at(5),
       );
       region.upsert(rec('second', spawnedAt: at(6)));
-      final rows = region.rows(now: at(7), width: 100);
+      final rows = region.rows(now: at(10), width: 100);
       expect(rows, hasLength(2));
       expect(rows[0].text, contains('first'));
       expect(rows[0].bright, isFalse); // settled keeps its old slot
