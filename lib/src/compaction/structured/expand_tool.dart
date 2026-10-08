@@ -237,31 +237,94 @@ final class CompactExpandController {
     String action,
     Object? rawTarget,
   ) async {
+    final unknown = _unknownActionError(action);
+    if (unknown != null) return unknown;
+    final (target, targetError) = _actionTarget(action, rawTarget);
+    if (targetError != null) return targetError;
+    final (start, end, label) = target!;
+    final (targets, resolveError) = _resolveRangeTargets(
+      seqs,
+      start,
+      end,
+      label,
+      validIds,
+    );
+    if (resolveError != null) return resolveError;
+    // Real user turns are exempt from every path (F8) — say so instead
+    // of silently no-oping.
+    final pinning = action == 'pin' || action == 'unpin';
+    final userTurnError = _realUserTurnRejection(targets, label, pinning);
+    if (userTurnError != null) return userTurnError;
+    if (pinning) return _pinAction(live, targets, label, action == 'pin');
+    return _hideAction(live, seqs, targets, label);
+  }
+
+  /// The structured rejection for an unrecognized action name (AC1) —
+  /// null when [action] is one of "hide", "pin", "unpin".
+  ToolExecutionResult? _unknownActionError(String action) {
     final pinning = action == 'pin' || action == 'unpin';
     if (!pinning && action != 'hide') {
       return ToolExecutionResult.text(
         'unknown action "$action" — use "hide", "pin" or "unpin"',
       );
     }
+    return null;
+  }
+
+  /// The validated target of a segment action, flattened to
+  /// `(start, end, label)` — or the structured rejection: an unparsable
+  /// target names the parse error, a missing target asks for one (AC1).
+  ((int, int, String)?, ToolExecutionResult?) _actionTarget(
+    String action,
+    Object? rawTarget,
+  ) {
     final (range, parseError) = _parseRangeArg(rawTarget);
-    if (parseError != null) return ToolExecutionResult.text(parseError);
+    if (parseError != null) {
+      return (null, ToolExecutionResult.text(parseError));
+    }
     if (range == null) {
-      return ToolExecutionResult.text(
-        'action "$action" requires a target id or range',
+      return (
+        null,
+        ToolExecutionResult.text(
+          'action "$action" requires a target id or range',
+        ),
       );
     }
-    final (start, end) = range;
-    final label = _rangeLabel(start, end);
+    return ((range.$1, range.$2, _rangeLabel(range.$1, range.$2)), null);
+  }
+
+  /// The target records of the validated seq range in order — or the
+  /// structured rejection when a seq has no record (AC1). The records
+  /// companion is unused whenever the error is non-null.
+  (List<SessionRecord>, ToolExecutionResult?) _resolveRangeTargets(
+    RecordSeqIndex seqs,
+    int start,
+    int end,
+    String label,
+    String validIds,
+  ) {
     final targets = <SessionRecord>[];
     for (var seq = start; seq <= end; seq++) {
       final record = seqs.recordAt(seq);
       if (record == null) {
-        return ToolExecutionResult.text(expandNoRecordMsg(label, validIds));
+        return (
+          targets,
+          ToolExecutionResult.text(expandNoRecordMsg(label, validIds)),
+        );
       }
       targets.add(record);
     }
-    // Real user turns are exempt from every path (F8) — say so instead
-    // of silently no-oping.
+    return (targets, null);
+  }
+
+  /// The structured rejection when any target is a real user turn (F8:
+  /// exempt from every path) — say so instead of silently no-oping.
+  /// Null when none is.
+  ToolExecutionResult? _realUserTurnRejection(
+    List<SessionRecord> targets,
+    String label,
+    bool pinning,
+  ) {
     for (final record in targets) {
       if (record is MessageRecord && _realUserTurn(record)) {
         return ToolExecutionResult.text(
@@ -270,8 +333,7 @@ final class CompactExpandController {
         );
       }
     }
-    if (pinning) return _pinAction(live, targets, label, action == 'pin');
-    return _hideAction(live, seqs, targets, label);
+    return null;
   }
 
   /// Pin / unpin: appends a [SegmentPinRecord] (replay: last one wins).
