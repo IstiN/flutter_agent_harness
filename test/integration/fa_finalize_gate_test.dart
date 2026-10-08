@@ -159,7 +159,7 @@ void main() {
       final transcript = const JsonEncoder.withIndent(' ').convert(records);
       expect(transcript, contains('test -x script.py'));
       expect(transcript, contains('chmod +x script.py'));
-      expect(transcript, contains('exit code 1'));
+      expect(transcript.toLowerCase(), contains('exited with code 1'));
 
       // The produced state is correct: the fix landed on disk.
       final mode = File('${tempDir.path}/script.py').statSync().modeString();
@@ -264,7 +264,11 @@ final class _ScriptedMock {
     bodies.add('x');
     final n = bodies.length - 1;
     final turn = n < script.length ? script[n] : const _Turn.text('done');
-    request.response.headers.contentType = ContentType('text', 'event-stream');
+    request.response.headers.contentType = ContentType(
+      'text',
+      'event-stream',
+      charset: 'utf-8',
+    );
     for (final chunk in _chunks(turn)) {
       request.response.write('data: $chunk\n\n');
     }
