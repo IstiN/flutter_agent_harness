@@ -57,6 +57,11 @@ void main() {
       Context context, {
       CancelToken? cancelToken,
     }) {
+      // ignore: avoid_print
+      print('>>> stream call: msgs=${context.messages.length} sys='
+          '${(context.systemPrompt ?? '').length}');
+      // ignore: avoid_print
+      print(StackTrace.current.toString().split('\n').take(14).join('\n'));
       if (!hung) {
         hung = true;
         return hang.call(model, context, cancelToken: cancelToken);

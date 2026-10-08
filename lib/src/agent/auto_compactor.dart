@@ -331,6 +331,8 @@ final class AutoCompactor {
     );
 
     if (!attempt.ok) {
+      // ignore: avoid_print
+      print('ZZZDEBUG local-trim reason: ${attempt.error}');
       // Both summarizers down: as a last resort, mechanically bound the
       // live context (see [_localTrimFallback]) so the agent can keep
       // working instead of being stuck over-window until the endpoint
