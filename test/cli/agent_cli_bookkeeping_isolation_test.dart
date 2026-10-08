@@ -64,6 +64,10 @@ void main() {
             ),
           ]),
           textTurn('started the background job'),
+          // The instant `echo` settles while the run is still live, so the
+          // settle notice injects a third model turn before headless exit —
+          // the script must cover it (leftover turns are simply unused).
+          textTurn('noted the background settle'),
         ]).call,
       );
 
