@@ -1,6 +1,9 @@
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+// LocalExecutionEnv is a VM-only surface (dart:io-backed) — it ships via
+// the io.dart barrel, not the platform-neutral one.
+import 'package:flutter_agent_harness/io.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';

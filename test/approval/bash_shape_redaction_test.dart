@@ -162,10 +162,16 @@ void main() {
         'use $token and ghp_${'C' * 36}',
         approvedLiterals: {token},
       )!;
+      // The hatch is scoped to its literal's own bytes: the GitHub shape
+      // still rewrites, the approved AWS value stays verbatim (run
+      // 37783963871 — the previous isNot(contains('$token and'))
+      // assertion contradicted the hatch: the approved value is SUPPOSED
+      // to remain in the command).
+      expect(
+        rewrite.command,
+        'use $token and [REDACTED:GitHub Token]',
+      );
       expect(rewrite.changes.single.label, 'GitHub Token');
-      expect(rewrite.command, contains(token));
-      expect(rewrite.command, isNot(contains('$token and')));
-      expect(rewrite.command, contains('[REDACTED:GitHub Token]'));
     });
   });
 

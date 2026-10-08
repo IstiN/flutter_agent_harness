@@ -486,13 +486,46 @@ void main() {
       // No newline yet: the partial line stays buffered, so no half-token
       // can reach the disk and dodge the redaction. The carry JOINS the
       // spans before the next scan — the chunk boundary never splits a
-      // token away from its shape.
+      // token away from its shape. ingest#2 therefore emits the JOINED
+      // complete line (including the 'key ' prefix held back by ingest#1)
+      // up to the newline; 'done' stays carried for flush() (run
+      // 37783963871: the original expectation was doubly wrong — it
+      // assumed 'key ' had already been emitted AND 'done' included).
       expect(redactor.ingest('key AKIA'), isEmpty);
-      expect(redactor.ingest('IOSFODNN7EXAMPLE\ndone'), '[REDACTED]\ndone');
+      expect(
+        redactor.ingest('IOSFODNN7EXAMPLE\ndone'),
+        'key [REDACTED]\n',
+      );
       // The trailing partial line ('done') is not trapped: flush() emits
-      // it sanitized at settle (validation 37778322435 — the original
-      // assertion wrongly pinned isEmpty).
+      // it sanitized at settle.
       expect(redactor.flush(), 'done');
+    });
+
+    test('a token split at ANY chunk offset stays redacted (parametrized)',
+        () {
+      // The reviewer-facing invariant, pinned at every boundary offset —
+      // not one lucky split: whatever the cut, no emitted byte sequence
+      // ever contains the raw token, and the assembled log carries the
+      // marker instead.
+      const token = 'AKIAIOSFODNN7EXAMPLE';
+      for (var cut = 0; cut <= token.length; cut++) {
+        final redactor = JobLogRedactor(
+          (text) => text.replaceAll(token, '[REDACTED]'),
+        );
+        final rested = redactor.ingest('key ${token.substring(0, cut)}') +
+            redactor.ingest('${token.substring(cut)} tail\n') +
+            redactor.flush();
+        expect(
+          rested.contains(token),
+          isFalse,
+          reason: 'cut=$cut let the raw token reach the log: $rested',
+        );
+        expect(
+          rested,
+          contains('[REDACTED]'),
+          reason: 'cut=$cut lost the redaction marker',
+        );
+      }
     });
 
     test('flush() emits a trailing partial line', () {
