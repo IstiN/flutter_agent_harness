@@ -241,7 +241,7 @@ void main() {
     for (final source in _topLevelParserSources) {
       parserKeys.addAll(
         RegExp(
-          "['\\[]([A-Za-z0-9]+)'\\]",
+          "['\\[]([A-Za-z0-9_]+)'\\]",
         ).allMatches(_read(source)).map((m) => m.group(1)!),
       );
     }
