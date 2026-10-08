@@ -1436,5 +1436,101 @@ void main() {
         expect(image.mimeType, 'image/png', reason: 'e$i');
       }
     });
+
+    test('gh-1425 AC1: the boundary stop waits for the kept path — a block '
+        'bottom between firstKeptEntryId and the compaction record keeps '
+        'paging (the kept region must never silently drop at resume)', () async {
+      // 1200 records, boundary at e450/c450, firstKeptEntryId = e380 (the
+      // compaction keeps its last 70 records — the classic post-compaction
+      // shape). The doubling blocks land the branch bottom at
+      // 1150/1101/1001/801/401 — 401 sits INSIDE the kept region
+      // (380 < 401 ≤ 450), exactly the geometry where the old found-stop
+      // fired with firstKeptEntryId non-resident and classicTransform
+      // dropped the whole kept region.
+      const iso = '2026-01-01T00:00:00.000Z';
+      const count = 1200;
+      const boundary = 450;
+      const firstKept = 380;
+      final buffer = StringBuffer(
+        '{"type":"session","version":3,"id":"big","timestamp":"$iso",'
+        '"cwd":"/work"}\n',
+      );
+      for (var i = 0; i < count; i++) {
+        if (i == boundary) {
+          buffer.write(
+            '{"type":"compaction","id":"c$i","parentId":"e${i - 1}",'
+            '"timestamp":"$iso","summary":"compacted prefix",'
+            '"firstKeptEntryId":"e$firstKept","tokensBefore":12345}\n',
+          );
+        }
+        buffer.write(
+          '{"type":"message","id":"e$i","parentId":'
+          '${i == 0
+              ? 'null'
+              : (i == boundary ? '"c$i"' : '"e${i - 1}"')},'
+          '"timestamp":"$iso",'
+          '"message":{"role":"user","content":[{"type":"text","text":'
+          '"body $i ${'a' * 40}"}]}}\n',
+        );
+      }
+      await fs.writeFile(path, buffer.toString());
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 50,
+        residentRecords: 100,
+      );
+      final leafBefore = await windowed.getLeafId();
+
+      final ok = await windowed.growOlderUntil((r) => r is CompactionRecord);
+
+      expect(ok, isTrue);
+      expect(await windowed.getLeafId(), leafBefore);
+      final branch = await windowed.getPathToRoot(leafBefore!);
+      expect(branch.any((r) => r is CompactionRecord), isTrue);
+      // THE FIX: the kept path is resident — firstKeptEntryId itself, and
+      // with it the whole kept region the live session rendered.
+      expect(
+        branch.any((r) => r.id == 'e$firstKept'),
+        isTrue,
+        reason: 'firstKeptEntryId must be resident when the walk stops at '
+            'the boundary, or the kept region silently drops',
+      );
+      // The boundary block bottom (e401) sits above firstKept — the walk
+      // had to page PAST it for this test to exercise the fix at all.
+      expect(
+        branch.any((r) => r.id == 'e401'),
+        isTrue,
+        reason: 'fixture geometry: the stop must land inside the kept region',
+      );
+    });
+
+    test('gh-1425 AC1: budget stop wins over kept-path completeness when '
+        'the boundary is unreachable (issue #503 bounded boot preserved)',
+        () async {
+      // The tail alone prices past the budget: the walk must stop on the
+      // budget (trim) even though no compaction is resident — the boot
+      // cap (AC3) owns the over-window residue, the walk stays bounded.
+      await seedSized(700, textChars: 2000); // ~500 tokens per record
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 50,
+        residentRecords: 100,
+      );
+      final leafBefore = await windowed.getLeafId();
+
+      final ok = await windowed.growOlderUntil(
+        (r) => r is CompactionRecord,
+        tokenBudget: 5000,
+      );
+
+      expect(ok, isTrue);
+      expect(await windowed.getLeafId(), leafBefore);
+      final branch = await windowed.getPathToRoot(leafBefore!);
+      expect(branch.any((r) => r is CompactionRecord), isFalse);
+      expect(estimateProjectedBranchTokens(branch), lessThanOrEqualTo(5000));
+      expect(windowed.hasOlder, isTrue);
+    });
   });
 }
