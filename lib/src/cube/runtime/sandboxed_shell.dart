@@ -131,6 +131,7 @@ ShellExecOptions sandboxExecOptions(CubeSpec spec, ShellExecOptions? options) {
     stdinData: options?.stdinData,
     jobLogMaxBytes: options?.jobLogMaxBytes,
     onJobLogWarning: options?.onJobLogWarning,
+    jobLogRedactor: options?.jobLogRedactor,
   );
 }
 

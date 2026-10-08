@@ -125,6 +125,7 @@ final class SessionVarsExecutionEnv
       liveStdin: options?.liveStdin,
       jobLogMaxBytes: options?.jobLogMaxBytes,
       onJobLogWarning: options?.onJobLogWarning,
+      jobLogRedactor: options?.jobLogRedactor,
     );
     return bg.startShellJob(command, id: id, logPath: logPath, options: merged);
   }

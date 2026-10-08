@@ -102,6 +102,11 @@ _POLL_SEC = 5.0
 # session logs).
 _CONTAINER_SESSION_ROOT = "/agent-logs/fah-sessions"
 
+# Issue #1408 AC1: the in-container home of fa's bash-job logs — OUTSIDE
+# the task workspace (the graded diff must never see harness artifacts).
+# Exported to fa as FAH_JOB_LOG_DIR in _env.
+_CONTAINER_JOB_LOG_DIR = "/tmp/fa-harness-artifacts/bash_jobs"
+
 # Round-3 forensics paths inside the container (issue #1392). The bench
 # workflow sets FA_CONN_TRACE_FILE/_SNAPSHOT to these via the adapter env;
 # the wrapper cats them at trial end / stall time.
@@ -183,6 +188,13 @@ class FaAgent(AbstractInstalledAgent):
             "FA_PROVIDER_TYPE": os.environ.get("FA_PROVIDER_TYPE", "anthropic"),
             "FA_PROVIDER_CONFIG_BASE64": _b64(os.environ["FA_PROVIDER_CONFIG"]),
         }
+        # Issue #1408 AC1: fa's bash-job logs (.fah/bash_jobs/) used to land
+        # INSIDE the task workspace, capturing raw secret values from the
+        # agent's own greps; the graded diff (test_no_other_files_changed)
+        # then failed on the agent sanitizing the harness's own logs.
+        # Relocate them next to the session root, outside the workspace —
+        # /tmp is the in-container twin of the runner's $RUNNER_TEMP.
+        env["FAH_JOB_LOG_DIR"] = _CONTAINER_JOB_LOG_DIR
         key_var = json.loads(os.environ["FA_PROVIDER_CONFIG"]).get("apiKeyEnvVar")
         if key_var and os.environ.get(key_var):
             env[f"{key_var}_BASE64"] = _b64(os.environ[key_var])

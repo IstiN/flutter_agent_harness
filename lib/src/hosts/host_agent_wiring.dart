@@ -64,6 +64,7 @@ import '../messaging/scheduled_messages.dart';
 import '../mcp/mcp_manager.dart';
 import '../model_roles/models_config.dart';
 import '../model_roles/provider_key_resolver.dart';
+import '../redact/redaction_types.dart';
 import '../session/session_tree.dart' show Session;
 import '../session_io_retry.dart' show SessionIoRetryConfig;
 import '../task/child_session_io.dart'
@@ -336,6 +337,18 @@ final class AgentCoreServices {
   final Object? extRuntimeFactory;
   final String? sessionRoot;
 
+  /// The host's resolved redaction config for the bash shape interceptor
+  /// (issue #1408 AC3, review 5456649624): the same `redact:` section
+  /// steers command rewriting and result/job-log masking. Null = the
+  /// default config (vendor shapes on).
+  final RedactionConfig? redactionConfig;
+
+  /// Live snapshot of the values the host registered as secrets
+  /// (`request_secret`, preconfig keys): those literals are EXEMPT from
+  /// command rewriting so an approved value still materializes while the
+  /// pipeline masks it in transcripts (review 5456649624).
+  final Set<String> Function()? approvedSecretLiterals;
+
   const AgentCoreServices({
     required this.baseEnv,
     this.sessionEnvVars,
@@ -367,6 +380,8 @@ final class AgentCoreServices {
     this.subagents,
     this.extRuntimeFactory,
     this.sessionRoot,
+    this.redactionConfig,
+    this.approvedSecretLiterals,
     this.telemetry,
     this.keyResolver,
     this.onKeySlotDrift,
@@ -624,6 +639,8 @@ List<AgentTool> _buildCoreTools({
       mcp: services.mcp,
       shellJobs: shellJobs,
       onPasswordPrompt: services.onPasswordPrompt,
+      redactionConfig: services.redactionConfig,
+      approvedSecretLiterals: services.approvedSecretLiterals,
     ),
     ...memoryTools(services.memory, onChanged: services.onMemoryChanged),
     ...?services.scheduledMessages == null
