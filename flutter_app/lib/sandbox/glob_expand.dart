@@ -16,6 +16,7 @@
 /// `[...]`/`[!...]`/`[^...]` with ranges. Brace expansion (`{a,b}`) is NOT
 /// part of this surface — `shell_parser` reports it as a loud parse error
 /// (never a silent divergence).
+library;
 
 /// One directory entry handed to the walker by the shell's fs.
 final class GlobEntry {

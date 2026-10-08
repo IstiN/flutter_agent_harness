@@ -181,11 +181,12 @@ void main() {
         'grep -A2 a /c.txt',
         'grep -L a /c.txt',
         'grep -P a /c.txt',
+        'grep -vo a /c.txt',
       ]) {
         final r = await run(argv);
         expect(r.exitCode, 2, reason: '$argv must exit 2');
         expect(r.stdout, isEmpty, reason: '$argv must print nothing');
-        expect(r.stderr, contains('grep:'), reason: '$argv');
+        expect(r.stderr, contains('grep:'), reason: argv);
         expect(r.stderr, isNot(isEmpty));
       }
 

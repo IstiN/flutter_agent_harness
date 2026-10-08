@@ -110,23 +110,6 @@ void main() {
       sandboxHostPath: sandbox.path,
     );
 
-    Future<ShellExecResult> run(
-      String command, {
-      List<int> stdoutBytes = const [],
-      List<int> stderrBytes = const [],
-      int exitCode = 0,
-      ShellExecOptions? options,
-    }) async {
-      rec.next = _ScriptedInstance()
-        ..out.add(Uint8List.fromList(stdoutBytes))
-        ..err.add(Uint8List.fromList(stderrBytes));
-      final r = await shell().exec(command, options: options);
-      expect(r.isOk, isTrue, reason: r.errorOrNull.toString());
-      final result = r.valueOrNull!;
-      // Drain the scripted streams like the real pipeline does.
-      return result;
-    }
-
     test('AC1: glob args expand (was: ShellParseException)', () async {
       // `grep -rl 'TAP' apps/*/app.json` — the evidence command. The rg
       // layer receives BOTH matched files (order sorted), the -l from the
