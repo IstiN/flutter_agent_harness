@@ -4751,4 +4751,8 @@
 
 - feat(1377): auto_update tri-state flag — notify banner, autonomous verified self-update, /update (#1384)
 
+## 1.0.531
+
+- fix(1406): bench ConnTrace dark inside tmux — launch-line env + loud-empty guard (#1416)
+
 ## Unreleased
