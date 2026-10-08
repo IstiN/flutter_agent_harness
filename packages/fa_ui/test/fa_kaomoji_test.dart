@@ -38,14 +38,15 @@ KaomojiFace replayFace(int seed, int swaps) {
   return face;
 }
 
-/// The face the mounted [KaomojiThinkingIcon] shows (keyed by face —
-/// see [KaomojiThinkingIcon.build]).
+/// The face the mounted [KaomojiThinkingIcon] shows. Matches ONLY the
+/// keyed box — flutter_svg 2.3.0 (the committed `flutter_app/
+/// pubspec.lock` pin) mounts its own internal `SizedBox`es, so a
+/// `find.byType(SizedBox)` matcher threw `Too many elements` (PR #1419
+/// re-review round 2). The key is ours alone and version-stable.
 KaomojiFace _shownFace(WidgetTester tester) =>
-    (tester.widget<SizedBox>(find.descendant(
-      of: find.byType(KaomojiThinkingIcon),
-      matching: find.byType(SizedBox),
-    )).key! as ValueKey<KaomojiFace>)
-        .value;
+    (tester.widget(find.byWidgetPredicate(
+      (w) => w.key is ValueKey<KaomojiFace>,
+    )).key! as ValueKey<KaomojiFace>).value;
 
 Widget _tileWrap(Widget child) {
   return FaUiThemeProvider(
@@ -70,6 +71,27 @@ class _PhaseService extends FakeChatService {
 
   void notify() => notifyListeners();
 }
+
+/// A transcript-level service for the live-thinking wiring test: a real
+/// message list the screen's metadata mapping consumes.
+class _TranscriptService extends FakeChatService {
+  List<FaChatMessage> msgs = const [];
+  bool streaming = false;
+
+  @override
+  List<FaChatMessage> get messages => msgs;
+  @override
+  bool get isStreaming => streaming;
+}
+
+/// Every face on screen (tree order): the keyed boxes the thinking
+/// tiles' [KaomojiThinkingIcon]s mount.
+List<KaomojiFace> _faces(WidgetTester tester) => [
+  for (final widget in tester.widgetList(
+    find.byWidgetPredicate((w) => w.key is ValueKey<KaomojiFace>),
+  ))
+    (widget.key! as ValueKey<KaomojiFace>).value,
+];
 
 void main() {
   testWidgets('KaomojiSwapper: random swap exactly on the ~0.9 s cadence',
@@ -214,7 +236,7 @@ void main() {
 
     const eye = Color(0xFF60D0D0);
     const mouth = Color(0xFF70A0E0);
-    TextSpan root() => tester
+    TextSpan richRoot() => tester
         .widget<RichText>(
           find.descendant(
             of: find.byType(KaomojiFaceText),
@@ -222,13 +244,19 @@ void main() {
           ),
         )
         .text as TextSpan;
-    String shown() => [
-          for (final span in root().children!) (span as TextSpan).text!,
-        ].join();
+
+    // Text.rich does NOT mount the given span as the RichText root — it
+    // nests it under a wrapper span (text: null), so the run spans sit
+    // one level down (PR #1419 re-review round 2; reading
+    // `root().children![0].text` nulled).
+    List<TextSpan> runs() => [
+      for (final span in (richRoot().children!.single as TextSpan).children!)
+        span as TextSpan,
+    ];
+    String shown() => [for (final span in runs()) span.text!].join();
     Set<Color> tones() => {
-          for (final span in root().children!)
-            (span as TextSpan).style!.color!,
-        };
+      for (final span in runs()) span.style!.color!,
+    };
 
     // First tick: the run opens on a random face.
     await tester.pump(const Duration(milliseconds: 100));
@@ -257,6 +285,80 @@ void main() {
       ..notify();
     await tester.pump();
     expect(find.byType(KaomojiFaceText), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  test('liveThinkingMessage: the NEWEST thinking block, only while '
+      'streaming', () {
+    final service = _TranscriptService()
+      ..msgs = [
+        FaChatMessage(role: 'thinking', content: 'finished turn'),
+        FaChatMessage(role: 'user', content: 'go on'),
+        FaChatMessage(role: 'thinking', content: 'live turn'),
+      ];
+    expect(liveThinkingMessage(service), isNull, reason: 'idle: nothing live');
+    expect(liveThinkingMessageIndex(service), -1);
+
+    service.streaming = true;
+    expect(liveThinkingMessageIndex(service), 2);
+    expect(liveThinkingMessage(service), same(service.msgs[2]));
+
+    // A transcript with no thinking block at all stays ungated.
+    service.msgs = [FaChatMessage(role: 'user', content: 'hi')];
+    expect(liveThinkingMessage(service), isNull);
+  });
+
+  testWidgets('wiring (AC4): only the NEWEST thinking tile animates while '
+      'a run streams — finished notes stay frozen', (tester) async {
+    // The regression for the PR #1419 re-review probe: two thinking
+    // tiles through the REAL chat-screen mapping, one pump past the
+    // swap boundary, only the live block's face moves.
+    final service = _TranscriptService()
+      ..msgs = [
+        FaChatMessage(role: 'thinking', content: 'finished turn'),
+        FaChatMessage(role: 'user', content: 'go on'),
+        FaChatMessage(role: 'thinking', content: 'live turn'),
+      ]
+      ..streaming = true;
+    tester.view.physicalSize = const Size(600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(home: FaChatScreen(service: service)));
+    // The transcript sync (50 ms debounce) + the reveal gate's frame.
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(_faces(tester), hasLength(2));
+    final before = _faces(tester);
+    await tester.pump(kKaomojiSwapPeriod);
+    final after = _faces(tester);
+    expect(after[0], same(before[0]),
+        reason: 'the finished thinking note keeps its frozen face');
+    expect(after[1], isNot(same(before[1])),
+        reason: 'only the LIVE thinking block animates');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('KaomojiFaceText: a degenerate (whitespace) face falls back '
+      'to a plain span — never a crash', (tester) async {
+    const blank = KaomojiFace(
+      'test-blank',
+      [(' ', false)],
+      [(' ', false)],
+      '',
+    );
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: KaomojiFaceText(face: blank),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+    // The fallback mounts the text as the ROOT span (a plain Text), not
+    // the nested run structure of the two-tone path.
+    final root =
+        tester.widget<RichText>(find.byType(RichText)).text as TextSpan;
+    expect(root.text, ' ');
     await tester.pumpWidget(const SizedBox.shrink());
   });
 }
