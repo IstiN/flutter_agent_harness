@@ -12,6 +12,7 @@ library;
 import 'dart:typed_data';
 
 import '../cancel_token.dart';
+import 'job_log_redaction.dart';
 
 /// Result of a fallible operation. Expected failures are returned as [Err]
 /// instead of thrown — [FileSystem] operations must never throw.
@@ -378,6 +379,7 @@ final class ShellExecOptions {
     this.liveStdin,
     this.jobLogMaxBytes,
     this.onJobLogWarning,
+    this.jobLogRedactor,
   });
 
   /// Working directory for the command. Defaults to [FileSystem.cwd].
@@ -420,6 +422,13 @@ final class ShellExecOptions {
   /// writes (issue #919). Only honored by [BackgroundShell.startShellJob];
   /// foreground execs ignore it.
   final void Function(String message)? onJobLogWarning;
+
+  /// Line-buffered redaction applied to a detached job's log writes at
+  /// rest (issue #1408 AC2): secret-shaped chunks become
+  /// `[REDACTED:<kind>]` markers in the log FILE, so `.fah/bash_jobs/`
+  /// never stores raw secret values. Only honored by
+  /// [BackgroundShell.startShellJob]; foreground execs ignore it.
+  final JobLogRedactor? jobLogRedactor;
 }
 
 /// Outcome of a completed [Shell.exec] invocation.

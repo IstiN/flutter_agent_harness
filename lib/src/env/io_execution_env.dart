@@ -16,6 +16,7 @@ import '../cube/config/fs_policy.dart';
 import 'execution_env.dart';
 import 'free_space_io.dart';
 import 'job_log_ceiling.dart';
+import 'job_log_redaction.dart';
 
 FileError _toFileError(Object error, String path) {
   if (error is FileError) return error;
@@ -944,6 +945,7 @@ final class LocalShell implements Shell, BackgroundShell {
         timeout: options?.timeout,
         token: token,
         ownGroup: ownGroup,
+        redactor: options?.jobLogRedactor,
       ),
     );
   }
@@ -962,7 +964,9 @@ final class _LocalShellJob implements ShellJob {
     required this._ownGroup,
     Duration? timeout,
     CancelToken? token,
-  }) : _process = process {
+    JobLogRedactor? redactor,
+  }) : _process = process,
+       _redactor = redactor {
     // Collect stdout/stderr into the log file. A naturally exiting process
     // closes the streams and we flush every byte; a killed/timed-out process
     // may leave the streams dangling on some platforms, so we cap the drain
@@ -980,10 +984,17 @@ final class _LocalShellJob implements ShellJob {
     // ceiling it yields the plain append (byte-identical to the old
     // `writeString(chunk)`); past it, patch ops that keep the file bounded
     // while the job keeps running. A write stop (low disk) yields no ops.
+    // Issue #1408 AC2: before the ceiling, the redactor (when configured)
+    // masks secret-shaped text — the RESTING file never stores raw secret
+    // values. The live `_output` stream stays raw (it feeds transient
+    // consumers like the password detector; at-rest is the contract here).
     void fanOut(String chunk) {
-      if (!_logBroken) {
+      // A broken log no longer ingests (review 5456649624): the carry
+      // would only grow for text that can never rest anywhere.
+      final safe = _logBroken ? chunk : (_redactor?.ingest(chunk) ?? chunk);
+      if (!_logBroken && safe.isNotEmpty) {
         _writeChain = _writeChain
-            .then((_) => _ceiling.ingest(chunk))
+            .then((_) => _ceiling.ingest(safe))
             .then(
               (ops) async {
                 for (final op in ops) {
@@ -1046,6 +1057,21 @@ final class _LocalShellJob implements ShellJob {
         // Drain pending writes first (RAF allows one op at a time), then
         // swallow every sink failure and settle regardless.
         await _writeChain;
+        // Issue #1408 AC2: the redactor's buffered partial line (a final
+        // output chunk without its newline) still belongs in the log.
+        if (!_logBroken && _redactor != null) {
+          try {
+            final rest = _redactor.flush();
+            if (rest.isNotEmpty) {
+              final ops = await _ceiling.ingest(rest);
+              for (final op in ops) {
+                await _applyLogWrite(op);
+              }
+            }
+          } on Object {
+            _logBroken = true;
+          }
+        }
         // Issue #919: final tail patch — the exact dropped count.
         if (!_logBroken) {
           try {
@@ -1075,6 +1101,9 @@ final class _LocalShellJob implements ShellJob {
   final Process _process;
   final RandomAccessFile _logSink;
   final JobLogCeiling _ceiling;
+
+  /// At-rest log redaction (issue #1408 AC2); null keeps raw bytes.
+  final JobLogRedactor? _redactor;
 
   /// Executes one ceiling op against the sink: a plain append at the
   /// advancing position, or an in-place overwrite of the marker+tail

@@ -195,7 +195,7 @@ final class RedactionPipeline {
     for (final match in matches) {
       buffer
         ..write(text.substring(cursor, match.start))
-        ..write('[REDACTED:${match.kindLabel}]');
+        ..write(redactionMarker(match.kindLabel));
       for (var i = match.start; i < match.end; i++) {
         if (text.codeUnitAt(i) == 0x0A) buffer.write('\n');
       }
