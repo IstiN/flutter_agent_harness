@@ -434,6 +434,14 @@ final class ModelRolesResolver {
     _wrappers.clear();
   }
 
+  /// Drops every cached chain wrapper so the next run rebuilds its models
+  /// through the CURRENT capability override layer (gh-1426: the settings
+  /// flow calls this after a `models.overrides` write — a run already
+  /// streaming keeps its resolved caps, the next run picks the edit up).
+  void refreshCapabilities() {
+    _wrappers.clear();
+  }
+
   /// "use the main model" escape of the settings-hub agent-models flow).
   void clearRoleChain(String role) {
     if (role == defaultModelRole) {

@@ -262,12 +262,8 @@ void main() {
           maxTokens: 16384,
         ),
       );
-      expect(
-        (body['generationConfig'] as Map<String, dynamic>).containsKey(
-          'thinkingConfig',
-        ),
-        isFalse,
-      );
+      final config = body['generationConfig'] as Map<String, dynamic>?;
+      expect(config?['thinkingConfig'], isNull);
     });
 
     test('an explicit options thinking wins over the model pin', () async {
@@ -306,12 +302,8 @@ void main() {
           maxTokens: 16384,
         ),
       );
-      expect(
-        (body['generationConfig'] as Map<String, dynamic>).containsKey(
-          'thinkingConfig',
-        ),
-        isFalse,
-      );
+      final config = body['generationConfig'] as Map<String, dynamic>?;
+      expect(config?['thinkingConfig'], isNull);
     });
   });
 

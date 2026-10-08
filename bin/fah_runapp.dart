@@ -231,6 +231,10 @@ Future<void> _runApp(List<String> args) async {
   } on ConfigException catch (error) {
     _fail(error.message);
   }
+  // Per-provider+model capability overrides (`models.overrides`, gh-1426):
+  // process-wide, consulted by every model build (roles chains, the legacy
+  // single model, custom definitions) — the resolver's top layer.
+  modelCapabilityOverrides = saved.models?.overrides;
   // Per-provider stall-recovery tuning (issue #1398): registry entries
   // declaring `connectTimeoutMs`/`streamIdleTimeoutMs` seed the tuning
   // table the watchdogs read per request URL. No entries → the table

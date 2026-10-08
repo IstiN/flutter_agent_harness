@@ -372,8 +372,19 @@ EffectiveCaps resolveModelCapabilities({
 
   // ── context window: override > role slot > endpoint > remote catalog >
   //    spec > documented unknown default, then the global cap LAST.
+  // The boundary floors apply to the OVERRIDE layer only (parse rejects
+  // below-floor values loudly; this is the safety net for programmatic
+  // construction) — role-slot and catalog values ride verbatim, so a
+  // chain entry's explicit small caps stay byte-identical to pre-resolver
+  // behavior (REG-1).
+  final overrideWindow = override?.contextWindow;
+  final flooredOverrideWindow = overrideWindow == null
+      ? null
+      : (overrideWindow < minOverrideContextWindow
+            ? minOverrideContextWindow
+            : overrideWindow);
   final resolvedWindow =
-      override?.contextWindow ??
+      flooredOverrideWindow ??
       roleContextWindow ??
       endpointContextWindow ??
       remoteCatalogContextWindow ??
@@ -389,15 +400,19 @@ EffectiveCaps resolveModelCapabilities({
     );
   }
   // Floor the safety net (parse already rejects small values loudly).
-  final flooredWindow = resolvedWindow < minOverrideContextWindow
-      ? minOverrideContextWindow
-      : resolvedWindow;
-  final window = effectiveContextWindow(flooredWindow, contextWindowCap);
+  final window = effectiveContextWindow(resolvedWindow, contextWindowCap);
 
   // ── max output tokens: override > role slot > endpoint > Claude
-  //    ceiling table > spec > documented unknown default.
+  //    ceiling table > spec > documented unknown default (override values
+  //    floored like the window — explicit role-slot values ride verbatim).
+  final overrideMaxTokens = override?.maxTokens;
+  final flooredOverrideMaxTokens = overrideMaxTokens == null
+      ? null
+      : (overrideMaxTokens < minOverrideMaxTokens
+            ? minOverrideMaxTokens
+            : overrideMaxTokens);
   final resolvedMaxTokens =
-      override?.maxTokens ??
+      flooredOverrideMaxTokens ??
       roleMaxTokens ??
       endpointMaxTokens ??
       resolveModelMaxOutputTokens(modelId, api: api ?? '') ??
@@ -412,9 +427,7 @@ EffectiveCaps resolveModelCapabilities({
       '(endpoint reported $endpointMaxTokens)',
     );
   }
-  final maxTokens = resolvedMaxTokens < minOverrideMaxTokens
-      ? minOverrideMaxTokens
-      : resolvedMaxTokens;
+  final maxTokens = resolvedMaxTokens;
 
   // ── thinking: model pin (override) > role slot, then the gate.
   final (thinkingLevel, gateNote) = gateThinkingLevel(
@@ -459,19 +472,20 @@ String? maxTokensFieldFor(String? api) => switch (api) {
 
 /// The thinking gate: a pinned rung on a `reasoning:false` model is
 /// dropped WITH a loud note (E3 — the request proceeds without thinking
-/// fields; never silently sent). `xhigh`/`max` fold to `high` like
-/// everywhere else. Returns `(level, note)`.
+/// fields; never silently sent). The level rides VERBATIM: the
+/// `xhigh`/`max` → `high` fold happens at the config parse boundary
+/// (normalizeConfigThinkingLevel), never at model build — the same
+/// pass-through contract ModelRef/FA_PROVIDER_CONFIG pins.
 (String?, String?) gateThinkingLevel(String? level, {required bool reasoning}) {
   if (level == null) return (null, null);
-  final clamped = clampThinkingLevel(level);
   if (!reasoning) {
     return (
       null,
-      'thinking level "$clamped" pinned on a non-reasoning model — gated, '
+      'thinking level "$level" pinned on a non-reasoning model — gated, '
       'the request proceeds without thinking fields',
     );
   }
-  return (clamped, null);
+  return (level, null);
 }
 
 /// Convenience: the [ModelRef]-shaped role-slot layer (a roles chain

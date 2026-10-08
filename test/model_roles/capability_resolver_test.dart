@@ -217,10 +217,16 @@ void main() {
     });
 
     test('reasoning models keep the pin, no note', () {
+      // Levels ride verbatim (the xhigh/max fold happens at config
+      // parse); a parse-built override already carries the folded rung.
       final caps = _resolve(
-        override: const ModelCapabilityOverride(thinkingLevel: 'max'),
+        override: ModelCapabilityOverride.fromYaml(
+          'zai',
+          'glm-5.3-flash',
+          _yaml('thinkingLevel: max'),
+        ),
       );
-      expect(caps.thinkingLevel, 'high'); // xhigh/max fold to high
+      expect(caps.thinkingLevel, 'high');
       expect(caps.notes, isEmpty);
     });
 
