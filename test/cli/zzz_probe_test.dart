@@ -71,6 +71,7 @@ void main() {
         env: env,
         sessionRoot: '/sessions',
         sessionName: 'small-boot',
+        homeDir: '/work',
         providerKind: 'openai-completions',
         skillsAccess: SkillsAccess.granted,
         compactionEngine: CompactionEngine.classic,
