@@ -43,6 +43,21 @@ name: Bench
 # on the padded budgets so LPT never under-counts. The cap is a cap, not
 # a wait: fast verifier phases are unaffected (a full-dataset worst case
 # grows < 10 min/shard); `0` restores the declared budgets.
+#
+# Issue #1392 (bench round 3): retire the artificial timeout class. The
+# ×4 ladder ceiling itself was the round-2 killer (play-zork died at 72
+# productive minutes), so with progress-extension ON the ladder ceiling
+# becomes an absolute one (3600s default, FA_AGENT_TIMEOUT_ABS_CEILING_SEC)
+# and the outer harness cap pins above THAT — a trial only dies by the
+# adapter's verdict (stall / abs ceiling), never tb's flat wait_for. The
+# experiment: split 8 shards, run at most `max-concurrent` (default 2) —
+# GHA's strategy.max-parallel IS the semaphore. Shards are LPT-packed to
+# the job cap minus 15 min headroom; the merge report degrades cancelled
+# shards to a `coverage: X/N` note (never red from aggregation), carries
+# per-request latency p50/p95 per concurrency level from each trial's
+# bench_metrics.json, and names any agent_timeout trial whose session
+# gaps never reached the 240s stall threshold (the round-2 contradiction,
+# AC8).
 
 on:
   workflow_dispatch:
@@ -71,6 +86,10 @@ on:
         description: 'Floor for declared task test timeouts, seconds (gh-1206; 0 = declared budgets)'
         required: false
         default: '120'
+      max-concurrent:
+        description: 'Shard jobs running at once (issue #1392: split 8, run 2 — the ours-vs-endpoint experiment; GHA queues the rest)'
+        required: false
+        default: '2'
 
 permissions:
   contents: read
@@ -98,6 +117,22 @@ jobs:
       count: ${{ steps.shards.outputs.count }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Round-3 review: validate max-concurrent like its siblings — 0 or
+      # negative would spin the whole matrix as effectively unbounded
+      # (and poison FA_BENCH_CONCURRENCY / the packing budget); fail the
+      # dispatch BEFORE any bundle is built. (A non-integer value still
+      # dies at workflow-graph parse — strategy.max-parallel fromJSON —
+      # before any job starts; this guard catches everything numeric.)
+      - name: Validate max-concurrent
+        run: |
+          case "${{ inputs.max-concurrent }}" in
+            ''|*[!0-9]*)
+              echo "::error::max-concurrent must be a positive integer, got '${{ inputs.max-concurrent }}'"; exit 1 ;;
+          esac
+          if [ "$((10#${{ inputs.max-concurrent }}))" -lt 1 ] || [ "$((10#${{ inputs.max-concurrent }}))" -gt 8 ]; then
+            echo "::error::max-concurrent must be between 1 and 8 (the split count), got '${{ inputs.max-concurrent }}'"; exit 1
+          fi
 
       # stable satisfies the repo SDK constraint (>=3.12.0 <4.0.0).
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
@@ -152,7 +187,12 @@ jobs:
           tb datasets download -d "$DATASET" --output-dir "$RUNNER_TEMP/ds"
           python bench/terminal_bench/shard_tasks.py \
             --dataset-dir "$RUNNER_TEMP/ds" --shards "$SHARDS" --tasks "$TASKS" \
-            --test-timeout-floor "$TEST_TIMEOUT_FLOOR"
+            --test-timeout-floor "$TEST_TIMEOUT_FLOOR" \
+            --job-cap-seconds "$((355 * 60))"
+          # --job-cap-seconds takes the RAW job cap (355 min): the packer
+          # subtracts its own 15-min headroom (shard_tasks.HEADROOM_SEC),
+          # so the packed worst case lands at 340 min usable. Round 2 lost
+          # shard-0 by ~1 min with zero headroom.
 
   bench:
     # Note: the display name cannot read ${{ env.BENCH_MODEL }} — the env
@@ -162,14 +202,18 @@ jobs:
     name: fa on terminal-bench, shard ${{ matrix.i }}
     needs: setup
     runs-on: ubuntu-latest
-    # Worst case per shard (LPT balance at multiplier 2) is ~4.5 h; 355 min
-    # covers it under the 6 h runner cap. --n-concurrent 1 keeps the math
-    # sequential-predictable and the total concurrent LLM load at
-    # max-parallel x 1 (z.ai rate limits).
+    # Worst case per shard is LPT-packed to 340 min (job cap − 15 min
+    # headroom, issue #1392); 355 min covers it under the 6 h runner cap.
+    # --n-concurrent 1 keeps the math sequential-predictable and the total
+    # concurrent LLM load at max-parallel x 1 (z.ai rate limits).
     timeout-minutes: 355
     strategy:
       fail-fast: false
-      max-parallel: 5
+      # Issue #1392 ShardStagger: split 8, run at most `max-concurrent`
+      # (default 2) at once — GHA queues the rest and starts each the
+      # moment a slot frees. This IS the concurrency experiment's
+      # semaphore; no runner-side coordination.
+      max-parallel: ${{ fromJSON(inputs.max-concurrent) }}
       matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -218,6 +262,20 @@ jobs:
           PROGRESS_EXTENSION: ${{ inputs.progress-extension }}
           # dataset task dir names: no whitespace, safe to word-split.
           SHARD_TASKS: ${{ matrix.tasks }}
+          # Issue #1392: the forensics layer is opt-in by env — this run IS
+          # the instrumented experiment, so it opts in deliberately (the
+          # adapter forwards these into the container base64-encoded via
+          # _CONN_ENV_KEYS). ConnTrace gives every trial's bench_metrics.json
+          # its per-request/watchdog events and the [fa-bench] live lines;
+          # the payload snapshot is what StallSentinel's hang-*.json
+          # captures (see FA_CONN_PAYLOAD_KEEP_AUTH — the snapshot redacts
+          # auth unless that is set, which bench never does).
+          FA_CONN_DEBUG: '1'
+          FA_CONN_TRACE_FILE: /tmp/fa-conn-trace.jsonl
+          FA_CONN_PAYLOAD_SNAPSHOT: /tmp/fa-conn-snapshot.json
+          # The concurrency level lands in every trial's bench_metrics.json
+          # (concurrency_level) and the report's per-level latency block.
+          FA_BENCH_CONCURRENCY: ${{ inputs.max-concurrent }}
         run: |
           set -euo pipefail
           [ -n "$FA_KEY_API_Z_AI_Z_AI" ] || { echo '::error::FA_BENCH_ZAI_KEY secret is not set'; exit 1; }
@@ -262,13 +320,26 @@ jobs:
             ladder_base=360
             export FA_AGENT_TIMEOUT_SEC="$ladder_base"
           fi
-          if [ -n "$ladder_base" ]; then
-            # Outer harness cap above the ladder ceiling (4x base + slack) so
-            # the progress ladder decides, never the flat harness wait_for.
-            args+=(--global-agent-timeout-sec "$((ladder_base * 4 + 180))")
-          fi
           if [ -n "$PROGRESS_EXTENSION_ON" ]; then
             export FA_PROGRESS_EXTENSION=1
+            # Round-3 review: extension on ALONE leaves the legacy x4
+            # ladder deciding (TimeoutKnobs.watch_active keys on a watch
+            # knob). Export the abs ceiling — default 3600s — so the
+            # progress watch, not the ladder, decides every kill.
+            export FA_AGENT_TIMEOUT_ABS_CEILING_SEC="${FA_AGENT_TIMEOUT_ABS_CEILING_SEC:-3600}"
+            # Issue #1392: with the progress watch on, the ladder's
+            # ceiling is the ABS ceiling (default 3600s) — the old 4x+180
+            # pin would guillotine an extended-but-progressing trial
+            # below our own decision point. Pin the harness cap above the
+            # abs ceiling so the adapter's verdict, not tb's flat
+            # wait_for, decides every kill.
+            args+=(--global-agent-timeout-sec \
+              "$(( ${FA_AGENT_TIMEOUT_ABS_CEILING_SEC:-3600} + 180 ))")
+          elif [ -n "$ladder_base" ]; then
+            # Flat ladder only: outer harness cap above the ladder ceiling
+            # (4x base + slack) so the ladder decides, never the flat
+            # harness wait_for.
+            args+=(--global-agent-timeout-sec "$((ladder_base * 4 + 180))")
           fi
           # Pinned --run-id: one tb-runs/shard-N/ dir per shard, so the merge
           # job's downloads cannot collide on tb's timestamped default.
@@ -317,6 +388,18 @@ jobs:
         with:
           python-version: '3.13'
 
+      # Issue #1392 AC4/AC7: re-own attribution after the fact — rows that
+      # recorded 0/0 (tb's flat-cap fabrication discards the adapter's
+      # fold) get their totals summed from the exported fa session JSONL,
+      # ExportGuard gaps and AC8 score-honesty violations print loudly.
+      # Runs BEFORE the merged upload so tb-runs-merged is the patched,
+      # analysis-ready record — the durable artifact must not carry the
+      # 0/0 rows this pass exists to fix.
+      - name: Post-mortem attribution pass
+        if: always()
+        run: |
+          python bench/post_mortem_usage.py tb-runs || true
+
       # tb exits 0 even with unresolved tasks; the verdict here (via
       # summary.py) covers run completeness — every expected task attempted
       # — after the merged artifact below is uploaded.
@@ -334,5 +417,9 @@ jobs:
           # Issue #1339 AC3: same pin as the shard summary — price every
           # trial even when its fa session logs are absent.
           MODEL: ${{ env.BENCH_MODEL }}
+          # Issue #1392: the report tags the run's concurrency level —
+          # the 8-shard/at-most-2 experiment is only comparable when the
+          # level it ran at is on the record.
+          BENCH_CONCURRENCY: ${{ inputs.max-concurrent }}
         run: |
           python bench/terminal_bench/summary.py tb-runs "$EXPECTED"
