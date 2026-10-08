@@ -4755,4 +4755,9 @@
 
 - fix(1406): bench ConnTrace dark inside tmux — launch-line env + loud-empty guard (#1416)
 
+## 1.0.532
+
+- ci(quarantine): skip pty_resume_equivalence_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1422) (#1423)
+- ci(quarantine): skip composer_echo_pty_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1413) (#1414)
+
 ## Unreleased
