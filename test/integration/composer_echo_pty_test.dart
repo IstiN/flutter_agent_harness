@@ -21,6 +21,10 @@ library;
 import 'dart:io';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
+// Same mask contract as composer_tui_grid_pty_test.dart: the spinner is
+// the kaomoji face zone (issue #1374) — strip the fixed zone + separator.
+import 'package:flutter_agent_harness/src/cli/fa_tui.dart'
+    show kKaomojiFaceZoneCells;
 import 'package:test/test.dart';
 
 import 'pty_harness.dart';
@@ -205,8 +209,10 @@ tui:
           reason: 'only the busy row may move between ticks:\n'
               'A:\n${dump(gridA)}\nB:\n${dump(gridB)}');
       expect(busyIdx, busyRows.single);
+      // The spinner is the kaomoji face zone (issue #1374): strip the
+      // fixed zone + separator; only face + seconds may move.
       String masked(String row) => row
-          .substring(row.indexOf(' ') + 1)
+          .substring(kKaomojiFaceZoneCells + 1)
           .replaceAll(RegExp(r'\d'), '#');
       expect(masked(gridA[busyIdx]), masked(gridB[busyIdx]),
           reason: 'inside the ticker only spinner + seconds move');

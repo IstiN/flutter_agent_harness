@@ -54,6 +54,10 @@ TuiTheme _sentinel() {
     userMessageText: Style(foregroundRgb: next()),
     toolSuccessBg: Style(backgroundRgb: next()),
     toolErrorBg: Style(backgroundRgb: next()),
+    // The kaomoji thinking-indicator tones are named roles too (issue
+    // #1374): registered here so their escapes stay attributable.
+    kaomojiEye: Style(foregroundRgb: next()),
+    kaomojiMouth: Style(foregroundRgb: next()),
   );
 }
 
@@ -79,6 +83,10 @@ Set<String> _roleEscapes(TuiTheme t) {
     t.userMessageText,
     t.toolSuccessBg,
     t.toolErrorBg,
+    // The kaomoji thinking-indicator roles (issue #1374): the busy row's
+    // face renders through them, so they are part of the audited set.
+    t.kaomojiEye,
+    t.kaomojiMouth,
     // Derived (non-field) emitters render too.
     Style(foregroundRgb: t.accent.foregroundRgb),
   ]) {

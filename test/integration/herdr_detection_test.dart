@@ -376,7 +376,7 @@ String renderApprovalFixture() {
     arguments: {'command': 'rm -rf ./build'},
     reason: 'exec tier requires approval in mode: code',
   );
-  return '⠋ Working…      3s\n${_sheet(ApprovalPromptSpec(request: request))}\n';
+  return '>_o  Working…      3s\n${_sheet(ApprovalPromptSpec(request: request))}\n';
 }
 
 String renderSecretFixture() {
@@ -384,7 +384,7 @@ String renderSecretFixture() {
     name: 'SERPAPI_KEY',
     reason: 'the web_search tool needs a SerpApi key',
   );
-  return '⠋ Working…      3s\n${_sheet(spec)}\n';
+  return '>_o  Working…      3s\n${_sheet(spec)}\n';
 }
 
 String renderAskFixture() {
@@ -399,7 +399,7 @@ String renderAskFixture() {
     ],
     recommended: 0,
   );
-  return '⠋ Working…      3s\n${_sheet(spec)}\n';
+  return '>_o  Working…      3s\n${_sheet(spec)}\n';
 }
 
 String renderInputFixture() =>
@@ -426,6 +426,7 @@ String _liveBusyLine({String phase = '', required int elapsed, int frame = 1}) {
     ),
     isExited: () => false,
     termWidth: 80,
+    kaomojiPick: (_) => 0, // fixtures pin the face — no randomness
   );
   model = model.update(const BusyMsg(true, source: 'run')).$1 as FaTuiModel;
   final now = DateTime.now().millisecondsSinceEpoch;
@@ -433,7 +434,7 @@ String _liveBusyLine({String phase = '', required int elapsed, int frame = 1}) {
     busyStartedAtMs: now - elapsed * 1000,
     busyLastEventMs: now,
     busyPhase: phase,
-    spinnerFrame: frame,
+    kaomojiFace: frame,
   );
   return model
       .view()
@@ -444,11 +445,19 @@ String _liveBusyLine({String phase = '', required int elapsed, int frame = 1}) {
       .trimRight();
 }
 
-final _busyLineRe = RegExp('^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] ');
+/// The busy-line contract regex, DERIVED from the shipped manifest's
+/// busy_row rule — a face-set change edits the manifest + kKaomojiFaces
+/// (already cross-tested), never a third synchronized copy here. The row
+/// opens with one of the eight kaomoji faces (issue #1374) padded into a
+/// fixed 4-cell zone (`  ?`: the not-gate's inline extractor forbids
+/// brace quantifiers); the ASCII fallback faces are matched too.
+RegExp _busyLineRe(_Manifest manifest) => RegExp(
+  manifest.rules.firstWhere((r) => r.id == 'busy_row').gate.lineRegex.first,
+);
 
-String _fixtureBusyLine(String name) => File(
+String _fixtureBusyLine(_Manifest manifest, String name) => File(
   '$_fixturesDir/$name',
-).readAsStringSync().split('\n').firstWhere(_busyLineRe.hasMatch);
+).readAsStringSync().split('\n').firstWhere(_busyLineRe(manifest).hasMatch);
 
 void main() {
   final manifest = _parseFaManifest(File(_manifestPath).readAsStringSync());
@@ -529,7 +538,11 @@ void main() {
       ),
     };
     live.forEach((name, rendered) {
-      expect(_fixtureBusyLine(name), rendered, reason: '$name busy-row drift');
+      expect(
+        _fixtureBusyLine(manifest, name),
+        rendered,
+        reason: '$name busy-row drift',
+      );
     });
   });
 
@@ -573,7 +586,7 @@ void main() {
         _classifyFaScreen(
           manifest,
           '$filler\n┌─ Approval ───┐\n│ Approve once (y) │\n'
-          '$fillerAfter\n⠙ Working…      5s\n╰─ \n',
+          '$fillerAfter\n-_-  Working…      5s\n╰─ \n',
         ),
         'working',
       );
