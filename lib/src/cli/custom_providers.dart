@@ -6,10 +6,18 @@
 /// presets and what the `/provider custom` wizard appends to; switching to
 /// an entry restores its last-used model, and `/model` while an entry is
 /// active writes the new model id back (per-provider model memory).
+///
+/// Entries may declare per-provider watchdog tuning (issue #1398):
+/// `connectTimeoutMs`/`streamIdleTimeoutMs` — positive milliseconds,
+/// resolution order entry > the global `providerTimeouts:` section >
+/// the 180 s / 300 s defaults. Recipe: `streamIdleTimeoutMs ≈ 2× p95` of
+/// the model's measured inter-chunk gap; the boot log prints one
+/// `[tuning]`-style line per seeded entry.
 library;
 
 import '../exceptions.dart';
 import '../model_roles/provider_catalog.dart';
+import '../providers/provider_tuning.dart' show parseProviderTimeoutMs;
 
 /// The api types a custom provider can take (the adapter dialect), mapping
 /// one-to-one to catalog specs. Includes OAuth/SSO-backed catalog providers
@@ -59,6 +67,8 @@ final class CustomProviderEntry {
     this.keyName,
     this.authMethod = CustomProviderAuthMethod.apiKey,
     this.authHeader,
+    this.connectTimeout,
+    this.streamIdleTimeout,
   });
 
   /// Parses one yaml map from the `customProviders:` list. Throws
@@ -107,6 +117,18 @@ final class CustomProviderEntry {
       // Named error (issue #964 AC5): the entry owns the bad value, so the
       // message names the entry.
       authHeader: authHeader,
+      // Per-provider stall-recovery tuning (issue #1398): the watchdog
+      // knobs ride the registry entry, same place baseUrl/keys live.
+      connectTimeout: parseProviderTimeoutMs(
+        node['connectTimeoutMs'],
+        'connectTimeoutMs',
+        'customProviders entry "$name"',
+      ),
+      streamIdleTimeout: parseProviderTimeoutMs(
+        node['streamIdleTimeoutMs'],
+        'streamIdleTimeoutMs',
+        'customProviders entry "$name"',
+      ),
     );
   }
 
@@ -144,11 +166,20 @@ final class CustomProviderEntry {
   /// Null keeps the Bearer default.
   String? authHeader;
 
+  /// Per-provider connect/first-headers watchdog override
+  /// (`connectTimeoutMs` on the entry, issue #1398). Null keeps the
+  /// global `providerTimeouts:` value, then the 180 s default.
+  Duration? connectTimeout;
+
+  /// Per-provider stream-idle watchdog override (`streamIdleTimeoutMs`,
+  /// issue #1398). Null keeps the global value, then the 300 s default.
+  Duration? streamIdleTimeout;
+
   /// The last-used model id (rewritten on `/model` switches while active).
   String modelId;
 
   /// Serializes to the yaml section's map shape.
-  Map<String, String> toYaml() {
+  Map<String, Object?> toYaml() {
     return {
       'name': name,
       'apiType': apiType,
@@ -156,6 +187,8 @@ final class CustomProviderEntry {
       'keyName': ?keyName,
       'authMethod': authMethod.name,
       'authHeader': ?authHeader,
+      'connectTimeoutMs': ?connectTimeout?.inMilliseconds,
+      'streamIdleTimeoutMs': ?streamIdleTimeout?.inMilliseconds,
       'modelId': modelId,
     };
   }
@@ -238,6 +271,24 @@ List<CustomProviderEntry> mergeCustomProviderEntries(
 bool sameEndpoint(String a, String b) {
   String norm(String u) => u.endsWith('/') ? u.substring(0, u.length - 1) : u;
   return norm(a) == norm(b);
+}
+
+/// Carries the hand-configured fields from [existing] onto [updated]
+/// (review r2): the `/provider` edit wizard rebuilds the entry from the
+/// wizard answers and would otherwise silently drop the fields it does
+/// not ask about — `authMethod` (the SSO/JWT routing signal), `authHeader`
+/// (issue #964), and the tuning keys `connectTimeoutMs`/`streamIdleTimeoutMs`
+/// (issue #1398). The wizard-owned identity fields (name, apiType,
+/// baseUrl, modelId, keyName) stay whatever the wizard produced.
+CustomProviderEntry mergeEditedCustomProviderEntry({
+  required CustomProviderEntry existing,
+  required CustomProviderEntry updated,
+}) {
+  return updated
+    ..authMethod = existing.authMethod
+    ..authHeader = existing.authHeader
+    ..connectTimeout = existing.connectTimeout
+    ..streamIdleTimeout = existing.streamIdleTimeout;
 }
 
 /// The `authHeader` of the saved entry serving [baseUrl], for the
