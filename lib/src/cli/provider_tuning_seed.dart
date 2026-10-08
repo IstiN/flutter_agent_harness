@@ -37,6 +37,11 @@ import 'custom_providers.dart';
 /// passes run without it (the queue pass must ADD to the config pass),
 /// while a host applying a fresh config snapshot resets so removed
 /// entries cannot outlive their config.
+///
+/// Table-driven on purpose (the CRAP ratchet): each config surface maps
+/// through its own tiny [_customProviderTuning]/[_customModelTuning]/
+/// [_roleRefTuning]/[_queueEntryTuning] adapter, and the loop lives once
+/// inside [ProviderTuningRegistry.registerAll].
 void seedProviderTuning({
   List<CustomProviderEntry>? customProviders,
   Map<String, CustomModelDefinition>? customModels,
@@ -45,53 +50,53 @@ void seedProviderTuning({
   bool reset = false,
 }) {
   if (reset) providerTuningRegistry.clear();
-  final custom = customProviders ?? const [];
-  for (final entry in custom) {
-    if (entry.connectTimeout == null && entry.streamIdleTimeout == null) {
-      continue;
-    }
-    providerTuningRegistry.register(
+  providerTuningRegistry.registerAll(
+    [
+      ...?customProviders?.map(_customProviderTuning),
+      ...?customModels?.entries.map(_customModelTuning),
+      ...?roleRefs?.map(_roleRefTuning),
+      ...?queueEntries?.map(_queueEntryTuning),
+    ].nonNulls,
+  );
+}
+
+ProviderTuningEntry _customProviderTuning(CustomProviderEntry entry) =>
+    ProviderTuningEntry(
       name: entry.name,
       baseUrl: entry.baseUrl,
       connect: entry.connectTimeout,
       streamIdle: entry.streamIdleTimeout,
     );
-  }
-  final models = customModels ?? const {};
-  for (final e in models.entries) {
-    if (e.value.connectTimeout == null && e.value.streamIdleTimeout == null) {
-      continue;
-    }
-    providerTuningRegistry.register(
-      name: 'models.custom.${e.key}',
-      baseUrl: e.value.baseUrl,
-      connect: e.value.connectTimeout,
-      streamIdle: e.value.streamIdleTimeout,
-    );
-  }
-  for (final ref in roleRefs ?? const <ModelRef>[]) {
-    if (ref.baseUrl == null) continue;
-    if (ref.connectTimeout == null && ref.streamIdleTimeout == null) continue;
-    providerTuningRegistry.register(
-      name: 'role:${ref.label}',
-      baseUrl: ref.baseUrl!,
-      connect: ref.connectTimeout,
-      streamIdle: ref.streamIdleTimeout,
-    );
-  }
-  for (final entry in queueEntries ?? const <ProviderQueueEntry>[]) {
-    if (entry.baseUrl == null) continue;
-    if (entry.connectTimeout == null && entry.streamIdleTimeout == null) {
-      continue;
-    }
-    providerTuningRegistry.register(
-      name: 'queue:${entry.label}',
-      baseUrl: entry.baseUrl!,
-      connect: entry.connectTimeout,
-      streamIdle: entry.streamIdleTimeout,
-    );
-  }
-}
+
+ProviderTuningEntry _customModelTuning(
+  MapEntry<String, CustomModelDefinition> entry,
+) => ProviderTuningEntry(
+  name: 'models.custom.${entry.key}',
+  baseUrl: entry.value.baseUrl,
+  connect: entry.value.connectTimeout,
+  streamIdle: entry.value.streamIdleTimeout,
+);
+
+/// Null when the chain entry carries no endpoint — nothing to key on.
+ProviderTuningEntry? _roleRefTuning(ModelRef ref) => ref.baseUrl == null
+    ? null
+    : ProviderTuningEntry(
+        name: 'role:${ref.label}',
+        baseUrl: ref.baseUrl!,
+        connect: ref.connectTimeout,
+        streamIdle: ref.streamIdleTimeout,
+      );
+
+/// Null when the queue entry carries no endpoint — nothing to key on.
+ProviderTuningEntry? _queueEntryTuning(ProviderQueueEntry entry) =>
+    entry.baseUrl == null
+    ? null
+    : ProviderTuningEntry(
+        name: 'queue:${entry.label}',
+        baseUrl: entry.baseUrl!,
+        connect: entry.connectTimeout,
+        streamIdle: entry.streamIdleTimeout,
+      );
 
 /// The boot notice lines for the seeded entries (one per entry, rendered
 /// next to the model line): `provider tuning glm-relay (https://…/v1):
