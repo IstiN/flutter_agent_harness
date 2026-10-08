@@ -5,7 +5,6 @@
 import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
-import 'package:http/http.dart' as http;
 import 'package:yaml/yaml.dart' show YamlMap, loadYaml;
 import 'package:test/test.dart';
 
