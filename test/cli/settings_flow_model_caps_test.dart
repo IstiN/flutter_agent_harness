@@ -6,7 +6,7 @@ import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:http/http.dart' as http;
-import 'package:yaml/yaml.dart' show loadYaml;
+import 'package:yaml/yaml.dart' show YamlMap, loadYaml;
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
@@ -73,9 +73,9 @@ void main() {
     );
     io.sendLine('${providerRow('zai')}'); // the zai catalog row
     await waitForIt(
-      () => io.out.toString().contains('model capabilities — model'),
+      () => io.out.toString().contains("model id (empty keeps"),
     );
-    io.sendLine('1'); // glm-5.3-flash from the fetched list
+    io.sendLine('glm-5.3-flash'); // manual entry (the zai kind has no list)
     await waitForIt(
       () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
     );
@@ -146,9 +146,9 @@ void main() {
     );
     io.sendLine('${providerRow('zai')}');
     await waitForIt(
-      () => io.out.toString().contains('model capabilities — model'),
+      () => io.out.toString().contains("model id (empty keeps"),
     );
-    io.sendLine('1');
+    io.sendLine('glm-5.3-flash');
     await waitForIt(
       () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
     );
