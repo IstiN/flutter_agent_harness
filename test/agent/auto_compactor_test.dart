@@ -335,6 +335,99 @@ void main() {
     expect(pass.tokensAfter, lessThan(pass.tokensBefore));
   });
 
+  test('gh-1425 clamp edge 1: the kept region reserves headroom for the '
+      '[context trimmed] marker — the trim lands UNDER the trigger, so the '
+      'next pre-flight does not re-fire a doomed pass', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    // ~30 tokens per message (120 chars / 4); 40 of them ≈ 1200 — over the
+    // 1000-token window. keepRecentTokens is deliberately HUGE (5000): the
+    // trigger clamp (window − reserve − headroom) must win over it.
+    for (var i = 0; i < 40; i++) {
+      await session.appendMessage(UserMessage.text('u$i${'a' * 120}'));
+    }
+    final state = AgentState(
+      model: _model,
+      messages: await session.buildContextMessages(),
+    );
+    const tinyWindowSettings = CompactionSettings(
+      enabled: true,
+      reserveTokens: 100,
+      keepRecentTokens: 5000,
+    );
+
+    Future<SummarizationResult> failing(SummarizationRequest request) async {
+      throw const CompactionException(
+        'Summarization failed: TimeoutException after 0:05:00.000',
+      );
+    }
+
+    final hooks = _RecordingHooks();
+    await AutoCompactor(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: tinyWindowSettings,
+      summary: failing,
+      mainSummary: failing,
+      smolModel: null,
+      hooks: hooks,
+    ).run();
+
+    final pass = hooks.passes.last;
+    expect(pass.fallback, 'local-trim');
+    // THE CLAMP: the kept region plus its own marker stays at/below the
+    // compaction trigger — the next pre-flight's shouldCompact does not
+    // re-fire (with both summarizers still down, a re-fire would print
+    // another doomed [context trimmed] line forever).
+    expect(pass.tokensAfter, lessThanOrEqualTo(1000 - tinyWindowSettings.reserveTokens));
+  });
+
+  test('gh-1425 clamp edge 2: degenerate overhead (overhead ≥ trigger) '
+      'still trims — at least the newest message is kept, never an empty '
+      'window (mirror of projectedBranchBudgetCut\'s rule)', () async {
+    final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));
+    for (var i = 0; i < 12; i++) {
+      await session.appendMessage(UserMessage.text('u$i${'a' * 400}'));
+    }
+    // A big system prompt prices the per-request overhead far past the
+    // trigger (small-window models with real system prompts): the raw
+    // clamp floors at 0, and without the newest-record floor the valve
+    // would trim NOTHING (kept comes back empty → null).
+    final state = AgentState(
+      model: _model,
+      systemPrompt: 'a' * 200,
+      messages: await session.buildContextMessages(),
+    );
+
+    Future<SummarizationResult> failing(SummarizationRequest request) async {
+      throw const CompactionException(
+        'Summarization failed: TimeoutException after 0:05:00.000',
+      );
+    }
+
+    final hooks = _RecordingHooks();
+    await AutoCompactor(
+      session: session,
+      state: state,
+      window: 1000,
+      settings: settings,
+      summary: failing,
+      mainSummary: failing,
+      smolModel: null,
+      hooks: hooks,
+    ).run();
+
+    final pass = hooks.passes.last;
+    // The valve TRIMMED (fallback ran, non-empty kept region) — it did not
+    // give up the way the raw zero-floor clamp made it.
+    expect(pass.fallback, 'local-trim');
+    expect(pass.ok, isTrue);
+    expect(state.messages, isNotEmpty);
+    // The newest message survived the trim (never an empty window).
+    final newest = await session.buildContextMessages();
+    expect(state.messages.last.toString(), newest.last.toString());
+  });
+
   test('AC2 (#729): an overflow-classified compaction failure routes to '
       'chunk/trim with ZERO backoff retries', () async {
     final session = await repo.create(JsonlSessionCreateOptions(cwd: '/w'));

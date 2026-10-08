@@ -153,6 +153,7 @@ void main() {
     _FakeStreamFunction fake, {
     Session? session,
     bool withSession = true,
+    CheckpointAutoCloseCallback? onAutoClose,
   }) async {
     final host = _TestHost(withSession ? session ?? await newSession() : null);
     late final CheckpointRewindController controller;
@@ -167,6 +168,7 @@ void main() {
       agent: agent,
       sink: host.sink,
       onRewindApplied: (count) => host.persistedCount = count,
+      onAutoClose: onAutoClose,
     );
     registry.registerAll(controller.tools);
     agent.state.tools = registry.tools;
@@ -534,6 +536,38 @@ void main() {
         'userTurn',
       );
       expect(records.single.content, contains('first detour'));
+    });
+
+    test('gh-1425 AC4: the host learns about every auto-close — onAutoClose '
+        'fires with the reason and the closed checkpoint (the hook the CLI '
+        'restore-budget guard wires)', () async {
+      final autoCloses = <(CheckpointAutoCloseReason, CheckpointState)>[];
+      final fake = _FakeStreamFunction([
+        _toolTurn([checkpointCall('c1', 'first detour')]),
+        // A real user turn lands inside the detour scope → the checkpoint
+        // goes stale (userTurn).
+        _textTurn('answered without rewinding'),
+        _toolTurn([checkpointCall('c2', 'second detour')]),
+        _textTurn('done'),
+      ]);
+      final h = await harness(
+        fake,
+        onAutoClose: (reason, checkpoint) async =>
+            autoCloses.add((reason, checkpoint)),
+      );
+      await h.agent.prompt('run one');
+      await h.agent.prompt('run two');
+
+      // The auto-close happened exactly once, reported to the host with
+      // the userTurn reason and the checkpoint that closed.
+      expect(autoCloses, hasLength(1));
+      expect(autoCloses.single.$1, CheckpointAutoCloseReason.userTurn);
+      expect(autoCloses.single.$2.goal, 'first detour');
+      expect(autoCloses.single.$2.entryId, isNotNull);
+      // Fired AFTER the audit record persisted: the host guard can rely on
+      // the tree mirroring the close.
+      final records = await autoClosedRecords(h.host.session!);
+      expect(records, hasLength(1));
     });
 
     test('a checkpoint whose anchored span is gone after a transcript '

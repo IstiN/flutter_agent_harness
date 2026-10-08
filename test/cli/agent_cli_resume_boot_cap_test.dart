@@ -178,4 +178,79 @@ void main() {
       expect(requestTokensOf(stream.contexts[1]), lessThanOrEqualTo(_window));
     },
   );
+
+  test(
+    'AC3 backstop: a boot cap that dies to an UNEXPECTED throw prints a '
+    'visible note — a crashed cap must not look like the pre-fix 143% '
+    'state (review thread: the on-Object catch failed silently)',
+    timeout: const Timeout(Duration(minutes: 5)),
+    () async {
+      final env = await seedOverWindow('boot-cap-target');
+      final stream = FakeStreamFunction([
+        // The cap's summarizer SUCCEEDS and the transcript is restamped —
+        // then rendering the report block throws (broken stdout). The
+        // unexpected-throw class the on-Object backstop exists for.
+        textTurn('compacted boot summary'),
+        textTurn('answered after the crashed report'),
+      ]);
+      final brokenIo = _BrokenStdoutIo();
+      final agent = AgentCli(
+        config: AgentCliConfig(
+          model: _model,
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          sessionName: 'boot-cap-target',
+          providerKind: 'openai-completions',
+          skillsAccess: SkillsAccess.granted,
+          compactionEngine: CompactionEngine.classic,
+        ),
+        io: brokenIo,
+        streamFunction: stream.call,
+      );
+
+      final run = agent.run();
+      await waitForIt(
+        () => stream.calls >= 1 && !agent.isBusy,
+        reason: 'the crashed cap settles at boot',
+      );
+      brokenIo.sendLine('go');
+      await waitForIt(
+        () => stream.calls >= 2 && !agent.isBusy,
+        reason: 'the turn proceeds after the crashed cap',
+      );
+      brokenIo.sendLine('/exit');
+      await run;
+
+      final output = brokenIo.out.toString();
+      // THE FIX: the backstop is LOUD — a dim one-liner names the crash
+      // and the still-over-window state, diagnosable from the transcript
+      // alone (the repo convention for every swallowed compaction
+      // failure).
+      expect(output, contains('[resume] boot compaction failed'));
+      expect(output, contains('stdout pipe broken'));
+      // Boot survival is unchanged: the turn answers…
+      expect(output, contains('answered after the crashed report'));
+      // …on the CAPPED context (the transcript was restamped before the
+      // report render crashed).
+      expect(
+        requestTokensOf(stream.contexts.last),
+        lessThanOrEqualTo(_threshold),
+      );
+    },
+  );
+}
+
+/// A [FakeCliIO] whose stdout dies mid-boot: every `auto-compacted` report
+/// line throws — the unexpected-throw class the boot cap's on-Object
+/// backstop exists for (the compaction itself landed; only the report
+/// render crashes).
+class _BrokenStdoutIo extends FakeCliIO {
+  @override
+  void writeln(String text) {
+    if (text.contains('auto-compacted')) {
+      throw StateError('stdout pipe broken');
+    }
+    super.writeln(text);
+  }
 }
