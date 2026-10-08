@@ -51,6 +51,7 @@ import 'dart:math' as math;
 // these exact files and 2.0.0→2.1.0 kept them stable. Revisit if
 // upstream moves them (then: propose the pure shim upstream).
 import 'package:dart_tui/src/bubbles/style.dart' show RgbColor, Style;
+import '../kaomoji_faces.dart' show kKaomojiEyeArgb, kKaomojiMouthArgb;
 import 'tui_symbols.dart';
 import 'tui_theme_palette.dart';
 
@@ -129,9 +130,24 @@ const TuiTheme kDefaultTuiTheme = TuiTheme(
   // teal/blue as NAMED roles — the #444 sweep (AC1) forbids anonymous
   // ANSI picks, so the face renders through the role table like every
   // other colorized segment. Palettes that name no kaomoji tone render
-  // the face plain (role-table rule), never a hard-coded pick.
-  kaomojiEye: Style(foregroundRgb: RgbColor(0x60, 0xd0, 0xd0)), // #60D0D0
-  kaomojiMouth: Style(foregroundRgb: RgbColor(0x70, 0xa0, 0xe0)), // #70A0E0
+  // the face plain (role-table rule), never a hard-coded pick. The
+  // triplets DERIVE from the shared pure-Dart palette constants (PR
+  // #1419 re-review round 2) — the one-definition rule, so the TUI
+  // tones cannot drift from the app/web hosts.
+  kaomojiEye: Style(
+    foregroundRgb: RgbColor(
+      (kKaomojiEyeArgb >> 16) & 0xFF,
+      (kKaomojiEyeArgb >> 8) & 0xFF,
+      kKaomojiEyeArgb & 0xFF,
+    ),
+  ), // kKaomojiEyeHex #60D0D0
+  kaomojiMouth: Style(
+    foregroundRgb: RgbColor(
+      (kKaomojiMouthArgb >> 16) & 0xFF,
+      (kKaomojiMouthArgb >> 8) & 0xFF,
+      kKaomojiMouthArgb & 0xFF,
+    ),
+  ), // kKaomojiMouthHex #70A0E0
   // The in-flight card tint: the historical `highlight` stand-in value,
   // now a named role (S1) — kept byte-stable so stored pre-#807 cards
   // still resolve their phase at repaint time.

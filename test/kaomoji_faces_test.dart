@@ -10,7 +10,11 @@ library;
 
 import 'dart:math';
 
-import 'package:flutter_agent_harness/src/kaomoji_faces.dart';
+// The PUBLIC barrel, not the internal src/ path (PR #1419 re-review
+// round 2): this suite pins the shared source's contract exactly as
+// hosts consume it — through the export `lib/flutter_agent_harness.dart`
+// advertises.
+import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
 import 'package:test/test.dart';
 

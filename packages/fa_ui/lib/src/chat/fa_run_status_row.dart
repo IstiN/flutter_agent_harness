@@ -5,7 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
-    show KaomojiFace, KaomojiFacePicker, kKaomojiFaces, kKaomojiSwapPeriod;
+    show KaomojiFace, KaomojiFacePicker, kKaomojiSwapPeriod;
 
 import '../theme/app_theme.dart';
 import 'chat_strings.dart';
@@ -61,7 +61,11 @@ class _FaRunStatusRowState extends State<FaRunStatusRow>
   /// the ticker stops with the phase (AC4), and tests pump the fake
   /// frame clock exactly like they already do for the seconds.
   final KaomojiFacePicker _facePicker = KaomojiFacePicker();
-  KaomojiFace _face = kKaomojiFaces[0];
+  // Opens on the picker's first draw (uniform over all eight, pin-aware)
+  // — a literal `kKaomojiFaces[0]` here was dead state: the first tick
+  // re-picked immediately, so the constant never rendered (PR #1419
+  // re-review round 2).
+  late KaomojiFace _face = _facePicker.first();
   Duration? _lastFaceSwap;
 
   void _onTick(Duration elapsed) {
@@ -134,6 +138,13 @@ class _FaRunStatusRowState extends State<FaRunStatusRow>
         };
         final theme = Theme.of(context);
         final palette = fahChatColorsOf(context);
+        // The face zone scales with the ambient text scale (PR #1419
+        // re-review round 2): at accessibility scales the widest face
+        // outgrows a fixed 32 px box (TextOverflow.visible would then
+        // paint over the gutter and under the label).
+        final faceZone = MediaQuery.textScalerOf(
+          context,
+        ).scale(kKaomojiFaceTextZoneWidth);
         return Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: Row(
@@ -146,11 +157,13 @@ class _FaRunStatusRowState extends State<FaRunStatusRow>
               // ticker is stopped) never animates (AC4). Fixed zone:
               // a swap never moves the label (the #365 fixed-cell rule).
               SizedBox(
-                width: kKaomojiFaceTextZoneWidth,
+                width: faceZone,
                 child: KaomojiFaceText(
+                  // Size/family from bodySmall; the span builder owns
+                  // every color (two-tone brand palette) — a color here
+                  // was dead configuration.
                   face: _face,
-                  style:
-                      theme.textTheme.bodySmall?.copyWith(color: palette.dim),
+                  style: theme.textTheme.bodySmall,
                 ),
               ),
               const SizedBox(width: 8),
