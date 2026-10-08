@@ -43,11 +43,13 @@ import '../session/session_record.dart';
 import '../session/session_tree.dart';
 import '../session/uuid.dart';
 import '../types.dart';
+import '../user_text.dart';
 import 'summary_sanitizer.dart';
 import 'token_estimation.dart';
 
 export '../compaction/compaction_engine.dart'
     show CompactionEngine, resolveCompactionEngine;
+export '../user_text.dart' show isSyntheticUserText, userMessageText;
 export '../compaction/structured/expand_tool.dart'
     show CompactExpandController, compactExpandToolName;
 export '../prompts/prompts.g.dart'
@@ -339,36 +341,10 @@ String formatFileOperations(
 /// Candidate lines carry the user's own words at full fidelity — checkpoint
 /// content is uncapped by owner ruling (issue #81 v2, constraint 1); only
 /// the prompt-file instruction text is budgeted.
-
-final _systemNoticePattern = RegExp('<system-notice>');
-
-/// Agent chat delivered as a user message (`from <id>: …`). Mail is data,
-/// never a user instruction (the `[from <id>]` attach-view form IS the
-/// user's own words and stays a candidate).
-final _agentMailPattern = RegExp(r'^from\s+\S+:\s');
-
-/// Branch summaries projected as user messages (see [branchSummaryPrefix]).
-final _branchSummaryPattern = RegExp(
-  r'^The following is a summary of a branch',
-);
-
-/// Whether a user-role text is synthetic harness content (system-notice
-/// envelope, agent mail, or a projected branch summary) rather than the
-/// user's own words. Shared by the summarizer's request-candidate scan
-/// and the structured compaction ledger (which must never hide a real
-/// user turn).
-bool isSyntheticUserText(String text) =>
-    _systemNoticePattern.hasMatch(text) ||
-    _branchSummaryPattern.hasMatch(text) ||
-    _agentMailPattern.hasMatch(text);
-/// Flattens a user-message content (plain text or content blocks) to text.
-String _userMessageText(Object content) {
-  if (content is String) return content;
-  return (content as List<Object>)
-      .whereType<TextContent>()
-      .map((block) => block.text)
-      .join(' ');
-}
+///
+/// The synthetic-user-text predicate and the content fold live in
+/// `../user_text.dart` (the ONE copy — issue #1380 review consolidation);
+/// re-exported here for the historical import path.
 
 /// The `asked <date>[, record <id-prefix>]` pointer of a candidate line.
 String _userRequestPointer(String? recordId, DateTime timestamp) {
@@ -393,11 +369,8 @@ List<String> userRequestCandidateLines(
   for (var i = 0; i < messages.length; i++) {
     final message = messages[i];
     if (message is! UserMessage) continue;
-    final text = _userMessageText(message.content);
-    if (text.isEmpty ||
-        _systemNoticePattern.hasMatch(text) ||
-        _branchSummaryPattern.hasMatch(text) ||
-        _agentMailPattern.hasMatch(text)) {
+    final text = userMessageText(message.content);
+    if (text.isEmpty || isSyntheticUserText(text)) {
       continue;
     }
     final id = (recordIds != null && i < recordIds.length)
