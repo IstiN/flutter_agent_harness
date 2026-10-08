@@ -23,8 +23,12 @@ final class _SubagentBoardCoordinator {
 
   final AgentCli _cli;
 
-  /// The row lifecycle (spawn/settle flash/fold, AC3) lives here.
-  final TaskBoardRegion region = TaskBoardRegion();
+  /// The row lifecycle (spawn/settle flash/fold, AC3) lives here. The
+  /// region reads the SAME clock seam the coordinator renders with (the
+  /// host's waiting clock) — a second, wall-clock region clock would
+  /// desync the flash end from the rendered `bright` (and break the
+  /// manual-clock tests).
+  late final TaskBoardRegion region = TaskBoardRegion(now: _now);
 
   Timer? _ticker;
 
@@ -48,17 +52,20 @@ final class _SubagentBoardCoordinator {
   }
 
   /// One 1 Hz tick: re-render age/cost from the timestamps (E3 — never
-  /// accumulated ticks) while a row is live; disarm when nothing is.
+  /// accumulated ticks) and push — the dedupe makes the unchanged ticks
+  /// free, and the tick at/after a flash END still renders (and ships)
+  /// the dim collapse, which a push-only-while-flashing guard would skip
+  /// exactly at the boundary (review thread 1). `_syncTicker` then
+  /// disarms on the same tick once nothing is live or flashing.
   void _tick() {
-    if (!_wired || !region.hasLive) {
-      _syncTicker();
-      return;
+    if (_wired) {
+      _push();
     }
-    _push();
+    _syncTicker();
   }
 
   void _syncTicker() {
-    final want = _wired && region.hasLive;
+    final want = _wired && (region.hasLive || region.hasFlashing);
     if (want && _ticker == null) {
       _ticker = Timer.periodic(_subagentBoardTickInterval, (_) => _tick());
     } else if (!want && _ticker != null) {
@@ -69,12 +76,14 @@ final class _SubagentBoardCoordinator {
 
   /// Renders at the live width and pushes only a CHANGED render: the age
   /// column moves once a minute (minute granularity), cost only when the
-  /// registry reports new usage.
+  /// registry reports new usage. The dedupe key carries BRIGHTNESS too
+  /// (review thread 1): the flash→dim collapse re-renders the same text
+  /// dimmed, and a text-only key would suppress exactly that push.
   void _push() {
     final controller = _cli._tuiController;
     if (controller == null) return;
     final rows = region.rows(now: _now(), width: controller.termWidth);
-    final texts = [for (final row in rows) row.text];
+    final texts = [for (final row in rows) '${row.text}|${row.bright}'];
     if (listEquals(texts, _lastPushed)) return;
     _lastPushed = texts;
     controller.setSubagentBoard(rows);

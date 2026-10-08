@@ -16,14 +16,22 @@ extension _TuiSubagentBoard on FaTuiModel {
 
   /// The subagent rows one frame paints — exactly [plan.subagents] of
   /// them, the count the budget paid for (single-source with
-  /// [_framePlanFor]). Under a squeezed frame the NEWEST rows keep the
-  /// region (the job-board precedent); live rows stay visible, settled
-  /// summaries yield first (they are dim one-liners by then).
+  /// [_framePlanFor]). Under a squeezed frame the ranking keeps LIVE rows
+  /// ahead of settled summaries (a long-lived child that spawned before
+  /// later, already-settled siblings is never dropped while dim
+  /// one-liners persist — review thread 4), each block newest-first: the
+  /// job-board precedent the squeeze test pins (the newest rows keep the
+  /// region), with settled summaries yielding oldest-first. Unsqueezed,
+  /// the full set keeps its spawn order (AC2).
   List<SubagentBoardRow> _visibleSubagentRows(_FramePlan plan) {
     final rows = subagentBoardRows;
     if (plan.subagents >= rows.length) return rows;
     if (plan.subagents <= 0) return const [];
-    return rows.sublist(rows.length - plan.subagents);
+    final ranked = [
+      ...rows.where((r) => r.bright).toList().reversed, // live, newest first
+      ...rows.where((r) => !r.bright).toList().reversed, // settled, newest 1st
+    ];
+    return ranked.take(plan.subagents).toList();
   }
 
   /// Paints the region directly above the busy row: bright rows paint

@@ -311,6 +311,20 @@ final class TaskBoardRegion {
   /// Whether any row is live (drives the host's repaint ticker).
   bool get hasLive => _rows.values.any((e) => !e.isTerminal);
 
+  /// Whether any settled row is inside its settle flash — a dim collapse
+  /// is pending, so the host's ticker must stay armed to ship it (review
+  /// thread 1: without this probe the ticker disarmed on settle and a
+  /// lone settled row stayed bright forever).
+  bool get hasFlashing {
+    final now = _now();
+    return _rows.values.any(
+      (e) =>
+          e.isTerminal &&
+          e.settledAt != null &&
+          now.difference(e.settledAt!) < settleFlash,
+    );
+  }
+
   /// Quiet zero (AC4): no subagent the board ever saw live → no rows.
   bool get isEmpty => _rows.isEmpty;
 
