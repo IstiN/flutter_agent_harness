@@ -60,6 +60,7 @@ final class StructuredViewState {
     required this.hiddenRecordIds,
     required this.checkpoints,
     required this.coveredRecordIds,
+    this.pinnedRecordIds = const {},
   });
 
   /// Union of every [HiddenRangeRecord.recordIds] on the path.
@@ -71,6 +72,10 @@ final class StructuredViewState {
   /// Record id -> the checkpoint covering it (a later checkpoint wins over
   /// an earlier one for the same record, D4 nesting).
   final Map<String, CompactCheckpointRecord> coveredRecordIds;
+
+  /// Record ids currently pinned (issue #1379 tier 2): never hidden by
+  /// judge, fallback, LRU re-hide, or agent hide — never checkpoint-covered.
+  final Set<String> pinnedRecordIds;
 
   /// Whether no structured state exists on the path.
   bool get isEmpty =>
@@ -88,10 +93,15 @@ StructuredViewState buildStructuredViewState(List<SessionRecord> path) {
   final hidden = <String>{};
   final checkpoints = <CompactCheckpointRecord>[];
   final covered = <String, CompactCheckpointRecord>{};
+  final pinnedRecordIds = <String>{};
   for (final record in path) {
     switch (record) {
       case HiddenRangeRecord(:final recordIds):
         hidden.addAll(recordIds);
+      case SegmentPinRecord(:final recordIds, :final pinned):
+        pinned
+            ? pinnedRecordIds.addAll(recordIds)
+            : pinnedRecordIds.removeAll(recordIds);
       case CompactCheckpointRecord():
         checkpoints.add(record);
         for (final id in record.coversRecordIds) {
@@ -108,8 +118,32 @@ StructuredViewState buildStructuredViewState(List<SessionRecord> path) {
     hiddenRecordIds: hidden,
     checkpoints: checkpoints,
     coveredRecordIds: covered,
+    pinnedRecordIds: pinnedRecordIds,
   );
 }
+
+/// The model-visible projecting records over a transformed path — the
+/// population both the judge ledger and the agent-hide validation work
+/// over (issue #1379 tier 2: one convention, engine and tool alike).
+List<SessionRecord> visibleStructuredPath(
+  List<SessionRecord> path,
+  StructuredViewState state,
+) => [
+  for (final record in path)
+    if (!state.isCovered(record.id) &&
+        record is! HiddenRangeRecord &&
+        !state.hiddenRecordIds.contains(record.id) &&
+        projectsStructured(record))
+      record,
+];
+
+/// Whether [record] renders into the model context at all.
+bool projectsStructured(SessionRecord record) =>
+    record is MessageRecord ||
+    record is CustomMessageRecord ||
+    record is CompactionRecord ||
+    record is BranchSummaryRecord ||
+    record is CompactCheckpointRecord;
 
 /// Renders [path] into the outgoing message list with markers.
 ///
@@ -286,7 +320,13 @@ Message _messageAt(
       message is ToolResultMessage &&
       hiddenCallIds.contains(message.toolCallId);
   return hidden || orphaned
-      ? _hiddenMessage(record, message, seq ?? 0, orphaned: orphaned)
+      ? _hiddenMessage(
+          record,
+          message,
+          seq ?? 0,
+          orphaned: orphaned,
+          pinned: state.pinnedRecordIds.contains(record.id),
+        )
       : message;
 }
 
@@ -351,10 +391,7 @@ Message _checkpointMessage(
     for (final id in record.coversRecordIds)
       if (!state.hiddenRecordIds.contains(id)) ?byId[id],
   ], seqs);
-  return UserMessage.text(
-    '$header\n$text$index',
-    timestamp: record.timestamp,
-  );
+  return UserMessage.text('$header\n$text$index', timestamp: record.timestamp);
 }
 
 /// Builds the marker replacement for a hidden [MessageRecord].
@@ -363,6 +400,7 @@ Message _hiddenMessage(
   Message message,
   int seq, {
   required bool orphaned,
+  required bool pinned,
 }) {
   final preview = markerPreview(recordPreviewSource(record));
   switch (message) {
@@ -379,6 +417,7 @@ Message _hiddenMessage(
               kind: markerKinds.toolResult,
               tokens: estimateTokens(message),
               preview: preview,
+              pinned: pinned,
             ),
           ),
         ],
@@ -394,6 +433,7 @@ Message _hiddenMessage(
           kind: markerKinds.toolResult,
           tokens: estimateTokens(message),
           preview: preview,
+          pinned: pinned,
         ),
         timestamp: message.timestamp,
       );
@@ -404,6 +444,7 @@ Message _hiddenMessage(
           kind: markerKinds.assistant,
           tokens: estimateTokens(message),
           preview: preview,
+          pinned: pinned,
         ),
         timestamp: message.timestamp,
       );
@@ -414,6 +455,7 @@ Message _hiddenMessage(
           kind: markerKinds.user,
           tokens: estimateTokens(message),
           preview: preview,
+          pinned: pinned,
         ),
         timestamp: message.timestamp,
       );
@@ -511,7 +553,6 @@ int recordTokens(SessionRecord record) {
       return 0;
   }
 }
-
 
 /// The projected wire cost of one hidden record (issue #387): its
 /// one-line marker message — the marker is what rides the wire after a

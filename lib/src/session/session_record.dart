@@ -278,6 +278,16 @@ sealed class SessionRecord {
             recordId as String,
         ],
       ),
+      'segment_pin' => SegmentPinRecord(
+        id: id,
+        parentId: parentId as String?,
+        timestamp: timestamp,
+        recordIds: [
+          for (final recordId in (json['recordIds'] as List?) ?? const [])
+            recordId as String,
+        ],
+        pinned: json['pinned'] as bool? ?? false,
+      ),
       'leaf' => LeafRecord(
         id: id,
         parentId: parentId as String?,
@@ -531,6 +541,41 @@ final class CompactCheckpointRecord extends SessionRecord {
     'text': text,
     'coversRecordIds': coversRecordIds,
     'flattenedRecordIds': flattenedRecordIds,
+  };
+}
+
+/// Per-segment pin state for the second compaction tier (issue #1379): a
+/// pinned segment is immune to every hide path — the judge's picks, the
+/// deterministic fallback, LRU re-hide after expansion, and agent-initiated
+/// hides alike — and is never swallowed by a checkpoint range. `pinned:
+/// false` is the unpin event; replay applies pin records in file order, so
+/// the last one per record wins.
+///
+/// Recorded like every structured-state record: stable record ids, never
+/// positions or derived indexes.
+final class SegmentPinRecord extends SessionRecord {
+  /// Creates a [SegmentPinRecord].
+  const SegmentPinRecord({
+    required super.id,
+    required super.parentId,
+    required super.timestamp,
+    required this.recordIds,
+    required this.pinned,
+  });
+
+  /// The ids of the records whose pin state this event sets.
+  final List<String> recordIds;
+
+  /// Whether the records become pinned (`true`) or released (`false`).
+  final bool pinned;
+
+  @override
+  String get type => 'segment_pin';
+
+  @override
+  Map<String, dynamic> payloadJson() => {
+    'recordIds': recordIds,
+    'pinned': pinned,
   };
 }
 

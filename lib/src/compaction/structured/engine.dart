@@ -29,6 +29,7 @@ import '../../agent/agent.dart' show AgentState;
 import '../../cancel_token.dart' show CancelToken, CancelTokenSource;
 import '../../session/session_record.dart';
 import '../../session/session_tree.dart';
+import '../../context.dart';
 import '../../types.dart';
 import '../compaction.dart';
 import '../summary_sanitizer.dart';
@@ -94,6 +95,20 @@ final class StructuredCompactionPass {
   final String? summary;
 }
 
+/// Rebuilds [state.messages] from the session projection, zeroing usage
+/// anchors on rebuilt transcripts (rebuilt messages carry no trustworthy
+/// usage). The ONE refresh both the engine passes and the agent-initiated
+/// hide use (issue #1379 tier 2) — a single contract, not two copies.
+Future<void> refreshAgentState(Session session, AgentState state) async {
+  final rebuilt = await session.buildContextMessages();
+  state.messages = [
+    for (final message in rebuilt)
+      message is AssistantMessage
+          ? message.copyWith(usage: Usage.zero)
+          : message,
+  ];
+}
+
 /// The structured compaction engine.
 final class StructuredCompactor {
   /// Creates a compactor over [session]/[state].
@@ -108,7 +123,7 @@ final class StructuredCompactor {
     this.hooks,
     this.maxHidePasses = 3,
     this.maxCheckpointPasses = 4,
-    this.protectLastN = 8,
+    this.protectLastN = hideProtectTailEntries,
     this.depthCap = 4,
     this.summarizerWindow,
     this.cancelToken,
@@ -210,9 +225,138 @@ final class StructuredCompactor {
     if (!force && _requestTokens() <= trigger) {
       return true;
     }
+    // Tier 2 LRU re-hide (issue #1379): evict least-recently-used
+    // expansion artifacts first — the oldest expand call/result pairs
+    // re-fold into markers before the judge ever sees the ledger.
+    await _runLruRehidePasses(trigger);
     if (!await _runHidePasses(trigger)) return false;
     if (!await _runCheckpointPasses(trigger)) return false;
     return _requestTokens() <= trigger;
+  }
+
+  /// Tier 2 LRU re-hide (issue #1379): after an expand storm, the oldest
+  /// expand call/result pairs re-fold into markers at the next pressure
+  /// event — the newest expansion is always kept. LRU order is derived
+  /// from file order alone (an expansion's recency IS its record position;
+  /// nothing extra is stored), so replay is deterministic. The re-hidden
+  /// segments themselves never left hidden-but-expandable state — their
+  /// markers stay in the session — so the lossless invariant (#148 AC2)
+  /// is untouched.
+  Future<void> _runLruRehidePasses(int trigger) async {
+    final before = _requestTokens();
+    final over = before - trigger;
+    if (over <= 0) return;
+    final view = await _buildView();
+    if (view == null) return;
+    final groups = _rehideCandidates(view);
+    if (groups.length <= 1) return;
+    final evictions = _pickRehideEvictions(
+      groups,
+      over,
+      protectedTailIds(view.ledger, protectLastN),
+      view.state.pinnedRecordIds,
+    );
+    if (evictions.isEmpty) return;
+    await session.appendHiddenRange(recordIds: evictions.toList()..sort());
+    final after = await _refreshState();
+    hooks?.onPass(
+      StructuredCompactionPass(
+        kind: 'hide-lru',
+        pass: ++_pass,
+        tokensBefore: before,
+        tokensAfter: after,
+        ok: true,
+        judgeCalls: 0,
+        hiddenCount: evictions.length,
+      ),
+    );
+  }
+
+  /// The visible expand-carrier groups oldest-first — the LRU eviction
+  /// candidates (issue #1379 tier 2): every visible assistant carrier of
+  /// a compact_expand call as its whole pair group, newest last.
+  List<(int, Set<String>, int)> _rehideCandidates(_LedgerView view) {
+    final byId = {for (final record in view.path) record.id: record};
+    final candidates = <(int, Set<String>, int)>[];
+    for (final record in view.path) {
+      final message = _rehideCandidateMessage(view, record);
+      if (message == null || !_isExpandCarrier(message)) continue;
+      final (group, tokens, hasResult) = _carrierGroupWeight(
+        view,
+        byId,
+        record.id,
+      );
+      // An unanswered carrier (no result yet) is not an expansion —
+      // hiding it would orphan a live tool call on the wire (#85).
+      if (!hasResult) continue;
+      candidates.add((view.seqs.seqOf(record.id) ?? 0, group, tokens));
+    }
+    candidates.sort((a, b) => a.$1.compareTo(b.$1));
+    return candidates;
+  }
+
+  /// The carrier [AssistantMessage] when [record] is a re-hide candidate
+  /// at all — a visible assistant record (never hidden, never
+  /// checkpoint-covered). Null otherwise.
+  AssistantMessage? _rehideCandidateMessage(
+    _LedgerView view,
+    SessionRecord record,
+  ) {
+    final message = record is MessageRecord ? record.message : null;
+    if (message is! AssistantMessage) return null;
+    if (view.state.hiddenRecordIds.contains(record.id)) return null;
+    if (view.state.isCovered(record.id)) return null;
+    return message;
+  }
+
+  /// Whether [message] carries a compact_expand tool call.
+  bool _isExpandCarrier(AssistantMessage message) => message.content.any(
+    (block) => block is ToolCall && block.name == compactExpandToolName,
+  );
+
+  /// The candidate's whole pair group with its token weight and whether a
+  /// result message rode along (#85 pair integrity).
+  (Set<String>, int, bool) _carrierGroupWeight(
+    _LedgerView view,
+    Map<String, SessionRecord> byId,
+    String carrierId,
+  ) {
+    final ledger = view.ledger;
+    final group = ledger.groupOf(carrierId);
+    var tokens = 0;
+    var hasResult = false;
+    for (final id in group) {
+      final other = byId[id];
+      if (other is MessageRecord && other.message is ToolResultMessage) {
+        hasResult = true;
+      }
+      final seq = view.seqs.seqOf(id);
+      if (seq != null) tokens += ledger.entryAtSeq(seq)?.tokens ?? 0;
+    }
+    return (group, tokens, hasResult);
+  }
+
+  /// The groups to re-fold now: oldest first until [over] tokens are
+  /// freed, never touching the newest group, the protected tail, or a
+  /// pinned expansion (AC3).
+  Set<String> _pickRehideEvictions(
+    List<(int, Set<String>, int)> groups,
+    int over,
+    Set<String> protectedTail,
+    Set<String> pinnedRecordIds,
+  ) {
+    final ids = <String>{};
+    var freed = 0;
+    for (final (_, group, tokens) in groups.take(groups.length - 1)) {
+      if (freed >= over) break;
+      // The protected tail holds here exactly as in the judge path, and a
+      // pinned expansion stays on the wire (AC3).
+      if (group.any(protectedTail.contains)) continue;
+      if (group.any(pinnedRecordIds.contains)) continue;
+      ids.addAll(group);
+      freed += tokens;
+    }
+    return ids;
   }
 
   /// Cancels the budget token — the factory's total-budget race calls
@@ -263,6 +407,7 @@ final class StructuredCompactor {
         picks,
         view.ledger,
         protectLastN: protectLastN,
+        pinnedRecordIds: view.state.pinnedRecordIds,
       );
       if (ids.isEmpty) break;
       await session.appendHiddenRange(recordIds: ids.toList()..sort());
@@ -346,28 +491,30 @@ final class StructuredCompactor {
     final ledger = view.ledger;
     final before = _requestTokens();
     final over = before - trigger;
-    final tailStart = ledger.entries.length - protectLastN < 0
-        ? 0
-        : ledger.entries.length - protectLastN;
-    final indexById = <String, int>{
-      for (var i = 0; i < ledger.entries.length; i++)
-        ledger.entries[i].recordId: i,
+    final protectedTail = protectedTailIds(ledger, protectLastN);
+    final tokensById = {
+      for (final entry in ledger.entries) entry.recordId: entry.tokens,
     };
     final ids = <String>{};
     var freed = 0;
-    for (var i = 0; i < tailStart && freed < over; i++) {
-      final entry = ledger.entries[i];
-      if (entry.exempt || ids.contains(entry.recordId)) continue;
+    for (final entry in ledger.entries) {
+      if (freed >= over) break;
+      if (entry.exempt ||
+          ids.contains(entry.recordId) ||
+          protectedTail.contains(entry.recordId)) {
+        continue;
+      }
       // Pair integrity (#85/D6): a group hides whole or never — the
       // veto lives in the token helper below.
       final group = ledger.groupOf(entry.recordId);
       final groupTokens = _hideableGroupTokens(
-        ledger,
+        tokensById,
         group,
-        indexById,
-        tailStart,
+        protectedTail,
       );
       if (groupTokens == null) continue;
+      // Tier 2 pin (issue #1379): the fallback never hides a pinned group.
+      if (group.any(view.state.pinnedRecordIds.contains)) continue;
       ids.addAll(group);
       freed += groupTokens;
     }
@@ -415,16 +562,14 @@ final class StructuredCompactor {
 
   /// Returns the group's token weight, or null when vetoed.
   int? _hideableGroupTokens(
-    ContextLedger ledger,
+    Map<String, int> tokensById,
     Iterable<String> group,
-    Map<String, int> indexById,
-    int tailStart,
+    Set<String> protectedTail,
   ) {
     var groupTokens = 0;
     for (final id in group) {
-      final idx = indexById[id];
-      if (idx == null || idx >= tailStart) return null;
-      groupTokens += ledger.entries[idx].tokens;
+      if (protectedTail.contains(id)) return null;
+      groupTokens += tokensById[id] ?? 0;
     }
     return groupTokens;
   }
@@ -499,7 +644,7 @@ final class StructuredCompactor {
   Future<_LedgerView?> _buildView() async {
     final path = classicTransform(await session.getBranch());
     final viewState = buildStructuredViewState(path);
-    final visible = _visiblePath(path, viewState);
+    final visible = visibleStructuredPath(path, viewState);
     if (visible.isEmpty) return null;
     final seqs = RecordSeqIndex(await session.getEntries());
     return _LedgerView(
@@ -511,36 +656,11 @@ final class StructuredCompactor {
     );
   }
 
-  List<SessionRecord> _visiblePath(
-    List<SessionRecord> transformed,
-    StructuredViewState viewState,
-  ) => [
-    for (final record in transformed)
-      if (!viewState.isCovered(record.id) &&
-          record is! HiddenRangeRecord &&
-          !viewState.hiddenRecordIds.contains(record.id) &&
-          _projects(record))
-        record,
-  ];
-
-  bool _projects(SessionRecord record) =>
-      record is MessageRecord ||
-      record is CustomMessageRecord ||
-      record is CompactionRecord ||
-      record is BranchSummaryRecord ||
-      record is CompactCheckpointRecord;
-
   /// Rebuilds `state.messages` from the session projection, zeroing usage
   /// anchors on rebuilt transcripts (the classic engine's convention —
   /// rebuilt messages carry no trustworthy usage).
   Future<int> _refreshState() async {
-    final rebuilt = await session.buildContextMessages();
-    state.messages = [
-      for (final message in rebuilt)
-        message is AssistantMessage
-            ? message.copyWith(usage: Usage.zero)
-            : message,
-    ];
+    await refreshAgentState(session, state);
     return _requestTokens();
   }
 
@@ -550,7 +670,7 @@ final class StructuredCompactor {
   List<_ProjectedEntry> _projectedEntries(_LedgerView view) {
     final projected = <_ProjectedEntry>[];
     for (final record in view.path) {
-      if (!view.state.isCovered(record.id) && _projects(record)) {
+      if (!view.state.isCovered(record.id) && projectsStructured(record)) {
         final seq = view.seqs.seqOf(record.id) ?? 0;
         final hidden = view.state.hiddenRecordIds.contains(record.id);
         projected.add(
@@ -579,23 +699,39 @@ final class StructuredCompactor {
     final projected = _projectedEntries(view);
     if (projected.isEmpty) return null;
 
-    // The protected tail: newest projected bytes totalling the keep-recent
-    // budget never enter a range (issue #388 keep-recent floor).
+    // The foldable prefix: pins and their whole pair groups drop out
+    // BEFORE the keep-recent walk (issue #1379 tier 2 rework). They
+    // can never fold, so they consume no keep-recent budget and never
+    // clamp the window — the walk measures foldable bytes only. A deep
+    // pin cannot starve checkpointing: every pass still folds the
+    // oldest unpinned content wherever the pin sits, while pinned
+    // records keep rendering at their positions, unswallowed and
+    // unsummarized. The only stall left is an empty foldable prefix —
+    // the same honest nothing-to-fold an exempt range gives, never a
+    // pin-induced fallback to the lossy classic path (the judge,
+    // deterministic and LRU passes still run).
+    final foldable = [
+      for (final entry in projected)
+        if (!view.ledger
+            .groupOf(entry.recordId)
+            .any(view.state.pinnedRecordIds.contains))
+          entry,
+    ];
+    if (foldable.isEmpty) return null;
     var tailBudget = settings.keepRecentTokens;
-    var cut = projected.length;
-    for (var i = projected.length - 1; i >= 0; i--) {
-      tailBudget -= projected[i].tokens;
+    var cut = foldable.length;
+    for (var i = foldable.length - 1; i >= 0; i--) {
+      tailBudget -= foldable[i].tokens;
       if (tailBudget <= 0) {
         cut = i;
         break;
       }
     }
     // Snap inward at group boundaries: a range never splits a pair.
-    while (cut > 1 && _sharesGroup(projected, cut, view.ledger)) {
+    while (cut > 1 && _sharesGroup(foldable, cut, view.ledger)) {
       cut--;
     }
-    if (cut <= 0) return null;
-    final members = projected.take(cut).toList();
+    final members = foldable.take(cut).toList();
     if (members.isEmpty) return null;
 
     final coveredIds = <String>{};
@@ -698,8 +834,14 @@ final class StructuredCompactor {
         if (record.message.role == 'user') record.message: record.id,
     };
     List<String> asksFor(List<Message> chunk) => userRequestCandidateLines(
-      [for (final m in chunk) if (askIdOf.containsKey(m)) m],
-      recordIds: [for (final m in chunk) if (askIdOf.containsKey(m)) askIdOf[m]!],
+      [
+        for (final m in chunk)
+          if (askIdOf.containsKey(m)) m,
+      ],
+      recordIds: [
+        for (final m in chunk)
+          if (askIdOf.containsKey(m)) askIdOf[m]!,
+      ],
     );
 
     String build(String conversation, List<String> asks, String? priorFold) {
@@ -764,8 +906,12 @@ final class StructuredCompactor {
   /// summary. A summarizer failure mid-fold is failure-safe (`null`).
   Future<String?> _chunkedFold(
     List<Message> messages, {
-    required String Function(String conversation, List<String> asks,
-        String? priorFold) build,
+    required String Function(
+      String conversation,
+      List<String> asks,
+      String? priorFold,
+    )
+    build,
     required List<String> Function(List<Message> chunk) asksFor,
     required int budget,
   }) async {
@@ -784,7 +930,11 @@ final class StructuredCompactor {
         envelopeChars: envelopeChars,
       );
       final text = await _callSummarizer(
-        build(conversation, asksFor(chunk), priorFold.isEmpty ? null : priorFold),
+        build(
+          conversation,
+          asksFor(chunk),
+          priorFold.isEmpty ? null : priorFold,
+        ),
       );
       if (text == null) return null;
       priorFold = text;
@@ -798,10 +948,7 @@ final class StructuredCompactor {
     try {
       final result =
           await summarize(
-            SummarizationRequest(
-              prompt: prompt,
-              cancelToken: _effectiveToken,
-            ),
+            SummarizationRequest(prompt: prompt, cancelToken: _effectiveToken),
           ).timeout(
             attemptBudget,
             onTimeout: () {

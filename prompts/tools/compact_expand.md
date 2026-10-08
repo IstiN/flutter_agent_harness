@@ -13,3 +13,12 @@ To read a segment back, pass its numeric id or range from a marker as `target` (
 - The session file never changes; an expanded segment may be re-hidden later by compaction.
 
 Prefer a targeted expand over re-reading files when the fact was already in context once, and prefer discovery + query over blind ids.
+
+## Managing segments yourself (tier 2)
+
+Pass `action` with a `target` to manage segments directly, without waiting for pressure:
+
+- `action: "hide"` folds a segment you know is dead weight into its expandable marker immediately — one-line marker stays where the content was, `compact_expand` reopens it any time. Real user turns are never hideable; pair groups hide whole; the most recent turns and pinned segments are rejected with the reason.
+- `action: "pin"` shields a segment from every hide/compact path (yours, the judge's, pressure-time LRU re-hide); `action: "unpin"` releases it. Pins render on the marker (`·pinned`) and survive session reload.
+
+Hiding and pinning are session state, not edits: the records stay in the file byte-for-byte.

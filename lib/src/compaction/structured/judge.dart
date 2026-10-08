@@ -10,6 +10,11 @@ import '../../session/uuid.dart' show uuidv7;
 import '../../types.dart';
 import 'ledger.dart';
 
+/// The live-edge floor shared by every hide path (judge picks, the
+/// deterministic fallback, LRU re-hide, agent hide — issue #1379 tier 2):
+/// the last N ledger entries are never hidden, whoever asks.
+const int hideProtectTailEntries = 8;
+
 /// answer (null = failed call — caller treats as no-op).
 typedef HideJudgeFn = Future<String?> Function(String ledgerText);
 
@@ -77,22 +82,17 @@ Set<int> _parsePickItem(Object? item) {
 Set<String> validateHidePicks(
   Set<int> picks,
   ContextLedger ledger, {
-  int protectLastN = 8,
+  int protectLastN = hideProtectTailEntries,
+  Set<String> pinnedRecordIds = const {},
 }) {
-  final protected = <String>{
-    for (final entry in ledger.entries.skip(
-      ledger.entries.length - protectLastN < 0
-          ? 0
-          : ledger.entries.length - protectLastN,
-    ))
-      entry.recordId,
-  };
+  final protected = protectedTailIds(ledger, protectLastN);
   final result = <String>{};
   for (final pick in picks) {
     final entry = ledger.entryAtSeq(pick);
     if (entry == null || entry.exempt) continue;
     final group = ledger.groupOf(entry.recordId);
     if (group.any(protected.contains)) continue;
+    if (group.any(pinnedRecordIds.contains)) continue;
     result.addAll(group);
   }
   return result;
