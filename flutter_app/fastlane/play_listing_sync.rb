@@ -160,27 +160,34 @@ module PlayListingSync
           "title for language <lang>'):\n#{problems.join("\n")}"
   end
 
-  # gh-1402: the languages this sync may manage — store-side listings with
-  # a NON-EMPTY title (repo-backed or console-created alike; a repo locale
-  # with no store listing yet is also untouchable, the upload would draft
-  # it title-less). A language outside this set must not be part of an
-  # image edit: any clear/upload drafts it and Google rejects the WHOLE
-  # edit at commit (HTTP 403 "This app has no title for language <lang>").
-  # The listing-texts deploy in the same lane (supply) creates/completes
-  # those listings; their images sync on a later run. skip_untitled: false
-  # restores full management ("unless explicitly adding one").
-  def managed_locales(metadata_dir, listings, skip_untitled: true)
+  # gh-1402: the locale PARTITION the sync works on — [managed, skipped].
+  # managed = store-side listings with a NON-EMPTY title (repo-backed or
+  # console-created alike; a repo locale with no store listing yet is also
+  # untouchable, the upload would draft it title-less). skipped = the
+  # untitled remainder of the same union. A language outside `managed`
+  # must not be part of an image edit: any clear/upload drafts it and
+  # Google rejects the WHOLE edit at commit (HTTP 403 "This app has no
+  # title for language <lang>"). The listing-texts deploy in the same lane
+  # (supply) creates/completes those listings; their images sync on a
+  # later run. skip_untitled: false restores full management ("unless
+  # explicitly adding one").
+  #
+  # The union is computed ONCE here (gh-1405 review): callers wanting both
+  # halves must use this, not re-derive the union for the skipped set.
+  def managed_and_skipped(metadata_dir, listings, skip_untitled: true)
     all = all_locales(metadata_dir, listings.map { |listing| listing.fetch("language") })
-    return all unless skip_untitled
+    return [all, []] unless skip_untitled
 
     titled = listings.reject { |listing| listing["title"].to_s.strip.empty? }
                      .map { |listing| listing.fetch("language") }
-    all & titled
+    managed = all & titled
+    [managed, all - managed]
   end
 
-  def untitled_locales(listings)
-    listings.select { |listing| listing["title"].to_s.strip.empty? }
-            .map { |listing| listing.fetch("language") }
+  # The languages this sync may manage (the managed half of
+  # managed_and_skipped).
+  def managed_locales(metadata_dir, listings, skip_untitled: true)
+    managed_and_skipped(metadata_dir, listings, skip_untitled: skip_untitled).first
   end
 
   # ── orchestration ───────────────────────────────────────────────────────
@@ -202,8 +209,10 @@ module PlayListingSync
     edit_id = begin_edit!(http, package_name, auth)
     begin
       listings = list_listings!(http, package_name, edit_id, auth)
-      managed = managed_locales(metadata_dir, listings, skip_untitled: skip_untitled)
-      skipped = all_locales(metadata_dir, listings.map { |l| l.fetch("language") }) - managed
+      # gh-1405 review: ONE union computation feeds both halves (the old
+      # code re-derived all_locales for the skipped set).
+      managed, skipped = managed_and_skipped(metadata_dir, listings,
+                                             skip_untitled: skip_untitled)
       skipped.each do |locale|
         warn "play_listing_sync: skipping #{locale} — no title on the Play listing " \
              "(gh-1402: an image edit would be rejected at commit, HTTP 403 'This " \
@@ -399,8 +408,9 @@ module PlayListingSync
   end
 
   # gh-1402: the FULL listings payload (language + title + descriptions) —
-  # the store-side surface the untitled-language gate reads. list_locales!
-  # stays for locale-only callers.
+  # the store-side surface the untitled-language gate reads (gh-1405
+  # review: the locale-only list_locales! wrapper is gone with its last
+  # production caller).
   def list_listings!(http, package_name, edit_id, auth)
     res = http.request(:Get, "#{API_ROOT}/#{package_name}/edits/#{edit_id}/listings",
                        headers: auth)
@@ -409,10 +419,6 @@ module PlayListingSync
     end
 
     JSON.parse(res[:body]).fetch("listings", [])
-  end
-
-  def list_locales!(http, package_name, edit_id, auth)
-    list_listings!(http, package_name, edit_id, auth).map { |l| l.fetch("language") }
   end
 
   # Deletes the WHOLE image set of a locale/type. 404 = nothing to clear.
