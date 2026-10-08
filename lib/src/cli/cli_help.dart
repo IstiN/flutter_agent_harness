@@ -140,7 +140,9 @@ OPTIONS
 
 QUICK COMMANDS
   update                       Download the latest release binary and swap
-                               it in (pub-global installs re-activate)
+                               it in (pub-global installs re-activate);
+                               `auto_update: notify|true|false` gates the
+                               boot check, /update runs it in-session
   dap                          fa dap start [--port N]: the one-step local
                                DAP hub — probes the port (foreign server =
                                clear error), spawns `fa hub serve`

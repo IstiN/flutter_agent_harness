@@ -136,6 +136,8 @@ final class AgentCliConfig {
     this.machineName,
     this.persistAbortedPartials = false,
     this.wireDump = false,
+    this.updateCommand,
+    this.autoUpdate = AutoUpdateMode.notify,
   });
 
   /// The user's home directory, when the host has one (used for user-level
@@ -158,6 +160,23 @@ final class AgentCliConfig {
   /// captured per request, redacted through the active pipeline, capped,
   /// and persisted as a `trajectory_wire_dump` session record.
   final bool wireDump;
+
+  /// The self-update policy (issue #1377, `auto_update` yaml key), plumbed
+  /// from [CliConfig.autoUpdate] by the host at boot. Mutable: the
+  /// settings-hub flow updates it after a successful persist — the same
+  /// live-override pattern as [liveCompactionEngine].
+  AutoUpdateMode autoUpdate = AutoUpdateMode.notify;
+
+  /// The `/update` slash-command seam (issue #1377): the self-update
+  /// engine lives in the host executable (`bin/self_manage.dart`) and
+  /// lib/src stays dart:io-free, so the host injects a closure that
+  /// checks, applies, spawns the successor and exits(0) on success — and
+  /// prints + stays alive on any failure. [String? sessionId] is the
+  /// LIVE session to resume (resolved by the caller): the successor argv
+  /// gains `--session <id>` when the argv does not already carry one, so
+  /// the running conversation survives the restart. Null (tests,
+  /// embedded hosts): the command reports the surface as unavailable.
+  final Future<void> Function(String? sessionId)? updateCommand;
 
   /// Override for the compaction thresholds (ratio-based trigger, reserve
   /// and recent-token budgets). When `null`, `defaultCompactionSettings`

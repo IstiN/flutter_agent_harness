@@ -184,6 +184,7 @@ const builtinSlashCommands = <String, String>{
   '/usage': '[rebuild] — session token-usage ledger (usage.json)',
   '/approval': '[mode] — show or set tool approval',
   '/settings': '— settings hub: provider, model, approval, keys, MCP',
+  '/update': '— check for updates, restart fa (same session)',
   '/allow': '[tool] — always-allow a tool (or list them)',
   '/mcp': '[list|reload] — show MCP servers or reload config',
   '/mouse': '[on|off] — TUI mouse capture: wheel + click hit-regions',

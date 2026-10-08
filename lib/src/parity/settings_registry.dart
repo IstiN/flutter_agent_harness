@@ -143,6 +143,11 @@ enum SharedSetting {
   /// #679): `fa --pi` runs pi's exact benchmark shape — the 4-tool
   /// surface, the bare prompt profile, the token-parity gate.
   harnessMode,
+
+  /// The self-update policy (`auto_update` scalar, issue #1377):
+  /// `notify` (boot check, print once), `on` (download + restart onto the
+  /// new release), `off` (no update network traffic).
+  autoUpdate,
 }
 
 /// Settings that are currently CLI-only.
@@ -203,6 +208,10 @@ const cliOnlySettings = <SharedSetting>{
   // the tool-scope pin and the bare prompt composition run in the CLI
   // host process (`fa --pi`); the app has no fa benchmark runner.
   SharedSetting.harnessMode,
+  // The self-update (issue #1377) downloads the new fa release and
+  // respawns the CLI executable over its own stdio; the app updates
+  // through its store/installer, never by re-exec-ing itself.
+  SharedSetting.autoUpdate,
 };
 
 /// Settings that are currently app-only.
@@ -293,6 +302,11 @@ const cliOnlyJustifications = <SharedSetting, String>{
       'The harness benchmark mode presets the CLI REPL boot (the 4-tool '
       'surface and bare prompt of `fa --pi`, issue #679); the app has no '
       'fa benchmark runner. Configure it in the CLI.',
+  SharedSetting.autoUpdate:
+      'The self-update downloads the fa release and restarts the CLI '
+      'executable over its own stdio (issue #1377); the app updates '
+      'through its store/installer, never by re-exec-ing itself. '
+      'Configure it in the CLI.',
 };
 
 /// Top-level yaml keys that are intentionally NOT interactive settings on
@@ -650,6 +664,19 @@ const settingSurfaces = <SharedSetting, SettingSurfaces>{
         'The web stub reads no ~/.fah/config.yaml, so agent.mode has '
         'nothing to load from.',
   ),
+  // The self-update swaps the fa binary and respawns the CLI process
+  // (issue #1377); app builds update through their store/installer, and
+  // the browser sandbox has no config file to persist the flag into.
+  SharedSetting.autoUpdate: SettingSurfaces(
+    macos: false,
+    ios: false,
+    web: false,
+    extensionPanel: false,
+    gapWhy:
+        'The self-update restarts the CLI executable over its own stdio; '
+        'no app surface can re-exec itself, and the browser sandbox has '
+        'no ~/.fah/config.yaml to persist the flag into.',
+  ),
 };
 
 /// Metadata for each [SharedSetting]: what to search for in each platform's
@@ -852,6 +879,12 @@ const sharedSettingMetadata = <SharedSetting, _SettingMeta>{
     appRef: null, // exempted — CLI REPL benchmark boot only (see above).
     yamlKeys: [], // rides `agent:` — single-owned by contextWindowCap.
     description: 'Harness benchmark mode preset (issue #679).',
+  ),
+  SharedSetting.autoUpdate: _SettingMeta(
+    cliRef: 'startAutoUpdateFlow',
+    appRef: null, // exempted — the CLI re-execs itself; the app cannot.
+    yamlKeys: ['auto_update'],
+    description: 'Self-update policy: notify | on | off (issue #1377).',
   ),
 };
 

@@ -2633,6 +2633,11 @@ extension SettingsFlow on AgentCli {
         label: 'MCP servers',
         description: _mcpStatusLabel(),
       ),
+      MenuItem(
+        key: 'auto-update',
+        label: 'Auto update',
+        description: _autoUpdateStatusLabel(),
+      ),
     ];
   }
 
@@ -2688,6 +2693,7 @@ extension SettingsFlow on AgentCli {
     'images': startImagesFlow,
     'power': startPowerFlow,
     'mcp': startMcpServersFlow,
+    'auto-update': startAutoUpdateFlow,
   };
 
   /// The line-mode `/settings` summary (the TUI opens the hub instead).
