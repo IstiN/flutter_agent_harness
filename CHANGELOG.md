@@ -4747,4 +4747,8 @@
 - fix(1402): pre-flight Play listing language gate + edit-discard on commit failure (#1405)
 - feat(1380): obligations ledger substrate — verbatim entries + level-0 context block (A1 slice 1) (#1382)
 
+## 1.0.529
+
+- feat(1377): auto_update tri-state flag — notify banner, autonomous verified self-update, /update (#1384)
+
 ## Unreleased
