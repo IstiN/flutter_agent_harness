@@ -58,6 +58,7 @@ final class OpenAICompletionsCompat {
     this.thinkingFormat,
     this.requiresToolResultName,
     this.sendsToolStrict = true,
+    this.omitMaxOutputTokens,
   });
 
   /// Which field carries the output-token cap: `max_tokens` or
@@ -81,6 +82,12 @@ final class OpenAICompletionsCompat {
   /// `400 Extra inputs are not permitted`. Default: true (OpenAI accepts
   /// `strict`).
   final bool sendsToolStrict;
+
+  /// The endpoint rejects the max-output field outright (400 on
+  /// `max_tokens`/`max_completion_tokens`): the adapter omits the field
+  /// entirely (gh-1426 AC7 — the omp/codex compat lesson). Default: null
+  /// (false — the field rides as today).
+  final bool? omitMaxOutputTokens;
 }
 
 /// A model the harness can call.

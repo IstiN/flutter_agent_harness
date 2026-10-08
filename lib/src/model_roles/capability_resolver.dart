@@ -4,9 +4,10 @@
 ///
 /// Layer precedence — the FIRST explicit value wins per field:
 ///
-/// 1. **per-provider+model user override** — `models.overrides.<provider>.
-///    <modelId>` in `~/.fah/config.yaml` (kimi-style: survives every
-///    catalog refresh; strict [ConfigException] on a bad shape);
+/// 1. **per-provider+model user override** — the `models.overrides`
+///    section of `~/.fah/config.yaml`, keyed `provider` then `modelId`
+///    (kimi-style: survives every catalog refresh; strict
+///    [ConfigException] on a bad shape);
 /// 2. **role slot** — the `roles:` chain entry's own explicit caps
 ///    (`contextWindow`/`maxTokens`/`thinkingLevel`, issues #734/#638);
 /// 3. **endpoint-published truth** — `contextWindow`/`maxTokens` the
@@ -250,6 +251,11 @@ final class ModelCapabilityOverrides {
   /// True when no override is pinned anywhere.
   bool get isEmpty => _byProvider.isEmpty;
 
+  /// How many model overrides are pinned in total.
+  int get length => [
+    for (final models in _byProvider.values) models.length,
+  ].fold(0, (sum, n) => sum + n);
+
   /// Registers (or replaces) the override for [provider]/[modelId].
   void set(
     String provider,
@@ -263,7 +269,7 @@ final class ModelCapabilityOverrides {
 
   /// Removes the override for [provider]/[modelId]; true when one existed.
   bool remove(String provider, String modelId) =>
-      _byProvider[provider.trim().toLowerCase()]?.remove(modelId) ?? false;
+      _byProvider[provider.trim().toLowerCase()]?.remove(modelId) != null;
 
   /// The pinned override for [provider]/[modelId], or null. The provider
   /// key is case-insensitive (catalog names are lowercase); the model id
@@ -284,15 +290,16 @@ final class ModelCapabilityOverrides {
         ),
   ];
 
-  /// Serializes the `overrides:` section body (the per-provider blocks at
-  /// the given base indent). Only called when non-empty.
+  /// Serializes the `overrides:` section body: per-provider blocks nested
+  /// under `models.overrides` (providers at +4, model ids at +6, fields at
+  /// +8 — the depths [ModelsConfig.toYaml] nests the section at).
   String toYaml() {
     final buffer = StringBuffer();
     for (final provider in _byProvider.keys) {
-      buffer.write('  ${jsonEncode(provider)}:\n');
+      buffer.write('    ${jsonEncode(provider)}:\n');
       for (final model in _byProvider[provider]!.entries) {
-        buffer.write('    ${jsonEncode(model.key)}:\n');
-        model.value.writeYaml(buffer, '      ');
+        buffer.write('      ${jsonEncode(model.key)}:\n');
+        model.value.writeYaml(buffer, '        ');
       }
     }
     return buffer.toString();
@@ -414,7 +421,9 @@ EffectiveCaps resolveModelCapabilities({
     override?.thinkingLevel ?? roleThinkingLevel,
     reasoning: reasoning,
   );
-  if (gateNote != null) notes.add(gateNote);
+  if (gateNote != null) {
+    notes.add('$provider/$modelId: $gateNote');
+  }
 
   // ── E4: an override addressing a model no catalog knows is kept (it
   //    addresses the future), with a surfaced warning.

@@ -90,7 +90,7 @@ overrides:
     vendor/big-model:
       contextWindow: 1000000
 '''));
-      expect(models.overrides, hasLength(2));
+      expect(models.overrides.length, 2);
       expect(
         models.overrides.lookup('zai', 'glm-5.3-flash')?.maxTokens,
         65536,
@@ -192,9 +192,8 @@ overrides:
           omitMaxOutputTokens: true,
         ),
       );
-      final parsed = ModelsConfig.fromYaml(
-        _yaml(models.toYaml()),
-      );
+      final doc = _yaml(models.toYaml());
+      final parsed = ModelsConfig.fromYaml(doc['models']);
       final roundTripped = parsed.overrides.lookup('zai', 'glm-5.3-flash');
       expect(roundTripped?.contextWindow, 400000);
       expect(roundTripped?.maxTokens, 65536);

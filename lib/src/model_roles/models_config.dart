@@ -42,6 +42,7 @@ import 'package:yaml/yaml.dart';
 import '../exceptions.dart';
 import '../providers/provider_tuning.dart' show parseProviderTimeoutMs;
 import 'media_model_slots.dart';
+import 'capability_resolver.dart';
 import 'provider_catalog.dart';
 
 /// A named custom model definition (`models.custom.<name>`): a concrete
@@ -237,23 +238,28 @@ final class ModelsConfig {
   ModelsConfig({
     Map<String, MediaSlotModelConfig>? slots,
     Map<String, CustomModelDefinition>? custom,
+    ModelCapabilityOverrides? overrides,
   }) : slots = slots ?? {},
-       custom = custom ?? {};
+       custom = custom ?? {},
+       overrides = overrides ?? ModelCapabilityOverrides();
 
   /// Parses the `models:` yaml node, strictly: the node must be a map with
-  /// only `slots`/`custom` keys; slot names must come from
+  /// only `slots`/`custom`/`overrides` keys; slot names must come from
   /// [mediaModelSlotIds]; entry-level rules are in
-  /// [MediaSlotModelConfig.fromYaml] and [CustomModelDefinition.fromYaml].
+  /// [MediaSlotModelConfig.fromYaml], [CustomModelDefinition.fromYaml], and
+  /// [ModelCapabilityOverrides.fromYaml].
   factory ModelsConfig.fromYaml(Object? node) {
     if (node is! YamlMap) {
       throw ConfigException(
-        'models must be a map with slots/custom sections, got: $node',
+        'models must be a map with slots/custom/overrides sections, '
+        'got: $node',
       );
     }
     for (final key in node.keys) {
-      if (key != 'slots' && key != 'custom') {
+      if (key != 'slots' && key != 'custom' && key != 'overrides') {
         throw ConfigException(
-          'unknown models section "$key" — expected slots/custom',
+          'unknown models section "$key" — expected '
+          'slots/custom/overrides',
         );
       }
     }
@@ -292,7 +298,11 @@ final class ModelsConfig {
       case final other:
         throw ConfigException('models.custom must be a map, got: $other');
     }
-    return ModelsConfig(slots: slots, custom: custom);
+    return ModelsConfig(
+      slots: slots,
+      custom: custom,
+      overrides: ModelCapabilityOverrides.fromYaml(node['overrides']),
+    );
   }
 
   /// Per-slot media overrides, keyed by [mediaModelSlotIds] name.
@@ -301,9 +311,28 @@ final class ModelsConfig {
   /// Named custom model definitions (`/model <name>` targets).
   final Map<String, CustomModelDefinition> custom;
 
+  /// Per-provider+model capability overrides (gh-1426): the resolver's
+  /// top layer — survives every catalog refresh (the entries live HERE,
+  /// in the config file, never in catalog data).
+  final ModelCapabilityOverrides overrides;
+
   /// True when neither section carries an entry (the config file then
   /// omits the whole `models:` section on save).
-  bool get isEmpty => slots.isEmpty && custom.isEmpty;
+  bool get isEmpty =>
+      slots.isEmpty && custom.isEmpty && overrides.isEmpty;
+
+  /// Registers (or replaces) the capability override for
+  /// [provider]/[modelId].
+  void setOverride(
+    String provider,
+    String modelId,
+    ModelCapabilityOverride override,
+  ) => overrides.set(provider, modelId, override);
+
+  /// Removes the capability override for [provider]/[modelId]; returns
+  /// false when none was set.
+  bool removeOverride(String provider, String modelId) =>
+      overrides.remove(provider, modelId);
 
   /// Sets (or replaces) the override for [slot], which must be one of
   /// [mediaModelSlotIds].
@@ -320,8 +349,8 @@ final class ModelsConfig {
   bool removeSlotOverride(String slot) => slots.remove(slot) != null;
 
   /// Serializes the `models:` section (only called when non-empty). Slots
-  /// emit in [mediaModelSlotIds] declaration order; custom definitions in
-  /// insertion order.
+  /// emit in [mediaModelSlotIds] declaration order; custom definitions and
+  /// capability overrides in insertion order.
   String toYaml() {
     final buffer = StringBuffer('models:\n');
     if (slots.isNotEmpty) {
@@ -339,6 +368,10 @@ final class ModelsConfig {
         buffer.write('    ${jsonEncode(entry.key)}:\n');
         entry.value.writeYaml(buffer, '      ');
       }
+    }
+    if (!overrides.isEmpty) {
+      buffer.write('  overrides:\n');
+      buffer.write(overrides.toYaml());
     }
     return buffer.toString();
   }

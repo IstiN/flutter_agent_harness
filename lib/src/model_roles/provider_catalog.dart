@@ -13,6 +13,7 @@ import '../context.dart';
 import '../event_stream.dart';
 import '../exceptions.dart';
 import '../model.dart';
+import 'capability_resolver.dart';
 import '../providers/anthropic.dart';
 import '../providers/aiin_auth.dart';
 import '../providers/chatgpt_codex.dart';
@@ -479,9 +480,12 @@ void validateAuthHeaderDialect(
 /// Builds a [Model] for [provider]/[modelId] with catalog defaults, overrid-
 /// able per reference (see `ModelRef`).
 ///
-/// `maxTokens` resolution order: the explicit override, then the Claude
-/// ceiling table ([resolveModelMaxOutputTokens]), then the provider spec
-/// default — per-model reality beats the blanket 16384.
+/// `maxTokens` resolution order: the capability override layer
+/// ([modelCapabilityOverrides], gh-1426), the explicit override, then the
+/// Claude ceiling table ([resolveModelMaxOutputTokens]), then the provider
+/// spec default — per-model reality beats the blanket 16384. The same
+/// layered precedence governs `contextWindow` and `thinkingLevel`, and an
+/// override's `omitMaxOutputTokens` lands on the model compat (AC7).
 ///
 /// Throws [ConfigException] for unknown providers.
 Model buildCatalogModel(
@@ -502,6 +506,17 @@ Model buildCatalogModel(
     );
   }
   validateAuthHeaderDialect(authHeader, spec, 'provider "$provider"');
+  final caps = resolveModelCapabilities(
+    provider: spec.name,
+    modelId: modelId,
+    override: modelCapabilityOverrides?.lookup(spec.name, modelId),
+    roleContextWindow: contextWindow,
+    roleMaxTokens: maxTokens,
+    roleThinkingLevel: thinkingLevel,
+    spec: spec,
+    api: spec.api,
+    reasoning: spec.reasoning,
+  );
   return Model(
     id: modelId,
     name: modelId,
@@ -510,13 +525,15 @@ Model buildCatalogModel(
     baseUrl: baseUrl ?? spec.defaultBaseUrl,
     reasoning: spec.reasoning,
     input: input ?? spec.input,
-    thinkingLevel: thinkingLevel,
-    contextWindow: contextWindow ?? spec.contextWindow,
-    maxTokens:
-        maxTokens ??
-        resolveModelMaxOutputTokens(modelId, api: spec.api) ??
-        spec.maxTokens,
+    thinkingLevel: caps.thinkingLevel,
+    contextWindow: caps.contextWindow,
+    maxTokens: caps.maxTokens,
     authHeader: authHeader,
+    // The omit-compat flag rides the model compat (AC7); every other
+    // compat field stays null so the adapter's auto-detection applies.
+    compat: caps.omitMaxOutputTokens
+        ? const OpenAICompletionsCompat(omitMaxOutputTokens: true)
+        : null,
   );
 }
 
@@ -619,8 +636,9 @@ String canonicalProviderKind(String id) {
 /// Resolves through [resolveCliProviderSpec] — every catalog name and kind
 /// builds; an id no version knows throws [ConfigException] (direct API
 /// callers get the loud error, the boot config boundary degrades it).
-/// `maxTokens` resolves like [buildCatalogModel]: ceiling table
-/// ([resolveModelMaxOutputTokens]) first, provider spec default on a miss.
+/// `maxTokens` resolves like [buildCatalogModel]: the capability override
+/// layer first ([modelCapabilityOverrides], gh-1426), then the ceiling
+/// table ([resolveModelMaxOutputTokens]), then the provider spec default.
 Model buildCliDefaultModel(
   String providerKind, {
   String? modelId,
@@ -640,8 +658,15 @@ Model buildCliDefaultModel(
     // No provider has a default model — the choice is always explicit.
     throw ConfigException('provider "$providerKind" requires --model <id>');
   }
-  final maxTokens =
-      resolveModelMaxOutputTokens(id, api: spec.api) ?? spec.maxTokens;
+  final caps = resolveModelCapabilities(
+    provider: spec.name,
+    modelId: id,
+    override: modelCapabilityOverrides?.lookup(spec.name, id),
+    roleThinkingLevel: thinkingLevel,
+    spec: spec,
+    api: spec.api,
+    reasoning: spec.reasoning,
+  );
   return Model(
     id: id,
     name: id,
@@ -653,12 +678,16 @@ Model buildCliDefaultModel(
     // The FA_PROVIDER_* preconfig level rides the fallback/default model
     // when no roles chain pins it (issue #734 rework: the boot notice must
     // never name a level the booted model does not carry).
-    thinkingLevel: thinkingLevel,
-    contextWindow: spec.contextWindow,
-    maxTokens: maxTokens,
+    thinkingLevel: caps.thinkingLevel,
+    contextWindow: caps.contextWindow,
+    maxTokens: caps.maxTokens,
     // Folder-state restores adopt the matching saved entry's authHeader
     // (issue #964) — a restored gateway endpoint without its header 401s.
     authHeader: authHeader,
+    // The omit-compat flag rides the model compat (AC7, gh-1426).
+    compat: caps.omitMaxOutputTokens
+        ? const OpenAICompletionsCompat(omitMaxOutputTokens: true)
+        : null,
   );
 }
 
