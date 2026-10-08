@@ -33,6 +33,15 @@ Host-side inputs (environment):
   (StallSentinel), and an export-guard.json row when the agent produced
   output but the session export came back empty (ExportGuard).
 
+  Issue #1406 (never-again): the launch line itself carries the
+  non-secret FA_CONN_* env into the tmux pane (`export …; env |
+  grep FA_CONN > /tmp/fa-conn-env.txt;` prefix — pane env belongs to the
+  shell/server history, not to the step env that typed a later command),
+  the capture folds into agent-logs/fa-conn-env.txt as runtime proof,
+  and the loud-empty guard fires (conn-guard.json + a ::warning::
+  annotation) when a trial's bench_metrics.json has requests == []
+  despite real usage tokens — an instrumentation outage is never silent.
+
   PYTHONPATH=bench/terminal_bench tb run -d terminal-bench-core==0.1.1 \
     --agent-import-path fa_agent:FaAgent -t hello-world
 """
@@ -104,6 +113,11 @@ _CONTAINER_JOB_LOG_DIR = "/tmp/fa-harness-artifacts/bash_jobs"
 _CONTAINER_TRACE_FILE = "/tmp/fa-conn-trace.jsonl"
 _CONTAINER_SNAPSHOT = "/tmp/fa-conn-snapshot.json"
 
+# Issue #1406: the launch-time `env | grep FA_CONN` capture inside the
+# pane, folded into the trial's agent-logs as fa-conn-env.txt — runtime
+# proof of what fa's pane environment actually contained at exec time.
+_CONTAINER_ENV_PROOF = "/tmp/fa-conn-env.txt"
+
 # Host env vars forwarded into the container (base64, like the provider
 # config) when set: the ConnTrace flags drive fa's connection forensics.
 _CONN_ENV_KEYS = (
@@ -114,6 +128,36 @@ _CONN_ENV_KEYS = (
     "FA_CONN_PAYLOAD_KEEP_AUTH",
     "FA_BENCH_CONCURRENCY",
 )
+
+
+def pane_launch_env_prefix(env=None) -> str:
+    """`export FA_CONN_…=…; env | grep FA_CONN > proof;` launch prefix.
+
+    Issue #1406 (round-3 bench ran ConnTrace-dark, 29/29 empty
+    bench_metrics.json): FA_CONN_DEBUG reached the container only through
+    setup-env.sh, sourced once at install time. A tmux pane's environment
+    belongs to the pane shell's history and the tmux server's env — not
+    to the step env that types a later command — so any shell-state loss
+    between install and launch (fresh pane, server-side env resolution,
+    update-environment allowlisting) drops the vars silently. The launch
+    line now carries the non-secret diagnostic env itself and captures
+    `env | grep FA_CONN` at the instant fa execs, so a ConnTrace outage
+    can neither happen nor hide. Secrets never ride this line: provider
+    config/keys keep their base64 setup-env.sh transport, off the pane
+    stream that pipe-pane and agent.cast mirror.
+    """
+    source = os.environ if env is None else env
+    exports = " ".join(
+        f"{name}={shlex.quote(source[name])}"
+        for name in _CONN_ENV_KEYS
+        if source.get(name)
+    )
+    proof = f"env | grep FA_CONN > {_CONTAINER_ENV_PROOF} 2>&1; "
+    if not exports:
+        # Nothing to forward — still capture: an inherited-DARK env is
+        # exactly what the proof file must show (never silent).
+        return proof
+    return f"export {exports}; {proof}"
 
 
 class FaAgent(AbstractInstalledAgent):
@@ -518,6 +562,78 @@ class FaAgent(AbstractInstalledAgent):
             )
 
     @staticmethod
+    def _write_conn_env_proof(session, logging_dir):
+        """Issue #1406 AC1: fold the launch-time `env | grep FA_CONN`
+        capture into the trial's agent-logs (fa-conn-env.txt) — runtime
+        proof of the pane environment fa actually inherited. Fail-soft.
+        """
+        if logging_dir is None:
+            return
+        try:
+            result = session.container.exec_run(
+                ["sh", "-c", f"cat {_CONTAINER_ENV_PROOF} 2>/dev/null"]
+            )
+            if result.exit_code == 0 and result.output:
+                data = result.output
+                if isinstance(data, bytes):
+                    data = data.decode("utf-8", errors="replace")
+                (Path(logging_dir) / "fa-conn-env.txt").write_text(data)
+        except Exception as exc:  # noqa: BLE001 — proof never fails a trial
+            print(
+                f"[fa_agent] warning: conn env proof not written ({exc})",
+                file=sys.stderr,
+            )
+
+    @staticmethod
+    def _guard_loud_empty(logging_dir, usage_tokens) -> None:
+        """Issue #1406 loud-empty guard (ExportGuard pattern): a trial
+        whose bench_metrics.json folded requests == [] while the usage
+        fold proves real model spend ran ConnTrace-dark — write the
+        conn-guard.json row and warn LOUDLY (::warning:: renders as a
+        GitHub Actions annotation). An instrumentation outage must never
+        be silent again. Fail-soft by contract.
+        """
+        if logging_dir is None:
+            return
+        try:
+            metrics = json.loads(
+                (Path(logging_dir) / "bench_metrics.json").read_text()
+            )
+        except (OSError, ValueError):
+            return  # no/corrupt metrics row (stock path) — nothing to guard
+        violated = _bench_metrics.loud_empty_violation(metrics, usage_tokens)
+        requests = metrics.get("requests") if isinstance(metrics, dict) else None
+        guard = {
+            "trial": Path(logging_dir).name,
+            "requests": len(requests) if isinstance(requests, list) else None,
+            "usage_tokens": usage_tokens,
+            "ok": not violated,
+            "guard": "loud_empty",
+        }
+        try:
+            (Path(logging_dir) / "conn-guard.json").write_text(json.dumps(guard))
+        except OSError:
+            pass
+        if not violated:
+            return
+        print(
+            f"[fa_agent] BENCH METRICS GUARD: trial {guard['trial']} recorded "
+            f"0 ConnTrace requests but the usage fold found {usage_tokens} "
+            "tokens of real model spend — ConnTrace ran dark (FA_CONN_* "
+            "never reached fa; issue #1406). Its latency/watchdog columns "
+            "are void.",
+            file=sys.stderr,
+            flush=True,
+        )
+        print(
+            f"::warning::[fa_agent] ConnTrace dark in trial {guard['trial']}: "
+            f"0 FA_CONN requests vs {usage_tokens} usage tokens — "
+            "instrumentation outage, not a quiet trial (issue #1406)",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    @staticmethod
     def _write_audit(logging_dir, knobs, ladder, outcome) -> None:
         # AC4 (issue #1122): extension decisions land in the trial artifact.
         path = Path(logging_dir) / "fa-agent-timeout.json"
@@ -534,6 +650,7 @@ class FaAgent(AbstractInstalledAgent):
         """
         _export_sessions(session, logging_dir)
         FaAgent._write_export_guard(session, logging_dir)
+        FaAgent._write_conn_env_proof(session, logging_dir)
         try:
             exit_code, output = session.container.exec_run(
                 [
@@ -561,6 +678,9 @@ class FaAgent(AbstractInstalledAgent):
             result.total_output_tokens = (
                 usage.output_tokens + usage.estimated_output_tokens
             )
+            # Issue #1406: with usage known, the loud-empty guard can name
+            # a ConnTrace-dark trial instead of shipping an empty shell.
+            FaAgent._guard_loud_empty(logging_dir, usage.total_tokens())
         except Exception as exc:  # noqa: BLE001 — fail-soft by contract
             print(
                 f"[fa_agent] warning: session usage extraction failed ({exc}); "
@@ -570,9 +690,15 @@ class FaAgent(AbstractInstalledAgent):
         return result
 
     def _run_agent_commands(self, instruction: str) -> list[TerminalCommand]:
+        # Issue #1406: the env prefix rides the SAME line that launches
+        # fa, so the pane environment cannot be lost between the
+        # install-time setup-env.sh sourcing and the launch; the grep
+        # capture doubles as AC1's runtime proof (folded into agent-logs
+        # as fa-conn-env.txt at trial end).
         return [
             TerminalCommand(
-                command=f"fa --session-root /agent-logs/fah-sessions "
+                command=f"{pane_launch_env_prefix()}"
+                f"fa --session-root /agent-logs/fah-sessions "
                 f"-p {shlex.quote(instruction)}",
                 min_timeout_sec=0.0,
                 max_timeout_sec=float("inf"),
