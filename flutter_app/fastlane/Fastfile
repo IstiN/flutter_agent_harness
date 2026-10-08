@@ -883,6 +883,25 @@ platform :android do
     # whole set is replaced per locale + device type (stale shots deleted,
     # ru-RU tenInch and other dropped sets cleared) and the committed
     # state is verified via edits.images.list — a mismatch fails the lane.
+    #
+    # gh-1402 (owner steering) — App-token rule for the release path: any
+    # automation that commits/pushes release-path changes (store metadata
+    # fixes, version bumps, changelogs) MUST use the fa-release-bot GitHub
+    # App token (the #1172 ruleset-bypass machinery) — never a PAT, never
+    # the default GITHUB_TOKEN: main's required status checks reject both
+    # (#1098).
+    #
+    # gh-1402 pre-flight, the lane's first step: the LOCAL
+    # language-completeness gate — every metadata/android/<lang>/ must
+    # carry non-empty title/short_description/full_description before any
+    # network call. Google rejects a listing edit AT COMMIT (HTTP 403
+    # "This app has no title for language ru-RU", 2026-10-08) when a
+    # touched language is untitled; the gate never lets Google say it
+    # first, and sync_and_verify! additionally skips store-side listings
+    # that have no title (the texts deploy below creates/completes them).
+    PlayListingSync.validate_listing_completeness!(
+      File.expand_path("metadata/android", __dir__)
+    )
     do_metadata = ENV.fetch("PLAY_DEPLOY_METADATA", "true") == "true"
     do_images = ENV.fetch("PLAY_DEPLOY_IMAGES", "true") == "true"
     repo_root = File.expand_path("..", __dir__)
