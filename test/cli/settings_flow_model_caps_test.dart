@@ -118,7 +118,7 @@ void main() {
     io.sendLine('6'); // done (caps loop — 5 is Remove now, Done shifted)
     // The flow menu re-renders identical text: match the second render.
     await waitForCount('Pin or edit', 2);
-    io.sendLine('2'); // done (flow menu)
+    io.sendLine('3'); // done (flow menu: 1 set, 2 the pinned entry, 3 Done)
     await flow;
     io.sendLine('/exit');
     await run;
