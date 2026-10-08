@@ -679,7 +679,7 @@ packages:
       path: ".."
       relative: true
     source: path
-    version: "1.0.526"
+    version: "1.0.527"
   flutter_agent_memory:
     dependency: "direct overridden"
     description:
