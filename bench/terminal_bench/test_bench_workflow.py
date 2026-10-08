@@ -17,18 +17,36 @@ env vars reach fa_agent.py. This suite executes that exact block against a
   inside EVERY trial's perform_task hours into the shard.
 - Invalid inputs (non-digit timeout, non-boolean extension) fail fast.
 
+Issue #1406: the fa launch path must carry the ConnTrace env into the
+tmux pane itself (string-level asserts on the generated TerminalCommand
+— the exact bytes tb types into the pane), and a trial whose
+bench_metrics.json folded zero requests despite real model usage must
+fire a LOUD workflow warning, never ship an empty shell silently.
+
 Run: python3 -m unittest discover -s bench/terminal_bench
 """
+import importlib.util
+import collections
+import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import types
 import unittest
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
+from unittest import mock
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _BENCH_YML = _REPO_ROOT / ".github" / "workflows" / "bench.yml"
+sys.path.insert(0, str(_REPO_ROOT / "bench"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import bench_metrics  # noqa: E402
 
 
 def _shard_run_block() -> str:
@@ -385,6 +403,314 @@ class AbsCeilingHarnessCapTest(unittest.TestCase):
             "1380",
         )
         self.assertEqual(_env_value(proc.stdout, "FA_PROGRESS_EXTENSION"), "__unset__")
+
+
+def _load_fa_agent_1406():
+    """fa_agent.py under the stdlib tb stub (anywhere python3 runs).
+
+    Mirrors test_progress_watch_adapter's loader; its installer is a
+    no-op when the real terminal_bench is importable. Under full-suite
+    discovery test_fa_usage installs a bare `TerminalCommand` (no
+    kwargs) whose importability then makes the availability check pass
+    and blocks that installer — so the resident stub is probed with the
+    adapter's actual constructor kwargs and replaced when hostile (a
+    dataclass-based real terminal_bench passes the probe untouched).
+    """
+    from test_progress_watch_adapter import _install_tb_stubs
+
+    _install_tb_stubs()
+    models_mod = sys.modules.get("terminal_bench.terminal.models")
+    probe = getattr(models_mod, "TerminalCommand", None)
+    if probe is not None:
+        try:
+            probe(
+                command="x",
+                min_timeout_sec=0.0,
+                max_timeout_sec=0.0,
+                block=True,
+                append_enter=True,
+            )
+        except TypeError:
+            class TerminalCommand:
+                def __init__(self, **kwargs):
+                    self.__dict__.update(kwargs)
+
+            models_mod.TerminalCommand = TerminalCommand
+    spec = importlib.util.spec_from_file_location(
+        "fa_agent_1406", _REPO_ROOT / "bench" / "terminal_bench" / "fa_agent.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class FaPaneLaunchEnvTest(unittest.TestCase):
+    """Issue #1406 AC1/AC3: the fa launch line carries FA_CONN_* itself.
+
+    Round-3 bench ran ConnTrace-dark (29/29 empty bench_metrics.json):
+    FA_CONN_DEBUG reached the container only through setup-env.sh,
+    sourced once at install time — a tmux pane's environment belongs to
+    the pane shell's history, not to the step env that typed a later
+    command, so shell-state loss between install and launch drops the
+    vars silently. These tests pin the generated TerminalCommand at
+    string level: the non-secret diagnostic env is exported on the SAME
+    line that launches fa, and the launch-time `env | grep FA_CONN`
+    capture (folded into agent-logs as fa-conn-env.txt) proves what fa
+    actually inherited.
+    """
+
+    maxDiff = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fa_agent = _load_fa_agent_1406()
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self._tarball = str(Path(self.tmpdir.name) / "fa-bundle.tar.gz")
+        Path(self._tarball).write_bytes(b"")
+
+    def _launch_command(self, **env):
+        full_env = {"FA_BUNDLE_TARBALL": self._tarball}
+        full_env.update(env)
+        with mock.patch.dict(os.environ, full_env, clear=True):
+            agent = self.fa_agent.FaAgent()
+            return agent._run_agent_commands("do the thing")[0].command
+
+    def test_conn_debug_reaches_the_launch_line_before_fa(self):
+        cmd = self._launch_command(FA_CONN_DEBUG="1")
+        self.assertIn("export FA_CONN_DEBUG=1", cmd)
+        # Same line, BEFORE the launch: the export must be in effect when
+        # fa execs, not typed into a pane whose shell state may reset.
+        self.assertLess(
+            cmd.index("FA_CONN_DEBUG=1"), cmd.index("fa --session-root")
+        )
+
+    def test_conn_trace_files_and_concurrency_ride_the_launch_line(self):
+        cmd = self._launch_command(
+            FA_CONN_DEBUG="1",
+            FA_CONN_TRACE_FILE="/tmp/fa-conn-trace.jsonl",
+            FA_CONN_PAYLOAD_SNAPSHOT="/tmp/fa-conn-snapshot.json",
+            FA_BENCH_CONCURRENCY="2",
+        )
+        self.assertIn("FA_CONN_TRACE_FILE=/tmp/fa-conn-trace.jsonl", cmd)
+        self.assertIn("FA_CONN_PAYLOAD_SNAPSHOT=/tmp/fa-conn-snapshot.json", cmd)
+        self.assertIn("FA_BENCH_CONCURRENCY=2", cmd)
+
+    def test_unset_conn_debug_is_not_forced_but_proof_still_captured(self):
+        # Forward-when-set (bench.yml owns the opt-in); the grep capture
+        # fires either way — an inherited-DARK env is exactly what the
+        # proof file must show (issue #1406: never silent).
+        cmd = self._launch_command()
+        self.assertNotIn("FA_CONN_DEBUG", cmd)
+        self.assertIn("env | grep FA_CONN", cmd)
+
+    def test_launch_time_env_grep_proof_is_captured(self):
+        cmd = self._launch_command(FA_CONN_DEBUG="1")
+        self.assertIn(
+            f"env | grep FA_CONN > "
+            f"{self.fa_agent._CONTAINER_ENV_PROOF} 2>&1;",
+            cmd,
+        )
+
+    def test_provider_secrets_stay_off_the_pane_line(self):
+        # The pane stream is captured (pipe-pane, agent.cast): the launch
+        # line carries only the non-secret diagnostic vars — provider
+        # config/keys keep their base64 setup-env.sh transport.
+        cmd = self._launch_command(
+            FA_CONN_DEBUG="1",
+            FA_PROVIDER_CONFIG='{"baseUrl":"https://x","apiKeyEnvVar":"K"}',
+            K="sk-supersecret",
+        )
+        self.assertNotIn("sk-supersecret", cmd)
+        self.assertNotIn("FA_PROVIDER_CONFIG", cmd)
+        self.assertNotIn("BASE64", cmd)
+
+    def test_launch_contract_unchanged_behind_the_env_prefix(self):
+        # AC4: pure instrumentation — the fa invocation tb runs must stay
+        # byte-for-byte (session root + shlex-quoted instruction).
+        expected_launch = (
+            "fa --session-root /agent-logs/fah-sessions -p 'do the thing'"
+        )
+        self.assertTrue(self._launch_command(FA_CONN_DEBUG="1").endswith(expected_launch))
+        self.assertTrue(self._launch_command().endswith(expected_launch))
+
+
+class LoudEmptyGuardTest(unittest.TestCase):
+    """Issue #1406 AC2: requests == [] on a trial with real usage is an
+    instrumentation outage — the guard names it loudly (stderr warning +
+    a ::warning:: GitHub annotation + a conn-guard.json row), never
+    silently ships the empty shell."""
+
+    maxDiff = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fa_agent = _load_fa_agent_1406()
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.logging_dir = Path(self.tmpdir.name) / "t0"
+        self.logging_dir.mkdir(parents=True)
+
+    def _guarded(self, requests, usage_tokens):
+        (self.logging_dir / "bench_metrics.json").write_text(
+            json.dumps({"trial": "t0", "requests": requests})
+        )
+        err = StringIO()
+        with redirect_stderr(err):
+            self.fa_agent.FaAgent._guard_loud_empty(self.logging_dir, usage_tokens)
+        return err.getvalue()
+
+    def test_empty_requests_with_usage_fires_the_loud_warning(self):
+        stderr = self._guarded([], 4321)
+        self.assertIn("BENCH METRICS GUARD", stderr)
+        self.assertIn("::warning::", stderr)
+        self.assertIn("4321", stderr)
+        guard = json.loads((self.logging_dir / "conn-guard.json").read_text())
+        self.assertFalse(guard["ok"])
+        self.assertEqual(guard["usage_tokens"], 4321)
+        self.assertEqual(guard["requests"], 0)
+        self.assertEqual(guard["guard"], "loud_empty")
+
+    def test_nonempty_requests_pass_quietly(self):
+        stderr = self._guarded([{"seq": 1, "first_byte_sec": 7.5}], 4321)
+        self.assertEqual(stderr, "")
+        guard = json.loads((self.logging_dir / "conn-guard.json").read_text())
+        self.assertTrue(guard["ok"])
+
+    def test_zero_usage_never_fires(self):
+        # A trial that made no model request cannot be "dark" — its empty
+        # shell is the honest shape.
+        self.assertEqual(self._guarded([], 0), "")
+
+    def test_none_logging_dir_no_ops_both_guards(self):
+        # Stock-path trials without a logging dir never trip the guard.
+        self.assertIsNone(self.fa_agent.FaAgent._guard_loud_empty(None, 5))
+        self.assertIsNone(
+            self.fa_agent.FaAgent._write_conn_env_proof(None, None)
+        )
+
+    def test_missing_metrics_file_is_not_a_violation(self):
+        err = StringIO()
+        with redirect_stderr(err):
+            self.fa_agent.FaAgent._guard_loud_empty(self.logging_dir, 500)
+        self.assertEqual(err.getvalue(), "")
+        self.assertFalse((self.logging_dir / "conn-guard.json").exists())
+
+    def test_corrupt_metrics_file_is_not_a_violation(self):
+        (self.logging_dir / "bench_metrics.json").write_text("{not json")
+        err = StringIO()
+        with redirect_stderr(err):
+            self.fa_agent.FaAgent._guard_loud_empty(self.logging_dir, 500)
+        self.assertEqual(err.getvalue(), "")
+
+    def test_predicate_is_pure(self):
+        self.assertTrue(bench_metrics.loud_empty_violation({"requests": []}, 1))
+        self.assertFalse(
+            bench_metrics.loud_empty_violation({"requests": [{"seq": 1}]}, 1)
+        )
+        self.assertFalse(bench_metrics.loud_empty_violation({"requests": []}, 0))
+        self.assertFalse(bench_metrics.loud_empty_violation({"requests": []}, None))
+        self.assertFalse(bench_metrics.loud_empty_violation({}, 5))
+        self.assertFalse(bench_metrics.loud_empty_violation(None, 5))
+
+
+class _FakeFoldContainer:
+    """exec_run surface for the fold: session JSONL + the env-proof cat.
+
+    Returns a namedtuple like docker's ExecResult — fa_agent consumes
+    exec_run both as a tuple (fold) and by attribute (pane taps).
+    """
+
+    _Exec = collections.namedtuple("_Exec", ["exit_code", "output"])
+
+    def __init__(self, session_jsonl, env_proof):
+        self._session_jsonl = session_jsonl
+        self._env_proof = env_proof
+
+    def exec_run(self, cmd, **kwargs):
+        joined = " ".join(cmd)
+        if "find" in joined and "-exec cat" in joined:
+            return self._Exec(0, self._session_jsonl.encode())
+        if "cat /tmp/fa-conn-env.txt" in joined:
+            return self._Exec(0, self._env_proof)
+        return self._Exec(0, b"")
+
+    def get_archive(self, path):
+        return ([b""], "unused.tar")
+
+
+class _FakeFoldSession:
+    """Minimal TmuxSession surface: just the container the fold touches."""
+
+    def __init__(self, container):
+        self.container = container
+
+
+class FoldWiringTest(unittest.TestCase):
+    """The usage fold is the common terminal path of BOTH adapter modes
+    (stock and deadline) — the env-proof fold and the loud-empty guard
+    must hang off it, so every bench trial gets them."""
+
+    maxDiff = None
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fa_agent = _load_fa_agent_1406()
+
+    def test_fold_writes_env_proof_and_fires_the_guard(self):
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        logging_dir = Path(tmpdir.name) / "t0"
+        logging_dir.mkdir(parents=True)
+        (logging_dir / "bench_metrics.json").write_text(
+            json.dumps({"trial": "t0", "requests": []})
+        )
+        session = _FakeFoldSession(
+            _FakeFoldContainer(
+                session_jsonl=(
+                    '{"timestamp":"2025-01-01T00:00:00Z","message":{"role":"assistant",'
+                    '"model":"m","usage":{"input":10,"output":5}}}\n'
+                ),
+                env_proof=(
+                    b"FA_CONN_DEBUG=1\n"
+                    b"FA_CONN_TRACE_FILE=/tmp/fa-conn-trace.jsonl\n"
+                ),
+            )
+        )
+        result = self.fa_agent.AgentResult(total_input_tokens=0, total_output_tokens=0)
+        err = StringIO()
+        with redirect_stderr(err):
+            self.fa_agent.FaAgent._fold_session_usage(session, result, logging_dir)
+        # Usage folded from the session records...
+        self.assertEqual(result.total_input_tokens, 10)
+        self.assertEqual(result.total_output_tokens, 5)
+        # ...the launch-time env proof landed in agent-logs (AC1)...
+        proof = (logging_dir / "fa-conn-env.txt").read_text()
+        self.assertIn("FA_CONN_DEBUG=1", proof)
+        # ...and the dark-ConnTrace trial fired the loud-empty guard (AC2).
+        self.assertIn("BENCH METRICS GUARD", err.getvalue())
+        guard = json.loads((logging_dir / "conn-guard.json").read_text())
+        self.assertFalse(guard["ok"])
+        self.assertEqual(guard["usage_tokens"], 15)
+
+    def test_env_proof_fold_is_fail_soft(self):
+        # A broken/wedged container must never fail the trial over a
+        # proof artifact (same contract as every other fold step).
+        class _BoomContainer:
+            def exec_run(self, cmd, **kwargs):
+                raise RuntimeError("container gone")
+
+        err = StringIO()
+        with redirect_stderr(err):
+            self.fa_agent.FaAgent._write_conn_env_proof(
+                _FakeFoldSession(_BoomContainer()), Path(tmp_dir := tempfile.mkdtemp())
+            )
+        self.assertIn("conn env proof not written", err.getvalue())
+        self.assertFalse((Path(tmp_dir) / "fa-conn-env.txt").exists())
 
 
 if __name__ == "__main__":

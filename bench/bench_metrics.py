@@ -297,6 +297,23 @@ def score_honesty_violation(failure_mode, max_gap_sec, stall_gap_sec=None):
     return max_gap_sec < stall_gap_sec
 
 
+def loud_empty_violation(metrics, usage_tokens):
+    """Issue #1406 loud-empty guard predicate: True when a trial's
+    bench_metrics.json folded ZERO ConnTrace requests while the usage
+    fold proves the trial made model requests (tokens > 0).
+
+    Round-3 bench shipped 29/29 empty shells that way — an
+    instrumentation outage must never masquerade as a quiet trial.
+    Anything unreadable (non-dict metrics, absent/zero tokens) is not a
+    violation: the usage fold's own warnings cover those.
+    """
+    if not isinstance(metrics, dict):
+        return False
+    if not usage_tokens or isinstance(usage_tokens, bool) or usage_tokens < 0:
+        return False
+    return metrics.get("requests") == []
+
+
 def write_bench_metrics(path, metrics):
     """Persist one trial's bench_metrics.json (parents created)."""
     path = Path(path)
