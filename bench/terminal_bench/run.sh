@@ -21,6 +21,9 @@
 #   burn the 60s tb default and die as test_timeout with the agent DONE;
 #   240s effective at multiplier 2; a cap is a cap, not a wait, so fast
 #   verifier phases are unaffected). 0 = declared budgets unchanged.
+#   On top of the floor, the gh-1407 per-task override table
+#   (test_budget_overrides.json — runner-measured test-phase p95 per
+#   repeat-offender task) pads those tasks so effective >= p95 x 1.5.
 #
 # tb needs the docker socket; run via sudo with the user env preserved:
 #   sudo -n env HOME=$HOME PATH=$PATH bench/terminal_bench/run.sh -t hello-world
@@ -45,7 +48,7 @@ tb datasets download -d "$DATASET"
 DS_CACHE="$HOME/.cache/terminal-bench/${DATASET%%==*}/${DATASET##*==}"
 python3 "$REPO/bench/terminal_bench/patch_dataset.py" "$DS_CACHE"
 python3 "$REPO/bench/terminal_bench/patch_test_timeouts.py" "$DS_CACHE" \
-    --floor "$TEST_TIMEOUT_FLOOR"
+    --floor "$TEST_TIMEOUT_FLOOR" --multiplier "$TIMEOUT_MULTIPLIER"
 
 echo "==> running terminal-bench"
 export FA_BUNDLE_TARBALL=/tmp/fa-bundle.tar.gz

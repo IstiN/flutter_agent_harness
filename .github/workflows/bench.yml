@@ -44,6 +44,18 @@ name: Bench
 # a wait: fast verifier phases are unaffected (a full-dataset worst case
 # grows < 10 min/shard); `0` restores the declared budgets.
 #
+# Issue gh-1407 (runs 37609468473 + 37736364517): the floor alone left
+# repeat-offender tasks (jupyter-notebook-server, build-initramfs-qemu)
+# test_timeout at the cap in every round — the budget measured runner
+# luck, not agent capability. patch_test_timeouts.py additionally applies
+# the per-task override table (test_budget_overrides.json, checked in
+# next to it: runner-measured test-phase p95 per task, effective budget
+# = max(declared, p95 x 1.5) — a slow-suite fix, NOT a global floor
+# bump), and shard_tasks.py emits a ::warning:: fairness annotation when
+# a planned task's effective test budget is still below its measured
+# p95 (fairness_warnings job output), so a structurally-unpassable
+# configuration is caught at planning time.
+#
 # Issue #1392 (bench round 3): retire the artificial timeout class. The
 # ×4 ladder ceiling itself was the round-2 killer (play-zork died at 72
 # productive minutes), so with progress-extension ON the ladder ceiling
