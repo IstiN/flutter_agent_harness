@@ -236,11 +236,20 @@ final class _WaitingCoordinator {
     liveness.callEnded(toolCallId);
   }
 
-  /// The cross-run job registry (`<cwd>/.fah/bash_jobs/running.json`):
-  /// one entry per job any fa process in this workspace still considers
-  /// running. Boot reconcile (issue #478) drops entries whose owning
-  /// process is gone instead of letting them sit there forever.
-  String get _manifestPath => '${_cli._env.cwd}/.fah/bash_jobs/running.json';
+  /// The cross-run job registry (`running.json` under the job
+  /// bookkeeping dir): one entry per job any fa process in this workspace
+  /// still considers running. Boot reconcile (issue #478) drops entries
+  /// whose owning process is gone instead of letting them sit there
+  /// forever.
+  String get _manifestPath => '$_jobBookkeepingDir/running.json';
+
+  /// The job bookkeeping dir (issue #1408 AC1, review 5456649624):
+  /// `<cwd>/.fah/bash_jobs` by default; the bench override
+  /// (`FAH_JOB_LOG_DIR` → [AgentCliConfig.jobLogDir]) relocates the
+  /// manifest + lock + retention prune WITH the logs so an unattended run
+  /// leaves no `.fah/` in the graded task workspace.
+  String get _jobBookkeepingDir =>
+      _cli.config.jobLogDir ?? '${_cli._env.cwd}/.fah/bash_jobs';
 
   /// Where a corrupt registry goes before the rebuild — the evidence
   /// stays inspectable instead of being silently lost.
@@ -459,10 +468,10 @@ final class _WaitingCoordinator {
   static const _lockWaitBound = Duration(milliseconds: 300);
 
   Future<void> _withRegistryLock(Future<void> Function() body) async {
-    // The lock dir lives under `.fah/bash_jobs/` — make sure the parent
-    // exists or the exclusive create fails for the wrong reason and every
-    // mutation pays the full contention wait.
-    await _cli._env.createDir('${_cli._env.cwd}/.fah/bash_jobs');
+    // The lock dir lives under the job bookkeeping dir — make sure the
+    // parent exists or the exclusive create fails for the wrong reason and
+    // every mutation pays the full contention wait.
+    await _cli._env.createDir(_jobBookkeepingDir);
     if (!await _acquireRegistryLock()) return body();
     try {
       await body();
@@ -553,7 +562,7 @@ final class _WaitingCoordinator {
   Future<int> _pruneOldJobLogs() async {
     final days = _cli.config.jobs.logRetentionDays;
     if (days <= 0) return 0;
-    final listed = await _cli._env.listDir('${_cli._env.cwd}/.fah/bash_jobs');
+    final listed = await _cli._env.listDir(_jobBookkeepingDir);
     if (listed.isErr) return 0;
     final cutoffMs =
         _clock().millisecondsSinceEpoch - days * Duration.millisecondsPerDay;

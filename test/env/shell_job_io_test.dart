@@ -460,6 +460,108 @@ void main() {
       expect(File(logPath).existsSync(), isFalse);
     });
   });
+
+  group('job log redaction at rest (issue #1408 AC2)', () {
+    test('a secret-shaped value never lands in the log file', () async {
+      final pipeline = RedactionPipeline(registeredSecrets: const []);
+      final started = await env.startShellJob(
+        "echo 'aws key AKIAIOSFODNN7EXAMPLE captured'",
+        id: 'sh-1408',
+        logPath: '${tempDir.path}/sh-1408.log',
+        options: ShellExecOptions(
+          jobLogRedactor: JobLogRedactor(pipeline.redact),
+        ),
+      );
+      final job = started.valueOrNull!;
+      await job.settled;
+      final log = File(job.logPath).readAsStringSync();
+      expect(log, isNot(contains('AKIAIOSFODNN7EXAMPLE')));
+      expect(log, contains('[REDACTED:AWS Access Key]'));
+    });
+
+    test('a secret split across chunks stays redacted (line buffering)', () {
+      final redactor = JobLogRedactor(
+        (text) => text.replaceAll('AKIAIOSFODNN7EXAMPLE', '[REDACTED]'),
+      );
+      // No newline yet: the partial line stays buffered, so no half-token
+      // can reach the disk and dodge the redaction. The carry JOINS the
+      // spans before the next scan — the chunk boundary never splits a
+      // token away from its shape. ingest#2 therefore emits the JOINED
+      // complete line (including the 'key ' prefix held back by ingest#1)
+      // up to the newline; 'done' stays carried for flush() (run
+      // 37783963871: the original expectation was doubly wrong — it
+      // assumed 'key ' had already been emitted AND 'done' included).
+      expect(redactor.ingest('key AKIA'), isEmpty);
+      expect(
+        redactor.ingest('IOSFODNN7EXAMPLE\ndone'),
+        'key [REDACTED]\n',
+      );
+      // The trailing partial line ('done') is not trapped: flush() emits
+      // it sanitized at settle.
+      expect(redactor.flush(), 'done');
+    });
+
+    test('a token split at ANY chunk offset stays redacted (parametrized)',
+        () {
+      // The reviewer-facing invariant, pinned at every boundary offset —
+      // not one lucky split: whatever the cut, no emitted byte sequence
+      // ever contains the raw token, and the assembled log carries the
+      // marker instead.
+      const token = 'AKIAIOSFODNN7EXAMPLE';
+      for (var cut = 0; cut <= token.length; cut++) {
+        final redactor = JobLogRedactor(
+          (text) => text.replaceAll(token, '[REDACTED]'),
+        );
+        final rested = redactor.ingest('key ${token.substring(0, cut)}') +
+            redactor.ingest('${token.substring(cut)} tail\n') +
+            redactor.flush();
+        expect(
+          rested.contains(token),
+          isFalse,
+          reason: 'cut=$cut let the raw token reach the log: $rested',
+        );
+        expect(
+          rested,
+          contains('[REDACTED]'),
+          reason: 'cut=$cut lost the redaction marker',
+        );
+      }
+    });
+
+    test('flush() emits a trailing partial line', () {
+      final redactor = JobLogRedactor((text) => text);
+      expect(redactor.ingest('partial tail'), isEmpty);
+      expect(redactor.flush(), 'partial tail');
+    });
+
+    test('an oversized newline-free chunk force-flushes instead of '
+        'buffering without bound (issue #919 memory discipline)', () {
+      final redactor = JobLogRedactor((text) => text);
+      // 2 MiB with no newline: past the 1 MiB partial-line budget this
+      // cannot sit on the fa heap — it flushes through the transform
+      // (best-effort at-rest redaction) with an overflow marker line.
+      final out = redactor.ingest('x' * (2 << 20));
+      expect(out, contains('xxxx'));
+      expect(out, contains('redaction buffer overflow'));
+      // The carry was reset: the next small chunk flows through normally.
+      expect(redactor.ingest('done\n'), 'done\n');
+      expect(redactor.flush(), isEmpty);
+    });
+
+    test('an oversized buffered partial line keeps best-effort redaction',
+        () {
+      final redactor = JobLogRedactor(
+        (text) => text.replaceAll('AKIAIOSFODNN7EXAMPLE', '[REDACTED]'),
+      );
+      // A partial line already holding the full token, then a 2 MiB
+      // newline-free chunk: the forced flush still passes through the
+      // transform, so what rests carries the marker, not the raw value.
+      expect(redactor.ingest('key AKIAIOSFODNN7EXAMPLE tail'), isEmpty);
+      final out = redactor.ingest('x' * (2 << 20));
+      expect(out, contains('[REDACTED]'));
+      expect(out, isNot(contains('AKIAIOSFODNN7EXAMPLE')));
+    });
+  });
 }
 
 /// Live `ps` rows matching [needle]; zombies and the scanner itself
