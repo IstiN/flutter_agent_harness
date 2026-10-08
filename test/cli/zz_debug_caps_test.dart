@@ -52,31 +52,29 @@ void main() {
     );
     final run = cli.run();
     final flow = cli.startModelCapsFlow();
-    await waitForIt(() => io.out.toString().contains('model capabilities'));
+    if (!await _poll(() => io.out.toString().contains('model capabilities'))) {
+      print('F0<<<${_tail()}>>>'); return;
+    }
     io.sendLine('1');
-    // ignore: avoid_print
-    print('S1<<<${_tail()}>>>');
-    await waitForIt(() => io.out.toString().contains('provider'));
+    if (!await _poll(() => io.out.toString().contains('— provider'))) {
+      print('F1<<<${_tail()}>>>'); return;
+    }
     io.sendLine('12');
-    // ignore: avoid_print
-    print('S2<<<${_tail()}>>>');
-    await waitForIt(
-      () => io.out.toString().contains('model id (empty keeps'),
-    );
+    if (!await _poll(() => io.out.toString().contains('model id (empty keeps'))) {
+      print('F2<<<${_tail()}>>>'); return;
+    }
     io.sendLine('glm-5.3-flash');
-    // ignore: avoid_print
-    print('S3<<<${_tail()}>>>');
-    await waitForIt(
-      () => io.out.toString().contains('capabilities — zai/glm-5.3-flash'),
-    );
+    if (!await _poll(() => io.out.toString().contains('capabilities — zai/glm-5.3-flash'))) {
+      print('F3<<<${_tail()}>>>'); return;
+    }
     io.sendLine('2');
-    await waitForIt(
-      () => io.out.toString().contains('maxTokens in tokens'),
-    );
+    if (!await _poll(() => io.out.toString().contains('maxTokens in tokens'))) {
+      print('F4<<<${_tail()}>>>'); return;
+    }
     io.sendLine('65536');
-    await waitForIt(
-      () => io.out.toString().contains('models.overrides.zai.glm-5.3-flash'),
-    );
+    if (!await _poll(() => io.out.toString().contains('models.overrides.zai.glm-5.3-flash'))) {
+      print('F5<<<${_tail()}>>>'); return;
+    }
     io.sendLine('3');
     if (!await _poll(
       () => io.out.toString().contains('thinking level'),
