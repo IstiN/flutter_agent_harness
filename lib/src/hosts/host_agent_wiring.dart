@@ -254,6 +254,13 @@ final class AgentCoreServices {
   /// always-registered graceful-failure contract as [onAsk].
   final RequestSecretCallback? onRequestSecret;
 
+  /// Whether the session runs UNATTENDED (approval mode
+  /// `unattended`/autopilot — no user present). Consumed by the
+  /// `request_secret` decline path (gh-1412): an unattended decline
+  /// carries the credential-hunt nudge instead of reading as a dead end.
+  /// Null = interactive (the default, unchanged decline text).
+  final bool Function()? isUnattended;
+
   /// The obligations-ledger close callback (`obligation_mark_done`,
   /// issue #1380 lifecycle). Null = the host does not maintain the
   /// ledger: the tool still registers and answers gracefully in-tool —
@@ -347,6 +354,7 @@ final class AgentCoreServices {
     this.scheduleSenderMailbox,
     this.onAsk,
     this.onRequestSecret,
+    this.isUnattended,
     this.obligationsClose,
     this.vision,
     this.transcribe,
@@ -633,7 +641,10 @@ List<AgentTool> _buildCoreTools({
     // pre-conversion CLI, which always registered them. Dropping them
     // would surface a bare "Tool ask not found" instead.
     askTool(callback: services.onAsk),
-    requestSecretTool(callback: services.onRequestSecret),
+    requestSecretTool(
+      callback: services.onRequestSecret,
+      unattended: services.isUnattended,
+    ),
     // The obligations close path (issue #1380 lifecycle): same
     // always-registered graceful-null contract as ask/request_secret.
     obligationMarkDoneTool(close: services.obligationsClose),

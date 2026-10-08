@@ -8,6 +8,7 @@ library;
 
 import 'dart:collection';
 
+import '../agent/finalize_gate.dart';
 import '../types.dart';
 
 import 'trajectory_blobs.dart';
@@ -139,6 +140,7 @@ final class TrajectorySnapshot {
     required this.recordLocations,
     required this.revision,
     this.blobs = const TrajectoryBlobTable(),
+    this.taskLedger,
     this.unknownRecordCount = 0,
   });
 
@@ -178,6 +180,13 @@ final class TrajectorySnapshot {
   /// system-prompt texts, tool manifests, and opt-in wire dumps. Empty
   /// for old sessions — renderers degrade to counts honestly (E6).
   final TrajectoryBlobTable blobs;
+
+  /// The FinalizeGate task ledger (gh-1412): the checklist the run
+  /// finished with, folded from the LAST hidden `task_ledger` custom
+  /// record (last-wins, like the request detail). Null for sessions that
+  /// never emitted one — post-mortems read it, renderers may ignore it
+  /// (the record is hidden: no ledger rows, no unknown rows).
+  final TaskLedger? taskLedger;
 
   /// How many record kinds the builder did not know rendered as
   /// `unknown record` context rows (F6: the ledger is provably lossless).

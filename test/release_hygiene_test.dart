@@ -2450,10 +2450,15 @@ gh release create "v9.9.9" \
         );
 
         // Exactly one coverage upload per shard leg, named pty-coverage-shard-N.
+        // gh-1412: the gh-1412 retry steps (same artifact name, `if` keyed on
+        // the primary upload's failed outcome) re-upload the SAME single
+        // artifact — they must not count as a second coverage upload here.
         final uploadNames = <String>[];
         for (final step in integration['steps'] as YamlList) {
           if (step is YamlMap &&
-              step['uses'].toString().startsWith('actions/upload-artifact')) {
+              step['uses'].toString().startsWith('actions/upload-artifact') &&
+              !(step['if']?.toString().contains("outcome == 'failure'") ??
+                  false)) {
             uploadNames.add(((step['with'] as YamlMap)['name']).toString());
           }
         }
