@@ -89,8 +89,7 @@ void main() {
   });
 
   group('UT-5 / AC5 — the name column ellipsizes, never wraps', () {
-    test('boundary ±1: exactly-fitting name keeps, +1 ellipsizes in place',
-        () {
+    test('boundary ±1: exactly-fitting name keeps, +1 ellipsizes in place', () {
       // The name column is 16 cells at default widths.
       final fits = subagentStatusLine(
         rec('abcdefghijklmno'), // 15
@@ -132,7 +131,10 @@ void main() {
   group('UT-2 / AC2 — the region stacks N rows in order', () {
     test('10 simultaneous subagents render as 10 stacked rows, same order', () {
       final region = TaskBoardRegion(now: () => t0);
-      final ids = List.generate(10, (i) => 'agent-${(i + 1).toString().padLeft(2, '0')}');
+      final ids = List.generate(
+        10,
+        (i) => 'agent-${(i + 1).toString().padLeft(2, '0')}',
+      );
       for (final id in ids) {
         region.upsert(rec(id, spawnedAt: t0));
       }
@@ -185,23 +187,25 @@ void main() {
       expect(settled.single.text, contains('worker'));
     });
 
-    test('the settled row is reused by no one: a new spawn appends after it',
-        () {
-      final clock = _ManualClock(t0);
-      final region = TaskBoardRegion(now: clock.now);
-      region.upsert(rec('first', spawnedAt: t0));
-      region.upsert(
-        rec('first', state: SubagentDisplayState.completed, spawnedAt: t0),
-        at: at(5),
-      );
-      region.upsert(rec('second', spawnedAt: at(6)));
-      final rows = region.rows(now: at(10), width: 100);
-      expect(rows, hasLength(2));
-      expect(rows[0].text, contains('first'));
-      expect(rows[0].bright, isFalse); // settled keeps its old slot
-      expect(rows[1].text, contains('second'));
-      expect(rows[1].bright, isTrue);
-    });
+    test(
+      'the settled row is reused by no one: a new spawn appends after it',
+      () {
+        final clock = _ManualClock(t0);
+        final region = TaskBoardRegion(now: clock.now);
+        region.upsert(rec('first', spawnedAt: t0));
+        region.upsert(
+          rec('first', state: SubagentDisplayState.completed, spawnedAt: t0),
+          at: at(5),
+        );
+        region.upsert(rec('second', spawnedAt: at(6)));
+        final rows = region.rows(now: at(10), width: 100);
+        expect(rows, hasLength(2));
+        expect(rows[0].text, contains('first'));
+        expect(rows[0].bright, isFalse); // settled keeps its old slot
+        expect(rows[1].text, contains('second'));
+        expect(rows[1].bright, isTrue);
+      },
+    );
 
     test('a resume revives the row (clears the settle stamp)', () {
       final clock = _ManualClock(t0);
@@ -220,8 +224,7 @@ void main() {
       expect(rows.single.text, contains('run'));
     });
 
-    test('settled rows fold oldest-first beyond the cap (scroll pressure)',
-        () {
+    test('settled rows fold oldest-first beyond the cap (scroll pressure)', () {
       final clock = _ManualClock(t0);
       final region = TaskBoardRegion(now: clock.now, maxSettledRows: 2);
       for (var i = 1; i <= 4; i++) {
@@ -299,12 +302,8 @@ void main() {
   group('E2 — duplicate names disambiguate with a 4-char id suffix', () {
     test('two same-named subagents carry ·id4 in the name column', () {
       final region = TaskBoardRegion(now: () => t0);
-      region.upsert(
-        rec('goal_builder-1', name: 'goal_builder', spawnedAt: t0),
-      );
-      region.upsert(
-        rec('goal_builder-2', name: 'goal_builder', spawnedAt: t0),
-      );
+      region.upsert(rec('goal_builder-1', name: 'goal_builder', spawnedAt: t0));
+      region.upsert(rec('goal_builder-2', name: 'goal_builder', spawnedAt: t0));
       final rows = region.rows(now: t0, width: 120);
       expect(rows, hasLength(2));
       expect(rows[0].text, contains('·er-1'));
@@ -313,9 +312,7 @@ void main() {
 
     test('a unique name carries no suffix', () {
       final region = TaskBoardRegion(now: () => t0);
-      region.upsert(
-        rec('goal_builder-1', name: 'goal_builder', spawnedAt: t0),
-      );
+      region.upsert(rec('goal_builder-1', name: 'goal_builder', spawnedAt: t0));
       region.upsert(rec('explore-1', name: 'explore', spawnedAt: t0));
       final texts = region.rows(now: t0, width: 120).map((r) => r.text);
       expect(texts, everyElement(isNot(contains('·'))));
@@ -388,17 +385,18 @@ void main() {
       int liveTokens = 0,
       String task = '',
     }) {
-      final h = SubagentHandle(
-        id: id,
-        name: name ?? id,
-        agentType: 'explore',
-        sessionId: 'parent/$id',
-        createdAt: createdAt ?? '2026-01-01T12:00:00.000Z',
-        task: task,
-      )
-        ..status = status
-        ..tokens = tokens
-        ..liveTokens = liveTokens;
+      final h =
+          SubagentHandle(
+              id: id,
+              name: name ?? id,
+              agentType: 'explore',
+              sessionId: 'parent/$id',
+              createdAt: createdAt ?? '2026-01-01T12:00:00.000Z',
+              task: task,
+            )
+            ..status = status
+            ..tokens = tokens
+            ..liveTokens = liveTokens;
       if (lastActivity != null) h.lastActivity = lastActivity;
       return h;
     }

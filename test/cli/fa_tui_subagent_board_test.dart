@@ -64,8 +64,7 @@ void main() {
 
   String plainRow(String row) => stripAnsi(row);
 
-  test('UT-4 / AC4: an empty board renders zero extra rows (quiet zero)',
-      () {
+  test('UT-4 / AC4: an empty board renders zero extra rows (quiet zero)', () {
     final bare = build(termHeight: 24);
     final withEmptyMsg = send(bare, const SubagentBoardMsg([]));
     // The empty push changes nothing: same frame as a model never told
@@ -76,9 +75,13 @@ void main() {
 
   test('UT-2 / AC2: 10 subagents stack as 10 rows above the busy row', () {
     final rows = [
-      for (var i = 1; i <= 10; i++) row('agent-${i.toString().padLeft(2, '0')}'),
+      for (var i = 1; i <= 10; i++)
+        row('agent-${i.toString().padLeft(2, '0')}'),
     ];
-    final model = send(build(termHeight: 40, busy: true), SubagentBoardMsg(rows));
+    final model = send(
+      build(termHeight: 40, busy: true),
+      SubagentBoardMsg(rows),
+    );
     final frame = rowsOf(model);
     expect(frame, hasLength(40));
     final plain = frame.map(plainRow).toList();
@@ -89,7 +92,11 @@ void main() {
       final name = 'agent-${i.toString().padLeft(2, '0')}';
       final idx = plain.indexWhere((r) => r.contains(name), busyIdx - 12);
       expect(idx, greaterThanOrEqualTo(0), reason: name);
-      expect(idx, lessThan(busyIdx), reason: '$name must sit above the busy row');
+      expect(
+        idx,
+        lessThan(busyIdx),
+        reason: '$name must sit above the busy row',
+      );
     }
     int nameCell(String frameRow, String name) =>
         tuiTextWidth(frameRow.substring(0, frameRow.indexOf(name)));
@@ -125,7 +132,8 @@ void main() {
 
   test('squeeze: the newest subagent rows keep the region, never wrap', () {
     final rows = [
-      for (var i = 1; i <= 10; i++) row('agent-${i.toString().padLeft(2, '0')}'),
+      for (var i = 1; i <= 10; i++)
+        row('agent-${i.toString().padLeft(2, '0')}'),
     ];
     // A tiny terminal: the optional chrome must yield, not wrap.
     final model = build(termHeight: 10, busy: true, subagents: rows);

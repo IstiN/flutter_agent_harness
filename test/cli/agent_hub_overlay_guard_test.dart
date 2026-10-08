@@ -172,7 +172,9 @@ void main() {
         }, reason: '/agents still opens the hub and the tree has the child');
 
         keys.add([0x03]); // ctrl+c press 1: abort + armed window, stays (#830)
-        keys.add([0x03]); // press 2 within the window quits (outranks the modal)
+        keys.add([
+          0x03,
+        ]); // press 2 within the window quits (outranks the modal)
         await run;
       } finally {
         await io.close();

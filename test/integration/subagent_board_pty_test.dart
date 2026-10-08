@@ -146,5 +146,6 @@ scenarios:
         timeout: const Duration(seconds: 90),
       );
       expect(settled, contains('done boardwatch'));
-    });
+    },
+  );
 }
