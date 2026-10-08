@@ -75,7 +75,7 @@ final class _SubagentBoardCoordinator {
     if (controller == null) return;
     final rows = region.rows(now: _now(), width: controller.termWidth);
     final texts = [for (final row in rows) row.text];
-    if (_listEquals(texts, _lastPushed)) return;
+    if (listEquals(texts, _lastPushed)) return;
     _lastPushed = texts;
     controller.setSubagentBoard(rows);
   }
@@ -87,15 +87,6 @@ final class _SubagentBoardCoordinator {
     region.clear();
     _lastPushed = const [];
   }
-}
-
-bool _listEquals(List<String> a, List<String> b) {
-  if (identical(a, b)) return true;
-  if (a.length != b.length) return false;
-  for (var i = 0; i < a.length; i++) {
-    if (a[i] != b[i]) return false;
-  }
-  return true;
 }
 
 /// Test seams for the subagent board (gh-1415).

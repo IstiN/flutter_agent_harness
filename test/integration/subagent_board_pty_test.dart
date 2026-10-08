@@ -8,12 +8,9 @@ library;
 // spawn (one dense line: glyph, state verb, human name, age, cost), TICKS
 // in place (the age recomputes from the spawn timestamp on the 1 Hz
 // repaint), and COLLAPSES to the settled one-liner on completion. The
-// child runs a real `bash sleep 4` so the running row lives long enough to
-// observe deterministically (a text-only child settles within one turn).
-//
-// Bright rows carry no SGR runs (the dim/bright split is the painter's),
-// so the raw PTY stream carries each repainted row contiguously — the tick
-// assertion reads the raw stream via [FaCliHarness.waitForRaw].
+// child runs a real `bash sleep 6` (general-purpose `task` agent —
+// `explore` is read-only and has no bash tool) so the running row lives
+// long enough to observe deterministically.
 //
 // Structure mirrors subagent_integration_test.dart (#551): bare-workspace
 // boot, content-routed MockLlmScript, keyless localhost config repointed
@@ -84,7 +81,10 @@ tui:
       // Content-routed script (substring match on the LAST user message).
       // The child's second request still matches its own scenario (its
       // tool result rides role:tool), so the two-response child script
-      // pops in order: bash sleep → final text.
+      // pops in order: bash sleep → final text. The child must be the
+      // general-purpose `task` agent — `explore` is read-only (no bash
+      // tool), so its toolCall would fail instantly and the running row
+      // would live <1s, unobservable.
       final script = MockLlmScript.parse('''
 scenarios:
   - match: "Use the task tool"
@@ -93,7 +93,7 @@ scenarios:
           name: task
           arguments: >-
             {"context":"Prove the board","tasks":[{"name":"boardwatch",
-            "agent":"explore","task":"Count the files in the current
+            "agent":"task","task":"Count the files in the current
             directory.","background":true}]}
       - text: "spawned boardwatch in the background"
   - match: "Count the files in the current directory"
@@ -128,13 +128,12 @@ scenarios:
       );
       expect(appearing, contains('run  boardwatch'));
 
-      // TICKING: the same row repaints in place with a larger age (the 1 Hz
-      // ticker; ages recompute from the spawn timestamp). The bright row is
-      // SGR-free, so the raw stream carries `run  boardwatch   Ns` as one
-      // contiguous byte run per repaint.
-      await harness.waitForRaw(
-        (raw) => RegExp('run  boardwatch\\s+[2-9]s').hasMatch(raw),
-        what: 'the boardwatch row repainted with an age ≥ 2s',
+      // TICKING: the 1 Hz ticker re-renders the age from the spawn
+      // timestamp in place — dart_tui diff-renders, so the raw stream
+      // only ever carries the CHANGED cells (the age digit), never the
+      // full row again; anchor the tick on the rendered screen instead.
+      await harness.waitForScreen(
+        RegExp('run  boardwatch\\s+[2-9]s'),
         timeout: const Duration(seconds: 30),
       );
 
