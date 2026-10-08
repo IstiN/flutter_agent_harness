@@ -125,6 +125,13 @@ const TuiTheme kDefaultTuiTheme = TuiTheme(
   userMessageText: Style(foregroundRgb: RgbColor(0xE8, 0xEE, 0xF7)),
   toolSuccessBg: Style(backgroundRgb: RgbColor(20, 37, 27)),
   toolErrorBg: Style(backgroundRgb: RgbColor(42, 21, 24)),
+  // Kaomoji thinking indicator (issue #1374): the launcher-icon brand
+  // teal/blue as NAMED roles — the #444 sweep (AC1) forbids anonymous
+  // ANSI picks, so the face renders through the role table like every
+  // other colorized segment. Palettes that name no kaomoji tone render
+  // the face plain (role-table rule), never a hard-coded pick.
+  kaomojiEye: Style(foregroundRgb: RgbColor(0x60, 0xd0, 0xd0)), // #60D0D0
+  kaomojiMouth: Style(foregroundRgb: RgbColor(0x70, 0xa0, 0xe0)), // #70A0E0
   // The in-flight card tint: the historical `highlight` stand-in value,
   // now a named role (S1) — kept byte-stable so stored pre-#807 cards
   // still resolve their phase at repaint time.
@@ -382,6 +389,10 @@ const Set<String> kThemeRoleNames = {
   'userMessageText',
   'toolSuccessBg',
   'toolErrorBg',
+  // issue #1374: the kaomoji thinking-indicator tones (named roles —
+  // the #444 sweep forbids anonymous picks).
+  'kaomojiEye',
+  'kaomojiMouth',
   // issue #804: the omp token families (partial themes keep inheriting
   // per-role; built-in names stay unshadowable).
   'toolPendingBg',
@@ -556,6 +567,8 @@ TuiTheme parseUserTheme(String text, String fileName) {
     userMessageText: fg('userMessageText'),
     toolSuccessBg: bg('toolSuccessBg'),
     toolErrorBg: bg('toolErrorBg'),
+    kaomojiEye: fg('kaomojiEye'),
+    kaomojiMouth: fg('kaomojiMouth'),
     // issue #804 token families: same inheritance rules, no flags (omp
     // has none).
     toolPendingBg: bg('toolPendingBg'),
@@ -630,6 +643,8 @@ Style? _defaultRoleStyle(String role) => switch (role) {
   'userMessageText' => kDefaultTuiTheme.userMessageText,
   'toolSuccessBg' => kDefaultTuiTheme.toolSuccessBg,
   'toolErrorBg' => kDefaultTuiTheme.toolErrorBg,
+  'kaomojiEye' => kDefaultTuiTheme.kaomojiEye,
+  'kaomojiMouth' => kDefaultTuiTheme.kaomojiMouth,
   _ => null,
 };
 
@@ -949,15 +964,15 @@ final class FaThemeController {
   String accentSoft(String text) =>
       _render(Style(foregroundRgb: _current.accent.foregroundRgb), text);
 
-  /// The kaomoji thinking-indicator tones (issue #1374): brand-fixed
-  /// launcher-icon colors, deliberately NOT theme roles — the faces must
-  /// read as the fa brand on every palette, exactly like the app's SVG
-  /// sprite. Profile-aware via [_render].
-  String kaomojiEye(String text) =>
-      _render(const Style(foregroundRgb: RgbColor(0x60, 0xd0, 0xd0)), text);
+  /// The kaomoji thinking-indicator tones (issue #1374): the boot
+  /// palette's launcher-icon brand teal/blue, carried as NAMED roles
+  /// (`kaomojiEye`/`kaomojiMouth`) — the #444 sweep forbids anonymous
+  /// ANSI picks, and a user theme can now retint or unset the face.
+  /// Palettes without the roles render the face plain. Profile-aware
+  /// via [_render].
+  String kaomojiEye(String text) => _render(_current.kaomojiEye, text);
 
-  String kaomojiMouth(String text) =>
-      _render(const Style(foregroundRgb: RgbColor(0x70, 0xa0, 0xe0)), text);
+  String kaomojiMouth(String text) => _render(_current.kaomojiMouth, text);
 
   String dim(String text) => _render(_current.muted, text);
 
