@@ -84,14 +84,29 @@ class _TranscriptService extends FakeChatService {
   bool get isStreaming => streaming;
 }
 
-/// Every face on screen (tree order): the keyed boxes the thinking
-/// tiles' [KaomojiThinkingIcon]s mount.
-List<KaomojiFace> _faces(WidgetTester tester) => [
-  for (final widget in tester.widgetList(
-    find.byWidgetPredicate((w) => w.key is ValueKey<KaomojiFace>),
-  ))
-    (widget.key! as ValueKey<KaomojiFace>).value,
-];
+/// (active, face) per thinking tile's [KaomojiSwapper], in tree order.
+/// The transcript renders NEWEST-FIRST, so ORDER IS NOT THE CONTRACT —
+/// the gate is: each tile is identified by its swapper's
+/// [KaomojiSwapper.active] flag (exactly one live), and only the live
+/// face ever moves.
+List<(bool, KaomojiFace)> _swapperStates(WidgetTester tester) => [
+      for (final swapper in tester.widgetList<KaomojiSwapper>(
+        find.byType(KaomojiSwapper),
+      ))
+        (swapper.active, _faceOf(tester, swapper)),
+    ];
+
+/// The face a specific swapper's tile shows, through the keyed box its
+/// builder mounts ([_shownFace]'s matcher, scoped to one swapper).
+KaomojiFace _faceOf(WidgetTester tester, KaomojiSwapper swapper) {
+  final box = tester.widget(
+    find.descendant(
+      of: find.byWidget(swapper),
+      matching: find.byWidgetPredicate((w) => w.key is ValueKey<KaomojiFace>),
+    ),
+  );
+  return (box.key! as ValueKey<KaomojiFace>).value;
+}
 
 void main() {
   testWidgets('KaomojiSwapper: random swap exactly on the ~0.9 s cadence',
@@ -328,14 +343,31 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     await tester.pump(const Duration(milliseconds: 100));
 
-    expect(_faces(tester), hasLength(2));
-    final before = _faces(tester);
+    // Round-3 review contract: identify the tiles through the GATE
+    // itself, not through tree order — the transcript renders
+    // NEWEST-FIRST (a positional [0]/[1] assumption inverts the
+    // assertions). Exactly one swapper is live; only its face moves.
+    expect(_swapperStates(tester), hasLength(2));
+    expect(
+      _swapperStates(tester).where((state) => state.$1),
+      hasLength(1),
+      reason: 'exactly ONE live swapper: the newest thinking block',
+    );
+    final liveBefore = _swapperStates(tester).firstWhere((s) => s.$1).$2;
+    final frozenBefore = _swapperStates(tester).firstWhere((s) => !s.$1).$2;
+
     await tester.pump(kKaomojiSwapPeriod);
-    final after = _faces(tester);
-    expect(after[0], same(before[0]),
+
+    final after = _swapperStates(tester);
+    expect(
+      after.where((state) => state.$1),
+      hasLength(1),
+      reason: 'the gate stays single-live across the swap boundary',
+    );
+    expect(after.firstWhere((s) => s.$1).$2, isNot(same(liveBefore)),
+        reason: 'the LIVE thinking block animates');
+    expect(after.firstWhere((s) => !s.$1).$2, same(frozenBefore),
         reason: 'the finished thinking note keeps its frozen face');
-    expect(after[1], isNot(same(before[1])),
-        reason: 'only the LIVE thinking block animates');
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
