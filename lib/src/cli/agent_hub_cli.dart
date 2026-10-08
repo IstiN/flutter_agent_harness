@@ -332,6 +332,8 @@ extension AgentCliHubDriver on AgentCli {
     // Event-driven waiting-row enter (issue #450): the awaited child joins
     // the row the moment it registers (issue #520 AC3).
     unawaited(_waiting.push());
+    // The status board row appears on spawn (gh-1415 delta 7).
+    _subagentBoard.refresh();
     _renderTaskBlock(
       TaskBlock(
         kind: 'agent',
@@ -344,6 +346,8 @@ extension AgentCliHubDriver on AgentCli {
 
   /// A `/task` job settled: the block closes with its status + elapsed.
   void _onTaskJobSettledBlock(TaskJob job) {
+    // The status board row flashes + collapses on settle (gh-1415 delta 9).
+    _subagentBoard.refresh();
     final result = job.result;
     _renderTaskBlock(
       TaskBlock(

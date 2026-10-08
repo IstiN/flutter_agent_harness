@@ -61,8 +61,11 @@ extension _TuiComposerLayout on FaTuiModel {
   }
 
   /// The optional sections' wanted row counts, in consumption order
-  /// (issue #496): board, waiting, scheduled, chips, queue, sticky.
-  (int, int, int, int, int, int) _optionalSectionWants(int width) {
+  /// (issue #496): subagents, board, waiting, scheduled, chips, queue,
+  /// sticky. The subagent board (gh-1415) sits in FRONT of the job board:
+  /// the card's rows are the region the whole frame exists to show.
+  (int, int, int, int, int, int, int) _optionalSectionWants(int width) {
+    final subagentsWanted = subagentBoardRows.length;
     final boardWanted = jobBoardLines.length;
     final waitingWanted = _waitingRowLines().length;
     final scheduledWanted = scheduledCount > 0 ? 1 : 0;
@@ -70,6 +73,7 @@ extension _TuiComposerLayout on FaTuiModel {
     final queueWanted = queue.isEmpty ? 0 : queue.length + 2;
     final stickyWanted = _stickyArmed ? _formattedStickyRows(width).length : 0;
     return (
+      subagentsWanted,
       boardWanted,
       waitingWanted,
       scheduledWanted,
@@ -114,6 +118,7 @@ extension _TuiComposerLayout on FaTuiModel {
         promptH +
         inputVisible;
     final (
+      subagentsWanted,
       boardWanted,
       waitingWanted,
       scheduledWanted,
@@ -124,6 +129,7 @@ extension _TuiComposerLayout on FaTuiModel {
       width,
     );
     final optionalWanted =
+        subagentsWanted +
         boardWanted +
         waitingWanted +
         scheduledWanted +
@@ -144,6 +150,7 @@ extension _TuiComposerLayout on FaTuiModel {
       return take;
     }
 
+    final subagents = section(subagentsWanted);
     final board = section(boardWanted);
     final waiting = section(waitingWanted);
     final scheduled = section(scheduledWanted);
@@ -198,6 +205,7 @@ extension _TuiComposerLayout on FaTuiModel {
     }
     consumable -= sticky;
     return _FramePlan(
+      subagents: subagents,
       board: board,
       waiting: waiting,
       scheduled: scheduled,
@@ -563,6 +571,7 @@ extension _TuiComposerLayout on FaTuiModel {
 /// screen.
 final class _FramePlan {
   const _FramePlan({
+    required this.subagents,
     required this.board,
     required this.waiting,
     required this.scheduled,
@@ -576,6 +585,7 @@ final class _FramePlan {
     this.inputOffset = 0,
   });
 
+  final int subagents;
   final int board;
   final int waiting;
   final int scheduled;
