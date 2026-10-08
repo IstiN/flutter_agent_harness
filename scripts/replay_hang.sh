@@ -1,26 +1,98 @@
 #!/usr/bin/env bash
-# replay_hang.sh — replay a captured hang-*.json (issue #1392 StallSentinel)
-# against a live endpoint and print the first-byte time, so a Class-C
-# "the request never returned" repro runs from any Mac without a bench:
+# replay_hang.sh — replay a captured hang against a live endpoint.
 #
-#     scripts/replay_hang.sh hang-t1__trial-213s.json
-#     scripts/replay_hang.sh hang-t1__trial-213s.json https://api.z.ai/...
+# Two capture formats are dispatched automatically on the meta's keys:
 #
-# The hang file's own payload.url is used unless a URL is passed as argv 2
-# (or FA_REPLAY_URL is set) — e.g. to retarget a captured payload at a
-# local mock. Per-request knobs (FA_REPLAY_TIMEOUT_SEC, default 400s)
-# bound the wait; the exit code is 0 only when a first byte arrived.
-set -euo pipefail
+#   1. StallSentinel dump (gh-1395 AC3): a meta.json with `idleSeconds`
+#      and payload.bin alongside — byte-identical curl replay bounded by
+#      the dump's idle budget. Auth headers were redacted at capture
+#      time; re-inject live values via env:
+#        REPLAY_AUTHORIZATION='Bearer ...' scripts/replay_hang.sh meta.json
+#      Exit codes: 0 answered within budget ("replayed: <status>");
+#      2 stall REPRODUCED ("stalled: <detail>"); 1 usage/curl failure.
+#
+#   2. Bench hang-*.json (issue #1392): a JSON whose `payload` carries
+#      url/method/body/headers — python-stdlib replay that prints the
+#      first-byte time, so a Class-C repro runs from any machine:
+#        scripts/replay_hang.sh hang-t1__trial-213s.json [url]
+#      (payload.url unless argv 2 / FA_REPLAY_URL; FA_REPLAY_TIMEOUT_SEC
+#      bounds the wait, default 400s; exit 0 only on a first byte.)
+set -uo pipefail
 
-file="${1:?usage: replay_hang.sh <hang-*.json> [url]}"
-url="${2:-${FA_REPLAY_URL:-}}"
+if [ $# -lt 1 ]; then
+  echo "replay-error: usage: $0 <meta.json|hang-*.json> [url]" >&2
+  exit 1
+fi
+FILE="$1"
 
-if [ ! -f "$file" ]; then
-  echo "replay_hang: no such file: $file" >&2
-  exit 2
+# Dispatch on format: the StallSentinel meta is flat with `idleSeconds`;
+# the bench hang file nests the request under `payload`.
+IS_SENTINEL_META="$(python3 - "$FILE" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1]) as fh:
+        m = json.load(fh)
+except Exception:
+    print("no")
+else:
+    print("yes" if isinstance(m, dict) and "idleSeconds" in m else "no")
+PY
+)"
+
+if [ "$IS_SENTINEL_META" = "yes" ]; then
+  META="$FILE"
+  DIR="$(cd "$(dirname "$META")" && pwd)"
+  PAYLOAD="$DIR/payload.bin"
+
+  if [ ! -f "$META" ]; then
+    echo "replay-error: meta not found: $META" >&2
+    exit 1
+  fi
+
+  # meta.json is a flat object we wrote ourselves; python3 parses it
+  # dependency-free (this box's jq is jaq with silent-stdin quirks).
+  read -r URL METHOD IDLE CT < <(python3 - "$META" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    m = json.load(f)
+print(m.get("url", ""), m.get("method", "POST"), m.get("idleSeconds", 300),
+      m.get("headers", {}).get("content-type", ""))
+PY
+)
+
+  if [ -z "$URL" ] || [ "$URL" = "unavailable" ]; then
+    echo "replay-error: no url in meta" >&2
+    exit 1
+  fi
+
+  ARGS=(--max-time "${IDLE:-300}" -s -o /dev/null -w '%{http_code}' -X "$METHOD")
+  if [ -n "$CT" ]; then
+    ARGS+=(-H "content-type: $CT")
+  fi
+  if [ -n "${REPLAY_AUTHORIZATION:-}" ]; then
+    ARGS+=(-H "authorization: $REPLAY_AUTHORIZATION")
+  fi
+  if [ -f "$PAYLOAD" ]; then
+    ARGS+=(--data-binary "@$PAYLOAD")
+  fi
+
+  STATUS="$(curl "${ARGS[@]}" "$URL")"
+  CURL_RC=$?
+
+  if [ "$CURL_RC" -eq 28 ]; then
+    echo "stalled: no response within ${IDLE}s (same stall signature)"
+    exit 2
+  elif [ "$CURL_RC" -ne 0 ]; then
+    echo "replay-error: curl exit $CURL_RC"
+    exit 1
+  fi
+
+  echo "replayed: HTTP $STATUS within ${IDLE}s"
+  exit 0
 fi
 
-python3 - "$file" "$url" <<'PY'
+# Bench hang-*.json replay (issue #1392).
+python3 - "$FILE" "${2:-${FA_REPLAY_URL:-}}" <<'PY'
 import json
 import sys
 import time
