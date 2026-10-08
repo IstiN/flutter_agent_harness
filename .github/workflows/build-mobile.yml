@@ -885,6 +885,7 @@ jobs:
           # "$IPA_PATH.stripped" against the mktemp dir (no flutter_app/
           # ancestor) → "zip error: Could not create output file". The
           # atomic-swap mv below carried the same hazard.
+          # (realpath: /usr/bin/realpath, macOS 13+ — the runner is newer.)
           IPA_PATH=$(realpath "$IPA_PATH")
           if ! unzip -l "$IPA_PATH" "Symbols/*" | grep -q "Symbols/"; then
             echo "no Symbols/ in the IPA — nothing to strip"

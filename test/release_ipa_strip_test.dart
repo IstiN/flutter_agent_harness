@@ -108,12 +108,12 @@ stat() {
 }
 ${runBlockOf(buildMobile, stripStep)}
 ''');
-        return Process.runSync(
-          'bash',
-          ['strip_step.sh'],
-          workingDirectory: sandbox.path,
-          environment: {'PATH': Platform.environment['PATH'] ?? ''},
-        );
+        // The parent environment is inherited by default — no `environment:`
+        // override (a same-value PATH entry would be a no-op, and a `?? ''`
+        // fallback would blank PATH where it is unset).
+        return Process.runSync('bash', [
+          'strip_step.sh',
+        ], workingDirectory: sandbox.path);
       }
 
       /// The entries of the sandbox IPA after the step ran.
