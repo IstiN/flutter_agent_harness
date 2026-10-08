@@ -72,8 +72,14 @@ class SummaryRenderTest(unittest.TestCase):
         self.assertIn("est. cost: $0.0001", out)
         # Rows with tokens but no price count as unpriced; the zero-token
         # row renders n/a but is NOT unpriced spend (harbor-aligned rule).
-        self.assertIn("| task-b | u.1-of-1.shard-1 | no |  | 40/20 | n/a |", out)
-        self.assertIn("| task-c | v.1-of-1.shard-1 | no |  | 0/0 | n/a |", out)
+        self.assertIn(
+            "| task-b | u.1-of-1.shard-1 | no |  | checklist: none | 40/20 | n/a |",
+            out,
+        )
+        self.assertIn(
+            "| task-c | v.1-of-1.shard-1 | no |  | checklist: none | 0/0 | n/a |",
+            out,
+        )
         self.assertIn("1 trial(s) unpriced", out)
 
     def test_agent_layout_sessions_found(self):

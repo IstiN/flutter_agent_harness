@@ -177,7 +177,7 @@ class SummaryObservabilityTest(unittest.TestCase):
         # run's row is 4000/2000 priced, not 0/0 n/a.
         self.assertIn(
             "| get-bitcoin-nodes | " + recovered
-            + " | yes | agent_timeout | 4000/2000 | $0.0016 |",
+            + " | yes | agent_timeout | checklist: none | 4000/2000 | $0.0016 |",
             out,
         )
         # The split classifies the takeover distinct from hang and work;
@@ -214,15 +214,19 @@ class SummaryObservabilityTest(unittest.TestCase):
         out = "\n".join(lines)
         self.assertIn(
             "| build-initramfs-qemu | b.1-of-1.shard-1 | no (test_timeout)"
-            " | test_timeout | 11640/10368 | n/a |",
+            " | test_timeout | checklist: none | 11640/10368 | n/a |",
             out,
         )
         self.assertIn(
             "| kill-trial | k.1-of-1.shard-1 | pending (agent_timeout)"
-            " | agent_timeout | 0/0 | n/a |",
+            " | agent_timeout | checklist: none | 0/0 | n/a |",
             out,
         )
-        self.assertIn("| lost-trial | l.1-of-1.shard-1 | pending |  | 0/0 | n/a |", out)
+        self.assertIn(
+            "| lost-trial | l.1-of-1.shard-1 | pending |  | checklist: none"
+            " | 0/0 | n/a |",
+            out,
+        )
 
     def test_ac3_unpriced_warning_names_the_model_id(self):
         name = "m.1-of-1.shard-1"
