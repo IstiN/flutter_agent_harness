@@ -244,6 +244,90 @@ Future<void> _runApp(List<String> args) async {
         ...chain,
     ],
   );
+
+  // Auto-update boot hook (issue #1377, `auto_update:` config): `off` is
+  // zero network; `notify` runs one bounded check and prints a
+  // once-per-process banner; `on` applies + restarts into the successor
+  // BEFORE the session boots — applied → exit(0), the successor inherits
+  // stdio + this argv and resumes the session through its own --session
+  // flag. Help/version and the update/uninstall quick commands exited
+  // above; serve/wire-daemon runs are skipped (a daemon must not restart
+  // itself under connected clients), and `fa config export-providers`
+  // (intercepted below) is not a session boot either.
+  final autoUpdateNotify = AutoUpdateNotify();
+  // The banner is best-effort: once the TUI owns the terminal a late
+  // stderr line would garble a frame, so the probe drops it instead
+  // (issue #1377 review r4).
+  var autoUpdateTuiOwnsScreen = false;
+  switch (bootUpdateAction(
+    mode: saved.autoUpdate,
+    serveOrDaemon:
+        serve.serveA2a ||
+        serve.serveBridge ||
+        wireServe.wireServe ||
+        parsed.config != null,
+  )) {
+    case BootUpdateAction.none:
+      break;
+    case BootUpdateAction.notifyCheck:
+      // Background probe: the boot never waits on it — the banner prints
+      // WHEN the answer lands (a dead endpoint just stays silent; the
+      // 3 s bound keeps a hung socket from printing late into a live
+      // TUI). stderr — the same pre-TUI boot-notice channel as the
+      // config warnings above.
+      unawaited(() async {
+        // The probe OWNS its client: `.timeout` abandons the in-flight
+        // request at the bound, and closing here (finally, always) is
+        // what actually releases the socket — not the inner finally,
+        // which only runs when the abandoned fetch itself settles.
+        final probe = http.Client();
+        try {
+          final latest = await fetchLatestTag(client: probe).timeout(
+            const Duration(seconds: 3),
+            onTimeout: () => null,
+          );
+          if (latest != null &&
+              compareVersions(latest, packageVersion) > 0 &&
+              !autoUpdateTuiOwnsScreen) {
+            final banner = autoUpdateNotify.banner(latest);
+            if (banner != null) stderr.writeln(banner);
+          }
+        } on Object catch (_) {
+          // Best-effort probe: a hostile/unreachable network must be
+          // INVISIBLE (no banner), never a crash (issue #1377 review r4).
+        } finally {
+          probe.close();
+        }
+      }());
+    case BootUpdateAction.applyAndExit:
+      final outcome = await applyUpdate(
+        currentVersion: packageVersion,
+        launchArgs: args,
+      );
+      switch (outcome) {
+        case ApplyUpdateOutcome.applied:
+          exit(0);
+        case ApplyUpdateOutcome.upToDate:
+          break;
+        case ApplyUpdateOutcome.refusedDevRun:
+          stderr.writeln('fa: auto update unavailable for source runs');
+        case ApplyUpdateOutcome.unsupportedPlatform:
+          break; // The engine swapped and printed the restart hint.
+        case ApplyUpdateOutcome.convergenceGuard:
+          stderr.writeln(
+            'fa: auto update paused — the release is not resolving '
+            'through this channel yet; continuing on v$packageVersion',
+          );
+        case _:
+          // Never crash the boot: one warn, then continue on the current
+          // binary (restartFailed keeps the already-swapped new binary).
+          stderr.writeln(
+            'fa: auto update failed (${outcome.name}) — '
+            'continuing on v$packageVersion',
+          );
+      }
+  }
+
   // Session image registry (`images:` section, issue #171): process-wide,
   // read inside the agent loop's request build. Default: on.
   imageRegistryConfig = saved.images ?? const ImageRegistryConfig();
@@ -1000,6 +1084,9 @@ Future<void> _runApp(List<String> args) async {
   // never polls the HID state, so it never pays for the probe.
   final useTui =
       headlessPrompt == null && stdout.supportsAnsiEscapes && io.isInteractive;
+  // From here the TUI (when it starts) owns the terminal: a late
+  // best-effort banner must not paint into its frame (issue #1377 r4).
+  if (useTui) autoUpdateTuiOwnsScreen = true;
   // Shift+Enter HID polling (issue #355): resolved ONCE at startup, off
   // the UI isolate — a CoreGraphics call wedged by a GUI-less session
   // (SSH) must never block the REPL. Null: modifier-encoding terminals
@@ -1387,6 +1474,20 @@ Future<void> _runApp(List<String> args) async {
         tuiClassic: saved.tuiClassic,
         statusLine: saved.statusLine,
         agentLoadMode: saved.agentLoadMode,
+        // `/update` (issue #1377): the engine lives in bin/self_manage.dart
+        // and lib stays dart:io-free, so the command calls back into this
+        // closure — check, apply, spawn the successor, exit(0) on success;
+        // print + stay alive on any failure. The LIVE session id rides
+        // into the successor argv (appended only when the argv itself does
+        // not carry one), so the conversation survives the restart.
+        updateCommand: (sessionId) => _runSlashUpdate(
+          currentVersion: packageVersion,
+          launchArgs: successorArgs(args, sessionId),
+          writeln: io.writeln,
+        ),
+        // The settings-hub row reads the live policy (slice B): seed it from
+        // the loaded `auto_update:` section.
+        autoUpdate: saved.autoUpdate,
       ),
       io: io,
     );
@@ -1642,4 +1743,34 @@ Future<void> _runApp(List<String> args) async {
   // (?1002l ?1006l) arrives too late or is lost. Write them again here with
   await resetTerminalForShell();
   exit(0);
+}
+
+/// The `/update` slash-command body (issue #1377): the same verified
+/// engine path as the boot hook and `fa update` — check, download+verify,
+/// swap, spawn the successor with the ORIGINAL argv (the session resume
+/// flag is already in it), then exit(0) to hand it the terminal. Any
+/// failure prints one line and stays alive on the current version;
+/// `unsupportedPlatform` is silent here — the engine already printed the
+/// restart prompt after the swap.
+Future<void> _runSlashUpdate({
+  required String currentVersion,
+  required List<String> launchArgs,
+  required void Function(String line) writeln,
+}) async {
+  final outcome = await applyUpdate(
+    currentVersion: currentVersion,
+    launchArgs: launchArgs,
+  );
+  switch (outcome) {
+    case ApplyUpdateOutcome.applied:
+      exit(0);
+    case ApplyUpdateOutcome.upToDate:
+      writeln('already up to date (v$currentVersion)');
+    case ApplyUpdateOutcome.unsupportedPlatform:
+      break;
+    case ApplyUpdateOutcome.refusedDevRun:
+      writeln('update unavailable for source runs');
+    case _:
+      writeln('update failed (${outcome.name}) — staying on v$currentVersion');
+  }
 }

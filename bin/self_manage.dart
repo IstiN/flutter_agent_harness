@@ -10,19 +10,46 @@ library;
 import 'dart:convert';
 import 'dart:ffi' show Abi;
 import 'dart:io';
+import 'dart:typed_data' show Uint8List;
 
 import 'package:http/http.dart' as http;
 
 import 'package:archive/archive.dart';
+import 'package:crypto/crypto.dart' show sha256;
+import 'package:cryptography/cryptography.dart' show RsaPublicKey;
+import 'package:pointycastle/export.dart'
+    show
+        PublicKeyParameter,
+        RSAPublicKey,
+        RSASigner,
+        RSASignature,
+        SHA256Digest;
 
 const _repo = 'IstiN/flutter_agent_harness';
+
+/// Network bounds for the self-update paths: metadata answers (latest
+/// tag, manifest, signature) within [kFaUpdateNetworkTimeout]; the
+/// archive body gets [kFaUpdateArchiveTimeout] (tens of MB on slow
+/// links). Anything exceeding its bound aborts the update — fail-closed,
+/// never a hang (issue #1377 review r4).
+
+/// Metadata answers (latest tag, manifest, signature) must land within
+/// this bound; slower means the update aborts, fail-closed.
+const Duration kFaUpdateNetworkTimeout = Duration(seconds: 15);
+
+/// The archive body bound (tens of MB on slow links).
+const Duration kFaUpdateArchiveTimeout = Duration(minutes: 2);
 
 void _say(String text) => stdout.writeln(text);
 void _warn(String text) => stderr.writeln('fa: $text');
 
 /// The host OS/arch pair as used in the release asset names.
-String? _archiveName() {
-  final abi = Abi.current().toString(); // e.g. windows_x64, macos_arm64
+String? _archiveName() => archiveNameFor(Abi.current().toString());
+
+/// The release asset name for an OS/arch pair (`windows_x64`, `macos_arm64`,
+/// … as `Abi.current()` reports them), or null when there is no prebuilt
+/// archive for the platform.
+String? archiveNameFor(String abi) {
   return switch (abi) {
     'windows_x64' => 'fa-windows-x64.zip',
     'macos_x64' => 'fa-macos-x64.tar.gz',
@@ -105,26 +132,36 @@ Install _detectInstall() => classifyInstall(
 
 /// Fetches the latest release tag (e.g. `v0.1.44`). The HTML permalink's
 /// 302 is tried first (the API's unauthenticated rate limit is easy to hit
-/// on shared IPs); the JSON API is the fallback.
-Future<String?> _latestTag(http.Client client) async {
-  final permalink = Uri.parse('https://github.com/$_repo/releases/latest');
-  final request = http.Request('GET', permalink)..followRedirects = false;
-  final redirected = await client.send(request);
-  final location = redirected.headers['location'];
-  if (location != null) {
-    final match = RegExp(r'/releases/tag/([^/]+)').firstMatch(location);
-    if (match != null) return match.group(1);
+/// on shared IPs); the JSON API is the fallback. Null when neither works.
+///
+/// [client] defaults to a fresh [http.Client] (closed before returning).
+Future<String?> fetchLatestTag({http.Client? client}) async {
+  final own = client ?? http.Client();
+  try {
+    final permalink = Uri.parse('https://github.com/$_repo/releases/latest');
+    final request = http.Request('GET', permalink)..followRedirects = false;
+    final redirected = await own.send(request);
+    final location = redirected.headers['location'];
+    if (location != null) {
+      final match = RegExp(r'/releases/tag/([^/]+)').firstMatch(location);
+      if (match != null) return match.group(1);
+    }
+    final response = await own.get(
+      Uri.parse('https://api.github.com/repos/$_repo/releases/latest'),
+      headers: {'Accept': 'application/vnd.github+json'},
+    );
+    if (response.statusCode != 200) return null;
+    final body = jsonDecode(response.body);
+    return body is Map<String, dynamic> ? body['tag_name'] as String? : null;
+  } finally {
+    if (client == null) own.close();
   }
-  final response = await client.get(
-    Uri.parse('https://api.github.com/repos/$_repo/releases/latest'),
-    headers: {'Accept': 'application/vnd.github+json'},
-  );
-  if (response.statusCode != 200) return null;
-  final body = jsonDecode(response.body);
-  return body is Map<String, dynamic> ? body['tag_name'] as String? : null;
 }
 
-int _compareVersions(String a, String b) {
+/// Compares two dotted version strings (`v` prefix ignored, missing
+/// components are zero): negative when [a] is older than [b], positive
+/// when newer, zero when equal.
+int compareVersions(String a, String b) {
   List<int> parts(String v) => [
     for (final piece in v.replaceFirst(RegExp('^v'), '').split('.'))
       int.tryParse(piece) ?? 0,
@@ -139,6 +176,168 @@ int _compareVersions(String a, String b) {
   return 0;
 }
 
+/// The pinned release trust anchor — byte-identical to
+/// TRUSTED_SIGNING_PEM in site/install.sh. Archives are only applied when
+/// their signed SHA256SUMS verifies against this key.
+const String kFaReleaseSigningPem = '-----BEGIN PUBLIC KEY-----\n'
+    'MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA/F/wk8xOz9U/sjsGJKn2\n'
+    'sDuqF3KxG8UXJsC95fSp6Bpm3hjPEVF1wsYycEy4KeCRpKBeyJGqhIoiEBeQBUgz\n'
+    'NKEOjEoGuZxLgtOL2/0OkDVLpXA/q5gmdey0yWx+P5I9ShDMuQWgbG1wR55ti6lD\n'
+    '0b/jhG9OUVTDjSDG2jvbxx27gAx1NMX6IgMAx6u3djYKyRMdj/DRqZXkv2cUO8RS\n'
+    'elhwcSChDKrVjrIaFru8iw7eBS0c5SNV1D9qLESNklFR5tTf9R4Uv1/ixTIN56tk\n'
+    'j8l7HrWT0NmFNU5d2sy33pbbsACqqGHSeCVnAEZmrn0vzZ25onFQbr68qIhPCQUq\n'
+    'z7DTlxKxdRViEkZwRGpKTSWnS5stu/Y+ReD/XeZgKFduje98kcVvHFyyfaQt6Wee\n'
+    '6ZO/s6AMByqPTI1eJCkxe53LkIiQs5py3a5whKrkPy99/C1uOrmGiJurA3luAbhD\n'
+    'guzhAH54jqj2XuzD8HQujgq+5Edt80HK4jvfbzN3XQE+XQB7s10KAvAcmhoPONn3\n'
+    'JctJXd6etpAaHg56YciFqzOa+/oyE4sgjunGqq0s4hx0ROHIhLC2almcekZFLEit\n'
+    '+GmhARJnFP2Nem6owJ1PSYzIWT5zVjrA4pK4VJGA6EC2H2poBq4x7tkDugQYxdgC\n'
+    'P2gLH2uyw0KaQBQa1CQVCnUCAwEAAQ==\n'
+    '-----END PUBLIC KEY-----';
+
+/// Whether two byte lists are identical.
+bool _listEquals(List<int> a, List<int> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+/// Minimal DER reader: hands out the value octets of consecutive
+/// tag-length-value elements.
+final class _DerReader {
+  _DerReader(this.bytes);
+
+  final List<int> bytes;
+  var pos = 0;
+
+  /// Reads the next element — which must carry [tag] — and returns its
+  /// value octets.
+  List<int> take(int tag) {
+    if (pos >= bytes.length || bytes[pos++] != tag) {
+      throw const FormatException('unexpected DER tag');
+    }
+    var length = bytes[pos++];
+    if (length & 0x80 != 0) {
+      final count = length & 0x7f;
+      length = 0;
+      for (var i = 0; i < count; i++) {
+        length = (length << 8) | bytes[pos++];
+      }
+    }
+    final value = bytes.sublist(pos, pos + length);
+    pos += length;
+    return value;
+  }
+}
+
+/// The rsaEncryption OID (1.2.840.113549.1.1.1) in DER form.
+const _rsaEncryptionOid = [
+  0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,
+];
+
+/// Drops the sign padding of a DER positive INTEGER (one leading 0x00).
+List<int> _unsignedInteger(List<int> bytes) =>
+    bytes.length > 1 && bytes.first == 0 ? bytes.sublist(1) : bytes;
+
+/// Reads an unsigned big-endian byte list (DER INTEGER content) as a
+/// [BigInt] for pointycastle's RSA key.
+BigInt _bytesToBigInt(List<int> bytes) => BigInt.parse(
+    bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join(),
+    radix: 16);
+
+/// Parses a PEM `BEGIN PUBLIC KEY` (SPKI) RSA public key into its
+/// modulus/exponent bytes. Public for the provenance tests.
+RsaPublicKey rsaPublicKeyFromPem(String pem) {
+  final base64Body = pem
+      .split('\n')
+      .where((line) => !line.startsWith('-----'))
+      .join();
+  final der = base64Decode(base64Body.replaceAll(RegExp(r'\s'), ''));
+  final spki = _DerReader(der);
+  // spki content: SEQUENCE{OID rsaEncryption, NULL}, BIT STRING{key}.
+  final content = _DerReader(spki.take(0x30));
+  final algorithm = _DerReader(content.take(0x30)); // AlgorithmIdentifier
+  if (!_listEquals(algorithm.take(0x06), _rsaEncryptionOid)) {
+    throw const FormatException('not an rsaEncryption SPKI');
+  }
+  // BIT STRING: one unused-bits octet, then SEQUENCE{INTEGER n, INTEGER e}.
+  final rsa = _DerReader(
+    _DerReader(content.take(0x03).sublist(1)).take(0x30),
+  );
+  return RsaPublicKey(
+    n: _unsignedInteger(rsa.take(0x02)), // INTEGER modulus
+    e: _unsignedInteger(rsa.take(0x02)), // INTEGER exponent
+  );
+}
+
+/// The hex digest [archiveName] is listed with in a sha256sum-style
+/// [manifest] (`<hex>  <name>`, the `*` binary-mode marker tolerated), or
+/// null when it is not listed.
+String? _manifestDigest(String manifest, String archiveName) {
+  for (final line in manifest.split('\n')) {
+    // sha256sum text mode emits TWO spaces between digest and name; the
+    // `*` binary-mode marker is tolerated. Whitespace around the name is
+    // never part of it.
+    final match = RegExp(
+      r'^([0-9a-fA-F]{64})[ \t]+\*?(.+?)[ \t]*$',
+    ).firstMatch(line.trim());
+    if (match != null && match.group(2) == archiveName) return match.group(1);
+  }
+  return null;
+}
+
+/// Verifies the release provenance of [archiveBytes]: fetches the
+/// SHA256SUMS manifest of [tag] and its signature, checks the RSA
+/// PKCS#1 v1.5 SHA-256 signature against the [pem] trust anchor, and
+/// compares the manifest digest for [archiveName] with the archive.
+/// False — never a throw — on ANY failure (missing assets, bad signature,
+/// unlisted or mismatched digest), so a broken release is just an aborted
+/// update.
+Future<bool> verifyReleaseProvenance({
+  required http.Client client,
+  required String tag,
+  required String archiveName,
+  required List<int> archiveBytes,
+  String pem = kFaReleaseSigningPem,
+}) async {
+  try {
+    final sumsUri = Uri.parse(
+      'https://github.com/$_repo/releases/download/$tag/SHA256SUMS',
+    );
+    final sums = await client
+        .get(sumsUri)
+        .timeout(kFaUpdateNetworkTimeout);
+    final sig = await client
+        .get(sumsUri.replace(path: '${sumsUri.path}.sig'))
+        .timeout(kFaUpdateNetworkTimeout);
+    if (sums.statusCode != 200 || sig.statusCode != 200) return false;
+    // package:cryptography's RsaSsaPkcs1v15 throws UnimplementedError on
+    // the VM (only WebCrypto backs it) — verify with pointycastle's pure
+    // Dart RSA instead (issue #1377 review r7). PKCS#1 v1.5 + SHA-256,
+    // the exact scheme `openssl dgst -sha256 -verify` checks.
+    final key = rsaPublicKeyFromPem(pem);
+    final signer = RSASigner(SHA256Digest(), '0609608648016503040201');
+    signer.init(
+      false,
+      PublicKeyParameter<RSAPublicKey>(
+        RSAPublicKey(_bytesToBigInt(key.n), _bytesToBigInt(key.e)),
+      ),
+    );
+    final verified = signer.verifySignature(
+      Uint8List.fromList(sums.bodyBytes),
+      RSASignature(Uint8List.fromList(sig.bodyBytes)),
+    );
+    if (!verified) return false;
+    final expected = _manifestDigest(sums.body, archiveName);
+    if (expected == null) return false;
+    return sha256.convert(archiveBytes).toString() ==
+        expected.toLowerCase();
+  } catch (_) {
+    return false;
+  }
+}
+
 /// `fa update`: downloads the latest release binary for this platform and
 /// swaps it in (atomic rename on Unix; rename-aside of the locked exe on
 /// Windows). Pub-global installs re-activate; dev runs are refused.
@@ -150,6 +349,7 @@ Future<int> runSelfUpdate({
   Install Function() detectInstall = _detectInstall,
   http.Client Function() newClient = http.Client.new,
   Future<ProcessResult> Function(String, List<String>) runProcess = Process.run,
+  String pem = kFaReleaseSigningPem,
 }) async {
   final install = detectInstall();
   if (install.kind == InstallKind.devRun) {
@@ -160,27 +360,27 @@ Future<int> runSelfUpdate({
   final client = newClient();
   try {
     _say('current version: $currentVersion');
-    final tag = await _latestTag(client);
+    final tag = await fetchLatestTag(client: client);
     if (tag == null) {
       _warn('cannot reach GitHub Releases (network or rate limit)');
       return 1;
     }
     final latest = tag.replaceFirst('v', '');
     _say('latest release:  $latest');
-    if (_compareVersions(latest, currentVersion) <= 0) {
+    if (compareVersions(latest, currentVersion) <= 0) {
       _say('already up to date.');
       return 0;
     }
 
     if (install.kind == InstallKind.pubGlobal) {
-      return await _pubGlobalUpdate(
+      return (await _pubGlobalUpdate(
         currentVersion: currentVersion,
         latest: latest,
         runProcess: runProcess,
-      );
+      )).$1;
     }
 
-    return await _binaryUpdate(client, install, tag, latest, runProcess);
+    return await _binaryUpdate(client, install, tag, latest, runProcess, pem);
   } finally {
     client.close();
   }
@@ -189,7 +389,7 @@ Future<int> runSelfUpdate({
 /// Pub-global update path: re-activate the package, forcing a clean
 /// re-activation first when pub believes a NEWER spec than the running
 /// binary.
-Future<int> _pubGlobalUpdate({
+Future<(int, String?)> _pubGlobalUpdate({
   required String currentVersion,
   required String latest,
   required Future<ProcessResult> Function(String, List<String>) runProcess,
@@ -203,7 +403,7 @@ Future<int> _pubGlobalUpdate({
     r'flutter_agent_harness\s+(\d+\.\d+\.\d+)',
   ).firstMatch('${listed.stdout}${listed.stderr}')?.group(1);
   if (activeVersion != null &&
-      _compareVersions(activeVersion, currentVersion) > 0) {
+      compareVersions(activeVersion, currentVersion) > 0) {
     _say(
       'rebuilding the activated snapshot '
       '(spec $activeVersion, running $currentVersion)…',
@@ -226,24 +426,28 @@ Future<int> _pubGlobalUpdate({
   stdout.write(result.stdout);
   stderr.write(result.stderr);
   if (result.exitCode == 0 &&
-      _compareVersions(latest, activeVersion ?? currentVersion) > 0) {
+      compareVersions(latest, activeVersion ?? currentVersion) > 0) {
     _say(
       'note: pub.dev lags behind GitHub ($latest available as a binary) — '
       'curl -fsSL https://fa1.dev/install.sh | sh',
     );
   }
-  return result.exitCode;
+  final activated = RegExp(
+    r'[Aa]ctivated flutter_agent_harness (\d+\.\d+\.\d+)',
+  ).firstMatch('${result.stdout}${result.stderr}')?.group(1);
+  return (result.exitCode, activated);
 }
 
-/// Binary update path: download the release archive for this platform and
-/// swap in the new binary + dylibs. Falls back to the macOS `.zip` asset
-/// when the archive is missing from the release.
+/// Binary update path: download the release archive for this platform,
+/// verify its provenance, and swap in the new binary + dylibs. Falls back
+/// to the macOS `.zip` asset when the archive is missing from the release.
 Future<int> _binaryUpdate(
   http.Client client,
   Install install,
   String tag,
   String latest,
   Future<ProcessResult> Function(String, List<String>) runProcess,
+  String pem,
 ) async {
   final archive = _archiveName();
   if (archive == null) {
@@ -255,9 +459,31 @@ Future<int> _binaryUpdate(
   final url = 'https://github.com/$_repo/releases/download/$tag/$archive';
   _say('downloading $archive…');
   final request = http.Request('GET', Uri.parse(url));
-  final streamed = await client.send(request);
+  final http.StreamedResponse streamed;
+  try {
+    streamed = await client.send(request).timeout(kFaUpdateNetworkTimeout);
+  } on Exception catch (error) {
+    _warn('download failed (network): $error');
+    return 1;
+  }
   if (streamed.statusCode == 200) {
-    final bytes = await streamed.stream.toBytes();
+    final List<int> bytes;
+    try {
+      bytes = await streamed.stream.toBytes().timeout(kFaUpdateArchiveTimeout);
+    } on Exception catch (error) {
+      _warn('download failed (network): $error');
+      return 1;
+    }
+    if (!await verifyReleaseProvenance(
+      client: client,
+      tag: tag,
+      archiveName: archive,
+      archiveBytes: bytes,
+      pem: pem,
+    )) {
+      _warn('update aborted: release provenance check failed for $archive');
+      return 1;
+    }
     return _extractAndSwap(
       bytes,
       archive,
@@ -326,6 +552,10 @@ Future<void> _atomicSwap(
     File(target).renameSync(aside);
     File(staging).renameSync(target);
   } else {
+    if (File(target).existsSync()) {
+      // One-generation rollback copy, overwritten on every update.
+      await File(target).copy('$target.bak');
+    }
     await File(staging).rename(target);
     await runProcess('chmod', ['+x', target]);
   }
@@ -460,17 +690,40 @@ Future<int> fallbackZipUpdate(
   String zipAsset,
   String target,
   String latest,
-  Future<ProcessResult> Function(String, List<String>) runProcess,
-) async {
+  Future<ProcessResult> Function(String, List<String>) runProcess, {
+  String pem = kFaReleaseSigningPem,
+}) async {
   final zipUrl = 'https://github.com/$_repo/releases/download/$tag/$zipAsset';
   final request = http.Request('GET', Uri.parse(zipUrl));
-  final streamed = await client.send(request);
+  final http.StreamedResponse streamed;
+  try {
+    streamed = await client.send(request).timeout(kFaUpdateNetworkTimeout);
+  } on Exception catch (error) {
+    _warn('download failed (network): $error');
+    return 1;
+  }
   if (streamed.statusCode != 200) {
     _warn('download failed (HTTP ${streamed.statusCode}): $zipUrl');
     return 1;
   }
   _say('extracting $zipAsset…');
-  final bytes = await streamed.stream.toBytes();
+  final List<int> bytes;
+  try {
+    bytes = await streamed.stream.toBytes().timeout(kFaUpdateArchiveTimeout);
+  } on Exception catch (error) {
+    _warn('download failed (network): $error');
+    return 1;
+  }
+  if (!await verifyReleaseProvenance(
+    client: client,
+    tag: tag,
+    archiveName: zipAsset,
+    archiveBytes: bytes,
+    pem: pem,
+  )) {
+    _warn('update aborted: release provenance check failed for $zipAsset');
+    return 1;
+  }
   final archive = ZipDecoder().decodeBytes(bytes.toList());
   final data = _extractMacBinary(archive);
   if (data == null) {
@@ -482,6 +735,450 @@ Future<int> fallbackZipUpdate(
   await _atomicSwap(staging, target, runProcess);
   _say('updated to $latest — restart fa to use it.');
   return 0;
+}
+
+/// The successor argv for a restart ([applyUpdate]'s `launchArgs` input):
+/// the ORIGINAL argv with `--session <sessionId>` appended when the id is
+/// known and the argv does not already carry one — a live session must
+/// survive the restart (issue #1377: same terminal, same session).
+List<String> successorArgs(List<String> args, String? sessionId) {
+  final carriesSession = args.any(
+    (arg) => arg == '--session' || arg.startsWith('--session='),
+  );
+  if (sessionId == null || carriesSession) return args;
+  return [...args, '--session', sessionId];
+}
+
+/// The default convergence-guard state file (`~/.fah/update-state.json`);
+/// null when the host has no home directory (guard disabled, disclosed).
+String? _convergenceStatePath() {
+  final home =
+      Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+  if (home == null || home.isEmpty) return null;
+  return '$home/.fah/update-state.json';
+}
+
+/// Reads the convergence-guard state: the tag the updater last attempted
+/// and how many times. Null when absent/corrupt (a fresh attempt is then
+/// allowed — the guard caps REPEAT attempts, not first ones).
+({String tag, int attempts})? _readConvergence(String? statePath) {
+  if (statePath == null) return null;
+  try {
+    final doc = jsonDecode(File(statePath).readAsStringSync());
+    final tag = doc is Map<String, dynamic> ? doc['tag'] : null;
+    if (tag is String && tag.isNotEmpty) {
+      return (tag: tag, attempts: (doc['attempts'] as int?) ?? 0);
+    }
+  } catch (_) {
+    // Corrupt/missing state: the guard opens (a first attempt is honest).
+  }
+  return null;
+}
+
+/// Records an attempt to reach [tag] in the convergence-guard state.
+void _writeConvergence(String? statePath, String tag) {
+  if (statePath == null) return;
+  try {
+    final previous = _readConvergence(statePath);
+    final attempts =
+        previous != null && previous.tag == tag ? previous.attempts + 1 : 1;
+    final file = File(statePath);
+    file.parent.createSync(recursive: true);
+    file.writeAsStringSync(jsonEncode({'tag': tag, 'attempts': attempts}));
+  } catch (_) {
+    // The guard must never break the update it guards.
+  }
+}
+
+/// Clears the convergence-guard state: a boot that finds itself up to
+/// date closes the loop, so a FUTURE release gets its attempts back.
+void _clearConvergence(String? statePath) {
+  if (statePath == null) return;
+  try {
+    File(statePath).deleteSync();
+  } on FileSystemException {
+    // Nothing to clear.
+  } catch (_) {
+    // The guard must never break the boot.
+  }
+}
+
+/// The result of [applyUpdate], the autonomous update path
+/// (`auto_update: on` at boot, `/update` in a session).
+enum ApplyUpdateOutcome {
+  applied,
+  upToDate,
+  refusedDevRun,
+  provenanceFailed,
+  downloadFailed,
+  unsupportedPlatform,
+  restartFailed,
+  convergenceGuard,
+}
+
+/// Updates fa autonomously: fetch the latest tag, download and VERIFY the
+/// release archive, swap it in, and spawn the successor with [launchArgs]
+/// (the ORIGINAL argv, so the session resumes through the new process).
+/// Never throws; every failure is an outcome and the current binary keeps
+/// running. A restart failure leaves the new binary in place, with
+/// `<target>.bak` for manual rollback.
+///
+/// [detectInstall], [newClient], [runProcess], [spawn], [pem],
+/// [settleDelay], and [logLine] are test seams; the defaults are the real
+/// platform behavior.
+Future<ApplyUpdateOutcome> applyUpdate({
+  required String currentVersion,
+  required List<String> launchArgs,
+  Install Function()? detectInstall,
+  http.Client Function()? newClient,
+  Future<ProcessResult> Function(String, List<String>)? runProcess,
+  Future<bool> Function(String, List<String>)? spawn,
+  String pem = kFaReleaseSigningPem,
+  Duration settleDelay = const Duration(seconds: 2),
+  void Function(String message)? logLine,
+  String? statePath,
+  Duration networkTimeout = kFaUpdateNetworkTimeout,
+}) async {
+  final install = (detectInstall ?? _detectInstall)();
+  if (install.kind == InstallKind.devRun) {
+    return ApplyUpdateOutcome.refusedDevRun;
+  }
+  final log = logLine ?? logUpdateLine;
+  final state = statePath ?? _convergenceStatePath();
+  final client = (newClient ?? http.Client.new)();
+  try {
+    final target = await _resolveUpdateTarget(
+      client: client,
+      currentVersion: currentVersion,
+      state: state,
+      log: log,
+      networkTimeout: networkTimeout,
+    );
+    final stop = target.stop;
+    if (stop != null) return stop;
+    final tag = target.tag!;
+    final latest = target.latest!;
+
+    if (install.kind == InstallKind.pubGlobal) {
+      return await _applyPubGlobalUpdate(
+        install: install,
+        currentVersion: currentVersion,
+        latest: latest,
+        launchArgs: launchArgs,
+        runProcess: runProcess ?? Process.run,
+        spawn: spawn,
+        settleDelay: settleDelay,
+        log: log,
+      );
+    }
+
+    final archive = _archiveName();
+    if (archive == null) {
+      // Unspawned, unprompted and UNPRINTED otherwise: say why nothing
+      // happened (unknown linux arch, freebsd, …) instead of a silent
+      // no-op.
+      _warn(
+        'no prebuilt fa archive for this platform — install via '
+        '`dart pub global activate flutter_agent_harness` instead',
+      );
+      return ApplyUpdateOutcome.unsupportedPlatform;
+    }
+    final download = await _downloadVerifiedArchive(
+      client: client,
+      tag: tag,
+      archive: archive,
+      pem: pem,
+      networkTimeout: networkTimeout,
+    );
+    final failed = download.stop;
+    if (failed != null) return failed;
+    return await _swapAndRestartArchive(
+      bytes: download.bytes,
+      archive: archive,
+      install: install,
+      currentVersion: currentVersion,
+      latest: latest,
+      launchArgs: launchArgs,
+      runProcess: runProcess ?? Process.run,
+      spawn: spawn,
+      settleDelay: settleDelay,
+      log: log,
+    );
+  } catch (_) {
+    // The update must never crash the boot: any surprise (socket reset,
+    // file error) is just a failed update.
+    return ApplyUpdateOutcome.downloadFailed;
+  } finally {
+    client.close();
+  }
+}
+
+/// One resolved update candidate: [stop] non-null ends the update with
+/// that outcome; otherwise [tag]/[latest] name the release to apply.
+typedef _ResolvedUpdate = ({ApplyUpdateOutcome? stop, String? tag, String? latest});
+
+/// Fetches the latest tag and resolves it against the current version and
+/// the convergence ledger (issue #1377): up to date closes the loop (the
+/// attempts ledger clears), a twice-attempted tag pauses the respawn, a
+/// fresh tag arms the ledger and proceeds.
+Future<_ResolvedUpdate> _resolveUpdateTarget({
+  required http.Client client,
+  required String currentVersion,
+  required String? state,
+  required void Function(String message) log,
+  required Duration networkTimeout,
+}) async {
+  final tag = await fetchLatestTag(
+    client: client,
+  ).timeout(networkTimeout, onTimeout: () => null);
+  if (tag == null) {
+    return (stop: ApplyUpdateOutcome.downloadFailed, tag: null, latest: null);
+  }
+  final latest = tag.replaceFirst('v', '');
+  if (compareVersions(latest, currentVersion) <= 0) {
+    // Up to date: the loop is closed — a future release gets its
+    // attempts back.
+    _clearConvergence(state);
+    return (stop: ApplyUpdateOutcome.upToDate, tag: null, latest: null);
+  }
+
+  // Convergence guard (issue #1377): auto_update:on + a channel that
+  // lags (pub.dev propagation, stale release assets) must not respawn
+  // forever. Two attempts per target tag; the state clears as soon as
+  // a boot reports up to date.
+  final convergence = _readConvergence(state);
+  if (convergence != null &&
+      convergence.tag == tag &&
+      convergence.attempts >= 2) {
+    log(
+      'fa update paused: v$latest attempted ${convergence.attempts}× '
+      'and still not resolving — not respawning again',
+    );
+    return (
+      stop: ApplyUpdateOutcome.convergenceGuard,
+      tag: null,
+      latest: null,
+    );
+  }
+  _writeConvergence(state, tag);
+  return (stop: null, tag: tag, latest: latest);
+}
+
+/// The pub-global arm (issue #1377 review r4): run the update, verify the
+/// ACTIVATED version actually advanced — pub exit 0 without an advance is
+/// propagation lag, and respawning would reboot the SAME binary — then
+/// restart through the shared successor spawn.
+Future<ApplyUpdateOutcome> _applyPubGlobalUpdate({
+  required Install install,
+  required String currentVersion,
+  required String latest,
+  required List<String> launchArgs,
+  required Future<ProcessResult> Function(String, List<String>) runProcess,
+  required Future<bool> Function(String, List<String>)? spawn,
+  required Duration settleDelay,
+  required void Function(String message) log,
+}) async {
+  final pub = await _pubGlobalUpdate(
+    currentVersion: currentVersion,
+    latest: latest,
+    runProcess: runProcess,
+  );
+  if (pub.$1 != 0) return ApplyUpdateOutcome.downloadFailed;
+  final activated = pub.$2;
+  if (activated != null && compareVersions(activated, currentVersion) > 0) {
+    log('fa update applied: v$currentVersion -> v$activated');
+  } else {
+    log(
+      'fa update: pub resolved v${activated ?? currentVersion} '
+      '(release v$latest not on pub.dev yet)',
+    );
+    return ApplyUpdateOutcome.convergenceGuard;
+  }
+  final restarted = await _restartAfterUpdate(
+    install,
+    launchArgs,
+    spawn: spawn,
+    settleDelay: settleDelay,
+    logLine: log,
+  );
+  return restarted
+      ? ApplyUpdateOutcome.applied
+      : ApplyUpdateOutcome.restartFailed;
+}
+
+/// Downloads the prebuilt archive and verifies its provenance before any
+/// byte is trusted (issue #1377 round 7): a non-200 is a download
+/// failure, a failed signature check is a provenance failure.
+Future<({ApplyUpdateOutcome? stop, List<int> bytes})> _downloadVerifiedArchive({
+  required http.Client client,
+  required String tag,
+  required String archive,
+  required String pem,
+  required Duration networkTimeout,
+}) async {
+  final url = 'https://github.com/$_repo/releases/download/$tag/$archive';
+  final streamed = await client
+      .send(http.Request('GET', Uri.parse(url)))
+      .timeout(networkTimeout);
+  if (streamed.statusCode != 200) {
+    return (stop: ApplyUpdateOutcome.downloadFailed, bytes: const <int>[]);
+  }
+  final bytes = await streamed.stream
+      .toBytes()
+      .timeout(kFaUpdateArchiveTimeout);
+  if (!await verifyReleaseProvenance(
+    client: client,
+    tag: tag,
+    archiveName: archive,
+    archiveBytes: bytes,
+    pem: pem,
+  )) {
+    return (stop: ApplyUpdateOutcome.provenanceFailed, bytes: const <int>[]);
+  }
+  return (stop: null, bytes: bytes);
+}
+
+/// Extracts and swaps in the verified archive, then restarts onto it (the
+/// prebuilt-binary arm). A failed swap is a download outcome; the locked
+/// Windows exe cannot relaunch in-process (the swap already printed the
+/// restart hint).
+Future<ApplyUpdateOutcome> _swapAndRestartArchive({
+  required List<int> bytes,
+  required String archive,
+  required Install install,
+  required String currentVersion,
+  required String latest,
+  required List<String> launchArgs,
+  required Future<ProcessResult> Function(String, List<String>) runProcess,
+  required Future<bool> Function(String, List<String>)? spawn,
+  required Duration settleDelay,
+  required void Function(String message) log,
+}) async {
+  final swapCode = await _extractAndSwap(
+    bytes,
+    archive,
+    install.executable,
+    File(install.executable).parent,
+    latest,
+    runProcess,
+  );
+  if (swapCode != 0) return ApplyUpdateOutcome.downloadFailed;
+  log('fa update applied: v$currentVersion -> v$latest');
+  if (Platform.isWindows) {
+    return ApplyUpdateOutcome.unsupportedPlatform;
+  }
+  final restarted = await _restartAfterUpdate(
+    install,
+    launchArgs,
+    spawn: spawn,
+    settleDelay: settleDelay,
+    logLine: log,
+  );
+  return restarted
+      ? ApplyUpdateOutcome.applied
+      : ApplyUpdateOutcome.restartFailed;
+}
+
+/// Restarts fa after a successful update: the injected [spawn] seam for
+/// binary installs, [spawnSuccessor] (which detects the install kind)
+/// otherwise. A false result is logged and warned about exactly once —
+/// the new binary stays installed.
+Future<bool> _restartAfterUpdate(
+  Install install,
+  List<String> launchArgs, {
+  Future<bool> Function(String, List<String>)? spawn,
+  required Duration settleDelay,
+  required void Function(String) logLine,
+}) async {
+  var restarted = false;
+  if (spawn != null) {
+    // Test seam: the injected spawner covers BOTH install kinds. The exe
+    // follows the same rule the real path uses — the swapped AOT binary
+    // for release installs, the `fa` PATH shim for pub-global ones.
+    final exe = install.kind == InstallKind.binary
+        ? Platform.resolvedExecutable
+        : (_whichFa() ?? 'fa');
+    restarted = await spawn(exe, launchArgs);
+  } else {
+    restarted = await spawnSuccessor(
+      launchArgs: launchArgs,
+      settleDelay: settleDelay,
+    );
+  }
+  if (restarted) return true;
+  logLine('fa update restart failed');
+  _warn('installed the new fa but the restart failed — start fa manually.');
+  return false;
+}
+
+/// Starts [exe] with [args]: the successor owns the terminal (stdio
+/// inherited) and outlives this process — the spawn-successor-then-exit
+/// restart contract (Dart has no exec-replace).
+Future<Process> _startSuccessor(String exe, List<String> args) {
+  return Process.start(
+    exe,
+    args,
+    mode: ProcessStartMode.detachedWithStdio,
+  );
+}
+
+/// Spawns the freshly installed fa over this one. [launchArgs] is the
+/// ORIGINAL argv, so the successor resumes the same session (the session
+/// flag rides along). Binary installs exec the swapped binary directly;
+/// pub-global installs exec the `fa` shim from PATH, which now points at
+/// the re-activated snapshot (a plain `'fa'` when PATH has no shim). After
+/// [settleDelay], a successor that already exited non-zero counts as a
+/// failed restart; anything still running counts as started.
+Future<bool> spawnSuccessor({
+  required List<String> launchArgs,
+  Future<Process> Function(String, List<String>)? spawn,
+  Duration settleDelay = const Duration(seconds: 2),
+}) async {
+  final exe = _detectInstall().kind == InstallKind.binary
+      ? Platform.resolvedExecutable
+      : (_whichFa() ?? 'fa');
+  try {
+    final process = await (spawn ?? _startSuccessor)(exe, launchArgs);
+    await Future<void>.delayed(settleDelay);
+    final exitCode = await process.exitCode
+        .then<int?>((code) => code)
+        .timeout(Duration.zero, onTimeout: () => null);
+    return exitCode == null || exitCode == 0;
+  } catch (_) {
+    return false; // Nothing was spawned.
+  }
+}
+
+/// Locates the `fa` launcher on PATH (the pub-global shim), or null.
+String? _whichFa() {
+  final path = Platform.environment['PATH'] ?? '';
+  for (final rawEntry in path.split(Platform.isWindows ? ';' : ':')) {
+    final entry = rawEntry.trim();
+    if (entry.isEmpty) continue;
+    final candidate = File('$entry/fa${Platform.isWindows ? '.exe' : ''}');
+    if (candidate.existsSync()) return candidate.path;
+  }
+  return null;
+}
+
+/// Appends `<ISO timestamp> <message>` to `~/.fah/logs/fa.log`, creating
+/// `~/.fah/logs` on the way — the same file and line format the CLI's
+/// diagnostic log uses. Never throws: the log must not break the CLI.
+void logUpdateLine(String message, {String? home}) {
+  try {
+    final root =
+        home ??
+        Platform.environment['HOME'] ??
+        Platform.environment['USERPROFILE'];
+    if (root == null || root.isEmpty) return;
+    final dir = Directory('$root/.fah/logs')..createSync(recursive: true);
+    File('${dir.path}/fa.log').writeAsStringSync(
+      '${DateTime.now().toIso8601String()} $message\n',
+      mode: FileMode.append,
+    );
+  } catch (_) {
+    // Diagnostics must never break the CLI.
+  }
 }
 
 /// Whether a terminal answer is an affirmative `y`/`yes` (any casing,
