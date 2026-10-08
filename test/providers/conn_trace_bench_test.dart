@@ -16,6 +16,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_agent_harness/src/providers/conn_trace.dart';
 import 'package:flutter_agent_harness/src/providers/conn_trace_bench_io.dart';
 import 'package:flutter_agent_harness/src/providers/provider_common.dart';
 import 'package:http/http.dart' as http;
@@ -439,8 +440,14 @@ void main() {
         connTrace.enable();
         providerHttpClientFactory = null;
         final client = sharedProviderHttpClient();
-        expect(client, isA<TracedProviderClient>());
-        // The default path (tracing off) keeps the plain client.
+        // Merged seam (gh-1395 + #1392): the accessor's product is the
+        // gh-1395 recorder wrapper; the bench traced client is pinned as
+        // the inner product by the tracedClient() test above — both
+        // forensics layers ride one accessor.
+        expect(client, isA<ConnTracedClient>());
+        // The default path (bench tracing off): no FA_CONN layer — the
+        // gh-1395 wrapper stays installed by design (it is a pass-through
+        // recorder with its knob off), but the bench layer is gone.
         connTrace.resetForTest();
         debugResetSharedProviderHttpClient();
         providerHttpClientFactory = null;
