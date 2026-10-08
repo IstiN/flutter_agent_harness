@@ -72,6 +72,13 @@
       "prompt": 107273,
       "completion": 31340,
       "total": 138613
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-08T18:56:21Z",
+      "prompt": 103103,
+      "completion": 27536,
+      "total": 130639
     }
   ],
   "pr-1418": [
