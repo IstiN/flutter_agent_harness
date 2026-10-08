@@ -6,7 +6,9 @@
 /// implement it and the tools answer a clean "not supported here" note).
 /// stdout/stderr stream into a log file under `.fah/bash_jobs/` so both the
 /// model (`bash_job output`, the `read` tool) and the user can inspect it
-/// while the job runs.
+/// while the job runs. Bench/unattended runs relocate the directory
+/// ([jobLogDir], env `FAH_JOB_LOG_DIR`) so the harness's own artifacts never
+/// land in the graded task workspace (issue #1408 AC1).
 ///
 /// When a job settles, [ShellJobRegistry.onSettled] fires — the host's
 /// terminal bookkeeping (the job board's Running count, the waiting row)
@@ -32,6 +34,20 @@ import '../env/process_probe_stub.dart'
     if (dart.library.io) '../env/process_probe_io.dart';
 
 final Random _shellJobRandom = Random.secure();
+
+/// The environment variable a bench/unattended run sets to relocate the
+/// bash-job log directory OUTSIDE the task workspace (issue #1408 AC1) —
+/// the in-container twin of the runner's `$RUNNER_TEMP`. The CLI resolves
+/// it at boot (lib/ stays dart:io-free) and hands the value to
+/// [ShellJobRegistry.jobLogDir].
+const shellJobLogDirEnvVar = 'FAH_JOB_LOG_DIR';
+
+/// The [shellJobLogDirEnvVar] value from [env], trimmed; null when unset or
+/// blank. Pure — the executable owns the `Platform.environment` read.
+String? jobLogDirOverride(Map<String, String> env) {
+  final value = env[shellJobLogDirEnvVar]?.trim();
+  return (value == null || value.isEmpty) ? null : value;
+}
 
 /// Globally-unique background job id: several fa processes share one
 /// workspace, so per-process counters alone (`sh-1`, `sh-2`) would make
@@ -129,6 +145,7 @@ final class ShellJobRegistry {
     this.onStaleJobLog,
     this.jobLogMaxBytes,
     this.onJobLogWarning,
+    this.jobLogDir,
     DateTime? bootTime,
   }) : _bootTime = bootTime ?? DateTime.now();
 
@@ -157,6 +174,12 @@ final class ShellJobRegistry {
   /// Low-disk warning channel merged into every job start (issue #919) —
   /// fired at most once per job, when log writes stop.
   final void Function(String message)? onJobLogWarning;
+
+  /// Where job logs live (issue #1408 AC1); defaults to
+  /// `<cwd>/.fah/bash_jobs`. Bench/unattended runs point this OUTSIDE the
+  /// task workspace (env `FAH_JOB_LOG_DIR`, e.g. the container's /tmp) so
+  /// the graded diff never sees harness artifacts.
+  final String? jobLogDir;
 
   /// Registry creation time; old-format logs modified before it are
   /// historical debris, not a live stale instance.
@@ -200,7 +223,9 @@ final class ShellJobRegistry {
     }
     final bg = baseEnv as BackgroundShell;
     final id = newShellJobId(_nextId++);
-    final dir = '${baseEnv.cwd}/.fah/bash_jobs';
+    // Issue #1408 AC1: the bench relocation keeps harness artifacts outside
+    // the graded task workspace.
+    final dir = jobLogDir ?? '${baseEnv.cwd}/.fah/bash_jobs';
     await baseEnv.createDir(dir);
     final logPath = '$dir/$id.log';
     unawaited(_checkStaleOldFormatJobLogs(dir));

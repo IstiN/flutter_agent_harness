@@ -419,6 +419,10 @@ class AgentCli {
           onStaleJobLog: _onStaleJobLog,
           jobLogMaxBytes: config.jobs.maxLogBytes,
           onJobLogWarning: _onJobLogWarning,
+          // Issue #1408 AC1: the bench boot relocates the job-log dir via
+          // FAH_JOB_LOG_DIR so nothing harness-owned lands in the graded
+          // task workspace.
+          jobLogDir: config.jobLogDir,
         ),
         onPasswordPrompt: io.isInteractive ? _answerPasswordPrompt : null,
         configServiceFactory: (coreEnv) =>

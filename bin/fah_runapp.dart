@@ -1113,6 +1113,10 @@ Future<void> _runApp(List<String> args) async {
         apiKey: apiKey,
         providerKind: provider,
         redactionPipeline: redactionPipeline,
+        // Issue #1408 AC1: a bench/unattended boot relocates the bash-job
+        // logs outside the task workspace (the in-container twin of the
+        // runner's $RUNNER_TEMP). Null keeps <cwd>/.fah/bash_jobs.
+        jobLogDir: jobLogDirOverride(Platform.environment),
         spills: spillsConfig,
         // Shared by the env config and the presence store below.
         env: cliEnv,

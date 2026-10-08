@@ -65,6 +65,7 @@ final class AgentCliConfig {
     this.ttsr,
     this.memoryConfig,
     this.redactionPipeline,
+    this.jobLogDir,
     this.spills,
     this.modelsConfig,
     this.onModelsConfigChanged,
@@ -423,6 +424,12 @@ final class AgentCliConfig {
   /// entry points; null = redaction hooks stay off (only the legacy
   /// [SecretRedactor] exact-value masking runs).
   final RedactionPipeline? redactionPipeline;
+
+  /// Where the bash-job registry writes job logs (issue #1408 AC1); null
+  /// keeps `<cwd>/.fah/bash_jobs`. The bench boot resolves
+  /// `FAH_JOB_LOG_DIR` ([jobLogDirOverride]) so unattended runs keep
+  /// harness artifacts outside the graded task workspace.
+  final String? jobLogDir;
 
   /// Optional `memory:` section of `~/.fah/config.yaml` — long-term memory
   /// storage path overrides (git-backed project memory). Null = the
