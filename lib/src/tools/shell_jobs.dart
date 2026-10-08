@@ -245,8 +245,11 @@ final class ShellJobRegistry {
     // policy through the shared seam. Issue #1408 AC2: the at-rest
     // redactor rides the same seam, wrapped in the line-buffered
     // [JobLogRedactor] so a secret split across stream chunks still masks.
+    // The hoisted local is what makes the null-check promote (public
+    // fields never do).
+    final sessionRedactor = jobLogRedactor;
     final redactor = options?.jobLogRedactor ??
-        (jobLogRedactor == null ? null : JobLogRedactor(jobLogRedactor));
+        (sessionRedactor == null ? null : JobLogRedactor(sessionRedactor));
     final mergedOptions = ShellExecOptions(
       cwd: options?.cwd,
       env: options?.env,
