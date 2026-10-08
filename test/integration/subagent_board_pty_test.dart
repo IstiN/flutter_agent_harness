@@ -4,10 +4,16 @@
 library;
 
 // gh-1415 E2E-1 / AC6: a scripted background `task` spawn in the PTY
-// harness shows the subagent status row APPEARING on spawn and COLLAPSING
-// to the settled one-liner — the live row language, end to end (the age
-// tick itself is pinned at the unit layer; sub-minute ages do not change
-// on screen inside a fast mock run).
+// harness shows the subagent status row language end to end — the row
+// APPEARS on spawn (one dense line: glyph, state verb, human name, age,
+// cost), TICKS in place (the age recomputes from timestamps on the 1 Hz
+// repaint), and COLLAPSES to the settled one-liner on completion. The
+// child runs a real `bash sleep 4` so the running row lives long enough
+// to observe deterministically (the mock alone finishes in one turn).
+//
+// Bright rows carry no SGR runs (the dim/bright split is the painter's),
+// so the raw PTY stream carries each repainted row contiguously — the
+// tick assertion reads the raw stream via [FaCliHarness.waitForRaw].
 
 import 'dart:io';
 
@@ -65,9 +71,12 @@ tui:
   }
 
   test(
-    'background task spawn: the status row appears and collapses (AC6)',
+    'background task spawn: the status row appears, ticks, collapses (AC6)',
     timeout: const Timeout(Duration(minutes: 2)),
     () async {
+      // Content-routed script (substring match on the LAST user message);
+      // the child's second request still matches (its tool result rides
+      // role:tool), so the two-turn child script pops in order.
       final script = MockLlmScript.parse('''
 scenarios:
   - match: "Use the task tool"
@@ -81,7 +90,15 @@ scenarios:
       - text: "spawned boardwatch in the background"
   - match: "Count the files in the current directory"
     responses:
-      - text: "boardwatch-done: 3 files counted"
+      - toolCall:
+          name: bash
+          arguments: >-
+            {"command":"sleep 4"}
+      - text: "boardwatch-done: counted"
+  - match: "Existing tags:"
+    sticky: true
+    responses:
+      - text: ""
   - match: "Background agent boardwatch"
     sticky: true
     responses:
@@ -100,30 +117,30 @@ scenarios:
       );
       harness.sendEnter();
 
-      // APPEARING: the live row renders one dense line per subagent —
-      // glyph, state verb, the human NAME (never a mailbox uuid), age.
-      await harness.waitForScreen(
-        'boardwatch',
+      // APPEARING: the live row renders as ONE dense line — the state
+      // verb and the human NAME (never a mailbox uuid) on the same row.
+      final appearing = await harness.waitForScreen(
+        'run  boardwatch',
         timeout: const Duration(seconds: 30),
       );
-      final appearing = await harness.waitForScreen(
-        'boardwatch',
-        timeout: const Duration(seconds: 10),
+      expect(appearing, contains('run  boardwatch'));
+
+      // TICKING: the same row repaints in place with a larger age (the
+      // 1 Hz ticker; ages recompute from the spawn timestamp). The bright
+      // row is SGR-free, so the raw stream carries `… boardwatch Ns …`
+      // contiguously per repaint.
+      await harness.waitForRaw(
+        (raw) => RegExp('run  boardwatch\\s+[2-9]s').hasMatch(raw),
+        what: 'the boardwatch row repainted with an age ≥ 2s',
+        timeout: const Duration(seconds: 30),
       );
-      expect(appearing, contains('boardwatch'));
 
       // COLLAPSING: the settle flash then the dim one-line summary — the
-      // done verb, still one row (never a lingering multi-line block).
+      // done verb and the name still share ONE row (never a block).
       final settled = await harness.waitForScreen(
-        'done',
+        'done  boardwatch',
         timeout: const Duration(seconds: 60),
       );
-      expect(settled, contains('boardwatch'));
-      // Density: the row is ONE line — the settled summary carries the
-      // name and the done verb on the same row.
-      final doneLine = settled
-          .split('\n')
-          .firstWhere((l) => l.contains('boardwatch') && l.contains('done'));
-      expect(doneLine.contains('boardwatch'), isTrue);
+      expect(settled, contains('done  boardwatch'));
     });
 }
