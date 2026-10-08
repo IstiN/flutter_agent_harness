@@ -35,7 +35,9 @@ import 'package:flutter_agent_harness/src/cli/omp_reg_scenarios.dart';
 /// boxed welcome pane + tip banner (23 rows after the normalizer drops
 /// the whole network update notice block); fa's status bar carries 5
 /// segments where omp fuses cwd+gauge into 3; fa renders turn chrome as
-/// 1–2 fence/border rows where omp paints full tool-card borders (11/21).
+/// fence rows + the fold indicator (1–2 rows per screen since the #1348
+/// bottom-pinned window, see [kRegKnownTurnChrome]) where omp paints full
+/// tool-card borders (11/21).
 ///
 /// The parity leg pins these as FACTS, not prose (issue #810 re-review):
 /// the finding COUNT (a new kind of drift = fail) plus the numbers and
@@ -59,9 +61,22 @@ const kRegKnownBootDrift = <String, (int, String, String)>{
 
 /// Documented turn-chrome inventory drift per surface:
 /// (fa rows, omp rows). Same policy as [kRegKnownBootDrift].
+///
+/// Re-baselined for #1348 (bottom-pinned follow window). fa's two counted
+/// rows on these screens are (i) the `──── ^ N lines above fold - PgUp
+/// ────` fold-indicator row and (ii) the visible ``` fence rows — the
+/// settled tool card paints band chrome without box glyphs. Under the
+/// #827 turn-start park the window started at the fresh echo: the banner
+/// rode the fold (indicator row on EVERY turn screen — 04's second row,
+/// 03's only row) and the prior turn's fences stayed hidden. Since #1348
+/// the window pins to the bottom: the boot banner fits on the settled
+/// glass so 04 shows no fold row (closing ``` only — the opening fence
+/// shares the `>_Fa ` prefix line, `>_Fa ```` ``` ```), and 03 shows turn
+/// 1's closing fence riding directly above the new prompt above the fold
+/// row. The omp side is untouched (fixtures re-captured ⇒ same numbers).
 const kRegKnownTurnChrome = <String, (int, int)>{
-  '03_tool_call': (1, 11),
-  '04_code_block': (2, 21),
+  '03_tool_call': (2, 11),
+  '04_code_block': (1, 21),
 };
 void main() {
   // Skip decision is made BEFORE the tests are declared: flutter_test has
