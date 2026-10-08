@@ -97,6 +97,7 @@ final class CwdOverrideEnv
             onStderr: options?.onStderr,
             jobLogMaxBytes: options?.jobLogMaxBytes,
             onJobLogWarning: options?.onJobLogWarning,
+            jobLogRedactor: options?.jobLogRedactor,
           )
         : options;
     return bg.startShellJob(

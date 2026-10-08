@@ -58,6 +58,12 @@ import fa_usage  # noqa: E402
 
 _VERSION = "0.1.0"
 
+# Issue #1408 AC1 (review 5456649624): the in-container job-log dir,
+# OUTSIDE the graded task workspace — same constant the terminal-bench
+# adapter defines (bench/terminal_bench/fa_agent.py); a future relocation
+# must move the two adapters together.
+_CONTAINER_JOB_LOG_DIR = "/tmp/fa-harness-artifacts/bash_jobs"
+
 # Pinned $/Mtok table (data, not code) for est_cost_usd (issue #1123).
 _PRICING_PATH = Path(__file__).resolve().parent.parent / "pricing.json"
 
@@ -93,6 +99,13 @@ class FaAgent(BaseInstalledAgent):
             "FA_PROVIDER_TYPE": os.environ.get("FA_PROVIDER_TYPE", "anthropic"),
             "FA_PROVIDER_CONFIG_BASE64": _b64(os.environ["FA_PROVIDER_CONFIG"]),
         }
+        # Issue #1408 AC1: fa's bash-job logs (.fah/bash_jobs/) used to land
+        # INSIDE the task workspace, capturing raw secret values from the
+        # agent's own greps; the graded diff (test_no_other_files_changed)
+        # then failed on the agent sanitizing the harness's own logs.
+        # Relocate them outside the workspace — /tmp is the in-container
+        # twin of the runner's $RUNNER_TEMP (same dir the tb adapter uses).
+        env["FAH_JOB_LOG_DIR"] = _CONTAINER_JOB_LOG_DIR
         key_var = json.loads(os.environ["FA_PROVIDER_CONFIG"]).get("apiKeyEnvVar")
         if key_var and os.environ.get(key_var):
             env[f"{key_var}_BASE64"] = _b64(os.environ[key_var])

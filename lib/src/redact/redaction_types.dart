@@ -109,6 +109,13 @@ class RedactionToolPolicy {
       !deny.contains(toolName) && (allow.isEmpty || allow.contains(toolName));
 }
 
+/// The repo-standard `[REDACTED:<kind>]` marker for [kindLabel] (the
+/// marker contract documented in `wire_protocol`). ONE construction site:
+/// the pipeline and the bash shape rewriter (issue #1408 AC3) must never
+/// diverge — a divergent marker would slip past the pipeline's
+/// re-redaction skip logic.
+String redactionMarker(String kindLabel) => '[REDACTED:$kindLabel]';
+
 final class RedactionConfig {
   /// Creates a configuration; see each field for its default.
   const RedactionConfig({

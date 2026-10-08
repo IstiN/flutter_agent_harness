@@ -114,6 +114,7 @@ final class SecretsExecutionEnv
       onStderr: options?.onStderr,
       jobLogMaxBytes: options?.jobLogMaxBytes,
       onJobLogWarning: options?.onJobLogWarning,
+      jobLogRedactor: options?.jobLogRedactor,
     );
     return bg.startShellJob(command, id: id, logPath: logPath, options: merged);
   }
