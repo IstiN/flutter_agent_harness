@@ -328,9 +328,13 @@ extension SettingsFlow on AgentCli {
   /// file, never in catalog data), and the resolver's top layer reads
   /// exactly these keys. Loops until the pick is cancelled or `done`.
   Future<void> startModelCapsFlow() async {
-    final pinnedEntries =
-        config.modelsConfig?.overrides.entries ?? const <({String provider, String modelId, ModelCapabilityOverride caps})>[];
     for (;;) {
+      // Re-read EVERY iteration: a remove/add inside the loop must be
+      // reflected in the next render — a pre-loop snapshot kept listing a
+      // just-removed override and reopened a ghost edit menu.
+      final pinnedEntries =
+          config.modelsConfig?.overrides.entries ??
+          const <({String provider, String modelId, ModelCapabilityOverride caps})>[];
       final picked = await _pickOption('model capabilities', [
         (
           'set',
