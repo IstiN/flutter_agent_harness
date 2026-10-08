@@ -151,32 +151,6 @@ factual: paths, commands, invariants — no essays.
   the message record's request detail (the Request tab).
   Consumers render, never re-derive: `packages/fa_ui`'s
   `lib/src/trajectory/` widgets and the CLI `/trajectory` family.
-- `lib/src/agent/finalize_gate.dart` — the FinalizeGate contract +
-  TaskLedger (gh-1412): near-miss elimination for unattended runs. In
-  unattended/bench mode the CLI system prompt appends the `finalize_gate`
-  contract (`prompts/cli/finalize_gate.md`, composed in
-  `agent_cli_prompt.dart`; interactive modes never carry it) — before any
-  final summary the agent re-quotes every explicit requirement as a
-  checklist, verifies each item with a real command against the produced
-  state, and fixes or explicitly reports every unmet item. The loop parses
-  the final answer's `task-ledger` fenced block (`parseTaskLedger`,
-  last block wins) and emits `TaskLedgerEvent`; hosts persist the hidden
-  `task_ledger` custom record (CLI: `agent_event_handler.dart` →
-  `_onTaskLedger` in `trajectory_commands.dart` — the `appendCustomEntry`
-  lives there, redacted through the host pipeline — wired through
-  `handleAgentEvent`'s nullable `onTaskLedger` callback; unset keeps
-  interactive sessions ledger-less), the wire protocol carries `task_ledger`
-  (golden fixture +
-  web client `KNOWN_EVENT_KINDS`), and `TrajectorySnapshotBuilder` folds
-  the latest ledger into `snapshot.taskLedger` (legacy sessions degrade to
-  null). The bench summaries render near-miss proximity from the synced
-  session logs: terminal-bench adds a per-task `checklist` table column,
-  harbor a `Checklist coverage` block — both parse the LAST `task_ledger`
-  record (`pass`/`fixed` count as verified; no ledger → `checklist: none`).
-  AC5: a declined `request_secret` in unattended mode carries the
-  credential-hunt nudge (`credentialHuntNudge`;
-  `AgentCoreServices.isUnattended`, keyed by the CLI on the LIVE approval
-  mode so a runtime `/approval` switch flips it).
 - `lib/src/cli/trajectory_commands.dart` (a `part of` `agent_cli.dart`) +
   `lib/src/cli/trajectory_tui.dart` — the read-only REPL family
   `/trajectory [view|cost|tail|inspect <n>]` (bare = `view`, capped at 200

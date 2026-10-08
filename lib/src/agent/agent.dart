@@ -209,7 +209,6 @@ class Agent {
     this.overWindowRelief,
     this.toolMisuseBreaker,
     this.stuckTool,
-    this.finalizeGate = false,
   }) : toolExecutor =
            toolExecutor ?? toolRegistry?.executor ?? _missingToolExecutor(),
        _state = AgentState(
@@ -259,19 +258,6 @@ class Agent {
   /// the host to redact, cap, and persist. OFF by default — payloads can
   /// carry secrets and bloat the session file.
   final bool wireDump;
-
-  /// The FinalizeGate (gh-1412, default off): hosts set it on unattended
-  /// runs (approval mode `unattended`/autopilot, the bench mode). When on,
-  /// every run parses the `task-ledger` fenced block out of the final
-  /// assistant answer and emits [TaskLedgerEvent] for the host to persist
-  /// as the hidden `task_ledger` session record. Off = interactive
-  /// behavior is byte-identical.
-  ///
-  /// Mutable: only the CLI host flips this today (boot approval mode
-  /// `unattended`); the builder's `AgentWiringSpec` has no knob for it in
-  /// v1 — hosts that want the gate must set the field after the stack
-  /// lands.
-  bool finalizeGate;
 
   /// Provider adapter used for every model call. See [StreamFunction].
   StreamFunction streamFunction;
@@ -575,7 +561,6 @@ class Agent {
             },
       stuckTool: stuckTool,
       toolExecution: toolExecution,
-      finalizeGate: finalizeGate,
       beforeToolCall: beforeToolCall,
       afterToolCall: afterToolCall,
       transformContext: transformContext,

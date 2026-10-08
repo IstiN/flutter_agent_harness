@@ -25,7 +25,6 @@ Future<void> handleAgentEvent(
   onToolExecutionEnd,
   required void Function(AssistantMessage message) onTurnEnd,
   Future<void> Function(ModelRequestEvent event)? onModelRequest,
-  Future<void> Function(TaskLedgerEvent event)? onTaskLedger,
 }) async {
   switch (event) {
     case MessageStartEvent(:final message) || MessageEndEvent(:final message):
@@ -49,8 +48,6 @@ Future<void> handleAgentEvent(
       onTurnEnd(message);
     case ModelRequestEvent():
       await onModelRequest?.call(event);
-    case TaskLedgerEvent():
-      await onTaskLedger?.call(event);
     default:
   }
 }

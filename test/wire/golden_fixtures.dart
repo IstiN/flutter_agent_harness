@@ -11,7 +11,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
-import 'package:flutter_agent_harness/src/agent/finalize_gate.dart';
 import 'package:flutter_agent_harness/src/approval/approval.dart';
 import 'package:flutter_agent_harness/src/tools/ask_tool.dart';
 import 'package:flutter_agent_harness/src/tools/request_secret_tool.dart';
@@ -249,26 +248,6 @@ AgentEvent nativeEventFor(String kind) => switch (kind) {
       renamedIds: [(from: 'call_1', to: 'call_1_renamed')],
     ),
     providerError: 'unexpected tool_use_id',
-  ),
-  'task_ledger' => const TaskLedgerEvent(
-    TaskLedger(
-      items: [
-        TaskLedgerItem(
-          requirement: 'create script.py',
-          command: 'test -f script.py',
-          expected: 'exit 0',
-          actual: 'exit 0',
-          status: TaskLedgerItemStatus.pass,
-        ),
-        TaskLedgerItem(
-          requirement: 'script.py is executable',
-          command: 'test -x script.py',
-          expected: 'exit 0',
-          actual: 'exit 1',
-          status: TaskLedgerItemStatus.fixed,
-        ),
-      ],
-    ),
   ),
   'tool_call_heartbeat' => ToolCallHeartbeatEvent(
     toolCallId: 'call_1',

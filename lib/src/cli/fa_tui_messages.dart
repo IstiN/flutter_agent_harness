@@ -139,16 +139,6 @@ final class JobBoardMsg extends Msg {
   final List<String> lines;
 }
 
-/// Host push of the subagent status board's live region (gh-1415): one
-/// compact line per subagent, pre-rendered by [TaskBoardRegion] (state,
-/// name, age, cost). An empty list hides the region — quiet zero.
-final class SubagentBoardMsg extends Msg {
-  const SubagentBoardMsg(this.rows);
-
-  /// Pre-rendered rows (possibly empty — hides the region).
-  final List<SubagentBoardRow> rows;
-}
-
 /// Host push of the run-liveness state (issue #514): the wedge watchdog's
 /// classifier (heartbeat silent past `steeringStaleAfter`) drives the busy
 /// row's `Stalled…` label — the row, the banner and the steering panels

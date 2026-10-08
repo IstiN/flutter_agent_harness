@@ -489,24 +489,18 @@ void main() {
           action: StuckFollowUpAction.cancelRetry,
           timestamp: DateTime.utc(2026),
         ),
-        const TaskLedgerEvent(
-          TaskLedger(items: [TaskLedgerItem(requirement: 'r')]),
-        ),
       ];
       // Tripwire: exactly the sealed hierarchy's current size. A new
       // AgentEvent subtype must be added above (and classified in
       // `filtered` or mapped) — this count is what makes the omission
       // visible.
-      expect(samples, hasLength(16));
+      expect(samples, hasLength(15));
       const filtered = {
         'ModelRequestEvent',
         'ToolPairingRepairEvent',
         // gh-1054 liveness records ride the session ledger only.
         'ToolCallHeartbeatEvent',
         'ToolCallStuckEvent',
-        // gh-1412 the task ledger rides the hidden session record + the
-        // wire-serve passthrough only — never the pi-shaped stream.
-        'TaskLedgerEvent',
       };
       for (final event in samples) {
         final line = streamJsonEventLine(event);

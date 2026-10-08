@@ -125,10 +125,6 @@ const rootSpecs = <PromptSpec>[
     requiredToken: '{{mailbox}}',
   ),
   PromptSpec(
-    source: 'prompts/cli/finalize_gate.md',
-    constName: 'finalizeGateContractPrompt',
-  ),
-  PromptSpec(
     source: 'prompts/tools/inspect_image.md',
     constName: 'inspectImageVisionSystemPrompt',
   ),

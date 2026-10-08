@@ -4762,7 +4762,6 @@
 
 ## 1.0.533
 
-- gh-1412 [GOAL] Near-miss elimination: FinalizeGate contract + TaskLedger — the agent verifies produced state against task text before declaring done (#1418)
 - gh-1403 [daily-publish] testflight leg failed (#1424)
 - feat(bench): per-task test-budget override table + planner fairness guard (gh-1407) (#1417)
 

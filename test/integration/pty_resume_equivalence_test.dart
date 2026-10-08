@@ -107,14 +107,6 @@ final _durationCell = RegExp(r'·\s*\d+(?:\.\d+)?(?:ms|s)');
 /// sides; the settlement NOTICE rows stay (they replay as blockquotes).
 final _boardCard = RegExp(r'sh-\d+-\w+.*·');
 
-/// The gh-1415 subagent status board's live rows (`⠿ run pty446  0s  – …`,
-/// `✓ done …`): one glyph + state verb + name + age + cost, painted above
-/// the busy row. Status chrome, never transcript grammar: the row flashes
-/// and collapses on settle LIVE, and the resumed boot stays quiet by
-/// design (terminal-first-sight — rehydrated children are history, not
-/// news), so it never replays and drops from both sides like [_boardCard].
-final _subagentBoardRow = RegExp(r'^[⠿⏸✓✗] (?:run|wait|done|fail) ');
-
 /// The context gauge (`5%/200k`, `10.5k/200k`): only the status footer and
 /// the resumed boot's brand row carry it — never transcript grammar.
 final _ctxGauge = RegExp(r'\d+(?:\.\d+)?[k%]/\d');
@@ -155,7 +147,6 @@ bool _isChrome(String t) =>
     t.contains(' · ctx ') ||
     _ctxGauge.hasMatch(t) ||
     _boardCard.hasMatch(t) ||
-    _subagentBoardRow.hasMatch(t) ||
     t.startsWith('/exit') ||
     t.startsWith('====') ||
     t.startsWith('────') ||
@@ -214,32 +205,6 @@ List<String> transcriptOf(List<String> lines) {
 }
 
 void main() {
-  // Canonicalizer pin (gh-1415): the subagent status board's rows are
-  // status chrome — the live board flashes and collapses them in place,
-  // the resumed boot stays quiet (terminal-first-sight) — so the grammar
-  // comparison must drop them from the live side. Every glyph/verb pair
-  // of the four-state vocabulary is pinned: a renderer vocabulary change
-  // must consciously re-derive this matcher (a silent miss shifts the
-  // AC1 alignment window by one row and fails the PTY run below with a
-  // confusing off-by-one diff).
-  test('gh-1415: subagent board rows are chrome, never transcript grammar', () {
-    for (final row in [
-      '⠿ run pty446             0s    – reply with the single word ok',
-      '⏸ wait pty446             0s    – reply with the single word ok',
-      '✓ done pty446             0s    – reply with the single word ok',
-      '✗ fail pty446             0s    – reply with the single word ok',
-    ]) {
-      expect(transcriptOf(['>_Fa mid-turn row', row]), [
-        '>_Fa mid-turn row',
-      ], reason: 'subagent board row leaked into the transcript: $row');
-    }
-    // The settled band tool cards (✔/✘) are the ONLY tool-row grammar —
-    // the new rule must not eat them (the #916 drift detection stays).
-    expect(transcriptOf(['✔ bash: echo pinned-render-1']), [
-      'bash: echo pinned-render-1',
-    ]);
-  });
-
   late Directory home;
   late Directory project;
   late File turnsFile;

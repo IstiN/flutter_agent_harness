@@ -41,7 +41,6 @@ import '../messaging/scheduled_messages.dart' show ScheduledMessageQueue;
 import 'paste_image.dart';
 import 'tui_key_hints.dart';
 import 'sigint_action.dart';
-import 'subagent_board.dart';
 
 part 'fa_tui_slash_menu.dart';
 
@@ -59,7 +58,6 @@ part 'fa_tui_composer.dart';
 part 'fa_tui_viewport.dart';
 part 'fa_tui_kaomoji.dart';
 part 'fa_tui_busy.dart';
-part 'fa_tui_subagent_board.dart';
 
 /// Translates the (web-safe) headless test hooks into dart_tui program
 /// options: a scripted key byte stream replaces stdin, the rendered frames
@@ -295,7 +293,6 @@ final class FaTuiModel extends Model {
     this.scheduledCount = 0,
     this.scheduledNextDueMs = -1,
     this.jobBoardLines = const [],
-    this.subagentBoardRows = const [],
     this.waitingJobs = const [],
     this.waitingTimers = const [],
     this.waitingLostJobs = 0,
@@ -433,11 +430,6 @@ final class FaTuiModel extends Model {
   /// The background-job board's live region (issue #429): summary lines +
   /// live rows, dim, above the busy row. Empty hides the region.
   final List<String> jobBoardLines;
-
-  /// The subagent status board's live region (gh-1415): one compact line
-  /// per subagent (state, name, age, cost), pre-rendered by the host's
-  /// TaskBoardRegion. Empty hides the region (quiet zero — AC4).
-  final List<SubagentBoardRow> subagentBoardRows;
 
   /// The visible-waiting row state (issue #450): purposes of the running
   /// background jobs and the armed self-wake timers (due epoch ms +
@@ -730,7 +722,6 @@ final class FaTuiModel extends Model {
     int? scheduledCount,
     int? scheduledNextDueMs,
     List<String>? jobBoardLines,
-    List<SubagentBoardRow>? subagentBoardRows,
     List<String>? waitingJobs,
     List<({int dueMs, String preview})>? waitingTimers,
     int? waitingLostJobs,
@@ -795,7 +786,6 @@ final class FaTuiModel extends Model {
       scheduledCount: scheduledCount ?? this.scheduledCount,
       scheduledNextDueMs: scheduledNextDueMs ?? this.scheduledNextDueMs,
       jobBoardLines: jobBoardLines ?? this.jobBoardLines,
-      subagentBoardRows: subagentBoardRows ?? this.subagentBoardRows,
       waitingJobs: waitingJobs ?? this.waitingJobs,
       waitingTimers: waitingTimers ?? this.waitingTimers,
       waitingLostJobs: waitingLostJobs ?? this.waitingLostJobs,
@@ -866,7 +856,6 @@ final class FaTuiModel extends Model {
     if (msg is ScheduledStatusMsg) return _handleScheduledStatus(msg);
     if (msg is ScheduledTickMsg) return _handleScheduledTick();
     if (msg is JobBoardMsg) return _handleJobBoard(msg);
-    if (msg is SubagentBoardMsg) return _handleSubagentBoard(msg);
     if (msg is WaitingStatusMsg) return _handleWaitingStatus(msg);
     return null;
   }
@@ -2604,13 +2593,6 @@ final class FaTuiController {
   /// list hides the region (everything settled).
   void setJobBoard(List<String> lines) {
     _send(JobBoardMsg(List.unmodifiable(lines)));
-  }
-
-  /// Pushes the subagent status board's live region (gh-1415): one compact
-  /// line per subagent (state, name, age, cost), pre-rendered by the
-  /// host's TaskBoardRegion. An empty list hides the region (quiet zero).
-  void setSubagentBoard(List<SubagentBoardRow> rows) {
-    _send(SubagentBoardMsg(List.unmodifiable(rows)));
   }
 
   /// Drains the queued messages (the model echoes them into the history) —

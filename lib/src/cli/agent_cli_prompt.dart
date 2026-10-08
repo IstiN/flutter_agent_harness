@@ -24,14 +24,14 @@ extension AgentCliPromptComposition on AgentCli {
       // MCP tool docs are stripped by the pi override in
       // refilterMcpTools, so recomposing here stays bare.
       _agent.state.systemPrompt = _mcp.composePrompt(
-        _withFinalizeGate(cliPiModePrompt),
+        config.systemPrompt ?? cliPiModePrompt,
         contextSection: formatProjectContext(_contextFiles),
         skillsSection: '',
       );
       return;
     }
     _agent.state.systemPrompt = _mcp.composePrompt(
-      _withFinalizeGate(config.systemPrompt ?? _currentMode.systemPrompt),
+      config.systemPrompt ?? _currentMode.systemPrompt,
       contextSection: formatProjectContext(_contextFiles),
       skillsSection: formatSkillsForPrompt(
         _enabledSkills,
@@ -43,17 +43,6 @@ extension AgentCliPromptComposition on AgentCli {
       extSection: _ext.promptSection,
     );
   }
-
-  /// The FinalizeGate contract (gh-1412): unattended/bench sessions run
-  /// with the verify-produced-state-before-declaring-done contract
-  /// appended to the base prompt. Keyed on the BOOT approval mode — the
-  /// bench and headless runs set `approvalMode: autopilot` before boot;
-  /// an interactive `/approval` switch never recomposes the contract
-  /// (v1: no interactive-mode behavior change).
-  String _withFinalizeGate(String base) =>
-      config.approvalMode == ApprovalMode.unattended
-      ? '$base\n\n$finalizeGateContractPrompt'
-      : base;
 
   /// The `## Agent messaging` prompt section: the agent's own mailbox in
   /// the fabric + how discovery/addressing work. Empty until the session

@@ -153,13 +153,8 @@ void main() {
         );
         expect(
           frames.plain.substring(closedMark),
-          isNot(contains('scout#1 (explore)')),
-          reason:
-              'no overlay tree content leaked into the chat view — the '
-              'name alone is NOT a leak marker since gh-1415 (the compact '
-              'subagent status row legitimately paints `run scout#1` in '
-              'the chat view); anchor on the hub-only tree row form '
-              '`name (type) · status`',
+          isNot(contains('scout#1')),
+          reason: 'no overlay content leaked into the chat view',
         );
 
         // The user opens the hub again: bare /agents still opens (AC5) and

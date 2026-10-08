@@ -169,7 +169,6 @@ String _kindOf(AgentEvent event) => switch (event) {
   ToolExecutionEndEvent() => 'tool_execution_end',
   ModelRequestEvent() => 'model_request',
   ToolPairingRepairEvent() => 'tool_pairing_repair',
-  TaskLedgerEvent() => 'task_ledger',
   ToolCallHeartbeatEvent() => 'tool_call_heartbeat',
   ToolCallStuckEvent() => 'tool_call_stuck',
 };
