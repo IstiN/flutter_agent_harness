@@ -284,7 +284,6 @@ final class FaTuiModel extends Model {
     this.stickyLines = const [],
     this.stickyIndex = -1,
     this.stickyEchoLineCount = 0,
-    this.turnStartLine = -1,
     this.bootAnchorLine = 0,
     this.queue = const [],
     this.attachments = const [],
@@ -494,13 +493,6 @@ final class FaTuiModel extends Model {
   /// set at submit time; the sticky pins only when these rows have fully
   /// scrolled out of view.
   final int stickyEchoLineCount;
-
-  /// Output-lines index where the CURRENT turn starts — the last submitted
-  /// prompt's echo (or the first steered/drained echo); -1 until then
-  /// (issue #827). Drives the follow anchor [_turnAnchor]: a fresh
-  /// prompt's window starts at its own echo instead of showing turn N-1
-  /// above the prompt line.
-  final int turnStartLine;
 
   /// The resumed boot's replay anchor (issue #446 wave-14): the LOGICAL
   /// line index of the restored session's first row. While following and
@@ -722,7 +714,6 @@ final class FaTuiModel extends Model {
     List<String>? stickyLines,
     int? stickyIndex,
     int? stickyEchoLineCount,
-    int? turnStartLine,
     int? bootAnchorLine,
     List<QueuedMessage>? queue,
     List<TuiImageAttachment>? attachments,
@@ -787,7 +778,6 @@ final class FaTuiModel extends Model {
       stickyLines: stickyLines ?? this.stickyLines,
       stickyIndex: stickyIndex ?? this.stickyIndex,
       stickyEchoLineCount: stickyEchoLineCount ?? this.stickyEchoLineCount,
-      turnStartLine: turnStartLine ?? this.turnStartLine,
       bootAnchorLine: bootAnchorLine ?? this.bootAnchorLine,
       queue: queue ?? this.queue,
       attachments: attachments ?? this.attachments,
@@ -929,17 +919,16 @@ final class FaTuiModel extends Model {
     );
     final next = copyWith(
       outputLines: newLines,
-      // A head trim shifts every transcript index — anchor and pin (#827).
-      turnStartLine: _turnStartShiftedBy(cut),
+      // A head trim shifts every transcript index — the pin (#827).
       bootAnchorLine: _bootAnchorShiftedBy(cut),
       stickyIndex: _stickyShiftedBy(cut),
     );
     final nextWrapped = next._wrappedLines();
     // Auto-follow the stream while the latch holds; preserve the scroll
     // position (clamped) when the user scrolled up. Following re-anchors
-    // at the turn boundary (issue #827) — the stream owns the window.
+    // at the live edge (issue #1348) — the stream owns the window.
     final nextOffset = followTail
-        ? next._turnAnchor(nextWrapped)
+        ? next._followAnchor(nextWrapped)
         : next._clampScroll(scrollOffset, nextWrapped);
     return (next.copyWith(scrollOffset: nextOffset), null);
   }
@@ -966,14 +955,14 @@ final class FaTuiModel extends Model {
     final cleared = copyWith(
       queue: const [],
       outputLines: lines,
-      // The first drained echo opens the next turn's window (issue #827);
-      // echo-time head-trims shift it by the accumulated cut. A live
-      // submit also dissolves the boot anchor — the boundary re-arms.
-      turnStartLine: outputLines.length - echoCut,
+      // Echo-time head trims shift every anchored index (#827 review): the
+      // sticky pin from the running turn survives the drain. The boot
+      // anchor dissolves either way.
+      stickyIndex: _stickyShiftedBy(echoCut),
       bootAnchorLine: 0,
     );
     final next = cleared.copyWith(
-      scrollOffset: cleared._turnAnchor(cleared._wrappedLines()),
+      scrollOffset: cleared._followAnchor(cleared._wrappedLines()),
       followTail: true,
     );
     return (next, null);
@@ -1759,13 +1748,12 @@ final class FaTuiModel extends Model {
   }
 
   /// Appends [text] as a service line (dim hint/error) and keeps the
-  /// turn-start index accurate across a head-trim the append may fire
+  /// pinned-echo index accurate across a head-trim the append may fire
   /// (issue #827).
   FaTuiModel _appendServiceLine(String text) {
     final (lines, cut) = _appendOutput(outputLines, text, true);
     return copyWith(
       outputLines: lines,
-      turnStartLine: _turnStartShiftedBy(cut),
       bootAnchorLine: _bootAnchorShiftedBy(cut),
       stickyIndex: _stickyShiftedBy(cut),
     );
@@ -1817,24 +1805,22 @@ final class FaTuiModel extends Model {
       menuTokenStart: -1,
       stickyLines: sticky,
       // The echo lands at the old length minus the cut the append may
-      // have fired — the new turn's first line (issue #827); the sticky
-      // math shares the exact same index.
+      // have fired — the sticky math shares the exact same index.
       stickyIndex: outputLines.length - echoCut,
       stickyEchoLineCount: stickyEchoLineCount,
-      turnStartLine: outputLines.length - echoCut,
-      // A live submit dissolves the boot anchor: the turn boundary re-arms
-      // at this echo (issue #446 wave-14).
+      // A live submit dissolves the boot anchor: the window returns to
+      // the live edge (issue #1348).
       bootAnchorLine: 0,
       attachments: keepAttachments ? null : const [],
     );
     return (
       // A fresh submit always jumps to the bottom AND re-attaches follow:
       // without it, a latch detached by an earlier scroll-up froze the
-      // stream off-screen (and the sticky echo never activated). #827: the
-      // landing spot is the turn anchor — this turn's echo — not a window
-      // over turn N-1's tail.
+      // stream off-screen (and the sticky echo never activated). #1348:
+      // the landing spot is the live edge — the echo sits at the BOTTOM
+      // above the composer, prior history directly above it.
       cleared.copyWith(
-        scrollOffset: cleared._turnAnchor(cleared._wrappedLines()),
+        scrollOffset: cleared._followAnchor(cleared._wrappedLines()),
         followTail: true,
       ),
       _submitCmd(text, images),
@@ -1952,14 +1938,16 @@ final class FaTuiModel extends Model {
       historyIndex: -1,
       historyDraft: null,
       outputLines: lines,
-      // The first steered echo starts the interrupted turn's window
-      // (issue #827 — each steered message is a separate user turn);
-      // echo-time head-trims shift it by the accumulated cut.
-      turnStartLine: outputLines.length - echoCut,
+      // Echo/receipt-time head trims shift every anchored index
+      // (#827 review): a boot anchor trimmed mid-region would re-qualify
+      // for the boot park at a foreign row; the running turn's sticky pin
+      // drifts the same way.
+      stickyIndex: _stickyShiftedBy(echoCut),
+      bootAnchorLine: _bootAnchorShiftedBy(echoCut),
     );
     return (
       cleared.copyWith(
-        scrollOffset: cleared._turnAnchor(cleared._wrappedLines()),
+        scrollOffset: cleared._followAnchor(cleared._wrappedLines()),
         followTail: true,
       ),
       () async {
@@ -2030,9 +2018,9 @@ final class FaTuiModel extends Model {
     // A following tail rides the CURRENT bottom (issue #496): when the
     // frame squeezes, the viewport shrinks without any history append —
     // only re-clamping here keeps the live edge (the sent echo) on screen
-    // instead of stranding the window at a stale offset. Issue #827: the
-    // ride floors at the current turn's first row, so a fresh prompt's
-    // window starts at its echo (fold indicator explains the rest).
+    // instead of stranding the window at a stale offset. Issue #1348: the
+    // ride IS the live edge — the window pins to the bottom, so a fresh
+    // prompt lands above the composer with prior history above it.
     final offset = followTail
         ? _followOffset(wrapped)
         : _clampScroll(scrollOffset, wrapped);
@@ -2202,8 +2190,9 @@ final class FaTuiModel extends Model {
   /// number of lines every stored transcript index must shift by after
   /// the bounded-history trim dropped lines from the head (one less when
   /// the synthetic fence-repair line was prepended, since it occupies the
-  /// first retained slot), 0 when no trim fired. Issue #827's turn start
-  /// is the one such index today.
+  /// first retained slot), 0 when no trim fired. Every append path must
+  /// shift the anchored indices by it — the pinned sticky echo and the
+  /// boot anchor today (issue #827 review; #1348 retired the turn start).
   static (List<String>, int) _appendOutput(
     List<String> lines,
     String text,
