@@ -263,7 +263,10 @@ def _trial_max_gap(trial_dir: Path):
     return max(gaps) if gaps else None
 
 
-_LEDGER_VERIFIED = ("pass", "fixed")
+_LEDGER_VERIFIED = ("pass", "fixed")  # keep in lockstep with the Dart
+# `TaskLedgerItemStatus` enum and the SIBLING copy in bench/harbor_fa/summary.py
+# (the two summary scripts are standalone-by-design — different layout
+# roots — so this parser is duplicated; change both together).
 
 
 def _ledger_records(trial_dir: Path) -> list:
@@ -303,11 +306,23 @@ def _ledger_cell(trial_dir: Path) -> str:
     telemetry. `pass`/`fixed` items count as verified; everything else
     (fail/unverified) is unmet. A trial with no ledger (legacy sessions,
     ledger-less tasks) renders `checklist: none`.
+
+    Tolerates the corrupt payloads the Dart fold deliberately tolerates
+    ("a corrupt ledger payload never throws"): a non-dict `data`, or an
+    `items` that is not a list, degrades to `checklist: none` — never an
+    AttributeError. An items-less ledger is `none` too: it verifies
+    nothing, and rendering 0/0 would count as fully verified downstream.
+    Duplicate of the sibling parser in bench/harbor_fa/summary.py (the
+    scripts are standalone-by-design) — change both together.
     """
     ledgers = _ledger_records(trial_dir)
     if not ledgers:
         return "checklist: none"
-    items = ((ledgers[-1].get("data") or {}).get("items")) or []
+    data = ledgers[-1].get("data")
+    rows = data.get("items") if isinstance(data, dict) else None
+    items = rows if isinstance(rows, list) else []
+    if not items:
+        return "checklist: none"
     total = len(items)
     verified = sum(
         1

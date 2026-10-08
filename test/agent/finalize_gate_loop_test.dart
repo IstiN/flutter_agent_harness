@@ -149,22 +149,17 @@ Task complete.
     },
   );
 
-  test(
-    'a ledger quoted in an earlier turn never satisfies the gate when the '
-    'run ends on tool calls (gh-1412 review)',
-    () async {
-      // Over-eager contract compliance: the model quotes its ledger
-      // MID-RUN (text + a tool call in the same turn), then the run ends
-      // on the tool batch (a terminate:true result ends the loop with the
-      // tool results as the last messages). That ledger describes state
-      // the subsequent tool activity may have changed — only a TERMINAL
-      // answer satisfies the gate.
-      const bashTool = Tool(
-        name: 'bash',
-        description: 'shell',
-        parameters: {},
-      );
-      final events = await runTurns([
+  test('a ledger quoted in an earlier turn never satisfies the gate when the '
+      'run ends on tool calls (gh-1412 review)', () async {
+    // Over-eager contract compliance: the model quotes its ledger
+    // MID-RUN (text + a tool call in the same turn), then the run ends
+    // on the tool batch (a terminate:true result ends the loop with the
+    // tool results as the last messages). That ledger describes state
+    // the subsequent tool activity may have changed — only a TERMINAL
+    // answer satisfies the gate.
+    const bashTool = Tool(name: 'bash', description: 'shell', parameters: {});
+    final events = await runTurns(
+      [
         [
           StartEvent(partial: testAssistant()),
           TextStartEvent(contentIndex: 0, partial: testAssistant()),
@@ -196,10 +191,13 @@ Task complete.
             ),
           ),
         ],
-      ], finalizeGate: true, toolExecutor: (_, _, _) async {
+      ],
+      finalizeGate: true,
+      toolExecutor: (_, _, _) async {
         return ToolExecutionResult.text('done', terminate: true);
-      }, tools: const [bashTool]);
-      expect(events.whereType<TaskLedgerEvent>(), isEmpty);
-    },
-  );
+      },
+      tools: const [bashTool],
+    );
+    expect(events.whereType<TaskLedgerEvent>(), isEmpty);
+  });
 }

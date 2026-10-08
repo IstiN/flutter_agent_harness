@@ -72,17 +72,35 @@ def _ledger_records(trial_dir: Path) -> list:
     return ledgers
 
 
-_LEDGER_VERIFIED = ("pass", "fixed")
+_LEDGER_VERIFIED = ("pass", "fixed")  # keep in lockstep with the Dart
+# `TaskLedgerItemStatus` enum and the SIBLING copy in
+# bench/terminal_bench/summary.py (the two summary scripts are
+# standalone-by-design — different layout roots — so this parser is
+# duplicated; change both together).
 
 
 def _ledger_cell(trial_dir: Path) -> str:
     """gh-1412: the trial's checklist-coverage cell from its last hidden
     `task_ledger` record — "checklist: V/T [(N unmet)]", "checklist: none"
-    when the session carries no ledger."""
+    when the session carries no ledger.
+
+    Tolerates the corrupt payloads the Dart fold deliberately tolerates
+    ("a corrupt ledger payload never throws"): a non-dict `data`, or an
+    `items` that is not a list, degrades to `checklist: none` — never an
+    AttributeError. An items-less ledger is `none` too: it verifies
+    nothing, and rendering 0/0 would count it as fully verified in the
+    coverage tally below. Duplicate of the sibling parser in
+    bench/terminal_bench/summary.py (the scripts are standalone-by-design)
+    — change both together.
+    """
     ledgers = _ledger_records(trial_dir)
     if not ledgers:
         return "checklist: none"
-    items = ((ledgers[-1].get("data") or {}).get("items")) or []
+    data = ledgers[-1].get("data")
+    rows = data.get("items") if isinstance(data, dict) else None
+    items = rows if isinstance(rows, list) else []
+    if not items:
+        return "checklist: none"
     total = len(items)
     verified = sum(
         1

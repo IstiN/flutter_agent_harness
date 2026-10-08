@@ -267,9 +267,10 @@ class Agent {
   /// as the hidden `task_ledger` session record. Off = interactive
   /// behavior is byte-identical.
   ///
-  /// Mutable: hosts that build the agent through `wireAgentCore` flip it
-  /// right after the stack lands (the builder's `AgentWiringSpec` has no
-  /// knob for it in v1).
+  /// Mutable: only the CLI host flips this today (boot approval mode
+  /// `unattended`); the builder's `AgentWiringSpec` has no knob for it in
+  /// v1 — hosts that want the gate must set the field after the stack
+  /// lands.
   bool finalizeGate;
 
   /// Provider adapter used for every model call. See [StreamFunction].

@@ -19,13 +19,14 @@ import 'agent_cli_test_support.dart';
 void main() {
   const secret = 'sk-live-topsecret-credential-42';
 
-  const ledgerAnswer = '''
+  final ledgerAnswer =
+      '''
 Task complete.
 ```task-ledger
-- requirement: key material \$key is gone
-  command: echo "\$key"
+- requirement: key $secret rotated
+  command: echo "$secret"
   expected: empty output
-  actual: sk-live-topsecret-credential-42
+  actual: $secret
   status: pass
 ```
 ''';
@@ -86,11 +87,13 @@ Task complete.
     expect(item['actual'], contains('[REDACTED:'));
   });
 
-  test('no pipeline: the record persists verbatim (byte-identical legacy)',
-      () async {
-    final ledgers = await runAndRecords();
-    expect(ledgers, hasLength(1));
-    final raw = ledgers.single.data.toString();
-    expect(raw, contains(secret));
-  });
+  test(
+    'no pipeline: the record persists verbatim (byte-identical legacy)',
+    () async {
+      final ledgers = await runAndRecords();
+      expect(ledgers, hasLength(1));
+      final raw = ledgers.single.data.toString();
+      expect(raw, contains(secret));
+    },
+  );
 }

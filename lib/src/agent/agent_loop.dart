@@ -1152,11 +1152,16 @@ Future<List<Message>> _runAgentLoop({
 }
 
 /// Parses the FinalizeGate ledger from the run's last assistant message
-/// (gh-1412). The LAST assistant message decides: a ledger quoted in an
-/// earlier turn's text never satisfies the gate.
+/// (gh-1412). The run must END on that message — a ledger quoted in an
+/// earlier turn's text never satisfies the gate, and a run that stopped on
+/// tool calls (terminate batch, abort) has no terminal answer to gate on:
+/// the last self-check it quoted predates tool activity that may have
+/// changed the produced state.
 TaskLedger? _finalTaskLedger(List<Message> messages) {
   for (final message in messages.reversed) {
-    if (message is! AssistantMessage) continue;
+    // The run's final message decides: anything after the last assistant
+    // message (tool results) means the run never ended on an answer.
+    if (message is! AssistantMessage) return null;
     for (final block in message.content.reversed) {
       if (block is! TextContent) continue;
       final ledger = parseTaskLedger(block.text);

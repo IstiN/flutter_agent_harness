@@ -162,9 +162,11 @@ factual: paths, commands, invariants — no essays.
   the final answer's `task-ledger` fenced block (`parseTaskLedger`,
   last block wins) and emits `TaskLedgerEvent`; hosts persist the hidden
   `task_ledger` custom record (CLI: `agent_event_handler.dart` →
-  `appendCustomEntry` right after the assistant message, wired through
-  `Agent.persistTaskLedger` — null keeps interactive sessions
-  ledger-less), the wire protocol carries `task_ledger` (golden fixture +
+  `_onTaskLedger` in `trajectory_commands.dart` — the `appendCustomEntry`
+  lives there, redacted through the host pipeline — wired through
+  `handleAgentEvent`'s nullable `onTaskLedger` callback; unset keeps
+  interactive sessions ledger-less), the wire protocol carries `task_ledger`
+  (golden fixture +
   web client `KNOWN_EVENT_KINDS`), and `TrajectorySnapshotBuilder` folds
   the latest ledger into `snapshot.taskLedger` (legacy sessions degrade to
   null). The bench summaries render near-miss proximity from the synced
