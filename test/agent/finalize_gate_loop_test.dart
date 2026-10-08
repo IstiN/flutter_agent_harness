@@ -76,14 +76,17 @@ Task complete.
   Future<List<AgentEvent>> runTurns(
     List<List<AssistantMessageEvent>> turns, {
     required bool finalizeGate,
+    ToolExecutor? toolExecutor,
+    List<Tool>? tools,
   }) async {
     final fake = FakeStreamFunction(turns);
     final stream = agentLoop(
       prompts: [UserMessage.text('fixture task')],
-      context: const Context(messages: []),
+      context: Context(messages: const [], tools: tools),
       config: AgentLoopConfig(model: testModel, finalizeGate: finalizeGate),
       streamFunction: fake.call,
-      toolExecutor: (_, _, _) async => ToolExecutionResult.text('ok'),
+      toolExecutor:
+          toolExecutor ?? (_, _, _) async => ToolExecutionResult.text('ok'),
     );
     return stream.toList();
   }
@@ -142,6 +145,60 @@ Task complete.
       ], finalizeGate: true);
       // The run ends with tool results as the last messages; no assistant
       // ledger answer ever arrived.
+      expect(events.whereType<TaskLedgerEvent>(), isEmpty);
+    },
+  );
+
+  test(
+    'a ledger quoted in an earlier turn never satisfies the gate when the '
+    'run ends on tool calls (gh-1412 review)',
+    () async {
+      // Over-eager contract compliance: the model quotes its ledger
+      // MID-RUN (text + a tool call in the same turn), then the run ends
+      // on the tool batch (a terminate:true result ends the loop with the
+      // tool results as the last messages). That ledger describes state
+      // the subsequent tool activity may have changed — only a TERMINAL
+      // answer satisfies the gate.
+      const bashTool = Tool(
+        name: 'bash',
+        description: 'shell',
+        parameters: {},
+      );
+      final events = await runTurns([
+        [
+          StartEvent(partial: testAssistant()),
+          TextStartEvent(contentIndex: 0, partial: testAssistant()),
+          TextDeltaEvent(
+            contentIndex: 0,
+            delta: ledgerText,
+            partial: testAssistant(content: [TextContent(text: ledgerText)]),
+          ),
+          ToolCallStartEvent(contentIndex: 1, partial: testAssistant()),
+          ToolCallEndEvent(
+            contentIndex: 1,
+            toolCall: ToolCall(id: 't1', name: 'bash', arguments: const {}),
+            partial: testAssistant(
+              content: [
+                TextContent(text: ledgerText),
+                ToolCall(id: 't1', name: 'bash', arguments: const {}),
+              ],
+              stopReason: StopReason.toolUse,
+            ),
+          ),
+          DoneEvent(
+            reason: StopReason.toolUse,
+            message: testAssistant(
+              content: [
+                TextContent(text: ledgerText),
+                ToolCall(id: 't1', name: 'bash', arguments: const {}),
+              ],
+              stopReason: StopReason.toolUse,
+            ),
+          ),
+        ],
+      ], finalizeGate: true, toolExecutor: (_, _, _) async {
+        return ToolExecutionResult.text('done', terminate: true);
+      }, tools: const [bashTool]);
       expect(events.whereType<TaskLedgerEvent>(), isEmpty);
     },
   );

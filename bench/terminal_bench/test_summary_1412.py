@@ -114,6 +114,37 @@ class ChecklistCoverageTest(unittest.TestCase):
         out = "\n".join(lines)
         self.assertIn("checklist: none |", out)
 
+    def test_corrupt_ledger_payload_never_crashes(self):
+        # gh-1412 review: the Dart fold tolerates corrupt ledger payloads
+        # ("a corrupt ledger payload never throws"); the Python parser must
+        # degrade the same way — a non-dict `data` renders `checklist:
+        # none`, it never kills the summary render.
+        for garbage in (3, "garbage", [1, 2], None, {"items": "nope"}):
+            with self.subTest(garbage=garbage):
+                name = "t.1-of-1.shard-1"
+                sessions = (
+                    self.runs / "shard-0" / "t" / name / "agent-logs"
+                    / "fah-sessions"
+                )
+                sessions.mkdir(parents=True, exist_ok=True)
+                (sessions / "session.jsonl").write_text(
+                    json.dumps({
+                        "type": "custom",
+                        "customType": "task_ledger",
+                        "data": garbage,
+                    })
+                    + "\n"
+                )
+                _results(self.runs / "shard-0", [_row("t", name)])
+                lines, _ = summary.render(self.runs)
+                self.assertIn("checklist: none |", "\n".join(lines))
+
+    def test_empty_items_ledger_is_none(self):
+        # An items-less ledger verifies nothing; rendering 0/0 would count
+        # it as fully verified downstream.
+        out = self._render_one([])
+        self.assertIn("checklist: none |", out)
+
     def test_ledger_less_trial_among_ledgered_ones(self):
         # Mixed run: one trial with a ledger, one legacy trial without.
         _results(self.runs / "shard-0", [_row("a", "a.1"), _row("b", "b.1")])

@@ -225,6 +225,42 @@ class ChecklistCoverageTest(unittest.TestCase):
         # The fully-verified trial is counted, not listed.
         self.assertNotIn("trial-1: checklist", out)
 
+    def test_corrupt_ledger_payload_never_crashes(self):
+        # gh-1412 review (empirically reproduced in round 2): a non-dict
+        # `data` must degrade to `checklist: none`, never kill the render
+        # (the Dart fold tolerates the same shapes).
+        make_jobs(
+            self.jobs,
+            "fa-4.0-docker-cpu-0",
+            [{"resolved": True}, {"resolved": True}, {"resolved": True},
+             {"resolved": True}],
+        )
+        job = self.jobs / "fa-4.0-docker-cpu-0"
+        for index, garbage in enumerate((3, "garbage", [1, 2], {"items": "nope"})):
+            trial = job / f"trial-{index}"
+            sessions = trial / "agent" / "fah-sessions"
+            sessions.mkdir(parents=True, exist_ok=True)
+            (sessions / "session.jsonl").write_text(
+                json.dumps({
+                    "type": "custom",
+                    "customType": "task_ledger",
+                    "data": garbage,
+                })
+                + "\n"
+            )
+        rc, out = self._run_default()
+        self.assertEqual(rc, 0)
+        self.assertNotIn("Checklist coverage", out)
+
+    def test_empty_ledger_is_not_fully_verified(self):
+        # A ledger with no items verifies nothing — rendering 0/0 would
+        # count the trial as fully verified in the coverage tally.
+        make_jobs(self.jobs, "fa-4.0-docker-cpu-0", [{"resolved": True}])
+        _write_ledger(self.jobs / "fa-4.0-docker-cpu-0" / "trial-0", [])
+        rc, out = self._run_default()
+        self.assertEqual(rc, 0)
+        self.assertNotIn("Checklist coverage", out)
+
 
 if __name__ == "__main__":
     unittest.main()
