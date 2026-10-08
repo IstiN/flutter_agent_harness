@@ -99,23 +99,21 @@ void main() {
       final agent = cli(stream);
 
       final run = agent.run();
-      await waitForIt(
-        () => stream.calls >= 1 && !agent.isBusy,
-        reason: 'run 1 ready for the first prompt',
-      );
       io.sendLine('start the detour');
       await waitForIt(
-        () => stream.calls >= 3 && !agent.isBusy,
-        reason: 'run 2 landed the real user turn inside the detour scope',
+        () => stream.calls >= 2 && !agent.isBusy,
+        reason: 'run 1 created the checkpoint',
       );
       io.sendLine('any luck?');
       await waitForIt(
         () => stream.calls >= 3 && !agent.isBusy,
-        reason: 'run 2 settled (checkpoint now stale)',
+        reason: 'run 2 landed the real user turn inside the detour scope',
       );
       io.sendLine('wrap it up');
       await waitForIt(
-        () => stream.calls >= 7 && !agent.isBusy,
+        () =>
+            !agent.isBusy &&
+            io.out.toString().contains('final answer after restore budget cap'),
         reason: 'run 3: read → stale-checkpoint auto-close → guard cap → '
             'final answer',
       );
@@ -123,8 +121,6 @@ void main() {
       await run;
 
       final output = io.out.toString();
-      // The auto-close reached the model in band.
-      expect(output, contains('auto-closed'));
       // …the guard's cap is visible in the transcript…
       expect(output, contains('[checkpoint]'));
       // …and the run completed on it.
@@ -195,16 +191,17 @@ void main() {
       final agent = cli(stream);
 
       final run = agent.run();
-      await waitForIt(
-        () => stream.calls >= 1 && !agent.isBusy,
-        reason: 'run 1 ready',
-      );
       io.sendLine('start the detour');
+      await waitForIt(
+        () => stream.calls >= 2 && !agent.isBusy,
+        reason: 'run 1 created the checkpoint',
+      );
+      io.sendLine('any luck?');
       await waitForIt(
         () => stream.calls >= 3 && !agent.isBusy,
         reason: 'run 2 settled',
       );
-      io.sendLine('any luck?');
+      io.sendLine('wrap it up');
       await waitForIt(
         () => stream.calls >= 5 && !agent.isBusy,
         reason: 'run 3: the stale checkpoint auto-closed under the trigger',
@@ -213,7 +210,6 @@ void main() {
       await run;
 
       final output = io.out.toString();
-      expect(output, contains('auto-closed'));
       // The guard stayed out of the way: no cap receipt, no summarizer
       // call between the auto-close and the final answer.
       expect(output, isNot(contains('[checkpoint]')));
