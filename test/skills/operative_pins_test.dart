@@ -328,6 +328,75 @@ void main() {
     });
   });
 
+  group('isPinRenumberingBoundary — boundary variants', () {
+    UserMessage _user(String text) => UserMessage(
+      content: text,
+      timestamp: DateTime.utc(2026),
+    );
+
+    test('classic compaction summary prefix', () {
+      expect(
+        isPinRenumberingBoundary(
+          _user('$compactionSummaryPrefix\nbody\n$compactionSummarySuffix'),
+        ),
+        isTrue,
+      );
+    });
+
+    test('branch summary prefix', () {
+      expect(
+        isPinRenumberingBoundary(
+          _user('$branchSummaryPrefix\nbody\n$branchSummarySuffix'),
+        ),
+        isTrue,
+      );
+    });
+
+    test('structured hidden/checkpoint marker text', () {
+      expect(isPinRenumberingBoundary(_user('[3:hidden·tool_result·4.2k]')),
+          isTrue);
+      expect(
+        isPinRenumberingBoundary(
+          ToolResultMessage(
+            toolCallId: 'c1',
+            toolName: 'read',
+            content: [TextContent(text: '[2-6:ckpt·38k→40tok·covers:3,5]')],
+            isError: false,
+            timestamp: DateTime.utc(2026),
+          ),
+        ),
+        isTrue,
+      );
+    });
+
+    test('local trim valve note', () {
+      expect(
+        isPinRenumberingBoundary(
+          _user('[context trimmed locally: overflow relief]'),
+        ),
+        isTrue,
+      );
+    });
+
+    test('ordinary messages are not boundaries', () {
+      expect(isPinRenumberingBoundary(_user('plain user text')), isFalse);
+      expect(
+        isPinRenumberingBoundary(
+          AssistantMessage(
+            content: [TextContent(text: 'assistant text')],
+            api: 'a',
+            provider: 'p',
+            model: 'm',
+            usage: Usage.zero,
+            stopReason: StopReason.stop,
+            timestamp: DateTime.utc(2026),
+          ),
+        ),
+        isFalse,
+      );
+    });
+  });
+
   group('REG-PIN-5 — consent inheritance (F7)', () {
     test('an unconsented third-party skill contributes zero pins — pins '
         'inherit exactly the discovery consent state', () async {
