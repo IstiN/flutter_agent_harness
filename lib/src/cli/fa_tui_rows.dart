@@ -288,6 +288,7 @@ extension _TuiRowRenderers on FaTuiModel {
     }
     row = _writeJobBoard(b, row, plan);
     row = _writeWaitingRows(b, row, plan);
+    row = _writeSubagentBoard(b, row, plan);
     row = _writeBusyRow(b, row);
     row = _writeQueueRows(b, row, plan);
     row = _writeAttachmentChips(b, row, plan);

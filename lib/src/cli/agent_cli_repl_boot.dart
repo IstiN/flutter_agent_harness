@@ -108,6 +108,11 @@ extension on AgentCli {
     // The visible-waiting row lights up on boot too (issue #450): armed
     // timers from previous runs + the restart-honesty note.
     unawaited(_waiting.push());
+    // The subagent status board refreshes on boot too (gh-1415): a
+    // wake-resumed child of a previous run shows if the registry carried
+    // one; rehydrated terminal rows stay history (the region's
+    // terminal-first-sight rule keeps the boot quiet).
+    _subagentBoard.refresh();
     // Consent first; the fresh-install wizard (issue #969) chains after it
     // so two wizard pickers never race for one answer completer.
     unawaited(
