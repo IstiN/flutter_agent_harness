@@ -239,10 +239,9 @@ void main() {
       var fired = false;
       textOnlyImageDropNotice = (_) => fired = true;
 
-      downgradeUnsupportedImages(
-        [UserMessage.text('plain', timestamp: DateTime.utc(2026))],
-        textOnly,
-      );
+      downgradeUnsupportedImages([
+        UserMessage.text('plain', timestamp: DateTime.utc(2026)),
+      ], textOnly);
 
       expect(fired, isFalse);
     });
@@ -263,10 +262,7 @@ void main() {
       expect(providerFetchReadTimeout, const Duration(seconds: 120));
       expect(effectiveProviderFetchReadTimeout, const Duration(seconds: 120));
       // The connect leg never exceeds the overall fetch budget.
-      expect(
-        effectiveProviderFetchConnectTimeout,
-        const Duration(seconds: 30),
-      );
+      expect(effectiveProviderFetchConnectTimeout, const Duration(seconds: 30));
       providerTimeoutsOverride = const ProviderTimeoutsOverride(
         fetchRead: Duration(seconds: 10),
       );
@@ -288,7 +284,10 @@ void main() {
         await expectLater(
           sendProviderFetch(
             client,
-            http.Request('GET', Uri.parse('https://quota.example.com/v1/limit')),
+            http.Request(
+              'GET',
+              Uri.parse('https://quota.example.com/v1/limit'),
+            ),
             endpoint: 'provider quota probe',
           ),
           throwsA(
