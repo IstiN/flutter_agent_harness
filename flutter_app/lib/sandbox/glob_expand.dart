@@ -126,7 +126,6 @@ Future<List<String>?> expandGlobPattern(
             }
             return path;
           })
-          .toSet()
           .toList()
         ..sort();
   return matches.isEmpty ? null : matches;

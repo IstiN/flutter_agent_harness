@@ -10,7 +10,6 @@
 library;
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io' as io;
 import 'dart:typed_data';
 
@@ -161,6 +160,22 @@ void main() {
       ]);
     });
 
+    test('AC1: bracket classes expand in argv (rework round 3)', () async {
+      // gh-1393 rework: `[0-9]*` matches only the 2048 app dir — the
+      // MemoryShell twin is pinned behaviorally (glob_expand_test) and
+      // against the sh -c oracle (conformance row).
+      rec.next = _ScriptedInstance();
+      await shell().exec('grep tap apps/[0-9]*/app.json');
+      expect(rec.configs.single.args, [
+        'rg',
+        '--no-ignore',
+        '--hidden',
+        '-e',
+        'tap',
+        '/apps/2048/app.json',
+      ]);
+    });
+
     test('quoted glob words stay literal', () async {
       rec.next = _ScriptedInstance();
       await shell().exec("grep x '*.nomatch'");
@@ -197,6 +212,27 @@ void main() {
         'TAP',
         '/apps',
       ]);
+    });
+
+    test('-m1 reaches rg attached and detached (rework round 3 pin)',
+        () async {
+      // gh-1393 rework: the max-count flag is pinned on BOTH shells —
+      // the WASI twin forwards it to rg (attached as `-m1`, detached as
+      // the `-m N` pair, `--max-count=N` as the pair), the MemoryShell
+      // engine honors it (memory_shell_test + the conformance oracle row).
+      rec.next = _ScriptedInstance();
+      await shell().exec('grep -m1 tap /in.txt');
+      expect(rec.configs.last.args, contains('-m1'));
+
+      rec.next = _ScriptedInstance();
+      await shell().exec('grep -m 1 tap /in.txt');
+      var args = rec.configs.last.args;
+      expect(args[args.indexOf('-m') + 1], '1');
+
+      rec.next = _ScriptedInstance();
+      await shell().exec('grep --max-count=2 tap /in.txt');
+      args = rec.configs.last.args;
+      expect(args[args.indexOf('-m') + 1], '2');
     });
 
     test('BRE alternation reaches rg as ERE', () async {

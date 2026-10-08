@@ -101,6 +101,89 @@ final conformanceTable = <ConformanceRow>[
         'pinned at the argv layer in sandbox_shell_parity_test)',
     'tr a b < apps/2048/app.json',
   ),
+  // ── glob + grep rows vs the oracle (rework round 3, review threads
+  //    6/15): the headline features are diffed against real `sh -c` here,
+  //    not only against argv pins / hand-written expectations. WASI stays
+  //    out (rg rides rg.wasm, cat rides coreutils.wasm — the skip list);
+  //    the WASI twins remain argv-pinned in sandbox_shell_parity_test.
+  ConformanceRow(
+    'AC1 glob expansion feeds grep: `grep -l TAP apps/*/app.json` matches '
+        'the oracle',
+    'grep -l TAP apps/*/app.json',
+    files: const {
+      'in.txt': 'alpha\nbeta\n',
+      'work/notes.txt': 'note one\nnote two\n',
+      'apps/2048/app.json': '{"TAP":true}\n',
+      'apps/notes/app.json': '{"other":1}\n',
+    },
+    wasi: false,
+    note: 'rg rides rg.wasm (scripted slots cannot execute it)',
+  ),
+  ConformanceRow(
+    'AC1 recursive grep over a directory agrees with GNU grep -r '
+        '(order-normalized)',
+    'grep -rl TAP apps',
+    files: const {
+      'apps/2048/app.json': '{"TAP":true}\n',
+      'apps/notes/app.json': '{"other":1}\n',
+      'apps/notes/README.md': 'no TAP here\n',
+    },
+    normalize: true,
+    wasi: false,
+    note: 'rg rides rg.wasm; POSIX leaves walk order unspecified',
+  ),
+  ConformanceRow(
+    'AC1 the Cyrillic evidence command agrees with GNU grep (order-normalized)',
+    'grep -rl счёт apps',
+    files: const {
+      'apps/2048/app.json': '{"tap":true}\n',
+      'apps/notes/ru.txt': 'счёт стоит\n',
+    },
+    normalize: true,
+    wasi: false,
+    note: 'rg rides rg.wasm; POSIX leaves walk order unspecified',
+  ),
+  ConformanceRow(
+    'AC1 --include= filters agree with GNU grep',
+    'grep -rl --include=*.json TAP apps',
+    files: const {
+      'apps/2048/app.json': '{"TAP":true}\n',
+      'apps/notes/README.md': 'TAP in a non-json file\n',
+    },
+    normalize: true,
+    wasi: false,
+    note: 'rg rides rg.wasm',
+  ),
+  ConformanceRow(
+    'AC1 -m1 caps matches per file exactly like GNU grep',
+    'grep -m1 tap apps/*/app.json',
+    wasi: false,
+    note: 'rg rides rg.wasm (the -m1 rework row)',
+  ),
+  ConformanceRow(
+    'AC1 -o match-only output agrees with GNU grep',
+    'grep -o tap apps/2048/app.json',
+    wasi: false,
+    note: 'rg rides rg.wasm',
+  ),
+  ConformanceRow(
+    'AC1 grep exit codes agree (match 0, no-match 1)',
+    'grep -q TAP apps/2048/app.json; grep -q MISSING apps/2048/app.json',
+    wasi: false,
+    note: 'rg rides rg.wasm',
+  ),
+  ConformanceRow(
+    'AC1 glob-expanded cat concatenates in bash sort order',
+    'cat apps/*/app.json',
+    wasi: false,
+    note: 'cat rides coreutils.wasm (scripted slots cannot execute it)',
+  ),
+  ConformanceRow(
+    'AC1 bracket classes expand identically to bash',
+    'cat apps/[n]otes/app.json',
+    wasi: false,
+    note: 'cat rides coreutils.wasm',
+  ),
   // ── core pipeline semantics ───────────────────────────────────────────
   const ConformanceRow('stdin redirect', 'tr a b < in.txt'),
   const ConformanceRow(
@@ -151,6 +234,42 @@ void main() {
     expect(
       names,
       contains('AC2 cd inside one command line redirects later stages'),
+    );
+  });
+
+  test('the conformance table pins glob/grep rows against the oracle', () {
+    // Rework round 3 (review threads 6/15): the headline features must be
+    // diffed against real `sh -c` — never only argv pins or hand-written
+    // expectations.
+    expect(
+      conformanceTable.any(
+        (r) => r.command.contains('grep') && r.command.contains('apps/*/'),
+      ),
+      isTrue,
+      reason: 'a glob-fed grep row must exist',
+    );
+    expect(
+      conformanceTable.any(
+        (r) => r.command.startsWith('grep -rl') && r.normalize,
+      ),
+      isTrue,
+      reason: 'an order-normalized recursive grep row must exist',
+    );
+    expect(
+      conformanceTable.any((r) => r.command.contains('--include=')),
+      isTrue,
+    );
+    expect(
+      conformanceTable.any((r) => r.command.contains('-m1')),
+      isTrue,
+      reason: 'the -m1 row pins the rework max-count contract',
+    );
+    expect(
+      conformanceTable.any(
+        (r) => r.command.startsWith('cat ') && r.command.contains('['),
+      ),
+      isTrue,
+      reason: 'a bracket-class glob row must exist',
     );
   });
 

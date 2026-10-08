@@ -155,10 +155,10 @@ void main() {
 
     test('a leading ] inside a class is literal (bash []x] rule)', () async {
       final bracketFs = fakeFs(const {
-        '/': [GlobEntry('x].txt'), GlobEntry('x.txt')],
+        '/': [GlobEntry('x].txt'), GlobEntry('xa.txt')],
       });
       expect(await expandGlobPattern('x[]].txt', '/', bracketFs), ['x].txt']);
-      expect(await expandGlobPattern('x[!]].txt', '/', bracketFs), ['x.txt']);
+      expect(await expandGlobPattern('x[!]].txt', '/', bracketFs), ['xa.txt']);
     });
 
     test('an unclosed [ is a literal character (no match → passthrough)',
