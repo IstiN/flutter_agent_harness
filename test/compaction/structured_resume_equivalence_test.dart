@@ -250,9 +250,13 @@ void main() {
         '"message":{"role":"user","content":[{"type":"text","text":'
         '"old message"}]}}\n'
         '{"type":"compact_checkpoint","id":"cc2","parentId":"u1",'
-        '"timestamp":"$iso","firstRecordId":"u1","lastRecordId":"u1",'
+        '"timestamp":"$iso",'
+        // An older writer's shape: the range ids and covers this build
+        // reads (`firstRecordId`/`lastRecordId`/`coversRecordIds`) are all
+        // absent — first/last parse to '' and covers to [], so the record
+        // references NOTHING resolvable.
         '"text":"checkpoint text from an incompatible writer",'
-        '"coversRecordIds":[],"flattenedRecordIds":[]}\n',
+        '"legacy_covers":["u1"]}\n',
       ).toString();
       final path = await pathOf(jsonl);
       final seqs = RecordSeqIndex(path);
@@ -275,7 +279,9 @@ void main() {
       expect(texts.where((s) => s.contains(':ckpt·')), isEmpty);
       // …and the covered record renders unfolded under the note.
       expect(texts.where((s) => s.contains('old message')), isNotEmpty);
-      expect(texts.where((s) => s.contains('[resume]')), isNotEmpty);
+      final note = texts.firstWhere((s) => s.contains('[resume]'));
+      expect(note, contains('compact_checkpoint'));
+      expect(note, contains('carries no record ids'));
     });
 
     test('healthy folds render exactly as before — no note, no shape change '

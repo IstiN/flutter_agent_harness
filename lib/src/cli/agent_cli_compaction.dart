@@ -351,6 +351,46 @@ extension AgentCliCompactionRun on AgentCli {
     tools: _agent.state.tools,
   );
 
+  /// gh-1425 AC3 (the resume boot cap): a resumed session whose projected
+  /// context is already over the compaction trigger runs ONE forced
+  /// compaction pass at IDLE BOOT — before any user message — so the ctx
+  /// meter renders the post-cap number instead of idling above 100% (the
+  /// owner's 143% at boot: the meter was honest, but nothing ever capped
+  /// the resume; the pre-flight gate only fires before a RUN). Also runs
+  /// on mid-REPL session switches (same detonation class — the switched-to
+  /// session boots over-window).
+  ///
+  /// Degradation (AC5) rides the shared [AutoCompactorFactory] pipeline: a
+  /// summarizer failure falls to the existing local-trim valve with its
+  /// visible `[context trimmed]` note, so the next request is still ≤
+  /// window and the boot survives any failure — the catch below only
+  /// backstops unexpected throws (a broken session must still boot).
+  /// Idempotent (kill/resume mid-pass): a failed pass appends nothing, so
+  /// the next boot re-runs the gate from the same state.
+  Future<void> _capResumedContext(Session session) async {
+    if (_agent.state.messages.isEmpty) return;
+    if (_runAbortRequested) return;
+    final tokens = _liveRequestTokens();
+    if (!shouldCompact(
+      tokens,
+      _effectiveContextWindow,
+      _effectiveCompactionSettings,
+    )) {
+      return;
+    }
+    _pushBusyPhase('Compacting context…');
+    _logDiagnostic('resume boot cap start sid=$_logSid tokens=$tokens');
+    try {
+      await _runAutoCompact('[auto-compacted]', session: session);
+    } on CancelledException {
+      rethrow;
+    } on Object catch (error) {
+      _logDiagnostic('resume boot cap failed sid=$_logSid: $error');
+    } finally {
+      _pushBusyPhase('');
+    }
+  }
+
   /// `/compact` manual override: same AutoCompactor pipeline as the
   /// auto-trigger, but unconditional — honours the user's explicit ask
   /// even when the threshold isn't crossed.
@@ -393,9 +433,11 @@ extension AgentCliCompactionRun on AgentCli {
 
   /// Builds the per-host smol/main summarizers and runs the shared
   /// [AutoCompactor]. Used by both [_maybeAutoCompact] (gated by
-  /// [shouldCompact]) and [_runManualCompact] (unconditional).
-  /// Returns whether a pass reported success (a rendered report block).
-  Future<bool> _runAutoCompact(String label) async {
+  /// [shouldCompact]) and [_runManualCompact] (unconditional), plus the
+  /// resume boot cap (which passes the session explicitly — at boot
+  /// `_session` is not assigned yet). Returns whether a pass reported
+  /// success (a rendered report block).
+  Future<bool> _runAutoCompact(String label, {Session? session}) async {
     // The user's explicit stop wins over any compaction (issue #1085
     // round-1): the abort must not merely cancel the IN-FLIGHT pass — it
     // must not be answered with a FRESH pass either (an aborted run's
@@ -428,7 +470,7 @@ extension AgentCliCompactionRun on AgentCli {
       );
     }
     try {
-      return await _runAutoCompactWithToken(label, abort.token);
+      return await _runAutoCompactWithToken(label, abort.token, session: session);
     } finally {
       _activeCompactionAbort = null;
       // Issue #1085 round-1 (review 🚨): a cancelled compaction must
@@ -443,14 +485,18 @@ extension AgentCliCompactionRun on AgentCli {
     }
   }
 
-  Future<bool> _runAutoCompactWithToken(String label, CancelToken token) async {
+  Future<bool> _runAutoCompactWithToken(
+    String label,
+    CancelToken token, {
+    Session? session,
+  }) async {
     final smol = config.modelRolesResolver?.resolveRole(smolModelRole);
     final hooks = _AutoCompactorCliHooks(
       this,
       auto: label == '[auto-compacted]',
     );
     await AutoCompactorFactory(
-      session: _session!,
+      session: session ?? _session!,
       state: _agent.state,
       window: _effectiveContextWindow,
       settings: _effectiveCompactionSettings,

@@ -609,6 +609,14 @@ extension on AgentCli {
     // fire a no-op compaction on every resume. Re-anchor at chars/4.
     _agent.state.messages = resetLoadedUsageAnchors(messages);
     _persistedCount = messages.length;
+    // gh-1425 AC3 (the resume boot cap): a resume that lands over the
+    // compaction trigger is capped HERE — one forced pass at idle boot,
+    // before any user message — so the meter renders a post-cap number
+    // instead of idling above 100% until the first pre-flight. The
+    // boundary walk above bounds residency, but a reachable boundary
+    // whose kept-path projection is over the window (or a giant tail
+    // record the budget trim floors at) still boots over-window.
+    await _capResumedContext(session);
     // Issue #437: persisted-but-unconsumed steering from a crashed
     // session re-enters the queue and wakes the idle agent (E1: one
     // record, consumed once — restart-safe).

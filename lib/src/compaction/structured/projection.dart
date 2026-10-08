@@ -220,16 +220,21 @@ ResolvedFolds resolveStructuredFolds(
   );
 }
 
-/// Every record id a fold record references, for the all-or-note check.
+/// Every record id a fold record references, for the all-or-nothing check.
+/// Empty strings are NOT references: an older writer's missing range ids
+/// parse to '' and the record is classified empty-shape instead.
 Set<String> _foldReferences(SessionRecord record) => switch (record) {
-  HiddenRangeRecord(:final recordIds) => recordIds.toSet(),
-  SegmentPinRecord(:final recordIds) => recordIds.toSet(),
+  HiddenRangeRecord(:final recordIds) => recordIds.where((id) => id.isNotEmpty).toSet(),
+  SegmentPinRecord(:final recordIds) => recordIds.where((id) => id.isNotEmpty).toSet(),
   CompactCheckpointRecord(
     :final coversRecordIds,
     :final firstRecordId,
     :final lastRecordId,
   ) =>
-    {...coversRecordIds, firstRecordId, lastRecordId},
+    {
+      for (final id in [...coversRecordIds, firstRecordId, lastRecordId])
+        if (id.isNotEmpty) id,
+    },
   _ => const {},
 };
 
