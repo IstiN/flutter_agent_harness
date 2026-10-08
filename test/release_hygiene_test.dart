@@ -820,10 +820,15 @@ int writeIpa(Directory sandbox, {required bool withSymbols}) {
   final archive = Archive();
   void add(String name, List<int> bytes) =>
       archive.addFile(ArchiveFile.bytes(name, bytes));
-  add('Payload/Fa.app/Info.plist', utf8.encode('<?xml version="1.0"?><plist/>'));
+  add(
+    'Payload/Fa.app/Info.plist',
+    utf8.encode('<?xml version="1.0"?><plist/>'),
+  );
   add('Payload/Fa.app/Fa', utf8.encode('fake-mach-o'));
-  add('Payload/Fa.app/_CodeSignature/CodeResources',
-      utf8.encode('sig-resources'));
+  add(
+    'Payload/Fa.app/_CodeSignature/CodeResources',
+    utf8.encode('sig-resources'),
+  );
   if (withSymbols) {
     add('Symbols/fa.app.dSYM/Contents/Info.plist', utf8.encode('dsym-plist'));
     add('Symbols/fa.app.dSYM/Contents/Resources/DWARF/Fa', dwarf);
@@ -2705,35 +2710,37 @@ gh release create "v9.9.9" \
     });
   });
 
-  group('gh-1403 — IPA strip step executes its MAIN path (not just the guard)', () {
-    // gh-1403: the strip step went red on the daily testflight leg with
-    // `zip error: Could not create output file (.../fa.ipa.stripped)` —
-    // `find` yields a RELATIVE IPA_PATH and the rezip runs inside
-    // `(cd "$STRIP" && …)`, so the output path resolved against the
-    // mktemp dir. Latent since #1331: every prior IPA took the
-    // "no Symbols/" early exit, so the main path had zero executions and
-    // zero coverage. These tests execute the exact run block against a
-    // fixture IPA — the guard path stays pinned too.
-    const buildMobile = '.github/workflows/build-mobile.yml';
-    const stripStep = 'Strip debug symbols from IPA (#1331)';
-    const ipaRel = 'flutter_app/build/ios/ipa/fa.ipa';
+  group(
+    'gh-1403 — IPA strip step executes its MAIN path (not just the guard)',
+    () {
+      // gh-1403: the strip step went red on the daily testflight leg with
+      // `zip error: Could not create output file (.../fa.ipa.stripped)` —
+      // `find` yields a RELATIVE IPA_PATH and the rezip runs inside
+      // `(cd "$STRIP" && …)`, so the output path resolved against the
+      // mktemp dir. Latent since #1331: every prior IPA took the
+      // "no Symbols/" early exit, so the main path had zero executions and
+      // zero coverage. These tests execute the exact run block against a
+      // fixture IPA — the guard path stays pinned too.
+      const buildMobile = '.github/workflows/build-mobile.yml';
+      const stripStep = 'Strip debug symbols from IPA (#1331)';
+      const ipaRel = 'flutter_app/build/ios/ipa/fa.ipa';
 
-    late Directory sandbox;
+      late Directory sandbox;
 
-    setUp(() {
-      sandbox = Directory.systemTemp.createTempSync('gh-1403-strip-');
-    });
+      setUp(() {
+        sandbox = Directory.systemTemp.createTempSync('gh-1403-strip-');
+      });
 
-    tearDown(() {
-      if (sandbox.existsSync()) sandbox.deleteSync(recursive: true);
-    });
+      tearDown(() {
+        if (sandbox.existsSync()) sandbox.deleteSync(recursive: true);
+      });
 
-    /// The step's run block as an executable driver. The step speaks BSD
-    /// `stat -f%z` (authored for the macOS runner); ubuntu CI speaks GNU —
-    /// a transparent shell-function shim translates, same GNU/BSD bridge
-    /// as the sed shim in runAutoReleaseDirect.
-    ProcessResult runStripStep() {
-      File('${sandbox.path}/strip_step.sh').writeAsStringSync('''
+      /// The step's run block as an executable driver. The step speaks BSD
+      /// `stat -f%z` (authored for the macOS runner); ubuntu CI speaks GNU —
+      /// a transparent shell-function shim translates, same GNU/BSD bridge
+      /// as the sed shim in runAutoReleaseDirect.
+      ProcessResult runStripStep() {
+        File('${sandbox.path}/strip_step.sh').writeAsStringSync('''
 #!/usr/bin/env bash
 # gh-1403 test shim: translate the BSD form, forward everything else.
 stat() {
@@ -2745,80 +2752,90 @@ stat() {
 }
 ${runBlockOf(buildMobile, stripStep)}
 ''');
-      return Process.runSync(
-        'bash',
-        ['strip_step.sh'],
-        workingDirectory: sandbox.path,
-        environment: {
-          'PATH': Platform.environment['PATH'] ?? '',
+        return Process.runSync(
+          'bash',
+          ['strip_step.sh'],
+          workingDirectory: sandbox.path,
+          environment: {'PATH': Platform.environment['PATH'] ?? ''},
+        );
+      }
+
+      /// The entries of the sandbox IPA after the step ran.
+      List<String> ipaEntries() => ZipDecoder()
+          .decodeBytes(File('${sandbox.path}/$ipaRel').readAsBytesSync())
+          .files
+          .map((f) => f.name)
+          .toList();
+
+      test(
+        'an IPA WITH Symbols/ is stripped in place — valid zip, Payload intact',
+        () {
+          final before = writeIpa(sandbox, withSymbols: true);
+          final proc = runStripStep();
+          expect(
+            proc.exitCode,
+            0,
+            reason: 'stdout: ${proc.stdout}\nstderr: ${proc.stderr}',
+          );
+          // The atomic swap leaves the IPA at the SAME path…
+          expect(File('${sandbox.path}/$ipaRel').existsSync(), isTrue);
+          // …a valid zip with Symbols/ gone…
+          final entries = ipaEntries();
+          expect(entries.where((n) => n.startsWith('Symbols/')), isEmpty);
+          // …Payload/ byte-intact (codesign validity lives inside the bundle).
+          expect(
+            entries,
+            containsAll([
+              'Payload/Fa.app/Info.plist',
+              'Payload/Fa.app/Fa',
+              'Payload/Fa.app/_CodeSignature/CodeResources',
+            ]),
+          );
+          // The diet is real and reported.
+          final m = RegExp(
+            r'IPA stripped: (\d+) -> (\d+)',
+          ).firstMatch(proc.stdout as String);
+          expect(
+            m,
+            isNotNull,
+            reason: 'the step must report the diet: ${proc.stdout}',
+          );
+          final beforeBytes = int.parse(m!.group(1)!);
+          final afterBytes = int.parse(m.group(2)!);
+          expect(beforeBytes, before);
+          expect(afterBytes, lessThan(beforeBytes));
         },
       );
-    }
 
-    /// The entries of the sandbox IPA after the step ran.
-    List<String> ipaEntries() => ZipDecoder()
-        .decodeBytes(File('${sandbox.path}/$ipaRel').readAsBytesSync())
-        .files
-        .map((f) => f.name)
-        .toList();
+      test('guard: an IPA without Symbols/ passes through untouched', () {
+        final original = writeIpa(sandbox, withSymbols: false);
+        final proc = runStripStep();
+        expect(
+          proc.exitCode,
+          0,
+          reason: 'stdout: ${proc.stdout}\nstderr: ${proc.stderr}',
+        );
+        expect(proc.stdout, contains('nothing to strip'));
+        expect(
+          File('${sandbox.path}/$ipaRel').readAsBytesSync().length,
+          original,
+          reason: 'the guard path must not touch the IPA',
+        );
+      });
 
-    test('an IPA WITH Symbols/ is stripped in place — valid zip, Payload intact', () {
-      final before = writeIpa(sandbox, withSymbols: true);
-      final proc = runStripStep();
-      expect(
-        proc.exitCode,
-        0,
-        reason: 'stdout: ${proc.stdout}\nstderr: ${proc.stderr}',
-      );
-      // The atomic swap leaves the IPA at the SAME path…
-      expect(File('${sandbox.path}/$ipaRel').existsSync(), isTrue);
-      // …a valid zip with Symbols/ gone…
-      final entries = ipaEntries();
-      expect(entries.where((n) => n.startsWith('Symbols/')), isEmpty);
-      // …Payload/ byte-intact (codesign validity lives inside the bundle).
-      expect(
-        entries,
-        containsAll([
-          'Payload/Fa.app/Info.plist',
-          'Payload/Fa.app/Fa',
-          'Payload/Fa.app/_CodeSignature/CodeResources',
-        ]),
-      );
-      // The diet is real and reported.
-      final m = RegExp(r'IPA stripped: (\d+) -> (\d+)')
-          .firstMatch(proc.stdout as String);
-      expect(m, isNotNull, reason: 'the step must report the diet: ${proc.stdout}');
-      final beforeBytes = int.parse(m!.group(1)!);
-      final afterBytes = int.parse(m.group(2)!);
-      expect(beforeBytes, before);
-      expect(afterBytes, lessThan(beforeBytes));
-    });
-
-    test('guard: an IPA without Symbols/ passes through untouched', () {
-      final original = writeIpa(sandbox, withSymbols: false);
-      final proc = runStripStep();
-      expect(
-        proc.exitCode,
-        0,
-        reason: 'stdout: ${proc.stdout}\nstderr: ${proc.stderr}',
-      );
-      expect(proc.stdout, contains('nothing to strip'));
-      expect(
-        File('${sandbox.path}/$ipaRel').readAsBytesSync().length,
-        original,
-        reason: 'the guard path must not touch the IPA',
-      );
-    });
-
-    test('missing IPA fails loudly with the ::error:: annotation', () {
-      // The reachable real-world state: the build step ran and produced no
-      // IPA (the dir exists, find matches nothing).
-      Directory('${sandbox.path}/flutter_app/build/ios/ipa')
-          .createSync(recursive: true);
-      final proc = runStripStep();
-      expect(proc.exitCode, 1);
-      expect('${proc.stdout}${proc.stderr}',
-          contains('::error::IPA file not found'));
-    });
-  });
+      test('missing IPA fails loudly with the ::error:: annotation', () {
+        // The reachable real-world state: the build step ran and produced no
+        // IPA (the dir exists, find matches nothing).
+        Directory(
+          '${sandbox.path}/flutter_app/build/ios/ipa',
+        ).createSync(recursive: true);
+        final proc = runStripStep();
+        expect(proc.exitCode, 1);
+        expect(
+          '${proc.stdout}${proc.stderr}',
+          contains('::error::IPA file not found'),
+        );
+      });
+    },
+  );
 }
