@@ -1309,25 +1309,21 @@ extension on AgentCli {
             ? 'caps source: catalog defaults '
                   '(pin with /settings → Model capabilities)'
             : 'caps source: models.overrides pin '
-                  '(${_capabilitySummaryFor(pinned)})',
+                  '(${_capabilitySummary(pinned)})',
       ),
     );
+    // The resolver's loud notes (E1 divergence, E3 gate, E4 catalog miss)
+    // belong next to the resolved triple — a pin the resolver dropped or
+    // overrode is never silent on the status surface (gh-1426 rework).
+    for (final note in current.capabilityNotes) {
+      io.writeln(_style.dim('note: $note'));
+    }
     io.writeln(
       _style.dim('set with /model-edit <contextWindow|maxTokens> <n>'),
     );
   }
 
-  /// The one-line summary of a pinned override (the status surface).
-  String _capabilitySummaryFor(ModelCapabilityOverride caps) {
-    final parts = <String>[
-      if (caps.contextWindow != null) 'ctx ${caps.contextWindow}',
-      if (caps.maxTokens != null) 'out ${caps.maxTokens}',
-      if (caps.thinkingLevel != null) 'thinking ${caps.thinkingLevel}',
-      if (caps.omitMaxOutputTokens ?? false) 'omit max-output field',
-    ];
-    return parts.isEmpty ? '(empty)' : parts.join(' · ');
-  }
-
+  /// Bare `/model-edit` in TUI mode: a two-step interactive picker —
   /// Bare `/model-edit` in TUI mode: a two-step interactive picker —
   /// (1) which field to edit (context window or max output tokens),
   /// (2) a standard preset list plus a "Custom…" free-text entry. The

@@ -880,13 +880,16 @@ Future<void> _runApp(List<String> args) async {
     );
     // A declared level on an adapter that is not wired to the
     // config-carried level is carried but never sent — say so once
-    // instead of silently ignoring it (issue #734 E1). Wording covers
-    // both no-thinking adapters (openai-completions) and adapters with
-    // their own thinking options that no config path reaches yet (google).
+    // instead of silently ignoring it (issue #734 E1). gh-1426 wired the
+    // openai-completions family, google, and anthropic to the
+    // model-carried level; the own-transport adapters (dial, copilot,
+    // chatgpt-codex) keep their own options and still ignore it — keyed
+    // on the adapter KIND (copilot/dial ride an openai-completions api
+    // name without the openai-completions stream path).
     if (preconfig.thinkingLevel != null &&
-        preconfig.spec.api != anthropicMessagesApi) {
+        _thinkingUnwiredAdapterKinds.contains(preconfig.spec.kind)) {
       io.writeln(
-        'note: the ${preconfig.spec.api} adapter is not wired to the '
+        'note: the ${preconfig.spec.kind} adapter is not wired to the '
         'config-carried thinkingLevel — the declared level is carried '
         'but unused',
       );
@@ -907,6 +910,14 @@ Future<void> _runApp(List<String> args) async {
   // next to the model line, never a silent override.
   for (final notice in tuningNotices) {
     io.writeln(notice);
+  }
+  // The capability resolver's loud notes for the booted model (gh-1426):
+  // gate drops (E3), endpoint divergences (E1), catalog-miss warnings
+  // (E4) — a pin the resolver dropped or overrode is never silent at
+  // boot. Roles-chain models carry the same notes on the Model; the
+  // /model-edit status surface renders them there.
+  for (final note in model.capabilityNotes) {
+    io.writeln('note: $note');
   }
   // The provider-queue boot notes: winning scope + shadowed scopes —
   // the loud handover, never a silent degrade (issue #418).

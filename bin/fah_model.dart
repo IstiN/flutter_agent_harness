@@ -1,5 +1,12 @@
 part of 'fah.dart';
 
+/// The adapter KINDS whose stream path does not read the model-carried
+/// `thinkingLevel` (issue #734 E1 boot note). gh-1426 wired the
+/// openai-completions family (openai-completions/minimax/zai/aiin),
+/// google, and anthropic; dial/copilot/chatgpt-codex keep their own
+/// options and still carry-but-never-send a declared level.
+const _thinkingUnwiredAdapterKinds = {'dial', 'copilot', 'chatgpt-codex'};
+
 Model _buildModel(CliArgs args, {List<String>? input, String? thinkingLevel}) {
   return buildCliDefaultModel(
     args.provider,

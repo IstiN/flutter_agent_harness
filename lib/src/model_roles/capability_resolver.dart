@@ -42,7 +42,6 @@ import '../exceptions.dart';
 import '../model.dart';
 import '../providers/thinking.dart';
 import 'provider_catalog.dart';
-import 'roles_config.dart' show ModelRef;
 
 /// The compaction reserve ([minAnswerTokens] is the output-side twin):
 /// an override context window below it is rejected at parse — the
@@ -457,14 +456,19 @@ EffectiveCaps resolveModelCapabilities({
   );
 
   // ── max output tokens: override > role slot > endpoint > Claude
-  //    ceiling table > spec > documented unknown default.
+  //    ceiling table > spec > documented unknown default. ONE effective
+  //    api for both consumers (the ceiling table and the documented wire
+  //    field): a caller that passes spec but no api must not document
+  //    max_tokens for a claude id while resolving WITHOUT the ceiling
+  //    table (gh-1426 rework).
+  final effectiveApi = api ?? spec?.api;
   final (maxTokens, maxTokensNotes) = _resolveCapabilityMaxTokensLayer(
     provider: provider,
     modelId: modelId,
     override: override,
     roleMaxTokens: roleMaxTokens,
     endpointMaxTokens: endpointMaxTokens,
-    api: api ?? '',
+    api: effectiveApi ?? '',
     spec: spec,
   );
   final notes = [...windowNotes, ...maxTokensNotes];
@@ -494,7 +498,7 @@ EffectiveCaps resolveModelCapabilities({
     contextWindow: window,
     maxTokens: maxTokens,
     thinkingLevel: thinkingLevel,
-    maxTokensField: maxTokensFieldFor(api ?? spec?.api),
+    maxTokensField: maxTokensFieldFor(effectiveApi),
     omitMaxOutputTokens: override?.omitMaxOutputTokens ?? false,
     notes: notes,
   );
@@ -526,34 +530,4 @@ String? maxTokensFieldFor(String? api) => switch (api) {
     );
   }
   return (level, null);
-}
-
-/// Convenience: the [ModelRef]-shaped role-slot layer (a roles chain
-/// entry's own explicit caps), so hosts holding a ref resolve with one
-/// call instead of unpacking the three fields.
-EffectiveCaps resolveModelRefCapabilities(
-  ModelRef ref, {
-  ModelCapabilityOverride? override,
-  int? endpointContextWindow,
-  int? endpointMaxTokens,
-  ProviderSpec? spec,
-  int? remoteCatalogContextWindow,
-  int? contextWindowCap,
-  bool? reasoning,
-}) {
-  return resolveModelCapabilities(
-    provider: ref.provider,
-    modelId: ref.modelId,
-    override: override,
-    roleThinkingLevel: ref.thinkingLevel,
-    roleContextWindow: ref.contextWindow,
-    roleMaxTokens: ref.maxTokens,
-    endpointContextWindow: endpointContextWindow,
-    endpointMaxTokens: endpointMaxTokens,
-    spec: spec,
-    remoteCatalogContextWindow: remoteCatalogContextWindow,
-    api: spec?.api,
-    reasoning: reasoning ?? spec?.reasoning ?? true,
-    contextWindowCap: contextWindowCap,
-  );
 }

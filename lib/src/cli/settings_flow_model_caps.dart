@@ -103,9 +103,12 @@ extension ModelCapabilityCapsSettings on AgentCli {
     (
       'omit',
       'Omit max-output field',
+      // The flag is read by the openai-completions adapter only
+      // (OpenAICompletionsCompat) — a pin on google/anthropic/chatgpt-
+      // codex does nothing; say so where the pin is made.
       (current.omitMaxOutputTokens ?? false)
-          ? 'on (endpoints that reject the field)'
-          : 'off',
+          ? 'on (openai-completions only — endpoints that reject the field)'
+          : 'off (openai-completions only)',
     ),
     if (!current.isEmpty)
       ('remove', 'Remove this override', 'all pinned fields'),
@@ -214,54 +217,31 @@ extension ModelCapabilityCapsSettings on AgentCli {
     String provider,
     String modelId,
     String field,
-  ) async {
-    final path = _userConfigPath();
-    if (path == null) {
-      io.writeln('model capabilities: no user config on this host — not saved');
-      return;
-    }
-    final read = await _env.readTextFile(path);
-    final String source;
-    switch (read) {
-      case Ok(:final value):
-        source = value;
-      case Err(:final error):
-        io.writeln('cannot read $path: $error — not saved');
-        return;
-    }
-    final edited = removeYamlPath(source, [
-      'models',
-      'overrides',
-      provider,
-      modelId,
-      field,
-    ]);
-    // Never persist a file the next boot would reject. A doc with no
-    // `models:` section left is valid — the models config is optional at
-    // boot, and removing the last pinned field drops the whole block.
-    final doc = loadYaml(edited);
-    final models = doc is YamlMap ? doc['models'] : null;
-    try {
-      if (models != null) ModelsConfig.fromYaml(models);
-    } on Object catch (error) {
-      io.writeln('not saved: $error');
-      return;
-    }
-    if (await _env.writeFile(path, edited) is Err) {
-      io.writeln('could not write $path');
-      return;
-    }
-    io.writeln(
-      'models.overrides.$provider.$modelId.$field removed → $path '
-      '(${applicationNote('models')})',
-    );
-    await _applyCapabilityEdit(provider, modelId);
-  }
+  ) => _removeCapabilityYaml(
+    ['models', 'overrides', provider, modelId, field],
+    'models.overrides.$provider.$modelId.$field removed',
+  );
 
   /// Removes the whole override entry for (provider, modelId).
   Future<void> _removeCapabilityOverride(
     String provider,
     String modelId,
+  ) => _removeCapabilityYaml(
+    ['models', 'overrides', provider, modelId],
+    'models.overrides.$provider.$modelId removed',
+  );
+
+  /// The shared capability remove path (one body for both twins): removes
+  /// the yaml node at [segments] from the USER config file, validated with
+  /// the real [ModelsConfig] parser BEFORE the write ("not saved" on throw
+  /// — never persist a file the next boot would reject); then the success
+  /// [message] (naming the removed path) and the live apply
+  /// (reload-after-write, E6). A doc with no `models:` section left is
+  /// valid — the models config is optional at boot, and removing the last
+  /// pinned field drops the whole block.
+  Future<void> _removeCapabilityYaml(
+    List<String> segments,
+    String message,
   ) async {
     final path = _userConfigPath();
     if (path == null) {
@@ -277,14 +257,7 @@ extension ModelCapabilityCapsSettings on AgentCli {
         io.writeln('cannot read $path: $error — not saved');
         return;
     }
-    final edited = removeYamlPath(source, [
-      'models',
-      'overrides',
-      provider,
-      modelId,
-    ]);
-    // Same rule as the field remove: no `models:` section left is valid —
-    // the last override's removal drops the whole block.
+    final edited = removeYamlPath(source, segments);
     final doc = loadYaml(edited);
     final models = doc is YamlMap ? doc['models'] : null;
     try {
@@ -297,11 +270,8 @@ extension ModelCapabilityCapsSettings on AgentCli {
       io.writeln('could not write $path');
       return;
     }
-    io.writeln(
-      'models.overrides.$provider.$modelId removed → $path '
-      '(${applicationNote('models')})',
-    );
-    await _applyCapabilityEdit(provider, modelId);
+    io.writeln('$message → $path (${applicationNote('models')})');
+    await _applyCapabilityEdit(segments[2], segments[3]);
   }
 
   /// The live apply after every capability write (E6): re-read the saved

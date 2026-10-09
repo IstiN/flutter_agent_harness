@@ -13,7 +13,6 @@ import '../context.dart';
 import '../event_stream.dart';
 import '../exceptions.dart';
 import '../model.dart';
-import 'capability_resolver.dart';
 import '../providers/anthropic.dart';
 import '../providers/aiin_auth.dart';
 import '../providers/chatgpt_codex.dart';
@@ -25,6 +24,7 @@ import '../providers/transient_retry_stream.dart';
 import '../providers/dial.dart';
 import '../providers/google.dart';
 import '../providers/openai_completions.dart';
+import 'capability_resolver.dart';
 
 /// Static description of a supported provider.
 final class ProviderSpec {
@@ -534,6 +534,10 @@ Model buildCatalogModel(
     compat: caps.omitMaxOutputTokens
         ? const OpenAICompletionsCompat(omitMaxOutputTokens: true)
         : null,
+    // The resolver's loud notes (E1 divergence, E3 gate, E4 catalog miss)
+    // ride the model so the status surfaces can render them — never
+    // dropped at the build boundary (gh-1426 rework).
+    capabilityNotes: caps.notes,
   );
 }
 
@@ -688,6 +692,9 @@ Model buildCliDefaultModel(
     compat: caps.omitMaxOutputTokens
         ? const OpenAICompletionsCompat(omitMaxOutputTokens: true)
         : null,
+    // The resolver's loud notes ride the model (gh-1426 rework) — the
+    // boot notice renders them; never dropped at the build boundary.
+    capabilityNotes: caps.notes,
   );
 }
 

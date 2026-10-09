@@ -1031,6 +1031,14 @@ String applicationNote(String section) => switch (section) {
   // Issue #279: the session theme switches live on write (`/theme` runs
   // the same persist + switch flow); a hand-edit applies at next boot.
   'tui' => 'applies live via /theme, otherwise at next boot',
+  // gh-1426: the Model capabilities flow reinstalls the process-wide
+  // override layer, re-syncs the live ModelsConfig, and refreshes the
+  // roles resolver on every write (E6 reload-after-write) — the NEXT
+  // model build picks the edit up live; the running session keeps its
+  // already-built model.
+  'models' =>
+    'applies live to the next model build — the running session keeps '
+        'its current model',
   // Issue #394: the boot-built Agent keeps the cap it was constructed
   // with (the loop's over-window guard reads its config field); the
   // running session never re-reads the yaml.

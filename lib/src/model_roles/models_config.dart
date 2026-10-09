@@ -41,8 +41,8 @@ import 'package:yaml/yaml.dart';
 
 import '../exceptions.dart';
 import '../providers/provider_tuning.dart' show parseProviderTimeoutMs;
-import 'media_model_slots.dart';
 import 'capability_resolver.dart';
+import 'media_model_slots.dart';
 import 'provider_catalog.dart';
 
 /// A named custom model definition (`models.custom.<name>`): a concrete

@@ -111,6 +111,7 @@ final class Model {
     this.headers,
     this.compat,
     this.authHeader,
+    this.capabilityNotes = const [],
   });
 
   /// The model id sent to the provider (e.g. `gpt-4o-mini`,
@@ -167,6 +168,14 @@ final class Model {
   /// default; a keyless request sends neither (see
   /// OpenAICompletionsOptions.apiKey).
   final String? authHeader;
+
+  /// The capability resolver's loud notes riding this model (gh-1426):
+  /// gate drops (E3 — a pinned rung on a non-reasoning model), endpoint
+  /// divergences (E1 — an override wins over the endpoint report), and
+  /// catalog-miss warnings (E4). Empty for the silent default build
+  /// (REG-1); the status surfaces render them (`/model-edit`, the boot
+  /// notice) — the wire never reads them.
+  final List<String> capabilityNotes;
 }
 
 /// The effective context window: the owner override ([cap],
