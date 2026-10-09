@@ -652,13 +652,12 @@ String _orphanNoteClause(
   final id = canonicalToolCallId(orphan.toolCallId);
   // Boundaries are user messages ([_nearestCutBoundary]); the shared
   // user-text fold does the probe.
-  final kept = boundary != null &&
-      userMessageText(
-        switch (messages[boundary.index]) {
-          UserMessage(:final content) => content,
-          _ => '',
-        },
-      ).contains(id);
+  final kept =
+      boundary != null &&
+      userMessageText(switch (messages[boundary.index]) {
+        UserMessage(:final content) => content,
+        _ => '',
+      }).contains(id);
   return 'removed by the ${boundary?.label ?? 'context'} cut; '
       'kept in summary: ${kept ? 'yes' : 'no'}';
 }
