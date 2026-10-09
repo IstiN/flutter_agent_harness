@@ -3,6 +3,8 @@
 /// in the parent session, and the child can be inspected and resumed.
 library;
 
+import '../cli/tui_theme.dart';
+
 /// The lifecycle state of a retained subagent.
 enum SubagentStatus { queued, running, idle, completed, failed, aborted }
 
@@ -256,7 +258,11 @@ final class SubagentHandle {
     final parts = <String>['$id ($agentType)'];
     switch (status) {
       case SubagentStatus.queued:
-        parts.add('⏳ queued');
+        // gh-1446 AC8: the pending glyph resolves through the central
+        // symbol table — no hardcoded `⏳` outside tui_symbols.dart.
+        parts.add(
+          '${FaThemeController.instance.sym('status.pending')} queued',
+        );
       case SubagentStatus.running:
         parts.add('🔄 running');
       case SubagentStatus.idle:

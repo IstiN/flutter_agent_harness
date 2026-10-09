@@ -19,12 +19,6 @@ library;
 import 'dart:io';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
-// The busy row's spinner is now the kaomoji face (issue #1374): the
-// invariance mask strips its FIXED 4-cell zone + separator, not "up to
-// the first space" — a 3-cell face pads the zone with a space, so the
-// first-space boundary moved with every face swap.
-import 'package:flutter_agent_harness/src/cli/fa_tui.dart'
-    show kKaomojiFaceZoneCells;
 import 'package:test/test.dart';
 
 import 'pty_harness.dart';

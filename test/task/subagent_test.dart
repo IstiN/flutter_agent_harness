@@ -1,6 +1,7 @@
 @TestOn('vm')
 library;
 
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
 import 'package:flutter_agent_harness/src/messaging/agent_message.dart';
 import 'package:flutter_agent_harness/src/messaging/fallback_messaging_repository.dart';
@@ -67,6 +68,28 @@ void main() {
       expect(handle.statusLine, contains('🔄 running'));
       expect(handle.statusLine, contains('500t'));
       expect(handle.statusLine, contains('mini'));
+    });
+
+    test('statusLine queued glyph routes through status.pending (gh-1446 '
+        'AC8: no hardcoded ⏳ outside tui_symbols.dart)', () {
+      final handle =
+          SubagentHandle(
+              id: 'a1',
+              name: 'a1',
+              agentType: 'explore',
+              sessionId: 's1',
+              createdAt: '',
+            )
+            ..status = SubagentStatus.queued;
+      // The unicode default's `status.pending` glyph.
+      expect(handle.statusLine, contains('○ queued'));
+
+      // The glyph DERIVES from the active preset — an ascii switch changes
+      // it, proving the line reads the symbol table instead of a literal.
+      final controller = FaThemeController.instance..reset();
+      addTearDown(controller.reset);
+      expect(controller.switchSymbols('ascii'), isTrue);
+      expect(handle.statusLine, contains('[*] queued'));
     });
 
     test('isTerminal is true for completed/failed/aborted', () {

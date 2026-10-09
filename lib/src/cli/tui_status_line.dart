@@ -1512,14 +1512,15 @@ LaidSegment? _renderCacheRead(StatusLineSnapshot s, StatusLineSpec spec) =>
     s.cacheRead <= 0
     ? null
     : LaidSegment('cache_read', [
-        ('⟲${formatTokens(s.cacheRead)}', StatusLineRoleKey.output),
+        ('${FaThemeController.instance.sym('icon.cacheRead')}'
+            '${formatTokens(s.cacheRead)}', StatusLineRoleKey.output),
       ]);
 
 LaidSegment? _renderCacheWrite(StatusLineSnapshot s, StatusLineSpec spec) =>
     s.cacheWrite <= 0
     ? null
     : LaidSegment('cache_write', [
-        ('${FaThemeController.instance.sym('icon.cache')}'
+        ('${FaThemeController.instance.sym('icon.cacheWrite')}'
             '${formatTokens(s.cacheWrite)}', StatusLineRoleKey.output),
       ]);
 

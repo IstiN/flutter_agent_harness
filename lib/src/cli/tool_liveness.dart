@@ -238,11 +238,11 @@ final class ToolLivenessTracker {
   }
 }
 
-/// The periodic reminder line (gh-1055 AC1): `<pending-glyph> [bash] sleep
-/// 500 — running 120s · consider background: true …` (gh-1446 AC8: the
-/// glyph resolves through the symbol table, no hardcoded `⏳`). Single
-/// line, tool name, short command tail, elapsed seconds, and the #1349
-/// background hint.
+/// The periodic reminder line (gh-1055 AC1): a pending glyph + the tool
+/// tag + the command tail, e.g. `○ [bash] sleep 500 — running 120s ·
+/// consider background: true …` (gh-1446 AC8: the glyph resolves through
+/// the symbol table, no hardcoded `⏳`). Single line, tool name, short
+/// command tail, elapsed seconds, and the #1349 background hint.
 String toolLivenessReminderLine(ToolLivenessCall call, DateTime now) =>
     _livenessLine(call, now, hint: toolLivenessForegroundHint);
 

@@ -130,6 +130,11 @@ const TuiSymbols kTuiSymbolsUnicode = TuiSymbols(
     'icon.job': '⚙',
     'icon.cache': '💾',
     'icon.cacheMiss': '⊘',
+    // The status-line cache pair (gh-1446 rework): the pre-1446 hardcoded
+    // `⟲`/`⟳` glyphs, now preset-addressable. Nerd keeps the same two
+    // glyphs — the pair was hardcoded across presets before.
+    'icon.cacheRead': '⟲',
+    'icon.cacheWrite': '⟳',
     'icon.input': '⤵',
     'icon.output': '⤴',
     'icon.throughput': '⚡',
@@ -282,6 +287,8 @@ const TuiSymbols kTuiSymbolsNerd = TuiSymbols(
     'icon.job': '\uf013',
     'icon.cache': '\uf1c0',
     'icon.cacheMiss': '\uf05e',
+    'icon.cacheRead': '⟲',
+    'icon.cacheWrite': '⟳',
     'icon.input': '\uf090',
     'icon.output': '\uf08b',
     'icon.throughput': '\uf0e4',
@@ -447,6 +454,11 @@ const TuiSymbols kTuiSymbolsAscii = TuiSymbols(
     'icon.job': 'bg',
     'icon.cache': 'cache',
     'icon.cacheMiss': '!',
+    // 1-cell read/write letters — the ascii preset must stay ASCII-pure
+    // AND the status-line segments must stay 1-cell-icon narrow (the 5-cell
+    // `cache` value would crowd sibling segments, gh-1446 rework).
+    'icon.cacheRead': 'r',
+    'icon.cacheWrite': 'w',
     'icon.input': 'in:',
     'icon.output': 'out:',
     'icon.throughput': 'tok/s:',

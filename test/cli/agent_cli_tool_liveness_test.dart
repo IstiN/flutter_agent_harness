@@ -11,14 +11,20 @@ import 'dart:async';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/tool_liveness.dart';
 import 'package:flutter_agent_harness/src/cli/waiting_heartbeat.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
 
 /// The liveness console records: every single-line reminder/hint the run
-/// printed (the `⏳` marker is the waiting layer's grep anchor).
+/// printed (the `status.pending` glyph + tool tag is the waiting layer's
+/// grep anchor — derived from the symbol table, gh-1446 AC8).
+final RegExp _livenessLine = RegExp(
+  '${RegExp.escape(FaThemeController.instance.sym('status.pending'))} \\[',
+);
+
 List<String> livenessLines(String out) =>
-    out.split('\n').where((line) => line.contains('○ [')).toList();
+    out.split('\n').where((line) => _livenessLine.hasMatch(line)).toList();
 
 void main() {
   late MemoryExecutionEnv env;

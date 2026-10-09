@@ -10,7 +10,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/status_line_git_probe.dart';
 import 'package:flutter_agent_harness/src/cli/tui_text_width.dart'
     show tuiTextWidth;
-import 'package:flutter_agent_harness/src/cli/tui_theme.dart' show TuiTheme;
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart'
+    show FaThemeController, TuiTheme;
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
 
@@ -860,6 +861,37 @@ M  staged-one
           reason: '3-cell zone + `Fa` = 5 chars for every frame',
         );
       }
+    });
+
+    test('cache_read/cache_write text pins: matched ⟲/⟳ pair', () {
+      // gh-1446 rework: both cache segments ride dedicated 1-cell symbol
+      // keys — the pre-1446 hardcoded `⟲`/`⟳` pair is preserved verbatim
+      // (the `icon.cache` database glyph was an unticketed visual change,
+      // +4 cells on the ascii preset). Pins sit next to the `pi` pin.
+      const snapshot = StatusLineSnapshot(cwd: '/', cacheRead: 3000,
+          cacheWrite: 1200);
+      expect(
+        kStatusLineSegments['cache_read']!(snapshot, _defaultSpec())!.text,
+        '⟲3k',
+      );
+      expect(
+        kStatusLineSegments['cache_write']!(snapshot, _defaultSpec())!.text,
+        '⟳1.2k',
+      );
+
+      // The ascii preset keeps the icon cells at 1 — the width-budgeted
+      // status line can never inherit the 5-cell `icon.cache` value.
+      final controller = FaThemeController.instance..reset();
+      addTearDown(controller.reset);
+      expect(controller.switchSymbols('ascii'), isTrue);
+      expect(
+        kStatusLineSegments['cache_read']!(snapshot, _defaultSpec())!.text,
+        'r3k',
+      );
+      expect(
+        kStatusLineSegments['cache_write']!(snapshot, _defaultSpec())!.text,
+        'w1.2k',
+      );
     });
 
     test('role table covers every StatusLineRoleKey', () {

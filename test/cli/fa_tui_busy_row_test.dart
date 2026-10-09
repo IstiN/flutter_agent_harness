@@ -16,10 +16,8 @@ import 'dart:async';
 import 'package:dart_tui/dart_tui.dart';
 
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
-import 'package:flutter_agent_harness/src/kaomoji_faces.dart';
 import 'package:flutter_agent_harness/src/cli/tui_prompt.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart' show MenuItem;
-import 'package:flutter_agent_harness/src/cli/tui_symbols.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/tools/ask_tool.dart';
 import 'package:test/test.dart';

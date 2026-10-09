@@ -12,7 +12,6 @@ library;
 import 'dart:io';
 
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
-import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 
 import 'package:test/test.dart';
 
