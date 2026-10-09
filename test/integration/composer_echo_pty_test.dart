@@ -209,11 +209,10 @@ tui:
           reason: 'only the busy row may move between ticks:\n'
               'A:\n${dump(gridA)}\nB:\n${dump(gridB)}');
       expect(busyIdx, busyRows.single);
-      // The spinner is the kaomoji face zone (issue #1374): strip the
-      // fixed zone + separator; only face + seconds may move.
-      String masked(String row) => row
-          .substring(kKaomojiFaceZoneCells + 1)
-          .replaceAll(RegExp(r'\d'), '#');
+      // gh-1446 retired the face zone: the row is plain text, only the
+      // seconds digits move. (kKaomojiFaceZoneCells survives only as the
+      // retired-zone constant; nothing is stripped here anymore.)
+      String masked(String row) => row.replaceAll(RegExp(r'\d'), '#');
       expect(masked(gridA[busyIdx]), masked(gridB[busyIdx]),
           reason: 'inside the ticker only spinner + seconds move');
     });

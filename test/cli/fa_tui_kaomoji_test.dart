@@ -1,7 +1,9 @@
 // The busy row's kaomoji thinking indicator (issue #1374): the eight
-// two-tone faces, the fixed face zone, the ~0.9 s random-swap cadence,
-// the brand palette, the ASCII fallback below the fixed-layout width,
-// and the shipped herdr busy_row contract that keys on the face glyphs.
+// two-tone faces and the ~0.9 s random-swap cadence — MODEL-SIDE state
+// only since gh-1446: the TUI busy row renders plain text (no face, no
+// spinner; motion lives in the status-line brand zone), so the face
+// machinery stays alive as state + the app/web hosts keep rendering the
+// shared set (lib/src/kaomoji_faces.dart).
 //
 // All randomness routes through the `kaomojiPick` constructor seam —
 // no test depends on [math.Random] sequence.
@@ -10,6 +12,7 @@ library;
 import 'dart:io';
 
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 
 import 'package:test/test.dart';
 
@@ -46,50 +49,38 @@ void main() {
       .map((line) => line.replaceAll(ansi, ''))
       .firstWhere((line) => line.contains(marker));
 
-  String coloredBusyRowOf(FaTuiModel m, {String marker = '· run'}) => m
-      .view()
-      .content
-      .split('\n')
-      .firstWhere((line) => line.replaceAll(ansi, '').contains(marker));
-
-  test(
-    'AC2: the busy row renders the face two-tone — eyes teal, mouth blue',
-    () {
-      // `o_<`: eye o, mouth _, eye <.
-      final row = coloredBusyRowOf(faceModel(4));
-      expect(
-        row,
-        contains('\x1b[38;2;96;208;208mo\x1b[0m'),
-        reason: 'eye teal',
-      );
-      expect(
-        row,
-        contains('\x1b[38;2;112;160;224m_\x1b[0m'),
-        reason: 'mouth blue',
-      );
-      expect(
-        row,
-        contains('\x1b[38;2;96;208;208m<\x1b[0m'),
-        reason: 'eye teal',
-      );
-      // The stripped row keeps the plain face text in the face zone.
-      expect(busyRowOf(faceModel(4)), startsWith('o_< '));
-    },
-  );
-
-  test('the face zone is fixed: every face keeps the label at column 5', () {
+  test('gh-1446 AC4: the busy row carries NO face in any cell', () {
+    // The row is plain text at column 0 — the face index is inert state.
     for (var i = 0; i < kKaomojiFaces.length; i++) {
       final row = busyRowOf(faceModel(i));
-      expect(
-        row.indexOf('Working…'),
-        5,
-        reason: 'face $i (${row.substring(0, 5)}) must not move the label',
-      );
+      expect(row, startsWith('Working…'), reason: 'face $i: $row');
       expect(row.length, 80, reason: 'face $i pads to the terminal width');
+      for (final f in kKaomojiFaces) {
+        expect(
+          row.contains(f.text),
+          isFalse,
+          reason: 'face $i renders face text "${f.text}": $row',
+        );
+      }
     }
-    // Widest face needs no zone pad; 3-cell faces pad with one space.
-    expect(busyRowOf(faceModel(7)), startsWith('o_o? W'));
-    expect(busyRowOf(faceModel(2)), startsWith('o_o  W'));
+  });
+
+  test('gh-1446 AC4: the row renders single-color dim chrome', () {
+    final raw = faceModel(4)
+        .view()
+        .content
+        .split('\n')
+        .firstWhere((line) => line.replaceAll(ansi, '').contains('· run'));
+    final sgrs = RegExp(r'\x1b\[[0-9;]*m').allMatches(raw).toSet();
+    // A single dim wrapper pair (open + reset) — no two-tone face palette
+    // (teal 96;208;208 / blue 112;160;224 retired with the face render).
+    expect(
+      sgrs.map((m) => m.group(0)).toSet(),
+      {'\x1b[2m', '\x1b[0m'},
+      reason: raw,
+    );
+    expect(raw, isNot(contains('38;2;96;208;208')), reason: raw);
+    expect(raw, isNot(contains('38;2;112;160;224')), reason: raw);
   });
 
   test('AC2: the face swaps every kKaomojiSwapTicks ticks, never in place', () {
@@ -130,38 +121,6 @@ void main() {
   });
 
   test(
-    'narrow terminal: below kKaomojiAsciiMinWidth the ASCII set renders',
-    () {
-      // Face 6 `¬_¬` falls back to `-_/` (mouth = the tilted stroke).
-      final narrow = faceModel(6, width: kKaomojiAsciiMinWidth - 1);
-      final row = busyRowOf(narrow, marker: 'Working…');
-      expect(row, contains('-_/'), reason: row);
-      expect(row, isNot(contains('¬')), reason: row);
-      expect(
-        coloredBusyRowOf(narrow, marker: 'Working…'),
-        contains('\x1b[38;2;112;160;224m/'),
-        reason: 'the fallback mouth stays blue',
-      );
-      // At the boundary the unicode face renders again.
-      expect(
-        busyRowOf(
-          faceModel(6, width: kKaomojiAsciiMinWidth),
-          marker: 'Working…',
-        ),
-        contains('¬_¬'),
-      );
-      // Face 5 `◕‿◕` falls back to `^.^`.
-      expect(
-        busyRowOf(
-          faceModel(5, width: kKaomojiAsciiMinWidth - 1),
-          marker: 'Working…',
-        ),
-        contains('^.^'),
-      );
-    },
-  );
-
-  test(
     'AC4: an idle tick animates nothing — the chain dies with the phase',
     () {
       var m = faceModel(2);
@@ -189,7 +148,11 @@ void main() {
       3,
       reason: 'the pin freezes the face across swap boundaries',
     );
-    expect(busyRowOf(m), startsWith('>_< '), reason: 'face 3 renders >_<');
+    expect(
+      busyRowOf(m),
+      startsWith('Working…'),
+      reason: 'the pinned face stays inert state — the row is faceless',
+    );
   });
 
   test('the pin clamps out-of-range values into the face set', () {
@@ -198,40 +161,32 @@ void main() {
     var m = model();
     m = m.update(BusyMsg(true, source: 'run')).$1 as FaTuiModel;
     expect(m.kaomojiFace, 7);
-    expect(
-      coloredBusyRowOf(m),
-      contains('\x1b[38;2;112;160;224m?'),
-      reason: 'face 7 = o_o? — the curious mouth stays blue',
-    );
   });
 
-  test('herdr contract: every face matches the shipped busy_row regex', () {
+  test('herdr contract: the busy_row rule matches the LIVE row shape', () {
     // The manifest is the canonical fa-side source of herdr's upstream
-    // detection rule (issue #818) — the busy_row rule keys on the face
-    // glyphs, so a face-set change must ship with it.
+    // detection rule (issue #818) — gh-1446 rekeyed it on the label +
+    // elapsed cells (the face prefix retired), so the LIVE painter bytes
+    // must match it (the same bytes the committed fixtures carry).
     final toml = File('docs/integrations/herdr/fa.toml').readAsStringSync();
     final busyRule = toml
         .split('[[rules]]')
         .firstWhere((b) => b.contains('id = "busy_row"'));
-    final facePattern = RegExp(
-      r"line_regex = \['(.+?)', ",
-    ).firstMatch(busyRule)!.group(1)!;
-    final faceRe = RegExp(facePattern);
-
-    const faces = [
-      '>_o', '-_-', 'o_o', '>_<', 'o_<', '◕‿◕', '¬_¬', 'o_o?',
-      // ASCII fallbacks.
-      '^.^', '-_/',
-    ];
-    for (final face in faces) {
-      expect(
-        faceRe.hasMatch('$face  Working…                12s · run'),
-        isTrue,
-        reason: 'face "$face" must match the manifest busy_row rule',
-      );
-    }
-    // The retired braille spinner must NOT match — old screens are not
-    // live fa panes.
-    expect(faceRe.hasMatch('⠋ Working…      3s'), isFalse);
+    final openerRe = RegExp(
+      RegExp(r"line_regex = \['(.+?)', ").firstMatch(busyRule)!.group(1)!,
+    );
+    final closerRe = RegExp(
+      RegExp(r"', '(.+?)'\]").firstMatch(busyRule)!.group(1)!,
+    );
+    final live = busyRowOf(faceModel(0));
+    expect(openerRe.hasMatch(live), isTrue, reason: live);
+    expect(closerRe.hasMatch(live), isTrue, reason: live);
+    // Phase labels match too — the harness-authored capitalized-… shape.
+    final phased = busyRowOf(
+      faceModel(0).copyWith(busyPhase: 'Compacting context…'),
+    );
+    expect(openerRe.hasMatch(phased), isTrue, reason: phased);
+    // A transcript QUOTE with no elapsed cell never matches both.
+    expect(closerRe.hasMatch('the log said Working… and moved on'), isFalse);
   });
 }

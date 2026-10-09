@@ -209,10 +209,13 @@ void main() {
     final forbidden = <String>{
       ...FaThemeController.instance.symbols.statusSpinner,
       ...FaThemeController.instance.symbols.activitySpinner,
+      // Whole face texts (`>_o`) and non-ASCII face strokes (`◕`, `‿`);
+      // single ASCII letters legitimately occur in labels, so only
+      // non-alphanumeric fallback strokes join the scan.
       for (final f in kKaomojiFaces) ...[
         f.text,
-        for (final (_, t) in f.runs) t,
-        for (final (_, t) in f.fallbackRuns) t,
+        for (final (t, _) in f.runs)
+          if (!RegExp(r'^[a-zA-Z0-9?]$').hasMatch(t)) t,
       ],
     };
     for (final elapsed in [0, 9, 978, 3600]) {

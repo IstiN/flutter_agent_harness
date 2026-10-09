@@ -154,12 +154,10 @@ tui:
       }
       expect(busyIdx, greaterThanOrEqualTo(0),
           reason: 'the sampled pair must differ in the busy row');
-      // The spinner is the kaomoji face zone (issue #1374): strip the
-      // fixed zone + separator (face + seconds are the only movers);
-      // the label/suffix columns right of it stay pinned byte-for-byte.
-      String masked(String row) => row
-          .substring(kKaomojiFaceZoneCells + 1)
-          .replaceAll(RegExp(r'\d'), '#');
+      // gh-1446 retired the face zone (issue #1374): the row is plain
+      // text at column 0, only the seconds digits move; every other
+      // column stays pinned byte-for-byte.
+      String masked(String row) => row.replaceAll(RegExp(r'\d'), '#');
       final busyA = gridA[busyIdx];
       final busyB = gridB[busyIdx];
       expect(busyA.isNotEmpty, isTrue);
