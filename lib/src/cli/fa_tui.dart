@@ -341,6 +341,13 @@ final class FaTuiModel extends Model {
   /// The open agents-hub overlay state (issue #277); null when closed.
   final FaHubState? hub;
 
+  /// Fired on every WindowSizeMsg the model processes (gh-1433 E8): the
+  /// controller attaches a hook here so its width seam tracks the LIVE
+  /// program size. The boot model's `termWidth` is only a fallback —
+  /// without this hook a desktop window at any real size rendered the
+  /// hub's cards and overlays at the stale boot width.
+  void Function(int width, int height)? onResized;
+
   /// The double-press Ctrl+C contract (issue #830). The host passes the
   /// process-wide instance so the SIGINT path (bin/fah.dart) and this
   /// KeyMsg path resolve ONE window state (ACX.5); the default builds a
@@ -1219,6 +1226,9 @@ final class FaTuiModel extends Model {
   }
 
   (Model, Cmd?) _handleWindowSize(WindowSizeMsg msg) {
+    // Live size tracking (gh-1433 E8): the controller's width seam
+    // updates with every resize the program processes.
+    onResized?.call(msg.width, msg.height);
     // Clamp the scroll offset to the new visible area so resizing cannot
     // leave it out of bounds (which showed >100% progress), then clear
     // the screen so no old frame artifacts survive the relayout. Wrapped
@@ -2469,13 +2479,26 @@ final class FaTuiController {
   /// the no-tty gate is skipped: the injected runner IS the tty.
   final SttyRunner? sttyRunner;
 
-  late final FaTuiModel _model = FaTuiModel(
-    callbacks: callbacks,
-    isExited: isExited,
-    mouseCapture: mouseCapture,
-    forceSyncUpdates: syncOutput == true,
-    sigintPolicy: sigintPolicy,
-  );
+  late final FaTuiModel _model = _buildBootModel();
+
+  /// Builds the boot model and attaches the live-size hook (gh-1433 E8):
+  /// the controller's width seam must track the program's WindowSizeMsg
+  /// stream — hub cards and overlays render at the LIVE window width,
+  /// and a mid-run resize applies to the next card without a restart.
+  FaTuiModel _buildBootModel() {
+    final model = FaTuiModel(
+      callbacks: callbacks,
+      isExited: isExited,
+      mouseCapture: mouseCapture,
+      forceSyncUpdates: syncOutput == true,
+      sigintPolicy: sigintPolicy,
+    );
+    model.onResized = (width, height) {
+      _liveTermWidth = width;
+      _liveTermHeight = height;
+    };
+    return model;
+  }
   late final Program _program = Program(
     options: [
       withAltScreen(),
@@ -2530,10 +2553,19 @@ final class FaTuiController {
 
   FaTuiModel get model => _model;
 
+  /// The live terminal size, tracked from the program's WindowSizeMsg
+  /// stream (gh-1433 E8). Before the first resize lands (pre-[run]),
+  /// the boot model's pinned size is the fallback.
+  int? _liveTermWidth;
+  int? _liveTermHeight;
+
   /// The live terminal width (the hub driver's block/overlay rendering
   /// width; the picker table elision, #278). Mirrored by the web stub as
   /// a constant 80.
-  int get termWidth => _model.termWidth;
+  int get termWidth => _liveTermWidth ?? _model.termWidth;
+
+  /// The live terminal height, same seam as [termWidth].
+  int get termHeight => _liveTermHeight ?? _model.termHeight;
 
   void _send(Msg msg) {
     if (msg is! OutputMsg) _flushOutput();

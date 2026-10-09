@@ -290,13 +290,16 @@ String shellJobCwdTail(String? cwd) {
 }
 
 /// One dim detail line for a job card: id + cwd tail + reason + log path,
-/// capped at [maxShellJobDetailLength] (issue #429 AC2).
+/// capped at [maxLength] (issue #429 AC2). The LOG face passes the larger
+/// [logFaceCardMaxBodyChars] budget (gh-1433 AC9) — the `log:` pointer is
+/// what a post-hoc reader follows, so the cap may not silently eat it.
 String shellJobCardDetail({
   required String id,
   String? cwd,
   String? logPath,
   required TaskBlockState state,
   int? exitCode,
+  int maxLength = maxShellJobDetailLength,
 }) {
   final reason = switch (state) {
     TaskBlockState.running => '',
@@ -312,9 +315,9 @@ String shellJobCardDetail({
     if (reason.isNotEmpty) reason,
     if (logPath != null && logPath.isNotEmpty) 'log: $logPath',
   ].join(' · ');
-  return detail.length <= maxShellJobDetailLength
+  return detail.length <= maxLength
       ? detail
-      : '${detail.substring(0, maxShellJobDetailLength - 1)}…';
+      : '${detail.substring(0, maxLength - 1)}…';
 }
 
 /// One compact background-job block: a shell job or a background `task`.
@@ -408,7 +411,18 @@ final class TaskBlock {
 /// Renders one compact task card: the human headline header (no ids), the
 /// label line, and the optional dim detail line. Every line fits [width]
 /// visually (border included).
-List<String> taskBlockLines(TaskBlock block, {required int width}) {
+///
+/// [fit] decides how long body text lands in the log (gh-1433 AC9): the
+/// interactive pane clips at the viewport width with an ellipsis (the TUI
+/// keeps that — its pane recomputes on resize); the LOG face wraps — the
+/// post-hoc reader must read what ran and follow the `log:` pointer, so
+/// the command and the log path are never silently ellipsized (E7 caps
+/// pathological bodies with an explicit pointer instead).
+List<String> taskBlockLines(
+  TaskBlock block, {
+  required int width,
+  CardTextFit fit = CardTextFit.clip,
+}) {
   final w = width < 20 ? 20 : width;
   final inner = w - 2;
   final header = taskBlockHeadline(
@@ -420,17 +434,33 @@ List<String> taskBlockLines(TaskBlock block, {required int width}) {
   final lines = <String>['┌─ ${_clip(header, inner - 3)}'];
   void body(String text) =>
       lines.add('│ ${_pad(_clip(text, inner - 3), inner - 3)}');
-  // Heredoc-aware preview (issue #599): a multi-line command renders as
-  // its first line plus one overflow hint — the heredoc body is never a
-  // transcript row source, and the body cap (≤ 6 rows) holds for any
-  // multi-line label (AC2).
-  body(shellJobCommandPreview(block.label));
+  void wrappedBody(String text) =>
+      lines.addAll(_wrapCardBody(text, inner - 3));
+  final wrap = fit == CardTextFit.wrap;
+  if (wrap) {
+    // The log face renders the FULL command: every physical line
+    // soft-wrapped, multi-line bodies included (the heredoc preview's
+    // `…`-first-line rule is a pane economy, not a log fidelity rule).
+    wrappedBody(block.label);
+  } else {
+    // Heredoc-aware preview (issue #599): a multi-line command renders as
+    // its first line plus one overflow hint — the heredoc body is never a
+    // transcript row source, and the body cap (≤ 6 rows) holds for any
+    // multi-line label (AC2).
+    body(shellJobCommandPreview(block.label));
+  }
   final moreLines = '\n'.allMatches(block.label).length;
-  if (moreLines > 0) {
+  if (moreLines > 0 && !wrap) {
     body('… $moreLines more — bash_job output ${block.id}');
   }
   if (block.detail != null) {
-    body(block.detail!);
+    // AC9: in the log face the detail (id · cwd · exit · log path) wraps
+    // too — the `log:` pointer is the thing a post-hoc reader follows.
+    if (wrap) {
+      wrappedBody(block.detail!);
+    } else {
+      body(block.detail!);
+    }
   } else {
     // The id always lives in the dim detail line (issue #429 AC2) —
     // synthesize one when the card arrived without it.
@@ -486,12 +516,80 @@ List<String> shellJobSummaryCardLines({
 String hubDurationLike(double seconds) =>
     hubDuration(Duration(milliseconds: (seconds * 1000).round()));
 
+/// How a card fits long body text (gh-1433 AC9).
+enum CardTextFit {
+  /// The interactive pane clips at the viewport width with an ellipsis —
+  /// today's TUI behavior; the pane recomputes on resize.
+  clip,
+
+  /// The LOG face soft-wraps: the command and the `log:` pointer are
+  /// never silently ellipsized (AC9), and a pathological body ends with
+  /// an explicit `(+N more chars, see <log>)` pointer instead (E7).
+  wrap,
+}
+
+/// The log-face wrap column (gh-1433 AC9): wide enough for the `ps …`
+/// commands and `log: …` paths the workflow captures must carry whole,
+/// narrow enough to stay readable in a CI log.
+const int logFaceCardWrapWidth = 120;
+
+/// The total body-text budget of one wrapped card (gh-1433 E7): past it
+/// the card ends with an explicit `(+N more chars, see <log>)` pointer —
+/// never a silent ellipsis, never unbounded card spam. Same order as the
+/// repo's tool-output tail cap.
+const int logFaceCardMaxBodyChars = 2000;
+
 /// Clips [text] to [width] visible characters with an ellipsis.
 String _clip(String text, int width) {
   final flat = text.replaceAll('\n', ' ');
   if (flat.length <= width) return flat;
   if (width <= 1) return flat.substring(0, width);
   return '${flat.substring(0, width - 1)}…';
+}
+
+/// Soft-wraps [text] into border-prefixed card body rows at [width]
+/// visible columns (gh-1433 AC9 log face): physical lines keep their
+/// breaks, long lines wrap, and the whole body stops at
+/// [logFaceCardMaxBodyChars] with an explicit `(+N more chars, see
+/// <log>)` pointer (E7) — never a silent ellipsis.
+List<String> _wrapCardBody(String text, int width) {
+  final rows = <String>[];
+  var emitted = 0;
+  var overflow = 0;
+  var capped = false;
+
+  void row(String chunk) {
+    rows.add('│ ${_pad(chunk, width)}');
+    emitted += chunk.length;
+  }
+
+  for (final physical in text.split('\n')) {
+    if (capped) {
+      overflow += physical.length + 1;
+      continue;
+    }
+    var rest = physical;
+    while (true) {
+      final room = logFaceCardMaxBodyChars - emitted;
+      if (room <= 0) {
+        capped = true;
+        overflow += rest.length;
+        break;
+      }
+      if (rest.length <= width && rest.length <= room) {
+        row(rest);
+        break;
+      }
+      final take = width < room ? width : room;
+      row(rest.substring(0, take));
+      rest = rest.substring(take);
+      if (rest.isEmpty) break;
+    }
+  }
+  if (overflow > 0) {
+    rows.add('│ ${_pad('(+ $overflow more chars, see <log>)', width)}');
+  }
+  return rows;
 }
 
 /// Right-pads [text] with spaces to exactly [width].
