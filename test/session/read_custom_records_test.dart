@@ -250,5 +250,39 @@ void main() {
         'after rotation',
       ]);
     });
+
+    test('orphan_report batches (gh-1449) round-trip append + scan', () async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      await session.appendMessage(UserMessage.text('hello'));
+      // Two reported batches (two separate repair passes), one other-type
+      // record that must not leak in.
+      await session.appendCustomEntry(
+        customType: orphanReportRecordType,
+        data: orphanReportRecordData({
+          'bash|198|1767225600000',
+          'task|toolu_9|1767225601000',
+        }),
+      );
+      await session.appendCustomEntry(
+        customType: 'steering',
+        data: {'text': 'unrelated'},
+      );
+      await session.appendCustomEntry(
+        customType: orphanReportRecordType,
+        data: orphanReportRecordData({'read|ghost|1767225602000'}),
+      );
+
+      final meta = (await repo.list(cwd: '/work')).single;
+      final restored = orphanReportKeysFromRecords(
+        await repo.readCustomRecordsOfType(meta, {orphanReportRecordType}),
+      );
+      expect(restored, {
+        'bash|198|1767225600000',
+        'task|toolu_9|1767225601000',
+        'read|ghost|1767225602000',
+      });
+    });
   });
 }

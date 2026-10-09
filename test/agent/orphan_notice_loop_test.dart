@@ -105,8 +105,7 @@ int _noteCount(Context context) => context.messages
     .length;
 
 void main() {
-  group('IT-ONESHOT: one orphan, N consecutive requests, exactly one note',
-      () {
+  group('IT-ONESHOT: one orphan, N consecutive requests, exactly one note', () {
     test('across runs on the same Agent', () async {
       final stream = _FakeStream();
       final agent = Agent(
@@ -121,11 +120,12 @@ void main() {
       // Every request carried the orphan (the transcript keeps it), but
       // the note went out exactly once.
       expect(stream.contexts, hasLength(4));
-      expect(
-        stream.contexts.map(_noteCount).toList(),
-        [1, 0, 0, 0],
-        reason: 'the note must ride the FIRST request only',
-      );
+      expect(stream.contexts.map(_noteCount).toList(), [
+        1,
+        0,
+        0,
+        0,
+      ], reason: 'the note must ride the FIRST request only');
     });
 
     test('across the pairing-heal retry inside one request', () async {
@@ -186,10 +186,8 @@ void main() {
     });
   });
 
-  group('IT-RESUME: a restored agent does not re-report a reported orphan',
-      () {
-    test('a fresh Agent seeded with the persisted keys stays silent',
-        () async {
+  group('IT-RESUME: a restored agent does not re-report a reported orphan', () {
+    test('a fresh Agent seeded with the persisted keys stays silent', () async {
       // "Session 1": report the orphan, collect the keys the loop latched
       // (the host persists them as orphan_report records).
       final first = _FakeStream();
@@ -202,8 +200,10 @@ void main() {
       await original.prompt('turn 1');
       expect(_noteCount(first.contexts.single), 1);
       final persisted = original.reportedOrphanKeys;
-      expect(persisted, contains(orphanReportKey(_orphanContext()[1]
-          as ToolResultMessage)));
+      expect(
+        persisted,
+        contains(orphanReportKey(_orphanContext()[1] as ToolResultMessage)),
+      );
 
       // "Session 2": a resumed process — a NEW agent over the SAME
       // transcript, seeded from the persisted orphan_report records.
@@ -223,33 +223,29 @@ void main() {
   });
 
   group('AC2: the note is never a stand-alone user turn on the wire', () {
-    test('every request carries the note INSIDE an existing user message',
-        () async {
-      final stream = _FakeStream();
-      final agent = Agent(
-        model: _model,
-        streamFunction: stream.call,
-        toolExecutor: _noTools,
-        messages: _orphanContext(),
-      );
-      await agent.prompt('turn 1');
-      final first = stream.contexts.first;
-      // The orphan is dropped from the payload and the note rides the last
-      // user message as an extra text block — no message added: the
-      // transcript's 4 messages minus the ghost result.
-      expect(first.messages, hasLength(_orphanContext().length));
-      expect(first.messages.whereType<ToolResultMessage>(), isEmpty);
-      final carrier = first.messages.last as UserMessage;
-      expect(carrier.content, isA<List<ContentBlock>>());
-      final blocks = carrier.content as List<ContentBlock>;
-      expect(
-        (blocks.first as TextContent).text,
-        'turn 1',
-      );
-      expect(
-        (blocks.last as TextContent).text,
-        startsWith('[context note:'),
-      );
-    });
+    test(
+      'every request carries the note INSIDE an existing user message',
+      () async {
+        final stream = _FakeStream();
+        final agent = Agent(
+          model: _model,
+          streamFunction: stream.call,
+          toolExecutor: _noTools,
+          messages: _orphanContext(),
+        );
+        await agent.prompt('turn 1');
+        final first = stream.contexts.first;
+        // The orphan is dropped from the payload and the note rides the last
+        // user message as an extra text block — no message added: the
+        // transcript's 4 messages minus the ghost result.
+        expect(first.messages, hasLength(_orphanContext().length));
+        expect(first.messages.whereType<ToolResultMessage>(), isEmpty);
+        final carrier = first.messages.last as UserMessage;
+        expect(carrier.content, isA<List<ContentBlock>>());
+        final blocks = carrier.content as List<ContentBlock>;
+        expect((blocks.first as TextContent).text, 'turn 1');
+        expect((blocks.last as TextContent).text, startsWith('[context note:'));
+      },
+    );
   });
 }

@@ -170,8 +170,7 @@ void main() {
       },
     );
 
-    test('middle position: orphan dropped, note appended, rest untouched',
-        () {
+    test('middle position: orphan dropped, note appended, rest untouched', () {
       final messages = [
         _u('hi'),
         _a([_c('c1', 'bash')]),
@@ -223,8 +222,10 @@ void main() {
       final notes = repaired.messages
           .whereType<UserMessage>()
           .map((m) => userMessageText(m.content))
-          .where((t) => t.startsWith('[context note:') ||
-              t.contains('[context note:'))
+          .where(
+            (t) =>
+                t.startsWith('[context note:') || t.contains('[context note:'),
+          )
           .toList();
       expect(notes, hasLength(1));
       expect(notes.single, contains('"bash"'));
@@ -522,22 +523,24 @@ void main() {
       );
     });
 
-    test('UT-TEXT: an orphan with no boundary in context says "context cut"',
-        () {
-      final repaired = repairToolPairing([
-        _u('hi'),
-        _a([_c('c1', 'bash')]),
-        _r('c1', 'bash'),
-        _orphan('ghost', 'read', DateTime.utc(2026)),
-        _u('go on'),
-      ]);
-      final carrier = userMessageText(
-        (repaired.messages.last as UserMessage).content,
-      );
-      expect(carrier, contains('ghost'));
-      expect(carrier, contains('"read"'));
-      expect(carrier, contains('context cut'));
-    });
+    test(
+      'UT-TEXT: an orphan with no boundary in context says "context cut"',
+      () {
+        final repaired = repairToolPairing([
+          _u('hi'),
+          _a([_c('c1', 'bash')]),
+          _r('c1', 'bash'),
+          _orphan('ghost', 'read', DateTime.utc(2026)),
+          _u('go on'),
+        ]);
+        final carrier = userMessageText(
+          (repaired.messages.last as UserMessage).content,
+        );
+        expect(carrier, contains('ghost'));
+        expect(carrier, contains('"read"'));
+        expect(carrier, contains('context cut'));
+      },
+    );
 
     test('UT-ROLE: the note never becomes a new message — it rides the '
         'last existing user message', () {
@@ -553,14 +556,8 @@ void main() {
       expect(carrier.content, isA<List<ContentBlock>>());
       final blocks = carrier.content as List<ContentBlock>;
       expect(blocks.first, isA<TextContent>());
-      expect(
-        (blocks.first as TextContent).text,
-        contains('earlier work'),
-      );
-      expect(
-        (blocks.last as TextContent).text,
-        startsWith('[context note:'),
-      );
+      expect((blocks.first as TextContent).text, contains('earlier work'));
+      expect((blocks.last as TextContent).text, startsWith('[context note:'));
       // No user message in the payload is a STAND-ALONE note.
       for (final message in repaired.messages.whereType<UserMessage>()) {
         final text = userMessageText(message.content);
@@ -621,32 +618,30 @@ void main() {
         carrier,
         _orphan('bash_198', 'bash', DateTime.utc(2026)),
       ]);
-      final blocks = (repaired.messages[0] as UserMessage).content
-          as List<ContentBlock>;
+      final blocks =
+          (repaired.messages[0] as UserMessage).content as List<ContentBlock>;
       expect(blocks, hasLength(3));
       expect(blocks[0], isA<TextContent>());
       expect(blocks[1], isA<ImageContent>());
-      expect(
-        (blocks[2] as TextContent).text,
-        startsWith('[context note:'),
-      );
+      expect((blocks[2] as TextContent).text, startsWith('[context note:'));
     });
 
-    test('UT-TRANSCRIPT: the transcript is byte-identical after the repair',
-        () {
-      final messages = [
-        _u('summary of earlier work'),
-        _orphan('bash_198', 'bash', DateTime.utc(2026)),
-      ];
-      final before = messages.map((m) => m.toJson()).toList();
-      repairToolPairing(messages, reportedOrphanKeys: const {});
-      final after = messages.map((m) => m.toJson()).toList();
-      expect(after, equals(before));
-      expect(messages, hasLength(2));
-    });
+    test(
+      'UT-TRANSCRIPT: the transcript is byte-identical after the repair',
+      () {
+        final messages = [
+          _u('summary of earlier work'),
+          _orphan('bash_198', 'bash', DateTime.utc(2026)),
+        ];
+        final before = messages.map((m) => m.toJson()).toList();
+        repairToolPairing(messages, reportedOrphanKeys: const {});
+        final after = messages.map((m) => m.toJson()).toList();
+        expect(after, equals(before));
+        expect(messages, hasLength(2));
+      },
+    );
 
-    test('one-shot: an already-reported orphan is dropped without a note',
-        () {
+    test('one-shot: an already-reported orphan is dropped without a note', () {
       final messages = [
         _u('summary of earlier work'),
         _orphan('bash_198', 'bash', DateTime.utc(2026)),
@@ -654,10 +649,7 @@ void main() {
       final key = orphanReportKey(messages[1] as ToolResultMessage);
       final first = repairToolPairing(messages);
       expect(first.report.notedOrphanKeys, [key]);
-      final second = repairToolPairing(
-        messages,
-        reportedOrphanKeys: {key},
-      );
+      final second = repairToolPairing(messages, reportedOrphanKeys: {key});
       // The orphan is still dropped from the payload…
       expect(second.report.droppedResultIds, ['bash_198']);
       // …but silently: no note anywhere, nothing newly reported.
@@ -730,8 +722,7 @@ void main() {
     });
 
     test('E5: a payload with NO user message degrades to the legacy '
-        'standalone note (unavoidable carrier) and still repairs valid',
-        () {
+        'standalone note (unavoidable carrier) and still repairs valid', () {
       final repaired = repairToolPairing([
         _a([TextContent(text: 'working')]),
         _orphan('ghost', 'bash', DateTime.utc(2026)),
@@ -759,10 +750,7 @@ void main() {
         reportedOrphanKeys: {'anything'},
       );
       expect(repaired.report.synthesizedResultIds, hasLength(1));
-      expect(
-        repaired.report.renamedIds,
-        [(from: 'c1', to: 'c1_2')],
-      );
+      expect(repaired.report.renamedIds, [(from: 'c1', to: 'c1_2')]);
       expect(validateToolPairing(repaired.messages), isEmpty);
     });
 
@@ -775,14 +763,18 @@ void main() {
           parentId: null,
           timestamp: DateTime.utc(2026),
           customType: orphanReportRecordType,
-          data: {'keys': ['k1', 'k2', 'k3']},
+          data: {
+            'keys': ['k1', 'k2', 'k3'],
+          },
         ),
         CustomRecord(
           id: 'r2',
           parentId: null,
           timestamp: DateTime.utc(2026),
           customType: 'other',
-          data: {'keys': ['nope']},
+          data: {
+            'keys': ['nope'],
+          },
         ),
       ]);
       expect(restored, {'k1', 'k2', 'k3'});

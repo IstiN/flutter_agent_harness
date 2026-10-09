@@ -633,9 +633,7 @@ extension on AgentCli {
         _agent.reportedOrphanKeys.addAll(orphanReportKeysFromRecords(reports));
       }
     } on Object catch (error) {
-      _logDiagnostic(
-        'orphan_report seed failed sid=${metadata.id}: $error',
-      );
+      _logDiagnostic('orphan_report seed failed sid=${metadata.id}: $error');
     }
     // Issue #437: persisted-but-unconsumed steering from a crashed
     // session re-enters the queue and wakes the idle agent (E1: one

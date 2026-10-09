@@ -444,9 +444,7 @@ _Attachment _attachResults(
       rebuilt.add(message);
       continue;
     }
-    rebuilt.add(
-      _rewriteAssistantCallIds(messages, i, slots, index, renames),
-    );
+    rebuilt.add(_rewriteAssistantCallIds(messages, i, slots, index, renames));
     _emitSlotResults(
       messages,
       slots,
@@ -468,8 +466,7 @@ _Attachment _attachResults(
   // the legacy standalone note — there is nothing else to carry it.
   final freshOrphans = [
     for (final orphan in attachment.orphans)
-      if (!reportedOrphanKeys.contains(orphanReportKey(orphan.message)))
-        orphan,
+      if (!reportedOrphanKeys.contains(orphanReportKey(orphan.message))) orphan,
   ];
   if (freshOrphans.isNotEmpty) {
     final note = _dropNote(freshOrphans, messages);
@@ -546,9 +543,7 @@ AssistantMessage _rewriteAssistantCallIds(
       continue;
     }
     // Find this block's slot (byMessage order matches content order).
-    final slot = slots.firstWhere(
-      (s) => identical(index.slots[s].call, call),
-    );
+    final slot = slots.firstWhere((s) => identical(index.slots[s].call, call));
     final newId = renames.slotNewIds[slot];
     if (newId != null) {
       call = call.copyWith(id: newId);
@@ -634,13 +629,12 @@ String _dropNote(
           '${_orphanNoteClause(orphan.message, orphan.messageIndex, messages)}',
   ];
   if (orphans.length == 1) {
-    return '[context note: a tool result for "${orphans.first.message
-        .toolName}" (id: ${orphans.first.message.toolCallId}) was dropped — '
+    return '[context note: a tool result for "${orphans.first.message.toolName}" (id: ${orphans.first.message.toolCallId}) was dropped — '
         '${lines.single}. No reply needed.]';
   }
   return [
     '[context note: ${orphans.length} tool results were dropped — their '
-    'originating tool calls are no longer in context. No reply needed.',
+        'originating tool calls are no longer in context. No reply needed.',
     ...lines.map((line) => '- $line'),
     'end context note]',
   ].join('\n');
@@ -655,8 +649,8 @@ String _orphanNoteClause(
 ) {
   final boundary = _nearestCutBoundary(messages, messageIndex);
   final id = canonicalToolCallId(orphan.toolCallId);
-  final kept = boundary != null && _boundaryText(messages[boundary.index])
-      .contains(id);
+  final kept =
+      boundary != null && _boundaryText(messages[boundary.index]).contains(id);
   return 'removed by the ${boundary?.label ?? 'context'} cut; '
       'kept in summary: ${kept ? 'yes' : 'no'}';
 }

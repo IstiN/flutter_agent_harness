@@ -1781,9 +1781,7 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   // sees them.
   final repaired = repairToolPairing(
     requestContext.messages,
-    reportedOrphanKeys:
-        config.reportedOrphanKeys ??
-        const <String>{},
+    reportedOrphanKeys: config.reportedOrphanKeys ?? const <String>{},
   );
   if (repaired.report.notedOrphanKeys.isNotEmpty) {
     config.reportedOrphanKeys?.addAll(repaired.report.notedOrphanKeys);
