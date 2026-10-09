@@ -4804,4 +4804,8 @@
   corrected and now fires only for the genuinely unwired adapters (dial,
   copilot, chatgpt-codex).
 
+## 1.0.537
+
+- feat(1374): animated two-tone kaomoji thinking indicator — app + web TUI (#1419)
+
 ## Unreleased
