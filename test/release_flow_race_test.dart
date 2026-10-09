@@ -1241,8 +1241,11 @@ void main() {
           contains('build-web|build-android|build-ios|build-macos|fa-aot-build|'
               'installer-verify|install-pin-gate|cube-kernel-live|'
               'cli-visual-settings|pty-integration-linux|pty-coverage-gate|'
-              'pty-visual)'),
-          reason: 'every platform/native/PTY leg must be publish-exempt');
+              'pty-visual|flutter-app-lock-smoke)'),
+          reason: 'every platform/native/PTY leg must be publish-exempt — '
+              'flutter-app-lock-smoke included (#1267 N2: a red lockfile '
+              'smoke release build blocks the merge via the aggregate, '
+              'never the publish)');
     });
 
     test('#1368: the Provider smoke runs off dart_ok, not the aggregate result',
