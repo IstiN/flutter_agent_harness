@@ -8,7 +8,6 @@ import 'dart:math' as math;
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show
@@ -305,24 +304,15 @@ class _FaChatScreenState extends State<FaChatScreen>
   Timer? _syncDebounce;
   bool _isSyncing = false;
 
-  /// Programmatic-move window (gh-1439 E6, re-review): a big-diff
-  /// setMessages re-anchors the scrollable and the correction glides the
-  /// position across frames (probe: 400→44px over ~8 frames on a
-  /// 25-row prepend); those moves are the SYNC's, not the user's —
-  /// classification is suppressed while the flag is up so the glide can
-  /// neither flush the held count by "landing" inside the arm band nor
-  /// hold. Frame-scoped, not timed: fake-async tests fire due timers
-  /// BEFORE the correction frame, so a timed window races the very moves
-  /// it brackets — a post-frame close with notification-driven re-arms
-  /// ends exactly one quiet frame after the corrections stop.
-  bool _suppressFollowClassification = false;
-
-  void _suppressForProgrammaticFrame() {
-    _suppressFollowClassification = true;
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      _suppressFollowClassification = false;
-    });
-  }
+  /// Whether a USER gesture (drag or its momentum coast) is in flight —
+  /// the non-drag relatch below may only act on those (gh-1439 E6,
+  /// re-review). Content-driven repositions arrive as non-drag updates
+  /// too: a big-diff setMessages re-anchor settles wherever the new
+  /// layout anchors it (probe: a 25-row prepend glided a held window to
+  /// 60px ≤ arm 80), and without this gate that settle wiped 3 counted
+  /// arrivals by "relatching". The sync invalidates the gate; a real
+  /// drag re-arms it; the ballistic end closes it.
+  bool _userGestureInFlight = false;
   bool _isStreaming = false;
   String? _error;
 
@@ -558,14 +548,7 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// and the #379 clamp's own animateTo) never hold and never re-arm;
   /// non-drag updates can only relatch at the near-bottom.
   void _trackUserScroll(ScrollNotification notification) {
-    debugPrint('TRACE classifier: ${notification.runtimeType} depth=${notification.depth} sup=$_suppressFollowClassification');
     if (notification.depth != 0) return;
-    if (_suppressFollowClassification) {
-      // A multi-frame settle re-arms the window; one quiet frame closes
-      // it (E6: none of these are user moves).
-      _suppressForProgrammaticFrame();
-      return;
-    }
     if (notification is! ScrollUpdateNotification &&
         notification is! ScrollEndNotification) {
       return;
@@ -575,11 +558,12 @@ class _FaChatScreenState extends State<FaChatScreen>
     final distance = position.pixels.round();
     final arm = _armExtent(position);
     final wasAway = _follow.isHeld;
-    debugPrint('TRACE decide: dist=$distance arm=$arm held=${_follow.isHeld} unseen=${_follow.unseen}');
     if (notification is ScrollUpdateNotification &&
         notification.dragDetails != null) {
       // USER drag: the landing position classifies — inside the band
-      // re-arms live (flushed), beyond it holds.
+      // re-arms live (flushed), beyond it holds. A real gesture is in
+      // flight; its momentum coast may follow.
+      _userGestureInFlight = true;
       final next = _follow.userScrolled(
         distanceFromLiveEdge: distance,
         armExtent: arm,
@@ -587,11 +571,22 @@ class _FaChatScreenState extends State<FaChatScreen>
       if (next != _follow && mounted) {
         setState(() => _follow = next);
       }
-    } else if (distance <= arm && _follow.isHeld && mounted) {
-      // Momentum/programmatic updates only ever RELATCH at the
-      // near-bottom — they never classify away (the #379 follow clamp's
-      // own animateTo must keep working, E6 debounce).
+    } else if (_userGestureInFlight &&
+        distance <= arm &&
+        _follow.isHeld &&
+        mounted) {
+      // Momentum-coast updates only ever RELATCH at the near-bottom —
+      // they never classify away (the #379 follow clamp's own animateTo
+      // must keep working, E6 debounce). Content-driven repositions (a
+      // big-diff re-anchor) arrive as non-drag updates too; for those
+      // the gate is false — the sync invalidated it.
       setState(() => _follow = _follow.jumpToLive());
+      _userGestureInFlight = false;
+    }
+    if (notification is ScrollEndNotification) {
+      // The finger lifted → a coast may follow (the gate stays up); the
+      // ballistic end → the gesture is over.
+      _userGestureInFlight = notification.dragDetails != null;
     }
     if (wasAway && !_follow.isHeld) {
       // Landing back at the bottom with a deep-paged window rejoins the
@@ -1057,9 +1052,9 @@ class _FaChatScreenState extends State<FaChatScreen>
         if (changes > 12) {
           // (re-review) The replacement re-anchors the scrollable: its
           // corrections glide for several frames and are programmatic —
-          // bracket the classification so the glide cannot flush the
-          // held count by "landing" inside the arm band.
-          _suppressForProgrammaticFrame();
+          // invalidate any in-flight gesture so the settle cannot flush
+          // the held count by "landing" inside the arm band.
+          _userGestureInFlight = false;
           await _chatController.setMessages(newList, animated: false);
         } else {
           for (var i = 0; i < commonPrefix; i++) {
