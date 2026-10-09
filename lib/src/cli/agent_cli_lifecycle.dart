@@ -121,15 +121,77 @@ extension AgentCliLifecycle on AgentCli {
   /// flight. Settled jobs inject async-result messages through the
   /// listener (re-wake runs), so loop until every job is terminal and
   /// those reaction runs settle too (capped like kimi's drain limit).
+  ///
+  /// gh-1459: live background SHELL jobs (`bash background:true`) drain
+  /// the same way — their settles ride the same fresh-turn notice path
+  /// (`_onShellJobSettled`) — and BOTH loops share ONE wall-clock ceiling
+  /// (`headless.shellJobDrainMs`, default 30 min): a job that never
+  /// settles (an infinite watch-loop) cannot hang headless forever. Past
+  /// the ceiling the loop gives up and the detach summary below applies;
+  /// `shellJobDrainMs: 0` disables the drain entirely.
   Future<void> _awaitHeadlessBackgroundJobs() async {
+    final deadline = _waitingClock().add(
+      Duration(milliseconds: config.headless.shellJobDrainMs),
+    );
+    var namedWaiting = false;
     for (var round = 0; round < 10; round++) {
-      final hasActive = _taskConfig.jobManager.jobs.any(
+      final subActive = _taskConfig.jobManager.jobs.any(
         (job) =>
             job.status == TaskJobStatus.queued ||
             job.status == TaskJobStatus.running,
       );
-      if (!hasActive) break;
-      await _taskConfig.jobManager.settled;
+      // A suppressed job's result already landed in-turn (the inline
+      // consumer reported it) — it is not a waiter (gh-1459 edge case).
+      final shellActive = [
+        for (final job in _shellJobs.jobs)
+          if (job.isRunning && job.notifyOnSettle) job,
+      ];
+      final action = headlessJobDrainAction(
+        hasActiveJobs: subActive || shellActive.isNotEmpty,
+        now: _waitingClock(),
+        deadline: deadline,
+      );
+      if (action != HeadlessDrainAction.drain) {
+        // The ceiling cut a live drain short: say so once — the detach
+        // summary below is the degradation, not a silent hang.
+        if (action == HeadlessDrainAction.detach) {
+          io.writeln(
+            _style.dim(
+              '⏳ background-job drain ceiling '
+              '(${config.headless.shellJobDrainMs} ms) reached — detaching',
+            ),
+          );
+        }
+        break;
+      }
+      // The #1055-parity waiting line, once per drain: the run stays
+      // alive for these and says so.
+      if (!namedWaiting) {
+        namedWaiting = true;
+        final snap = await _waiting.snapshot();
+        io.writeln('⏳ waiting: ${_waiting.describe(snap)}');
+      }
+      // All active settles at once — bounded by the remaining ceiling.
+      await Future.any([
+        Future.wait([
+          if (subActive) _taskConfig.jobManager.settled,
+          for (final job in shellActive) job.settled,
+        ]),
+        _waitingSleep(deadline.difference(_waitingClock())),
+      ]);
+      // A settle notice starts its reaction run one event-loop turn later
+      // (the registry's settle listener leg); pump it, then let the
+      // reaction run finish before re-checking.
+      await Future<void>.delayed(Duration.zero);
+      if (isBusy) {
+        await _settled;
+        await _afterRun();
+      }
+    }
+    // A settle notice that landed outside a drain round (the window
+    // between the last active check and here) still starts its reaction
+    // run — never return mid-run (gh-1459).
+    if (isBusy) {
       await _settled;
       await _afterRun();
     }

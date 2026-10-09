@@ -1034,6 +1034,11 @@ extension AgentCliShellJobSettle on AgentCli {
 
 /// Test seams for the visible-waiting layer (issue #450).
 extension AgentCliWaitingSeams on AgentCli {
+  /// Test seam: the session's background-shell-job registry (the headless
+  /// drain tests inspect and suppress live jobs, gh-1459).
+  @visibleForTesting
+  ShellJobRegistry get shellJobsRegistryForTest => _shellJobs;
+
   /// Test seam: fires one waiting-heartbeat beat now (mirrors
   /// [heartbeatTickForTest] for #383).
   @visibleForTesting

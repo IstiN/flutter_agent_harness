@@ -913,6 +913,7 @@ final class CliConfig {
       tuiClassic: tuiClassic,
       statusLine: statusLine,
       links: links,
+      headless: headless,
       autoUpdate: autoUpdate,
     );
   }
@@ -1076,6 +1077,13 @@ final class CliConfig {
       return '';
     }
     return jobsConfig.toYaml();
+  }
+
+  /// The `headless:` section (gh-1459), only when explicitly configured;
+  /// defaults are never written so the file stays minimal.
+  String _headlessYaml() {
+    if (headless.shellJobDrainMs == defaultShellJobDrainMs) return '';
+    return headless.toYaml();
   }
 
   /// The `compaction:` section, only when explicitly configured; defaults

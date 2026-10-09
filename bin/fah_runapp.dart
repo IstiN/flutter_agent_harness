@@ -1348,6 +1348,7 @@ Future<void> _runApp(List<String> args) async {
         stuckTool: saved.stuckTool,
         subagents: saved.subagents,
         jobs: saved.jobs,
+        headless: saved.headless,
         // The gh-1198 thinking stream: the `--stream-thinking` flag wins
         // over the `output.streamThinking` config for this run.
         streamThinking: resolveStreamThinking(

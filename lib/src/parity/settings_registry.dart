@@ -364,6 +364,15 @@ const fileOnlyConfigKeys = <String, String>{
       'Waiting-heartbeat cadence, the headless --wait-for-jobs ceiling '
       '(issue #450), and the per-call tool-liveness thresholds '
       '(gh-1055) — operational knobs, tuned in the file.',
+
+  // Headless drain ceiling (gh-1459): how long `fa -p` may keep draining
+  // live background jobs (subagents + shell jobs) after the final answer
+  // before it detaches — an operational ceiling tuned per environment; 0
+  // disables the drain.
+  'headless':
+      'The headless background-job drain ceiling (gh-1459) — how long '
+      '`fa -p` stays alive for awaited background jobs after the final '
+      'answer; operational, tuned in the file.',
   // The fabric section carries the HOST's discovery announcements (issue
   // #27 phase 2) — written by hosts, read by the runtime, never user-edited.
   'fabric':
