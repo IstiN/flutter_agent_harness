@@ -39,25 +39,35 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
 import '../compaction/structured/markers.dart'
-    show isCompactionMarkerText, localTrimMarkerPrefix;
+    show
+        isCompactionMarkerText,
+        localTrimMarkerPrefix,
+        pinBlockCloseTag,
+        pinBlockOpenTag;
 import '../context.dart' show UserMessage, ToolResultMessage;
 import '../session/session_tree.dart'
     show branchSummaryPrefix, compactionSummaryPrefix;
 import '../types.dart';
 import 'skills.dart' show Skill;
 
+// The pin block's fixed wrapper tags live in ONE place
+// (`compaction/structured/markers.dart`) next to the sanitizer's envelope
+// match, so a renderer rename cannot silently orphan the sanitizer's
+// exemption (review gh-1409 round 2, suggestion 5). Re-exported here for
+// the established consumers of this library.
+export '../compaction/structured/markers.dart'
+    show pinBlockCloseTag, pinBlockOpenTag;
+
 /// Default per-window pin budget in characters (gh-1409 Q3: ~2048 tokens
 /// at the 4-chars/token heuristic). Lines vary in length, so the budget is
 /// measured over the RENDERED carrier block, not per-pin count.
 const defaultPinBudgetChars = 8192;
 
-/// The fixed wrapper open tag of every rendered pin block (E8: the
-/// framing is harness-generated; a hostile line cannot impersonate the
-/// wrapper — it lands inside the quoted, provenance-tagged body).
-const pinBlockOpenTag = '<pinned-skill-directives>';
-
-/// The fixed wrapper close tag.
-const pinBlockCloseTag = '</pinned-skill-directives>';
+/// The previous window's pin registry — the diff baseline behind the P4/P5
+/// lifecycle notices (supersede/drop). Process-wide like
+/// [operativePinNotice] (supported hosts run one agent per process);
+/// tests reset it directly between cases.
+SkillOperativePins? lastOperativePinRegistry;
 
 /// Settings for the skill-pin surface (`skills.pins` config precedent,
 /// same process-wide pattern as `imageRegistryConfig`): the carrier
@@ -235,7 +245,13 @@ class SkillOperativePins {
   /// Diffs this (current) registry against [previous] (P4/P5): pins whose
   /// content key changed while their owner skill persists are SUPERSEDED;
   /// pins whose owners all vanished (deleted, renamed, consent revoked)
-  /// are DROPPED. Never silent — render the notices.
+  /// — or whose owner still exists but no longer declares the line — are
+  /// DROPPED. Never silent — render the notices.
+  ///
+  /// Budget drops are deliberately NOT part of the diff: a pin dropped by
+  /// the previous window's budget was already reported at drop time (P6)
+  /// and is not a lifecycle change — the diff baseline covers kept pins
+  /// only.
   OperativePinDiff diff(SkillOperativePins previous) {
     final currentKeys = pinByKey.keys.toSet();
     final currentSkills = {
@@ -247,13 +263,26 @@ class SkillOperativePins {
     for (final old in previous.pins) {
       if (currentKeys.contains(old.contentKey)) continue;
       if (old.provenance.any((p) => currentSkills.contains(p.skillName))) {
-        final replacement = pins.firstWhere(
-          (pin) => pin.provenance.any(
+        // The successor must be a CURRENT pin of the same owner skill
+        // carrying a NEW content key — never just the skill's first pin
+        // (a multi-pin skill's unrelated surviving line must not be named
+        // as the replacement, review gh-1409 round 2).
+        OperativePin? replacement;
+        for (final pin in pins) {
+          final isNewKey = !previous.pinByKey.containsKey(pin.contentKey);
+          final sameOwner = pin.provenance.any(
             (p) => old.provenance.any((o) => o.skillName == p.skillName),
-          ),
-          orElse: () => pins.first,
-        );
-        superseded.add((previous: old, current: replacement));
+          );
+          if (isNewKey && sameOwner) {
+            replacement = pin;
+            break;
+          }
+        }
+        if (replacement != null) {
+          superseded.add((previous: old, current: replacement));
+        } else {
+          droppedPins.add(old);
+        }
       } else {
         droppedPins.add(old);
       }
@@ -283,7 +312,8 @@ class OperativePinDiff {
           '"${change.current.line}"',
     for (final pin in dropped)
       'skill pin dropped: "${pin.line}" — skill '
-          '`${pin.provenance.first.skillName}` no longer discoverable',
+          '`${pin.provenance.first.skillName}` no longer discoverable or '
+          'no longer declares it',
   ];
 }
 
@@ -315,15 +345,6 @@ String pinCarrierBlock(
       'them even where the original skill text was compacted away:\n'
       '${registry.pins.map((pin) => _renderPinLine(pin, restored: restoredKeys.contains(pin.contentKey))).join('\n')}\n'
       '$pinBlockCloseTag';
-}
-
-/// Renders the index-channel pin notice for a host's system prompt (the
-/// resume re-inject channel — same channel as the skills index). Empty
-/// pins → empty string.
-String formatOperativePinsForPrompt(SkillOperativePins registry) {
-  final body = pinCarrierBlock(registry);
-  if (body.isEmpty) return '';
-  return body;
 }
 
 /// Renders the summarizer-input block carrying the verbatim-preserve duty
