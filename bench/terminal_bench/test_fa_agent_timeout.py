@@ -10,6 +10,7 @@ import base64
 import importlib.util
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -53,6 +54,78 @@ def clean_env(**overrides):
     env = {name: value for name, value in os.environ.items() if name not in KNOB_NAMES}
     env.update(overrides)
     return env
+
+
+def _dart_duration_seconds(declaration: str) -> float:
+    """Seconds inside a Dart `Duration(...)` constructor call.
+
+    Accepts any argument subset/order (`Duration(seconds: 180)`,
+    `Duration(minutes: 5)`, `Duration(minutes: 1, seconds: 30)`,
+    `Duration(milliseconds: 500)`) — the coupling REG (gh-1430) feeds it
+    the `providerStreamIdleTimeout` line from the Dart source, and the
+    parse must survive a benign unit change there.
+    """
+    body = declaration[declaration.index("(") + 1 : declaration.rindex(")")]
+    factors = {
+        "milliseconds": 0.001,
+        "seconds": 1.0,
+        "minutes": 60.0,
+        "hours": 3600.0,
+    }
+    total = 0.0
+    matched = False
+    for name, factor in factors.items():
+        # \b anchors the unit name: `seconds` occurs inside
+        # `milliseconds`, and a bare substring match would double-count
+        # every milliseconds argument as whole seconds (gh-1430 review).
+        for value in re.findall(rf"\b{name}\s*:\s*([0-9.]+)", body):
+            matched = True
+            total += float(value) * factor
+    if not matched:
+        raise ValueError(f"no Duration arguments in: {declaration!r}")
+    return total
+
+class DartDurationParseTest(unittest.TestCase):
+    """Unit table for _dart_duration_seconds (gh-1430 review thread 1).
+
+    The coupling REG feeds this helper the `providerStreamIdleTimeout`
+    line straight from the Dart source, and the docstring promises the
+    parse survives a benign unit change there. `seconds` occurs INSIDE
+    `milliseconds`, so the unit match must be word-boundary anchored —
+    otherwise `Duration(milliseconds: 3000)` double-counts (3.0s from
+    the milliseconds factor + 3000.0s from the `seconds` substring) and
+    a no-op refactor reds the one REG whose job is to be trusted.
+    """
+
+    def test_seconds_and_minutes_compose(self):
+        self.assertEqual(_dart_duration_seconds("Duration(seconds: 300)"), 300.0)
+        self.assertEqual(_dart_duration_seconds("Duration(minutes: 5)"), 300.0)
+        self.assertEqual(
+            _dart_duration_seconds("Duration(minutes: 1, seconds: 30)"), 90.0
+        )
+
+    def test_milliseconds_does_not_double_count_as_seconds(self):
+        # The exact case the substring matcher got wrong: `seconds`
+        # matched inside `milli**seconds**` → 3003.0 instead of 3.0.
+        self.assertEqual(
+            _dart_duration_seconds("Duration(milliseconds: 3000)"), 3.0
+        )
+        self.assertEqual(
+            _dart_duration_seconds("Duration(milliseconds: 500)"), 0.5
+        )
+
+    def test_mixed_milliseconds_and_seconds(self):
+        self.assertEqual(
+            _dart_duration_seconds(
+                "Duration(seconds: 3, milliseconds: 500)"
+            ),
+            3.5,
+        )
+
+    def test_no_duration_arguments_fails_loud(self):
+        with self.assertRaises(ValueError):
+            _dart_duration_seconds("Duration()")
+
 
 
 class KnobParsingTest(unittest.TestCase):
@@ -273,6 +346,46 @@ class LivenessBytesTest(unittest.TestCase):
         self.assertIsNone(fa_agent_timeout.liveness_bytes_of(None))
         self.assertEqual(fa_agent_timeout.liveness_bytes_of("no anchor"), 0)
 
+    def test_reasoning_heartbeat_lines_count_as_liveness_bytes(self):
+        # gh-1430: the `… reasoning Ns (streaming)` heartbeat is fa's
+        # in-band liveness signal alongside the ⏳ tool-liveness family —
+        # the #1185 AC6 audit disclosure must see BOTH, or a trial kept
+        # alive purely by reasoning heartbeats reports pane growth as
+        # progress with zero disclosed liveness bytes.
+        heartbeat = "… reasoning 60s (streaming)\n"
+        self.assertEqual(
+            fa_agent_timeout.liveness_bytes_of(heartbeat),
+            len("… reasoning 60s (streaming)".encode("utf-8")) + 1,
+        )
+        tier2 = "… reasoning 45s\n"
+        self.assertEqual(
+            fa_agent_timeout.liveness_bytes_of(tier2),
+            len("… reasoning 45s".encode("utf-8")) + 1,
+        )
+
+    def test_mixed_liveness_families_both_count(self):
+        stream = (
+            "assistant text\n"
+            "⏳ [bash] sleep 500 — running 60s\n"
+            "✓ bash · 61s\n"
+            "… reasoning 120s (streaming)\n"
+        )
+        measured = fa_agent_timeout.liveness_bytes_of(stream)
+        expected = sum(
+            len(line.encode("utf-8")) + 1
+            for line in stream.split("\n")
+            if "⏳" in line or "… reasoning" in line
+        )
+        self.assertEqual(measured, expected)
+        self.assertGreater(measured, 0)
+
+    def test_plain_reasoning_prose_is_not_a_liveness_line(self):
+        # The anchor is the ellipsis-led line head, not any mention of
+        # reasoning: assistant prose stays outside the disclosure.
+        self.assertEqual(
+            fa_agent_timeout.liveness_bytes_of("I reason therefore I am\n"),
+            0,
+        )
 
 class FakeTmuxSession:
     """Duck-typed TmuxSession: pane tap via a byte counter, keys recorded."""
@@ -763,9 +876,49 @@ class ProgressWatchKnobTest(unittest.TestCase):
         self.assertTrue(knobs.progress_watch)
         self.assertEqual(knobs.abs_ceiling_sec, 5400.0)
         self.assertEqual(knobs.watch_abs_ceiling_sec, 5400.0)
-        # The stall gap defaults to 240s in watch mode (round-2 healthy
-        # max gap ~200s; class-B gaps start ~240s).
-        self.assertEqual(knobs.watch_stall_gap_sec, 240.0)
+        # The stall gap defaults to 360s in watch mode (gh-1430: fa's
+        # 300s stream-idle watchdog + a 60s margin — the bench must never
+        # arbitrate a stream fa itself considers live; the coupling REG
+        # below pins it against the Dart source).
+        self.assertEqual(knobs.watch_stall_gap_sec, 360.0)
+
+    def test_stall_gap_default_stays_above_fa_stream_watchdog(self):
+        # gh-1430 AC4 (REG-R3): the shipped FA_STALL_GAP_SEC default must
+        # stay >= fa's effective providerStreamIdleTimeout + margin. This
+        # reads the SHIPPED fa default straight from the Dart source, so
+        # the REG fails if EITHER side drifts (a watchdog raise without a
+        # gap raise would reintroduce the round-4 mid-thinking kills; a
+        # gap drop below the watchdog would make the bench the premature
+        # liveness arbiter again). Ordering invariant (fa_agent_timeout
+        # docstring): fa's watchdog is the sole arbiter of stream death;
+        # the bench gap only catches pane/process death.
+        root = Path(__file__).resolve().parents[2]
+        provider_common = root / "lib" / "src" / "providers" / "provider_common.dart"
+        match = None
+        for line in provider_common.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("const providerStreamIdleTimeout ="):
+                match = stripped
+                break
+        self.assertIsNotNone(
+            match, "providerStreamIdleTimeout moved — update this REG"
+        )
+        watchdog_sec = _dart_duration_seconds(match)
+        margin_sec = 60.0
+        self.assertGreaterEqual(
+            fa_agent_timeout._STALL_GAP_DEFAULT,
+            watchdog_sec + margin_sec,
+            f"FA_STALL_GAP_SEC default "
+            f"({fa_agent_timeout._STALL_GAP_DEFAULT}s) dropped to/below fa's "
+            f"stream-idle watchdog ({watchdog_sec}s) + margin — the bench "
+            f"would SIGKILL streams fa itself considers live again "
+            f"(gh-1430)",
+        )
+        # The env knob path resolves to the same shipped default.
+        knobs = TimeoutKnobs.from_env(
+            clean_env_all(FA_PROGRESS_EXTENSION="1")
+        )
+        self.assertEqual(knobs.watch_stall_gap_sec, 360.0)
 
     def test_garbage_new_knob_fails_loud(self):
         with self.assertRaises(ValueError):
@@ -806,21 +959,34 @@ class ProgressWatchTest(unittest.TestCase):
         self.assertEqual(watch.evaluate(3660.0, 3660 * 1000), "abs_ceiling")
 
     def test_single_stall_gap_gap_dies_at_ladder(self):
-        # AC1: one 240s+ gap and no progress after it -> the ladder resumes
-        # counting and the trial dies (last progress + idle window, which a
-        # 240s gap has already exceeded).
+        # AC1: one 360s+ gap and no progress after it -> the ladder resumes
+        # counting and the trial dies (last progress + idle window, which
+        # a 360s gap has already exceeded).
         watch = self._watch()
         for t in range(0, 600, 60):
             self.assertIsNone(watch.evaluate(float(t), t * 1000))
-        # 300s of silence after the last progress at 540s.
-        self.assertEqual(watch.evaluate(840.0, None), "stall")
+        # 360s of silence after the last progress at 540s.
         self.assertEqual(watch.evaluate(900.0, None), "stall")
+        self.assertEqual(watch.evaluate(960.0, None), "stall")
+
+    def test_sub_watchdog_gap_stays_progressing(self):
+        # gh-1430: the shipped gap (360s) sits ABOVE fa's stream-idle
+        # watchdog (300s) — a mid-thinking gap fa itself tolerates must
+        # never reach the bench's stall verdict (the round-4 kill class).
+        watch = self._watch()
+        self.assertIsNone(watch.evaluate(0.0, 10))
+        self.assertIsNone(watch.evaluate(240.0, 10))
+        self.assertIsNone(watch.evaluate(300.0, 10))
+        self.assertIsNone(watch.evaluate(359.0, 10))
+        self.assertEqual(watch.evaluate(360.0, 10), "stall")
 
     def test_gap_exactly_at_threshold_is_stall_no_flap(self):
-        # E1: gap exactly at the 240s threshold counts as stalled (>=),
-        # and the verdict is sticky: it does not flap back without new
-        # progress bytes.
-        watch = self._watch()
+        # E1: a gap exactly at the threshold counts as stalled (>=), and
+        # the verdict is sticky: it does not flap back without new
+        # progress bytes. Pinned on an explicit 240s gap so the boundary
+        # semantics stay covered independent of the shipped default.
+        env = clean_env_all(FA_PROGRESS_EXTENSION="1", FA_STALL_GAP_SEC="240")
+        watch = fa_agent_timeout.ProgressWatch(TimeoutKnobs.from_env(env))
         self.assertIsNone(watch.evaluate(0.0, 10))
         self.assertEqual(watch.evaluate(240.0, 10), "stall")
         self.assertEqual(watch.evaluate(241.0, 10), "stall")
@@ -830,10 +996,10 @@ class ProgressWatchTest(unittest.TestCase):
         # progressing mode — only the abs ceiling can kill again.
         watch = self._watch()
         self.assertIsNone(watch.evaluate(0.0, 10))
-        self.assertEqual(watch.evaluate(300.0, 10), "stall")
-        self.assertIsNone(watch.evaluate(320.0, 20))  # progress resumes
-        self.assertIsNone(watch.evaluate(380.0, 30))
-        self.assertEqual(watch.evaluate(700.0, 30), "stall")
+        self.assertEqual(watch.evaluate(400.0, 10), "stall")
+        self.assertIsNone(watch.evaluate(420.0, 20))  # progress resumes
+        self.assertIsNone(watch.evaluate(480.0, 30))
+        self.assertEqual(watch.evaluate(840.0, 30), "stall")
 
     def test_extension_off_flat_cap_byte_identical(self):
         # REG: with the extension off the watch is the flat cap, exactly
@@ -858,13 +1024,13 @@ class ProgressWatchTest(unittest.TestCase):
     def test_watch_events_recorded_for_audit(self):
         watch = self._watch()
         watch.evaluate(0.0, 10)
-        watch.evaluate(300.0, 10)  # stall detected
-        watch.evaluate(320.0, 20)  # progress resumes
+        watch.evaluate(400.0, 10)  # stall detected (gap 400 >= 360)
+        watch.evaluate(420.0, 20)  # progress resumes
         kinds = [event["kind"] for event in watch.events]
         self.assertIn("stall_detected", kinds)
         self.assertIn("progress_resumed", kinds)
         stall = next(e for e in watch.events if e["kind"] == "stall_detected")
-        self.assertEqual(stall["gap_sec"], 300.0)
+        self.assertEqual(stall["gap_sec"], 400.0)
 
 
 class ProgressWatchAuditTest(unittest.TestCase):

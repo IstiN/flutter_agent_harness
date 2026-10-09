@@ -32,7 +32,7 @@ run COMPLETENESS only. Issue #1392 AC6: a lost/cancelled shard degrades
 to an explicit `coverage: X/N` note (green-with-note) — the red verdict
 is reserved for real defects: nothing produced at all, or the AC8
 score-honesty contradiction (an `agent_timeout` trial whose session
-shows steady sub-240s inter-record gaps, i.e. the round-2 "killed
+shows steady sub-threshold inter-record gaps, i.e. the round-2 "killed
 mid-work" class the progress-aware ladder was built to retire).
 --no-fail turns the verdict off (informational per-shard tallies).
 
@@ -342,7 +342,8 @@ def _score_honesty(runs_dir: Path, rows) -> list:
 
     Justified kills: the trial's fa-agent-timeout.json audit names a stall
     or ceiling outcome (round-3 adapters), or — legacy artifacts — the
-    session's max inter-record gap reached the 240s stall threshold.
+    session's max inter-record gap reached the shipped stall threshold
+    (bench_metrics.DEFAULT_STALL_GAP_SEC, 360s since gh-1430).
     Missing session data degrades to "unverifiable", never a contradiction.
     """
     contradictions = []
@@ -360,7 +361,7 @@ def _score_honesty(runs_dir: Path, rows) -> list:
             except (OSError, json.JSONDecodeError):
                 outcome = None
             # The audit IS the round-3 contract: the watch itself decided
-            # the kill (stall at the 240s gap, or a ceiling), so its
+            # the kill (stall at the configured gap, or a ceiling), so its
             # verdict justifies the row and the legacy gap cross-check is
             # intentionally skipped — a legitimate abs-ceiling kill has
             # sub-threshold gaps BY DESIGN (E2) and must not read as a

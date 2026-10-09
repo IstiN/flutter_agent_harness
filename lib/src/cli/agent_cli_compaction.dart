@@ -550,6 +550,11 @@ extension AgentCliCompactionRun on AgentCli {
     // never cancels through here.
     final abort = CancelTokenSource();
     _activeCompactionAbort = abort;
+    // gh-1430 E3: no agent events fire during compaction, so the
+    // liveness watches would stay blind over a multi-minute summarizer
+    // request — arm the tier-2 reasoning line for the window (line
+    // mode/headless; the TUI busy row owns that surface).
+    _waiting.compactionLivenessStart();
     final runToken = _agent.cancelToken;
     if (runToken != null) {
       unawaited(
@@ -564,6 +569,7 @@ extension AgentCliCompactionRun on AgentCli {
       );
     } finally {
       _activeCompactionAbort = null;
+      _waiting.compactionLivenessEnd();
       // Issue #1085 round-1 (review 🚨): a cancelled compaction must
       // surface as an ABORT, not as a failed pass. Both engines convert
       // the cancelled summarizer into `ok: false` (the classic `_attempt`
