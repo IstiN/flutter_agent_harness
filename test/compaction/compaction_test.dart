@@ -577,9 +577,16 @@ void main() {
       final repaired = repairToolPairing(rebuilt);
       expect(validateToolPairing(repaired.messages), isEmpty);
       expect(repaired.report.droppedResultIds, ['c2']);
-      // The note replaces the dropped result so the model is not gaslit.
-      final note = repaired.messages.last as UserMessage;
-      expect(note.content, contains('context note'));
+      // The note replaces the dropped result so the model is not gaslit —
+      // gh-1449: riding the kept region's LAST user message as a text
+      // block, never a stand-alone turn.
+      expect(repaired.messages, hasLength(2));
+      expect((repaired.messages[0] as UserMessage).content, 'HISTORY SUMMARY');
+      final note = userMessageText(
+        (repaired.messages[1] as UserMessage).content,
+      );
+      expect(note, contains('context note'));
+      expect(note, contains('steer!'));
     });
   });
 

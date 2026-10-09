@@ -1009,6 +1009,38 @@ extension ApprovalCommands on AgentCli {
     // Run-lifecycle forensics to fa.log: one line per phase transition, so
     // a wedged "Working…"/"Compacting…" row can be attributed to the exact
     // phase (provider turn vs named tool vs run) that never finished.
+    _logEventForensics(event);
+    await _persistEventLiveness(event);
+    await _persistIncremental(event);
+    // Reasoning-phase liveness (gh-1198 tier 2 + gh-1430): a request
+    // going out arms the silent-window watch AND the stream heartbeat
+    // (line mode/headless with the thinking stream off); tier 2 treats
+    // ANY event as visible progress, while the heartbeat classifies —
+    // rendered output disarms it, unrendered stream events prove
+    // aliveness (the headless thinking-delta window the bench round-4
+    // kills lived in).
+    if (event is ModelRequestEvent) {
+      _waiting.reasoningRequestStarted();
+    } else {
+      _waiting.reasoningProgress(event);
+    }
+    await handleAgentEvent(
+      event,
+      onMessageLifecycle: _onMessageLifecycle,
+      onMessageUpdate: _onMessageUpdate,
+      onToolExecutionStart: _onToolExecutionStart,
+      onToolExecutionEnd: _onToolExecutionEnd,
+      onTurnEnd: (message) => _usage.add(message.usage),
+      onModelRequest: _onModelRequest,
+      onTaskLedger: _onTaskLedger,
+    );
+  }
+
+  /// fa.log forensics for the phase-transition events (the plain
+  /// diagnostic cases of [_onAgentEvent]; the record-persisting cases
+  /// live in [_persistEventLiveness] — split to keep both sides under
+  /// the crap4dart CRAP ceiling, gh-1449 rework round 3).
+  void _logEventForensics(AgentEvent event) {
     switch (event) {
       case AgentStartEvent():
         _logDiagnostic('run start sid=$_logSid');
@@ -1022,6 +1054,22 @@ extension ApprovalCommands on AgentCli {
         _logDiagnostic('turn end sid=$_logSid stop=${message.stopReason.name}');
       case AgentEndEvent():
         _logDiagnostic('run end sid=$_logSid');
+      case ToolCallHeartbeatEvent():
+      case ToolCallStuckEvent():
+      case ToolPairingRepairEvent():
+        // Persisting cases: logged where the record is written (see
+        // [_persistEventLiveness]); nothing extra here.
+        break;
+      default:
+    }
+  }
+
+  /// Session-record side of the liveness events (heartbeats, stuck calls,
+  /// orphan-report batches): each case logs its own diagnostic line so the
+  /// original intra-event order (log → persist → terminal print) is
+  /// preserved.
+  Future<void> _persistEventLiveness(AgentEvent event) async {
+    switch (event) {
       case ToolCallHeartbeatEvent(
         :final toolCallId,
         :final toolName,
@@ -1071,31 +1119,19 @@ extension ApprovalCommands on AgentCli {
           '[stuck-call] $toolName: ${action.label} after '
           '${elapsed.inSeconds}s${shownDetail.isEmpty ? '' : ' — $shownDetail'}',
         );
+      case ToolPairingRepairEvent(:final report):
+        // gh-1449 AC6: a batch of FIRST-TIME orphan notes is persisted as
+        // the hidden `orphan_report` record — a resumed session seeds its
+        // one-shot latch from these, so the same orphan never re-reports.
+        // Re-drops of already-reported orphans write nothing.
+        if (report.notedOrphanKeys.isNotEmpty) {
+          await _persistToolLivenessRecord(
+            orphanReportRecordType,
+            orphanReportRecordData(report.notedOrphanKeys.toSet()),
+          );
+        }
       default:
     }
-    await _persistIncremental(event);
-    // Reasoning-phase liveness (gh-1198 tier 2 + gh-1430): a request
-    // going out arms the silent-window watch AND the stream heartbeat
-    // (line mode/headless with the thinking stream off); tier 2 treats
-    // ANY event as visible progress, while the heartbeat classifies —
-    // rendered output disarms it, unrendered stream events prove
-    // aliveness (the headless thinking-delta window the bench round-4
-    // kills lived in).
-    if (event is ModelRequestEvent) {
-      _waiting.reasoningRequestStarted();
-    } else {
-      _waiting.reasoningProgress(event);
-    }
-    await handleAgentEvent(
-      event,
-      onMessageLifecycle: _onMessageLifecycle,
-      onMessageUpdate: _onMessageUpdate,
-      onToolExecutionStart: _onToolExecutionStart,
-      onToolExecutionEnd: _onToolExecutionEnd,
-      onTurnEnd: (message) => _usage.add(message.usage),
-      onModelRequest: _onModelRequest,
-      onTaskLedger: _onTaskLedger,
-    );
   }
 
   /// Message lifecycle for assistant turns: a start re-arms the

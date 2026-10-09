@@ -661,18 +661,20 @@ void main() {
 
     expect(ok, isTrue);
     expect(hooks.passes.last.fallback, 'local-trim');
-    // The orphan never reaches the provider: dropped, note appended.
+    // The orphan never reaches the provider: dropped, note appended —
+    // gh-1449: as an extra text block on the kept region's last user
+    // message, never a stand-alone turn.
     expect(state.messages.whereType<ToolResultMessage>(), isEmpty);
     final notes = state.messages
         .whereType<UserMessage>()
-        .map((m) => m.content as String)
-        .where((t) => t.startsWith('[context note:'))
+        .map((m) => userMessageText(m.content))
+        .where((t) => t.contains('[context note:'))
         .toList();
     expect(notes, hasLength(1));
     expect(notes.single, contains('bash_198'));
     // The trim marker still opens the kept region.
     expect(
-      (state.messages.first as UserMessage).content as String,
+      userMessageText((state.messages.first as UserMessage).content),
       contains('context trimmed locally'),
     );
   });
