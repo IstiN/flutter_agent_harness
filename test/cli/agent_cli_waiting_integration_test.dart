@@ -9,6 +9,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/cli/waiting_heartbeat.dart';
 import 'package:flutter_agent_harness/io.dart';
 import 'package:test/test.dart';
@@ -148,7 +149,13 @@ void main() {
     final code = await cli.runHeadless('hi', waitForJobs: true);
     expect(code, 0);
     final out = io.out.toString();
-    expect(out, contains('⏳ waiting:'));
+        // gh-1446 AC8: the pending glyph resolves through the symbol table.
+    expect(
+      out,
+      contains(
+        '${FaThemeController.instance.sym('status.pending')} waiting:',
+      ),
+    );
     expect(out, contains('waiters resolved'));
   });
 

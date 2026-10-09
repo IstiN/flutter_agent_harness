@@ -837,8 +837,29 @@ M  staged-one
 
   group('review pins (#831 round 2)', () {
     test('pi brand mark text is pinned', () {
-      const s = StatusLineSnapshot(cwd: '/');
-      expect(kStatusLineSegments['pi']!(s, _defaultSpec())!.text, '>_Fa');
+      // gh-1446 AC5: idle renders the blank frame cell (`>_ Fa`, with the
+      // space); a run frame sits between `>_` and `Fa` at the same column.
+      const idle = StatusLineSnapshot(cwd: '/');
+      expect(kStatusLineSegments['pi']!(idle, _defaultSpec())!.text, '>_ Fa');
+      final running = StatusLineSnapshot(cwd: '/', brandFrame: '⠋');
+      expect(
+        kStatusLineSegments['pi']!(running, _defaultSpec())!.text,
+        '>_⠋Fa',
+        reason: 'the frame cell replaces the blank — ` Fa` never moves',
+      );
+      // The frame zone is exactly 1 cell: every frame keeps the total at
+      // 5 chars (`>_` + frame + `Fa`) — ` Fa`'s column never moves (E3
+      // guards the 1-cell width via the render's debug assert).
+      for (final frame in const ['⠋', '⠙', '⠹']) {
+        expect(
+          kStatusLineSegments['pi']!(
+            StatusLineSnapshot(cwd: '/', brandFrame: frame),
+            _defaultSpec(),
+          )!.text.length,
+          5,
+          reason: '3-cell zone + `Fa` = 5 chars for every frame',
+        );
+      }
     });
 
     test('role table covers every StatusLineRoleKey', () {

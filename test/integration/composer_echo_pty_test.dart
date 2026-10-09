@@ -21,10 +21,6 @@ library;
 import 'dart:io';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
-// Same mask contract as composer_tui_grid_pty_test.dart: the spinner is
-// the kaomoji face zone (issue #1374) — strip the fixed zone + separator.
-import 'package:flutter_agent_harness/src/cli/fa_tui.dart'
-    show kKaomojiFaceZoneCells;
 import 'package:test/test.dart';
 
 import 'pty_harness.dart';
