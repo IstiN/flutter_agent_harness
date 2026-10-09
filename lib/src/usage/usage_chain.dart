@@ -60,12 +60,20 @@ final class UsageChainSegment {
   /// Creates a [UsageChainSegment].
   const UsageChainSegment({
     required this.requests,
+    this.model,
     this.openedAt,
     this.closedAt,
   });
 
   /// The segment's provider requests.
   final List<FoldRequest> requests;
+
+  /// The segment's LAST-SEEN model id (gh-1460): the model that served the
+  /// final request — stamped into the `fa-tokens:` segment-close line so
+  /// the row is attributable (and priceable) downstream. `null` when the
+  /// segment never observed a model (legacy chains, zero-filled fallbacks
+  /// only): the line then keeps its legacy shape.
+  final String? model;
 
   /// First contributing record's chain timestamp (or the opening marker's).
   final DateTime? openedAt;
@@ -175,9 +183,11 @@ final class UsageChainScanner {
   void _handleAssistantMessage(Map<String, dynamic> decoded, _ScanState state) {
     final message = decoded['message'];
     if (message is! Map || message['role'] != 'assistant') return;
-    state.current().requests.add(
-      _foldAssistant(message.cast<String, dynamic>(), state.pending),
+    final request = _foldAssistant(
+      message.cast<String, dynamic>(),
+      state.pending,
     );
+    state.current().addRequest(request);
     state.pending = null;
   }
 
@@ -307,6 +317,7 @@ final class _ScanState {
         for (final segment in segments)
           UsageChainSegment(
             requests: segment.requests,
+            model: segment.lastModel,
             openedAt: segment.openedAt ?? segment.firstRecordAt,
             closedAt: segment.closedAt,
           ),
@@ -326,9 +337,22 @@ final class _ScanSegment {
   DateTime? firstRecordAt;
   DateTime? closedAt;
 
+  /// The LAST-SEEN model on a real request (gh-1460): zero-filled fallbacks
+  /// (`unknownUsageModel`) are not observations — they never overwrite a
+  /// model the segment actually saw, and a segment of only fallbacks stays
+  /// model-less so the segment-close line keeps its legacy shape.
+  String? lastModel;
+
   /// Whether anything contributed to this segment (a marker claiming an
   /// empty virgin segment does not count — killed boots leave nothing).
   bool get hasContent => requests.isNotEmpty || firstRecordAt != null;
+
+  /// Adds a request and, when it observed a real model, records it as the
+  /// segment's last-seen model.
+  void addRequest(FoldRequest request) {
+    requests.add(request);
+    if (request.model != unknownUsageModel) lastModel = request.model;
+  }
 
   void setOpenedAt(DateTime? at) {
     openedAt ??= at;
@@ -401,6 +425,7 @@ final class UsageChainFolder {
         folder.foldSegment(
           i,
           scan.segments[i].requests,
+          model: scan.segments[i].model,
           openedAt: scan.segments[i].openedAt,
           closedAt: scan.segments[i].closedAt,
         ),

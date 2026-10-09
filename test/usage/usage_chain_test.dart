@@ -212,6 +212,100 @@ void main() {
     );
   });
 
+  group('gh-1460: segment-close model capture', () {
+    test(
+      'last-seen model wins: the segment model is the LAST request\'s model',
+      () {
+        final ledger = foldChain([
+          sessionHeaderLine('sess-1'),
+          segmentMarkerLine(1),
+          requestSummaryLine(2),
+          assistantLine(
+            3,
+            model: 'model-main',
+            usage: reportedUsage(input: 100, output: 50),
+          ),
+          requestSummaryLine(4),
+          assistantLine(
+            5,
+            model: 'model-smol',
+            usage: reportedUsage(input: 20, output: 10),
+          ),
+        ]);
+        expect(ledger.segments.single.model, 'model-smol');
+      },
+    );
+
+    test('each resume segment carries its OWN last model', () {
+      final ledger = foldChain([
+        sessionHeaderLine('sess-1'),
+        segmentMarkerLine(1),
+        requestSummaryLine(2),
+        assistantLine(
+          3,
+          model: 'model-old',
+          usage: reportedUsage(input: 100, output: 50),
+        ),
+        segmentMarkerLine(4),
+        requestSummaryLine(5),
+        assistantLine(
+          6,
+          model: 'model-new',
+          usage: reportedUsage(input: 42, output: 9),
+        ),
+      ]);
+      expect(ledger.segments.length, 2);
+      expect(ledger.segments[0].model, 'model-old');
+      expect(ledger.segments[1].model, 'model-new');
+    });
+
+    test('a dangling summary fallback never clobbers the last known model', () {
+      final ledger = foldChain([
+        sessionHeaderLine('sess-1'),
+        segmentMarkerLine(1),
+        requestSummaryLine(2),
+        assistantLine(
+          3,
+          model: 'model-a',
+          usage: reportedUsage(input: 10, output: 5),
+        ),
+        requestSummaryLine(4), // never produced an assistant message
+      ]);
+      expect(ledger.segments.single.model, 'model-a');
+    });
+
+    test('a fallback-only segment (all requests died mid-flight) has no '
+        'model — the line degrades to the legacy shape', () {
+      final ledger = foldChain([
+        sessionHeaderLine('sess-1'),
+        segmentMarkerLine(1),
+        requestSummaryLine(2), // never produced an assistant message
+      ]);
+      expect(ledger.segments.single.model, isNull);
+    });
+
+    test('the model rides the fold, not the usage.json schema (I6)', () {
+      final ledger = foldChain([
+        sessionHeaderLine('sess-1'),
+        segmentMarkerLine(1),
+        requestSummaryLine(2),
+        assistantLine(3, model: 'model-a', usage: reportedUsage()),
+      ]);
+      expect(ledger.segments.single.model, 'model-a');
+      expect(jsonEncode(ledger.toJson()), isNot(contains('"model":')));
+      // Rebuildable: a second fold over the same chain reproduces it.
+      expect(
+        foldChain([
+          sessionHeaderLine('sess-1'),
+          segmentMarkerLine(1),
+          requestSummaryLine(2),
+          assistantLine(3, model: 'model-a', usage: reportedUsage()),
+        ]).segments.single.model,
+        'model-a',
+      );
+    });
+  });
+
   group('robustness', () {
     test('chains without markers or summaries still fold (old sessions)', () {
       final ledger = foldChain([

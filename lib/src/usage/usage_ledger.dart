@@ -151,6 +151,7 @@ final class UsageSegment {
     required this.totals,
     required this.byModel,
     required this.source,
+    this.model,
     this.openedAt,
     this.closedAt,
   });
@@ -158,6 +159,15 @@ final class UsageSegment {
   /// 0-based position in the session's segment sequence (chain order — a
   /// resume APPENDS, never reorders, E4).
   final int index;
+
+  /// The segment's LAST-SEEN model id (gh-1460): the model that served the
+  /// segment's final request — the id stamped into the `fa-tokens:`
+  /// segment-close line so downstream consumers can price the row.
+  /// `null` on segments that never observed a model (legacy chains, or
+  /// only zero-filled fallbacks) — the log line then keeps its legacy
+  /// shape. Deliberately NOT part of the usage.json schema: it is
+  /// rebuildable from the chain and consumed by the log line only.
+  final String? model;
 
   /// Request/token sums over the segment.
   final UsageModelTotals totals;

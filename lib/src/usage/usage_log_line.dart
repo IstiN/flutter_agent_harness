@@ -19,16 +19,24 @@ const String usageTokensLogPrefix = 'fa-tokens: ';
 
 /// The pinned one-line shape (AC7): every field documented in gh-1241,
 /// compact JSON, fixed key order. `source` is the segment's marker (I3).
+/// gh-1460 adds the OPTIONAL `"model"` key — the segment's last-seen model
+/// id, emitted once per segment-close line so every token row is
+/// attributable (and priceable) downstream; it is omitted when the fold
+/// never saw a model (legacy chains), which keeps old lines parsing and
+/// lets this regex keep matching them (the group is optional, and the
+/// builder only writes the key when a model exists).
 final RegExp usageTokensLogPattern = RegExp(
-  r'^fa-tokens: \{"sessionId":"[^"]*","segment":[0-9]+,'
-  r'"input":[0-9]+,"output":[0-9]+,"cacheRead":[0-9]+,'
+  r'^fa-tokens: \{"sessionId":"[^"]*","segment":[0-9]+(?:,"model":"[^"]*")?'
+  r',"input":[0-9]+,"output":[0-9]+,"cacheRead":[0-9]+,'
   r'"requests":[0-9]+,"source":"(reported|estimated|mixed)"\}$',
 );
 
 /// Builds the segment-close line for [segment] of [sessionId] — compact,
-/// key order fixed, matching [usageTokensLogPattern] by construction.
+/// key order fixed, matching [usageTokensLogPattern] by construction. The
+/// optional `"model"` key rides the segment's last-seen model (gh-1460)
+/// and is left out entirely when the segment has none (legacy shape).
 String usageTokensLogLine({
   required String sessionId,
   required UsageSegment segment,
 }) =>
-    '$usageTokensLogPrefix${jsonEncode({'sessionId': sessionId, 'segment': segment.index, 'input': segment.totals.input, 'output': segment.totals.output, 'cacheRead': segment.totals.cacheRead, 'requests': segment.totals.requests, 'source': segment.source.wire})}';
+    '$usageTokensLogPrefix${jsonEncode({'sessionId': sessionId, 'segment': segment.index, if (segment.model case final model? when model.isNotEmpty) 'model': model, 'input': segment.totals.input, 'output': segment.totals.output, 'cacheRead': segment.totals.cacheRead, 'requests': segment.totals.requests, 'source': segment.source.wire})}';

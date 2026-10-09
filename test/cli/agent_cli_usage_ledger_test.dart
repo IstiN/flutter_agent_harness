@@ -58,6 +58,28 @@ void main() {
   }
 
   test(
+    'the fa-tokens line carries the session model id (gh-1460 AC1/AC4)',
+    () async {
+      final cli = cliFor([textTurn('ok', usage: reportedUsage())]);
+      expect(await cli.runHeadless('say hi'), 0);
+
+      final log = (await env.readTextFile(
+        '/home/.fah/logs/fa.log',
+      )).valueOrNull!;
+      final lines = log
+          .split('\n')
+          .where((line) => line.contains('fa-tokens: '))
+          .toList();
+      expect(lines, hasLength(1));
+      final payload = 'fa-tokens: ${lines.single.split('fa-tokens: ').last}';
+      // The model id is the one the assistant message records — the same
+      // string the settings/UI display.
+      expect(payload, contains('"model":"test-model"'));
+      expect(usageTokensLogPattern.hasMatch(payload), isTrue);
+    },
+  );
+
+  test(
     'a headless run leaves usage.json and one fa-tokens log line (AC1/AC7)',
     () async {
       final cli = cliFor([textTurn('ok', usage: reportedUsage())]);
