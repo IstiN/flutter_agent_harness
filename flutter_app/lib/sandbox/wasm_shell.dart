@@ -2627,9 +2627,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         out.add(utf8.encode(stdinText ?? ''));
         continue;
       }
-      final path = _resolveSandboxPath(file, cwd);
-      if (path.startsWith(builtinSkillPathPrefix)) {
-        final embedded = builtinSkillTextAt(path);
+      // A builtin:// URI is its own operand namespace (C1: fs paths and
+      // builtin URIs are equivalent for reads) — it must NEVER ride the
+      // sandbox path resolver, which would mangle it into a guest path.
+      if (file.startsWith(builtinSkillPathPrefix)) {
+        final embedded = builtinSkillTextAt(file);
         if (embedded == null) {
           err.write('cat: $file: No such file or directory\n');
           exitCode = 1;
@@ -2638,6 +2640,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         out.add(utf8.encode(_catNumbered(embedded, parsed)));
         continue;
       }
+      final path = _resolveSandboxPath(file, cwd);
       // Byte-first: an existing operand is delivered verbatim (the
       // coreutils applet was binary-safe; the seam must not regress that —
       // tarballs/PNGs ride cat). Only a MISSING operand consults pointer

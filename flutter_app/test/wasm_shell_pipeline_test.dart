@@ -15,6 +15,8 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 
 import 'package:fa/sandbox/wasm_shell.dart';
+import 'package:fa/sandbox/wasm_shell_builtins.dart'
+    show applyCatNumbering;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wasm_run/wasm_run.dart';
@@ -1116,5 +1118,53 @@ void main() {
         );
       },
     );
+
+    test('the builtin:// URI is a direct cat operand on the WASI shell too',
+        () async {
+      final r = await run('cat builtin://skills/create-goal/SKILL.md');
+      expect(r.exitCode, 0);
+      expect(r.stdout, builtinSkillTextAt(
+        'builtin://skills/create-goal/SKILL.md',
+      ));
+      // No WASM stage was launched for the builtin operand.
+      expect(rec.configs, isEmpty);
+    });
+
+    test('an unknown builtin:// operand is a plain ENOENT', () async {
+      final r = await run('cat builtin://skills/nope/SKILL.md');
+      expect(r.exitCode, 1);
+      expect(r.stderr, contains('No such file or directory'));
+    });
+
+    test('cat -n numbers a seamed skill body like the applet would',
+        () async {
+      seedPointer('create-goal');
+      final r = await run('cat -n .fah/skills/create-goal/SKILL.md');
+      expect(r.exitCode, 0);
+      expect(r.stdout, contains('     1\t'));
+      // The numbering rides the same body bytes.
+      expect(
+        r.stdout.endsWith(
+          applyCatNumbering(
+            builtinSkillTextAt('builtin://skills/create-goal/SKILL.md')!,
+            nonBlankOnly: false,
+          ),
+        ),
+        isTrue,
+      );
+    });
+
+    test('a missing operand beside a seam errors GNU-shaped, exit 1',
+        () async {
+      seedPointer('create-goal');
+      final r = await run('cat .fah/skills/create-goal/SKILL.md /nope.txt');
+      expect(r.exitCode, 1);
+      expect(r.stderr, contains('cat: /nope.txt: No such file or directory'));
+      // The seamed operand still printed before the failure.
+      expect(
+        r.stdout,
+        builtinSkillTextAt('builtin://skills/create-goal/SKILL.md'),
+      );
+    });
   });
 }
