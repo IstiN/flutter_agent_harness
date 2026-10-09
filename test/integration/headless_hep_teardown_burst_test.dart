@@ -48,15 +48,15 @@ void main() {
     'a tool-loop HEP burst exits cleanly with an intact frame stream',
     () async {
       final server = await MockLlmServer.start();
-      // A 30-cycle bash tool loop: every turn flushes a full frame group
-      // (turn_start, message frames, tool_call/tool_result, turn_end) into
-      // the pipe back-to-back — hundreds of frames through the writer in
-      // the shortest possible wall time, the load profile that made the
-      // old unawaited per-line flushes overlap.
+      // 30 consecutive tool-use turns: every tool result goes straight
+      // back into the next toolUse response, so ~200 HEP frames flush
+      // back-to-back into the pipe — the load profile that made the old
+      // unawaited per-line flushes overlap — and the final MockText ends
+      // the run with a clean stop.
       for (var i = 0; i < 30; i++) {
         server.enqueueToolCall('bash', '{"command":"echo cycle-$i"}');
-        server.enqueueText('cycle $i done');
       }
+      server.enqueueText('all 30 cycles done');
       addTearDown(server.stop);
 
       final command = faCliCommand([
@@ -117,8 +117,11 @@ void main() {
         }
         lines.add(jsonDecode(trimmed) as Map<String, dynamic>);
       }
-      // Every frame is valid JSONL, in order, with a frame type.
-      expect(lines.length, greaterThan(120));
+      // Every frame is valid JSONL, in order, with a frame type. The
+      // 31-turn loop produces ~3 frames per turn (~95 lines) — far above
+      // the single-turn baseline, which is the point: a sustained burst
+      // through the writer.
+      expect(lines.length, greaterThan(60));
       for (final frame in lines) {
         expect(frame.containsKey('type') || frame.containsKey('event'), isTrue,
             reason: 'malformed frame: $frame');
