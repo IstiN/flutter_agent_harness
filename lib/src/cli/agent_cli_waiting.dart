@@ -160,21 +160,108 @@ final class _WaitingCoordinator {
     tickSeconds: () => _cli.config.waiting.toolLivenessTickSeconds,
   );
 
-  /// A provider request went out (gh-1198): arm the reasoning watch when
-  /// this surface watches it — surfaces where thinking does NOT render.
-  /// Since gh-1433 that is decided by the SAME log-fidelity resolution
-  /// the render gate uses: TUI and log-face runs (headless) see the
-  /// deltas (or tiles) live; only non-streaming line mode and the
-  /// `--no-stream-thinking` hatch watch the silent window.
+  /// Streaming-phase liveness (gh-1430): the fifth waiting horizon — a
+  /// provider request whose events flow but render NOTHING in the current
+  /// output mode (thinking deltas with `--stream-thinking` off, the
+  /// headless default). Tier 2 disarms at the first event, which is
+  /// exactly when a reasoning burst starts, so the pane used to go
+  /// byte-silent for minutes of healthy streaming. The heartbeat prints
+  /// `… reasoning Ns (streaming)` on the same waiting cadence — and never
+  /// for a stream that stopped emitting, so fa's stream-idle watchdog
+  /// stays the sole arbiter of stream death.
+  late final StreamLivenessHeartbeat streamHeartbeat = StreamLivenessHeartbeat(
+    onRemind: (elapsed) => _printLiveness(streamLivenessLine(elapsed)),
+    clock: _clock,
+    livenessSeconds: () => _cli.config.waiting.toolLivenessSeconds,
+    tickSeconds: () => _cli.config.waiting.toolLivenessTickSeconds,
+  );
+
+  /// A provider request went out (gh-1198 + gh-1430): arm both watches
+  /// when this surface watches them — surfaces where thinking does NOT
+  /// render. Since gh-1433 that is decided by the SAME log-fidelity
+  /// resolution the render gate uses: TUI and log-face runs (headless)
+  /// see the deltas (or tiles) live; only non-streaming line mode and
+  /// the `--no-stream-thinking` hatch watch the silent window.
   void reasoningRequestStarted() {
     if (_cli._streamsThinking) return;
     reasoning.requestStarted();
+    streamHeartbeat.requestStarted();
   }
 
-  /// Any agent event after the request (gh-1198): the run is visibly
-  /// moving — disarm. A no-op while nothing is watched (the tracker stays
-  /// out of TUI/streaming runs entirely).
-  void reasoningProgress() => reasoning.progress();
+  /// Any agent event after the request (gh-1198): tier 2 watches only the
+  /// pre-first-event window, so ANY event is visible progress for it. The
+  /// stream heartbeat classifies instead (gh-1430): rendered output
+  /// disarms it, unrendered stream events prove aliveness, lifecycle ends
+  /// stop it.
+  void reasoningProgress(AgentEvent event) {
+    reasoning.progress();
+    streamHeartbeatProgress(event);
+  }
+
+  /// The gh-1430 classification of one agent event for the stream
+  /// heartbeat. Rendered (disarm): text deltas (raw mode prints them
+  /// live; styled surfaces flush at message end — either way the answer
+  /// is on its way, E1), streamed thinking deltas, and tool rows. Live
+  /// but unrendered: the stream events headless does not draw. Stops:
+  /// the message/turn ends — the request phase is over, and a timer that
+  /// prints over an ended stream would be a wall timer, not a liveness
+  /// signal. Everything else (run bookkeeping, tool heartbeats) is
+  /// neither, and leaves the watch untouched.
+  void streamHeartbeatProgress(AgentEvent event) {
+    switch (event) {
+      case MessageUpdateEvent(:final assistantMessageEvent):
+        final rendered =
+            assistantMessageEvent is TextDeltaEvent ||
+            (assistantMessageEvent is ThinkingDeltaEvent &&
+                _cli._streamsThinking);
+        if (rendered) {
+          streamHeartbeat.renderedOutput();
+        } else {
+          streamHeartbeat.unrenderedEvent();
+        }
+      case MessageStartEvent():
+        // Mirrors the provider stream's StartEvent: the first byte landed.
+        streamHeartbeat.unrenderedEvent();
+      case MessageEndEvent() || TurnEndEvent() || AgentEndEvent():
+        streamHeartbeat.stop();
+      case ToolExecutionStartEvent() || ToolExecutionEndEvent():
+        // The tool rows print in every mode — rendered bytes.
+        streamHeartbeat.renderedOutput();
+      default:
+        break;
+    }
+  }
+
+  /// The compaction window (gh-1430 E3): summarizer requests are provider
+  /// requests too, but NO agent events fire while the [AutoCompactor]
+  /// runs — neither tracker would ever see its stream. Arm tier 2 over
+  /// the window so a multi-minute summarization is not a byte-silent
+  /// bench window: past the cadence it prints the bare `… reasoning Ns`
+  /// line until the window ends (a dead summarizer stream errors through
+  /// fa's own watchdog first, same as the main path). Line mode/headless
+  /// only — the TUI busy row (`Compacting context…`) owns that surface.
+  void compactionLivenessStart() {
+    // Deliberately ignores config.streamThinking (unlike
+    // reasoningRequestStarted): the summarizer's stream never reaches
+    // the CLI render path, so nothing renders in this window even with
+    // the flag on — tier 2 is the only signal here. Do NOT add the
+    // streamThinking gate for "consistency": it would silently
+    // reintroduce a byte-silent multi-minute summarization window in
+    // --stream-thinking runs.
+    if (_cli._useTui) return;
+    reasoning.requestStarted();
+  }
+
+  /// The compaction window ended: drop the watch (a stale arm cannot
+  /// survive into the idle session — the next agent event disarms tier 2
+  /// anyway, but the explicit stop keeps the chain honest). The
+  /// unconditional stop (no `streamThinking`/TUI guard) is safe by
+  /// lifecycle: compaction runs BETWEEN provider requests — the watch is
+  /// disarmed outside the window anyway, so the stop is a belt-and-
+  /// braces no-op unless a compaction ever overlaps an in-flight request.
+  void compactionLivenessEnd() {
+    reasoning.stop();
+  }
 
   /// Nudges left this turn (issue #1185 E2, the storm guard): reset at
   /// every real turn start (see [_beginUserPrompt]), spent by
@@ -1018,4 +1105,33 @@ extension AgentCliWaitingSeams on AgentCli {
   /// — the request-out/first-event observable.
   @visibleForTesting
   bool get reasoningLivenessActiveForTest => _waiting.reasoning.armed;
+
+  /// Test seam: fires one stream-liveness evaluation now (gh-1430), the
+  /// analog of [reasoningLivenessTickForTest].
+  @visibleForTesting
+  void streamLivenessTickForTest() => _waiting.streamHeartbeat.tick();
+
+  /// Test seam: whether the stream heartbeat is armed right now (gh-1430)
+  /// — the request-out/rendered-output observable.
+  @visibleForTesting
+  bool get streamLivenessActiveForTest => _waiting.streamHeartbeat.armed;
+
+  /// Test seam: whether an unrendered event arrived in the heartbeat's
+  /// window since the last print (gh-1430) — the aliveness observable an
+  /// integration test waits on after pushing a stream event.
+  @visibleForTesting
+  bool get streamLivenessDirtyForTest {
+    final heart = _waiting.streamHeartbeat;
+    // ignore: invalid_use_of_visible_for_testing_member
+    return heart.armed && heart.dirtyForTest;
+  }
+
+  /// Test seam: opens the compaction liveness window (gh-1430 E3) without
+  /// running a real compaction pass.
+  @visibleForTesting
+  void compactionLivenessStartForTest() => _waiting.compactionLivenessStart();
+
+  /// Test seam: closes the compaction liveness window (gh-1430 E3).
+  @visibleForTesting
+  void compactionLivenessEndForTest() => _waiting.compactionLivenessEnd();
 }
