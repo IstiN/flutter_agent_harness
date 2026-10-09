@@ -51,6 +51,23 @@ extension AgentServiceEvents on AgentService {
         );
       case ModelRequestEvent():
         _persistModelRequest(event);
+      case ToolPairingRepairEvent(:final report):
+        // gh-1449 AC6: persist a batch of FIRST-TIME orphan notes as the
+        // hidden `orphan_report` record — the resume seed (see loadSession).
+        // Re-drops of already-reported orphans write nothing.
+        final session = _session;
+        if (report.notedOrphanKeys.isNotEmpty && session != null) {
+          unawaited(
+            session
+                .appendCustomEntry(
+                  customType: orphanReportRecordType,
+                  data: orphanReportRecordData(
+                    report.notedOrphanKeys.toSet(),
+                  ),
+                )
+                .then((_) {}, onError: (Object _) {}),
+          );
+        }
       case AgentEndEvent():
         await _onAgentEnd();
       default:

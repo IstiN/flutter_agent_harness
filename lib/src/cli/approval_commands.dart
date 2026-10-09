@@ -1071,6 +1071,17 @@ extension ApprovalCommands on AgentCli {
           '[stuck-call] $toolName: ${action.label} after '
           '${elapsed.inSeconds}s${shownDetail.isEmpty ? '' : ' — $shownDetail'}',
         );
+      case ToolPairingRepairEvent(:final report):
+        // gh-1449 AC6: a batch of FIRST-TIME orphan notes is persisted as
+        // the hidden `orphan_report` record — a resumed session seeds its
+        // one-shot latch from these, so the same orphan never re-reports.
+        // Re-drops of already-reported orphans write nothing.
+        if (report.notedOrphanKeys.isNotEmpty) {
+          await _persistToolLivenessRecord(
+            orphanReportRecordType,
+            orphanReportRecordData(report.notedOrphanKeys.toSet()),
+          );
+        }
       default:
     }
     await _persistIncremental(event);

@@ -264,6 +264,21 @@ extension AgentServiceSessions on AgentService {
     final contextMessages = resetLoadedUsageAnchors(context.messages);
     _agent.reset();
     _agent.state.messages = contextMessages;
+    // gh-1449 AC6: seed the one-shot orphan-report latch from the persisted
+    // `orphan_report` records — a resumed session never re-reports an
+    // orphan it already reported. Best-effort: a scan failure must not
+    // break the open.
+    try {
+      _agent.reportedOrphanKeys.addAll(
+        orphanReportKeysFromRecords(
+          await _repo.readCustomRecordsOfType(metadata, {
+            orphanReportRecordType,
+          }),
+        ),
+      );
+    } on Object catch (error) {
+      AppLog.i('open', 'orphan_report seed failed: $error');
+    }
     _session = session;
     _setMailboxPrefix(metadata.id);
     // Follow external appends (a running fa CLI on the same session).
