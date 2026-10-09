@@ -59,6 +59,12 @@ String maskedForScan(String source) {
   var i = 0;
   void keep(int index) => out[index] = source.codeUnitAt(index);
 
+  /// Masks one position — a space, except newlines survive so line
+  /// numbers taken from the masked text stay valid against the original.
+  void mask(int index) {
+    if (source[index] != '\n') out[index] = 0x20;
+  }
+
   bool wordChar(int index) {
     if (index < 0 || index >= source.length) return false;
     final c = source.codeUnitAt(index);
@@ -68,18 +74,16 @@ String maskedForScan(String source) {
         c == 0x5F;
   }
 
-  /// Consumes a string literal starting at [start] (the opening quote —
-  /// already known not to be a raw-string prefix) and returns the index
-  /// just past its closing quote. [raw] strings treat `\` literally.
+  /// Consumes a string literal whose opening quote(s) start at [start]
+  /// and returns the index just past the closing quote. [raw] strings
+  /// treat `\` literally. The interior is masked (newlines preserved).
   int consumeString(int start, String quote, {required bool raw}) {
-    keep(start);
     final triple = source.startsWith(quote + quote, start + 1);
-    final end = triple ? start + 3 : start + 1;
-    if (triple) {
-      for (var k = start; k < end; k++) {
-        keep(k);
-      }
+    final openLen = triple ? 3 : 1;
+    for (var k = start; k < start + openLen && k < source.length; k++) {
+      keep(k);
     }
+    i = start + openLen;
     while (i < source.length) {
       final ch = source[i];
       if (!raw && ch == r'\') {
@@ -97,6 +101,7 @@ String maskedForScan(String source) {
         }
         return close;
       }
+      mask(i);
       i++;
     }
     return i; // unterminated: caller sees a masked tail (false RED guard)
@@ -106,8 +111,10 @@ String maskedForScan(String source) {
     final ch = source[i];
     final next = i + 1 < source.length ? source[i + 1] : '';
     if (ch == '/' && next == '/') {
-      // Line comment: mask through the end of the line (keep the newline).
+      // Line comment: mask through the end of the line (mask() keeps the
+      // newline, so line numbering survives).
       while (i < source.length && source[i] != '\n') {
+        mask(i);
         i++;
       }
     } else if (ch == '/' && next == '*') {
@@ -122,6 +129,7 @@ String maskedForScan(String source) {
           i += 2;
           break;
         }
+        mask(i);
         i++;
       }
     } else if ((ch == "'" || ch == '"') &&
@@ -277,12 +285,18 @@ void main() {
     test('double-quoted strings with // survive intact', () {
       const source = '''
 final url = "https://x";
-final renderer = JsonWidgetRenderer(onEvent: _, voxelWorld: w);
+final renderer = JsonWidgetRenderer(onEvent: _, note: "see docs://a(b)", voxelWorld: w);
 ''';
       final masked = maskedForScan(source);
       expect(masked, hasLength(source.length)); // offsets stay valid
+      final site = rendererConstructionsOf(masked).single;
+      expect(site.$2, 2, reason: 'line numbers survive masking');
+      expect(site.$3, contains('voxelWorld:'));
+      // The `//` inside the URL string must not truncate the LINE: the
+      // construction AFTER it on the same line stays visible.
+      const sameLine = 'final r = JsonWidgetRenderer(note: "https://x", voxelWorld: w);';
       expect(
-        rendererConstructionsOf(masked).single.$3,
+        rendererConstructionsOf(maskedForScan(sameLine)).single.$3,
         contains('voxelWorld:'),
       );
     });

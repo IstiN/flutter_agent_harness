@@ -15,8 +15,14 @@
 //   its placeholder without crashing.
 //
 // The bridge-gated legs boot a real engine (issue #184 guard); the
-// getter/diagnostic asserts run everywhere — a never-started engine is
-// exactly the null-world state AC3 describes.
+// getter/diagnostic asserts run everywhere. The diagnostic's silence
+// contract is checked on the states this runner can construct: the boot
+// gap (null `_engine` — never started / disposed) and a LIVE shipped
+// backend whose world is always wired. The one-shot's spent-flag path
+// (live minimal backend, world null) has no constructible backend here —
+// same documented gap as REG-2's web-worker leg; the flag's re-arm and
+// live-engine gate are pinned statically by
+// test/jsr_voxel_world_pin_guard_test.dart.
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_engine.dart';
 import 'package:fa/services/app_log.dart';
@@ -116,46 +122,76 @@ void main() {
     });
   }, skip: _engineSkip);
 
-  group('JsAppEngine.noteUnwiredVoxelWorld (gh-1441 AC3)', () {
-    test('logs ONCE for a voxel tree on a world-less engine, and only for '
-        'voxel trees', () {
+  group('JsAppEngine.noteUnwiredVoxelWorld (gh-1441 AC3 + review)', () {
+    test('the boot gap stays silent: a never-started engine is not the AC3 '
+        'subject', () {
       AppLog.reset();
       addTearDown(AppLog.reset);
       final env = MemoryExecutionEnv();
-      final e = engine(env, 'voxel-unwired');
-      expect(e.voxelWorld, isNull); // the AC3 state: no world wired
+      final e = engine(env, 'voxel-boot-gap');
+      expect(e.voxelWorld, isNull); // null _engine — nothing wired yet
 
-      final voxelTree = {
+      e.noteUnwiredVoxelWorld({
         'type': 'column',
         'children': [
           {'type': 'text', 'data': 'hi'},
           {'type': 'voxel', 'id': 'world'},
         ],
-      };
-      e.noteUnwiredVoxelWorld(voxelTree);
-      e.noteUnwiredVoxelWorld(voxelTree); // re-render — no second line
-      final voxelLines = AppLog.dump()
-          .split('\n')
-          .where((l) => l.contains('no voxelWorld is wired'))
-          .length;
-      expect(
-        voxelLines,
-        1,
-        reason:
-            'the diagnostic is one-shot per engine '
-            'instance — a 120 fps re-render loop must not spam the log',
-      );
+      });
+      // gh-1441 review: `_start()` nulls `_engine` BEFORE the async
+      // dispose/boot while `tree.value` still publishes the old tree — a
+      // rebuild in that gap renders the placeholder transiently and must
+      // NOT fire the one-shot WARNING (it would fire on shipped backends,
+      // contradicting the diagnostic's own contract, and permanently spend
+      // the one-shot for the instance). AC3's subject is a LIVE engine
+      // whose backend ships no world.
+      expect(AppLog.dump(), isEmpty);
+    });
 
-      // A tree WITHOUT a voxel node stays silent (nothing to degrade).
+    test('a disposed engine (null _engine) stays silent too', () async {
       AppLog.reset();
+      addTearDown(AppLog.reset);
+      final env = MemoryExecutionEnv();
+      final e = engine(env, 'voxel-disposed-gap');
+      await e.dispose();
       e.noteUnwiredVoxelWorld({
-        'type': 'column',
-        'children': [
-          {'type': 'text', 'data': 'hi'},
-        ],
+        'type': 'voxel',
+        'id': 'world',
       });
       expect(AppLog.dump(), isEmpty);
     });
+
+    testWidgets('a LIVE shipped-backend engine with a wired world never '
+        'fires the diagnostic — re-armed across restarts', (tester) async {
+      AppLog.reset();
+      addTearDown(AppLog.reset);
+      final env = MemoryExecutionEnv();
+      final e = engine(env, 'voxel-wired');
+      await tester.runAsync(() async {
+        await env.writeFile('apps/voxel-wired/widget.js', voxelAppSource);
+        await e.start();
+      });
+      expect(e.voxelWorld, isNotNull);
+      final voxelTree = {
+        'type': 'voxel',
+        'id': 'world',
+      };
+      e.noteUnwiredVoxelWorld(voxelTree);
+      // Restart: the diagnostic flag re-arms (a fresh boot), and the new
+      // engine's world is wired again — still silent on shipped backends.
+      await tester.runAsync(e.start);
+      expect(e.voxelWorld, isNotNull);
+      e.noteUnwiredVoxelWorld(voxelTree);
+      await tester.runAsync(e.dispose);
+      expect(
+        AppLog.dump(),
+        isEmpty,
+        reason:
+            'shipped backends always own a bridge world — the '
+            '"no voxelWorld is wired" WARNING must never fire on them '
+            '(gh-1441 AC3 contract)',
+      );
+    }, skip: _engineSkip);
 
     testWidgets('a null-world renderer still draws the placeholder without '
         'crashing (degradation contract)', (tester) async {
