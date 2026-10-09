@@ -9,6 +9,17 @@ on:
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
+    inputs:
+      # Issue #1267 AC3: the synthetic-red drill — dispatch the nightly
+      # with a forced-failing leg and fileTracker=true; the filer must
+      # file or comment the nightly-red tracker WITHIN that same run.
+      # Manual dispatches without the flag stay tracker-silent (ad-hoc
+      # red runs never spam the tracker; scheduled nights always file).
+      fileTracker:
+        description: 'File/comment the nightly-red tracker when this run is red (#1267 AC3 drill flag)'
+        required: false
+        type: boolean
+        default: false
 
 # SEC-08 (#796): minimal default — the nightly-red filing job grants
 # issues: write (+ actions: read) in its own job-level block.
@@ -497,32 +508,73 @@ jobs:
   # open `nightly-red` issue is searched first and only commented on, so a
   # persistent failure never spams duplicates. A GREEN scheduled run closes
   # the open issue (the nightly-red tracker is only as good as its sunset).
+  #
+  # Resurrection (issue #1267 N3): five consecutive red nights
+  # (2026-10-01 → 10-05) filed NOTHING. Two defects, both fixed here —
+  #  1. the dedup lookup read jq's literal "null" (an empty result of
+  #     `.[0].number`) as a truthy issue number, so the no-open-tracker
+  #     path died commenting issue "null" and never filed — every lookup
+  #     now reads `.[0].number // empty` (both steps);
+  #  2. the job was schedule-only, so the AC3 synthetic-red drill could
+  #     not reach it — dispatch + fileTracker=true arms it too.
+  # The decision (filed / commented / closed / why-not) lands in the job
+  # output AND the step summary; two consecutive red scheduled nights add
+  # the nightly-red-escalated label (streak counted from the completed
+  # schedule-event runs preceding this one — dispatch runs never count).
   auto-issue:
     name: File nightly-red issue
     needs: [full-quality, pty-integration, cli-visual, flutter-app-macos, build-release]
-    if: always() && github.event_name == 'schedule' && !cancelled()
+    if: >-
+      always() && !cancelled() &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && github.event.inputs.fileTracker == 'true'))
     runs-on: ubuntu-latest
     permissions:
-      # issues: write — file/comment/close the deduped nightly-red issue.
-      # actions: read — the filing leg lists this run's jobs via `gh api
-      # repos/.../actions/runs/$RUN_ID/jobs`; a job-level permissions block
-      # drops every unlisted scope to none, so without this the call 403s
+      # issues: write — file/comment/close/label the deduped nightly-red
+      # issue. actions: read — the filing leg lists this run's jobs via
+      # `gh api repos/.../actions/runs/$RUN_ID/jobs` and the escalation
+      # streak via `gh run list`; a job-level permissions block drops
+      # every unlisted scope to none, so without this the calls 403
       # ("Resource not accessible by integration") and no issue is filed.
       issues: write
       actions: read
     steps:
+      # AC3 decision-log visibility: the arm/disarm reason is in the job
+      # output on EVERY run, red or green, filing or not.
+      - name: Filer decision (why-not visibility, #1267 AC3)
+        if: always()
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "filer armed: scheduled run — files/comments/closes the tracker"
+          elif [ "${{ github.event.inputs.fileTracker }}" = "true" ]; then
+            echo "filer armed: dispatch with fileTracker=true (AC3 synthetic-red drill)"
+          else
+            echo "filer decision: why-not — manual dispatch without fileTracker=true; pass it to exercise the tracker (AC3 drill)"
+          fi
+
       - name: Close the nightly-red issue on a green run
-        if: success()
+        # Schedule-only: a manual (drill) dispatch is not a night — its
+        # green must never close the live nightly tracker.
+        if: success() && github.event_name == 'schedule'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           repo="${GITHUB_REPOSITORY}"
+          # `// empty` (issue #1267 N3): an empty result must read EMPTY —
+          # jq's bare `.[0].number` prints the literal string "null",
+          # which `[ -n ]` treats as a live issue number, so the close
+          # died commenting issue "null" (the silent-death bug).
           existing=$(gh issue list --state open --label nightly-red \
-            --json number --jq '.[0].number' --repo "$repo")
+            --json number --jq '.[0].number // empty' --repo "$repo")
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --repo "$repo" \
               --body "Green again: ${GITHUB_SERVER_URL}/${repo}/actions/runs/${GITHUB_RUN_ID} — closing."
             gh issue close "$existing" --repo "$repo"
+            echo "decision: closed #$existing — nightly green again"
+            echo "decision: closed #$existing — nightly green again" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "decision: why-not close — no open nightly-red tracker"
+            echo "decision: why-not close — no open nightly-red tracker" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Create or update the nightly-red issue
@@ -536,21 +588,49 @@ jobs:
           gh label create nightly-red --force \
             --description "Nightly full-quality run is failing" \
             --color B60205 --repo "$repo"
+          gh label create nightly-red-escalated --force \
+            --description "Nightly red 2+ consecutive scheduled nights (issue #1267 N3)" \
+            --color D93F0B --repo "$repo"
           # Failing job names of this run, plus the run URL.
           failing=$(gh api \
             "repos/$repo/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
             --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")')
           [ -z "$failing" ] && failing="(unknown)"
-          body=$(printf 'Nightly full-matrix run is red.\n\nFailing jobs: %s\nRun: %s\n' \
-            "$failing" "${GITHUB_SERVER_URL}/${repo}/actions/runs/${GITHUB_RUN_ID}")
+          # N3 escalation: consecutive red SCHEDULED nights completed
+          # BEFORE this run (this run's own red is the +1). The streak
+          # stops at the first non-failure. Dispatch runs never count —
+          # the label tracks real nights.
+          streak=$(gh run list --repo "$repo" --workflow nightly.yml \
+            --event schedule --status completed --limit 10 \
+            --json conclusion,databaseId \
+            --jq 'reduce .[] as $r ({s: 0, done: false};
+                  if ($r.databaseId | tostring) == "'"$GITHUB_RUN_ID"'" or .done then .
+                  elif $r.conclusion == "failure" then {s: (.s + 1), done: false}
+                  else {s: .s, done: true} end) | .s')
+          nights=$((streak + 1))
+          echo "decision: red night ${nights} in a row (streak input: ${streak} completed failures)"
+          body=$(printf 'Nightly full-matrix run is red.\n\nFailing jobs: %s\nRun: %s\nConsecutive red scheduled nights (incl. this one): %s\n' \
+            "$failing" "${GITHUB_SERVER_URL}/${repo}/actions/runs/${GITHUB_RUN_ID}" "$nights")
           # Dedup: comment on the existing open nightly-red issue instead of
           # opening a duplicate. --repo everywhere: this job has no checkout,
           # bare `gh` invokes git for repo detection and dies with
           # "not a git repository" (the 2026-09-18 filing-leg failure).
+          # `// empty` on the lookup — the literal-"null" bug above.
           existing=$(gh issue list --state open --label nightly-red \
-            --json number --jq '.[0].number' --repo "$repo")
+            --json number --jq '.[0].number // empty' --repo "$repo")
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --body "$body" --repo "$repo"
+            echo "decision: commented the open tracker #$existing (no duplicate filed)"
+            echo "decision: commented the open tracker #$existing (no duplicate filed)" >> "$GITHUB_STEP_SUMMARY"
+            target="$existing"
           else
-            gh issue create --title "$title" --label nightly-red --body "$body" --assignee ai-teammate --repo "$repo"
+            target=$(gh issue create --title "$title" --label nightly-red \
+              --body "$body" --assignee ai-teammate --repo "$repo")
+            echo "decision: filed $target"
+            echo "decision: filed $target" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$streak" -ge 1 ]; then
+            gh issue edit "$target" --add-label nightly-red-escalated --repo "$repo"
+            echo "decision: escalated $target — $nights consecutive red scheduled nights"
+            echo "decision: escalated $target — $nights consecutive red scheduled nights" >> "$GITHUB_STEP_SUMMARY"
           fi

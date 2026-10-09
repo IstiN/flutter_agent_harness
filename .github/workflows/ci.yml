@@ -61,9 +61,15 @@ concurrency:
 #                   golden suite stays in build-macos.yml — goldens are
 #                   host-locked, see issue #177 E5 discussion)
 #   flutter-app-exzone → JS-engine exclusion-zone tests on macOS (issue
-#               #1267 N1; runs in every SM validation dispatch — path-blind
-#               under dispatch-only CI, gh-1280 idiom; the nightly macos leg
-#               stays the main/tag backstop)
+#               #1267 N1; PATH-TRIGGERED on pull_request events and SM
+#               validation dispatches alike — the changes classifier
+#               derives the validated diff via merge-base(origin/main,
+#               HEAD) under dispatch-only CI; the nightly macos leg stays
+#               the main/tag backstop)
+#   flutter-app-lock-smoke → linux+windows flutter_app RELEASE builds,
+#               run only when the diff modifies flutter_app/pubspec.lock
+#               (issue #1267 N2; same path-triggered model — PRs not
+#               touching the lockfile pay nothing)
 #   test-faui → packages/fa_ui tests sharded ×3 by manifest   (app/core/shared;
 #               issue #283 — same template as test-core: manifest assert,
 #               per-shard coverage merged to ONE report, junit durations
@@ -102,12 +108,16 @@ jobs:
       # PR-only (gh-1241 REG-1): a trajectory/session/usage-touching diff
       # runs the usage-fold suite per-merge.
       usagefold: ${{ steps.paths.outputs.usagefold }}
-      # Issue #1267 N1: the macOS exclusion-zone path set. Reserve only —
-      # ci.yml has no pull_request trigger (dispatch-only CI); the
-      # flutter-app-exzone leg gates on the SM validation dispatch itself
-      # (gh-1280 idiom) and consults this output only if a real
-      # pull_request trigger ever lands.
+      # Issue #1267 N1: the macOS exclusion-zone path set — live on
+      # pull_request events AND on SM validation dispatches: the paths
+      # step derives the validated diff from merge-base(origin/main, HEAD)
+      # when no pull_request context exists (fail-safe — a classification
+      # failure runs the leg, never skips it).
       exzone: ${{ steps.paths.outputs.exzone }}
+      # Issue #1267 N2: the diff modified flutter_app/pubspec.lock — the
+      # transitive-drift vector that kept linux/windows release builds red
+      # for five nights (#1265). Same path-triggered model as exzone.
+      locksmoke: ${{ steps.paths.outputs.locksmoke }}
       # PR-only (issue #551): test/integration/** changes run the no-key
       # mock-LLM integration legs per-PR instead of at tag time only.
       intmock: ${{ steps.paths.outputs.intmock }}
@@ -131,11 +141,60 @@ jobs:
       # hook. The selected stage set maps back to the same four groups the
       # old dorny filter emitted.
       - id: paths
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
         env:
           BASE_REF: ${{ github.event.pull_request.base.sha }}
           HEAD_REF: ${{ github.event.pull_request.head.sha }}
         run: |
+          # ── Issue #1267 N1/N2 dispatch arm ──────────────────────────────
+          # SM validation dispatches carry NO pull_request event context,
+          # so BASE_REF/HEAD_REF are empty there: derive the validated diff
+          # from git — merge-base(origin/main, HEAD) is the PR fork point
+          # (the checkout above is fetch-depth: 0, so origin/main exists).
+          # merge-base == HEAD (a main dispatch, or an already-merged
+          # branch) diffs to nothing and the narrowed arms skip. A failed
+          # resolve fails SAFE: both arms run unconditioned —
+          # over-triggering a rare-path leg costs minutes, under-triggering
+          # one hides a nightly-only red (the #1309 class).
+          if [ -z "$HEAD_REF" ]; then
+            HEAD_REF="$(git rev-parse HEAD)"
+            BASE_REF="$(git merge-base origin/main "$HEAD_REF" 2>/dev/null || true)"
+            if [ -z "$BASE_REF" ]; then
+              echo "::warning::merge-base(origin/main, HEAD) failed on the dispatch checkout — failing safe: exzone + locksmoke arms run"
+              echo "exzone=true" >> "$GITHUB_OUTPUT"
+              echo "locksmoke=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          # Issue #1267 N1: the macOS exclusion-zone path set. Gated on
+          # BOTH pull_request events and SM validation dispatches (the
+          # legs below consult these outputs on either event). Context:
+          # the ubuntu flutter-tests leg runs this family but every
+          # engine-dependent test SKIPS there (native_test_guard.dart finds
+          # no QuickJS .so on a bare runner); they truly execute only on
+          # macOS — the hole #1309 escaped through (gh-1307). The issue's
+          # packages/js_widget_runtime/** is an EXTERNAL repo now, so its
+          # bumps arrive via the flutter_app/pubspec.yaml pin.
+          if git diff --name-only "$BASE_REF" "$HEAD_REF" |
+              grep -qE '(^flutter_app/lib/apps/|^lib/src/js_ext/|^flutter_app/test/apps/|^flutter_app/test/native_test_guard\.dart$|^flutter_app/pubspec\.yaml$)'; then
+            echo "exzone=true" >> "$GITHUB_OUTPUT"
+          fi
+          # Issue #1267 N2 (AC2): the lockfile-refresh vector — resolution
+          # floats transitive deps to latest-compatible, and the breaking
+          # arrival (#1265: a transitive flutter_inappwebview) lands as a
+          # flutter_app/pubspec.lock diff with nothing else changed. The
+          # flutter-app-lock-smoke legs are the pre-merge net; PRs not
+          # touching the lockfile never pay for them.
+          if git diff --name-only "$BASE_REF" "$HEAD_REF" |
+              grep -qE '^flutter_app/pubspec\.lock$'; then
+            echo "locksmoke=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            # Dispatch done — the stages classifier below reads a
+            # pull_request event's base/head only; on dispatches the group
+            # outputs stay with the non-PR filter step (full gate).
+            exit 0
+          fi
           stages=$(scripts/ci_fast_gate.sh --dry-run |
             sed -n 's/^Fast gate scope: .*stages://p')
           echo "gate stages:[$stages]"
@@ -172,23 +231,6 @@ jobs:
           if git diff --name-only "$BASE_REF" "$HEAD_REF" |
               grep -qE '(^lib/src/trajectory/|^lib/src/session/|^lib/src/usage/|^test/usage/|^lib/src/cli/agent_cli_usage_ledger\.dart$)'; then
             echo "usagefold=true" >> "$GITHUB_OUTPUT"
-          fi
-          # Issue #1267 N1: the macOS exclusion-zone path set. NOTE the
-          # trigger model: ci.yml has NO pull_request trigger (dispatch-only
-          # CI, see the flutter-app-exzone job comment) — this step runs only
-          # on a real pull_request event, so today it is path-narrowing
-          # RESERVE, exactly like the perf/usagefold/intmock greps above
-          # (documented pending in issue #303); the flutter-app-exzone leg
-          # actually gates via its workflow_dispatch arm (gh-1280 idiom).
-          # Context: the ubuntu flutter-tests leg runs this family but every
-          # engine-dependent test SKIPS there (native_test_guard.dart finds
-          # no QuickJS .so on a bare runner); they truly execute only on
-          # macOS — the hole #1309 escaped through (gh-1307). The issue's
-          # packages/js_widget_runtime/** is an EXTERNAL repo now, so its
-          # bumps arrive via the flutter_app/pubspec.yaml pin.
-          if git diff --name-only "$BASE_REF" "$HEAD_REF" |
-              grep -qE '(^flutter_app/lib/apps/|^lib/src/js_ext/|^flutter_app/test/apps/|^flutter_app/test/native_test_guard\.dart$|^flutter_app/pubspec\.yaml$)'; then
-            echo "exzone=true" >> "$GITHUB_OUTPUT"
           fi
 
   # ─────────────────────────────────────────────────────────────────────────
@@ -1470,23 +1512,22 @@ jobs:
   # nightly macOS leg — the hole #1309 escaped through (gh-1307: an
   # apps/engine regression merged green and went red the same night).
   #
-  # Trigger model (dispatch-only CI, gh-1280 binaries-pr idiom): ci.yml has
-  # NO pull_request trigger — PR validation arrives as an SM
-  # workflow_dispatch on the head SHA (machine-sm.yml), where the paths
-  # classifier cannot run (no pull_request event diff). The leg is
-  # therefore path-BLIND on dispatches: it runs in EVERY SM validation
-  # (one hosted-macOS leg beside the build-macos/build-ios legs already
-  # paid there), and the exzone path set only narrows a future real
-  # pull_request trigger. Main/tag/schedule/release runs skip it — the
-  # nightly flutter-app-macos leg stays the full-suite backstop there.
+  # Trigger model (issue #1267 N1 slice 2): ci.yml has NO pull_request
+  # trigger — PR validation arrives as an SM workflow_dispatch on the head
+  # SHA (machine-sm.yml). The changes classifier derives the validated diff
+  # under BOTH events (merge-base(origin/main, HEAD) on dispatches), so
+  # this leg is PATH-TRIGGERED: a PR touching only lib/src core never pays
+  # for it (AC1), a lib/apps + js_ext diff does, and a classifier failure
+  # fails safe (the leg runs). Main/tag/schedule/release runs skip it —
+  # the nightly flutter-app-macos leg stays the full-suite backstop there.
   # ─────────────────────────────────────────────────────────────────────────
   flutter-app-exzone:
     name: Exclusion zone (macOS JS-engine tests)
     runs-on: macos-latest
     needs: changes
     if: >-
-      (github.event_name == 'pull_request' && needs.changes.outputs.exzone == 'true') ||
-      github.event_name == 'workflow_dispatch'
+      (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
+      needs.changes.outputs.exzone == 'true'
     timeout-minutes: 25
     permissions:
       contents: read
@@ -1514,6 +1555,87 @@ jobs:
       - name: flutter test test/apps (JS engine live)
         working-directory: flutter_app
         run: flutter test --exclude-tags integration test/apps
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Issue #1267 N2 (AC2) — lockfile-modified release smoke. Resolution
+  # floats transitive deps to latest-compatible on every resolve, and the
+  # breaking arrival (#1265: a transitive flutter_inappwebview nobody
+  # declares) lands as a flutter_app/pubspec.lock diff — a surface the PR
+  # legs never built: the native linux/windows desktop targets were
+  # nightly-only (nightly.yml build-release), so the break surfaced as the
+  # 5-red-nights window instead of a red PR. When the diff MODIFIES the
+  # lockfile, this matrix release-builds the app on linux+windows pre-merge
+  # (the same two targets the nightly carries); every other PR pays
+  # nothing. The resolve rides the shared composite action (--enforce-
+  # lockfile, #726 retry, skew fail-fast — test/ci_pub_get_retry_guard_
+  # test.dart), so a pubspec/lockfile skew fails HERE loudly before any
+  # build step. Path-triggered like exzone: pull_request events AND SM
+  # validation dispatches (merge-base diff in the classifier, fail-safe).
+  # Main/tag/schedule/release runs skip it — the nightly build-release
+  # matrix stays the backstop, and a red leg reddens the required Quality
+  # gate (platform class — it must block the merge, never the pure-Dart
+  # publish, #1368).
+  # ─────────────────────────────────────────────────────────────────────────
+  flutter-app-lock-smoke:
+    name: Lockfile smoke (${{ matrix.os }} release)
+    runs-on: ${{ matrix.runner }}
+    needs: changes
+    if: >-
+      (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
+      needs.changes.outputs.locksmoke == 'true'
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-latest
+          - os: windows
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same pinned SDK as the nightly build-release legs (#281).
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: '3.47.x'
+          channel: stable
+          cache: true
+
+      # Linux desktop toolchain + plugin native deps (gtk3 for the runner,
+      # gstreamer for audioplayers_linux) — same as the nightly linux leg.
+      - name: Install Linux desktop toolchain
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+
+      - name: Create placeholder .env asset
+        working-directory: flutter_app
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > .env << 'EOF'
+          OPENROUTER_API_KEY=
+          MODEL_ID=
+          BASE_URL=
+          HUGGINGFACE_TOKEN=
+          EOF
+
+      - name: Create placeholder firebase_options.dart
+        shell: bash
+        run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
+
+      - uses: ./.github/actions/flutter-pub-get
+
+      - name: flutter build ${{ matrix.os }} --release (lockfile smoke)
+        working-directory: flutter_app
+        shell: bash
+        run: flutter build ${{ matrix.os }} --release
 
   # Issue #433: flutter_app CRAP ratchet — the app's beasts were never
   # gated (the root crap4dart.yaml covers core lib/bin only). The 2
@@ -2414,7 +2536,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify, install-pin-gate, flutter-app-exzone]
+    needs: [changes, static, flutter-analyze, test-core, coverage-gate, guards, flutter-tests, app-crap-gate, test-faui, perf-gate, usage-fold, cli-visual-settings, cube-kernel-live, build-web, build-android, build-ios, build-macos, integration-mock, hostile-env, fa-aot-build, pty-integration-linux, pty-coverage-gate, pty-visual, supply-chain, dep-audit, installer-verify, install-pin-gate, flutter-app-exzone, flutter-app-lock-smoke]
     if: always()
     timeout-minutes: 5
     permissions:
@@ -2455,6 +2577,7 @@ jobs:
           echo "installer-it = ${{ needs.installer-verify.result }}"
           echo "pin-gate    = ${{ needs.install-pin-gate.result }}"
           echo "exzone      = ${{ needs.flutter-app-exzone.result }}"
+          echo "lock-smoke  = ${{ needs.flutter-app-lock-smoke.result }}"
       - name: Fail on any real failure (skipped security = dodge = FAIL)
         id: gate
         env:
@@ -2486,6 +2609,7 @@ jobs:
           R_INSTALLER_VERIFY: ${{ needs.installer-verify.result }}
           R_INSTALL_PIN_GATE: ${{ needs.install-pin-gate.result }}
           R_EXZONE: ${{ needs.flutter-app-exzone.result }}
+          R_LOCK_SMOKE: ${{ needs.flutter-app-lock-smoke.result }}
         run: |
           fail() { echo "Quality gate FAILED: $1"; exit 1; }
           # Verdict pass collects blockers WITHOUT exiting, so dart_ok is
@@ -2527,10 +2651,10 @@ jobs:
                     "fa-aot-build:$R_FA_AOT" \
                     "pty-integration-linux:$R_PTY_LINUX" "pty-coverage-gate:$R_PTY_GATES" "pty-visual:$R_PTY_VISUAL" \
                     "installer-verify:$R_INSTALLER_VERIFY" "install-pin-gate:$R_INSTALL_PIN_GATE" \
-                    "flutter-app-exzone:$R_EXZONE"; do
+                    "flutter-app-exzone:$R_EXZONE" "flutter-app-lock-smoke:$R_LOCK_SMOKE"; do
             name="${kv%%:*}"; r="${kv#*:}"
             case "$name" in
-              build-web|build-android|build-ios|build-macos|fa-aot-build|installer-verify|install-pin-gate|cube-kernel-live|cli-visual-settings|pty-integration-linux|pty-coverage-gate|pty-visual)
+              build-web|build-android|build-ios|build-macos|fa-aot-build|installer-verify|install-pin-gate|cube-kernel-live|cli-visual-settings|pty-integration-linux|pty-coverage-gate|pty-visual|flutter-app-lock-smoke)
                 if [ "$r" != "success" ] && [ "$r" != "skipped" ]; then
                   platform_red=true
                 fi
