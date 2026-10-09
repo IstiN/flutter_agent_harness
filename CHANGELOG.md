@@ -21,8 +21,6 @@
   and the detach summary stays the documented degradation, never the
   default path. The drain prints a `⏳ waiting: …` line (#1055 parity)
   naming what the run stays alive for.
-
-
 - feat(providers): issue #1398 — stall-recovery tuning becomes per-provider
   and data-driven. Registry entries (`customProviders:`, `models.custom:`,
   roles chain entries, `providersQueue:` entries) accept optional
