@@ -184,7 +184,11 @@ List<(String, int, String)> rendererConstructionsInTree() {
       // drops out and the knownSurfaces floor turns the run red with a
       // clear reason (the documented false-RED direction, never false
       // GREEN).
-      sites.add((path, line, balancedArgs(masked, at + 'JsonWidgetRenderer'.length) ?? ''));
+      sites.add((
+        path,
+        line,
+        balancedArgs(masked, at + 'JsonWidgetRenderer'.length) ?? '',
+      ));
       from = at + 'JsonWidgetRenderer('.length;
     }
   }
@@ -213,7 +217,8 @@ void main() {
       expect(
         sites.length,
         greaterThanOrEqualTo(knownSurfaces.length),
-        reason: 'the scan found fewer constructions than the known '
+        reason:
+            'the scan found fewer constructions than the known '
             'surfaces — the scanner is undercounting',
       );
       for (final (path, line, args) in sites) {
@@ -294,7 +299,8 @@ final renderer = JsonWidgetRenderer(onEvent: _, note: "see docs://a(b)", voxelWo
       expect(site.$3, contains('voxelWorld:'));
       // The `//` inside the URL string must not truncate the LINE: the
       // construction AFTER it on the same line stays visible.
-      const sameLine = 'final r = JsonWidgetRenderer(note: "https://x", voxelWorld: w);';
+      const sameLine =
+          'final r = JsonWidgetRenderer(note: "https://x", voxelWorld: w);';
       expect(
         rendererConstructionsOf(maskedForScan(sameLine)).single.$3,
         contains('voxelWorld:'),
@@ -315,7 +321,7 @@ final r3 = JsonWidgetRenderer(onEvent: _, voxelWorld: w);
 
     test('raw strings, triple quotes and escapes do not desync the mask', () {
       const source = '''
-final a = r'it\'s raw // not a comment';
+final a = r'it\\'s raw // not a comment';
 final b = \'\'\'
 multi "line" // string with (parens)
 \'\'\';

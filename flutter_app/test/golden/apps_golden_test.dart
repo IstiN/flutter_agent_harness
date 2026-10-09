@@ -25,6 +25,7 @@ library;
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:fa/services/agent_service.dart';
 import 'package:fa/apps/app_icon.dart';
@@ -37,6 +38,7 @@ import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/ui/widgets/chat_message_tile.dart';
 import 'package:fa/ui/widgets/media_player.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:fa/ui/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -1230,25 +1232,53 @@ void main() {
   }) {
     const faces = [
       // +z (front)
-      [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]],
+      [
+        [0, 0, 1],
+        [1, 0, 1],
+        [1, 1, 1],
+        [0, 1, 1],
+      ],
       // -z (back)
-      [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]],
+      [
+        [1, 0, 0],
+        [0, 0, 0],
+        [0, 1, 0],
+        [1, 1, 0],
+      ],
       // +y (top)
-      [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]],
+      [
+        [0, 1, 1],
+        [1, 1, 1],
+        [1, 1, 0],
+        [0, 1, 0],
+      ],
       // -y (bottom)
-      [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]],
+      [
+        [0, 0, 0],
+        [1, 0, 0],
+        [1, 0, 1],
+        [0, 0, 1],
+      ],
       // +x (right)
-      [[1, 0, 1], [1, 0, 0], [1, 1, 0], [1, 1, 1]],
+      [
+        [1, 0, 1],
+        [1, 0, 0],
+        [1, 1, 0],
+        [1, 1, 1],
+      ],
       // -x (left)
-      [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]],
+      [
+        [0, 0, 0],
+        [0, 0, 1],
+        [0, 1, 1],
+        [0, 1, 0],
+      ],
     ];
     for (var f = 0; f < faces.length; f++) {
       final color = f == 2 ? top : side;
       final base = chunkPositions.length ~/ 3;
       for (final corner in faces[f]) {
-        chunkPositions.addAll([
-          x + corner[0], y + corner[1], z + corner[2],
-        ]);
+        chunkPositions.addAll([x + corner[0], y + corner[1], z + corner[2]]);
         chunkColors.addAll(color);
       }
       chunkIndices.addAll([base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -1334,7 +1364,10 @@ void main() {
             ],
           ),
           actions: [
-            IconButton(icon: const Icon(Icons.shield_outlined), onPressed: () {}),
+            IconButton(
+              icon: const Icon(Icons.shield_outlined),
+              onPressed: () {},
+            ),
             IconButton(icon: const Icon(Icons.refresh), onPressed: () {}),
           ],
         ),
@@ -1347,31 +1380,32 @@ void main() {
               // golden file pins the pixels; this pins the semantics).
               child: RepaintBoundary(
                 key: _voxelProbeKey,
-                child: JsonWidgetRenderer(
-                  onEvent: (_, _) {},
-                  theme: JsonWidgetTheme.fromAccent(
-                    theme.colorScheme.primary,
-                    brightness: theme.brightness,
-                  ),
-                  // The SAME wiring every Fa surface now passes
-                  // (gh-1441): the engine's bridge-owned world — here
-                  // fed by hand.
-                  voxelWorld: world,
-                ).build(const {
-                  'type': 'column',
-                  'children': [
-                    {
-                      'type': 'text',
-                      'data': 'fa-craft 0.2.18 — 9 chunks · 1296 faces',
-                    },
-                    {
-                      'type': 'voxel',
-                      'id': 'fa-craft',
-                      'width': 820,
-                      'height': 430,
-                    },
-                  ],
-                }, context),
+                child:
+                    JsonWidgetRenderer(
+                      onEvent: (_, _) {},
+                      theme: JsonWidgetTheme.fromAccent(
+                        theme.colorScheme.primary,
+                        brightness: theme.brightness,
+                      ),
+                      // The SAME wiring every Fa surface now passes
+                      // (gh-1441): the engine's bridge-owned world — here
+                      // fed by hand.
+                      voxelWorld: world,
+                    ).build(const {
+                      'type': 'column',
+                      'children': [
+                        {
+                          'type': 'text',
+                          'data': 'fa-craft 0.2.18 — 9 chunks · 1296 faces',
+                        },
+                        {
+                          'type': 'voxel',
+                          'id': 'fa-craft',
+                          'width': 820,
+                          'height': 430,
+                        },
+                      ],
+                    }, context),
               ),
             ),
           ),
@@ -1386,6 +1420,54 @@ void main() {
     expect(find.byIcon(Icons.landscape), findsNothing);
     expect(find.text('Voxel world'), findsNothing);
     await expectGolden(tester, 'apps_voxel_world');
+    // Eye-free content probe: the canvas must hold BOTH sky and chunk
+    // geometry — an all-sky capture means the chunks were never painted
+    // (the gh-1441 bug class: probes resolve, uploads succeed, screen
+    // stays placeholder).
+    final boundary = tester.renderObject<RenderRepaintBoundary>(
+      find.byKey(_voxelProbeKey),
+    );
+    final image = await tester.runAsync(() => boundary.toImage());
+    final rgba = await tester.runAsync(
+      () => image!.toByteData(format: ui.ImageByteFormat.rawStraightRgba),
+    );
+    image!.dispose();
+    expect(rgba, isNotNull);
+    const sky = Color(0xFF87CEEB);
+    // 0..255 channel ints (Color.r/g/b are the deprecated doubles here).
+    int ch8(double v) => (v * 255.0).round();
+    final skyR = ch8(sky.r), skyG = ch8(sky.g), skyB = ch8(sky.b);
+    final panelR = ch8(theme.colorScheme.surface.r),
+        panelG = ch8(theme.colorScheme.surface.g);
+    var skyPx = 0;
+    var landPx = 0;
+    final bytes = rgba!.buffer.asUint8List();
+    final total = bytes.length ~/ 4;
+    for (var p = 0; p < total; p++) {
+      final r = bytes[p * 4], g = bytes[p * 4 + 1], b = bytes[p * 4 + 2];
+      final isSky =
+          (r - skyR).abs() <= 14 &&
+          (g - skyG).abs() <= 14 &&
+          (b - skyB).abs() <= 14;
+      if (isSky) {
+        skyPx++;
+      } else if ((r - panelR).abs() > 16 || (g - panelG).abs() > 16) {
+        landPx++; // neither sky nor the bare panel = painted geometry/text
+      }
+    }
+    expect(
+      skyPx / total,
+      greaterThan(0.10),
+      reason: 'the voxel canvas must show the camera skyColor',
+    );
+    expect(
+      landPx / total,
+      greaterThan(0.15),
+      reason:
+          'the voxel canvas must paint the uploaded chunk geometry — '
+          'an (almost) terrain-free frame is the gh-1441 placeholder '
+          'regression this golden exists to catch',
+    );
   });
 
   /// Pumps the bundled Map demo with offline tiles and snapshots it as
@@ -1524,3 +1606,6 @@ final class _SolidTileProvider extends TileProvider {
   ImageProvider getImage(TileCoordinates coordinates, TileLayer options) =>
       MemoryImage(bytes);
 }
+
+/// The captured subtree of the gh-1441 voxel golden (see the pixel probe).
+const _voxelProbeKey = ValueKey('voxel-golden-probe');

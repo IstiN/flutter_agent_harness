@@ -154,10 +154,7 @@ void main() {
       final env = MemoryExecutionEnv();
       final e = engine(env, 'voxel-disposed-gap');
       await e.dispose();
-      e.noteUnwiredVoxelWorld({
-        'type': 'voxel',
-        'id': 'world',
-      });
+      e.noteUnwiredVoxelWorld({'type': 'voxel', 'id': 'world'});
       expect(AppLog.dump(), isEmpty);
     });
 
@@ -192,10 +189,7 @@ void main() {
         await e.start();
       });
       expect(e.voxelWorld, isNotNull);
-      final voxelTree = {
-        'type': 'voxel',
-        'id': 'world',
-      };
+      final voxelTree = {'type': 'voxel', 'id': 'world'};
       e.noteUnwiredVoxelWorld(voxelTree);
       // Restart: the diagnostic flag re-arms (a fresh boot), and the new
       // engine's world is wired again — still silent on shipped backends.
