@@ -103,19 +103,7 @@ void main() {
 
     // The note reached the request, riding a user message.
     final notes = noteTexts(stream.contexts.first);
-    expect(
-      notes,
-      hasLength(1),
-      reason: [
-        'IO: ${io.out.toString().replaceAll('\n', ' | ')}',
-        for (final m in stream.contexts.first.messages)
-          '${m.runtimeType}: ${m is UserMessage
-              ? messageText(m)
-              : m is ToolResultMessage
-              ? (m as ToolResultMessage).toolCallId
-              : '…'}',
-      ].join(' || '),
-    );
+    expect(notes, hasLength(1));
     expect(notes.single, contains('bash_198'));
     expect(notes.single, contains('kept in summary'));
 

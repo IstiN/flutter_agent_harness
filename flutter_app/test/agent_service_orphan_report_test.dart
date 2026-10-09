@@ -115,36 +115,38 @@ String _messageText(UserMessage message) {
 }
 
 void main() {
-  test('persist: a first-time orphan note appends the orphan_report record',
-      () async {
-    final env = MemoryExecutionEnv(cwd: '/work');
-    final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
-    final (meta, key) = await _seedOrphanSession(repo, 'orphan-app-live');
-    final stream = _CapturingStream();
-    final service = AgentService(
-      agent: _agentWith(stream),
-      env: env,
-      sessionsRoot: '/sessions',
-      repo: repo,
-    );
-    addTearDown(service.dispose);
-    await service.initialize();
-    await service.loadSession(meta);
+  test(
+    'persist: a first-time orphan note appends the orphan_report record',
+    () async {
+      final env = MemoryExecutionEnv(cwd: '/work');
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final (meta, key) = await _seedOrphanSession(repo, 'orphan-app-live');
+      final stream = _CapturingStream();
+      final service = AgentService(
+        agent: _agentWith(stream),
+        env: env,
+        sessionsRoot: '/sessions',
+        repo: repo,
+      );
+      addTearDown(service.dispose);
+      await service.initialize();
+      await service.loadSession(meta);
 
-    await service.sendText('go');
-    await service.waitForIdle();
+      await service.sendText('go');
+      await service.waitForIdle();
 
-    // The note reached the request, riding a user message.
-    final notes = _noteTexts(stream.contexts.first);
-    expect(notes, hasLength(1));
-    expect(notes.single, contains('bash_198'));
+      // The note reached the request, riding a user message.
+      final notes = _noteTexts(stream.contexts.first);
+      expect(notes, hasLength(1));
+      expect(notes.single, contains('bash_198'));
 
-    // AC6: the batch was persisted as the hidden record.
-    final records = await repo.readCustomRecordsOfType(meta, {
-      orphanReportRecordType,
-    });
-    expect(orphanReportKeysFromRecords(records), {key});
-  });
+      // AC6: the batch was persisted as the hidden record.
+      final records = await repo.readCustomRecordsOfType(meta, {
+        orphanReportRecordType,
+      });
+      expect(orphanReportKeysFromRecords(records), {key});
+    },
+  );
 
   test('seed: a resumed session whose orphan_report record holds the key '
       'does not re-note', () async {

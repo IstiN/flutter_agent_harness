@@ -308,21 +308,16 @@ void main() {
         '${meta.path}.part-0001',
         '${lines[0]}\n${lines[1]}\n',
       );
-      await env.writeFile(
-        meta.path,
-        '${lines[0]}\n${lines[2]}\n',
-      );
+      await env.writeFile(meta.path, '${lines[0]}\n${lines[2]}\n');
 
       final full = orphanReportKeysFromRecords(
         await repo.readCustomRecordsOfType(meta, {orphanReportRecordType}),
       );
       expect(full, {'bash|198|1', 'read|ghost|2'});
       final tail = orphanReportKeysFromRecords(
-        await repo.readCustomRecordsOfType(
-          meta,
-          {orphanReportRecordType},
-          lastSegmentOnly: true,
-        ),
+        await repo.readCustomRecordsOfType(meta, {
+          orphanReportRecordType,
+        }, lastSegmentOnly: true),
       );
       expect(tail, {'read|ghost|2'});
     });
