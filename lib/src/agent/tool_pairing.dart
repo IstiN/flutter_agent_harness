@@ -31,8 +31,14 @@
 /// happened in the first place.
 library;
 
+import '../compaction/structured/markers.dart'
+    show isCompactionMarkerText, localTrimMarkerPrefix;
 import '../context.dart';
+import '../session/session_record.dart' show CustomRecord;
+import '../session/session_tree.dart'
+    show branchSummaryPrefix, compactionSummaryPrefix;
 import '../types.dart';
+import '../user_text.dart' show userMessageText;
 
 /// What a [validateToolPairing] violation is, in provider terms.
 enum ToolPairingViolationKind {
@@ -76,9 +82,11 @@ final class ToolPairingRepairReport {
     this.droppedResultIds = const [],
     this.synthesizedResultIds = const [],
     this.renamedIds = const [],
+    this.notedOrphanKeys = const [],
   });
 
-  /// Ids of orphaned results dropped from the payload.
+  /// Ids of orphaned results dropped from the payload (newly noted AND
+  /// silently re-dropped already-reported ones).
   final List<String> droppedResultIds;
 
   /// Ids of calls that got a synthetic interrupted result.
@@ -86,6 +94,13 @@ final class ToolPairingRepairReport {
 
   /// Duplicate-id renames applied to a call AND its result.
   final List<({String from, String to})> renamedIds;
+
+  /// gh-1449: stable keys of the orphans THIS pass reported for the first
+  /// time (a subset of [droppedResultIds]). Callers merge them into the
+  /// session's reported-orphan latch — [orphanReportRecordData] is the
+  /// persisted shape — so the next request drops the same orphans
+  /// silently instead of re-emitting the note.
+  final List<String> notedOrphanKeys;
 
   bool get isNotEmpty =>
       droppedResultIds.isNotEmpty ||
@@ -95,7 +110,7 @@ final class ToolPairingRepairReport {
   @override
   String toString() =>
       'dropped=$droppedResultIds synthesized=$synthesizedResultIds '
-      'renamed=$renamedIds';
+      'renamed=$renamedIds noted=$notedOrphanKeys';
 }
 
 /// Canonical wire form of a tool-call id: the projection every provider
@@ -221,13 +236,61 @@ void _flagUnanswered(
   }
 }
 
+/// The stable latch key of an orphaned result (gh-1449 E1): canonical call
+/// id + tool name + the result's timestamp in epoch milliseconds. Ids reset
+/// per run, so the timestamp is the position discriminator — a reused id is
+/// a DIFFERENT orphan and is reported again; the same result rebuilds to
+/// the same key across requests, compactions and session resumes (the
+/// timestamp round-trips the session record).
+String orphanReportKey(ToolResultMessage orphan) =>
+    '${canonicalToolCallId(orphan.toolCallId)}|'
+    '${canonicalToolCallId(orphan.toolName)}|'
+    '${orphan.timestamp.millisecondsSinceEpoch}';
+
+/// The persisted shape of a reported-orphan batch: the `data` payload of
+/// the hidden `orphan_report` custom record (see
+/// [orphanReportRecordType]). A plain key list — every write carries only
+/// ITS batch, reads union all records.
+Map<String, Object?> orphanReportRecordData(Set<String> keys) => {
+  'keys': keys.toList()..sort(),
+};
+
+/// Unions the reported-orphan keys out of a scanned record list (records of
+/// any other type are skipped). Tolerant of corrupt payloads — a broken
+/// record must never fail a session boot.
+Set<String> orphanReportKeysFromRecords(Iterable<CustomRecord> records) => {
+  for (final record in records)
+    if (record.customType == orphanReportRecordType)
+      ...switch (record.data) {
+        {'keys': final List<Object?> keys} => [
+          for (final key in keys)
+            if (key is String && key.isNotEmpty) key,
+        ],
+        _ => const <String>[],
+      },
+};
+
+/// The hidden custom-record type hosts persist reported orphan batches
+/// under (gh-1449 AC6: a resumed session must not re-report).
+const String orphanReportRecordType = 'orphan_report';
+
 /// Symmetric pairing repair at the request boundary. Returns [messages]
 /// untouched (same instance, empty report) when the context already
 /// satisfies [validateToolPairing]; otherwise returns a rebuilt payload
 /// whose wire view is valid — the transcript itself is never modified.
+///
+/// gh-1449: dropped orphan results are reported ONCE — [reportedOrphanKeys]
+/// is the session's latch of already-reported [orphanReportKey]s; latched
+/// orphans are dropped silently. The note is never a stand-alone user-role
+/// message (it would cost the model a turn): it rides the payload's last
+/// existing user message as an extra text block. Only when the payload has
+/// NO user message at all does the repair degrade to the legacy standalone
+/// note (the carrier cannot be honored; the emitted
+/// `ToolPairingRepairEvent` reports the batch).
 ({List<Message> messages, ToolPairingRepairReport report}) repairToolPairing(
-  List<Message> messages,
-) {
+  List<Message> messages, {
+  Set<String> reportedOrphanKeys = const {},
+}) {
   if (validateToolPairing(messages).isEmpty) {
     return (messages: messages, report: const ToolPairingRepairReport());
   }
@@ -235,7 +298,7 @@ void _flagUnanswered(
   final index = _indexCalls(messages);
   final renames = _renameDuplicates(index, messages);
   final attached = _attachResults(index, messages, renames.slotNewIds);
-  return _rebuild(messages, index, renames, attached);
+  return _rebuild(messages, index, renames, attached, reportedOrphanKeys);
 }
 
 final class _CallIndex {
@@ -327,8 +390,10 @@ final class _Attachment {
   /// Slot index → original message index of its result.
   final resultForSlot = <int, int>{};
 
-  /// Orphaned results (no call occurrence left to answer them).
-  final orphans = <ToolResultMessage>[];
+  /// Orphaned results (no call occurrence left to answer them), in
+  /// encounter order with their original message index (the cut-boundary
+  /// probe anchors on the position).
+  final orphans = <({int messageIndex, ToolResultMessage message})>[];
 }
 
 /// Pairs each result with its call occurrence (k-th result of an id answers
@@ -345,7 +410,7 @@ _Attachment _attachResults(
     if (message is! ToolResultMessage) continue;
     final slots = index.byId[message.toolCallId];
     if (slots == null) {
-      attachment.orphans.add(message);
+      attachment.orphans.add((messageIndex: i, message: message));
       continue;
     }
     final n = occurrence.putIfAbsent(message.toolCallId, () => 0);
@@ -353,7 +418,7 @@ _Attachment _attachResults(
     if (n < slots.length) {
       attachment.resultForSlot[slots[n]] = i;
     } else {
-      attachment.orphans.add(message);
+      attachment.orphans.add((messageIndex: i, message: message));
     }
   }
   return attachment;
@@ -364,6 +429,7 @@ _Attachment _attachResults(
   _CallIndex index,
   _Renames renames,
   _Attachment attachment,
+  Set<String> reportedOrphanKeys,
 ) {
   final rebuilt = <Message>[];
   final emittedResults = <int>{};
@@ -379,9 +445,7 @@ _Attachment _attachResults(
       rebuilt.add(message);
       continue;
     }
-    rebuilt.add(
-      _rewriteAssistantCallIds(messages, i, slots, index, renames),
-    );
+    rebuilt.add(_rewriteAssistantCallIds(messages, i, slots, index, renames));
     _emitSlotResults(
       messages,
       slots,
@@ -394,24 +458,68 @@ _Attachment _attachResults(
     );
   }
 
-  // Dropped orphans are replaced by ONE visible note so the model knows the
-  // work happened but is no longer in context. Appended at the end: strict
-  // endpoints require tool_result blocks to come before text in a message,
-  // so a note mid-context could re-break the very grouping we just fixed.
-  if (attachment.orphans.isNotEmpty) {
-    rebuilt.add(UserMessage.text(_dropNote(attachment.orphans)));
+  // gh-1449: dropped orphans are reported ONCE per session, as a note that
+  // never costs the model a turn. The note rides the payload's last
+  // existing user message as an appended text block (in the rebuilt payload
+  // every user message sits outside or AFTER its wire group's results, so
+  // the annotation can never re-break the strict results-first ordering the
+  // repair just fixed); the degenerate no-user-message payload degrades to
+  // the legacy standalone note — there is nothing else to carry it.
+  final freshOrphans = [
+    for (final orphan in attachment.orphans)
+      if (!reportedOrphanKeys.contains(orphanReportKey(orphan.message))) orphan,
+  ];
+  if (freshOrphans.isNotEmpty) {
+    final note = _dropNote(freshOrphans, messages);
+    final carrierIndex = _lastUserMessageIndex(rebuilt);
+    if (carrierIndex == null) {
+      rebuilt.add(UserMessage.text(note));
+    } else {
+      rebuilt[carrierIndex] = _withAppendedNote(
+        rebuilt[carrierIndex] as UserMessage,
+        note,
+      );
+    }
   }
 
   return (
     messages: rebuilt,
     report: ToolPairingRepairReport(
       droppedResultIds: [
-        for (final orphan in attachment.orphans) orphan.toolCallId,
+        for (final orphan in attachment.orphans) orphan.message.toolCallId,
       ],
       synthesizedResultIds: synthesized,
       renamedIds: renames.entries,
+      notedOrphanKeys: [
+        for (final orphan in freshOrphans) orphanReportKey(orphan.message),
+      ],
     ),
   );
+}
+
+/// The last user message in [messages], or null when the payload has none.
+int? _lastUserMessageIndex(List<Message> messages) {
+  for (var i = messages.length - 1; i >= 0; i--) {
+    if (messages[i] is UserMessage) return i;
+  }
+  return null;
+}
+
+/// [message] with the note appended as one more text block (a plain-string
+/// content is promoted to blocks). Payload-only — the transcript keeps the
+/// original instance.
+UserMessage _withAppendedNote(UserMessage message, String note) {
+  final content = message.content;
+  final blocks = [
+    if (content is String)
+      TextContent(text: content)
+    else if (content is List<ContentBlock>)
+      ...content
+    else
+      ...const <ContentBlock>[],
+    TextContent(text: note),
+  ];
+  return UserMessage(content: blocks, timestamp: message.timestamp);
 }
 
 /// The assistant message at [i] with its tool-call ids renamed per
@@ -436,9 +544,7 @@ AssistantMessage _rewriteAssistantCallIds(
       continue;
     }
     // Find this block's slot (byMessage order matches content order).
-    final slot = slots.firstWhere(
-      (s) => identical(index.slots[s].call, call),
-    );
+    final slot = slots.firstWhere((s) => identical(index.slots[s].call, call));
     final newId = renames.slotNewIds[slot];
     if (newId != null) {
       call = call.copyWith(id: newId);
@@ -504,15 +610,100 @@ void _emitSlotResults(
   }
 }
 
-String _dropNote(List<ToolResultMessage> orphans) {
-  final dropped = orphans
-      .map((orphan) => '"${orphan.toolName}" (id: ${orphan.toolCallId})')
-      .join(', ');
-  return orphans.length == 1
-      ? '[context note: a tool result for $dropped was dropped — its '
-            'originating call is no longer in context]'
-      : '[context note: ${orphans.length} tool results ($dropped) were '
-            'dropped — their originating calls are no longer in context]';
+/// The one-shot drop note (gh-1449 invariant 3): names each orphan's tool
+/// and call id, the cut that removed its call, and whether the call's trace
+/// survives the summary — and says no reply is needed, so the annotation
+/// never costs a turn even when it rides the pending user message.
+///
+/// [messages] is the ORIGINAL payload: the cut reference is the nearest
+/// renumbering boundary (compaction summary / branch summary / local trim /
+/// structured marker) BEFORE the orphan's position. The kept-in-summary
+/// probe is a substring scan of that boundary's text for the canonical call
+/// id — the one stable trace a summarizer plausibly carries.
+///
+/// The note is ONE line for any orphan count (gh-1449 rework): the
+/// compaction-summary sanitizer's whole-block strip
+/// (`_stripContextNotes` in `summary_sanitizer.dart`) follows an opener
+/// across at most two newlines, so a multi-line bullet note echoed into a
+/// summary would escape the strip and re-render forever (the gh-1131
+/// stale-claim class). Items join with `; `; each clause's halves join
+/// with `, ` so the separators never collide
+/// (pinned by `summary_sanitizer_test`).
+String _dropNote(
+  List<({int messageIndex, ToolResultMessage message})> orphans,
+  List<Message> messages,
+) {
+  final first = orphans.first.message;
+  final clauses = [
+    for (final orphan in orphans)
+      '"${orphan.message.toolName}" '
+          // The canonical id — the same identity the latch key and the
+          // kept-in-summary probe use (a raw provider id could sanitize
+          // to something else, and the note must name what was matched).
+          '(id: ${canonicalToolCallId(orphan.message.toolCallId)}): '
+          '${_orphanNoteClause(orphan.message, orphan.messageIndex, messages)}',
+  ];
+  if (orphans.length == 1) {
+    return '[context note: a tool result for "${first.toolName}" '
+        '(id: ${canonicalToolCallId(first.toolCallId)}) was dropped — '
+        '${_orphanNoteClause(first, orphans.first.messageIndex, messages)}. '
+        'No reply needed.]';
+  }
+  return '[context note: ${orphans.length} tool results were dropped — '
+      'their originating tool calls are no longer in context. '
+      '${clauses.join('; ')}. No reply needed.]';
+}
+
+/// One orphan's named clause: `removed by the [cut] cut, kept in summary:
+/// yes|no`.
+String _orphanNoteClause(
+  ToolResultMessage orphan,
+  int messageIndex,
+  List<Message> messages,
+) {
+  final boundary = _nearestCutBoundary(messages, messageIndex);
+  final id = canonicalToolCallId(orphan.toolCallId);
+  // Boundaries are user messages ([_nearestCutBoundary]); the shared
+  // user-text fold does the probe.
+  final kept =
+      boundary != null &&
+      userMessageText(switch (messages[boundary.index]) {
+        UserMessage(:final content) => content,
+        _ => '',
+      }).contains(id);
+  return 'removed by the ${boundary?.label ?? 'context'} cut, '
+      'kept in summary: ${kept ? 'yes' : 'no'}';
+}
+
+final class _CutBoundary {
+  const _CutBoundary(this.index, this.label);
+
+  final int index;
+  final String label;
+}
+
+/// The nearest cut boundary (gh-1449 invariant 3's "compaction/cut that
+/// removed the call") at or before [fromIndex] in the payload, or null.
+_CutBoundary? _nearestCutBoundary(List<Message> messages, int fromIndex) {
+  for (var i = fromIndex; i >= 0; i--) {
+    final message = messages[i];
+    if (message is! UserMessage) continue;
+    final content = message.content;
+    if (content is! String) continue;
+    if (content.startsWith(compactionSummaryPrefix)) {
+      return _CutBoundary(i, 'compaction summary');
+    }
+    if (content.startsWith(branchSummaryPrefix)) {
+      return _CutBoundary(i, 'branch summary');
+    }
+    if (content.startsWith(localTrimMarkerPrefix)) {
+      return _CutBoundary(i, 'local trim');
+    }
+    if (isCompactionMarkerText(content)) {
+      return _CutBoundary(i, 'context marker');
+    }
+  }
+  return null;
 }
 
 /// The wire-equivalent projection of harness messages: a run of consecutive

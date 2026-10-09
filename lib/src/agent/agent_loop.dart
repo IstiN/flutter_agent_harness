@@ -422,6 +422,7 @@ final class AgentLoopConfig {
     this.stuckTool,
     this.finalizeGate = false,
     this.operativeSkills = const [],
+    this.reportedOrphanKeys,
   });
 
   /// The model to call each turn.
@@ -524,6 +525,15 @@ final class AgentLoopConfig {
   /// requests are byte-identical to the pre-pin loop (F4 compat guard).
   final List<Skill> operativeSkills;
 
+  /// gh-1449: the session's one-shot latch of already-reported orphan
+  /// results ([orphanReportKey]s). The loop adds every key it reports in
+  /// [ToolPairingRepairReport.notedOrphanKeys] back into the set, so the
+  /// SAME orphan never re-emits its note on a later request. Hosts seed
+  /// the set from the persisted `orphan_report` records at resume
+  /// (IT-RESUME); `null` (a loop built without an owner set) keeps the
+  /// legacy always-note behavior.
+  final Set<String>? reportedOrphanKeys;
+
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
   AgentLoopConfig copyWith({Model? model}) {
     return AgentLoopConfig(
@@ -546,6 +556,7 @@ final class AgentLoopConfig {
       stuckTool: stuckTool,
       finalizeGate: finalizeGate,
       operativeSkills: operativeSkills,
+      reportedOrphanKeys: reportedOrphanKeys,
     );
   }
 }
@@ -1764,7 +1775,17 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   // Broken tool pairing (orphan results at any position, displaced results,
   // duplicate ids, unanswered calls) makes providers hard-400 EVERY
   // subsequent request; repair the payload, never the transcript.
-  final repaired = repairToolPairing(requestContext.messages);
+  // gh-1449: the session's reported-orphan latch rides the repair — an
+  // orphan is noted once, then dropped silently; the new keys merge back
+  // into the owner set so the next request (and the pairing-heal retry)
+  // sees them.
+  final repaired = repairToolPairing(
+    requestContext.messages,
+    reportedOrphanKeys: config.reportedOrphanKeys ?? const <String>{},
+  );
+  if (repaired.report.notedOrphanKeys.isNotEmpty) {
+    config.reportedOrphanKeys?.addAll(repaired.report.notedOrphanKeys);
+  }
   if (!identical(repaired.messages, requestContext.messages)) {
     requestContext = Context(
       systemPrompt: requestContext.systemPrompt,

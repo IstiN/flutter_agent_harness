@@ -619,6 +619,33 @@ extension on AgentCli {
     // fire a no-op compaction on every resume. Re-anchor at chars/4.
     _agent.state.messages = resetLoadedUsageAnchors(messages);
     _persistedCount = messages.length;
+    // gh-1449 AC6: seed the one-shot orphan-report latch from the persisted
+    // `orphan_report` records (raw scan — the windowed open drops side-leaf
+    // custom records out of getEntries, the same reason the subagent
+    // registry scans raw). A resumed session never re-reports an orphan
+    // it already reported. Best-effort: a scan failure must not break boot.
+    //
+    // lastSegmentOnly (gh-1449 rework): the scan rides the RESUME BOOT
+    // PATH, so it reads the primary segment only — orphan_report records
+    // are tail-appended during runs, and the primary is rotation-bounded
+    // (kSessionSegmentRotateBytes). A record already rotated into a
+    // `.part-NN` segment may cost one re-report after a resume — the
+    // accepted trade against the #503 whole-chain boot cost below.
+    // clear() first: the Agent instance is reused across session opens,
+    // so the latch must be strictly per-session.
+    try {
+      final repo = _repo;
+      if (repo is JsonlSessionRepo) {
+        final reports = await repo.readCustomRecordsOfType(metadata, {
+          orphanReportRecordType,
+        }, lastSegmentOnly: true);
+        _agent.reportedOrphanKeys
+          ..clear()
+          ..addAll(orphanReportKeysFromRecords(reports));
+      }
+    } on Object catch (error) {
+      _logDiagnostic('orphan_report seed failed sid=${metadata.id}: $error');
+    }
     // Issue #437: persisted-but-unconsumed steering from a crashed
     // session re-enters the queue and wakes the idle agent (E1: one
     // record, consumed once — restart-safe).
