@@ -387,9 +387,19 @@ class JsAppEngine {
   /// indistinguishable from a broken widget unless the host says why. A
   /// minimal custom backend ships no world (`JsWidgetEngine.voxelWorld`
   /// returns null there); shipped backends always have one, so on them
-  /// this never fires. Logs ONCE per engine instance.
+  /// this never fires. Logs ONCE per engine boot.
   void noteUnwiredVoxelWorld(Map<String, dynamic> tree) {
-    if (_unwiredVoxelNoted || voxelWorld != null) return;
+    // Live engine only. `_start()` nulls `_engine` before the async
+    // dispose/boot while `tree.value` still publishes the old tree — a
+    // rebuild in that gap renders the placeholder transiently and must
+    // NOT spend the one-shot (it would warn on shipped backends, and the
+    // flag would stay spent for the rest of the instance). AC3's actual
+    // subject is a LIVE engine whose backend ships no world (gh-1441
+    // review).
+    final engine = _engine;
+    if (_unwiredVoxelNoted || engine == null || engine.voxelWorld != null) {
+      return;
+    }
     if (!_containsVoxelNode(tree, depth: 0)) return;
     _unwiredVoxelNoted = true;
     AppLog.i(
@@ -424,6 +434,10 @@ class JsAppEngine {
   Future<void> _start() async {
     final old = _engine;
     _engine = null;
+    // A fresh boot re-arms the one-shot unwired-voxel diagnostic: start()
+    // restarts the SAME instance, so a flag spent by an earlier boot would
+    // silence a genuinely-unwired state after a reload (gh-1441 review).
+    _unwiredVoxelNoted = false;
     if (old != null) await old.dispose();
     backHandlerRegistered.value = false;
 
