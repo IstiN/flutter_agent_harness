@@ -50,11 +50,15 @@ void main() {
       final server = await MockLlmServer.start();
       // A 30-cycle bash tool loop: every turn flushes a full frame group
       // (turn_start, message frames, tool_call/tool_result, turn_end) into
-      // the pipe back-to-back — the overlap window the old unawaited
-      // flushes raced on.
+      // the pipe back-to-back. The delta payload is large on purpose: a
+      // multi-hundred-KB `message_delta` frame keeps the underlying flush
+      // genuinely in flight (a pipe write of that size takes real time),
+      // so the next frames overlap it — exactly the window the old
+      // unawaited per-line flushes raced on.
+      final fatDelta = 'x' * (400 * 1024);
       for (var i = 0; i < 30; i++) {
         server.enqueueToolCall('bash', '{"command":"echo cycle-$i"}');
-        server.enqueueText('cycle $i done');
+        server.enqueueText('$fatDelta cycle $i done');
       }
       addTearDown(server.stop);
 

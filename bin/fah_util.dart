@@ -126,7 +126,9 @@ Future<void> drainStdoutLines() async {
 /// One HEP JSONL line to stdout, flushed immediately (issue #155): a
 /// supervisor tailing the pipe must never wait on a buffer.
 void _writeHepLine(String line) {
-  _enqueueStdoutLine(line);
+  // TEMP (teeth check): the pre-gh-1455 unserialized writer.
+  stdout.writeln(line);
+  stdout.flush();
 }
 
 /// One stream-json NDJSON line to stdout, flushed immediately (issue
