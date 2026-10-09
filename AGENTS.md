@@ -92,13 +92,22 @@ factual: paths, commands, invariants — no essays.
   `validateToolPairing` checks the wire-equivalent message sequence (orphan
   results, unanswered calls, duplicate ids, displaced results after
   same-role merges); `repairToolPairing` fixes the outbound payload only
-  (drop orphan + note, synthesize interrupted results, hoist steering text
-  after results, uniquify duplicate ids symmetrically on call+result).
+  (drop orphan + one-shot note, synthesize interrupted results, hoist
+  steering text after results, uniquify duplicate ids symmetrically on
+  call+result). gh-1449: the drop note never costs the model a turn — it
+  rides the payload's LAST existing user message as an extra text block
+  (degenerate no-user-message payload degrades to the legacy standalone
+  note), names tool/id/cut/kept-in-summary, and fires ONCE per orphan:
+  `orphanReportKey` (canonical id + tool + timestamp) latches in
+  `Agent.reportedOrphanKeys`; hosts persist each first-time batch as the
+  hidden `orphan_report` custom record and seed the latch back at resume
+  (CLI `_loadSession`, app `loadSession`).
   `agent_loop.dart` repairs before every request and retries once on a
   pairing-shaped provider 400 (`ToolPairingRepairEvent` is the audit
-  trail); `_finishStreamed` stamps per-run position-counter ids
-  session-unique; `auto_compactor.dart`'s `_localTrimFallback` routes the
-  kept region through the same repairer.
+  trail; its report carries `notedOrphanKeys` — the wire frame is
+  optional-field backward-compatible); `_finishStreamed` stamps per-run
+  position-counter ids session-unique; `auto_compactor.dart`'s
+  `_localTrimFallback` routes the kept region through the same repairer.
 - `lib/src/agent/image_registry.dart` — session image registry (issue
   #171): unique images ride a provider request exactly once; every other
   occurrence becomes a `[Image N]` text ref. `rewriteHistoryImages`

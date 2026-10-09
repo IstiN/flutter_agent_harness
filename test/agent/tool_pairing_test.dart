@@ -1,6 +1,8 @@
 import 'dart:math';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/compaction/structured/markers.dart'
+    show localTrimMarkerPrefix;
 import 'package:test/test.dart';
 
 AssistantMessage _a(List<ContentBlock> content) => AssistantMessage(
@@ -150,25 +152,23 @@ void main() {
     test(
       'production shape: orphan after a compaction summary user message',
       () {
-        final messages = [
-          _u('summary of earlier work'),
-          _r('bash_198', 'bash'),
-        ];
+        final summary = _u('summary of earlier work');
+        final messages = [summary, _r('bash_198', 'bash')];
         final repaired = repairToolPairing(messages);
-        expect(repaired.messages, hasLength(2));
-        expect(repaired.messages[0], same(messages[0]));
+        // gh-1449: the orphan is dropped and the note rides the summary
+        // message as an extra text block — no message added or removed,
+        // never a stand-alone user turn.
+        expect(repaired.messages, hasLength(1));
+        expect(repaired.messages.single, isA<UserMessage>());
         expect(
-          repaired.messages[1],
-          isA<UserMessage>().having(
-            (m) => m.content as String,
-            'note',
-            contains('bash_198'),
-          ),
+          userMessageText((repaired.messages.single as UserMessage).content),
+          allOf(contains('summary of earlier work'), contains('bash_198')),
         );
         expect(validateToolPairing(repaired.messages), isEmpty);
         expect(repaired.report.droppedResultIds, ['bash_198']);
         // The transcript is never modified.
         expect(messages, hasLength(2));
+        expect((messages[1] as ToolResultMessage).toolCallId, 'bash_198');
       },
     );
 
@@ -181,18 +181,16 @@ void main() {
         _u('go on'),
       ];
       final repaired = repairToolPairing(messages);
-      expect(repaired.messages, hasLength(5));
+      expect(repaired.messages, hasLength(4));
       expect(repaired.messages[0], same(messages[0]));
       expect(repaired.messages[2], same(messages[2]));
-      expect(repaired.messages[3], same(messages[4]));
-      expect(
-        repaired.messages[4],
-        isA<UserMessage>().having(
-          (m) => m.content as String,
-          'note',
-          contains('"read"'),
-        ),
+      // The trailing user message carries the note — a copy with the note
+      // as an extra block (payload-only; the transcript keeps the original).
+      final carrier = userMessageText(
+        (repaired.messages[3] as UserMessage).content,
       );
+      expect(carrier, contains('go on'));
+      expect(carrier, contains('"read"'));
       expect(validateToolPairing(repaired.messages), isEmpty);
     });
 
@@ -225,8 +223,11 @@ void main() {
       expect(repaired.report.droppedResultIds, ['ghost1', 'ghost2']);
       final notes = repaired.messages
           .whereType<UserMessage>()
-          .map((m) => m.content as String)
-          .where((t) => t.startsWith('[context note:'))
+          .map((m) => userMessageText(m.content))
+          .where(
+            (t) =>
+                t.startsWith('[context note:') || t.contains('[context note:'),
+          )
           .toList();
       expect(notes, hasLength(1));
       expect(notes.single, contains('"bash"'));
@@ -467,6 +468,407 @@ void main() {
           .map((m) => canonicalToolCallId(m.toolCallId))
           .toList();
       expect(wireIds.toSet(), hasLength(2));
+    });
+  });
+
+  group('orphan-result notices (gh-1449)', () {
+    // The REAL compaction-summary projection (session_tree.dart): the
+    // boundary probe keys on the production prefix, not on any text.
+    UserMessage compacted(String summary) => UserMessage.text(
+      '$compactionSummaryPrefix$summary$compactionSummarySuffix',
+      timestamp: DateTime.utc(2026),
+    );
+
+    ToolResultMessage makeOrphan(String id, String name, DateTime at) =>
+        ToolResultMessage(
+          toolCallId: id,
+          toolName: name,
+          content: [TextContent(text: 'ok')],
+          timestamp: at,
+          isError: false,
+        );
+
+    test('UT-TEXT: the note names the tool, the call id and the cut '
+        'reference', () {
+      final repaired = repairToolPairing([
+        compacted('earlier work'),
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
+      ]);
+      final note = repaired.messages
+          .map((m) => userMessageText((m as UserMessage).content))
+          .join();
+      expect(note, contains('"bash"'));
+      expect(note, contains('bash_198'));
+      expect(note, contains('compaction summary'));
+      expect(note, contains('kept in summary'));
+    });
+
+    test('UT-TEXT: the note names the CANONICAL call id — the same '
+        'identity the latch key and the kept-in-summary probe use', () {
+      // A provider id with separator chars: the canonical projection
+      // (sanitized) is what orphanReportKey and the summary probe match,
+      // so that is what the model must read.
+      final repaired = repairToolPairing([
+        compacted('earlier work'),
+        makeOrphan('call.198', 'bash', DateTime.utc(2026)),
+      ]);
+      final note = repaired.messages
+          .map((m) => userMessageText((m as UserMessage).content))
+          .join();
+      expect(note, contains(canonicalToolCallId('call.198')));
+      expect(note, isNot(contains('call.198')));
+    });
+
+    test('UT-TEXT: every cut boundary arm is named (table-driven)', () {
+      final cases = <(UserMessage, String)>[
+        (
+          UserMessage.text(
+            '$branchSummaryPrefix$compactionSummarySuffix',
+            timestamp: DateTime.utc(2026),
+          ),
+          'branch summary',
+        ),
+        (
+          UserMessage.text(
+            '$localTrimMarkerPrefix older messages dropped]',
+            timestamp: DateTime.utc(2026),
+          ),
+          'local trim',
+        ),
+        (
+          UserMessage.text('[3:hidden·user·12]', timestamp: DateTime.utc(2026)),
+          'context marker',
+        ),
+      ];
+      for (final (boundary, label) in cases) {
+        final repaired = repairToolPairing([
+          boundary,
+          makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
+        ]);
+        final note = repaired.messages
+            .map((m) => userMessageText((m as UserMessage).content))
+            .join();
+        expect(note, contains(label), reason: 'boundary $label');
+      }
+    });
+
+    test('UT-TEXT: the nearest boundary wins over an earlier one', () {
+      final repaired = repairToolPairing([
+        compacted('older compaction'),
+        UserMessage.text(
+          '$localTrimMarkerPrefix tail dropped]',
+          timestamp: DateTime.utc(2026),
+        ),
+        makeOrphan('ghost', 'read', DateTime.utc(2026)),
+      ]);
+      final note = repaired.messages
+          .map((m) => userMessageText((m as UserMessage).content))
+          .join();
+      expect(note, contains('local trim'));
+      expect(note, isNot(contains('compaction summary')));
+    });
+
+    test('UT-TEXT: the kept-in-summary hint probes the boundary text', () {
+      final withId = repairToolPairing([
+        compacted(
+          'earlier work: the call bash_198 ran the deploy script and it '
+          'passed',
+        ),
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
+      ]);
+      final withoutId = repairToolPairing([
+        compacted('earlier work'),
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
+      ]);
+      expect(
+        userMessageText((withId.messages.last as UserMessage).content),
+        contains('kept in summary: yes'),
+      );
+      expect(
+        userMessageText((withoutId.messages.last as UserMessage).content),
+        contains('kept in summary: no'),
+      );
+    });
+
+    test(
+      'UT-TEXT: an orphan with no boundary in context says "context cut"',
+      () {
+        final repaired = repairToolPairing([
+          _u('hi'),
+          _a([_c('c1', 'bash')]),
+          _r('c1', 'bash'),
+          makeOrphan('ghost', 'read', DateTime.utc(2026)),
+          _u('go on'),
+        ]);
+        final carrier = userMessageText(
+          (repaired.messages.last as UserMessage).content,
+        );
+        expect(carrier, contains('ghost'));
+        expect(carrier, contains('"read"'));
+        expect(carrier, contains('context cut'));
+      },
+    );
+
+    test('UT-ROLE: the note never becomes a new message — it rides the '
+        'last existing user message', () {
+      final summary = compacted('earlier work');
+      final repaired = repairToolPairing([
+        summary,
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
+      ]);
+      // The orphan is dropped and the summary message carries the note:
+      // one message in the payload out of two, none added.
+      expect(repaired.messages, hasLength(1));
+      final carrier = repaired.messages[0] as UserMessage;
+      expect(carrier.content, isA<List<ContentBlock>>());
+      final blocks = carrier.content as List<ContentBlock>;
+      expect(blocks.first, isA<TextContent>());
+      expect((blocks.first as TextContent).text, contains('earlier work'));
+      expect((blocks.last as TextContent).text, startsWith('[context note:'));
+      // No user message in the payload is a STAND-ALONE note.
+      for (final message in repaired.messages.whereType<UserMessage>()) {
+        final text = userMessageText(message.content);
+        expect(
+          text.trim().startsWith('[context note:'),
+          isFalse,
+          reason: 'stand-alone note message leaked into the payload',
+        );
+      }
+      expect(validateToolPairing(repaired.messages), isEmpty);
+    });
+
+    test('UT-ROLE: a payload whose last message is a tool result carries '
+        'the note on the preceding user message', () {
+      final prompt = _u('run the checks');
+      final repaired = repairToolPairing([
+        prompt,
+        _a([_c('c1', 'bash')]),
+        _r('c1', 'bash'),
+        makeOrphan('ghost', 'read', DateTime.utc(2026)),
+      ]);
+      final carrier = repaired.messages[0] as UserMessage;
+      expect(userMessageText(carrier.content), contains('[context note:'));
+      // No new message: the ghost result is dropped, the rest survives.
+      expect(repaired.messages, hasLength(3));
+      expect(validateToolPairing(repaired.messages), isEmpty);
+    });
+
+    test('UT-ROLE: a steering-hoisted user message carries the note after '
+        'its results', () {
+      final steering = _u('steering question');
+      final repaired = repairToolPairing([
+        _a([_c('c1', 'bash')]),
+        steering,
+        _r('c1', 'bash'),
+        makeOrphan('ghost', 'read', DateTime.utc(2026)),
+      ]);
+      // The hoisted steering message is the note carrier: copied with the
+      // note as an extra block, still after the results.
+      final carrier = repaired.messages.last as UserMessage;
+      final text = userMessageText(carrier.content);
+      expect(text, contains('steering question'));
+      expect(text, contains('[context note:'));
+      expect(repaired.messages[1], isA<ToolResultMessage>());
+      expect(validateToolPairing(repaired.messages), isEmpty);
+    });
+
+    test('UT-ROLE: block-content user message keeps its blocks and gains '
+        'the note block', () {
+      final carrier = UserMessage(
+        content: [
+          TextContent(text: 'original'),
+          ImageContent(mimeType: 'image/png', data: 'aGk='),
+        ],
+        timestamp: DateTime.utc(2026),
+      );
+      final repaired = repairToolPairing([
+        carrier,
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
+      ]);
+      final blocks =
+          (repaired.messages[0] as UserMessage).content as List<ContentBlock>;
+      expect(blocks, hasLength(3));
+      expect(blocks[0], isA<TextContent>());
+      expect(blocks[1], isA<ImageContent>());
+      expect((blocks[2] as TextContent).text, startsWith('[context note:'));
+    });
+
+    test(
+      'UT-TRANSCRIPT: the transcript is byte-identical after the repair',
+      () {
+        final messages = [
+          _u('summary of earlier work'),
+          makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
+        ];
+        final before = messages.map((m) => m.toJson()).toList();
+        repairToolPairing(messages, reportedOrphanKeys: const {});
+        final after = messages.map((m) => m.toJson()).toList();
+        expect(after, equals(before));
+        expect(messages, hasLength(2));
+      },
+    );
+
+    test('one-shot: an already-reported orphan is dropped without a note', () {
+      final messages = [
+        _u('summary of earlier work'),
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
+      ];
+      final key = orphanReportKey(messages[1] as ToolResultMessage);
+      final first = repairToolPairing(messages);
+      expect(first.report.notedOrphanKeys, [key]);
+      final second = repairToolPairing(messages, reportedOrphanKeys: {key});
+      // The orphan is still dropped from the payload…
+      expect(second.report.droppedResultIds, ['bash_198']);
+      // …but silently: no note anywhere, nothing newly reported.
+      expect(second.report.notedOrphanKeys, isEmpty);
+      final text = second.messages
+          .map((m) => userMessageText((m as UserMessage).content))
+          .join();
+      expect(text, isNot(contains('[context note:')));
+    });
+
+    test('one-shot: IT-ONESHOT shape — N consecutive repairs of the same '
+        'context note exactly once through a shared latch', () {
+      final messages = [
+        _u('summary of earlier work'),
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
+        _u('continue'),
+      ];
+      final latch = <String>{};
+      var notes = 0;
+      for (var request = 0; request < 10; request++) {
+        final repaired = repairToolPairing(messages, reportedOrphanKeys: latch);
+        latch.addAll(repaired.report.notedOrphanKeys);
+        notes += repaired.messages
+            .whereType<UserMessage>()
+            .map((m) => userMessageText(m.content))
+            .where((t) => t.contains('[context note:'))
+            .length;
+      }
+      expect(notes, 1);
+    });
+
+    test('E1: an id reused later (ids reset per run) reports once per '
+        '(id, position)', () {
+      final early = makeOrphan('bash_1', 'bash', DateTime.utc(2026));
+      final late = makeOrphan('bash_1', 'bash', DateTime.utc(2027));
+      final key = orphanReportKey(early);
+      final repaired = repairToolPairing(
+        [_u('summary'), late],
+        reportedOrphanKeys: {key},
+      );
+      // The late orphan has a different timestamp — a different position —
+      // so it is newly reported even though the id repeats.
+      expect(repaired.report.notedOrphanKeys, [orphanReportKey(late)]);
+      expect(
+        userMessageText((repaired.messages.last as UserMessage).content),
+        contains('[context note:'),
+      );
+    });
+
+    test('E2: two orphans in one request produce ONE combined note naming '
+        'both', () {
+      final repaired = repairToolPairing([
+        _u('summary of earlier work'),
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
+        _a([_c('c1', 'read')]),
+        _r('c1', 'read'),
+        makeOrphan('ghost', 'write', DateTime.utc(2026)),
+        _u('go on'),
+      ]);
+      expect(repaired.report.notedOrphanKeys, hasLength(2));
+      final carriers = repaired.messages
+          .whereType<UserMessage>()
+          .map((m) => userMessageText(m.content))
+          .where((t) => t.contains('[context note:'))
+          .toList();
+      expect(carriers, hasLength(1));
+      expect(carriers.single, contains('"bash"'));
+      expect(carriers.single, contains('"write"'));
+      expect(validateToolPairing(repaired.messages), isEmpty);
+    });
+
+    test('E2: the combined note stays ONE line for any orphan count — '
+        'a multi-line note escapes the gh-1131 summary-sanitizer strip '
+        'window and would re-render forever', () {
+      final repaired = repairToolPairing([
+        _u('summary of earlier work'),
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
+        _a([_c('c1', 'read')]),
+        _r('c1', 'read'),
+        makeOrphan('ghost', 'write', DateTime.utc(2026)),
+        _u('go on'),
+      ]);
+      final carriers = repaired.messages
+          .whereType<UserMessage>()
+          .map((m) => userMessageText(m.content))
+          .where((t) => t.contains('[context note:'))
+          .toList();
+      expect(carriers, hasLength(1));
+      expect(
+        carriers.single.contains('\n'),
+        isFalse,
+        reason: 'the note must fit the sanitizer strip window: one line',
+      );
+    });
+
+    test('E5: a payload with NO user message degrades to the legacy '
+        'standalone note (unavoidable carrier) and still repairs valid', () {
+      final repaired = repairToolPairing([
+        _a([TextContent(text: 'working')]),
+        makeOrphan('ghost', 'bash', DateTime.utc(2026)),
+      ]);
+      final noteMessages = repaired.messages
+          .whereType<UserMessage>()
+          .map((m) => userMessageText(m.content))
+          .where((t) => t.startsWith('[context note:'))
+          .toList();
+      expect(noteMessages, hasLength(1));
+      expect(noteMessages.single, contains('"bash"'));
+      expect(validateToolPairing(repaired.messages), isEmpty);
+    });
+
+    test('REG-PAIRING: synthesized interrupted results and duplicate-id '
+        'renames are unchanged by the latch', () {
+      final messages = [
+        _u('hi'),
+        _a([_c('c1', 'bash')]),
+        _a([_c('c1', 'bash')]),
+        _r('c1', 'bash'),
+      ];
+      final repaired = repairToolPairing(
+        messages,
+        reportedOrphanKeys: {'anything'},
+      );
+      expect(repaired.report.synthesizedResultIds, hasLength(1));
+      expect(repaired.report.renamedIds, [(from: 'c1', to: 'c1_2')]);
+      expect(validateToolPairing(repaired.messages), isEmpty);
+    });
+
+    test('the report record round-trips the orphan-report record shape', () {
+      final data = orphanReportRecordData({'k1', 'k2'});
+      expect(data['keys'], isA<List<dynamic>>());
+      final restored = orphanReportKeysFromRecords([
+        CustomRecord(
+          id: 'r1',
+          parentId: null,
+          timestamp: DateTime.utc(2026),
+          customType: orphanReportRecordType,
+          data: {
+            'keys': ['k1', 'k2', 'k3'],
+          },
+        ),
+        CustomRecord(
+          id: 'r2',
+          parentId: null,
+          timestamp: DateTime.utc(2026),
+          customType: 'other',
+          data: {
+            'keys': ['nope'],
+          },
+        ),
+      ]);
+      expect(restored, {'k1', 'k2', 'k3'});
     });
   });
 
