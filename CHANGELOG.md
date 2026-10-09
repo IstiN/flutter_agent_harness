@@ -1,22 +1,5 @@
 # Changelog
 
-## 1.0.541
-
-- feat(usage): gh-1460 — the `fa-tokens:` segment-close line carries the
-  session's model id, so every token row the factory publishes is
-  attributable to a model and therefore priceable. The fold now captures
-  each segment's LAST-SEEN model id (the model that served the final
-  request, the same string settings/UI display — mid-session fallback
-  take-overs attribute the segment to the model that actually finished it;
-  zero-filled fallbacks never clobber a seen model) and the pinned line
-  shape grows an OPTIONAL `"model":"<id>"` key after `"segment"` — omitted
-  when no model was observed, so legacy lines parse unchanged and the
-  pinned regex (`usageTokensLogPattern`, gh-1241 AC7) keeps matching both
-  shapes. usage.json's schema is untouched (the model is rebuildable from
-  the chain, I6); old consumers using tolerant JSON ignore the new key,
-  and the repo's single strict consumer (the pinned constant) is updated
-  in the same change.
-
 ## 1.0.508
 
 
@@ -4843,3 +4826,18 @@
 - gh-1441 Voxel nodes render as the “Voxel world” placeholder — Fa app builds JsonWidgetRenderer without voxelWorld (fa-craft 0.2.18, voxel-sandbox 1.0.0) (#1445)
 
 ## Unreleased
+
+- feat(usage): gh-1460 — the `fa-tokens:` segment-close line carries the
+  session's model id, so every token row the factory publishes is
+  attributable to a model and therefore priceable. The fold now captures
+  each segment's LAST-SEEN model id (the model that served the final
+  request, the same string settings/UI display — mid-session fallback
+  take-overs attribute the segment to the model that actually finished it;
+  zero-filled fallbacks never clobber a seen model) and the pinned line
+  shape grows an OPTIONAL `"model":"<id>"` key after `"segment"` — omitted
+  when no model was observed, so legacy lines parse unchanged and the
+  pinned regex (`usageTokensLogPattern`, gh-1241 AC7) keeps matching both
+  shapes. usage.json's schema is untouched (the model is rebuildable from
+  the chain, I6); old consumers using tolerant JSON ignore the new key,
+  and the repo's single strict consumer (the pinned constant) is updated
+  in the same change.
