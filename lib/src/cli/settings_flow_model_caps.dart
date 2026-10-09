@@ -75,6 +75,43 @@ extension ModelCapabilityCapsSettings on AgentCli {
     return parts.isEmpty ? '(empty)' : parts.join(' · ');
   }
 
+  /// The caps menu for one (provider, modelId) override: one row per
+  /// pinnable field showing the current value, the remove row (only when
+  /// something is pinned), and Done.
+  List<FlowOption> _capabilityMenuOptions(ModelCapabilityOverride current) => [
+    (
+      'contextWindow',
+      'Context window',
+      current.contextWindow == null
+          ? 'not pinned (catalog default)'
+          : '${current.contextWindow} tokens',
+    ),
+    (
+      'maxTokens',
+      'Max output tokens',
+      current.maxTokens == null
+          ? 'not pinned (catalog default)'
+          : '${current.maxTokens} tokens',
+    ),
+    (
+      'thinkingLevel',
+      'Thinking level',
+      current.thinkingLevel == null
+          ? 'not pinned (no thinking requested)'
+          : current.thinkingLevel!,
+    ),
+    (
+      'omit',
+      'Omit max-output field',
+      (current.omitMaxOutputTokens ?? false)
+          ? 'on (endpoints that reject the field)'
+          : 'off',
+    ),
+    if (!current.isEmpty)
+      ('remove', 'Remove this override', 'all pinned fields'),
+    ('done', 'Done', ''),
+  ];
+
   /// The caps loop for one (provider, modelId) override: shows the pinned
   /// values, edits one field at a time through the validated upsert, and
   /// offers removal. Cancelling returns to the flow menu.
@@ -83,39 +120,10 @@ extension ModelCapabilityCapsSettings on AgentCli {
       final current =
           config.modelsConfig?.overrides.lookup(provider, modelId) ??
           const ModelCapabilityOverride();
-      final picked = await _pickOption('capabilities — $provider/$modelId', [
-        (
-          'contextWindow',
-          'Context window',
-          current.contextWindow == null
-              ? 'not pinned (catalog default)'
-              : '${current.contextWindow} tokens',
-        ),
-        (
-          'maxTokens',
-          'Max output tokens',
-          current.maxTokens == null
-              ? 'not pinned (catalog default)'
-              : '${current.maxTokens} tokens',
-        ),
-        (
-          'thinkingLevel',
-          'Thinking level',
-          current.thinkingLevel == null
-              ? 'not pinned (no thinking requested)'
-              : current.thinkingLevel!,
-        ),
-        (
-          'omit',
-          'Omit max-output field',
-          (current.omitMaxOutputTokens ?? false)
-              ? 'on (endpoints that reject the field)'
-              : 'off',
-        ),
-        if (!current.isEmpty)
-          ('remove', 'Remove this override', 'all pinned fields'),
-        ('done', 'Done', ''),
-      ]);
+      final picked = await _pickOption(
+        'capabilities — $provider/$modelId',
+        _capabilityMenuOptions(current),
+      );
       if (picked == null || picked == 'done') return;
       switch (picked) {
         case 'remove':
