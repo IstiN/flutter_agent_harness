@@ -50,6 +50,19 @@ class _FollowTestService extends FakeChatService {
     ];
     notifyListeners();
   }
+
+  /// Plays the service side of `loadOlderHistory`: an older page
+  /// PREPENDS — index-based ids (`msg-$index`) all shift, so the sync
+  /// sees a whole new window.
+  void prepend(int count) {
+    final old = msgs;
+    msgs = [
+      for (var i = 0; i < count; i++)
+        FaChatMessage(role: i.isEven ? 'user' : 'assistant', content: 'old$i'),
+      ...old,
+    ];
+    notifyListeners();
+  }
 }
 
 List<FaChatMessage> _msgs(int n) => [
@@ -281,5 +294,54 @@ void main() {
     expect(en.chatJumpToLive, 'Jump to live');
     expect(ru.chatFollowNewCount('42'), contains('42'));
     expect(ru.chatJumpToLive, isNotEmpty);
+  });
+
+  testWidgets('re-review: a history-page PREPEND while held is not an '
+      'arrival — the pill keeps its previous count', (tester) async {
+    final service = _FollowTestService()
+      ..msgs = _msgs(30)
+      ..streaming = true;
+    await _pump(tester, service);
+    await _dragTowardHistory(tester, 400);
+
+    // Pure tail growth: 3 arrivals counted.
+    service.append(3);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('⌄ 3 new'), findsOneWidget);
+
+    // The user loads an older history page while held: the page
+    // PREPENDS, index-based ids (`msg-$index`) all shift, and the sync
+    // sees a whole new window (commonPrefix collapses to 0). None of it
+    // is an arrival — the pill must stay at 3.
+    service.prepend(25);
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(
+      find.text('⌄ 3 new'),
+      findsOneWidget,
+      reason:
+          'prepends are not arrivals — the pill counts tail growth only',
+    );
+    expect(find.text('⌄ 28 new'), findsNothing);
+  });
+
+  testWidgets('re-review: a prepend with zero arrivals never shows the '
+      'pill', (tester) async {
+    final service = _FollowTestService()
+      ..msgs = _msgs(30)
+      ..streaming = true;
+    await _pump(tester, service);
+    await _dragTowardHistory(tester, 400);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('faChatJumpToLivePill')), findsNothing);
+
+    service.prepend(25);
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(
+      find.byKey(const ValueKey('faChatJumpToLivePill')),
+      findsNothing,
+      reason: 'a history-page load adds zero arrivals — no pill',
+    );
   });
 }

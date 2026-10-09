@@ -155,19 +155,37 @@ extension _TuiViewport on FaTuiModel {
   }
 
   /// The held anchor after an append that trimmed [cut] head lines
-  /// (gh-1439 E1): the anchor shifts by the cut and the window re-derives
-  /// its offset from the NEW wrap (the cache still holds the old
-  /// line-starts — read them before any re-sync). Returns
-  /// `(newAnchorLine, newOffset)`; an unheld or anchorless state passes
-  /// through clamped unchanged.
+  /// (gh-1439 E1): the anchor shifts by the cut and the window's offset
+  /// is the anchor's row minus the rows the dropped head consumed —
+  /// derived from the PRE-trim wrap cache (read before any re-sync).
+  /// Returns `(newAnchorLine, newOffset)`; an unheld or anchorless state
+  /// passes through clamped unchanged.
   (int, int) _heldAnchorShiftedByCut(int cut) {
     final bottom = _scrollBottom(_wrappedLines());
     if (!follow.isHeld || heldAnchorLine < 0) {
       return (heldAnchorLine, scrollOffset.clamp(0, bottom));
     }
+    // gh-1439 E1 (re-review): the cache still holds the PRE-trim
+    // line-starts — the caller has not re-synced it to the trimmed list
+    // yet. A same-width trim only removes head rows from the unchanged
+    // wrapped layout, so the reading position survives EXACTLY by
+    // shifting the raw offset by the rows the dropped head consumed
+    // (`starts[cut]`): re-deriving the row from the anchor line's start
+    // (`starts[heldAnchorLine] - starts[cut]`) or — worse — indexing the
+    // old cache at the shifted line (`starts[heldAnchorLine - cut]`)
+    // snaps a window parked mid-line (a continuation row of a wrapped
+    // line) or names a different line whenever wrapped heights are not
+    // uniform. The anchor LINE still shifts for the resize contract
+    // (E2). (When the fence-repair synthetic was prepended the shift is
+    // the raw cut − 1, so the row can drift by one dropped line's height
+    // in that rare shape.)
     final starts = _wrapCache.lineStartRows;
     final shifted = (heldAnchorLine - cut).clamp(0, starts.length - 2);
-    return (shifted, starts[shifted].clamp(0, bottom));
+    final droppedRows = starts[cut.clamp(0, starts.length - 1)];
+    // The trim removes whole head rows from the same wrapped layout, so
+    // the new bottom is the old one minus the dropped rows.
+    final newBottom = (bottom - droppedRows).clamp(0, bottom);
+    return (shifted, (scrollOffset - droppedRows).clamp(0, newBottom));
   }
 
   /// The held anchor's wrapped row after a re-wrap (gh-1439 E2): the

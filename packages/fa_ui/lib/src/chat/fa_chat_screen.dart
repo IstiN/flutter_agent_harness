@@ -995,9 +995,15 @@ class _FaChatScreenState extends State<FaChatScreen>
         // appends never count (the viewport shows them — today's
         // behavior). Counted for BOTH render paths (big-diff setMessages
         // and the per-row insert loop alike).
-        final appendedRows = newLen - commonPrefix;
-        if (appendedRows > 0 && _follow.isHeld) {
-          _follow = _follow.appended(appendedRows);
+        // (re-review) Only pure tail growth is an arrival: ids are
+        // index-based, so a "Load earlier" PREPEND shifts every id and
+        // collapses the common prefix — `newLen - commonPrefix` would
+        // count the entire re-synced window (hundreds of already-read
+        // rows) as new. A length-preserving id change (in-place edit) is
+        // not an arrival either.
+        final isTailAppend = commonPrefix == oldLen && newLen > oldLen;
+        if (isTailAppend && _follow.isHeld) {
+          _follow = _follow.appended(newLen - oldLen);
           followCounted = true;
         }
 
