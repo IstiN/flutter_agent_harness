@@ -745,7 +745,7 @@ final class _WaitingCoordinator {
     _syncHeartbeat(snap);
     // The empty push IS the leave event: setWaiting REPLACES the whole
     // row state, so skipping it when the last waiter resolves strands the
-    // stale `⏳ waiting` row above the composer forever (issue #615).
+    // stale waiting row above the composer forever (issue #615).
     // Always deliver — the empty snapshot included.
     _cli._tuiController?.setWaiting(
       jobs: snap.jobs,

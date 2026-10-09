@@ -408,10 +408,11 @@ extension _TuiRowRenderers on FaTuiModel {
     return _dim('⏰ $scheduledCount scheduled$eta');
   }
 
-  /// The visible-waiting rows (issue #450): headline row (`⏳ waiting ·
-  /// purpose · next wake in 4m (timer)`) plus capped detail rows and the
-  /// restart-honesty note; empty while busy or with no waiters. The pure
-  /// builder `waitingRowLines` holds the logic.
+  /// The visible-waiting rows (issue #450): headline row
+  /// (`<pending-glyph> waiting · purpose · next wake in 4m (timer)` — the
+  /// glyph resolves through the symbol table, gh-1446 AC8) plus capped
+  /// detail rows and the restart-honesty note; empty while busy or with
+  /// no waiters. The pure builder `waitingRowLines` holds the logic.
   List<String> _waitingRowLines() => waitingRowLines(
     busy: busy,
     waitingJobs: waitingJobs,

@@ -344,10 +344,19 @@ void main() {
             'signal format — no count suffix when nothing is lost):\n'
             '${after.join('\n')}',
       );
-      // gh-1446 AC2: the live line NEVER carries count words.
+      // gh-1446 AC2: the LIVE line never carries count words — the settled
+      // summary card keeps its terminal counts (a transcript record, not
+      // live chrome).
       expect(
-        after.join('\n'),
-        isNot(contains('running ·')),
+        after
+            .where((l) => l.trimLeft().startsWith('◐ Background jobs')),
+        everyElement(
+          isNot(
+            contains(
+              'running',
+            ),
+          ),
+        ),
         reason: 'the live board line names no `running` segment',
       );
 
