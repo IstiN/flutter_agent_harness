@@ -112,6 +112,7 @@ final class AgentCliConfig {
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
     this.streamThinking = false,
+    this.noStreamThinking = false,
     this.cubeSpec,
     this.cubeSource,
     this.cubeSettings,
@@ -851,6 +852,12 @@ final class AgentCliConfig {
   /// byte-identical legacy output and enables the reasoning-phase
   /// liveness line instead.
   final bool streamThinking;
+
+  /// The `--no-stream-thinking` hatch (gh-1433): thinking-scoped silence —
+  /// on the log face (headless runs stream thinking by default since
+  /// gh-1433) it restores the legacy thinking silence for the run. The
+  /// arg parser rejects it together with `--stream-thinking`.
+  final bool noStreamThinking;
 
   /// This host's machine name for `name@machine` addressing (issue #27
   /// phase 2): a `@machine` suffix matching it is stripped before local
