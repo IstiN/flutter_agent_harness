@@ -80,6 +80,12 @@ abstract class FaChatStrings {
   String get chatLoadNewer;
   String chatLoadNewerCount(String count);
 
+  /// The follow-mode jump pill (gh-1439): the semantic label and the
+  /// live-updating `⌄ N new` counter shown while the user is held away
+  /// from the live tail.
+  String get chatJumpToLive;
+  String chatFollowNewCount(String count);
+
   /// The `+N lines` hint on a collapsed tool-output card (issue #458).
   String chatClampHint(int lines);
   String get chatShowMore;
@@ -256,6 +262,10 @@ class FaChatStringsEn extends FaChatStrings {
   String get chatLoadNewer => 'Load newer';
   @override
   String chatLoadNewerCount(String count) => 'Load newer ($count more)';
+  @override
+  String get chatJumpToLive => 'Jump to live';
+  @override
+  String chatFollowNewCount(String count) => '⌄ $count new';
   @override
   String approvalAllowToolTitle(String tool) => 'Allow $tool?';
   @override
@@ -471,6 +481,10 @@ class FaChatStringsRu extends FaChatStrings {
   @override
   String chatLoadNewerCount(String count) =>
       'Загрузить более новые (ещё $count)';
+  @override
+  String get chatJumpToLive => 'К живому концу переписки';
+  @override
+  String chatFollowNewCount(String count) => '⌄ ещё $count';
   @override
   String approvalAllowToolTitle(String tool) => 'Разрешить $tool?';
   @override
