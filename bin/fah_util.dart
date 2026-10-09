@@ -113,9 +113,15 @@ void _enqueueStdoutLine(String line) {
 
 /// Drains the line chain and flushes once more — the exit paths call this
 /// instead of a bare `await stdout.flush()` so a final flush can never
-/// overlap an in-flight chain link. Never throws.
+/// overlap an in-flight chain link. Re-drains while stragglers enqueue
+/// behind us (bounded), so the final flush is the true last sink
+/// operation. Never throws.
 Future<void> drainStdoutLines() async {
-  await _stdoutLineChain;
+  for (var round = 0; round < 8; round++) {
+    final chain = _stdoutLineChain;
+    await chain;
+    if (identical(chain, _stdoutLineChain)) break;
+  }
   try {
     await stdout.flush();
   } on Object {
@@ -126,9 +132,7 @@ Future<void> drainStdoutLines() async {
 /// One HEP JSONL line to stdout, flushed immediately (issue #155): a
 /// supervisor tailing the pipe must never wait on a buffer.
 void _writeHepLine(String line) {
-  // TEMP (teeth check): the pre-gh-1455 unserialized writer.
-  stdout.writeln(line);
-  stdout.flush();
+  _enqueueStdoutLine(line);
 }
 
 /// One stream-json NDJSON line to stdout, flushed immediately (issue

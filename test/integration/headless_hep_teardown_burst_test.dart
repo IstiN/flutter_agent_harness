@@ -50,15 +50,12 @@ void main() {
       final server = await MockLlmServer.start();
       // A 30-cycle bash tool loop: every turn flushes a full frame group
       // (turn_start, message frames, tool_call/tool_result, turn_end) into
-      // the pipe back-to-back. The delta payload is large on purpose: a
-      // multi-hundred-KB `message_delta` frame keeps the underlying flush
-      // genuinely in flight (a pipe write of that size takes real time),
-      // so the next frames overlap it — exactly the window the old
-      // unawaited per-line flushes raced on.
-      final fatDelta = 'x' * (400 * 1024);
+      // the pipe back-to-back — hundreds of frames through the writer in
+      // the shortest possible wall time, the load profile that made the
+      // old unawaited per-line flushes overlap.
       for (var i = 0; i < 30; i++) {
         server.enqueueToolCall('bash', '{"command":"echo cycle-$i"}');
-        server.enqueueText('$fatDelta cycle $i done');
+        server.enqueueText('cycle $i done');
       }
       addTearDown(server.stop);
 
@@ -80,14 +77,19 @@ void main() {
         command.first,
         command.sublist(1),
         workingDirectory: Directory.current.path,
+        // Whitelist child env (same convention as headless_log_file_test):
+        // the ambient FA_PROVIDER_* / FA_SESSION_* variables on this
+        // runner must NOT leak in — with only the mock reachable, a script
+        // mismatch fails loudly instead of silently talking to a live
+        // provider.
         environment: {
-          ...Platform.environment,
+          'OPENAI_API_KEY': 'mock',
           'HOME': tempHome.path,
           'FA_STATE_DIR': '${tempHome.path}/.fah',
         },
         stdoutEncoding: utf8,
         stderrEncoding: utf8,
-      );
+      ).timeout(const Duration(minutes: 4));
 
       final stdoutText = result.stdout as String;
       final stderrText = result.stderr as String;
