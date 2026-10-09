@@ -232,6 +232,7 @@ export 'src/skills/skill_availability.dart';
 export 'src/skills/builtin_skills.dart';
 export 'src/skills/operative_pins.dart';
 export 'src/skills/skills.dart';
+export 'src/skills/skills_freshness.dart';
 export 'src/sse_decoder.dart';
 export 'src/task/task.dart';
 export 'src/task/subagent.dart';
