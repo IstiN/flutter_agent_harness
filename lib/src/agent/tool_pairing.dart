@@ -38,6 +38,7 @@ import '../session/session_record.dart' show CustomRecord;
 import '../session/session_tree.dart'
     show branchSummaryPrefix, compactionSummaryPrefix;
 import '../types.dart';
+import '../user_text.dart' show userMessageText;
 
 /// What a [validateToolPairing] violation is, in provider terms.
 enum ToolPairingViolationKind {
@@ -649,8 +650,15 @@ String _orphanNoteClause(
 ) {
   final boundary = _nearestCutBoundary(messages, messageIndex);
   final id = canonicalToolCallId(orphan.toolCallId);
-  final kept =
-      boundary != null && _boundaryText(messages[boundary.index]).contains(id);
+  // Boundaries are user messages ([_nearestCutBoundary]); the shared
+  // user-text fold does the probe.
+  final kept = boundary != null &&
+      userMessageText(
+        switch (messages[boundary.index]) {
+          UserMessage(:final content) => content,
+          _ => '',
+        },
+      ).contains(id);
   return 'removed by the ${boundary?.label ?? 'context'} cut; '
       'kept in summary: ${kept ? 'yes' : 'no'}';
 }
@@ -684,32 +692,6 @@ _CutBoundary? _nearestCutBoundary(List<Message> messages, int fromIndex) {
     }
   }
   return null;
-}
-
-/// The plain text of a boundary message (summary bodies are plain strings;
-/// marker projections can ride other roles).
-String _boundaryText(Message message) {
-  switch (message) {
-    case UserMessage(:final content):
-      if (content is String) return content;
-      if (content is! List) return '';
-      return [
-        for (final block in content)
-          if (block is TextContent) block.text,
-      ].join();
-    case ToolResultMessage(:final content):
-      return [
-        for (final block in content)
-          if (block is TextContent) block.text,
-      ].join();
-    case AssistantMessage(:final content):
-      return [
-        for (final block in content)
-          if (block is TextContent) block.text,
-      ].join();
-  }
-  // `Message` is an interface: unknown implementations have no text.
-  return '';
 }
 
 /// The wire-equivalent projection of harness messages: a run of consecutive
