@@ -119,7 +119,7 @@ extension FaTuiModelBusy on FaTuiModel {
     // deterministic frames for the visual fixtures.
     final frame = spinnerFrame + 1;
     final face = frame % kKaomojiSwapTicks == 0 && _kaomojiFacePin() == null
-        ? _nextKaomojiIndex(kaomojiPick, kaomojiFace)
+        ? kaomojiNextFaceIndex(kaomojiPick, kaomojiFace)
         : kaomojiFace;
     return (
       copyWith(spinnerFrame: frame, kaomojiFace: face),
