@@ -163,35 +163,27 @@ extension _TuiRowRenderers on FaTuiModel {
 
   /// Scroll progress indicator — only while the user scrolled away from
   /// the live edge (a "you are here" hint); while following, the row stays
-  /// blank so the layout never shifts. Issue #827: while the tail latch
-  /// holds and wrapped rows hide above the window, the same reserved row
-  /// names them (`──── ^ N lines above fold - PgUp ────`) — the streaming
-  /// default was the one state the old gate left unannounced. Both
-  /// directions read [_foldAccount]; the hint rides the row the budget
-  /// already reserves, so it never costs a content row.
+  /// blank so the layout never shifts. Issue #827 reserved the row and
+  /// named the hidden rows (`──── ^ N lines above fold - PgUp ────`);
+  /// gh-1446 retracts the streaming state's TEXT (owner directive: «не
+  /// надо — просто горизонтальная линия») — the row renders as a plain
+  /// dim RULE while the tail latch holds and wrapped rows hide above the
+  /// window. The row reservation, the single [_foldAccount] computation
+  /// and the detached `── NN% ──` percent all stay.
   ///
-  /// Both states embed into the dim RULE row (the detached percent reads
+  /// Every state embeds into the dim RULE row (the detached percent reads
   /// `── NN% ──`): a transcript region is a row stream, and a standalone
   /// hint row reads as CONTENT to every screen consumer — the wave-14 PTY
   /// resume-equivalence diff treated the padded hint as a transcript row,
-  /// shifting its tail slice by one (issue #827 wave-14). A rule-embedded
-  /// hint stays chrome (`────…`) to every grammar that already strips the
-  /// separator.
+  /// shifting its tail slice by one (issue #827 wave-14). A textless rule
+  /// is chrome (`────…`) to every grammar that already strips the
+  /// separator — and cannot leak counts to shoulder-surfers.
   int _writeScrollIndicator(StringBuffer b, List<String> wrapped, int offset) {
     final (above, below) = _foldAccount(wrapped, offset);
     if (followTail && above > 0 && offset < wrapped.length) {
       // A window that shows no rows (zero-height history) announces
-      // nothing — the budget rule yields the hint, never the prompt row.
-      // Four leading rules keep the row unambiguous chrome even at widths
-      // where the centered form would run out of left padding.
-      final noun = above == 1 ? 'line' : 'lines';
-      final hint = '──── ^ $above $noun above fold - PgUp ';
-      final fitted = tuiFitWidth(hint, termWidth);
-      // Dash-padded, not space-padded: the row previously carried rules
-      // end to end, and the renderer only overwrites written cells — a
-      // space pad leaves stale dashes right of a shorter hint.
-      final fill = (termWidth - tuiTextWidth(fitted)).clamp(0, termWidth);
-      b.writeln(_dim('$fitted${'─' * fill}'));
+      // nothing — the budget rule yields the row, never the prompt row.
+      b.writeln(_dim('─' * termWidth));
     } else if (!followTail && below > 0) {
       final bottom = _scrollBottom(wrapped);
       final scrollPercent = bottom == 0

@@ -84,6 +84,19 @@ void main() {
       );
     });
 
+    test('status.running/status.pending carry the gh-1446 modern glyphs', () {
+      // Owner-accepted v2 defaults (2026-10-09): the unicode preset loses
+      // the `⟳`/`⏳` pair for the half/empty circle pair; the nerd preset
+      // keeps its nerd variants; the ascii preset stays ASCII-only.
+      expect(kTuiSymbolsUnicode.glyph('status.running'), '◐');
+      expect(kTuiSymbolsUnicode.glyph('status.pending'), '○');
+      expect(kTuiSymbolsNerd.glyph('status.running'), '\uf110');
+      expect(kTuiSymbolsNerd.glyph('status.pending'), '\uf254');
+      expect(kTuiSymbolsAscii.glyph('status.running'), '[~]');
+      expect(kTuiSymbolsAscii.glyph('status.pending'), '[*]');
+    });
+
+
     test('the controller seam switches presets and serves glyphs', () {
       final controller = FaThemeController.instance;
       expect(controller.sym('sep.dot'), kTuiSymbolsUnicode.glyphs['sep.dot']);
