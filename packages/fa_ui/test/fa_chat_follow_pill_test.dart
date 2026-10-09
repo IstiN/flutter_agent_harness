@@ -12,6 +12,7 @@
 library;
 
 import 'package:fa_ui/fa_ui.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -342,6 +343,61 @@ void main() {
       find.byKey(const ValueKey('faChatJumpToLivePill')),
       findsNothing,
       reason: 'a history-page load adds zero arrivals — no pill',
+    );
+  });
+
+  testWidgets('re-review: a WHEEL scroll-up during a run holds and arms '
+      'the pill (mouse/trackpad are user gestures too)', (tester) async {
+    final service = _FollowTestService()
+      ..msgs = _msgs(30)
+      ..streaming = true;
+    await _pump(tester, service);
+
+    // Wheel-up = toward history (reversed list: a negative wheel delta
+    // grows the offset). The tick lands far beyond the arm band.
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: tester.getCenter(find.byType(Scrollable).first),
+        scrollDelta: const Offset(0, -400),
+      ),
+    );
+    await tester.pump();
+
+    // The stream keeps producing; a wheel user must NOT be yanked back
+    // and the arrivals must count.
+    service.append(3);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(
+      find.byKey(const ValueKey('faChatJumpToLivePill')),
+      findsOneWidget,
+      reason: 'wheel-up is a user gesture: it holds and arrivals count',
+    );
+    expect(find.text('⌄ 3 new'), findsOneWidget);
+  });
+
+  testWidgets('re-review: a WHEEL scroll-down back to the near-bottom '
+      're-arms live (the pill goes away)', (tester) async {
+    final service = _FollowTestService()
+      ..msgs = _msgs(30)
+      ..streaming = true;
+    await _pump(tester, service);
+    await _dragTowardHistory(tester, 400);
+    service.append(2);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byKey(const ValueKey('faChatJumpToLivePill')), findsOneWidget);
+
+    // Wheel-down to just inside the ~10% arm band.
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: tester.getCenter(find.byType(Scrollable).first),
+        scrollDelta: const Offset(0, 350),
+      ),
+    );
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('faChatJumpToLivePill')),
+      findsNothing,
+      reason: 'landing inside the band by wheel re-arms live',
     );
   });
 }

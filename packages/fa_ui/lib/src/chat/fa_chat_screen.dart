@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:desktop_drop/desktop_drop.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
@@ -313,6 +314,16 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// arrivals by "relatching". The sync invalidates the gate; a real
   /// drag re-arms it; the ballistic end closes it.
   bool _userGestureInFlight = false;
+
+  /// A wheel/trackpad tick arrived on the transcript (raw
+  /// [PointerScrollEvent], gh-1439 re-review): the next depth-0 scroll
+  /// update IS that user gesture — classify it like a drag. Wheel
+  /// updates reach the classifier with dragDetails == null and could
+  /// otherwise never hold (the #379 clamp kept yanking wheel users,
+  /// exactly on the surfaces the ticket's capability table promises).
+  /// Consumed by the first classified update; invalidated by content
+  /// syncs.
+  bool _wheelGesturePending = false;
   bool _isStreaming = false;
   String? _error;
 
@@ -559,11 +570,13 @@ class _FaChatScreenState extends State<FaChatScreen>
     final arm = _armExtent(position);
     final wasAway = _follow.isHeld;
     if (notification is ScrollUpdateNotification &&
-        notification.dragDetails != null) {
-      // USER drag: the landing position classifies — inside the band
-      // re-arms live (flushed), beyond it holds. A real gesture is in
-      // flight; its momentum coast may follow.
-      _userGestureInFlight = true;
+        (notification.dragDetails != null || _wheelGesturePending)) {
+      // USER gesture: the landing position classifies — inside the band
+      // re-arms live (flushed), beyond it holds. A drag leaves its
+      // momentum coast in flight; a wheel/trackpad tick (dragDetails ==
+      // null, gh-1439 re-review) is its own whole gesture.
+      _userGestureInFlight = notification.dragDetails != null;
+      _wheelGesturePending = false;
       final next = _follow.userScrolled(
         distanceFromLiveEdge: distance,
         armExtent: arm,
@@ -1055,6 +1068,7 @@ class _FaChatScreenState extends State<FaChatScreen>
           // invalidate any in-flight gesture so the settle cannot flush
           // the held count by "landing" inside the arm band.
           _userGestureInFlight = false;
+          _wheelGesturePending = false;
           await _chatController.setMessages(newList, animated: false);
         } else {
           for (var i = 0; i < commonPrefix; i++) {
@@ -1410,71 +1424,77 @@ class _FaChatScreenState extends State<FaChatScreen>
                   _trackUserScroll(notification);
                   return false;
                 },
-                child: Chat(
-                  currentUserId: 'user',
-                  resolveUser: _resolveUser,
-                  chatController: _chatController,
-                  // With a wallpaper layer the transcript surface paints
-                  // transparent so the layer underneath shows through (E2: the
-                  // layer itself owns the color fallback when the image is gone).
-                  backgroundColor: wallpaper == null
-                      ? null
-                      : const Color(0x00000000),
-                  builders: Builders(
-                    textMessageBuilder: _buildTextMessage,
-                    customMessageBuilder: _buildCustomMessage,
-                    chatAnimatedListBuilder: (context, itemBuilder) =>
-                        ChatAnimatedList(
-                          // Tests target the transcript's scrollable
-                          // through this key (E2E scroll-to-top for the
-                          // reveal-on-top banner) instead of tree order.
-                          key: const ValueKey('faChatTranscriptList'),
-                          itemBuilder: itemBuilder,
-                          scrollController: _chatScrollController,
-                          // Reversed list (the learn.ai pattern): index 0 is the
-                          // newest message, the list starts AT the bottom — no
-                          // initial scroll-to-end, no jump, or "stuck mid-list"
-                          // on long transcripts. New rows grow upwards, exactly
-                          // like a chat.
-                          reversed: true,
-                          // The initial history load (and big external reloads)
-                          // renders without the per-row insert animation cascade;
-                          // live messages keep the default animation. 1ms instead
-                          // of a true zero: a zero duration leaves the package's
-                          // initial-scroll timer unsettled inside fake_async
-                          // test bindings.
-                          insertAnimationDurationResolver: (_) =>
-                              _suppressInsertAnimations
-                              ? const Duration(milliseconds: 1)
-                              : const Duration(milliseconds: 250),
-                          // The single transient status row lives IN the list
-                          // (issues #459, #1042): in a reversed scroll view
-                          // the bottom sliver renders visually LAST — below
-                          // the newest message, right above the composer —
-                          // and on completion it is replaced by the assistant
-                          // message (it self-hides when the run ends; never a
-                          // composer-docked second row).
-                          bottomSliver: SliverToBoxAdapter(
-                            key: const ValueKey('faChatRunStatusRow'),
-                            child: FaRunStatusRow(service: widget.service),
+                child: Listener(
+                  onPointerSignal: (event) {
+                    if (event is PointerScrollEvent) {
+                      _wheelGesturePending = true;
+                    }
+                  },
+                  child: Chat(
+                    currentUserId: 'user',
+                    resolveUser: _resolveUser,
+                    chatController: _chatController,
+                    // With a wallpaper layer the transcript surface paints
+                    // transparent so the layer underneath shows through (E2: the
+                    // layer itself owns the color fallback when the image is gone).
+                    backgroundColor: wallpaper == null
+                        ? null
+                        : const Color(0x00000000),
+                    builders: Builders(
+                      textMessageBuilder: _buildTextMessage,
+                      customMessageBuilder: _buildCustomMessage,
+                      chatAnimatedListBuilder: (context, itemBuilder) => ChatAnimatedList(
+                        // Tests target the transcript's scrollable
+                        // through this key (E2E scroll-to-top for the
+                        // reveal-on-top banner) instead of tree order.
+                        key: const ValueKey('faChatTranscriptList'),
+                        itemBuilder: itemBuilder,
+                        scrollController: _chatScrollController,
+                        // Reversed list (the learn.ai pattern): index 0 is the
+                        // newest message, the list starts AT the bottom — no
+                        // initial scroll-to-end, no jump, or "stuck mid-list"
+                        // on long transcripts. New rows grow upwards, exactly
+                        // like a chat.
+                        reversed: true,
+                        // The initial history load (and big external reloads)
+                        // renders without the per-row insert animation cascade;
+                        // live messages keep the default animation. 1ms instead
+                        // of a true zero: a zero duration leaves the package's
+                        // initial-scroll timer unsettled inside fake_async
+                        // test bindings.
+                        insertAnimationDurationResolver: (_) =>
+                            _suppressInsertAnimations
+                            ? const Duration(milliseconds: 1)
+                            : const Duration(milliseconds: 250),
+                        // The single transient status row lives IN the list
+                        // (issues #459, #1042): in a reversed scroll view
+                        // the bottom sliver renders visually LAST — below
+                        // the newest message, right above the composer —
+                        // and on completion it is replaced by the assistant
+                        // message (it self-hides when the run ends; never a
+                        // composer-docked second row).
+                        bottomSliver: SliverToBoxAdapter(
+                          key: const ValueKey('faChatRunStatusRow'),
+                          child: FaRunStatusRow(service: widget.service),
+                        ),
+                      ),
+                      // While streaming with an empty transcript the status row
+                      // is the only item (E1) — the package's default
+                      // "No messages yet" overlay would stack under it; idle
+                      // keeps the default (the row renders nothing then).
+                      emptyChatListBuilder: (context) => _isStreaming
+                          ? const SizedBox.shrink()
+                          : const EmptyChatList(),
+                      composerBuilder: (_) => const SizedBox.shrink(),
+                    ),
+                    theme: Theme.of(context).brightness == Brightness.light
+                        ? buildFahChatThemeLight(
+                            uiTheme: FaUiThemeProvider.of(context),
+                          )
+                        : buildFahChatTheme(
+                            uiTheme: FaUiThemeProvider.of(context),
                           ),
-                        ),
-                    // While streaming with an empty transcript the status row
-                    // is the only item (E1) — the package's default
-                    // "No messages yet" overlay would stack under it; idle
-                    // keeps the default (the row renders nothing then).
-                    emptyChatListBuilder: (context) => _isStreaming
-                        ? const SizedBox.shrink()
-                        : const EmptyChatList(),
-                    composerBuilder: (_) => const SizedBox.shrink(),
                   ),
-                  theme: Theme.of(context).brightness == Brightness.light
-                      ? buildFahChatThemeLight(
-                          uiTheme: FaUiThemeProvider.of(context),
-                        )
-                      : buildFahChatTheme(
-                          uiTheme: FaUiThemeProvider.of(context),
-                        ),
                 ),
               ),
             ),
