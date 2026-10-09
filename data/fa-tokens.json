@@ -500,6 +500,13 @@
       "prompt": 342677,
       "completion": 104647,
       "total": 447324
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-09T12:29:02Z",
+      "prompt": 148365,
+      "completion": 56398,
+      "total": 204763
     }
   ],
   "issue-1441": [
