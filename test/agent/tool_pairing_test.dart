@@ -472,12 +472,12 @@ void main() {
   group('orphan-result notices (gh-1449)', () {
     // The REAL compaction-summary projection (session_tree.dart): the
     // boundary probe keys on the production prefix, not on any text.
-    UserMessage _compacted(String summary) => UserMessage.text(
+    UserMessage compacted(String summary) => UserMessage.text(
       '$compactionSummaryPrefix$summary$compactionSummarySuffix',
       timestamp: DateTime.utc(2026),
     );
 
-    ToolResultMessage _orphan(String id, String name, DateTime at) =>
+    ToolResultMessage makeOrphan(String id, String name, DateTime at) =>
         ToolResultMessage(
           toolCallId: id,
           toolName: name,
@@ -489,8 +489,8 @@ void main() {
     test('UT-TEXT: the note names the tool, the call id and the cut '
         'reference', () {
       final repaired = repairToolPairing([
-        _compacted('earlier work'),
-        _orphan('bash_198', 'bash', DateTime.utc(2026)),
+        compacted('earlier work'),
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
       ]);
       final note = repaired.messages
           .map((m) => userMessageText((m as UserMessage).content))
@@ -501,17 +501,82 @@ void main() {
       expect(note, contains('kept in summary'));
     });
 
+    test('UT-TEXT: the note names the CANONICAL call id — the same '
+        'identity the latch key and the kept-in-summary probe use', () {
+      // A provider id with separator chars: the canonical projection
+      // (sanitized) is what orphanReportKey and the summary probe match,
+      // so that is what the model must read.
+      final repaired = repairToolPairing([
+        compacted('earlier work'),
+        makeOrphan('call.198', 'bash', DateTime.utc(2026)),
+      ]);
+      final note = repaired.messages
+          .map((m) => userMessageText((m as UserMessage).content))
+          .join();
+      expect(note, contains(canonicalToolCallId('call.198')));
+      expect(note, isNot(contains('call.198')));
+    });
+
+    test('UT-TEXT: every cut boundary arm is named (table-driven)', () {
+      final cases = <(UserMessage, String)>[
+        (
+          UserMessage.text(
+            '$branchSummaryPrefix$compactionSummarySuffix',
+            timestamp: DateTime.utc(2026),
+          ),
+          'branch summary',
+        ),
+        (
+          UserMessage.text(
+            '$localTrimMarkerPrefix older messages dropped]',
+            timestamp: DateTime.utc(2026),
+          ),
+          'local trim',
+        ),
+        (
+          UserMessage.text('[3:hidden·user·12]', timestamp: DateTime.utc(2026)),
+          'context marker',
+        ),
+      ];
+      for (final (boundary, label) in cases) {
+        final repaired = repairToolPairing([
+          boundary,
+          makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
+        ]);
+        final note = repaired.messages
+            .map((m) => userMessageText((m as UserMessage).content))
+            .join();
+        expect(note, contains(label), reason: 'boundary $label');
+      }
+    });
+
+    test('UT-TEXT: the nearest boundary wins over an earlier one', () {
+      final repaired = repairToolPairing([
+        compacted('older compaction'),
+        makeOrphan('ghost', 'read', DateTime.utc(2026)),
+        UserMessage.text(
+          '$localTrimMarkerPrefix tail dropped]',
+          timestamp: DateTime.utc(2026),
+        ),
+      ]);
+      final note = repaired.messages
+          .map((m) => userMessageText((m as UserMessage).content))
+          .join();
+      expect(note, contains('local trim'));
+      expect(note, isNot(contains('compaction summary')));
+    });
+
     test('UT-TEXT: the kept-in-summary hint probes the boundary text', () {
       final withId = repairToolPairing([
-        _compacted(
+        compacted(
           'earlier work: the call bash_198 ran the deploy script and it '
           'passed',
         ),
-        _orphan('bash_198', 'bash', DateTime.utc(2026)),
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
       ]);
       final withoutId = repairToolPairing([
-        _compacted('earlier work'),
-        _orphan('bash_198', 'bash', DateTime.utc(2026)),
+        compacted('earlier work'),
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
       ]);
       expect(
         userMessageText((withId.messages.last as UserMessage).content),
@@ -530,7 +595,7 @@ void main() {
           _u('hi'),
           _a([_c('c1', 'bash')]),
           _r('c1', 'bash'),
-          _orphan('ghost', 'read', DateTime.utc(2026)),
+          makeOrphan('ghost', 'read', DateTime.utc(2026)),
           _u('go on'),
         ]);
         final carrier = userMessageText(
@@ -544,10 +609,10 @@ void main() {
 
     test('UT-ROLE: the note never becomes a new message — it rides the '
         'last existing user message', () {
-      final summary = _compacted('earlier work');
+      final summary = compacted('earlier work');
       final repaired = repairToolPairing([
         summary,
-        _orphan('bash_198', 'bash', DateTime.utc(2026)),
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
       ]);
       // The orphan is dropped and the summary message carries the note:
       // one message in the payload out of two, none added.
@@ -577,7 +642,7 @@ void main() {
         prompt,
         _a([_c('c1', 'bash')]),
         _r('c1', 'bash'),
-        _orphan('ghost', 'read', DateTime.utc(2026)),
+        makeOrphan('ghost', 'read', DateTime.utc(2026)),
       ]);
       final carrier = repaired.messages[0] as UserMessage;
       expect(userMessageText(carrier.content), contains('[context note:'));
@@ -593,7 +658,7 @@ void main() {
         _a([_c('c1', 'bash')]),
         steering,
         _r('c1', 'bash'),
-        _orphan('ghost', 'read', DateTime.utc(2026)),
+        makeOrphan('ghost', 'read', DateTime.utc(2026)),
       ]);
       // The hoisted steering message is the note carrier: copied with the
       // note as an extra block, still after the results.
@@ -616,7 +681,7 @@ void main() {
       );
       final repaired = repairToolPairing([
         carrier,
-        _orphan('bash_198', 'bash', DateTime.utc(2026)),
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
       ]);
       final blocks =
           (repaired.messages[0] as UserMessage).content as List<ContentBlock>;
@@ -631,7 +696,7 @@ void main() {
       () {
         final messages = [
           _u('summary of earlier work'),
-          _orphan('bash_198', 'bash', DateTime.utc(2026)),
+          makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
         ];
         final before = messages.map((m) => m.toJson()).toList();
         repairToolPairing(messages, reportedOrphanKeys: const {});
@@ -644,7 +709,7 @@ void main() {
     test('one-shot: an already-reported orphan is dropped without a note', () {
       final messages = [
         _u('summary of earlier work'),
-        _orphan('bash_198', 'bash', DateTime.utc(2026)),
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
       ];
       final key = orphanReportKey(messages[1] as ToolResultMessage);
       final first = repairToolPairing(messages);
@@ -664,7 +729,7 @@ void main() {
         'context note exactly once through a shared latch', () {
       final messages = [
         _u('summary of earlier work'),
-        _orphan('bash_198', 'bash', DateTime.utc(2026)),
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
         _u('continue'),
       ];
       final latch = <String>{};
@@ -683,8 +748,8 @@ void main() {
 
     test('E1: an id reused later (ids reset per run) reports once per '
         '(id, position)', () {
-      final early = _orphan('bash_1', 'bash', DateTime.utc(2026));
-      final late = _orphan('bash_1', 'bash', DateTime.utc(2027));
+      final early = makeOrphan('bash_1', 'bash', DateTime.utc(2026));
+      final late = makeOrphan('bash_1', 'bash', DateTime.utc(2027));
       final key = orphanReportKey(early);
       final repaired = repairToolPairing(
         [_u('summary'), late],
@@ -703,10 +768,10 @@ void main() {
         'both', () {
       final repaired = repairToolPairing([
         _u('summary of earlier work'),
-        _orphan('bash_198', 'bash', DateTime.utc(2026)),
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
         _a([_c('c1', 'read')]),
         _r('c1', 'read'),
-        _orphan('ghost', 'write', DateTime.utc(2026)),
+        makeOrphan('ghost', 'write', DateTime.utc(2026)),
         _u('go on'),
       ]);
       expect(repaired.report.notedOrphanKeys, hasLength(2));
@@ -725,7 +790,7 @@ void main() {
         'standalone note (unavoidable carrier) and still repairs valid', () {
       final repaired = repairToolPairing([
         _a([TextContent(text: 'working')]),
-        _orphan('ghost', 'bash', DateTime.utc(2026)),
+        makeOrphan('ghost', 'bash', DateTime.utc(2026)),
       ]);
       final noteMessages = repaired.messages
           .whereType<UserMessage>()
