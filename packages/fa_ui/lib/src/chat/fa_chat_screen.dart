@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:desktop_drop/desktop_drop.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
@@ -15,6 +16,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
         ApprovalRequest,
         AskAnswer,
         AskQuestion,
+        FollowMode,
         MemoryExecutionEnv,
         RequestSecretResult,
         TrajectorySnapshot,
@@ -226,13 +228,20 @@ class _FaChatScreenState extends State<FaChatScreen>
   final _chatScrollController = ScrollController();
   bool _userNearBottom = true;
 
-  /// True once the USER dragged the transcript away (parked at ≥ the
-  /// near-bottom latch). Programmatic scrolls — the tail follow and the
-  /// live-widget clamp's own animateTo — never set this, so the clamp
-  /// keeps working after it moves the viewport past the latch threshold,
-  /// while a real user scroll always wins (issue #379 AC2). Dragging
-  /// back to the bottom relatches.
-  bool _userScrolledAway = false;
+  /// The follow-mode contract (gh-1439): the shared pure state machine
+  /// (core `package:flutter_agent_harness`) owns live⇄held plus the
+  /// counted-unseen the jump pill shows. Starts `live` at the newest row
+  /// — boot/resume never restores held (AC5). Held = the user dragged the
+  /// transcript away; programmatic scrolls — the tail follow and the
+  /// live-widget clamp's own animateTo — never classify, so the clamp
+  /// keeps working after it moves the viewport past the arm band, while a
+  /// real user scroll always wins (issue #379 AC2).
+  FollowMode _follow = const FollowMode.live();
+
+  /// True once the USER dragged the transcript away (parked beyond the
+  /// near-bottom arm band). Derived from the shared follow state so the
+  /// #379 clamp and the #1159 banner rejoin read the ONE owner.
+  bool get _userScrolledAway => _follow.isHeld;
 
   /// Loads sandbox images referenced from Markdown / `generate_image` tool
   /// results through the session's env (memoized — see
@@ -295,6 +304,26 @@ class _FaChatScreenState extends State<FaChatScreen>
   bool _suppressInsertAnimations = true;
   Timer? _syncDebounce;
   bool _isSyncing = false;
+
+  /// Whether a USER gesture (drag or its momentum coast) is in flight —
+  /// the non-drag relatch below may only act on those (gh-1439 E6,
+  /// re-review). Content-driven repositions arrive as non-drag updates
+  /// too: a big-diff setMessages re-anchor settles wherever the new
+  /// layout anchors it (probe: a 25-row prepend glided a held window to
+  /// 60px ≤ arm 80), and without this gate that settle wiped 3 counted
+  /// arrivals by "relatching". The sync invalidates the gate; a real
+  /// drag re-arms it; the ballistic end closes it.
+  bool _userGestureInFlight = false;
+
+  /// A wheel/trackpad tick arrived on the transcript (raw
+  /// [PointerScrollEvent], gh-1439 re-review): the next depth-0 scroll
+  /// update IS that user gesture — classify it like a drag. Wheel
+  /// updates reach the classifier with dragDetails == null and could
+  /// otherwise never hold (the #379 clamp kept yanking wheel users,
+  /// exactly on the surfaces the ticket's capability table promises).
+  /// Consumed by the first classified update; invalidated by content
+  /// syncs.
+  bool _wheelGesturePending = false;
   bool _isStreaming = false;
   String? _error;
 
@@ -487,6 +516,10 @@ class _FaChatScreenState extends State<FaChatScreen>
       // The host swapped sessions (close/switch): re-subscribe and re-sync.
       _unsubscribeFromService(oldWidget.service);
       _subscribeToService(widget.service);
+      // A new session is a new viewport: follow starts live at its newest
+      // record — held never persists across a restart (gh-1439 AC5).
+      _follow = const FollowMode.live();
+      _userNearBottom = true;
       _unbindTrajectory();
       if (widget.features.trajectory) _trajectory;
       _isStreaming = widget.service.isStreaming;
@@ -509,13 +542,22 @@ class _FaChatScreenState extends State<FaChatScreen>
   void _trackNearBottom() {
     if (!_chatScrollController.hasClients) return;
     final position = _chatScrollController.position;
-    _userNearBottom = position.pixels < 150;
+    _userNearBottom = position.pixels < _armExtent(position);
   }
 
+  /// The near-bottom re-arm band for this viewport (gh-1439 open question
+  /// 1): the shared ~10%-of-viewport fraction, one rule on every surface.
+  int _armExtent(ScrollPosition position) =>
+      FollowMode.nearBottomArmExtent(position.viewportDimension.round());
+
   /// Classifies scroll activity on the transcript's own scrollable
-  /// (depth 0 — inner tool-output scrollables don't count): a user drag
-  /// parking above the latch threshold marks the transcript
-  /// scrolled-away; anything landing back under the threshold relatches.
+  /// (depth 0 — inner tool-output scrollables don't count) through the
+  /// shared [FollowMode] machine (gh-1439): a user drag parking beyond
+  /// the near-bottom arm band holds (no more yank); landing inside the
+  /// band re-arms live and flushes the count. E6 debounce: only the
+  /// USER's position classifies — programmatic moves (the tail follow
+  /// and the #379 clamp's own animateTo) never hold and never re-arm;
+  /// non-drag updates can only relatch at the near-bottom.
   void _trackUserScroll(ScrollNotification notification) {
     if (notification.depth != 0) return;
     if (notification is! ScrollUpdateNotification &&
@@ -523,19 +565,63 @@ class _FaChatScreenState extends State<FaChatScreen>
       return;
     }
     if (!_chatScrollController.hasClients) return;
-    final pixels = _chatScrollController.position.pixels;
-    final wasAway = _userScrolledAway;
+    final position = _chatScrollController.position;
+    final distance = position.pixels.round();
+    final arm = _armExtent(position);
+    final wasAway = _follow.isHeld;
     if (notification is ScrollUpdateNotification &&
-        notification.dragDetails != null) {
-      _userScrolledAway = pixels >= 150;
-    } else if (pixels < 150) {
-      _userScrolledAway = false;
+        (notification.dragDetails != null || _wheelGesturePending)) {
+      // USER gesture: the landing position classifies — inside the band
+      // re-arms live (flushed), beyond it holds. A drag leaves its
+      // momentum coast in flight; a wheel/trackpad tick (dragDetails ==
+      // null, gh-1439 re-review) is its own whole gesture.
+      _userGestureInFlight = notification.dragDetails != null;
+      _wheelGesturePending = false;
+      final next = _follow.userScrolled(
+        distanceFromLiveEdge: distance,
+        armExtent: arm,
+      );
+      if (next != _follow && mounted) {
+        setState(() => _follow = next);
+      }
+    } else if (_userGestureInFlight &&
+        distance <= arm &&
+        _follow.isHeld &&
+        mounted) {
+      // Momentum-coast updates only ever RELATCH at the near-bottom —
+      // they never classify away (the #379 follow clamp's own animateTo
+      // must keep working, E6 debounce). Content-driven repositions (a
+      // big-diff re-anchor) arrive as non-drag updates too; for those
+      // the gate is false — the sync invalidated it.
+      setState(() => _follow = _follow.jumpToLive());
+      _userGestureInFlight = false;
     }
-    if (wasAway && !_userScrolledAway) {
+    if (notification is ScrollEndNotification) {
+      // The finger lifted → a coast may follow (the gate stays up); the
+      // ballistic end → the gesture is over.
+      _userGestureInFlight = notification.dragDetails != null;
+    }
+    if (wasAway && !_follow.isHeld) {
       // Landing back at the bottom with a deep-paged window rejoins the
       // live tail on its own — no stuck banner post-run (issue #1159
       // AC4).
       _followTailIfPinned();
+    }
+  }
+
+  /// The one-action re-engage (gh-1439): live again, count flushed, and
+  /// the window lands at the newest row — a deep-paged window pages the
+  /// tail in first (E4: jumping to live lands the newest window, never
+  /// the whole backlog).
+  Future<void> _jumpToLive() async {
+    if (mounted) setState(() => _follow = _follow.jumpToLive());
+    _userNearBottom = true;
+    if (_historyHasNewer && !_historyLoading) {
+      await widget.service.loadNewerHistory();
+    }
+    if (!mounted) return;
+    if (_chatScrollController.hasClients) {
+      _chatScrollController.jumpTo(0);
     }
   }
 
@@ -904,6 +990,7 @@ class _FaChatScreenState extends State<FaChatScreen>
   }
 
   Future<void> _syncMessages() async {
+    var followCounted = false;
     if (_isSyncing) {
       _syncDebounce?.cancel();
       _syncDebounce = Timer(const Duration(milliseconds: 50), () {
@@ -939,6 +1026,34 @@ class _FaChatScreenState extends State<FaChatScreen>
             _lastSynced[commonPrefix].id == newList[commonPrefix].id) {
           commonPrefix++;
         }
+        // gh-1439: held appends are COUNTED (the model keeps everything —
+        // zero loss, AC4); the pill's counter is the affordance. Live
+        // appends never count (the viewport shows them — today's
+        // behavior). Counted for BOTH render paths (big-diff setMessages
+        // and the per-row insert loop alike).
+        // (re-review) Only pure tail growth is an arrival — and the
+        // prefix for COUNTING must be content-aware: ids are index-based
+        // (`msg-$index`), so a "Load earlier" PREPEND shifts every row's
+        // content while REUSING every id; the id-based `commonPrefix`
+        // stays == oldLen and `newLen - commonPrefix` billed the loaded
+        // page as arrivals. A length-preserving content edit must not
+        // count either. The render diff below keeps the id-based prefix
+        // (in-place edits must updateMessage, not remove+insert); only
+        // the count scans content.
+        var countedPrefix = 0;
+        while (countedPrefix < minLen &&
+            _lastSynced[countedPrefix].id == newList[countedPrefix].id &&
+            !_messageChanged(
+              _lastSynced[countedPrefix],
+              newList[countedPrefix],
+            )) {
+          countedPrefix++;
+        }
+        final isTailAppend = countedPrefix == oldLen && newLen > oldLen;
+        if (isTailAppend && _follow.isHeld) {
+          _follow = _follow.appended(newLen - oldLen);
+          followCounted = true;
+        }
 
         final changes =
             (commonPrefix - math.min(oldLen, commonPrefix)) +
@@ -948,6 +1063,12 @@ class _FaChatScreenState extends State<FaChatScreen>
         // ONE setMessages pass: per-message inserts rebuild the list per
         // row and stream in bottom-up, visibly slow on long transcripts.
         if (changes > 12) {
+          // (re-review) The replacement re-anchors the scrollable: its
+          // corrections glide for several frames and are programmatic —
+          // invalidate any in-flight gesture so the settle cannot flush
+          // the held count by "landing" inside the arm band.
+          _userGestureInFlight = false;
+          _wheelGesturePending = false;
           await _chatController.setMessages(newList, animated: false);
         } else {
           for (var i = 0; i < commonPrefix; i++) {
@@ -975,6 +1096,9 @@ class _FaChatScreenState extends State<FaChatScreen>
       }
 
       _lastSynced = newList;
+      if (followCounted && mounted) {
+        setState(() {});
+      }
 
       // E3 (issue #379): a widget id entering the current turn afresh —
       // a NEW dynamic message, or the same widget re-presented later —
@@ -1300,71 +1424,77 @@ class _FaChatScreenState extends State<FaChatScreen>
                   _trackUserScroll(notification);
                   return false;
                 },
-                child: Chat(
-                  currentUserId: 'user',
-                  resolveUser: _resolveUser,
-                  chatController: _chatController,
-                  // With a wallpaper layer the transcript surface paints
-                  // transparent so the layer underneath shows through (E2: the
-                  // layer itself owns the color fallback when the image is gone).
-                  backgroundColor: wallpaper == null
-                      ? null
-                      : const Color(0x00000000),
-                  builders: Builders(
-                    textMessageBuilder: _buildTextMessage,
-                    customMessageBuilder: _buildCustomMessage,
-                    chatAnimatedListBuilder: (context, itemBuilder) =>
-                        ChatAnimatedList(
-                          // Tests target the transcript's scrollable
-                          // through this key (E2E scroll-to-top for the
-                          // reveal-on-top banner) instead of tree order.
-                          key: const ValueKey('faChatTranscriptList'),
-                          itemBuilder: itemBuilder,
-                          scrollController: _chatScrollController,
-                          // Reversed list (the learn.ai pattern): index 0 is the
-                          // newest message, the list starts AT the bottom — no
-                          // initial scroll-to-end, no jump, or "stuck mid-list"
-                          // on long transcripts. New rows grow upwards, exactly
-                          // like a chat.
-                          reversed: true,
-                          // The initial history load (and big external reloads)
-                          // renders without the per-row insert animation cascade;
-                          // live messages keep the default animation. 1ms instead
-                          // of a true zero: a zero duration leaves the package's
-                          // initial-scroll timer unsettled inside fake_async
-                          // test bindings.
-                          insertAnimationDurationResolver: (_) =>
-                              _suppressInsertAnimations
-                              ? const Duration(milliseconds: 1)
-                              : const Duration(milliseconds: 250),
-                          // The single transient status row lives IN the list
-                          // (issues #459, #1042): in a reversed scroll view
-                          // the bottom sliver renders visually LAST — below
-                          // the newest message, right above the composer —
-                          // and on completion it is replaced by the assistant
-                          // message (it self-hides when the run ends; never a
-                          // composer-docked second row).
-                          bottomSliver: SliverToBoxAdapter(
-                            key: const ValueKey('faChatRunStatusRow'),
-                            child: FaRunStatusRow(service: widget.service),
+                child: Listener(
+                  onPointerSignal: (event) {
+                    if (event is PointerScrollEvent) {
+                      _wheelGesturePending = true;
+                    }
+                  },
+                  child: Chat(
+                    currentUserId: 'user',
+                    resolveUser: _resolveUser,
+                    chatController: _chatController,
+                    // With a wallpaper layer the transcript surface paints
+                    // transparent so the layer underneath shows through (E2: the
+                    // layer itself owns the color fallback when the image is gone).
+                    backgroundColor: wallpaper == null
+                        ? null
+                        : const Color(0x00000000),
+                    builders: Builders(
+                      textMessageBuilder: _buildTextMessage,
+                      customMessageBuilder: _buildCustomMessage,
+                      chatAnimatedListBuilder: (context, itemBuilder) => ChatAnimatedList(
+                        // Tests target the transcript's scrollable
+                        // through this key (E2E scroll-to-top for the
+                        // reveal-on-top banner) instead of tree order.
+                        key: const ValueKey('faChatTranscriptList'),
+                        itemBuilder: itemBuilder,
+                        scrollController: _chatScrollController,
+                        // Reversed list (the learn.ai pattern): index 0 is the
+                        // newest message, the list starts AT the bottom — no
+                        // initial scroll-to-end, no jump, or "stuck mid-list"
+                        // on long transcripts. New rows grow upwards, exactly
+                        // like a chat.
+                        reversed: true,
+                        // The initial history load (and big external reloads)
+                        // renders without the per-row insert animation cascade;
+                        // live messages keep the default animation. 1ms instead
+                        // of a true zero: a zero duration leaves the package's
+                        // initial-scroll timer unsettled inside fake_async
+                        // test bindings.
+                        insertAnimationDurationResolver: (_) =>
+                            _suppressInsertAnimations
+                            ? const Duration(milliseconds: 1)
+                            : const Duration(milliseconds: 250),
+                        // The single transient status row lives IN the list
+                        // (issues #459, #1042): in a reversed scroll view
+                        // the bottom sliver renders visually LAST — below
+                        // the newest message, right above the composer —
+                        // and on completion it is replaced by the assistant
+                        // message (it self-hides when the run ends; never a
+                        // composer-docked second row).
+                        bottomSliver: SliverToBoxAdapter(
+                          key: const ValueKey('faChatRunStatusRow'),
+                          child: FaRunStatusRow(service: widget.service),
+                        ),
+                      ),
+                      // While streaming with an empty transcript the status row
+                      // is the only item (E1) — the package's default
+                      // "No messages yet" overlay would stack under it; idle
+                      // keeps the default (the row renders nothing then).
+                      emptyChatListBuilder: (context) => _isStreaming
+                          ? const SizedBox.shrink()
+                          : const EmptyChatList(),
+                      composerBuilder: (_) => const SizedBox.shrink(),
+                    ),
+                    theme: Theme.of(context).brightness == Brightness.light
+                        ? buildFahChatThemeLight(
+                            uiTheme: FaUiThemeProvider.of(context),
+                          )
+                        : buildFahChatTheme(
+                            uiTheme: FaUiThemeProvider.of(context),
                           ),
-                        ),
-                    // While streaming with an empty transcript the status row
-                    // is the only item (E1) — the package's default
-                    // "No messages yet" overlay would stack under it; idle
-                    // keeps the default (the row renders nothing then).
-                    emptyChatListBuilder: (context) => _isStreaming
-                        ? const SizedBox.shrink()
-                        : const EmptyChatList(),
-                    composerBuilder: (_) => const SizedBox.shrink(),
                   ),
-                  theme: Theme.of(context).brightness == Brightness.light
-                      ? buildFahChatThemeLight(
-                          uiTheme: FaUiThemeProvider.of(context),
-                        )
-                      : buildFahChatTheme(
-                          uiTheme: FaUiThemeProvider.of(context),
-                        ),
                 ),
               ),
             ),
@@ -1380,6 +1510,10 @@ class _FaChatScreenState extends State<FaChatScreen>
                   : strings.chatLoadNewerCount('$historyBelow'),
               tappable: !_historyLoading,
             ),
+          // The follow-mode jump pill (gh-1439): a SIBLING of the history
+          // banner, live-updating — visible exactly while held with
+          // counted arrivals, one tap returns to the live tail.
+          if (_follow.isHeld && _follow.unseen > 0) _followLivePill(strings),
           composerBuilder != null
               ? composerBuilder(context, widget.service, _dropBridge)
               : ChatComposer(
@@ -1419,6 +1553,57 @@ class _FaChatScreenState extends State<FaChatScreen>
         Positioned.fill(child: Builder(builder: wallpaper)),
         Positioned.fill(child: body),
       ],
+    );
+  }
+
+  /// The `⌄ N new` jump-to-live pill (gh-1439): a floating, live-updating
+  /// affordance in the banner slot family — centered, compact, one tap
+  /// re-engages the live tail and flushes the count (AC2). The count is
+  /// the shared [FollowMode.unseen]; approval prompts are NOT affected
+  /// (AC6: they render through their own surface above this slot).
+  Widget _followLivePill(FaChatStrings strings) {
+    return Align(
+      alignment: Alignment.center,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Semantics(
+          label: strings.chatJumpToLive,
+          button: true,
+          child: Material(
+            key: const ValueKey('faChatJumpToLivePill'),
+            color: Theme.of(context).colorScheme.primaryContainer,
+            borderRadius: BorderRadius.circular(999),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(999),
+              onTap: _jumpToLive,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 6,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      strings.chatFollowNewCount('${_follow.unseen}'),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.keyboard_arrow_down,
+                      size: 18,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1484,17 +1669,12 @@ class _FaChatScreenState extends State<FaChatScreen>
         onTap: tappable
             ? (top
                   ? widget.service.loadOlderHistory
-                  : () async {
-                      await widget.service.loadNewerHistory();
-                      if (!mounted) return;
-                      // The tap's promise is the live tail (issue #1159
-                      // AC1): relatch follow and land on the newest row
-                      // of the rejoined window.
-                      _userScrolledAway = false;
-                      if (_chatScrollController.hasClients) {
-                        _chatScrollController.jumpTo(0);
-                      }
-                    })
+                  // The tap's promise is the live tail (issue #1159 AC1):
+                  // one owner for the re-engage — relatch + the E4
+                  // deep-page-then-jump ordering. _jumpToLive already
+                  // awaits the page-in before landing at 0; the tear-off
+                  // is fire-and-forget (gh-1439 re-review).
+                  : _jumpToLive)
             : null,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),

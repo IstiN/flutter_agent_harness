@@ -2,6 +2,7 @@
 // click→drop, the /mouse toggle (AC4/E4) and the REG guarantees — wheel
 // behavior unchanged with regions present, capture off silences regions.
 import 'package:dart_tui/dart_tui.dart';
+import 'package:flutter_agent_harness/src/cli/agent_hub_tui.dart';
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart'
     show MenuItem, QueuedMessage;
@@ -96,11 +97,17 @@ void main() {
 
   group('queue row hit-region', () {
     test('clicking a queued message drops it', () {
-      var model = FaTuiModel(
-        callbacks: callbacks(),
-        isExited: () => false,
-        termHeight: 12,
-      ).copyWith(queue: const [QueuedMessage('first message'), QueuedMessage('second message')]);
+      var model =
+          FaTuiModel(
+            callbacks: callbacks(),
+            isExited: () => false,
+            termHeight: 12,
+          ).copyWith(
+            queue: const [
+              QueuedMessage('first message'),
+              QueuedMessage('second message'),
+            ],
+          );
       final y = rowOf(frameLines(model), 'second message');
       model = send(model, MouseClickMsg(mouseAt(3, y)));
       model = send(model, MouseReleaseMsg(mouseAt(3, y)));
@@ -126,6 +133,75 @@ void main() {
       );
       expect(model.scrollOffset, bottom - 3);
       expect(model.followTail, isFalse);
+    });
+  });
+
+  group('hub overlay owns the wheel while it is up (gh-1439 REG)', () {
+    FaTuiModel hubModel() => FaTuiModel(
+      callbacks: callbacks(),
+      isExited: () => false,
+      termHeight: 12,
+      hub: FaHubState.tree(
+        footer: '',
+        rows: const [
+          HubLine('main', key: 'main'),
+          HubLine('  a1', key: 'a1'),
+        ],
+      ),
+    );
+
+    test('wheel steps the fleet-tree selection, never the transcript', () {
+      var model = hubModel();
+      model = send(model, OutputMsg('history line', newline: true));
+      final offsetBefore = model.scrollOffset;
+      model = send(
+        model,
+        MouseWheelMsg(const Mouse(x: 0, y: 0, button: MouseButton.wheelDown)),
+      );
+      expect(model.hub!.selectedKey, 'a1');
+      expect(
+        model.scrollOffset,
+        offsetBefore,
+        reason: 'the overlay consumes the wheel; follow state stands still',
+      );
+      expect(model.follow.isLive, isTrue);
+      model = send(
+        model,
+        MouseWheelMsg(const Mouse(x: 0, y: 0, button: MouseButton.wheelUp)),
+      );
+      expect(model.hub!.selectedKey, 'main');
+      expect(model.scrollOffset, offsetBefore);
+    });
+
+    test('a MouseWheelMsg carrying a non-wheel button is a no-op', () {
+      var model = hubModel();
+      model = send(
+        model,
+        MouseWheelMsg(const Mouse(x: 0, y: 0, button: MouseButton.left)),
+      );
+      expect(model.hub!.selectedKey, 'main');
+      expect(model.scrollOffset, 0);
+    });
+  });
+
+  group('transcript wheel defaults (gh-1439 REG)', () {
+    test('a MouseWheelMsg carrying a non-wheel button neither scrolls '
+        'nor classifies follow', () {
+      var model = FaTuiModel(
+        callbacks: callbacks(),
+        isExited: () => false,
+        termHeight: 12,
+      );
+      for (var i = 0; i < 30; i++) {
+        model = send(model, OutputMsg('line $i', newline: true));
+      }
+      final before = model.scrollOffset;
+      model = send(
+        model,
+        MouseWheelMsg(const Mouse(x: 0, y: 0, button: MouseButton.left)),
+      );
+      expect(model.scrollOffset, before);
+      expect(model.follow.isLive, isTrue);
     });
   });
 
@@ -223,16 +299,17 @@ void main() {
 
     test('click on a plain slash menu row inserts the item, not the '
         'picker accept', () async {
-      var model = FaTuiModel(
-        callbacks: slashCb(),
-        isExited: () => false,
-        termHeight: 12,
-      ).copyWith(
-        inputText: '/',
-        menuOpen: true,
-        menuTokenStart: 0,
-        menuItems: slashCb().buildSlashMenu('/'),
-      );
+      var model =
+          FaTuiModel(
+            callbacks: slashCb(),
+            isExited: () => false,
+            termHeight: 12,
+          ).copyWith(
+            inputText: '/',
+            menuOpen: true,
+            menuTokenStart: 0,
+            menuItems: slashCb().buildSlashMenu('/'),
+          );
       final y = rowOf(frameLines(model), '/exit');
       model.view(); // register this frame's regions
       model = await click(model, 3, y);
@@ -257,16 +334,17 @@ void main() {
         statusLine: () => 'test',
         prompt: 'fa> ',
       );
-      var model = FaTuiModel(
-        callbacks: cb(),
-        isExited: () => false,
-        termHeight: 12,
-      ).copyWith(
-        inputText: '/',
-        menuOpen: true,
-        menuTokenStart: 0,
-        menuItems: cb().buildSlashMenu('/'),
-      );
+      var model =
+          FaTuiModel(
+            callbacks: cb(),
+            isExited: () => false,
+            termHeight: 12,
+          ).copyWith(
+            inputText: '/',
+            menuOpen: true,
+            menuTokenStart: 0,
+            menuItems: cb().buildSlashMenu('/'),
+          );
       // Click the /model row -> opens the models picker (pickerId set).
       final yModel = rowOf(frameLines(model), '/model');
       model.view();
@@ -292,8 +370,7 @@ void main() {
       expect(selected, isFalse);
     });
 
-    test('clicking a picker row still resolves via onModelSelected',
-        () async {
+    test('clicking a picker row still resolves via onModelSelected', () async {
       var selected = '';
       FaTuiCallbacks cb() => FaTuiCallbacks(
         onSubmit: (_, {images = const []}) async {},
@@ -305,18 +382,19 @@ void main() {
         statusLine: () => 'test',
         prompt: 'fa> ',
       );
-      var model = FaTuiModel(
-        callbacks: cb(),
-        isExited: () => false,
-        termHeight: 12,
-      ).copyWith(
-        menuOpen: true,
-        menuModelMode: true,
-        pickerId: 'models',
-        menuItems: const [
-          MenuItem(key: 'glm', label: 'glm', description: 'x'),
-        ],
-      );
+      var model =
+          FaTuiModel(
+            callbacks: cb(),
+            isExited: () => false,
+            termHeight: 12,
+          ).copyWith(
+            menuOpen: true,
+            menuModelMode: true,
+            pickerId: 'models',
+            menuItems: const [
+              MenuItem(key: 'glm', label: 'glm', description: 'x'),
+            ],
+          );
       final y = rowOf(frameLines(model), 'glm');
       model.view();
       model = await click(model, 3, y);
@@ -324,7 +402,6 @@ void main() {
       expect(model.pickerId, isEmpty);
     });
   });
-
 
   group('/mouse off wires the terminal down (AC4)', () {
     Future<FaTuiModel> submit(FaTuiModel model, String line) async {
@@ -347,9 +424,7 @@ void main() {
       expect(model.mouseCapture, isFalse);
       model = send(
         model,
-        MouseWheelMsg(
-          const Mouse(x: 0, y: 0, button: MouseButton.wheelUp),
-        ),
+        MouseWheelMsg(const Mouse(x: 0, y: 0, button: MouseButton.wheelUp)),
       );
       // The hint promises a keyboard-only session — honor it even for
       // bytes a not-yet-disarmed terminal still sends.
