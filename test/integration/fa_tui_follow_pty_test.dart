@@ -90,18 +90,28 @@ tui:
       harness.sendText('\x1b[5~'); // pgup
 
       // (2) Late arrivals count up on the held rule while live content
-      // flows in BELOW the fold (`NN% · ● N new · End = live`). The first
-      // tool segment may race the detach, so the anchor is the THIRD
-      // counted arrival — two more OutputMsgs must land after the detach
-      // for the counter to get there.
+      // flows in BELOW the fold (`NN% · ● N new · End = live`). The bash
+      // tools run as background jobs, so arrivals land in bursts — anchor
+      // on ANY counted rule, then prove the counter GROWS (monotonic
+      // unseen accounting), not on one exact sample.
       final counted = await harness.waitForScreen(
-        RegExp(r'\d+% · ● 3 new'),
+        RegExp(r'\d+% · ● \d+ new'),
         timeout: const Duration(seconds: 30),
       );
-      expect(counted, isNot(contains('above fold')),
-          reason: 'detached: the live-fold hint belongs to following only');
       expect(counted, contains('End = live'),
           reason: 'the chip carries the one-action re-engage hint');
+      final firstCount =
+          int.parse(RegExp(r'● (\d+) new').firstMatch(counted)!.group(1)!);
+      final grown = await _waitCounterGrows(harness, firstCount);
+      // Absence assertions need a SETTLED screen: the cell-diff paint path
+      // repaints only changed cells, so the pre-detach live-fold hint row
+      // can linger one frame after the detach (#550/#557 family).
+      await harness.waitForOutput(settleMs: 400);
+      final settled = harness.screenText;
+      expect(settled, isNot(contains('above fold')),
+          reason: 'detached: the live-fold hint belongs to following only');
+      expect(grown, greaterThan(firstCount),
+          reason: 'unseen arrivals keep counting while held');
 
       // (3) End re-engages: the hint row leaves the glass and the newest
       // content is at the live edge.
@@ -110,18 +120,40 @@ tui:
       final live = harness.screenText;
       expect(live, isNot(contains('above fold')),
           reason: 'the fold hint must not survive re-engage');
-      expect(live, isNot(contains('● 3 new')),
+      expect(live, isNot(contains(RegExp(r'● \d+ new'))),
           reason: 'the counter resets when the unseen tail is revealed');
-      expect(live, contains('Working'),
+      expect(live, contains('Background jobs'),
           reason: 're-engage lands on the LIVE edge: the busy tail is on '
               'the glass, not the parked view');
 
       // Let the run settle before teardown (no detached-pty noise): the
-      // last sleep tool still has up to 8s to drain.
+      // last sleep tool still has up to 8s to drain — and its completion
+      // text is the newest arrival, painted at the live edge.
       await harness.waitForText(
         'turn two done',
         timeout: const Duration(seconds: 30),
       );
+      await harness.waitForOutput(settleMs: 400);
+      expect(harness.screenText, contains('turn two done'),
+          reason: 'the newest arrival rides the live edge after re-engage');
     },
   );
+}
+
+/// Polls the SCREEN until the held-rule counter exceeds [from]; returns the
+/// parsed count. Screen-side (not raw) — the contract is the glass.
+Future<int> _waitCounterGrows(
+  FaCliHarness harness,
+  int from,
+) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 30));
+  while (DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    final match =
+        RegExp(r'● (\d+) new').firstMatch(harness.screenText);
+    if (match != null && int.parse(match.group(1)!) > from) {
+      return int.parse(match.group(1)!);
+    }
+  }
+  fail('held counter never grew past $from');
 }
