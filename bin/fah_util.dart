@@ -78,24 +78,62 @@ void _gracefulHeadlessExit(void Function() fireInterrupt) {
       if (run != null) {
         await run.timeout(const Duration(seconds: 10), onTimeout: () => 130);
       }
-      await stdout.flush();
+      // gh-1455: drain the serialized line chain instead of a bare flush —
+      // a flush racing the in-flight per-line flushes is the exact
+      // "StreamSink is bound to a stream" teardown crash.
+      await drainStdoutLines();
     }).whenComplete(() => exit(130)),
   );
+}
+
+/// gh-1455: the ONE write+flush chain for headless stdout (HEP v1 and
+/// stream-json lines). `stdout.flush()` marks the sink "bound" while in
+/// flight, so the old unawaited per-line `stdout.flush()` racing the next
+/// `writeln` — or the exit paths' own flush — threw the synchronous
+/// `StateError("StreamSink is bound to a stream")` from an event-callback
+/// frame: an uncaught zone error that crashed shutdown (crash.log) and let
+/// the process linger until the runner's stall-kill. Every link is
+/// guarded, so the chain itself can never reject; nothing escapes after
+/// teardown.
+Future<void> _stdoutLineChain = Future<void>.value();
+
+/// Appends one line to [_stdoutLineChain] — write, then flush, both
+/// guarded. Never throws.
+void _enqueueStdoutLine(String line) {
+  _stdoutLineChain = _stdoutLineChain.then((_) async {
+    try {
+      stdout.writeln(line);
+      await stdout.flush();
+    } on Object {
+      // The sink is being torn down (or its stream already closed): a
+      // crashed writer must not surface as an uncaught zone error.
+    }
+  });
+}
+
+/// Drains the line chain and flushes once more — the exit paths call this
+/// instead of a bare `await stdout.flush()` so a final flush can never
+/// overlap an in-flight chain link. Never throws.
+Future<void> drainStdoutLines() async {
+  await _stdoutLineChain;
+  try {
+    await stdout.flush();
+  } on Object {
+    // Same teardown guard as [_enqueueStdoutLine].
+  }
 }
 
 /// One HEP JSONL line to stdout, flushed immediately (issue #155): a
 /// supervisor tailing the pipe must never wait on a buffer.
 void _writeHepLine(String line) {
-  stdout.writeln(line);
-  stdout.flush();
+  _enqueueStdoutLine(line);
 }
 
 /// One stream-json NDJSON line to stdout, flushed immediately (issue
 /// #695): same live-pipe contract as HEP — `| jq` consumers tail the
 /// stream line by line, and jsonEncode output is always single-line.
 void _writeStreamJsonLine(String line) {
-  stdout.writeln(line);
-  stdout.flush();
+  _enqueueStdoutLine(line);
 }
 
 /// The mime reported when the magic-byte sniff misses — callers treat it
