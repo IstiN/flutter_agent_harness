@@ -229,6 +229,7 @@ export 'src/trajectory/trajectory_snapshot_builder.dart';
 export 'src/trajectory/trajectory_export.dart';
 export 'src/trajectory/search_index.dart';
 export 'src/skills/skill_availability.dart';
+export 'src/skills/skill_pointer.dart';
 export 'src/skills/builtin_skills.dart';
 export 'src/skills/operative_pins.dart';
 export 'src/skills/skills.dart';
