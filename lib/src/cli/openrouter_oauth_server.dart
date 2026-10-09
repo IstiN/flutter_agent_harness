@@ -10,6 +10,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../providers/openrouter_oauth.dart';
+import 'pi_mode.dart' show isTruthyEnvValue;
 
 /// A one-shot HTTP server that captures the OpenRouter OAuth callback on
 /// localhost.
@@ -213,7 +214,9 @@ bool shouldLaunchBrowser({
   bool? isLinux,
 }) {
   if (noBrowserFlag) return false;
-  if (isTruthyEnvValue((environment ?? Platform.environment)[noBrowserEnvVar])) {
+  if (isTruthyEnvValue(
+    (environment ?? Platform.environment)[noBrowserEnvVar],
+  )) {
     return false;
   }
   return !isHeadlessOrRemoteSession(
@@ -299,8 +302,12 @@ Future<bool> openBrowser(String url) async {
 /// Runs the full automatic OAuth flow for the CLI: starts a localhost server,
 /// opens the browser, waits for the callback, and exchanges the code.
 ///
-/// [onStatus] receives human-readable status lines ("open this URL", "waiting",
-/// etc.). [openBrowserFn] and [exchangeFn] are injectable for tests.
+/// [onStatus] receives human-readable status lines ("authorization URL",
+/// "waiting", etc.). [openBrowserFn], [exchangeFn], [shouldOpenBrowserFn]
+/// and [timeout] are injectable for tests. The authorization URL is printed
+/// in every outcome (gh-1450); a `false` [shouldOpenBrowserFn] skips the
+/// launch entirely (the `--no-browser` flag / `FA_NO_BROWSER` env /
+/// headless auto-detect precedence resolves upstream).
 Future<OpenRouterOAuthKey?> runOpenRouterOAuthCliFlow({
   required void Function(String) onStatus,
   Future<bool> Function(String) openBrowserFn = openBrowser,
@@ -312,12 +319,14 @@ Future<OpenRouterOAuthKey?> runOpenRouterOAuthCliFlow({
       exchangeFn =
       _defaultExchange,
   String keyLabel = openRouterDefaultKeyLabel,
+  bool Function() shouldOpenBrowserFn = defaultBrowserLaunchPolicy,
+  Duration timeout = const Duration(minutes: 5),
 }) async {
   final verifier = generateOpenRouterCodeVerifier();
   final challenge = generateOpenRouterCodeChallenge(verifier);
   final server = OpenRouterOAuthLocalCallbackServer();
 
-  final callbackUrl = await server.start();
+  final callbackUrl = await server.start(timeout: timeout);
   onStatus('listening for OAuth callback on $callbackUrl');
 
   final authUrl = buildOpenRouterAuthUrl(
@@ -326,17 +335,19 @@ Future<OpenRouterOAuthKey?> runOpenRouterOAuthCliFlow({
     keyLabel: keyLabel,
   );
 
-  final opened = await openBrowserFn(authUrl.toString());
-  if (opened) {
-    onStatus('browser opened; complete authorization on the OpenRouter page');
-  } else {
-    onStatus('could not open browser automatically');
-    onStatus('open this URL manually: $authUrl');
-  }
+  await openAuthUrlWithStatus(
+    url: authUrl.toString(),
+    launchBrowser: shouldOpenBrowserFn(),
+    openBrowserFn: openBrowserFn,
+    onStatus: onStatus,
+    openedMessage:
+        'browser opened; complete authorization on the OpenRouter page',
+  );
 
   final code = await server.waitForCode();
   if (code == null || code.isEmpty) {
     onStatus('no authorization code received (timeout or cancelled)');
+    onStatus('$authorizationUrlPrefix$authUrl');
     return null;
   }
   onStatus('authorization code received, exchanging for API key...');

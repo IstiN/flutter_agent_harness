@@ -6,6 +6,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/src/cli/chatgpt_oauth_server.dart';
+import 'package:flutter_agent_harness/src/cli/openrouter_oauth_server.dart'
+    show authorizationUrlPrefix;
 import 'package:flutter_agent_harness/src/providers/chatgpt_oauth.dart';
 import 'package:test/test.dart';
 
@@ -162,6 +164,7 @@ void main() {
         ports: const [0],
         onStatus: (status) => driver.record(statuses, status),
         openBrowserFn: (_) async => false,
+        shouldOpenBrowserFn: () => true,
         exchangeFn:
             ({
               required String code,
@@ -186,6 +189,8 @@ void main() {
       expect(statuses, contains(contains('listening for ChatGPT OAuth')));
       expect(statuses, contains(contains('could not open browser')));
       expect(statuses, contains('ChatGPT authorized'));
+      // gh-1450 AC1: the URL prints in every outcome.
+      _expectExactlyOneAuthorizationUrlLine(statuses);
     });
 
     test('returns null on a state mismatch', () async {
@@ -197,6 +202,7 @@ void main() {
         ports: const [0],
         onStatus: (status) => driver.record(statuses, status),
         openBrowserFn: (_) async => true,
+        shouldOpenBrowserFn: () => true,
         exchangeFn:
             ({
               required String code,
@@ -226,6 +232,8 @@ void main() {
         contains('browser opened; complete authorization with ChatGPT'),
       );
       expect(statuses, contains('ChatGPT authorization callback was invalid'));
+      // gh-1450 AC1: the URL line survives in the success branch too.
+      _expectExactlyOneAuthorizationUrlLine(statuses);
     });
 
     test('returns null on a provider error callback', () async {
@@ -236,6 +244,7 @@ void main() {
         ports: const [0],
         onStatus: (status) => driver.record(statuses, status),
         openBrowserFn: (_) async => false,
+        shouldOpenBrowserFn: () => true,
         exchangeFn:
             ({
               required String code,
@@ -258,6 +267,54 @@ void main() {
       );
     });
 
+    test('skips the launch when the policy says so (gh-1450 AC2/AC3)', () async {
+      final statuses = <String>[];
+      final driver = _FlowDriver();
+      var launches = 0;
+
+      final flowFuture = runChatGptOAuthCliFlow(
+        ports: const [0],
+        onStatus: (status) => driver.record(statuses, status),
+        openBrowserFn: (_) async {
+          launches++;
+          return true;
+        },
+        shouldOpenBrowserFn: () => false,
+      );
+
+      final state = await driver.authorizeState();
+      await driver.getCallback({'code': 'flow-code', 'state': state});
+      await flowFuture;
+
+      // The launch function is never called; the URL still prints.
+      expect(launches, 0);
+      expect(statuses, contains(contains('browser launch skipped')));
+      _expectExactlyOneAuthorizationUrlLine(statuses);
+    });
+
+    test('a throwing launcher degrades to the failure branch with the URL '
+        '(gh-1450 E3)', () async {
+      final statuses = <String>[];
+      final driver = _FlowDriver();
+
+      final flowFuture = runChatGptOAuthCliFlow(
+        ports: const [0],
+        onStatus: (status) => driver.record(statuses, status),
+        openBrowserFn: (_) => throw StateError('no browser'),
+        shouldOpenBrowserFn: () => true,
+      );
+
+      final state = await driver.authorizeState();
+      await driver.getCallback({'code': 'flow-code', 'state': state});
+      await flowFuture;
+
+      expect(
+        statuses,
+        contains(contains('could not open browser automatically')),
+      );
+      _expectExactlyOneAuthorizationUrlLine(statuses);
+    });
+
     test('returns null when no callback arrives before the timeout', () async {
       final statuses = <String>[];
 
@@ -265,6 +322,7 @@ void main() {
         ports: const [0],
         onStatus: statuses.add,
         openBrowserFn: (_) async => false,
+        shouldOpenBrowserFn: () => true,
         timeout: const Duration(milliseconds: 50),
         exchangeFn:
             ({
@@ -279,6 +337,45 @@ void main() {
         statuses,
         contains(contains('no authorization callback received')),
       );
+      // gh-1450 AC4: the timeout carries the URL as the last-chance rescue.
+      expect(statuses.last, contains(authorizationUrlPrefix));
+      expect(statuses.last, contains('auth.openai.com'));
+    });
+
+    test('no code/verifier value ever appears in the printed lines '
+        '(gh-1450 AC5)', () async {
+      final statuses = <String>[];
+      final driver = _FlowDriver();
+      const secretCode = 'super-secret-auth-code-1234567890';
+      const secretVerifier = 'super-secret-pkce-verifier-1234567890';
+
+      final flowFuture = runChatGptOAuthCliFlow(
+        ports: const [0],
+        onStatus: (status) => driver.record(statuses, status),
+        openBrowserFn: (_) async => false,
+        shouldOpenBrowserFn: () => true,
+        exchangeFn:
+            ({
+              required String code,
+              required String redirectUri,
+              required String verifier,
+            }) async {
+              expect(verifier, secretVerifier);
+              return const ChatGptOAuthCredentials(
+                accessToken: '[REDACTED:Sensitive Value]',
+                refreshToken: '[REDACTED:Sensitive Value]',
+                idToken: 'i',
+              );
+            },
+      );
+
+      final state = await driver.authorizeState();
+      await driver.getCallback({'code': secretCode, 'state': state});
+      await flowFuture;
+
+      final joined = statuses.join('\n');
+      expect(joined, isNot(contains(secretCode)));
+      expect(joined, isNot(contains(secretVerifier)));
     });
 
     test('returns null when the token exchange fails', () async {
@@ -289,6 +386,7 @@ void main() {
         ports: const [0],
         onStatus: (status) => driver.record(statuses, status),
         openBrowserFn: (_) async => false,
+        shouldOpenBrowserFn: () => true,
         exchangeFn:
             ({
               required String code,
@@ -307,10 +405,22 @@ void main() {
   });
 }
 
+/// Asserts exactly one copyable `authorization URL: <url>` line was printed
+/// (gh-1450 AC1) — a single line, full URL, no truncation.
+void _expectExactlyOneAuthorizationUrlLine(List<String> statuses) {
+  final lines = statuses
+      .where((s) => s.startsWith(authorizationUrlPrefix))
+      .toList();
+  expect(lines, hasLength(1), reason: 'exactly one authorization URL line');
+  final url = lines.single.substring(authorizationUrlPrefix.length);
+  expect(url, startsWith('https://'));
+  expect(url, contains('auth.openai.com'));
+  expect(url, isNot(contains('…')), reason: 'never truncated');
+}
+
 /// Tracks the URLs the flow reports via `onStatus` and drives the callback.
 final class _FlowDriver {
   static const _listeningPrefix = 'listening for ChatGPT OAuth callback on ';
-  static const _manualPrefix = 'open this URL manually: ';
 
   final _listening = Completer<String>();
   final _manualUrl = Completer<Uri>();
@@ -320,8 +430,10 @@ final class _FlowDriver {
     if (status.startsWith(_listeningPrefix) && !_listening.isCompleted) {
       _listening.complete(status.substring(_listeningPrefix.length));
     }
-    if (status.startsWith(_manualPrefix) && !_manualUrl.isCompleted) {
-      _manualUrl.complete(Uri.parse(status.substring(_manualPrefix.length)));
+    if (status.startsWith(authorizationUrlPrefix) && !_manualUrl.isCompleted) {
+      _manualUrl.complete(
+        Uri.parse(status.substring(authorizationUrlPrefix.length)),
+      );
     }
   }
 
