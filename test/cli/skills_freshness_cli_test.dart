@@ -47,6 +47,48 @@ final class _CountingEnv implements ExecutionEnv {
   String get cwd => inner.cwd;
 
   @override
+  Future<Result<String, FileError>> absolutePath(String path) =>
+      inner.absolutePath(path);
+
+  @override
+  Future<Result<String, FileError>> joinPath(List<String> parts) =>
+      inner.joinPath(parts);
+
+  @override
+  Future<Result<String, FileError>> readTextFile(String path) async {
+    if (path.endsWith('.md')) skillBodyReads.add(path);
+    return inner.readTextFile(path);
+  }
+
+  @override
+  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
+      inner.readBinaryFile(path);
+
+  @override
+  Future<Result<List<String>, FileError>> readTextLines(
+    String path, {
+    int? maxLines,
+  }) => inner.readTextLines(path, maxLines: maxLines);
+
+  @override
+  Future<Result<void, FileError>> writeBinaryFile(
+    String path,
+    Uint8List content,
+  ) => inner.writeBinaryFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> writeFile(String path, String content) =>
+      inner.writeFile(path, content);
+
+  @override
+  Future<Result<void, FileError>> appendFile(String path, String content) =>
+      inner.appendFile(path, content);
+
+  @override
+  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
+      inner.fileInfo(path);
+
+  @override
   Future<Result<List<FileInfo>, FileError>> listDir(String path) async {
     final doomed = throwOnListDir;
     if (doomed != null && doomed == path) {
@@ -57,14 +99,26 @@ final class _CountingEnv implements ExecutionEnv {
   }
 
   @override
-  Future<Result<String, FileError>> readTextFile(String path) async {
-    if (path.endsWith('.md')) skillBodyReads.add(path);
-    return inner.readTextFile(path);
-  }
+  Future<Result<bool, FileError>> exists(String path) => inner.exists(path);
 
   @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      super.noSuchMethod(invocation);
+  Future<Result<void, FileError>> createDir(
+    String path, {
+    bool recursive = true,
+  }) => inner.createDir(path, recursive: recursive);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => inner.remove(path, recursive: recursive, force: force);
+
+  @override
+  Future<Result<ShellExecResult, ExecutionError>> exec(
+    String command, {
+    ShellExecOptions? options,
+  }) => inner.exec(command, options: options);
 }
 
 void main() {
