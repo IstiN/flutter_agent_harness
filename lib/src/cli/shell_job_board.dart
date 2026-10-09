@@ -262,7 +262,12 @@ final class ShellJobBoard {
   /// Terminal material for the scrolling transcript, draining exactly once:
   /// individual cards for non-collapsed turns, one summary card (plus
   /// prominent lost cards) per collapsed turn once ALL its jobs settled.
-  List<String> takeTranscriptLines({required int width}) {
+  /// [fit] threads the gh-1433 card mode: the log face wraps (the command
+  /// and the `log:` pointer never ellipsize), the TUI pane clips.
+  List<String> takeTranscriptLines({
+    required int width,
+    CardTextFit fit = CardTextFit.clip,
+  }) {
     final lines = <String>[];
     // Issue #503: resume-lost cards never print individually — N four-line
     // cards flood the first glass and evict the resumed transcript tail.
@@ -291,11 +296,11 @@ final class ShellJobBoard {
         // individually: a failure is never summarized away (issue #429).
         if (card.state == TaskBlockState.done) continue;
         _emittedCardIds.add(card.id);
-        lines.addAll(taskBlockLines(card, width: width));
+        lines.addAll(taskBlockLines(card, width: width, fit: fit));
         continue;
       }
       _emittedCardIds.add(card.id);
-      lines.addAll(taskBlockLines(card, width: width));
+      lines.addAll(taskBlockLines(card, width: width, fit: fit));
     }
     final turns = _cards.map((c) => c.turn).toSet().toList()..sort();
     for (final t in turns) {
