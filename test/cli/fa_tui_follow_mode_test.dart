@@ -294,6 +294,48 @@ void main() {
       );
     });
 
+    test('E1 (re-review): a trim while held with variable-height lines '
+        'keeps the exact reading row — offset = anchor row − rows the '
+        'dropped head consumed, not the old cache read at the shifted '
+        'line', () {
+      // Heterogeneous wrapped heights (200-char lines every 7th entry
+      // wrap at 80 cols; pads are single rows): with uniform heights the
+      // wrong derivation — indexing the PRE-trim wrap cache at the
+      // shifted line — coincides with the correct row, which is why the
+      // original E1 test passed vacuously (its trim fired before the
+      // hold, so cut was always 0).
+      final lines = <String>[
+        for (var i = 0; i < 1999; i++)
+          i % 7 == 0 ? 'LONG $i ${'x' * 200}' : 'pad $i',
+        '',
+      ];
+      var model = _build().copyWith(outputLines: lines);
+      model = _send(model, OutputMsg('seed', newline: true));
+      model = _send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageUp)));
+      final visibleBefore = _rowsOf(model).take(19).join('\n');
+
+      // One burst crosses the 2400-line cap while held: the trim drops
+      // head lines (cut > 0) in the SAME append the reader is held
+      // through.
+      model = _send(
+        model,
+        OutputMsg(
+          [for (var i = 0; i < 500; i++) 'burst $i'].join('\n'),
+          newline: true,
+        ),
+      );
+      expect(model.followTail, isFalse);
+      final visibleAfter = _rowsOf(model).take(19).join('\n');
+      expect(
+        visibleAfter,
+        visibleBefore,
+        reason:
+            'the trim must not shift what the user is reading: the '
+            'window re-anchors to the anchor line\'s row minus the rows '
+            'the dropped head consumed',
+      );
+    });
+
     test('E2: resize mid-hold recomputes the same logical position', () {
       var model = filled(60, termHeight: 24);
       model = _send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageUp)));
