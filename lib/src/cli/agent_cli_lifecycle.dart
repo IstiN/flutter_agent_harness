@@ -130,9 +130,8 @@ extension AgentCliLifecycle on AgentCli {
   /// the ceiling the loop gives up and the detach summary below applies;
   /// `shellJobDrainMs: 0` disables the drain entirely.
   Future<void> _awaitHeadlessBackgroundJobs() async {
-    final deadline = _waitingClock().add(
-      Duration(milliseconds: config.headless.shellJobDrainMs),
-    );
+    final drainMs = config.headless.shellJobDrainMs;
+    final deadline = _waitingClock().add(Duration(milliseconds: drainMs));
     var namedWaiting = false;
     for (var round = 0; round < 10; round++) {
       final subActive = _taskConfig.jobManager.jobs.any(
@@ -151,19 +150,7 @@ extension AgentCliLifecycle on AgentCli {
         now: _waitingClock(),
         deadline: deadline,
       );
-      if (action != HeadlessDrainAction.drain) {
-        // The ceiling cut a live drain short: say so once — the detach
-        // summary below is the degradation, not a silent hang.
-        if (action == HeadlessDrainAction.detach) {
-          io.writeln(
-            _style.dim(
-              '⏳ background-job drain ceiling '
-              '(${config.headless.shellJobDrainMs} ms) reached — detaching',
-            ),
-          );
-        }
-        break;
-      }
+      if (action != HeadlessDrainAction.drain) break;
       // The #1055-parity waiting line, once per drain: the run stays
       // alive for these and says so.
       if (!namedWaiting) {
@@ -194,6 +181,26 @@ extension AgentCliLifecycle on AgentCli {
     if (isBusy) {
       await _settled;
       await _afterRun();
+    }
+    // Anything still live when the drain gives up was cut short by the
+    // ceiling (or its 10-round cap racing the same wall budget — the
+    // wake legs ride the monotonic timer clock, the deadline the wall
+    // clock): say so once, then let the detach summary below name the
+    // jobs — the documented degradation, never a silent hang (gh-1459).
+    final stillActive =
+        _taskConfig.jobManager.jobs.any(
+          (job) =>
+              job.status == TaskJobStatus.queued ||
+              job.status == TaskJobStatus.running,
+        ) ||
+        _shellJobs.jobs.any((job) => job.isRunning && job.notifyOnSettle);
+    if (stillActive) {
+      io.writeln(
+        _style.dim(
+          '⏳ background-job drain ceiling ($drainMs ms) reached — '
+          'detaching',
+        ),
+      );
     }
   }
 

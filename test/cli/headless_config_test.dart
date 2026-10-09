@@ -3,7 +3,6 @@
 /// (active jobs → drain; none → exit; ceiling exceeded → detach).
 library;
 
-import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/headless_config.dart';
 import 'package:test/test.dart';
 
