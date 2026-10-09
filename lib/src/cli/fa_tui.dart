@@ -35,6 +35,7 @@ import 'tui_chrome.dart';
 import 'termios_guard.dart' show SttyRunner;
 import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks, stripAnsi;
 import 'system_notice_render.dart';
+import '../viewport/follow_mode.dart';
 import 'tui_text_width.dart'
     show tuiFitWidth, tuiGraphemeWidth, tuiPadRight, tuiTextWidth;
 import '../messaging/scheduled_messages.dart' show ScheduledMessageQueue;
@@ -268,6 +269,7 @@ final class FaTuiModel extends Model {
     TuiLineEditor? editor,
     this.scrollOffset = 0,
     this.follow = const FollowMode.live(),
+    this.heldAnchorLine = -1,
     this.menuOpen = false,
     this.menuModelMode = false,
     this.menuSelected = 0,
@@ -722,7 +724,8 @@ final class FaTuiModel extends Model {
     int? cursor,
     TuiLineEditor? editor,
     int? scrollOffset,
-    bool? followTail,
+    FollowMode? follow,
+    int? heldAnchorLine,
     bool? menuOpen,
     bool? menuModelMode,
     int? menuSelected,
@@ -782,7 +785,8 @@ final class FaTuiModel extends Model {
                   ),
                 )),
       scrollOffset: scrollOffset ?? this.scrollOffset,
-      followTail: followTail ?? this.followTail,
+      follow: follow ?? this.follow,
+      heldAnchorLine: heldAnchorLine ?? this.heldAnchorLine,
       menuOpen: menuOpen ?? this.menuOpen,
       menuModelMode: menuModelMode ?? this.menuModelMode,
       menuSelected: menuSelected ?? this.menuSelected,
@@ -958,14 +962,25 @@ final class FaTuiModel extends Model {
       bootAnchorLine: _bootAnchorShiftedBy(cut),
       stickyIndex: _stickyShiftedBy(cut),
     );
-    final nextWrapped = next._wrappedLines();
-    // Auto-follow the stream while the latch holds; preserve the scroll
-    // position (clamped) when the user scrolled up. Following re-anchors
-    // at the live edge (issue #1348) — the stream owns the window.
-    final nextOffset = followTail
-        ? next._followAnchor(nextWrapped)
-        : next._clampScroll(scrollOffset, nextWrapped);
-    return (next.copyWith(scrollOffset: nextOffset), null);
+    // Held (gh-1439): the append is COUNTED, never shown by force — the
+    // window re-anchors to the same transcript line (E1: a head trim
+    // shifts the anchor by the cut; the wrapped-row offset is recomputed
+    // from the anchor, not preserved raw). Live: today's behavior — the
+    // stream owns the window (issue #1348).
+    if (followTail) {
+      final nextWrapped = next._wrappedLines();
+      return (
+        next.copyWith(scrollOffset: next._followAnchor(nextWrapped)),
+        null,
+      );
+    }
+    final trimmedRows = _heldAnchorShiftedByCut(cut);
+    final reanchored = next.copyWith(
+      heldAnchorLine: trimmedRows.$1,
+      scrollOffset: trimmedRows.$2,
+      follow: follow.appended(1),
+    );
+    return (reanchored, null);
   }
 
   /// Last-resort busy bracket: a row with zero activity for this long is a
@@ -998,7 +1013,8 @@ final class FaTuiModel extends Model {
     );
     final next = cleared.copyWith(
       scrollOffset: cleared._followAnchor(cleared._wrappedLines()),
-      followTail: true,
+      follow: const FollowMode.live(),
+      heldAnchorLine: -1,
     );
     return (next, null);
   }
@@ -1251,7 +1267,10 @@ final class FaTuiModel extends Model {
     final wrapped = resized._wrappedLines(msg.width);
     return (
       resized.copyWith(
-        scrollOffset: resized._clampScroll(scrollOffset, wrapped),
+        // Held (gh-1439 E2): the anchor is a transcript line — the new
+        // wrap names the same logical position at the new size. Live:
+        // plain clamp (the anchor recomputes on the next append).
+        scrollOffset: resized._heldAnchorRow(wrapped),
       ),
       () async => ClearScreenMsg(),
     );
@@ -1278,15 +1297,16 @@ final class FaTuiModel extends Model {
       return (this, null);
     }
     // Mouse wheel scrolls the chat history, like Copilot's transcript pane.
-    final delta = switch (msg.mouse.button) {
-      MouseButton.wheelUp => -3,
-      MouseButton.wheelDown => 3,
-      _ => 0,
-    };
-    if (delta != 0) {
-      return (_scrolledTo(scrollOffset + delta), null);
+    // gh-1439: the wheel is a page gesture — up disengages follow, down
+    // re-arms inside the shared near-bottom band.
+    switch (msg.mouse.button) {
+      case MouseButton.wheelUp:
+        return (_scrolledTo(scrollOffset - 3, towardLive: false, pageGesture: true), null);
+      case MouseButton.wheelDown:
+        return (_scrolledTo(scrollOffset + 3, towardLive: true, pageGesture: true), null);
+      default:
+        return (this, null);
     }
-    return (this, null);
   }
 
   (Model, Cmd?) _handleMultiCharRunes(KeyPressMsg msg) {
@@ -1328,6 +1348,7 @@ final class FaTuiModel extends Model {
 
     // Normal input editing.
     return _handleControlKey(msg) ??
+        _handleJumpLiveKey(msg) ??
         _handleScrollKey(msg) ??
         _handleCursorNavKey(msg) ??
         _handleEditKey(msg);
@@ -1473,7 +1494,7 @@ final class FaTuiModel extends Model {
               null,
             );
           }
-          return (_scrolledTo(scrollOffset - 1), null);
+          return (_scrolledTo(scrollOffset - 1, towardLive: false), null);
         }
         return (this, null);
       case 'down':
@@ -1504,7 +1525,7 @@ final class FaTuiModel extends Model {
           );
         }
         if (inputText.isEmpty) {
-          return (_scrolledTo(scrollOffset + 1), null);
+          return (_scrolledTo(scrollOffset + 1, towardLive: true), null);
         }
         return (this, null);
       default:
@@ -1513,16 +1534,39 @@ final class FaTuiModel extends Model {
   }
 
   /// Normal-mode page scroll keys (pgup/pgdown); null when the key belongs
-  /// to another cluster.
+  /// to another cluster. gh-1439: PgUp disengages follow; PgDn re-engages
+  /// when it lands inside the near-bottom band (past the newest content).
   (Model, Cmd?)? _handlePageScrollKey(KeyMsg msg) {
     switch (msg.key) {
       case 'pgup':
-        return (_scrolledTo(scrollOffset - _viewportHeight), null);
+        return (
+          _scrolledTo(
+            scrollOffset - _viewportHeight,
+            towardLive: false,
+            pageGesture: true,
+          ),
+          null,
+        );
       case 'pgdown':
-        return (_scrolledTo(scrollOffset + _viewportHeight), null);
+        return (
+          _scrolledTo(
+            scrollOffset + _viewportHeight,
+            towardLive: true,
+            pageGesture: true,
+          ),
+          null,
+        );
       default:
         return null;
     }
+  }
+
+  /// gh-1439 re-engage key: End jumps to live when the composer is empty
+  /// (one action, count flushed). With composer text End stays the caret
+  /// key — the cluster below owns it.
+  (Model, Cmd?)? _handleJumpLiveKey(KeyMsg msg) {
+    if (msg.key != 'end' || inputText.isNotEmpty) return null;
+    return (_jumpToLive(), null);
   }
 
   /// Normal-mode cursor motion keys; null when the key belongs to another
@@ -1856,7 +1900,8 @@ final class FaTuiModel extends Model {
       // above the composer, prior history directly above it.
       cleared.copyWith(
         scrollOffset: cleared._followAnchor(cleared._wrappedLines()),
-        followTail: true,
+        follow: const FollowMode.live(),
+        heldAnchorLine: -1,
       ),
       _submitCmd(text, images),
     );
@@ -1983,7 +2028,8 @@ final class FaTuiModel extends Model {
     return (
       cleared.copyWith(
         scrollOffset: cleared._followAnchor(cleared._wrappedLines()),
-        followTail: true,
+        follow: const FollowMode.live(),
+        heldAnchorLine: -1,
       ),
       () async {
         await callbacks.onSteer?.call(messages);
@@ -2070,6 +2116,20 @@ final class FaTuiModel extends Model {
         kind: TuiRegionKind.scrollback,
       ),
     );
+    // The held-mode jump chip (gh-1439): when the rule row carries the
+    // `● N new` counter, the row is the on-screen re-engage affordance —
+    // added AFTER the scrollback rect so the chip wins the overlap.
+    if (!followTail && follow.unseen > 0) {
+      _hitRegions.add(
+        TuiHitRegion(
+          x: 0,
+          y: stickyRows + historyRows,
+          w: termWidth,
+          h: 1,
+          kind: TuiRegionKind.jumpLive,
+        ),
+      );
+    }
 
     // Menu above input.
     var row = stickyRows + historyRows + 1;

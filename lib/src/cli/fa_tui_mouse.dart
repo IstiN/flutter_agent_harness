@@ -66,6 +66,10 @@ extension _TuiMouseRegions on FaTuiModel {
         if (index < 0 || index >= queue.length) return (this, null);
         final next = [...queue]..removeAt(index);
         return (copyWith(queue: next), null);
+      case TuiRegionKind.jumpLive:
+        // The held-mode jump chip (gh-1439): the counter row IS the
+        // on-screen re-engage affordance — one click returns to live.
+        return (_jumpToLive(), null);
       case TuiRegionKind.scrollback:
         return (this, null);
     }
