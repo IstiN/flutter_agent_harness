@@ -19,6 +19,8 @@ library;
 
 import 'dart:async';
 
+import 'package:meta/meta.dart';
+
 import 'tool_liveness.dart';
 
 /// The pinned line format (gh-1198 AC4): `… reasoning Ns` — single line,
@@ -178,6 +180,11 @@ final class StreamLivenessHeartbeat {
 
   /// True while a provider request is watched and nothing has rendered.
   bool get armed => _since != null;
+
+  /// Whether an unrendered event arrived since the last print (test
+  /// seam only — the aliveness observable).
+  @visibleForTesting
+  bool get dirtyForTest => _dirty;
 
   /// A provider request went out: begin watching its rendering gap. Arms
   /// over a stale watch (a new request restarts the elapsed base — the

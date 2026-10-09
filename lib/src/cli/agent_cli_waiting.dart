@@ -1103,6 +1103,16 @@ extension AgentCliWaitingSeams on AgentCli {
   @visibleForTesting
   bool get streamLivenessActiveForTest => _waiting.streamHeartbeat.armed;
 
+  /// Test seam: whether an unrendered event arrived in the heartbeat's
+  /// window since the last print (gh-1430) — the aliveness observable an
+  /// integration test waits on after pushing a stream event.
+  @visibleForTesting
+  bool get streamLivenessDirtyForTest {
+    final heart = _waiting.streamHeartbeat;
+    // ignore: invalid_use_of_visible_for_testing_member
+    return heart.armed && heart.dirtyForTest;
+  }
+
   /// Test seam: opens the compaction liveness window (gh-1430 E3) without
   /// running a real compaction pass.
   @visibleForTesting

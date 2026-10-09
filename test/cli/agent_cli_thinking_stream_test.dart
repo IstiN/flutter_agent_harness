@@ -661,6 +661,10 @@ void main() {
       // The burst keeps emitting: a fresh delta re-arms the window and
       // the next tick prints again — the pane grows monotonically.
       fake.pushThinking(' still going');
+      await waitForIt(
+        () => cli.streamLivenessDirtyForTest,
+        reason: 'the pushed delta reached the host and marked the window',
+      );
       now = now.add(const Duration(seconds: 60));
       cli.streamLivenessTickForTest();
       expect(io.out.toString(), contains('… reasoning 120s (streaming)'));

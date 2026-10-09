@@ -14,8 +14,7 @@ ceiling itself was the killer (play-zork worked productively for 72 min,
 136 turns, and was still guillotined by the ladder cap). ProgressWatch,
 the new kill decision in this module, replaces the byte-growth ceiling
 with a GAP-aware one: a trial counts as progressing while
-inter-assistant-record gaps stay under FA_STALL_GAP_SEC (default 240s —
-round-2 healthy max gap was ~200s, class-B gaps start ~240s); a
+inter-assistant-record gaps stay under FA_STALL_GAP_SEC; a
 progressing trial dies only at FA_AGENT_TIMEOUT_ABS_CEILING_SEC (default
 3600s, flat — the agent phase does NOT consume the verifier's test
 budget; tb enforces the test phase separately, and the adapter never
@@ -23,6 +22,27 @@ folds a test budget in). A gap >= the threshold marks the trial
 stalled and the ladder resumes counting (last progress + idle window) —
 a genuinely stuck agent still dies, and a class-C catastrophic stall now
 dies at the gap boundary instead of burning the whole ladder.
+
+Round 4 (gh-1430) — the stall-gap default couples to fa's OWN stream
+watchdog: the shipped gap is now 360s (fa's providerStreamIdleTimeout,
+300s, + a 60s poll-jitter margin), and the ordering invariant is part of
+this module's contract:
+
+    fa's watchdog is the sole arbiter of stream death; the bench gap
+    only catches pane/process death.
+
+A healthy reasoning stream can sit minutes between rendered bytes (the
+first event of a reasoning model is a thinking delta, which headless fa
+does not render) — fa's own in-band liveness (`… reasoning Ns
+(streaming)` heartbeats, gh-1430) keeps the pane growing while events
+flow, and fa's stream-idle watchdog errors a truly dead stream at 300s,
+BEFORE this module's 360s gap could fire. The bench must never SIGKILL a
+stream fa itself considers live, so the gap default may never drop to or
+below the watchdog (the shipped REG in test_fa_agent_timeout.py pins
+this against the Dart source and fails if either side drifts). Round-2
+healthy max gap was ~200s; the pre-gh-1430 default (240s) was the
+round-4 killer (13 tasks ≈ 16% killed mid-thinking, stopReason
+"aborted", zero provider errors).
 
 The legacy ProgressLadder stays untouched for runs that do not set the
 new knobs: with FA_STALL_GAP_SEC / FA_AGENT_TIMEOUT_ABS_CEILING_SEC both
@@ -36,15 +56,18 @@ default workflow run keeps today's byte-for-byte behavior):
   FA_AGENT_IDLE_WINDOW_SEC     silence span that constitutes a stall (default 120)
   FA_AGENT_CEILING_MULTIPLIER  hard ceiling = base * this (default 4)
   FA_STALL_GAP_SEC             progress-watch: inter-record gap that marks a
-                               stall (default 240 in watch mode)
+                               stall (default 360 in watch mode — gh-1430:
+                               fa's 300s stream-idle watchdog + 60s margin)
   FA_AGENT_TIMEOUT_ABS_CEILING_SEC  progress-watch: absolute kill ceiling the
                                extension can never pass (default 3600, flat;
                                the ADAPTER does not fold a test budget in)
 
 Extension signal (E1): the counters fed to ProgressLadder measure the
 agent process's own output bytes. The harness itself emits nothing into
-that stream on a timer, so a pure keep-alive source does not exist here;
-fa headless output is exactly deltas/tool activity.
+that stream on a timer — EXCEPT fa's own liveness lines (the ⏳ tool
+liveness family and, since gh-1430, the `… reasoning Ns (streaming)`
+heartbeat), which are fa's designed in-band liveness signal and are
+documented, not subtracted (see audit_dict / liveness_bytes_of).
 
 All times are SECONDS ELAPSED since the agent phase started — no clocks
 live in this module, so the ladder is deterministic and unit-testable.
@@ -59,7 +82,11 @@ from dataclasses import dataclass, field
 _BASE_DEFAULT = 360.0
 _IDLE_DEFAULT = 120.0
 _CEILING_DEFAULT = 4.0
-_STALL_GAP_DEFAULT = 240.0
+# gh-1430: fa's stream-idle watchdog (providerStreamIdleTimeout, 300s in
+# lib/src/providers/provider_common.dart) + a 60s margin for poll jitter
+# and one missed tick. MUST stay above the watchdog — the REG in
+# test_fa_agent_timeout.py reads the Dart source and enforces it.
+_STALL_GAP_DEFAULT = 360.0
 _ABS_CEILING_DEFAULT = 3600.0
 
 _STALL = "stall"
@@ -129,7 +156,13 @@ class TimeoutKnobs:
 
     @property
     def watch_stall_gap_sec(self) -> float:
-        """Effective stall-gap threshold (default 240s in watch mode)."""
+        """Effective stall-gap threshold.
+
+        gh-1430: default 360s in watch mode — fa's stream-idle watchdog
+        (300s) + a 60s margin. The ordering invariant lives in this
+        module's docstring: fa's watchdog is the sole arbiter of stream
+        death; the bench gap only catches pane/process death.
+        """
         if self.stall_gap_sec is not None:
             return self.stall_gap_sec
         return _STALL_GAP_DEFAULT
@@ -253,9 +286,9 @@ class ProgressWatch:
     - a sample whose gap (elapsed - last progress) >= stall-gap marks the
       trial STALLED (sticky): the ladder resumes counting and the kill
       lands at max(detection moment, last progress + idle window). With
-      the default stall-gap (240s) above the idle window (120s) that is
-      the gap boundary itself — a class-C catastrophic stall dies the
-      moment it is provable instead of burning the whole ladder.
+      the default stall-gap (360s, gh-1430) above the idle window (120s)
+      that is the gap boundary itself — a class-C catastrophic stall dies
+      the moment it is provable instead of burning the whole ladder.
     - new output bytes after a stall detection re-freeze the ladder
       (hysteresis, E1): the verdict cannot flap while the agent resumes.
     - extension disabled: flat base cap, the legacy regression pin.
