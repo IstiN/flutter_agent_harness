@@ -179,14 +179,22 @@ void main() {
           reason: 'the replayed tail must not lose its head ($row)',
         );
       }
-      // The banner above the fold is named, not lost (#827): the hint
-      // count is the banner's wrapped row count — exactly the 13 boot
-      // chrome rows — and scroll-up still reaches them (pinned at model
-      // level in the fold suite).
+      // gh-1446 AC1: the streaming fold row is TEXTLESS — the reserved
+      // row renders as a plain dim rule, so no row count ever reaches
+      // the glass (a rule row cannot leak row counts to shoulder-
+      // surfers). Reachability stays pinned at model level in the fold
+      // suite (the 13 boot chrome rows fold above and PgUp returns).
       expect(
         _hintN(screen),
-        13,
-        reason: 'the folded banner rows carry the indicator',
+        isNull,
+        reason: 'no `^ N lines above fold` text survives on the glass',
+      );
+      expect(
+        screen
+            .split('\n')
+            .any((r) => RegExp('^${'─' * width}\$').hasMatch(r)),
+        isTrue,
+        reason: 'the reserved row renders as the textless dim rule',
       );
     }, timeout: const Timeout(Duration(seconds: 60)));
   }

@@ -177,14 +177,16 @@ void main() {
       return lines[firstRule - 1];
     }
 
+    // gh-1446 AC4 control: the busy row is MOTIONLESS chrome now — the
+    // face zone is gone, so a full swap cadence of ticks repaints the row
+    // byte-identically (the ring lives in the status-line brand zone,
+    // AC5). The composer region shares that stability.
     final busyAt0 = busyRowOf(m);
-    // Pump one full swap cadence: the face only changes at the
-    // kKaomojiSwapTicks boundary (#1374) — sub-cadence ticks repaint
-    // without altering the row bytes.
     for (var i = 0; i < kKaomojiSwapTicks; i++) {
       m = send(m, SpinnerTickMsg());
     }
-    expect(busyRowOf(m), isNot(busyAt0), reason: 'ticks must repaint busy');
+    expect(busyRowOf(m), busyAt0,
+        reason: 'gh-1446 AC4: ticks never mutate the busy row bytes');
   });
 
   test('AC2: composer region carries ONLY composer-owned content', () {
