@@ -112,14 +112,24 @@ tui:
 
     // (c) the input frame is intact on its own rows: exactly two
     // full-width rules with an untouched (empty) composer zone between
-    // them — no board/busy/status bleed into the composer.
-    final rules = <int>[
-      for (var i = 0; i < grid.length; i++)
-        if (grid[i].trim() == '─' * 80) i,
-    ];
-    expect(rules, hasLength(2), reason: 'input frame: top + bottom rule');
-    final zone = grid.sublist(rules.first + 1, rules.last);
-    expect(zone, hasLength(1), reason: 'composer zone: ${grid.join("\n")}');
+    // them — no board/busy/status bleed into the composer. gh-1446 adds
+    // a THIRD full-width rule row elsewhere in the frame (the streaming
+    // fold indicator is now a textless dim rule), so the composer rules
+    // are located FROM the empty zone instead of counted.
+    var composerTop = -1;
+    for (var i = 1; i < grid.length - 1; i++) {
+      if (grid[i].trim().isEmpty &&
+          grid[i - 1].trim() == '─' * 80 &&
+          grid[i + 1].trim() == '─' * 80) {
+        composerTop = i;
+        break;
+      }
+    }
+    expect(composerTop, greaterThan(0),
+        reason: 'input frame: rules around an empty composer zone; '
+            'frame was:\n${grid.join('\n')}');
+    final zone = grid.sublist(composerTop, composerTop + 1);
+    expect(zone, hasLength(1), reason: 'composer zone: ${grid.join('\n')}');
     expect(zone.single.trim(), isEmpty, reason: 'empty composer row');
   });
 }

@@ -106,8 +106,10 @@ allowedTools: []
         timeout: const Duration(seconds: 10),
       );
       // On open the cursor sits on the first item — the flat/tree toggle;
-      // numbered rows follow in recency order (newest first).
-      expect(screen, contains('▸ ⟳ flat list'));
+      // numbered rows follow in recency order (newest first). The toggle's
+      // loop glyph resolves through the symbol table (gh-1446 AC8: the
+      // unicode preset's `icon.loop` = `↻`, no hardcoded `⟳`).
+      expect(screen, contains('▸ ↻ flat list'));
       expect(screen, contains('1) gamma-four'));
 
       // Type-to-filter `alp`: exactly the two alpha rows stay, selection

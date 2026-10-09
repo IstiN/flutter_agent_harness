@@ -190,11 +190,11 @@ void main() {
         reason: 'no `^ N lines above fold` text survives on the glass',
       );
       expect(
-        screen
-            .split('\n')
-            .any((r) => RegExp('^${'─' * width}\$').hasMatch(r)),
+        RegExp('─{$width}').hasMatch(screen),
         isTrue,
-        reason: 'the reserved row renders as the textless dim rule',
+        reason: 'the reserved row renders as the textless dim rule '
+            '(the frame stream places it with cursor addressing, so the '
+            'probe matches a dash RUN, not a newline-aligned row)',
       );
     }, timeout: const Timeout(Duration(seconds: 60)));
   }

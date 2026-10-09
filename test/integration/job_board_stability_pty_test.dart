@@ -80,10 +80,11 @@ final _turns = [
   ],
 ];
 
-/// The first wave's collapsed live summary row (5 running, nothing settled).
+/// The first wave's collapsed live summary row (gh-1446 signal format:
+/// the running count behind the modern glyph, no done/lost noise — the
+/// `· older` provenance marker stays, frozen at first print, #539).
 final _olderRow = RegExp(
-  r'Background jobs \(5\) · 5 running · 0 done · '
-  r'0 lost · older',
+  r'[◐○⬤\W] Background jobs \(5\) · older',
 );
 
 /// The first settle notice — `[bash] sh-… exited(0)` prints once per
@@ -337,10 +338,17 @@ void main() {
       );
       expect(
         after.join('\n'),
-        contains('Background jobs (6) · 6 running · 0 done · 0 lost'),
+        contains('Background jobs (6)'),
         reason:
-            'wave two stays live, frozen at its printed counts:\n'
+            'wave two stays live, frozen at its printed counts (gh-1446 '
+            'signal format — no count suffix when nothing is lost):\n'
             '${after.join('\n')}',
+      );
+      // gh-1446 AC2: the live line NEVER carries count words.
+      expect(
+        after.join('\n'),
+        isNot(contains('running ·')),
+        reason: 'the live board line names no `running` segment',
       );
 
       await harness.runSlashCommand('/exit');
