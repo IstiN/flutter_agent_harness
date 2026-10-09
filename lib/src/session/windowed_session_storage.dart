@@ -324,6 +324,23 @@ final class WindowedSessionStorage
   /// the model's context window; older history pages in lazily through
   /// the scrollback's [loadOlder] path. `null` keeps the pure
   /// match/file-head semantics.
+  ///
+  /// gh-1425 (AC1, replay equivalence): a boundary match only stops the
+  /// walk when the KEPT PATH is resident — the newest resident
+  /// [CompactionRecord]'s `firstKeptEntryId` onwards. The classic
+  /// transform keeps records from `firstKeptEntryId` UP TO the compaction
+  /// record, and a doubling-block bottom landing between the two (the
+  /// normal case on a marathon file) used to stop the walk with the kept
+  /// start below the window: `foundFirstKept` stayed false and the
+  /// transform silently dropped the whole kept region — records the live
+  /// session rendered, half-applying the fold chain at resume. Paging
+  /// continues (bounded by one doubling block plus the kept region) until
+  /// the kept start is resident; the [tokenBudget] stop is unaffected
+  /// (a budget-truncated resume renders the fold-consistent tail, and the
+  /// host's boot cap owns the over-window residue). Structured fold
+  /// records need no equivalent guard: a fold always references records
+  /// OLDER than itself (it is appended after them), so a fold record
+  /// inside the window can never target records below it.
   Future<bool> growOlderUntil(
     bool Function(SessionRecord record) found, {
     int maxPages = 512,
@@ -343,7 +360,7 @@ final class WindowedSessionStorage
         final leaf = await getLeafId();
         if (leaf == null) return true; // genuinely empty session
         final branch = await getPathToRoot(leaf);
-        if (branch.any(found)) return true;
+        if (branch.any(found) && _keptPathResident(branch)) return true;
         if (tokenBudget != null) {
           // Projection-aware whole-branch estimate (issue #503 round 3b):
           // hidden/covered records project as one-line markers or nothing
@@ -375,6 +392,22 @@ final class WindowedSessionStorage
     } finally {
       _suspendEviction = false;
     }
+  }
+
+  /// Whether the classic kept path is fully resident on [branch] (gh-1425
+  /// AC1): the newest resident [CompactionRecord]'s `firstKeptEntryId` is
+  /// resident too. A branch without a compaction record has no kept path
+  /// to complete. See [growOlderUntil] for why the boundary stop waits
+  /// for this.
+  bool _keptPathResident(List<SessionRecord> branch) {
+    CompactionRecord? compaction;
+    for (final record in branch) {
+      if (record is CompactionRecord) compaction = record;
+    }
+    if (compaction == null) return true;
+    final keptId = compaction.firstKeptEntryId;
+    if (keptId.isEmpty) return true; // defensive: nothing to wait for
+    return branch.any((record) => record.id == keptId);
   }
 
   /// Largest single block of the [growOlderUntil] walk — the per-page

@@ -312,7 +312,10 @@ class FaAgent(BaseInstalledAgent):
 
         progress = `wc -c` on the pane stream — the same measure the
         ladder's `_progress_bytes` samples, so both auditors agree.
-        liveness = byte count of the ⏳ lines inside it (grep passes whole
+        liveness = byte count of fa's liveness lines inside it — BOTH
+        families, matching [_timeout.liveness_bytes_of]: the ⏳
+        tool-liveness lines (gh-1055) and the `… reasoning`
+        reasoning-liveness lines (gh-1198/gh-1430). grep passes whole
         lines through, `wc -c` counts them; grep terminates a final
         unterminated line, the only ±1 w.r.t. the pure-Python rule in
         [_timeout.liveness_bytes_of] — an audit heuristic, not a spec).
@@ -322,7 +325,8 @@ class FaAgent(BaseInstalledAgent):
                 environment,
                 command=(
                     "if p=$(wc -c < /logs/agent/fa.txt 2>/dev/null); then "
-                    "l=$(grep -F '\u23f3' /logs/agent/fa.txt 2>/dev/null "
+                    "l=$(grep -hF -e '\u23f3' -e '… reasoning' "
+                    "/logs/agent/fa.txt 2>/dev/null "
                     "| wc -c); "
                     "printf '%s %s' \"$p\" \"$l\"; fi"
                 ),

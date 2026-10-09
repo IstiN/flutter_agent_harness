@@ -112,6 +112,16 @@ extension on AgentCli {
     _agent.reset();
     _checkpoints.clear();
     _ttsr?.reset();
+    // gh-1425 review (stale-abort boot-cap skip): _runAbortRequested is
+    // CLI-lifetime state — without this clear, an abort of the PREVIOUS
+    // session's run survives the switch and `_capResumedContext` (which
+    // treats the flag as "a run is being aborted right now") skips the
+    // boot cap, so a resumed over-window session idles above 100% until
+    // the first prompt resets the flag. An abort of the previous run has
+    // no meaning for the session being booted — clear it with the other
+    // per-session resets (the next prompt's own reset at
+    // `_beginUserPrompt` is untouched).
+    _runAbortRequested = false;
     _env.cwd = metadata.cwd;
     _modes = builtInAgentModes(_env.cwd, overrides: config.promptOverrides);
     _currentMode = _modes[_currentMode.name] ?? _modes['code']!;
@@ -635,6 +645,20 @@ extension on AgentCli {
     // session reopened as copilot). Re-apply the session folder's saved
     // triple.
     await _applySessionFolderModelState(session, leafModel: context.model);
+    // gh-1425 AC3 (the resume boot cap): a resume that lands over the
+    // compaction trigger is capped HERE — one forced pass at idle boot,
+    // before any user message — so the meter renders a post-cap number
+    // instead of idling above 100% until the first pre-flight. The
+    // boundary walk above bounds residency, but a reachable boundary
+    // whose kept-path projection is over the window (or a giant tail
+    // record the budget trim floors at) still boots over-window.
+    //
+    // Ordered AFTER the gh-1000 binding restore (gh-1425 review): the
+    // cap's summarizer requests must ride the session's OWN
+    // provider/model binding, not the launch default — otherwise every
+    // boot of a non-default-provider session bills (or 401s against) the
+    // wrong endpoint before the restore lands.
+    await _capResumedContext(session);
     return session;
   }
 
