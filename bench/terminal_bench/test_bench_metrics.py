@@ -230,8 +230,109 @@ class SessionGapTest(unittest.TestCase):
                         "message": {"role": "assistant"}})))
 
 
+class FullNarrativePaneTest(unittest.TestCase):
+    """gh-1433 AC7: the parsers stay correct on FULL-NARRATIVE pane
+    captures. Since the log-fidelity flip a headless fa -p pane carries
+    dimmed thinking deltas, streamed assistant prose, and tool rows
+    BETWEEN the FA_CONN lines (and no longer ends at the tool-only
+    shape). The parse contract is fail-soft noise tolerance: conn events,
+    session gaps, and verdicts must fold identically on both captures.
+    """
+
+    # The same two FA_CONN events, once on a tool-only pane (the
+    # pre-flip capture shape) and once interleaved with the full
+    # narrative a gh-1433 pane now carries.
+    conn_lines = [
+        'FA_CONN {"event":"first_byte","seq":1,"wallSec":12.5,'
+        '"fresh":true,"localPort":51000,"poolSize":0}',
+        'FA_CONN {"event":"first_byte","seq":2,"wallSec":3.25,'
+        '"fresh":false,"localPort":51001,"poolSize":1}',
+    ]
+
+    tool_only_pane = "\n".join(
+        [
+            "✓ bash · echo hi 0s",
+            conn_lines[0],
+            "• read · /work/main.dart",
+            conn_lines[1],
+        ]
+    )
+
+    full_narrative_pane = "\n".join(
+        [
+            "[2mI should check the layout first and count the rows.[0m",
+            "Reading the entry point now.",
+            "• bash · echo hi",
+            conn_lines[0],
+            "│ ✓ bash · echo hi 0s",
+            "[2mthe output looks clean — moving on to the next step[0m",
+            "All done \u2014 found it.",
+            "fa-tokens: {\"sessionId\":\"abc\",\"input\":10,\"output\":2}",
+            conn_lines[1],
+            "┌─ bash task completed in background (2s)",
+            "│ ps -o pid,ppid,etime,pcpu,args -p $(pgrep -f test.dart)",
+            "│ log: /home/runner/work/repo/.fah/bash_jobs/sh-1/job.log",
+            "└" + "\u2500" * 60,
+        ]
+    )
+
+    def test_conn_events_identical_on_both_capture_shapes(self):
+        tool_only = bench_metrics.parse_conn_events(self.tool_only_pane)
+        narrative = bench_metrics.parse_conn_events(self.full_narrative_pane)
+        self.assertEqual(tool_only, narrative)
+        self.assertEqual([e["seq"] for e in narrative], [1, 2])
+        self.assertEqual(
+            [r["first_byte_sec"] for r in bench_metrics.summarize_trial(
+                "t", narrative)["requests"]],
+            [12.5, 3.25],
+        )
+
+    def test_summary_folds_identically_on_both_capture_shapes(self):
+        a = bench_metrics.summarize_trial(
+            "t", bench_metrics.parse_conn_events(self.tool_only_pane)
+        )
+        b = bench_metrics.summarize_trial(
+            "t", bench_metrics.parse_conn_events(self.full_narrative_pane)
+        )
+        self.assertEqual(
+            a["latency"]["first_byte"]["p50"],
+            b["latency"]["first_byte"]["p50"],
+        )
+        self.assertEqual(a["latency"]["fresh_requests"],
+                         b["latency"]["fresh_requests"])
+        self.assertEqual(a["requests"], b["requests"])
+        self.assertEqual(a["watchdog_events"], b["watchdog_events"])
+
+    def test_session_gaps_ignores_narrative_noise_between_records(self):
+        records = [
+            json.dumps({"type": "message", "id": "a", "timestamp":
+                        "2026-01-01T00:01:00Z",
+                        "message": {"role": "assistant", "content": "hi"}}),
+            # The gh-1433 pane bytes a human sees BETWEEN session records
+            # are log lines, not records \u2014 the gap math must skip them.
+            "\x1b[2mthinking about the next step\x1b[0m",
+            "• bash · ls",
+            "text prose between turns",
+            json.dumps({"type": "message", "id": "b", "timestamp":
+                        "2026-01-01T00:02:00Z",
+                        "message": {"role": "assistant", "content": "done"}}),
+        ]
+        text = "\n".join(records)
+        self.assertEqual(bench_metrics.session_assistant_gaps(text), [60.0])
+        self.assertEqual(bench_metrics.max_session_gap(text), 60.0)
+
+    def test_live_progress_flashes_one_line_per_event_on_a_narrative_pane(self):
+        out = StringIO()
+        progress = bench_metrics.LiveProgress(out=out)
+        progress.feed(self.full_narrative_pane)
+        lines = [l for l in out.getvalue().splitlines() if l.strip()]
+        self.assertEqual(len(lines), 2, lines)
+
+
 class ScoreHonestyTest(unittest.TestCase):
-    """AC8: an agent_timeout trial with steady gaps is a loud violation."""    def test_agent_timeout_with_steady_gaps_violates(self):
+    """AC8: an agent_timeout trial with steady gaps is a loud violation."""
+
+    def test_agent_timeout_with_steady_gaps_violates(self):
         self.assertTrue(
             bench_metrics.score_honesty_violation(
                 "agent_timeout", max_gap_sec=166.0, stall_gap_sec=240.0
