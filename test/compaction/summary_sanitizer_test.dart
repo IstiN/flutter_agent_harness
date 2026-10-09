@@ -363,6 +363,71 @@ void main() {
       expect(result.stripped, isEmpty);
     });
 
+    test('gh-1449: the harness REAL multi-orphan drop note is stripped '
+        'whole', () {
+      // Produced by the production repairer itself (not a hand-copied
+      // shape): if the pairing note and the sanitizer ever drift apart —
+      // e.g. the note grows past the ≤2-newline strip window — this pin
+      // goes red and the stale note re-renders forever (gh-1131 class).
+      final repaired = repairToolPairing([
+        UserMessage.text(
+          'summary of earlier work',
+          timestamp: DateTime.utc(2026),
+        ),
+        ToolResultMessage(
+          toolCallId: 'bash_198',
+          toolName: 'bash',
+          content: const [TextContent(text: 'ok')],
+          timestamp: DateTime.utc(2026),
+          isError: false,
+        ),
+        AssistantMessage(
+          content: [
+            ToolCall(id: 'c1', name: 'read', arguments: const {'x': 1}),
+          ],
+          api: 'test-api',
+          provider: 'test-provider',
+          model: 'test-model',
+          usage: Usage.zero,
+          stopReason: StopReason.toolUse,
+          timestamp: DateTime.utc(2026),
+        ),
+        ToolResultMessage(
+          toolCallId: 'c1',
+          toolName: 'read',
+          content: const [TextContent(text: 'ok')],
+          timestamp: DateTime.utc(2026),
+          isError: false,
+        ),
+        ToolResultMessage(
+          toolCallId: 'ghost',
+          toolName: 'write',
+          content: const [TextContent(text: 'ok')],
+          timestamp: DateTime.utc(2026),
+          isError: false,
+        ),
+      ]);
+      final carrier = repaired.messages
+          .map(
+            (m) => userMessageText(switch (m) {
+              UserMessage(:final content) => content,
+              _ => '',
+            }),
+          )
+          .firstWhere((t) => t.contains('[context note:'));
+      final note = carrier.substring(
+        carrier.indexOf('[context note:'),
+        carrier.indexOf(']') + 1,
+      );
+      expect(note, contains('No reply needed'));
+
+      // A model echoing its own note into a summary must not poison it:
+      // the whole block strips.
+      final result = sanitizeSummary('Did the deploy.\n$note\n');
+      expect(result.text, 'Did the deploy.\n');
+      expect(result.stripped, [note]);
+    });
+
     test('R2-T3: contracted and interpolated drop claims strip', () {
       final result = sanitizeSummary(
         'You\'ve just landed the fix. You\'re about to lose the staging '

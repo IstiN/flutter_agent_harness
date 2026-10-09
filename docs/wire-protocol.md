@@ -57,7 +57,7 @@ carries the live `message` snapshot):
 | `tool_execution_update` | + `partialResult` |
 | `tool_execution_end` | + `result`, `isError` |
 | `model_request` | `detail` (sizes/previews), optional `promptBlob` / `manifestBlob`, optional `rawWireDump` (**SECRET**, see §5) |
-| `tool_pairing_repair` | `report` (`droppedResultIds`, `synthesizedResultIds`, `renamedIds`), optional `providerError` |
+| `tool_pairing_repair` | `report` (`droppedResultIds`, `synthesizedResultIds`, `renamedIds`, optional `notedOrphanKeys` — gh-1449 one-shot batch), optional `providerError` |
 
 Host-interaction request kinds (in-process these are the
 `ApprovalPrompt` / `AskCallback` / `RequestSecretCallback`; over the wire
