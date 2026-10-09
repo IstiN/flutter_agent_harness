@@ -10,6 +10,7 @@ import base64
 import importlib.util
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -64,8 +65,6 @@ def _dart_duration_seconds(declaration: str) -> float:
     the `providerStreamIdleTimeout` line from the Dart source, and the
     parse must survive a benign unit change there.
     """
-    import re
-
     body = declaration[declaration.index("(") + 1 : declaration.rindex(")")]
     factors = {
         "milliseconds": 0.001,
@@ -76,12 +75,57 @@ def _dart_duration_seconds(declaration: str) -> float:
     total = 0.0
     matched = False
     for name, factor in factors.items():
-        for value in re.findall(rf"{name}\s*:\s*([0-9.]+)", body):
+        # \b anchors the unit name: `seconds` occurs inside
+        # `milliseconds`, and a bare substring match would double-count
+        # every milliseconds argument as whole seconds (gh-1430 review).
+        for value in re.findall(rf"\b{name}\s*:\s*([0-9.]+)", body):
             matched = True
             total += float(value) * factor
     if not matched:
         raise ValueError(f"no Duration arguments in: {declaration!r}")
     return total
+
+class DartDurationParseTest(unittest.TestCase):
+    """Unit table for _dart_duration_seconds (gh-1430 review thread 1).
+
+    The coupling REG feeds this helper the `providerStreamIdleTimeout`
+    line straight from the Dart source, and the docstring promises the
+    parse survives a benign unit change there. `seconds` occurs INSIDE
+    `milliseconds`, so the unit match must be word-boundary anchored —
+    otherwise `Duration(milliseconds: 3000)` double-counts (3.0s from
+    the milliseconds factor + 3000.0s from the `seconds` substring) and
+    a no-op refactor reds the one REG whose job is to be trusted.
+    """
+
+    def test_seconds_and_minutes_compose(self):
+        self.assertEqual(_dart_duration_seconds("Duration(seconds: 300)"), 300.0)
+        self.assertEqual(_dart_duration_seconds("Duration(minutes: 5)"), 300.0)
+        self.assertEqual(
+            _dart_duration_seconds("Duration(minutes: 1, seconds: 30)"), 90.0
+        )
+
+    def test_milliseconds_does_not_double_count_as_seconds(self):
+        # The exact case the substring matcher got wrong: `seconds`
+        # matched inside `milli**seconds**` → 3003.0 instead of 3.0.
+        self.assertEqual(
+            _dart_duration_seconds("Duration(milliseconds: 3000)"), 3.0
+        )
+        self.assertEqual(
+            _dart_duration_seconds("Duration(milliseconds: 500)"), 0.5
+        )
+
+    def test_mixed_milliseconds_and_seconds(self):
+        self.assertEqual(
+            _dart_duration_seconds(
+                "Duration(seconds: 3, milliseconds: 500)"
+            ),
+            3.5,
+        )
+
+    def test_no_duration_arguments_fails_loud(self):
+        with self.assertRaises(ValueError):
+            _dart_duration_seconds("Duration()")
+
 
 
 class KnobParsingTest(unittest.TestCase):
@@ -302,6 +346,46 @@ class LivenessBytesTest(unittest.TestCase):
         self.assertIsNone(fa_agent_timeout.liveness_bytes_of(None))
         self.assertEqual(fa_agent_timeout.liveness_bytes_of("no anchor"), 0)
 
+    def test_reasoning_heartbeat_lines_count_as_liveness_bytes(self):
+        # gh-1430: the `… reasoning Ns (streaming)` heartbeat is fa's
+        # in-band liveness signal alongside the ⏳ tool-liveness family —
+        # the #1185 AC6 audit disclosure must see BOTH, or a trial kept
+        # alive purely by reasoning heartbeats reports pane growth as
+        # progress with zero disclosed liveness bytes.
+        heartbeat = "… reasoning 60s (streaming)\n"
+        self.assertEqual(
+            fa_agent_timeout.liveness_bytes_of(heartbeat),
+            len("… reasoning 60s (streaming)".encode("utf-8")) + 1,
+        )
+        tier2 = "… reasoning 45s\n"
+        self.assertEqual(
+            fa_agent_timeout.liveness_bytes_of(tier2),
+            len("… reasoning 45s".encode("utf-8")) + 1,
+        )
+
+    def test_mixed_liveness_families_both_count(self):
+        stream = (
+            "assistant text\n"
+            "⏳ [bash] sleep 500 — running 60s\n"
+            "✓ bash · 61s\n"
+            "… reasoning 120s (streaming)\n"
+        )
+        measured = fa_agent_timeout.liveness_bytes_of(stream)
+        expected = sum(
+            len(line.encode("utf-8")) + 1
+            for line in stream.split("\n")
+            if "⏳" in line or "… reasoning" in line
+        )
+        self.assertEqual(measured, expected)
+        self.assertGreater(measured, 0)
+
+    def test_plain_reasoning_prose_is_not_a_liveness_line(self):
+        # The anchor is the ellipsis-led line head, not any mention of
+        # reasoning: assistant prose stays outside the disclosure.
+        self.assertEqual(
+            fa_agent_timeout.liveness_bytes_of("I reason therefore I am\n"),
+            0,
+        )
 
 class FakeTmuxSession:
     """Duck-typed TmuxSession: pane tap via a byte counter, keys recorded."""

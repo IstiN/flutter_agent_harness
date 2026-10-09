@@ -374,8 +374,10 @@ def audit_dict(
 
     Issue #1185 AC6: when the caller can read the progress stream, it also
     passes the final sample size (`progress_bytes`) and the bytes inside it
-    that are fa's OWN `⏳` liveness lines (`liveness_bytes`,
-    [liveness_bytes_of]) — harness-originated prints the pane counter
+    that are fa's OWN liveness lines (`liveness_bytes`,
+    [liveness_bytes_of] — both the ⏳ tool-liveness family and the
+    `… reasoning` reasoning-liveness family, gh-1055/gh-1198/gh-1430) —
+    harness-originated prints the pane counter
     counts as progress. Documented, not subtracted: the model legitimately
     reads its own logs, so separating the two streams perfectly is not
     attempted; the audit makes the inflation visible per trial.
@@ -417,18 +419,32 @@ def audit_dict(
         record["progress_note"] = (
             "progress_liveness_bytes = the agent's own liveness status "
             "lines inside the progress sample (issue #1185 AC6): "
-            "harness-originated bytes the pane counter counts as progress"
+            "harness-originated bytes the pane counter counts as progress "
+            "(the ⏳ tool-liveness family and the `… reasoning` "
+            "reasoning-liveness family, gh-1055/gh-1198/gh-1430)"
         )
     return record
 
 
-# The liveness status line's grep anchor (gh-1055): every harness-originated
-# reminder/escalation line carries it; nothing else the agent emits does.
-_LIVENESS_ANCHOR = "⏳"
+# The liveness status lines' grep anchors: every harness-originated
+# liveness line carries one of these; nothing else the agent emits does.
+# The ⏳ family is the gh-1055 tool-liveness lines; `… reasoning` is the
+# gh-1198/gh-1430 reasoning family (the tier-2 line and its `(streaming)`
+# heartbeat sibling).
+_LIVENESS_ANCHORS = ("⏳", "… reasoning")
+
+
+def _is_liveness_line(line: str) -> bool:
+    return any(anchor in line for anchor in _LIVENESS_ANCHORS)
 
 
 def liveness_bytes_of(stream: str | bytes | None) -> int | None:
-    """Bytes of `⏳` liveness lines inside a progress stream (AC6 helper).
+    """Bytes of fa's liveness lines inside a progress stream (AC6 helper).
+
+    Counts BOTH families: the `⏳` tool-liveness lines (gh-1055) and the
+    `… reasoning` reasoning-liveness lines (gh-1198 tier 2 + the gh-1430
+    `(streaming)` heartbeat) — the audit disclosure must cover every
+    harness-originated byte class the pane counter credits as progress.
 
     None propagates: an unreadable stream must not fabricate a zero (the
     audit then just omits the field).
@@ -446,7 +462,7 @@ def liveness_bytes_of(stream: str | bytes | None) -> int | None:
     total = 0
     lines = stream.split("\n")
     for index, line in enumerate(lines):
-        if _LIVENESS_ANCHOR in line:
+        if _is_liveness_line(line):
             total += len(line.encode("utf-8"))
             if index < len(lines) - 1:
                 total += 1  # the newline this line ends with
