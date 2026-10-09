@@ -162,17 +162,19 @@ void main() {
   });
 
   group('AC3 UT-collapse-counts', () {
-    test('N>3 jobs collapse into one summary with live counts', () {
+    test('N>3 jobs collapse into one signal-only summary (gh-1446)', () {
       final board = ShellJobBoard();
       for (var i = 0; i < 17; i++) {
         board.start(_card('sh-$i'));
       }
       expect(board.collapsed, isTrue);
       final live = board.liveLines();
-      expect(live.first, contains('Background jobs (17)'));
-      expect(live.first, contains('17 running'));
-      expect(live.first, contains('0 done'));
-      expect(live.first, contains('0 lost'));
+      expect(live.first, '◐ Background jobs (17)');
+      // The done count and the `older` marker are retired chrome noise:
+      // the live line names ONLY the running (and lost) counts.
+      expect(live.first, isNot(contains('running')));
+      expect(live.first, isNot(contains('done')));
+      expect(live.first, isNot(contains('older')));
     });
 
     test('counts update live on settle', () {
@@ -187,10 +189,8 @@ void main() {
         detail: 'sh-1 · exit 1',
       );
       final live = board.liveLines();
-      expect(live.first, contains('Background jobs (5)'));
-      expect(live.first, contains('3 running'));
-      expect(live.first, contains('1 done'));
-      expect(live.first, contains('0 lost'));
+      // 3 still running (done + failed dropped from the live signal).
+      expect(live.first, '◐ Background jobs (3)');
     });
 
     test('lost>0 is always visible — never hidden in a green count', () {
@@ -200,12 +200,16 @@ void main() {
       }
       board.settle('sh-0', state: TaskBlockState.lost);
       expect(board.liveLines().first, contains('1 lost'));
-      // Even a zero count keeps the segment so the field never disappears.
+      // E1: lost>0 with ZERO running still renders — a zombie is never
+      // silently dropped.
       final board2 = ShellJobBoard();
       for (var i = 0; i < 4; i++) {
         board2.start(_card('sh-$i'));
       }
-      expect(board2.liveLines().first, contains('0 lost'));
+      for (var i = 0; i < 4; i++) {
+        board2.settle('sh-$i', state: TaskBlockState.lost);
+      }
+      expect(board2.liveLines().first, contains('4 lost'));
     });
 
     test('three or fewer jobs stay individual (no summary)', () {
@@ -217,6 +221,75 @@ void main() {
       expect(
         board.liveLines().join('\n'),
         isNot(contains('Background jobs (')),
+      );
+    });
+  });
+
+  group('gh-1446 jobs-line contract (pure)', () {
+    test('the three state cells of the capability table', () {
+      // R > 0, L = 0.
+      expect(shellJobLiveSummaryLine(running: 2, lost: 0),
+          '◐ Background jobs (2)');
+      // L > 0, any R including 0.
+      expect(shellJobLiveSummaryLine(running: 1, lost: 16),
+          '◐ Background jobs (1) · 16 lost');
+      expect(shellJobLiveSummaryLine(running: 0, lost: 16),
+          '◐ Background jobs (0) · 16 lost');
+      // R == 0 && L == 0 → absent.
+      expect(shellJobLiveSummaryLine(running: 0, lost: 0), isNull);
+      // The forbidden chrome substrings never appear.
+      for (final line in [
+        shellJobLiveSummaryLine(running: 3, lost: 0)!,
+        shellJobLiveSummaryLine(running: 0, lost: 9)!,
+      ]) {
+        expect(line, isNot(contains('running')));
+        expect(line, isNot(contains('done')));
+        expect(line, isNot(contains('older')));
+      }
+    });
+
+    test('the glyph resolves through the session symbol preset', () {
+      final controller = FaThemeController.instance;
+      controller
+        ..reset()
+        ..profile = ColorProfile.trueColor;
+      expect(
+        shellJobLiveSummaryLine(running: 1, lost: 0),
+        startsWith('${controller.sym('status.running')} '),
+      );
+      controller.switchSymbols('ascii');
+      expect(
+        shellJobLiveSummaryLine(running: 1, lost: 0),
+        '[~] Background jobs (1)',
+        reason: 'the ascii preset never emits a non-ASCII glyph',
+      );
+      controller.switchSymbols('nerd');
+      expect(
+        shellJobLiveSummaryLine(running: 1, lost: 0),
+        startsWith('\uf110 '),
+      );
+    });
+
+    test('AC6: at width 40 the lost count is the LAST thing clipped', () {
+      // E2: 1 running, 999 lost — icon and parens may clip, lost never.
+      final line = shellJobLiveSummaryLine(running: 1, lost: 999, width: 40);
+      expect(line, contains('999 lost'));
+      expect(line, isNot(contains('(')), reason: 'parens clip before lost');
+      // A wide-but-fitting line keeps every segment.
+      expect(
+        shellJobLiveSummaryLine(running: 1, lost: 999, width: 80),
+        '◐ Background jobs (1) · 999 lost',
+      );
+      // The ladder order: the icon goes first, then the parens.
+      expect(
+        shellJobLiveSummaryLine(running: 12, lost: 0, width: 22),
+        'Background jobs (12)',
+        reason: 'icon clips first',
+      );
+      expect(
+        shellJobLiveSummaryLine(running: 12, lost: 3, width: 20),
+        'Background jobs · 3 lost',
+        reason: 'parens clip second',
       );
     });
   });
@@ -235,7 +308,7 @@ void main() {
       // re-emit of settled old rows.
       final live = board.liveLines().join('\n');
       expect(live, contains('· older'));
-      expect(live, contains('5 running'));
+      expect(live, contains('Background jobs (5)'));
       expect(live, contains('sh-new'));
       expect(live, isNot(contains('sh-old-0')));
     });
@@ -329,7 +402,9 @@ void main() {
       final olderBefore = board.liveLines().singleWhere(
         (l) => l.contains('· older'),
       );
-      expect(olderBefore, contains('5 running'));
+      // gh-1446: the frozen row carries the signal-only format — the
+      // running count, no done/lost segments.
+      expect(olderBefore, '◐ Background jobs (5) · older');
       // Settle four of five — the printed `· older` row is a frozen
       // snapshot and must not re-derive from the live registry.
       board.settle('sh-old-0', state: TaskBlockState.done, elapsed: 1.0);
@@ -339,6 +414,16 @@ void main() {
       final olderAfter = board.liveLines().singleWhere(
         (l) => l.contains('· older'),
       );
+      expect(
+        olderAfter,
+        olderBefore,
+        reason: 'a printed `· older` row never changes counts',
+      );
+      // Full settle removes the row entirely — the truthful terminal
+      // summary card takes over in the transcript.
+      board.settle('sh-old-4', state: TaskBlockState.done, elapsed: 4.0);
+      expect(board.liveLines().where((l) => l.contains('· older')), isEmpty);
+    });
       expect(
         olderAfter,
         olderBefore,

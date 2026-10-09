@@ -231,8 +231,10 @@ final class ShellJobBoard {
       if (t != turn) {
         // Frozen at first print (issue #539): the live region re-renders
         // on every job mutation, and a re-derived older row mutates across
-        // frames — a frozen transcript must never show moving counts.
-        lines.add(_frozenOlderSummaries.putIfAbsent(t, () => line));
+        // frames — a frozen transcript must never show moving counts. The
+        // `· older` suffix marks provenance (gh-1446 retires the count
+        // noise, not the turn marker).
+        lines.add(_frozenOlderSummaries.putIfAbsent(t, () => '$line · older'));
         continue;
       }
       lines.add(line);
