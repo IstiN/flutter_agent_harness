@@ -27,6 +27,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/src/env/io_execution_env.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/session/session_record.dart';
 import 'package:flutter_agent_harness/src/session/session_repo.dart';
 import 'package:flutter_agent_harness/src/types.dart';
@@ -119,10 +120,15 @@ final _subagentBoardRow = RegExp(r'^[⠿⏸✓✗] (?:run|wait|done|fail) ');
 /// the resumed boot's brand row carry it — never transcript grammar.
 final _ctxGauge = RegExp(r'\d+(?:\.\d+)?[k%]/\d');
 
-/// A live RUNNING band tool card (`⟳ bash: sleep 2 …`, `⏳ …`): live-only
+/// A live RUNNING band tool card (`◐ bash: sleep 2 …`): live-only
 /// transient — its settled twin carries the same facts and is the row that
-/// replays.
-final _runningCard = RegExp(r'^[⟳⏳] \S+: ');
+/// replays. gh-1446 AC8: the glyph resolves through the symbol table
+/// (`status.running`/`status.pending` — the retired `⟳`/`⏳` pair), so
+/// the class derives from the session preset.
+final _runningCard = RegExp(
+  '^[${FaThemeController.instance.sym('status.running')}'
+  '${FaThemeController.instance.sym('status.pending')}] \\S+: ',
+);
 
 /// A live SETTLED band tool card (`✔ bash: sleep 2 … 0s`, `✘ … [exit 1]`).
 final _settledCard = RegExp(r'^[✔✘] (\S+): (.+)$');

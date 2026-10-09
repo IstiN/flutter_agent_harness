@@ -1,4 +1,5 @@
-// Issue #615 (RED first): the `⏳ waiting` row never cleared after its
+// Issue #615 (RED first): the waiting row (gh-1446 AC8: pending glyph,
+// no hardcoded `⏳`) never cleared after its
 // background job settled — the waiting coordinator swallowed the empty
 // push (`snap.isEmpty && lostJobs == 0 → return`), which is exactly the
 // row's leave event. The last waiter's settle left the row painted above
@@ -23,9 +24,15 @@ library;
 import 'dart:io';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:test/test.dart';
 
 import 'pty_harness.dart';
+
+/// The waiting headline's glyph prefix (gh-1446 AC8: `status.pending`
+/// resolves through the symbol table — the ascii preset emits ASCII).
+String _waitingHead() =>
+    '${FaThemeController.instance.sym('status.pending')} waiting';
 
 /// Boots the CLI against [server] in a fresh temp workspace and waits for
 /// the TUI to come up.
@@ -85,7 +92,7 @@ void main() {
 
       // Baseline: once idle with the job running, the row is on screen.
       await harness.waitForScreen(
-        '⏳ waiting',
+        _waitingHead(),
         timeout: const Duration(seconds: 60),
       );
 
@@ -100,7 +107,7 @@ void main() {
       final screen = await _settledScreen(harness);
       expect(
         screen,
-        isNot(contains('⏳ waiting')),
+        isNot(contains(_waitingHead())),
         reason:
             'the job settled and the board says 0 running — the waiting '
             'row must be gone from the idle screen:\n$screen',
@@ -144,11 +151,11 @@ void main() {
         timeout: const Duration(seconds: 60),
       );
       var screen = await _settledScreen(harness);
-      expect(screen, contains('⏳ waiting · sleep 4'),
+      expect(screen, contains('${_waitingHead()} · sleep 4'),
           reason: 'the row follows the outstanding waiter:\n$screen');
       expect(
         screen,
-        isNot(contains('⏳ waiting · sleep 2')),
+        isNot(contains('${_waitingHead()} · sleep 2')),
         reason: 'the settled waiter leaves the row:\n$screen',
       );
 
@@ -160,7 +167,7 @@ void main() {
       screen = await _settledScreen(harness);
       expect(
         screen,
-        isNot(contains('⏳ waiting')),
+        isNot(contains(_waitingHead())),
         reason: 'the row dies with the last waiter:\n$screen',
       );
     },
