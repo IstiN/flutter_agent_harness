@@ -57,52 +57,70 @@ FaTuiModel _send(FaTuiModel m, Msg msg) => m.update(msg).$1 as FaTuiModel;
 List<String> _rowsOf(FaTuiModel m) =>
     m.view().content.split('\n').map((r) => stripAnsi(r)).toList();
 
-final _hint = RegExp(r'\^ (\d+) lines? above fold - PgUp');
+final _percent = RegExp(r'\d+%');
 
-/// The `^ N lines above fold` count in the frame, or null when absent.
-int? _hintN(List<String> rows) {
-  for (final row in rows) {
-    final m = _hint.firstMatch(row);
-    if (m != null) return int.parse(m.group(1)!);
-  }
-  return null;
-}
+/// A pure gh-1446 fold-rule row: only `─` cells. The legacy composer's
+/// input-frame rules match too — the tests pin the fold rule as a
+/// rule-count DELTA against the same frame shape with nothing hidden (the
+/// calm baseline), or by the row's position right under the history
+/// window.
+bool _isRuleRow(String row) =>
+    row.isNotEmpty && row.runes.every((r) => r == 0x2500);
+
+int _ruleRowCount(List<String> rows) => rows.where(_isRuleRow).length;
+
+/// Whether [rows] carries the textless fold rule: one MORE pure rule row
+/// than the calm twin of the same frame shape.
+bool _hasFoldRule(List<String> rows, List<String> calmRows) =>
+    _ruleRowCount(rows) == _ruleRowCount(calmRows) + 1;
 
 bool _hasPercent(List<String> rows) =>
-    rows.any((r) => RegExp(r'\d+%').hasMatch(r));
+    rows.any((r) => _percent.hasMatch(r));
 
 void main() {
   group('AC1 — above-the-fold indicator during tail-follow', () {
-    test('a long single-turn transcript shows N = wrapped-hidden rows', () {
+    test('rows hiding above the fold render the textless rule under the '
+        'history window', () {
       // 40 short (non-wrapping) lines, one turn from row 0: vh = 24 - 5
       // (progress + 2 rules + status + input) = 19, so 21 rows hide above.
       final model = _build(
         termHeight: 24,
       ).copyWith(outputLines: [for (var i = 0; i < 40; i++) 'row $i']);
       final rows = _rowsOf(model);
-      expect(_hintN(rows), 21, reason: 'N must equal wrapped-hidden rows');
+      expect(
+        _isRuleRow(rows[19]),
+        isTrue,
+        reason: 'the reserved row renders the textless rule (21 hidden)',
+      );
       // The window content confirms the geometry: rows 21..39 on glass.
       expect(rows.first, contains('row 21'));
       expect(rows[18], contains('row 39'));
     });
 
-    test('N counts WRAPPED rows, not logical lines (CJK-safe)', () {
+    test('the rule keys on WRAPPED rows, not logical lines (CJK-safe)', () {
       // 10 lines of 90 cells each wrap to 2 rows at width 80 → 20 wrapped
-      // rows; the bottom-riding window shows the last 19, so the hint
-      // names 1 hidden WRAPPED row (logical counting would say 0).
+      // rows; the bottom-riding window shows the last 19, so one hidden
+      // WRAPPED row already folds (logical counting would say 0).
       final wide = '要約' * 22 + 'x'; // 44 wide glyphs (88 cells) + 1 = 89 cells
-      final model = _build().copyWith(
+      final wideModel = _build().copyWith(
         outputLines: [for (var i = 0; i < 10; i++) '$wide $i'],
       );
-      final rows = _rowsOf(model);
-      expect(_hintN(rows), 1, reason: 'N counts wrapped rows (20 - 19 vh)');
+      final calm = _build().copyWith(
+        outputLines: [for (var i = 0; i < 10; i++) 'short $i'],
+      );
+      expect(
+        _hasFoldRule(_rowsOf(wideModel), _rowsOf(calm)),
+        isTrue,
+        reason: '20 wrapped rows - 19 vh: the rule shows',
+      );
     });
 
-    test('no hint at offset 0 and none when the tail latch is detached', () {
+    test('no rule at offset 0 and none when the tail latch is detached', () {
       final short = _build().copyWith(outputLines: ['just one row']);
+      final calm = _build().copyWith(outputLines: ['just one row']);
       expect(
-        _hintN(_rowsOf(short)),
-        isNull,
+        _hasFoldRule(_rowsOf(short), _rowsOf(calm)),
+        isFalse,
         reason: 'E3: one-row response, zero hidden rows',
       );
 
@@ -114,7 +132,11 @@ void main() {
         MouseWheelMsg(const Mouse(x: 0, y: 0, button: MouseButton.wheelUp)),
       );
       final rows = _rowsOf(scrolled);
-      expect(_hintN(rows), isNull, reason: 'detached: the percent rule owns');
+      expect(
+        _hasFoldRule(rows, _rowsOf(_build().copyWith(outputLines: ['tiny']))),
+        isFalse,
+        reason: 'detached: the percent rule owns',
+      );
       expect(_hasPercent(rows), isTrue);
     });
   });
@@ -134,7 +156,11 @@ void main() {
       expect(up.scrollOffset, 18, reason: 'bottom 21 - 3');
       final rows = _rowsOf(up);
       expect(_hasPercent(rows), isTrue);
-      expect(_hintN(rows), isNull, reason: 'detached: percent, never both');
+      expect(
+        _hasFoldRule(rows, _rowsOf(_build().copyWith(outputLines: ['tiny']))),
+        isFalse,
+        reason: 'detached: percent, never both',
+      );
     });
 
     test('detached, new activity never moves the window — the percent '
@@ -163,7 +189,13 @@ void main() {
       expect(model.followTail, isFalse);
       model = _send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageDown)));
       expect(model.followTail, isTrue);
-      expect(_hintN(_rowsOf(model)), 21);
+      expect(
+        _hasFoldRule(
+          _rowsOf(model),
+          _rowsOf(_build().copyWith(outputLines: ['tiny'])),
+        ),
+        isTrue,
+      );
       expect(_hasPercent(_rowsOf(model)), isFalse);
     });
   });
@@ -273,8 +305,8 @@ void main() {
     });
   });
 
-  group('AC4 — the hint lives inside the frame budget', () {
-    test('one-row viewport history still paints the hint without stealing '
+  group('AC4 — the indicator lives inside the frame budget', () {
+    test('one-row viewport history still paints the rule without stealing '
         'the prompt chrome', () {
       // termHeight 6: legacy fixed chrome 5 → history 1 → 39 rows hide.
       final model = _build(
@@ -282,7 +314,7 @@ void main() {
       ).copyWith(outputLines: [for (var i = 0; i < 40; i++) 'row $i']);
       final rows = _rowsOf(model);
       expect(rows, hasLength(6), reason: 'frame exactly fits the glass');
-      expect(_hintN(rows), 39);
+      expect(_isRuleRow(rows[1]), isTrue, reason: 'the reserved rule row');
       expect(
         rows.last,
         contains('test-model'),
@@ -291,18 +323,14 @@ void main() {
       expect(rows[0], contains('row 39'), reason: 'live edge still on glass');
     });
 
-    test('zero-history viewport yields the hint entirely (E2)', () {
+    test('zero-history viewport yields the rule entirely (E2)', () {
       // termHeight 5: chrome alone fills the glass, history = 0.
       final model = _build(
         termHeight: 5,
       ).copyWith(outputLines: [for (var i = 0; i < 40; i++) 'row $i']);
       final rows = _rowsOf(model);
       expect(rows, hasLength(5));
-      expect(
-        _hintN(rows),
-        isNull,
-        reason: 'a window that shows no rows announces nothing',
-      );
+      final calm = _build(termHeight: 5).copyWith(outputLines: ['tiny']);
       expect(
         rows.last,
         contains('test-model'),
@@ -394,8 +422,11 @@ void main() {
       expect(scrolled.followTail, isFalse);
       expect(_hasPercent(_rowsOf(scrolled)), isTrue);
       expect(
-        _hintN(_rowsOf(scrolled)),
-        isNull,
+        _hasFoldRule(
+          _rowsOf(scrolled),
+          _rowsOf(_build().copyWith(outputLines: ['tiny'])),
+        ),
+        isFalse,
         reason: 'detached: percent rule, never both at once',
       );
     });
@@ -415,29 +446,34 @@ void main() {
   });
 
   group('Edge cases', () {
-    test('E1: resize mid-stream recomputes the hint, latch survives', () {
+    test('E1: resize mid-stream re-renders the rule, latch survives', () {
       var model = _build(
         termHeight: 24,
       ).copyWith(outputLines: [for (var i = 0; i < 60; i++) 'row $i']);
-      expect(_hintN(_rowsOf(model)), 41, reason: '60 - 19 vh');
+      expect(_isRuleRow(_rowsOf(model)[19]), isTrue, reason: '60 - 19 vh');
 
       model = _send(model, WindowSizeMsg(80, 12));
       expect(model.followTail, isTrue, reason: 'shrink keeps the latch');
-      expect(_hintN(_rowsOf(model)), 53, reason: '60 - 7 vh');
+      expect(_isRuleRow(_rowsOf(model)[7]), isTrue, reason: '60 - 7 vh');
 
       model = _send(model, WindowSizeMsg(80, 30));
-      expect(_hintN(_rowsOf(model)), 35, reason: '60 - 25 vh');
+      expect(_isRuleRow(_rowsOf(model)[25]), isTrue, reason: '60 - 25 vh');
       expect(_rowsOf(model), hasLength(30));
     });
 
-    test('E3: one-row response never shows the hint (idle and busy)', () {
+    test('E3: one-row response never shows the rule (idle and busy)', () {
       for (final busy in [false, true]) {
         final model = _build(busy: busy).copyWith(outputLines: ['single line']);
-        expect(_hintN(_rowsOf(model)), isNull, reason: 'busy=$busy');
+        final calm = _build(busy: busy).copyWith(outputLines: ['single line']);
+        expect(
+          _hasFoldRule(_rowsOf(model), _rowsOf(calm)),
+          isFalse,
+          reason: 'busy=$busy',
+        );
       }
     });
 
-    test('E5: tall from the first streamed row — hint present from the '
+    test('E5: tall from the first streamed row — rule present from the '
         'first overflow', () {
       var model = _build(termHeight: 24);
       for (var i = 0; i < 20; i++) {
@@ -446,50 +482,47 @@ void main() {
       // 21 wrapped rows (newline appends a trailing blank), vh 19: two
       // rows hidden already.
       final rows = _rowsOf(model);
-      expect(_hintN(rows), 2, reason: 'symptom 1 verbatim');
+      expect(_isRuleRow(rows[19]), isTrue, reason: 'symptom 1 verbatim');
       expect(
         rows.first,
         contains('stream 2'),
-        reason: 'the hidden head is named, not lost',
+        reason: 'the window tracks the live edge, not the fold',
       );
     });
 
-    test('E6: exactly one hidden row pluralizes correctly', () {
+    test('E6: a single hidden row already renders the rule', () {
       // 20 copied rows, vh 19: bottom = 1, one row hides above the fold.
+      // The text is gone (gh-1446) — the COUNT is no longer observable;
+      // the rule appearing at all is the contract.
       final model = _build().copyWith(
         outputLines: [for (var i = 0; i < 20; i++) 'row $i'],
       );
-      final frame = _rowsOf(model).join('\n');
-      expect(frame, contains('^ 1 line above fold - PgUp'));
-      expect(frame, isNot(contains('1 lines')));
-      expect(_hintN(_rowsOf(model)), 1);
+      final rows = _rowsOf(model);
+      expect(_isRuleRow(rows[19]), isTrue);
+      expect(rows.join('\n'), isNot(contains('above fold')),
+          reason: 'the textless rule carries no words');
     });
 
-    test('the hint rides the rule row — chrome to every screen grammar', () {
-      // Wave-14 regression: a STANDALONE padded hint row reads as content
-      // to PTY/resume transcript normalizers (they strip rule rows), and
-      // the extra row shifted the resume-equivalence diff slice by one.
-      // The hint embeds into the dim rule exactly like the detached
-      // percent bar (`── NN% ──`): rule-prefixed, rule-padded, no gap.
+    test('AC1 byte-scan: the streaming rule row carries NO text glyphs', () {
+      // The reserved row renders as a dim rule of `─` only — no digits,
+      // letters or `^` ever reach the row (gh-1446 AC1).
       final model = _build().copyWith(
         outputLines: [for (var i = 0; i < 40; i++) 'row $i'],
       );
-      final hintRow = _rowsOf(model).firstWhere(_hint.hasMatch);
-      expect(
-        hintRow.startsWith('────'),
-        isTrue,
-        reason: 'rule prefix keeps the row chrome',
-      );
-      expect(
-        hintRow.trimRight().endsWith('─'),
-        isTrue,
-        reason: 'rule padding, never spaces — stale cells cannot survive',
-      );
-      expect(
-        hintRow,
-        isNot(startsWith(' ')),
-        reason: 'a leading gap would break rule-row grammars',
-      );
+      final rows = _rowsOf(model);
+      final ruleRow = rows[19];
+      expect(ruleRow, matches(RegExp(r'^─+$')), reason: ruleRow);
+      expect(ruleRow, hasLength(80), reason: 'full-width rule, no gaps');
+      // The row reservation holds: the frame keeps the calm shape (the
+      // same row count) — nothing below the rule shifts.
+      final calm = _build().copyWith(outputLines: ['tiny']);
+      expect(rows, hasLength(_rowsOf(calm).length));
+      // Wave-14 grammar: a pure rule row is chrome to every separator-
+      // stripping screen consumer — unlike the padded hint text it
+      // replaces.
+      expect(ruleRow.startsWith('────'), isTrue);
+      expect(ruleRow.trimRight().endsWith('─'), isTrue);
+      expect(ruleRow, isNot(startsWith(' ')));
     });
   });
 
