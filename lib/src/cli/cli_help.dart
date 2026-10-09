@@ -578,10 +578,10 @@ SKILLS AND CONTEXT FILES
                      this session (an endpoint-reported window from /models
                      wins over the 200k catalog default; persist per chain
                      via roles yaml contextWindow:/maxTokens:)
-  /provider [name] [baseUrl] [token] | custom | aiin [key [apiKey]]
-                     | openrouter oauth [headless]
-                     | chatgpt oauth [headless] | /provider copilot
-                     | codemie sso [orgUrl] | dial setup | kimi
+  /provider [name] [baseUrl] [token] | custom | aiin [--no-browser] [key [apiKey]]
+                     | openrouter oauth [headless] [--no-browser]
+                     | chatgpt oauth [headless] [--no-browser] | /provider copilot
+                     | codemie sso [orgUrl] [--no-browser] | dial setup | kimi
                      show or switch the provider/endpoint (token optional,
                      saved to the OS secure store when available); custom is
                      a guided setup that saves the provider (api type, url,
@@ -602,7 +602,11 @@ SKILLS AND CONTEXT FILES
                      custom provider — the session JWT rides the standard
                      OpenAI-compatible adapter; dial setup runs the guided
                      DIAL Core flow (base URL, Api key, deployment) and
-                     saves the org as a dial custom provider
+                     saves the org as a dial custom provider;
+                     --no-browser skips the automatic browser launch —
+                     the full authorization URL always prints (also on
+                     timeout), and FA_NO_BROWSER=1 or a headless/SSH
+                     session skips the launch automatically
                     /provider copilot connects a GitHub Copilot account via
                     the GitHub device flow (open the shown URL, enter the
                     code; also works headless) or by pasting an existing

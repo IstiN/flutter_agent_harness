@@ -13,7 +13,7 @@ extension on AgentCli {
   /// The `/provider codemie ...` dispatcher. Supports:
   ///
   /// - `/provider codemie` (no args) — asks whether to use SSO or JWT Bearer.
-  /// - `/provider codemie sso [orgUrl]` — browser SSO flow.
+  /// - `/provider codemie sso [orgUrl] [--no-browser]` — browser SSO flow.
   /// - `/provider codemie jwt [orgUrl] [token]` — JWT Bearer token flow.
   ///
   /// Returns true when the command targeted CodeMie.
@@ -30,14 +30,21 @@ extension on AgentCli {
     return true;
   }
 
-  /// Dispatches `/provider codemie sso [orgUrl]`.
+  /// Dispatches `/provider codemie sso [orgUrl] [--no-browser]`. The
+  /// `--no-browser` flag skips the automatic browser launch — the URL
+  /// prints prominently instead (gh-1450).
   bool _startCodeMieSsoArg(List<String> args) {
-    final url = args.length > 2 ? args[2] : defaultCodeMieBaseUrl;
-    if (args.length > 3 || !_isHttpUrl(url)) {
-      io.writeln('usage: /provider codemie sso [orgUrl]');
+    final rest = args.skip(2).toList();
+    final noBrowser = rest.contains('--no-browser');
+    final urlArgs = rest.where((a) => a != '--no-browser').toList();
+    final url = urlArgs.isNotEmpty ? urlArgs.first : defaultCodeMieBaseUrl;
+    if (urlArgs.length > 1 || !_isHttpUrl(url)) {
+      io.writeln('usage: /provider codemie sso [orgUrl] [--no-browser]');
       return true;
     }
-    unawaited(_handleCodeMieSsoCommand(url, offerName: true));
+    unawaited(
+      _handleCodeMieSsoCommand(url, offerName: true, noBrowser: noBrowser),
+    );
     return true;
   }
 
@@ -60,7 +67,8 @@ extension on AgentCli {
   /// Prints the CodeMie subcommand usage line.
   void _printCodeMieUsage() {
     io.writeln(
-      'usage: /provider codemie [sso [orgUrl] | jwt [orgUrl] [token]]',
+      'usage: /provider codemie [sso [orgUrl] [--no-browser] | '
+      'jwt [orgUrl] [token]]',
     );
   }
 

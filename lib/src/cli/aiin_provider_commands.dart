@@ -12,10 +12,12 @@
 part of 'agent_cli.dart';
 
 extension _AiinProviderCommands on AgentCli {
-  /// Dispatches `/provider aiin [key [apiKey]]`:
+  /// Dispatches `/provider aiin [--no-browser] [key [apiKey]]`:
   ///
   /// - `/provider aiin` — browser sign-in (OAuth proxy flow) + key
   ///   registration;
+  /// - `/provider aiin --no-browser` — the same, without the automatic
+  ///   browser launch (the URL prints prominently instead; gh-1450);
   /// - `/provider aiin key [apiKey]` — paste an existing `sk-aiin-…` key.
   ///
   /// Returns true when the command targeted AIIN.
@@ -23,6 +25,10 @@ extension _AiinProviderCommands on AgentCli {
     if (args.first != 'aiin') return false;
     if (args.length == 1) {
       unawaited(_handleAiinConnectCommand());
+      return true;
+    }
+    if (args.length == 2 && args[1] == '--no-browser') {
+      unawaited(_handleAiinConnectCommand(noBrowser: true));
       return true;
     }
     return args[1] == 'key' ? _startAiinKeyArg(args) : _aiinUsage();
@@ -39,17 +45,25 @@ extension _AiinProviderCommands on AgentCli {
 
   /// Prints the command usage. Always "handled" (true).
   bool _aiinUsage() {
-    io.writeln('usage: /provider aiin [key [apiKey]]');
+    io.writeln('usage: /provider aiin [--no-browser] [key [apiKey]]');
     return true;
   }
 
   /// The AIIN connect flow: sign-in method choice (browser or pasted key),
   /// the connect itself, then the shared model-pick + named-entry apply.
-  Future<void> _handleAiinConnectCommand({String? pasteKey}) async {
+  /// [noBrowser] skips the connect flow's automatic browser launch — the
+  /// URL prints prominently instead (gh-1450).
+  Future<void> _handleAiinConnectCommand({
+    String? pasteKey,
+    bool noBrowser = false,
+  }) async {
     if (_providerFlowActive) return;
     _providerFlowActive = true;
     try {
-      final credential = await _aiinAcquireCredential(pasteKey: pasteKey);
+      final credential = await _aiinAcquireCredential(
+        pasteKey: pasteKey,
+        noBrowser: noBrowser,
+      );
       if (credential != null) {
         await _applyAiinCredentials(credential.$1, email: credential.$2);
       }
@@ -61,7 +75,10 @@ extension _AiinProviderCommands on AgentCli {
 
   /// Resolves the `sk-aiin-…` credential: the pasted [pasteKey], a key the
   /// user typed in, or the browser connect flow. Null = cancelled.
-  Future<(String, String?)?> _aiinAcquireCredential({String? pasteKey}) async {
+  Future<(String, String?)?> _aiinAcquireCredential({
+    String? pasteKey,
+    bool noBrowser = false,
+  }) async {
     if (pasteKey != null) return (pasteKey, null);
     final choice = await _pickOption('AIIN (aiin.by) sign-in', [
       (
@@ -79,7 +96,9 @@ extension _AiinProviderCommands on AgentCli {
       io.writeln('AIIN setup cancelled');
       return null;
     }
-    return choice == 'key' ? _aiinAcquirePastedKey() : _aiinConnectViaBrowser();
+    return choice == 'key'
+        ? _aiinAcquirePastedKey()
+        : _aiinConnectViaBrowser(noBrowser: noBrowser);
   }
 
   /// Asks for an existing key. Null = cancelled / empty answer.
@@ -94,14 +113,17 @@ extension _AiinProviderCommands on AgentCli {
   }
 
   /// The browser connect: identity-provider pick, then the loopback OAuth
-  /// proxy flow. Null = cancelled at either step.
-  Future<(String, String?)?> _aiinConnectViaBrowser() async {
+  /// proxy flow. Null = cancelled at either step. [noBrowser] skips the
+  /// automatic browser launch (gh-1450).
+  Future<(String, String?)?> _aiinConnectViaBrowser({
+    bool noBrowser = false,
+  }) async {
     final provider = await _pickAiinIdentityProvider();
     if (provider == null) {
       io.writeln('AIIN setup cancelled');
       return null;
     }
-    final result = await _runAiinConnect(provider);
+    final result = await _runAiinConnect(provider, noBrowser: noBrowser);
     if (result == null) {
       io.writeln('AIIN setup cancelled');
       return null;
@@ -114,12 +136,18 @@ extension _AiinProviderCommands on AgentCli {
   }
 
   /// Runs the connect flow, honoring the test seam.
-  Future<AiinConnectResult?> _runAiinConnect(String provider) {
+  Future<AiinConnectResult?> _runAiinConnect(
+    String provider, {
+    bool noBrowser = false,
+  }) {
     final connectFn = config.aiinConnectFn;
     if (connectFn != null) {
       return connectFn(provider: provider, onStatus: io.writeln);
     }
-    return runAiinConnectCliFlow(onStatus: io.writeln);
+    return runAiinConnectCliFlow(
+      onStatus: io.writeln,
+      shouldOpenBrowserFn: () => shouldLaunchBrowser(noBrowserFlag: noBrowser),
+    );
   }
 
   /// Fetches the live identity-provider list (google first, matching the
