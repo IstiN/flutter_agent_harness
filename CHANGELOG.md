@@ -4808,4 +4808,13 @@
 
 - feat(1374): animated two-tone kaomoji thinking indicator — app + web TUI (#1419)
 
+## 1.0.538
+
+- gh-1433 [GOAL] Workflow log fidelity: non-interactive headless renders EVERYTHING the model says — thinking deltas AND assistant text, default-on (the post-hoc log IS the UI) (#1437)
+- gh-1425 [GOAL] Resume loses structured-compaction folds — marathon session reopens at 143% of window make fold projection resume-equivalent and cap every detonation path (#1427)
+- gh-1430 [GOAL] Headless stream-liveness: fa must heartbeat provably-alive reasoning streams, and the bench stall-gap must defer to fa's own watchdog (round-4 RCA: 13 tasks ≈ 16% killed mid-thinking) (#1436)
+- chore(1431): reseed fa-extension size baseline for the 3.47.7 engine rev (#1432)
+- gh-1409 [GOAL] Compaction-pinned skill operative lines — instructions must survive folding (image-carrier precedent) (#1428)
+- feat(1374): animated two-tone kaomoji thinking indicator — app + web TUI (#1419)
+
 ## Unreleased
