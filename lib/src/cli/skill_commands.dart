@@ -67,8 +67,6 @@ extension AgentCliSkillsExt on AgentCli {
   /// system prompt (`/skills reload`, consent changes, `/skills import`,
   /// freshness rescans — gh-1440).
   Future<void> _reloadSkills() async {
-    // ignore: avoid_print
-    print('RELOAD from ' + StackTrace.current.toString().split('\n').skip(1).take(4).join(' | '));
     final roots = defaultSkillRoots(cwd: _env.cwd, homeDir: config.homeDir);
     _skills = await discoverSkills(
       _env,
