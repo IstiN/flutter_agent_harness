@@ -551,6 +551,13 @@ void main() {
       expect(result.stripped, [ephemeralNeighbor]);
     });
 
+    test('a line reduced to a bare list marker drops whole '
+        '(reassembler bound)', () {
+      final result = sanitizeSummary('2. $ephemeralNeighbor\n');
+      expect(result.text, isEmpty);
+      expect(result.stripped, hasLength(1));
+    });
+
     test('REG-PIN-4: a legit-sized envelope inside the bound stays exempt '
         'end-to-end', () {
       final pins = List.generate(

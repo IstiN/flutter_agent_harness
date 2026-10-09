@@ -177,26 +177,53 @@ String? _sanitizeLine(
   List<String> stripped,
   Set<String> protectedLines,
 ) {
+  final pinKept = _pinProtectedLine(line, protectedLines);
+  if (pinKept != null) return pinKept;
+  final sentences = line.split(RegExp(r'(?<=[.!?])\s+'));
+  final kept = _stripEphemeralSentences(sentences, stripped);
+  if (kept == null) return line; // nothing stripped → byte-identical.
+  if (kept.isEmpty) return null; // the line carried only ephemeral text.
+  return _reassembleStrippedLine(line, kept.join(' '));
+}
+
+/// The gh-1409 AC4 guard: [line] survives verbatim when it contains any of
+/// [protectedLines] (a pin carrying the summary must not be mangled by the
+/// ephemeral-claim strips around it). `null` → not protected.
+String? _pinProtectedLine(String line, Set<String> protectedLines) {
   for (final protected in protectedLines) {
     if (protected.isNotEmpty && line.contains(protected)) return line;
   }
-  final sentences = line.split(RegExp(r'(?<=[.!?])\s+'));
+  return null;
+}
+
+/// Drops the ephemeral-claim sentences ([_secondPerson] + [_ephemeralClaim])
+/// from [sentences], recording each in [stripped]. `null` → nothing was
+/// ephemeral (the caller keeps the line byte-identical).
+List<String>? _stripEphemeralSentences(
+  List<String> sentences,
+  List<String> stripped,
+) {
   final kept = <String>[];
+  var removed = 0;
   for (final sentence in sentences) {
     if (_secondPerson.hasMatch(sentence) &&
         _ephemeralClaim.hasMatch(sentence)) {
       if (sentence.trim().isNotEmpty) stripped.add(sentence.trim());
+      removed++;
       continue;
     }
     kept.add(sentence);
   }
-  if (kept.length == sentences.length) return line;
-  if (kept.isEmpty) return null;
-  final text = kept.join(' ');
-  // A surviving bare list marker ("2." after its content was stripped)
-  // is noise, and re-attaching the original marker would duplicate it.
+  if (removed == 0) return null;
+  return kept;
+}
+
+/// Reassembles a line whose ephemeral sentences were stripped: a bare
+/// surviving list marker ("2." after its content was stripped) is noise
+/// (`null` — the line drops), and a partially stripped bullet keeps its
+/// marker so the list stays valid.
+String? _reassembleStrippedLine(String line, String text) {
   if (RegExp(r'^\s*(?:[-*+]|\d+\.)$').hasMatch(text)) return null;
-  // A partially stripped bullet keeps its marker so the list stays valid.
   final bullet = RegExp(r'^(\s*(?:[-*+]|\d+\.)\s+)');
   if (bullet.hasMatch(line) && !bullet.hasMatch(text)) {
     return bullet.firstMatch(line)!.group(1)! + text.trimLeft();
