@@ -374,7 +374,7 @@ Future<ToolExecutionResult> _runForegroundBash(
           timeoutArg != null) {
         notices.add(
           '[bash attempt $attempt/${bashToolMaxRetries + 1} timed out'
-          '${timeoutArg != null ? ' after ${timeoutArg}s' : ''} — '
+          ' after ${timeoutArg}s — '
           'retrying]',
         );
         await Future<void>.delayed(retryBackoff);
