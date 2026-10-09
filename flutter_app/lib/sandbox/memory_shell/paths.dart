@@ -56,6 +56,16 @@ Future<String?> readCommandInput(
       buffer.write(stdin ?? '');
       continue;
     }
+    // gh-1444 C1: fs paths and builtin:// URIs are equivalent for reads.
+    if (arg.startsWith(builtinSkillPathPrefix)) {
+      final embedded = builtinSkillTextAt(arg);
+      if (embedded == null) {
+        onError(arg);
+        return null;
+      }
+      buffer.write(embedded);
+      continue;
+    }
     final resolved = resolveSandboxPath(arg, cwd);
     var text = (await fs.readTextFile(resolved)).valueOrNull;
     if (text == null) {
