@@ -1055,5 +1055,52 @@ void main() {
         expect(() => jsonDecode(line), returnsNormally);
       }
     });
+
+    test('HEP: the thinking turn stays pure — stdout empty, frames carry '
+        'text only (thinking deltas are NOT message_delta frames)',
+        () async {
+      final fake = FakeStreamFunction([
+        narratedToolTurn(),
+        textTurn('All done — found it.'),
+      ]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: MemoryExecutionEnv(cwd: '/work', shell: FakeShell(stdout: 'ok')),
+          sessionRoot: '/sessions',
+          approvalMode: ApprovalMode.yolo,
+          headlessRun: true,
+        ),
+        // The host wiring (bin/fah.dart events mode): HepEventsIO drops
+        // write() prose — the gh-1433 flip adds MORE prose writes, and
+        // the decorator must drop every one of them.
+        io: HepEventsIO(io),
+        streamFunction: fake.call,
+      );
+      final frames = <String>[];
+      final hep = HepWriter(emit: frames.add, fahVersion: 'test');
+      final exit = await cli.runHeadless('check', hep: hep);
+      expect(exit, 0);
+      final out = io.out.toString();
+      expect(out.contains('pondering'), isFalse, reason: out);
+      expect(out.contains('Checking the file'), isFalse, reason: out);
+      final parsed = [
+        for (final line in frames) jsonDecode(line) as Map<String, dynamic>,
+      ];
+      expect(parsed.first['type'], 'hep_header');
+      expect(parsed.map((f) => f['type']), containsAllInOrder([
+        'agent_start',
+        'message_start',
+        'turn_done',
+      ]));
+      final allFrames = frames.join();
+      // The answer (and the pre-tool narration — both are TEXT content)
+      // ride the frames; THINKING rides nothing (the HEP protocol never
+      // framed thinking — byte-identical pre/post flip).
+      expect(allFrames, contains('All done — found it.'));
+      expect(allFrames, contains('Checking the file now.'));
+      expect(allFrames, isNot(contains('pondering')));
+    });
   });
 }
