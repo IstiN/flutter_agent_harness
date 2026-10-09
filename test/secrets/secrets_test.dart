@@ -248,7 +248,11 @@ void main() {
         ),
       );
       final options = shell.lastOptions!;
-      expect(options.env, {'SECRET': 's3cr3t-value', 'OTHER': '1'});
+      expect(options.env, {
+        'SECRET': '[REDACTED:Sensitive Value]',
+        'OTHER': '1',
+        secretPresenceEnvVar: 'SECRET',
+      });
       expect(options.timeout, const Duration(seconds: 5));
     });
 
@@ -262,7 +266,10 @@ void main() {
         'x',
         options: ShellExecOptions(env: const {'SECRET': 'override'}),
       );
-      expect(shell.lastOptions!.env, {'SECRET': 'override'});
+      expect(shell.lastOptions!.env, {
+        'SECRET': '[REDACTED:Sensitive Value]',
+        secretPresenceEnvVar: 'SECRET',
+      });
     });
 
     test('exec with no options still injects secrets', () async {
@@ -272,7 +279,10 @@ void main() {
         const {'SECRET': 's3cr3t-value'},
       );
       await env.exec('x');
-      expect(shell.lastOptions!.env, {'SECRET': 's3cr3t-value'});
+      expect(shell.lastOptions!.env, {
+        'SECRET': '[REDACTED:Sensitive Value]',
+        secretPresenceEnvVar: 'SECRET',
+      });
     });
 
     test('empty secrets pass options through untouched', () async {
@@ -292,7 +302,10 @@ void main() {
         const {'SECRET': 's3cr3t-value'},
       );
       await env.exec('x');
-      expect(shell.lastOptions!.env, {'SECRET': 's3cr3t-value'});
+      expect(shell.lastOptions!.env, {
+        'SECRET': '[REDACTED:Sensitive Value]',
+        secretPresenceEnvVar: 'SECRET',
+      });
       env.addSecrets(const {'NEW_KEY': 'n3w-value'});
       await env.exec('x');
       expect(shell.lastOptions!.env, {
@@ -309,7 +322,10 @@ void main() {
       );
       env.addSecrets(const {'SECRET': 'new-value'});
       await env.exec('x');
-      expect(shell.lastOptions!.env, {'SECRET': 'new-value'});
+      expect(shell.lastOptions!.env, {
+        'SECRET': '[REDACTED:Sensitive Value]',
+        secretPresenceEnvVar: 'SECRET',
+      });
     });
 
     test('secretsSnapshot reflects runtime grants and is a copy', () async {

@@ -209,7 +209,7 @@ void main() {
       expect(result.exitCode, 63);
       final stderr = utf8.decode(result.stderr);
       expect(stderr, contains('${big.length} bytes'));
-      expect(stderr, contains('\${SandboxBuiltins.maxCurlResponseBytes}'));
+      expect(stderr, contains('${SandboxBuiltins.maxCurlResponseBytes}'));
       expect(utf8.decode(result.stdout), isEmpty);
     });
   });
