@@ -437,23 +437,30 @@ final class AutoCompactor {
     // immediately and, with both summarizers still down, the session is
     // stuck again (the exact marathon-resume cliff this valve exists
     // for). Clamp the kept budget to the trigger minus the per-request
-    // overhead; keepRecentTokens still wins when it is smaller. Two edge
-    // guards (gh-1425 review):
+    // overhead; keepRecentTokens still wins when it is smaller. Three
+    // edge guards (gh-1425 review + flutter_app IT-2):
     // - reserve the [context trimmed] marker's own tokens (~64) so the
     //   kept region plus marker still lands under the trigger;
     // - floor the clamp at the newest message's tokens — a degenerate
     //   overhead (≥ the trigger) must still trim SOMETHING, never return
-    //   an empty window (the projectedBranchBudgetCut rule).
+    //   an empty window (the projectedBranchBudgetCut rule);
+    // - but only up to keepRecentTokens: a newest message LARGER than
+    //   keepRecentTokens must keep the budget AT keepRecentTokens so the
+    //   walk still finds "nothing droppable" and returns null — that
+    //   null is the failure the summarizer-ladder exhaustion surfaces
+    //   (gh-1077 AC2: the app's fix-location notice fires on it, and the
+    //   transcript stays intact instead of silently dropping the user's
+    //   newest turn).
     final overhead = estimateRequestTokens(
       const [],
       systemPrompt: state.systemPrompt,
       tools: state.tools,
     );
-    final budget = math.max(
-      estimateTokens(messages.last), // never an empty window
-      math.min(
-        settings.keepRecentTokens,
+    final budget = math.min(
+      settings.keepRecentTokens,
+      math.max(
         math.max(0, window - settings.reserveTokens - overhead - 64),
+        estimateTokens(messages.last), // never an empty window
       ),
     );
     var cut = 0; // first kept index
