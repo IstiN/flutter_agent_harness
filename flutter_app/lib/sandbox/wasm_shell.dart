@@ -513,6 +513,18 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         ),
       );
     }
+    // gh-1444 C1: a cat whose operands touch pointer semantics is served
+    // by the Dart builtin (the file seam follows `.pointer` siblings; the
+    // coreutils.wasm applet cannot). Plain cats keep the applet path so
+    // the host-cwd argument projection below keeps applying.
+    if (command == 'cat' &&
+        await _catNeedsPointerSeam(args, options, inputSource)) {
+      return _runBuiltin(
+        stage: Stage(command: command, args: args),
+        options: options,
+        inputSource: inputSource,
+      );
+    }
     final cwd = _effectiveCwd(options);
     final cwdArgs = _rewriteRelativeArgs(command, args, cwd);
     final effectiveArgs = inputSource != null && command != 'rg'
@@ -2573,12 +2585,34 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     };
   }
 
+  /// True when a `cat` invocation touches pointer semantics (gh-1444 C1):
+  /// a `builtin://skills/...` operand, or a missing operand whose
+  /// `<path>.pointer` sibling resolves (the seam rule: an existing file
+  /// always wins). Plain cats stay on the coreutils.wasm applet path so
+  /// the host-cwd argument projection (gh-1274, issue #1335) keeps
+  /// applying byte-identically.
+  Future<bool> _catNeedsPointerSeam(
+    List<String> args,
+    ShellExecOptions? options,
+    String? inputSource,
+  ) async {
+    final parsed = parseCatArgs(args);
+    if (parsed.error != null) return false;
+    final files = [...parsed.files];
+    if (files.isEmpty && inputSource != null) files.add(inputSource);
+    final cwd = _effectiveCwd(options);
+    for (final file in files) {
+      if (file == '-') continue;
+      if (file.startsWith(builtinSkillPathPrefix)) return true;
+      final path = _resolveSandboxPath(file, cwd);
+      if (await _readSandboxText(path) != null) continue;
+      final followed = await followSkillPointer(path, _readSandboxText);
+      if (followed is! SkillPointerAbsent) return true;
+    }
+    return false;
+  }
+
   /// The `cat` builtin (gh-1444 C1): reads operands through the shell's
-  /// transparent file seam ([_readSandboxTextFollowPointers]) so a skill
-  /// path whose `.pointer` sibling resolves serves the compiled-in builtin
-  /// body — the coreutils.wasm applet reads through WASI and cannot.
-  /// Binary-safe (bytes pass through undecoded) unless `-n`/`-b` demand
-  /// line numbering.
   Future<Result<StageResult, ExecutionError>> _catBuiltin(
     Stage stage,
     ShellExecOptions? options,
