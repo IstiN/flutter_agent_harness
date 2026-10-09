@@ -1563,9 +1563,13 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         ? instance.stderr.listen(
             (chunk) {
               debugPrint('[wasm_shell] stderr chunk: ${chunk.length} bytes');
-              final clean = noiseFilter?.process(chunk) ?? chunk;
-              if (clean.isNotEmpty) {
-                io.collect(io.stderrBuffer, clean, onStderr);
+              if (noiseFilter == null) {
+                io.collect(io.stderrBuffer, chunk, onStderr);
+              } else {
+                final clean = Uint8List.fromList(noiseFilter.process(chunk));
+                if (clean.isNotEmpty) {
+                  io.collect(io.stderrBuffer, clean, onStderr);
+                }
               }
             },
             onDone: () {

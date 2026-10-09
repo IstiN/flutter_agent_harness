@@ -250,18 +250,18 @@ void main() {
 
   group('stage engine over scripted modules', () {
     test('build failure surfaces a spawn error', () async {
-      final r = await shell().exec('cat notes.txt');
+      final r = await shell().exec('tail notes.txt');
       expect(r.isErr, isTrue);
       expect(r.errorOrNull?.code, ExecutionErrorCode.spawnError);
     });
 
-    test('cat operand is rewritten against the current directory', () async {
+    test('tail operand is rewritten against the current directory', () async {
       io.Directory('${sandbox.path}/work').createSync();
       rec.next = _ScriptedInstance();
-      final r = await shell().exec('cd /work && cat notes.txt');
+      final r = await shell().exec('cd /work && tail notes.txt');
       expect(r.isOk, isTrue); // the stub's start returns, exit 0
       expect(rec.configs, hasLength(1));
-      expect(rec.configs.single.args, ['cat', '/work/notes.txt']);
+      expect(rec.configs.single.args, ['tail', '/work/notes.txt']);
     });
 
     test('dd if=/of= operands are rewritten', () async {
@@ -312,7 +312,7 @@ void main() {
 
     test('non-python stages get no PYTHONPATH', () async {
       rec.next = _ScriptedInstance();
-      await shell().exec('cat notes.txt');
+      await shell().exec('tail notes.txt');
       expect(
         rec.configs.single.env.map((e) => e.name),
         isNot(contains('PYTHONPATH')),
@@ -324,7 +324,7 @@ void main() {
       final instance = _ScriptedInstance();
       rec.next = instance;
       final future = shell().exec(
-        'cat x',
+        'tail x',
         options: ShellExecOptions(onStdout: seen.add),
       );
       instance.out.add(utf8.encode('hello'));
@@ -340,14 +340,14 @@ void main() {
       final instance = _ScriptedInstance()
         ..startError = Exception('Exited with i32 exit status 7');
       rec.next = instance;
-      final r = await shell().exec('cat x');
+      final r = await shell().exec('tail x');
       expect(r.valueOrNull!.exitCode, 7);
     });
 
     test('unparsable traps with output degrade to exit 1', () async {
       final instance = _ScriptedInstance()..startError = StateError('trap');
       rec.next = instance;
-      final future = shell().exec('cat x');
+      final future = shell().exec('tail x');
       instance.out.add(utf8.encode('partial'));
       final r = await future;
       expect(r.valueOrNull!.exitCode, 1);
@@ -357,7 +357,7 @@ void main() {
       final instance = _ScriptedInstance()..gate = Completer<void>();
       rec.next = instance;
       final r = await shell().exec(
-        'cat x',
+        'tail x',
         options: ShellExecOptions(timeout: const Duration(milliseconds: 30)),
       );
       expect(r.isErr, isTrue);
@@ -371,7 +371,7 @@ void main() {
       rec.next = instance;
       final delivered = Completer<void>();
       final future = shell().exec(
-        'cat x',
+        'tail x',
         options: ShellExecOptions(
           onStdout: (s) {
             if (!delivered.isCompleted) delivered.complete();
@@ -788,7 +788,9 @@ void main() {
     test('light commands never touch the lazy loader (AC1)', () async {
       final loads = <String>[];
       rec.next = _ScriptedInstance();
-      final r = await lazyShell(loads).exec('cat notes.txt');
+      // gh-1444: cat is a Dart builtin now; tail still rides the eager
+      // coreutils slot — neither may trigger a lazy interpreter compile.
+      final r = await lazyShell(loads).exec('tail notes.txt');
       expect(r.isOk, isTrue);
       expect(loads, isEmpty);
     });
