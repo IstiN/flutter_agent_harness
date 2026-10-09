@@ -6,8 +6,11 @@ coverage/
 # coverage/; a WIP auto-save swept one onto the branch once (gh-1033
 # review thread 11).
 cov-*/
-# Same artifact class (gh-1439 rework: a WIP auto-save swept a local
-# coverage-verify/ scratch run onto the branch — 47 .vm.json files).
+# VM coverage scratch (lcov.info + per-test .vm.json) from the quality-gate
+# coverage runs — same artifact class as coverage/; WIP auto-saves swept it
+# onto the branch repeatedly (gh-1033 review thread 11, gh-1449 review
+# thread 14: coverage_cov/; gh-1439 rework: coverage-verify/).
+coverage_cov/
 coverage-verify/
 # The Pages workflow assembles the Flutter web demo here; never commit it.
 site/app/
