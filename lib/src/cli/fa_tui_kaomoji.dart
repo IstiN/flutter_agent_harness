@@ -1,9 +1,10 @@
-// The busy row's kaomoji thinking indicator (issue #1374): TUI-side
-// rendering of the shared face set (lib/src/kaomoji_faces.dart — the
-// faces, palette and swap cadence the app/web hosts render too). Data +
-// render helpers for the busy row; the model state (face index, picker
-// seam, swap cadence) lives in FaTuiModel. Same library, so the private
-// members stay private — mirrors the fa_tui_heartbeat.dart split.
+// The busy row's kaomoji thinking indicator (issue #1374): the model-side
+// face state (index, picker seam, swap cadence) and the FA_KAOMOJI_FACE
+// pin. gh-1446 retired the TUI's face RENDERING (the busy row is plain
+// text; motion lives in the status-line brand zone) — the app/web hosts
+// still render the shared face set (lib/src/kaomoji_faces.dart). Same
+// library, so the private members stay private — mirrors the
+// fa_tui_heartbeat.dart split.
 part of 'fa_tui.dart';
 
 /// Face-zone width: the widest face is `o_o?` (4 cells). Every face pads
@@ -11,9 +12,9 @@ part of 'fa_tui.dart';
 /// (the #365 fixed-cell rule).
 const kKaomojiFaceZoneCells = 4;
 
-/// Below this width the fixed busy-row zones stop fitting, and cramped
-/// terminals are also the likeliest to lack ◕‿¬ glyphs: render the
-/// ASCII-safe fallback set (3 cells, 7-bit only).
+/// Below this width the fixed busy-row zones used to stop fitting
+/// (issue #1374's ASCII face fallback): gh-1446 retired the face render —
+/// the constant stays only for the repo's fixture arithmetic.
 const kKaomojiAsciiMinWidth = 36;
 
 /// The process-wide random source of the default picker. Never read at a
@@ -40,23 +41,3 @@ int? _kaomojiFacePin() {
   return pin?.clamp(0, kKaomojiFaces.length - 1);
 }
 
-/// The face's plain text (its exact cell count — every glyph is one
-/// BMP code unit).
-String _kaomojiPlainText(KaomojiFace face, bool ascii) {
-  final b = StringBuffer();
-  for (final (text, _) in face.runsFor(ascii)) {
-    b.write(text);
-  }
-  return b.toString();
-}
-
-/// The face rendered two-tone: eye/face strokes in the brand teal, mouths
-/// in the brand blue (issue #1374), through the theme controller's
-/// profile-aware emitters.
-String _kaomojiColored(KaomojiFace face, bool ascii) {
-  final b = StringBuffer();
-  for (final (text, mouth) in face.runsFor(ascii)) {
-    b.write(mouth ? tuiKaomojiMouth(text) : tuiKaomojiEye(text));
-  }
-  return b.toString();
-}

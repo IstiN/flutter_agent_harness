@@ -757,8 +757,7 @@ final class _WaitingCoordinator {
   /// Arms the heartbeat while waiters exist (a resolved-then-remaining
   /// wait restarts the full period, E2) and stops it when the last
   /// waiter resolves (AC3: a resolved wait never beats again).
-  void _syncHeartbeat(WaiterSnapshot snap) {
-    if (snap.isEmpty) {
+  void _syncHeartbeat(WaiterSnapshot snap) {    if (snap.isEmpty) {
       waitingSince = null;
       heartbeat.stop();
     } else {
@@ -820,9 +819,9 @@ final class _WaitingCoordinator {
   Future<void> waitForJobsCeiling() async {
     final snap = await snapshot();
     if (snap.isEmpty) return;
-    _cli.io.writeln('⏳ waiting: ${describe(snap)}');
+    _cli.io.writeln('${_pendingGlyph()} waiting: ${describe(snap)}');
     final settled = await _ceilingWait(snap);
-    _cli.io.writeln('⏳ waiters resolved — ${waitingDetachSummary(settled)}');
+    _cli.io.writeln('${_pendingGlyph()} waiters resolved — ${waitingDetachSummary(settled)}');
   }
 
   /// The ceiling wait loop: sleeps to the nearest wake source (a job
@@ -853,7 +852,7 @@ final class _WaitingCoordinator {
     final now = _clock();
     if (now.isBefore(deadline)) return false;
     _cli.io.writeln(
-      '⏳ ${waitingDetachSummary(snap)} — wait ceiling ($ceilingMin min)'
+      '${_pendingGlyph()} ${waitingDetachSummary(snap)} — wait ceiling ($ceilingMin min)'
       ' reached, exiting',
     );
     return true;
@@ -886,7 +885,7 @@ final class _WaitingCoordinator {
     }
     final beatSnap = await snapshot();
     if (beatSnap.isEmpty) return _clock();
-    _cli.io.writeln('⏳ still waiting: ${describe(beatSnap)}');
+    _cli.io.writeln('${_pendingGlyph()} still waiting: ${describe(beatSnap)}');
     return _clock();
   }
 
@@ -953,10 +952,14 @@ Duration nextWakeDelay({
   return delay;
 }
 
+/// The waiting rows' pending glyph (gh-1446 AC8): `status.pending`
+/// resolves through the session symbol table — no hardcoded `⏳` survives
+/// in chrome code; the ascii preset emits its ASCII mapping (E8).
+String _pendingGlyph() => FaThemeController.instance.sym('status.pending');
+
 /// One-line human description of a snapshot (issue #450): "1 background
 /// job (…), 2 timers armed". Pure — unit-tested directly.
-String waitingDescribe(WaiterSnapshot snap) {
-  final parts = <String>[
+String waitingDescribe(WaiterSnapshot snap) {  final parts = <String>[
     if (snap.jobs.isNotEmpty)
       '${snap.jobs.length} background job'
           '${snap.jobs.length == 1 ? '' : 's'} (${snap.jobs.first})',

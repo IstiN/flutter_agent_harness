@@ -177,6 +177,14 @@ final class FaTuiController {
   /// controller's terminal width accessor.
   int get termWidth => 80;
 
+  /// Frame zero on web (the stub never animates). Mirrors the real
+  /// controller's spinner-frame accessor (gh-1446 AC5).
+  int get spinnerFrame => 0;
+
+  /// Blank on web (the stub never animates). Mirrors the real
+  /// controller's brand-frame accessor (gh-1446 AC5).
+  String get brandFrameGlyph => ' ';
+
   Future<List<String>> drainQueue() async => const [];
 
   void clearQueue() {}

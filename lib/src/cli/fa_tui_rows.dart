@@ -465,13 +465,17 @@ List<String> waitingRowLines({
   return lines;
 }
 
-/// The `⏳ waiting` headline: job purpose and/or the nearest timer wake.
+/// The `waiting` headline (gh-1446 AC8): the pending glyph resolves
+/// through the symbol table (`status.pending` = `○`, no hardcoded `⏳`);
+/// job purpose and/or the nearest timer wake follow.
 String _waitingHeadLine(
   List<String> jobs,
   List<({int dueMs, String preview})> timers,
   String Function(int) etaOf,
 ) {
-  final head = StringBuffer('⏳ waiting');
+  final head = StringBuffer(
+    '${FaThemeController.instance.sym('status.pending')} waiting',
+  );
   if (jobs.length == 1) {
     final singleJob = jobs.single.replaceAll(RegExp(r'\s+'), ' ').trim();
     head.write(' · $singleJob');
