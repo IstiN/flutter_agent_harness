@@ -7,6 +7,30 @@
 part of 'fa_tui.dart';
 
 extension _TuiViewport on FaTuiModel {
+  /// Resize (gh-1433 E8 + gh-1439 E2). Split out of fa_tui.dart to keep
+  /// the model file under the repo's ≤2800-line gate — the scroll math
+  /// lives here with the rest of the viewport machinery.
+  (Model, Cmd?) _handleWindowSize(WindowSizeMsg msg) {
+    // Live size tracking (gh-1433 E8): the controller's width seam
+    // updates with every resize the program processes.
+    onResized?.call(msg.width, msg.height);
+    // Clamp the scroll offset to the new visible area so resizing cannot
+    // leave it out of bounds (which showed >100% progress), then clear
+    // the screen so no old frame artifacts survive the relayout. Wrapped
+    // rows are recomputed at the NEW width.
+    final resized = copyWith(termWidth: msg.width, termHeight: msg.height);
+    final wrapped = resized._wrappedLines(msg.width);
+    return (
+      resized.copyWith(
+        // Held (gh-1439 E2): the anchor is a transcript line — the new
+        // wrap names the same logical position at the new size. Live:
+        // plain clamp (the anchor recomputes on the next append).
+        scrollOffset: resized._heldAnchorRow(wrapped),
+      ),
+      () async => ClearScreenMsg(),
+    );
+  }
+
   /// Mouse-wheel routing (issue #278 + gh-1439). Split out of fa_tui.dart
   /// to keep the model file under the repo's ≤2800-line gate — same
   /// library (`part of`), so the extension sees the model's privates.
@@ -18,6 +42,24 @@ extension _TuiViewport on FaTuiModel {
     if (hub != null) return _wheelToHubSelection(msg);
     // Transcript: the wheel is a page gesture.
     return _wheelTranscript(msg);
+  }
+
+  /// The held-mode jump chip (gh-1439): when the rule row carries the
+  /// `● N new` counter (held with unseen output), the row is the on-screen
+  /// re-engage affordance — one full-width row, a click jumps live and
+  /// flushes the count. Live — or held with nothing new, where the rule
+  /// row is the fold hint — registers nothing.
+  void _registerJumpLiveRegion(int stickyRows, int historyRows) {
+    if (follow.isLive || follow.unseen <= 0) return;
+    _hitRegions.add(
+      TuiHitRegion(
+        x: 0,
+        y: stickyRows + historyRows,
+        w: termWidth,
+        h: 1,
+        kind: TuiRegionKind.jumpLive,
+      ),
+    );
   }
 
   /// The hub overlay's wheel half: each notch steps the fleet-tree

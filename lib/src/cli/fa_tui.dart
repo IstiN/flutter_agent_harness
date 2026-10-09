@@ -1271,27 +1271,6 @@ final class FaTuiModel extends Model {
     return _schedulePickerReveal(revealMs);
   }
 
-  (Model, Cmd?) _handleWindowSize(WindowSizeMsg msg) {
-    // Live size tracking (gh-1433 E8): the controller's width seam
-    // updates with every resize the program processes.
-    onResized?.call(msg.width, msg.height);
-    // Clamp the scroll offset to the new visible area so resizing cannot
-    // leave it out of bounds (which showed >100% progress), then clear
-    // the screen so no old frame artifacts survive the relayout. Wrapped
-    // rows are recomputed at the NEW width.
-    final resized = copyWith(termWidth: msg.width, termHeight: msg.height);
-    final wrapped = resized._wrappedLines(msg.width);
-    return (
-      resized.copyWith(
-        // Held (gh-1439 E2): the anchor is a transcript line — the new
-        // wrap names the same logical position at the new size. Live:
-        // plain clamp (the anchor recomputes on the next append).
-        scrollOffset: resized._heldAnchorRow(wrapped),
-      ),
-      () async => ClearScreenMsg(),
-    );
-  }
-
   (Model, Cmd?) _handleMultiCharRunes(KeyPressMsg msg) {
     Model current = this;
     Cmd? lastCmd;
@@ -2171,24 +2150,6 @@ final class FaTuiModel extends Model {
           ? null
           : Cursor(x: cursorX, y: cursorRow, shape: CursorShape.bar),
       mouseMode: _viewMouseMode,
-    );
-  }
-
-  /// The held-mode jump chip (gh-1439): when the rule row carries the
-  /// `● N new` counter (held with unseen output), the row is the on-screen
-  /// re-engage affordance — one full-width row, a click jumps live and
-  /// flushes the count. Live — or held with nothing new, where the rule
-  /// row is the fold hint — registers nothing.
-  void _registerJumpLiveRegion(int stickyRows, int historyRows) {
-    if (follow.isLive || follow.unseen <= 0) return;
-    _hitRegions.add(
-      TuiHitRegion(
-        x: 0,
-        y: stickyRows + historyRows,
-        w: termWidth,
-        h: 1,
-        kind: TuiRegionKind.jumpLive,
-      ),
     );
   }
 
