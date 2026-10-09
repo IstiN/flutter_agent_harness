@@ -444,6 +444,7 @@ void main() {
         _promptBody('prompts/compaction/branch_summary.md'),
         _promptBody('prompts/compaction/branch_summary_preamble.md'),
         _promptBody('prompts/compaction/turn_prefix.md'),
+        _promptBody('prompts/compaction/pinned_operative.md'),
       ];
       for (final body in bodies) {
         expect(

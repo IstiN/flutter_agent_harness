@@ -481,6 +481,9 @@ extension AgentCliCompactionRun on AgentCli {
       attemptBudget: Duration(
         seconds: config.compactionJudgeBudgetSeconds ?? 300,
       ),
+      // gh-1409: the enabled skills' operative lines ride every
+      // summarization prompt as the verbatim-preserve pinned block.
+      operativeSkills: _enabledSkills,
       // Issue #1085 M1/M3: linked cancellation — see [_runAutoCompact].
       runToken: token,
       memoryExtractionHook: (text) async {
