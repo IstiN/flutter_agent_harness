@@ -342,12 +342,12 @@ void main() {
       expect(statuses.last, contains('auth.openai.com'));
     });
 
-    test('no code/verifier value ever appears in the printed lines '
+    test('no code/verifier/token value ever appears in the printed lines '
         '(gh-1450 AC5)', () async {
       final statuses = <String>[];
       final driver = _FlowDriver();
       const secretCode = 'super-secret-auth-code-1234567890';
-      const secretVerifier = 'super-secret-pkce-verifier-1234567890';
+      final seenVerifiers = <String>[];
 
       final flowFuture = runChatGptOAuthCliFlow(
         ports: const [0],
@@ -360,7 +360,7 @@ void main() {
               required String redirectUri,
               required String verifier,
             }) async {
-              expect(verifier, secretVerifier);
+              seenVerifiers.add(verifier);
               return const ChatGptOAuthCredentials(
                 accessToken: '[REDACTED:Sensitive Value]',
                 refreshToken: '[REDACTED:Sensitive Value]',
@@ -375,7 +375,13 @@ void main() {
 
       final joined = statuses.join('\n');
       expect(joined, isNot(contains(secretCode)));
-      expect(joined, isNot(contains(secretVerifier)));
+      // The PKCE verifier is flow-generated; byte-scan the real value.
+      for (final verifier in seenVerifiers) {
+        expect(verifier, isNotEmpty);
+        expect(joined, isNot(contains(verifier)));
+      }
+      expect(joined, isNot(contains('at-z')));
+      expect(joined, isNot(contains('rt-z')));
     });
 
     test('returns null when the token exchange fails', () async {
