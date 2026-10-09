@@ -76,7 +76,15 @@ String maskedForScan(String source) {
 
   /// Consumes a string literal whose opening quote(s) start at [start]
   /// and returns the index just past the closing quote. [raw] strings
-  /// treat `\` literally. The interior is masked (newlines preserved).
+  /// treat `\` literally (and never interpolate). The interior is masked
+  /// (newlines preserved), INCLUDING `${...}` interpolation spans: the
+  /// masker brace-matches from `${` to its closing `}` and masks the
+  /// whole span, so nested quotes inside an interpolation (`'${a['k']}'`)
+  /// can neither terminate the outer string nor leave junk parens for
+  /// [balancedArgs]. A `}` hiding inside a NESTED string of an
+  /// interpolation could extend the mask past the real end — masking
+  /// never adds matches, so the failure direction is the documented
+  /// false RED only.
   int consumeString(int start, String quote, {required bool raw}) {
     final triple = source.startsWith(quote + quote, start + 1);
     final openLen = triple ? 3 : 1;
@@ -91,6 +99,21 @@ String maskedForScan(String source) {
         keep(i);
         if (i + 1 < source.length) keep(i + 1);
         i += 2;
+        continue;
+      }
+      if (!raw && ch == r'$' && source.startsWith('{', i + 1)) {
+        // String interpolation `${...}`: mask the brace-matched span.
+        mask(i);
+        mask(i + 1);
+        i += 2;
+        var braceDepth = 1;
+        while (i < source.length && braceDepth > 0) {
+          final c = source[i];
+          mask(i);
+          i++;
+          if (c == '{') braceDepth++;
+          if (c == '}') braceDepth--;
+        }
         continue;
       }
       if (source.startsWith(quote, i) &&
@@ -166,6 +189,39 @@ String? balancedArgs(String maskedSource, int openParen) {
   return null;
 }
 
+/// Strips every nested balanced `(...)` group from captured constructor
+/// [args] (run them through this AFTER masking), leaving only the
+/// construction's OWN top-level tokens. The wiring check
+/// (`contains('voxelWorld:')`) reads THIS, never the raw args — a
+/// `voxelWorld:` that appears only inside a nested call
+/// (`JsonWidgetRenderer(theme: resolve(voxelWorld: w))`) is not a wiring
+/// and must read as unwired (gh-1441 review round 2, residual path 1 —
+/// the only false-GREEN shape `contains` over raw args had).
+String topLevelArgs(String args) {
+  // [args] is the balanced `(...)` span starting at the construction's
+  // own opening paren — drop that frame first, then strip the nested
+  // groups inside it.
+  var body = args;
+  if (body.startsWith('(') && body.endsWith(')') && body.length >= 2) {
+    body = body.substring(1, body.length - 1);
+  }
+  final out = StringBuffer();
+  var depth = 0;
+  for (var i = 0; i < body.length; i++) {
+    final ch = body[i];
+    if (ch == '(') {
+      depth++;
+      continue;
+    }
+    if (ch == ')') {
+      if (depth > 0) depth--;
+      continue;
+    }
+    if (depth == 0) out.write(ch);
+  }
+  return out.toString();
+}
+
 /// Every `JsonWidgetRenderer(` construction site as (path, lineNo, args),
 /// scanned across every `.dart` file under [rendererRoot].
 List<(String, int, String)> rendererConstructionsInTree() {
@@ -223,14 +279,16 @@ void main() {
       );
       for (final (path, line, args) in sites) {
         expect(
-          args,
+          topLevelArgs(args),
           contains('voxelWorld:'),
           reason:
               '$path builds JsonWidgetRenderer at :$line without '
               '`voxelWorld:` — every `voxel` node in the tree degrades to '
               'the "Voxel world" placeholder (gh-1441). Wire the engine '
-              "bridge world: `voxelWorld: engine.voxelWorld` (mirrors the "
-              'webViewHost/js3dHost wiring).',
+              'bridge world as a DIRECT argument: '
+              '`voxelWorld: engine.voxelWorld` (mirrors the webViewHost/'
+              'js3dHost wiring; a voxelWorld: only inside a nested call '
+              'does not count).',
         );
       }
     });
@@ -352,6 +410,53 @@ final d = JsonWidgetRenderer(onEvent: _, voxelWorld: w);
       const source = "final s = 'unterminated;\nfinal r = JsonWidgetRenderer(";
       final masked = maskedForScan(source);
       expect(rendererConstructionsOf(masked), isEmpty);
+    });
+
+    test('a voxelWorld only inside a NESTED call is not a wiring — the '
+        'guard must not false-GREEN on contains-over-raw-args', () {
+      // gh-1441 review round 2, residual path 1: contains('voxelWorld:')
+      // over the RAW captured args matches a nested call inside the args.
+      // topLevelArgs strips nested balanced groups, so the guard sees the
+      // construction's OWN arguments — this shape reads as UNWIRED (RED).
+      const source =
+          'final r = JsonWidgetRenderer(theme: resolve(voxelWorld: w));';
+      final site = rendererConstructionsOf(maskedForScan(source)).single;
+      expect(
+        site.$3,
+        contains('voxelWorld:'),
+        reason: 'precondition: the raw args DO carry the token',
+      );
+      expect(
+        topLevelArgs(site.$3),
+        isNot(contains('voxelWorld:')),
+        reason: 'the construction itself omits voxelWorld: — unwired',
+      );
+    });
+
+    test('a direct top-level voxelWorld survives nested-group stripping', () {
+      const source =
+          'final r = JsonWidgetRenderer(voxelWorld: w, theme: resolve(x));';
+      final site = rendererConstructionsOf(maskedForScan(source)).single;
+      expect(topLevelArgs(site.$3), contains('voxelWorld:'));
+    });
+
+    test('string interpolation \${...} cannot desync balancedArgs', () {
+      // gh-1441 review round 2, residual path 2: the masker used to close
+      // the outer string at the inner quote of 'v: ${cfg['k']} )', leaving
+      // the tail as code — junk parens in balancedArgs' reach.
+      const source = '''
+final note = 'v: \${cfg['k']} )';
+final r = JsonWidgetRenderer(onEvent: _, voxelWorld: w);
+''';
+      final site = rendererConstructionsOf(maskedForScan(source)).single;
+      expect(site.$2, 2, reason: 'line numbers survive the mask');
+      expect(
+        topLevelArgs(site.$3),
+        contains('voxelWorld:'),
+        reason:
+            'the `)` inside the interpolation must not end the '
+            'argument capture',
+      );
     });
   });
 }
