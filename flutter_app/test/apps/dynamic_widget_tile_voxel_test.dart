@@ -14,7 +14,6 @@ import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/dynamic_messages.dart';
 import 'package:fa/apps/dynamic_widget_tile.dart';
 import 'package:fa/apps/js_app_engine.dart';
-import 'package:fa/services/agent_service.dart';
 import 'package:fa_ui/fa_ui.dart' show FaChatMessage;
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
@@ -58,13 +57,12 @@ void main() {
   group('DynamicWidgetTile voxel node (gh-1441 IT-2)', () {
     TestWidgetsFlutterBinding.ensureInitialized();
 
-    DynamicMessageDefinition definition(String id) =>
-        DynamicMessageDefinition(
-          id: id,
-          title: 'Voxel sandbox',
-          jsSource: voxelTileSource,
-          createdAt: DateTime(2026, 10, 9, 12, 30),
-        );
+    DynamicMessageDefinition definition(String id) => DynamicMessageDefinition(
+      id: id,
+      title: 'Voxel sandbox',
+      jsSource: voxelTileSource,
+      createdAt: DateTime(2026, 10, 9, 12, 30),
+    );
 
     DynamicMessagesService service() => DynamicMessagesService(
       env: MemoryExecutionEnv(),
@@ -81,7 +79,7 @@ void main() {
     Widget host(Widget child) => MaterialApp(home: Scaffold(body: child));
 
     testWidgets('a tile tree with a voxel node renders JsVoxelNode, not the '
-        'placeholder (AC2)', skip: _engineSkip, (tester) async {
+        'placeholder (AC2)', (tester) async {
       final dm = service();
       final def = definition('dm-voxel');
       final env = MemoryExecutionEnv();
@@ -123,5 +121,5 @@ void main() {
       expect(find.byIcon(Icons.landscape), findsNothing);
       expect(find.text('Voxel world'), findsNothing);
     });
-  });
+  }, skip: _engineSkip);
 }

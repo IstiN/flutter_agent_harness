@@ -81,15 +81,15 @@ List<(int, String)> rendererConstructions(String commentedSource) {
 
 void main() {
   group('gh-1441 voxelWorld wiring guard', () {
-    test('every Fa-app JsonWidgetRenderer construction passes voxelWorld:',
-        () {
+    test('every Fa-app JsonWidgetRenderer construction passes voxelWorld:', () {
       rendererSites.forEach((surface, path) {
         final source = File(path).readAsStringSync();
         final sites = rendererConstructions(source);
         expect(
           sites,
           isNotEmpty,
-          reason: '$surface: the guard found no JsonWidgetRenderer( '
+          reason:
+              '$surface: the guard found no JsonWidgetRenderer( '
               'construction — the scan is stale (file renamed/moved?), fix '
               'the guard before trusting a green run',
         );
@@ -113,7 +113,8 @@ void main() {
       expect(
         source,
         contains('JsVoxelWorld? get voxelWorld'),
-        reason: 'JsAppEngine keeps the JsWidgetEngine private — without a '
+        reason:
+            'JsAppEngine keeps the JsWidgetEngine private — without a '
             'voxelWorld accessor the surfaces have nothing to pass to '
             'JsonWidgetRenderer (gh-1441)',
       );
@@ -122,7 +123,8 @@ void main() {
       expect(
         source,
         contains('get voxelWorld => _engine?.voxelWorld'),
-        reason: 'voxelWorld must delegate to the CURRENT _engine: a cached '
+        reason:
+            'voxelWorld must delegate to the CURRENT _engine: a cached '
             'world survives dispose/reload and repaints a disposed world '
             '(gh-1441 AC5)',
       );

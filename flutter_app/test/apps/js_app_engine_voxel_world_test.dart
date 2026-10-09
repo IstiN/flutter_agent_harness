@@ -69,7 +69,7 @@ const voxelAppSource = '''
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('JsAppEngine.voxelWorld (gh-1441 UT-1/AC5)', () {
+  group('JsAppEngine.voxelWorld (gh-1441 UT-1/AC5) — world-less states', () {
     test('null before start', () {
       final env = MemoryExecutionEnv();
       expect(engine(env, 'voxel-null-pre').voxelWorld, isNull);
@@ -81,6 +81,10 @@ void main() {
       await e.dispose();
       expect(e.voxelWorld, isNull);
     });
+  });
+
+  group('JsAppEngine.voxelWorld (gh-1441 UT-1/AC5) — live engine', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
 
     testWidgets('live world after start, a NEW world after restart, null '
         'after dispose (no stale world repaints)', (tester) async {
@@ -98,15 +102,19 @@ void main() {
       await tester.runAsync(e.start);
       final second = e.voxelWorld;
       expect(second, isNotNull);
-      expect(identical(first, second), isFalse,
-          reason: 'a reload must re-wire the CURRENT world — a stale world '
-              'from the disposed engine would repaint dead state (gh-1441 '
-              'AC5/E4)');
+      expect(
+        identical(first, second),
+        isFalse,
+        reason:
+            'a reload must re-wire the CURRENT world — a stale world '
+            'from the disposed engine would repaint dead state (gh-1441 '
+            'AC5/E4)',
+      );
 
       await tester.runAsync(e.dispose);
       expect(e.voxelWorld, isNull);
     });
-  });
+  }, skip: _engineSkip);
 
   group('JsAppEngine.noteUnwiredVoxelWorld (gh-1441 AC3)', () {
     test('logs ONCE for a voxel tree on a world-less engine, and only for '
@@ -126,13 +134,17 @@ void main() {
       };
       e.noteUnwiredVoxelWorld(voxelTree);
       e.noteUnwiredVoxelWorld(voxelTree); // re-render — no second line
-      final voxelLines = AppLog
-          .dump()
+      final voxelLines = AppLog.dump()
           .split('\n')
           .where((l) => l.contains('no voxelWorld is wired'))
           .length;
-      expect(voxelLines, 1, reason: 'the diagnostic is one-shot per engine '
-          'instance — a 120 fps re-render loop must not spam the log');
+      expect(
+        voxelLines,
+        1,
+        reason:
+            'the diagnostic is one-shot per engine '
+            'instance — a 120 fps re-render loop must not spam the log',
+      );
 
       // A tree WITHOUT a voxel node stays silent (nothing to degrade).
       AppLog.reset();
@@ -154,10 +166,7 @@ void main() {
               onEvent: (_, _) {},
               // The AC3 minimal backend: no world wired.
               voxelWorld: null,
-            ).build(const {
-              'type': 'voxel',
-              'id': 'world',
-            }, context),
+            ).build(const {'type': 'voxel', 'id': 'world'}, context),
           ),
         ),
       );

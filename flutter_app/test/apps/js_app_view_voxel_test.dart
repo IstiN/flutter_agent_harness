@@ -12,7 +12,6 @@
 // Boots the REAL JavaScriptCore/QuickJS backend (issue #184 guard) with a
 // MemoryExecutionEnv + voxel fixture, pushes the JsAppView route like the
 // calculator suite, and asserts on the live widget tree.
-import 'dart:io';
 
 import 'package:fa/apps/apps_store.dart';
 import 'package:fa/apps/js_app_view.dart';
@@ -72,6 +71,8 @@ const bareVoxelAppSource = '''
 void main() {
   group('JsAppView voxel node (gh-1441 IT-1)', () {
     TestWidgetsFlutterBinding.ensureInitialized();
+    // Every leg boots a real JS engine — skip wholesale on hosts without
+    // the native bridge (issue #184).
 
     /// Pumps a two-route app (home with an "open-app" button → [JsAppView])
     /// and waits until the JS app renders [readyText]. Everything runs on
@@ -137,8 +138,7 @@ void main() {
     }
 
     testWidgets('a voxel node after attach + mesh + camera renders '
-        'JsVoxelNode, not the placeholder (AC1)',
-        skip: _engineSkip, (tester) async {
+        'JsVoxelNode, not the placeholder (AC1)', (tester) async {
       final env = MemoryExecutionEnv();
       await tester.runAsync(() async {
         await env.writeFile('apps/voxelapp/widget.js', voxelAppSource);
@@ -154,8 +154,7 @@ void main() {
     });
 
     testWidgets('a bare voxel node on the FIRST tree (zero voxel.* calls) '
-        'renders JsVoxelNode — the eager bridge world (E1)',
-        skip: _engineSkip, (tester) async {
+        'renders JsVoxelNode — the eager bridge world (E1)', (tester) async {
       final env = MemoryExecutionEnv();
       await tester.runAsync(() async {
         await env.writeFile('apps/voxelbare/widget.js', bareVoxelAppSource);
@@ -167,5 +166,5 @@ void main() {
       expect(find.text('Voxel world'), findsNothing);
       await unmount(tester);
     });
-  });
+  }, skip: _engineSkip);
 }
