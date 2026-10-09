@@ -15,6 +15,7 @@
 library;
 
 import '../trajectory/formatters.dart' show formatTokens;
+import 'tui_theme.dart';
 
 /// The hub lifecycle states, coarse enough for one icon per row.
 ///
@@ -32,11 +33,13 @@ const Map<HubStatus, int> hubStatusRank = {
   HubStatus.aborted: 5,
 };
 
-/// One icon per hub status (the tree rows).
+/// One icon per hub status (the tree rows). gh-1446 AC8: the queued
+/// hourglass resolves through the symbol table (`status.pending`) — no
+/// hardcoded `⏳` survives in chrome code.
 String hubStatusIcon(HubStatus status) => switch (status) {
   HubStatus.running => '🔄',
   HubStatus.waiting => '✋',
-  HubStatus.queued => '⏳',
+  HubStatus.queued => FaThemeController.instance.sym('status.pending'),
   HubStatus.done => '✅',
   HubStatus.failed => '❌',
   HubStatus.aborted => '🛑',

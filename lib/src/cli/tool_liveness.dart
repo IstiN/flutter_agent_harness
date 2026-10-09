@@ -21,6 +21,8 @@ library;
 
 import 'dart:async';
 
+import 'tui_theme.dart';
+
 /// Default threshold before per-call liveness reminders start (`waiting:
 /// toolLivenessSeconds`; `0` disables the reminders).
 const defaultToolLivenessSeconds = 60;
@@ -236,9 +238,11 @@ final class ToolLivenessTracker {
   }
 }
 
-/// The periodic reminder line (gh-1055 AC1): `⏳ [bash] sleep 500 — running
-/// 120s · consider background: true …`. Single line, tool name, short
-/// command tail, elapsed seconds, and the #1349 background hint.
+/// The periodic reminder line (gh-1055 AC1): `<pending-glyph> [bash] sleep
+/// 500 — running 120s · consider background: true …` (gh-1446 AC8: the
+/// glyph resolves through the symbol table, no hardcoded `⏳`). Single
+/// line, tool name, short command tail, elapsed seconds, and the #1349
+/// background hint.
 String toolLivenessReminderLine(ToolLivenessCall call, DateTime now) =>
     _livenessLine(call, now, hint: toolLivenessForegroundHint);
 
@@ -250,9 +254,10 @@ String toolLivenessEscalationLine(ToolLivenessCall call, DateTime now) =>
 String _livenessLine(ToolLivenessCall call, DateTime now, {String? hint}) {
   final elapsed = now.difference(call.startedAt).inSeconds;
   final detail = clipToolLivenessDetail(call.detail);
+  final pending = FaThemeController.instance.sym('status.pending');
   final head = detail.isEmpty
-      ? '⏳ [${call.toolName}] running ${elapsed}s'
-      : '⏳ [${call.toolName}] $detail — running ${elapsed}s';
+      ? '$pending [${call.toolName}] running ${elapsed}s'
+      : '$pending [${call.toolName}] $detail — running ${elapsed}s';
   return hint == null ? head : '$head · $hint';
 }
 

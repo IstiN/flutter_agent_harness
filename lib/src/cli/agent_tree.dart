@@ -5,6 +5,7 @@ library;
 
 import '../task/subagent.dart';
 import 'tui_repl.dart' show MenuItem;
+import 'tui_theme.dart';
 
 /// The refusal line for a child that cannot receive a message, or null
 /// when [handle] can receive (pure, testable).
@@ -17,9 +18,12 @@ String? subagentReceiveGuard(SubagentHandle? handle, String id) {
   return null;
 }
 
-/// One emoji per subagent status (the tree rows + the observe view header).
+/// One emoji per subagent status (the tree rows + the observe view
+/// header). gh-1446 AC8: the queued hourglass resolves through the symbol
+/// table (`status.pending`) — no hardcoded `⏳` survives in chrome code.
 String agentStatusIcon(SubagentStatus status) => switch (status) {
-  SubagentStatus.queued => '⏳',
+  SubagentStatus.queued =>
+    FaThemeController.instance.sym('status.pending'),
   SubagentStatus.running => '🔄',
   SubagentStatus.idle => '⏸',
   SubagentStatus.completed => '✅',

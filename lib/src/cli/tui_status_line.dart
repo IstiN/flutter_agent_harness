@@ -1518,7 +1518,8 @@ LaidSegment? _renderCacheWrite(StatusLineSnapshot s, StatusLineSpec spec) =>
     s.cacheWrite <= 0
     ? null
     : LaidSegment('cache_write', [
-        ('⟳${formatTokens(s.cacheWrite)}', StatusLineRoleKey.output),
+        ('${FaThemeController.instance.sym('icon.cache')}'
+            '${formatTokens(s.cacheWrite)}', StatusLineRoleKey.output),
       ]);
 
 LaidSegment? _renderCacheHit(StatusLineSnapshot s, StatusLineSpec spec) =>
