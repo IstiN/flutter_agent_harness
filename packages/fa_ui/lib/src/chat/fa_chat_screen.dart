@@ -15,6 +15,7 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart'
         ApprovalRequest,
         AskAnswer,
         AskQuestion,
+        FollowMode,
         MemoryExecutionEnv,
         RequestSecretResult,
         TrajectorySnapshot,
@@ -226,13 +227,20 @@ class _FaChatScreenState extends State<FaChatScreen>
   final _chatScrollController = ScrollController();
   bool _userNearBottom = true;
 
-  /// True once the USER dragged the transcript away (parked at ≥ the
-  /// near-bottom latch). Programmatic scrolls — the tail follow and the
-  /// live-widget clamp's own animateTo — never set this, so the clamp
-  /// keeps working after it moves the viewport past the latch threshold,
-  /// while a real user scroll always wins (issue #379 AC2). Dragging
-  /// back to the bottom relatches.
-  bool _userScrolledAway = false;
+  /// The follow-mode contract (gh-1439): the shared pure state machine
+  /// (core `package:flutter_agent_harness`) owns live⇄held plus the
+  /// counted-unseen the jump pill shows. Starts `live` at the newest row
+  /// — boot/resume never restores held (AC5). Held = the user dragged the
+  /// transcript away; programmatic scrolls — the tail follow and the
+  /// live-widget clamp's own animateTo — never classify, so the clamp
+  /// keeps working after it moves the viewport past the arm band, while a
+  /// real user scroll always wins (issue #379 AC2).
+  FollowMode _follow = const FollowMode.live();
+
+  /// True once the USER dragged the transcript away (parked beyond the
+  /// near-bottom arm band). Derived from the shared follow state so the
+  /// #379 clamp and the #1159 banner rejoin read the ONE owner.
+  bool get _userScrolledAway => _follow.isHeld;
 
   /// Loads sandbox images referenced from Markdown / `generate_image` tool
   /// results through the session's env (memoized — see
@@ -487,6 +495,10 @@ class _FaChatScreenState extends State<FaChatScreen>
       // The host swapped sessions (close/switch): re-subscribe and re-sync.
       _unsubscribeFromService(oldWidget.service);
       _subscribeToService(widget.service);
+      // A new session is a new viewport: follow starts live at its newest
+      // record — held never persists across a restart (gh-1439 AC5).
+      _follow = const FollowMode.live();
+      _userNearBottom = true;
       _unbindTrajectory();
       if (widget.features.trajectory) _trajectory;
       _isStreaming = widget.service.isStreaming;
@@ -509,13 +521,22 @@ class _FaChatScreenState extends State<FaChatScreen>
   void _trackNearBottom() {
     if (!_chatScrollController.hasClients) return;
     final position = _chatScrollController.position;
-    _userNearBottom = position.pixels < 150;
+    _userNearBottom = position.pixels < _armExtent(position);
   }
 
+  /// The near-bottom re-arm band for this viewport (gh-1439 open question
+  /// 1): the shared ~10%-of-viewport fraction, one rule on every surface.
+  int _armExtent(ScrollPosition position) =>
+      FollowMode.nearBottomArmExtent(position.viewportDimension.round());
+
   /// Classifies scroll activity on the transcript's own scrollable
-  /// (depth 0 — inner tool-output scrollables don't count): a user drag
-  /// parking above the latch threshold marks the transcript
-  /// scrolled-away; anything landing back under the threshold relatches.
+  /// (depth 0 — inner tool-output scrollables don't count) through the
+  /// shared [FollowMode] machine (gh-1439): a user drag parking beyond
+  /// the near-bottom arm band holds (no more yank); a drag/momentum
+  /// landing inside the band re-arms live and flushes the count. E6
+  /// debounce: re-arm wins only when the GESTURE produced the position —
+  /// programmatic moves (delta null) never re-arm, and the live edge
+  /// itself (distance 0) can never hold.
   void _trackUserScroll(ScrollNotification notification) {
     if (notification.depth != 0) return;
     if (notification is! ScrollUpdateNotification &&
@@ -523,19 +544,45 @@ class _FaChatScreenState extends State<FaChatScreen>
       return;
     }
     if (!_chatScrollController.hasClients) return;
-    final pixels = _chatScrollController.position.pixels;
-    final wasAway = _userScrolledAway;
-    if (notification is ScrollUpdateNotification &&
-        notification.dragDetails != null) {
-      _userScrolledAway = pixels >= 150;
-    } else if (pixels < 150) {
-      _userScrolledAway = false;
+    final position = _chatScrollController.position;
+    final distance = position.pixels.round();
+    final arm = _armExtent(position);
+    final wasAway = _follow.isHeld;
+    if (notification is ScrollUpdateNotification) {
+      final next = _follow.userScrolled(
+        distanceFromLiveEdge: distance,
+        armExtent: arm,
+        movedTowardLive: (notification.scrollDelta ?? 0) < 0,
+      );
+      if (next != _follow && mounted) {
+        setState(() => _follow = next);
+      }
+    } else if (distance <= arm && _follow.isHeld && mounted) {
+      // A coast settling inside the band re-arms (the drag update already
+      // classified the gesture; this catches momentum-only endings).
+      setState(() => _follow = _follow.jumpToLive());
     }
-    if (wasAway && !_userScrolledAway) {
+    if (wasAway && !_follow.isHeld) {
       // Landing back at the bottom with a deep-paged window rejoins the
       // live tail on its own — no stuck banner post-run (issue #1159
       // AC4).
       _followTailIfPinned();
+    }
+  }
+
+  /// The one-action re-engage (gh-1439): live again, count flushed, and
+  /// the window lands at the newest row — a deep-paged window pages the
+  /// tail in first (E4: jumping to live lands the newest window, never
+  /// the whole backlog).
+  Future<void> _jumpToLive() async {
+    if (mounted) setState(() => _follow = _follow.jumpToLive());
+    _userNearBottom = true;
+    if (_historyHasNewer && !_historyLoading) {
+      await widget.service.loadNewerHistory();
+    }
+    if (!mounted) return;
+    if (_chatScrollController.hasClients) {
+      _chatScrollController.jumpTo(0);
     }
   }
 
@@ -904,6 +951,7 @@ class _FaChatScreenState extends State<FaChatScreen>
   }
 
   Future<void> _syncMessages() async {
+    var followCounted = false;
     if (_isSyncing) {
       _syncDebounce?.cancel();
       _syncDebounce = Timer(const Duration(milliseconds: 50), () {
@@ -971,10 +1019,21 @@ class _FaChatScreenState extends State<FaChatScreen>
             await _chatController.insertMessage(newList[i], index: i);
           }
           _suppressInsertAnimations = oldSuppress;
+          // gh-1439: held appends are COUNTED (the model keeps
+          // everything — zero loss, AC4); the pill's counter is the
+          // affordance. Live appends never count (the viewport shows
+          // them — today's behavior).
+          if (appended > 0 && _follow.isHeld) {
+            _follow = _follow.appended(appended);
+            followCounted = true;
+          }
         }
       }
 
       _lastSynced = newList;
+      if (followCounted && mounted) {
+        setState(() {});
+      }
 
       // E3 (issue #379): a widget id entering the current turn afresh —
       // a NEW dynamic message, or the same widget re-presented later —
@@ -1380,6 +1439,11 @@ class _FaChatScreenState extends State<FaChatScreen>
                   : strings.chatLoadNewerCount('$historyBelow'),
               tappable: !_historyLoading,
             ),
+          // The follow-mode jump pill (gh-1439): a SIBLING of the history
+          // banner, live-updating — visible exactly while held with
+          // counted arrivals, one tap returns to the live tail.
+          if (_follow.isHeld && _follow.unseen > 0)
+            _followLivePill(strings),
           composerBuilder != null
               ? composerBuilder(context, widget.service, _dropBridge)
               : ChatComposer(
@@ -1419,6 +1483,57 @@ class _FaChatScreenState extends State<FaChatScreen>
         Positioned.fill(child: Builder(builder: wallpaper)),
         Positioned.fill(child: body),
       ],
+    );
+  }
+
+  /// The `⌄ N new` jump-to-live pill (gh-1439): a floating, live-updating
+  /// affordance in the banner slot family — centered, compact, one tap
+  /// re-engages the live tail and flushes the count (AC2). The count is
+  /// the shared [FollowMode.unseen]; approval prompts are NOT affected
+  /// (AC6: they render through their own surface above this slot).
+  Widget _followLivePill(FaChatStrings strings) {
+    return Align(
+      alignment: Alignment.center,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Semantics(
+          label: strings.chatJumpToLive,
+          button: true,
+          child: Material(
+            key: const ValueKey('faChatJumpToLivePill'),
+            color: Theme.of(context).colorScheme.primaryContainer,
+            borderRadius: BorderRadius.circular(999),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(999),
+              onTap: _jumpToLive,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 6,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      strings.chatFollowNewCount('${_follow.unseen}'),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.keyboard_arrow_down,
+                      size: 18,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1490,7 +1605,7 @@ class _FaChatScreenState extends State<FaChatScreen>
                       // The tap's promise is the live tail (issue #1159
                       // AC1): relatch follow and land on the newest row
                       // of the rejoined window.
-                      _userScrolledAway = false;
+                      setState(() => _follow = _follow.jumpToLive());
                       if (_chatScrollController.hasClients) {
                         _chatScrollController.jumpTo(0);
                       }

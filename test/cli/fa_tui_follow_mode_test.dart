@@ -49,10 +49,14 @@ int? _unseenOf(List<String> rows) {
   return null;
 }
 
-/// A model with [n] transcript rows parked at the live edge.
-FaTuiModel filled(int n, {int termHeight = 24}) => _build(
-  termHeight: termHeight,
-).copyWith(outputLines: [for (var i = 0; i < n; i++) 'row $i']);
+/// A model with [n] transcript rows parked at the live edge (one live
+/// append snaps the window to the bottom anchor before the user holds).
+FaTuiModel filled(int n, {int termHeight = 24}) {
+  var model = _build(
+    termHeight: termHeight,
+  ).copyWith(outputLines: [for (var i = 0; i < n; i++) 'row $i']);
+  return _send(model, OutputMsg('seed', newline: true));
+}
 
 void main() {
   group('AC1 — PgUp holds through the stream; the counter lives on the '
@@ -243,6 +247,9 @@ void main() {
           'TAIL-MARK',
         ],
       );
+      // Park at the live edge first, then hold mid-transcript — the trim
+      // must not shift what the user is reading.
+      model = _send(model, OutputMsg('seed', newline: true));
       model = _send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageUp)));
       final visibleBefore = _rowsOf(model).take(19).join('\n');
 
