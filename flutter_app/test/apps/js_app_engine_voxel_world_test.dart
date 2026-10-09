@@ -197,8 +197,17 @@ void main() {
       expect(e.voxelWorld, isNotNull);
       e.noteUnwiredVoxelWorld(voxelTree);
       await tester.runAsync(e.dispose);
+      // Assert the DIAGNOSTIC never fired — not that the whole AppLog
+      // buffer is empty: a live engine legitimately logs INFO lines
+      // (`engine start: <app>/<entry>`, gh-1336) on every boot, so an
+      // unfiltered `isEmpty` could never hold on a live bridge (and went
+      // red when main's gh-1336 log line merged under this test).
+      final fired = AppLog.dump()
+          .split('\n')
+          .where((line) => line.contains('no voxelWorld is wired'))
+          .toList();
       expect(
-        AppLog.dump(),
+        fired,
         isEmpty,
         reason:
             'shipped backends always own a bridge world — the '
