@@ -2,10 +2,11 @@
 // BOTTOM — a submitted message lands at the bottom above the composer with
 // the prior history directly above it (no blank void), streaming scrolls up
 // line by line, and a user scroll-up releases the pin (the detached percent
-// rule is the jump-to-bottom affordance). The tail-follow hint
-// (`^ N lines above fold - PgUp`) and the unified above/below fold
-// accounting ride the same window. #1348 supersedes #827's turn-start
-// anchor: the window never parks at the turn's first row.
+// rule is the jump-to-bottom affordance). gh-1446 retracts the reserved
+// row's streaming TEXT: while rows hide above the fold the row renders as
+// a textless dim rule; the unified above/below fold accounting stays.
+// #1348 supersedes #827's turn-start anchor: the window never parks at the
+// turn's first row.
 //
 // Pure render tests — fake terminal, no IO. Frames are read straight off
 // `model.view()`; the AC7 goldens go through the real CellRenderer over an
@@ -334,25 +335,29 @@ void main() {
       expect(
         rows.last,
         contains('test-model'),
-        reason: 'prompt row never moves for the hint',
+        reason: 'prompt row never moves for the rule',
       );
 
-      // The composer tail is identical whether or not rows hide above.
-      final calm = _build(termHeight: 5).copyWith(outputLines: ['tiny']);
+      // The composer tail is identical whether or not rows hide above —
+      // a window that shows no rows announces nothing (E4).
       expect(
-        _rowsOf(model).skip(1),
+        rows.skip(1),
         _rowsOf(calm).skip(1),
-        reason: 'hint absence keeps the bottom chrome byte-stable',
+        reason: 'rule absence keeps the bottom chrome byte-stable',
       );
     });
   });
 
-  group('AC5 — reset-to-bottom paths re-evaluate the hint', () {
+  group('AC5 — reset-to-bottom paths re-evaluate the rule', () {
     List<String> longHistory() => [for (var i = 0; i < 40; i++) 'row $i'];
 
     test('submit re-anchors the window at the live edge', () async {
       var model = _build(termHeight: 12).copyWith(outputLines: longHistory());
-      expect(_hintN(_rowsOf(model)), 33, reason: '40 - 7 vh');
+      expect(
+        _isRuleRow(_rowsOf(model)[7]),
+        isTrue,
+        reason: '40 - 7 vh: the rule owns the reserved row',
+      );
 
       model = model.copyWith(inputText: 'second question');
       final result = model.update(
@@ -362,10 +367,10 @@ void main() {
       await result.$2?.call();
 
       // The echo bubble adds 4 wrapped rows (44 total); the window rides
-      // the live edge, not the echo row (#1348).
+      // the live edge, not the echo row (#1348) — the rule stays.
       expect(
-        _hintN(_rowsOf(model)),
-        37,
+        _isRuleRow(_rowsOf(model)[7]),
+        isTrue,
         reason: '44 - 7 vh: the window is pinned to the bottom',
       );
     });
@@ -383,10 +388,10 @@ void main() {
         ),
       );
       expect(model.queue, isEmpty, reason: 'fixture: ctrl+s flushed');
-      final n = _hintN(_rowsOf(model));
+      final calm = _build(busy: true).copyWith(outputLines: ['tiny']);
       expect(
-        n,
-        27,
+        _hasFoldRule(_rowsOf(model), _rowsOf(calm)),
+        isTrue,
         reason:
             '40 + 4 echo + 1 receipt = 45; busy vh 18: the window rides '
             'the bottom',
@@ -400,10 +405,11 @@ void main() {
         queue: const [QueuedMessage('drained text')],
       );
       model = _send(model, DrainQueueMsg(Completer<List<String>>()));
+      final calm = _build(busy: true).copyWith(outputLines: ['tiny']);
       expect(
-        _hintN(_rowsOf(model)),
-        26,
-        reason: '44 lines, busy vh 18: fresh fold count at the live edge',
+        _hasFoldRule(_rowsOf(model), _rowsOf(calm)),
+        isTrue,
+        reason: '44 lines, busy vh 18: the rule rides the live edge',
       );
     });
   });
@@ -751,9 +757,15 @@ void main() {
           .copyWith(inputText: 'F4-TURN')
           .update(KeyPressMsg(const TeaKey(code: KeyCode.enter)));
       final turned = result.$1 as FaTuiModel;
-      // The snapshot pins the hint row AND every stable region; any
-      // accidental layout drift fails here (REG blocks merge).
-      expect(_hintN(_rowsOf(turned)), isNotNull);
+      // The snapshot pins the textless rule row AND every stable region;
+      // any accidental layout drift fails here (REG blocks merge).
+      expect(
+        _hasFoldRule(
+          _rowsOf(turned),
+          _rowsOf(_build().copyWith(outputLines: ['tiny'])),
+        ),
+        isTrue,
+      );
       expect(
         render(turned),
         golden(goldens, 'F4'),
@@ -787,30 +799,32 @@ void main() {
         ],
       );
       final rows = _rowsOf(model);
+      // The reserved row stays BLANK — nothing hides, the fold rule never
+      // shows (the replayed `────` separator is transcript content, not
+      // the indicator; it sits at rows index 19 = history bottom + 1).
       expect(
-        _hintN(rows),
-        isNull,
+        _isRuleRow(rows[19]),
+        isFalse,
         reason: 'nothing is hidden when the transcript fits the glass',
       );
+      expect(rows[19].trim(), isEmpty, reason: 'the blank reserved row');
       expect(rows.join('\n'), contains('lost on restart'));
       expect(rows.join('\n'), contains('RESUMED-PROMPT'));
     });
 
     test('a resumed transcript taller than the glass rides the bottom '
-        'and explains the fold', () {
+        'under the textless rule', () {
       final model = _build().copyWith(outputLines: replayed());
       final rows = _rowsOf(model);
       // The live edge wins: the replayed tail is on the glass, the older
-      // rows are named by the hint — the same window the session rode at
-      // close (#446 1:1), with the #827 indicator owning the explanation.
+      // rows hide above the fold — the same window the session rode at
+      // close (#446 1:1), with the reserved rule owning the signal.
       expect(rows.join('\n'), contains('RESUMED-PROMPT'));
       expect(rows.join('\n'), contains('resumed answer 11'));
       expect(
-        _hintN(rows),
-        36,
-        reason:
-            'the hint names the 55 - 19 wrapped rows above the '
-            'bottom-riding window',
+        _isRuleRow(rows[19]),
+        isTrue,
+        reason: '55 - 19 wrapped rows hide above the bottom-riding window',
       );
       expect(
         rows.join('\n').contains('old row 0 '),
@@ -846,8 +860,8 @@ void main() {
         reason: 'the replayed tail sits directly above the echo',
       );
       expect(
-        _hintN(_rowsOf(model)),
-        40,
+        _isRuleRow(_rowsOf(model)[19]),
+        isTrue,
         reason: '55 replayed + 4 echo rows = 59 - 19 vh',
       );
     });

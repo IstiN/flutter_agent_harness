@@ -208,8 +208,10 @@ final class ShellJobBoard {
 
   /// The transient job-board region: one summary line per collapsed bucket
   /// that still has live cards (current turn first), plus up to
-  /// [_maxLiveRows] live rows. Buckets with 3 or fewer jobs show rows only.
-  List<String> liveLines() {
+  /// [_maxLiveRows] live rows. Buckets with 3 or fewer jobs show rows
+  /// only. [width] threads the gh-1446 clip-priority fit into the summary
+  /// line (AC6: lost > parens > icon); null keeps the line unclipped.
+  List<String> liveLines({int? width}) {
     final lines = <String>[];
     final turnsWithLive =
         _cards
@@ -220,32 +222,20 @@ final class ShellJobBoard {
           ..sort((a, b) => b.compareTo(a));
     for (final t in turnsWithLive) {
       if (cardsOfTurn(t).length <= 3) continue;
+      final line = shellJobLiveSummaryLine(
+        running: _countOfTurn(t, (c) => c.state == TaskBlockState.running),
+        lost: _countOfTurn(t, (c) => c.state == TaskBlockState.lost),
+        width: width,
+      );
+      if (line == null) continue;
       if (t != turn) {
-        lines.add(
-          _frozenOlderSummaries.putIfAbsent(
-            t,
-            () => shellJobLiveSummaryLine(
-              total: _countOfTurn(t, (_) => true),
-              running: _countOfTurn(
-                t,
-                (c) => c.state == TaskBlockState.running,
-              ),
-              done: _countOfTurn(t, (c) => c.state == TaskBlockState.done),
-              lost: _countOfTurn(t, (c) => c.state == TaskBlockState.lost),
-              older: true,
-            ),
-          ),
-        );
+        // Frozen at first print (issue #539): the live region re-renders
+        // on every job mutation, and a re-derived older row mutates across
+        // frames — a frozen transcript must never show moving counts.
+        lines.add(_frozenOlderSummaries.putIfAbsent(t, () => line));
         continue;
       }
-      lines.add(
-        shellJobLiveSummaryLine(
-          total: _countOfTurn(t, (_) => true),
-          running: _countOfTurn(t, (c) => c.state == TaskBlockState.running),
-          done: _countOfTurn(t, (c) => c.state == TaskBlockState.done),
-          lost: _countOfTurn(t, (c) => c.state == TaskBlockState.lost),
-        ),
-      );
+      lines.add(line);
     }
     for (final card in liveCards.take(_maxLiveRows)) {
       // No fixed char cap (issue #638 AC3): the TUI frame clips at the

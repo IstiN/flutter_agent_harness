@@ -2,6 +2,8 @@ library;
 
 import 'agent_hub_view.dart' show hubDuration;
 import 'tool_rows.dart' show shellJobCommandPreview;
+import 'tui_text_width.dart';
+import 'tui_theme.dart';
 
 /// Deferred-message panels (btw-style) and background-task blocks for the
 /// agents hub surface (issue #277).
@@ -39,9 +41,13 @@ enum DeferredPanelState {
   dead,
 }
 
-/// One state icon for the panel header.
+/// One state icon for the panel header. The pending state routes through
+/// the symbol table (gh-1446 AC8): no hardcoded hourglass survives in
+/// chrome code — the unicode preset's modern `○` rides `status.pending`.
 String deferredPanelStateIcon(DeferredPanelState state) => switch (state) {
-  DeferredPanelState.pending => '⏳',
+  DeferredPanelState.pending => FaThemeController.instance.sym(
+    'status.pending',
+  ),
   DeferredPanelState.running => '🔄',
   DeferredPanelState.delivered => '✅',
   DeferredPanelState.complete => '✅',
@@ -476,18 +482,36 @@ List<String> taskBlockLines(
   return lines;
 }
 
-/// The live (transient) board summary line: `⟳ Background jobs (17) · 2
-/// running · 15 done · 0 lost`. The lost segment is ALWAYS present — a
-/// zombie is never hidden inside a green count (issue #429 AC3).
-String shellJobLiveSummaryLine({
-  required int total,
+/// The live (transient) board summary line (gh-1446): signal-only — the
+/// RUNNING count behind the symbol table's modern running glyph, plus the
+/// lost count when nonzero (a zombie is never hidden inside a green
+/// count, issue #429 AC3). The done count and the `older` marker are
+/// retired (owner directive: completed counts are not live signal — they
+/// stay on the settled transcript summary card). Null = nothing live:
+/// the row is absent (R == 0 && L == 0).
+///
+/// [width] applies the clip-priority ladder (gh-1446 AC6): the icon
+/// clips first, then the parens count — the lost segment is the LAST
+/// thing that ever clips (lost > parens > icon). At width 40 with
+/// `999 lost` the icon and parens may go; the lost digits never do (E2).
+String? shellJobLiveSummaryLine({
   required int running,
-  required int done,
   required int lost,
-  bool older = false,
-}) =>
-    '⟳ Background jobs ($total) · $running running · $done done · '
-    '$lost lost${older ? ' · older' : ''}';
+  int? width,
+}) {
+  if (running <= 0 && lost <= 0) return null;
+  final icon = FaThemeController.instance.sym('status.running');
+  final base = 'Background jobs';
+  final parens = '($running)';
+  final lostSuffix = lost > 0 ? ' · $lost lost' : '';
+  final full = '$icon $base $parens$lostSuffix';
+  if (width == null || tuiTextWidth(full) <= width) return full;
+  final noIcon = '$base $parens$lostSuffix';
+  if (tuiTextWidth(noIcon) <= width) return noIcon;
+  // Icon and parens gone; what remains overflows only below ~26 cells,
+  // where no shape fits — the lost digits themselves never clip.
+  return '$base$lostSuffix';
+}
 
 /// The settled summary card a collapsed turn leaves in the transcript:
 /// terminal counts only (issue #429 AC6).
