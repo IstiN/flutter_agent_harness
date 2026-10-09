@@ -977,6 +977,7 @@ Future<String> generateSummary(
         candidates: candidates,
         prior: prior,
         instructions: instructions,
+        pinnedBlock: pinnedOperative?.block,
       ),
     );
     fold = await _runSummarization(
@@ -1021,11 +1022,21 @@ int _summaryEnvelopeChars({
   required String? candidates,
   required String? prior,
   required String instructions,
+  String? pinnedBlock,
 }) {
   final prompt = StringBuffer()..write('<conversation>\n\n</conversation>\n\n');
   if (candidates != null) {
     prompt
       ..write(candidates)
+      ..write('\n\n');
+  }
+  // The pinned block rides EVERY summarization prompt (gh-1409 AC3) — it
+  // must count against the envelope or a host with a large
+  // `OperativePinConfig.budgetChars` pushes summarization payloads past
+  // `summarizationPayloadBudget` (review round 2, suggestion 7).
+  if (pinnedBlock != null) {
+    prompt
+      ..write(pinnedBlock)
       ..write('\n\n');
   }
   if (prior != null) {

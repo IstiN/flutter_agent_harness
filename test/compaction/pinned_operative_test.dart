@@ -178,6 +178,50 @@ void main() {
       expect(result.summary, contains('turn prefix checkpoint'));
     });
 
+    test('a pinned, budget-maxed summarization prompt still fits '
+        'summarizationPayloadBudget (review round 2, suggestion 7)', () async {
+      // The pinned block rides EVERY summarization prompt; the envelope
+      // must count it or truncateForSummaryBudget under-reserves and the
+      // outbound payload crosses the budget. maxPromptTokens here IS
+      // summarizationPayloadBudget(window, defaultCompactionSettings) —
+      // the value the real pipeline passes (a 4096-token smol summarizer
+      // under the pi-default reserve).
+      final bigRegistry = SkillOperativePins.build([
+        _skill('fleet', [_pin, 'pad rule ${'x' * 2000}']),
+      ], budgetChars: defaultPinBudgetChars);
+      final payload = PinnedOperativePayload(
+        block: pinnedOperativePromptBlock(bigRegistry)!,
+        lines: {for (final pin in bigRegistry.pins) pin.line},
+      );
+      final budget = summarizationPayloadBudget(4096, defaultCompactionSettings);
+      final fake = _FakeSummarizer([
+        for (var i = 0; i < 64; i++) SummarizationResult.success('fold $i'),
+      ]);
+      await generateSummary(
+        [
+          for (var i = 0; i < 120; i++)
+            UserMessage.text(
+              'history turn $i — ${'detail ' * 40}',
+            ),
+        ],
+        summarize: fake.call,
+        pinnedOperative: payload,
+        maxPromptTokens: budget,
+      );
+      // The chunked path ran (the region exceeds the budget) and EVERY
+      // recorded prompt — the SAME text the real provider would receive —
+      // fits the budget.
+      expect(fake.prompts.length, greaterThan(1));
+      for (final prompt in fake.prompts) {
+        expect(
+          estimateStringTokens(prompt),
+          lessThanOrEqualTo(budget),
+          reason: 'a pinned, budget-maxed summarization prompt must fit '
+              'summarizationPayloadBudget',
+        );
+      }
+    });
+
     test('F4 compat: no pins → prompts byte-identical to the pre-pin '
         'pipeline', () async {
       final fakeA = _FakeSummarizer([SummarizationResult.success('ckpt')]);
