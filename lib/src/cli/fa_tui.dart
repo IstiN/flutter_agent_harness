@@ -1276,39 +1276,6 @@ final class FaTuiModel extends Model {
     );
   }
 
-  (Model, Cmd?) _handleMouseWheel(MouseWheelMsg msg) {
-    // Capture off: the hint says wheel is disabled — honor it even for
-    // bytes a not-yet-disarmed terminal still sends (issue #278, AC4).
-    if (!mouseCapture) return (this, null);
-    // Hub overlay: the wheel moves the fleet-tree selection.
-    if (hub != null) {
-      final delta = switch (msg.mouse.button) {
-        MouseButton.wheelUp => -1,
-        MouseButton.wheelDown => 1,
-        _ => 0,
-      };
-      if (delta != 0) {
-        final (next, _) = hub!.handleKey(
-          delta < 0 ? 'up' : 'down',
-          viewport: _viewportHeight - 3,
-        );
-        return (copyWith(hub: next), null);
-      }
-      return (this, null);
-    }
-    // Mouse wheel scrolls the chat history, like Copilot's transcript pane.
-    // gh-1439: the wheel is a page gesture — up disengages follow, down
-    // re-arms inside the shared near-bottom band.
-    switch (msg.mouse.button) {
-      case MouseButton.wheelUp:
-        return (_scrolledTo(scrollOffset - 3, pageGesture: true), null);
-      case MouseButton.wheelDown:
-        return (_scrolledTo(scrollOffset + 3, pageGesture: true), null);
-      default:
-        return (this, null);
-    }
-  }
-
   (Model, Cmd?) _handleMultiCharRunes(KeyPressMsg msg) {
     Model current = this;
     Cmd? lastCmd;
