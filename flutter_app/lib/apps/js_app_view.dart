@@ -835,7 +835,8 @@ class _JsAppViewState extends State<JsAppView> {
             theme.colorScheme.primary,
             brightness: theme.brightness,
           ),
-          mapTileProvider: widget.mapTileProvider,          mediaHost: widget.mediaHost ?? const FaMediaHost(),
+          mapTileProvider: widget.mapTileProvider,
+          mediaHost: widget.mediaHost ?? const FaMediaHost(),
           // Embedded web content: the SAME host the engine's JsRuntimeConfig
           // got (see JsAppEngine.start), so a `webView` node renders
           // identically wherever the tree is drawn.
@@ -856,6 +857,10 @@ class _JsAppViewState extends State<JsAppView> {
             unawaited(engine.callEvent(actionId, payload));
           },
         );
+        // gh-1441 AC3: a null world on a voxel tree must never be silent —
+        // one line tells "host did not wire voxelWorld" from "broken
+        // widget" (one-shot; never fires on shipped backends).
+        engine.noteUnwiredVoxelWorld(tree);
         // gh-1164 Part B: a host-side render/build failure is reported to
         // the authoring agent through the same gate as JS-side errors —
         // the framework still renders its own error UI for the user.
