@@ -18,6 +18,7 @@ import 'markdown_style.dart';
 import 'media_player.dart';
 import 'media_tool_names.dart';
 import 'fa_chat_host.dart';
+import 'fa_kaomoji.dart';
 import 'upload_utils.dart' show isInlineImageMimeType, mimeTypeForUploadName;
 
 /// Builds the leading avatar for a transcript message [role] (`user` /
@@ -68,6 +69,7 @@ class ChatMessageTile extends StatelessWidget {
     this.messageFontSize,
     this.imageCacheWidth = kDefaultImagePreviewCacheWidth,
     this.dynamicWidgetTileBuilder,
+    this.thinkingLive = false,
   });
 
   /// The message to render (`user` / `assistant` / `thinking` / `tool` /
@@ -119,6 +121,13 @@ class ChatMessageTile extends StatelessWidget {
   /// transcript surface wires its own so the tile renders wherever the
   /// transcript does (issue #336).
   final FaDynamicWidgetTileBuilder? dynamicWidgetTileBuilder;
+
+  /// Whether the `thinking` row is the LIVE streaming block (issue
+  /// #1374): its kaomoji icon swaps on the shared ~0.9 s random cadence
+  /// only while the phase runs. Finished thinking notes stay on screen
+  /// with a frozen face (AC4 — no animation while idle); non-thinking
+  /// rows ignore the flag.
+  final bool thinkingLive;
 
   @override
   Widget build(BuildContext context) {
@@ -438,7 +447,10 @@ class ChatMessageTile extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.psychology_outlined, size: 14, color: palette.dim),
+          // The two-tone kaomoji face (issue #1374) replaces the
+          // head-with-gear: approved SVG sprite frames, random swap on
+          // the shared ~0.9 s cadence while the thinking phase streams.
+          KaomojiThinkingIcon(size: 16, active: thinkingLive),
           const SizedBox(width: 6),
           Expanded(
             // Reasoning can run to thousands of lines (and small models

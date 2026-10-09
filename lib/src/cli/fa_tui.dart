@@ -43,6 +43,13 @@ import 'tui_key_hints.dart';
 import 'sigint_action.dart';
 import 'subagent_board.dart';
 
+// The kaomoji thinking-indicator data (issue #1374) is shared with the
+// app/web hosts — ONE pure-Dart source the busy row renders from. The
+// export keeps the face set/palette names visible to every importer of
+// this library (the part files use them through the import).
+import '../kaomoji_faces.dart';
+export '../kaomoji_faces.dart';
+
 part 'fa_tui_slash_menu.dart';
 
 part 'fa_tui_messages.dart';
