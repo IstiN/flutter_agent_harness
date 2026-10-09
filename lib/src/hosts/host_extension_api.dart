@@ -30,6 +30,13 @@
 /// trajectory are SDK invariants). The only route to "replace" a core
 /// tool is a colliding id, and E7 rejects it at build time.
 ///
+/// Slice 6 (IT-5) pins the runtime half of that contract end-to-end:
+/// `test/hosts/extension_host_parity_test.dart` drives the YoClip
+/// scenario — a custom-profile host registering `yoclip.*` tools — and
+/// asserts record-level byte parity with the CLI host (same JSONL record
+/// kinds/payloads, same compaction trigger, same memory semantics) on the
+/// same scripted session.
+///
 /// Pure Dart: no `dart:io`.
 library;
 
