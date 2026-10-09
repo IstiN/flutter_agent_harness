@@ -1273,6 +1273,11 @@ class AgentWireProtocol {
       for (final rename in report.renamedIds)
         {'from': rename.from, 'to': rename.to},
     ],
+    // gh-1449: the one-shot latch batch. Optional on the wire — peers
+    // without the field decode it as empty (legacy reports are valid).
+    'notedOrphanKeys': ?report.notedOrphanKeys.isEmpty
+        ? null
+        : report.notedOrphanKeys,
   };
 
   static ToolPairingRepairReport _decodeRepairReport(
@@ -1304,6 +1309,10 @@ class AgentWireProtocol {
             to: _requireString(entry['to'], 'renamedIds[].to'),
           );
         }(),
+    ],
+    notedOrphanKeys: [
+      for (final key in (encoded['notedOrphanKeys'] as List?) ?? const [])
+        key as String,
     ],
   );
 
