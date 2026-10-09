@@ -111,6 +111,7 @@ final class CliArgs extends CliArgsResult {
     this.debugSecrets = false,
     this.noFormat = false,
     this.streamThinking = false,
+    this.noStreamThinking = false,
   }) : super._();
 
   /// `--model <id>`.

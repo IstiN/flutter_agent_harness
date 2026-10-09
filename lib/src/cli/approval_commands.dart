@@ -1095,12 +1095,17 @@ extension ApprovalCommands on AgentCli {
   }
 
   /// Message lifecycle for assistant turns: a start re-arms the
-  /// once-per-message prefix; an end flushes the stream and reports the
-  /// stop reason.
+  /// once-per-message prefix and flushes any narration orphaned by a
+  /// tool result that never rendered; an end flushes the stream and
+  /// reports the stop reason.
   void _onMessageLifecycle(Message message, {required bool start}) {
     if (message is! AssistantMessage) return;
     if (start) {
       _assistantPrefixPrinted = false;
+      // AC3 orphan safety: post-tool narration held by a message whose
+      // tool result never rendered flushes here — nothing swallowed, and
+      // it lands BEFORE the new message's content (positional).
+      _flushPostToolText();
       return;
     }
     _onAssistantMessageEnd(message);
@@ -1182,14 +1187,36 @@ extension ApprovalCommands on AgentCli {
   /// `--no-stream-thinking` silencing the log face for the run.
   bool get _streamsThinking => _logFidelity.streamThinking;
 
+  /// Rendered deltas pass through the SAME redaction pipeline as tool
+  /// results (gh-1433 AC5): thinking may echo secrets from tool output,
+  /// and the log face widens that content's exposure from the local
+  /// session JSONL to every log consumer. The pipeline is live-mutable,
+  /// so the check happens at RENDER time (E6) — a secret registered
+  /// mid-run is masked in every delta rendered after it.
+  String _redactRendered(String text) =>
+      config.redactionPipeline?.redact(text) ?? text;
+
   void _onMessageUpdate(AssistantMessageEvent assistantMessageEvent) {
+    if (assistantMessageEvent is ToolCallStartEvent ||
+        assistantMessageEvent is ToolCallEndEvent) {
+      // AC3: the hold opens at the first tool-call block of the message.
+      // TUI keeps today's behavior (its transcript card grammar is a
+      // non-goal here).
+      if (!_useTui) _postToolHoldOpen = true;
+      return;
+    }
     if (assistantMessageEvent is TextDeltaEvent) {
+      final delta = assistantMessageEvent.delta;
       if (_useTui || !_buffersAnswer) {
-        // The answer text starts on its own line after the dimmed
-        // thinking block.
+        // Live surfaces.
+        if (!_useTui && _postToolHoldOpen) {
+          _postToolText.write(delta);
+          return;
+        }
+        if (_flushWhitespaceHold(delta)) return;
         if (_streamedThinking && !_streamedText) io.write('\n');
         _writeAssistantPrefix();
-        io.write(assistantMessageEvent.delta);
+        io.write(_redactRendered(delta));
       } else {
         // The buffered surfaces keep the same separation rule (E1): a
         // `\n` lands the moment the first answer delta follows streamed
@@ -1202,16 +1229,82 @@ extension ApprovalCommands on AgentCli {
         _streamsThinking) {
       // Reasoning models stream long thinking before any text; showing
       // it dimmed under the user message is the TUI's progress signal —
-      // and, since gh-1198, the opt-in progress signal of line mode and
-      // headless too. The delta is dimmed VERBATIM — no per-delta inline
-      // markdown: a markdown span split across deltas can never pair
-      // anyway (each fragment opens+closes its own SGR pair), and the
-      // per-delta escape density used to be the TUI's worst quadratic
-      // input (a long thinking burst froze the whole UI — see
+      // and, since gh-1433, the DEFAULT of the log face too (the
+      // post-hoc log is the UI): line mode keeps the gh-1198 opt-in. The
+      // delta is dimmed VERBATIM — no per-delta inline markdown: a
+      // markdown span split across deltas can never pair anyway (each
+      // fragment opens+closes its own SGR pair), and the per-delta escape
+      // density used to be the TUI's worst quadratic input (a long
+      // thinking burst froze the whole UI — see
       // AnsiMarkdown.inlineFormatMaxChars).
-      io.write(_style.dim(assistantMessageEvent.delta));
+      io.write(_style.dim(_redactRendered(assistantMessageEvent.delta)));
       _streamedThinking = true;
     }
+  }
+
+  /// The E1 whitespace hold: whitespace-only deltas before the first real
+  /// text of a live face buffer until a real delta arrives (then the hold
+  /// flushes ahead of it) or the message ends (then the hold DROPS — a
+  /// whitespace-only narration block paints nothing). Returns true when
+  /// [delta] was absorbed by the hold.
+  bool _flushWhitespaceHold(String delta) {
+    if (_useTui) return false;
+    final hold = _whitespaceHold;
+    if (hold != null) {
+      if (delta.trim().isEmpty) {
+        hold.write(delta);
+        return true;
+      }
+      // First real text: the held whitespace belongs in front of it.
+      io.write(hold.toString());
+      _whitespaceHold = null;
+      return false;
+    }
+    if (delta.trim().isEmpty && !_streamedText) {
+      _whitespaceHold = StringBuffer(delta);
+      return true;
+    }
+    return false;
+  }
+
+  /// Drops a still-whitespace-only hold at message end (E1) — nothing
+  /// was streamed, so the separators of a real text stream must not
+  /// fire either.
+  void _discardWhitespaceHoldAtEnd() {
+    final hold = _whitespaceHold;
+    if (hold == null) return;
+    _whitespaceHold = null;
+    if (hold.toString().trim().isEmpty) return;
+    // A real delta slipped in without a flush (defensive — the hold
+    // flushes at the first real delta): it is content, stream it.
+    io.write(hold.toString());
+    _streamedText = true;
+  }
+
+  /// Flushes the AC3 post-tool narration after the tool RESULT row, in
+  /// position, and re-arms the live surface for the narration that may
+  /// follow the result (a second tool call of the same message re-opens
+  /// the hold). Nothing swallowed: an orphaned hold flushes at the next
+  /// message start instead.
+  void _flushPostToolText() {
+    _postToolHoldOpen = false;
+    if (_postToolText.isEmpty) return;
+    final held = _postToolText.toString();
+    _postToolText.clear();
+    if (held.trim().isEmpty) {
+      // E1: whitespace-only narration never paints a line by itself —
+      // mid-stream it is real spacing (today's behavior), leading it
+      // stays pending until a real delta or the message end decides.
+      if (_streamedText) {
+        io.write(held);
+      } else {
+        _whitespaceHold ??= StringBuffer(held);
+      }
+      return;
+    }
+    if (_streamedThinking && !_streamedText) io.write('\n');
+    _streamedText = true;
+    io.write(_redactRendered(held));
   }
 
   /// End of an assistant message: flush the stream newline, then report the
@@ -1267,6 +1360,10 @@ extension ApprovalCommands on AgentCli {
   /// CRAP ratchet (gh-1198: the thinking-reset branches tipped it over).
   void _flushAssistantStreamAtEnd() {
     if (_useTui || !_buffersAnswer) {
+      // E1: a whitespace-only narration hold decides at message end —
+      // still whitespace-only, it paints nothing (and the separators of
+      // a real text stream must not fire for it).
+      _discardWhitespaceHoldAtEnd();
       if (_streamedText || _streamedThinking) {
         // The trailing newline of the streamed text belongs to the
         // primary channel (write), not to diagnostics (writeln) — a
@@ -1277,6 +1374,8 @@ extension ApprovalCommands on AgentCli {
       }
       return;
     }
+    // The buffered faces keep the E1 hold decision too (nothing painted).
+    _discardWhitespaceHoldAtEnd();
     if (_streamedText) {
       // The rendered message lands on the primary channel (write), not
       // diagnostics (writeln) — a headless host routes only writeln to
@@ -1378,6 +1477,9 @@ extension ApprovalCommands on AgentCli {
         state,
       ),
     );
+    // AC3: the result row rendered — any narration the message held
+    // behind the tool call lands here, in position.
+    _flushPostToolText();
   }
 
   /// Prints the `>_Fa ` prefix once per assistant message, before the first

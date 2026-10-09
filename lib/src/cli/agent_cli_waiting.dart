@@ -161,11 +161,13 @@ final class _WaitingCoordinator {
   );
 
   /// A provider request went out (gh-1198): arm the reasoning watch when
-  /// this surface watches it — line mode/headless with the thinking
-  /// stream off. TUI and streaming runs stay out (the deltas are visible
-  /// there).
+  /// this surface watches it — surfaces where thinking does NOT render.
+  /// Since gh-1433 that is decided by the SAME log-fidelity resolution
+  /// the render gate uses: TUI and log-face runs (headless) see the
+  /// deltas (or tiles) live; only non-streaming line mode and the
+  /// `--no-stream-thinking` hatch watch the silent window.
   void reasoningRequestStarted() {
-    if (_cli._useTui || _cli.config.streamThinking) return;
+    if (_cli._streamsThinking) return;
     reasoning.requestStarted();
   }
 

@@ -1226,6 +1226,24 @@ class AgentCli {
   /// message buffers here and renders once, whole, at message end.
   final StringBuffer _assistantText = StringBuffer();
 
+  /// The AC3 post-tool_use hold (gh-1433): once the current message
+  /// streams a tool-call block, its later text deltas are post-call
+  /// narration — they buffer here until the tool RESULT renders, so the
+  /// captured log keeps positional order (text → tool line → result →
+  /// narration). Live faces only; the TUI keeps today's behavior.
+  /// (State lives on the class — the render methods are an extension.)
+  final StringBuffer _postToolText = StringBuffer();
+
+  /// Whether the post-tool hold is open for the current message.
+  var _postToolHoldOpen = false;
+
+  /// The E1 leading-whitespace hold (gh-1433): whitespace-only deltas
+  /// before the first real text hold here so a whitespace-only narration
+  /// block never paints a stray blank line into the log. Flushed (and
+  /// dropped when still whitespace-only) at the first real delta or at
+  /// message end.
+  StringBuffer? _whitespaceHold;
+
   /// Whether the default role resolved and drives the agent (roles mode).
   /// The banner's key-status line reads env var names from the live model's
   /// provider then; legacy mode reads them from the provider kind.
