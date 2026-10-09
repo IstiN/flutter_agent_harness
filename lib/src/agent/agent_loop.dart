@@ -2567,7 +2567,11 @@ ToolExecutionResult _errorToolResult(Object message, {String? toolName}) {
       message is ToolNotFoundException ||
       (message is StateError &&
           (text.contains('Command exited with code') ||
-              text.contains('Command aborted')));
+              text.contains('Command aborted') ||
+              // gh-1444 AC5: a shell timeout is the command's verdict, not
+              // a harness fault — the honest "timed out after Ns" carrier
+              // must not wear the "uncaught exception" hint.
+              text.contains('Command timed out')));
   final rendered = text.isEmpty ? '<no error message>' : text;
   return ToolExecutionResult(
     content: [

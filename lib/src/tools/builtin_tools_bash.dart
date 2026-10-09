@@ -22,6 +22,59 @@ String _appendStatus(String text, String status) {
   return text.isEmpty ? status : '$text\n\n$status';
 }
 
+/// Extracts the effective timeout in whole seconds from a shell timeout
+/// error message (`timeout: 0:00:30` — the shape both LocalShell and the
+/// WASI sandbox emit), or null when no parseable duration is present.
+/// Sub-second caps round up to 1 so the text never claims "after 0s".
+int? timeoutSecondsFromMessage(String message) {
+  final match = RegExp(r'timeout:\s*(\d+):(\d{1,2}):(\d{1,2})').firstMatch(
+    message,
+  );
+  if (match == null) return null;
+  final seconds =
+      int.parse(match.group(1)!) * 3600 +
+      int.parse(match.group(2)!) * 60 +
+      int.parse(match.group(3)!);
+  return seconds > 0 ? seconds : 1;
+}
+
+/// The honest timeout status line (gh-1444 AC5): the model's own cap when
+/// it passed one, else the shell's effective cap — the job's recorded exec
+/// timeout, or the duration parsed from the exec error's
+/// `timeout: <duration>` message — never "unknown seconds". When no cap is
+/// recoverable at all the line states the timeout without inventing a
+/// number.
+String bashTimeoutStatus({
+  num? timeoutArg,
+  Duration? effectiveTimeout,
+  String? errorMessage,
+}) {
+  if (timeoutArg != null) {
+    return 'Command timed out after ${_formatTimeoutSeconds(timeoutArg)} '
+        'seconds';
+  }
+  final seconds = effectiveTimeout?.inSeconds;
+  if (seconds != null && seconds > 0) {
+    return 'Command timed out after $seconds seconds';
+  }
+  final parsed = errorMessage == null
+      ? null
+      : timeoutSecondsFromMessage(errorMessage);
+  if (parsed != null) {
+    return 'Command timed out after $parsed seconds';
+  }
+  return 'Command timed out';
+}
+
+/// Renders a timeout argument the way the model passed it (whole numbers
+/// stay whole, fractions keep their digits).
+String _formatTimeoutSeconds(num seconds) {
+  if (seconds == seconds.truncate()) {
+    return '${seconds.truncate()}';
+  }
+  return '$seconds';
+}
+
 /// Foreground sleep deny threshold (issue #1349): a bare `sleep` longer
 /// than this is rejected at call validation. A bare long sleep is never
 /// legitimate foreground work — it parks the whole turn (steering and the
@@ -351,7 +404,7 @@ StateError _bashFailureError(
         error,
         _appendStatus(
           _retryNoticePrefix(notices),
-          'Command timed out after ${timeoutArg ?? 'unknown'} seconds',
+          bashTimeoutStatus(timeoutArg: timeoutArg, errorMessage: error.message),
         ),
       ),
     ),
@@ -510,7 +563,7 @@ Future<ToolExecutionResult> _awaitJobOutcome(
     throw StateError(
       _appendStatus(
         output,
-        'Command timed out after ${timeoutArg ?? 'unknown'} seconds',
+        bashTimeoutStatus(timeoutArg: timeoutArg, effectiveTimeout: entry.timeout),
       ),
     );
   }
