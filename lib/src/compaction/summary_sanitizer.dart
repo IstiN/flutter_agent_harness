@@ -19,6 +19,8 @@
 /// the tests" all stay verbatim.
 library;
 
+import 'structured/markers.dart' show pinBlockCloseTag, pinBlockOpenTag;
+
 /// A summary after sanitization: the cleaned [text] plus the [stripped]
 /// ephemeral sentences (persist sites log them, e.g. in the compaction
 /// record's `details`).
@@ -92,21 +94,46 @@ SanitizedSummary sanitizeSummary(
   final text = _stripContextNotes(summary, stripped);
   final keptLines = <String>[];
   var insidePinEnvelope = false;
+  var envelopeLines = 0;
   for (final line in text.split('\n')) {
-    if (line.contains(pinEnvelopeOpenTag)) insidePinEnvelope = true;
-    final keptLine = insidePinEnvelope
+    // Standalone-line equality only (review gh-1409 round 2): the harness
+    // renders the tags as whole lines, so a tag quoted mid-prose — a pin
+    // line copied into a sentence, or a hostile `operative:` line
+    // smuggling the marker — must not flip the exemption.
+    final trimmed = line.trim();
+    if (trimmed == pinEnvelopeOpenTag) {
+      insidePinEnvelope = true;
+      envelopeLines = 0;
+    }
+    // The exemption is BOUNDED: a legit pin block is budget-capped
+    // ([defaultPinBudgetChars] ⇒ ≤ ~273 rendered lines), so an unclosed
+    // envelope (truncated checkpoint, hostile open without close) re-arms
+    // sanitization after [_maxPinEnvelopeLines] lines instead of staying
+    // exempt for the rest of the summary.
+    final keptLine =
+        insidePinEnvelope && envelopeLines < _maxPinEnvelopeLines
         ? line
         : _sanitizeLine(line, stripped, protectedLines);
     if (keptLine != null) keptLines.add(keptLine);
-    if (line.contains(pinEnvelopeCloseTag)) insidePinEnvelope = false;
+    if (insidePinEnvelope) envelopeLines++;
+    if (trimmed == pinEnvelopeCloseTag) insidePinEnvelope = false;
   }
   return (text: keptLines.join('\n'), stripped: stripped);
 }
 
-/// The pin-block envelope tags (gh-1409) — lines between them are
-/// harness-framed pin renderings and are exempt from sanitization.
-const pinEnvelopeOpenTag = '<pinned-skill-directives>';
-const pinEnvelopeCloseTag = '</pinned-skill-directives>';
+/// The pin-envelope exemption's line bound (defense in depth): a
+/// budget-capped legit pin block is ≤ ~273 rendered lines at
+/// [defaultPinBudgetChars] (8192 chars over the ~30-char minimal
+/// rendering), so 512 is provably above any legit block while a hostile
+/// unclosed open cannot latch the exemption over the whole summary.
+const _maxPinEnvelopeLines = 512;
+
+/// Aliases of the renderer's envelope tags — single source of truth in
+/// `structured/markers.dart` ([pinBlockOpenTag]/[pinBlockCloseTag]);
+/// compile-time linked, so a renderer rename cannot silently orphan the
+/// exemption (review gh-1409 round 2, suggestion 5).
+const pinEnvelopeOpenTag = pinBlockOpenTag;
+const pinEnvelopeCloseTag = pinBlockCloseTag;
 
 /// Removes every `[context note …]` block — opened by a real bracket and
 /// closed by a `]` within the same line or the two lines after it (LLM

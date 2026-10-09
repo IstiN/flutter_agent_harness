@@ -419,9 +419,10 @@ Set<String> readSkillPathsInWindow(List<Message> messages, List<Skill> skills) {
 /// unchanged (E6: pre-boundary the body is still in context; no
 /// duplication). No pins → unchanged (E1).
 ///
-/// [onNotice] receives every non-silent event: budget drops (P6) and
-/// repairs (a pin absent from the whole window text — its carrier line is
-/// the repair from the registry, AC3).
+/// [onNotice] receives every non-silent event: budget drops (P6), P4/P5
+/// lifecycle changes (diffed against [lastOperativePinRegistry], the
+/// previous window's registry), and repairs (a pin absent from the whole
+/// window text — its carrier line is the repair from the registry, AC3).
 ///
 /// Returns the SAME list instance when there is nothing to inject, so
 /// pin-free sessions pay nothing.
@@ -434,7 +435,33 @@ List<Message> injectOperativePinCarriers(
   if (!operativePinConfig.enabled || skills.isEmpty || messages.isEmpty) {
     return messages;
   }
-  final readPaths = readSkillPathsInWindow(messages, skills);
+  final registry = _buildRegistry(
+    skills,
+    readSkillPathsInWindow(messages, skills),
+    budgetChars,
+    onNotice,
+  );
+  if (registry.isEmpty) return messages; // E1: no pins → no carrier.
+  final boundary = _lastRenumberingBoundary(messages);
+  if (boundary < 0) return messages; // E6: no fold yet → no carrier.
+  return _insertCarrier(
+    messages,
+    registry,
+    boundary,
+    _repairProbe(messages, registry, onNotice),
+  );
+}
+
+/// Builds the window's pin registry and reports every non-silent event
+/// around it: budget drops (P6) and the P4/P5 lifecycle diff against
+/// [lastOperativePinRegistry] (supersede/drop — reported even when the
+/// new registry ends up empty, e.g. the last pin-owning skill vanished).
+SkillOperativePins _buildRegistry(
+  List<Skill> skills,
+  Set<String> readPaths,
+  int? budgetChars,
+  void Function(String notice)? onNotice,
+) {
   final registry = SkillOperativePins.build(
     skills,
     readSkillPaths: readPaths,
@@ -446,29 +473,41 @@ List<Message> injectOperativePinCarriers(
       '`${drop.pin.provenance.first.skillName}`',
     );
   }
-  if (registry.isEmpty) return messages;
-
-  // Find the LAST renumbering boundary (the compaction boundary the
-  // carrier must sit after — never inside the summarized range).
-  var boundary = -1;
-  for (var i = messages.length - 1; i >= 0; i--) {
-    if (isPinRenumberingBoundary(messages[i])) {
-      boundary = i;
-      break;
+  final previous = lastOperativePinRegistry;
+  lastOperativePinRegistry = registry;
+  if (previous != null) {
+    for (final notice in registry.diff(previous).notices()) {
+      onNotice?.call(notice);
     }
   }
-  if (boundary < 0) return messages; // E6: no fold yet → no carrier.
+  return registry;
+}
 
-  // AC3 repair report: a pin absent from the whole window text (body
-  // folded AND the checkpoint summary dropped it) is restored verbatim by
-  // this carrier — repaired from the registry, never from summary memory.
-  final windowText = messages
-      .map(_messageText)
-      .where((t) => t.isNotEmpty)
-      .join('\n');
+/// The LAST renumbering boundary in [messages], or -1 when the window has
+/// none (E6: the carrier must sit after the compaction boundary — never
+/// inside the summarized range).
+int _lastRenumberingBoundary(List<Message> messages) {
+  for (var i = messages.length - 1; i >= 0; i--) {
+    if (isPinRenumberingBoundary(messages[i])) return i;
+  }
+  return -1;
+}
+
+/// The AC3 repair probe: keys of pins absent from the WHOLE window text
+/// (body folded AND the checkpoint summary dropped them) — their carrier
+/// line is the repair from the registry, reported, never silent. Scans
+/// per message with early exit (review gh-1409 round 2, suggestion 6): no
+/// window-sized join, each probe pays O(its message), same as the image
+/// registry's membership scan.
+Set<String> _repairProbe(
+  List<Message> messages,
+  SkillOperativePins registry,
+  void Function(String notice)? onNotice,
+) {
   final restoredKeys = <String>{
     for (final pin in registry.pins)
-      if (!windowText.contains(pin.line)) pin.contentKey,
+      if (!messages.any((message) => _messageText(message).contains(pin.line)))
+        pin.contentKey,
   };
   for (final pin in registry.pins) {
     if (restoredKeys.contains(pin.contentKey)) {
@@ -479,13 +518,21 @@ List<Message> injectOperativePinCarriers(
       );
     }
   }
-  final block = pinCarrierBlock(registry, restoredKeys: restoredKeys);
-  if (block.isEmpty) return messages;
+  return restoredKeys;
+}
 
-  // Anchor AFTER the boundary: a user message rides directly after the
-  // boundary message; a tool-result boundary extends to the end of its
-  // result run first (nothing may sit inside a call/result run — the
-  // image-carrier anchor rule).
+/// Anchors the carrier immediately AFTER [boundary]: a user message rides
+/// directly after the boundary message; a tool-result boundary extends to
+/// the end of its result run first (nothing may sit inside a call/result
+/// run — the image-carrier anchor rule). The registry is non-empty here,
+/// so the rendered block is non-empty by construction ([pinCarrierBlock]
+/// returns empty only for empty pins).
+List<Message> _insertCarrier(
+  List<Message> messages,
+  SkillOperativePins registry,
+  int boundary,
+  Set<String> restoredKeys,
+) {
   var anchor = boundary;
   while (anchor + 1 < messages.length &&
       messages[anchor + 1] is ToolResultMessage &&
@@ -493,7 +540,7 @@ List<Message> injectOperativePinCarriers(
     anchor++;
   }
   final carrier = UserMessage(
-    content: block,
+    content: pinCarrierBlock(registry, restoredKeys: restoredKeys),
     timestamp: messages[anchor].timestamp,
   );
   return [

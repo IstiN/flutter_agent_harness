@@ -235,6 +235,7 @@ class AgentService extends ChangeNotifier
     _activeApiKey = '';
     _wireImageDropNotice();
     _wireTextOnlyImageDropNotice();
+    _wireOperativePinNotice();
     _wireDeliverySloNotice();
     _redactor = redactor;
     _attachRedactor(redactor, bootSecrets);
@@ -279,6 +280,13 @@ class AgentService extends ChangeNotifier
             '— per-request cap reached',
       );
     };
+  }
+
+  /// gh-1409 P4/P5/P6: pin notices (budget drops, lifecycle
+  /// supersedes/drops, AC3 repairs) must never be silent either — same
+  /// AppLog surface as the drop notices above.
+  static void _wireOperativePinNotice() {
+    operativePinNotice = (notice) => AppLog.i('skills', notice);
   }
 
   /// Text-only model image drops must never be silent either (issue #638):
@@ -386,7 +394,7 @@ class AgentService extends ChangeNotifier
       homeDir: desktopHomeDir(),
       skillToggles: savedSkillToggles,
     );
-    final promptSuffix = promptSuffixResult.$1;
+    final (promptSuffix, enabledSkills) = promptSuffixResult;
     // Always wrap: the `request_secret` tool injects user-granted keys into
     // the LIVE env at runtime (see [_handleSecretRequest]), so the wrapper
     // must be in place even when the boot-time secret set is empty.
@@ -398,6 +406,12 @@ class AgentService extends ChangeNotifier
       secretsEnv: secretsEnv,
       sessionKeys: sessionKeys,
       config: config,
+      // gh-1409 (review round 2, BLOCKING): publish the boot discovery's
+      // enabled skills — the pin registry's source set — instead of
+      // dropping them (they rode only the prompt suffix before, so the
+      // app host's pin mechanism was silently inert until a settings
+      // change re-published the list).
+      operativeSkills: enabledSkills,
       providerRegistry: providerRegistry,
       redactor: redactor,
       bootSecrets: secrets,
@@ -486,6 +500,7 @@ class AgentService extends ChangeNotifier
     this._toolsAvailabilityStore,
     String? skillsHomeDir,
     this.powerAssertion,
+    List<Skill> operativeSkills = const [],
 
     /// The `~/.fah` home the yaml loader reads (issue #1078).
     String? configHomeDir,
@@ -499,6 +514,7 @@ class AgentService extends ChangeNotifier
        _config = config,
        _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
        _skillToggles = initialSkillToggles,
+       _bootOperativeSkills = operativeSkills,
        _resolveSecretName = resolveSecretName,
        // ignore: prefer_initializing_formals
        _providerRegistry = providerRegistry,
@@ -529,6 +545,7 @@ class AgentService extends ChangeNotifier
     maybeCurrent = this;
     _wireImageDropNotice();
     _wireTextOnlyImageDropNotice();
+    _wireOperativePinNotice();
     _wireDeliverySloNotice();
     _providerKind = config.providerKind;
     _activeBaseUrl = config.baseUrl;
@@ -956,6 +973,11 @@ class AgentService extends ChangeNotifier
       contextWindowCap: _contextWindowCap,
       overWindowRelief: (overWindow) => _relieveOverWindow(overWindow),
     );
+    // gh-1409: publish the boot discovery's enabled skills — the pin
+    // registry's source set. Derived state (P2): re-published on consent
+    // and toggle changes; without this the app host's pin mechanism is a
+    // silent no-op until a settings change.
+    _agent.operativeSkills = List.of(_bootOperativeSkills);
     // The main agent's inbox: messages from children (agent_message to
     // "main") and from other Fa instances arrive at turn boundaries.
     _agent.externalSteeringSource = _mainInboxMessages;
@@ -1084,6 +1106,11 @@ class AgentService extends ChangeNotifier
   /// Home directory for user-level skill roots (desktop only; null on
   /// mobile/web). Null in tests keeps discovery deterministic.
   final String? _skillsHomeDir;
+
+  /// The enabled skills discovered at boot (`create` → `_withEnv`), the
+  /// pin registry's source set (gh-1409). Republished onto the agent once
+  /// it is constructed; consent/toggle changes re-publish over it.
+  late final List<Skill> _bootOperativeSkills;
 
   /// UI hook rendering the approval prompt (the chat screen installs a
   /// Material dialog). `null` → prompt-policy calls are denied.
@@ -1646,6 +1673,13 @@ class AgentService extends ChangeNotifier
 
   @override
   String? error;
+
+  /// The agent's operative-skill source set (gh-1409): published at boot
+  /// from `create`'s discovery and re-published on consent/toggle
+  /// changes — visible so the boot-publication regression test can assert
+  /// the app host is not silently inert (review round 2, BLOCKING).
+  @visibleForTesting
+  List<Skill> get operativeSkills => _agent.operativeSkills;
 
   /// Builtin tools whose completion may mean the sandbox filesystem changed
   /// (the actual tool names in `builtinTools`: `write`, `edit`, `bash`).

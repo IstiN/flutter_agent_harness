@@ -211,7 +211,7 @@ class Agent {
     this.toolMisuseBreaker,
     this.stuckTool,
     this.finalizeGate = false,
-    List<Skill> operativeSkills = const [],
+    this.operativeSkills = const [],
   }) : toolExecutor =
            toolExecutor ?? toolRegistry?.executor ?? _missingToolExecutor(),
        _state = AgentState(
@@ -221,8 +221,7 @@ class Agent {
          messages: messages ?? const [],
        ),
        _steeringQueue = _PendingMessageQueue(steeringMode),
-       _followUpQueue = _PendingMessageQueue(followUpMode),
-       operativeSkills = operativeSkills {
+       _followUpQueue = _PendingMessageQueue(followUpMode) {
     _steeringQueue.onEnqueue = () {
       if (!_steeringArrived.isClosed) _steeringArrived.add(null);
     };
