@@ -348,7 +348,8 @@ def main(argv):
         print(
             f"[post-mortem] SCORE HONESTY VIOLATION: {violation['trial']} "
             f"failed {violation['failure_mode']} but its session shows only "
-            f"steady gaps (max {violation['max_gap_sec']}s < 240s) — "
+            f"steady gaps (max {violation['max_gap_sec']}s < "
+            f"{violation.get('stall_gap_sec', bench_metrics.DEFAULT_STALL_GAP_SEC)}s) — "
             "the run killed a productive agent",
             file=sys.stderr,
         )
