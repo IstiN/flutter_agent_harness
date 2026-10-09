@@ -7,18 +7,199 @@
 part of 'fa_tui.dart';
 
 extension _TuiViewport on FaTuiModel {
-  /// Applies a user scroll: moves the offset (clamped) and re-evaluates the
-  /// follow latch — scrolling up detaches, landing back on the exact bottom
-  /// re-attaches. Any user scroll dissolves the boot anchor: the park is
-  /// the boot's, not the user's.
-  FaTuiModel _scrolledTo(int offset) {
+  /// Resize (gh-1433 E8 + gh-1439 E2). Split out of fa_tui.dart to keep
+  /// the model file under the repo's ≤2800-line gate — the scroll math
+  /// lives here with the rest of the viewport machinery.
+  (Model, Cmd?) _handleWindowSize(WindowSizeMsg msg) {
+    // Live size tracking (gh-1433 E8): the controller's width seam
+    // updates with every resize the program processes.
+    onResized?.call(msg.width, msg.height);
+    // Clamp the scroll offset to the new visible area so resizing cannot
+    // leave it out of bounds (which showed >100% progress), then clear
+    // the screen so no old frame artifacts survive the relayout. Wrapped
+    // rows are recomputed at the NEW width.
+    final resized = copyWith(termWidth: msg.width, termHeight: msg.height);
+    final wrapped = resized._wrappedLines(msg.width);
+    return (
+      resized.copyWith(
+        // Held (gh-1439 E2): the anchor is a transcript line — the new
+        // wrap names the same logical position at the new size. Live:
+        // plain clamp (the anchor recomputes on the next append).
+        scrollOffset: resized._heldAnchorRow(wrapped),
+      ),
+      () async => ClearScreenMsg(),
+    );
+  }
+
+  /// Mouse-wheel routing (issue #278 + gh-1439). Split out of fa_tui.dart
+  /// to keep the model file under the repo's ≤2800-line gate — same
+  /// library (`part of`), so the extension sees the model's privates.
+  (Model, Cmd?) _handleMouseWheel(MouseWheelMsg msg) {
+    // Capture off: the hint says wheel is disabled — honor it even for
+    // bytes a not-yet-disarmed terminal still sends (issue #278, AC4).
+    if (!mouseCapture) return (this, null);
+    // Hub overlay: the wheel belongs to the fleet tree.
+    if (hub != null) return _wheelToHubSelection(msg);
+    // Transcript: the wheel is a page gesture.
+    return _wheelTranscript(msg);
+  }
+
+  /// The held-mode jump chip (gh-1439): when the rule row carries the
+  /// `● N new` counter (held with unseen output), the row is the on-screen
+  /// re-engage affordance — one full-width row, a click jumps live and
+  /// flushes the count. Live — or held with nothing new, where the rule
+  /// row is the fold hint — registers nothing.
+  void _registerJumpLiveRegion(int stickyRows, int historyRows) {
+    if (follow.isLive || follow.unseen <= 0) return;
+    _hitRegions.add(
+      TuiHitRegion(
+        x: 0,
+        y: stickyRows + historyRows,
+        w: termWidth,
+        h: 1,
+        kind: TuiRegionKind.jumpLive,
+      ),
+    );
+  }
+
+  /// The hub overlay's wheel half: each notch steps the fleet-tree
+  /// selection one visible row; the transcript scroll state and the
+  /// follow contract stand still while the overlay is up.
+  (Model, Cmd?) _wheelToHubSelection(MouseWheelMsg msg) {
+    final delta = switch (msg.mouse.button) {
+      MouseButton.wheelUp => -1,
+      MouseButton.wheelDown => 1,
+      _ => 0,
+    };
+    if (delta == 0) return (this, null);
+    final (next, _) = hub!.handleKey(
+      delta < 0 ? 'up' : 'down',
+      viewport: _viewportHeight - 3,
+    );
+    return (copyWith(hub: next), null);
+  }
+
+  /// The transcript's wheel half (gh-1439): the wheel is a page gesture —
+  /// up disengages follow, down re-arms inside the shared near-bottom
+  /// band; any other button is not a scroll gesture at all.
+  (Model, Cmd?) _wheelTranscript(MouseWheelMsg msg) {
+    switch (msg.mouse.button) {
+      case MouseButton.wheelUp:
+        return (_scrolledTo(scrollOffset - 3, pageGesture: true), null);
+      case MouseButton.wheelDown:
+        return (_scrolledTo(scrollOffset + 3, pageGesture: true), null);
+      default:
+        return (this, null);
+    }
+  }
+
+  /// Applies a user scroll: moves the offset (clamped) and classifies the
+  /// landing position through the shared [FollowMode] contract (gh-1439) —
+  /// a park inside the near-bottom band re-arms live, beyond it holds.
+  /// [pageGesture] arms the shared ~10%-of-viewport band; line steps
+  /// (arrows) re-arm on the exact edge — the pinned arrow-key semantics
+  /// (REG). Any user scroll dissolves the boot anchor: the park is the
+  /// boot's, not the user's. Holding stores the transcript line at the
+  /// window's top edge ([heldAnchorLine]) so trims/resizes re-anchor the
+  /// same logical position (E1/E2).
+  FaTuiModel _scrolledTo(int offset, {bool pageGesture = false}) {
     final wrapped = _wrappedLines();
+    final bottom = _scrollBottom(wrapped);
     final next = offset.clamp(0, _scrollTopMax(wrapped));
+    final arm = pageGesture
+        ? FollowMode.nearBottomArmExtent(_viewportHeight)
+        : 0;
+    final followMode = follow.userScrolled(
+      distanceFromLiveEdge: bottom - next,
+      armExtent: arm,
+    );
     return copyWith(
       scrollOffset: next,
-      followTail: next >= _scrollBottom(wrapped),
+      follow: followMode,
+      heldAnchorLine: followMode.isHeld ? _anchorLineAtRow(next) : -1,
       bootAnchorLine: 0,
     );
+  }
+
+  /// The explicit re-engage (End key / jump-chip click): live at the
+  /// bottom edge, count flushed, anchor cleared. Exactly one action.
+  FaTuiModel _jumpToLive() {
+    final wrapped = _wrappedLines();
+    return copyWith(
+      scrollOffset: _scrollBottom(wrapped),
+      follow: follow.jumpToLive(),
+      heldAnchorLine: -1,
+      bootAnchorLine: 0,
+    );
+  }
+
+  /// The transcript line whose wrapped rows start at or before [row] —
+  /// the logical anchor for a held window (binary search over
+  /// [lineStartRows]; the sentinel tail entry is excluded).
+  int _anchorLineAtRow(int row) {
+    final starts = _wrapCache.lineStartRows;
+    if (starts.length <= 1) return 0;
+    var lo = 0;
+    var hi = starts.length - 2;
+    var best = 0;
+    while (lo <= hi) {
+      final mid = (lo + hi) ~/ 2;
+      if (starts[mid] <= row) {
+        best = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return best;
+  }
+
+  /// The held anchor after an append that trimmed [cut] head lines
+  /// (gh-1439 E1): the anchor shifts by the cut and the window's offset
+  /// is the anchor's row minus the rows the dropped head consumed —
+  /// derived from the PRE-trim wrap cache (read before any re-sync).
+  /// Returns `(newAnchorLine, newOffset)`; an unheld or anchorless state
+  /// passes through clamped unchanged.
+  (int, int) _heldAnchorShiftedByCut(int cut) {
+    final bottom = _scrollBottom(_wrappedLines());
+    if (!follow.isHeld || heldAnchorLine < 0) {
+      return (heldAnchorLine, scrollOffset.clamp(0, bottom));
+    }
+    // gh-1439 E1 (re-review): the cache still holds the PRE-trim
+    // line-starts — the caller has not re-synced it to the trimmed list
+    // yet. A same-width trim only removes head rows from the unchanged
+    // wrapped layout, so the reading position survives EXACTLY by
+    // shifting the raw offset by the rows the dropped head consumed
+    // (`starts[cut]`): re-deriving the row from the anchor line's start
+    // (`starts[heldAnchorLine] - starts[cut]`) or — worse — indexing the
+    // old cache at the shifted line (`starts[heldAnchorLine - cut]`)
+    // snaps a window parked mid-line (a continuation row of a wrapped
+    // line) or names a different line whenever wrapped heights are not
+    // uniform. The anchor LINE still shifts for the resize contract
+    // (E2). (When the fence-repair synthetic was prepended the shift is
+    // the raw cut − 1, so the row can drift by one dropped line's height
+    // in that rare shape.)
+    final starts = _wrapCache.lineStartRows;
+    final shifted = (heldAnchorLine - cut).clamp(0, starts.length - 2);
+    final droppedRows = starts[cut.clamp(0, starts.length - 1)];
+    // The trim removes whole head rows from the same wrapped layout, so
+    // the new bottom is the old one minus the dropped rows.
+    final newBottom = (bottom - droppedRows).clamp(0, bottom);
+    return (shifted, (scrollOffset - droppedRows).clamp(0, newBottom));
+  }
+
+  /// The held anchor's wrapped row after a re-wrap (gh-1439 E2): the
+  /// anchor is a transcript line, so the NEW wrap's line-starts name the
+  /// same logical position at any width. -1 anchors degrade to the clamped
+  /// raw offset.
+  int _heldAnchorRow(List<String> wrapped) {
+    final bottom = _scrollBottom(wrapped);
+    if (!follow.isHeld || heldAnchorLine < 0) {
+      return _clampScroll(scrollOffset, wrapped);
+    }
+    final starts = _wrapCache.lineStartRows;
+    final anchor = heldAnchorLine.clamp(0, starts.length - 2);
+    return starts[anchor].clamp(0, bottom);
   }
 
   /// The sticky-echo index after a transcript head-trim dropped [cut]
