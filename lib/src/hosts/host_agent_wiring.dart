@@ -1,7 +1,9 @@
 /// Live agent-stack wiring through the builder (issue #1079, slice 2 —
 /// the CLI converts to this as the first host shell; slice 3 — the
 /// fabric/subagent/task complex joins the builder-owned set; slice 4 —
-/// host extensions become builder-gated, declared surface).
+/// host extensions become builder-gated, declared surface; slice 6 —
+/// the extension host's RUNTIME behavior is pinned record-identical to
+/// the CLI host's, `test/hosts/extension_host_parity_test.dart`).
 ///
 /// [wireAgentCore] consumes a [HostCapabilityProfile] plus the host's
 /// typed [AgentCoreServices] and returns a [WiredAgentCore]: the
