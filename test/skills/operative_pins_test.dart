@@ -120,7 +120,6 @@ void main() {
       ]);
       expect(registry.pins, isEmpty);
       expect(pinCarrierBlock(registry), isEmpty);
-      expect(formatOperativePinsForPrompt(registry), isEmpty);
       expect(pinnedOperativePromptBlock(registry), isNull);
     });
 
@@ -324,18 +323,6 @@ void main() {
     });
   });
 
-  group('formatOperativePinsForPrompt (resume/index channel, AC5)', () {
-    test('renders the pinned notice with provenance', () {
-      final registry = SkillOperativePins.build([
-        _skill('fleet', ['use fleet_sweep.sh']),
-      ]);
-      final section = formatOperativePinsForPrompt(registry);
-      expect(section, contains(pinBlockOpenTag));
-      expect(section, contains('"use fleet_sweep.sh"'));
-      expect(section, contains('pinned from skill `fleet`'));
-    });
-  });
-
   group('isPinRenumberingBoundary — boundary variants', () {
     UserMessage user(String text) =>
         UserMessage(content: text, timestamp: DateTime.utc(2026));
@@ -462,6 +449,263 @@ void main() {
         grantedPins.pins.expand((p) => p.provenance.map((x) => x.skillName)),
         contains('rogue'),
       );
+    });
+  });
+
+  group('window-membership probe surfaces (review round 2: CC/coverage)', () {
+    UserMessage user(String text) =>
+        UserMessage(content: text, timestamp: DateTime.utc(2026));
+
+    AssistantMessage assistant(List<ContentBlock> content) =>
+        AssistantMessage(
+          content: content,
+          api: 'test-api',
+          provider: 'test-provider',
+          model: 'test-model',
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        );
+
+    test('a pin quoted by an ASSISTANT text block counts as present — no '
+        'repair', () {
+      final skills = [
+        _skill('fleet', ['never hand-roll the gh battery']),
+      ];
+      final messages = [
+        user('$compactionSummaryPrefix summary'),
+        assistant([
+          TextContent(text: 'the pin says "never hand-roll the gh battery".'),
+        ]),
+      ];
+      final notices = <String>[];
+      injectOperativePinCarriers(messages, skills: skills, onNotice: notices.add);
+      expect(notices.where((n) => n.contains('restored')), isEmpty);
+    });
+
+    test('a pin quoted by a TOOL RESULT text block counts as present', () {
+      final skills = [
+        _skill('fleet', ['never hand-roll the gh battery']),
+      ];
+      final messages = [
+        user('$compactionSummaryPrefix summary'),
+        ToolResultMessage(
+          toolCallId: 't1',
+          toolName: 'bash',
+          content: [TextContent(text: 'output: never hand-roll the gh battery')],
+          isError: false,
+          timestamp: DateTime.utc(2026),
+        ),
+      ];
+      final notices = <String>[];
+      injectOperativePinCarriers(messages, skills: skills, onNotice: notices.add);
+      expect(notices.where((n) => n.contains('restored')), isEmpty);
+    });
+
+    test('a pin quoted in a list-content USER message counts as present',
+        () {
+      final skills = [
+        _skill('fleet', ['never hand-roll the gh battery']),
+      ];
+      final messages = [
+        user('$compactionSummaryPrefix summary'),
+        UserMessage(
+          content: [
+            TextContent(text: 'context: never hand-roll the gh battery'),
+          ],
+          timestamp: DateTime.utc(2026),
+        ),
+      ];
+      final notices = <String>[];
+      injectOperativePinCarriers(messages, skills: skills, onNotice: notices.add);
+      expect(notices.where((n) => n.contains('restored')), isEmpty);
+    });
+
+    test('message kinds with no text surface (non-text blocks only) count '
+        'as absent → the repair fires', () {
+      final skills = [
+        _skill('fleet', ['never hand-roll the gh battery']),
+      ];
+      final messages = [
+        user('$compactionSummaryPrefix summary'),
+        assistant([const ThinkingContent(thinking: 'hmm')]),
+      ];
+      final notices = <String>[];
+      injectOperativePinCarriers(messages, skills: skills, onNotice: notices.add);
+      expect(notices.where((n) => n.contains('restored')), hasLength(1));
+    });
+  });
+
+  group('readSkillPathsInWindow — branch matrix (review round 2)', () {
+    AssistantMessage assistant(List<ContentBlock> content) =>
+        AssistantMessage(
+          content: content,
+          api: 'test-api',
+          provider: 'test-provider',
+          model: 'test-model',
+          usage: Usage.zero,
+          stopReason: StopReason.stop,
+          timestamp: DateTime.utc(2026),
+        );
+
+    test('non-`read` tool calls never count as skill reads', () {
+      final skills = [_skill('fleet', ['rule'])];
+      final reads = readSkillPathsInWindow([
+        assistant([
+          ToolCall(
+            id: 't1',
+            name: 'write',
+            arguments: {'path': '/work/.fah/skills/fleet/SKILL.md'},
+          ),
+        ]),
+      ], skills);
+      expect(reads, isEmpty);
+    });
+
+    test('non-String `path` arguments are ignored', () {
+      final skills = [_skill('fleet', ['rule'])];
+      final reads = readSkillPathsInWindow([
+        assistant([
+          ToolCall(id: 't1', name: 'read', arguments: {'path': 42}),
+        ]),
+      ], skills);
+      expect(reads, isEmpty);
+    });
+
+    test('paths outside the skill set are ignored', () {
+      final skills = [_skill('fleet', ['rule'])];
+      final reads = readSkillPathsInWindow([
+        assistant([
+          ToolCall(
+            id: 't1',
+            name: 'read',
+            arguments: {'path': '/work/README.md'},
+          ),
+        ]),
+      ], skills);
+      expect(reads, isEmpty);
+    });
+
+    test('a real skill read is reported (the P6 priority class)', () {
+      final skill = _skill('fleet', ['rule']);
+      final reads = readSkillPathsInWindow([
+        assistant([
+          ToolCall(
+            id: 't1',
+            name: 'read',
+            arguments: {'path': skill.filePath},
+          ),
+        ]),
+      ], [skill]);
+      expect(reads, {skill.filePath});
+    });
+  });
+
+  group('P4/P5 lifecycle notices through injection (review round 2)', () {
+    UserMessage user(String text) =>
+        UserMessage(content: text, timestamp: DateTime.utc(2026));
+
+    List<Message> window() => [
+      user('$compactionSummaryPrefix summary'),
+      user('newest'),
+    ];
+
+    setUp(() {
+      lastOperativePinRegistry = null;
+    });
+
+    tearDown(() {
+      lastOperativePinRegistry = null;
+    });
+
+    test('a changed content key supersedes with a notice naming the NEW '
+        'line (P5)', () {
+      final skills = [_skill('fleet', ['use fleet_sweep.sh'])];
+      injectOperativePinCarriers(window(), skills: skills);
+      final notices = <String>[];
+      injectOperativePinCarriers(
+        window(),
+        skills: [_skill('fleet', ['use fleet_sweep_v2.sh'])],
+        onNotice: notices.add,
+      );
+      final supersede = notices.singleWhere(
+        (n) => n.contains('superseded'),
+        orElse: () => '',
+      );
+      expect(supersede, contains('use fleet_sweep.sh'));
+      expect(supersede, contains('fleet_sweep_v2.sh'));
+    });
+
+    test('a vanished pin-owning skill drops with a notice (P4)', () {
+      final skills = [_skill('fleet', ['use fleet_sweep.sh'])];
+      injectOperativePinCarriers(window(), skills: skills);
+      final notices = <String>[];
+      injectOperativePinCarriers(window(), skills: [], onNotice: notices.add);
+      expect(
+        notices.where((n) => n.contains('skill pin dropped')),
+        isNotEmpty,
+      );
+    });
+
+    test('an unchanged registry diffs clean — no repeat notices', () {
+      final skills = [_skill('fleet', ['use fleet_sweep.sh'])];
+      injectOperativePinCarriers(window(), skills: skills);
+      final notices = <String>[];
+      injectOperativePinCarriers(window(), skills: skills, onNotice: notices.add);
+      expect(notices.where((n) => n.contains('superseded')), isEmpty);
+      expect(notices.where((n) => n.contains('skill pin dropped:')),
+          isEmpty);
+    });
+
+    test('the diff reports even when the new registry is empty (the last '
+        'pin-owning skill vanished)', () {
+      final skills = [_skill('fleet', ['use fleet_sweep.sh'])];
+      injectOperativePinCarriers(window(), skills: skills);
+      final notices = <String>[];
+      final injected = injectOperativePinCarriers(
+        window(),
+        skills: [],
+        onNotice: notices.add,
+      );
+      expect(identical(injected, window()), isFalse);
+      expect(
+        notices.any((n) => n.contains('no longer discoverable')),
+        isTrue,
+      );
+    });
+  });
+
+  group('SkillOperativePins.diff — successor selection (review round 2)', () {
+    test('a multi-pin skill\'s supersede names the CHANGED line, not the '
+        'skill\'s first pin', () {
+      final before = SkillOperativePins.build([
+        _skill('fleet', ['rule one', 'rule two']),
+      ]);
+      // `rule one` survives; `rule two` changes to `rule two prime` — the
+      // successor of `rule two` must be `rule two prime`, never the
+      // unrelated surviving `rule one`.
+      final after = SkillOperativePins.build([
+        _skill('fleet', ['rule one', 'rule two prime']),
+      ]);
+      final diff = after.diff(before);
+      expect(diff.superseded, hasLength(1));
+      expect(diff.superseded.single.previous.line, 'rule two');
+      expect(diff.superseded.single.current.line, 'rule two prime');
+      expect(
+        diff.notices().single,
+        contains('"rule two" (skill `fleet`) → "rule two prime"'),
+      );
+    });
+
+    test('a line the owner skill no longer declares drops (not '
+        'supersede-mislabeled)', () {
+      final before = SkillOperativePins.build([
+        _skill('fleet', ['rule one', 'rule two']),
+      ]);
+      final after = SkillOperativePins.build([_skill('fleet', ['rule one'])]);
+      final diff = after.diff(before);
+      expect(diff.superseded, isEmpty);
+      expect(diff.dropped.single.line, 'rule two');
     });
   });
 }
