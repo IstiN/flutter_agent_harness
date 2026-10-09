@@ -60,19 +60,23 @@ void main() {
     return (meta, orphanReportKey(orphan));
   }
 
-  AgentCli cliFor(MemoryExecutionEnv env, FakeStreamFunction stream) =>
-      AgentCli(
-        config: AgentCliConfig(
-          model: testModel,
-          apiKey: '[REDACTED:Sensitive Value]',
-          env: env,
-          sessionRoot: '/sessions',
-          providerKind: 'openai-completions',
-          skillsAccess: SkillsAccess.granted,
-        ),
-        io: io,
-        streamFunction: stream.call,
-      );
+  AgentCli cliFor(
+    MemoryExecutionEnv env,
+    FakeStreamFunction stream,
+    String sessionName,
+  ) => AgentCli(
+    config: AgentCliConfig(
+      model: testModel,
+      apiKey: '[REDACTED:Sensitive Value]',
+      env: env,
+      sessionRoot: '/sessions',
+      sessionName: sessionName,
+      providerKind: 'openai-completions',
+      skillsAccess: SkillsAccess.granted,
+    ),
+    io: io,
+    streamFunction: stream.call,
+  );
 
   List<String> noteTexts(Context context) => context.messages
       .whereType<UserMessage>()
@@ -83,10 +87,11 @@ void main() {
   test('persist: a resumed session with a fresh orphan notes it on the '
       'request and appends the orphan_report record', () async {
     final env = await freshEnv();
-    final (meta, key) = await seedOrphanSession(env, 'orphan-live');
+    const sessionName = 'orphan-live';
+    final (meta, key) = await seedOrphanSession(env, sessionName);
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
     final stream = FakeStreamFunction([textTurn('ok')]);
-    final cli = cliFor(env, stream);
+    final cli = cliFor(env, stream, sessionName);
     final run = cli.run();
     io.sendLine('go');
     await waitForIt(
@@ -102,9 +107,14 @@ void main() {
       notes,
       hasLength(1),
       reason: [
+        'IO: ${io.out.toString().replaceAll('\n', ' | ')}',
         for (final m in stream.contexts.first.messages)
-          '${m.runtimeType}: ${m is UserMessage ? messageText(m) : m is ToolResultMessage ? (m as ToolResultMessage).toolCallId : '…'}',
-      ].join(' | '),
+          '${m.runtimeType}: ${m is UserMessage
+              ? messageText(m)
+              : m is ToolResultMessage
+              ? (m as ToolResultMessage).toolCallId
+              : '…'}',
+      ].join(' || '),
     );
     expect(notes.single, contains('bash_198'));
     expect(notes.single, contains('kept in summary'));
@@ -113,17 +123,14 @@ void main() {
     final records = await repo.readCustomRecordsOfType(meta, {
       orphanReportRecordType,
     });
-    expect(
-      orphanReportKeysFromRecords(records),
-      {key},
-      reason: 'session file: ${(await env.readTextFile(meta.path)).getOrThrow()}',
-    );
+    expect(orphanReportKeysFromRecords(records), {key});
   });
 
   test('seed: a resumed session whose orphan_report record holds the key '
       'does not re-note and appends nothing', () async {
     final env = await freshEnv();
-    final (meta, key) = await seedOrphanSession(env, 'orphan-recorded');
+    const sessionName = 'orphan-recorded';
+    final (meta, key) = await seedOrphanSession(env, sessionName);
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
     // The prior process reported this orphan: the record exists BEFORE
     // the resume.
@@ -137,7 +144,7 @@ void main() {
     });
 
     final stream = FakeStreamFunction([textTurn('ok')]);
-    final cli = cliFor(env, stream);
+    final cli = cliFor(env, stream, sessionName);
     final run = cli.run();
     io.sendLine('go');
     await waitForIt(
@@ -147,7 +154,12 @@ void main() {
     io.sendLine('/exit');
     await run;
 
-    // The orphan was still dropped from the payload…
+    // The resume is real — the seeded history reached the request…
+    expect(
+      stream.contexts.first.messages.whereType<UserMessage>().map(messageText),
+      contains('before the cut'),
+    );
+    // …the orphan was dropped from the payload…
     expect(
       stream.contexts.first.messages.whereType<ToolResultMessage>(),
       isEmpty,
@@ -166,7 +178,8 @@ void main() {
     final env = await freshEnv();
     // SAME orphan shape (tool/id/timestamp ⇒ the same latch key) in both
     // sessions; only A carries the orphan_report record.
-    await seedOrphanSession(env, 'orphan-a');
+    const sessionName = 'orphan-a';
+    await seedOrphanSession(env, sessionName);
     final (bMeta, _) = await seedOrphanSession(env, 'orphan-b');
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
     expect(
@@ -175,7 +188,7 @@ void main() {
     );
 
     final stream = FakeStreamFunction([textTurn('ok'), textTurn('ok')]);
-    final cli = cliFor(env, stream);
+    final cli = cliFor(env, stream, sessionName);
     final run = cli.run();
     io.sendLine('go');
     await waitForIt(
