@@ -71,6 +71,7 @@ import 'agent_hub_tui.dart';
 import 'waiting_heartbeat.dart';
 import 'tool_liveness.dart';
 import 'reasoning_liveness.dart';
+import 'log_fidelity.dart';
 import 'agent_hub_view.dart';
 import '../task/agent_discovery.dart';
 import '../task/child_session_io.dart';
@@ -1201,10 +1202,53 @@ class AgentCli {
   /// passthrough; bin/fah resolves TTY/color/width for the real surfaces.
   final MarkdownSurface _markdownSurface;
 
+  /// The workflow-log-fidelity face for this run (gh-1433): TUI /
+  /// interactive line / headless log. Resolved once from the constructor
+  /// facts — the pure module is the test seam.
+  late final LogFidelityFace _logFace = resolveLogFidelityFace(
+    useTui: _useTui,
+    headlessRun: config.headlessRun,
+  );
+
+  /// The workflow-log-fidelity render defaults for this run (gh-1433):
+  /// whether thinking deltas render dimmed and live, and whether text
+  /// streams live (the buffered-answer path never applies).
+  late final LogFidelity _logFidelity = resolveLogFidelity(
+    face: _logFace,
+    streamThinkingSetting: config.streamThinking,
+    noStreamThinking: config.noStreamThinking,
+    envFidelity: environment[logFidelityEnvKey],
+  );
+
+  /// Whether this run drives the workflow-log face (gh-1433): a headless
+  /// run — `fa -p`, CI, bench, parent-CLI capture — has no repaintable
+  /// UI, so the log IS the UI. The post-hoc reader gets the full
+  /// narrative (thinking, prose, tools) in positional order.
+  bool get _logIsUi => _logFace == LogFidelityFace.log;
+
   /// The streamed answer of the current assistant message on non-TUI
   /// surfaces (issue #774): line mode and headless cannot repaint, so the
   /// message buffers here and renders once, whole, at message end.
   final StringBuffer _assistantText = StringBuffer();
+
+  /// The AC3 post-tool_use narration holds (gh-1433): once the current
+  /// message streams a tool-call block, its later text deltas are
+  /// post-call narration — each tool-call block opens a segment, deltas
+  /// append to the newest one, and a segment flushes after ITS call's
+  /// result row. A 2+ tool-call message therefore keeps positional
+  /// order (text → tool line → result → narration → result → …)
+  /// instead of draining every segment after the first result. Live
+  /// faces only; the TUI keeps today's behavior. (State lives on the
+  /// class — the render methods are an extension.)
+  final List<_PostToolNarrationHold> _postToolHolds =
+      <_PostToolNarrationHold>[];
+
+  /// The E1 leading-whitespace hold (gh-1433): whitespace-only deltas
+  /// before the first real text hold here so a whitespace-only narration
+  /// block never paints a stray blank line into the log. Flushed (and
+  /// dropped when still whitespace-only) at the first real delta or at
+  /// message end.
+  StringBuffer? _whitespaceHold;
 
   /// Whether the default role resolved and drives the agent (roles mode).
   /// The banner's key-status line reads env var names from the live model's
@@ -2006,4 +2050,18 @@ class AgentCli {
 
   String? _activeCustomName;
   Completer<String?>? _wizardPickerAnswer;
+}
+
+/// One AC3 post-tool narration segment (gh-1433): the text deltas that
+/// streamed after ONE tool-call block of the current message. [toolCallId]
+/// is stamped by the block's `ToolCallEndEvent` — the same id the
+/// execution events carry — so the segment flushes after that call's
+/// result row (positional even for parallel/multi-call messages).
+final class _PostToolNarrationHold {
+  /// The held narration deltas, in stream order.
+  final StringBuffer text = StringBuffer();
+
+  /// The tool call this segment follows; null until the call's
+  /// `ToolCallEndEvent` stamps it (or never, on a degenerate stream).
+  String? toolCallId;
 }

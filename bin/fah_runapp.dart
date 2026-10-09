@@ -1354,6 +1354,9 @@ Future<void> _runApp(List<String> args) async {
           flag: parsed.streamThinking,
           configValue: saved.streamThinking,
         ),
+        // The gh-1433 thinking-scoped silence hatch (the parser rejects it
+        // together with --stream-thinking).
+        noStreamThinking: parsed.noStreamThinking,
         modelRolesResolver: rolesResolver,
         providersQueueRuntime: queueRuntime,
         // The live models config (`models:` section): `/models set`/`remove`

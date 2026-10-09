@@ -619,19 +619,30 @@ docs/dap.md; never hand-edit the DAP files while a hub client is running.
 
 <!-- parity: none (boot config only) -->
 
-Console-output behavior flags (gh-1198), user file. Today one key — the
-opt-in live thinking stream for CLI line-mode/headless runs: with
+Console-output behavior flags (gh-1198 + gh-1433), user file. Today one
+key — the live thinking stream for CLI line-mode runs: with
 `streamThinking: true` (or the `--stream-thinking` flag, which wins for
-the run), thinking deltas print dimmed and live like the TUI's, so CI/ssh
-logs show the model's reasoning as it happens. The default `false` keeps
-the byte-identical legacy output (machine consumers parse it) and prints a
-periodic `… reasoning Ns` liveness line instead while a provider request
-sits silent — the same waiting cadence the tool-liveness lines use
+the run), thinking deltas print dimmed and live like the TUI's, so ssh
+sessions show the model's reasoning as it happens. The default `false`
+keeps the interactive line-mode byte shape and prints a periodic
+`… reasoning Ns` liveness line instead while a provider request sits
+silent — the same waiting cadence the tool-liveness lines use
 (`waiting.toolLivenessSeconds` / `toolLivenessTickSeconds`; `0` disables).
+
+Since gh-1433 this key decides the INTERACTIVE faces only: a headless
+`fa -p` run streams thinking and text by default (the log is the UI, no
+flags needed). `--no-stream-thinking` silences thinking for one headless
+run (the reasoning liveness line returns), and `FA_LOG_FIDELITY=legacy`
+reverts the whole headless face to the pre-gh-1433 byte shape for edge
+hosts that parse the log. Rendered deltas — thinking AND streamed text,
+on every face — pass through the redaction pipeline at render time since
+gh-1433: a registered secret echoed in a delta is masked live, so
+byte-pin tests for interactive `--stream-thinking` sessions must assume
+redacted deltas whenever redaction is enabled (default).
 
 ```yaml
 output:
-  streamThinking: false # default; true = stream thinking deltas dimmed, live
+  streamThinking: false # interactive line mode only; headless runs stream by default
 ```
 
 Applies at next boot (the flag applies to its own run).

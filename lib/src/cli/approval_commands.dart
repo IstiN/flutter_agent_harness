@@ -1099,12 +1099,17 @@ extension ApprovalCommands on AgentCli {
   }
 
   /// Message lifecycle for assistant turns: a start re-arms the
-  /// once-per-message prefix; an end flushes the stream and reports the
-  /// stop reason.
+  /// once-per-message prefix and flushes any narration orphaned by tool
+  /// results that never rendered; an end flushes the stream and reports
+  /// the stop reason.
   void _onMessageLifecycle(Message message, {required bool start}) {
     if (message is! AssistantMessage) return;
     if (start) {
       _assistantPrefixPrinted = false;
+      // AC3 orphan safety: post-tool narration held by a message whose
+      // tool result never rendered flushes here — nothing swallowed, and
+      // it lands BEFORE the new message's content (positional).
+      _flushPostToolText();
       return;
     }
     _onAssistantMessageEnd(message);
@@ -1172,49 +1177,214 @@ extension ApprovalCommands on AgentCli {
   /// buffer the answer and render it through the markdown policy at
   /// message end (issue #774) — line mode and headless cannot repaint, so
   /// a half-streamed table or fence would print raw mid-flight; the whole
-  /// message renders once, correctly.
-  bool get _buffersAnswer => _markdownSurface.mode != MarkdownSurfaceMode.raw;
+  /// message renders once, correctly. The LOG face (gh-1433) never
+  /// buffers: a headless run's log is its UI, and a log that reveals the
+  /// answer only at message end is not a narrative.
+  bool get _buffersAnswer =>
+      !_logFidelity.liveText &&
+      _markdownSurface.mode != MarkdownSurfaceMode.raw;
 
-  /// Whether this surface streams thinking deltas live (gh-1198): the TUI
-  /// always has; line mode and headless opt in through the effective run
-  /// setting (`--stream-thinking` flag or `output.streamThinking`).
-  bool get _streamsThinking => _useTui || config.streamThinking;
+  /// Whether this surface streams thinking deltas live: the TUI always
+  /// has; the LOG face does by default since gh-1433 (the log is the
+  /// UI); interactive line mode stays at the gh-1198 opt-in
+  /// (`--stream-thinking` flag or `output.streamThinking`), with
+  /// `--no-stream-thinking` silencing the log face for the run.
+  bool get _streamsThinking => _logFidelity.streamThinking;
+
+  /// Rendered deltas pass through the SAME redaction pipeline as tool
+  /// results (gh-1433 AC5): thinking may echo secrets from tool output,
+  /// and the log face widens that content's exposure from the local
+  /// session JSONL to every log consumer. The pipeline is live-mutable,
+  /// so the check happens at RENDER time (E6) — a secret registered
+  /// mid-run is masked in every delta rendered after it.
+  String _redactRendered(String text) =>
+      config.redactionPipeline?.redact(text) ?? text;
 
   void _onMessageUpdate(AssistantMessageEvent assistantMessageEvent) {
-    if (assistantMessageEvent is TextDeltaEvent) {
-      if (_useTui || !_buffersAnswer) {
-        // The answer text starts on its own line after the dimmed
-        // thinking block.
-        if (_streamedThinking && !_streamedText) io.write('\n');
-        _writeAssistantPrefix();
-        io.write(assistantMessageEvent.delta);
-      } else {
-        // The buffered surfaces keep the same separation rule (E1): a
-        // `\n` lands the moment the first answer delta follows streamed
-        // thinking, so the end-of-message render starts on a fresh line.
-        if (_streamedThinking && !_streamedText) io.write('\n');
-        _assistantText.write(assistantMessageEvent.delta);
-      }
-      _streamedText = true;
-    } else if (assistantMessageEvent is ThinkingDeltaEvent &&
-        _streamsThinking) {
-      // Reasoning models stream long thinking before any text; showing
-      // it dimmed under the user message is the TUI's progress signal —
-      // and, since gh-1198, the opt-in progress signal of line mode and
-      // headless too. The delta is dimmed VERBATIM — no per-delta inline
-      // markdown: a markdown span split across deltas can never pair
-      // anyway (each fragment opens+closes its own SGR pair), and the
-      // per-delta escape density used to be the TUI's worst quadratic
-      // input (a long thinking burst froze the whole UI — see
-      // AnsiMarkdown.inlineFormatMaxChars).
-      io.write(_style.dim(assistantMessageEvent.delta));
-      _streamedThinking = true;
+    if (assistantMessageEvent is ToolCallStartEvent ||
+        assistantMessageEvent is ToolCallEndEvent) {
+      _onToolCallGate(assistantMessageEvent);
+      return;
     }
+    if (assistantMessageEvent is TextDeltaEvent) {
+      _onTextDelta(assistantMessageEvent);
+      return;
+    }
+    if (assistantMessageEvent is ThinkingDeltaEvent && _streamsThinking) {
+      _onThinkingDelta(assistantMessageEvent);
+    }
+  }
+
+  /// The AC3 hold open/close (gh-1433, non-TUI): every tool-call block
+  /// of the current message opens a narration segment, and the block's
+  /// [ToolCallEndEvent] stamps it with the call id the execution events
+  /// carry — so a 2+ tool-call message flushes each segment after ITS
+  /// OWN result row. TUI keeps today's behavior (its transcript card
+  /// grammar is a non-goal here). Split out of [_onMessageUpdate] so the
+  /// dispatcher stays under the CRAP ratchet (gh-1433 rework: the AC3
+  /// hold branches tipped it over).
+  void _onToolCallGate(AssistantMessageEvent assistantMessageEvent) {
+    if (_useTui) return;
+    if (assistantMessageEvent is ToolCallStartEvent) {
+      _postToolHolds.add(_PostToolNarrationHold());
+      return;
+    }
+    if (assistantMessageEvent is ToolCallEndEvent) {
+      for (final hold in _postToolHolds.reversed) {
+        if (hold.toolCallId == null) {
+          hold.toolCallId = assistantMessageEvent.toolCall.id;
+          return;
+        }
+      }
+      // Degenerate stream (End without Start): the narration after it
+      // still holds — open a pre-stamped segment.
+      _postToolHolds.add(
+        _PostToolNarrationHold()
+          ..toolCallId = assistantMessageEvent.toolCall.id,
+      );
+    }
+  }
+
+  /// The text-delta paths (gh-1433): live surfaces stream (or hold while
+  /// a tool-call block is open), the styled surfaces buffer for their
+  /// end-of-message markdown render. Split out of [_onMessageUpdate] so
+  /// the dispatcher stays under the CRAP ratchet.
+  void _onTextDelta(TextDeltaEvent assistantMessageEvent) {
+    final delta = assistantMessageEvent.delta;
+    if (_useTui || !_buffersAnswer) {
+      // Live surfaces.
+      if (!_useTui && _postToolHolds.isNotEmpty) {
+        _postToolHolds.last.text.write(delta);
+        return;
+      }
+      if (_flushWhitespaceHold(delta)) return;
+      if (_streamedThinking && !_streamedText) io.write('\n');
+      _writeAssistantPrefix();
+      io.write(_redactRendered(delta));
+    } else {
+      // The buffered surfaces keep the same separation rule (E1): a
+      // `\n` lands the moment the first answer delta follows streamed
+      // thinking, so the end-of-message render starts on a fresh line.
+      if (_streamedThinking && !_streamedText) io.write('\n');
+      _assistantText.write(delta);
+    }
+    _streamedText = true;
+  }
+
+  /// The thinking-delta path (gh-1433): reasoning models stream long
+  /// thinking before any text; showing it dimmed under the user message
+  /// is the TUI's progress signal — and, since gh-1433, the DEFAULT of
+  /// the log face too (the post-hoc log is the UI): line mode keeps the
+  /// gh-1198 opt-in. The delta is dimmed VERBATIM — no per-delta
+  /// inline markdown: a markdown span split across deltas can never pair
+  /// anyway (each fragment opens+closes its own SGR pair), and the
+  /// per-delta escape density used to be the TUI's worst quadratic input
+  /// (a long thinking burst froze the whole UI — see
+  /// AnsiMarkdown.inlineFormatMaxChars). Split out of [_onMessageUpdate]
+  /// so the dispatcher stays under the CRAP ratchet.
+  void _onThinkingDelta(ThinkingDeltaEvent assistantMessageEvent) {
+    io.write(_style.dim(_redactRendered(assistantMessageEvent.delta)));
+    _streamedThinking = true;
+  }
+
+  /// The E1 whitespace hold: whitespace-only deltas before the first real
+  /// text of a live face buffer until a real delta arrives (then the hold
+  /// flushes ahead of it) or the message ends (then the hold DROPS — a
+  /// whitespace-only narration block paints nothing). Returns true when
+  /// [delta] was absorbed by the hold.
+  bool _flushWhitespaceHold(String delta) {
+    if (_useTui) return false;
+    final hold = _whitespaceHold;
+    if (hold != null) {
+      if (delta.trim().isEmpty) {
+        hold.write(delta);
+        return true;
+      }
+      // First real text: the held whitespace belongs in front of it.
+      io.write(hold.toString());
+      _whitespaceHold = null;
+      return false;
+    }
+    if (delta.trim().isEmpty && !_streamedText) {
+      _whitespaceHold = StringBuffer(delta);
+      return true;
+    }
+    return false;
+  }
+
+  /// Drops a still-whitespace-only hold at message end (E1) — nothing
+  /// was streamed, so the separators of a real text stream must not
+  /// fire either.
+  void _discardWhitespaceHoldAtEnd() {
+    final hold = _whitespaceHold;
+    if (hold == null) return;
+    _whitespaceHold = null;
+    if (hold.toString().trim().isEmpty) return;
+    // A real delta slipped in without a flush (defensive — the hold
+    // flushes at the first real delta): it is content, stream it.
+    io.write(hold.toString());
+    _streamedText = true;
+  }
+
+  /// Flushes EVERY held narration segment (gh-1433 AC3), in stream
+  /// order, and closes the hold — the orphan nets: a message whose tool
+  /// result never renders (non-toolUse end) and the next message's
+  /// start. Per-result flushes go through [_flushPostToolTextFor].
+  void _flushPostToolText() {
+    if (_postToolHolds.isEmpty) return;
+    final holds = List.of(_postToolHolds);
+    _postToolHolds.clear();
+    for (final hold in holds) {
+      _emitHeldNarration(hold.text.toString());
+    }
+  }
+
+  /// Flushes the AC3 narration the current message held behind THE tool
+  /// call [toolCallId], after that call's result row, in position —
+  /// later calls keep their own segments, so a 2+ tool-call message
+  /// never drifts its narration across results. No matching segment
+  /// (a call with no trailing narration) paints nothing.
+  void _flushPostToolTextFor(String toolCallId) {
+    for (var i = 0; i < _postToolHolds.length; i++) {
+      if (_postToolHolds[i].toolCallId != toolCallId) continue;
+      final hold = _postToolHolds.removeAt(i);
+      _emitHeldNarration(hold.text.toString());
+      return;
+    }
+  }
+
+  /// Emits one held narration block with the presentation
+  /// [_flushPostToolText] always applied: the E1 whitespace rule
+  /// (whitespace-only narration never paints a line by itself —
+  /// mid-stream it is real spacing, leading it stays pending until a
+  /// real delta or the message end decides) and the thinking-stream
+  /// separator.
+  void _emitHeldNarration(String held) {
+    if (held.isEmpty) return;
+    if (held.trim().isEmpty) {
+      if (_streamedText) {
+        io.write(held);
+      } else {
+        _whitespaceHold ??= StringBuffer(held);
+      }
+      return;
+    }
+    if (_streamedThinking && !_streamedText) io.write('\n');
+    _streamedText = true;
+    io.write(_redactRendered(held));
   }
 
   /// End of an assistant message: flush the stream newline, then report the
   /// stop reason (errors, aborts, silent truncations, empty responses).
   void _onAssistantMessageEnd(AssistantMessage message) {
+    // AC3 orphan safety: a message that ends WITHOUT a tool execution
+    // following (any non-toolUse stop) can never render the result row its
+    // held narration waits for — flush it HERE, in the message's own
+    // position, before the stop-reason line. A toolUse message keeps the
+    // hold: its tools execute AFTER this end, and the result row flushes
+    // the narration itself (positional). The next-message-start flush
+    // stays as the second net.
+    if (message.stopReason != StopReason.toolUse) _flushPostToolText();
     _flushAssistantStreamAtEnd();
     switch (message.stopReason) {
       case StopReason.error:
@@ -1265,6 +1435,10 @@ extension ApprovalCommands on AgentCli {
   /// CRAP ratchet (gh-1198: the thinking-reset branches tipped it over).
   void _flushAssistantStreamAtEnd() {
     if (_useTui || !_buffersAnswer) {
+      // E1: a whitespace-only narration hold decides at message end —
+      // still whitespace-only, it paints nothing (and the separators of
+      // a real text stream must not fire for it).
+      _discardWhitespaceHoldAtEnd();
       if (_streamedText || _streamedThinking) {
         // The trailing newline of the streamed text belongs to the
         // primary channel (write), not to diagnostics (writeln) — a
@@ -1275,6 +1449,8 @@ extension ApprovalCommands on AgentCli {
       }
       return;
     }
+    // The buffered faces keep the E1 hold decision too (nothing painted).
+    _discardWhitespaceHoldAtEnd();
     if (_streamedText) {
       // The rendered message lands on the primary channel (write), not
       // diagnostics (writeln) — a headless host routes only writeln to
@@ -1376,6 +1552,10 @@ extension ApprovalCommands on AgentCli {
         state,
       ),
     );
+    // AC3: the result row rendered — the narration the message held
+    // behind THIS tool call lands here, in position (later calls of the
+    // same message flush after their own result rows).
+    _flushPostToolTextFor(toolCallId);
   }
 
   /// Prints the `>_Fa ` prefix once per assistant message, before the first
