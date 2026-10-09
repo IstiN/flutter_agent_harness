@@ -995,13 +995,25 @@ class _FaChatScreenState extends State<FaChatScreen>
         // appends never count (the viewport shows them — today's
         // behavior). Counted for BOTH render paths (big-diff setMessages
         // and the per-row insert loop alike).
-        // (re-review) Only pure tail growth is an arrival: ids are
-        // index-based, so a "Load earlier" PREPEND shifts every id and
-        // collapses the common prefix — `newLen - commonPrefix` would
-        // count the entire re-synced window (hundreds of already-read
-        // rows) as new. A length-preserving id change (in-place edit) is
-        // not an arrival either.
-        final isTailAppend = commonPrefix == oldLen && newLen > oldLen;
+        // (re-review) Only pure tail growth is an arrival — and the
+        // prefix for COUNTING must be content-aware: ids are index-based
+        // (`msg-$index`), so a "Load earlier" PREPEND shifts every row's
+        // content while REUSING every id; the id-based `commonPrefix`
+        // stays == oldLen and `newLen - commonPrefix` billed the loaded
+        // page as arrivals. A length-preserving content edit must not
+        // count either. The render diff below keeps the id-based prefix
+        // (in-place edits must updateMessage, not remove+insert); only
+        // the count scans content.
+        var countedPrefix = 0;
+        while (countedPrefix < minLen &&
+            _lastSynced[countedPrefix].id == newList[countedPrefix].id &&
+            !_messageChanged(
+              _lastSynced[countedPrefix],
+              newList[countedPrefix],
+            )) {
+          countedPrefix++;
+        }
+        final isTailAppend = countedPrefix == oldLen && newLen > oldLen;
         if (isTailAppend && _follow.isHeld) {
           _follow = _follow.appended(newLen - oldLen);
           followCounted = true;
