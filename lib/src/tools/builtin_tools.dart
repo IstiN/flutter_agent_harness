@@ -62,6 +62,7 @@ import '../redact/redaction_types.dart';
 import '../types.dart';
 import '../web_search/web_search.dart';
 import 'archive_reader.dart';
+import 'job_id_resolution.dart';
 import 'misuse_policy.dart';
 import 'read_selector.dart';
 import 'password_prompt.dart';
