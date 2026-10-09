@@ -2076,20 +2076,9 @@ final class FaTuiModel extends Model {
         kind: TuiRegionKind.scrollback,
       ),
     );
-    // The held-mode jump chip (gh-1439): when the rule row carries the
-    // `● N new` counter, the row is the on-screen re-engage affordance —
-    // added AFTER the scrollback rect so the chip wins the overlap.
-    if (!followTail && follow.unseen > 0) {
-      _hitRegions.add(
-        TuiHitRegion(
-          x: 0,
-          y: stickyRows + historyRows,
-          w: termWidth,
-          h: 1,
-          kind: TuiRegionKind.jumpLive,
-        ),
-      );
-    }
+    // The held-mode jump chip (gh-1439) — registered AFTER the scrollback
+    // rect so the chip wins the overlap.
+    _registerJumpLiveRegion(stickyRows, historyRows);
 
     // Menu above input.
     var row = stickyRows + historyRows + 1;
@@ -2166,6 +2155,24 @@ final class FaTuiModel extends Model {
           ? null
           : Cursor(x: cursorX, y: cursorRow, shape: CursorShape.bar),
       mouseMode: _viewMouseMode,
+    );
+  }
+
+  /// The held-mode jump chip (gh-1439): when the rule row carries the
+  /// `● N new` counter (held with unseen output), the row is the on-screen
+  /// re-engage affordance — one full-width row, a click jumps live and
+  /// flushes the count. Live — or held with nothing new, where the rule
+  /// row is the fold hint — registers nothing.
+  void _registerJumpLiveRegion(int stickyRows, int historyRows) {
+    if (follow.isLive || follow.unseen <= 0) return;
+    _hitRegions.add(
+      TuiHitRegion(
+        x: 0,
+        y: stickyRows + historyRows,
+        w: termWidth,
+        h: 1,
+        kind: TuiRegionKind.jumpLive,
+      ),
     );
   }
 

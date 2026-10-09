@@ -7,6 +7,50 @@
 part of 'fa_tui.dart';
 
 extension _TuiViewport on FaTuiModel {
+  /// Mouse-wheel routing (issue #278 + gh-1439). Split out of fa_tui.dart
+  /// to keep the model file under the repo's ≤2800-line gate — same
+  /// library (`part of`), so the extension sees the model's privates.
+  (Model, Cmd?) _handleMouseWheel(MouseWheelMsg msg) {
+    // Capture off: the hint says wheel is disabled — honor it even for
+    // bytes a not-yet-disarmed terminal still sends (issue #278, AC4).
+    if (!mouseCapture) return (this, null);
+    // Hub overlay: the wheel belongs to the fleet tree.
+    if (hub != null) return _wheelToHubSelection(msg);
+    // Transcript: the wheel is a page gesture.
+    return _wheelTranscript(msg);
+  }
+
+  /// The hub overlay's wheel half: each notch steps the fleet-tree
+  /// selection one visible row; the transcript scroll state and the
+  /// follow contract stand still while the overlay is up.
+  (Model, Cmd?) _wheelToHubSelection(MouseWheelMsg msg) {
+    final delta = switch (msg.mouse.button) {
+      MouseButton.wheelUp => -1,
+      MouseButton.wheelDown => 1,
+      _ => 0,
+    };
+    if (delta == 0) return (this, null);
+    final (next, _) = hub!.handleKey(
+      delta < 0 ? 'up' : 'down',
+      viewport: _viewportHeight - 3,
+    );
+    return (copyWith(hub: next), null);
+  }
+
+  /// The transcript's wheel half (gh-1439): the wheel is a page gesture —
+  /// up disengages follow, down re-arms inside the shared near-bottom
+  /// band; any other button is not a scroll gesture at all.
+  (Model, Cmd?) _wheelTranscript(MouseWheelMsg msg) {
+    switch (msg.mouse.button) {
+      case MouseButton.wheelUp:
+        return (_scrolledTo(scrollOffset - 3, pageGesture: true), null);
+      case MouseButton.wheelDown:
+        return (_scrolledTo(scrollOffset + 3, pageGesture: true), null);
+      default:
+        return (this, null);
+    }
+  }
+
   /// Applies a user scroll: moves the offset (clamped) and classifies the
   /// landing position through the shared [FollowMode] contract (gh-1439) —
   /// a park inside the near-bottom band re-arms live, beyond it holds.
