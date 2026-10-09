@@ -29,15 +29,17 @@ void main() {
         ..enqueueText([
           for (var i = 1; i <= 30; i++) 'seed line $i',
         ].join('\n'))
-        // Turn 2 keeps the agent BUSY while the user scrolls: three text
-        // chunks spaced by 2s tool sleeps so each lands AFTER the detach
-        // (the counted arrivals), then a sleep holds the run open for the
-        // End press, then it settles.
-        ..enqueueText('chunk one')
-        ..enqueueToolCall('bash', '{"command": "sleep 2"}')
-        ..enqueueText('chunk two')
-        ..enqueueToolCall('bash', '{"command": "sleep 2"}')
-        ..enqueueText('chunk three')
+        // Turn 2 keeps the agent BUSY while the user scrolls. The mock
+        // protocol chains a run across TOOL segments only — a pure-text
+        // segment ENDS the run — so the post-detach arrivals are spaced
+        // bash tools (each paints rows = counted OutputMsgs), one long
+        // sleep holds the run open for the End press, and a final text
+        // segment settles it.
+        ..enqueueToolCall('bash', '{"command": "sleep 1"}')
+        ..enqueueToolCall('bash', '{"command": "sleep 1"}')
+        ..enqueueToolCall('bash', '{"command": "sleep 1"}')
+        ..enqueueToolCall('bash', '{"command": "sleep 1"}')
+        ..enqueueToolCall('bash', '{"command": "sleep 1"}')
         ..enqueueToolCall('bash', '{"command": "sleep 8"}')
         ..enqueueText('turn two done');
       addTearDown(server.stop);
@@ -88,23 +90,18 @@ tui:
       harness.sendText('\x1b[5~'); // pgup
 
       // (2) Late arrivals count up on the held rule while live content
-      // flows in BELOW the fold (`NN% · ● N new · End = live`).
+      // flows in BELOW the fold (`NN% · ● N new · End = live`). The first
+      // tool segment may race the detach, so the anchor is the THIRD
+      // counted arrival — two more OutputMsgs must land after the detach
+      // for the counter to get there.
       final counted = await harness.waitForScreen(
-        RegExp(r'\d+% · ● 1 new'),
-        timeout: const Duration(seconds: 20),
+        RegExp(r'\d+% · ● 3 new'),
+        timeout: const Duration(seconds: 30),
       );
       expect(counted, isNot(contains('above fold')),
           reason: 'detached: the live-fold hint belongs to following only');
       expect(counted, contains('End = live'),
           reason: 'the chip carries the one-action re-engage hint');
-      await harness.waitForScreen(
-        RegExp(r'\d+% · ● 2 new'),
-        timeout: const Duration(seconds: 20),
-      );
-      await harness.waitForScreen(
-        RegExp(r'\d+% · ● 3 new'),
-        timeout: const Duration(seconds: 20),
-      );
 
       // (3) End re-engages: the hint row leaves the glass and the newest
       // content is at the live edge.
@@ -115,11 +112,16 @@ tui:
           reason: 'the fold hint must not survive re-engage');
       expect(live, isNot(contains('● 3 new')),
           reason: 'the counter resets when the unseen tail is revealed');
-      expect(live, contains('chunk three'),
-          reason: 'the newest arrival is on the glass after re-engage');
+      expect(live, contains('Working'),
+          reason: 're-engage lands on the LIVE edge: the busy tail is on '
+              'the glass, not the parked view');
 
-      // Let the run settle before teardown (no detached-pty noise).
-      await harness.waitForText('turn two done');
+      // Let the run settle before teardown (no detached-pty noise): the
+      // last sleep tool still has up to 8s to drain.
+      await harness.waitForText(
+        'turn two done',
+        timeout: const Duration(seconds: 30),
+      );
     },
   );
 }
