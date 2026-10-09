@@ -1033,7 +1033,12 @@ void main() {
 
     test('a real file wins; a refused pointer fails loudly (E1)', () async {
       io.File('${sandbox.path}/real.txt').writeAsStringSync('bytes');
-      expect((await run('cat real.txt')).stdout, 'bytes');
+      // A plain cat rides the coreutils applet path (the gh-1274 projection
+      // contract): it reaches the WASM stage with the raw operand and the
+      // pointer seam is not consulted.
+      rec.next = _ScriptedInstance();
+      await shell().exec('cat real.txt');
+      expect(rec.configs.single.args, contains('/real.txt'));
 
       final dir = io.Directory('${sandbox.path}/.fah/skills/create-goal')
         ..createSync(recursive: true);
