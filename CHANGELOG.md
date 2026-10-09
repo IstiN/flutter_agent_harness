@@ -237,4 +237,10 @@ pre-tag + publish gates) fails fast when the cap is approached again.
 
 - gh-1441 Voxel nodes render as the “Voxel world” placeholder — Fa app builds JsonWidgetRenderer without voxelWorld (fa-craft 0.2.18, voxel-sandbox 1.0.0) (#1445)
 
+## 1.0.541
+
+- feat(1079): SDK slice 6 — IT-5 record-level runtime parity for extension hosts (YoClip scenario) (#1456)
+- gh-1449 [GOAL] Orphan-result notices: reported once, never a user turn, always identifies the call (#1451)
+- gh-1439 [GOAL] Live-follow etiquette: scrolling up while the agent works never yanks the user back down (TUI + app + web: follow-mode contract + «jump to live» affordance) (#1443)
+
 ## Unreleased
