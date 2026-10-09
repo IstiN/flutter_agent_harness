@@ -68,6 +68,14 @@ const hideJudgeSystemPrompt =
 const structuredCheckpointPrompt =
     'Write a checkpoint of the conversation above. It replaces a range of\nrecords in the agent\'s context, so it must let the agent continue the work\nwithout the replaced records.\n\nRules:\n- Start with a `covers:` line listing EXACTLY the expand ids given in the\n  `<covers>` block, verbatim, comma-separated. Every replaced segment must\n  stay reachable through that line — never drop an id.\n- If an `<open-user-requests>` block is present, carry each listed request\n  VERBATIM at the top of the checkpoint, under a `open asks:` heading.\n- Keep decisions, conclusions, final answers, error causes, and file paths\n  the agent still needs. Preserve important tool outputs (test verdicts,\n  command results, error traces) with what produced them.\n- Preserve epistemic status: uncertainty qualifiers ("may", "suspect",\n  "unconfirmed") stay verbatim with their claims — never detach or upgrade a\n  hedge. Tag unevidenced claims [assumed] or [hearsay: source]; [verified]\n  marks a claim a kept tool result shows. Every conclusion keeps one line of\n  its why, or the marker "unverified — re-verify" when the evidence is\n  dropped.\n- Timeless content only: never record ephemeral, second-person, or\n  time-scoped statements ("your last tool call\'s result was dropped", "you\n  just ran X") — harness notes about dropped or trimmed context are one-time\n  delivery events, not facts; record only the durable outcome. Durable\n  temporal wording ("the last release was v1.0.492") is fine.\n- Keep it dense prose or tight bullets; no preamble, no restating these\n  instructions.';
 
+/// gh-1409 verbatim-preserve duty appended to every compaction summarization
+/// call when the session carries compaction-pinned skill operative lines. The
+/// pinned lines must appear VERBATIM in the checkpoint output.
+///
+/// Source: `prompts/compaction/pinned_operative.md`.
+const pinnedOperativePrompt =
+    'PINNED SKILL DIRECTIVES: the PINNED OPERATIVE LINES section above lists directives pinned verbatim from skill manifests. Copy EVERY one of them into your checkpoint output character-for-character, each on its own line, preserving the exact wording, order, and quoting. These lines override any generalization you would otherwise make: do not paraphrase, shorten, merge, translate, or drop them, even when they look redundant with the conversation. If a pinned line has no bearing on the folded span, still reproduce it under `## Critical Context` marked as "(pinned directive)". A checkpoint that loses a pinned line is repaired from the pin registry downstream, but you must not rely on that: your output is the primary carrier.';
+
 /// System prompt template for the Fa CLI default coding mode.
 ///
 /// Source: `prompts/cli/mode_code.md`.

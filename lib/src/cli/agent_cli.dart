@@ -84,6 +84,7 @@ import '../task/delivery_slo.dart';
 import '../skills/builtin_skills.dart';
 import '../skills/skill_availability.dart';
 import '../skills/skills.dart';
+import '../skills/operative_pins.dart' show operativePinNotice;
 import '../skills/skill_renderer.dart';
 import '../prompts/prompts.g.dart'
     show
@@ -1587,6 +1588,7 @@ class AgentCli {
     _wireTransientRetryNotice();
     _wireDeliverySloNotice();
     _wireImageDropNotice();
+    _wireOperativePinNotice();
     onUnknownFinishReason = (reason) =>
         _logDiagnostic('unknown finish_reason sid=$_logSid reason=$reason');
     _livePresence = await _registerLivePresence();

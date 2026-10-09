@@ -130,6 +130,8 @@ final class StructuredCompactor {
     this.budgetSource,
     this.attemptBudget = const Duration(seconds: 300),
     this.judgeTarget = 'role=default',
+    this.pinnedOperativeBlock,
+    this.pinnedLines = const {},
   });
 
   /// The session being compacted.
@@ -195,6 +197,15 @@ final class StructuredCompactor {
   /// #541 AC3): `role=smol, model=kimi-k2 @ gate.example.ai` — a dead
   /// judge must never surface as an anonymous TimeoutException.
   final String judgeTarget;
+
+  /// gh-1409 E7: the rendered PINNED OPERATIVE LINES block (verbatim-
+  /// preserve duty) inserted into every checkpoint prompt. `null` →
+  /// prompts are byte-identical to the pre-pin engine (F4 compat guard).
+  final String? pinnedOperativeBlock;
+
+  /// gh-1409 AC4: the raw pin lines the sanitizer protects when healing
+  /// folded checkpoints re-entering the prompt.
+  final Set<String> pinnedLines;
 
   /// Consecutive judge failures before the deterministic fallback hide
   /// engages (issue #541): one retry, then the judge-less hide.
@@ -859,12 +870,23 @@ final class StructuredCompactor {
           ..writeln(asks.join('\n'))
           ..writeln('</open-user-requests>');
       }
+      // gh-1409 E7: the verbatim-preserve block rides every checkpoint
+      // prompt (and every chunk of a chunked fold — `build` builds those
+      // too), before the folded checkpoints it must not paraphrase over.
+      if (pinnedOperativeBlock != null) {
+        prompt
+          ..writeln(pinnedOperativeBlock)
+          ..writeln();
+      }
       for (final folded in flattened) {
         prompt
           ..writeln('<folded-checkpoint>')
           // Issue #1131: older persisted checkpoints re-enter this prompt
           // verbatim — heal them so poison cannot be paraphrased forward.
-          ..writeln(sanitizeSummary(folded.text).text)
+          // gh-1409: pins inside heal protected (AC4).
+          ..writeln(
+            sanitizeSummary(folded.text, protectedLines: pinnedLines).text,
+          )
           ..writeln('</folded-checkpoint>');
       }
       if (priorFold != null) {
@@ -964,7 +986,9 @@ final class StructuredCompactor {
       if (text == null || text.isEmpty) return null;
       // Issue #1131: checkpoints re-render every turn — strip ephemeral,
       // time-scoped claims the summarizer may have copied from context.
-      return sanitizeSummary(text).text;
+      // gh-1409 AC4: pin-carrying lines are exempt (the pin rides in the
+      // envelope, structurally protected; raw lines protected here too).
+      return sanitizeSummary(text, protectedLines: pinnedLines).text;
     } on TimeoutException {
       // A budget kill surfaces as a named error (issue #515) — the pass
       // loop must not dissolve it into the failure-safety null.

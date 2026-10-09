@@ -25,6 +25,7 @@ import 'dart:async';
 import '../cancel_token.dart';
 import '../context.dart';
 import '../model.dart';
+import '../skills/skills.dart' show Skill;
 import '../types.dart';
 import 'agent_loop.dart';
 import 'misuse_breaker.dart';
@@ -210,6 +211,7 @@ class Agent {
     this.toolMisuseBreaker,
     this.stuckTool,
     this.finalizeGate = false,
+    this.operativeSkills = const [],
   }) : toolExecutor =
            toolExecutor ?? toolRegistry?.executor ?? _missingToolExecutor(),
        _state = AgentState(
@@ -272,6 +274,14 @@ class Agent {
   /// v1 — hosts that want the gate must set the field after the stack
   /// lands.
   bool finalizeGate;
+
+  /// gh-1409: the skills known to the session — their `operative:` lines
+  /// ride every post-compaction request as the verbatim pinned carrier.
+  /// Hosts republish on skill reload (the same way the system prompt's
+  /// skills section recomposes). Empty (default) → byte-identical legacy
+  /// requests. Mutable by design: `/skills reload` and availability
+  /// toggles swap the list.
+  List<Skill> operativeSkills;
 
   /// Provider adapter used for every model call. See [StreamFunction].
   StreamFunction streamFunction;
@@ -576,6 +586,7 @@ class Agent {
       stuckTool: stuckTool,
       toolExecution: toolExecution,
       finalizeGate: finalizeGate,
+      operativeSkills: operativeSkills,
       beforeToolCall: beforeToolCall,
       afterToolCall: afterToolCall,
       transformContext: transformContext,
