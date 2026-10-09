@@ -1285,18 +1285,45 @@ extension on AgentCli {
       .toList();
 
   /// Bare `/model-edit`: the active model's token limits and the setter
-  /// usage hint.
+  /// usage hint. gh-1426 (AC8): the RESOLVED capability triple is visible
+  /// here — thinking level, the omit flag, and the override provenance
+  /// (`models.overrides` pin vs catalog default).
   void _printModelLimits() {
     final current = _agent.state.model;
     io.writeln(
       'model ${current.id}: contextWindow ${current.contextWindow} · '
       'maxTokens ${current.maxTokens}',
     );
+    final caps = <String>[
+      'thinking ${current.thinkingLevel ?? 'off'}',
+      if (current.compat?.omitMaxOutputTokens ?? false) 'omit max-output field',
+    ];
+    io.writeln('capabilities: ${caps.join(' · ')}');
+    final pinned = modelCapabilityOverrides?.lookup(
+      current.provider,
+      current.id,
+    );
+    io.writeln(
+      _style.dim(
+        pinned == null
+            ? 'caps source: catalog defaults '
+                  '(pin with /settings → Model capabilities)'
+            : 'caps source: models.overrides pin '
+                  '(${_capabilitySummary(pinned)})',
+      ),
+    );
+    // The resolver's loud notes (E1 divergence, E3 gate, E4 catalog miss)
+    // belong next to the resolved triple — a pin the resolver dropped or
+    // overrode is never silent on the status surface (gh-1426 rework).
+    for (final note in current.capabilityNotes) {
+      io.writeln(_style.dim('note: $note'));
+    }
     io.writeln(
       _style.dim('set with /model-edit <contextWindow|maxTokens> <n>'),
     );
   }
 
+  /// Bare `/model-edit` in TUI mode: a two-step interactive picker —
   /// Bare `/model-edit` in TUI mode: a two-step interactive picker —
   /// (1) which field to edit (context window or max output tokens),
   /// (2) a standard preset list plus a "Custom…" free-text entry. The

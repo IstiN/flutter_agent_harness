@@ -780,6 +780,21 @@ void main() {
     });
   });
 
+  group('applicationNote', () {
+    test('models overrides apply live to the next model build (gh-1426)', () {
+      // The caps flow reinstalls the process-wide override layer, re-syncs
+      // the live ModelsConfig, and refreshes the roles resolver on every
+      // write (E6 reload-after-write) — "next boot" would be a lie.
+      final note = applicationNote('models');
+      expect(note, contains('applies live'));
+      expect(note, isNot(contains('next boot')));
+    });
+
+    test('unlisted sections stay at next boot', () {
+      expect(applicationNote('bogus'), 'applies at next boot');
+    });
+  });
+
   group('pins against cli_config.dart', () {
     test('the output section validates identically (gh-1198)', () {
       final bad = loadYaml('output:\n  bogus: 1\n') as YamlMap;

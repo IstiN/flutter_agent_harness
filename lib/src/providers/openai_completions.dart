@@ -872,6 +872,7 @@ final class _ResolvedCompat {
     required this.cacheControlFormat,
     required this.supportsLongCacheRetention,
     required this.sendsToolStrict,
+    required this.omitMaxOutputTokens,
   });
 
   final String maxTokensField;
@@ -893,6 +894,9 @@ final class _ResolvedCompat {
   /// strict request schema rejects it (`400 … strict … Extra inputs are not
   /// permitted`).
   final bool sendsToolStrict;
+
+  /// The endpoint rejects the max-output field: nothing rides (gh-1426).
+  final bool omitMaxOutputTokens;
 }
 
 bool _isOpenRouterModel(Model model) {
@@ -949,6 +953,9 @@ _ResolvedCompat _getCompat(Model model) {
     // generateContent endpoint also rejects it (400 "Cannot find
     // field 'strict'"). Neither adapter carries it.
     sendsToolStrict: compat?.sendsToolStrict ?? (!isDial && !isGoogle),
+    // gh-1426: the resolver's omit-compat escape — an endpoint that 400s
+    // on the max-output fields gets none.
+    omitMaxOutputTokens: compat?.omitMaxOutputTokens ?? false,
   );
 }
 
@@ -973,9 +980,9 @@ Map<String, dynamic> _buildParams(
     params['stream_options'] = {'include_usage': true};
   }
 
-  if (options?.maxTokens != null) {
+  if (options?.maxTokens != null && !compat.omitMaxOutputTokens) {
     params[compat.maxTokensField] = options!.maxTokens;
-  } else if (model.maxTokens > 0) {
+  } else if (model.maxTokens > 0 && !compat.omitMaxOutputTokens) {
     // The model's carried cap (catalog default or endpoint-detected via
     // /models limits) — same fallback semantics as the Anthropic adapter.
     params[compat.maxTokensField] = model.maxTokens;
@@ -1159,13 +1166,20 @@ void _applyReasoningParam(
   OpenAICompletionsOptions? options,
   _ResolvedCompat compat,
 ) {
-  if (model.reasoning && options?.reasoningEffort != null) {
+  // gh-1426 (AC6): a model-pinned level (roles chain entry, capability
+  // override, env preconfig) reaches the wire too — options silent and a
+  // carried level ride as the effort; an explicit options effort wins.
+  // Non-reasoning models never carry the field (E3: the gate drops the
+  // pin — the resolver notes it, the adapter enforces it).
+  final effort = options?.reasoningEffort ??
+      (model.reasoning ? model.thinkingLevel : null);
+  if (model.reasoning && effort != null) {
     if (compat.thinkingFormat == ThinkingFormat.openrouter) {
       // OpenRouter normalizes reasoning across providers via a nested
       // reasoning object.
-      params['reasoning'] = {'effort': options!.reasoningEffort};
+      params['reasoning'] = {'effort': effort};
     } else {
-      params['reasoning_effort'] = options!.reasoningEffort;
+      params['reasoning_effort'] = effort;
     }
   }
 }
