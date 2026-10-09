@@ -1836,15 +1836,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     }
 
     final merged = <String, String>{...env, ...assignments};
-    final lines =
-        merged.entries
-            .where((e) => e.key != '?') // POSIX `$?` is not a real env var.
-            .map((e) => '${e.key}=${e.value}')
-            .toList()
-          ..sort();
+    // gh-1444 AC4: rostered secret vars render as PRESENT/ABSENT lines —
+    // presence is verifiable, values never render.
     return Ok(
       StageResult(
-        stdout: utf8.encode(lines.join('\n') + (lines.isNotEmpty ? '\n' : '')),
+        stdout: utf8.encode(renderEnvListingWithSecretPresence(merged)),
         stderr: const [],
         exitCode: 0,
       ),

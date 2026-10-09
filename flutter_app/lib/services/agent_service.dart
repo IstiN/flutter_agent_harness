@@ -398,7 +398,11 @@ class AgentService extends ChangeNotifier
     // Always wrap: the `request_secret` tool injects user-granted keys into
     // the LIVE env at runtime (see [_handleSecretRequest]), so the wrapper
     // must be in place even when the boot-time secret set is empty.
-    final secretsEnv = SecretsExecutionEnv(resolvedEnv, secrets);
+    final secretsEnv = SecretsExecutionEnv(resolvedEnv, secrets)
+      // gh-1444 AC4: the prompt's name list doubles as the sandbox `env`
+      // presence roster — a revoked name renders `NAME: ABSENT` instead of
+      // silently disappearing.
+      ..registerSecretNames(secrets.keys);
     final resolvedSessionsRoot =
         sessionsRoot ?? defaultSessionsRoot(resolvedEnv.sessionCwd);
     return AgentService._withEnv(
