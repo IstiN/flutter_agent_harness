@@ -740,6 +740,50 @@ String upsertYamlPath(
   throw StateError('upsertYamlPath fell through');
 }
 
+/// Edits [text] so the dotted [segments] path is REMOVED, keeping every
+/// unrelated line byte-identical:
+///
+/// - the leaf key line and its block body are deleted;
+/// - an ancestor whose block becomes empty is deleted too (a removed last
+///   leaf under `models.overrides.zai.glm` drops the emptied `glm:` /
+///   `zai:` blocks up the chain);
+/// - a missing path is a no-op.
+///
+/// Same line-scan rules as [upsertYamlPath] (the CRAP ratchet split those
+/// helpers out; this one shares them).
+String removeYamlPath(String text, List<String> segments) {
+  if (segments.isEmpty) return text;
+  final hadTrailingNewline = text.endsWith('\n');
+  final lines = text.isEmpty
+      ? <String>[]
+      : (hadTrailingNewline ? text.substring(0, text.length - 1) : text).split(
+          '\n',
+        );
+  final foundAt = <int>[];
+  var cursor = 0;
+  for (var depth = 0; depth < segments.length; depth++) {
+    final found = _findKeyLine(lines, segments, depth, cursor);
+    if (found < 0) return text; // absent path — nothing to remove
+    foundAt.add(found);
+    cursor = found + 1;
+  }
+  // Delete deepest-first: the leaf's block body, then emptied ancestors.
+  for (var depth = segments.length - 1; depth >= 0; depth--) {
+    final keyLine = foundAt[depth];
+    final end = _blockEnd(lines, keyLine, depth);
+    lines.removeRange(keyLine, end);
+    // An emptied ancestor block: the parent key line now carries no body.
+    if (depth > 0) {
+      final parentLine = foundAt[depth - 1];
+      if (_blockEnd(lines, parentLine, depth - 1) == parentLine + 1) {
+        continue; // loop's next iteration removes the emptied parent
+      }
+      break;
+    }
+  }
+  return _join(lines, hadTrailingNewline);
+}
+
 /// The index of the line declaring `segments[depth]` at [cursor]'s block
 /// level, or -1. The scan stops when the indentation backs out of the
 /// parent block.
@@ -987,6 +1031,14 @@ String applicationNote(String section) => switch (section) {
   // Issue #279: the session theme switches live on write (`/theme` runs
   // the same persist + switch flow); a hand-edit applies at next boot.
   'tui' => 'applies live via /theme, otherwise at next boot',
+  // gh-1426: the Model capabilities flow reinstalls the process-wide
+  // override layer, re-syncs the live ModelsConfig, and refreshes the
+  // roles resolver on every write (E6 reload-after-write) — the NEXT
+  // model build picks the edit up live; the running session keeps its
+  // already-built model.
+  'models' =>
+    'applies live to the next model build — the running session keeps '
+        'its current model',
   // Issue #394: the boot-built Agent keeps the cap it was constructed
   // with (the loop's over-window guard reads its config field); the
   // running session never re-reads the yaml.

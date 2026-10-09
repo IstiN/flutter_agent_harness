@@ -2536,6 +2536,11 @@ extension SettingsFlow on AgentCli {
         label: 'Model parameters',
         description: 'context window, token limits',
       ),
+      MenuItem(
+        key: 'model-caps',
+        label: 'Model capabilities',
+        description: _modelCapsStatusLabel(),
+      ),
       const MenuItem(
         key: 'media',
         label: 'Media models',
@@ -2674,6 +2679,7 @@ extension SettingsFlow on AgentCli {
     'approval': () async => _openApprovalPicker(),
     'mode': () async => _openModePicker(),
     'model-edit': () => _handleModelEdit(''),
+    'model-caps': startModelCapsFlow,
     'media': startMediaSlotFlow,
     'agent-models': startAgentModelFlow,
     'tools': _toolsSettingsFlow,
