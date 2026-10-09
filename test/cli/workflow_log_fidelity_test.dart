@@ -491,26 +491,24 @@ void main() {
       final exit = await cli.runHeadless('check');
       expect(exit, 0);
       final out = io.out.toString();
-      // Rows alternate per call: • start(c1) ✓ result(c1) • start(c2) ✓
-      // result(c2). Each narration segment lands between ITS call's
-      // result row and the next tool row — no first-result drift.
+      // Rows are pinned by their distinctive detail (the loop may emit
+      // start rows up front and settle the results in completion order).
+      // Each narration segment lands after ITS OWN call's result row —
+      // never flushed wholesale after the first one.
       final before = out.indexOf('before the first call');
-      final start1 = out.indexOf('• bash');
-      final result1 = out.indexOf('✓ bash');
-      final start2 = out.indexOf('• bash', start1 + 1);
-      final result2 = out.indexOf('✓ bash', result1 + 1);
+      final result1 = out.indexOf('✓ bash · echo one');
+      final result2 = out.indexOf('✓ bash · echo two');
       final between = out.indexOf('narration between the calls');
       final after = out.indexOf('narration after the second call');
       expect(before, greaterThanOrEqualTo(0), reason: out);
-      expect(start1, greaterThan(before), reason: out);
-      expect(result1, greaterThan(start1), reason: out);
-      expect(start2, greaterThan(result1), reason: out);
-      expect(result2, greaterThan(start2), reason: out);
+      expect(result1, greaterThan(before), reason: out);
+      expect(result2, greaterThan(result1), reason: out);
       expect(between, greaterThan(result1),
           reason: 'narration streamed between the calls renders after the '
               'FIRST result row:\n$out');
-      expect(between, lessThan(start2),
-          reason: '…and before the second tool row — positional:\n$out');
+      expect(between, lessThan(result2),
+          reason: '…and before the second result row — positional, not '
+              'drifted:\n$out');
       expect(after, greaterThan(result2),
           reason: 'narration streamed after the second call renders after '
               'the SECOND result row, not after the first (the '
@@ -1072,7 +1070,13 @@ void main() {
         fit: CardTextFit.wrap,
       );
       final body = lines.join('\n');
-      expect(body, contains('log: $longLogPath'),
+      // The detail soft-wraps: concatenated body rows restore the whole
+      // pointer (the AC9 assertion shape).
+      final wrapped = lines
+          .where((l) => l.startsWith('│ '))
+          .map((l) => l.substring(2).trimRight())
+          .join();
+      expect(wrapped, contains('log: $longLogPath'),
           reason: 'the pointer survives whole behind the capped command:\n'
               '$body');
       expect(body, contains('more chars, see <log>'),

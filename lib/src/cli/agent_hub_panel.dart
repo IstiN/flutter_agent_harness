@@ -573,7 +573,10 @@ List<String> _wrapCardBody(String text, int width) {
       final room = logFaceCardMaxBodyChars - emitted;
       if (room <= 0) {
         capped = true;
-        overflow += rest.length;
+        // The boundary newline belongs to the remainder too (`emitted`
+        // never counts newlines): without the +1 the pointer under-reports
+        // by one whenever the cap lands exactly on a line break.
+        overflow += rest.length + 1;
         break;
       }
       if (rest.length <= width && rest.length <= room) {

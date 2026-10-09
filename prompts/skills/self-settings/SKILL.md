@@ -634,7 +634,11 @@ Since gh-1433 this key decides the INTERACTIVE faces only: a headless
 flags needed). `--no-stream-thinking` silences thinking for one headless
 run (the reasoning liveness line returns), and `FA_LOG_FIDELITY=legacy`
 reverts the whole headless face to the pre-gh-1433 byte shape for edge
-hosts that parse the log.
+hosts that parse the log. Rendered deltas — thinking AND streamed text,
+on every face — pass through the redaction pipeline at render time since
+gh-1433: a registered secret echoed in a delta is masked live, so
+byte-pin tests for interactive `--stream-thinking` sessions must assume
+redacted deltas whenever redaction is enabled (default).
 
 ```yaml
 output:

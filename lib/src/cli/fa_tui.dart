@@ -835,6 +835,12 @@ final class FaTuiModel extends Model {
     copy._hitRegions = _hitRegions;
     copy._mouseRouter = _mouseRouter;
     copy._mouseHintShown = _mouseHintShown;
+    // gh-1433 E8: the live-width seam must survive copies — update()
+    // returns a copyWith copy and the program swaps to it on almost
+    // every message (the busy-heartbeat alone re-copies); a dropped
+    // hook would freeze the hub cards at the boot width after the
+    // first resize.
+    copy.onResized = onResized;
     return copy;
   }
 

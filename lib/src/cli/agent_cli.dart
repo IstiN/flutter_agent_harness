@@ -1227,16 +1227,17 @@ class AgentCli {
   /// message buffers here and renders once, whole, at message end.
   final StringBuffer _assistantText = StringBuffer();
 
-  /// The AC3 post-tool_use hold (gh-1433): once the current message
-  /// streams a tool-call block, its later text deltas are post-call
-  /// narration — they buffer here until the tool RESULT renders, so the
-  /// captured log keeps positional order (text → tool line → result →
-  /// narration). Live faces only; the TUI keeps today's behavior.
-  /// (State lives on the class — the render methods are an extension.)
-  final StringBuffer _postToolText = StringBuffer();
-
-  /// Whether the post-tool hold is open for the current message.
-  var _postToolHoldOpen = false;
+  /// The AC3 post-tool_use narration holds (gh-1433): once the current
+  /// message streams a tool-call block, its later text deltas are
+  /// post-call narration — each tool-call block opens a segment, deltas
+  /// append to the newest one, and a segment flushes after ITS call's
+  /// result row. A 2+ tool-call message therefore keeps positional
+  /// order (text → tool line → result → narration → result → …)
+  /// instead of draining every segment after the first result. Live
+  /// faces only; the TUI keeps today's behavior. (State lives on the
+  /// class — the render methods are an extension.)
+  final List<PostToolNarrationHold> _postToolHolds =
+      <PostToolNarrationHold>[];
 
   /// The E1 leading-whitespace hold (gh-1433): whitespace-only deltas
   /// before the first real text hold here so a whitespace-only narration
@@ -2045,4 +2046,18 @@ class AgentCli {
 
   String? _activeCustomName;
   Completer<String?>? _wizardPickerAnswer;
+}
+
+/// One AC3 post-tool narration segment (gh-1433): the text deltas that
+/// streamed after ONE tool-call block of the current message. [toolCallId]
+/// is stamped by the block's `ToolCallEndEvent` — the same id the
+/// execution events carry — so the segment flushes after that call's
+/// result row (positional even for parallel/multi-call messages).
+final class PostToolNarrationHold {
+  /// The held narration deltas, in stream order.
+  final StringBuffer text = StringBuffer();
+
+  /// The tool call this segment follows; null until the call's
+  /// `ToolCallEndEvent` stamps it (or never, on a degenerate stream).
+  String? toolCallId;
 }

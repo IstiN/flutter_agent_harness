@@ -260,12 +260,12 @@ class FullNarrativePaneTest(unittest.TestCase):
 
     full_narrative_pane = "\n".join(
         [
-            "[2mI should check the layout first and count the rows.[0m",
+            "\x1b[2mI should check the layout first and count the rows.\x1b[0m",
             "Reading the entry point now.",
             "• bash · echo hi",
             conn_lines[0],
             "│ ✓ bash · echo hi 0s",
-            "[2mthe output looks clean — moving on to the next step[0m",
+            "\x1b[2mthe output looks clean — moving on to the next step\x1b[0m",
             "All done \u2014 found it.",
             "fa-tokens: {\"sessionId\":\"abc\",\"input\":10,\"output\":2}",
             conn_lines[1],
