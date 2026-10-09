@@ -4772,3 +4772,33 @@
 - gh-1415 [GOAL] Subagent status line-language: one compact live row per subagent in the CLI TUI (omp-density, ten named deltas) (#1420)
 
 ## Unreleased
+
+- gh-1426 [GOAL] Model capability negotiation (rework): the resolver's loud
+  notes now ride the built `Model` (`capabilityNotes`) and render on the
+  status surfaces — `/model-edit` prints them next to the resolved triple,
+  and the single-model boot prints them in the boot notice — so a gated
+  pin (E3), an override-vs-endpoint divergence (E1), and a catalog-miss
+  override (E4) are never silent. Also: `applicationNote('models')` says
+  "applies live to the next model build" (the flow live-applies; "next
+  boot" was wrong), the duplicate `_capabilitySummaryFor` collapsed onto
+  `_capabilitySummary`, the two capability remove paths share one
+  `_removeCapabilityYaml` body, the omit-max-output menu row names its
+  adapter scope ("openai-completions only"), the dead
+  `resolveModelRefCapabilities` export is dropped, and the resolver's
+  ceiling-table lookup and documented wire field both read the same
+  effective api (`api ?? spec?.api`).
+- **Behavior change (gh-1426, deliberate — AC6)**: pre-existing
+  `thinkingLevel` pins (a `roles:` chain entry, the `FA_PROVIDER_CONFIG`
+  preconfig, or a `models.overrides` pin) now reach the wire for the first
+  time on the openai-completions family (`reasoning_effort`) and google
+  (`thinkingConfig`); on `origin/main` they were carried but wire-silent
+  there. Consequences: (1) REG-1's "no overrides → byte-identical payload"
+  corpus holds only for sessions with NO thinking pin at all — a session
+  with a bare roles pin changes payloads by design; (2) an endpoint that
+  rejects `reasoning_effort` (strict gateways, o-series rung spelling) can
+  now 400 where it previously worked — unpin the level (`/settings → Model
+  capabilities → thinking level → off`) or pin `omitMaxOutputTokens` where
+  the max-output field is the problem. The boot note that claimed the
+  openai-completions adapter "is not wired" to the config-carried level is
+  corrected and now fires only for the genuinely unwired adapters (dial,
+  copilot, chatgpt-codex).

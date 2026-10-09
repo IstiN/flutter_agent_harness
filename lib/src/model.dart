@@ -58,6 +58,7 @@ final class OpenAICompletionsCompat {
     this.thinkingFormat,
     this.requiresToolResultName,
     this.sendsToolStrict = true,
+    this.omitMaxOutputTokens,
   });
 
   /// Which field carries the output-token cap: `max_tokens` or
@@ -81,6 +82,12 @@ final class OpenAICompletionsCompat {
   /// `400 Extra inputs are not permitted`. Default: true (OpenAI accepts
   /// `strict`).
   final bool sendsToolStrict;
+
+  /// The endpoint rejects the max-output field outright (400 on
+  /// `max_tokens`/`max_completion_tokens`): the adapter omits the field
+  /// entirely (gh-1426 AC7 — the omp/codex compat lesson). Default: null
+  /// (false — the field rides as today).
+  final bool? omitMaxOutputTokens;
 }
 
 /// A model the harness can call.
@@ -104,6 +111,7 @@ final class Model {
     this.headers,
     this.compat,
     this.authHeader,
+    this.capabilityNotes = const [],
   });
 
   /// The model id sent to the provider (e.g. `gpt-4o-mini`,
@@ -160,6 +168,14 @@ final class Model {
   /// default; a keyless request sends neither (see
   /// OpenAICompletionsOptions.apiKey).
   final String? authHeader;
+
+  /// The capability resolver's loud notes riding this model (gh-1426):
+  /// gate drops (E3 — a pinned rung on a non-reasoning model), endpoint
+  /// divergences (E1 — an override wins over the endpoint report), and
+  /// catalog-miss warnings (E4). Empty for the silent default build
+  /// (REG-1); the status surfaces render them (`/model-edit`, the boot
+  /// notice) — the wire never reads them.
+  final List<String> capabilityNotes;
 }
 
 /// The effective context window: the owner override ([cap],

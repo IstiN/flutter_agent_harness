@@ -728,24 +728,46 @@ Map<String, dynamic> _buildGenerationConfig(
 
 /// Builds the `thinkingConfig` map for a reasoning model, or null when no
 /// thinking options apply (ported from pi's `buildParams` thinking branch).
+///
+/// gh-1426 (AC6): with options silent, a model-carried level (roles chain
+/// entry, capability override, env preconfig) rides the Gemini
+/// `thinkingLevel` ladder (`MINIMAL`/`LOW`/`MEDIUM`/`HIGH`); the model's
+/// reasoning gate applies first (E3 — a pinned level on a non-reasoning
+/// model is dropped, the resolver notes it).
 Map<String, dynamic>? _buildThinkingConfig(
   Model model,
   GoogleThinking? thinking,
 ) {
-  if (thinking == null || !model.reasoning) {
+  if (!model.reasoning) {
     return null;
   }
-  if (!thinking.enabled) {
-    return _getDisabledThinkingConfig(model);
+  if (thinking != null) {
+    if (!thinking.enabled) {
+      return _getDisabledThinkingConfig(model);
+    }
+    return {
+      'includeThoughts': true,
+      if (thinking.level != null)
+        'thinkingLevel': thinking.level
+      else if (thinking.budgetTokens != null)
+        'thinkingBudget': thinking.budgetTokens,
+    };
   }
-  return {
-    'includeThoughts': true,
-    if (thinking.level != null)
-      'thinkingLevel': thinking.level
-    else if (thinking.budgetTokens != null)
-      'thinkingBudget': thinking.budgetTokens,
-  };
+  final pinned = googleThinkingLevelFor(model.thinkingLevel);
+  return pinned == null
+      ? null
+      : {'includeThoughts': true, 'thinkingLevel': pinned};
 }
+
+/// Maps our thinking ladder rung onto Gemini's `ThinkingLevel` enum
+/// values; unknown rungs (none today after the clamp) map to null.
+String? googleThinkingLevelFor(String? level) => switch (level) {
+  'minimal' => 'MINIMAL',
+  'low' => 'LOW',
+  'medium' => 'MEDIUM',
+  'high' => 'HIGH',
+  _ => null,
+};
 
 /// Ported from pi's `isGemini3ProModel`.
 bool _isGemini3ProModel(String modelId) {

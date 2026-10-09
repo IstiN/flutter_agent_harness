@@ -18,6 +18,7 @@
 ///   consumer surface (agent runs, compaction `smol`, `/model` display).
 library;
 
+export 'capability_resolver.dart';
 export 'fallback_stream.dart';
 export 'key_rotation.dart';
 export 'media_model_slots.dart';
