@@ -803,10 +803,20 @@ final class JsonlSessionRepo implements SessionRepo {
   /// only lines that pass the byte-level gate (type names are ASCII, so a
   /// byte scan is exact); line boundaries are found on raw bytes, which
   /// is UTF-8-safe (`0x0A` never appears inside a multi-byte sequence).
+  ///
+  /// With [lastSegmentOnly] only the PRIMARY segment (the live file) is
+  /// scanned instead of the whole `.part-NN` chain — O(tail) cost for
+  /// boot-path callers whose records are tail-appended during runs
+  /// (gh-1449's orphan-report seed). The trade-off is explicit: records
+  /// already rotated into an older segment are invisible to the scan, so
+  /// such a caller may re-report once after a resume; use it only where
+  /// that degradation is acceptable and the chain walk must not sit on
+  /// the boot path (the #503 precedent).
   Future<List<CustomRecord>> readCustomRecordsOfType(
     SessionMetadata metadata,
-    Set<String> types,
-  ) async {
+    Set<String> types, {
+    bool lastSegmentOnly = false,
+  }) async {
     // Rotated sessions (gh-1077) keep older records in `.part-NN`
     // segments: scan the whole chain in order or registry snapshots
     // flushed before the last rotation become invisible to subagent
@@ -814,9 +824,11 @@ final class JsonlSessionRepo implements SessionRepo {
     // between a failed rotation seed and the next open the archived
     // part and the restored primary hold the SAME records — the open
     // path dedupes (seenRecordIds), the raw scan must too (round 5).
+    final paths = await listSessionSegmentPaths(_fs, metadata.path);
+    final scanned = lastSegmentOnly ? paths.sublist(paths.length - 1) : paths;
     final records = <CustomRecord>[];
     final seen = <String>{};
-    for (final path in await listSessionSegmentPaths(_fs, metadata.path)) {
+    for (final path in scanned) {
       for (final record in await _readCustomRecordsInFile(path, types)) {
         if (seen.add(record.id)) records.add(record);
       }

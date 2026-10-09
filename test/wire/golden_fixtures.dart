@@ -247,6 +247,7 @@ AgentEvent nativeEventFor(String kind) => switch (kind) {
       droppedResultIds: ['call_9'],
       synthesizedResultIds: ['call_7'],
       renamedIds: [(from: 'call_1', to: 'call_1_renamed')],
+      notedOrphanKeys: ['call_9|bash|1767225600000'],
     ),
     providerError: 'unexpected tool_use_id',
   ),
