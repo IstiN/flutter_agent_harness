@@ -302,6 +302,10 @@ void main() {
       expect(last, contains('999 lost'));
       expect(last, startsWith('…'));
       expect(tuiTextWidth(last), lessThanOrEqualTo(12));
+      // Degenerate widths keep tail-keeping: the last cell survives.
+      final one = shellJobLiveSummaryLine(running: 1, lost: 999, width: 1)!;
+      expect(tuiTextWidth(one), 1, reason: one);
+      expect(shellJobLiveSummaryLine(running: 1, lost: 999, width: 0), '');
     });
 
     test('AC6: zero-lost lines clip the same way', () {

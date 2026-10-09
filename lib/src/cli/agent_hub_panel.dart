@@ -519,16 +519,19 @@ String? shellJobLiveSummaryLine({
 
 /// Tail-keeping clip (gh-1446 AC6): the LAST [width] cells of [text],
 /// prefixed with `…` when anything was dropped — the lost count lives at
-/// the line's tail and must never clip away.
+/// the line's tail and must never clip away. The ellipsis spends one of
+/// [width]'s cells so the result never exceeds the budget.
 String _tailKeep(String text, int width) {
   if (tuiTextWidth(text) <= width) return text;
   if (width <= 0) return '';
   final cells = [
     for (final g in text.characters) (g, tuiGraphemeWidth(g)),
   ];
+  const ellipsisCells = 1;
+  final budget = width - ellipsisCells;
   var kept = 0;
   var i = cells.length;
-  while (i > 0 && kept + cells[i - 1].$2 <= width) {
+  while (i > 0 && kept + cells[i - 1].$2 <= budget) {
     kept += cells[i - 1].$2;
     i--;
   }

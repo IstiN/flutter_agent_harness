@@ -1259,15 +1259,16 @@ String formatStatusLineDuration(Duration d) {
 
 LaidSegment? _renderPi(StatusLineSnapshot s, StatusLineSpec spec) {
   // The brand mark (gh-1446 AC5): `>_` + a FIXED 1-cell animation slot +
-  // ` Fa`. Idle renders the blank cell (`>_ Fa` — owner-accepted final
-  // state, with the space); while a run is active the cell cycles the
-  // EXISTING activity ring at its current cadence (`>_⠋ Fa`) — the frame
-  // glyph arrives resolved in [StatusLineSnapshot.brandFrame] from the
-  // compile-time ring, so the pure engine never reads the symbol table
-  // and a model-authored string can never become a frame. The zone is
-  // exactly 3 cells (`>_<frame>`): a frame swap never reflows ` Fa` or
-  // anything right of it. The fade is handled at paint time (the painter
-  // blends toward the dim endpoint via [statusLineBrandFadeT]).
+  // `Fa`. Idle renders the blank cell (`>_ Fa` — owner-accepted final
+  // state, with the space); while a run is active the SAME cell cycles
+  // the EXISTING activity ring at its current cadence (`>_⠋Fa`) — the
+  // frame glyph arrives resolved in [StatusLineSnapshot.brandFrame] from
+  // the compile-time ring, so the pure engine never reads the symbol
+  // table and a model-authored string can never become a frame. The zone
+  // is exactly 3 cells (`>_<frame>`): a frame swap never reflows `Fa` or
+  // anything right of it, and the blank cell keeps the `Fa` column
+  // constant in both states. The fade is handled at paint time (the
+  // painter blends toward the dim endpoint via [statusLineBrandFadeT]).
   final frame = s.brandFrame;
   assert(frame == null || tuiTextWidth(frame) == 1,
       'brand frame must stay exactly 1 cell (E3)');
