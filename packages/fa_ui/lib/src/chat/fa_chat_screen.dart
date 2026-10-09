@@ -558,6 +558,7 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// and the #379 clamp's own animateTo) never hold and never re-arm;
   /// non-drag updates can only relatch at the near-bottom.
   void _trackUserScroll(ScrollNotification notification) {
+    debugPrint('TRACE classifier: ${notification.runtimeType} depth=${notification.depth} sup=$_suppressFollowClassification');
     if (notification.depth != 0) return;
     if (_suppressFollowClassification) {
       // A multi-frame settle re-arms the window; one quiet frame closes
@@ -574,6 +575,7 @@ class _FaChatScreenState extends State<FaChatScreen>
     final distance = position.pixels.round();
     final arm = _armExtent(position);
     final wasAway = _follow.isHeld;
+    debugPrint('TRACE decide: dist=$distance arm=$arm held=${_follow.isHeld} unseen=${_follow.unseen}');
     if (notification is ScrollUpdateNotification &&
         notification.dragDetails != null) {
       // USER drag: the landing position classifies — inside the band
