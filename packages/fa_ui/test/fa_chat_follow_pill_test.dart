@@ -83,11 +83,7 @@ void main() {
     // machine's shape (value semantics, shared classifier). Behavior
     // parity with the CLI surface is pinned by the core suite.
     const live = FollowMode.live();
-    final held = live.userScrolled(
-      distanceFromLiveEdge: 500,
-      armExtent: 100,
-      movedTowardLive: false,
-    );
+    final held = live.userScrolled(distanceFromLiveEdge: 500, armExtent: 100);
     expect(held.isHeld, isTrue);
     expect(held.appended(3).unseen, 3);
     expect(held.jumpToLive(), const FollowMode.live());
