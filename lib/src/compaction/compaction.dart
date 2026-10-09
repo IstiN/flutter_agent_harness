@@ -55,6 +55,7 @@ export '../compaction/structured/expand_tool.dart'
 export '../prompts/prompts.g.dart'
     show
         hideJudgeSystemPrompt,
+        pinnedOperativePrompt,
         structuredCheckpointPrompt,
         summarizationPrompt,
         summarizationSystemPrompt,
@@ -85,6 +86,7 @@ final class CompactionPrompts {
     this.turnPrefix = turnPrefixSummarizationPrompt,
     this.hideJudgeSystem = hideJudgeSystemPrompt,
     this.structuredCheckpoint = structuredCheckpointPrompt,
+    this.pinnedOperative = pinnedOperativePrompt,
   });
 
   /// Resolves the bundle against CLI prompt [overrides] (names mirror the
@@ -116,6 +118,10 @@ final class CompactionPrompts {
         'compaction/structured_checkpoint',
         structuredCheckpointPrompt,
       ),
+      pinnedOperative: overrides.resolve(
+        'compaction/pinned_operative',
+        pinnedOperativePrompt,
+      ),
     );
   }
 
@@ -136,6 +142,13 @@ final class CompactionPrompts {
 
   /// Instruction tail of the structured-engine checkpoint call (#148).
   final String structuredCheckpoint;
+
+  /// gh-1409 verbatim-preserve duty (AC3): appended to every
+  /// summarization call whose input carries the pinned-operative block.
+  /// The prompt is belt — the fold carrier (the pin registry) is the
+  /// boundary; a summary that drops a pinned line is repaired from the
+  /// registry at request assembly, never trusted from summary text.
+  final String pinnedOperative;
 }
 
 /// The built-in compaction prompts (no overrides).
@@ -495,8 +508,10 @@ bool shouldCompact(
 /// summarize into. Every compaction request's estimated payload must stay
 /// at or under this — the invariant asserted in tests on the recorded
 /// outbound prompts.
-int summarizationPayloadBudget(int summarizerWindow, CompactionSettings settings) =>
-    max(summarizerWindow - settings.reserveTokens, summarizerWindow ~/ 2);
+int summarizationPayloadBudget(
+  int summarizerWindow,
+  CompactionSettings settings,
+) => max(summarizerWindow - settings.reserveTokens, summarizerWindow ~/ 2);
 
 /// Splits [messages] into consecutive chunks whose serialized conversation
 /// text estimates under [budgetTokens] (issue #729). Order is preserved and
@@ -826,6 +841,23 @@ Future<String> _runSummarization({
   return text;
 }
 
+/// gh-1409: the compaction-pinned skill operative lines threaded into
+/// every summarization call — the rendered prompt [block] (the PINNED
+/// OPERATIVE LINES section) plus the raw verbatim [lines] for the
+/// sanitizer's pin exemption (AC4). Null/absent when the session carries
+/// no pins.
+final class PinnedOperativePayload {
+  const PinnedOperativePayload({required this.block, required this.lines});
+
+  /// The rendered `PINNED OPERATIVE LINES` block (from
+  /// `pinnedOperativePromptBlock`).
+  final String block;
+
+  /// The raw verbatim pin lines (P3) — the sanitizer never strips or
+  /// rewrites a line containing one.
+  final Set<String> lines;
+}
+
 /// Generate (or update) a conversation summary for compaction.
 ///
 /// Ported from pi's `generateSummary`: serializes [messages] into
@@ -853,16 +885,27 @@ Future<String> generateSummary(
   CompactionPrompts prompts = defaultCompactionPrompts,
   String? userRequestCandidates,
   int? maxPromptTokens,
+  PinnedOperativePayload? pinnedOperative,
 }) async {
   // Issue #1131: the previous checkpoint re-enters this prompt verbatim —
   // heal it first so a poisoned old summary cannot be paraphrased forward
-  // into a fresh one (idempotent; clean records are unaffected).
+  // into a fresh one (idempotent; clean records are unaffected). gh-1409:
+  // pinned lines ride the heal protected (AC4) — a pin inside an old
+  // checkpoint survives sanitization byte-identical.
   previousSummary = previousSummary == null
       ? null
-      : sanitizeSummary(previousSummary).text;
+      : sanitizeSummary(
+          previousSummary,
+          protectedLines: pinnedOperative?.lines ?? const {},
+        ).text;
   var basePrompt = previousSummary != null
       ? prompts.summaryUpdate
       : prompts.summary;
+  // gh-1409 AC3: the verbatim-preserve duty rides the instruction tail of
+  // every call whose input carries the pinned block.
+  if (pinnedOperative != null) {
+    basePrompt = '$basePrompt\n\n${prompts.pinnedOperative}';
+  }
   if (customInstructions != null) {
     basePrompt = '$basePrompt\n\nAdditional focus: $customInstructions';
   }
@@ -879,6 +922,11 @@ Future<String> generateSummary(
     if (candidates != null) {
       prompt
         ..write(candidates)
+        ..write('\n\n');
+    }
+    if (pinnedOperative != null) {
+      prompt
+        ..write(pinnedOperative.block)
         ..write('\n\n');
     }
     if (prior != null) {
@@ -916,7 +964,12 @@ Future<String> generateSummary(
   );
   for (var i = 0; i < chunks.length; i++) {
     final candidates = userRequestCandidatesBlock(chunks[i]);
-    final instructions = i == 0 ? basePrompt : prompts.summaryUpdate;
+    final instructions = i == 0
+        ? basePrompt
+        : (pinnedOperative == null
+              ? prompts.summaryUpdate
+              // E7: the verbatim-preserve duty rides every chunk.
+              : '${prompts.summaryUpdate}\n\n${prompts.pinnedOperative}');
     final conversation = truncateForSummaryBudget(
       serializeConversation(chunks[i]),
       budgetTokens: maxPromptTokens,
@@ -924,6 +977,7 @@ Future<String> generateSummary(
         candidates: candidates,
         prior: prior,
         instructions: instructions,
+        pinnedBlock: pinnedOperative?.block,
       ),
     );
     fold = await _runSummarization(
@@ -957,8 +1011,10 @@ String truncateForSummaryBudget(
   required int budgetTokens,
   required int envelopeChars,
 }) {
-  final maxChars =
-      max(budgetTokens * 4 - envelopeChars - _truncateNoteChars, 1024);
+  final maxChars = max(
+    budgetTokens * 4 - envelopeChars - _truncateNoteChars,
+    1024,
+  );
   return _truncateForSummary(conversation, maxChars);
 }
 
@@ -966,12 +1022,21 @@ int _summaryEnvelopeChars({
   required String? candidates,
   required String? prior,
   required String instructions,
+  String? pinnedBlock,
 }) {
-  final prompt = StringBuffer()
-    ..write('<conversation>\n\n</conversation>\n\n');
+  final prompt = StringBuffer()..write('<conversation>\n\n</conversation>\n\n');
   if (candidates != null) {
     prompt
       ..write(candidates)
+      ..write('\n\n');
+  }
+  // The pinned block rides EVERY summarization prompt (gh-1409 AC3) — it
+  // must count against the envelope or a host with a large
+  // `OperativePinConfig.budgetChars` pushes summarization payloads past
+  // `summarizationPayloadBudget` (review round 2, suggestion 7).
+  if (pinnedBlock != null) {
+    prompt
+      ..write(pinnedBlock)
       ..write('\n\n');
   }
   if (prior != null) {
@@ -987,11 +1052,15 @@ Future<String> _generateTurnPrefixSummary(
   CancelToken? cancelToken,
   CompactionPrompts prompts = defaultCompactionPrompts,
   int? maxPromptTokens,
+  PinnedOperativePayload? pinnedOperative,
 }) {
+  // E7: the split-turn prefix carries the verbatim-preserve duty too.
+  final duty = pinnedOperative == null ? '' : '\n\n${prompts.pinnedOperative}';
   var conversation = serializeConversation(messages);
   var prompt =
       '<conversation>\n$conversation\n</conversation>\n\n'
-      '${prompts.turnPrefix}';
+      '${pinnedOperative == null ? '' : '${pinnedOperative.block}\n\n'}'
+      '${prompts.turnPrefix}$duty';
   if (maxPromptTokens != null &&
       estimateStringTokens(prompt) > maxPromptTokens) {
     // Issue #729: the split-turn prefix never rides an over-window
@@ -1007,7 +1076,8 @@ Future<String> _generateTurnPrefixSummary(
     );
     prompt =
         '<conversation>\n$conversation\n</conversation>\n\n'
-        '${prompts.turnPrefix}';
+        '${pinnedOperative == null ? '' : '${pinnedOperative.block}\n\n'}'
+        '${prompts.turnPrefix}$duty';
   }
   return _runSummarization(
     prompt: prompt,
@@ -1204,6 +1274,7 @@ final class CompactionManager {
     this.prompts = defaultCompactionPrompts,
     this.memoryExtractionHook,
     this.summarizerWindow,
+    this.pinnedOperative,
   });
 
   /// The summary LLM call used for every summarization.
@@ -1227,6 +1298,11 @@ final class CompactionManager {
   /// outbound summary request is chunked/truncated to
   /// [summarizationPayloadBudget] so it fits the summarizer's window.
   final int? summarizerWindow;
+
+  /// gh-1409: the session's compaction-pinned skill operative lines.
+  /// `null` (default) → every prompt is byte-identical to the pre-pin
+  /// pipeline (F4 compat guard).
+  final PinnedOperativePayload? pinnedOperative;
 
   /// The outbound payload budget for [summarizerWindow], or `null` when
   /// unbounded.
@@ -1335,6 +1411,7 @@ final class CompactionManager {
               prompts: prompts,
               userRequestCandidates: userRequests,
               maxPromptTokens: maxPromptTokens,
+              pinnedOperative: pinnedOperative,
             )
           : 'No prior history.';
       final turnPrefix = await _generateTurnPrefixSummary(
@@ -1343,6 +1420,7 @@ final class CompactionManager {
         cancelToken: cancelToken,
         prompts: prompts,
         maxPromptTokens: maxPromptTokens,
+        pinnedOperative: pinnedOperative,
       );
       summary =
           '$history\n\n---\n\n**Turn Context (split turn):**\n\n$turnPrefix';
@@ -1356,13 +1434,19 @@ final class CompactionManager {
         prompts: prompts,
         userRequestCandidates: userRequests,
         maxPromptTokens: maxPromptTokens,
+        pinnedOperative: pinnedOperative,
       );
     }
 
     // Issue #1131: a summary re-renders on every later turn, so ephemeral,
     // time-scoped claims ("your last tool call's result was dropped") are
     // stripped pre-persist; the fires are logged in the record details.
-    final sanitized = sanitizeSummary(summary);
+    // gh-1409 AC4: pinned lines are protected — the sanitizer strips the
+    // ephemeral claims AROUND them, never the pins themselves.
+    final sanitized = sanitizeSummary(
+      summary,
+      protectedLines: pinnedOperative?.lines ?? const {},
+    );
     summary = sanitized.text;
 
     summary += formatFileOperations(

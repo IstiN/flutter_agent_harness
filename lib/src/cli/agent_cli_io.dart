@@ -159,6 +159,7 @@ extension AgentCliRunNotices on AgentCli {
     _wireImageDropNotice();
     _wireTextOnlyImageDropNotice();
     _wireDeliverySloNotice();
+    _wireOperativePinNotice();
   }
 
   /// Transient network retry visibility (the Wi-Fi-switch case): the
@@ -195,6 +196,16 @@ extension AgentCliRunNotices on AgentCli {
       _logDiagnostic(
         'image registry drop sid=$_logSid index=$index key=$keyPreview',
       );
+    };
+  }
+
+  /// Skill-pin notice visibility (gh-1409 P4/P5/P6 "never silent"):
+  /// budget drops, lifecycle supersedes/drops, and AC3 repairs get the
+  /// same dim transcript line + fa.log entry as the image drops.
+  void _wireOperativePinNotice() {
+    operativePinNotice = (notice) {
+      io.writeln(_style.dim('[skills] $notice'));
+      _logDiagnostic('operative pin sid=$_logSid $notice');
     };
   }
 

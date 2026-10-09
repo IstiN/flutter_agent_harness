@@ -210,6 +210,38 @@ void main() {
     },
   );
 
+  test('gh-1409 P2: /skills off|on republishes agent.operativeSkills '
+      'in-session', () async {
+    // The toggle path recomputes _enabledSkills but (before the fix) never
+    // re-published the agent's pin source set — a disabled pin-owning
+    // skill kept its operative directives riding every request, an
+    // enabled one never started, until a full /skills reload.
+    await env.writeFile(
+      '/work/.fah/skills/pinny/SKILL.md',
+      '---\nname: pinny\ndescription: pin owner\n'
+      'operative:\n  - "always cite sources"\n---\nBody.\n',
+    );
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = cliFor(fake.call);
+    final run = cli.run();
+    await waitForIt(() => cli.systemPrompt.contains('<name>pinny</name>'));
+    // Boot published the source set (lifecycle P2).
+    expect(cli.agent.operativeSkills.map((s) => s.name), contains('pinny'));
+
+    io.sendLine('/skills off pinny');
+    await waitForIt(() => io.out.toString().contains('skills: disabled pinny'));
+    expect(
+      cli.agent.operativeSkills.map((s) => s.name),
+      isNot(contains('pinny')),
+    );
+
+    io.sendLine('/skills on pinny');
+    await waitForIt(() => io.out.toString().contains('skills: enabled pinny'));
+    expect(cli.agent.operativeSkills.map((s) => s.name), contains('pinny'));
+    io.sendLine('/exit');
+    await run;
+  });
+
   test('AC3: toggling through a valid-yaml invalid-section file is data '
       '(CQIw merge path, review -HUfC)', () async {
     // Syntactically valid yaml whose skills: section carries a

@@ -20,6 +20,7 @@ void main() {
   tearDown(() {
     io.close();
     transientRetryNotice = null;
+    operativePinNotice = null;
     imageDropNotice = null;
     deliverySloSink = null;
   });
@@ -122,5 +123,30 @@ void main() {
     expect(io.out.toString(), contains('[slo BREACH]'));
     expect(io.out.toString(), contains('stage=consumed elapsed=3400ms'));
     expect(io.out.toString(), isNot(contains('stage=enqueued')));
+  });
+
+  test('the skill-pin notice prints a dim transcript line (gh-1409 '
+      'P4/P5/P6, review round 2)', () {
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: '[REDACTED:Sensitive Value]',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+      ),
+      io: io,
+    );
+    cli.wireRunNoticesForTesting();
+    expect(operativePinNotice, isNotNull, reason: 'the boot wires the pin '
+        'notices');
+
+    operativePinNotice?.call(
+      'skill pin restored from registry (missing from checkpoint summary): '
+      '"rule one" — pinned from skill `fleet`',
+    );
+
+    expect(io.out.toString(), contains('[skills] skill pin restored'));
+    expect(io.out.toString(), contains('"rule one"'));
   });
 }

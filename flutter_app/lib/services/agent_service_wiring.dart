@@ -137,7 +137,7 @@ extension AgentServiceWiring on AgentService {
     if (store != null) unawaited(store.save(access));
     final config = _config;
     if (config == null) return;
-    final suffix = await _discoverPromptSuffix(
+    final (suffix, pinSkills) = await _discoverPromptSuffix(
       env,
       access,
       homeDir: _skillsHomeDir ?? desktopHomeDir(),
@@ -145,6 +145,8 @@ extension AgentServiceWiring on AgentService {
     // A newer choice made while discovery ran wins — don't clobber it.
     if (access != _skillsAccess) return;
     _promptSuffix = suffix;
+    // gh-1409: republish the operative-pin source set (derived state, P2).
+    _agent.operativeSkills = pinSkills;
     _agent.state.systemPrompt = _composeSystemPrompt(config);
   }
 

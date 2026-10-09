@@ -30,6 +30,9 @@ import '../compaction/structured/judge.dart';
 import '../context.dart';
 import '../model.dart';
 import '../session/session_tree.dart' show Session;
+import '../skills/operative_pins.dart'
+    show SkillOperativePins, pinnedOperativePromptBlock;
+import '../skills/skills.dart' show Skill;
 import '../types.dart';
 import 'agent.dart' show AgentState;
 import 'agent_loop.dart' show StreamFunction;
@@ -134,6 +137,7 @@ final class AutoCompactor {
     required this.hooks,
     this.memoryExtractionHook,
     this.prompts = defaultCompactionPrompts,
+    this.operativeSkills = const [],
     this.maxPasses = 8,
     this.maxAttempts = 3,
     this.baseBackoff = const Duration(seconds: 1),
@@ -180,6 +184,18 @@ final class AutoCompactor {
   /// host's `prompts:` yaml override reaches the same `summary` callback
   /// that `streamFunctionSummarizer` already uses.
   final CompactionPrompts prompts;
+
+  /// gh-1409: the skills known to the session — their `operative:`
+  /// directives ride every summarization prompt as the verbatim-preserve
+  /// pinned block (AC3) and are protected from the sanitizer (AC4).
+  /// Empty (default) → prompts byte-identical to the pre-pin pipeline
+  /// (F4 compat guard).
+  final List<Skill> operativeSkills;
+
+  /// The pinned-operative payload derived from [operativeSkills] (null
+  /// when the skills declare no operative lines).
+  PinnedOperativePayload? get pinnedOperative =>
+      pinnedOperativePayloadOf(operativeSkills);
 
   /// Upper bound on pass count per [run]. Picked so a 1M→200k session
   /// compacts down in 2-3 passes; deep enough for the worst case but
@@ -623,6 +639,9 @@ final class AutoCompactor {
           // Issue #729: bound this summarizer's outbound payloads to its
           // own window — chunked summarization inside the pass.
           summarizerWindow: summarizerWindow,
+          // gh-1409: pinned skill directives ride the verbatim-preserve
+          // block; the sanitizer protects them (AC3/AC4).
+          pinnedOperative: pinnedOperative,
         );
         // Issue #515: the budget kill must abort the underlying request,
         // not abandon it — an endpoint that accepts and never answers
@@ -760,8 +779,25 @@ class AutoCompactorSources {
   final Model mainModel;
 }
 
-/// Hosts plug in their own [AutoCompactorSources], hooks, and settings;
-/// the factory wires the smol/main summarizers with the configured
+/// Builds the gh-1409 summarization payload for [skills]: the rendered
+/// verbatim-preserve block plus the raw pin lines for the sanitizer's
+/// exemption. `null` when the skills declare no operative lines (the
+/// ONE derivation shared by [AutoCompactor] and [AutoCompactorFactory]).
+PinnedOperativePayload? pinnedOperativePayloadOf(List<Skill> skills) {
+  if (skills.isEmpty) return null;
+  final registry = SkillOperativePins.build(skills);
+  if (registry.isEmpty) return null;
+  final block = pinnedOperativePromptBlock(registry);
+  if (block == null) return null;
+  return PinnedOperativePayload(
+    block: block,
+    lines: {for (final pin in registry.pins) pin.line},
+  );
+}
+
+/// Compact helper that owns the multi-pass + retry + smol→main logic for
+/// hosts that build their compactor through the factory: the factory
+/// wires the smol/main summarizers with the configured
 /// [CompactionPrompts] and optional memory hook, then runs the loop.
 ///
 /// When [force] is `true` the compactor skips [shouldCompact] — used by
@@ -785,6 +821,7 @@ class AutoCompactorFactory {
     this.totalBudget = const Duration(minutes: 15),
     this.engine = CompactionEngine.structured,
     this.runToken,
+    this.operativeSkills = const [],
   });
 
   final Session session;
@@ -812,6 +849,16 @@ class AutoCompactorFactory {
   /// token: a user abort during a mid-run relief cancels the in-flight
   /// compaction on BOTH engines. `null` = standalone compaction.
   final CancelToken? runToken;
+
+  /// gh-1409: the session's skills, forwarded to the built
+  /// [AutoCompactor] — their `operative:` lines ride every summarization
+  /// prompt as the verbatim-preserve pinned block.
+  final List<Skill> operativeSkills;
+
+  /// The pinned-operative payload derived from [operativeSkills] (null
+  /// when the skills declare no operative lines).
+  PinnedOperativePayload? get pinnedOperative =>
+      pinnedOperativePayloadOf(operativeSkills);
 
   /// Per-attempt wall-clock budget, forwarded to the built [AutoCompactor].
   final Duration attemptBudget;
@@ -898,7 +945,13 @@ class AutoCompactorFactory {
       // SUMMARIZER's window (the smol role when configured), not the main
       // model's.
       summarizerWindow: (sources.smolModel ?? sources.mainModel).contextWindow,
-      checkpointPrompt: prompts.structuredCheckpoint,
+      checkpointPrompt: pinnedOperative == null
+          ? prompts.structuredCheckpoint
+          // gh-1409 E7: the structured checkpoint carries the
+          // verbatim-preserve duty too.
+          : '${prompts.structuredCheckpoint}\n\n${prompts.pinnedOperative}',
+      pinnedOperativeBlock: pinnedOperative?.block,
+      pinnedLines: pinnedOperative?.lines ?? const {},
       hooks: adapter ?? _StructuredHooksAdapter(hooks),
       budgetSource: budgetSource,
       // #541: the knob actually bounds the judge — the factory's
@@ -968,6 +1021,7 @@ class AutoCompactorFactory {
       attemptBudget: attemptBudget,
       totalBudget: totalBudget,
       runToken: runToken,
+      operativeSkills: operativeSkills,
     );
   }
 }

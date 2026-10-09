@@ -100,6 +100,10 @@ const rootSpecs = <PromptSpec>[
     constName: 'structuredCheckpointPrompt',
   ),
   PromptSpec(
+    source: 'prompts/compaction/pinned_operative.md',
+    constName: 'pinnedOperativePrompt',
+  ),
+  PromptSpec(
     source: 'prompts/cli/mode_code.md',
     constName: 'cliCodeModePrompt',
     requiredToken: '{{cwd}}',

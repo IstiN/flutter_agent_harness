@@ -141,7 +141,11 @@ Future<void> seedBuiltinSkillPointers(ExecutionEnv env) async {
 /// [skillToggles] (the app store's `skills:`-shaped wishes; the single
 /// app-side scope, project config.yaml toggles are NOT read here) filter
 /// the discovered list down to the enabled skills.
-Future<String> _discoverPromptSuffix(
+///
+/// Returns the composed prompt suffix AND the enabled skills (gh-1409:
+/// hosts republish them onto the agent so the operative-pin registry
+/// rebuilds from the same list the prompt index renders).
+Future<(String, List<Skill>)> _discoverPromptSuffix(
   ExecutionEnv env,
   SkillsAccess access, {
   String? homeDir,
@@ -169,12 +173,13 @@ Future<String> _discoverPromptSuffix(
   );
   final enabled = enabledSkills(skills, resolution);
   final contextFiles = await loadProjectContextFiles(env);
-  return [
+  final suffix = [
     if (formatProjectContext(contextFiles).isNotEmpty)
       formatProjectContext(contextFiles),
     if (formatSkillsForPrompt(enabled).isNotEmpty)
       formatSkillsForPrompt(enabled),
   ].join('\n\n');
+  return (suffix, enabled);
 }
 
 /// Per-skill availability (issue #1151): the app twin of the CLI `skills:`
@@ -200,7 +205,7 @@ extension AgentServiceSkills on AgentService {
     final config = _config;
     if (config == null) return;
     final generation = _skillTogglesGeneration;
-    final suffix = await _discoverPromptSuffix(
+    final (suffix, pinSkills) = await _discoverPromptSuffix(
       env,
       _skillsAccess,
       homeDir: _skillsHomeDir ?? desktopHomeDir(),
@@ -209,6 +214,8 @@ extension AgentServiceSkills on AgentService {
     // A newer toggle change made while discovery ran wins — don't clobber.
     if (generation != _skillTogglesGeneration) return;
     _promptSuffix = suffix;
+    // gh-1409: republish the operative-pin source set (derived state, P2).
+    _agent.operativeSkills = pinSkills;
     _agent.state.systemPrompt = _composeSystemPrompt(config);
   }
 }

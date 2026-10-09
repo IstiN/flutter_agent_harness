@@ -34,6 +34,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math';
 import 'dart:convert';
 
 import '../cancel_token.dart';
@@ -52,6 +53,13 @@ import '../context.dart';
 import '../event_stream.dart';
 import '../exceptions.dart';
 import '../model.dart';
+import '../skills/skills.dart' show Skill;
+import '../skills/operative_pins.dart'
+    show
+        defaultPinBudgetChars,
+        injectOperativePinCarriers,
+        operativePinConfig,
+        operativePinNotice;
 import '../types.dart';
 import '../trajectory/event_projection.dart' show textPayloadOf;
 import '../trajectory/trajectory_blobs.dart';
@@ -413,6 +421,7 @@ final class AgentLoopConfig {
     this.toolMisuseBreaker,
     this.stuckTool,
     this.finalizeGate = false,
+    this.operativeSkills = const [],
   });
 
   /// The model to call each turn.
@@ -509,6 +518,12 @@ final class AgentLoopConfig {
   /// runs are byte-identical — the contract is unattended-only).
   final bool finalizeGate;
 
+  /// gh-1409: the skills known to the session. Their `operative:` lines
+  /// ride every post-compaction request as the verbatim pinned carrier
+  /// (payload-only — the transcript is never touched). Empty (default) →
+  /// requests are byte-identical to the pre-pin loop (F4 compat guard).
+  final List<Skill> operativeSkills;
+
   /// Returns a copy with [model] replaced (used by [prepareNextTurn]).
   AgentLoopConfig copyWith({Model? model}) {
     return AgentLoopConfig(
@@ -530,6 +545,7 @@ final class AgentLoopConfig {
       toolMisuseBreaker: toolMisuseBreaker,
       stuckTool: stuckTool,
       finalizeGate: finalizeGate,
+      operativeSkills: operativeSkills,
     );
   }
 }
@@ -1705,6 +1721,42 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
       requestContext = Context(
         systemPrompt: requestContext.systemPrompt,
         messages: rewritten,
+        tools: requestContext.tools,
+      );
+    }
+  }
+  // gh-1409: compaction-pinned skill operative lines ride every
+  // post-boundary request as the verbatim carrier (AC2) — payload-only,
+  // the transcript is never touched; the kill switch
+  // (`operativePinConfig.enabled = false`) skips it entirely. Runs BEFORE
+  // tool-pairing repair: the carrier is a standalone user message and can
+  // never break a call/result run (it anchors outside them).
+  if (config.operativeSkills.isNotEmpty && operativePinConfig.enabled) {
+    // E9: the pin budget shrinks proportionally on tiny windows so pins
+    // never crowd out the recent-token working set — an eighth of the
+    // effective window, floored at 1024 chars (one 512-char line plus
+    // envelope), capped at the configured budget.
+    final window = effectiveContextWindow(
+      config.model.contextWindow,
+      config.contextWindowCap,
+    );
+    final budgetChars = min(
+      operativePinConfig.budgetChars ?? defaultPinBudgetChars,
+      // E9: at most an eighth of the effective window, floored at 1024
+      // chars (one 512-char line plus envelope) — a large window keeps the
+      // full default budget, a tiny one shrinks the pins proportionally.
+      max(window ~/ 8, 1024),
+    );
+    final injected = injectOperativePinCarriers(
+      requestContext.messages,
+      skills: config.operativeSkills,
+      budgetChars: budgetChars,
+      onNotice: operativePinNotice,
+    );
+    if (!identical(injected, requestContext.messages)) {
+      requestContext = Context(
+        systemPrompt: requestContext.systemPrompt,
+        messages: injected,
         tools: requestContext.tools,
       );
     }
