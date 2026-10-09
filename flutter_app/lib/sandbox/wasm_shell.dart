@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
+import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
@@ -419,6 +420,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     required String? inputSource,
   }) async {
     return switch (stage.command) {
+      'cat' => _catBuiltin(stage, options, inputSource),
       'curl' => _curlBuiltin(stage, options, inputSource),
       'wget' => _wgetBuiltin(stage, options),
       'git' => _gitBuiltin(stage, options),
@@ -1874,6 +1876,27 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     return file.readAsString();
   }
 
+  /// Transparent skill-path read (gh-1444 AC1): a `builtin://skills/...`
+  /// URI resolves from the embedded copies, an existing file wins, and a
+  /// missing file whose `<path>.pointer` sibling resolves serves the
+  /// builtin body. Returns `(text, refusal)` — `refusal` is non-null when a
+  /// pointer exists but its target is not a resolvable builtin reference
+  /// (E1: the caller must report the refusal, never fall back to ENOENT
+  /// silently). `(null, null)` = plain not-found.
+  Future<(String?, String?)> _readSandboxTextFollowPointers(String path) async {
+    if (path.startsWith(builtinSkillPathPrefix)) {
+      return (builtinSkillTextAt(path), null);
+    }
+    final direct = await _readSandboxText(path);
+    if (direct != null) return (direct, null);
+    final followed = await followSkillPointer(path, _readSandboxText);
+    return switch (followed) {
+      SkillPointerResolved(:final text) => (text, null),
+      SkillPointerRefused(:final reason) => (null, reason),
+      SkillPointerAbsent() => (null, null),
+    };
+  }
+
   /// Host write for the sandbox file at sandbox-absolute [path].
   Future<void> _writeSandboxBytes(String path, List<int> bytes) async {
     final file = _hostFile(path);
@@ -2514,6 +2537,69 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       io.FileSystemEntityType.link => 'symbolic link',
       _ => 'unknown',
     };
+  }
+
+  /// The `cat` builtin (gh-1444 C1): reads operands through the shell's
+  /// transparent file seam ([_readSandboxTextFollowPointers]) so a skill
+  /// path whose `.pointer` sibling resolves serves the compiled-in builtin
+  /// body — the coreutils.wasm applet reads through WASI and cannot.
+  /// Binary-safe (bytes pass through undecoded) unless `-n`/`-b` demand
+  /// line numbering.
+  Future<Result<StageResult, ExecutionError>> _catBuiltin(
+    Stage stage,
+    ShellExecOptions? options,
+    String? inputSource,
+  ) async {
+    final parsed = parseCatArgs(stage.args);
+    if (parsed.error != null) {
+      return Ok(
+        StageResult(
+          stdout: const [],
+          stderr: utf8.encode('cat: ${parsed.error}\n'),
+          exitCode: 1,
+        ),
+      );
+    }
+    final files = [...parsed.files];
+    if (files.isEmpty && inputSource != null) files.add(inputSource);
+    final cwd = _effectiveCwd(options);
+    final stdinText = await _stdinFromSource(stage, inputSource);
+    final out = BytesBuilder(copy: false);
+    final err = StringBuffer();
+    var exitCode = 0;
+    for (final file in files) {
+      if (file == '-') {
+        out.add(utf8.encode(stdinText ?? ''));
+        continue;
+      }
+      final (text, refusal) = await _readSandboxTextFollowPointers(
+        _resolveSandboxPath(file, cwd),
+      );
+      if (refusal != null) {
+        err.write('cat: $file: skill pointer refused: $refusal\n');
+        exitCode = 1;
+        continue;
+      }
+      if (text == null) {
+        err.write('cat: $file: No such file or directory\n');
+        exitCode = 1;
+        continue;
+      }
+      out.add(
+        utf8.encode(
+          parsed.number || parsed.numberNonBlank
+              ? applyCatNumbering(text, nonBlankOnly: parsed.numberNonBlank)
+              : text,
+        ),
+      );
+    }
+    return Ok(
+      StageResult(
+        stdout: out.toBytes(),
+        stderr: utf8.encode(err.toString()),
+        exitCode: exitCode,
+      ),
+    );
   }
 
   Future<Result<StageResult, ExecutionError>> _tacBuiltin(

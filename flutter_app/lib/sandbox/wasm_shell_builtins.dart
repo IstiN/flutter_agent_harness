@@ -749,3 +749,80 @@ const Map<String, Set<String>> nonPathFlagValues = {
   'find': {'-iname', '-mmin', '-mtime', '-name', '-size', '-type'},
   'mktemp': {'-t'},
 };
+
+/// Parsed `cat` invocation (gh-1444 C1: the mobile shell runs cat as a Dart
+/// builtin so skill-path reads follow `.pointer` files — the coreutils.wasm
+/// applet reads through WASI and cannot). GNU subset: `-n` numbers every
+/// line, `-b` numbers non-blank lines, `-` reads stdin, `--` ends flags.
+final class CatInvocation {
+  const CatInvocation({
+    this.number = false,
+    this.numberNonBlank = false,
+    this.files = const <String>[],
+    this.error,
+  });
+
+  /// `-n`.
+  final bool number;
+
+  /// `-b` (overrides `-n` where both apply, like GNU cat).
+  final bool numberNonBlank;
+
+  /// Operand files in order; `-` means stdin.
+  final List<String> files;
+
+  /// GNU-shaped usage error, or null when the invocation is executable.
+  final String? error;
+}
+
+/// Pure `cat` argument parser. See [CatInvocation].
+CatInvocation parseCatArgs(List<String> args) {
+  var number = false;
+  var numberNonBlank = false;
+  final files = <String>[];
+  var noMoreFlags = false;
+  for (final arg in args) {
+    if (!noMoreFlags && arg == '--') {
+      noMoreFlags = true;
+    } else if (!noMoreFlags && arg.startsWith('-') && arg != '-' && arg != '') {
+      if (arg == '-n' || arg == '--number') {
+        number = true;
+      } else if (arg == '-b' || arg == '--number-nonblank') {
+        numberNonBlank = true;
+      } else {
+        final short = arg.startsWith('--') ? arg : arg.substring(0, 2);
+        return CatInvocation(
+          error: "invalid option -- '${short.replaceAll('-', '')}'",
+        );
+      }
+    } else {
+      files.add(arg);
+    }
+  }
+  return CatInvocation(
+    number: number,
+    numberNonBlank: numberNonBlank,
+    files: files,
+  );
+}
+
+/// Applies `-n`/`-b` numbering to [input] the way GNU cat renders it:
+/// right-aligned 6-width number, tab, line; `-b` skips blank lines and
+/// never advances the counter for them.
+String applyCatNumbering(String input, {required bool nonBlankOnly}) {
+  final endsWithNewline = input.endsWith('\n');
+  final lines = endsWithNewline
+      ? input.substring(0, input.length - 1).split('\n')
+      : input.split('\n');
+  final out = StringBuffer();
+  var counter = 0;
+  for (final line in lines) {
+    counter++;
+    if (nonBlankOnly && line.isEmpty) {
+      out.write('$line\n');
+    } else {
+      out.write('${counter.toString().padLeft(6)}\t$line\n');
+    }
+  }
+  return out.toString();
+}

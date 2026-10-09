@@ -222,7 +222,13 @@ const Set<String> mobileCoreutilsApplets = {
 
 /// Mobile shell builtins implemented in Dart. These do not need a WASM
 /// module and do not increase the IPA size.
+///
+/// `cat` rides this set (gh-1444 C1): the Dart builtin reads through the
+/// shell's file seam, so a skill path whose `.pointer` sibling resolves
+/// serves the compiled-in builtin body — the coreutils.wasm applet reads
+/// through WASI and cannot follow pointers.
 const Set<String> mobileBuiltinCommands = {
+  'cat',
   'curl',
   'wget',
   'git',
