@@ -255,7 +255,6 @@ void main() {
 
         // Mid-session drop AFTER that miss's rescan: `latecomer` is on
         // disk but unindexed — the cold-resolve path (AC3).
-        final outAfterMiss = io.out.toString();
         await seedSkill('latecomer');
         io.sendLine('/skill:latecomer');
         await waitForIt(

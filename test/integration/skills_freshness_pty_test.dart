@@ -25,7 +25,7 @@ void main() {
     'mid-session skill drop: /skill: cold-resolves, turn recomposition '
     'flags it',
     () async {
-      final tempHome = Directory.systemTemp.createTempSync('fa_gh1440_home_');
+      final tempHome = Directory.systemTemp.createTempSync('fa1440h_');
       addTearDown(() => tempHome.deleteSync(recursive: true));
       final server = await MockLlmServer.start()
         // Turn 1: the cold-resolved /skill:latecomer2 invocation.
@@ -46,16 +46,16 @@ approvalMode: yolo
 allowedTools: []
 ''');
 
-      final workspace = Directory.systemTemp.createTempSync('fa_gh1440_ws_');
+      final workspace = Directory('/tmp').createTempSync('fa1440w_');
       addTearDown(() => workspace.deleteSync(recursive: true));
 
       final harness = await FaCliHarness.spawn(
         workingDirectory: workspace.path,
         extraEnv: {'HOME': tempHome.path},
-        // 120 columns: the /skills rows below must NOT wrap (a wrapped dim
-        // tail can split `added mid-session` from its row) — 100 is not
-        // enough once path + scope/source flags are appended.
-        columns: 120,
+        // 160 columns: the /skills rows below must NOT wrap (a wrapped dim
+        // tail splits `added mid-session` across two screen rows — seen on
+        // the 120-column run) once path + scope/source flags are appended.
+        columns: 160,
         rows: 40,
       );
       addTearDown(() async {

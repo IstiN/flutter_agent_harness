@@ -31,9 +31,10 @@ import 'agent_cli_test_support.dart';
 /// listings (the metadata the fingerprint check is allowed to spend) and
 /// SKILL.md body reads (zero allowed on an unchanged fingerprint, I1).
 /// [throwOnListDir] injects an IO failure for one path — the I2
-/// degradation fixture.
+/// degradation fixture (assigned mid-test, so it is a mutable field and
+/// not a constructor parameter).
 final class _CountingEnv implements ExecutionEnv {
-  _CountingEnv(this.inner, {this.throwOnListDir});
+  _CountingEnv(this.inner);
 
   final MemoryExecutionEnv inner;
 
