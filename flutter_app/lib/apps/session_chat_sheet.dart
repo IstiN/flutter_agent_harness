@@ -20,6 +20,7 @@ import 'package:fa_ui/fa_ui.dart'
         FaRunStatusRow,
         TrajectoryController,
         TrajectoryScreen,
+        liveThinkingMessage,
         showFahErrorSnack,
         showFahSnack;
 
@@ -1763,6 +1764,9 @@ class _SessionTranscriptState extends State<_SessionTranscript>
         // completion. Empty transcript + streaming: it is the only item
         // (E1).
         final streaming = widget.service.isStreaming;
+        // Only the LIVE thinking block animates (issue #1374 AC4) —
+        // computed once per transcript pass, identity-matched per tile.
+        final liveThinking = liveThinkingMessage(widget.service);
         if (messages.isEmpty && !streaming) {
           return Center(
             child: Padding(
@@ -1816,6 +1820,11 @@ class _SessionTranscriptState extends State<_SessionTranscript>
               messageFontSize: ChatTextScope.maybeOf(context)?.fontSize,
               audioControllerFactory: widget.audioControllerFactory,
               videoControllerFactory: widget.videoControllerFactory,
+              // Only the LIVE thinking block animates (issue #1374 AC4):
+              // the transcript's NEWEST thinking message; finished
+              // thinking notes keep a frozen face. Identity holds — the
+              // message IS a service.messages element.
+              thinkingLive: identical(message, liveThinking),
               // The launcher panel never mounts a ChatScreen, so it wires
               // its own widget-tile builder (issue #336): without one the
               // live widget degrades to the plain tool card.

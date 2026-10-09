@@ -55,6 +55,26 @@ final class FaChatMessage {
 /// (`uploads/…`, null for bytes sent without a path — in-app screenshots).
 typedef FaChatAttachment = ({Uint8List? bytes, String? path});
 
+/// The transcript index of the LIVE thinking block (issue #1374): the
+/// NEWEST `thinking`-role message while the run streams, -1 when idle.
+/// One agentic run leaves SEVERAL finished thinking notes in the
+/// transcript (one per LLM turn) — a `isStreaming`-only gate animated
+/// every one of them (a ticker + SVG re-parse each); only the live
+/// block may animate.
+int liveThinkingMessageIndex(FaChatService service) =>
+    service.isStreaming
+        ? service.messages.lastIndexWhere((m) => m.role == 'thinking')
+        : -1;
+
+/// The live thinking block itself. Candidates compare with [identical]
+/// against the SAME [FaChatService.messages] list the tile was built
+/// from; surfaces that rebuild the [FaChatMessage] (the chat screen's
+/// metadata mapping) gate through [liveThinkingMessageIndex] instead.
+FaChatMessage? liveThinkingMessage(FaChatService service) {
+  final index = liveThinkingMessageIndex(service);
+  return index < 0 ? null : service.messages[index];
+}
+
 /// A file staged in the composer before sending: written into the agent
 /// sandbox and referenced by path.
 typedef FaStagedAttachment = ({String path, Uint8List bytes, String mimeType});
