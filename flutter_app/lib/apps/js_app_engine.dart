@@ -366,6 +366,58 @@ class JsAppEngine {
   Map<String, dynamic>? get exportedState => _engine?.exportedState;
   List<Map<String, dynamic>> peekLogs() => _engine?.peekLogs() ?? const [];
 
+  /// The bridge-owned voxel world behind `voxel` nodes (`jsr.hostCall(
+  /// 'voxel.*')`): the SAME world the running engine's backend created at
+  /// start and every `voxel.attach`/`voxel.mesh`/`voxel.camera` call lands
+  /// in (gh-1441). Surfaces pass it to [JsonWidgetRenderer.voxelWorld] —
+  /// without it the renderer swaps every `voxel` node for the "Voxel
+  /// world" placeholder while the engine side reports success.
+  ///
+  /// Null before [start] and after [dispose]/restart, so a re-render after
+  /// a reload always wires the CURRENT world — never a stale one from a
+  /// disposed engine.
+  JsVoxelWorld? get voxelWorld => _engine?.voxelWorld;
+
+  /// Whether the one-shot unwired-voxel diagnostic already fired (see
+  /// [noteUnwiredVoxelWorld]).
+  bool _unwiredVoxelNoted = false;
+
+  /// gh-1441 AC3: when a tree carries a `voxel` node while this engine has
+  /// NO voxel world, the renderer draws its "Voxel world" placeholder —
+  /// indistinguishable from a broken widget unless the host says why. A
+  /// minimal custom backend ships no world (`JsWidgetEngine.voxelWorld`
+  /// returns null there); shipped backends always have one, so on them
+  /// this never fires. Logs ONCE per engine instance.
+  void noteUnwiredVoxelWorld(Map<String, dynamic> tree) {
+    if (_unwiredVoxelNoted || voxelWorld != null) return;
+    if (!_containsVoxelNode(tree, depth: 0)) return;
+    _unwiredVoxelNoted = true;
+    AppLog.i(
+      'apps',
+      'WARNING: ${app.id}/$entryFile: voxel node in the rendered tree but '
+          'no voxelWorld is wired — the bridge world is missing on this '
+          'engine (minimal backend?); the "Voxel world" placeholder is host '
+          'wiring, not a broken widget',
+    );
+  }
+
+  /// Whether [node] — a JSON widget tree — contains a `voxel` node
+  /// anywhere (recursing through child maps/lists, depth-capped).
+  static bool _containsVoxelNode(Object? node, {required int depth}) {
+    if (depth > 64) return false;
+    if (node is Map) {
+      if (node['type'] == 'voxel') return true;
+      for (final value in node.values) {
+        if (_containsVoxelNode(value, depth: depth + 1)) return true;
+      }
+    } else if (node is List) {
+      for (final value in node) {
+        if (_containsVoxelNode(value, depth: depth + 1)) return true;
+      }
+    }
+    return false;
+  }
+
   /// Starts (or restarts) the JS engine with the current [entryFile].
   Future<void> start() => _guardLifecycle(_start);
 

@@ -835,8 +835,7 @@ class _JsAppViewState extends State<JsAppView> {
             theme.colorScheme.primary,
             brightness: theme.brightness,
           ),
-          mapTileProvider: widget.mapTileProvider,
-          mediaHost: widget.mediaHost ?? const FaMediaHost(),
+          mapTileProvider: widget.mapTileProvider,          mediaHost: widget.mediaHost ?? const FaMediaHost(),
           // Embedded web content: the SAME host the engine's JsRuntimeConfig
           // got (see JsAppEngine.start), so a `webView` node renders
           // identically wherever the tree is drawn.
@@ -845,6 +844,12 @@ class _JsAppViewState extends State<JsAppView> {
           // JsRuntimeConfig (see JsAppEngine.start); taps raycast into
           // `jsr.scene3d.onTap` handlers in the app.
           js3dHost: createFaJs3dHost(widget.env),
+          // Voxel worlds: the bridge-owned world the engine's backend
+          // created at start — the SAME world every `voxel.*` hostCall
+          // lands in (see JsAppEngine.voxelWorld). Without it the renderer
+          // swaps every `voxel` node for the "Voxel world" placeholder
+          // while the engine side reports success (gh-1441).
+          voxelWorld: engine.voxelWorld,
           onScene3dTap: (sceneId, payload) =>
               engine.dispatchHostEvent('scene3d.tap:$sceneId', payload),
           onEvent: (actionId, payload) {
