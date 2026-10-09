@@ -2873,6 +2873,11 @@ jobs:
             echo "::error::pubspec.yaml sets publish_to: none — a tagged release cannot reach pub.dev. Remove the flag from pubspec.yaml, or stop tagging v* releases (see #554)."
             exit 1
           fi
+          # gh-1452: pub.dev server-rejects the upload when CHANGELOG.md is
+          # at/over its 262144-byte content cap (v1.0.538 died mid-upload,
+          # after the tag + GitHub release). Fast-fail HERE, before staging
+          # and publish, not at the server.
+          bash scripts/check_changelog_size.sh CHANGELOG.md
           echo "publishable=true" >> "$GITHUB_OUTPUT"
 
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1

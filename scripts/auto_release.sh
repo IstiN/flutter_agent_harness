@@ -124,6 +124,14 @@ if not re.search(r"^## Unreleased[ \t]*$", text, re.M):
 open(path, "w", encoding="utf-8").write(text)
 PY
 
+  # gh-1452: pub.dev server-rejects an upload whose CHANGELOG.md exceeds its
+  # hard 262144-byte content cap — v1.0.538 died at `dart publish` AFTER the
+  # tag + GitHub release existed. Measure the POST-entry changelog and abort
+  # BEFORE the bump commit is authored (its push fires tag_release + the
+  # publish job): the approach of the cap must surface pre-tag, not
+  # mid-upload. Fix when red: archive the tail to CHANGELOG_ARCHIVE.md.
+  bash scripts/check_changelog_size.sh CHANGELOG.md
+
   sed -i "s/^version: .*/version: $next/" pubspec.yaml
   # One version everywhere (gh-785): the app pubspec (Android versionName,
   # CFBundleShortVersionString fallback, App Store train) rides the same
