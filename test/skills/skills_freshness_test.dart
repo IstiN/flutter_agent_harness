@@ -237,13 +237,12 @@ void main() {
           ]).call,
         );
         final run = cli.run();
-        await waitForIt(() => cli.systemPrompt.contains('<name>known</name>'));
+        await waitForIt(
+          () => cli.systemPrompt.contains('<name>known</name>'),
+          reason: 'boot index; out=${io.out}',
+        );
 
-        // Mid-session drop: `latecomer` lands after boot — invisible to the
-        // boot snapshot but cold-resolvable.
-        await seedSkill('latecomer');
-
-        // nowhere (before any rescan): exact wording, no new noise (AC4).
+        // nowhere: exact wording, no new noise (AC4).
         io.sendLine('/skill:does-not-exist');
         await waitForIt(
           () => io.out.toString().contains('unknown skill: does-not-exist'),
@@ -254,7 +253,10 @@ void main() {
           isNot(contains('discovered since startup')),
         );
 
-        // on-disk-unindexed: cold-resolve refreshes the index (AC3).
+        // Mid-session drop AFTER that miss's rescan: `latecomer` is on
+        // disk but unindexed — the cold-resolve path (AC3).
+        final outAfterMiss = io.out.toString();
+        await seedSkill('latecomer');
         io.sendLine('/skill:latecomer');
         await waitForIt(
           () => io.out.toString().contains(
