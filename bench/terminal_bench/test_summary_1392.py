@@ -199,11 +199,15 @@ class ScoreHonestyTest(unittest.TestCase):
         )
 
     def test_stalled_kill_is_justified(self):
+        # gh-1430: the shipped stall gap is 360s, so a kill whose session
+        # gap reached it (400s) is the watch's own justified verdict —
+        # never a contradiction. (fa's own watchdog errors a dead stream
+        # at 300s, so post-fix kills land at 360s+ gaps or with an audit.)
         _results(
             self.runs / "shard-0",
             [_row("t1", "t1__trial", mode="agent_timeout")],
         )
-        _session(self.runs, "t1", "t1__trial", [60, 300, 60])
+        _session(self.runs, "t1", "t1__trial", [60, 400, 60])
         lines, problems = summary.render(self.runs)
         self.assertFalse(
             any("contradiction" in line and "1" in line for line in lines),

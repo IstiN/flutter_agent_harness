@@ -29,9 +29,13 @@ from pathlib import Path
 FA_CONN_PREFIX = "FA_CONN "
 
 # Issue #1392: the stall-gap threshold (ProgressWatch freeze boundary,
-# StallSentinel trigger, and the AC8 score-honesty yardstick). Class-B
-# gaps start ~240s; round-2 healthy max was ~200s.
-DEFAULT_STALL_GAP_SEC = 240.0
+# StallSentinel trigger, and the AC8 score-honesty yardstick). gh-1430
+# raised the shipped gap to 360s — fa's stream-idle watchdog (300s,
+# lib/src/providers/provider_common.dart) + a 60s margin; this yardstick
+# must mirror bench/fa_agent_timeout.py's _STALL_GAP_DEFAULT (the
+# test_bench_metrics coupling REG fails if the two drift). Round-2
+# healthy max gap was ~200s; the pre-gh-1430 default was 240s.
+DEFAULT_STALL_GAP_SEC = 360.0
 
 # Seconds a first byte may take before the live line flags it (the card's
 # "⚠ slow (>120s)" threshold; class-B gaps start ~240s, healthy ~200s).

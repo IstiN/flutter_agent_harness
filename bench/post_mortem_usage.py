@@ -186,15 +186,19 @@ def _export_guard(trial_dir, row):
     return None
 
 
-def post_mortem(runs_dir, stall_gap_sec=240.0):
+def post_mortem(runs_dir, stall_gap_sec=None):
     """Fold session usage into every results.json under <runs_dir>.
 
     Returns the report dict: patched rows, warnings, export gaps, and the
     AC8 score-honesty violations (agent_timeout verdicts on trials whose
     sessions show only steady sub-threshold gaps — the round-2
-    contradiction that can never again pass silently).
+    contradiction that can never again pass silently). The default
+    threshold mirrors bench_metrics.DEFAULT_STALL_GAP_SEC (gh-1430: the
+    shipped 360s watch gap).
     """
     runs_dir = Path(runs_dir)
+    if stall_gap_sec is None:
+        stall_gap_sec = bench_metrics.DEFAULT_STALL_GAP_SEC
     report = {"patched": [], "warnings": [], "export_gaps": [],
               "honesty_violations": []}
     for results_path in sorted(runs_dir.glob("*/*/results.json")) + sorted(
@@ -238,6 +242,7 @@ def post_mortem(runs_dir, stall_gap_sec=240.0):
                                 "trial": trial_name,
                                 "failure_mode": mode,
                                 "max_gap_sec": max_gap,
+                                "stall_gap_sec": stall_gap_sec,
                             }
                         )
                 continue
@@ -343,7 +348,8 @@ def main(argv):
         print(
             f"[post-mortem] SCORE HONESTY VIOLATION: {violation['trial']} "
             f"failed {violation['failure_mode']} but its session shows only "
-            f"steady gaps (max {violation['max_gap_sec']}s < 240s) — "
+            f"steady gaps (max {violation['max_gap_sec']}s < "
+            f"{violation.get('stall_gap_sec', bench_metrics.DEFAULT_STALL_GAP_SEC)}s) — "
             "the run killed a productive agent",
             file=sys.stderr,
         )
