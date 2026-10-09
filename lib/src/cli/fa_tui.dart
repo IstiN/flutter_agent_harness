@@ -35,6 +35,7 @@ import 'tui_chrome.dart';
 import 'termios_guard.dart' show SttyRunner;
 import 'tui_repl.dart' show MenuItem, QueuedMessage, TuiProgramHooks, stripAnsi;
 import 'system_notice_render.dart';
+import '../viewport/follow_mode.dart';
 import 'tui_text_width.dart'
     show tuiFitWidth, tuiGraphemeWidth, tuiPadRight, tuiTextWidth;
 import '../messaging/scheduled_messages.dart' show ScheduledMessageQueue;
@@ -267,7 +268,8 @@ final class FaTuiModel extends Model {
     this.outputLines = const [],
     TuiLineEditor? editor,
     this.scrollOffset = 0,
-    this.followTail = true,
+    this.follow = const FollowMode.live(),
+    this.heldAnchorLine = -1,
     this.menuOpen = false,
     this.menuModelMode = false,
     this.menuSelected = 0,
@@ -377,13 +379,30 @@ final class FaTuiModel extends Model {
   /// new output while [followTail] holds; kept (clamped) otherwise.
   final int scrollOffset;
 
+  /// The follow-mode state (gh-1439): `live` snaps new output to the
+  /// bottom; `held` (user scrolled up) keeps the window anchored while
+  /// arrivals count into [FollowMode.unseen] — the `● N new` counter on
+  /// the rule row. Only USER scrolling changes it (wheel/PgUp detach,
+  /// wheel-to-bottom / PgDn into the near-bottom band re-arm — the shared
+  /// [FollowMode] classifier decides); transient viewport shrinkage
+  /// (picker menu, busy row, queue) never does. Held carries a
+  /// transcript-line anchor ([heldAnchorLine]) so trims and resizes
+  /// re-anchor the same logical position (E1/E2).
+  final FollowMode follow;
+
   /// Auto-follow latch: new output snaps the viewport to the bottom. Only
   /// USER scrolling changes it (wheel/arrows detach, scrolling back to the
   /// exact bottom re-attaches) — transient viewport shrinkage (picker menu,
   /// busy row, queue) must NOT detach it, which the old per-event
   /// `offset >= bottom` check got wrong: opening a picker broke follow
   /// until the user scrolled to the bottom by hand.
-  final bool followTail;
+  bool get followTail => follow.isLive;
+
+  /// While held: the transcript LINE anchored at the window's top edge
+  /// (gh-1439 E1/E2) — trims shift it by the cut, resizes recompute the
+  /// wrapped row through the new wrap, so the user keeps reading the same
+  /// logical position. -1 when live (no anchor).
+  final int heldAnchorLine;
   final bool menuOpen;
   final bool menuModelMode;
   final int menuSelected;
@@ -712,7 +731,8 @@ final class FaTuiModel extends Model {
     int? cursor,
     TuiLineEditor? editor,
     int? scrollOffset,
-    bool? followTail,
+    FollowMode? follow,
+    int? heldAnchorLine,
     bool? menuOpen,
     bool? menuModelMode,
     int? menuSelected,
@@ -772,7 +792,8 @@ final class FaTuiModel extends Model {
                   ),
                 )),
       scrollOffset: scrollOffset ?? this.scrollOffset,
-      followTail: followTail ?? this.followTail,
+      follow: follow ?? this.follow,
+      heldAnchorLine: heldAnchorLine ?? this.heldAnchorLine,
       menuOpen: menuOpen ?? this.menuOpen,
       menuModelMode: menuModelMode ?? this.menuModelMode,
       menuSelected: menuSelected ?? this.menuSelected,
@@ -954,14 +975,25 @@ final class FaTuiModel extends Model {
       bootAnchorLine: _bootAnchorShiftedBy(cut),
       stickyIndex: _stickyShiftedBy(cut),
     );
-    final nextWrapped = next._wrappedLines();
-    // Auto-follow the stream while the latch holds; preserve the scroll
-    // position (clamped) when the user scrolled up. Following re-anchors
-    // at the live edge (issue #1348) — the stream owns the window.
-    final nextOffset = followTail
-        ? next._followAnchor(nextWrapped)
-        : next._clampScroll(scrollOffset, nextWrapped);
-    return (next.copyWith(scrollOffset: nextOffset), null);
+    // Held (gh-1439): the append is COUNTED, never shown by force — the
+    // window re-anchors to the same transcript line (E1: a head trim
+    // shifts the anchor by the cut; the wrapped-row offset is recomputed
+    // from the anchor, not preserved raw). Live: today's behavior — the
+    // stream owns the window (issue #1348).
+    if (followTail) {
+      final nextWrapped = next._wrappedLines();
+      return (
+        next.copyWith(scrollOffset: next._followAnchor(nextWrapped)),
+        null,
+      );
+    }
+    final trimmedRows = _heldAnchorShiftedByCut(cut);
+    final reanchored = next.copyWith(
+      heldAnchorLine: trimmedRows.$1,
+      scrollOffset: trimmedRows.$2,
+      follow: follow.appended(1),
+    );
+    return (reanchored, null);
   }
 
   /// Last-resort busy bracket: a row with zero activity for this long is a
@@ -994,7 +1026,8 @@ final class FaTuiModel extends Model {
     );
     final next = cleared.copyWith(
       scrollOffset: cleared._followAnchor(cleared._wrappedLines()),
-      followTail: true,
+      follow: const FollowMode.live(),
+      heldAnchorLine: -1,
     );
     return (next, null);
   }
@@ -1238,56 +1271,6 @@ final class FaTuiModel extends Model {
     return _schedulePickerReveal(revealMs);
   }
 
-  (Model, Cmd?) _handleWindowSize(WindowSizeMsg msg) {
-    // Live size tracking (gh-1433 E8): the controller's width seam
-    // updates with every resize the program processes.
-    onResized?.call(msg.width, msg.height);
-    // Clamp the scroll offset to the new visible area so resizing cannot
-    // leave it out of bounds (which showed >100% progress), then clear
-    // the screen so no old frame artifacts survive the relayout. Wrapped
-    // rows are recomputed at the NEW width.
-    final resized = copyWith(termWidth: msg.width, termHeight: msg.height);
-    final wrapped = resized._wrappedLines(msg.width);
-    return (
-      resized.copyWith(
-        scrollOffset: resized._clampScroll(scrollOffset, wrapped),
-      ),
-      () async => ClearScreenMsg(),
-    );
-  }
-
-  (Model, Cmd?) _handleMouseWheel(MouseWheelMsg msg) {
-    // Capture off: the hint says wheel is disabled — honor it even for
-    // bytes a not-yet-disarmed terminal still sends (issue #278, AC4).
-    if (!mouseCapture) return (this, null);
-    // Hub overlay: the wheel moves the fleet-tree selection.
-    if (hub != null) {
-      final delta = switch (msg.mouse.button) {
-        MouseButton.wheelUp => -1,
-        MouseButton.wheelDown => 1,
-        _ => 0,
-      };
-      if (delta != 0) {
-        final (next, _) = hub!.handleKey(
-          delta < 0 ? 'up' : 'down',
-          viewport: _viewportHeight - 3,
-        );
-        return (copyWith(hub: next), null);
-      }
-      return (this, null);
-    }
-    // Mouse wheel scrolls the chat history, like Copilot's transcript pane.
-    final delta = switch (msg.mouse.button) {
-      MouseButton.wheelUp => -3,
-      MouseButton.wheelDown => 3,
-      _ => 0,
-    };
-    if (delta != 0) {
-      return (_scrolledTo(scrollOffset + delta), null);
-    }
-    return (this, null);
-  }
-
   (Model, Cmd?) _handleMultiCharRunes(KeyPressMsg msg) {
     Model current = this;
     Cmd? lastCmd;
@@ -1327,6 +1310,7 @@ final class FaTuiModel extends Model {
 
     // Normal input editing.
     return _handleControlKey(msg) ??
+        _handleJumpLiveKey(msg) ??
         _handleScrollKey(msg) ??
         _handleCursorNavKey(msg) ??
         _handleEditKey(msg);
@@ -1512,16 +1496,32 @@ final class FaTuiModel extends Model {
   }
 
   /// Normal-mode page scroll keys (pgup/pgdown); null when the key belongs
-  /// to another cluster.
+  /// to another cluster. gh-1439: PgUp parks beyond the near-bottom band
+  /// (disengages); PgDn re-engages when it lands inside the band (past
+  /// the newest content).
   (Model, Cmd?)? _handlePageScrollKey(KeyMsg msg) {
     switch (msg.key) {
       case 'pgup':
-        return (_scrolledTo(scrollOffset - _viewportHeight), null);
+        return (
+          _scrolledTo(scrollOffset - _viewportHeight, pageGesture: true),
+          null,
+        );
       case 'pgdown':
-        return (_scrolledTo(scrollOffset + _viewportHeight), null);
+        return (
+          _scrolledTo(scrollOffset + _viewportHeight, pageGesture: true),
+          null,
+        );
       default:
         return null;
     }
+  }
+
+  /// gh-1439 re-engage key: End jumps to live when the composer is empty
+  /// (one action, count flushed). With composer text End stays the caret
+  /// key — the cluster below owns it.
+  (Model, Cmd?)? _handleJumpLiveKey(KeyMsg msg) {
+    if (msg.key != 'end' || inputText.isNotEmpty) return null;
+    return (_jumpToLive(), null);
   }
 
   /// Normal-mode cursor motion keys; null when the key belongs to another
@@ -1855,7 +1855,8 @@ final class FaTuiModel extends Model {
       // above the composer, prior history directly above it.
       cleared.copyWith(
         scrollOffset: cleared._followAnchor(cleared._wrappedLines()),
-        followTail: true,
+        follow: const FollowMode.live(),
+        heldAnchorLine: -1,
       ),
       _submitCmd(text, images),
     );
@@ -1982,7 +1983,8 @@ final class FaTuiModel extends Model {
     return (
       cleared.copyWith(
         scrollOffset: cleared._followAnchor(cleared._wrappedLines()),
-        followTail: true,
+        follow: const FollowMode.live(),
+        heldAnchorLine: -1,
       ),
       () async {
         await callbacks.onSteer?.call(messages);
@@ -2069,6 +2071,9 @@ final class FaTuiModel extends Model {
         kind: TuiRegionKind.scrollback,
       ),
     );
+    // The held-mode jump chip (gh-1439) — registered AFTER the scrollback
+    // rect so the chip wins the overlap.
+    _registerJumpLiveRegion(stickyRows, historyRows);
 
     // Menu above input.
     var row = stickyRows + historyRows + 1;

@@ -190,12 +190,24 @@ extension _TuiRowRenderers on FaTuiModel {
           ? 100
           : ((offset / bottom) * 100).round().clamp(0, 100);
       final progressText = ' $scrollPercent% ';
-      final progressWidth = progressText.length;
+      // gh-1439: while held with counted arrivals the rule row GROWS the
+      // live `● N new` counter plus the one-action re-engage hint (the
+      // row itself is a click target — the on-screen jump chip). The
+      // position rule stays: the counter extends it, never replaces it.
+      // One stripped-width count covers both — the emitted runs carry SGR.
+      final counterText = follow.unseen > 0
+          ? '· ● ${follow.unseen} new · End = live '
+          : '';
+      // gh-1439 re-review: one width measure for the combined run — the
+      // emission below is ONE styled string, so its width is measured as
+      // one string; mixing tuiTextWidth with .length silently relied on
+      // every counter char being width-1.
+      final progressWidth = tuiTextWidth('$progressText$counterText');
       final leftWidth = (termWidth - progressWidth) ~/ 2;
       final rightWidth = termWidth - progressWidth - leftWidth;
       b.writeln(
         _dim('─' * (leftWidth < 0 ? 0 : leftWidth)) +
-            _accent2Plain(progressText) +
+            _accent2Plain('$progressText$counterText') +
             _dim('─' * (rightWidth < 0 ? 0 : rightWidth)),
       );
     } else {
