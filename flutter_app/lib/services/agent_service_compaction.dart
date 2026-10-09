@@ -131,7 +131,23 @@ class _AutoCompactorFlutterHooks implements AutoCompactorHooks {
   void onAttemptStart(String label, int attempt, Duration budget) {}
 
   @override
-  void onPass(AutoCompactorPass pass) {}
+  void onPass(AutoCompactorPass pass) {
+    // gh-1425 IT-2: a local-trim pass means BOTH summarizer roles failed —
+    // the valve only runs as the last resort — even though the mechanical
+    // rescue bounded this pass (the valve's clamp keeps at least the newest
+    // message, so a degenerate overhead no longer leaves it "nothing
+    // droppable"). The user must still learn their Quick-model chain is
+    // broken: record it like a ladder exhaustion so `_maybeAutoCompact`
+    // surfaces the fix-location notice after the rebuild.
+    if (pass.ok && pass.fallback == 'local-trim') {
+      failures.add(
+        StateError(
+          'both summarizer roles failed; the local-trim valve bounded the '
+          'context for this pass',
+        ),
+      );
+    }
+  }
 
   @override
   void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {}
