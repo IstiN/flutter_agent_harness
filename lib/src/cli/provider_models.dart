@@ -1296,8 +1296,7 @@ extension on AgentCli {
     );
     final caps = <String>[
       'thinking ${current.thinkingLevel ?? 'off'}',
-      if (current.compat?.omitMaxOutputTokens ?? false)
-        'omit max-output field',
+      if (current.compat?.omitMaxOutputTokens ?? false) 'omit max-output field',
     ];
     io.writeln('capabilities: ${caps.join(' · ')}');
     final pinned = modelCapabilityOverrides?.lookup(
@@ -1308,9 +1307,9 @@ extension on AgentCli {
       _style.dim(
         pinned == null
             ? 'caps source: catalog defaults '
-                '(pin with /settings → Model capabilities)'
+                  '(pin with /settings → Model capabilities)'
             : 'caps source: models.overrides pin '
-                '(${_capabilitySummaryFor(pinned)})',
+                  '(${_capabilitySummaryFor(pinned)})',
       ),
     );
     io.writeln(
