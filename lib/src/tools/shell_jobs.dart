@@ -31,6 +31,7 @@ import 'package:meta/meta.dart';
 import '../env/execution_env.dart';
 import '../env/job_log_ceiling.dart';
 import '../env/job_log_redaction.dart';
+import 'job_id_resolution.dart';
 // The boot-sweep process-table probe is VM-only infrastructure (`ps` via
 // dart:io); web builds get a stub that always reports "no process table".
 import '../env/process_probe_stub.dart'
@@ -74,6 +75,13 @@ final class ShellJobEntry {
 
   /// When the job registered (drives the terminal card's elapsed).
   final DateTime startedAt;
+
+  /// When the registry observed the job's exit (gh-1438) — null while
+  /// running. Drives the status line's "exited Nm ago" context and the
+  /// retained-entry GC's LRU order. Stamped by the registry's settle
+  /// listener; first observation wins.
+  DateTime? _settledAt;
+  DateTime? get settledAt => _settledAt;
 
   /// The working directory the job was started from (the dim detail's cwd
   /// tail, issue #429 AC2).
@@ -150,8 +158,21 @@ final class ShellJobRegistry {
     this.onJobLogWarning,
     this.jobLogDir,
     this.jobLogRedactor,
+    this.maxRetainedExitedJobs = defaultMaxRetainedExitedJobs,
     DateTime? bootTime,
   }) : _bootTime = bootTime ?? DateTime.now();
+
+  /// How many exited jobs the registry retains (gh-1438 second tier).
+  /// Production monitor sessions ran thousands of short-lived jobs and the
+  /// grow-only list kept every entry — with its log text — for the process
+  /// lifetime. Beyond the cap the oldest-settled entries are pruned (LRU by
+  /// settle time); their log FILES stay on disk and exact-id lookups fall
+  /// back to them ([prunedLogPath]/[tailFromLog], AC4). Running jobs are
+  /// never pruned.
+  static const defaultMaxRetainedExitedJobs = 100;
+
+  /// The exited-entry retention cap; see [defaultMaxRetainedExitedJobs].
+  final int maxRetainedExitedJobs;
 
   /// The environment jobs run in.
   final ExecutionEnv env;
@@ -198,6 +219,15 @@ final class ShellJobRegistry {
   var _staleJobLogWarned = false;
   final _jobs = <ShellJobEntry>[];
   var _nextId = 1;
+
+  /// GC tombstones: pruned exited ids → their on-disk log path (gh-1438
+  /// AC4). Ids and paths only — cheap enough to keep for the session.
+  final _prunedLogPaths = <String, String>{};
+
+  /// The on-disk log of a GC'd (pruned) exited job, or null when [id] was
+  /// never pruned. The log may itself be gone (deleted by retention sweeps)
+  /// — callers treat a failed read as today's clean unknown-id error (E2).
+  String? prunedLogPath(String id) => _prunedLogPaths[id];
 
   /// Whether the environment can run detached jobs at all.
   bool get isSupported {
@@ -248,7 +278,8 @@ final class ShellJobRegistry {
     // The hoisted local is what makes the null-check promote (public
     // fields never do).
     final sessionRedactor = jobLogRedactor;
-    final redactor = options?.jobLogRedactor ??
+    final redactor =
+        options?.jobLogRedactor ??
         (sessionRedactor == null ? null : JobLogRedactor(sessionRedactor));
     final mergedOptions = ShellExecOptions(
       cwd: options?.cwd,
@@ -285,11 +316,51 @@ final class ShellJobRegistry {
         // the flag left settled jobs counted as running forever on the
         // board (issue #562).
         await Future<void>.delayed(Duration.zero);
+        entry._settledAt ??= DateTime.now();
+        _gcExitedJobs();
         onSettled?.call(entry);
       }),
     );
     onStart?.call(entry);
     return entry;
+  }
+
+  /// Prunes exited entries beyond [maxRetainedExitedJobs], oldest settle
+  /// first, tombstoning each prune's log path (gh-1438 second tier). Runs
+  /// on every settle; running jobs are never pruned.
+  void _gcExitedJobs() {
+    final exited = <ShellJobEntry>[
+      for (final entry in _jobs)
+        if (!entry.isRunning) entry,
+    ];
+    final overflow = exited.length - maxRetainedExitedJobs;
+    if (overflow <= 0) return;
+    final epoch = DateTime.fromMillisecondsSinceEpoch(0);
+    // Oldest settle first; equal stamps fall back to start order
+    // (List.sort is not stable, and rapid test loops do collide).
+    final order = List<int>.generate(exited.length, (i) => i);
+    order.sort((a, b) {
+      final bySettled = (exited[a].settledAt ?? epoch).compareTo(
+        exited[b].settledAt ?? epoch,
+      );
+      return bySettled != 0 ? bySettled : a.compareTo(b);
+    });
+    final pruneIds = {for (var i = 0; i < overflow; i++) exited[order[i]].id};
+    _jobs.removeWhere((entry) => pruneIds.contains(entry.id));
+    for (final entry in exited) {
+      if (pruneIds.contains(entry.id)) {
+        _prunedLogPaths[entry.id] = entry.logPath;
+      }
+    }
+  }
+
+  /// Reads the last [maxLines] lines of any job log path on disk — the
+  /// post-GC exact-id fallback (gh-1438 AC4). Returns null when the file
+  /// cannot be read (gone, deleted by retention sweeps).
+  Future<String?> tailFromLog(String path, {int maxLines = 50}) async {
+    final content = await env.readTextFile(path);
+    if (content.isErr) return null;
+    return _tailOfContent(content.valueOrNull!, maxLines);
   }
 
   /// Reads the last [maxLines] lines of the job's log (the whole log when
@@ -301,11 +372,31 @@ final class ShellJobRegistry {
     }
     final content = await env.readTextFile(entry.logPath);
     if (content.isErr) return '';
-    final lines = content.valueOrNull!.split('\n');
-    // A trailing newline is the line terminator, not an extra empty line.
-    if (lines.length > 1 && lines.last.isEmpty) lines.removeLast();
-    final start = lines.length > maxLines ? lines.length - maxLines : 0;
-    return lines.sublist(start).join('\n').trimRight();
+    return _tailOfContent(content.valueOrNull!, maxLines);
+  }
+
+  /// Classifies [id] against the registry (gh-1438): an exact hit, a
+  /// unique `sh-<n>-` near-miss resolved to its retained job (read-only —
+  /// destructive actions never consume this), an ambiguous shared-`n`
+  /// match, or unknown with the closest retained ids. Resolution never
+  /// reads the disk — the post-GC log fallback is the caller's step.
+  ShellJobLookup lookup(String id) {
+    final exact = job(id);
+    if (exact != null) return ShellJobHit(id, exact);
+    final match = matchShellJobId(id, [for (final entry in _jobs) entry.id]);
+    return switch (match) {
+      ShellJobIdUnique(id: final resolved) => ShellJobNearMiss(
+        id,
+        job(resolved)!,
+      ),
+      ShellJobIdAmbiguous(ids: final resolved) => ShellJobPrefixAmbiguous(id, [
+        for (final matched in resolved) job(matched)!,
+      ]),
+      ShellJobIdNoMatch(closest: final closest) => ShellJobUnknownId(
+        id,
+        closest,
+      ),
+    };
   }
 
   /// One-per-session scan for freshly-written old-format job logs (see
@@ -325,6 +416,58 @@ final class ShellJobRegistry {
       }
     }
   }
+}
+
+/// The outcome of classifying a `bash_job` id against a
+/// [ShellJobRegistry] (gh-1438). The tool layer renders these; the
+/// registry stays message-free.
+sealed class ShellJobLookup {
+  ShellJobLookup(this.id);
+
+  /// The id exactly as requested (the corrected id rides the resolution).
+  final String id;
+}
+
+/// Exact match among retained jobs.
+final class ShellJobHit extends ShellJobLookup {
+  ShellJobHit(super.id, this.entry);
+
+  final ShellJobEntry entry;
+}
+
+/// A stale near-miss: exactly one retained job shares the requested
+/// `sh-<n>-` numeric part (AC1). Read-only resolution — `output`/`status`
+/// act on it, `stop` never does (AC5).
+final class ShellJobNearMiss extends ShellJobLookup {
+  ShellJobNearMiss(super.id, this.entry);
+
+  final ShellJobEntry entry;
+}
+
+/// Two or more retained jobs share the `sh-<n>-` numeric part (edge case
+/// E1) — no silent pick; the caller lists the candidates.
+final class ShellJobPrefixAmbiguous extends ShellJobLookup {
+  ShellJobPrefixAmbiguous(super.id, this.entries);
+
+  final List<ShellJobEntry> entries;
+}
+
+/// Unresolvable (AC2). [closestIds] is empty for malformed ids (edge case
+/// E3 — resolution skipped, the caller renders the shortest error) and
+/// otherwise lists up to 3 nearest retained ids.
+final class ShellJobUnknownId extends ShellJobLookup {
+  ShellJobUnknownId(super.id, this.closestIds);
+
+  final List<String> closestIds;
+}
+
+/// Tail-caps [content] to its last [maxLines] lines (a trailing newline is
+/// the line terminator, not an extra empty line).
+String _tailOfContent(String content, int maxLines) {
+  final lines = content.split('\n');
+  if (lines.length > 1 && lines.last.isEmpty) lines.removeLast();
+  final start = lines.length > maxLines ? lines.length - maxLines : 0;
+  return lines.sublist(start).join('\n').trimRight();
 }
 
 /// Boot sweep (issue #517): reap the process groups of previous-run jobs —
