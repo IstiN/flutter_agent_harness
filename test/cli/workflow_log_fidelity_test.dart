@@ -165,6 +165,62 @@ List<AssistantMessageEvent> thinkingOnlyTurn(String thinking, String text) {
   ];
 }
 
+/// A 2+ tool-call message with narration BETWEEN the calls and after the
+/// second one — the AC3 multi-call positional probe: `before` paints
+/// live ahead of the calls, `between` holds behind call 1, `after`
+/// behind call 2. Each narration segment must flush after ITS OWN
+/// call's result row (review PRRT_kwDOTXdlLc6qt-V0).
+List<AssistantMessageEvent> multiNarrationToolTurn() {
+  const before = 'before the first call';
+  const between = 'narration between the calls';
+  const after = 'narration after the second call';
+  const call1 = ToolCall(
+    id: 'mc1',
+    name: 'bash',
+    arguments: {'command': 'echo one'},
+  );
+  const call2 = ToolCall(
+    id: 'mc2',
+    name: 'bash',
+    arguments: {'command': 'echo two'},
+  );
+  AssistantMessage partial(List<ContentBlock> content) => testAssistant(
+    content: content,
+    stopReason: StopReason.toolUse,
+  );
+  final p0 = testAssistant();
+  final p1 = partial([TextContent(text: before)]);
+  final p2 = partial([TextContent(text: before), call1]);
+  final p3 = partial([TextContent(text: before), call1, TextContent(text: between)]);
+  final p4 = partial([
+    TextContent(text: before),
+    call1,
+    TextContent(text: between),
+    call2,
+  ]);
+  final p5 = partial([
+    TextContent(text: before),
+    call1,
+    TextContent(text: between),
+    call2,
+    TextContent(text: after),
+  ]);
+  return [
+    StartEvent(partial: p0),
+    TextStartEvent(contentIndex: 0, partial: p0),
+    TextDeltaEvent(contentIndex: 0, delta: before, partial: p1),
+    ToolCallStartEvent(contentIndex: 1, partial: p1),
+    ToolCallEndEvent(contentIndex: 1, toolCall: call1, partial: p2),
+    TextStartEvent(contentIndex: 2, partial: p2),
+    TextDeltaEvent(contentIndex: 2, delta: between, partial: p3),
+    ToolCallStartEvent(contentIndex: 3, partial: p3),
+    ToolCallEndEvent(contentIndex: 3, toolCall: call2, partial: p4),
+    TextStartEvent(contentIndex: 4, partial: p4),
+    TextDeltaEvent(contentIndex: 4, delta: after, partial: p5),
+    DoneEvent(reason: StopReason.toolUse, message: p5),
+  ];
+}
+
 /// A text-only stream held open until [release]: the AC2 proof that
 /// stdout grows during the stream (the buffered path would print only at
 /// message end).
@@ -423,6 +479,42 @@ void main() {
           reason: 'same-message trailing narration after the RESULT row:\n'
               '$out');
       expect(finalText, greaterThan(toolEnd));
+    });
+
+    test('AC3 multi-call: narration follows ITS OWN result row when one '
+        'message streams 2+ tool calls', () async {
+      final fake = FakeStreamFunction([
+        multiNarrationToolTurn(),
+        textTurn('All done — found it.'),
+      ]);
+      final cli = cliFor(fake, io: io);
+      final exit = await cli.runHeadless('check');
+      expect(exit, 0);
+      final out = io.out.toString();
+      // Rows alternate per call: • start(c1) ✓ result(c1) • start(c2) ✓
+      // result(c2). Each narration segment lands between ITS call's
+      // result row and the next tool row — no first-result drift.
+      final before = out.indexOf('before the first call');
+      final start1 = out.indexOf('• bash');
+      final result1 = out.indexOf('✓ bash');
+      final start2 = out.indexOf('• bash', start1 + 1);
+      final result2 = out.indexOf('✓ bash', result1 + 1);
+      final between = out.indexOf('narration between the calls');
+      final after = out.indexOf('narration after the second call');
+      expect(before, greaterThanOrEqualTo(0), reason: out);
+      expect(start1, greaterThan(before), reason: out);
+      expect(result1, greaterThan(start1), reason: out);
+      expect(start2, greaterThan(result1), reason: out);
+      expect(result2, greaterThan(start2), reason: out);
+      expect(between, greaterThan(result1),
+          reason: 'narration streamed between the calls renders after the '
+              'FIRST result row:\n$out');
+      expect(between, lessThan(start2),
+          reason: '…and before the second tool row — positional:\n$out');
+      expect(after, greaterThan(result2),
+          reason: 'narration streamed after the second call renders after '
+              'the SECOND result row, not after the first (the '
+              'single-buffer drift):\n$out');
     });
 
     test('AC3 orphan: post-tool narration survives a result-less turn — '
@@ -962,6 +1054,57 @@ void main() {
       expect(whole.endsWith('…'), isFalse);
       expect(whole, contains('/log/${'a' * 300}.log'));
     });
+
+    test('AC9: the log: pointer survives behind a pathological command '
+        '(the wrap budget is per body, never shared)', () {
+      // Review PRRT_kwDOTXdlLc6qt-Z0: a multi-KB command must not eat
+      // the budget the `log:` pointer needs — the pointer is the thing
+      // a post-hoc reader follows. The label and the detail each get
+      // their own [logFaceCardMaxBodyChars] budget, so the E7 cap hits
+      // the command, never the detail.
+      final huge = 'echo ${'y' * 5000}';
+      final lines = taskBlockLines(
+        settleCard(
+          command: huge,
+          detail: 'sh-1234 · work · exit 0 · log: $longLogPath',
+        ),
+        width: 100,
+        fit: CardTextFit.wrap,
+      );
+      final body = lines.join('\n');
+      expect(body, contains('log: $longLogPath'),
+          reason: 'the pointer survives whole behind the capped command:\n'
+              '$body');
+      expect(body, contains('more chars, see <log>'),
+          reason: 'the command still caps explicitly:\n$body');
+    });
+
+    test('E7: the (+N more chars) count is exact — also when the cap '
+        'lands on a physical line boundary', () {
+      // Review PRRT_kwDOTXdlLc6qt-Z0 (minor): the reported remainder
+      // must not drift by a newline. `emitted` never counts newlines,
+      // so a flip exactly at a line boundary owns the boundary newline.
+      // Mid-line flips are exact by construction (the next line's +1
+      // carries the preceding newline).
+      final lines = taskBlockLines(
+        settleCard(
+          command: '${'a' * logFaceCardMaxBodyChars}\nshort tail',
+          detail: 'sh-1 · exit 0',
+        ),
+        width: 100,
+        fit: CardTextFit.wrap,
+      );
+      final body = lines.join('\n');
+      final pointer =
+          RegExp(r'\(\+ (\d+) more chars, see <log>\)').firstMatch(body);
+      expect(pointer, isNotNull, reason: body);
+      expect(
+        int.parse(pointer!.group(1)!),
+        '\nshort tail'.length,
+        reason: 'the unshown remainder is the boundary newline + the '
+            'second line:\n$body',
+      );
+    });
   });
 
   group('UT: E8 — the TUI width seam tracks the live window', () {
@@ -1003,6 +1146,41 @@ void main() {
       expect(controller.termWidth, 200, reason: 'the widen applies live');
       controller.model.update(WindowSizeMsg(90, 40));
       expect(controller.termWidth, 90, reason: 'and the shrink too');
+    });
+
+    test('E8 REG: the resize hook survives the copyWith swap — the model '
+        'update() RETURNS keeps tracking resizes (the production path)',
+        () {
+      final controller = FaTuiController(
+        callbacks: _tuiCallbacks(),
+        isExited: () => false,
+      );
+      // Production: the program swaps to update()'s return value (the
+      // busy-heartbeat alone re-copies the model on almost every
+      // message) — driving controller.model directly, as the test above
+      // does, always feeds the BOOT instance and discards the copies.
+      // The boot instance fires the hook for the FIRST resize…
+      final (swapped, _) = controller.model.update(WindowSizeMsg(120, 40));
+      expect(controller.termWidth, 120);
+      expect(identical(swapped, controller.model), isFalse,
+          reason: 'update() returns a copy — the instance the program '
+              'swaps to');
+      // …but every later resize arrives on THAT copy: its WindowSizeMsg
+      // must fire the hook too (copyWith carries onResized), or every
+      // post-boot SIGWINCH is silently dropped and the hub cards freeze
+      // at the startup width.
+      final (next, _) = (swapped as FaTuiModel).update(WindowSizeMsg(200, 50));
+      expect(
+        controller.termWidth,
+        200,
+        reason: 'onResized must survive copyWith — the running copy is '
+            'what production feeds',
+      );
+      // The chain keeps surviving copies (heartbeat churn re-copies
+      // constantly mid-run).
+      final (last, _) = (next as FaTuiModel).update(WindowSizeMsg(90, 40));
+      expect(controller.termWidth, 90, reason: 'the shrink applies too');
+      expect(last, isA<FaTuiModel>());
     });
   });
 
