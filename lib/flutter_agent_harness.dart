@@ -292,3 +292,5 @@ export 'src/wire/wire_adapter.dart';
 export 'src/wire/wire_protocol.dart';
 export 'src/wire/wire_serve.dart';
 export 'src/web_search/web_search.dart';
+// ── viewport ──
+export 'src/viewport/follow_mode.dart';
