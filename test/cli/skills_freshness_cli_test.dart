@@ -38,7 +38,9 @@ final class _CountingEnv implements ExecutionEnv {
   final MemoryExecutionEnv inner;
 
   /// When set, a `listDir` of this path throws instead of returning.
-  final String? throwOnListDir;
+  /// Mutable: tests flip it mid-session to model a root turning unreadable
+  /// AFTER a healthy boot.
+  String? throwOnListDir;
 
   int listDirCalls = 0;
   final skillBodyReads = <String>[];
@@ -97,10 +99,6 @@ final class _CountingEnv implements ExecutionEnv {
     }
     listDirCalls++;
     listDirLog.add(path);
-    if (path == '/work/.fah/skills') {
-      // ignore: avoid_print
-      print('LIST-SKILLS: ' + StackTrace.current.toString().split('\n').skip(1).take(5).join(' | '));
-    }
     return inner.listDir(path);
   }
 
@@ -364,6 +362,10 @@ void main() {
       // The fixed rewrite rides the NEXT scan (here forced by a second
       // mid-session drop — a plain in-place rewrite is fingerprint-
       // invisible by design, see the capability table).
+      await env.writeFile(
+        '/work/.fah/skills/broken/SKILL.md',
+        '---\nname: broken\ndescription: fixed now\n---\nbody\n',
+      );
       await seedProjectSkill('latecomer');
       io.sendLine('again');
       await waitForIt(() => fake.calls >= 2, reason: 'second turn');
@@ -467,18 +469,18 @@ void main() {
         '/work/.fah/skills/alpha/SKILL.md',
         '---\nname: alpha\ndescription: alpha skill\n---\nbody\n',
       );
+      final counting = _CountingEnv(throwingEnv);
       final fake = FakeStreamFunction([textTurn('ok'), textTurn('ok')]);
-      final cli = cliFor(
-        fake.call,
-        envOverride: _CountingEnv(
-          throwingEnv,
-          throwOnListDir: '/work/.fah/skills',
-        ),
-      );
+      final cli = cliFor(fake.call, envOverride: counting);
       final run = cli.run();
-      // Boot failure of the check path is data, not a crash: the session
-      // boots, and the last good (empty) index stands.
-      await waitForIt(() => cli.systemPrompt.isNotEmpty, reason: 'boot');
+      await waitForIt(
+        () => cli.systemPrompt.contains('<name>alpha</name>'),
+        reason: 'boot index',
+      );
+      // Mid-session the root turns unreadable (permissions change, mount
+      // drop): the next composition's check must keep the last good
+      // snapshot, warn once, and never block the turn (I2).
+      counting.throwOnListDir = '/work/.fah/skills';
       io.sendLine('hello');
       await waitForIt(() => fake.calls >= 1, reason: 'turn');
       await waitForIt(
@@ -490,6 +492,9 @@ void main() {
         hasLength(1),
         reason: 'warn once',
       );
+      // The last good snapshot stands: alpha is still indexed.
+      expect(cli.systemPrompt, contains('<name>alpha</name>'));
+      // And the turn was never blocked (its reply went out above).
       io.sendLine('/exit');
       await run;
     });
@@ -512,6 +517,7 @@ void main() {
         await waitQuiet(counting.listDirLog);
         counting.listDirCalls = 0;
         counting.skillBodyReads.clear();
+        counting.listDirLog.clear();
 
         // Unchanged turn: the freshness check stats every allowed root
         // exactly once and reads no content (I1, AC5).
@@ -537,35 +543,31 @@ void main() {
         await waitQuiet(counting.listDirLog);
         counting.listDirCalls = 0;
         counting.skillBodyReads.clear();
+        counting.listDirLog.clear();
         io.sendLine('again');
         await waitForIt(
           () => cli.systemPrompt.contains('<name>storm4</name>'),
           reason: 'post-storm index',
         );
         await waitQuiet(counting.listDirLog);
-        // All five picked up by the ONE rescan: the prompt names every
-        // storm skill, and the drop-note channel printed no per-skill
-        // rescan traces. The observable one-rescan proof: the scanned-at
-        // stamp moved exactly once (boot → rescan), and the scan's own
-        // listings are the freshness check's roots + the rescan's reads —
-        // ONE rescan wave of root listings at the next composition (I5):
-        // the turn lists every allowed root at most TWICE (once for the
-        // check's fingerprint, once for the rescan's own post-scan
-        // fingerprint), never once per changed file.
+        // All five picked up by the ONE rescan (I5, E-7): the churn storm
+        // costs exactly THREE root-listing waves — the check's fingerprint,
+        // the rescan's discovery scan (what /skills reload always cost),
+        // and the rescan's own post-scan baseline — never one wave per
+        // changed file. A second rescan would show a fourth wave.
         final turn2SkillRootListings = counting.listDirLog
             .where((e) => e.contains('/skills') || e.contains('/commands'))
             .length;
-        expect(turn2SkillRootListings, lessThanOrEqualTo(12));
+        expect(turn2SkillRootListings, allowedRootCount * 3);
         for (var i = 0; i < 5; i++) {
           expect(cli.systemPrompt, contains('<name>storm$i</name>'));
         }
-        // Body reads: only rescan-discovered SKILL.md files — never the
-        // unchanged alpha (byte-identical entries are not re-read; I1 is
-        // about the UNCHANGED path, asserted above).
-        expect(counting.skillBodyReads, everyElement(contains('SKILL.md')));
+        // Body reads happen ONLY inside the rescan's full re-discovery
+        // (I4 — no ad-hoc side door): bounded by the discovered file count,
+        // never per changed root wave.
         expect(
-          counting.skillBodyReads.where((p) => p.contains('alpha')),
-          isEmpty,
+          counting.skillBodyReads,
+          hasLength(6), // alpha + storm0..4 — one rescan, one read per file.
         );
         io.sendLine('/exit');
         await run;
