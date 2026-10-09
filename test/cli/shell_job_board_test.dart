@@ -202,8 +202,9 @@ void main() {
       }
       board.settle('sh-0', state: TaskBlockState.lost);
       expect(board.liveLines().first, contains('1 lost'));
-      // E1: lost>0 with ZERO running still renders — a zombie is never
-      // silently dropped.
+      // A fully-lost turn has NO live cards left: the live row goes away
+      // and the transcript carries the individual lost cards (a zombie is
+      // never dropped — it moves to history, not into silence).
       final board2 = ShellJobBoard();
       for (var i = 0; i < 4; i++) {
         board2.start(_card('sh-$i'));
@@ -211,7 +212,10 @@ void main() {
       for (var i = 0; i < 4; i++) {
         board2.settle('sh-$i', state: TaskBlockState.lost);
       }
-      expect(board2.liveLines().first, contains('4 lost'));
+      expect(board2.liveLines(), isEmpty);
+      final transcript = board2.takeTranscriptLines(width: 100).join('\n');
+      expect(transcript, contains('4 lost'));
+      expect('bash task lost'.allMatches(transcript), hasLength(4));
     });
 
     test('three or fewer jobs stay individual (no summary)', () {
@@ -255,7 +259,9 @@ void main() {
       controller
         ..reset()
         ..profile = ColorProfile.trueColor;
-      addTearDown(controller.reset);
+      // The symbol preset is NOT part of reset(): restore it explicitly so
+      // later groups in this file see the default unicode glyph.
+      addTearDown(() => controller.switchSymbols('unicode'));
       expect(
         shellJobLiveSummaryLine(running: 1, lost: 0),
         startsWith('${controller.sym('status.running')} '),
