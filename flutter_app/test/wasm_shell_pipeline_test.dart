@@ -366,27 +366,26 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     });
 
-    test('a timed-out stage carries its captured partial output (AC5)',
-        () async {
-      final instance = _ScriptedInstance()..gate = Completer<void>();
-      rec.next = instance;
-      final future = shell().exec(
-        'tail x',
-        options: ShellExecOptions(timeout: const Duration(milliseconds: 50)),
-      );
-      // Output lands BEFORE the timeout fires — the kill must keep it.
-      instance.out.add(utf8.encode('scanned-half-of-the-fs'));
-      final r = await future;
-      expect(r.isErr, isTrue);
-      expect(r.errorOrNull?.code, ExecutionErrorCode.timeout);
-      expect(r.errorOrNull?.message, contains('timeout: 0:00:00'));
-      expect(
-        r.errorOrNull?.stdout,
-        contains('scanned-half-of-the-fs'),
-      );
-      instance.gate!.complete();
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    });
+    test(
+      'a timed-out stage carries its captured partial output (AC5)',
+      () async {
+        final instance = _ScriptedInstance()..gate = Completer<void>();
+        rec.next = instance;
+        final future = shell().exec(
+          'tail x',
+          options: ShellExecOptions(timeout: const Duration(milliseconds: 50)),
+        );
+        // Output lands BEFORE the timeout fires — the kill must keep it.
+        instance.out.add(utf8.encode('scanned-half-of-the-fs'));
+        final r = await future;
+        expect(r.isErr, isTrue);
+        expect(r.errorOrNull?.code, ExecutionErrorCode.timeout);
+        expect(r.errorOrNull?.message, contains('timeout: 0:00:00'));
+        expect(r.errorOrNull?.stdout, contains('scanned-half-of-the-fs'));
+        instance.gate!.complete();
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      },
+    );
 
     test('caller callback failure wins the outcome', () async {
       final instance = _ScriptedInstance()..gate = Completer<void>();
@@ -1015,21 +1014,23 @@ void main() {
     void seedPointer(String name) {
       final dir = io.Directory('${sandbox.path}/.fah/skills/$name')
         ..createSync(recursive: true);
-      io.File('${dir.path}/SKILL.md.pointer').writeAsStringSync(
-        'builtin://skills/$name/SKILL.md\n',
-      );
+      io.File(
+        '${dir.path}/SKILL.md.pointer',
+      ).writeAsStringSync('builtin://skills/$name/SKILL.md\n');
     }
 
-    test('cat of a skill path follows the pointer to the builtin body',
-        () async {
-      seedPointer('create-goal');
-      final r = await run('cat .fah/skills/create-goal/SKILL.md');
-      expect(
-        r.stdout,
-        builtinSkillTextAt('builtin://skills/create-goal/SKILL.md'),
-      );
-      expect(r.exitCode, 0);
-    });
+    test(
+      'cat of a skill path follows the pointer to the builtin body',
+      () async {
+        seedPointer('create-goal');
+        final r = await run('cat .fah/skills/create-goal/SKILL.md');
+        expect(
+          r.stdout,
+          builtinSkillTextAt('builtin://skills/create-goal/SKILL.md'),
+        );
+        expect(r.exitCode, 0);
+      },
+    );
 
     test('a real file wins; a refused pointer fails loudly (E1)', () async {
       io.File('${sandbox.path}/real.txt').writeAsStringSync('bytes');
@@ -1042,8 +1043,9 @@ void main() {
 
       final dir = io.Directory('${sandbox.path}/.fah/skills/create-goal')
         ..createSync(recursive: true);
-      io.File('${dir.path}/SKILL.md.pointer')
-          .writeAsStringSync('file:///etc/passwd\n');
+      io.File(
+        '${dir.path}/SKILL.md.pointer',
+      ).writeAsStringSync('file:///etc/passwd\n');
       final r = await run('cat .fah/skills/create-goal/SKILL.md');
       expect(r.exitCode, 1);
       expect(r.stderr, contains('skill pointer refused'));
@@ -1053,64 +1055,66 @@ void main() {
     test('pointer bodies ride pipes into Dart builtins', () async {
       seedPointer('js-apps');
       final body = builtinSkillTextAt('builtin://skills/js-apps/SKILL.md')!;
-      final reversed = body.substring(0, body.length - 1)
+      final reversed = body
+          .substring(0, body.length - 1)
           .split('\n')
           .reversed
           .join('\n');
-      final r = await run(
-        'cat .fah/skills/js-apps/SKILL.md | tac',
-      );
+      final r = await run('cat .fah/skills/js-apps/SKILL.md | tac');
       expect(r.stdout, '$reversed\n');
     });
 
-    test('cat of a binary file never routes bytes through a UTF-8 API',
-        () async {
-      // The file class AC6's own recipe produces (a codeload tarball):
-      // gzip magic plus bytes that are not valid UTF-8. The probe must not
-      // read the operand as text — the coreutils applet is binary-safe and
-      // keeps handling plain cats.
-      final tarball = Uint8List.fromList([
-        0x1f, 0x8b, 0x08, 0x00, 0xff, 0xfe, 0x00, 0x82, //
-        0xed, 0x7f, 0x9c, 0x3a, 0x00, 0xc0, 0x80, 0xff,
-      ]);
-      io.File('${sandbox.path}/repo.tar.gz').writeAsBytesSync(tarball);
-      final instance = _ScriptedInstance();
-      rec.next = instance;
-      final future = shell().exec('cat repo.tar.gz');
-      instance.out.add(tarball);
-      final r = await future;
-      expect(r.isOk, isTrue, reason: r.errorOrNull?.message);
-      expect(r.valueOrNull!.exitCode, 0);
-      // ShellExecResult.stdout is a String: binary bytes surface as the
-      // lossy decoding of exactly the bytes the applet echoed.
-      expect(
-        r.valueOrNull!.stdout,
-        utf8.decode(tarball, allowMalformed: true),
-      );
-      // The operand stayed on the applet path (raw projection preserved).
-      expect(rec.configs.single.args, contains('/repo.tar.gz'));
-    });
+    test(
+      'cat of a binary file never routes bytes through a UTF-8 API',
+      () async {
+        // The file class AC6's own recipe produces (a codeload tarball):
+        // gzip magic plus bytes that are not valid UTF-8. The probe must not
+        // read the operand as text — the coreutils applet is binary-safe and
+        // keeps handling plain cats.
+        final tarball = Uint8List.fromList([
+          0x1f, 0x8b, 0x08, 0x00, 0xff, 0xfe, 0x00, 0x82, //
+          0xed, 0x7f, 0x9c, 0x3a, 0x00, 0xc0, 0x80, 0xff,
+        ]);
+        io.File('${sandbox.path}/repo.tar.gz').writeAsBytesSync(tarball);
+        final instance = _ScriptedInstance();
+        rec.next = instance;
+        final future = shell().exec('cat repo.tar.gz');
+        instance.out.add(tarball);
+        final r = await future;
+        expect(r.isOk, isTrue, reason: r.errorOrNull?.message);
+        expect(r.valueOrNull!.exitCode, 0);
+        // ShellExecResult.stdout is a String: binary bytes surface as the
+        // lossy decoding of exactly the bytes the applet echoed.
+        expect(
+          r.valueOrNull!.stdout,
+          utf8.decode(tarball, allowMalformed: true),
+        );
+        // The operand stayed on the applet path (raw projection preserved).
+        expect(rec.configs.single.args, contains('/repo.tar.gz'));
+      },
+    );
 
-    test('cat of a binary operand beside a pointer seam delivers the bytes',
-        () async {
-      // Mixed operands: the pointer file pulls the invocation onto the Dart
-      // cat builtin, but the BINARY operand must still be delivered — the
-      // seam reads it as bytes, never as text.
-      seedPointer('create-goal');
-      final tarball = Uint8List.fromList([
-        0x42, 0x5a, 0x68, 0x00, 0xff, 0x00, 0x80, 0x7f, //
-      ]);
-      io.File('${sandbox.path}/dl.tar').writeAsBytesSync(tarball);
-      final body = builtinSkillTextAt(
-        'builtin://skills/create-goal/SKILL.md',
-      )!;
-      final r = await run('cat .fah/skills/create-goal/SKILL.md dl.tar');
-      expect(r.exitCode, 0);
-      expect(
-        r.stdout,
-        utf8.decode(utf8.encode(body) + tarball, allowMalformed: true),
-      );
-    });
+    test(
+      'cat of a binary operand beside a pointer seam delivers the bytes',
+      () async {
+        // Mixed operands: the pointer file pulls the invocation onto the Dart
+        // cat builtin, but the BINARY operand must still be delivered — the
+        // seam reads it as bytes, never as text.
+        seedPointer('create-goal');
+        final tarball = Uint8List.fromList([
+          0x42, 0x5a, 0x68, 0x00, 0xff, 0x00, 0x80, 0x7f, //
+        ]);
+        io.File('${sandbox.path}/dl.tar').writeAsBytesSync(tarball);
+        final body = builtinSkillTextAt(
+          'builtin://skills/create-goal/SKILL.md',
+        )!;
+        final r = await run('cat .fah/skills/create-goal/SKILL.md dl.tar');
+        expect(r.exitCode, 0);
+        expect(
+          r.stdout,
+          utf8.decode(utf8.encode(body) + tarball, allowMalformed: true),
+        );
+      },
+    );
   });
-
 }

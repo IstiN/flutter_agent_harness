@@ -16,15 +16,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-SandboxBuiltins _builtins(
-  http.Client client, {
-  List<String>? failures,
-}) => SandboxBuiltins(
-  readTextFile: (_) async => null,
-  writeBinaryFile: (_, __) async {},
-  httpClient: client,
-  logFailure: failures?.add,
-);
+SandboxBuiltins _builtins(http.Client client, {List<String>? failures}) =>
+    SandboxBuiltins(
+      readTextFile: (_) async => null,
+      writeBinaryFile: (_, __) async {},
+      httpClient: client,
+      logFailure: failures?.add,
+    );
 
 void main() {
   group('curl builtin transport failures (AC3)', () {
@@ -32,9 +30,7 @@ void main() {
       final failures = <String>[];
       final builtins = _builtins(
         MockClient(
-          (_) async => throw const SocketException(
-            'Connection reset by peer',
-          ),
+          (_) async => throw const SocketException('Connection reset by peer'),
         ),
         failures: failures,
       );
@@ -102,10 +98,14 @@ void main() {
       final builtins = _builtins(
         _RedirectingClient((request) async {
           if (request.url.host == 'codeload.github.com') {
-            return http.Response('', 302, headers: {
-              'location':
-                  'https://objects.githubusercontent.com/x/tar.gz/main',
-            });
+            return http.Response(
+              '',
+              302,
+              headers: {
+                'location':
+                    'https://objects.githubusercontent.com/x/tar.gz/main',
+              },
+            );
           }
           return http.Response.bytes(tarball, 200);
         }),
@@ -122,24 +122,28 @@ void main() {
       expect(result.stdout, isNotEmpty);
     });
 
-    test('without -L the 302 body is empty (documented curl semantics)',
-        () async {
-      final builtins = _builtins(
-        MockClient(
-          (_) async => http.Response('', 302, headers: {
-            'location': 'https://objects.githubusercontent.com/x',
-          }),
-        ),
-      );
+    test(
+      'without -L the 302 body is empty (documented curl semantics)',
+      () async {
+        final builtins = _builtins(
+          MockClient(
+            (_) async => http.Response(
+              '',
+              302,
+              headers: {'location': 'https://objects.githubusercontent.com/x'},
+            ),
+          ),
+        );
 
-      final result = await builtins.curl([
-        '-s',
-        'https://codeload.github.com/o/r/tar.gz/refs/heads/main',
-      ]);
+        final result = await builtins.curl([
+          '-s',
+          'https://codeload.github.com/o/r/tar.gz/refs/heads/main',
+        ]);
 
-      expect(result.exitCode, 0);
-      expect(result.stdout, isEmpty);
-    });
+        expect(result.exitCode, 0);
+        expect(result.stdout, isEmpty);
+      },
+    );
   });
 
   group('mid-body reset delivers the partial payload (E2)', () {
@@ -183,35 +187,37 @@ void main() {
   });
 
   group('oversized response quota (E7)', () {
-    test('the stream aborts at the cap with both byte numbers, exit 63',
-        () async {
-      // Shrink the cap via a subclass seam? The cap is a const; instead
-      // push a body just over it — 256 MiB is too big for a test, so this
-      // test exercises the abort loop with a fake oversized stream via
-      // curl's cap check on the FIRST chunk over the limit... The cap is
-      // static: verify the abort logic through a manual drain of a stream
-      // that emits more than maxCurlResponseBytes in one chunk.
-      final big = Uint8List(SandboxBuiltins.maxCurlResponseBytes + 1);
-      final controller = StreamController<Uint8List>();
-      final builtins = _builtins(
-        MockClient.streaming((request, bodyStream) async {
-          unawaited(() async {
-            await Future<void>.delayed(Duration.zero);
-            controller.add(big);
-            await controller.close();
-          }());
-          return http.StreamedResponse(controller.stream, 200);
-        }),
-      );
+    test(
+      'the stream aborts at the cap with both byte numbers, exit 63',
+      () async {
+        // Shrink the cap via a subclass seam? The cap is a const; instead
+        // push a body just over it — 256 MiB is too big for a test, so this
+        // test exercises the abort loop with a fake oversized stream via
+        // curl's cap check on the FIRST chunk over the limit... The cap is
+        // static: verify the abort logic through a manual drain of a stream
+        // that emits more than maxCurlResponseBytes in one chunk.
+        final big = Uint8List(SandboxBuiltins.maxCurlResponseBytes + 1);
+        final controller = StreamController<Uint8List>();
+        final builtins = _builtins(
+          MockClient.streaming((request, bodyStream) async {
+            unawaited(() async {
+              await Future<void>.delayed(Duration.zero);
+              controller.add(big);
+              await controller.close();
+            }());
+            return http.StreamedResponse(controller.stream, 200);
+          }),
+        );
 
-      final result = await builtins.curl(['-s', 'https://big.example.com']);
+        final result = await builtins.curl(['-s', 'https://big.example.com']);
 
-      expect(result.exitCode, 63);
-      final stderr = utf8.decode(result.stderr);
-      expect(stderr, contains('${big.length} bytes'));
-      expect(stderr, contains('${SandboxBuiltins.maxCurlResponseBytes}'));
-      expect(utf8.decode(result.stdout), isEmpty);
-    });
+        expect(result.exitCode, 63);
+        final stderr = utf8.decode(result.stderr);
+        expect(stderr, contains('${big.length} bytes'));
+        expect(stderr, contains('${SandboxBuiltins.maxCurlResponseBytes}'));
+        expect(utf8.decode(result.stdout), isEmpty);
+      },
+    );
   });
 
   group('python HTTP bridge failures (AC3)', () {
@@ -230,32 +236,33 @@ void main() {
       logFailure: failures.add,
     );
 
-    test('a failed exchange writes the [bridge] line back and logs it',
-        () async {
-      final bridge = makeBridge(
-        MockClient(
-          (_) async => throw const SocketException(
-            'Connection reset by peer',
+    test(
+      'a failed exchange writes the [bridge] line back and logs it',
+      () async {
+        final bridge = makeBridge(
+          MockClient(
+            (_) async =>
+                throw const SocketException('Connection reset by peer'),
           ),
-        ),
-      );
-      final rid = 'abc123';
-      final marker =
-          '\x01FAHTTP1 $rid https://api.github.com:443 '
-          '${base64.encode(utf8.encode('GET /repos/o/r HTTP/1.1\r\n'
-              'Host: api.github.com\r\n\r\n'))}\n';
-      bridge.filter(utf8.encode(marker));
+        );
+        final rid = 'abc123';
+        final marker =
+            '\x01FAHTTP1 $rid https://api.github.com:443 '
+            '${base64.encode(utf8.encode('GET /repos/o/r HTTP/1.1\r\n'
+            'Host: api.github.com\r\n\r\n'))}\n';
+        bridge.filter(utf8.encode(marker));
 
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+        await Future<void>.delayed(const Duration(milliseconds: 200));
 
-      final file = File('${root.path}/dev/.fahttp/$rid');
-      expect(file.existsSync(), isTrue);
-      final payload = utf8.decode(file.readAsBytesSync());
-      expect(payload, startsWith('![bridge] GET api.github.com:'));
-      expect(payload, contains('connection reset'));
-      expect(payload, contains('(rid $rid)'));
-      expect(failures.single, contains('[bridge] GET api.github.com:'));
-    });
+        final file = File('${root.path}/dev/.fahttp/$rid');
+        expect(file.existsSync(), isTrue);
+        final payload = utf8.decode(file.readAsBytesSync());
+        expect(payload, startsWith('![bridge] GET api.github.com:'));
+        expect(payload, contains('connection reset'));
+        expect(payload, contains('(rid $rid)'));
+        expect(failures.single, contains('[bridge] GET api.github.com:'));
+      },
+    );
   });
 
   group('bridge error classification (pure)', () {
@@ -290,6 +297,36 @@ void main() {
         rid: 'r1',
       );
       expect(line, '[bridge] POST api.github.com: connection reset (rid r1)');
+    });
+
+    test(
+      'IPv6 authorities render the unbracketed host (review suggestion)',
+      () {
+        expect(bridgeHostOfAuthority('http://[::1]:8080/x'), '::1');
+        expect(bridgeHostOfAuthority('[::1]:443'), '::1');
+        expect(
+          bridgeHostOfAuthority('https://[2001:db8::1]:443'),
+          '2001:db8::1',
+        );
+      },
+    );
+
+    test('scheme/host/port authorities keep the exact host', () {
+      expect(
+        bridgeHostOfAuthority('https://api.github.com:443'),
+        'api.github.com',
+      );
+      expect(bridgeHostOfAuthority('api.github.com:443'), 'api.github.com');
+      expect(
+        bridgeHostOfAuthority('https://slow.example.com'),
+        'slow.example.com',
+      );
+    });
+
+    test('a corrupt authority still renders (fail loudly, never silently)', () {
+      // Uri.parse throws on this shape; the failure line must still carry
+      // something host-shaped rather than crashing the failure path.
+      expect(bridgeHostOfAuthority('http://[::1:8080/x'), isNotEmpty);
     });
 
     test('partial-body line carries the byte count and truncation', () {

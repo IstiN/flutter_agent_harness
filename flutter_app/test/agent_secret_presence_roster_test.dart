@@ -17,9 +17,11 @@ import 'package:fa/services/session_keys_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-// ignore: avoid_unused_constructor_parameters — the StreamFunction shape.
+// The StreamFunction shape (model/context/cancelToken); this factory never
+// streams — tests never drive it.
+// ignore: avoid_unused_constructor_parameters
 AssistantMessageEventStream _noStream(
-  Model _, Context __, {
+  Model _, Context _, {
   CancelToken? cancelToken,
 }) {
   final stream = AssistantMessageEventStream();
@@ -96,23 +98,25 @@ void main() {
   });
 
   group('the Keys section is the production revocation path (E3)', () {
-    test('a mid-session delete flips the value to ABSENT, name stays',
-        () async {
-      final keys = SessionKeysStore.inMemory({
-        'GITHUB_TOKEN': 'ghp_0123456789abcdef',
-      });
-      final service = await buildService(keys);
-      addTearDown(service.dispose);
+    test(
+      'a mid-session delete flips the value to ABSENT, name stays',
+      () async {
+        final keys = SessionKeysStore.inMemory({
+          'GITHUB_TOKEN': 'ghp_0123456789abcdef',
+        });
+        final service = await buildService(keys);
+        addTearDown(service.dispose);
 
-      final env = service.secretsEnvForTest!;
-      expect(env.secretsSnapshot()['GITHUB_TOKEN'], 'ghp_0123456789abcdef');
+        final env = service.secretsEnvForTest!;
+        expect(env.secretsSnapshot()['GITHUB_TOKEN'], 'ghp_0123456789abcdef');
 
-      // The settings Keys section delete: the store notifies, the env
-      // revokes the value and keeps the name on the roster.
-      await keys.delete('GITHUB_TOKEN');
-      expect(env.secretsSnapshot().containsKey('GITHUB_TOKEN'), isFalse);
-      expect(env.secretNames, contains('GITHUB_TOKEN'));
-    });
+        // The settings Keys section delete: the store notifies, the env
+        // revokes the value and keeps the name on the roster.
+        await keys.delete('GITHUB_TOKEN');
+        expect(env.secretsSnapshot().containsKey('GITHUB_TOKEN'), isFalse);
+        expect(env.secretNames, contains('GITHUB_TOKEN'));
+      },
+    );
 
     test('a re-saved key becomes PRESENT again', () async {
       final keys = SessionKeysStore.inMemory({
@@ -146,8 +150,10 @@ void main() {
       await keys.set('OPENROUTER_API_KEY', 'sk-or-v1-0123456789');
 
       expect(env.secretsSnapshot()['DOTENV_ONLY_VAR'], 'dotenv-value-12345');
-      expect(env.secretsSnapshot()['OPENROUTER_API_KEY'],
-          'sk-or-v1-0123456789');
+      expect(
+        env.secretsSnapshot()['OPENROUTER_API_KEY'],
+        'sk-or-v1-0123456789',
+      );
     });
   });
 }

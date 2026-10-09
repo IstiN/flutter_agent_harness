@@ -1409,8 +1409,12 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
           error.code,
           _sanitizeSandboxText(error.message),
           cause: error.cause,
-          stdout: _tailCapture(utf8.decode(io.stdoutBuffer, allowMalformed: true)),
-          stderr: _tailCapture(utf8.decode(io.stderrBuffer, allowMalformed: true)),
+          stdout: _tailCapture(
+            utf8.decode(io.stdoutBuffer, allowMalformed: true),
+          ),
+          stderr: _tailCapture(
+            utf8.decode(io.stderrBuffer, allowMalformed: true),
+          ),
         ),
       );
     }
@@ -2680,8 +2684,8 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
   /// Applies `cat` numbering only when the invocation asked for it.
   String _catNumbered(String text, CatInvocation parsed) =>
       parsed.number || parsed.numberNonBlank
-          ? applyCatNumbering(text, nonBlankOnly: parsed.numberNonBlank)
-          : text;
+      ? applyCatNumbering(text, nonBlankOnly: parsed.numberNonBlank)
+      : text;
 
   Future<Result<StageResult, ExecutionError>> _tacBuiltin(
     Stage stage,

@@ -27,9 +27,9 @@ String _appendStatus(String text, String status) {
 /// WASI sandbox emit), or null when no parseable duration is present.
 /// Sub-second caps round up to 1 so the text never claims "after 0s".
 int? timeoutSecondsFromMessage(String message) {
-  final match = RegExp(r'timeout:\s*(\d+):(\d{1,2}):(\d{1,2})').firstMatch(
-    message,
-  );
+  final match = RegExp(
+    r'timeout:\s*(\d+):(\d{1,2}):(\d{1,2})',
+  ).firstMatch(message);
   if (match == null) return null;
   final seconds =
       int.parse(match.group(1)!) * 3600 +
@@ -417,7 +417,10 @@ StateError _bashFailureError(
         error,
         _appendStatus(
           _retryNoticePrefix(notices),
-          bashTimeoutStatus(timeoutArg: timeoutArg, errorMessage: error.message),
+          bashTimeoutStatus(
+            timeoutArg: timeoutArg,
+            errorMessage: error.message,
+          ),
         ),
       ),
     ),
@@ -576,7 +579,10 @@ Future<ToolExecutionResult> _awaitJobOutcome(
     throw StateError(
       _appendStatus(
         output,
-        bashTimeoutStatus(timeoutArg: timeoutArg, effectiveTimeout: entry.timeout),
+        bashTimeoutStatus(
+          timeoutArg: timeoutArg,
+          effectiveTimeout: entry.timeout,
+        ),
       ),
     );
   }

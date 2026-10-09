@@ -59,15 +59,19 @@ String bridgeFailureLine({
 }
 
 /// The host of a bridged authority (`https://api.github.com:443`) for
-/// failure lines — the scheme, default port, and any path never render.
+/// failure lines — the scheme, default port, any path, and IPv6 brackets
+/// never render (`http://[::1]:8080/x` → `::1`; the manual first-colon
+/// slice mangled bracketed hosts). The platform parser does the slicing;
+/// a corrupt authority (never produced by the bridge or the curl URL
+/// parse) still renders the raw text — the failure line must exist, never
+/// crash the failure path.
 String bridgeHostOfAuthority(String authority) {
-  var host = authority;
-  final scheme = host.indexOf('://');
-  if (scheme != -1) host = host.substring(scheme + 3);
-  final slash = host.indexOf('/');
-  if (slash != -1) host = host.substring(0, slash);
-  if (host.endsWith(':443') || host.endsWith(':80')) {
-    host = host.substring(0, host.indexOf(':'));
+  // A bare authority (`api.github.com:443`) needs the `//` so the parser
+  // reads it as host:port instead of scheme:path.
+  final parseable = authority.contains('://') ? authority : '//$authority';
+  try {
+    return Uri.parse(parseable).host;
+  } on FormatException {
+    return authority;
   }
-  return host;
 }
