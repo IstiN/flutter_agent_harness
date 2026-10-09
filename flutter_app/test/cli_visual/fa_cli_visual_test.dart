@@ -760,10 +760,12 @@ void main() {
         );
 
         // The picker viewport is shorter than the hub list, so
-        // type-to-filter narrows it to the gh-1426 entry.
+        // type-to-filter narrows it to the gh-1426 entry; the filtered
+        // picker title carries the QUERY (the compaction test's
+        // "Settings: compaction" precedent).
         harness.sendText('model cap');
         await harness.liveWaitForText(
-          'Settings: Model capabilities',
+          'Settings: model cap',
           timeout: const Duration(seconds: 15),
         );
         harness.sendEnter();

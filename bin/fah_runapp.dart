@@ -916,9 +916,7 @@ Future<void> _runApp(List<String> args) async {
   // (E4) — a pin the resolver dropped or overrode is never silent at
   // boot. Roles-chain models carry the same notes on the Model; the
   // /model-edit status surface renders them there.
-  for (final note in model.capabilityNotes) {
-    io.writeln('note: $note');
-  }
+  _printCapabilityBootNotes(model, io.writeln);
   // The provider-queue boot notes: winning scope + shadowed scopes —
   // the loud handover, never a silent degrade (issue #418).
   for (final notice in queueNotices) {

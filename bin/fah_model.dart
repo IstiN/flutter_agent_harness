@@ -7,6 +7,18 @@ part of 'fah.dart';
 /// options and still carry-but-never-send a declared level.
 const _thinkingUnwiredAdapterKinds = {'dial', 'copilot', 'chatgpt-codex'};
 
+/// The capability resolver's loud notes for the booted model (gh-1426):
+/// gate drops (E3), endpoint divergences (E1), catalog-miss warnings (E4)
+/// — a pin the resolver dropped or overrode is never silent at boot.
+/// Roles-chain models carry the same notes on the Model; the /model-edit
+/// status surface renders them there. (Own function so the `_runApp`
+/// census stays byte-stable — see crap4dart.yaml's baseline contract.)
+void _printCapabilityBootNotes(Model model, void Function(String) write) {
+  for (final note in model.capabilityNotes) {
+    write('note: $note');
+  }
+}
+
 Model _buildModel(CliArgs args, {List<String>? input, String? thinkingLevel}) {
   return buildCliDefaultModel(
     args.provider,
