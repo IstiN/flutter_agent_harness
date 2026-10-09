@@ -239,13 +239,24 @@ final class _WaitingCoordinator {
   /// fa's own watchdog first, same as the main path). Line mode/headless
   /// only — the TUI busy row (`Compacting context…`) owns that surface.
   void compactionLivenessStart() {
+    // Deliberately ignores config.streamThinking (unlike
+    // reasoningRequestStarted): the summarizer's stream never reaches
+    // the CLI render path, so nothing renders in this window even with
+    // the flag on — tier 2 is the only signal here. Do NOT add the
+    // streamThinking gate for "consistency": it would silently
+    // reintroduce a byte-silent multi-minute summarization window in
+    // --stream-thinking runs.
     if (_cli._useTui) return;
     reasoning.requestStarted();
   }
 
   /// The compaction window ended: drop the watch (a stale arm cannot
   /// survive into the idle session — the next agent event disarms tier 2
-  /// anyway, but the explicit stop keeps the chain honest).
+  /// anyway, but the explicit stop keeps the chain honest). The
+  /// unconditional stop (no `streamThinking`/TUI guard) is safe by
+  /// lifecycle: compaction runs BETWEEN provider requests — the watch is
+  /// disarmed outside the window anyway, so the stop is a belt-and-
+  /// braces no-op unless a compaction ever overlaps an in-flight request.
   void compactionLivenessEnd() {
     reasoning.stop();
   }

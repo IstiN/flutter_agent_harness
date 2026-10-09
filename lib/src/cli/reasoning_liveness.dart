@@ -225,9 +225,14 @@ final class StreamLivenessHeartbeat {
   }
 
   /// One evaluation now: fire the line when the window is dirty (events
-  /// flowed) and the elapsed time passed the cadence, then re-arm a full
-  /// cadence from NOW. Mirrors the sibling trackers (the tick seam owns
-  /// the chain state and can never double-fire with the production leg).
+  /// flowed) and the elapsed time passed the cadence, then re-arm ONE
+  /// tick (`tickSeconds`). The cadence is measured from the request
+  /// start (`_since` is never reset by a print): with tick < cadence the
+  /// line repeats per tick past the threshold, mirroring the sibling
+  /// trackers (the tick seam owns the chain state and can never
+  /// double-fire with the production leg). The E6 fallback
+  /// (`toolLivenessSeconds` <= 0 → [defaultToolLivenessSeconds], never a
+  /// spin) is applied inside `_evaluate`.
   void tick() {
     _timer?.cancel();
     _timer = null;

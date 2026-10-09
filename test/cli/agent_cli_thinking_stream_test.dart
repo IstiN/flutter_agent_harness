@@ -14,6 +14,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
@@ -134,6 +135,25 @@ class GatedThinkingStreamFunction {
           TextDeltaEvent(contentIndex: 1, delta: 'Answer', partial: withText),
         );
         stream.push(DoneEvent(reason: StopReason.stop, message: withText));
+        stream.end();
+      }),
+    );
+    // A real provider closes the stream when the request's CancelToken
+    // fires (the abort path depends on it); mirror that so an interrupt
+    // mid-burst terminates the run instead of hanging on the gate (the
+    // E4 abort-mid-heartbeat IT rides this path).
+    unawaited(
+      cancelToken?.onCancel.then((_) {
+        if (_gate.isCompleted) return;
+        stream.push(
+          ErrorEvent(
+            reason: StopReason.aborted,
+            error: testAssistant(
+              stopReason: StopReason.aborted,
+              errorMessage: 'Operation aborted',
+            ),
+          ),
+        );
         stream.end();
       }),
     );
@@ -887,6 +907,143 @@ void main() {
       cli.reasoningLivenessTickForTest();
       final bare = RegExp(r'… reasoning \d+s\n').allMatches(io.out.toString());
       expect(bare, hasLength(1));
+    });
+
+    test('E4: abort mid-heartbeat — the run ends cleanly and no '
+        '`(streaming)` line ever prints after the abort', () async {
+      final fake = GatedThinkingStreamFunction();
+      final cli = cliFor(
+        fake.call,
+        waiting: const WaitingConfig(
+          toolLivenessSeconds: 60,
+          toolLivenessTickSeconds: 60,
+        ),
+      );
+      final run = cli.runHeadless('hi');
+      await waitForIt(() => cli.streamLivenessActiveForTest);
+
+      now = now.add(const Duration(seconds: 60));
+      cli.streamLivenessTickForTest();
+      expect(io.out.toString(), contains('… reasoning 60s (streaming)'));
+
+      // Ctrl-C mid-thinking: the run terminates through the abort path
+      // (exit 130), whose lifecycle events (MessageEnd/AgentEnd) must
+      // stop the heartbeat — the pending timer dies with the run and
+      // no line can print over the dead stream or the idle session.
+      io.interrupt();
+      expect(await run, 130);
+      expect(cli.streamLivenessActiveForTest, isFalse);
+      expect(cli.reasoningLivenessActiveForTest, isFalse);
+
+      final linesAtAbort = '(streaming)'.allMatches(io.out.toString()).length;
+      now = now.add(const Duration(seconds: 180));
+      cli.streamLivenessTickForTest();
+      cli.reasoningLivenessTickForTest();
+      expect(
+        '(streaming)'.allMatches(io.out.toString()),
+        hasLength(linesAtAbort),
+      );
+    });
+
+    test('E5: stream-json mode — stdout stays structured, the heartbeat '
+        'rides stderr, the FIRST-line contract is unchanged', () async {
+      final split = SplitChannelCliIO();
+      final fake = GatedThinkingStreamFunction();
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          approvalMode: ApprovalMode.yolo,
+          streamThinking: false,
+          waiting: const WaitingConfig(
+            toolLivenessSeconds: 60,
+            toolLivenessTickSeconds: 60,
+          ),
+        ),
+        io: split,
+        streamFunction: fake.call,
+        waitingClock: () => now,
+      );
+      final frames = <String>[];
+      final run = cli.runHeadless(
+        'hi',
+        streamJson: StreamJsonWriter(emit: frames.add),
+      );
+      await waitForIt(
+        () => cli.streamLivenessActiveForTest,
+        reason: 'the stream heartbeat arms with the request',
+      );
+      now = now.add(const Duration(seconds: 60));
+      cli.streamLivenessTickForTest();
+
+      // The FIRST stdout line is the stream-json session header — no
+      // heartbeat line ever raced it (the header-race pin).
+      expect(frames, isNotEmpty);
+      expect(
+        (jsonDecode(frames.first) as Map<String, dynamic>)['type'],
+        'session',
+      );
+      // Every stdout line still parses as one JSON object — no prose.
+      for (final line in frames) {
+        expect(jsonDecode(line), isA<Map<String, dynamic>>());
+      }
+      // The heartbeat rode the stderr channel: `diag` in the split
+      // fixture, never the prose stdout, never the structured frames.
+      expect(split.diag.toString(), contains('… reasoning 60s (streaming)'));
+      expect(split.out.toString(), isNot(contains('(streaming)')));
+      expect(frames.join('\n'), isNot(contains('(streaming)')));
+
+      fake.release();
+      expect(await run, 0);
+    });
+
+    test('E5: HEP events mode — stdout stays the frame stream, the '
+        'heartbeat rides stderr, hep_header stays FIRST', () async {
+      final split = SplitChannelCliIO();
+      final fake = GatedThinkingStreamFunction();
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          approvalMode: ApprovalMode.yolo,
+          streamThinking: false,
+          waiting: const WaitingConfig(
+            toolLivenessSeconds: 60,
+            toolLivenessTickSeconds: 60,
+          ),
+        ),
+        io: split,
+        streamFunction: fake.call,
+        waitingClock: () => now,
+      );
+      final frames = <String>[];
+      final run = cli.runHeadless(
+        'hi',
+        hep: HepWriter(emit: frames.add, fahVersion: 'test'),
+      );
+      await waitForIt(
+        () => cli.streamLivenessActiveForTest,
+        reason: 'the stream heartbeat arms with the request',
+      );
+      now = now.add(const Duration(seconds: 60));
+      cli.streamLivenessTickForTest();
+
+      expect(frames, isNotEmpty);
+      final first = jsonDecode(frames.first) as Map<String, dynamic>;
+      expect(first['type'], 'hep_header');
+      expect(first['hep'], 'v1');
+      for (final line in frames) {
+        expect(jsonDecode(line), isA<Map<String, dynamic>>());
+      }
+      expect(split.diag.toString(), contains('… reasoning 60s (streaming)'));
+      expect(frames.join('\n'), isNot(contains('(streaming)')));
+
+      fake.release();
+      expect(await run, 0);
     });
   });
 
