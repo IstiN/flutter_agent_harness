@@ -44,7 +44,10 @@ AgentCli cliFor(
   config: AgentCliConfig(
     model: testModel,
     apiKey: '[REDACTED:Sensitive Value]',
-    env: MemoryExecutionEnv(cwd: '/work', shell: FakeShell(stdout: 'ok')),
+    env: MemoryExecutionEnv(
+      cwd: '/work',
+      shell: FakeShell(stdout: 'ok'),
+    ),
     sessionRoot: '/sessions',
     approvalMode: ApprovalMode.yolo,
     headlessRun: headlessRun,
@@ -94,16 +97,8 @@ List<AssistantMessageEvent> narratedToolTurn({
   final events = <AssistantMessageEvent>[
     StartEvent(partial: empty),
     ThinkingStartEvent(contentIndex: 0, partial: empty),
-    ThinkingDeltaEvent(
-      contentIndex: 0,
-      delta: thinking,
-      partial: withThinking,
-    ),
-    ThinkingEndEvent(
-      contentIndex: 0,
-      content: thinking,
-      partial: withThinking,
-    ),
+    ThinkingDeltaEvent(contentIndex: 0, delta: thinking, partial: withThinking),
+    ThinkingEndEvent(contentIndex: 0, content: thinking, partial: withThinking),
     TextStartEvent(contentIndex: 1, partial: withThinking),
     TextDeltaEvent(contentIndex: 1, delta: narration, partial: withNarration),
     ToolCallStartEvent(contentIndex: 2, partial: withNarration),
@@ -126,10 +121,7 @@ List<AssistantMessageEvent> narratedToolTurn({
       );
   }
   events.add(
-    DoneEvent(
-      reason: StopReason.toolUse,
-      message: events.last.partial,
-    ),
+    DoneEvent(reason: StopReason.toolUse, message: events.last.partial),
   );
   return events;
 }
@@ -149,16 +141,8 @@ List<AssistantMessageEvent> thinkingOnlyTurn(String thinking, String text) {
   return [
     StartEvent(partial: empty),
     ThinkingStartEvent(contentIndex: 0, partial: empty),
-    ThinkingDeltaEvent(
-      contentIndex: 0,
-      delta: thinking,
-      partial: withThinking,
-    ),
-    ThinkingEndEvent(
-      contentIndex: 0,
-      content: thinking,
-      partial: withThinking,
-    ),
+    ThinkingDeltaEvent(contentIndex: 0, delta: thinking, partial: withThinking),
+    ThinkingEndEvent(contentIndex: 0, content: thinking, partial: withThinking),
     TextStartEvent(contentIndex: 1, partial: withThinking),
     TextDeltaEvent(contentIndex: 1, delta: text, partial: full),
     DoneEvent(reason: StopReason.stop, message: full),
@@ -184,14 +168,16 @@ List<AssistantMessageEvent> multiNarrationToolTurn() {
     name: 'bash',
     arguments: {'command': 'echo two'},
   );
-  AssistantMessage partial(List<ContentBlock> content) => testAssistant(
-    content: content,
-    stopReason: StopReason.toolUse,
-  );
+  AssistantMessage partial(List<ContentBlock> content) =>
+      testAssistant(content: content, stopReason: StopReason.toolUse);
   final p0 = testAssistant();
   final p1 = partial([TextContent(text: before)]);
   final p2 = partial([TextContent(text: before), call1]);
-  final p3 = partial([TextContent(text: before), call1, TextContent(text: between)]);
+  final p3 = partial([
+    TextContent(text: before),
+    call1,
+    TextContent(text: between),
+  ]);
   final p4 = partial([
     TextContent(text: before),
     call1,
@@ -243,9 +229,7 @@ class GatedTextStream {
     );
     unawaited(
       _gate.future.then((_) {
-        stream.push(
-          DoneEvent(reason: StopReason.stop, message: partial),
-        );
+        stream.push(DoneEvent(reason: StopReason.stop, message: partial));
         stream.end();
       }),
     );
@@ -399,7 +383,9 @@ void main() {
 
     test('AC1 (both directions of the seam): the interactive host stays '
         'silent without the flag', () async {
-      final fake = FakeStreamFunction([thinkingOnlyTurn('pondering…', 'Answer')]);
+      final fake = FakeStreamFunction([
+        thinkingOnlyTurn('pondering…', 'Answer'),
+      ]);
       final cli = cliFor(
         fake,
         io: io,
@@ -432,9 +418,7 @@ void main() {
           headlessRun: true,
         ),
         io: io,
-        markdownSurface: const MarkdownSurface(
-          mode: MarkdownSurfaceMode.ansi,
-        ),
+        markdownSurface: const MarkdownSurface(mode: MarkdownSurfaceMode.ansi),
         streamFunction: gated.call,
       );
       final run = cli.runHeadless('say');
@@ -472,12 +456,19 @@ void main() {
       final trailingAt = out.indexOf(trailing);
       final finalText = out.indexOf('All done — found it.');
       expect(narration, greaterThanOrEqualTo(0));
-      expect(toolStart, greaterThan(narration),
-          reason: 'narration before the tool line:\n$out');
+      expect(
+        toolStart,
+        greaterThan(narration),
+        reason: 'narration before the tool line:\n$out',
+      );
       expect(toolEnd, greaterThan(toolStart));
-      expect(trailingAt, greaterThan(toolEnd),
-          reason: 'same-message trailing narration after the RESULT row:\n'
-              '$out');
+      expect(
+        trailingAt,
+        greaterThan(toolEnd),
+        reason:
+            'same-message trailing narration after the RESULT row:\n'
+            '$out',
+      );
       expect(finalText, greaterThan(toolEnd));
     });
 
@@ -503,16 +494,28 @@ void main() {
       expect(before, greaterThanOrEqualTo(0), reason: out);
       expect(result1, greaterThan(before), reason: out);
       expect(result2, greaterThan(result1), reason: out);
-      expect(between, greaterThan(result1),
-          reason: 'narration streamed between the calls renders after the '
-              'FIRST result row:\n$out');
-      expect(between, lessThan(result2),
-          reason: '…and before the second result row — positional, not '
-              'drifted:\n$out');
-      expect(after, greaterThan(result2),
-          reason: 'narration streamed after the second call renders after '
-              'the SECOND result row, not after the first (the '
-              'single-buffer drift):\n$out');
+      expect(
+        between,
+        greaterThan(result1),
+        reason:
+            'narration streamed between the calls renders after the '
+            'FIRST result row:\n$out',
+      );
+      expect(
+        between,
+        lessThan(result2),
+        reason:
+            '…and before the second result row — positional, not '
+            'drifted:\n$out',
+      );
+      expect(
+        after,
+        greaterThan(result2),
+        reason:
+            'narration streamed after the second call renders after '
+            'the SECOND result row, not after the first (the '
+            'single-buffer drift):\n$out',
+      );
     });
 
     test('AC3 orphan: post-tool narration survives a result-less turn — '
@@ -543,10 +546,16 @@ void main() {
       expect(exit, 0);
       final out = io.out.toString();
       final orphanAt = out.indexOf('orphan narration');
-      expect(orphanAt, greaterThanOrEqualTo(0),
-          reason: 'nothing swallowed:\n$out');
-      expect(out.indexOf('fa-tokens:'), greaterThan(orphanAt),
-          reason: 'the narration precedes the run summary:\n$out');
+      expect(
+        orphanAt,
+        greaterThanOrEqualTo(0),
+        reason: 'nothing swallowed:\n$out',
+      );
+      expect(
+        out.indexOf('fa-tokens:'),
+        greaterThan(orphanAt),
+        reason: 'the narration precedes the run summary:\n$out',
+      );
     });
 
     test('E1: whitespace-only narration paints nothing — no stray blank '
@@ -564,9 +573,13 @@ void main() {
       final toolRowAt = out.indexOf('• bash');
       expect(toolRowAt, greaterThan(0));
       final before = out.substring(0, toolRowAt);
-      expect('\n\n'.allMatches(before), isEmpty,
-          reason: 'no stray blank line before the tool row:\n'
-              '${before.replaceAll('\x1B', '<ESC>')}');
+      expect(
+        '\n\n'.allMatches(before),
+        isEmpty,
+        reason:
+            'no stray blank line before the tool row:\n'
+            '${before.replaceAll('\x1B', '<ESC>')}',
+      );
     });
 
     test('E2: abort mid-thinking keeps the partial dimmed block and the '
@@ -618,9 +631,7 @@ void main() {
           waiting: const WaitingConfig(toolLivenessSeconds: 3600),
         ),
         io: io,
-        markdownSurface: const MarkdownSurface(
-          mode: MarkdownSurfaceMode.raw,
-        ),
+        markdownSurface: const MarkdownSurface(mode: MarkdownSurfaceMode.raw),
         streamFunction: abortable,
       );
       final run = cli.runHeadless('watch');
@@ -689,9 +700,7 @@ void main() {
         ),
         io: io,
         useColor: true,
-        markdownSurface: const MarkdownSurface(
-          mode: MarkdownSurfaceMode.raw,
-        ),
+        markdownSurface: const MarkdownSurface(mode: MarkdownSurfaceMode.raw),
         streamFunction: abortable,
       );
       final run = cli.runHeadless('watch');
@@ -700,10 +709,7 @@ void main() {
       await run;
       final out = io.out.toString();
       expect(out, contains('\x1B[2mhalf a thought'));
-      expect(
-        out.indexOf('aborted'),
-        greaterThan(out.lastIndexOf('\x1B[0m')),
-      );
+      expect(out.indexOf('aborted'), greaterThan(out.lastIndexOf('\x1B[0m')));
     });
   });
 
@@ -713,23 +719,25 @@ void main() {
     setUp(() => io = FakeCliIO());
     tearDown(() => io.close());
 
-    test('REG golden: --no-stream-thinking on a non-interactive host — '
-        'tools + answer text only, zero thinking bytes, zero dim SGR',
-        () async {
-      final fake = FakeStreamFunction([
-        narratedToolTurn(),
-        textTurn('All done — found it.'),
-      ]);
-      final cli = cliFor(fake, io: io, noStreamThinking: true);
-      final exit = await cli.runHeadless('check');
-      expect(exit, 0);
-      final out = io.out.toString();
-      expect(out.contains('pondering'), isFalse, reason: out);
-      expect(out.contains('\x1B[2m'), isFalse, reason: out);
-      // The legacy shape still carries the tool activity and the answer.
-      expect(out, contains('• bash'));
-      expect(out, contains('All done — found it.'));
-    });
+    test(
+      'REG golden: --no-stream-thinking on a non-interactive host — '
+      'tools + answer text only, zero thinking bytes, zero dim SGR',
+      () async {
+        final fake = FakeStreamFunction([
+          narratedToolTurn(),
+          textTurn('All done — found it.'),
+        ]);
+        final cli = cliFor(fake, io: io, noStreamThinking: true);
+        final exit = await cli.runHeadless('check');
+        expect(exit, 0);
+        final out = io.out.toString();
+        expect(out.contains('pondering'), isFalse, reason: out);
+        expect(out.contains('\x1B[2m'), isFalse, reason: out);
+        // The legacy shape still carries the tool activity and the answer.
+        expect(out, contains('• bash'));
+        expect(out, contains('All done — found it.'));
+      },
+    );
 
     test('the hatch re-arms the reasoning liveness gate (the legacy '
         'visibility channel owns the silent window again)', () async {
@@ -779,8 +787,7 @@ void main() {
       await cli.runHeadless('check');
       final out = io.out.toString();
       expect(out.contains('[REDACTED:'), isTrue, reason: out);
-      expect(out.contains(secret), isFalse,
-          reason: 'raw secret leaked:\n$out');
+      expect(out.contains(secret), isFalse, reason: 'raw secret leaked:\n$out');
     });
 
     test('E6: the LIVE pipeline decides at render time — a secret '
@@ -817,9 +824,7 @@ void main() {
                 partial: d2,
               ),
             );
-            stream.push(
-              DoneEvent(reason: StopReason.stop, message: d2),
-            );
+            stream.push(DoneEvent(reason: StopReason.stop, message: d2));
             stream.end();
           }),
         );
@@ -830,7 +835,10 @@ void main() {
         config: AgentCliConfig(
           model: testModel,
           apiKey: '[REDACTED:Sensitive Value]',
-          env: MemoryExecutionEnv(cwd: '/work', shell: FakeShell(stdout: 'ok')),
+          env: MemoryExecutionEnv(
+            cwd: '/work',
+            shell: FakeShell(stdout: 'ok'),
+          ),
           sessionRoot: '/sessions',
           approvalMode: ApprovalMode.yolo,
           headlessRun: true,
@@ -843,8 +851,11 @@ void main() {
       final out = io.out.toString();
       expect(out.contains('[REDACTED:'), isTrue, reason: out);
       expect(out.contains(early), isFalse, reason: out);
-      expect(out.contains(late), isFalse,
-          reason: 'mid-run secret leaked:\n$out');
+      expect(
+        out.contains(late),
+        isFalse,
+        reason: 'mid-run secret leaked:\n$out',
+      );
     });
   });
 
@@ -875,21 +886,9 @@ void main() {
         // Three tool calls whose outputs (~8200 tokens each) push the
         // next request past the window — the over-window guard fires.
         toolTurn(const [
-          ToolCall(
-            id: 'c1',
-            name: 'bash',
-            arguments: {'command': 'cat a.log'},
-          ),
-          ToolCall(
-            id: 'c2',
-            name: 'bash',
-            arguments: {'command': 'cat b.log'},
-          ),
-          ToolCall(
-            id: 'c3',
-            name: 'bash',
-            arguments: {'command': 'cat c.log'},
-          ),
+          ToolCall(id: 'c1', name: 'bash', arguments: {'command': 'cat a.log'}),
+          ToolCall(id: 'c2', name: 'bash', arguments: {'command': 'cat b.log'}),
+          ToolCall(id: 'c3', name: 'bash', arguments: {'command': 'cat c.log'}),
         ]),
         // Consumed by the mid-run relief's no-op compaction attempt.
         textTurn('S'),
@@ -925,7 +924,8 @@ void main() {
       expect(
         out,
         contains('\x1B[2mcompaction reasoning'),
-        reason: 'the summarizer thinking must render dimmed on the log:\n'
+        reason:
+            'the summarizer thinking must render dimmed on the log:\n'
             '$out',
       );
       // The stream line closes before the continuation lands.
@@ -937,11 +937,11 @@ void main() {
   });
 
   group('UT: AC9/E7 — background-job cards never ellipsize the log face', () {
-
     const psCommand =
         'ps -o pid,ppid,etime,pcpu,args -p \$(pgrep -f test.dart) '
         '2>/dev/null | cut -c1-160';
-    const longLogPath = '/home/runner/work/repo/.fah/bash_jobs/'
+    const longLogPath =
+        '/home/runner/work/repo/.fah/bash_jobs/'
         'sh-1234-very-long-session-identifier/job-output.log';
 
     TaskBlock settleCard({String command = psCommand, String? detail}) =>
@@ -951,13 +951,10 @@ void main() {
           state: TaskBlockState.done,
           elapsed: 2,
           label: command,
-          detail:
-              detail ??
-              'sh-1234 · work · exit 0 · log: $longLogPath',
+          detail: detail ?? 'sh-1234 · work · exit 0 · log: $longLogPath',
         );
 
-    test('REG golden: the TUI pane keeps the width clip (ellipsis)',
-        () {
+    test('REG golden: the TUI pane keeps the width clip (ellipsis)', () {
       final lines = taskBlockLines(
         settleCard(command: 'echo ${'x' * 300}'),
         width: 80,
@@ -970,7 +967,11 @@ void main() {
 
     test('AC9: the log face renders the FULL command soft-wrapped — no '
         'ellipsis anywhere', () {
-      final lines = taskBlockLines(settleCard(), width: 80, fit: CardTextFit.wrap);
+      final lines = taskBlockLines(
+        settleCard(),
+        width: 80,
+        fit: CardTextFit.wrap,
+      );
       final body = lines.join('\n');
       expect(body.contains('…'), isFalse, reason: body);
       // The command survives whole: every fragment is present and the
@@ -986,7 +987,11 @@ void main() {
 
     test('AC9: the FULL log: path survives in the log face (wrapped, '
         'never clipped)', () {
-      final lines = taskBlockLines(settleCard(), width: 80, fit: CardTextFit.wrap);
+      final lines = taskBlockLines(
+        settleCard(),
+        width: 80,
+        fit: CardTextFit.wrap,
+      );
       final body = lines.join('\n');
       expect(body.contains('…'), isFalse, reason: body);
       // The path is soft-wrapped: the DETAIL rows concatenated restore it.
@@ -1010,8 +1015,11 @@ void main() {
       expect(body, contains("cat > /tmp/x.md << 'EOF'"));
       expect(body, contains('first body line'));
       expect(body, contains('second body line'));
-      expect(body.contains('more — bash_job output'), isFalse,
-          reason: 'the full command is the point; the hint is pane economy');
+      expect(
+        body.contains('more — bash_job output'),
+        isFalse,
+        reason: 'the full command is the point; the hint is pane economy',
+      );
     });
 
     test('E7: a multi-KB one-liner wraps to a bounded card with an '
@@ -1024,24 +1032,32 @@ void main() {
       );
       final body = lines.join('\n');
       expect(body, contains('more chars, see <log>'), reason: body);
-      expect(body.contains('…'), isFalse,
-          reason: 'the cap is explicit, never a silent ellipsis');
+      expect(
+        body.contains('…'),
+        isFalse,
+        reason: 'the cap is explicit, never a silent ellipsis',
+      );
       // Bounded: the 2000-char body budget / ~95-wide rows + pointer.
       final bodyRows = lines.where((l) => l.startsWith('│')).length;
-      expect(bodyRows, lessThanOrEqualTo(logFaceCardMaxBodyChars ~/ 90 + 3),
-          reason: body);
+      expect(
+        bodyRows,
+        lessThanOrEqualTo(logFaceCardMaxBodyChars ~/ 90 + 3),
+        reason: body,
+      );
     });
 
-    test('the detail builder spends the log-face budget on the log path',
-        () {
+    test('the detail builder spends the log-face budget on the log path', () {
       final capped = shellJobCardDetail(
         id: 'sh-1',
         logPath: '/log/${'a' * 300}.log',
         state: TaskBlockState.done,
         exitCode: 0,
       );
-      expect(capped.endsWith('…'), isTrue,
-          reason: 'the pane cap (issue #429) holds by default');
+      expect(
+        capped.endsWith('…'),
+        isTrue,
+        reason: 'the pane cap (issue #429) holds by default',
+      );
       final whole = shellJobCardDetail(
         id: 'sh-1',
         logPath: '/log/${'a' * 300}.log',
@@ -1076,11 +1092,18 @@ void main() {
           .where((l) => l.startsWith('│ '))
           .map((l) => l.substring(2).trimRight())
           .join();
-      expect(wrapped, contains('log: $longLogPath'),
-          reason: 'the pointer survives whole behind the capped command:\n'
-              '$body');
-      expect(body, contains('more chars, see <log>'),
-          reason: 'the command still caps explicitly:\n$body');
+      expect(
+        wrapped,
+        contains('log: $longLogPath'),
+        reason:
+            'the pointer survives whole behind the capped command:\n'
+            '$body',
+      );
+      expect(
+        body,
+        contains('more chars, see <log>'),
+        reason: 'the command still caps explicitly:\n$body',
+      );
     });
 
     test('E7: the (+N more chars) count is exact — also when the cap '
@@ -1099,13 +1122,15 @@ void main() {
         fit: CardTextFit.wrap,
       );
       final body = lines.join('\n');
-      final pointer =
-          RegExp(r'\(\+ (\d+) more chars, see <log>\)').firstMatch(body);
+      final pointer = RegExp(
+        r'\(\+ (\d+) more chars, see <log>\)',
+      ).firstMatch(body);
       expect(pointer, isNotNull, reason: body);
       expect(
         int.parse(pointer!.group(1)!),
         '\nshort tail'.length,
-        reason: 'the unshown remainder is the boundary newline + the '
+        reason:
+            'the unshown remainder is the boundary newline + the '
             'second line:\n$body',
       );
     });
@@ -1153,8 +1178,7 @@ void main() {
     });
 
     test('E8 REG: the resize hook survives the copyWith swap — the model '
-        'update() RETURNS keeps tracking resizes (the production path)',
-        () {
+        'update() RETURNS keeps tracking resizes (the production path)', () {
       final controller = FaTuiController(
         callbacks: _tuiCallbacks(),
         isExited: () => false,
@@ -1166,9 +1190,13 @@ void main() {
       // The boot instance fires the hook for the FIRST resize…
       final (swapped, _) = controller.model.update(WindowSizeMsg(120, 40));
       expect(controller.termWidth, 120);
-      expect(identical(swapped, controller.model), isFalse,
-          reason: 'update() returns a copy — the instance the program '
-              'swaps to');
+      expect(
+        identical(swapped, controller.model),
+        isFalse,
+        reason:
+            'update() returns a copy — the instance the program '
+            'swaps to',
+      );
       // …but every later resize arrives on THAT copy: its WindowSizeMsg
       // must fire the hook too (copyWith carries onResized), or every
       // post-boot SIGWINCH is silently dropped and the hub cards freeze
@@ -1177,7 +1205,8 @@ void main() {
       expect(
         controller.termWidth,
         200,
-        reason: 'onResized must survive copyWith — the running copy is '
+        reason:
+            'onResized must survive copyWith — the running copy is '
             'what production feeds',
       );
       // The chain keeps surviving copies (heartbeat churn re-copies
@@ -1194,53 +1223,57 @@ void main() {
     setUp(() => io = FakeCliIO());
     tearDown(() => io.close());
 
-    test('stream-json: the thinking turn projects exactly the pre-flip '
-        'frame sequence — no narrative bytes leak into stdout frames',
-        () async {
-      final fake = FakeStreamFunction([
-        narratedToolTurn(),
-        textTurn('All done — found it.'),
-      ]);
-      final cli = AgentCli(
-        config: AgentCliConfig(
-          model: testModel,
-          apiKey: '[REDACTED:Sensitive Value]',
-          env: MemoryExecutionEnv(cwd: '/work', shell: FakeShell(stdout: 'ok')),
-          sessionRoot: '/sessions',
-          approvalMode: ApprovalMode.yolo,
-          headlessRun: true,
-        ),
-        // The host wiring (bin/fah_runapp.dart): structured modes wrap the
-        // IO so write() deltas are dropped — stdout purity.
-        io: HepEventsIO(io),
-        streamFunction: fake.call,
-      );
-      final frames = <String>[];
-      final writer = StreamJsonWriter(emit: frames.add);
-      final exit = await cli.runHeadless('check', streamJson: writer);
-      expect(exit, 0);
-      // The captured io.out only carries the diagnostics channel —
-      // the narrative write()s must be absent in structured mode.
-      final types = [
-        for (final line in frames)
-          (jsonDecode(line) as Map<String, dynamic>)['type'] as String,
-      ];
-      expect(types.first, 'session');
-      expect(types, contains('message_update'));
-      expect(types.last, 'agent_settled');
-      // The full-narrative bytes (thinking, narration) ride NO stdout
-      // line: the HEP/stream-json wrapper drops write() by contract.
-      expect(io.out.toString().contains('pondering'), isFalse);
-      expect(io.out.toString().contains('Checking the file'), isFalse);
-      // The frames themselves stay structured.
-      for (final line in frames) {
-        expect(() => jsonDecode(line), returnsNormally);
-      }
-    });
+    test(
+      'stream-json: the thinking turn projects exactly the pre-flip '
+      'frame sequence — no narrative bytes leak into stdout frames',
+      () async {
+        final fake = FakeStreamFunction([
+          narratedToolTurn(),
+          textTurn('All done — found it.'),
+        ]);
+        final cli = AgentCli(
+          config: AgentCliConfig(
+            model: testModel,
+            apiKey: '[REDACTED:Sensitive Value]',
+            env: MemoryExecutionEnv(
+              cwd: '/work',
+              shell: FakeShell(stdout: 'ok'),
+            ),
+            sessionRoot: '/sessions',
+            approvalMode: ApprovalMode.yolo,
+            headlessRun: true,
+          ),
+          // The host wiring (bin/fah_runapp.dart): structured modes wrap the
+          // IO so write() deltas are dropped — stdout purity.
+          io: HepEventsIO(io),
+          streamFunction: fake.call,
+        );
+        final frames = <String>[];
+        final writer = StreamJsonWriter(emit: frames.add);
+        final exit = await cli.runHeadless('check', streamJson: writer);
+        expect(exit, 0);
+        // The captured io.out only carries the diagnostics channel —
+        // the narrative write()s must be absent in structured mode.
+        final types = [
+          for (final line in frames)
+            (jsonDecode(line) as Map<String, dynamic>)['type'] as String,
+        ];
+        expect(types.first, 'session');
+        expect(types, contains('message_update'));
+        expect(types.last, 'agent_settled');
+        // The full-narrative bytes (thinking, narration) ride NO stdout
+        // line: the HEP/stream-json wrapper drops write() by contract.
+        expect(io.out.toString().contains('pondering'), isFalse);
+        expect(io.out.toString().contains('Checking the file'), isFalse);
+        // The frames themselves stay structured.
+        for (final line in frames) {
+          expect(() => jsonDecode(line), returnsNormally);
+        }
+      },
+    );
 
     test('HEP: the thinking turn stays pure — stdout empty, frames carry '
-        'text only (thinking deltas are NOT message_delta frames)',
-        () async {
+        'text only (thinking deltas are NOT message_delta frames)', () async {
       final fake = FakeStreamFunction([
         narratedToolTurn(),
         textTurn('All done — found it.'),
@@ -1249,7 +1282,10 @@ void main() {
         config: AgentCliConfig(
           model: testModel,
           apiKey: '[REDACTED:Sensitive Value]',
-          env: MemoryExecutionEnv(cwd: '/work', shell: FakeShell(stdout: 'ok')),
+          env: MemoryExecutionEnv(
+            cwd: '/work',
+            shell: FakeShell(stdout: 'ok'),
+          ),
           sessionRoot: '/sessions',
           approvalMode: ApprovalMode.yolo,
           headlessRun: true,
@@ -1271,11 +1307,10 @@ void main() {
         for (final line in frames) jsonDecode(line) as Map<String, dynamic>,
       ];
       expect(parsed.first['type'], 'hep_header');
-      expect(parsed.map((f) => f['type']), containsAllInOrder([
-        'agent_start',
-        'message_start',
-        'turn_done',
-      ]));
+      expect(
+        parsed.map((f) => f['type']),
+        containsAllInOrder(['agent_start', 'message_start', 'turn_done']),
+      );
       final allFrames = frames.join();
       // The answer (and the pre-tool narration — both are TEXT content)
       // ride the frames; THINKING rides nothing (the HEP protocol never

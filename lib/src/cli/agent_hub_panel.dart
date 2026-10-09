@@ -246,7 +246,8 @@ String shellJobResumeLostSummaryLine({
   required int width,
 }) {
   final n = ids.length;
-  final head = '✗ $n background task${n == 1 ? '' : 's'} lost on restart'
+  final head =
+      '✗ $n background task${n == 1 ? '' : 's'} lost on restart'
       ' ($shellJobLostReason)';
   final line = ids.isEmpty ? head : '$head: ${ids.join(' · ')}';
   return line.length <= width ? line : '${line.substring(0, width - 1)}…';
@@ -434,8 +435,7 @@ List<String> taskBlockLines(
   final lines = <String>['┌─ ${_clip(header, inner - 3)}'];
   void body(String text) =>
       lines.add('│ ${_pad(_clip(text, inner - 3), inner - 3)}');
-  void wrappedBody(String text) =>
-      lines.addAll(_wrapCardBody(text, inner - 3));
+  void wrappedBody(String text) => lines.addAll(_wrapCardBody(text, inner - 3));
   final wrap = fit == CardTextFit.wrap;
   if (wrap) {
     // The log face renders the FULL command: every physical line

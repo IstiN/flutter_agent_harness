@@ -2512,6 +2512,7 @@ final class FaTuiController {
     };
     return model;
   }
+
   late final Program _program = Program(
     options: [
       withAltScreen(),

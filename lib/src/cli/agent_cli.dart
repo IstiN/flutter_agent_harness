@@ -1236,8 +1236,7 @@ class AgentCli {
   /// instead of draining every segment after the first result. Live
   /// faces only; the TUI keeps today's behavior. (State lives on the
   /// class — the render methods are an extension.)
-  final List<PostToolNarrationHold> _postToolHolds =
-      <PostToolNarrationHold>[];
+  final List<PostToolNarrationHold> _postToolHolds = <PostToolNarrationHold>[];
 
   /// The E1 leading-whitespace hold (gh-1433): whitespace-only deltas
   /// before the first real text hold here so a whitespace-only narration
