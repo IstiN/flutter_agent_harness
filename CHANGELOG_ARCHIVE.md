@@ -1,0 +1,4601 @@
+# Changelog archive
+
+Entries before 1.0.506, moved out of `CHANGELOG.md` on 2026-10-09
+(gh-1452): pub.dev server-rejects a publish whose `CHANGELOG.md`
+exceeds its 262144-byte content cap, so the inline file keeps a bounded
+recent window and this archive carries the tail. GitHub releases carry
+the same history per version.
+
+## 1.0.508
+
+
+- feat(providers): issue #1398 — stall-recovery tuning becomes per-provider
+  and data-driven. Registry entries (`customProviders:`, `models.custom:`,
+  roles chain entries, `providersQueue:` entries) accept optional
+  `connectTimeoutMs`/`streamIdleTimeoutMs` (strict positive-int parsing);
+  resolution is **entry > the `providerTimeouts:` section > the 180 s/300 s
+  defaults**, per field, and every seeded entry prints its effective values
+  at boot. The wire seams (`sendWatchedProviderRequest` connect watchdog,
+  `createSseIterator` idle watchdog) resolve per request URL, so all
+  adapters inherit the tuning; runs without entries are byte-identical
+  (AC6). Also: the retry backoff contract — a parseable delta-seconds
+  `Retry-After` wins over the ladder for that attempt, hard-capped at the
+  60 s ceiling (the clamp names the advertised value; `0` counts as
+  absent, malformed/HTTP-date headers fall back to the ladder with a trace
+  note) — and the dual retry budgets (connection-class cap 4, stream-class
+  cap 3, independent counters, the terminal story carries both). Trace
+  lines pin the format `budget=<connection|stream> attempt=<n>/<cap>
+  delay=<ladder|server|clamp>`; the tuning report prints per-model
+  p50/p95 inter-chunk gap + watchdog-fire counts with the
+  `streamIdleTimeoutMs ≈ 2× p95` recipe (the production feeder lands with
+  #1392's LatencyMeter).
+- feat(hosts): gh-1322 — the wireAgentCore host-adoption gaps: an embed
+  guide (`docs/embedding.md`, with the explicit "hosts ride wireAgentCore,
+  never adk_dart" rule), the host-facing key-slot resolver
+  (`AgentCoreServices.resolveKey` + `HostKeyResolver` — the effective slot
+  NAME, pinned-twin drift hints identical to the CLI's migration notes,
+  registry-leg `knownSlotNames`, injected env/store readers only), and
+  lifecycle telemetry for in-process hosts (`AgentCoreServices.telemetry`:
+  the pure interface + in-memory ring in core, the fa.log file sink behind
+  `lib/io.dart`; requestStart/firstToken/turn/tool/run records with
+  durations and the provider HTTP status).
+- chore(ci): document the sm-kicker head-completeness codeless-head crash
+  (upstream awf#15) — the factory job's `gh api` calls put `--jq` before
+  `--arg`/`--argjson`, so a CODELESS branch head (2 parents, 0 changed
+  files: a routine branch-sync merge with no content diff) crashes the
+  job with `accepts 1 arg(s), received 4` — even when CI is fully green
+  on that head, and the job's own rescue dispatch can never heal exactly
+  those heads. Workaround until the upstream fix: keep the branch head
+  code-bearing. Live instance: run 37193754301 on head 1fe9b1232.
+- fix(messaging): gh-1180 — `schedule_message` self-chains no longer die
+  silently at the agent-chatter wake cap. The idle inbox-wake gate
+  (`InboxWakePolicy`, shared by the CLI and the app hosts) now exempts a
+  delivered scheduled self-reminder (`[scheduled] ` prefix, from == to)
+  from the 10-consecutive-wake streak: a deliberate agent-chosen cadence
+  (night watch, periodic sweep) wakes forever, while foreign
+  agent-to-agent chatter stays capped (anti-storm REG) and user-kind
+  mail always wakes. A 30s cadence floor bounds a zero-delay
+  re-schedule spin (E5). Refused wakes are visible (`[mail] wake
+  refused`, once per episode) and every lifecycle step is receipted to
+  `<messagesRoot>/_scheduled/receipts.jsonl` (`ScheduledReceiptLog`):
+  scheduled / delivered / delivery_failed / scan_failed /
+  wake_attempted / turn_started / wake_refused. A failed scheduler scan
+  (transient `listDir` error) now re-arms at `failureBackoff` with an
+  `onError` log instead of silently disarming the delivery heartbeat.
+- fix(messaging): gh-1180 review round — refusal receipts and the
+  visible refusal line are gated once per refusal EPISODE (the latch
+  lives in `InboxWakePolicy` next to the streak and re-arms on the same
+  resets), so a held gate no longer appends per-tick `wake_attempted`
+  rows (~43k duplicate lines/day) and a repeat episode after user input
+  is announced and receipted again. The app host receipts its wake path
+  (`wake_attempted` / `turn_started` / `wake_refused`) onto the same
+  trail — AC4 is no longer CLI-only. A self-reminder adopted across a
+  session-id change delivers FROM the live mailbox (from re-addressed
+  alongside to), so the resumed chain stays self-shaped and exempt
+  instead of falling back to the capped chatter lane. Plugin-only
+  pending batches are explicitly classified as chatter (the contract is
+  stated, not accidental), the wake cap is single-sourced from
+  `InboxWakePolicy.defaultMaxInboxWakeStreak`, and the policy file lost
+  a stale copy-pasted `ignore_for_file`.
+
+## 1.0.485
+
+
+- fix(ci): Daily auto-publish `pub.dev` leg — poll the pub.dev API until it
+  reflects the rerun's publish instead of a single read. 2026-09-28: the
+  recovery rerun published AND self-verified 1.0.483 (`pub.dev verified`
+  at 05:44:11Z), but the leg's one-shot API query 52s later hit a stale
+  replica, saw 1.0.482 and false-errored "manual publish needed". Initial
+  behind-check now takes three spaced reads (newest wins) so a stale read
+  cannot trigger unnecessary recovery either.
+- fix(ci): `install-pin-bump` no longer hard-gates on `release-provenance`.
+  When provenance FAILED (binaries/signature upload race), the marker job
+  was left SKIPPED — and `rerun --failed` never resurrects skipped jobs, so
+  the `vpinned` marker stayed stale forever (v1.0.483: the recovery rerun
+  went green, the marker never advanced). The job now uses
+  `if: always()`; `pin_release.sh`'s own pre-move provenance gate
+  (`check_install_pin.sh` with `FA_PIN_TARGET`) fails it loudly instead of
+  moving the marker, and a FAILED job IS part of `rerun --failed` — so the
+  recovery cascade reaches it.
+
+## 1.0.483
+
+
+- fix(install): the pinned default is now the `vpinned` RELEASE MARKER —
+  no committed pin at all. `install-config.yaml` `pinned_cli_version`
+  said 0.1.452 while the generated `site/install.sh` carried 1.0.480
+  (#1015 hand-edited only the generated file): a committed pin rots, and a
+  pin advanced by committing/pushing from the release pipeline re-races
+  `auto_release` and re-triggers Pages on every tag. Instead, the
+  installer resolves the standing `vpinned` release marker (its
+  `PINNED_VERSION` asset names the known-good release) and verifies the
+  pointed release exactly as before — the marker is only a pointer, so a
+  tampered one fails closed (DoS at worst, never a bad binary; the
+  embedded trust anchor stays the real trust root).
+  `scripts/pin_release.sh` advances the marker from the tag-scoped
+  `install-pin-bump` CI job after `release-provenance` signs the release:
+  pure release-artifact manipulation — zero commits, zero pushes, no
+  `RELEASE_PAT`, no regeneration (`is-newer` keeps bumps forward-only; a
+  pre-move `check_install_pin.sh` run with `FA_PIN_TARGET` proves the new
+  release BEFORE the marker moves, and a post-move run proves the
+  published marker). `scripts/check_install_pin.sh` (new ci.yml
+  `install-pin-gate` job on every PR, aggregated into the Quality gate)
+  fails when the generated installer drifts from the marker model
+  (`E_PIN_DRIFT`), the marker is missing/ill-formed (`E_PIN_MISSING` /
+  `E_PIN_INVALID`), or the marked release lacks a signature-verified
+  `SHA256SUMS` covering every platform archive (`E_PIN_PROVENANCE_MISSING`
+  / `E_PIN_PROVENANCE_INVALID` / `E_PIN_ASSET_COVERAGE`). Fixture coverage
+  in `installer_verify_selftest.sh`: contracts 1/1b/5/6, including
+  end-to-end `pin_release.sh` runs against a `file://` fixture release
+  root. `gen_installers.dart` drops the `pinned_cli_version` knob.
+
+## 1.0.472
+
+- feat(818): herdr integration — fa as a supported herdr agent. The
+  canonical detection manifest (`docs/integrations/herdr/fa.toml`) keys
+  herdr's `working/blocked/idle` classification on the S3 band-composer
+  chrome and the four prompt-zone sheets; `not` gates keep the
+  never-unmounting composer gutter from reading idle under the busy row.
+  Fixture transcripts captured from the real renderers live under
+  `docs/integrations/herdr/fixtures/`, and
+  `herdr_detection_test.dart` transliterates herdr's matcher (regions,
+  gates, priority arbitration) to keep the manifest and fixtures honest.
+  The herdr agent skill (`docs/integrations/herdr/SKILL.md`, installed
+  by herdr into `~/.fah/skills/herdr/`) is first-party, `HERDR_ENV`-
+  guarded and inert outside herdr; `herdr_skill_test.dart` proves
+  discovery, rendering, env passthrough, resume by session id and name,
+  and zero regression without herdr. herdr's pane restore re-attaches
+  killed panes with the existing `fa --session <id|name>` contract — no
+  new fa surface needed. Side fix: `process_probe_io.dart` now honors
+  its documented never-throws contract — the old code let a
+  `ProcessException` from the `ps` spawn itself (hardened runtimes,
+  sandboxes) crash the waiting manifest reconcile; the probes now
+  degrade to the documented null ("unverifiable") path.
+
+- fix(env): `LocalExecutionEnv` forwards `renamePath` — kernel-mode cube
+  exec was dead since #803's atomic profile restage (the
+  `RenamableFileSystem` capability probe failed at the base env), making
+  every kernel-backend bash call fail with "profile staging failed" and
+  keeping the macOS nested-rw integration gate red on darwin dev
+  machines. Capability restored + unit regression; the full
+  `fa_cube_integration_test` suite is green again through real
+  sandbox-exec.
+- fix(781): green the nightly, nightly parity at PR time. Five
+  `cli_visual` regressions red on main for days are fixed at the test
+  layer — the product behavior was already correct in each case:
+  sandbox-HOME (`#508`) can never have a working keychain so `key set`
+  honestly reports `could not save`; the `/agents` hub overlay
+  (`#316`) never carried the picker's `mail:N` cue (hub rows now
+  append ` · mail:N` via a re-entrancy-guarded fabric peek, refresh-only
+  re-push can never force the overlay open); the secret-sheet rename hint
+  copy changed in `#627`; the markdown-table and sibling tests shared one
+  fixed port whose leak cascaded into an unreadable `SocketException`
+  (ephemeral ports now); the seeded-fleet fixture lied about liveness
+  (a seeded `running` row is zombie-settled to `failed` at boot, `#332`,
+  which reordered the tree under arrow navigation — seed `idle`).
+  `bin/fah.dart` lost a duplicated remote-catalog preload (merge artifact
+  from `#411`+`#448`) that double-awaited boot latency up to +10s
+  offline. CI: the two nightly-only legs — PTY/CLI integration + CLI
+  coverage ratchet and the Terminal-visual PTY suite — now run on every
+  PR (aggregate Quality gate, same secret shape as the nightly/gardener
+  so the ratchet measures the same surface; `#781`).
+
+## 1.0.468
+
+
+- feat(tui): the omp status bar engine (#805). **Behavior note**: the
+  `tui:` config section is now parsed strictly — an unknown key under
+  `tui:` (e.g. a typo'd `theme2:` left behind by hand-editing) throws
+  `ConfigException` at boot instead of being silently ignored. Remove
+  the unknown key; the error message lists the known ones
+  (`theme`, `classic`, `statusLine`). New `tui.statusLine:` section
+  configures the status bar (preset | custom groups | separator |
+  segmentOptions | transparent); unknown *segment ids* there are
+  warned and dropped at boot, not fatal.
+
+## 1.0.457
+
+
+- fix(771): one model-list dispatch everywhere — the ChatGPT (codex)
+  provider's model list loads on every surface (provider editor
+  quick-select, default-chat picker, media-slot pickers, task model
+  pickers) instead of only right after OAuth. Pickers resolve through
+  `fetchModelsForEndpoint`, with registry entries' persisted
+  `CustomProvider.kind` winning over URL-shape guessing.
+  **Breaking for out-of-tree `ModelListDialect` implementers**: the
+  `fetch` override signature gains an optional named
+  `void Function()? onBundledFallback` parameter — keep it in the
+  override's signature (and ignore it) unless your dialect can answer
+  from a bundled offline catalog when the live fetch fails.
+
+## 0.1.397
+
+
+- fix(460): YOLO is YOLO again — the critical-pattern guard
+  `recursive delete from a root path` no longer fires on harmless `rm`
+  commands. The matcher stopped being a regex over the raw string and now
+  parses the invocation: recursion requires an explicit
+  `-r`/`-R`/`--recursive` flag (or a short cluster containing `r`/`R` —
+  `-rf`, `-fr`, `-Rf`), and the target check accepts only genuine roots —
+  `/` itself, `/*`-style root-level globs, `~`/`$HOME` (plus `/` and `/*`
+  suffixes), drive roots (`C:\`, `C:/`) and single top-level components
+  (`/usr`, `/etc`, `/tmp`). Nested absolute paths (`/tmp/x`, `/usr/local/y`),
+  relative paths and unresolved variable components (`/$VAR`) never match;
+  `-f`/`-i`/`-v` alone never make a command recursive. Flags and targets are
+  extracted per simple-command segment after stripping launchers (`sudo`,
+  `nohup`, `env`, `FOO=bar` assignments), so `cd /tmp && rm -rf /` still
+  matches while `git commit -m "rm -rf /"` and `rm -f /tmp/a; ls /` do not.
+  The `chmod`/`chown` recursive-root patterns shared the same
+  absolute-path-as-root false positive (`chmod -R 755 /tmp/x` used to fire)
+  and now ride the same root-precision parser; the other critical patterns
+  (mkfs, fork bomb, disk devices, remote-fetch, force-push) keep their
+  semantics, and all labels — and therefore every surface's prompt text —
+  are unchanged. True catastrophes (`rm -rf /`, `rm -rf /*`, `rm -rf ~`,
+  `rm -rf /usr`) keep outranking every interactive mode; only `unattended`
+  skips the interceptor (#380, unchanged). The two owner regressions
+  (`rm -f /tmp/test_dash.js`, `rm -f /tmp/issue_wip_dm.json
+  /tmp/resp_wip.json`) are permanent never-match fixtures, with a flag ×
+  target matrix table, mode-level yolo/write/always-ask tests and a
+  real-CLI headless e2e (mock LLM): yolo executes `rm -f /tmp/…` silently,
+  `rm -rf /` is still intercepted and denied. Fixes #460.
+
+## 0.1.398
+
+- feat(458): tool output cards clamp to a 3-line preview — long dumps no
+  longer evict the conversation. A card shows the first 3 lines plus a
+  `+N lines` hint (stable height regardless of dump size); tapping
+  expands to the full output, scrollable past a 200-line hard cap
+  (failed results open expanded at a tighter 20-line cap — errors are
+  why you look). Empty results render a localized `(no output)` stub;
+  the Show more/less toggle is localized en+ru (Развернуть/Свернуть);
+  state is per card and never persisted across restarts. Goldens:
+  `issue458_tool_card_*` (clamp/expand/error × light/dark, phone
+  width); the host-locked `apps_fa_chat_overlay_rich*` frames need a
+  macOS `--update-goldens` pass (the seeded `read`/thinking tiles now
+  clamp to 3 lines).
+
+## 0.1.392
+
+
+- fix(439): subagents no longer die at the context wall — the main loop's
+  compaction discipline (#387/#388) now applies to children: every child
+  turn boundary checks the estimate (transcript + system prompt + tools,
+  plus any incoming steering) against the CHILD's effective window and
+  compacts through the same AutoCompactor pipeline before the next
+  request; `task_send` to an at-wall child compacts first, then delivers
+  (the over-window guard stays the last resort for a single record
+  larger than the window and still fails honestly); `task_status` and
+  `/tasks` rows expose the child's pressure (estimated tokens / window %
+  / last-compaction info), so the parent sees the wall approaching and
+  pre-empts instead of losing its worker to a hard-failed steer.
+
+- fix(427): transient-ENOENT resilience for the JSONL session store —
+  session-file opens, creations and appends (full and windowed storage,
+  the task-resume child reopen included) retry a not-found-shaped
+  failure on a small capped exponential backoff (attempts at
+  0/50/250/1050 ms, ≤ ~1.5 s total — a submit never hangs long) instead
+  of dying on the first transient ENOENT (macOS Group Containers
+  materialization, backup/AV scans, cloud placeholders). Every retry
+  logs one `session_io_retry` line (op, attempt, path, wait, error)
+  through the hosts' diagnostic sink (the CLI wires `_logDiagnostic` →
+  `~/.fah/logs/fa.log`); exhausting the cap still fails as a named
+  `SessionException` — no wedge, no crash.
+- feat(402): app agents join the agent network (Phase 27.1 + app
+  wiring) — `HubMessagingRepository implements MessagingRepository` in
+  the harness (`lib/src/messaging/`, pure Dart over an injectable
+  `HubTransport`/`HubSocket` seam, at-most-once delivery, dedup by id,
+  per-sender ordering, queue-while-disconnected with backoff, presence
+  live/busy/offline from registration) plus the app wiring: the macOS/iOS
+  agent opts in ("Join as agent" in the hub settings) and becomes a live
+  hub member — roster presence, name-addressable DMs from the CLI, the
+  DM composer replying hub-ward — with the session file fabric kept as
+  the offline fallback (unreachable hub boots the app fully usable and
+  retries in the background).
+- fix(365): the TUI busy row no longer jumps horizontally while a run or
+  an ask prompt is open — the row is laid out in FIXED cells: the label
+  zone holds a constant 24 cells (overlong labels ellipsize inside it),
+  the elapsed field a constant 6 cells (`0s`…`3599s`, then `1h00m`…
+  `99h59m`, capped `99h+`), and the honesty suffixes render
+  provenance-first with the quiet hint LAST, so a zone that appears or
+  grows never sits left of a stable one. The row is fitted AND padded to
+  the terminal width like the status row: digit growth at power-of-ten
+  seconds, the 180 s quiet-threshold crossing and mid-run phase swaps
+  repaint only their own cells — the parked cursor column and every hint
+  column stay put. The renderer moved to `fa_tui_rows.dart`, next to its
+  caller.
+
+- feat(366): TUI tool rows read as first-class branded UI — the compact
+  oh-my-pi-style grammar `• label · detail [suffix]` replaces the raw
+  `[tool] args=JSON` plumbing (issue #366). Every builtin renders a human
+  detail: ask shows the first question text (no more JSON leaks with
+  broken quoting), bash collapses a leading `cd <dir> &&` compound to the
+  meaningful tail, read renders `path:N-M` with `~`-collapsed and
+  project-relative paths, write/edit show the path, bash_job pairs command
+  + job id; unknown/MCP tools degrade to their first string argument, and
+  argument-less calls render bare (`• bash`, no dangling `·`). End rows
+  echo the start detail plus a wall-clock suffix (`✓ bash · make -j8 3s`),
+  errors render `✗` with the result's first line kept full-bright.
+  `/tasks` shell-job rows adopt the same grammar — command in the detail
+  zone, job id + relativized `.fah/bash_jobs/…` log path as the dim
+  suffix, `✗` for non-zero exits. Truncation is budget-aware per segment:
+  the fitter wraps each zone to its own width (label + separator + detail
+  + suffix never exceed the live terminal width), appends `…` only when a
+  segment genuinely overflows, and never splits a grapheme — CJK/emoji
+  safe. Colors come from the theme roles (label `accent2`, running glyph
+  `accent2Soft`, success `accentSoft`, error `error`, details `dim`) —
+  nothing hardcodes SGR; palette swaps repaint on the next emit. The
+  tool trace reaches `toolCallId` (the event handler threads it through),
+  so unpaired ends render no elapsed and parallel calls attribute
+  durations correctly. Tests: pure grammar module (`tool_rows.dart`) +
+  golden transcript fixture + updated row pins; existing collapse/expand
+  and job-id copy behavior untouched (AC5).
+- perf(369): `--session <name>` cold start no longer reads session
+  bodies — name resolution (`sessionNameQuick`, shared by the CLI
+  matcher, `/sessions` listing, and `/trajectory`) costs two bounded
+  byte probes per file: the HEAD window first (named-at-creation
+  sessions keep their `session_info` at the file START), then the TAIL
+  window, whose record wins whenever present (rename-at-end). At most
+  ~2 MiB is touched per file, the body between the windows is never
+  read to prove a name is absent, and only gate-matching lines
+  JSON-decode (an ASCII `"type":"session_info"` needle selects them).
+  The old chunk-paged scan full-parsed every file on every cold start
+  (two ~400 MB sessions cost ~36 s). Newest-record-wins within the
+  probe cap, empty-name-clears, exact-id-first, and ambiguity
+  semantics are unchanged; the CLI matcher now fans the per-session
+  probes through the bounded `sessionNamesQuick` pool (16-way) after a
+  zero-IO exact-id pass, and hosts without ranged reads keep the
+  previous error contract. Perf gates: `dart test --tags perf` runs
+  the 300-session + two 400 MB giants store at <= 2 s per boot
+  (AC3/AC4).
+- feat!(325, #326 rework): per-run sleep assertions — the default hold is
+  now `per-run` (acquired when a run goes in flight, released when it
+  settles, so an idle agent never pins the machine awake); the previous
+  session-held lifecycle stays available as the explicit
+  `power.hold: session` opt-in. `power:` config gains a `hold` member
+  (`per-run | session`, default `per-run`, strict parse — a bad value
+  throws `ConfigException`) next to `sleepPrevention:
+  off|idle|display|system`. The CLI (`AgentCli`) fires the lifecycle
+  events around every REPL/headless run; the app (`AgentService`)
+  brackets them on its streaming state. macOS runs `caffeinate -i [-d]
+  [-s] [-u] -w <fa pid>` (self-exits with fa, never orphaned), Linux
+  tries `systemd-inhibit --what=idle[:sleep]` behind a pid watchdog
+  (best-effort), other platforms no-op (Windows is a tracked stub);
+  failures log a warning and the run continues. `/power` shows the
+  level, the hold, and the held state. Release is BOUNDED (5s SIGTERM
+  timeout → SIGKILL → proceed), and the app LOGS power config errors it
+  degrades from instead of swallowing them. Core model + lifecycle are
+  pure Dart in `lib/src/power_*.dart` with the runner injected by the
+  host (`lib/io.dart`), so no unit test spawns a real helper process.
+- feat(325): sleep-resilient sessions — power assertions after
+  oh-my-pi's `power.sleepPrevention`. A `power:` config section
+  (`sleepPrevention: off|idle|display|system`, default `idle`, strict
+  parse — a bad value throws `ConfigException`) picks a cumulative
+  sleep-prevention level. New `/power` slash command shows the level
+  and held state.
+
+## 0.1.358
+
+- fix(327): provider connections can no longer assemble a model from
+  one provider row and auth from another — the app-level guard
+  (`restorableBootConfig` + `AgentService`) refuses mismatched
+  model/auth entries up front with a `ProviderConnectionException`
+  naming the entry, and 401-style auth failures surface the entry name
+  (`[<entry>]` decoration) instead of a bare provider error. The
+  Settings Providers section marks each saved row with a provenance
+  badge — `[local]` for entries added on this surface, `[synced]` for
+  seeds synced from the CLI (pre-provenance rows read as local) — and
+  the office-host-bound `outlook.*` family now renders as a gated
+  Tools row with the "available in the Outlook add-in host only"
+  reason on every other surface (app, relay/SW registry, CLI `tools`
+  listing) instead of staying silent. The drawer session selection
+  debug line prints on CHANGE only (issue #327 AC6: the 3 s idle poll
+  no longer spams 20 identical lines per minute).
+  docs/tool-availability.md documents the outlook family row.
+- fix(259): sleep-resilient scheduled wake-ups for `schedule_message`.
+  All due-time math in `ScheduledMessageQueue` now rides an injectable
+  wall clock (`clock:`), long waits are split into ≤60s timer legs that
+  recompute the remaining delay from the wall clock on every fire (no
+  duration-drift accumulation across OS sleep), and both hosts run a
+  wall-clock catch-up sweep at every turn start (CLI `_beginUserPrompt`,
+  app `sendText`) on top of the existing idle inbox-tick sweeps — the
+  first post-sleep turn delivers every overdue record immediately.
+  Catch-up is exactly-once per record (no replay of missed cycles);
+  recurring self-re-arming cycles resume from "now" after a clock jump.
+  Docs (AGENTS.md messaging section) describe an optional external
+  cron/launchd pinger for delivery during lid sleep.
+
+- feat(287): compaction 2.0 is the DEFAULT — every resolution point now
+  falls back to the structured engine (judge-hide → checkpoint + expand,
+  #148) instead of the classic lossy prefix summary: the core resolver
+  (`resolveCompactionEngine`), the `AutoCompactorFactory` default, the
+  CLI compaction host (`config.compactionEngine ?? structured`), the
+  `/settings` summary line, and the app's per-compaction resolution.
+  Classic 1.0 stays fully supported as the in-settings rollback — an
+  explicit `compaction.engine: classic` (user or project yaml) or
+  `--compaction-engine classic` is always honored, never rewritten.
+  Migration: users without a `compaction:` section get structured on
+  upgrade; nothing is rewritten on read. The app's Settings gained a
+  Compaction section (issue #287): an engine picker — Structured
+  (recommended) / Classic (legacy 1.0) — with honest one-line tradeoffs
+  (structured: hidden-in-place + expandable, requires a configured
+  model for the judge pass; classic: lossy summary, zero extra calls),
+  the effective engine plus its source layer (project `.fah/config.yaml`
+  > user `~/.fah/config.yaml` > structured default), a docs link, and
+  writes that go through the core config service (surgical line edits
+  validated before persisting — unrelated comments survive
+  byte-for-byte). The choice applies at the next compaction (the
+  per-compaction re-resolution, no restart needed). On the web there is
+  no config yaml: the picker renders disabled with a note and the
+  structured default applies. The CLI `/settings` summary mirrors the
+  default in its `compaction:` line.
+
+- fix(hub): boot online from the persisted DAP credential — with no
+  `DAP_MASTER_SECRET`/`DAP_CLIENT_SECRET` in the environment, the CLI now
+  seeds the hub kill switch from `~/.dap/config.json` `clientSecret`
+  (the explicit prior opt-in from `/dap start`), restoring the documented
+  "the next boot is online by itself" behavior: hub mail delivery and
+  hub peers in `agent_directory` (the browser extension, embedded hosts)
+  work on a fresh boot. The fabric gate also reads the mutable
+  environment overlay the plugin actually uses, not the read-only
+  process environment.
+- fix(195): images follow-up from the #190 review. F2: a stale
+  `[Image N]` citation in history no longer silently rebinds to the
+  WRONG image after compaction renumbering — once a renumbering boundary
+  (compaction summary, structured marker, local-trim note) exists in the
+  window, authored history citations degrade to the
+  `(image no longer available)` note while generated content-keyed refs,
+  carrier labels and the current message stay intact. F3: the current
+  message's in-place images now carry their `[Image N]` label so the
+  model can cite what it sees. F4: the app logs per-request cap drops
+  through `AppLog` (`logs/app.log`) instead of silently dropping. F5:
+  `estimateContextTokens` charges repeated images at the wire-replacement
+  cost (first occurrence full, repeats ~32 chars), fixing the
+  transcript-vs-wire estimation asymmetry; per-message `estimateTokens`
+  is unchanged. F1: the `images:` config section gained the previously
+  claimed tests — CLI parse/round-trip/strictness (bad bools, unknown
+  keys, non-positive ints, malformed sections) and the config-service
+  validator dispatch pin.
+
+- feat(169): declarative-only secured theme API — theme packs
+  (`theme.json` + optional wallpaper image in a `.zip`; strict schema
+  validation with unknown-key rejection, path-traversal/symlink/size
+  screens, WCAG contrast warnings), a Settings section to import, switch
+  and remove packs (a colors-only apply keeps the current wallpaper;
+  removing the active pack reverts atomically), wallpaper layers in the
+  chat, apps grid and launcher screens, and the `jsr.fa.theme` bridge —
+  `list`/`current`/`apply` behind the `theme` permission with a consent
+  dialog per apply. Apps can never install or delete packs (no such API
+  exists; pinned by a byte-scan test).
+- chore(flutter): raise the Flutter floor to 3.47 (`>=3.47.0`) across
+  `flutter_app`, `packages/fa_ui`, `packages/fa_llm_flutter` and
+  `yoclip`; drop the `meta: 1.18.0` dependency overrides (the 3.47 SDK
+  declares `meta ^1.18.3`, so 1.19.0 resolves for dart_tui without an
+  override); regenerate the flutter_app goldens for the 3.47.4
+  rendering (text/geometry drift only); clean up new-SDK lints in two
+  config tests; ios Podfile now forces the iOS 16 deployment floor on
+  pod TARGET-level build configs too (podspec-declared 15.0 targets
+  broke the build against 16.0-only Promises under the newer toolchain).
+- chore(deps): js_widget_runtime ^0.4.121 — typed fallback hardening
+  for legacy manifest keys, widget manifest i18n compatibility, and the
+  JSR video `onError` bridge.
+
+## 0.1.357
+
+- feat(155): backend agent mode — `fah` as a server-side agent engine
+  for a Go supervisor. `--output events[=full]` switches stdout to a HEP
+  v1 JSONL stream (header + agent_start/turn lifecycle frames, message
+  and tool deltas, usage passthrough in turn_done; `events=full` also
+  caps tool args at 4000 chars instead of the 100-char summary);
+  prose mode is untouched. `--attach <path>` (repeatable) reads image
+  files, sniffs the type from magic bytes, and rides them as base64
+  data-URI image blocks on the first user message. SIGTERM (and SIGINT)
+  in headless mode now abort the run gracefully — partial transcript
+  persists (`persistAbortedPartials`), a `cancelled` frame closes the
+  HEP stream, stdout is flushed, exit code 130; a second SIGTERM forces
+  exit 143. An unknown `--session` key on a clean root starts a fresh
+  session instead of failing. `--version --output json` prints
+  `{"version":…,"hep":"v1"}`. (Per-request `[Image N]` image dedup was
+  also prototyped here and is superseded by the session image registry
+  from #190, which this change adopts instead.)
+
+## 0.1.356
+
+- ci(177): PR-level CI speed restructure — a pull request now pays only for
+  what it touched. Path-aware gating (`changes` job), the sequential
+  "Quality gates" monolith split into parallel jobs (`static`, `test-core`
+  ×3 duration-balanced shards with merged coverage, `coverage-gate`,
+  `guards`, `flutter-tests` on ubuntu), pub/flutter caching everywhere,
+  concurrency cancel-in-progress on all PR workflows, and one aggregate
+  `Quality gate` required check. PRs ratchet coverage on CHANGED lines
+  (`scripts/diff_coverage.py`); main/tags/nightly keep the full 80%
+  ratchet. The pre-commit hook is now a thin wrapper over the SAME
+  `scripts/ci_fast_gate.sh` CI runs, with the same path filters.
+- ci(177): nightly full-matrix workflow (`nightly.yml`) — the original
+  monolith gates + the PTY/CLI integration suites (never gated on PRs
+  before; live-provider tests self-skip without keys) + the terminal-visual
+  screenshot suite (never ran in CI at all) — with a deduped `nightly-red`
+  auto-issue. `packages/fa_ui` non-golden tests join CI for the first time.
+- ci(177): automatically growing terminal-test coverage — weekly
+  `coverage-gardener.yml` re-measures PTY-suite coverage of
+  `lib/src/cli/**` and commits the higher baseline;
+  `scripts/check_cli_coverage.py` enforces it nightly (ratchet only up).
+- ci(177): duration-balanced test sharding — `scripts/test_shards.json` +
+  `scripts/rebalance_shards.py` (junit timing or file-count fallback),
+  rebalanced weekly by `shard-rebalance.yml`.
+
+## 0.1.357
+
+
+- feat(171): session image registry — unique images ride a provider
+  request exactly once per window; every other occurrence becomes a
+  stable `[Image N]` text ref. `rewriteHistoryImages`
+  (`lib/src/agent/image_registry.dart`) rewrites the OUTBOUND payload
+  only (session JSONL byte-identical): carriers
+  `[{text:"[Image N]"},{image}]` anchor before the first referencing
+  user message or after the tool-result run (never inside call/result
+  pairs); the current user message rides images in place; the
+  per-request cap drops current-first-then-newest with a drop notice
+  (never silent); dangling refs (compaction, cap) resolve to
+  `(image no longer available)`. Stateless per-request rebuild —
+  determinism, eviction and resume come free. Config: `images.registry`
+  kill switch (false = byte-for-byte legacy shape) +
+  `images.maxPerRequest` (default 20), strict parse, CLI and app honor
+  it. Fixes #171.
+
+
+
+## 0.1.354
+
+
+- feat(148): structured compaction engine — context hiding that is
+  structured, addressable, and expandable. New branch records
+  `hidden_range` / `compact_checkpoint` store hide/cover state keyed by
+  stable record ids (append-only; classic compaction's lossy summary is
+  untouched); the context projection replaces hidden records with one-line
+  markers (≤12 tokens each) at their original positions, hides tool pairs
+  atomically so the wire stays valid for both provider shapes, and keeps a
+  stable numeric alias per record (1-based JSONL line number — the
+  zero-tool fallback resolves to the same bytes). The two-pass engine
+  (`lib/src/compaction/structured/`) hides first via a cheap judge over
+  the context ledger and checkpoints only when hiding is insufficient
+  (nested checkpoints flatten at depth cap). The `compact_expand` tool
+  restores any id/range on demand under a per-turn token budget with
+  paging; the agent loop resets the budget per user turn. Engine choice:
+  `compaction.engine: classic|structured` in config (strict parse),
+  resolved session < project < global, default classic; CLI host flag and
+  settings entry included, the Flutter app honors the same chain through
+  `loadAppCompactionEngine` (config parity, no new settings screen).
+  Trajectory ledger folds both record kinds as collapsible `compacted`
+  rows. Fixes #148.
+
+## 0.1.344
+
+
+- fix(97): the TUI secret sheet accepts multiline and over-wide pastes
+  safely: a pasted NAME drops CR/LF (UPPER_SNAKE can never carry line
+  breaks), a pasted VALUE normalizes CRLF to LF and grants PEM-style
+  multiline credentials verbatim, and the masked/revealed value renders
+  one frame row per line instead of embedding a raw newline inside a row
+  (which physically tore the sheet frame in the terminal). The exact-width
+  row off-by-one seen in the same frames is issue #109 and is fixed there.
+ A shortening (CRLF) paste now advances the value cursor by the normalized
+ length - pinned to the raw paste length it overran the buffer and crashed
+ the next edit keystroke (review follow-up).
+
+## 0.1.336
+
+- fix(97): TUI secret sheet opens on the VALUE field with the suggested
+  name as a dim placeholder (typing replaces it wholesale, Tab toggles
+  fields, ▸ marks focus), the value renders masked from the first
+  keystroke (Ctrl+R reveals), and a blocked Enter shows the reason inline
+  instead of dying silently. SECURITY ADVISORY: with the sheet as shipped
+  before this fix, a credential typed on name focus rendered UNMASKED in
+  the Name row (visible in scrollback, screen recordings, transcripts) —
+  treat secrets entered through the CLI secret sheet before 0.1.336 as
+  potentially exposed and rotate them.
+## 0.1.335
+
+- feat(dap): password-protected local hub — `LocalHub(masterSecret:)`
+  requires a credential on every WS upgrade (`Authorization: Bearer` for
+  native clients, the `dap_token` query param for browser clients that
+  cannot set headers), rejects strangers with `401` + `Connection: close`
+  (keep-alive pools never replay a dead socket), and gates
+  `{"t":"enroll"}` to master-authenticated connections: enrolling issues a
+  per-client secret persisted (agentId → secret, mode 0600) in
+  `~/.dap/hub.json` alongside the password, so hub restarts keep both.
+  `fa hub serve` resolves the password as `--secret` > `DAP_HUB_SECRET` >
+  the state file, and the first interactive start (bare `fa hub serve` or
+  the CLI's one-button `/dap start`) offers to set a password once (empty
+  = stay open, remembered). The browser extension joins a protected hub
+  via a new Hub password field in the panel (faDap.secret, sent as
+  `dap_token`); an empty field keeps the stored password, and `hub.bind`
+  rebinds preserve it. Docs: docs/dap.md §8.1/§8.3.
+- fix(59): scheduled-message ownership release on dispose — tearing a
+  session down now clears the `owner` tag on its pending self-addressed
+  records, so the next session's queue adopts them (the #65 recreate
+  contract) while #88's anti-theft tagging keeps protecting LIVE foreign
+  owners. Fixes the pre-existing flutter_app regression from the #88
+  merge; also repairs the branch's golden gaps (DapHubMark golden +
+  guard registration, resume-refresher exemption, regenerated DAP page
+  snapshots) and the golden-test fake missing the DapHubService binding
+  members.
+- test(dap): protected-hub e2e — the Playwright dap spec now also runs
+  against a PASSWORD-PROTECTED hub (FakeHub(masterSecret:) +
+  DAP_E2E_HUB_SECRET on the e2e hub server): a stranger boot is 401'd
+  before any hello (client stays reconnecting), the password boot
+  connects, and a CLI enrolled with the same password exchanges DMs with
+  the extension end to end. The shared scripted mock gains resetScript()
+  so every test's CLI gets the dap_dm tool call as call #1.
+- feat(dap): the app-mode Agent network editor gains the Hub password
+  field (write-only — an empty field keeps the stored one), wired through
+  DapHubService.saveConnection: the extension variant rides hub.save, the
+  desktop variant persists clientSecret into ~/.dap/config.json.
+- fix(dap): /dap start no longer 401-loops against its own protected
+  hub — the session's client now dials with the HUB's password (prompted
+  or read back from the state file), persisted as clientSecret so stale
+  secrets from an older hub can never win the resolution precedence.
+- fix(extension): a session created from ANY surface now shows up in
+  every other surface's sessions drawer. The SW broadcast the attach
+  trio after session_new/session_open only to the requesting port, so a
+  panel/app-tab that missed it kept a stale live-session id and its
+  drawer filter hid the freshly archived row ("added a session, still
+  see one"). The trio now broadcasts to all connected ports, and the
+  drawer filter no longer drops archived rows by a possibly-stale id.
+- fix(app): clicking a session no longer teleports it to the top of the
+  sidebar. The pending-click jump-to-top reordered the list while the
+  row's stamps were still old, parking a "1:08 PM" row above an
+  "8:42 PM" row. The click now highlights the row in place; the list
+  reorders only when a session's real activity time changes.
+- fix(app): ONE session-selection source for every surface. The wide
+  sidebar and the narrow drawer had divergent active-row logic
+  (manager slot vs SW live id), so a switch lit two rows in the wide
+  sidebar (pending + stale slot) and none moved in the drawer.
+  FlutterSessionManager.hostedLiveId is now the single truth (set on
+  every attach broadcast), pending clicks REPLACE it until it lands,
+  and both surfaces derive their dot from the same effective id.
+- fix(app): the wide sidebar's active dot follows session switches. The
+  live session is always the freshest row, so the dot sat pinned to the
+  first row and a switch had no immediate feedback. The clicked session
+  now highlights and jumps to the top instantly (pendingSessionId),
+  clearing when the manager's slot catches the attach broadcast.
+- feat(app): the Agent network page is now connections-first: a list
+  (active connection on top, always present even when never bookmarked)
+  + Add connection; tapping a row opens that connection's details in the
+  SAME page — the active one shows url/status/identity/incoming
+  routing/channels/edit, a bookmark shows its coordinates with Make
+  active and Remove (the switch stays live).
+- feat(app/extension): multiple hub connections in Agent network. The
+  extension keeps a bookmark list (faDap.savedConnections): Add
+  connection saves a new hub and goes live on it, tapping a bookmark
+  switches the live agent (hub.switch — the entry's own secret applies,
+  an open bookmark clears the stored password), re-saving the active
+  connection preserves the list (hub.connections.set manages it). SW
+  logs: [dap-hub] connection saved / switched / list set.
+- fix(extension): session switches now follow the UI everywhere. The
+  manager's active slot kept its boot-time id/stamps after any
+  session_new/session_open, so the active dot stayed on a row whose
+  label never changed, and the wide-layout sidebar (app tab) listed only
+  one session — it read the page-local repo while the session files
+  live in the service worker. The relay now re-keys the manager slot on
+  an adopted broadcast, the sidebar/drawer take fresh stamps from the
+  SW poll, and listPersistedSessions delegates to the relay's
+  sessions_query on hosted pages. Logs: session switches, dispatches,
+  busy refusals, and mail-driven bound-session switches are printed on
+  both sides ([fah][relay] / [dap-host]).
+- fix(dap): the browser client stops the fast retry loop when the hub
+  keeps rejecting the credential (wrong Hub password): after three
+  fast closes with a credential configured it holds at a 30 s re-check
+  and surfaces the new `unauthorized` phase instead of hammering 401s.
+
+## 0.1.331
+
+- fix(86): compaction checkpoint honors the owner review on #82 — the
+  hardcoded imperative-verb ask detector (`_requestMarkerPattern`) is gone;
+  every user-role message (initial + steering, any phrasing or language)
+  now reaches the summarizer as a `USER REQUEST CANDIDATES` line and the
+  LLM itself judges which are open asks (only structural non-user content —
+  `<system-notice>` envelopes, agent mail, projected branch summaries — is
+  skipped; `detectUserRequestCandidates` → `userRequestCandidateLines`), so
+  marker-less asks ("можешь глянуть почему тест падает?") can no longer be
+  evicted before the summarizer sees them. The compaction prompts (system,
+  first-time, update, turn-prefix, branch) gain an explicit tool-results
+  assessment: important outputs (test verdicts, command results, error
+  traces, fetched data) are checkpointed with what produced them; trivial
+  banners may be omitted, with the LLM assessing importance. The owner's
+  ≤500-char instruction budget (issue #81 AC7, restated by #86 AC4) holds
+  at net delta 423: the summary_update.md section hints were tightened to
+  make room while every operational rule (PRESERVE/ADD/UPDATE/ASSESS and
+  the open-ask close-out rules) stays intact. Tests: marker-less-ask
+  regression (unit + end-to-end into `## Open User Requests`), non-lossy
+  candidate pin, tool-results wording pin across the five prompts, and a
+  checkpoint behavior test (failing-test output preserved, success banner
+  not required).
+
+## 0.1.330
+
+
+- feat(27): A2A boundary gateway (issue #27 phase 3) — cross-machine
+  `agent_message` rides A2A: `name@machine` addresses resolve the machine
+  against the `a2a:` config section and deliver as `message/send` with a
+  `faMail` metadata envelope (`A2aMailGateway`, lib/src/a2a/
+  a2a_mail_gateway.dart); failed remote tasks error instead of dead-
+  dropping, unconfigured machines fail with the exact config hint. Inbound:
+  `fa serve --a2a` now accepts envelope-carrying sends and deposits them
+  into the project's file inboxes (by mailbox id or session display name)
+  instead of running an agent turn. The hub remains the intra-machine
+  transport; hosts still carry no transport code.
+
+## 0.1.324
+
+- fix(43): typing during minutes-long thinking streams no longer degrades —
+  the 32KB tail hard-split in `_appendOutput` used to land on
+  `TranscriptMarkdown`'s commit boundary (fresh substring identities
+  defeat both resumability sentinels) and force a full O(transcript)
+  markdown+wrap rebuild, so frame builds grew with the session
+  (real-PTY e2e at 200 reasoning deltas/s: frame-build p99 24.8ms /
+  max 81ms after 60s, keystroke echo p99 59.5ms). The grown-tail
+  rollback now also recognizes the split shape — the boundary line
+  survives as a prefix of the concatenated chunks (`_boundarySurvivesAsChunks`,
+  one O(boundary) string compare per suspected split) — rolls back one
+  source line and re-walks the chunks; replaced content still takes the
+  documented rebuild path. Rebuilds in the flood regime: 0 (bench
+  `scripts/tui_typing_bench.dart --grow-tail`; frame-build p99 5.0ms /
+  max 7.4ms flat). Contracts: split-resume trio in
+  `test/cli/transcript_markdown_perf_test.dart`; perf log:
+  docs/performance-cli-tui.md.
+
+- feat(skills): the `fa-self-config` skill (issue #29, phase 1) — fa
+  configures itself by editing the config files the CLI settings commands
+  write, with a test-enforced parity guard: every settings-affecting CLI
+  command (`/provider`, `/models`, `/model`, `/model-edit`, `/memory`,
+  `/tools`, `/cube`, `/mcp`, `/redact`, `/skills`, `/approval`, `/allow`,
+  `/mode` family, `/settings`) must stay documented in the skill with its
+  config-file equivalent, and a new settings command fails CI until it is
+  classified and documented. The skill encodes precedence (project
+  `memory:`/`cube:`/`tools:` win over the user file), strict vs tolerant
+  parse behavior, live vs next-boot application, and the
+  never-inline-API-keys rule; an accuracy test pins every documented key
+  against the real parsers (`CliConfig`/`MemoryConfig`/`ToolsConfig`/
+  `McpConfig`/roles) so no phantom keys or stale names can ship.
+
+## 0.1.322
+
+
+- feat(flutter_app): CodeMie sign-in works inside the browser extension —
+  no webview, no localhost callback, no API key. The app page detects the
+  extension host (`chrome.runtime.id`), opens the login page in a NORMAL
+  browser tab (IdPs forbid framing; MV3 has no webview), and polls the
+  models endpoint with `credentials: 'include'` until the shared cookie
+  jar holds a session. The redirect-interception dance (localhost
+  callback server) stays a desktop/mobile-only concern; the saved
+  provider keeps an EMPTY key — the service worker's streaming fetch
+  carries the jar. Poll/parse core is pure and tested
+  (`codemie_extension_signin.dart`); `extOpenTab`/`extFetchString`
+  bindings live beside the existing `chrome.runtime` interop.
+- feat(browser_ext): CodeMie cookie sign-in without any API key or SSO
+  dance — the panel now talks to a small `ext_request` op surface on the
+  service worker (`cookies.get_all`, SW-relayed `fetch` with
+  `credentials: 'include'` — MV3 + host permissions mean no CORS and the
+  browser jar rides along — and `tabs.create` for the login page).
+  `codeMieLogin` probes `llm_models`: 200 → cookies alive, model ids
+  prefill, the key field stays empty; 401/403 → the login tab opens and
+  the probe repeats until the jar holds a session. A CodeMie base URL
+  (`isCookieAuthUrl`) streams DIRECT from the SW — never through the
+  bridge relay, which would strip the cookies and 401. New
+  `ext_request`/`ext_result` protocol kinds; every op validates its
+  params and answers a structured result, unknown ops never crash.
+- fix(browser_ext): the exfil gate's ask under yolo now stays silent —
+  the user's contract is that yolo asks for NOTHING (the extension has
+  no bash to carry critical patterns), so only the interactive modes
+  (ask/write) surface the outbound dialog; unattended keeps allowing
+  without asking.
+
+## 0.1.321
+
+
+- fix(browser_ext): cross-origin `tabs_open`/`downloads_start` no longer
+  hard-fail without asking — the exfil gate threw `approval_required`
+  straight at the model, so even yolo could not open a never-visited
+  site (the agent looped on the tool error, "reads the page but can't
+  open apple.com"). Flagged outbound actions now route through the
+  host's approval prompt: one dialog per new ORIGIN (an allow seeds the
+  visited set), deny keeps the tool error, and unattended hosts allow
+  without asking so autonomous runs never stall on the 120s backstop.
+  The ask is an injectable `ExfilApprovalAsk` on the tool surface;
+  unwired surfaces keep the conservative hard error.
+- fix(browser_ext): the approval loop could not be answered or rescued —
+  the extension panel's primary chat surface (the narrow-layout session
+  sheet) never installed an approval handler, so every gated tool call
+  sat out the SW's 120s backstop and was denied with the user never
+  asked: the turn looped "busy", produced no output, and the model kept
+  retrying gated tools. Fixes, three ways:
+  - `FaChatSurfaceHandlers` (fa_ui): a reusable binder installing the
+    approval dialog + ask sheet + secret-request sheet on the active
+    service for as long as a chat surface shows; the session sheet now
+    binds it (moves on session switch, clears exactly its own handlers
+    on dispose, never clobbers a foreign handler).
+  - `ApprovalFlow` (browser_ext/dart, pure + VM-tested): the SW host's
+    pending-approval core extracted from agent_host (same wire events);
+    `resolveAll` completes every pending prompt at once.
+  - live approval-mode changes: `reconfigure` no longer drops the mode
+    behind the busy guard — the mode applies mid-run, and flipping to
+    yolo/unattended resolves pending prompts as allowed (the user's
+    rescue gesture); only provider/mailbox/hub/tool changes still
+    require an idle host.
+
+## 0.1.313
+
+
+- feat(js-ext): JS extension core (issue #32) — `JsrRuntime` engine seam +
+  engine-agnostic bootstrap (`jsr.ext.*`: registerTool tiers, six hook
+  events, slash commands, provider flows, session/fs/exec/keys/io/has
+  bridges) over three transports (qjs stdio, flutter_js send-message, web
+  worker); `JsExtensionHost` wires commits into the agent with
+  deny-precedence hook composition (JS can only tighten), append-only
+  `afterToolCall` redacted twice (before JS sees it, before persist),
+  read-only `prepareNextTurn`, E14 follow-up collapse, and 30/10/120 s
+  load/hook/tool budgets that degrade to log lines, never crash the loop;
+  manifest/trust/install machinery — strict accumulating manifest parse
+  (E12), TOFU trust with capability-diff re-prompt + hash-only silent
+  re-grant, local/zip/gh/catalog/bundled planners with sha256-verified
+  hostile-zip rules, and the tolerant v2 catalog client (unions `widgets`
+  + `extensions`).
+- feat(cli-ext): `fa ext list|install|remove|update|audit` with
+  `--pin <sha256>`/`--trust`/`--strict`/`--bundled`/`--json` (enable/
+  disable stay REPL-only), the quickjs-ng engine process (`qjs --std`,
+  binary via explicit override → `FA_QJS_BIN` → PATH, missing binary
+  degrades to an `engine unavailable` skip), the `/ext` REPL family
+  (list/enable/disable/audit/remove/update/reload), and idempotent
+  `.fah/bootstrap.yaml` applies at every start — project then user, E16
+  project-wins shadowing, E15 named soft-fail lines unless
+  `FA_EXT_BOOTSTRAP_STRICT=1`.
+- feat(app-ext): `flutter_app/lib/services/ext/` — `AppExtensionService`
+  owns the on-device store roots + host; flutter_js (native) and web
+  worker (web) runtimes behind one factory. v1 scope: trusted-only load
+  (no trust prompt — untrusted extensions tombstone-skip); the app trust
+  UI lands in a later wave.
+- feat(js-ext): bundled `crap-guard` reference extension (post-edit CRAP +
+  2800-line guard via `crap4dart`, 2 s edit debounce, one aggregated
+  `{append}` per burst, E17 single missing-tool note) compiled in as const
+  strings, byte-mirrored into `js-ext-registry/crap-guard/` for publishing
+  (sync test enforces equality) with a README covering the fa_widgets
+  `catalog.json` entry, zip + `shasum -a 256` recipe, and gh-repo layout;
+  authoring guide in docs/js-extensions.md.
+
+- feat(browser-ext): browser extension v2.1 (issue #30) — fa web moves
+  into the extension and grows browser superpowers. The panel is now an
+  app-hosting bootstrap: `scripts/build_browser_ext.sh --with-app`
+  bundles the Flutter web build as `browser_ext/app/` and the side
+  panel/full tab loads it (v1 minimal chat stays as fallback). The
+  service worker gains the UI protocol server — `FaUiProtocol` over a
+  `chrome.runtime` port (17 message kinds: hello/attach/prompt/steer/
+  cancel/stream/approval/sessions/settings, prompt-id dedup + attach
+  replay), `WorkerRelayTransport` vs `LocalStreamTransport` with
+  capability detection — and a 34-tool browser surface
+  (`browser_api_tools.dart`) over the typed `ChromeApi` facade (23
+  chrome.* groups): tabs/windows/groups/sessions/history/bookmarks/
+  downloads/cookies CRUD, first-class `inject_js` (ISOLATED/MAIN worlds,
+  MAIN always prompts) + `inject_css`, `cdp_eval`, `page_screenshot`,
+  `app_screenshot`, `nav_wait`; restricted pages refuse scripting.
+  Permission⇄tool matrix (`permission_matrix.dart`): 28 core rows /
+  9 second-tier optional / 11 excluded (incl. the impossible-by-
+  construction `passwords` row), unpacked vs store manifest profiles
+  (store strips `debugger`+`cookies`); manifest 0.2.0 with 26 core
+  permissions, second tier in optional_permissions, `ask-fa` command
+  (Ctrl+Shift+1) and omnibox keyword `fa`. Background residency: badge
+  state machine (idle/busy/mail, resync after SW kill, denied-
+  notification fallback), exactly-once scheduled tasks over
+  `chrome.alarms`, lifetime-capped offscreen documents, EntryPointHub
+  steering omnibox/commands/contextMenus into one agent. Security layer:
+  quarantine + instruction-hierarchy classifier (page bytes are always
+  data), injection validator (login-form/keylogger refusals), exfil
+  gate (page-derived/cross-origin/data-exit approval), and a new
+  `layer_credential.dart` redaction layer masking credential-shaped
+  form values pre-persist. Docs rewritten:
+  browser_ext/README.md, docs/browser-extension.md, new
+  docs/browser-extension-permissions.md. Pending: flutter_app
+  worker-relay chat integration, Playwright e2e, store publication.
+
+## 0.1.297
+
+- fix(tui): a long thinking burst froze the whole TUI (typing dead, spinner
+  stuck — user report: "пиздец как тормозит" on a glm-5.3 session). Root
+  cause: the CLI wrapped every thinking delta in inline markdown, and the
+  escape-dense result drove AnsiMarkdown's inline link regex into
+  quadratic backtracking — measured 10.9 s of synchronous work per
+  coalesced 185 KB flush. Two fixes: thinking deltas now dim verbatim
+  (spans cannot pair across deltas anyway), and inline span substitution
+  is skipped for lines over 4 KB (`AnsiMarkdown.inlineFormatMaxChars`) —
+  degenerate spans render verbatim, fences/rules/tables unchanged.
+  Regression-tested by the new `tool/thinking_lag_probe.dart` PTY probe
+  (burst streams: keypress echo p95 stays under budget) and a markdown
+  unit test.
+- docs(readme): reflect the shipped surface — status, design contract,
+  what's inside (agent core, providers, sessions, tools, skills,
+  approval gate, trajectory, messaging), CLI slash commands.
+
+## 0.1.296
+
+- feat(bash): automatic transient-failure retry — timeout-class failures
+  (the model's per-call cap, or an outer future cap on a hung transport,
+  e.g. a stalled `gh` API call) are retried up to 2 times (3 attempts
+  total) with a 1s backoff before the error surfaces. Retries are visible
+  as `[bash attempt N/3 ... — retrying]` notices in the tool output, and
+  the final error carries them too. Aborts and real command failures
+  (non-zero exit, exec errors, shell unavailable) are never retried.
+- fix(app): the macOS/iOS app could boot to a black screen — the native
+  Firebase SDK auto-configures the [DEFAULT] app from
+  GoogleService-Info.plist at plugin registration, so the Dart
+  `Firebase.initializeApp` threw an unhandled [core/duplicate-app] that
+  killed main() before the first frame. The duplicate-app case now reuses
+  the natively configured app.
+
+## 0.1.296
+
+- feat(bash): automatic transient-failure retry — timeout-class failures
+  (the model's per-call cap, or an outer future cap on a hung transport,
+  e.g. a stalled `gh` API call) are retried up to 2 times (3 attempts
+  total) with a 1s backoff before the error surfaces. Retries are visible
+  as `[bash attempt N/3 ... — retrying]` notices in the tool output, and
+  the final error carries them too. Aborts and real command failures
+  (non-zero exit, exec errors, shell unavailable) are never retried.
+
+## 0.1.295
+
+- docs: fa1.dev is now referenced from the README (website + live web
+  demo + iOS beta + installer) and from `homepage` in pubspec.yaml, so
+  the link renders on pub.dev next to the package name.
+
+## 0.1.294
+
+- feat(redact): layered secret redaction pipeline (issue #24) — ten pure
+  layers (registered/path/vendor/prefix/pem/asn1/connection/context/
+  entropy/pii) merged priority-first into `RedactionPipeline.scan/redact`
+  with idempotent `[REDACTED:<kind>]` markers, allowlist + data-URL
+  pass-through, live `RedactionConfig`, and per-layer/per-tool stats.
+  Agent hooks mask tool results BEFORE session persist, mask the outgoing
+  context, deny credential-file read/bash in `blockMode`, and mask user
+  prompts; write-side tools (write/edit/checkpoint/MCP write-ish) are
+  never filtered. `redact:` config section, `/redact` command, app wiring,
+  docs/redaction.md.
+- test: tui_prototype_snapshot marked `integration` — the real-PTY +
+  `dart run` cold start intermittently exceeded the gate timeouts on CI,
+  which had been silently blocking every tag publish since ~0.1.214.
+
+## 0.1.289
+
+- fix(roles): transient transport failures no longer kill the turn. A
+  dropped connection ("Connection closed while receiving data", resets,
+  refusals, DNS/TLS handshake failures, 502/503/504) during a provider
+  call is now retried in place with the retry policy's backoff budget
+  (`retry.retriesPerEntry`, default 2), then falls over to the next chain
+  entry — the run survives instead of ending with an error event. Key
+  rotation is deliberately skipped for this class (the endpoint dropped,
+  not the credential), the observable-output guard still holds (a stream
+  that already emitted content is never silently replayed), and every
+  retry is announced via `FallbackNoticeKind.transportRetry` (the CLI
+  prints `[roles] connection lost on … — retrying in Ns`).
+- fix(app): the onboarding flow follows the dark theme — provider cards
+  were hardcoded `Colors.white` with near-white title text (white on
+  white), the wide ghost column's "Ask when needed" used the brand blue
+  on a near-black background, and step dots/progress tracks/dividers were
+  light-themed; all now route through the `_onb*` dark-aware helpers with
+  a readable `_onbPrimary` accent in dark mode.
+- fix(cli): steering robustness — file-path-prefixed input sent while a
+  run is busy is steered with its attachment instead of dying on the busy
+  gate, steered `~/`/`./` paths resolve like interactive input, leftover
+  steering after an aborted/interrupted run runs as a fresh turn or is
+  dropped loudly (texts printed), and queue drops always show what fell
+  out instead of vanishing silently.
+- fix(cli): a `!command` executed locally now also steers a compact
+  `<system-notice>` (command + exit code + capped output tail) into the
+  conversation — the agent learns what ran without being woken.
+- deps: the DAP hub client moved to the published `fa_hub_client` 0.2.8,
+  whose reconnect backoff no longer overflows after ~64 attempts (Dart
+  int shift semantics: `1 << 64` == 0) into a zero-delay tight reconnect
+  loop against a dead hub — the root cause of the multi-hour CPU storms.
+- fix(tools): media slot overrides no longer fall back to the main
+  provider API key — a slot override is its own provider configuration
+  (CLI `generate_image` + the app's `MediaModelsStore.resolve`).
+- fix(tools): `generate_image` surfaces MiniMax `base_resp` errors that
+  hide inside HTTP 200 responses.
+- fix(cli): per-folder model memory — `/model` and `/provider` switches
+  are scoped to the launch folder; the global config keeps its seed
+  triple, so a switch in one workspace no longer leaks into the others
+  across restarts.
+- fix(cli): model/provider persistence callbacks are awaited — `/model x`
+  + `/exit` can no longer lose the switch.
+- fix(cli): the over-window context guard renders a calm yellow note
+  instead of a red error; explicit guidance when compaction cannot free
+  the window.
+
+## 0.1.282
+
+
+- feat(cli): a `DAP / Hub` entry in the `/settings` hub — view the live
+  hub snapshot (resolved url, agent name, connection state), set the hub
+  url and the agent name (persisted through the hub client's
+  `~/.dap/config.json` read-modify-write, so channels and invites
+  survive), test the connection, and write the `hub: false` plugin
+  opt-out into `.fah/packages.yaml` (existing sections preserved). The
+  flow reads the hub state through an injectable snapshot seam the
+  executable wires to the hub plugin — no sockets, fully fake-drivable
+  in tests.
+- fix(cli): `.fah/packages.yaml` entries actually load now — package:yaml
+  reifies its map entries as dynamic-keyed, so the loader's String-keyed
+  `whereType` filter dropped every entry and the whole file (plugin
+  enabling and configuration, `hub:` url/name, `hub: false` opt-outs)
+  was inert. The loader now deep-converts the parsed yaml tree to plain
+  Dart values before handing sections to plugins and the DAP / Hub
+  settings flow.
+  The loader now lives in `lib/src/plugins/packages_config.dart` (reading
+  through the ExecutionEnv), so tests can pin it without importing the
+  executable.
+- feat(app): DAP/Hub settings section in the Flutter app — a settings row
+  opening the hub page (resolved URL, connection probe, agent name/agentId,
+  channels) with add/edit of the machine-shared `~/.dap/config.json`
+  connection via `fah_hub_client`; web degrades to an honest
+  not-supported note (the hub client is IO-bound).
+- fix(dap): a `dap_dm` to a known-but-offline peer no longer reads like
+  a typo — the no-match error lists the known online peers and points at
+  `dap_invite` for offline peers and `dap_peers` for typos.
+- feat(plugins): `FahPlugin.dispose` — the CLI calls it once per plugin
+  at shutdown (errors swallowed per plugin, so one bad plugin cannot
+  block exit); plugins override it to release sockets, processes, and
+  timers. The hub plugin host disposes the vendored hub client.
+- chore(cli): the `fah_hub_client` import in `bin/fah.dart` is now
+  marked as the ONLY core-CLI import of the hub client — downstream
+  forks wanting a different or no hub client patch that import plus the
+  `'hub'` case in `_builtInPlugin`.
+
+- fix(messaging): `agent_directory` no longer drowns in graveyard mailboxes —
+  it lists LIVE mailboxes (recent activity) plus anything holding pending
+  mail and the agent's own address; stale mailboxes from long-finished
+  sessions appear only with the new `all: true` parameter. Liveness is
+  source-defined `MailboxEntry.lastActivity` (`MailboxEntry.isLive`,
+  15-minute default window): the file repository scans the `.heartbeat`
+  marker plus `inbox`/`read` content mtimes (the `.id` identity marker and
+  `_scheduled`/dot directories are excluded), and running hosts keep the
+  heartbeat fresh from their existing inbox-watch timers via the new
+  `MessagingRepository.touch` (CLI every ~4s, app every ~6s; best-effort).
+  Unknown-activity entries (custom repositories) are never hidden.
+
+- refactor(cli): the `fah` executable's startup is decomposed — the pure
+  phases (`serve --a2a` argument interception, provider/model restoration,
+  the secure-store preload set, the startup API-key decision, roles-secret
+  collection, secret-redactor and web-search assembly) moved to
+  `lib/src/cli/startup.dart` with unit tests in `test/cli/startup_test.dart`;
+  `bin/fah.dart` keeps only process glue and `_runApp` reads as a phase
+  sequence. The CRAP ratchet is green again (worst 12.00): the
+  plugin-resolution test importing `bin/fah.dart` had dragged the whole
+  executable into the coverage trace at 0% hits, scoring `_runApp`
+  CRAP 3906.
+- fix(dap): vendored hub client warns loudly when the identity file's
+  `chmod 600` cannot be applied (no `chmod` on Windows, or the call
+  fails) — the Ed25519/X25519 private seeds would otherwise persist with
+  default permissive ACLs, readable by other local users.
+- fix(dap): vendored hub client's HKDF expand enforces the RFC 5869
+  255-block cap (throws `StateError`) — a zero-length MAC from a
+  misbehaving crypto dependency can no longer hang the hub connection.
+- fix(dap): `.fah/packages.yaml` plugin opt-out is value-aware —
+  `hub: false` (or an empty value) now really disables the plugin
+  instead of the key-only de-dup keeping it on; a failing connect to the
+  zero-config default hub prints one quiet hint line instead of a raw
+  error, so plain CLI starts stay clean.
+- fix(dap): the hub plugin's fire-and-forget connect carries a defensive
+  `.catchError`, so a future escape can never kill startup silently.
+- feat(memory): the long-term-memory LLM slot is wired — a new
+  `HarnessLlmProvider` adapts fa_llm's `LlmProvider` onto the harness
+  streaming contract and is resolved per call (`memory` role → `smol` →
+  main) in BOTH the CLI and the app. Memory consolidation and semantic
+  search now actually run instead of being silently skipped.
+
+## 0.1.280
+
+- fix(providers): correct the Copilot token guidance (0.1.278 had it
+  backwards). Per the official GitHub Copilot CLI docs (2026-09), the
+  supported credential types are fine-grained PATs (github_pat_…,
+  v2) WITH the "Copilot Requests" permission and OAuth tokens — while
+  classic PATs (ghp_…) are NOT supported by Copilot at all. 0.1.278
+  rejected all github_pat_ tokens up front and recommended ghp_ —
+  blocking working tokens and pointing at dead ones. Now: a pasted
+  fine-grained PAT is accepted with a hint that the "Copilot Requests"
+  permission is required (its absence is what makes the exchange 404),
+  a pasted classic ghp_ token is warned about and re-asked, and the
+  exchange 404 message names the missing permission.
+
+## 0.1.278
+
+- fix(providers): GitHub Copilot rejects fine-grained PATs clearly, at
+  connect time. The Copilot token exchange answers `github_pat_…` tokens
+  with HTTP 404 (GitHub's Copilot credential API only accepts classic
+  PATs and OAuth tokens), which used to surface as a bare "token exchange
+  failed (HTTP 404)" on the first message and, during connect, as a
+  silent fall-back to manual model entry (the `/user` lookup accepts
+  fine-grained PATs, masking the problem). Now: the paste-token step
+  rejects a fine-grained PAT immediately with the fix (use the GitHub
+  device flow or a classic `ghp_…` token), the exchange short-circuits
+  the known-dead token type without a round-trip, the 404 names both
+  likely causes (token type / no Copilot plan), and a failing exchange is
+  reported during connect instead of an unexplained empty model list.
+- chore(cli): split the banner/key-status block out of `agent_cli.dart`
+  and disentangle `_runPrompt` (error-stop and empty-continue branches
+  into named helpers) — the file-size guard and the CRAP ratchet are
+  green again.
+## 0.1.277
+
+- fix(cli): endpoint-reported context windows now apply in roles mode.
+  The Copilot `/models` limits (`capabilities.limits.
+  max_context_window_tokens` / `max_output_tokens`) were parsed and
+  applied only when no `roles:` resolver was configured; with one, a
+  chain entry riding the catalog default silently kept the provider's
+  default window — the copilot default is 1M, so a 256k model (live-
+  verified: the endpoint reports kimi-k2.7-code = 256000/32000) ran
+  with compaction thresholds sized for 1M and the over-window guard
+  never fired in time. Roles entries with EXPLICIT `contextWindow`/
+  `maxTokens` still win over the endpoint (per-limit).
+- fix(cli): the line REPL warms the model cache like the TUI, so
+  `/model <id>` switches see endpoint limits there too.
+
+## 0.1.276
+
+- fix(cli): the over-window guard no longer strands the agent mid-task.
+  When the guard stops a run (outgoing context past the model window),
+  the post-run auto-compaction frees the window and the CLI CONTINUES
+  the interrupted turn on its own — once per user prompt, delivering a
+  `<system-notice>` that names what happened and tells the model to
+  avoid re-reading the outputs that filled the window. Ending the run
+  there left live sessions idle until a manual "continue" (seen on a
+  glm-5.3-flash session: guard at 200676/200k, local trim to 20k, then
+  silence). `_maybeAutoCompact` now reports whether it actually shrank
+  the transcript; the continuation fires only when the window was
+  really freed.
+- fix(cli): compaction settings scale with the model window
+  (`CompactionSettings.forWindow`) unless `compactionSettings:` is
+  pinned in the config — matching the Flutter app's existing rule. The
+  pi-fixed defaults (keep 20000) structurally prevented compaction on
+  small-window models: with keep 20000 on an 8k window the kept region
+  always covers the whole transcript, so nothing could ever be
+  summarized away and the over-window guard could never be satisfied.
+- app: the same guard + compact + continue flow in `AgentService` (once
+  per user text, reset on the next real input).
+- agent_loop: exported `contextWindowExhaustedMarker` and
+  `isContextWindowExhaustedError` so hosts recognize the guard without
+  parsing numbers out of the error text.
+## 0.1.274
+
+- fix(compaction): the summarizer can no longer hold the turn hostage.
+  A dead/dribbling summarizer endpoint used to keep the "Compacting
+  context…" row up for up to ~20 minutes (10-minute per-attempt budget
+  from 0.1.240, smol + main): the per-attempt budget is now 90 s and a
+  new whole-run `totalBudget` (4 min) skips any further attempts once
+  burned, falling to the mechanical local trim. New
+  `AutoCompactorHooks.onAttemptStart` surfaces each attempt in the busy
+  row ("smol=provider/model, attempt 1, 90s cap") so the wait reads as
+  bounded, and the CLI resets its delta tail per attempt.
+- fix(agent-loop): mid-turn over-window guard — before each provider
+  request the outgoing context is estimated; past the model's window
+  the run stops with a clear "Context window exhausted" error instead
+  of silently sending a 287k-token context to a 200k model (seen live:
+  compaction only runs at turn boundaries, and a single verification
+  turn with full-suite logs ballooned far past it). Gross overflow
+  only — between the compaction trigger and the window the post-run
+  compaction flow still owns the decision.
+
+## 0.1.273
+
+- fix(agent): `Agent.abort()` disarms the run idle watchdog — it guards a
+  WEDGED stream going silent, not a host that cancelled on purpose; an
+  8-minute timer no longer outlives an aborted run. The app's
+  `AgentService.dispose` now aborts an in-flight run (its error callback
+  skips `notifyListeners` once disposed), which un-wedged the widget-test
+  floor: 8 pre-existing flutter_app failures from the 0.1.271 watchdog
+  (chat screen, session binding, work bar, session chat sheet) pass again.
+- refactor(tui): split `_handleBusyMsg`'s transition diagnostic/copy out
+  of the dispatcher (CRAP 15.15 → under the pinned 12.0 ratchet).
+
+## 0.1.272
+
+- fix(providers): no provider carries a default model anymore — every
+  connect/switch flow picks the model explicitly. `/provider kimi` and
+  `/provider copilot` now fetch the endpoint's /models (the Copilot
+  dialect runs the GitHub→Copilot token exchange first) and ask the user
+  to pick, falling back to a manual id entry when the fetch is empty; the
+  silent `gpt-4.1` seed is gone from the Copilot connect flow.
+- fix(providers): the Copilot /models dialect lists only picker-eligible
+  chat models — pi-mono parity (`model_picker_enabled`, `policy.state`,
+  `supports.tool_calls`) plus a `supported_endpoints` check: responses-only
+  models (e.g. `gpt-5.6-sol`) 400 with "not accessible via the
+  /chat/completions endpoint" on our chat transport and are no longer
+  offered.
+- feat(cli): `/model` and `/provider` switches print a role-models note
+  naming the models the smol/subagent/memory roles still run, so a
+  main-model switch never silently strands a mismatched combination
+  ("/settings → Agent models to adjust").
+## 0.1.271
+
+- fix(tui): the busy row now names its owner and dies on its own. Every
+  arm/release carries a provenance tag rendered in the row
+  (`Working… 91s · run`) and logged to fa.log; a stretch silent for 3+
+  minutes shows a `quiet Nm` hint instead of pretending steady progress;
+  and a model-level watchdog force-releases any row with zero activity
+  for 10 minutes — the last-resort finally for the immortal "Working…"
+  class, with the last armer named in the diagnostic log.
+- test(tui): provenance render, transition forensics, quiet hint, and
+  the watchdog release are all pinned in fa_tui_test.
+
+## 0.1.270
+
+- fix(memory): flutter_agent_memory 0.2.1 — the deletion ledger is now
+  strictly append-only (a delete never rewrites existing content;
+  tolerant parser infers a missing `type:` from the id prefix and
+  recomputes missing fingerprints), closing the clobber class that
+  erased 144 tombstones in production. `ExecutionEnvKbStorage`
+  implements the new `KbAppendCapable` through the existing
+  `ExecutionEnv.appendFile` — racing deletes append instead of
+  read-modify-write last-writer-wins.
+- test(memory): regression pins the incident: a legacy 144-entry
+  ledger with the `count:` header survives a delete with every
+  tombstone intact and the new entry appended; the adapter's native
+  append is asserted directly.
+
+## 0.1.268
+
+- fix(tui): the "Working… Ns" immortal-spinner wedge (found live: a
+  session burned 100% CPU for 8 hours after the run had cleanly ended —
+  `Working… 28301s`). Root cause in the TUI busy state machine: a raw
+  `BusyMsg(true)` landing on an IDLE model — a post-run straggler like a
+  compaction finally-branch calling `setBusyPhase('')` after the busy
+  bracket released — re-armed the spinner with a fresh elapsed window and
+  scheduled a NEW 100ms tick chain; nothing ever sent the matching
+  `BusyMsg(false)`, and every chain re-rendered the full transcript
+  (268k tokens) ten times a second — the 99.8% CPU storm. Two guards now
+  close the class: the model drops phase-relabels and duplicate busy
+  starts while idle/already-busy (no new window, no extra chain — one
+  chain per busy stretch), and the controller's `setBusyPhase` no-ops at
+  busy-depth zero. Regression tests: post-run straggler cannot resurrect
+  the row, duplicate starts keep the single chain.
+
+## 0.1.267
+
+- feat(memory): flutter_agent_memory 0.2.0 — merge-friendly note ids
+  (`n_0447_a1b2` = sequential index + 4-hex md5 of the normalized text;
+  parallel branches union-merge, legacy `n_0001` ids valid forever), and
+  `MemoryRepoInit.ensureGitSupport()` wired into the project store: the
+  memory dir self-maintains `.gitignore` (derived artifacts never
+  committed) and `.gitattributes` (`DELETIONS.md merge=union`).
+- feat(memory): the `memory_add` tool description IS the memory repo's
+  policy (`MemoryPolicy.memoryAddPolicy` —
+  docs/memory/memory_add_policy.md): durable facts only, solved problems
+  are superseded via delete+add instead of rotting, project scope is
+  PUBLIC (committed to git — no secrets or personal data), user scope
+  stays machine-local. One source of truth for every future agent.
+- fix(build): CRAP ratchet green again — `MemoryController` delegates
+  path resolution to `MemoryConfig` (one source, covered through the
+  controller tests), and `AgentCli.run` sheds the retry-notice closure
+  into `_wireTransientRetryNotice` (the 12.61 breach).
+- docs(agents): the git-backed memory layout is documented in AGENTS.md
+  (paths resolution, derived artifacts, id scheme, the commit
+  convention: memory/ changes ride with the task's commit).
+
+## 0.1.266
+
+- feat(memory): project-level `.fah/config.yaml` — the `memory:` section
+  now also resolves from the project's own config file and WINS over the
+  user-level one, so the git-backed memory pointer travels with the repo:
+  `memory: {projectPath: ./memory}` in `.fah/config.yaml` makes the
+  repo's `memory/` directory the project memory for anyone who clones it
+  (CLI and app, web keeps the default).
+- feat(repo): flutter_agent's own memory moved into git — the full
+  revision landed first (446 notes audited one by one; 142 deleted
+  through tombstone `memory_delete`: 84 duplicates, 44 stale, 14
+  superseded), the surviving 304 notes now live in the committable
+  `memory/` directory with derived artifacts (`GRAPH.md`,
+  `MEMORY.revision`, indexes) gitignored and `DELETIONS.md` under
+  `merge=union`. `.gitignore` flipped from ignoring all of `.fah/` to a
+  whitelist: `config.yaml`, `rules.yaml`, `lsp.json`, `mcp.json`,
+  `agents/`, `skills/`, `packages.yaml` are committable;
+  logs/sessions/bash_jobs stay local.
+
+## 0.1.265
+
+- feat(memory): configurable long-term memory storage paths — the new
+  `memory:` section of `~/.fah/config.yaml` (`projectPath`, `userPath`,
+  strict schema like the other sections) feeds `MemoryController`'s new
+  storage-path overrides: a relative projectPath resolves against the
+  project root, `~/` in userPath expands against the user home, and null
+  keeps the historical `.fah/memory` layout. Point `projectPath` inside
+  the repository (e.g. `./memory`) and the project memory becomes
+  committable — anyone cloning the repo gets its memory. Wired in the
+  CLI (`AgentCliConfig.memoryConfig`) and the app (`AgentService` reads
+  the same section through a conditional IO/stub loader — web keeps the
+  default). Step P0 of the git-backed memory program.
+
+## 0.1.264
+
+- fix(cli): macOS Cmd+Left/Right no longer types "aaaa" in the composer —
+  those keys arrive as ^A/^E control bytes, and the dart_tui decoder puts
+  the BASE LETTER into the event text, so every unhandled ctrl combo
+  leaked its letter through the catch-all insert. Three insert paths
+  (composer, picker type-to-filter, prompt re-shaper) now drop
+  command-modified keystrokes (ctrl/alt/meta/hyper/super — shift stays,
+  kitty-protocol shifted letters carry real text), and ctrl+a/ctrl+e do
+  what the user meant: readline start/end of line.
+- feat(cli): the `request_secret` sheet gets readline Ctrl+U — one
+  keystroke clears the suggested name on name focus (the 16-backspace
+  "erase SUDO_PASSWORD" nuisance) and kills the value back to the cursor
+  on value focus; both hints name the key.
+- test(cli): PTY visual coverage with screenshots — a real terminal run
+  proves the composer edits (`Xhello worldYZ` after ^A/^E plus silent
+  ctrl+x/g/z) and the full secret-sheet lifecycle end-to-end through a
+  canned LLM that emits `request_secret`: suggested name, Ctrl+U clear,
+  dot masking, Ctrl+R reveal, value kill, save — with the grant never
+  echoing the secret into the transcript (screens 102–108).
+
+## 0.1.263
+
+- feat(cli): the `request_secret` TUI sheet can reveal the typed value —
+  Ctrl+R toggles between the masked dots (default) and clear text, with
+  the header line naming the current state (`value hidden (Ctrl+R
+  reveals)` / `value visible (Ctrl+R hides)`). Long sudo passwords and
+  tokens pasted into a blind field were unverifiable; now one keystroke
+  shows what was actually typed before Enter.
+
+## 0.1.262
+
+- fix(providers): GitHub Copilot enterprise sign-in actually connects —
+  the token exchange sent the legacy `Authorization: token <githubToken>`
+  scheme, which `api.github.com/copilot_internal/v2/token` rejects with a
+  bare 401 for enterprise-managed (EMU) accounts; pi's actively maintained
+  `oauth/github-copilot.ts` uses `Bearer` for the exchange, and so do we
+  now (OAuth device tokens are `gho_`/`ghu_` Bearer credentials). The
+  account-type picker hardcoding also bit: an enterprise tenant's real API
+  host lives INSIDE the exchanged token (`proxy-ep=proxy.<tenant>.github
+  copilot.com`), so both the chat path and the `/models` listing now
+  derive the tenant host from the token (pi `getGitHubCopilotBaseUrl`
+  parity) and the picked tier host is only the fallback. The app gets the
+  fix for free through the shared core exchange.
+
+## 0.1.261
+
+- feat(providers): transient network retry on every provider call — a
+  Wi-Fi/VPN switch mid-turn killed the stream with "Connection reset by
+  peer" and the turn ended in a hard error. `providerStreamFunction` (the
+  one chokepoint for chat turns, roles chains, compaction summaries, and
+  memory extraction) now wraps every adapter with
+  `transientRetryStreamFunction`: a socket-level failure (reset / refused /
+  unreachable / timed out / broken pipe / TLS handshake cut — certificates
+  excluded, a bad cert never heals in 5s) sleeps 5s and replays the call,
+  up to 3 attempts. omp's observable-output guard is kept: a stream that
+  already emitted content is never replayed, so a retried generation can't
+  duplicate text. The CLI surfaces each retry as a dim `[net] connection
+  lost — retrying in 5s (attempt 2/3)` line plus an fa.log entry instead
+  of a mysterious pause; `transientRetryNotice`/`transientRetrySleeper`
+  are the host/test seams.
+
+## 0.1.260
+
+- fix(app): Copilot parity with the CLI — the app's model pickers now
+  fetch through the copilot dialect (GitHub→Copilot token exchange,
+  capabilities/limits) instead of 401ing the raw GitHub token against
+  `<host>/models`; a picked Copilot model connects as the copilot wire
+  dialect, and the entry-scoped `FA_KEY_COPILOT_<NAME>` key resolves as
+  the fallback. Deleting a Copilot account now removes its entry-scoped
+  token from the Keychain and the saved-keys store (before: only the
+  shared `FA_KEY_<HOST>` slot went away and the token leaked); the
+  duplicated name→key algorithm is gone — both surfaces use the one core
+  `CustomProviderRegistry.copilotEntryKeyName`.
+
+## 0.1.259
+
+- feat(cli): fa.log now opens with `fa boot sid=… version=…` — the shared
+  diagnostics log had no way to attribute a wedged "Working…" row to the
+  BUILD that held it (today's 1949s spinner post-mortem stalled on exactly
+  that: the wedged process predated the 0.1.255 busy-bracket fix, but only
+  circumstantial evidence proved it). Every process now names its version
+  next to its session id before any lifecycle line.
+
+## 0.1.258
+
+- fix(cli): the Copilot preset row now actually starts the connect flow —
+  the "Add provider" picker shipped the row WITHOUT its handler
+  (`null?.call()` closed the picker and nothing happened; the typed
+  `/provider copilot` always worked). The handler map gained the copilot
+  entry, and the picker test now asserts rows == handlers in BOTH
+  directions so a dead row can never ship again, plus a line-mode routing
+  test and a PTY visual test (screenshots 28/29/34) drive the real TUI
+  from `/provider` to the "Copilot sign-in" step.
+- fix(cli): `fa --session <name>` no longer opens another project's
+  session — same-named sessions resolve with the LAUNCH folder first
+  (a single local match wins); an ambiguous remainder (several in one
+  folder, or none in it) auto-resolves to the most recently updated with
+  a printed note naming every candidate id, the TUI offers the scoped
+  "which one?" picker right after boot, and mid-session `/session <name>`
+  asks with a numbered/wizard list. The switch itself now runs DETACHED
+  under the flow gate (an awaited interactive pick deadlocked the
+  sequential line REPL), redelivers lines typed during the switch instead
+  of dropping them as flow junk, and redraws the idle prompt so the
+  zeroed status meter shows.
+
+## 0.1.257
+
+- fix(cli): GitHub Copilot appears in the TUI "Add provider" picker — the
+  preset list is hand-maintained and shipped without a Copilot row even
+  though `/provider copilot` (device flow) worked; the row routes to the
+  same connect command, and a picker test now pins every preset key to a
+  handler so a future provider can't silently miss the menu.
+
+## 0.1.256
+
+- fix(cli): `/model <id>` on a saved CodeMie/custom entry no longer fails
+  with 'no usable chain entry: set OPENAI_API_KEY' — the roles-mode pin
+  carried the entry's key NAME, but the resolver's secrets never held the
+  key material (the CodeMie JWT/SSO switch paths bypass the resolver), so
+  the chain failed to resolve and the switch silently did nothing (the
+  status line kept the old model). `_switchModel` now seeds the resolver
+  with the session's live key under the pinned name (env-ring fallback)
+  before pinning, and cookie-header auth (CodeMie SSO) keeps the direct
+  model set — a cookie can never ride a Bearer chain.
+
+- chore(sync): resolve the orphaned stash-pop conflicts to origin/main
+- fix(cli): central busy bracket in _startRun — no more spinner-after-settle
+- feat(fa_ui): always-visible custom answer in the ask sheet
+- feat(apps): JsMediaHost wiring — video/audio nodes play for real
+- fix(agent): abort wedged runs — SSE event-level idle watchdog + Agent.runIdleTimeout + fa.log run forensics
+- feat(cli): env preconfig — required fields, base64 twins, all-roles default
+- feat(app): chat text-size setting + dense markdown + unclipped copy
+- feat(apps): adaptive layout host support (js_widget_runtime ^0.4.87)
+- test(integration): fix latent env-key crash in real-model test
+- feat(providers): Z.AI first-class + env-activated providers + FA_PROVIDER_* env preconfig
+
+## 0.1.255
+
+- fix(cli): the "Working… forever with an idle agent" wedge — the TUI
+  busy bracket lived only in the submit handler, so runs triggered
+  elsewhere (the idle inbox wake, a shell-job settle, a scheduled
+  message) streamed with phase labels but released nothing: the spinner
+  stayed on after the run settled. The busy bracket is now CENTRAL in
+  `_startRun` (paired with the settle future) and the counter is the
+  extracted, unit-tested `BusyDepth` — nested brackets (submit around
+  run around wake) collapse to one edge pair. Forensics: fa.log showed
+  `run end` with the spinner still up in two live sessions.
+
+## 0.1.254
+
+- **Wedged "Working…"/"Compacting…" turns now abort instead of hanging
+  forever.** Two layered fixes after three live sessions (working,
+  compacting, post-compact) pinned the busy row for 30-60 minutes with no
+  recovery:
+  - The SSE idle watchdog moved from the raw byte stream to a per-`moveNext`
+    timer on decoded events: gateways keep dead generations alive with
+    `: comment` heartbeat bytes, and the byte-level timer reset on every
+    heartbeat — event-level silence is the honest signal. (`Stream.timeout`
+    after the `async*` SseDecoder never fires at all — a Dart quirk this
+    sidesteps entirely.)
+  - New `Agent.runIdleTimeout` backstop (default 8 min, `Duration.zero`
+    disables, `onRunIdleTimeout` callback): a run with no events outside
+    tool execution is cancelled with a `TimeoutException` reason and ends
+    as `aborted`. Streaming deltas re-arm, tool phases disarm — a long
+    legitimate test gate never trips it.
+- **Run-lifecycle forensics in `~/.fah/logs/fa.log`**: one line per phase
+  transition (`run/turn/tool start|end`, `auto-compact start`, watchdog
+  fires), each tagged with the short session id — a wedged busy row can
+  now be attributed to the exact phase (provider turn vs named tool vs
+  compaction) that never finished, across parallel fa processes.
+
+## 0.1.253
+
+- fix(cli): the busy row stops lying about compaction hangs
+- feat(catalog): category filter chips above the widget list
+- refactor(cli): split for the 2800-line size gate
+- feat(providers): multi-account ChatGPT — per-entry keys, account picker, app parity
+- fix(providers): review fixes — string-typed oauth json, pre-send cookie baseline, SSE incomplete/failed as stream events
+- fix: drop duplicate models_for_endpoint import left by the main merge
+- fix(codex): pin chatgpt catalog visibility; note review fixes in changelog
+- fix(codex): terminate failed/incomplete SSE turns as error events
+- fix(codex): serialize OAuth expiry as a string; decode stays tolerant of int blobs
+- docs(goal): codex gpt auth — tick checklist, fill implementation log
+- feat(providers): unhide chatgpt provider — ship docs, changelog, live smoke
+- test(providers): chatgpt oauth token-leak guard — persisted registry + transcript carry no tokens
+- feat(providers): codex models — live GET /models with bundled-catalog fallback
+- feat(providers): codex http sse transport — header parity, cloudflare cookie replay, full event coverage
+- feat(providers): chatgpt oauth expiry tracking — expiresAt + needsRefresh
+- feat(providers): codex transport helpers — header parity, cloudflare cookie jar, rate-limit parsing
+
+## 0.1.252
+
+- fix(cli): the busy row stops lying about compaction hangs — the
+  pre-flight compaction's 'Compacting context…' label no longer stays up
+  for the whole run (a long tool call read as a compaction hang); the
+  busy row now names the executing tool ('Running bash…') and drops back
+  to 'Working…' between calls; resumed sessions drop generation-time
+  usage anchors, so a compacted branch no longer phantom-reports its
+  pre-compaction size (no more no-op compaction on every resume + an
+  honest context gauge).
+
+## 0.1.251
+
+- feat(catalog): stacked equal-width action buttons on tile rows
+- feat(launcher): Open menu item + icons, icon-square-only hover
+- feat(app): interactive live tiles via widget.interactive opt-in
+- feat(app): drop bundled demos — the catalog is the source of apps
+- fix(app): actually pass sessionInfoNames to the sidebar (torn-write casualty)
+- feat(app): the sidebar shows the CLI-written session_info names
+- fix(app): reset/remove/install refresh the grid + sane dialog width
+
+## 0.1.250
+
+- feat(providers): ChatGPT goes multi-account — each account saves as its
+  own named entry with its own name-scoped secure-store slot
+  (`FA_KEY_CHATGPT_COM_<NAME>`, the CodeMie per-entry key pattern), so a
+  refresh-token rotation never overwrites a sibling account's blob and
+  the refresh callback writes to the ACTIVE entry's slot.
+- feat(provider): `/provider chatgpt oauth` offers the saved ChatGPT
+  accounts first (switch to one, or add another) before running OAuth;
+  a NEW account gets a guided model pick from the live Codex `/models`
+  (bundled default when the fetch answers nothing), while a re-login to
+  the SAME entry keeps its last-used model.
+- feat(app): the ChatGPT OAuth flow names the entry from the OAuth
+  account's email (id_token claim) and matches re-auths by name +
+  baseUrl — a second ChatGPT account lands in its own entry and its own
+  entry-scoped Keychain slot, mirroring the CLI.
+- feat(chatgpt): the ChatGPT provider (Codex backend) is now visible across
+  the pickers and `/provider` — it ships with the real Codex HTTP SSE
+  transport: Codex header parity (originator, session/thread ids, account
+  id), cloudflare cookie replay, and a single challenge retry.
+- feat(chatgpt): OAuth access tokens refresh proactively (expiry is tracked
+  on the credentials blob) and the rotated blob is re-persisted.
+- feat(chatgpt): reasoning deltas surface as thinking blocks;
+  `response.incomplete` / `response.failed` end the stream as a terminal
+  error event, preserving any partial text already streamed.
+- fix(chatgpt): OAuth credentials `toJson` returns `Map<String, String>`
+  again (expiry serialized as an epoch-millisecond string); decoding still
+  accepts blobs with a raw int `expires_at`.
+- fix(chatgpt): the cookie-replay baseline is the header the request
+  actually carried (snapshotted before the send), so the single
+  challenge retry fires only when the jar truly learned a new cookie.
+- feat(chatgpt): `/models` probes the live Codex `/models` endpoint and
+  falls back to the bundled catalog on 401 / challenge / malformed bodies.
+- feat(memory): the long-term-memory LLM slot is wired — a new
+  `HarnessLlmProvider` adapts fa_llm's `LlmProvider` onto the harness
+  streaming contract and is resolved per call (`memory` role → `smol` →
+  main) in BOTH the CLI and the app. Memory consolidation and semantic
+  search now actually run instead of being silently skipped.
+
+## 0.1.249
+
+- fix(app): self-heal stale-catalog sha mismatches + card-ify the catalog list
+- test(app): hold-release on a classic tile now expects the menu
+- fix(app): installed widgets really swap Preview for Remove + tests
+- fix(app): re-add the _localApps field declaration (clobbered again)
+- fix(app): restore the _localApps field + refresh (clobbered mid-commit)
+- feat(app): catalog sheet — Remove for installed, Created by me, real avatars
+- fix(app): tile menu opens for plain icon widgets + right-click + soft hover
+- fix(site): openPreview really uses the RUNNER url — the torn write had resurrected the /widgets/preview/ path
+- fix(site): repair torn index.html (duplicate tail after </html>) + restore the app-only marks
+- feat(site): platform widgets are marked 'runs in the Fa app' instead of a broken preview
+- fix(site): preview iframe points at the jsr repo's own Pages runner
+- feat(site): widget preview runs the real Flutter/jsr runner — DOM shim removed
+
+## 0.1.248
+
+- fix(cli): a run counts as busy from the moment it is STARTED, not from
+  the first streamed byte — the inbox watcher / shell-job settle path no
+  longer starts a parallel run during the pre-flight compaction window
+  (live session showed `Bad state: Agent is already processing a prompt`
+  right after `[auto-compacted]`).
+- feat(app,widgets): catalog entries parse the optional `platforms`
+  manifest field; the catalog sheet shows iOS/macOS platform chips.
+- feat(site): widget gallery cards show platform tags and no longer wrap
+  the size/`jsr ≥` text or the Preview/Download button labels.
+
+- feat(provider): GitHub Copilot as a first-class provider — catalog
+  entry plus the `/provider copilot` CLI flow (GitHub device flow with
+  user_code + verification_uri, or paste an existing PAT; works
+  headless) and the app's fa_ui Copilot connect sheet.
+- feat(providers): Copilot protocol core in `lib/src/providers/` —
+  `copilot.dart` (streamCopilot: token exchange, mandatory Copilot
+  headers, errors-as-events), `copilot_oauth.dart` (short-lived token
+  + header builder), `copilot_device_flow.dart` (grant + poll).
+- feat(keys): entry-scoped `FA_KEY_COPILOT_<NAME>` secure-store keys
+  with an env-first `_2`… ring — CI supplies keys without a store.
+- feat(models): live copilot `/models` dialect — the GitHub token is
+  exchanged for the Copilot token, capability/limit fields parsed.
+- feat(provider): multi-account isolation — each GitHub account saves
+  as its own named entry (`copilot-<login>`); re-auth updates only its
+  own entry.
+- fix(providers): copilot kind-dispatch audit — every provider-kind
+  dispatch in lib/src now handles `copilot`: `inspect_image` streams
+  through `streamCopilot` (GitHub token exchanged for the short-lived
+  API token, never sent as the Bearer header) and the roles fallback
+  chain accepts copilot entries (`providerStreamFunction` →
+  `_CatalogStreamFunction` → `streamCopilot`). A single dispatch-chain
+  test drives role takeover + inspect_image + /models in one run.
+- fix(models): copilot /models limits override — the catalog's static
+  copilot `contextWindow: 1000000` / `maxTokens: 32768` are wrong for
+  several real models (400s from the backend); the endpoint-reported
+  `capabilities.limits.max_context_window_tokens` /
+  `max_output_tokens` now replace them per model when present, and
+  the catalog defaults stay when the payload has no opinion.
+
+## 0.1.247
+
+- feat(tools): Hailuo 2.3 video dialect + headless pre-flight compaction
+- fix(tui): key parser never swallows a trailing control byte into a text run
+- fix(cli): restored sessions label the model with the pinned-key account
+
+## 0.1.246
+
+- feat(tools): `HailuoVideoDialect` — Hailuo 2.3 video generation on the
+  MiniMax V1 contract (`POST /v1/video_generation` → poll
+  `task_id` → `file_id` → `/v1/files/retrieve` → `download_url`),
+  with size mapping (1080P/768P) and full MockClient flow tests.
+  Dialect registry reordered most-specific-first: both MiniMax dialects
+  share the `minimax` baseUrl marker, so the H3 dialect previously
+  swallowed Hailuo endpoints into the wrong (V2) contract.
+- fix(cli): headless runs compact BEFORE the first request — a resumed
+  session already over the threshold went out over-window and the
+  endpoint rejected the turn (the same pre-flight guard the REPL had).
+- fix(tui): key parser never swallows a trailing control byte into a
+  text run — a burst PTY read delivering `text\r` in one chunk ate the
+  Enter into the text and the composer never submitted.
+- chore: drop the build artifacts (`fa-local/bundle/…`) from git —
+  `install_local.sh` rebuilds them and the directory was already
+  gitignored (they were force-added once and churned 13 MB per install).
+
+## 0.1.245
+
+- fix(cli): restored sessions label the model with the RIGHT account
+  too — 0.1.244 covered live switches via `_activeCustomName`, but a
+  restarted session has none, so two same-endpoint accounts
+  (`kimi-ira1`/`kimi_me`) still showed the first registry entry. The
+  status label now disambiguates by the apiKeyName the persisted roles
+  chain pins for the endpoint (`_endpointEntryLabel` +
+  `_chainKeyNameFor`); the first-match scan remains the pin-less
+  fallback.
+
+- fix(cli): status bar labels model with the ACTIVE saved provider
+
+## 0.1.244
+
+- fix(cli): the status bar labels the model with the ACTIVE saved
+  provider entry, not the first baseUrl match — two accounts on one
+  endpoint (e.g. `kimi-ira1` + `kimi_me` both on
+  `api.kimi.com/coding/v1`) used to show the first registry entry's
+  name no matter which one was picked (`/model kimi_me` → status read
+  `kimi-ira1/<model>`). `_statusProviderLabel` now prefers
+  `_activeCustomName` and only falls back to the endpoint scan when no
+  custom entry is active; the key resolution was never affected.
+
+- fix(cli): media slot flow propagates custom provider keyName
+
+## 0.1.243
+
+- fix: gen_prompts trims description trailing newline
+- fix: skip subagent integration tests when MiniMax key missing
+- feat: v0.1.242 — MiniMax media picker fix + generate_video tool
+- fix(provider): minimax /model picker shows the full catalog, not the saved modelId
+
+## 0.1.242
+
+- feat(catalog,ui): remote models catalog + thinking markdown + table CRAP fix (0.1.241)
+
+## 0.1.241
+
+- feat(catalog): remote provider-models catalog at `fa1.dev/models-catalog.json`
+  preloaded once per process — fills `contextWindow` defaults the
+  MiniMax-style `/v1/models` endpoint doesn't publish (M3=1M,
+  M2.x=204800) and ships per-slot media-model lists
+  (`imageGeneration`/`videoGeneration`/`speech`/`transcription`) the
+  chat endpoint never returns. Pickers stay endpoint-driven: the
+  catalog NEVER seeds the chat model id list (the provider's own
+  `/v1/models` is the source of truth) — it only enriches metadata and
+  the media slots. Endpoint-reported values always win; failures are
+  silent (10s budget, never throws); pickers keep their manual-entry
+  fallback. `RemoteCatalogEnrichment` (`lib/src/providers/`) is the
+  host seam — preloaded from `bin/fah.dart` at boot.
+- fix(tui): thinking-streaming deltas get inline markdown (bold,
+  italic, inline code) inside their dim wrapper — reasoning snippets
+  that quote function names or emphasise alternatives render properly
+  instead of leaving stray `**…**` in the dim background. Renderer is
+  a small single-pass scanner split into `_matchInlineSpan` +
+  per-marker helpers (`lib/src/cli/ansi_markdown.dart`); block
+  constructs (fences, headings, lists) still belong to `AnsiMarkdown`
+  for full answers.
+- refactor: `AnsiMarkdown._renderTableRows` split into
+  `_tableFragments` / `_tableSeparator` / `_renderTableRow` /
+  `_renderTableLine` — CC dropped, CRAP ratchet back to 12.00
+  (pre-existing method was 16.27 at 69% coverage; now 12.00 at 100%).
+
+- fix(compaction): 10-minute attempt budget — a hung summarizer can no longer wedge the turn (0.1.240)
+
+## 0.1.240
+
+- feat(catalog): remote provider-models catalog at `fa1.dev/models-catalog.json`
+  preloaded once per process — fills `contextWindows` the endpoint
+  didn't publish, suggests a `defaultModelId`, and ships per-slot
+  media-model lists (`imageGeneration`, `videoGeneration`, `speech`,
+  `transcription`) for providers like MiniMax whose chat endpoint
+  doesn't return their media models. Endpoint-reported values always
+  win; failures are silent (10s budget, never throws); pickers keep
+  their manual-entry fallback. The catalog lives in
+  `RemoteCatalogEnrichment` (`lib/src/providers/`) — preloaded from
+  `bin/fah.dart` at boot.
+- fix(tui): thinking-streaming deltas get inline markdown (bold,
+  italic, inline code) inside their dim wrapper — reasoning snippets
+  that quote function names or emphasise alternatives render properly
+  instead of leaving stray `**…**` in the dim background.
+
+- fix(compaction): a summarizer endpoint that accepts the request and
+  never answers can no longer wedge the turn on the compaction spinner
+  forever — every summarization attempt now runs under a 10-minute
+  wall-clock budget (`AutoCompactor.attemptBudget`); the timeout fails
+  the attempt (not transient — no retry spin), the pass falls through to
+  the next summarizer or the honest local trim, and the turn goes on.
+- fix(compaction): the emergency local trim zeroes the kept generations'
+  usage anchors — a stale generation-time anchor kept the post-trim
+  estimate over the window and retriggered the compactor every turn.
+- fix(app,test): the whole quality gate goes green — CRAP ratchet, app suite, l10n and goldens (0.1.239)
+- fix(replay): compact system-notice rows in restored transcripts (0.1.238)
+- fix(provider): entry-name status label + persist catalog model picks (0.1.237)
+- docs(goal): codex gpt auth — cross-platform notes (Rust portability does not transfer)
+- docs(goal): codex gpt auth — point the reference at the open-source GitHub repo
+- docs(goal): codex gpt auth — ship the ChatGPT/Codex-backend provider
+- perf+fix: growing-tail throttle, codemie scoped key, status bar (0.1.236)
+- docs(goal): copilot — translate to English, add tickable implementation checklist
+- docs(goal): copilot — multi-account contract, mandatory TDD plan, Keychain-only tokens
+- docs(goal): copilot provider — multi-account support as first-class scope
+- docs(goal): add copilot provider goal — migrate copilot-proxy-go protocol into fa_llm
+- deps: flutter_agent_memory ^0.1.1 (0.1.235)
+- fix(memory): tombstoned delete via KBMemoryStore; hosted dep (0.1.234)
+- feat: schedule_message + bash stdin param; crash hardening (0.1.233)
+- perf(tui): O(1) in-place rollback of grown-tail arrays (0.1.232)
+- perf(tui): flush streamed output every 16ms (0.1.231)
+- perf(tui): cache formatted sticky echo rows (0.1.230)
+- feat(memory): memory_delete tool; quote-style service blocks (0.1.229)
+- fix(tui): add the missing system_notice_render import in fa_tui (0.1.228 fixup)
+- feat(tui): render system notices as dim blockquotes with a gear marker (0.1.228)
+- perf(tui): ASCII fast path + bounded line-width memo in tuiTextWidth (0.1.227)
+- fix(tui): hoist terminal reset before SIGINT use; wire compaction delta tail (0.1.226 follow-up)
+- fix(tui): restore terminal modes on Ctrl+C exit (0.1.226)
+- fix(tui): keep the input caret visible while a run streams (0.1.225)
+- fix(messaging): cross-project agent_message delivers to the recipient root (0.1.224)
+- feat: instant key echo + Ctrl+C exits like /exit (0.1.223)
+- fix(cli): visible hint after mid-run Ctrl+C abort (0.1.222)
+- chore(tool): land the frame-build bisect probe (gitignored path)
+- fix(tui): no-newline stream deltas stay incremental — typing lag gone (0.1.221)
+- chore(tool): land the key-latency probe (path is gitignored)
+- feat(tools): warn when a stale fa build writes old-format job logs here (0.1.220)
+- fix(cli,compaction): paste-a-path sends, honest compact status, bounded extraction, per-delta ctx memo (0.1.219)
+- fix(cli): FaTuiController stub carries setBusyPhase — web build compiles again
+- fix(app,site): widgets entry points visible and verifiable
+- docs(widgets): mark C2/M1 app-catalog milestone shipped with live checks
+- feat(app): widgets catalog — install from fa_widgets releases, slim the bundle
+- test(tools): assert shell job ids by shape after unique-id change
+- chore(messaging): skip messages-registry write when unchanged
+- fix(tools): collision-proof background job ids and image filenames
+- fix(session): serialize JSONL writers per file and quarantine torn lines on open
+- chore(local): rebuild fa-local bundle binary at 0.1.218
+- fix(tui,fork): serialize tracer writes through a flush queue
+- fix(tui,fork): FA_TUI_TRACE file sink flushes per event (crash-safe)
+- perf(tui,fork): render-aware cursor dedupe — zero-byte idle frames
+- perf(tui,fork): lazy frames, output dedupe, keypress-paint tracer
+- fix(tui): replay restored messages in full — no per-message head caps
+- fix(tui): wrap overflowing table cells — keep the box grid readable
+- perf(tui,fork): drop-frame fps throttle — stop sleeping the event loop
+- chore(vendor): inline dart_tui 2.0.0 under vendor/ for perf work
+- perf(tui): amortized history-cap trim — no full re-parse per streaming flush
+- feat(tui): truthful busy-row phase labels
+- feat(cli): pre-flight context guard — compact BEFORE an over-window request
+
+## 0.1.239
+
+- fix(app): the macOS app builds again against the current core — the
+  harness barrel now exports `ScheduledMessageQueue` +
+  `scheduleMessageTool`, the service declares its `_scheduledMessages`
+  field and arms the queue, the fabric repo's `root:` is a plain String,
+  `_AutoCompactorFlutterHooks` implements `onDelta`, and the app's
+  flutter_agent_memory constraint moved to ^0.1.1 (the stale lock had
+  resolved harness 0.1.218).
+- refactor(cli): the perf-sprint methods fit the CRAP ratchet again —
+  pure extractions (busy-edge `sendBusy`, `_rollingTail`,
+  `_maybeSwitchToSavedEntry`, fold-XOR fence scan,
+  `_needsRewrite`/`_nextOpenTag`/`_taskOpenerEnd`, `_resumable`/
+  `_tailThrottled`, `_replayUserTui`/`_chromeMarkerLine`); no behavior
+  change. Max CRAP back to 12.00.
+- test(app): the flutter_app suite is green under the hook again — the
+  compaction-failure test matches the honest local-trim contract, the
+  drawer tests drain the real-async lazy open, the map goldens skip when
+  the demo moved to the widgets catalog, the ctrl+s visual test cancels
+  the full `sh-<n>-<uniq>` job id, the /agents visual test seeds mail
+  under the app-group sessions root, the corrupt-session test matches
+  the quarantine-on-open heal, and `WidgetsCatalogSheet` passes the
+  l10n + golden-coverage guards (new arb keys en/ru + two goldens).
+
+## 0.1.238
+
+- fix(replay): a restored `<system-notice>` message (background-shell job
+  settle, inter-agent mail, task result) replays as ONE dim chrome line
+  instead of the raw block — the full multi-line command dump, log paths
+  and the closing tag no longer wall up the transcript after a resume.
+  Mixed content still replays verbatim.
+
+## 0.1.237
+
+- fix(status): the provider shown next to the model is now the saved
+  provider ENTRY name (z.ai, codemie-personal, …) matched by endpoint —
+  the model's `provider` field carries the catalog protocol kind
+  ("openai"), which read as "it switched to OpenAI" although the pick
+  was z.ai.
+- fix(provider): `/model` switches on catalog providers (no active
+  custom entry) now persist the picked model — the host's onModelChanged
+  fired only for saved-entry switches, so a restart restored the last
+  provider switch's model (gemini from a codemie test) instead of the
+  one the user chose.
+
+## 0.1.236
+
+- fix(roles): model switches on NON-catalog endpoints (CodeMie SSO, DIAL,
+  self-hosted) resolve the endpoint-scoped store key
+  (FA_KEY_<HOST>_<NAME>) even when the registry entry has no explicit
+  keyName — SSO-cookie saves never set one, and the resolver fell back to
+  the catalog env name (OPENAI_API_KEY), rejecting the chain ("no usable
+  chain entry") and silently keeping the entry's saved model. The chosen
+  provider's own token is now the ONLY candidate; expiry still triggers
+  the silent browser re-auth. The catalog default endpoint keeps env-name
+  priority.
+- perf(tui): growing-tail throttle — a streamed paragraph whose last
+  line keeps growing (a long thinking burst with no newline) re-formats +
+  re-wraps that line on every 16ms flush, O(line length) per tick, which
+  saturated the event loop and froze the screen (neither the thinking nor
+  typed input rendered). Expensive tails (>8k chars) now re-render at
+  ~10 Hz and complete instantly on the final newline; short lines and
+  tests keep the byte-exact immediate path (debugTailThrottled counter).
+- fix(codemie): the SSO wait now shows a live "still waiting…" status and
+  bails after 5 minutes instead of hanging forever — the page usually
+  signs in by itself (existing browser session), so the callback just
+  needs patient waiting, not user action.
+- fix(status): hide the $0.0000 price when the model has no cost data,
+  humanize big token counts (12.3k / 4.6M), and show the provider name
+  with the model in the status bar.
+  MemoryRevisionService (+ MemoryRevision, ConcurrentRevisionException)
+  are now public exports, so pendingDeletions/markConsolidated and the
+  consolidate(expectedRevisionHash:) contract are reachable directly.
+
+## 0.1.234
+
+- fix(memory): `memory_delete` now goes through `KBMemoryStore.deleteRecord`
+  (flutter_agent_memory 0.1.0) — tombstones + revision bump mean
+  consolidation can no longer resurrect deleted entries; graph rebuilds on
+  delete. `deleteEntityById` stays as a raw-storage escape hatch only.
+- deps: flutter_agent_memory flipped from git tag to hosted `^0.1.0`
+  (published on pub.dev) — unblocks fa's own future publish.
+
+## 0.1.233
+
+- fix(tui): a throwing update()/picker command can never close the app —
+  dart_tui wraps model.update in try/catch (log + keep running), matching
+  the existing runCmd guard. Cross-provider model switches surface errors
+  as notices instead of dying (the CodeMie crash).
+- fix(cli): stdout.terminalColumns/terminalLines fall back to 80/24 when
+  stdout is not a TTY (session-switch replay crashed twice in crash.log).
+- fix(tui): sendBusy is reference-counted — a second submit during a
+  running turn (slash menus work mid-stream) no longer resets the elapsed
+  timer + sticky echo, and its finally no longer kills the spinner of the
+  live stream.
+- feat(tools): bash gains a `stdin` param — text written to the command's
+  stdin right after start (ask the USER for a passphrase via the ask tool,
+  then feed it; ssh-add/sudo no longer hang on a raw prompt).
+- feat(messaging): `schedule_message` — persisted delayed notes to an
+  agent mailbox (self by default); pending records survive restarts and
+  delivery rides the inbox idle-wake. Wired into the CLI and the app.
+- deps: flutter_agent_memory 0.1.0 (git tag v0.1.0) — tombstoned deletes,
+  timeout-guarded search, public graph-overview API.
+
+## 0.1.232
+
+- perf(tui): grown-tail rollback truncates the transcript arrays
+  in place instead of sublist-copying them per streaming chunk — the
+  per-chunk cost no longer grows with session length (the last
+  time-coupled term; everything else is bounded or O(delta)).
+
+## 0.1.231
+
+- perf(tui): streaming flush interval 50ms → 16ms (~60 fps). A traced
+  real huge session showed p50 frame build of 37µs, so flushing thrice
+  as often is nearly free and streamed text (thinking included) appears
+  smooth instead of in 50ms chunks.
+
+## 0.1.230
+
+- perf(tui): cache the formatted sticky echo. During a stream every
+  keystroke forces a paint, and each paint re-ran markdown formatting
+  over the entire echoed prompt — typing cost was O(echo lines) per
+  key, painful with long prompts in big sessions. Rows are now formatted
+  once per echo change (content+width keyed cache carried across model
+  copies); view frames just write the cached bytes.
+
+## 0.1.229
+
+- feat(memory): `memory_delete` tool — remove stale entries by id
+  (scan project then user scope, or restrict with `scope`); hosts get
+  the prompt-section refresh hook like `memory_add`.
+- feat(tui): `<task-result>` blocks and `[auto-compacted]` /
+  `[context trimmed]` / `[memory maintained]` service receipts render as
+  dim blockquotes with a ⚙ marker, same as `<system-notice>`.
+
+## 0.1.228
+
+- feat(tui): `<system-notice>` blocks (background-shell settlements,
+  inter-agent mail) render as dim blockquotes with a ⚙ marker instead of
+  raw tags — session notes look like notes. Model-visible records keep
+  the raw tags; only the TUI view restyles them.
+
+## 0.1.227
+
+- perf(tui): width measurement fast path — printable-ASCII runs skip
+  grapheme iteration entirely and a bounded whole-line memo (8192
+  entries, insertion-order eviction) catches re-measured rows.
+  Profiled with crap4dart on the transcript suite: wrapAnsiLine
+  30.7s → 0.62s total (×49); tuiTextWidth/tuiGraphemeWidth dropped out
+  of the top-10 hot methods; formatLine total 37.0s → 32.8s.
+
+## 0.1.226
+
+- fix(tui): Ctrl+C exit now restores terminal modes before exit(130)
+  (mouse tracking off, alt-screen exit, cursor show) — the shell prompt
+  no longer inherits mouse reporting, so wheel scrolling after fa quits
+  stops printing escape garbage. The reset block is shared by the
+  natural end and the SIGINT path.
+
+## 0.1.225
+
+- fix(tui): the input caret stays visible while a run streams. The old
+  hide-while-busy guarded a pre-force-home artifact (the cursor jumping
+  inside streamed text); the renderer now re-homes after every painting
+  frame, so hiding only stranded invisible typing. Pickers and prompt
+  dialogs still hide it.
+
+## 0.1.224
+
+- fix(messaging): agent_message to a peer in ANOTHER project now lands in
+  the recipient's messages root. Delivery used to write into the sender's
+  cwd-slug root, so the other fa (draining only its own root) never saw
+  the mail — cross-project chats silently vanished. FileMessagingRepository
+  resolves the mailbox's real root (messages-registry.json slug map, then
+  a sibling-slug scan by .id marker); unknown ids stay local. Diagnosed
+  live: a message fa<->crap4dart agent was found sitting in the wrong
+  project's inbox.
+
+## 0.1.223
+
+- feat(tui): input-driven frames bypass the fps throttle — a keystroke or
+  wheel event paints immediately instead of waiting out the ~18ms frame
+  window (kitty's input_delay/repaint_delay split). Measured echo latency
+  during a 500-delta/s stream over a 20k-line transcript: p50 12-17ms →
+  0.1-0.2ms, p95 ≤0.4ms.
+- feat(cli): Ctrl+C now exits exactly like /exit — aborts any in-flight
+  run (bounded 5s wait), persists the partial transcript, prints the
+  `fa --session '...'` resume hint to the real stdout, exits 130. Esc
+  stays the abort-without-exit key inside the TUI. Adds
+  AgentCli.waitForIdle (bounded settle) and sessionResumeHint.
+
+## 0.1.222
+
+- fix(cli): Ctrl+C while a run streams now prints "run aborted — press
+  Ctrl+C again to exit". The first press always aborted the run but gave
+  no feedback, so the suddenly-silent screen read as a hung process
+  (PTY-verified: the SIGINT abort path works; only the hint was missing).
+  A second press exits 130 as before.
+
+## 0.1.221
+
+- fix(tui): streaming without trailing newlines no longer force-rebuilds the
+  whole transcript render — a delta that grows the current line (the
+  coalescer's exact no-newline flush shape) used to break the incremental
+  boundary's identity sentinel and trigger a full format+wrap pass
+  (~220ms on a 150k-token transcript) on EVERY flush, saturating the UI
+  loop so typing during a stream rubber-banded or froze. A prefix-extended
+  tail now rolls the durable caches back one source line and resumes:
+  measured 4327ms → 15ms over 20 growing appends; appends with newlines
+  stay O(delta) as before.
+
+## 0.1.220
+
+- feat(tools): one-per-session warning when a freshly written old-format
+  background-job log (`sh-<n>.log`, the pre-unique-id scheme) appears in
+  this directory — proof a stale fa build shares the cwd and its job output
+  can interleave with stale logs; surfaced as a loud CLI hint to restart
+  that instance on the current binary.
+- chore(tool): `tool/key_latency_probe.dart` — headless key-echo latency
+  probe for the TUI (stream + burst + status-line scenarios), used to
+  verify that typing during an active stream stays sub-frame on current
+  builds.
+
+## 0.1.219
+
+- fix(cli): a pasted absolute path that EXISTS is sent as a message with the
+  file attached instead of being refused with a "filesystem path, not a
+  command" hint; a nonexistent path keeps the hint.
+- fix(cli): auto-compaction reports honestly — a failed pass no longer
+  prints the success-looking "[auto-compacted] N tokens summarized" line,
+  and a no-op pass stays quiet.
+- fix(compaction): emergency local trim — when both summarizers are down and
+  the transcript is over the window, the most recent keepRecentTokens stay
+  live behind a user-role marker (in-memory only; the session file keeps the
+  full history) so the agent can keep working instead of being stuck
+  over-window until the endpoint recovers.
+- fix(cli): compaction-time memory extraction is bounded — the extraction
+  stream is cancelled after 90s and force-skipped after 120s (the phase
+  label no longer hangs for the whole role-chain retry ladder), and the
+  "Compacting context…" phase is restored afterwards.
+- perf(cli): the status line's context estimate memoizes the settled
+  transcript by list identity + length only — the in-flight stream message
+  is estimated per render and never invalidates the memo. Keying the memo on
+  the stream's growing length used to force a full O(context) re-scan on
+  EVERY streamed delta (dozens per second — the "typing lag" while a run
+  streams over a large transcript).
+
+## 0.1.218
+
+- fix(tui,fork): the FA_TUI_TRACE file sink flushes every row — a traced
+  session is the one you post-mortem, so a hard kill can no longer eat the
+  trace tail. Opt-in only; zero cost when tracing is off.
+
+## 0.1.217
+
+- perf(tui,fork): cursor home dedupe is render-aware — a frame that painted
+  rows force-homes the physical cursor exactly once; fully idle frames now
+  emit ZERO bytes (the identical-content skip no longer pays the CUP).
+- perf(cli): drop the nonce-SGR suffix from the idle cursor line — the
+  renderer's render-aware re-home replaces it, so idle appends stop
+  repainting the status row every frame.
+
+## 0.1.216
+
+- perf(tui,fork): dropped frames no longer build the view — `Program` now
+  builds the screen lazily inside the frame budget check, so frames the fps
+  throttle discards stop paying a full assembly for nothing.
+- perf(tui,fork): renderer output hygiene — the window title OSC sequence
+  and an unmoved cursor's CUP are emitted once (deduped, invalidated on
+  clearScreen/alt-screen/scroll/insert) instead of on every frame.
+- feat(tui,fork): keypress→paint tracer — attach `withTracer(...)` or set
+  `FA_TUI_TRACE=<path>` to get an ordered JSONL timeline of stdin arrivals,
+  drained batches and painted/dropped frames (`build_us`/`render_us`), for
+  offline latency joins.
+- perf(cli): the frame builder stops allocating a List<String> of every
+  physical row per frame just to count lines (newline scan instead) and
+  drops one full-screen string copy.
+
+## 0.1.215
+
+- fix(cli): restored sessions replay messages IN FULL — the per-message
+  head caps (TUI: 20 rows, line mode: 2 rows) hid long answers behind a
+  trailing ellipsis after a restart. The global row budget still bounds a
+  marathon replay, but it now drops OLDER WHOLE messages instead of
+  decapitating every entry; tool-call-only runs keep collapsing.
+
+## 0.1.214
+
+- fix(cli): wide GFM tables keep their box grid — cells wider than the
+  terminal wrap onto aligned continuation rows instead of collapsing the
+  whole table back to raw markdown; only a degenerate budget (tiny width,
+  many columns) still prints raw rows.
+- perf(tui): dart_tui vendored under `vendor/` and its fps throttle fixed to
+  drop-frame semantics — an early frame no longer sleeps the event loop
+  (~16 ms stalls per frame made typing/scrolling rubber-band during long
+  streaming answers); drops repaint only the latest view via an internal
+  RenderTickMsg, invisible to models.
+
+## 0.1.213
+
+- style(env): brace single-statement if in CwdOverrideEnv.backgroundJobsSupported
+
+## 0.1.212
+
+- fix(bench): drop stale fa_tui show-import from tui_stream_bench
+- fix(tui): open-table boundary invariant — streamed tables never lose rows
+- feat(site): widgets gallery page + machine index; widgets GOAL
+- perf(tui): incremental transcript markdown+wrap — streaming flush x729 faster
+- fix(cli,app): attach delivery, pasted-path attachments; split cli inbox part file
+
+## 0.1.211
+
+- fix(cli): a pasted filesystem path is not a slash command
+
+## 0.1.210
+
+- ci(mobile): skip the iOS artifact download when the IPA build was skipped
+
+## 0.1.208
+
+- feat(attach): live CLI sessions in the app — presence, 1:1 view, input handover
+
+## 0.1.207
+
+- fix(app): explain empty responses that follow an image-bearing prompt
+
+## 0.1.206
+
+- fix(app): skill discovery scans user-level roots (~/.claude, ~/.copilot, ...)
+- ci(macos): tolerate an existing keychain when packaging the TestFlight PKG
+
+## 0.1.205
+
+- fix(cli): TUI renders rows in terminal cells (grapheme clusters) - markdown
+  no longer slides after emoji/CJK; status row padding and menu truncation are
+  cell-width aware; output history cap raised 200 -> 2000 (fence-safe replay).
+- feat(cli): `unattended` approval mode - auto-approve everything including
+  critical bash patterns, for runs without a user present; yolo regains its
+  critical-pattern safety net.
+- feat(cli): approval prompts accept a typed note and deliver it to the agent
+  as steering feedback alongside the decision.
+- fix(cli): empty assistant responses retry once with a 'continue' nudge
+  (loop-level `maxEmptyRetries`); errors/aborts never trigger it.
+- feat(session): incremental message persistence (crash-safe appends);
+  sessions with persisted records survive empty-session cleanup.
+- fix(cli): status meter tracks streaming thinking/tool-call sizes; session
+  switches reset tok/cost/turn; failed runs keep the last real ctx anchor.
+- feat(cli): skills access defaults to granted (opt-out); bare `/skills
+  access` opens an interactive picker; disabled-skills hints on listings;
+  `/skills` dispatch decomposed for the CRAP ratchet.
+- fix(providers): OpenRouter OAuth keys persist endpoint-scoped
+  (`FA_KEY_OPENROUTER_AI`) and the auth picker offers the stored key first.
+- feat(tui): mouse capture defaults ON (two-finger scroll); `FA_TUI_MOUSE=0`
+  opts out.
+- test(cli): waitForIt poll budget 2s -> 25s (coverage runs on loaded boxes).
+
+## 0.1.204
+
+- fix(providers): do not close shared HTTP client during OpenRouter OAuth exchange
+
+## 0.1.203
+
+- fix(cli): provider picker, CodeMie auth refresh, skills access
+- feat(session): unify CLI and macOS app session storage
+- fix(providers): restore Kimi endpoint (api.kimi.com/coding/v1) and default model k3
+- fix(cli): auto-refresh expired CodeMie SSO cookie on startup
+
+## 0.1.202
+
+- fix(install): remove broken Dart fallback, respect FA_INSTALL_DIR, sign macOS CLI in CI
+
+## 0.1.200
+
+- fix(ios): correct force_load path — pod products live in a per-pod subdir
+- fix(ios): force-load cupertino_http pod binary + CI gate on its FFI symbols
+- fix(flutter_app): project mount sets agent cwd to /project so sessions are folder-scoped
+
+## 0.1.199
+
+- fix(cli): show auth-method picker when adding openrouter/codemie from TUI
+
+## 0.1.195
+
+- fix(install): macOS CLI bundle + quarantine/sign handling
+
+## 0.1.194
+
+- fix(ci): merge Release.entitlements into the signed macOS build, don't strip them
+
+## 0.1.191
+
+- feat(cli): add auth-method picker for CodeMie SSO/JWT and OpenRouter OAuth/key
+- feat(cli): auto-restart CodeMie SSO when the saved cookie expired
+- fix(cli): catch uncaught errors and harden provider switch against crashes
+- fix(ui): make ChatComposer transparent and regenerate goldens
+- fix(network): use platform HTTP client for sandbox env, allow local HTTP, log bookmark failures
+- fix(macos): add app-scope bookmark entitlement and surface folder picker errors
+
+## 0.1.188
+
+- feat(app): js_widget_runtime back on hosted pub (`^0.4.79`, the git pin
+  dropped) — JS apps gain the Material 3 catalog: appBar/navigationBar/
+  navigationRail/tabBar/fab/segmentedButton/radio/searchBar/tooltip/
+  popupMenu/banner/bottomAppBar/carousel/drawer, modal overlay nodes
+  (bottomSheet/dialog/snackBar/datePicker/timePicker), `flChart`
+  (line/bar/pie/radar/scatter via fl_chart), new layout/display/input nodes
+  (wrap/align/flexible/spacer/scroll/clipRRect/svg/markdown/chip/badge/
+  progress indicators/switch/checkbox/slider/dropdown, textButton/
+  outlinedButton/iconButton), M3 motion tokens — and the seeded `js-apps`
+  skill documents the whole catalog
+- fix(providers): one shared keep-alive HTTP client for all provider streams
+  instead of a fresh client per call — per-turn TCP churn piled up TIME_WAIT
+  sockets until connect() stalled into the watchdog (`TimeoutException:
+  Future not completed`); kimi-cli/pi reuse one client for exactly this
+  reason. Aborts still close just their own response subscription
+- fix(compaction): auto-compaction no longer spins identical no-op passes to
+  the max after a compaction: a pass with nothing left to cut stops the loop,
+  and the post-pass transcript restamp clears the kept messages' stale
+  generation-time usage so the estimate reflects the compacted size (before,
+  a compacted session kept reporting its pre-compaction ~200k and retriggered
+  compaction on every idle wake)
+- fix(tui): the status row is padded to the terminal width — switching from
+  a long model id to a shorter one no longer leaves the old tail on screen
+- fix(cli): the status line is live again — ctx% shows the current context
+  pressure (provider-reported usage plus the estimated tail, i.e. what the
+  next request carries, not the last turn's frozen prompt size) and the tok
+  counter grows during streaming (settled turns + in-flight estimate)
+- fix(providers): inline `<think>…</think>` tags in the content stream (kimi
+  k3 via openai-completions and other endpoints without a reasoning field)
+  are extracted into the thinking block instead of rendering as raw tags —
+  streaming-safe (tags may split across deltas)
+- fix(tui): history wrapping no longer breaks markdown styling — the wrap is
+  now word-aware (no more mid-word cuts) and active SGR styles are closed at
+  the cut and re-opened on the continuation row, so a wrapped bold/code span
+  keeps its style instead of going plain (visible mostly after resizes)
+- fix(tui): restored sessions no longer lose markdown formatting after an
+  unclosed code fence — replay truncation (20-row cap) and the replay budget
+  cut could leave the fence state dangling, rendering everything after as
+  verbatim text; truncated messages now close their fence synthetically and
+  a budget cut starting mid-fence prepends a balancing opener
+- fix(tui): restored sessions no longer dump the raw `<summary>`/`<read-files>`
+  block into the history — a projected compaction/branch summary replays as
+  one dim marker row with the summary's first line as a hint
+- feat(config): provider watchdogs are configurable — `providerTimeouts:`
+  section in `~/.fah/config.yaml` (`connectTimeoutMs`, `streamIdleTimeoutMs`;
+  strict parsing) for slow endpoints whose first byte takes minutes; the
+  connect default itself is raised 60s → 180s (loaded reasoning endpoints
+  hold big requests before the first byte) and the stream-idle default
+  120s → 5min (reasoning models think for minutes between chunks — pi and
+  kimi-cli carry no such watchdog at all / SDK's 600s total)
+- fix(tui): Cyrillic/CJK paste no longer arrives as mojibake — dart_tui
+  2.0.0's bracketed-paste decoder maps every pasted byte to a Latin-1 char
+  code; fa re-decodes the (lossless) mis-decoded text as UTF-8 at the
+  PasteMsg boundary
+- fix(tui): Ctrl+S no longer freezes the terminal — dart_tui's raw mode left
+  termios IXON on, so Ctrl+S was the tty driver's VSTOP (XOFF: output froze,
+  the keypress never reached the app); the TUI now disables software flow
+  control for its lifetime and restores the saved termios on exit
+- feat(tools): background shell jobs — `bash background: true` runs detached
+  (log in `.fah/bash_jobs/<id>.log`), `bash_job {status|output|stop}` manages
+  them, completions re-enter the conversation as system-notices (steered
+  mid-run, fresh turn while idle)
+- feat(agent): steer soft-yield — a message arriving mid tool-call phase
+  (Ctrl+S, subagent completion, inbox mail) asks yield-aware tools to finish
+  the call early WITHOUT stopping the work: a running foreground `bash` moves
+  to a background job untouched, a blocking `task` converts still-running
+  children to background jobs; the user message is delivered at the next
+  step boundary instead of after the whole tool call
+- feat(task): model-facing `task_cancel` aborts a running background subagent
+  job; `/tasks` lists background agents AND shell jobs, `/tasks cancel <id>`
+  routes by id
+- feat(app): background shell jobs on every platform — the desktop app
+  forwards the host shell's capability through `ProjectMountEnv`; mobile's
+  `WasiSandboxShell` and web's `MemoryShell` run jobs as detached script
+  Futures on job-local interpreter clones (own cwd/vars/output capture,
+  shared filesystem), so `bash background: true` + steer-yield work in the
+  sandbox too
+
+## 0.1.187
+
+- refactor(ui): sane Settings structure — providers include on-device, one Models group
+
+## 0.1.186
+
+- fix(crap): decompose FaTuiModel._submit/_wrappedInput (CRAP 12.14/12.01 -> in budget)
+- refactor(cli): split provider key helpers out of provider_commands.dart (2800-line gate)
+- fix(providers): roles-mode switches preserve the scoped key; messaging presence
+- test(cli): visual integration coverage for the new TUI UX
+- feat(tui): shell-style input history on ↑/↓
+- feat(messaging): live cross-instance chat — discovery, self-address, idle wake
+- test(app): web-safety guard — no Platform.is without a kIsWeb guard
+- test(messaging): visual integration for the agents inbox + terminal-safe marker
+- fix(app): no crash on CodeMie/ChatGPT taps in the web build
+
+## 0.1.185
+
+- feat(tui): leave the mouse to the terminal by default (FA_TUI_MOUSE=1 to capture)
+- fix(app): iOS CodeMie SSO — run the real loopback callback server
+
+## 0.1.182
+
+- test(messaging): drop unused import (dart analyze warning)
+
+## 0.1.180
+
+- feat(memory): keyword-only search fallback without an LLM provider
+- fix(subagents): fire-and-forget registry persistence + per-session rehydrate
+- fix(providers): connect + idle watchdogs on provider streams
+- feat(ui): brand provider icons in onboarding, file split, iOS icon sync
+- feat(session): never keep an untouched session file
+- chore: drop unused import
+- fix(cli): provider wizard asks for the key in roles mode; switches accept it
+- feat(subagents): crash-resilient child sessions — spawn-time async creation + incremental turn flush (serialized, fire-and-forget)
+- fix(memory): inject the <memory> section into the system prompt (CLI + app)
+- test(cli): drop flaky real-model live badge visual test (unit-covered badge logic); document why
+
+## 0.1.179
+
+- fix(crap): simplify pickAgentAction dispatch; broaden badge visual soft-skip catch
+- chore: drop unused session_repo imports
+- feat(cli): extract active-agents badge to pure helper + unit tests; soft-skip live badge visual test
+- fix(tui): soft-wrap long input lines instead of horizontal clipping
+- feat(subagents): real JSONL child sessions at completion + /agents open <id> (race-free register)
+- feat(providers): list-first model pickers everywhere — quick search, manual escape, agent models flow
+- feat(cli): /agents child → Open session action — switch into the subagent's session
+
+## 0.1.178
+
+- feat(app): live agents badge in FaWorkBar (CLI bg: parity) + fix cli_visual tests for new settings hub order and /agents tree
+
+## 0.1.177
+
+- feat(ui): onboarding provider step is real and mandatory
+- test(crap): decompose + cover /agents panel methods (pure helpers in agent_tree.dart), public subagentManager getter
+- fix(analyze): drop redundant null guard in agents section
+- feat(app): agents panel in settings — live subagent tree with observe/send (CLI parity)
+- test(cli): /agents tree panel integration test (keyless)
+- feat(cli): agents viz A+B — live agents badge in status line, /agents tree panel with observe/send
+- fix(ui): saturated glyph colors for the light brand icon
+- feat(task): Claude Code agent compat — .claude/agents roots + model: frontmatter alias
+- fix(ui): macOS traffic-light clearance for pushed AppBar routes
+- fix(ui): pin the onboarding Privacy link to the footer center
+- feat(ui): single brand tile everywhere, glyph rebalanced in the icon
+- fix(analyze): drop unnecessary non-null assertion
+- feat(task): subagent model role — settings-picked delegation model (TaskModelsStore + roles: config), smol/explore precedence
+
+## 0.1.176
+
+- fix(analyze): await in try block, drop unused imports
+- test(crap): decompose + cover new subagents/a2a/memory methods (CRAP ≤ 12)
+- feat(ui): brand icon in dark + light forms, styleguide colors in onboarding
+- chore: drop unused imports
+- fix(providers): commit the FA_PROVIDERS filter + enabledProviders definitions unbreaking main
+- style: dart format task_executor
+- docs(subagents): mark all phases done + AGENTS.md bullets for memory/a2a
+- test(subagents): real-model test skips without ZAI key, longer timeout
+- feat(a2a): phase 5b — fah serve --a2a HTTP mount + full client↔server loop verified live
+- feat(ui): onboarding top padding, privacy link, centered wide layout + light macOS icon
+- feat(a2a): phase 5a — a2a: config, A2aManager lazy connect, task tool a2a:<name> remote agents, /a2a status
+- feat(memory): phase 2 — compaction extraction hook, maintain() pipeline, /memory command
+- feat(ui): onboarding redesigned pixel-close to the reference prototype
+- feat(subagents): reply tool, agent_message sibling messaging, completed_without_reply notice + pending-queue guards
+- fix(ci): remove stray file "flutter_app/\" breaking the windows checkout
+- feat(ui): Focus Timer as standalone dark card with circular progress ring
+- feat(ui): onboarding rewritten to match reference — 3-col mockups, circular Focus Timer, colorful icons
+
+## 0.1.175
+
+- feat(providers): DIAL provider kind — `{baseUrl}/openai/deployments/{model}/chat/completions` with `Api-Key` auth, optional `DIAL_API_VERSION` query, `/openai/models` listing; `--provider dial --model <deployment>` headless
+
+## 0.1.173
+
+- fix(ci): restrict auto-release tag matching to v*.*.*; fix pubspec version
+- feat(ui): auto-focus composer input on session open/switch
+- fix(testflight): fail on submit errors; fix framework bundle IDs; cleanup publish job
+- feat: switch to hosted flutter_agent_memory dep, remove publish_to: none
+- chore: add LICENSE to fa_llm for pub.dev
+- feat: prepare fa_llm for pub.dev publishing
+
+## fa_llm-v0.1.1
+
+- feat: switch to hosted flutter_agent_memory dep, remove publish_to: none
+
+## 0.1.172
+
+- fix(version): use Platform.resolvedExecutable so version works regardless of invocation path
+
+## 0.1.171
+
+- chore: trigger CI + auto-release for v0.1.171
+- fix(ci): quote sed command to fix YAML syntax
+- fix(ci): keep publish_to: none for analyzer; strip it only in the publish job
+- fix(installer): rm -f target before cp — break symlinks so version.txt lives next to the binary
+
+## 0.1.169
+
+- fix: fa update now copies version.txt alongside the new binary
+- feat(ui): permission cards with working action buttons
+- ci: CodeQL workflow — Dart + JS only (no Java/Kotlin, no Gradle in root)
+- fix(security): exact hostname match for testflight.apple.com (CodeQL #7)
+- fix(ui): settings/files/model picker as popup dialogs on wide screens
+- fix: disable Impeller on macOS to prevent resize crash
+- fix(installer): copy version.txt next to binary + fix version lookup path
+- feat(ui): FaMark sparkle brand icon (no background) + files goldens update
+- fix(security): URL sanitization in analytics.js + workflow permissions
+- fix(ui): full-height dividers — panels extend to window top on macOS
+- fix(ui): address prototype feedback — tabs, calendar, timer, model switch
+- Create SECURITY.md for security policy
+
+## 0.1.168
+
+- fix(pages): web demo build is optional (dart:ffi from sqlite3 breaks it)
+- fix(installer): $zip_asset… unbound variable — brace the var before ellipsis
+- feat(ui): 'Add app' tile in Created-by-you section (prototype style)
+- feat(ui): system app tiles grid in AppsPanel (Calendar/Files/Notes/Maps/…)
+- feat(ui): tool tiles show display names + dropdown arrows (prototype style)
+- feat(ui): user profile section in sidebar bottom (matching prototype)
+- fix: suppress dead-code warning on new sidebar null check (line 198)
+- feat(ui): permission-denied card for tool errors (prototype style)
+- fix: pub.dev publish_to removed, Windows zip uses 7z instead of zip
+- feat(ui): Customize label in AppsPanel header (matching prototype)
+- feat(ui): composer matches prototype — star icon, Ask anything, up-arrow send
+- test(goldens): AppsPanel golden coverage — dark + light variants
+- feat(ui): session date grouping + 3-dot menu + subtitle timestamps
+- feat(ui): workspace header in wide layout + session tile 3-dot menu
+
+## 0.1.167
+
+- chore: trigger auto-release for CLI binaries + subagents 2.0
+- feat(ui): AppsPanel with search/filters/sections for wide-layout right panel
+- fix: remove unused test class + imports causing CI analyze warning
+- fix(crap): decompose + cover all new methods to pass CRAP ratchet (12.0)
+
+## 0.1.164
+
+- test(cli): avoid real network in /provider custom default URL test
+- refactor(self_manage): lower fallbackZipUpdate CRAP and cover zip path
+- ci: pin crap4dart to 0.2.1 to match pre-commit ratchet
+- fix(installer): fallback to .zip extraction when raw binary not in release
+
+## 0.1.162
+
+- fix(app): key field no longer prefills OPENROUTER_API_KEY for non-OpenRouter providers
+- fix(oauth): native iOS/macOS OAuth via HTTPS callback + custom scheme redirect
+- fix(oauth): iOS web redirect flow with state + verifier
+
+## 0.1.157
+
+- fix(oauth): capture OpenRouter web callback via JS object postMessage
+
+## 0.1.153
+
+- feat(providers): Google Gemini media provider + MediaModelsSection in fa_ui
+
+## 0.1.152
+
+- fix(providers): voice sample URLs are case-sensitive on the CDN
+
+## 0.1.149
+
+- feat(apps): Language Tutor rewrite + fitness-trainer device-path probes
+
+## 0.1.148
+
+- Gate JS apps and skills by platform
+
+## 0.1.147
+
+- fix(macos): surface EventKit authorization failures
+- feat(macos): allow explicit calendar permission bootstrap
+
+## 0.1.146
+
+- fix(macos): split Debug entitlements for local flutter run
+
+## 0.1.143
+
+- feat(macos): privacy prompts, configurable signing, and no-sandbox release for Fa
+
+## 0.1.142
+
+- macOS: no-sandbox release flavor, HealthKit support, privacy entitlements
+- Local models heading, Gemma 128k context, context-fit budget fix
+- feat(flutter_app): feature-gate WebLLM, expand Gemma context window, filter BYOK picker
+
+## 0.1.141
+
+- fix(macos): bundle LiteRT-LM companion dylibs for flutter_gemma
+
+## 0.1.140
+
+- feat(settings): show on-device providers in the Providers section
+- feat(settings): voice selection for the TTS media slot
+
+## 0.1.139
+
+- docs(gemma): update platform comments for macOS support
+
+## 0.1.138
+
+- feat(gemma): enable on-device Gemma provider on macOS
+- feat(fa_ui): wire fa_llm/fa_llm_flutter into provider config
+
+## 0.1.137
+
+- chore(deps): bump flutter_gemma to latest official releases
+- feat(fa_llm_flutter): add FlutterGemma on-device provider
+
+## 0.1.136
+
+- Add fa_llm package extracted from flutter_agent_memory llm layer
+
+## 0.1.135
+
+- feat(fa_ui): providerId through the connect flow
+
+## 0.1.134
+
+- feat(fa_ui): userBubble/userBubbleBorder tokens in FaUiTheme
+
+## 0.1.133
+
+- feat(fa_ui): avatar builder + theme-driven chat surfaces
+- feat(fa_ui): host surface tokens + optional app bar in FaChatScreen
+- fix(fa_ui): FaChatScreen honors the host FaUiTheme in the chat theme
+
+## 0.1.132
+
+- feat(fa_ui): extract the agent chat into the shared fa_ui package
+
+## 0.1.130
+
+- feat(launcher): 'Restore reference version' tile menu item for demo apps
+
+## 0.1.128
+
+- fix(apps): jscore multi-instance crash override + seed-error surface + map top inset
+
+## 0.1.125
+
+- fix(example): pin js_widget_runtime@9498d0c — revert the native-release grace that defeated the lifecycle serialization (tf-6 SIGSEGV); drop the test-only grace config
+
+## 0.1.123
+
+- feat(site): TestFlight public beta link in the hero CTA row
+
+## 0.1.120
+
+- feat(fa_ui): present editor/picker pages as constrained dialogs on wide canvases
+
+## 0.1.119
+
+- feat(yoclip): Fa promo video workspace — 19s promo in 3 aspects x en/ru (App Preview + social + YouTube), creative treatment, VO, music bed, frame QA
+- test(example): realistic providers in the store_providers frame; pre-commit format gate scopes to package dirs (yoclip/ is a standalone workspace)
+
+## 0.1.117
+
+- feat(example): launcher home on all layouts (legacy session sidebar removed), App Store shots v2 ('your own apps, built by chat'), golden orphan gate
+
+## 0.1.116
+
+- fix(example): close action for full-chrome JS apps (map was unclosable), store copyright name
+
+## 0.1.114
+
+- ci(ios): scope codesign rewrite to Runner, auto-sign the FaLiveActivity extension (bundle-id collision 90685)
+- fix(example): steer button interrupts the run, queued steers run after stop, sheet opens at the latest message
+
+## 0.1.113
+
+- test(example): real-agent E2E on the macOS host + store promo artwork
+
+## 0.1.112
+
+- feat(example): iOS background execution + Live Activity, key resolution fix, crash-churn guard, mini drag pill
+
+## 0.1.111
+
+- fix(example): TestFlight SIGSEGV root cause — serialized engine lifecycle
+
+## 0.1.110
+
+- fix(example): visible run errors, mini last-message strip, iOS-grade drag&drop, weather timeouts
+
+## 0.1.109
+
+- feat: CRAP green zone (max ≤ 8), app integration tests, tool-dup fix
+
+## 0.1.108
+
+- fix(example): TestFlight JSC crash, ownership-aware demo sync, CRAP yellow zone
+
+## 0.1.107
+
+- docs: privacy policy — PRIVACY.md + published site page, onboarding links it
+
+## 0.1.106
+
+- feat(example): app content respects the bottom safe area + onboarding replay
+
+## 0.1.105
+
+- feat(example): icons-per-row setting, tight row gap, pager bounce fix
+
+## 0.1.104
+
+- fix(example): reliable tile drops, full-width grid, widget drag cards
+
+## 0.1.103
+
+- feat(example): first-launch onboarding, scene3d wiring + 3D game demo, sheet/tile polish
+
+## 0.1.102
+
+- feat(example): iOS-style home grid — icon-unit alignment, live reflow, resizable tiles
+- fix(example): drop the border on the floating chat bar/icon — shadow only
+- feat(example): tile span sizes + floating mini chat bar, directional sheet swipes
+- feat(example): live app tiles on the launcher + chat sheet mini-by-default
+
+## 0.1.101
+
+- fix(example): sheet respects the top safe area + light-theme golden
+
+## 0.1.100
+
+- refactor(example): drop unused members left by the sheet v3 rewrite
+- feat(example): sheet v3 — ONE panel: round icon ↔ mini bar ↔ full sheet
+
+## 0.1.99
+
+- fix(example): sheet UX — full-bleed, one surface, ghost panel gone
+
+## 0.1.98
+
+- feat(example): session chat sheet v2 — mini bar with input, smooth physics
+
+## 0.1.97
+
+- docs(example): AGENTS.md notes for the launcher home, chat sheet and shared composer
+- feat(example): session chat bottom sheet over the launcher (pager, shared composer)
+- feat(example): apps launcher home on narrow layouts (grid, folders, system tiles)
+- fix(example): home control disambiguation (room/UUID) + duplicate-bridge-id write routing
+- fix(example): preset carousel is full-bleed — cards slide behind the edges
+
+## 0.1.96
+
+- fix(example): Home + Health apps scroll — root column → listView
+
+## 0.1.95
+
+- fix(example): pin js_widget_runtime to git fix for JSC use-after-free (TestFlight crash)
+- refactor(example): share chat message rendering with the in-app Fa overlay + full state goldens
+- fix(example): Fa panel is one bottom sheet, never two stacked cards
+
+## 0.1.94
+
+- refactor(test): split agent_cli_test.dart into support + provider/model topical files
+- fix(cli): spec env names resolve only for the default hosted endpoint
+- fix: video download auth on own-origin urls + provider key name dedupe + keychain preflight
+- fix(cli): fa update misdetects a native binary in pub-cache as pub-global
+
+## 0.1.93
+
+- fix(cli): empty Enter submits in guided flows; parse models[]/alias /models dialect
+- docs: commit identity policy — ai.teammate for contributors
+
+## 0.1.92
+
+- feat(example): generate_video tool — async /videos job on the videoGeneration slot
+- feat: request_secret tool — agent asks the user for missing credentials
+- fix(example): theme-aware FaWorkBar — one component with the chat overlay
+- fix(example): HomeKit entitlement + longer homes wait + notify probe
+- feat(example): resume the day's session at boot instead of stacking empties
+
+## 0.1.91
+
+- feat(example): model presets wizard in settings
+- feat(example): audio/video playback in the file preview
+- feat(example): story-driven App Store screenshots with real photos
+
+## 0.1.90
+
+- fix(example): set the App Store copyright field in the deliver lanes
+
+## 0.1.89
+
+- fix(deps): revert sqlite3 to ^2.9.4 — 3.x build hooks break dart compile
+
+## 0.1.88
+
+- fix(example): retry deliver on Apple's bursty Connect API 500s
+- fix(example): preflight the macOS store version before deliver
+- fix(example): tolerate deliver's first-version 'No data' review-detail crash
+- fix(example): shrink RU promotional text under App Store's 170-char limit
+- ci: store-metadata workflow — App Store content upload on demand
+- feat(example): App Store content pipeline — store goldens, metadata, fastlane lanes
+
+## 0.1.87
+
+- fix(example): iOS build — HMHomeManagerDelegate members shadow the homeManager global
+- feat(example): HomeKit maximum API, empty-homes race fix, shareable debug logs
+- feat(example): privacy-first analytics facade (Firebase Analytics)
+- fix(example): contacts — system back steps out of detail, transient call hint
+- feat(example): rename sessions, arbitrary agent keys, persist approval mode
+
+## 0.1.86
+
+- fix(example): regenerate iOS Podfile.lock (Firebase 12.x + media players)
+- feat(example): calendar recurrence, alarms, calendars, span, and url
+- fix(providers): thinking — dedupe reasoning vs reasoning_details + tail collapse
+- feat(example): inline audio/video playback for sandbox media in chat
+
+## 0.1.85
+
+- feat(example): render sandbox images in chat — markdown imageBuilder + inline generate_image tiles
+- feat(example): expand Fa chat in place inside JS app views
+- fix(example): macOS pods — platform 14.0 + regenerated lock (Firebase 12.x)
+- fix(example): in-app Fa stays in the bottom sheet on first contact
+- chore(deps): update AI integration deps (firebase, flutter_gemma, js_widget_runtime) and sqlite3; migrate sqlite3 dispose -> close
+
+## 0.1.84
+
+- feat(example): preset default-model override + two-step media slot flow
+
+## 0.1.83
+
+- fix(example): drop the robot icon + Model header from the sidebar
+- fix(example): macOS keychain read + dead platform channels
+- feat(example): providers-first settings — provider editor page, default chat model flow, provider-based media slots
+- feat(example): providers-first settings — provider editor page, default chat model flow, provider-based media slots
+- fix(example): contacts list scroll + live search; paged full-list search with phone matching for dedup
+- fix(example): composer stop button while streaming; abort drains steer queue into transcript
+- chore(example): pin js_widget_runtime ^0.4.13 (image UA fix)
+- fix(providers): dedupe overlapping/cumulative reasoning chunks in openai-completions thinking stream
+
+## 0.1.82
+
+- fix(example): browser-ish UA for network images (runtime 0.4.13) + url image probes
+
+## 0.1.79
+
+- fix: commit the missing modifications from models-config and media UI (autostash unstaging)
+- feat(example): per-run date refresh, media models full-screen editor with /models picker
+- fix(example): dead onPressed buttons (runtime 0.4.12), calendar date-labeled lists + ±7d match, mic e2e probes
+- fix(example): current date in system prompt, foreground notification banners, contacts openUrl errors
+- feat: CLI models-config (models: config + /models set|remove|config) + media models settings UI
+
+## 0.1.78
+
+- feat: Keychain key persistence (iOS/macOS), /models endpoint listing, model marks, site updates
+- refactor(example): dedupe cache sections into shared model_cache_section; bump runtime 0.4.11
+- feat(example): transcription slot wiring + read_video (frames → vision)
+- feat(example): media models config + generate_image/speak/generate_music tools + js bridge
+- feat(example): iCloud sync for sessions/apps (iOS; macOS pending signing)
+- feat(example): local push notifications — channel, notify tool, js bridge, reminders demo
+- feat(example): HomeKit control (iOS) + mic/ASR voice input
+- feat(example): HealthKit read (iOS), scene3d dep (0.4.10), Android readiness doc
+
+## 0.1.77
+
+- feat(example): contacts domain — channel, agent tools, js bridge, demo app
+- feat(example): jsr.fa.llm chat (multi-turn) + stream (delta events)
+- feat(example): calendar write — channel, agent tools, js bridge, demo editing
+- feat(example): back-swipe contract (jsr.onBack), privacy manifests + usage descriptions
+
+## 0.1.76
+
+- feat(example): chrome modes, branding sweep (fah→Fa), textArea+scrolling docs (0.4.8), system-API design doc
+
+## 0.1.75
+
+- feat(example): animation nodes demo (entrance stagger, animatedSwitcher), theme+reply-sheet sources
+- feat(example): jsr.theme plumbing (light/dark live), Fa mini reply sheet, map-app golden
+- fix(example): chart node API alignment (0.4.7), gridView docs, bar chart demo
+
+## 0.1.72
+
+- feat(example): orbit work-bar, light theme, secrets UI, open_app + calendar tools, map node demos
+
+## 0.1.70
+
+- docs: mandate golden tests for all UI work in AGENTS.md
+- feat(example): brand fonts (Inter/JetBrainsMono), marketing-grade full-screen goldens, app quality gates
+- fix(example): absolute path for upload_picker_web conditional import
+- fix(example): update imports for the sandbox/services/ui layout
+- feat(cli): name the key source (environment vs secure store) in the 401 hint
+- feat(cli): diagnose auth failures with the key source (env vs store shadowing)
+- feat(cli): print the session resume command on exit
+- test(example): golden tests for every UI widget + pipeline golden gate
+- fix(agent): repair orphaned tool calls in the request payload
+- feat(cli): replay the full restored transcript with collapsed tool runs
+
+## 0.1.69
+
+- fix(example): unblind hosted models — vision detection + settings checkbox
+- feat(example): localize the UI (en/ru) with a hardcoded-string guard test
+- perf(cli): coalesce streamed output deltas to keep typing responsive
+- fix(cli): keep the ctx gauge at the last real usage after a failed run
+- fix(example): bump js_widget_runtime to ^0.4.3 — renderer no longer crashes on array borderRadius
+- perf(cli): memoize the markdown wrap pass so scrolling stays O(1)
+- fix(cli): re-attach follow on submit so the sticky echo pins again
+
+## 0.1.68
+
+- feat(cli): render provider error lines in red
+- fix(cli): hide the physical cursor while a run streams
+- feat(example): follow-tail auto-scroll + collapse long thinking blocks
+- fix(example): work bar for grid-opened apps; prove permission persistence
+
+## 0.1.67
+
+- feat(example): UX batch — collapsible tool output, Fa mark, in-app work bar
+- test(example): textField onChange delivers typed text to JS
+- fix(example): render attached-image messages — add the missing imageMessageBuilder
+
+## 0.1.66
+
+- feat(example): stream model thinking live into the chat
+- fix(example): replace the whole-run timeout with an idle watchdog
+- feat(example): SVG app icons for JS apps
+- feat(example): restore persisted sessions in the sidebar after restart
+
+## 0.1.65
+
+- feat(example): teach the js-apps skill how to test apps before handover
+- fix(example): fit the on-device Gemma context instead of engine overflow
+- test(example): tap test — calculator key reaches the JS engine
+- fix(cli): never hang on a keychain system modal
+- fix(example): bundle demo app assets — nested asset dirs need explicit entries
+
+## 0.1.64
+
+- fix(ios,macos): keep -exported_symbol out of Debug link flags
+
+## 0.1.63
+
+- test(example): end-to-end render test for the calculator demo app
+- feat(example): JS apps platform in the Fa app (js_widget_runtime)
+- docs: document the wasm_run symbol gate, strip-style pitfall, and new CI secrets/caches
+
+## 0.1.60
+
+- fix(ios): export wasm_run FFI symbols so Release/TestFlight builds keep them
+- ci: whitelist the tracked Firebase config for pub.dev's leak scanner
+
+## 0.1.59
+
+- fix(ios): use development provisioning profile for Debug builds
+- ci: unblock releases — vendor gitignore rule, pubspec catch-up, tag-ahead release
+- test(example): drop the unused accessGranted param (CI fatal-warnings)
+- feat: widen shell PATH for GUI apps (Homebrew python/node)
+
+## 0.1.53
+
+- ci(macos): fix provisioning profile entitlement extraction
+- fix(cli): rewind context crash and sticky echo duplication
+- ci(macos): fix provisioning profile entitlement key
+- fix(cli): enable mouse-wheel scrolling in TUI transcript
+- ci(macos): fix entitlements heredoc syntax
+- fix(cli): long user messages in TUI — ellipsis marker, calm scroll hint
+- ci(macos): embed provisioning profile, use git tags for version
+- fix(cli): degrade keychain write failures to session-only, never crash
+- fix(macos): raise deployment target to 12.0 for TestFlight
+- fix(macos): add LSApplicationCategoryType for TestFlight validation
+
+## 0.1.52
+
+- ci(ios): use absolute IPA path for TestFlight submit
+- ci(ios,macos): fix submit artifact path and macOS Ruby PATH
+
+## 0.1.51
+
+- ci(ios,macos): fix artifact downloads and macOS keychain password
+- ci(ios,macos): fix artifact path, macOS framework restore, action versions
+
+## 0.1.50
+
+- ci(ios,macos): fallback to GitHub release for WasmRun iOS framework
+- ci(ios,macos): restore WasmRun frameworks from local runner copy
+- ci(ios): restore WasmRun.xcframework from pub cache before build
+- fix(ios): use SRCROOT-relative path for wasm_run force_load
+- ci(macos): set working-directory for flutter steps and create .env placeholder
+- fix(ios): use absolute path for wasm_run force_load in Podfile
+- fix(ios): force-load wasm_run via Podfile post_install for Runner target
+- test(cli): wizard/registry coverage, help keyword, docs
+- fix(ios): force-load wasm_run in pod target only
+- fix(ios): use PODS_ROOT path for wasm_run force-load
+- fix(ios): force-load wasm_run static lib for arm64
+- ci(ios): create placeholder .env asset for build
+- chore(ios): track firebase_options.dart for CI builds
+- feat(cli): custom provider registry, guided wizard menus, TUI follow latch
+- ci(ios): download missing iOS platform before build
+- ci(ios): use simulator build to avoid missing device sdk
+- ci(ios): boot simulator before flutter build to avoid attached device
+- ci(ios): fix simctl invocation in fastlane build_only
+
+## 0.1.49
+
+- ci(ios): fix signing identity extraction
+- ci(ios): use fastlane build_only with temporary keychain
+- ci(ios): use persistent ci.keychain on self-hosted runner
+- ci(ios): use only build.keychain as default/search list, no OTHER_CODE_SIGN_FLAGS
+- ci(ios): import distribution cert into login.keychain and build without isolated keychain
+- ci(ios): download Apple WWDR G3 intermediate into build.keychain
+- ci(ios): import WWDR intermediate into build.keychain, keep it unlocked, pass --keychain
+- ci(ios): pass --keychain to codesign via OTHER_CODE_SIGN_FLAGS and add debug output
+
+## 0.1.48
+
+- feat(cli): guided custom provider setup (`/provider custom`): api type
+  (openai/anthropic/google-like), base URL, optional key (saved to the OS
+  secure store), then the model — picked from the endpoint's `/models`
+  list or typed manually; the TUI provider picker gains `+ custom
+  provider…`. (Code landed inside 7082bc8, swept up by a parallel commit.)
+
+## 0.1.47
+
+- ci: explicit export-options plist for iOS builds (UUID + full identity)
+- fix(example): pin the full signing identity name for iOS CI builds
+- fix(example): pin CODE_SIGN_IDENTITY iPhone Distribution for CI builds
+
+## 0.1.46
+
+- fix(example): manual code signing with Fa Profile for CI iOS builds
+- ci: placeholder firebase_options.dart for the repo-wide analyze
+- chore(example): untrack leftover Firebase configs from the pre-migration path
+- ci: cd /tmp before wiping the workspace in mirror checkout
+- ci(pages): tracked firebase_options template instead of git history
+- ci: self-updating mirror checkout in build-mobile.yml (same as build-macos)
+- ci(pages): placeholder firebase_options.dart for the web build
+- fix(example): keep Firebase Analytics from killing web startup
+- ci: quote pwsh run line breaking the ci.yml YAML parse
+- feat(example): unify bundle id to dev.fa1.app for a single App Store record
+- feat(cli): /provider runtime switching and OS secure key storage (/key)
+- fix(install): POSIX-clean install.sh and setup.sh for Ubuntu dash
+- docs: document app build/TestFlight workflows and secrets in AGENTS.md
+- ci: TestFlight submission for iOS and macOS (learn.ai pattern)
+- refactor(example): migrate example/flutter_example to flutter_app (fa package)
+
+## 0.1.45
+
+- feat(cli): fa update and fa uninstall quick commands
+- fix(ci): quote pwsh run line — leading & parsed as a YAML anchor, breaking the whole workflow
+- fix(windows): fa crash after TUI exit + installer mojibake
+- ci: installer-smoke job runs the one-line installers on every tag
+
+## 0.1.44
+
+- ci: fix Windows binary build + installer mojibake
+
+## 0.1.43
+
+- feat: agent skills + project context files (all platforms)
+- feat(cli): background subagents via the task tool
+- fix(cli): keep cursor pinned to input while the spinner ticks
+- ci: create GitHub Release before binary upload + embed version
+
+## 0.1.42
+
+- feat(cli): dart_tui interactive TUI with markdown rendering
+- ci: add build-mobile.yml (APK/iOS) and build-macos.yml (DMG) workflows
+- feat: multi-session support — AgentSessionManager (core) + FlutterSessionManager (app)
+- fix(example): hide empty assistant bubbles in chat
+- feat(example): debug-log system prompt platform and WASM runtime setup
+- docs(example): drop stale no-WASM-on-iOS comments after static linking fix
+- fix(example): iOS gets the full WASM sandbox command set in the system prompt
+
+## 0.1.41
+
+- fix(site): quote install URLs for zsh glob safety; refine iOS wasm_run static-library flags
+- fix(cli): avoid double stdin subscription in TUI REPL
+- fix(example): use DynamicLibrary.process for iOS wasm_run static linking
+
+## 0.1.40
+
+- fix(vendor): force-load wasm_run static lib via podspec and refresh Podfile.lock
+- refactor(site): centralize installer banner/recipe in install-config.yaml and use DMTools-style Windows PATH
+- fix(vendor): apply iOS wasm_run_flutter static-library linker flags in Podfile
+- feat(cli): numbered line-mode slash menu and guard TUI to interactive TTYs
+- fix(vendor): iOS wasm_run_flutter static library fallback
+- fix(install): use github releases/latest/download direct URLs, avoid API rate limits
+- feat(ci): build native fa binaries for win/mac/linux and download them in installers
+- feat(ios): enable WASM shell via statically linked executable
+- fix(site): repair install dropdown visibility and bust cache; make CLI raw-mode fallback graceful
+- feat(cli): add named session management via --session and /session commands
+- feat(cli): raw-mode TUI with slash menu, model picker, and dynamic version
+- feat(site): add Windows cmd.exe installer wrapper (install.bat)
+
+## 0.1.39
+
+- feat(cli): Pi-style terminal banner, status bar, and /help filtering
+- fix(site,install): remove DMTools from install dropdown and reword PATH symlink comment
+- fix(install): make fa available immediately after install without shell reload
+- feat(site): add DMTools install options to site dropdown
+- fix(example): split SandboxPlatform.mobile into android/ios and disable shell command ads on iOS
+- refactor(install): split installer into non-interactive install + interactive setup wizard
+- fix(cli,install): primary command is fa, auto-add pub-cache to PATH
+- fix(site): cache-bust web demo assets on every deploy
+- fix(example): render user messages through the harness loop
+- fix(site): mktemp compatibility on macOS
+
+## 0.1.38
+
+- feat(site): Windows PowerShell installer + generated menus from install-config.yaml
+- chore(macos): set bundle identifier to dev.fa1.macos and update copyright
+- fix(site): use correct GA4 measurement ID (G-0Z3SW38FYC) and Fa mobile app label
+- fix(ios): graceful WASM fallback — app starts without wasm shell on iOS
+- feat(prompt-tools): slim on-device system prompt — compact schemas + fewer tools
+- feat(cli): modern TUI pack — ! shell commands, /models filter, status line
+- chore(site): switch GA measurement ID to Firebase web stream
+- feat(cli): interactive installer with progress bar, provider/model picker, and config setup
+- fix(example): readable ONNX/WebGPU crash messages + verified engine recovery
+
+## 0.1.37
+
+- fix(example): halve ONNX Gemma context window to 2048 (WebGPU OOM mitigation)
+- feat: optional API token for custom providers (local servers need no key)
+- feat(cli): banner shows baseUrl+key status, connection-refused hint, version in --help
+- chore(example): ignore Firebase config files with real API keys
+- fix(site): full-width header background and Fa branding
+- feat(example): release prep — Fa branding, icons, bundle IDs, Firebase Analytics
+- feat(cli): prompt overrides (config prompts: + --system-prompt[-file]) and full --help reference
+
+## 0.1.36
+
+- fix(example): WebLLM context windows sized for the Fa system prompt + compaction scales with model window
+- feat(cli): headless mode — fa "prompt", -p alias, file-as-prompt (md/txt content, binary path ref)
+
+## 0.1.35
+
+- feat(example): persist last connection + downloaded-models quick start on setup screen
+- feat(tools): lsp tool backed by the Dart analysis server (diagnostics/definition/references/rename)
+
+## 0.1.34
+
+- feat(tools): task tool — parallel subagents with schema-validated results (omp port)
+- feat(agent): TTSR stream rules — abort, inject, retry mid-generation (omp port)
+- feat(providers): model roles (default/smol/slow/plan) with fallback chains, key rotation, path overrides
+
+## 0.1.33
+
+- feat(tools): read selector grammar (:A-B, :A+C, multi-range, :raw) + zip inner paths + SQLite reads
+- feat(tools): image read parity with pi (byte cap, pass-through, EXIF, placeholders) + transcribe_audio tool
+- feat(site): set GA4 measurement ID
+
+## 0.1.32
+
+- feat(tools): web_search with provider chain (DDG keyless first, Brave/Tavily behind secrets) + web_fetch markdown extraction with a pub.dev site handler
+
+## 0.1.31
+
+- feat(tools): hashline edit format with content-hash anchors (omp port)
+- feat(core): approval tiers with per-tool policy, bash interceptor, CLI/app prompt UIs
+- feat(example): model lineup — drop <1.5GB presets, add Gemma 4 E4B ONNX (~5.2GB)
+
+## 0.1.30
+
+- feat(example): WebLLM presets refresh — Qwen3.5 + Qwen2.5-Coder (web-llm 0.2.84)
+- feat(example): visible app name is Fa (assistant label, AppBar, transcript, system prompt)
+
+## 0.1.29
+
+- fix(example): transformers.js download filter+progress, SVG/upload/attach UX, provider-error robustness
+
+## 0.1.28
+
+- feat(example): central sandbox command registry drives the Fa system prompt
+- fix(example): web upload fix + chat uploads→uploads/ + light HTML preview + session delete
+
+## 0.1.27
+
+- feat(example): transformers.js Gemma provider on web (ONNX q4f16, tools via prompt wrapper)
+- feat(brand): rename visible brand to Fa + app favicon matches the site
+
+## 0.1.26
+
+- fix(example): Gemma web uses -web.litertlm builds + Gemma cache management in settings
+
+## 0.1.25
+
+- ci: coalesce auto-releases to <=1 per 2h + scheduled catch-up
+
+## 0.1.24
+
+- feat(example): brand app icon for all platforms (gradient >_ mark)
+
+## 0.1.23
+
+- feat(example): markdown/HTML file previews + auto-refresh on agent file mutations
+
+## 0.1.22
+
+- refactor(example): WebLLM goes chat-only + universal prompt-tools wrapper
+
+## 0.1.21
+
+- feat(example): Gemma provider on web via flutter_gemma litert-lm web (Gemma 4 tools in-browser)
+
+## 0.1.20
+
+- feat(core): prompt-based tool-calling wrapper (universal chat-model tools)
+
+## 0.1.19
+
+- fix(example): settings dialogs adapt to narrow phone screens
+
+## 0.1.18
+
+- feat(example): Gemma 4 on-device provider via flutter_gemma (iOS/Android)
+
+## 0.1.17
+
+- feat(example): custom provider management + WebLLM model cache management in settings
+
+## 0.1.16
+
+- feat(example): left sidebar (model picker + sessions), files move right
+
+## 0.1.15
+
+- feat(example): WebLLM function calling (tools for Hermes-3 FC preset)
+
+## 0.1.14
+
+- feat(example): branded web loading splash (first-frame fade)
+
+## 0.1.13
+
+- feat(example): dark theme matching the landing (terminal aesthetic)
+
+## 0.1.12
+
+- feat(example): full WebLLM preset list matching flutter_agent_memory (22 models)
+
+## 0.1.11
+
+- feat(example): WebLLM on-device provider for the web demo (no API key needed)
+
+## 0.1.10
+
+- feat(site): capability comparison table (Browser/macOS/iOS/Android/Windows)
+
+## 0.1.9
+
+- feat(example): web file upload + IndexedDB-persisted sandbox FS
+
+## 0.1.8
+
+- feat(site): SEO/GEO pack + OG share image
+
+## 0.1.7
+
+- fix(example): sharpen Ollama Cloud CORS guidance in BYOK notes
+
+## 0.1.6
+
+- feat(site): GitHub Pages landing + live web demo with BYOK
+- feat(example): BYOK connection settings with provider presets
+
+## 0.1.5
+
+- refactor(prompts): extract LLM prompts to prompts/*.md + codegen (AGENTS.md convention)
+
+## 0.1.4
+
+- chore: mark fake PEM stubs as false_secrets for pub validation
+
+## 0.1.3
+
+- ci: fix auto-release tag push — annotated tag + --atomic (lightweight tags are not sent by --follow-tags)
+- test(providers): Ollama Cloud live integration tests (gpt-oss:20b default, OLLAMA_MODEL override)
+- ci: create placeholder .env for the example app (asset_does_not_exist)
+- fix(example): mobile sessions no longer land in a doubled host path
+- ci: fix quality gate — install Flutter SDK + example pub get for repo-wide analyze
+- ci: auto-release on push to main (patch bump + tag, OIDC publish) + OLLAMA_API_KEY in integration env
+- feat(example): file browser panel (tree + preview, collapsible on wide screens)
+- test(providers): live integration tests (OpenRouter live, Anthropic/Google key-gated)
+- feat(sandbox): pip-lite for sandbox python (pure-python wheels)
+- feat(sandbox): lua interpreter (WASI) in the mobile shell
+- feat(sandbox): small utils batch (tree, file, xz/bzip2 -d, base64+hashes on web)
+- feat(sandbox): ssh/scp/sftp exec builtins via dartssh2
+- feat(sandbox): nslookup/dig + whois network diag builtins
+- feat(sandbox): diff/patch builtins (Dart, iOS+web)
+- feat(secrets): env injection + redaction (SecretsStore)
+- feat(sandbox): web command parity with iOS shell
+- feat(example): python3/qjs on web via CDN interpreters + copy-session button
+- chore: remove ssh debug script
+- feat(sandbox): sqlite3 CLI (WASI build from official amalgamation)
+- style: curly braces in web_git remote add (lint info)
+- feat(web): local git in the browser sandbox (MemoryShell)
+- feat(sandbox): QuickJS JavaScript engine (qjs/js) + web parity checks
+- feat(sandbox): python3 (CPython 3.14 WASI) in the mobile shell
+- feat(tools): edit (str_replace) tool + sandbox path mapping + coding system prompt
+- feat(git): push over smart HTTP (receive-pack) + SSH transport (dartssh2)
+- feat(git): remote/fetch subcommands, checkout -b, branch -r, clone fixes
+- fix(mobile shell): curl/wget --version, --help, and no-URL error message
+- feat(git): smart HTTP git-upload-pack clone for any public remote
+- feat(web): pure-Dart MemoryShell for the browser + flutter build web fixed
+- feat(mobile shell): cd/export/unset, $VAR expansion, grep/wget, du/stat/tac/expr/id/relpath builtins
+- feat(mobile shell): add git support via dart-git + GitHub archive clone
+- feat(mobile shell): add dart-native curl/jq/yq builtins
+- feat(mobile shell): add WASM sed/awk/tar/gzip/zip+unzip, env builtin, redirect capture fix, POSIX double-quote escapes
+- feat(mobile shell): add shell builtins (test, which, whoami, xargs, command -v)
+- chore: remove stray temp files accidentally committed
+- test: add shell command integration tests (host + WASM sandbox catalog)
+- fix(ls tool): return basename when path points to a file
+- fix(ios): get WASM shell working on iOS simulator
+- feat(example): replace busybox with permissive uutils/ripgrep WASM sandbox
+- feat(example): sandboxed WASM bash shell for mobile/web via busybox+wasm_run
+- fix(example): cache streaming/error state in ChatScreen for immediate UI updates and add multi-turn test
+- fix(example): notify UI before persisting so streaming indicator hides immediately
+- fix(example): throttle and incrementally sync messages to avoid SliverAnimatedList crash
+- fix(example): move input bar outside Chat widget to fix layout and semantics
+- fix(example): replace package Composer with custom input bar to fix ParentDataWidget crash
+- feat(flutter_example): integrate flutter_chat_ui with markdown and tool cards
+- feat(flutter_example): load API key from .env for simulator runs
+- fix(flutter): typing indicator, error banner, 90s timeout; feat(cli): persist last model/provider/mode in ~/.fah/config.yaml
+- Add Flutter mobile example with path_provider + LocalExecutionEnv
+- Add pi-style agent modes and prompt templates to CLI
+- Clean lint info in plugin tests
+- Update GOAL.md with plugin/package extension API
+- Add plugin/package extension system with built-in inspect_image plugin
+- Add inspect_image tool: dedicated vision model analysis like pi-inspect-image
+- Add fah/fa executables, rebrand system prompt, image support in read tool
+- Add CLI harness: bin/fah REPL with builtin tools, sessions, compaction
+- Format codebase, fix lint info, shorten pubspec description (pana 160/160); add format gate to pre-commit
+- CI: GitHub Actions quality gates + OIDC pub.dev publish on version tags
+- Phase 3: token estimation and LLM compaction pipeline
+- Phase 3: ExecutionEnv abstraction and append-only JSONL session tree
+- Phase 2: AgentTool registry with JSON-schema param validation
+- Phase 2: stateful Agent with steering/follow-up queues and hooks
+- GOAL.md: TDD for new code, coverage target >90%, push after every card
+- Phase 2: port low-level agent loop with AgentEvent stream and CancelToken abort
+- Phase 1: context-overflow detection, Retry-After parsing, sealed exception hierarchy
+- Phase 1: port Google provider adapter with native functionCalling streaming
+- Phase 1: port Anthropic provider adapter with native tool_use/thinking streaming
+- Phase 0: port openai-completions provider adapter (OpenRouter-ready) with errors-as-events and CancelToken abort
+- Phase 0: port AssistantMessageEventStream contract and SSE line decoder from pi-mono
+- GOAL.md: allow agent publishing on explicit user instruction; OIDC for tagged releases
+
+## 0.1.2
+
+- test(providers): Ollama Cloud live integration tests (gpt-oss:20b default, OLLAMA_MODEL override)
+- ci: create placeholder .env for the example app (asset_does_not_exist)
+- fix(example): mobile sessions no longer land in a doubled host path
+- ci: fix quality gate — install Flutter SDK + example pub get for repo-wide analyze
+- ci: auto-release on push to main (patch bump + tag, OIDC publish) + OLLAMA_API_KEY in integration env
+- feat(example): file browser panel (tree + preview, collapsible on wide screens)
+- test(providers): live integration tests (OpenRouter live, Anthropic/Google key-gated)
+- feat(sandbox): pip-lite for sandbox python (pure-python wheels)
+- feat(sandbox): lua interpreter (WASI) in the mobile shell
+- feat(sandbox): small utils batch (tree, file, xz/bzip2 -d, base64+hashes on web)
+- feat(sandbox): ssh/scp/sftp exec builtins via dartssh2
+- feat(sandbox): nslookup/dig + whois network diag builtins
+- feat(sandbox): diff/patch builtins (Dart, iOS+web)
+- feat(secrets): env injection + redaction (SecretsStore)
+- feat(sandbox): web command parity with iOS shell
+- feat(example): python3/qjs on web via CDN interpreters + copy-session button
+- chore: remove ssh debug script
+- feat(sandbox): sqlite3 CLI (WASI build from official amalgamation)
+- style: curly braces in web_git remote add (lint info)
+- feat(web): local git in the browser sandbox (MemoryShell)
+- feat(sandbox): QuickJS JavaScript engine (qjs/js) + web parity checks
+- feat(sandbox): python3 (CPython 3.14 WASI) in the mobile shell
+- feat(tools): edit (str_replace) tool + sandbox path mapping + coding system prompt
+- feat(git): push over smart HTTP (receive-pack) + SSH transport (dartssh2)
+- feat(git): remote/fetch subcommands, checkout -b, branch -r, clone fixes
+- fix(mobile shell): curl/wget --version, --help, and no-URL error message
+- feat(git): smart HTTP git-upload-pack clone for any public remote
+- feat(web): pure-Dart MemoryShell for the browser + flutter build web fixed
+- feat(mobile shell): cd/export/unset, $VAR expansion, grep/wget, du/stat/tac/expr/id/relpath builtins
+- feat(mobile shell): add git support via dart-git + GitHub archive clone
+- feat(mobile shell): add dart-native curl/jq/yq builtins
+- feat(mobile shell): add WASM sed/awk/tar/gzip/zip+unzip, env builtin, redirect capture fix, POSIX double-quote escapes
+- feat(mobile shell): add shell builtins (test, which, whoami, xargs, command -v)
+- chore: remove stray temp files accidentally committed
+- test: add shell command integration tests (host + WASM sandbox catalog)
+- fix(ls tool): return basename when path points to a file
+- fix(ios): get WASM shell working on iOS simulator
+- feat(example): replace busybox with permissive uutils/ripgrep WASM sandbox
+- feat(example): sandboxed WASM bash shell for mobile/web via busybox+wasm_run
+- fix(example): cache streaming/error state in ChatScreen for immediate UI updates and add multi-turn test
+- fix(example): notify UI before persisting so streaming indicator hides immediately
+- fix(example): throttle and incrementally sync messages to avoid SliverAnimatedList crash
+- fix(example): move input bar outside Chat widget to fix layout and semantics
+- fix(example): replace package Composer with custom input bar to fix ParentDataWidget crash
+- feat(flutter_example): integrate flutter_chat_ui with markdown and tool cards
+- feat(flutter_example): load API key from .env for simulator runs
+- fix(flutter): typing indicator, error banner, 90s timeout; feat(cli): persist last model/provider/mode in ~/.fah/config.yaml
+- Add Flutter mobile example with path_provider + LocalExecutionEnv
+- Add pi-style agent modes and prompt templates to CLI
+- Clean lint info in plugin tests
+- Update GOAL.md with plugin/package extension API
+- Add plugin/package extension system with built-in inspect_image plugin
+- Add inspect_image tool: dedicated vision model analysis like pi-inspect-image
+- Add fah/fa executables, rebrand system prompt, image support in read tool
+- Add CLI harness: bin/fah REPL with builtin tools, sessions, compaction
+- Format codebase, fix lint info, shorten pubspec description (pana 160/160); add format gate to pre-commit
+- CI: GitHub Actions quality gates + OIDC pub.dev publish on version tags
+- Phase 3: token estimation and LLM compaction pipeline
+- Phase 3: ExecutionEnv abstraction and append-only JSONL session tree
+- Phase 2: AgentTool registry with JSON-schema param validation
+- Phase 2: stateful Agent with steering/follow-up queues and hooks
+- GOAL.md: TDD for new code, coverage target >90%, push after every card
+- Phase 2: port low-level agent loop with AgentEvent stream and CancelToken abort
+- Phase 1: context-overflow detection, Retry-After parsing, sealed exception hierarchy
+- Phase 1: port Google provider adapter with native functionCalling streaming
+- Phase 1: port Anthropic provider adapter with native tool_use/thinking streaming
+- Phase 0: port openai-completions provider adapter (OpenRouter-ready) with errors-as-events and CancelToken abort
+- Phase 0: port AssistantMessageEventStream contract and SSE line decoder from pi-mono
+- GOAL.md: allow agent publishing on explicit user instruction; OIDC for tagged releases
+
+## 0.1.1
+
+- Ported pi-mono `packages/ai`: EventStream contract (partial-first deltas,
+  errors-as-events), SSE line decoder, openai-completions (OpenRouter-ready),
+  Anthropic and Google provider adapters, usage/cost accounting,
+  context-overflow detection, `Retry-After` parsing.
+- Ported pi-mono `packages/agent`: low-level agent loop, stateful `Agent`
+  with steering/follow-up queues and hooks, `AgentTool` registry with
+  JSON-schema param validation.
+- Sessions and context management: `ExecutionEnv` abstraction (pure-Dart
+  memory impl + `dart:io` impl in `lib/io.dart`), append-only JSONL session
+  tree with branching/labels, token estimation and LLM compaction pipeline.
+- CLI harness (`bin/fah.dart`): a pi-like terminal agent with built-in
+  `read`/`write`/`ls`/`bash` tools on the `ExecutionEnv` abstraction
+  (`lib/src/tools/builtin_tools.dart`), a pure-Dart REPL core with injectable
+  IO (`lib/src/cli/agent_cli.dart`) — live streaming output, slash commands
+  (`/exit`, `/reset`, `/compact`, `/stats`, `/model`, `/help`), steering,
+  Ctrl-C abort, JSONL session persistence, and auto-compaction.
+
+## 0.1.0
+
+- Initial project setup: package skeleton, quality gates (analyze, tests,
+  coverage ≥ 80%, duplication < 1%), GOAL.md with the pi-mono port roadmap.
+- Seeded `CancelToken` / `CancelTokenSource` / `CancelledException` — the
+  universal cancellation primitive (Dart counterpart of web `AbortSignal`).
+
+## 0.1.268
+
+- memory: flutter_agent_memory roadmap hints (LLM role, graph screen, multi-root)
+- feat(memory): flutter_agent_memory 0.2.0 — merge-friendly ids, git support, policy-driven memory_add (0.1.267)
+
+## 0.1.269
+
+- memory: maintain() leveling pass (level: 2 on 13 notes)
+- fix(tui): immortal Working… spinner wedge — 100% CPU for 8h after run end (0.1.268)
+
+## 0.1.275
+
+- fix(compaction): bounded compactor budgets + attempt progress; loop over-window guard (0.1.274)
+- feat(app): copilot connect picks the model explicitly; restart hydrates the entry-scoped key
+- fix(agent): run watchdog disarms on abort; AgentService.dispose aborts in-flight runs (0.1.273)
+- fix(providers): explicit model picks everywhere — no default models, copilot picker filter (0.1.272)
+
+## 0.1.279
+
+- fix(providers): reject Copilot fine-grained PATs at connect time (0.1.278)
+- refactor(cli): split banner/key-status out of agent_cli.dart, untangle _runPrompt
+
+## 0.1.281
+
+- fix(providers): correct the Copilot token guidance — fine-grained PATs need the Copilot Requests permission (0.1.280)
+- memory: copilot fine-grained PAT 404 root cause + flutter_app flame_3d env breakage
+
+## 0.1.283
+
+- fix(app): shared DapHubSnapshot, probe dispose ordering, scope reverts (#15 review)
+- refactor(cli): one DapHubSnapshot type shared by CLI and app (#15 review)
+- fix(app): compile fixes after main merge — barrel import hides, l10n key for widgets catalog note
+- refactor(cli): extract packages.yaml loader into lib/ — keeps bin/ out of test coverage (CRAP gate)
+- fix(cli): make dap opt-out test teardown race-tolerant
+- fix(app): harden DAP hub page error paths and test determinism (#6)
+- feat(app): DAP/Hub settings section (#6)
+- fix(cli): review fixes for DAP/Hub /settings entry (#5)
+- feat(cli): DAP/Hub entry in /settings (#5)
+
+## 0.1.284
+
+- memory: session access-count sync from trajectory work
+- docs(trajectory): AGENTS.md sections for core, fa_ui widgets, CLI commands (#10)
+- test(trajectory): fa_ui golden baselines (57 PNGs) + real icon glyphs (#10 phase 11)
+- refactor(trajectory): CLI CRAP ratchet — split inspect renderer, cover tail/parse arms (#10)
+- fix(trajectory): mirrored live-tail rows keep real-record durations (#10)
+- feat(trajectory): Flutter host — service stream, feature flag, AppBar icon, panel (#10 phase 10)
+- feat(trajectory): CLI /trajectory family + headless fa trajectory + TUI fallback (#10 phase 9)
+- feat(trajectory): wire view, toolbar strings, barrel exports (#10 phases 6-8 integration)
+- feat(trajectory): TrajectoryDetails tabbed sheet (#10 phase 8)
+- feat(trajectory): TrajectoryTimeline painter + gestures (#10 phase 7)
+- feat(trajectory): TrajectoryTable, per-kind cells, virtualised ledger (#10 phase 6)
+- refactor(trajectory): split CRAP-heavy layout fold and timed timeline (#10)
+- feat(trajectory): fa_ui controller, view skeleton, toolbar, strings (#10 phase 5)
+- feat(trajectory): incremental full-text search index (#10 phase 4)
+- feat(trajectory): timeline projection — sequence/duration/time/actual modes (#10 phase 3)
+- feat(trajectory): event projection, request numbering, live tail, layout fold (#10 phase 2)
+- feat(trajectory): core record model, snapshot contract, JSONL walker (#10 phase 1)
+
+## 0.1.285
+
+- fix(trajectory): timeline lane labels inherit theme font
+- test(trajectory): real fonts in fa_ui goldens — Inter/JetBrainsMono + monospace alias
+
+## 0.1.286
+
+- fix(trajectory): thread ToolCall.parentCallId so subtool rows replay from sessions
+
+## 0.1.287
+
+
+- feat(tools): capability-gated tool availability (issue #19) — the pure
+  decision layer (`lib/src/tools/availability.dart`: `ToolsConfig` yaml/JSON
+  parsing with `mcp:<server>` flattening, `resolveToolAvailability` merging
+  the global < project < session < runtime scope stack over the host's hard
+  capability floor — absent tools can never be force-enabled, unknown ids
+  warn once) and the gate (`availability_gate.dart`: idempotent registry
+  hide/restore + prompt rebuild, executor tombstones for calls to disabled
+  tools, `noteHiddenNames` covering late MCP registrations).
+- feat(cli): the `/tools` family (bare list, `enable|disable <id>
+  [global|project|session]`, `reload`), a Tools entry in the `/settings`
+  hub, and the runtime scope: `--tools 'id=on|off,...'` with the `FA_TOOLS`
+  env twin (flag wins; a malformed spec is a hard startup error). Scopes
+  re-read and re-applied live — no restart; a broken scope file keeps the
+  last good one with a warning.
+- feat(dap): the `dap_*` tools register only when a hub is actually
+  configured (env > `hub:` section > `~/.dap/config.json` > default) — the
+  zero-config install hands the model no dead-end tools; `/dap <host>`
+  still connects on demand and the tools appear at the next launch.
+  `dap: false` in any `tools:` scope turns the family off.
+- feat(app): a Tools section in the app settings — one live switch per
+  known tool id (ids the app cannot wire render disabled with the
+  capability's reason), applied to the running agent without a restart and
+  persisted as `tools_availability.json` via the new `ToolsAvailabilityStore`
+  (the same `ToolsConfig` JSON envelope the CLI parses).
+- feat(read): the `read` tool follows the `sqlite` availability decision —
+  its description carries the SQLite section only while sqlite is enabled,
+  and the variant swap re-registers in place (shared snapshot store, so
+  hashline anchors recorded by either variant validate for `edit`).
+
+## 0.1.290
+
+- release: 0.1.289
+- release: 0.1.282
+- memory: supersede stale CPU-storm notes, record hub-test flakiness
+- feat(roles): retry transient transport failures instead of killing the turn
+- fix(app): onboarding dark theme — themed provider cards, dots, badges
+- deps: switch to fa_hub_client 0.2.8 (hosted) — the published backoff fix
+- deps: fah_hub_client 0.2.8 from the IstiN fork — backoff overflow fix (CPU storm)
+- feat(cli): tell the agent about local ! commands via a steering notice
+- fix(cli): steer file-prefixed busy input; run/drop leftover steering loudly
+- fix(tools): media slots never inherit the main provider key; generate_image surfaces MiniMax base_resp errors
+- memory: CPU burn investigation notes
+- feat(cube): fa1.dev registry client, /cube templates + /cube install
+- feat(cli): cube sandbox settings picker lists the built-in security presets
+- feat(cube): resolver falls back to built-in security presets by id
+- feat(cube): built-in security-level presets (L1-L3 x core/full) with tests
+- fix(tui): shift+enter via legacy ESC CR wire (alt+enter); pin keyboard-protocol contract
+- fix(tui): kitty shift+enter newline; cap streamed tail line growth
+- memory: note that origin is a local file mirror (no GitHub remote)
+- fix(cli): approval note Ctrl+U; hoist per-keystroke regexes
+- test(cli): pin line-mode /exit-during-run interleaving
+- fix(providers): strip a leading UTF-8 BOM in the SSE decoder
+- chore(test): drop leftover PTY debug screenshots
+- memory: session notes from the tui/gateway/debugging fixes
+- feat(memory): hot-reload the memory config at runtime
+- fix(cli): folder paths stay messages; session switches re-apply folder model memory
+- fix(cli): slash and bang commands execute while a run streams
+- fix(tui): backspace erases typed note characters in the approval prompt
+- fix(tui): keep the history-cap trim fence-balanced
+- test(integration): PTY proof for the approval selector and git-prompt fail-fast
+- snapshot: local tree 2026-09-02, grafted onto upstream 30ac68b4 (repo line was rootless)
+
+## 0.1.291
+
+- ci(publish): honor publish_to: none instead of failing every tag
+
+## 0.1.292
+
+- feat(widgets): live state sync between board tile and fullscreen app + 1x1 icon tiles
+
+## 0.1.293
+
+- redact: stage 2 — agent hook wiring for the layered pipeline (issue #24)
+- feat(redact): layered redaction pipeline core (issue #24 stage 1)
+- feat(pub): publishable again — hosted dart_tui dep, vendor stays local
+- feat(app): Copilot provider entries re-auth via the device-code flow
+- fix(app): launcher tile labels no longer glued to the icon square
+- fix(app): onboarding page 3/4 mockups readable in dark mode + light goldens
+
+## 0.1.298
+
+- test(ollama): diagnose live forced-tool-call null args instead of a bare cast
+
+## 0.1.299
+
+
+- feat(browser): the browser extension (issue #23) — `browser_ext/` (Chrome
+  MV3) pairs a local fa with the browser over a loopback WebSocket bridge
+  (`fa serve --bridge [--port N] [--token T]`, `/browser connect|status`):
+  wire protocol v1 client (hello/welcome, 1s→30s reconnect backoff,
+  offline outbox, msgId dedupe, ping keepalive), one-time 32-byte pairing
+  tokens (`.fah/bridge/token`, mode 0600, rotated by every connect,
+  constant-time compare, non-`chrome-extension://` origins refused, AC15),
+  two-way mail relay over the file messaging fabric
+  (`browser-ext/<agentId>` mailboxes). Eleven `browser_*` tools over the
+  bridge (navigate/tabs/switch_tab/click/type/press_key/select/read_dom/
+  eval/screenshot/wait_for, exec tier, availability-gated under the
+  `browser` + `browser_eval` ids — hidden until an extension pairs,
+  docs/tool-availability.md). Two control planes: quiet content-script DOM
+  ops by default, per-call `trusted: true` chrome.debugger path (E23
+  denied when DevTools owns the tab, any-tab screenshots via
+  Page.captureScreenshot, AC16) with the debugging infobar as the honesty
+  signal; task tab groups (`fa — <task>`) close agent-opened tabs on
+  task_end or bridge disconnect (AC17). Self-contained mode: dart2js build
+  of `browser_ext/dart/` (`scripts/build_browser_ext.sh` → sw/agent.js +
+  build/fa-extension.zip) runs the agent core inside the service worker —
+  panel provider form (OpenAI-compatible endpoints; deterministic `fake:`
+  provider for tests), approval banner (30s timeout = deny), JSONL session
+  + compaction in chrome.storage, no shell (`shellUnavailable`), keys read
+  only inside the SW (AC8). The embedded agent joins the DAP hub with an
+  E2E-encrypted CLI-compatible identity (`faDapKey`): `dap_peers`/`dap_dm`
+  tools, one mail deduper across bridge + hub links (AC18). Headless CI:
+  `test/browser_ext/` (real Chrome via `--load-extension`,
+  `--headless=new`; integration-tagged) in `.github/workflows/
+  browser-ext.yml`; unit layers `dart test test/browser/`,
+  `browser_ext/dart` dart test, `node --test browser_ext/test/`. Docs:
+  docs/browser-extension.md.
+
+## 0.1.300
+
+- fix(aiin): open the web sign-in popup inside the tap gesture
+- fix(app): drop the duplicate aiin_connect_flow golden-guard exemption
+- fix(app): drop a duplicate golden-guard exemption key; memory: session notes
+- feat(aiin): one-click web sign-in — the OpenRouter-style popup flow
+- test(redact): pin the agent file-reading scenarios end to end
+- docs(AGENTS.md): name-based addressing in the messaging fabric bullet
+- fix(redact): entropy layer stops shredding paths, hashes and lockfile integrity
+- test(app): regenerate goldens after AIIN-hosted form changes
+
+## 0.1.301
+
+- feat(aiin): paste-key fallback — the service now blocks our redirects
+- memory: session notes
+- feat(skills): bundled create-goal skill — goal-writing discipline as /create-goal
+
+## 0.1.302
+
+- feat(aiin): official aiin.by mark, identity-provider picker, model search
+- test(redact): integration e2e for issue #24 AC5-AC8
+- fix(aiin): Safari popup — no awaits before window.open, paint the popup
+- test(redact): integration e2e for issue #24 AC5-AC8
+
+## 0.1.304
+
+- fix(publish): assemble the redaction e2e PEM fixture at runtime — pub.dev's
+  key-leak validator rejected the 0.1.303 upload because the archive carried
+  a literal (fake) private-key block in `test/integration/redaction_e2e_test.dart`;
+  the file now builds the same byte-identical string from chunks.
+- fix(roles): 500-class gateway errors ("Internal network failure, please try
+  again later") now classify as transient transport failures and retry in
+  place with backoff before failing over (previously only 502/503/504 did).
+- feat(messaging): agent_directory rows show an 8-char short id, session
+  names, last-activity ("active 2m ago" vs "asleep") and home-shortened cwd;
+  `agent_message` to an asleep target launches a detached headless run of
+  that session so pending mail is processed immediately (wake: false opts
+  out).
+- test(cli): pin session-start memory maintenance off in boot-race tests
+  (CI flake: consolidate() consumed the scripted turn before /exit).
+
+## 0.1.303
+
+- fix(roles): classify 5xx internal errors as transient transport failures
+- feat(messaging): readable agent_directory + auto-wake for asleep mailboxes
+
+## 0.1.305
+
+- feat(aiin): use the hosted AIIN sign-in page as the connect entry
+
+## 0.1.306
+
+- ci: workflow_dispatch for ci.yml — manual gates when pull_request can't fire
+
+## 0.1.309
+
+- fix(cli): skill autocomplete for partial skill names — typing /goal or
+  /skill:goal in the TUI composer now offers /create-goal (the raw-prefix
+  match broke on the embedded slash), the accepted item still inserts the
+  canonical `/skill:<name> ` form.
+
+## 0.1.308
+
+- fix(roles): provider watchdog timeouts ("TimeoutException after 0:03:00:
+  Future not completed", "request timed out") classify as transient
+  transport failures — retried in place with backoff, then failover to the
+  next chain entry, instead of killing the turn (YoClip agent report).
+
+## 0.1.307
+
+- fix(widgets): unique router instanceId per engine — frozen tiles and dead buttons
+
+## 0.1.312
+
+- fix(compaction): the summarizer-down local-trim valve no longer wedges the
+  session — a token-boundary cut could land between an assistant tool call
+  and its result, leaving an orphaned ToolResultMessage that made strict
+  providers reject every following request ("400: tool_call_id is not
+  found", Kimi). The trim now advances past leading tool results.
+
+## 0.1.311
+
+- fix(messaging): scheduled self-reminders actually arrive — 'self' was never
+  resolved to the agent's mailbox, so schedule_message fired on time and then
+  the mail vanished into a phantom `<root>/self` inbox; start() now migrates
+  the stranded legacy mail into the real mailbox. Cross-mailbox `from`
+  attribution fixed; parseDelay `ms`/fractional units fixed ('90ms' was 90 s).
+- feat(cli): terminal visibility for scheduled messages — dim '[sched] in
+  25m: <text>' when the agent schedules one and '[sched] fired: <text>' when
+  it fires.
+
+## 0.1.310
+
+- refactor(cli): move trajectory view additions out of agent_cli (file size guard)
+- fix(windows): restore generated plugin files stripped in #31 (review)
+- fix(trajectory): close audit findings — focus consumption, keyboard copy, a11y, safe-area, CRAP (#25)
+- test(trajectory): regenerate toolbar+layout goldens, refresh AGENTS.md (#25)
+- feat(trajectory): integration — export menu, request persistence, guard closed (#25)
+- feat(trajectory): real-content feed rows, guaranteed details, Gantt timeline (#25 L3-L6)
+- feat(trajectory): full-screen adaptive shell + header (#25 L1-L2)
+- feat(trajectory): data completeness for the ledger view (#25 L7)
+
+## 0.1.314
+
+- fix(app): visible section hint on dark theme + device-flow connect by default (#35)
+- fix(browser_ext): mirror canvaskit into <engineRevision>/chromium/
+- fix(browser_ext): externalize inline web scripts; local canvaskit
+- fix(browser_ext): CSP + local canvaskit let the embedded fa app load
+- fix(browser_ext): bundle the fa web app where the panel probes it
+
+## 0.1.315
+
+- fix(browser_ext): panel boots clean — verified by a headless CDP check
+- feat(aiin): re-authenticate an existing AIIN entry from the editor
+- fix(app): actionable hint when the GitHub token cannot create repos (#35)
+- fix(redact): a bare .env filename is no longer masked as a credential
+
+## 0.1.316
+
+- fix(app): reject repo-rightless GitHub tokens at connect time (#35)
+
+## 0.1.317
+
+- feat(browser_ext): tools_state/tools_put wire the panel Tools section; seed models from the SW snapshot (#34 phase 2)
+- revert(app): restore main.dart and build_browser_ext.sh pre-48f757ba
+- revert(app): un-publish support agent's staged WIP accidentally included in 48f757ba
+- feat(app): runtime-configurable device-flow OAuth app + fallback warning (#35)
+- fix(browser_ext): extension panel boots the relay before any local path (#34 item 1)
+- feat(browser_ext): the panel agent moves onto the worker relay (#34 item 1)
+
+## 0.1.318
+
+- fix(scripts): dart fix e2e_extension_agent — unblock the repo analyze gate
+- fix(app): bootstrap empty widget repos via the Contents API (#35)
+- fix(browser_ext): issue #41 — unbreak DAP dm replies under tab-context decoration
+- fix(app): publish into a freshly created (empty) GitHub repo (#35)
+- feat(app): Browser connect tab — GitHub OAuth web flow via fa1.dev (#35)
+- fix(app): the relay IS the FaChatConnection the models screens render (#34)
+- feat(browser_ext): real-wire e2e for the extension agent + provider merge semantics (#34)
+
+## 0.1.319
+
+- fix(app): publish widget sources at the repo root, full-snapshot tree (#35)
+
+## 0.1.320
+
+- feat(js-ext): JavaScript extension system — QuickJS engines, jsr.ext.* bridges, install/trust, fa ext CLI, crap-guard (issue #32) (#37)
+- chore: dart fix drift + ignore local worktree/panel build dirs; memory: session notes
+- fix(extension): live e2e with a real provider — approvals, user bubbles, yolo mode
+- fix(browser_ext): status snapshots must not flip the transport to streaming
+- fix(browser_ext): the panel relay never connected — port name + envelope mismatch
+
+## 0.1.323
+
+
+- fix(browser_ext): page/app screenshots reach the model as vision image
+  blocks — `page_screenshot`/`app_screenshot` and the v1 `screenshot` op
+  return `ImageContent` plus compact metadata text; the base64 blob no
+  longer floods the context as invisible text (provider adapters already
+  serialize tool-result images for openai-completions/anthropic/google).
+- fix(browser_ext): thinking deltas stream to the panel as
+  `thinking_delta` UI events (they were dropped at the host) — the relay
+  chat renders reasoning as its own collapsible bubble; pure event→UI
+  mappings extracted to `host_event_map.dart` (VM-testable, agent_host
+  stays web-only).
+- fix(app): a relay client without a mounted approval handler stays
+  silent instead of instantly denying — a bystander surface raced ahead
+  of the real UI and recorded denials the user never chose; the SW's
+  120s timeout remains the backstop, and a throwing handler still denies.
+- test(browser_ext): live e2e grows read_dom (reads example.com's real
+  heading), screenshot (vision block through the loop) and thinking
+  count legs; robust multi-approval auto-allow; scripted fake provider
+  gained `think`/`screenshot` directives and an image-seen reply.
+- ci: the Chrome extension builds in the release pipeline and ships as a
+  release asset (fa-extension.zip) and on fa1.dev (/extension/), landing
+  page gains the download + load-unpacked card.
+
+## 0.1.325
+
+- feat(browser_ext): session history in the extension panel — list + open SW archives (#64)
+- fix(ci): binary smoke SIGPIPE + smoke gate passes skipped matrix on push/schedule (#63)
+
+## 0.1.326
+
+- fix(59): schedule_message records survive host reconfigures and always surface (#65)
+- fix(browser_ext): explicit boots win over the auto-boot storage snapshot
+- feat(27): hub-first agent messaging fabric with file fallback (phase 1) (#58)
+- build(browser_ext): strip on-device CDN loaders from the panel bundle
+- fix(browser_ext): explicit boot keys persist — auto-boot no longer reverts them
+- fix(ui): sharp chevron tip in the web splash and favicon
+- feat(browser_ext): durable transcript replay — history survives SW restarts and session_open
+
+## 0.1.327
+
+- feat(29): config service + fa config verbs + agent config tool (S3) (#70)
+- fix(flutter_app): drawer keeps archived sessions after a relay session_open (#72)
+- build(browser_ext): mark the on-device stub rejection handled (#69)
+- fix(flutter_app): render replay rows whose nested maps come from dartify (#71)
+
+## 0.1.328
+
+- feat(35): out-of-view status polling + real-GitHub E2E (E2E-1) and AC12 check (#75)
+- feat(27): discovery surface in agent_directory - presence, capabilities, name@machine (phase 2) (#68)
+- feat(35): timed status polling + offline hint in My publications (#67)
+- fix: relay turn-state indicator, yolo-everything, yolo checkbox in the approval dialog (#73)
+
+## 0.1.329
+
+
+- feat(27): hub-first agent messaging fabric with file fallback (phase 1) —
+  the CLI composes the DAP hub into the agent messaging fabric
+  (`FallbackMessagingRepository` over `lib/src/messaging/agent_fabric.dart`):
+  hub-resolvable targets (16-hex ids, unambiguous display names, `#channels`)
+  deliver over DAP/1, file inboxes stay the offline fallback with
+  forward-on-reconnect (flushed by the 2s inbox probe), inbound hub mail
+  merges into the main inbox drain only, deduped by id and
+  sender+time+body; recipient guards consult the hub roster so hub peers
+  are deliverable through `agent_message`. Docs: `docs/dap.md` §12.
+  Discovery/presence states (`busy`) and the A2A gateway remain for
+  phases 2-3.
+
+## 0.1.331
+
+- feat(83): sort session lists current-folder first, each group newest first (#84)
+
+## 0.1.332
+
+- feat(81): open user requests survive compaction summary-of-summary (#82)
+
+## 0.1.333
+
+- feat(dap): /dap start one-step bring-up, fa hub serve, DapHubService for web/extension (#90)
+
+## 0.1.334
+
+- feat(29): AC11/AC12 cross-surface config parity (+AC8/AC10 pins) (#92)
+- fix(59): stop cross-instance theft of scheduled self-reminders (#88)
+- fix(86): compaction — LLM finds asks itself (no hardcode) + tool-results assessment in checkpoint prompts (#87)
+
+## 0.1.335
+
+- test(35): make the AC12 E2E catalog-first (#96)
+- feat(91): add --log-file to tee the live session trace to a file (#95)
+
+## 0.1.336
+
+- fix(85): context pair-integrity — validate and repair tool pairing at the request boundary (#93)
+
+## 0.1.337
+
+- feat(101): add explicit --prompt-file <path> headless prompt flag (#103)
+- fix(97): TUI secret sheet — value-first focus, placeholder name, masked input, Enter explains itself (#98)
+- fix(99): clear macOS traffic lights on the trajectory screen (#100)
+
+## 0.1.338
+
+- build(deps): bump playwright (#106)
+- feat(89): Outlook Office Add-in host bridge (fa1.dev/outlook) (#94)
+
+## 0.1.339
+
+- feat(115): visualize pending scheduled follow-ups in the CLI TUI (#117)
+
+## 0.1.340
+
+- fix(107): un-red the tag pipeline — publish validation + LLM integration job (#108)
+
+## 0.1.341
+
+- feat(102): interactive dynamic messages - UI surface (tile, sheet, save-as-app) (#120)
+- fix(121): scope the pub.dev publish token to the publish step only (#123)
+- feat(113): fa1.dev reflects the Chrome extension, Outlook add-in, and full tool surface (#116)
+
+## 0.1.342
+
+- feat(125): bench.yml — run fa on terminal-bench on a GitHub runner (#126)
+- fix(109): clear stale TUI ask answers and keep the prompt frame inside the terminal width (#112)
+- chore(114): terminal-bench adapter and runner for fa (#119)
+
+## 0.1.343
+
+- fix(122): run dart pub publish --dry-run in PR quality gates (#128)
+- fix(118): strip Dart core exception prefixes from model-visible tool errors (#127)
+
+## 0.1.346
+
+- ci(browser-ext): placeholder .env for the dispatch-only panel-app build (#136)
+
+## 0.1.349
+
+- docs(143): KB for the Monarch VersionOverrides manifest fix (#156)
+- docs: backend agent mode research — fa behind product Go backends
+- fix(143): manifest VersionOverrides command surface for Monarch/new OWA (#151)
+- docs(144): real Outlook add-in installation guide (#149)
+
+## 0.1.352
+
+- docs(backend-mode): pin MVP shape with mermaid architecture
+- DAP slash-flow + CodeMie SSO expiry detection & auto re-auth (extension/app/CLI) (#145)
+
+## 0.1.353
+
+- ci(merge-trigger): prefer PAT_TOKEN so machine merges land as the owner (#164)
+- ci(159): skip mobile release cleanly when no binaries were built (#162)
+- docs(backend-mode): reconnect semantics — turns survive client disconnect
+- docs(backend-mode): memory mapping for backend mode
+- docs(backend-mode): memory mapping for backend mode
+
+## 0.1.354
+
+- docs(159): KB — clean no-op for content=none dispatch of build-mobile.yml (#165)
+
+## 0.1.355
+
+- docs(144): KB — real Outlook add-in installation guide (#154)
+- docs(168): KB — mobile trajectory view (parity desktop) (#180)
+- feat(166): apps grid custom cell spans (1×2, 2×1, 1×3, 3×1) (#176)
+- feat(168): mobile trajectory view — parity with desktop (#175)
+- docs(157): KB — DAP e2e family triage (two cases were #158 races) (#163)
+
+## 0.1.357
+
+- feat(135): windowed session loading for app chat (#139)
+- feat(155): backend agent mode — HEP v1 events output, --attach, SIGTERM graceful abort, image registry (#193)
+- feat(137): generic chrome.* bridge — browser_api / browser_api_catalog (#172)
+- feat(171): session image registry — [Image N] send-once request assembly (#190)
+- fix(184): host-portable flutter_app tests — quickjs skip guard + injected-ASR fix (#191)
+- ci(161): daily auto-publish — TestFlight + pub.dev + CLI + website + add-in, self-filing fix issues (#170)
+- fix(152): root-cause the browser-ext e2e dispatch flake class (#158)
+- ci(177): drop the 'Quality gates' alias — protection switched to 'Quality gate' (#192)
+
+## 0.1.361
+
+- feat(178): honor FA_LOG_FILE env var as the default for --log-file (#216)
+- fix(197): four minor windowing defects from the round-4 review (#211)
+- fix(196): HEP follow-up from #193 review (#210)
+- fix(195): images follow-up - stale citation renumbering guard + F3/F4/F5 + config tests (#205)
+
+## 0.1.363
+
+- chore(flutter): raise Flutter floor to 3.47 + js_widget_runtime ^0.4.121 (#230)
+- fix(apps): unmute JSR media widgets on iOS — audio session category drift (#227)
+- feat(apps): widget manifest i18n — additive nameI18n/descriptionI18n keys (#226)
+- fix(catalog): single-slash URL join for all release-asset fetches (#219)
+
+## 0.1.364
+
+- feat(198): tree-grouped session listings (core + CLI) (#220)
+- fix(ext): sessions survive reload/update/restart — issue #228 persistence vectors (#236)
+- fix(config): merge-before-write + atomic save for ~/.fah/config.yaml (#221) (#235)
+- fix(catalog): web installs widgets from CORS-friendly raw URLs (#231)
+- fix(ctx): footer meter, over-window guard and compaction share one request-size basis (#217)
+
+## 0.1.365
+
+- fix(142): unblock tb runs — LPT shards, doubled timeouts, buildable debian task images (#253)
+- fix(fa_ui): hide the "Load earlier" banner on empty sessions (#223) (#247)
+- test(233): triage + fix the 13+4 integration-failure clusters (#248)
+- feat(224): apps collapse toggle - Apps icon in the chat header actions (#245)
+- fix(215): split agent_service.dart and settings.dart under the 2800-line gate (#244)
+- fix(234): latch the web boot signal; e2e waits on it, not the transient splash class (#242)
+
+## 0.1.366
+
+- feat(200): session search field pinned atop the session lists (#246)
+- fix(238): close migration-ordering data-loss window, stop deleted-session resurrection (#240)
+- feat(199): session loading off the UI isolate - background parse, parallel listing, quick names, generation guards (#243)
+- feat(239): store automation — daily EXTERNAL TestFlight + manual release-appstore.yml (App Store review) (#252)
+- feat(147): Harbor adapter for fa + Terminal-Bench 4.0 run (self-hosted + Modal + Hub upload) (#254)
+- fix(app): web IndexedDB session persistence — per-record keys, migration, quota isolation (#237) (#249)
+
+## 0.1.368
+
+- feat(app): setting to disable chat image preview downscale (#207) (#267)
+- test: fix the flutter_app 3.47.4 macOS fallout that #248 did not cover — #233 (3 commits) (#251)
+- fix(147): emit fully-qualified task ids into the harbor matrix (#263)
+- fix(147): default CPU shards to Modal — the runner mac has no docker (#258)
+
+## 0.1.369
+
+- feat(app): pin-only widget publish PRs — retire per-widget submodules app-side (#232) (#268)
+- fix(147): CA roots in task images, honest summary verdicts, gpu-tagged job names (#272)
+- fix(147): CA roots in task images, honest summary verdicts, gpu-tagged job names (#272)
+- fix(app): device-code connect — no unconsented auto-open, transient poll retries, lifecycle-aware polling (#229) (#269)
+- feat(messaging): wall-clock catch-up for scheduled wake-ups (#259) (#265)
+- ci: shard fa_ui tests ×3 + cap the 220s virtualisation soak (#283) (#285)
+- ci(daily-publish): pin Flutter 3.47.x in the macOS/iOS legs — drop reliance on runner-local SDKs (#260, #261) (#281)
+- fix(cli): TUI scheduled countdown ticks on the minute boundary while idle (#213) (#264)
+
+## 0.1.393
+
+- refactor(481): [GATE] CRAP descent #5 - memory_shell per-utility modules (#494)
+- fix(470): Outlook embed DOA - SW fetch bridge, fs_store gate, dead-frame sender hygiene (#489)
+- fix(464): one typing indicator in docked/collapsed chat — single ownership per view mode (#474)
+
+## 0.1.394
+
+- refactor(480): CRAP descent #4 - sandbox_builtins parser/executor split with table tests (#495)
+- refactor(476): [GATE] CRAP descent #3 — codemie_sso_flow per-surface step extraction + pickers out of the service (#493)
+- fix(467): composer wraps long input, stays inside the screen budget, no artifact cells (#492)
+- refactor(475): CRAP descent #2 - wasm_shell cluster decomposed + covered, ratchet 870->702 (#491)
+
+## 0.1.395
+
+- refactor(482): decompose sandbox_ssh monoliths into parser/executor/lifecycle layers (#498)
+
+## 0.1.396
+
+- fix(516): mail routing resolves a live registration over a stale cross-root mailbox (#518)
+- feat(457): Dynamic Messages full-width layout, header actions redesign, scrollable canvas (#505)
+- refactor(486): [GATE] CRAP descent #10 - six service monitors (#504)
+- fix(sandbox): split sandbox_builtins.dart under the 2800-line gate via part files (#512)
+- feat(462): modernize sessions icon — A4b «Modern pair + dots» (#509)
+
+## 0.1.399
+
+- refactor(messaging): de-CRAP HubMessagingRepository._failWaiters under the 12 gate (#531)
+- Fixes #488: steering into a dead/wedged run - queued-steering count, child-registry rehydration, task_send cap (#535)
+- fix(520): main agent stays steerable while children work — waiting is idle, owner mail keeps user-kind, children on the waiting row (#536)
+- fix(519): TUI artifacts — paste-chip rows reserved in the input-zone math; fuzzy selected row keeps one base role (#532)
+- test(cli): deflake agent_hub_driver collapse-summary race (#533)
+
+## 0.1.401
+
+- fix(514): wedged run reads stalled everywhere - one classifier, banner with actions, /restart (#526)
+
+## 0.1.402
+
+- fix(539): stacked job boards never shift or lie - frozen frames, serialized persists, restart-lost REG (#540)
+- fix(506): boot-banner >_Fa mark - composed two-role label asserted and gallery regenerated (#528)
+- fix(510): one cursor rule — DECTCEM via View.cursor, phantom escapes out of picker frame content (#534)
+
+## 0.1.403
+
+- fix(544): boot pipeline created the platform env before binding + wasm runtime — TestFlight build 160 white screen (#545)
+- fix(541): structured-compaction judge SPOF - deterministic fallback + bounded judge input (#543)
+- fix(538): integration suite rot — TUI boot-output race, stale expectations, workflow redaction rot (#542)
+
+## 0.1.404
+
+- docs: point the integration-tag note at #551 (per-PR via MockLlmServer) (#552)
+- fix(478): shell-job registry boot reconcile + bounded log GC (#547)
+- test(538): de-flake the last two integration legs — /agents types waits for the full frame (raw stream carries cursor-jump splits), shift+enter wire matrix uses unique per-variant markers (stale viewport rows raced the row measurement) (#550)
+- ci(487): cross-module duplication gate at measured baseline (ratchet only-tighten) (#548)
+- chore: collapse duplicated 0.1.403/Unreleased CHANGELOG sections (raced bot auto-release with PR #546) (#549)
+
+## 0.1.406
+
+- test(557): dap menu leg waits for the PAINTED screen — pty_harness gains waitForScreen (raw echo races frame paint on loaded runners, the #550 flake family that reddened the v0.1.405 tag CI) (#557)
+- ci(554): tag-run publish must never skip silently — fa#456 transitive-skip fix + loud gate + pub.dev post-verify (#556)
+- fix(507): revive the model-picker visual tests (#529)
+
+## 0.1.407
+
+- refactor(564): dap_settings_page 10 methods 56→24 CRAP, split + covered (#576)
+- fix(555): provider-name prompts re-prompt on '?' instead of saving a config-bricking name (#572)
+- refactor(560): js_app_engine 5 beasts 240/156/72/72/72 -> <=24 (CRAP descent 3/4) (#574)
+- ci(554): publish from a staged package — sub-projects (flutter_app wasm toolchain, yoclip media, browser_ext, office_addin, vendor, packages) blew the pub.dev 100MB cap (v0.1.406: 100.4MB); staged copy is ~32MB with a loud 90MB guard (#571)
+
+## 0.1.409
+
+- refactor(566): settings/onboarding UI cluster — 9 methods 56→24 CRAP, split + covered (#581)
+- refactor(563): wasm_shell tail — 7 surviving methods 56/42/30 -> <=6 CRAP (#594)
+- fix(586): anchor the CodeMie re-auth flow on the root navigator (#593)
+- refactor(567): session services — 9 methods 52→≤24 CRAP (ladder #433) (#582)
+- fix(562): job-board Running count drains after inline-settled jobs (#573)
+- refactor(559): wasm_shell builtins CRAP 272->24 (descent 11, app ratchet 272->210) (#579)
+- fix(578): omit empty summary block from auto-compaction report (#580)
+
+## 0.1.410
+
+- fix(595): measure picker menu rows in visible cells, not SGR bytes (#601)
+- fix(605): degrade silently when systemd-inhibit is absent (containers) (#606)
+- refactor(568): sandbox tail II — 13 methods CRAP 56→≤24 (split + cover) (#583)
+- fix(599): bound job-card bodies - heredoc-aware one-line previews, 6-row cap, scroll-safe transcript (#604)
+- ci: route every auto-filed failure to ai-teammate (#602)
+- fix(514): emit informational notice on stalled run without queued messages (#598)
+- refactor(569): apps/widgets tail 12 methods 42->24 CRAP, split + covered (#588)
+
+## 0.1.411
+
+- fix(608): sync firebase_options template public API (optionsFor) with tracked file (#609)
+- refactor(570): services tail + boot CRAP 42->24 (ladder #433 closer, +45 tests) (#596)
+- ci(551): run integration tests per-PR via MockLlmServer; real-provider smoke tag-only (#553)
+- fix(584): publish stage resolves path deps — include vendor/xterm + fa_llm_mock, drop pubspec_overrides (#587)
+- refactor(561): UI+services singles 9 methods 56→24 CRAP (split + cover, ladder 4/4) (#589)
+
+## 0.1.413
+
+- fix(597): staged publish self-contained + PR-time staged dry-run + dead-tag fix (#600)
+- fix(611): poll pub.dev post-upload verify up to 11 min instead of failing at ~16s (#612)
+
+## 0.1.414
+
+- fix(613): staged publish tree analyzes clean (staging anchors + hosted dart_tui resolution + dry-run gate) (#617)
+- fix(466): nightly auto-issue leg repo-pinning + green-run sunset (#616)
+- feat(machine): dmtools-agents factory rollout — ai-teammate-author gated (#614)
+
+## 0.1.416
+
+- chore(factory): repin to dmtools-agents 4bbc817a (FA_VERSION=latest fix) (#626)
+- feat(media): add DialImageDialect and same-host key fallback for image generation (#629)
+- fix(cli): improve secret prompt layout, glass cropping, and waiting busy indicator (#627)
+- fix(cli): sanitize and clip multiline shell job commands in waiting rows and job board (#628)
+- fix(615): waiting row never clears after its job settles (#618)
+- feat(machine): assignment-driven trigger — assign to ai-teammate starts the loop (#625)
+
+## 0.1.417
+
+- chore: ignore machine-loop workspace artifacts (codegraph, dmtools logs) (#637)
+- fix(machine): wire the autocommit timer into all four runners (#634)
+- fix(machine): runner path overrides — factory-agents/ layout for fa (#631)
+
+## 0.1.418
+
+- --quiet (#641)
+- fix(633): Outlook add-in sends - bridge/hub relay chain + empty-model guard (#639)
+- fix(638): env-preconfig vision (input modalities end-to-end) + viewport-width command clipping (#642)
+- fix(632): confine cube bash - SBPL write/read rules, redirect-target checks, loud degradation (#636)
+- chore(factory): repin to c85468de — timer, excludes, flutter, 120-min timeout (#635)
+
+## 0.1.419
+
+- feat: resume-timing instrumentation — session-open phases logged (resume_timing lines) (#648)
+- fix(machine): dev runners carry targetRepository so the timer auto-save works (#644)
+
+## 0.1.420
+
+- fix(479): every rendered chrome region pays into the TUI viewport budget (#657)
+- chore: repin factory to job task-list markers + exclude fix (2eaa5e17b) (#651)
+- chore(factory): repin to timer-workingdir-fallback (#645)
+- fix(503): windowed resume keeps the tail anchored while paging to the compaction boundary — the loadOlder loop slid the leaf out of residency on the first chunk, the branch read empty, and every deep-boundary resume fell back to a full open (38s on a 1.4 GB live session); growOlderUntil suspends eviction for the walk (#654)
+- fix(640): lazy interpreter WASM loading + MemoryShell fallback — mobile cold boot no longer black-screens (#656)
+- fix(643): claim-free store copy (en+ru) + Play metadata compliance gate (#652)
+- gh-623 [BUG] After success authorization codemie auth request still presented in the session message (#646)
+- feat: resume-timing caller attribution — full opens log the calling frames (names who bypassed the windowed path) (#649)
+
+## 0.1.421
+
+- fix(machine): drop accidental factory-agents gitlink; ignore the runtime clone (#655)
+- fix(647): messaging delivery SLO <=2s — warm wake, universal yield, steering/Ctrl+S AC1-AC6 (#661)
+- perf(503): boundary walk reads single-pass blocks instead of capped chunks — readBefore's doubling window re-decoded its whole buffer per pass (a 396 MB tail-after-compaction walked 10.3s; the linear block walk does it in 3.0s, 3.4x, byte-identical branch semantics); readBlockBefore reads one strip per page with per-page doubling bounded at 64MB/4096 records (#660)
+- fix(653): stale auto-compacted marker on the busy row after the fold finishes (#658)
+
+## 0.1.422
+
+
+- feat(622): Android `mobile.*` automation ships as two release flavors —
+  `store` (applicationId `dev.fa1.app`, the Play pipeline) and `god`
+  (`dev.fa1.app.god`, sideload only, same release key) — with ONE CI
+  variable driving both the gradle flavor and the `FA_FLAVOR`
+  dart-define so the pair cannot drift. build-mobile.yml grows a
+  store|god APK matrix (both APKs attach to the GitHub release; the Play
+  AAB job is unchanged) plus a store-APK size-delta report against the
+  previous release artifact (UT-CI-1, +10% fail threshold) and a
+  disabled (`if: false`) emulator job pinning the shape for the six
+  channel ITs (IT-flavor-1, IT-floor-1, IT-observe-1, IT-gesture-1,
+  IT-shell-1, IT-consent-1). Tool tiers: store exposes
+  `mobile.launch`/`mobile.logs` (own-app deep links + launcher); god
+  adds `mobile.hierarchy`/`mobile.tap`/`mobile.swipe`/`mobile.text`/
+  `mobile.screenshot` (AccessibilityService + MediaProjection);
+  `mobile.shell` rides an opt-in Shizuku bridge and fails with the named
+  error `Shizuku not running` when absent. Everything is gated through
+  the issue #19 availability floor with the honest reason "requires the
+  god tier (sideload build) — get it at https://fa1.dev/android".
+  Binding threat model: consent screen before accessibility activation,
+  one-tap disable in Settings, redaction on extracted screen text,
+  exec-tier approval + critical patterns on mobile.shell, god never
+  ships to Play. Tier table, sideload + Shizuku steps, consent notes and
+  the manual E2E checklist: docs/android-automation.md.
+
+## 0.1.423
+
+- fix(release): AAB legs pin the store flavor (#665)
+- Nightly red 2/2: 35418633939 — crap4dart pin, cli-visual stable pair, hub_overlay settle (#663)
+- ci(nightly): fix four deterministic nightly-red failures (#662)
+
+## 0.1.424
+
+- chore(factory): repin to the job-marker gap fix (ed77b3c)
+- fix(cli): coalesce pre-run TUI output; exit hint keeps the session name (#503) (#672)
+- chore(factory): repin to node24 actions bump (1818fe62ea748455f8c4090d36239c8c98da76d5)
+- fix(release): annotated tag created with actions-bot identity — no more empty-ident exit 128 (run 35426119831) (#669)
+- chore(factory): declare input modalities [text,image] in fa runner configs
+
+## 0.1.425
+
+- gh-671 TUI Theme switcher (#674)
+- chore: untrack agent runtime input/outputs + gitignore
+- fix(agent): survive starved hidden ranges on the auto-compact continuation (#677)
+- ci: pin ubuntu-24.04 in the gate + repin factory (f23ef09)
+
+## 0.1.426
+
+- fix(cli): hermetic resolveEffectiveCliArgs env + skip missing browser-ext artifact (#681)
+
+## 0.1.427
+
+- fix(#687): stub issue input must accept empty (PR-anchored dispatches) (#697)
+- fix(#693): declare pr dispatch input; human-assigned issues are review-only (#696)
+- feat(#687): PR-owned lifecycle wiring (pin dmtools-agents#442) (#694)
+- fix(cube): gate web tool egress behind the cube network policy (#685)
+- feat(agent): automatic tool-result spilling with symmetric previews (#684)
+
+## 0.1.428
+
+- chore: repin factory 4b5b1be (silent-update-behind) (#707)
+- fix(#687): silent token via factory input + repin 1274089 (#703)
+- fix(cli): fit-preserving table column sizing (#686) (#688)
+- feat(#687): machine-author passthrough via vars.MACHINE_AUTHOR + repin ceddca5 (#699)
+- fix(#687): repin factory 40dd6f0 (dup-guard) + pr-aware stub run-name (#698)
+
+## 0.1.429
+
+- chore: repin factory 5519dc7 (deterministic merge state + version floor) (#714)
+- chore: repin factory a0feb83 (REST shapes + budget-free localActions) (#711)
+- chore: repin factory 3cae1d2 (REST mergeable_state + direct silent token) (#708)
+
+## 0.1.430
+
+- chore: repin factory 24082c9 (token-URL silent push) (#723)
+- chore: repin factory 05315d42640a15d04c65e67d686828ebb2b5b398 (target-repo silent update) (#722)
+- chore: repin factory 5e275aa (git-merge silent update) (#721)
+- chore: repin factory 19d60ef (update-branch PUT) (#717)
+- chore: repin factory f1073c5 (REST update-branch) (#716)
+- fix(sm): contents:write — update-branch pushes onto the head branch (#715)
+
+## 0.1.432
+
+- repin: factory a0e3a47 — machine-loop dead-end fixes (#458) (#725)
+
+## 0.1.433
+
+- ci: repin factory workflows to dmtools-agents@55b95fed — stale-verdict re-review (#731)
+- ci: repin factory workflows to dmtools-agents@364a303c — prStatus state-case fix (#730)
+- repin: factory 358eb3e — develop-done source fix (#459) (#728)
+
+## 0.1.434
+
+- ci: repin factory workflows to dmtools-agents@4ca4840 — threads-resolved re-review (#733)
+
+## 0.1.435
+
+- fix(702): CRAP descent #13 — auth/loader trio + band top (#724)
+- ci: repin factory to dmtools-agents@5098d93b — in-flight dedup fix + review timer removal (#739)
+- fix(706): /model picker — one ChatGPT identity, reachable list top (#712)
+- config(runners): dev/rework legs get a provider fallback queue; generic runner names (#737)
+
+## 0.1.436
+
+- fix(#701): cover the 0%-coverage CRAP trio (stat builtin, isFaCliInstalled, apps panel menu) (#720)
+- fix(#695): stream-json output for headless fa runs (--output-format stream-json / --mode json) (#719)
+- ci: repin factory to dmtools-agents@082311d — sm duplicate-dispatch fixes (#466) (#742)
+- fix(cube): rw mounts emit file-read* allow in SBPL — kernel reads under read-denied prefixes (#718)
+- ci: repin factory to dmtools-agents@759a811 — prMachineAuthor auto-leg gate (#465) (#741)
+
+## 0.1.437
+
+- fix(692): iOS sandbox fitness — visible errors, sandbox-aware prompt, viewport-aware widgets, bounded app-state (#704)
+- gh-740 [GOAL] Compaction failure must never brick a session — deterministic trim fallback, decorrelated role chain, trap circuit-breaker (M1 spec: 90s→300s ready) (#743)
+
+## 0.1.438
+
+- feat(691): App Store launch surface — links: config, fa1.dev block + goldens page, Get banners, referral analytics (#700)
+- ci: repin factory to f03fbdf — label-echo dedup (no duplicate legs) (#749)
+- ci: repin factory to 78345a9 — rework policy + auto-approve external + guard AGENT_HANDLE (#748)
+- config(machine): machine author is ai-teammate (the App), not the SOURCE-token login (#747)
+
+## 0.1.439
+
+- ci: repin factory to 0c9abdb — review derive + backfill fixes (#751)
+- feat(cli): omp load-modes + settings switch (#690)
+- fix(732): pin SBPL last-match-wins ordering — nested rw mounts survive broader later ro denies (#745)
+- feat(734): optional thinkingLevel in FA_PROVIDER_CONFIG + roles chain entries (#744)
+
+## 0.1.440
+
+- feat(cli): pi mode — pi's exact benchmark config (4 tools, bare prompt, token parity) (#689)
+
+## 0.1.441
+
+- fix(735): TermiosGuard — re-assert raw-mode tty flags after tool phases so Ctrl+S steering survives IXON re-enable (#738)
+
+## 0.1.443
+
+- chore: repin factory to bd763b3 (#474) (#754)
+- chore(coverage): CLI terminal-test baseline 8.0 -> 12.17 (ratchet up)
+
+## 0.1.444
+
+- chore: repin factory to 554cfb0 (#476) (#757)
+- chore: repin factory to 8d83bf4 (fail_validation unarm + branch fallback) (#755)
+
+## 0.1.445
+
+- fix(cli): cut marathon-session boot cost round 2 (issue #503) (#676)
+- gh-752 Boarding screens in Apps disable swipping (#753)
+
+## 0.1.446
+
+- fix(726): resilient iOS pub get + advancing TestFlight marketing version (#764)
+- gh-746 Android Play Store Error (#750)
+
+## 0.1.447
+
+- Fixes #705: provider-switch-safe sessions — top-level function_call items, sanitize-on-switch, recovery (#765)
+- feat(blog): fa1.dev blog — first post (40B tokens article) (#758)
+- fix(#761): never emit whole-screen CSI S/T when the leading edge row is static (#766)
+
+## 0.1.448
+
+- fix(machine): repair Frankenstein factory ref — sed replaced only the 7-char prefix inside the 40-char SHA
+- chore(machine): pin factory to 27534bf — no-op rework token guard (#775)
+- feat(machine): dispatch-only CI — SM is the only CI trigger; auto-update-prs retired (#770)
+- feat(693): providers queue picks through the shared two-step provider→model flow (#769)
+- chore(ci): cache native-assets hook downloads — ride out GitHub release-asset 504s (#768)
+- fix(729): over-window resume — raised-window override + window-bounded compaction payloads (#767)
+
+## 0.1.449
+
+- chore: pin factory b105bfd1bc1d93539b561f1957e6e97466a8fe4a (conflict-rework)
+- chore: pin factory a92d91cd2ceb3787c80982542844d03aa6ade73f (prStatus BLOCKED fix)
+- chore(machine): pin factory to d6c45fb — guest PRs never get a rework arm
+
+## 0.1.450
+
+- chore: pin factory f0e962a79acfd0f10c29550840bf03e34d9b8a8b (sticky-approval rework fix)
+
+## 0.1.451
+
+- test(550-family): /dap menu leg anchors on the painted screen (Stop DAP races sibling rows) (#776)
+
+## 1.0.453
+
+- fix(release): unstick nightly publish legs (testflight version, play AAB lib check) (#797)
+- fix(ci): factory_ref echo follows the pinned factory ref (unstick main) (#788)
+- chore: pin factory 1eebd58c — merge-bot concurrency fix (factory #487) (#787)
+- feat(machine): merge bot stub — event-driven merge fast path (factory a7a1b13) (#784)
+
+## 1.0.454
+
+- chore: pin factory 46cf243 — owner FIFO (notMergeState array) (#821)
+- chore: pin factory f0198b1 — bot CI-run fallback; stub listens to 'CI' + passes ci.yml (#820)
+- chore: pin factory d21899e — mergeBot rollup fallback (#762 fix) (#819)
+- chore: pin factory 4d8537b — mutex serial validation (strict FIFO) (#816)
+- Fixes #774: markdown renders on every CLI surface - one MarkdownSurface policy (#778)
+- chore: pin factory af38761 — unarm BEHIND-only (deadlock fix #488) + lockstep (#799)
+
+## 1.0.455
+
+- chore: pin factory fec4d87 — CANCELLED≠red + bot BLOCKED-race (#762) (#824)
+- chore: pin factory dff2d08 — mergeBot fallback scoped (#762) (#822)
+
+## 1.0.456
+
+- gh-789 [SEC-01] the browser relay must never send a stored key to a client-chosen address (#811)
+- gh-760 [GOAL] A persisted provider can never brick the CLI — chatgpt-codex boot-switch hole + degrade-never-crash boot (#762)
+- chore: pin factory f5c86d8 — mergeBot pullRequestId (#762 merge fix) (#826)
+- fix(772): one identity per provider - name/kind split resolved through the catalog seam (#779)
+
+## 1.0.458
+
+- fix: factory_ref skew — macOS sed \s gap left acc3ded after pin 54e86fd (#851)
+- ci: skip SM gate bridge on chore:pin PRs — pin validation is exempt by design (#848)
+- chore: pin factory 54e86fd (mutexAmong priority fix) (#847)
+- ci: runner split final — pure-Dart ARM, flutter via arm64 git bootstrap (pending experiment), M5 macOS (#846)
+- chore: pin factory acc3ded — PR-head leg dispatch (#842)
+- ci: runner split — ARM pool for light/medium jobs, self-hosted M5 for macOS (#844)
+
+## 1.0.459
+
+- fix(cube): backend kernel means kernel-or-refuse, degrade only via explicit allowDegrade (#793) (#815)
+- ci(release): ASC version-floor pre-check + AAB gate self-test (#798) (#800)
+
+## 1.0.460
+
+- feat(ci): SHA-pinned actions + pin-freshness automation (#796) (#849)
+- feat(tui): theme token parity - 67 omp tokens, syntax/markdown palettes, symbol presets (#804) (#832)
+
+## 1.0.462
+
+- feat(tui): keyHint grammar + /help hotkey table (#809) (#834)
+
+## 1.0.463
+
+- fix(cube): fs guard resolves symlinks — access checks judge the file the OS will open (#791) (#813)
+
+## 1.0.464
+
+- chore: pin factory f7fac02 — SM tick on Bitrise dmtools-ci pool (factory #507) (#870)
+- fix(security): installer verifies pinned version + provenance before install (#814)
+- chore: pin factory 77fc330 — sm: validation economy (#506) (#868)
+
+## 1.0.465
+
+- test: remove await_sm_ci_test — the bridge it pinned is deleted (#873) (#880)
+- chore: pin factory 68d98b0461944c6f48a7699e0eb35d5344bfeed6 (loop-scope stamp fix) (#879)
+- ci: grant checks:write — the factory stamps validation check runs (#878)
+- chore: pin factory 7e63e31a62793a178cb929bc0817d07d33f5cdda (App-token check stamps) (#877)
+- chore: pin factory 37cb42725a7588897ebc500ee26e455766cc9ca7 (gh-api check stamps) (#876)
+- chore: pin factory b00d60c90dd2a60bcb4df1f366ebdf0b7e6c3d1c (validation-sync URL fix) (#875)
+- chore: pin factory 28eee7ba65edb150bcca560f91396fbfae4f9819 (debug instrumentation for validation-sync) (#874)
+- ci: bridge-free validation — tick-stamped checks, ci-gate.yml deleted (#873)
+- chore: revert SM tick to hosted pool — Bitrise group invisible to IstiN org (#871)
+
+## 1.0.466
+
+- fix(hub): relay handling bounded - one slow request never stalls the hub (#794) (#817)
+- chore: pin factory c6eb4eb — one-tick actualization order (#895)
+- chore: pin factory c17bd77 — gh-first whitelist transport (#894)
+- chore: pin factory 67ec614 — stale-validation cancel, both stubs (#893)
+- chore: pin factory fc29b7e — both stubs in lockstep (Contents API PUT transport) (#892)
+- chore: align ai-teammate factory pin with machine-sm (383a27b, #890) (#891)
+- chore: pin factory 383a27b — heredoc graphql state transport (#516) (#890)
+- chore: align ai-teammate factory pin with machine-sm (f767351) (#888)
+- chore: pin factory 05f591c + branch tag factory-data (#515) (#889)
+- chore: pin factory f767351b75a47112e0f01ef86da213117154ffb3 — gh-only state transport (#514) (#887)
+- chore: pin factory ee66f4e — state-publish whitelist fix (#513) (#886)
+- hotfix: restore factory pin — 882 wrote an empty sha (uses: @ / factory_ref: empty) (#884)
+- chore: pin factory 34097f0 + publish fa-state.json (agents#512) (#883)
+- chore: pin factory d7d7308 — duplicate-dispatch guard (agents#511) (#882)
+
+## 1.0.467
+
+- ci: factory pin c6eb4eb → 7fe0a64 (agents #522 — publish fix + time-travel history) (#901)
+- test: retry the port-release proof-bind in openrouter oauth timeout test (#885)
+- feat(tui): transcript chrome - Box frames, dividers, bordered tool cards (#807) (#828)
+
+## 1.0.469
+
+- fix(tui): address #834 review threads - alignment, chord labels, /help summary, TUI-leg pin (#859)
+- chore(deps): bump the github-actions group with 10 updates (#853)
+
+## 1.0.471
+
+- security(sep-07): rotate release-signing trust anchor — the #814 keypair died with its ephemeral CI runner (#902)
+
+## 1.0.473
+
+- ci: cap the fa-m5 mini pool at 2 concurrent PTY jobs (was 3) (#935)
+- chore(ci): rebase cli coverage floor 12.17 → 11.9 (#924)
+- test(integration): port pty suites to band-mode TUI + GLM live provider tests (#914)
+- ci(nightly): PTY legs on fa-m5 minis (hosted fallback) (#903)
+- fix(ci): drop setup-python from the mac PTY/CLI leg — system python3 (#910)
+- ci: runner-pick threshold 2 -> 1 free mini (#909)
+- fix(ci): redirect RUNNER_TOOL_CACHE on fa-m5 minis (#908)
+- fix(ci): runner-pick outputs must be JSON arrays — fromJSON in runs-on (#907)
+
+## 1.0.474
+
+- feat(chat): live phase/tool status row above the composer (#865) (#897)
+
+## 1.0.476
+
+- feat(818): herdr integration - detection manifest, skill surface, session resume (#911)
+- fix(951): re-enable lazy-interpreter Linux leg — group proven green on hosted ubuntu, 'env shift' was green-test debug output (#960)
+- chore(crap-gate): temporarily exclude coverage-orphaned catalog/wasm builtins from the ratchet (pipeline release) (#956)
+- fix: valid Linux-only runtime skips (#950/#953 artifacts) — closing-brace group(skip:), no reformat (#954)
+- fix(wasm): #952 syntax fixup — group(skip:) with block body is invalid; use setUpAll+Skip (#953)
+- test(wasm): Linux-only skip for lazy-interpreter group — hosted-ubuntu env shift gh-951 (#952)
+- fix(crap-gate): catalog_service flake skip must be Linux-only — unconditional @Skip killed macOS coverage (CRAP 272 > 30, fa#911) (#950)
+- ci: SM kicker — no cancel-in-progress (global group cancelled cross-PR, stamping CANCELLED checks) (#945)
+- gh-938 WIP auto-save 2026-09-25T05-39-30 (#942)
+- gh-937 ai/gh-869 (PR #899) regresses job_board_stability: 'stacked boards' expects 1 board, gets 0 — deterministic, quiet box (#940)
+- ci: bump factory pack pins to dmtools-agents#d99fc8c — 'blocked' label support (fa #939) (#941)
+- feat(ui): one-tap copy affordance on every error surface (#899)
+
+## 1.0.478
+
+- feat: #955 Add agent DAP tab mints unique credentials via agents/enroll
+- feat(fanet): align with the deployed agents/enroll contract
+- fix: #988 hub teardown StateError('connection closed') is not a crash
+- feat: lib/src/fanet — fa_network REST client for the CLI network mode
+- chore(ci): flutter_app CRAP threshold 30.0 -> 75.0 temp raise (owner call, gh-992) (#993)
+- chore(factory): pin dmtools-agents to 6b953f8 (dup-dispatch guard fix #539) (#991)
+- feat: #955 pure-DAP invite format for clients without fa_network
+- feat: #955 env split — network password is its own variable
+- fix: #988 guard hub presence queries — a drop mid-query must not escape
+- fix: #955 env invite is the network credential — drop DAP_MASTER_SECRET
+- feat: #955 env vars as per-row copy + network-level Add agent
+- fix: #955 env format is hub-only — drop the provider vars
+- chore(ci): lower CLI coverage baseline 11.9 -> 11.0 (owner call, unblock merge train) (#989)
+- chore: regenerated l10n for the Add-agent scope/format strings
+- feat: #955 Add-agent env format — CI runner launch line
+- Add a test-duration budget gate on the PTY/CLI critical path (on top of #963's 3-shard leg) (#932)
+- feat: #955 Add-agent invite — scope (channel/network) × format (link/CLI)
+- chore(factory): pin factory to 6a7544c (agentDocsCoverage versions.json fix, dmtools-agents#533) (#987)
+- feat: #955 keyless agent invites for public channels + channel-id invites
+- chore(factory): pin factory to 2e8d366 (mutex-leak fix, dmtools-agents#531) (#980)
+- chore(ci): quarantine flaky job_board_stability PTY test (gh-982) — unblock main (#983)
+- fix(app): #955 WS auth header never sent + unhandled-error storm
+- feat(app): #955 channel header with the discoverable Add agent action
+- feat(cli): #955 fa dap import — ingest the app's add-agent invite
+- feat(app): #955 adopt fa_network chat-order pagination
+- feat(app): #955 anonymous showcase browsing (public networks)
+- chore(factory): pin factory to 7dd967a (merge-leg pullRequestId fix, dmtools-agents#529) (#972)
+- feat(app): #955 network diagnostics via AppLog (no secrets)
+- fix(app): #955 management routes never fall back to a session token
+- feat(app): #955 friendly create dialog — wider, auto-slugify, full errors
+- feat(app): #955 public-directory checkbox on create + owner network delete
+- feat(app): #955 create-network dialog validates the server's exact rules
+- fix(app): #955 TokenBundle accepts the real snake_case exchange shape
+- fix(app): #955 OAuth loopback — never rewrite the provider auth URL
+- chore: factory pin bump d99fc8c → ac8b718 (lockstep) (#966)
+- fix(app): #955 route ai-native auth calls to the auth host, not the relay
+- feat(app): #955 real ai-native OAuth sign-in (loopback RFC 8252)
+- feat(app): #955 sidebar style parity, first-class sign-in, public directory
+- feat(app): #955 network mode lives in the shell sidebar (owner UX rework)
+- fix(app): #955 network header clears the macOS traffic lights
+- feat(app): #955 ⌘K quick switcher + REG-NOLEAK key-leak scan
+- feat(app): #955 network mode UI — Local|Network chip, networks sidebar, Grok-style channel chat
+- feat(app): #955 adopt contract senderKey — envelopes carry the sender X25519 pub
+- feat(app): #955 network mode engine — fa_network client, WS, fanet1 crypto, KeyWallet, sessions
+
+## 1.0.480
+
+- chore(factory): bump dmtools-agents to d67b66b — blocked-label freeze (#546) in lockstep (uses + factory_ref) (#1011)
+- docs: ladder smoke — trivial README marker to walk the full factory pipeline (#1010)
+- chore(factory): bump dmtools-agents pins to fa6e9c2 — PR-anchored rework (#544/#545) (#1009)
+- quarantine(#1007): dap_tui_menu_test master-secret hub-connect flake (#1008)
+- gh-1005 Migrate PTY test coverage from macOS shards to Linux-hosted runners (#1006)
+- Raise the CLI-coverage floor: third-party skills consent PTY suite (#927) (#934)
+- gh-982 fix flaky PTY test: job_board_stability (stacked boards freeze across settles) — quarantined, fix + re-enable (#986)
+- Fix #943: infra tests fixed properly — tmp roots, hub port hygiene, prewarm, budgets; #938 skips re-enabled (#948)
+- gh-995 WIP auto-save 2026-09-27T04-55-21 (#996)
+- chore(ci): M5_POOL=1 — PTY legs serial on the single fa-m5-1 runner (#1004)
+- chore(ci): M5_POOL 2 → 0 — single-runner mode on the fa-m5 host (owner 2026-09-27) (#1003)
+- chore(quality): temp CLI coverage baseline 11.0 → 7.9 — unwedge PTY-gate (restore: gh-997) (#998)
+- gh-946 CLI Rename unattended change to autopilot (#949)
+
+## 1.0.481
+
+- fix(921): swallow post-abandonment SSE transport errors instead of crashing (#922)
+- chore(factory): mirror ai-teammate stub template (effective-anchor run-name) (#1017)
+- gh-957: drop the 3 temporary CRAP excludes after #948 (f2498ead) — gate re-measures green at 30.0 (#959)
+- fix(install): bump SEC-07 pin 0.1.452 -> 1.0.480 (#1015)
+- quarantine(#1012 #1014): linux shard-0 PTY timing flakes (scheduled_indicator + ctrl_c_double_press) (#1013)
+
+## 1.0.482
+
+- chore: pin factory 60571fed (validation_failed sticky park) (#1027)
+- hotfix: correct uses: factory sha in all 3 workflows (fake sha from #1024) (#1025)
+- chore: pin factory 5e2a8051 (session quarantine) (#1024)
+- chore: pin factory a18361b2 (red-park + dryRun + dup-guard + teammate watchdog) (#1023)
+- chore(factory): bump dmtools-agents to b44b5493 — latch-skip + stamp links + auto-anchor fallback (#547/#548/#549) in lockstep (#1019)
+
+## 1.0.486
+
+- fix(926): CodeMie budget/spending exhaustion is terminal — no retry loops, immediate fallback (#929)
+- chore: pin factory 1fdb4c6 (git-guard double-shim exec-loop fix) (#1043)
+
+## 1.0.487
+
+- Fix #947: store goldens render real text; Play listing images ship via whole-set replace + verify (#962)
+- fix(920): optimal space usage in the CLI TUI status band (#923)
+
+## 1.0.488
+
+- fix(#973): Enter sends, Shift+Enter inserts newline in chat composer (#978)
+- site: add /oauth/callback page — the web app's OAuth popup receiver target (#1048)
+
+## 1.0.489
+
+- fix(web): conditionally export FFI-backed io.dart members
+- feat(#977): provider name step + multi-account coexistence in app add-provider flow (#984)
+- feat(#969): show add-provider flow first on fresh install (#971)
+
+## 1.0.490
+
+- gh-1041 [GOAL] Submission ≠ appearance — never fail a green store submit deferred 1–2h store-appearance re-check job (TestFlight / Play / pub.dev) (#1046)
+- gh-1032 Migrate to flutter_agent_memory 0.2.3: conflict-free deletions (tombstones + deleted/ dir) (#1050)
+
+## 1.0.492
+
+- chore(deps): bump ruby/setup-ruby in the github-actions group (#1056)
+
+## 1.0.494
+
+- fix(release): land the version bump as a PR — protected main rejects direct bot pushes (#1093)
+- fix(sm-kicker): rescue ticks must pass -f dryRun=false (machine-sm defaults dry) (#1092)
+- fix(#964): configurable auth header (x-api-key) + reasoning-aware stream retry boundary (#1088)
+- revert: undo the stale-tree mass revert in 80a5ebeeb, keep the FFI web fix (#1071)
+- fix(web): restore /oauth/callback page + open the OAuth popup eagerly on user gesture (#1068)
+- fix(#1083): per-path mutation lock for same-file concurrent tool edits (#1084)
+- feat(#1078): flutter_app honors ~/.fah/config.yaml (parity v1) (#1087)
+
+## 1.0.495
+
+- feat(1086): sandbox shell heredocs, here-strings, fail-fast guards (#1094)
+- chore(factory): pin dmtools-agents @cee5996 — mutexExcludeSelf + conflict-rework + release-bump authorship + teammate dev-leg timeout (#1111)
+
+## 1.0.496
+
+- gh-1149 [daily-publish] cli leg failed (#1154)
+- fix(#916): replayed tool rows paint the settled band card — #807 chrome migration completed (#1136)
+- feat(#864): one-Fa-one-session tap (#1144)
+- fix(#1131): compaction summaries must not re-render time-scoped claims as current facts (#1133)
+- feat(#1124): Terminal-Bench family coverage 2.0/2.1/3.0/4.0 from one dispatch surface (#1128)
+- fix(#1126): resume mid-stream provider aborts with partial content via TransientRetryStream (#1132)
+- feat(#1123): real token/cost accounting in bench results (#1129)
+- fix(app): flutter_agent_memory override 0.2.1 -> ^0.2.3 — track the lib floor (#1158)
+- chore(factory): runners parent agent packs from the registry, not the git checkout (#1155)
+- feat(#1122): configurable + progress-aware bench agent timeout (#1127)
+- feat(#827): TUI viewport never loses shown content (#1097)
+- pin: factory workflows -> dmtools-agentic-workflows@b93dc51 (#1146)
+- fix(#1036): bound provider HTTP calls with client-side timeouts (#1108)
+- fix(#1045): per-widget publish status with verbatim validator errors (#1141)
+- fix(#1121): transparent bounded retry on zero-byte connect-stall watchdog timeout (#1125)
+- feat(#1106): enable Type-2 duplication gate (crap4dart 0.11.0) + 13-file triage (#1116)
+- feat(#1103): fa wire-serve - headless AWP server over WS + NDJSON-stdio (#1113)
+- feat(#1096): release size manifest gate + unambiguous extension/web cuts (slice 1) (#1110)
+- fix(#1117): close web network-auth popup after grant + handle post-auth redirect (#1119)
+- fix(#1102): persist chain re-runs skipped passes (lost assistant record) (#1112)
+- feat(#1101): Agent Wire Protocol v1 schema, versioning, fixtures, in-process adapter (slice 1) (#1109)
+- feat(#1100): ship rehostable web SPA bundle (fa-web-spa.zip) on releases (#1107)
+- feat(#823): provider quota & budget monitoring — CORE tier (model, OpenRouter adapter, TTL service, CLI /quota + badge, app meters, resolver feed) (#1099)
+- feat(#1079): SDK slice 1 — HostCapabilityProfile + HostWiringBuilder foundation (#1091)
+- fix(#1085): post-compaction run continuation — watchdog suspension + loud failure (#1090)
+- chore(factory): sm-kicker -> shared factory-sm-kicker stub (#1118)
+
+## 1.0.497
+
+- feat(#1172): release pipeline pushes bump directly to main via fa-release-bot App (#1174)
+- fix(#864): gesture-entry mint failures surface a snack, not a zone error (#1144 follow-up) (#1170)
+- fix(session): segment rotation — cap JSONL traces under the git 100MB limit (#1114)
+- ci: re-pin factory-teammate @9bcec53 — kit/ (guard+creds) at invocation ref (#1183)
+- feat(#881): App Store CTA header badge (#1138)
+- ci: re-pin factory-teammate @9bcec53 — kit/ (guard+creds) at invocation ref (#1177)
+- fix(#917): deterministic wrap-turn dedupe in TUI composer (no double-paint on slow PTY) (#1137)
+- ci: re-pin factory-teammate @9bcec53 — kit/ (guard+creds) at invocation ref (#1176)
+- fix(#1134): auto_release.sh pins chore:pin label on release PRs (#1135)
+
+## 1.0.498
+
+- feat(#866): apps panel reflects reality (#1139)
+- fix(#1152): path-guard fires only on bare single-token input (#1153)
+- feat(#861): one passkey-capable auth surface for provider sign-in (#1142)
+
+## 1.0.499
+
+- feat(cli): stuck foreground tool calls nudge the model via steering (#1185) (#1187)
+- fix(#1122): restore bench timeout-ladder helpers lost in the #1127×#1129 merge (#1184)
+- feat(#1151): built-in skills shipped with fa — /skill-name on every surface, toggleable like tools (#1157)
+
+## 1.0.500
+
+- chore: repin factory workflows to f47d52b (kit in RUNNER_TEMP) (#1191)
+
+## 1.0.501
+
+- fix(#1121): replay zero-byte watchdog-killed requests on the shared ladder (#1188)
+- fix(#1168): resume mid-stream connection failures from the completed prefix (#1169)
+- test: deflake memory round-trip PTY waits (kill taggen 500-storm, re-anchor on terminal marker) (#1166)
+- bench-mls.yml: run fa on MLS-Bench via the existing Harbor adapter (staged nop→oracle→agent, GPU cost discipline) (#1161)
+- chore: repin factory workflows to f47d52b (kit in RUNNER_TEMP) (#1191)
+
+## 1.0.502
+
+- fix(#1175): one Fa, one session — FAB continues the app-bound session, never re-mints (#1173)
+- WASI sandbox fidelity: dup-merge, per-exec pipe dirs, drain-before-cancel, clean errors (#1156) (#1163)
+- fix(chat): Load-newer banner works mid-run, auto-clears at the live tail (#1159) (#1165)
+- feat(#862): tool-misuse resilience (#1143)
+- fix(#858): Codex/Responses wire — no replayable history may ever brick a session (#1140)
+
+## 1.0.503
+
+- gh-1054 [GOAL] Headless/unattended runs must detect long-stuck tool calls mid-run and follow up — liveness heartbeats + cancel/retry/convert, not a silent 10-min wait for the external watchdog (#1200)
+- chore(ci): bump sm-kicker pin — real-dispatch fix (awf#13) (#1213)
+- fix(kicker): wake machine-sm on CI conclusions (workflow_run) (#1203)
+- gh-1171 flake: subagent_integration_test 'memory_add and memory_search tools are available' — mock script exhausted by memory auto-tag LLM call (#1202)
+- gh-1014 Flaky: ctrl_c_double_press_test ACX.3 SIGINT timing-window flake under runner load — quarantined, fix + re-enable (#1196)
+- test(#1172): pin the CHANGELOG '## Unreleased' dedupe + deflake sandbox authorship under git hooks (#1195)
+- gh-1000 Key resolution loses the provider/key binding: 401 after /sessions restore and on pinned roles (smol/subagents) — duplicate modelId, env-only roles path (#1190)
+- gh-1192 [GOAL] Release-flow race hardening: daily verify must skip 'release in flight', version tag must pin the bump commit (#1193)
+- fix(#1175): one Fa, one session — FAB continues the app-bound session, never re-mints (#1173)
+- WASI sandbox fidelity: dup-merge, per-exec pipe dirs, drain-before-cancel, clean errors (#1156) (#1163)
+- fix(chat): Load-newer banner works mid-run, auto-clears at the live tail (#1159) (#1165)
+- feat(#862): tool-misuse resilience (#1143)
+- fix(#858): Codex/Responses wire — no replayable history may ever brick a session (#1140)
+
+## 1.0.505
+
+- gh-1210 [BENCH] Pre-seed a system-level git identity in task containers (fa-setup.sh.j2) — stop burning agent turns on 'Author identity unknown' (#1214)
