@@ -1062,6 +1062,55 @@ void main() {
       );
       expect(r.stdout, '$reversed\n');
     });
+
+    test('cat of a binary file never routes bytes through a UTF-8 API',
+        () async {
+      // The file class AC6's own recipe produces (a codeload tarball):
+      // gzip magic plus bytes that are not valid UTF-8. The probe must not
+      // read the operand as text — the coreutils applet is binary-safe and
+      // keeps handling plain cats.
+      final tarball = Uint8List.fromList([
+        0x1f, 0x8b, 0x08, 0x00, 0xff, 0xfe, 0x00, 0x82, //
+        0xed, 0x7f, 0x9c, 0x3a, 0x00, 0xc0, 0x80, 0xff,
+      ]);
+      io.File('${sandbox.path}/repo.tar.gz').writeAsBytesSync(tarball);
+      final instance = _ScriptedInstance();
+      rec.next = instance;
+      final future = shell().exec('cat repo.tar.gz');
+      instance.out.add(tarball);
+      final r = await future;
+      expect(r.isOk, isTrue, reason: r.errorOrNull?.message);
+      expect(r.valueOrNull!.exitCode, 0);
+      // ShellExecResult.stdout is a String: binary bytes surface as the
+      // lossy decoding of exactly the bytes the applet echoed.
+      expect(
+        r.valueOrNull!.stdout,
+        utf8.decode(tarball, allowMalformed: true),
+      );
+      // The operand stayed on the applet path (raw projection preserved).
+      expect(rec.configs.single.args, contains('/repo.tar.gz'));
+    });
+
+    test('cat of a binary operand beside a pointer seam delivers the bytes',
+        () async {
+      // Mixed operands: the pointer file pulls the invocation onto the Dart
+      // cat builtin, but the BINARY operand must still be delivered — the
+      // seam reads it as bytes, never as text.
+      seedPointer('create-goal');
+      final tarball = Uint8List.fromList([
+        0x42, 0x5a, 0x68, 0x00, 0xff, 0x00, 0x80, 0x7f, //
+      ]);
+      io.File('${sandbox.path}/dl.tar').writeAsBytesSync(tarball);
+      final body = builtinSkillTextAt(
+        'builtin://skills/create-goal/SKILL.md',
+      )!;
+      final r = await run('cat .fah/skills/create-goal/SKILL.md dl.tar');
+      expect(r.exitCode, 0);
+      expect(
+        r.stdout,
+        utf8.decode(utf8.encode(body) + tarball, allowMalformed: true),
+      );
+    });
   });
 
 }

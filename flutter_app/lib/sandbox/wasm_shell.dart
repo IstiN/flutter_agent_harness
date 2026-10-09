@@ -1922,27 +1922,6 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     return file.readAsString();
   }
 
-  /// Transparent skill-path read (gh-1444 AC1): a `builtin://skills/...`
-  /// URI resolves from the embedded copies, an existing file wins, and a
-  /// missing file whose `<path>.pointer` sibling resolves serves the
-  /// builtin body. Returns `(text, refusal)` — `refusal` is non-null when a
-  /// pointer exists but its target is not a resolvable builtin reference
-  /// (E1: the caller must report the refusal, never fall back to ENOENT
-  /// silently). `(null, null)` = plain not-found.
-  Future<(String?, String?)> _readSandboxTextFollowPointers(String path) async {
-    if (path.startsWith(builtinSkillPathPrefix)) {
-      return (builtinSkillTextAt(path), null);
-    }
-    final direct = await _readSandboxText(path);
-    if (direct != null) return (direct, null);
-    final followed = await followSkillPointer(path, _readSandboxText);
-    return switch (followed) {
-      SkillPointerResolved(:final text) => (text, null),
-      SkillPointerRefused(:final reason) => (null, reason),
-      SkillPointerAbsent() => (null, null),
-    };
-  }
-
   /// Host write for the sandbox file at sandbox-absolute [path].
   Future<void> _writeSandboxBytes(String path, List<int> bytes) async {
     final file = _hostFile(path);
@@ -2605,7 +2584,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       if (file == '-') continue;
       if (file.startsWith(builtinSkillPathPrefix)) return true;
       final path = _resolveSandboxPath(file, cwd);
-      if (await _readSandboxText(path) != null) continue;
+      // Existence probe only: an existing operand always wins and the
+      // coreutils applet is binary-safe, so the seam must never read bytes
+      // through a UTF-8 text API (gh-1444 review: cat of a downloaded
+      // tarball/PNG threw a FileSystemException out of exec()).
+      if (await _hostFile(path).exists()) continue;
       final followed = await followSkillPointer(path, _readSandboxText);
       if (followed is! SkillPointerAbsent) return true;
     }
@@ -2640,26 +2623,50 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         out.add(utf8.encode(stdinText ?? ''));
         continue;
       }
-      final (text, refusal) = await _readSandboxTextFollowPointers(
-        _resolveSandboxPath(file, cwd),
-      );
-      if (refusal != null) {
-        err.write('cat: $file: skill pointer refused: $refusal\n');
-        exitCode = 1;
+      final path = _resolveSandboxPath(file, cwd);
+      if (path.startsWith(builtinSkillPathPrefix)) {
+        final embedded = builtinSkillTextAt(path);
+        if (embedded == null) {
+          err.write('cat: $file: No such file or directory\n');
+          exitCode = 1;
+          continue;
+        }
+        out.add(utf8.encode(_catNumbered(embedded, parsed)));
         continue;
       }
-      if (text == null) {
-        err.write('cat: $file: No such file or directory\n');
-        exitCode = 1;
+      // Byte-first: an existing operand is delivered verbatim (the
+      // coreutils applet was binary-safe; the seam must not regress that —
+      // tarballs/PNGs ride cat). Only a MISSING operand consults pointer
+      // machinery, and pointer files are harness-authored text.
+      final bytes = await _readSandboxBytes(path);
+      if (bytes != null) {
+        if (parsed.number || parsed.numberNonBlank) {
+          // GNU cat -n/-b on binary is a mangled best effort; decode
+          // lossily rather than throwing the operand out of exec().
+          out.add(
+            utf8.encode(
+              applyCatNumbering(
+                utf8.decode(bytes, allowMalformed: true),
+                nonBlankOnly: parsed.numberNonBlank,
+              ),
+            ),
+          );
+        } else {
+          out.add(bytes);
+        }
         continue;
       }
-      out.add(
-        utf8.encode(
-          parsed.number || parsed.numberNonBlank
-              ? applyCatNumbering(text, nonBlankOnly: parsed.numberNonBlank)
-              : text,
-        ),
-      );
+      final followed = await followSkillPointer(path, _readSandboxText);
+      switch (followed) {
+        case SkillPointerResolved(:final text):
+          out.add(utf8.encode(_catNumbered(text, parsed)));
+        case SkillPointerRefused(:final reason):
+          err.write('cat: $file: skill pointer refused: $reason\n');
+          exitCode = 1;
+        case SkillPointerAbsent():
+          err.write('cat: $file: No such file or directory\n');
+          exitCode = 1;
+      }
     }
     return Ok(
       StageResult(
@@ -2669,6 +2676,12 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       ),
     );
   }
+
+  /// Applies `cat` numbering only when the invocation asked for it.
+  String _catNumbered(String text, CatInvocation parsed) =>
+      parsed.number || parsed.numberNonBlank
+          ? applyCatNumbering(text, nonBlankOnly: parsed.numberNonBlank)
+          : text;
 
   Future<Result<StageResult, ExecutionError>> _tacBuiltin(
     Stage stage,
