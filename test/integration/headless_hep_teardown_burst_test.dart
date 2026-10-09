@@ -77,12 +77,14 @@ void main() {
         command.first,
         command.sublist(1),
         workingDirectory: Directory.current.path,
-        // Whitelist child env (same convention as headless_log_file_test):
-        // the ambient FA_PROVIDER_* / FA_SESSION_* variables on this
-        // runner must NOT leak in — with only the mock reachable, a script
-        // mismatch fails loudly instead of silently talking to a live
-        // provider.
+        // Fully hermetic child: Dart MERGES `environment` into the parent
+        // env, so this runner's ambient FA_PROVIDER_QUEUE (a live failover
+        // queue) would still leak in and could answer when the mock script
+        // misbehaves. includeParentEnvironment:false + an explicit minimal
+        // env is the only real whitelist.
+        includeParentEnvironment: false,
         environment: {
+          'PATH': Platform.environment['PATH'] ?? '/usr/bin:/bin',
           'OPENAI_API_KEY': 'mock',
           'HOME': tempHome.path,
           'FA_STATE_DIR': '${tempHome.path}/.fah',
