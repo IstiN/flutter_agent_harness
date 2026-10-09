@@ -35,17 +35,18 @@ typedef FaLlmMessage = ({String role, String content});
 /// LLM completion used by the `jsr.fa.llm*` bridge calls. Receives the
 /// conversation and resolves with the assistant's reply text. When [onDelta]
 /// is given (the `llm.stream` call), it reports text deltas as they arrive.
-typedef FaLlmHandler =
-    Future<Object?> Function(
-      List<FaLlmMessage> messages, {
-      void Function(String delta)? onDelta,
-    });
+typedef FaLlmHandler = Future<Object?> Function(
+  List<FaLlmMessage> messages, {
+  void Function(String delta)? onDelta,
+});
 
 /// Handler for platform bridges still without a real backend (health
 /// actions other than `health.summary`). Receives the action name
 /// (`health.stepsToday`, …) and args.
-typedef FaPlatformHandler =
-    Future<Object?> Function(String action, Map<String, Object?> args);
+typedef FaPlatformHandler = Future<Object?> Function(
+  String action,
+  Map<String, Object?> args,
+);
 
 /// Read source for the host's merged secrets (dotenv + saved keys) behind
 /// the `jsr.fa.keys.list/get` bridge calls; returns a fresh name → value
@@ -54,11 +55,10 @@ typedef FaHostKeysSource = Map<String, String> Function();
 
 /// One `home`/`homekit` action handler: resolves the bridge map from the
 /// gated [HomeApi] (see [_homeActions]).
-typedef _HomeAction =
-    Future<Map<String, Object?>> Function(
-      HomeApi api,
-      Map<String, Object?> args,
-    );
+typedef _HomeAction = Future<Map<String, Object?>> Function(
+  HomeApi api,
+  Map<String, Object?> args,
+);
 
 /// Theme-pack bridge behind `jsr.fa.theme.list/current/apply` (issue #169).
 /// The host implements it; the apply leg ALWAYS renders a consent prompt —
