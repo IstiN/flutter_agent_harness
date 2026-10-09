@@ -20,7 +20,10 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:dart_tui/dart_tui.dart' show WindowSizeMsg;
+import 'package:flutter_agent_harness/src/cli/agent_hub_panel.dart';
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
+import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
 import 'package:flutter_agent_harness/src/cli/log_fidelity.dart';
 import 'package:flutter_agent_harness/src/cli/waiting_heartbeat.dart';
 import 'package:test/test.dart';
@@ -193,6 +196,16 @@ class GatedTextStream {
     return stream;
   }
 }
+
+/// Minimal [FaTuiCallbacks] for the E8 width-seam controller tests.
+FaTuiCallbacks _tuiCallbacks() => FaTuiCallbacks(
+  onSubmit: (line, {images = const []}) async {},
+  onModelSelected: (id) async {},
+  buildSlashMenu: (prefix) => const [],
+  buildModelMenu: (filter, width) => const [],
+  statusLine: () => 'test',
+  prompt: 'fa> ',
+);
 
 void main() {
   group('UT: face + default resolution', () {
@@ -711,6 +724,166 @@ void main() {
     });
   });
 
+  group('UT: AC9/E7 — background-job cards never ellipsize the log face', () {
+
+    const psCommand =
+        'ps -o pid,ppid,etime,pcpu,args -p \$(pgrep -f test.dart) '
+        '2>/dev/null | cut -c1-160';
+    const longLogPath = '/home/runner/work/repo/.fah/bash_jobs/'
+        'sh-1234-very-long-session-identifier/job-output.log';
+
+    TaskBlock settleCard({String command = psCommand, String? detail}) =>
+        TaskBlock(
+          kind: 'bash',
+          id: 'sh-1234',
+          state: TaskBlockState.done,
+          elapsed: 2,
+          label: command,
+          detail:
+              detail ??
+              'sh-1234 · work · exit 0 · log: $longLogPath',
+        );
+
+    test('REG golden: the TUI pane keeps the width clip (ellipsis)',
+        () {
+      final lines = taskBlockLines(
+        settleCard(command: 'echo ${'x' * 300}'),
+        width: 80,
+      );
+      expect(lines.join('\n'), contains('…'));
+      for (final line in lines) {
+        expect(line.length, lessThanOrEqualTo(80));
+      }
+    });
+
+    test('AC9: the log face renders the FULL command soft-wrapped — no '
+        'ellipsis anywhere', () {
+      final lines = taskBlockLines(settleCard(), width: 80, fit: CardTextFit.wrap);
+      final body = lines.join('\n');
+      expect(body.contains('…'), isFalse, reason: body);
+      // The command survives whole: every fragment is present and the
+      // concatenation of the wrapped label rows restores it.
+      final labelRows = lines
+          .where((l) => l.startsWith('│ '))
+          .map((l) => l.substring(2).trimRight())
+          .toList();
+      final joined = labelRows.join();
+      expect(joined, contains('pgrep -f test.dart'));
+      expect(joined, contains('cut -c1-160'));
+    });
+
+    test('AC9: the FULL log: path survives in the log face (wrapped, '
+        'never clipped)', () {
+      final lines = taskBlockLines(settleCard(), width: 80, fit: CardTextFit.wrap);
+      final body = lines.join('\n');
+      expect(body.contains('…'), isFalse, reason: body);
+      // The path is soft-wrapped: the DETAIL rows concatenated restore it.
+      final detailRows = lines
+          .where((l) => l.startsWith('│ '))
+          .map((l) => l.substring(2).trimRight())
+          .join();
+      expect(detailRows, contains('log: $longLogPath'));
+    });
+
+    test('AC9: a multi-line (heredoc) command renders EVERY line, not '
+        'the first line + hint', () {
+      const heredoc =
+          "cat > /tmp/x.md << 'EOF'\nfirst body line\nsecond body line\nEOF";
+      final lines = taskBlockLines(
+        settleCard(command: heredoc, detail: 'sh-1234 · exit 0'),
+        width: 80,
+        fit: CardTextFit.wrap,
+      );
+      final body = lines.join('\n');
+      expect(body, contains("cat > /tmp/x.md << 'EOF'"));
+      expect(body, contains('first body line'));
+      expect(body, contains('second body line'));
+      expect(body.contains('more — bash_job output'), isFalse,
+          reason: 'the full command is the point; the hint is pane economy');
+    });
+
+    test('E7: a multi-KB one-liner wraps to a bounded card with an '
+        'explicit (+N more chars, see <log>) pointer — never silent', () {
+      final huge = 'echo ${'y' * 5000}';
+      final lines = taskBlockLines(
+        settleCard(command: huge, detail: 'sh-1234 · exit 0'),
+        width: 100,
+        fit: CardTextFit.wrap,
+      );
+      final body = lines.join('\n');
+      expect(body, contains('more chars, see <log>'), reason: body);
+      expect(body.contains('…'), isFalse,
+          reason: 'the cap is explicit, never a silent ellipsis');
+      // Bounded: the 2000-char body budget / ~95-wide rows + pointer.
+      final bodyRows = lines.where((l) => l.startsWith('│')).length;
+      expect(bodyRows, lessThanOrEqualTo(logFaceCardMaxBodyChars ~/ 90 + 3),
+          reason: body);
+    });
+
+    test('the detail builder spends the log-face budget on the log path',
+        () {
+      final capped = shellJobCardDetail(
+        id: 'sh-1',
+        logPath: '/log/${'a' * 300}.log',
+        state: TaskBlockState.done,
+        exitCode: 0,
+      );
+      expect(capped.endsWith('…'), isTrue,
+          reason: 'the pane cap (issue #429) holds by default');
+      final whole = shellJobCardDetail(
+        id: 'sh-1',
+        logPath: '/log/${'a' * 300}.log',
+        state: TaskBlockState.done,
+        exitCode: 0,
+        maxLength: logFaceCardMaxBodyChars,
+      );
+      expect(whole.endsWith('…'), isFalse);
+      expect(whole, contains('/log/${'a' * 300}.log'));
+    });
+  });
+
+  group('UT: E8 — the TUI width seam tracks the live window', () {
+    test('a card at 200 cols renders ~200-wide lines; the boot model '
+        'never pins the seam', () {
+      final controller = FaTuiController(
+        callbacks: _tuiCallbacks(),
+        isExited: () => false,
+      );
+      // The program's boot WindowSizeMsg lands before any card: the
+      // controller's width seam IS the live width (not the stale 80).
+      controller.model.update(WindowSizeMsg(200, 50));
+      expect(controller.termWidth, 200);
+      final lines = taskBlockLines(
+        const TaskBlock(
+          kind: 'bash',
+          id: 'sh-1',
+          state: TaskBlockState.done,
+          label: 'echo wide',
+          detail: 'sh-1 · exit 0',
+        ),
+        width: controller.termWidth,
+      );
+      for (final line in lines) {
+        expect(line.length, lessThanOrEqualTo(200));
+      }
+      expect(lines.join('\n'), contains('echo wide'));
+    });
+
+    test('resize-mid-run: a card after a window widen uses the new '
+        'width — no restart needed', () {
+      final controller = FaTuiController(
+        callbacks: _tuiCallbacks(),
+        isExited: () => false,
+      );
+      controller.model.update(WindowSizeMsg(120, 40));
+      expect(controller.termWidth, 120);
+      controller.model.update(WindowSizeMsg(200, 50));
+      expect(controller.termWidth, 200, reason: 'the widen applies live');
+      controller.model.update(WindowSizeMsg(90, 40));
+      expect(controller.termWidth, 90, reason: 'and the shrink too');
+    });
+  });
+
   group('REG: AC6 — structured modes stay byte-identical', () {
     late FakeCliIO io;
 
@@ -733,7 +906,9 @@ void main() {
           approvalMode: ApprovalMode.yolo,
           headlessRun: true,
         ),
-        io: io,
+        // The host wiring (bin/fah_runapp.dart): structured modes wrap the
+        // IO so write() deltas are dropped — stdout purity.
+        io: HepEventsIO(io),
         streamFunction: fake.call,
       );
       final frames = <String>[];

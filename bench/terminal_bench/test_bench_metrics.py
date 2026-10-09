@@ -231,9 +231,7 @@ class SessionGapTest(unittest.TestCase):
 
 
 class ScoreHonestyTest(unittest.TestCase):
-    """AC8: an agent_timeout trial with steady gaps is a loud violation."""
-
-    def test_agent_timeout_with_steady_gaps_violates(self):
+    """AC8: an agent_timeout trial with steady gaps is a loud violation."""    def test_agent_timeout_with_steady_gaps_violates(self):
         self.assertTrue(
             bench_metrics.score_honesty_violation(
                 "agent_timeout", max_gap_sec=166.0, stall_gap_sec=240.0
