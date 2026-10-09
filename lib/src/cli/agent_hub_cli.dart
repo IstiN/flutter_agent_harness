@@ -324,7 +324,25 @@ extension AgentCliHubDriver on AgentCli {
 
   /// The transcript width for block rendering: the TUI's live width, or
   /// the classic 80 columns in line mode.
-  int get _hubBlockWidth => _tuiController?.termWidth ?? 80;
+  /// The card-render width seam (gh-1433 E8): the LIVE TUI width — the
+  /// controller tracks every WindowSizeMsg the program processes, so a
+  /// window widen applies to the next card without a restart; the log
+  /// face wraps at [logFaceCardWrapWidth] instead of a fake pane width;
+  /// line mode keeps its legacy 80-column fallback.
+  int get _hubBlockWidth => _tuiController?.termWidth ??
+      (_logIsUi ? logFaceCardWrapWidth : 80);
+
+  /// The card text mode (gh-1433 AC9): the LOG face soft-wraps — nothing
+  /// silently ellipsized; the TUI pane clips at its live width; line
+  /// mode keeps its legacy clip.
+  CardTextFit get _cardTextFit =>
+      _logIsUi ? CardTextFit.wrap : CardTextFit.clip;
+
+  /// The detail-line budget (gh-1433 AC9): the log face spends the card
+  /// body budget so a long `log:` path survives whole; the pane keeps
+  /// issue #429's compact cap.
+  int get _cardDetailMaxLength =>
+      _logIsUi ? logFaceCardMaxBodyChars : maxShellJobDetailLength;
 
   /// `/task` background agent start: a distinct block opens in the
   /// transcript the moment the job registers.
@@ -405,6 +423,8 @@ extension AgentCliHubDriver on AgentCli {
         logPath: job.logPath,
         state: state,
         exitCode: job.exitCode,
+        // AC9: the log face's budget keeps a long `log:` path whole.
+        maxLength: _cardDetailMaxLength,
       ),
     );
     _jobBoardAfterMutation();
@@ -413,7 +433,12 @@ extension AgentCliHubDriver on AgentCli {
   /// After every board mutation: drain terminal material into the
   /// transcript, refresh the TUI's live region, persist the records.
   void _jobBoardAfterMutation() {
-    _printBoardLines(_jobBoard.takeTranscriptLines(width: _hubBlockWidth));
+    _printBoardLines(
+      _jobBoard.takeTranscriptLines(
+        width: _hubBlockWidth,
+        fit: _cardTextFit,
+      ),
+    );
     _tuiController?.setJobBoard(_jobBoard.liveLines());
     unawaited(_persistJobBoard());
   }
@@ -473,7 +498,12 @@ extension AgentCliHubDriver on AgentCli {
     // Fresh session file content: the next persist is a new snapshot, not
     // a repeat of whatever the previous session last wrote (gh-1073).
     _jobBoardPersistDeduper.reset();
-    _printBoardLines(_jobBoard.takeTranscriptLines(width: _hubBlockWidth));
+    _printBoardLines(
+      _jobBoard.takeTranscriptLines(
+        width: _hubBlockWidth,
+        fit: _cardTextFit,
+      ),
+    );
   }
 
   /// Prints drained board lines dim - the one place board material reaches
@@ -486,7 +516,11 @@ extension AgentCliHubDriver on AgentCli {
 
   /// Renders one task block's lines dim into the transcript.
   void _renderTaskBlock(TaskBlock block) {
-    for (final line in taskBlockLines(block, width: _hubBlockWidth)) {
+    for (final line in taskBlockLines(
+      block,
+      width: _hubBlockWidth,
+      fit: _cardTextFit,
+    )) {
       io.writeln(_style.dim(line));
     }
   }

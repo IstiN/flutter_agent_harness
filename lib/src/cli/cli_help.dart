@@ -128,6 +128,11 @@ OPTIONS
                                config for the run; without it, a
                                reasoning phase with no events prints a
                                periodic `… reasoning Ns` liveness line
+  --no-stream-thinking          Silence the thinking deltas for this run
+                               (gh-1433): headless runs stream them by
+                               default (the log is the UI); this flag
+                               restores the legacy quiet and the
+                               reasoning liveness line instead
   --log-file <path>            Tee every printed line (assistant text,
                                tool trace, diagnostics) to <path> as it
                                is produced — a live, `tail -f`-able
