@@ -71,6 +71,7 @@ import 'agent_hub_tui.dart';
 import 'waiting_heartbeat.dart';
 import 'tool_liveness.dart';
 import 'reasoning_liveness.dart';
+import 'log_fidelity.dart';
 import 'agent_hub_view.dart';
 import '../task/agent_discovery.dart';
 import '../task/child_session_io.dart';
@@ -1195,6 +1196,30 @@ class AgentCli {
   /// text through at message end (issue #774). Defaults to raw
   /// passthrough; bin/fah resolves TTY/color/width for the real surfaces.
   final MarkdownSurface _markdownSurface;
+
+  /// The workflow-log-fidelity face for this run (gh-1433): TUI /
+  /// interactive line / headless log. Resolved once from the constructor
+  /// facts — the pure module is the test seam.
+  late final LogFidelityFace _logFace = resolveLogFidelityFace(
+    useTui: _useTui,
+    headlessRun: config.headlessRun,
+  );
+
+  /// The workflow-log-fidelity render defaults for this run (gh-1433):
+  /// whether thinking deltas render dimmed and live, and whether text
+  /// streams live (the buffered-answer path never applies).
+  late final LogFidelity _logFidelity = resolveLogFidelity(
+    face: _logFace,
+    streamThinkingSetting: config.streamThinking,
+    noStreamThinking: config.noStreamThinking,
+    envFidelity: environment[logFidelityEnvKey],
+  );
+
+  /// Whether this run drives the workflow-log face (gh-1433): a headless
+  /// run — `fa -p`, CI, bench, parent-CLI capture — has no repaintable
+  /// UI, so the log IS the UI. The post-hoc reader gets the full
+  /// narrative (thinking, prose, tools) in positional order.
+  bool get _logIsUi => _logFace == LogFidelityFace.log;
 
   /// The streamed answer of the current assistant message on non-TUI
   /// surfaces (issue #774): line mode and headless cannot repaint, so the

@@ -1168,13 +1168,19 @@ extension ApprovalCommands on AgentCli {
   /// buffer the answer and render it through the markdown policy at
   /// message end (issue #774) — line mode and headless cannot repaint, so
   /// a half-streamed table or fence would print raw mid-flight; the whole
-  /// message renders once, correctly.
-  bool get _buffersAnswer => _markdownSurface.mode != MarkdownSurfaceMode.raw;
+  /// message renders once, correctly. The LOG face (gh-1433) never
+  /// buffers: a headless run's log is its UI, and a log that reveals the
+  /// answer only at message end is not a narrative.
+  bool get _buffersAnswer =>
+      !_logFidelity.liveText &&
+      _markdownSurface.mode != MarkdownSurfaceMode.raw;
 
-  /// Whether this surface streams thinking deltas live (gh-1198): the TUI
-  /// always has; line mode and headless opt in through the effective run
-  /// setting (`--stream-thinking` flag or `output.streamThinking`).
-  bool get _streamsThinking => _useTui || config.streamThinking;
+  /// Whether this surface streams thinking deltas live: the TUI always
+  /// has; the LOG face does by default since gh-1433 (the log is the
+  /// UI); interactive line mode stays at the gh-1198 opt-in
+  /// (`--stream-thinking` flag or `output.streamThinking`), with
+  /// `--no-stream-thinking` silencing the log face for the run.
+  bool get _streamsThinking => _logFidelity.streamThinking;
 
   void _onMessageUpdate(AssistantMessageEvent assistantMessageEvent) {
     if (assistantMessageEvent is TextDeltaEvent) {
