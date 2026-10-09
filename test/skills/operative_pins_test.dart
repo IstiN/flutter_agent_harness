@@ -637,14 +637,23 @@ void main() {
     });
 
     test('a vanished pin-owning skill drops with a notice (P4)', () {
-      final skills = [_skill('fleet', ['use fleet_sweep.sh'])];
+      final skills = [
+        _skill('fleet', ['use fleet_sweep.sh']),
+        _skill('other', ['other rule']),
+      ];
       injectOperativePinCarriers(window(), skills: skills);
       final notices = <String>[];
-      injectOperativePinCarriers(window(), skills: [], onNotice: notices.add);
-      expect(
-        notices.where((n) => n.contains('skill pin dropped')),
-        isNotEmpty,
+      injectOperativePinCarriers(
+        window(),
+        skills: [_skill('other', ['other rule'])],
+        onNotice: notices.add,
       );
+      final dropped = notices.singleWhere(
+        (n) => n.contains('skill pin dropped'),
+        orElse: () => '',
+      );
+      expect(dropped, contains('use fleet_sweep.sh'));
+      expect(dropped, isNot(contains('other rule')));
     });
 
     test('an unchanged registry diffs clean — no repeat notices', () {
@@ -657,21 +666,28 @@ void main() {
           isEmpty);
     });
 
-    test('the diff reports even when the new registry is empty (the last '
-        'pin-owning skill vanished)', () {
-      final skills = [_skill('fleet', ['use fleet_sweep.sh'])];
+    test('the lifecycle diff fires while OTHER pins keep flowing (the '
+        'dropped skill does not silence the rest)', () {
+      final skills = [
+        _skill('fleet', ['use fleet_sweep.sh']),
+        _skill('other', ['other rule']),
+      ];
       injectOperativePinCarriers(window(), skills: skills);
       final notices = <String>[];
-      final injected = injectOperativePinCarriers(
+      injectOperativePinCarriers(
         window(),
-        skills: [],
+        skills: [_skill('other', ['other rule'])],
         onNotice: notices.add,
       );
-      expect(identical(injected, window()), isFalse);
-      expect(
-        notices.any((n) => n.contains('no longer discoverable')),
-        isTrue,
+      expect(notices.any((n) => n.contains('no longer discoverable')), isTrue);
+      // The surviving pin's window still gets its carrier (non-identical
+      // list).
+      final messages = window();
+      final injected = injectOperativePinCarriers(
+        messages,
+        skills: [_skill('other', ['other rule'])],
       );
+      expect(identical(injected, messages), isFalse);
     });
   });
 
