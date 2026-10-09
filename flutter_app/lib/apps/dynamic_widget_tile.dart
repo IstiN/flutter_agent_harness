@@ -380,11 +380,24 @@ class _DynamicWidgetCanvasState extends State<DynamicWidgetCanvas> {
                         ),
                         mediaHost: const FaMediaHost(),
                         js3dHost: createFaJs3dHost(widget.service.env),
+                        // Voxel worlds: the bridge-owned world the engine's
+                        // backend created at start — the SAME world every
+                        // `voxel.*` hostCall lands in (see
+                        // JsAppEngine.voxelWorld). Without it the renderer
+                        // swaps every `voxel` node for the "Voxel world"
+                        // placeholder while the engine side reports
+                        // success (gh-1441).
+                        voxelWorld: engine.voxelWorld,
                         onScene3dTap: (sceneId, payload) => engine
                             .dispatchHostEvent('scene3d.tap:$sceneId', payload),
                         onEvent: (actionId, payload) =>
                             unawaited(engine.callEvent(actionId, payload)),
                       );
+                      // gh-1441 AC3: a null world on a voxel tree must
+                      // never be silent — one line tells "host did not
+                      // wire voxelWorld" from "broken widget" (one-shot;
+                      // never fires on shipped backends).
+                      engine.noteUnwiredVoxelWorld(tree);
                       Widget body;
                       try {
                         body = renderer.build(tree, context);
