@@ -757,7 +757,7 @@ final class MemoryShell implements Shell, BackgroundShell {
       (path) => errorPath = path,
     );
     if (input == null) {
-      return _error('sed: $errorPath: No such file or directory\n');
+      return _error('sed: $errorPath\n');
     }
     return _text(runSed(input, commands, quiet: parsed.quiet));
   }
@@ -1139,7 +1139,7 @@ final class MemoryShell implements Shell, BackgroundShell {
       (path) => errorPath = path,
     );
     if (input == null) {
-      return _error('cat: $errorPath: No such file or directory\n');
+      return _error('cat: $errorPath\n');
     }
     if (!number) return _text(input);
     final lines = input.split('\n');
@@ -1692,7 +1692,7 @@ final class MemoryShell implements Shell, BackgroundShell {
     );
     if (input == null) {
       return _error(
-        '$name: cannot open $errorPath for reading: No such file or directory\n',
+        '$name: cannot open $errorPath for reading\n',
       );
     }
     final lines = input.split('\n');
@@ -1777,7 +1777,7 @@ final class MemoryShell implements Shell, BackgroundShell {
     );
     if (input == null) {
       return _error(
-        'sort: cannot read: $errorPath: No such file or directory\n',
+        'sort: cannot read: $errorPath\n',
       );
     }
     final lines = input.split('\n');

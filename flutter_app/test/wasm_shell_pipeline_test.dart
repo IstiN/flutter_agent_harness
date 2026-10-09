@@ -366,6 +366,28 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     });
 
+    test('a timed-out stage carries its captured partial output (AC5)',
+        () async {
+      final instance = _ScriptedInstance()..gate = Completer<void>();
+      rec.next = instance;
+      final future = shell().exec(
+        'tail x',
+        options: ShellExecOptions(timeout: const Duration(milliseconds: 50)),
+      );
+      // Output lands BEFORE the timeout fires — the kill must keep it.
+      instance.out.add(utf8.encode('scanned-half-of-the-fs'));
+      final r = await future;
+      expect(r.isErr, isTrue);
+      expect(r.errorOrNull?.code, ExecutionErrorCode.timeout);
+      expect(r.errorOrNull?.message, contains('timeout: 0:00:00'));
+      expect(
+        r.errorOrNull?.stdout,
+        contains('scanned-half-of-the-fs'),
+      );
+      instance.gate!.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
+
     test('caller callback failure wins the outcome', () async {
       final instance = _ScriptedInstance()..gate = Completer<void>();
       rec.next = instance;
@@ -983,4 +1005,58 @@ void main() {
       expect(names, contains('PATH'));
     });
   });
+  group('skill pointer reads (gh-1444 C1/AC1)', () {
+    Future<ShellExecResult> run(String script) async {
+      final r = await shell().exec(script);
+      expect(r.isOk, isTrue, reason: script);
+      return r.valueOrNull!;
+    }
+
+    void seedPointer(String name) {
+      final dir = io.Directory('${sandbox.path}/.fah/skills/$name')
+        ..createSync(recursive: true);
+      io.File('${dir.path}/SKILL.md.pointer').writeAsStringSync(
+        'builtin://skills/$name/SKILL.md\n',
+      );
+    }
+
+    test('cat of a skill path follows the pointer to the builtin body',
+        () async {
+      seedPointer('create-goal');
+      final r = await run('cat .fah/skills/create-goal/SKILL.md');
+      expect(
+        r.stdout,
+        builtinSkillTextAt('builtin://skills/create-goal/SKILL.md'),
+      );
+      expect(r.exitCode, 0);
+    });
+
+    test('a real file wins; a refused pointer fails loudly (E1)', () async {
+      io.File('${sandbox.path}/real.txt').writeAsStringSync('bytes');
+      expect((await run('cat real.txt')).stdout, 'bytes');
+
+      final dir = io.Directory('${sandbox.path}/.fah/skills/create-goal')
+        ..createSync(recursive: true);
+      io.File('${dir.path}/SKILL.md.pointer')
+          .writeAsStringSync('file:///etc/passwd\n');
+      final r = await run('cat .fah/skills/create-goal/SKILL.md');
+      expect(r.exitCode, 1);
+      expect(r.stderr, contains('skill pointer refused'));
+      expect(r.stderr, isNot(contains('No such file or directory')));
+    });
+
+    test('pointer bodies ride pipes into Dart builtins', () async {
+      seedPointer('js-apps');
+      final body = builtinSkillTextAt('builtin://skills/js-apps/SKILL.md')!;
+      final reversed = body.substring(0, body.length - 1)
+          .split('\n')
+          .reversed
+          .join('\n');
+      final r = await run(
+        'cat .fah/skills/js-apps/SKILL.md | tac',
+      );
+      expect(r.stdout, '$reversed\n');
+    });
+  });
+
 }

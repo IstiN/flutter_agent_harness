@@ -34,8 +34,14 @@ String resolveSandboxPath(String path, String cwd) {
 }
 
 /// Reads the input for a command: the files in [paths] concatenated, or the
-/// stdin text when [paths] is empty. Returns `null` and reports the failing
-/// file through [onError] when a file cannot be read.
+/// stdin text when [paths] is empty. Returns `null` and reports the failure
+/// through [onError] when a file cannot be read.
+///
+/// gh-1444 AC1: a failed read whose sibling `<path>.pointer` resolves serves
+/// the compiled-in builtin body (the seeded `.fah/skills/<name>/SKILL.md.pointer`
+/// files are transparent for web-shell reads), and a present-but-invalid
+/// pointer is refused LOUDLY through [onError] (E1) — never a silent
+/// not-found.
 Future<String?> readCommandInput(
   MemoryFileSystem fs,
   String cwd,
@@ -51,12 +57,26 @@ Future<String?> readCommandInput(
       continue;
     }
     final resolved = resolveSandboxPath(arg, cwd);
-    final result = await fs.readTextFile(resolved);
-    if (result.isErr) {
-      onError(arg);
-      return null;
+    var text = (await fs.readTextFile(resolved)).valueOrNull;
+    if (text == null) {
+      final followed = await followSkillPointer(resolved, (pointerPath) async {
+        if (pointerPath.startsWith(builtinSkillPathPrefix)) {
+          return builtinSkillTextAt(pointerPath);
+        }
+        return (await fs.readTextFile(pointerPath)).valueOrNull;
+      });
+      if (followed is SkillPointerRefused) {
+        onError('$arg: skill pointer refused: ${followed.reason}');
+        return null;
+      }
+      if (followed is SkillPointerResolved) {
+        text = followed.text;
+      } else {
+        onError(arg);
+        return null;
+      }
     }
-    buffer.write(result.valueOrNull);
+    buffer.write(text);
   }
   return buffer.toString();
 }

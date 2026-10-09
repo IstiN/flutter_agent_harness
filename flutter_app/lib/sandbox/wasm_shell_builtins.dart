@@ -807,8 +807,9 @@ CatInvocation parseCatArgs(List<String> args) {
 }
 
 /// Applies `-n`/`-b` numbering to [input] the way GNU cat renders it:
-/// right-aligned 6-width number, tab, line; `-b` skips blank lines and
-/// never advances the counter for them.
+/// right-aligned 6-width number, tab, line; `-b` numbers only non-blank
+/// lines and the counter advances ONLY for numbered lines (GNU semantics:
+/// `printf 'a\n\nb\n' | cat -b` labels b as 2, not 3).
 String applyCatNumbering(String input, {required bool nonBlankOnly}) {
   final endsWithNewline = input.endsWith('\n');
   final lines = endsWithNewline
@@ -817,12 +818,12 @@ String applyCatNumbering(String input, {required bool nonBlankOnly}) {
   final out = StringBuffer();
   var counter = 0;
   for (final line in lines) {
-    counter++;
     if (nonBlankOnly && line.isEmpty) {
       out.write('$line\n');
-    } else {
-      out.write('${counter.toString().padLeft(6)}\t$line\n');
+      continue;
     }
+    counter++;
+    out.write('${counter.toString().padLeft(6)}\t$line\n');
   }
   return out.toString();
 }
