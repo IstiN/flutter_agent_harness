@@ -266,6 +266,7 @@ part 'agent_cli_config.dart';
 part 'settings_flow.dart';
 part 'settings_flow_auto_update.dart';
 part 'settings_flow_harness_mode.dart';
+part 'settings_flow_model_caps.dart';
 part 'agent_commands.dart';
 part 'approval_commands.dart';
 part 'skill_commands.dart';
@@ -446,7 +447,8 @@ class AgentCli {
         // config when redaction is on, a disabled config when it is off
         // (job logs raw ⇒ commands untouched). Registered secrets are
         // exempt from command rewriting so approved values materialize.
-        redactionConfig: config.redactionPipeline?.config ??
+        redactionConfig:
+            config.redactionPipeline?.config ??
             const RedactionConfig(enabled: false),
         approvedSecretLiterals: () =>
             config.redactionPipeline?.registeredSecrets.toSet() ?? const {},
