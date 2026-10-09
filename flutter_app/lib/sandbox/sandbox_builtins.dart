@@ -433,11 +433,10 @@ final class SandboxBuiltins {
         : utf8.encode(
             _renderCurlWriteOut(
               parsed.writeOut!,
-              http.Response.bytes(
-                bytes,
-                streamedResponse.statusCode,
-                headers: streamedResponse.headers,
-              ),
+              statusCode: streamedResponse.statusCode,
+              headers: streamedResponse.headers,
+              url: request.url,
+              bodyLength: bytes.length,
             ),
           );
 
@@ -472,17 +471,23 @@ final class SandboxBuiltins {
     }
   }
 
-  /// Renders a curl `-w` template against [response]: `%{variable}` for the
-  /// supported set (unknown → empty, like real curl), `%%` → `%`, and the
-  /// `\n`/`\r`/`\t` escapes.
-  static String _renderCurlWriteOut(String template, http.Response response) {
+  /// Renders a curl `-w` template: `%{variable}` for the supported set
+  /// (unknown → empty, like real curl), `%%` → `%`, and the `\n`/`\r`/`\t`
+  /// escapes. [url] is the effective request URL (`%{url_effective}`).
+  static String _renderCurlWriteOut(
+    String template, {
+    required int statusCode,
+    required Map<String, String> headers,
+    required Uri url,
+    required int bodyLength,
+  }) {
     final variables = <String, String>{
-      'http_code': '${response.statusCode}',
-      'size_download': '${response.bodyBytes.length}',
+      'http_code': '$statusCode',
+      'size_download': '$bodyLength',
       'size_upload': '0',
-      'content_type': response.headers['content-type'] ?? '',
-      'url_effective': response.request?.url.toString() ?? '',
-      'response_code': '${response.statusCode}',
+      'content_type': headers['content-type'] ?? '',
+      'url_effective': url.toString(),
+      'response_code': '$statusCode',
     };
     final out = StringBuffer();
     for (var i = 0; i < template.length; i++) {
