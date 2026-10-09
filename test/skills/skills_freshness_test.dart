@@ -269,18 +269,17 @@ void main() {
           reason: 'latecomer render; out=${io.out}',
         );
 
-        // indexed: the normal path, no warning.
-        final outBefore = io.out.toString();
+        // indexed: the normal path, no warning — assert on the DELTA (the
+        // transcript already carries the latecomer cold-resolve line).
+        final outBeforeKnown = io.out.toString();
         io.sendLine('/skill:known');
         await waitForIt(
           () => io.out.toString().contains('skill known — '),
           reason: 'known render; out=${io.out}',
         );
-        expect(
-          io.out.toString(),
-          isNot(contains('discovered since startup')),
-        );
-        expect(io.out.toString().length, greaterThan(outBefore.length));
+        final knownDelta = io.out.toString().substring(outBeforeKnown.length);
+        expect(knownDelta, isNot(contains('discovered since startup')));
+        expect(knownDelta, contains('skill known — '));
 
         // disabled-by-toggle: named way back, never `unknown skill`.
         io.sendLine('/skill:off');
