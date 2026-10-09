@@ -666,6 +666,37 @@ void main() {
           isEmpty);
     });
 
+    test('ALL skills gone at once still reports the last pin drops '
+        '(round 3: the empty-list corner)', () {
+      final skills = [_skill('fleet', ['use fleet_sweep.sh'])];
+      injectOperativePinCarriers(window(), skills: skills);
+      final notices = <String>[];
+      injectOperativePinCarriers(window(), skills: [], onNotice: notices.add);
+      expect(
+        notices.where((n) => n.contains('skill pin dropped:')).single,
+        contains('use fleet_sweep.sh'),
+      );
+      // The baseline reset: the NEXT empty turn is silent (reported once).
+      final repeat = <String>[];
+      injectOperativePinCarriers(window(), skills: [], onNotice: repeat.add);
+      expect(repeat.where((n) => n.contains('skill pin dropped:')), isEmpty);
+    });
+
+    test('an empty-window or disabled turn never touches the baseline '
+        '(round 3: kill-switch stays inert)', () {
+      final skills = [_skill('fleet', ['use fleet_sweep.sh'])];
+      injectOperativePinCarriers(window(), skills: skills);
+      // Empty window: nothing to report against, baseline untouched.
+      injectOperativePinCarriers([], skills: []);
+      // The next REAL turn with the skills gone still reports the drop.
+      final notices = <String>[];
+      injectOperativePinCarriers(window(), skills: [], onNotice: notices.add);
+      expect(
+        notices.where((n) => n.contains('skill pin dropped:')),
+        isNotEmpty,
+      );
+    });
+
     test('the lifecycle diff fires while OTHER pins keep flowing (the '
         'dropped skill does not silence the rest)', () {
       final skills = [
@@ -722,6 +753,23 @@ void main() {
       final diff = after.diff(before);
       expect(diff.superseded, isEmpty);
       expect(diff.dropped.single.line, 'rule two');
+    });
+
+    test('two simultaneous line edits name DIFFERENT successors — each '
+        'new-key pin is claimed at most once (round 3)', () {
+      final before = SkillOperativePins.build([
+        _skill('fleet', ['rule one', 'rule two']),
+      ]);
+      final after = SkillOperativePins.build([
+        _skill('fleet', ['rule one prime', 'rule two prime']),
+      ]);
+      final diff = after.diff(before);
+      expect(diff.superseded, hasLength(2));
+      final byPrevious = {
+        for (final change in diff.superseded) change.previous.line: change,
+      };
+      expect(byPrevious['rule one']!.current.line, 'rule one prime');
+      expect(byPrevious['rule two']!.current.line, 'rule two prime');
     });
   });
 }

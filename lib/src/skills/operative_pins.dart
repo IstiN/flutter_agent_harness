@@ -143,6 +143,10 @@ class DroppedPin {
 class SkillOperativePins {
   const SkillOperativePins._(this.pins, this.dropped);
 
+  /// The empty registry (no kept pins, no drops) — the all-skills-gone
+  /// baseline for the P4 lifecycle diff (round 3: the empty-list corner).
+  static const SkillOperativePins empty = SkillOperativePins._([], []);
+
   /// The kept pins, ordered: current-session reads first (P6 priority),
   /// then first-declared order.
   final List<OperativePin> pins;
@@ -260,21 +264,30 @@ class SkillOperativePins {
     };
     final superseded = <({OperativePin previous, OperativePin current})>[];
     final droppedPins = <OperativePin>[];
+    // Round 3: a successor may serve at most ONE supersede — a skill that
+    // edited two pinned lines between two windows has TWO distinct
+    // new-key pins, and binding both old lines to the first match named
+    // the wrong "→" line in one of the notices.
+    final claimedSuccessors = <String>{};
     for (final old in previous.pins) {
       if (currentKeys.contains(old.contentKey)) continue;
       if (old.provenance.any((p) => currentSkills.contains(p.skillName))) {
         // The successor must be a CURRENT pin of the same owner skill
         // carrying a NEW content key — never just the skill's first pin
         // (a multi-pin skill's unrelated surviving line must not be named
-        // as the replacement, review gh-1409 round 2).
+        // as the replacement, review gh-1409 round 2) and never a pin
+        // already claimed by an earlier supersede in this same diff
+        // (round 3).
         OperativePin? replacement;
         for (final pin in pins) {
-          final isNewKey = !previous.pinByKey.containsKey(pin.contentKey);
+          final isNewKey = !previous.pinByKey.containsKey(pin.contentKey) &&
+              !claimedSuccessors.contains(pin.contentKey);
           final sameOwner = pin.provenance.any(
             (p) => old.provenance.any((o) => o.skillName == p.skillName),
           );
           if (isNewKey && sameOwner) {
             replacement = pin;
+            claimedSuccessors.add(pin.contentKey);
             break;
           }
         }
@@ -432,7 +445,16 @@ List<Message> injectOperativePinCarriers(
   int? budgetChars,
   void Function(String notice)? onNotice,
 }) {
-  if (!operativePinConfig.enabled || skills.isEmpty || messages.isEmpty) {
+  if (!operativePinConfig.enabled || messages.isEmpty) {
+    return messages;
+  }
+  if (skills.isEmpty) {
+    // The everything-gone-at-once corner (round 3): the last batch of pin
+    // drops must still be reported (P4) — diff the previous baseline
+    // against an empty registry and reset it. The `enabled` kill switch
+    // and an empty window stay fully inert by contract (an empty window
+    // has nothing to report against).
+    _reportAllPinsGone(onNotice);
     return messages;
   }
   final registry = _buildRegistry(
@@ -450,6 +472,19 @@ List<Message> injectOperativePinCarriers(
     boundary,
     _repairProbe(messages, registry, onNotice),
   );
+}
+
+/// Reports the all-skills-gone turn: the previous baseline (if any pins
+/// were live) diffs against [SkillOperativePins.empty] — every kept pin
+/// becomes a P4 drop notice — and the baseline resets so the drop batch
+/// is reported exactly once (round 3, empty-list corner).
+void _reportAllPinsGone(void Function(String notice)? onNotice) {
+  final previous = lastOperativePinRegistry;
+  if (previous == null || previous.isEmpty) return;
+  lastOperativePinRegistry = SkillOperativePins.empty;
+  for (final notice in SkillOperativePins.empty.diff(previous).notices()) {
+    onNotice?.call(notice);
+  }
 }
 
 /// Builds the window's pin registry and reports every non-silent event
