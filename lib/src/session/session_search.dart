@@ -464,7 +464,7 @@ final class _ScanAccumulator {
 
   void _trackTree(SessionRecord record) {
     switch (record) {
-      case LeafRecord(:final targetId):
+      case LeafRecord(:final targetId?):
         if (targetId.isNotEmpty) _activeLeaf = targetId;
       default:
         break;
@@ -602,7 +602,12 @@ Future<void> scanSessionSegment(
   _ScanAccumulator accumulator, {
   int blockBytes = sessionSearchScanBlockBytes,
 }) async {
-  final ranged = fs is RangedReadFileSystem ? fs : null;
+  // The Object bridge is the repo's flow-analysis workaround (the same
+  // trick as session_repair's _repairIoSurface): promoting a
+  // FileSystem-typed variable to the RangedReadFileSystem SUBTYPE inside
+  // a ternary does not stick, so upcast first and probe that.
+  final Object maybeRanged = fs;
+  final ranged = maybeRanged is RangedReadFileSystem ? maybeRanged : null;
   if (ranged == null) {
     final read = await fs.readTextLines(path);
     if (read.isErr) return;
