@@ -120,10 +120,10 @@ final class ModelCapabilityOverride {
       null => null,
       String value =>
         normalizeConfigThinkingLevel(value.trim()) ??
-        (throw ConfigException(
-          '$where.thinkingLevel must be one of '
-          '${configThinkingLevels.join(', ')}, got: $value',
-        )),
+            (throw ConfigException(
+              '$where.thinkingLevel must be one of '
+              '${configThinkingLevels.join(', ')}, got: $value',
+            )),
       final other => throw ConfigException(
         '$where.thinkingLevel must be one of '
         '${configThinkingLevels.join(', ')}, got: $other',
@@ -241,8 +241,11 @@ final class ModelCapabilityOverrides {
         overrides._byProvider.putIfAbsent(
           provider.trim().toLowerCase(),
           () => {},
-        )[modelId] = ModelCapabilityOverride.fromYaml(provider, modelId,
-            modelEntry.value,);
+        )[modelId] = ModelCapabilityOverride.fromYaml(
+          provider,
+          modelId,
+          modelEntry.value,
+        );
       }
     }
     return overrides;
@@ -257,13 +260,8 @@ final class ModelCapabilityOverrides {
   ].fold(0, (sum, n) => sum + n);
 
   /// Registers (or replaces) the override for [provider]/[modelId].
-  void set(
-    String provider,
-    String modelId,
-    ModelCapabilityOverride override,
-  ) {
-    _byProvider
-        .putIfAbsent(provider.trim().toLowerCase(), () => {})[modelId] =
+  void set(String provider, String modelId, ModelCapabilityOverride override) {
+    _byProvider.putIfAbsent(provider.trim().toLowerCase(), () => {})[modelId] =
         override;
   }
 
@@ -283,11 +281,7 @@ final class ModelCapabilityOverrides {
   get entries => [
     for (final provider in _byProvider.entries)
       for (final model in provider.value.entries)
-        (
-          provider: provider.key,
-          modelId: model.key,
-          caps: model.value,
-        ),
+        (provider: provider.key, modelId: model.key, caps: model.value),
   ];
 
   /// Serializes the `overrides:` section body: per-provider blocks nested
@@ -351,6 +345,87 @@ final class EffectiveCaps {
 /// `providerFilterEnvOverride` in provider_catalog.dart.
 ModelCapabilityOverrides? modelCapabilityOverrides;
 
+/// The override floor (the parse boundary's twin): parse rejects
+/// below-floor values loudly; this is the safety net for programmatic
+/// construction. Null rides through.
+int? _flooredOverrideValue(int? value, int floor) =>
+    value == null ? null : (value < floor ? floor : value);
+
+/// The context-window layer of [resolveModelCapabilities]: override >
+/// role slot > endpoint > remote catalog > spec > documented unknown
+/// default, then the global cap LAST. The boundary floors apply to the
+/// OVERRIDE layer only — role-slot and catalog values ride verbatim, so
+/// a chain entry's explicit small caps stay byte-identical to
+/// pre-resolver behavior (REG-1). Returns the effective window plus the
+/// E1 divergence notes (an override contradicting the endpoint report
+/// wins, loudly).
+(int, List<String>) _resolveCapabilityWindowLayer({
+  required String provider,
+  required String modelId,
+  required ModelCapabilityOverride? override,
+  required int? roleContextWindow,
+  required int? endpointContextWindow,
+  required int? remoteCatalogContextWindow,
+  required ProviderSpec? spec,
+  required int? contextWindowCap,
+}) {
+  final notes = <String>[];
+  final resolvedWindow =
+      _flooredOverrideValue(
+        override?.contextWindow,
+        minOverrideContextWindow,
+      ) ??
+      roleContextWindow ??
+      endpointContextWindow ??
+      remoteCatalogContextWindow ??
+      spec?.contextWindow ??
+      unknownModelContextWindow;
+  if (override?.contextWindow != null &&
+      endpointContextWindow != null &&
+      endpointContextWindow != override!.contextWindow) {
+    notes.add(
+      'capability override wins over the endpoint report for '
+      '$provider/$modelId contextWindow: ${override.contextWindow} '
+      '(endpoint reported $endpointContextWindow)',
+    );
+  }
+  // Floor the safety net (parse already rejects small values loudly).
+  return (effectiveContextWindow(resolvedWindow, contextWindowCap), notes);
+}
+
+/// The max-output layer of [resolveModelCapabilities]: override > role
+/// slot > endpoint > Claude ceiling table > spec > documented unknown
+/// default (override values floored like the window — explicit role-slot
+/// values ride verbatim). Returns the value plus the E1 divergence notes.
+(int, List<String>) _resolveCapabilityMaxTokensLayer({
+  required String provider,
+  required String modelId,
+  required ModelCapabilityOverride? override,
+  required int? roleMaxTokens,
+  required int? endpointMaxTokens,
+  required String api,
+  required ProviderSpec? spec,
+}) {
+  final notes = <String>[];
+  final resolvedMaxTokens =
+      _flooredOverrideValue(override?.maxTokens, minOverrideMaxTokens) ??
+      roleMaxTokens ??
+      endpointMaxTokens ??
+      resolveModelMaxOutputTokens(modelId, api: api) ??
+      spec?.maxTokens ??
+      unknownModelMaxTokens;
+  if (override?.maxTokens != null &&
+      endpointMaxTokens != null &&
+      endpointMaxTokens != override!.maxTokens) {
+    notes.add(
+      'capability override wins over the endpoint report for '
+      '$provider/$modelId maxTokens: ${override.maxTokens} '
+      '(endpoint reported $endpointMaxTokens)',
+    );
+  }
+  return (resolvedMaxTokens, notes);
+}
+
 /// The layered resolution (gh-1426 AC1). Pure: every layer is an explicit
 /// argument, no IO. See the library docs for the precedence contract.
 EffectiveCaps resolveModelCapabilities({
@@ -368,66 +443,31 @@ EffectiveCaps resolveModelCapabilities({
   bool reasoning = true,
   int? contextWindowCap,
 }) {
-  final notes = <String>[];
-
   // ── context window: override > role slot > endpoint > remote catalog >
   //    spec > documented unknown default, then the global cap LAST.
-  // The boundary floors apply to the OVERRIDE layer only (parse rejects
-  // below-floor values loudly; this is the safety net for programmatic
-  // construction) — role-slot and catalog values ride verbatim, so a
-  // chain entry's explicit small caps stay byte-identical to pre-resolver
-  // behavior (REG-1).
-  final overrideWindow = override?.contextWindow;
-  final flooredOverrideWindow = overrideWindow == null
-      ? null
-      : (overrideWindow < minOverrideContextWindow
-            ? minOverrideContextWindow
-            : overrideWindow);
-  final resolvedWindow =
-      flooredOverrideWindow ??
-      roleContextWindow ??
-      endpointContextWindow ??
-      remoteCatalogContextWindow ??
-      spec?.contextWindow ??
-      unknownModelContextWindow;
-  if (override?.contextWindow != null &&
-      endpointContextWindow != null &&
-      endpointContextWindow != override!.contextWindow) {
-    notes.add(
-      'capability override wins over the endpoint report for '
-      '$provider/$modelId contextWindow: ${override.contextWindow} '
-      '(endpoint reported $endpointContextWindow)',
-    );
-  }
-  // Floor the safety net (parse already rejects small values loudly).
-  final window = effectiveContextWindow(resolvedWindow, contextWindowCap);
+  final (window, windowNotes) = _resolveCapabilityWindowLayer(
+    provider: provider,
+    modelId: modelId,
+    override: override,
+    roleContextWindow: roleContextWindow,
+    endpointContextWindow: endpointContextWindow,
+    remoteCatalogContextWindow: remoteCatalogContextWindow,
+    spec: spec,
+    contextWindowCap: contextWindowCap,
+  );
 
   // ── max output tokens: override > role slot > endpoint > Claude
-  //    ceiling table > spec > documented unknown default (override values
-  //    floored like the window — explicit role-slot values ride verbatim).
-  final overrideMaxTokens = override?.maxTokens;
-  final flooredOverrideMaxTokens = overrideMaxTokens == null
-      ? null
-      : (overrideMaxTokens < minOverrideMaxTokens
-            ? minOverrideMaxTokens
-            : overrideMaxTokens);
-  final resolvedMaxTokens =
-      flooredOverrideMaxTokens ??
-      roleMaxTokens ??
-      endpointMaxTokens ??
-      resolveModelMaxOutputTokens(modelId, api: api ?? '') ??
-      spec?.maxTokens ??
-      unknownModelMaxTokens;
-  if (override?.maxTokens != null &&
-      endpointMaxTokens != null &&
-      endpointMaxTokens != override!.maxTokens) {
-    notes.add(
-      'capability override wins over the endpoint report for '
-      '$provider/$modelId maxTokens: ${override.maxTokens} '
-      '(endpoint reported $endpointMaxTokens)',
-    );
-  }
-  final maxTokens = resolvedMaxTokens;
+  //    ceiling table > spec > documented unknown default.
+  final (maxTokens, maxTokensNotes) = _resolveCapabilityMaxTokensLayer(
+    provider: provider,
+    modelId: modelId,
+    override: override,
+    roleMaxTokens: roleMaxTokens,
+    endpointMaxTokens: endpointMaxTokens,
+    api: api ?? '',
+    spec: spec,
+  );
+  final notes = [...windowNotes, ...maxTokensNotes];
 
   // ── thinking: model pin (override) > role slot, then the gate.
   final (thinkingLevel, gateNote) = gateThinkingLevel(
@@ -482,7 +522,7 @@ String? maxTokensFieldFor(String? api) => switch (api) {
     return (
       null,
       'thinking level "$level" pinned on a non-reasoning model — gated, '
-      'the request proceeds without thinking fields',
+          'the request proceeds without thinking fields',
     );
   }
   return (level, null);
