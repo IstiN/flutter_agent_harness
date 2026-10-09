@@ -681,4 +681,34 @@ void main() {
       );
     });
   });
+
+  group('parseCliArgs --no-stream-thinking (gh-1433)', () {
+    test('parses the hatch in a headless run', () {
+      final args =
+          parseCliArgs(const ['--no-stream-thinking', '-p', 'hi']) as CliArgs;
+      expect(args.noStreamThinking, isTrue);
+      expect(args.streamThinking, isFalse);
+      expect(args.isHeadless, isTrue);
+    });
+
+    test('defaults to false', () {
+      final args = parseCliArgs(const ['-p', 'hi']) as CliArgs;
+      expect(args.noStreamThinking, isFalse);
+    });
+
+    test('rejects the combination with --stream-thinking', () {
+      expect(
+        () => parseCliArgs(
+          const ['--stream-thinking', '--no-stream-thinking', '-p', 'hi'],
+        ),
+        throwsA(
+          isA<CliArgsException>().having(
+            (e) => e.message,
+            'message',
+            contains('cannot combine --stream-thinking'),
+          ),
+        ),
+      );
+    });
+  });
 }

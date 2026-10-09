@@ -131,9 +131,14 @@ Flags: `--model <id>`,
 `--provider openai-completions|anthropic|google|dial|minimax|zai`,
 `--base-url <url>`, `--cwd <dir>`, `--session-root <dir>`, `-p`/`--prompt
 <text>`, `--stream-thinking` (stream the model's thinking deltas dimmed
-into stdout — off by default, so piped/machine-consumed output stays
-byte-identical; `output.streamThinking: true` in the config is the
-durable form), `--help`, `--version`.
+into stdout — the default for headless `-p` runs since gh-1433, whose log
+is the UI; `--no-stream-thinking` opts out for one run and
+`output.streamThinking` in the config is the durable form for
+interactive line mode), `--help`, `--version`. Rendered deltas —
+thinking and streamed text, on every face since gh-1433 — pass through
+the redaction pipeline at render time, so interactive `--stream-thinking`
+output is redacted too (a registered secret echoed in a delta is masked
+live, not only in tool results).
 
 The `chatgpt` provider (Codex backend) is also available: sign in with a
 ChatGPT account via `/provider chatgpt oauth` in the REPL (OAuth-only —

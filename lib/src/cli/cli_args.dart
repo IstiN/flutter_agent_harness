@@ -111,6 +111,7 @@ final class CliArgs extends CliArgsResult {
     this.debugSecrets = false,
     this.noFormat = false,
     this.streamThinking = false,
+    this.noStreamThinking = false,
   }) : super._();
 
   /// `--model <id>`.
@@ -287,6 +288,12 @@ final class CliArgs extends CliArgsResult {
   /// output.
   final bool streamThinking;
 
+  /// `--no-stream-thinking` (gh-1433): the thinking-scoped silence escape
+  /// hatch — on the log face (headless runs, which stream thinking by
+  /// default since gh-1433) it restores legacy thinking silence for the
+  /// run. Cannot combine with `--stream-thinking`.
+  final bool noStreamThinking;
+
   /// Whether this invocation runs a single headless prompt instead of the
   /// interactive REPL.
   bool get isHeadless =>
@@ -310,9 +317,9 @@ const Map<String, CliArgsResult Function(List<String>)> _cliSubcommands = {
 };
 
 /// Applies the no-value boolean flags (`--wait-for-jobs`, `--pi`,
-/// `--omp`, `--debug-secrets`, `--no-format`, `--stream-thinking`) to
-/// [values]; returns false when [arg] is none of them (the caller falls
-/// through to the value-flag table).
+/// `--omp`, `--debug-secrets`, `--no-format`, `--stream-thinking`,
+/// `--no-stream-thinking`) to [values]; returns false when [arg] is none
+/// of them (the caller falls through to the value-flag table).
 bool _applyBooleanFlag(_CliArgValues values, String arg) {
   if (arg == '--wait-for-jobs') {
     values.waitForJobs = true;
@@ -338,14 +345,20 @@ bool _applyBooleanFlag(_CliArgValues values, String arg) {
     values.streamThinking = true;
     return true;
   }
+  if (arg == '--no-stream-thinking') {
+    values.noStreamThinking = true;
+    return true;
+  }
   return false;
 }
 
 /// The effective gh-1198 thinking-stream setting for a run: the
 /// `--stream-thinking` flag wins over the `output.streamThinking` config
 /// for the run; the config default (false) keeps the byte-identical
-/// legacy output. The flag is opt-in only, so "wins" is an inclusive OR —
-/// there is no `--no-stream-thinking` spelling.
+/// legacy output. The flag is opt-in only, so "wins" is an inclusive OR.
+/// (Since gh-1433 the LOG face streams thinking by default — the
+/// `--no-stream-thinking` hatch silences it there — so this setting now
+/// decides the INTERACTIVE line-mode face only.)
 bool resolveStreamThinking({required bool flag, required bool configValue}) =>
     flag || configValue;
 
@@ -1147,6 +1160,7 @@ final class _CliArgValues {
   bool debugSecrets = false;
   bool noFormat = false;
   bool streamThinking = false;
+  bool noStreamThinking = false;
   final promptTemplateDirs = <String>[];
   String? mode;
   String? cwd;
@@ -1188,6 +1202,11 @@ final class _CliArgValues {
         'cannot combine --prompt-file with positional prompt arguments',
       );
     }
+    if (streamThinking && noStreamThinking) {
+      throw const CliArgsException(
+        'cannot combine --stream-thinking and --no-stream-thinking',
+      );
+    }
     _validateBackendModeFlags();
     return CliArgs(
       model: model,
@@ -1223,6 +1242,7 @@ final class _CliArgValues {
       debugSecrets: debugSecrets,
       noFormat: noFormat,
       streamThinking: streamThinking,
+      noStreamThinking: noStreamThinking,
       attachments: List.unmodifiable(attachments),
     );
   }
