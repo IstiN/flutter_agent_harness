@@ -26,9 +26,7 @@ void main() {
       final server = await MockLlmServer.start()
         // Turn 1 seeds a transcript taller than the viewport (24 rows ->
         // ~19-row history window), so scrolling up has somewhere to go.
-        ..enqueueText([
-          for (var i = 1; i <= 30; i++) 'seed line $i',
-        ].join('\n'))
+        ..enqueueText([for (var i = 1; i <= 30; i++) 'seed line $i'].join('\n'))
         // Turn 2 keeps the agent BUSY while the user scrolls. The mock
         // protocol chains a run across TOOL segments only — a pure-text
         // segment ENDS the run — so the post-detach arrivals are spaced
@@ -81,7 +79,10 @@ tui:
       harness.sendText('stream while I scroll');
       await Future<void>.delayed(const Duration(milliseconds: 150));
       harness.sendEnter();
-      await harness.waitForText('· submit', timeout: const Duration(seconds: 20));
+      await harness.waitForText(
+        '· submit',
+        timeout: const Duration(seconds: 20),
+      );
 
       // (1) Detach mid-run: PageUp parks the view above the live edge.
       // The held rule carries the position percent; the live-fold hint
@@ -98,33 +99,61 @@ tui:
         RegExp(r'\d+% · ● \d+ new'),
         timeout: const Duration(seconds: 30),
       );
-      expect(counted, contains('End = live'),
-          reason: 'the chip carries the one-action re-engage hint');
-      final firstCount =
-          int.parse(RegExp(r'● (\d+) new').firstMatch(counted)!.group(1)!);
+      expect(
+        counted,
+        contains('End = live'),
+        reason: 'the chip carries the one-action re-engage hint',
+      );
+      final firstCount = int.parse(
+        RegExp(r'● (\d+) new').firstMatch(counted)!.group(1)!,
+      );
       final grown = await _waitCounterGrows(harness, firstCount);
       // Absence assertions need a SETTLED screen: the cell-diff paint path
       // repaints only changed cells, so the pre-detach live-fold hint row
       // can linger one frame after the detach (#550/#557 family).
       await harness.waitForOutput(settleMs: 400);
       final settled = harness.screenText;
-      expect(settled, isNot(contains('above fold')),
-          reason: 'detached: the live-fold hint belongs to following only');
-      expect(grown, greaterThan(firstCount),
-          reason: 'unseen arrivals keep counting while held');
+      expect(
+        settled,
+        isNot(contains('above fold')),
+        reason: 'detached: the live-fold hint belongs to following only',
+      );
+      expect(
+        grown,
+        greaterThan(firstCount),
+        reason: 'unseen arrivals keep counting while held',
+      );
 
-      // (3) End re-engages: the hint row leaves the glass and the newest
-      // content is at the live edge.
+      // (3) End re-engages: the held rule (percent + counter) is replaced
+      // by the live-fold hint (the #827 "N lines above fold" announce for
+      // the following state) and the newest content is at the live edge.
       harness.sendText('\x1b[F'); // end
       await Future<void>.delayed(const Duration(milliseconds: 1500));
       final live = harness.screenText;
-      expect(live, isNot(contains('above fold')),
-          reason: 'the fold hint must not survive re-engage');
-      expect(live, isNot(contains(RegExp(r'● \d+ new'))),
-          reason: 'the counter resets when the unseen tail is revealed');
-      expect(live, contains('Background jobs'),
-          reason: 're-engage lands on the LIVE edge: the busy tail is on '
-              'the glass, not the parked view');
+      expect(
+        live,
+        isNot(contains(RegExp(r'● \d+ new'))),
+        reason: 'the counter resets when the unseen tail is revealed',
+      );
+      expect(
+        live,
+        isNot(contains(RegExp(r'\d+% · '))),
+        reason: 'the held percent rule leaves the glass on re-engage',
+      );
+      expect(
+        live,
+        contains('above fold'),
+        reason:
+            'back to FOLLOWING: the live-fold hint replaces the '
+            'held rule (the #827 etiquette)',
+      );
+      expect(
+        live,
+        contains('Background jobs'),
+        reason:
+            're-engage lands on the LIVE edge: the busy tail is on '
+            'the glass, not the parked view',
+      );
 
       // Let the run settle before teardown (no detached-pty noise): the
       // last sleep tool still has up to 8s to drain — and its completion
@@ -134,23 +163,22 @@ tui:
         timeout: const Duration(seconds: 30),
       );
       await harness.waitForOutput(settleMs: 400);
-      expect(harness.screenText, contains('turn two done'),
-          reason: 'the newest arrival rides the live edge after re-engage');
+      expect(
+        harness.screenText,
+        contains('turn two done'),
+        reason: 'the newest arrival rides the live edge after re-engage',
+      );
     },
   );
 }
 
 /// Polls the SCREEN until the held-rule counter exceeds [from]; returns the
 /// parsed count. Screen-side (not raw) — the contract is the glass.
-Future<int> _waitCounterGrows(
-  FaCliHarness harness,
-  int from,
-) async {
+Future<int> _waitCounterGrows(FaCliHarness harness, int from) async {
   final deadline = DateTime.now().add(const Duration(seconds: 30));
   while (DateTime.now().isBefore(deadline)) {
     await Future<void>.delayed(const Duration(milliseconds: 200));
-    final match =
-        RegExp(r'● (\d+) new').firstMatch(harness.screenText);
+    final match = RegExp(r'● (\d+) new').firstMatch(harness.screenText);
     if (match != null && int.parse(match.group(1)!) > from) {
       return int.parse(match.group(1)!);
     }

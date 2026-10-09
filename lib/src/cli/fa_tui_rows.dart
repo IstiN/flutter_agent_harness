@@ -206,8 +206,7 @@ extension _TuiRowRenderers on FaTuiModel {
       final counterText = follow.unseen > 0
           ? '· ● ${follow.unseen} new · End = live '
           : '';
-      final progressWidth =
-          tuiTextWidth(progressText) + counterText.length;
+      final progressWidth = tuiTextWidth(progressText) + counterText.length;
       final leftWidth = (termWidth - progressWidth) ~/ 2;
       final rightWidth = termWidth - progressWidth - leftWidth;
       b.writeln(

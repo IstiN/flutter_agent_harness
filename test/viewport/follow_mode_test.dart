@@ -47,10 +47,7 @@ void main() {
     test('scrolling back toward the live edge within the arm band '
         're-engages and flushes unseen', () {
       const held = FollowMode.held(unseen: 30);
-      final rearmed = held.userScrolled(
-        distanceFromLiveEdge: 2,
-        armExtent: 2,
-      );
+      final rearmed = held.userScrolled(distanceFromLiveEdge: 2, armExtent: 2);
       expect(rearmed.isLive, isTrue);
       expect(rearmed.unseen, 0, reason: 're-engage flushes the count');
     });
@@ -148,11 +145,20 @@ void main() {
 
   group('value semantics', () {
     test('equal states compare equal (app setState relies on it)', () {
-      expect(const FollowMode.held(unseen: 4), const FollowMode.held(unseen: 4));
+      expect(
+        const FollowMode.held(unseen: 4),
+        const FollowMode.held(unseen: 4),
+      );
       expect(const FollowMode.live(), const FollowMode.live());
-      expect(const FollowMode.held(unseen: 4), isNot(const FollowMode.held(unseen: 5)));
+      expect(
+        const FollowMode.held(unseen: 4),
+        isNot(const FollowMode.held(unseen: 5)),
+      );
       expect(const FollowMode.live(), isNot(const FollowMode.held(unseen: 0)));
-      expect(const FollowMode.held(unseen: 4).hashCode, const FollowMode.held(unseen: 4).hashCode);
+      expect(
+        const FollowMode.held(unseen: 4).hashCode,
+        const FollowMode.held(unseen: 4).hashCode,
+      );
     });
   });
 }

@@ -30,9 +30,7 @@ extension _TuiViewport on FaTuiModel {
     return copyWith(
       scrollOffset: next,
       follow: followMode,
-      heldAnchorLine: followMode.isHeld
-          ? _anchorLineAtRow(next)
-          : -1,
+      heldAnchorLine: followMode.isHeld ? _anchorLineAtRow(next) : -1,
       bootAnchorLine: 0,
     );
   }

@@ -37,7 +37,11 @@ extension _TuiMouseRegions on FaTuiModel {
   /// region routes to [_activateRegion].
   (Model, Cmd?) _handleMouseRelease(MouseReleaseMsg msg) {
     if (!mouseCapture) return (this, null);
-    final gesture = _mouseRouter.releaseAt(msg.mouse.x, msg.mouse.y, _hitRegions);
+    final gesture = _mouseRouter.releaseAt(
+      msg.mouse.x,
+      msg.mouse.y,
+      _hitRegions,
+    );
     if (gesture is! MouseClickGesture) return (this, null);
     return _activateRegion(gesture.region, msg.mouse.x, msg.mouse.y);
   }
@@ -49,10 +53,7 @@ extension _TuiMouseRegions on FaTuiModel {
     switch (region.kind) {
       case TuiRegionKind.composer:
         final caret = _caretForComposerClick(y - region.y, x);
-        return (
-          copyWith(cursor: caret.clamp(0, inputText.length)),
-          null,
-        );
+        return (copyWith(cursor: caret.clamp(0, inputText.length)), null);
       case TuiRegionKind.menuRow:
         final index = region.index.clamp(0, menuItems.length - 1);
         // Picker rows go through the picker accept; slash/path menu rows
@@ -89,7 +90,8 @@ extension _TuiMouseRegions on FaTuiModel {
     final gutter = _activeGutterWidth;
     final content = termWidth - gutter;
     final width = content < 1 ? 1 : content;
-    final col = gutter > 0 ? (clickCol > gutter ? clickCol - gutter : 0)
+    final col = gutter > 0
+        ? (clickCol > gutter ? clickCol - gutter : 0)
         : clickCol;
     var offset = 0; // code units consumed, newlines included
     for (final line in inputText.split('\n')) {
@@ -135,15 +137,12 @@ extension _TuiMouseRegions on FaTuiModel {
     switch (arg) {
       case '':
       case 'on':
-        return (
-          copyWith(mouseCapture: true, inputText: '', cursor: 0),
-          null,
-        );
+        return (copyWith(mouseCapture: true, inputText: '', cursor: 0), null);
       case 'off':
         final hint = _mouseHintShown
             ? null
             : 'mouse capture off — wheel and clicks disabled; /mouse to '
-                're-enable';
+                  're-enable';
         _mouseHintShown = true;
         return (
           (hint == null ? this : _appendServiceLine(_dim(hint))).copyWith(
@@ -155,10 +154,9 @@ extension _TuiMouseRegions on FaTuiModel {
         );
       default:
         return (
-          _appendServiceLine(_dim('usage: /mouse [on|off]')).copyWith(
-            inputText: '',
-            cursor: 0,
-          ),
+          _appendServiceLine(
+            _dim('usage: /mouse [on|off]'),
+          ).copyWith(inputText: '', cursor: 0),
           null,
         );
     }

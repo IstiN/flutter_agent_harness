@@ -1447,8 +1447,7 @@ class _FaChatScreenState extends State<FaChatScreen>
           // The follow-mode jump pill (gh-1439): a SIBLING of the history
           // banner, live-updating — visible exactly while held with
           // counted arrivals, one tap returns to the live tail.
-          if (_follow.isHeld && _follow.unseen > 0)
-            _followLivePill(strings),
+          if (_follow.isHeld && _follow.unseen > 0) _followLivePill(strings),
           composerBuilder != null
               ? composerBuilder(context, widget.service, _dropBridge)
               : ChatComposer(

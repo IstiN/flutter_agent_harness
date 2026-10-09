@@ -98,8 +98,11 @@ void main() {
 
     // Hold: drag toward history, parking beyond the arm band.
     await _dragTowardHistory(tester, 400);
-    expect(find.byKey(const ValueKey('faChatJumpToLivePill')), findsNothing,
-        reason: 'no arrivals yet — the affordance shows only with unseen');
+    expect(
+      find.byKey(const ValueKey('faChatJumpToLivePill')),
+      findsNothing,
+      reason: 'no arrivals yet — the affordance shows only with unseen',
+    );
 
     // The stream keeps producing; the viewport must stay pinned and the
     // count must grow instead of yanking the user down.
@@ -110,20 +113,28 @@ void main() {
 
     final pill = find.byKey(const ValueKey('faChatJumpToLivePill'));
     expect(pill, findsOneWidget);
-    expect(find.text('⌄ 7 new'), findsOneWidget,
-        reason: 'the pill counts live (AC2)');
+    expect(
+      find.text('⌄ 7 new'),
+      findsOneWidget,
+      reason: 'the pill counts live (AC2)',
+    );
 
     // One action: back to the live tail, count flushed.
     await tester.tap(pill);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     expect(pill, findsNothing);
-    final position = tester.state<ScrollableState>(
-      find.byType(Scrollable).first,
-    ).widget.controller!.position;
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .widget
+        .controller!
+        .position;
     expect(position.pixels, 0, reason: 'the window lands at the live tail');
-    expect(find.text('m36'), findsOneWidget,
-        reason: 'the newest arrival is on the glass (zero loss)');
+    expect(
+      find.text('m36'),
+      findsOneWidget,
+      reason: 'the newest arrival is on the glass (zero loss)',
+    );
   });
 
   testWidgets('AC2: a near-bottom drag re-arms live without the pill', (
@@ -141,8 +152,11 @@ void main() {
     expect(find.byKey(const ValueKey('faChatJumpToLivePill')), findsOneWidget);
 
     await _dragTowardHistory(tester, -350);
-    expect(find.byKey(const ValueKey('faChatJumpToLivePill')), findsNothing,
-        reason: 'landing inside the band re-arms live — no button needed');
+    expect(
+      find.byKey(const ValueKey('faChatJumpToLivePill')),
+      findsNothing,
+      reason: 'landing inside the band re-arms live — no button needed',
+    );
 
     // Following again: further arrivals never show the pill.
     service.append(2);
@@ -153,7 +167,9 @@ void main() {
   testWidgets('AC4: a held session loses nothing — the post-jump '
       'transcript equals the twin live run', (tester) async {
     // Twin A: hold, stream 20, jump to live.
-    final held = _FollowTestService()..msgs = _msgs(30)..streaming = true;
+    final held = _FollowTestService()
+      ..msgs = _msgs(30)
+      ..streaming = true;
     await _pump(tester, held);
     await _dragTowardHistory(tester, 400);
     held.append(20);
@@ -161,22 +177,32 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('faChatJumpToLivePill')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
-    final heldWindow = tester.widgetList<Text>(
-      find.byType(Text),
-    ).map((t) => t.data).whereType<String>().toSet();
+    final heldWindow = tester
+        .widgetList<Text>(find.byType(Text))
+        .map((t) => t.data)
+        .whereType<String>()
+        .toSet();
 
     // Twin B: the same stream with the user at the bottom the whole time.
-    final live = _FollowTestService()..msgs = _msgs(30)..streaming = true;
+    final live = _FollowTestService()
+      ..msgs = _msgs(30)
+      ..streaming = true;
     await _pump(tester, live);
     live.append(20);
     await tester.pump(const Duration(milliseconds: 100));
-    final liveWindow = tester.widgetList<Text>(
-      find.byType(Text),
-    ).map((t) => t.data).whereType<String>().toSet();
+    final liveWindow = tester
+        .widgetList<Text>(find.byType(Text))
+        .map((t) => t.data)
+        .whereType<String>()
+        .toSet();
 
-    expect(heldWindow, liveWindow,
-        reason: 'held withheld only the VIEWPORT — after re-engage the '
-            'rendered transcript equals the live twin');
+    expect(
+      heldWindow,
+      liveWindow,
+      reason:
+          'held withheld only the VIEWPORT — after re-engage the '
+          'rendered transcript equals the live twin',
+    );
   });
 
   testWidgets('AC5: a fresh screen starts live; a session swap never '
@@ -186,10 +212,7 @@ void main() {
     await _dragTowardHistory(tester, 400);
     service.append(1);
     await tester.pump(const Duration(milliseconds: 100));
-    expect(
-      find.byKey(const ValueKey('faChatJumpToLivePill')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('faChatJumpToLivePill')), findsOneWidget);
 
     // The host swaps sessions: the same screen re-syncs to the new
     // service — the viewport restarts live (nothing durable carries the
@@ -207,9 +230,11 @@ void main() {
       findsNothing,
       reason: 'a swapped-in session always starts live',
     );
-    final position = tester.state<ScrollableState>(
-      find.byType(Scrollable).first,
-    ).widget.controller!.position;
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .widget
+        .controller!
+        .position;
     expect(position.pixels, 0);
   });
 
@@ -226,10 +251,16 @@ void main() {
     // never auto-paged — the pill is a SIBLING, not a rework.
     await _dragTowardHistory(tester, 400);
     await tester.pump();
-    expect(find.textContaining('Load newer'), findsOneWidget,
-        reason: 'the deep-paged banner keeps its own contract (#1159)');
-    expect(service.loadNewerHistoryCalls, 0,
-        reason: 'a held user is never auto-paged (#1159 AC3)');
+    expect(
+      find.textContaining('Load newer'),
+      findsOneWidget,
+      reason: 'the deep-paged banner keeps its own contract (#1159)',
+    );
+    expect(
+      service.loadNewerHistoryCalls,
+      0,
+      reason: 'a held user is never auto-paged (#1159 AC3)',
+    );
     expect(
       find.byKey(const ValueKey('faChatJumpToLivePill')),
       findsNothing,

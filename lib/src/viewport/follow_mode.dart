@@ -107,9 +107,7 @@ final class FollowMode {
 
   @override
   bool operator ==(Object other) =>
-      other is FollowMode &&
-      other.isHeld == isHeld &&
-      other.unseen == unseen;
+      other is FollowMode && other.isHeld == isHeld && other.unseen == unseen;
 
   @override
   int get hashCode => Object.hash(isHeld, unseen);

@@ -60,7 +60,8 @@ FaTuiModel filled(int n, {int termHeight = 24}) {
 
 void main() {
   group('AC1 — PgUp holds through the stream; the counter lives on the '
-      'rule row; End returns to live', () {    test('PgUp holds the fold through 50 append events', () {
+      'rule row; End returns to live', () {
+    test('PgUp holds the fold through 50 append events', () {
       var model = filled(60, termHeight: 24);
       final liveBottom = model.scrollOffset;
       model = _send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageUp)));
@@ -92,12 +93,21 @@ void main() {
       final unseen = _unseenOf(rows);
       expect(unseen, 3, reason: 'the counter shows on-screen while held');
       final counterRow = rows.firstWhere((r) => r.contains('● 3 new'));
-      expect(counterRow.startsWith('────'), isTrue,
-          reason: 'the counter rides the dim rule row (chrome grammar)');
-      expect(counterRow, contains('%'),
-          reason: 'the position rule stays — the counter GROWS it');
-      expect(counterRow, contains('End'),
-          reason: 'the one-action re-engage is named on the row');
+      expect(
+        counterRow.startsWith('────'),
+        isTrue,
+        reason: 'the counter rides the dim rule row (chrome grammar)',
+      );
+      expect(
+        counterRow,
+        contains('%'),
+        reason: 'the position rule stays — the counter GROWS it',
+      );
+      expect(
+        counterRow,
+        contains('End'),
+        reason: 'the one-action re-engage is named on the row',
+      );
     });
 
     test('End jumps to live and flushes the count', () {
@@ -114,20 +124,26 @@ void main() {
       expect(
         _rowsOf(model).join('\n'),
         contains('late 9'),
-        reason: 'the window lands at the live edge — the newest arrival is '
+        reason:
+            'the window lands at the live edge — the newest arrival is '
             'on the glass',
       );
-      expect(_unseenOf(_rowsOf(model)), isNull,
-          reason: 'no counter once live');
+      expect(_unseenOf(_rowsOf(model)), isNull, reason: 'no counter once live');
     });
 
     test('End keeps its composer-caret role while the composer has text', () {
       var model = filled(60);
       model = _send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageUp)));
       final withText = model.copyWith(inputText: 'draft', cursor: 0);
-      final after = _send(withText, KeyPressMsg(const TeaKey(code: KeyCode.end)));
-      expect(after.followTail, isFalse,
-          reason: 'End is the caret key when the composer owns text');
+      final after = _send(
+        withText,
+        KeyPressMsg(const TeaKey(code: KeyCode.end)),
+      );
+      expect(
+        after.followTail,
+        isFalse,
+        reason: 'End is the caret key when the composer owns text',
+      );
       expect(after.cursor, 'draft'.length);
     });
 
@@ -139,8 +155,11 @@ void main() {
       expect(model.followTail, isFalse);
 
       model = _send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageDown)));
-      expect(model.followTail, isTrue,
-          reason: 'the page lands inside the near-bottom band');
+      expect(
+        model.followTail,
+        isTrue,
+        reason: 'the page lands inside the near-bottom band',
+      );
       expect(model.follow.unseen, 0);
     });
 
@@ -170,10 +189,14 @@ void main() {
       // The chip row registers a hit region; a release on it re-engages.
       model.view(); // rebuild the per-frame registry
       final (next, _) = model.update(
-        MouseClickMsg(Mouse(x: 2, y: counterRowIndex, button: MouseButton.left)),
+        MouseClickMsg(
+          Mouse(x: 2, y: counterRowIndex, button: MouseButton.left),
+        ),
       );
       final (released, _) = (next as FaTuiModel).update(
-        MouseReleaseMsg(Mouse(x: 2, y: counterRowIndex, button: MouseButton.left)),
+        MouseReleaseMsg(
+          Mouse(x: 2, y: counterRowIndex, button: MouseButton.left),
+        ),
       );
       final live = released as FaTuiModel;
       expect(live.followTail, isTrue);
@@ -199,14 +222,21 @@ void main() {
         liveRun = _send(liveRun, OutputMsg('arrive $i', newline: true));
       }
 
-      expect(heldRun.outputLines, liveRun.outputLines,
-          reason: 'held mode appends everything — only the viewport '
-              'withholds');
+      expect(
+        heldRun.outputLines,
+        liveRun.outputLines,
+        reason:
+            'held mode appends everything — only the viewport '
+            'withholds',
+      );
       expect(heldRun.follow.unseen, 0);
       expect(heldRun.scrollOffset, greaterThan(parked));
       final rows = _rowsOf(heldRun);
-      expect(rows.join('\n'), contains('arrive 29'),
-          reason: 'the newest arrival is on the glass after re-engage');
+      expect(
+        rows.join('\n'),
+        contains('arrive 29'),
+        reason: 'the newest arrival is on the glass after re-engage',
+      );
     });
   });
 
@@ -220,8 +250,7 @@ void main() {
       expect(_rowsOf(fresh).join('\n'), contains('row 59'));
     });
 
-    test('a held model copied for a new run starts the run held-stateless',
-        () {
+    test('a held model copied for a new run starts the run held-stateless', () {
       // Held state lives on the viewport model instance only — nothing
       // durable carries it (no store, no session field).
       var held = filled(60);
@@ -231,8 +260,11 @@ void main() {
         outputLines: held.outputLines,
         scrollOffset: held.scrollOffset,
       );
-      expect(rebooted.follow, const FollowMode.live(),
-          reason: 'a rebooted viewport never restores held');
+      expect(
+        rebooted.follow,
+        const FollowMode.live(),
+        reason: 'a rebooted viewport never restores held',
+      );
     });
   });
 
@@ -242,10 +274,7 @@ void main() {
       // 2401 lines: the next append crosses the trim boundary and cuts
       // head lines (the compaction-fold rebuild shape).
       var model = _build().copyWith(
-        outputLines: [
-          for (var i = 0; i < 2400; i++) 'pad $i',
-          'TAIL-MARK',
-        ],
+        outputLines: [for (var i = 0; i < 2400; i++) 'pad $i', 'TAIL-MARK'],
       );
       // Park at the live edge first, then hold mid-transcript — the trim
       // must not shift what the user is reading.
@@ -259,7 +288,8 @@ void main() {
       expect(
         visibleBefore,
         visibleAfter,
-        reason: 'the window re-anchors to the same transcript line — the '
+        reason:
+            'the window re-anchors to the same transcript line — the '
             'head trim must not shift what the user is reading',
       );
     });
@@ -271,9 +301,13 @@ void main() {
 
       model = _send(model, WindowSizeMsg(80, 12));
       expect(model.followTail, isFalse, reason: 'resize keeps the hold');
-      expect(_topVisibleLine(model), topLineBefore,
-          reason: 'the window tops out at the same transcript line at the '
-              'new size');
+      expect(
+        _topVisibleLine(model),
+        topLineBefore,
+        reason:
+            'the window tops out at the same transcript line at the '
+            'new size',
+      );
     });
   });
 
@@ -293,8 +327,10 @@ void main() {
     test('settle cards while held count the same way', () {
       var model = filled(60);
       model = _send(model, KeyPressMsg(const TeaKey(code: KeyCode.pageUp)));
-      model = _send(model, OutputMsg('── run settled · 1.2s ──\n── next ──',
-          newline: true));
+      model = _send(
+        model,
+        OutputMsg('── run settled · 1.2s ──\n── next ──', newline: true),
+      );
       expect(model.follow.unseen, 1);
       expect(model.followTail, isFalse);
     });
@@ -307,9 +343,13 @@ void main() {
       // gesture — held survives a resize that lands the window near the
       // new bottom.
       model = _send(model, WindowSizeMsg(80, 60));
-      expect(model.followTail, isFalse,
-          reason: 'only the user gesture re-arms — never a programmatic '
-              'position');
+      expect(
+        model.followTail,
+        isFalse,
+        reason:
+            'only the user gesture re-arms — never a programmatic '
+            'position',
+      );
     });
   });
 
@@ -321,9 +361,13 @@ void main() {
         model,
         MouseWheelMsg(const Mouse(x: 0, y: 0, button: MouseButton.wheelUp)),
       );
-      expect(afterWheel.followTail, isTrue,
-          reason: 'native mode keeps the mouse for selection — only an '
-              'explicit PgUp disengages');
+      expect(
+        afterWheel.followTail,
+        isTrue,
+        reason:
+            'native mode keeps the mouse for selection — only an '
+            'explicit PgUp disengages',
+      );
       final afterPgUp = _send(
         afterWheel,
         KeyPressMsg(const TeaKey(code: KeyCode.pageUp)),
@@ -348,11 +392,18 @@ void main() {
         prompt: TuiPromptState(ApprovalPromptSpec(request: request)),
       );
       final rows = _rowsOf(heldModel);
-      expect(rows.join('\n'), contains('rm -rf build/'),
-          reason: 'the approval prompt renders at its own rules — follow '
-              'mode never delays it');
-      expect(_unseenOf(rows), 1,
-          reason: 'the held counter keeps counting beside the prompt');
+      expect(
+        rows.join('\n'),
+        contains('rm -rf build/'),
+        reason:
+            'the approval prompt renders at its own rules — follow '
+            'mode never delays it',
+      );
+      expect(
+        _unseenOf(rows),
+        1,
+        reason: 'the held counter keeps counting beside the prompt',
+      );
     });
   });
 
@@ -367,10 +418,16 @@ void main() {
       }
       expect(model.followTail, isTrue);
       expect(model.follow.unseen, 0);
-      expect(model.scrollOffset, greaterThan(startOffset),
-          reason: 'the live edge advanced with every append');
-      expect(_rowsOf(model).join('\n'), contains('live 49'),
-          reason: 'the window rides the live edge');
+      expect(
+        model.scrollOffset,
+        greaterThan(startOffset),
+        reason: 'the live edge advanced with every append',
+      );
+      expect(
+        _rowsOf(model).join('\n'),
+        contains('live 49'),
+        reason: 'the window rides the live edge',
+      );
       expect(_unseenOf(_rowsOf(model)), isNull);
     });
 
