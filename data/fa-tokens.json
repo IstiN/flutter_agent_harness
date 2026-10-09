@@ -645,6 +645,13 @@
       "prompt": 114425,
       "completion": 4852,
       "total": 119277
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-09T18:51:38Z",
+      "prompt": 111384,
+      "completion": 27751,
+      "total": 139135
     }
   ],
   "pr-1445": [
