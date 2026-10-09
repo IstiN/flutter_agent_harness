@@ -88,6 +88,107 @@ final class StructuredViewState {
   bool isCovered(String recordId) => coveredRecordIds.containsKey(recordId);
 }
 
+/// One fold record the replay dropped WHOLE (gh-1425 AC2): it carries NO
+/// ids this build can read — the version-skew shape (an older writer put
+/// the ids under keys this binary does not parse, so every id field is
+/// empty). All-or-note resolution means none of its ids enter the derived
+/// state (there are none) and its own marker/text never renders; a visible
+/// note names the dropped generation instead.
+final class DroppedFold {
+  const DroppedFold({required this.record});
+
+  /// The fold record itself (hidden range / compact checkpoint /
+  /// segment pin).
+  final SessionRecord record;
+}
+
+/// The [StructuredViewState] a fold-aware replay produced plus the folds
+/// it had to drop whole.
+final class ResolvedFolds {
+  const ResolvedFolds({required this.state, required this.dropped});
+
+  final StructuredViewState state;
+
+  /// The dropped fold records, in path order — the renderer surfaces one
+  /// visible resume note per entry.
+  final List<DroppedFold> dropped;
+}
+
+/// Resolves the structured fold chain over a branch [path] with ALL-OR-NOTE
+/// semantics (gh-1425 AC2): a fold record the replaying binary cannot
+/// RESOLVE — it carries no ids at all (the record-shape skew a newer binary
+/// can hit replaying an older build's folds: the ids live under keys this
+/// build does not read) — is dropped WHOLE and reported, so its text never
+/// renders as a valid checkpoint/hide and nothing half-applies silently.
+///
+/// References that merely point OFF the path are NOT skew and are applied
+/// as before, unchanged: a checkpoint legitimately covers an off-branch
+/// arc (it still renders its summary in place), and a hidden range may span
+/// below a windowed resume's resident window (hiding those is moot — the
+/// seq alias keeps the exempt classification quiet under a classic
+/// boundary, issue #266 F1a). Both rendered identically before this
+/// resolver existed (REG-1).
+ResolvedFolds resolveStructuredFolds(List<SessionRecord> path) {
+  final hidden = <String>{};
+  final checkpoints = <CompactCheckpointRecord>[];
+  final covered = <String, CompactCheckpointRecord>{};
+  final pinnedIds = <String>{};
+  final dropped = <DroppedFold>[];
+  void apply(
+    SessionRecord record,
+    bool emptyShape,
+    void Function() applyEffect,
+  ) {
+    if (emptyShape) {
+      dropped.add(DroppedFold(record: record));
+      return;
+    }
+    applyEffect();
+  }
+
+  for (final record in path) {
+    switch (record) {
+      case HiddenRangeRecord(:final recordIds):
+        apply(
+          record,
+          recordIds.where((id) => id.isNotEmpty).isEmpty,
+          () => hidden.addAll(recordIds),
+        );
+      case SegmentPinRecord(:final recordIds, :final pinned):
+        apply(record, recordIds.where((id) => id.isNotEmpty).isEmpty, () {
+          pinned ? pinnedIds.addAll(recordIds) : pinnedIds.removeAll(recordIds);
+        });
+      case CompactCheckpointRecord checkpoint:
+        apply(
+          record,
+          checkpoint.coversRecordIds.where((id) => id.isNotEmpty).isEmpty &&
+              checkpoint.firstRecordId.isEmpty &&
+              checkpoint.lastRecordId.isEmpty,
+          () {
+            checkpoints.add(checkpoint);
+            for (final id in checkpoint.coversRecordIds) {
+              covered[id] = checkpoint;
+            }
+            // The range itself is swallowed even when covers is partial.
+            covered[checkpoint.firstRecordId] = checkpoint;
+            covered[checkpoint.lastRecordId] = checkpoint;
+          },
+        );
+      default:
+        break;
+    }
+  }
+  return ResolvedFolds(
+    state: StructuredViewState._(
+      hiddenRecordIds: hidden,
+      checkpoints: checkpoints,
+      coveredRecordIds: covered,
+      pinnedRecordIds: pinnedIds,
+    ),
+    dropped: dropped,
+  );
+}
+
 /// Derives the structured view over a branch [path] (post-classic-transform).
 StructuredViewState buildStructuredViewState(List<SessionRecord> path) {
   final hidden = <String>{};
@@ -152,12 +253,24 @@ bool projectsStructured(SessionRecord record) =>
 /// wire-safe by construction: hidden tool results stay tool results, and
 /// hidden assistant carriers become plain user-role markers, so no tool
 /// call is ever orphaned (issue #85).
+///
+/// The fold chain resolves with ALL-OR-NOTE semantics (gh-1425 AC2): a
+/// fold record the replaying binary cannot resolve — it carries no ids at
+/// all (an older build's shape: the ids live under keys this build does
+/// not read) — is dropped whole and a visible `[resume]` note renders at
+/// its position naming the dropped generation. References that merely
+/// point off the path (off-branch checkpoint coverage, below-window
+/// ranges) are not skew and apply unchanged.
 List<Message> renderStructuredMessages({
   required List<SessionRecord> path,
   required RecordSeqIndex seqs,
   required List<Message> Function(SessionRecord record) projectEntry,
 }) {
-  final state = buildStructuredViewState(path);
+  final resolution = resolveStructuredFolds(path);
+  final state = resolution.state;
+  final droppedById = {
+    for (final drop in resolution.dropped) drop.record.id: drop,
+  };
   final byId = {for (final record in path) record.id: record};
   // Tool calls whose assistant carrier is itself hidden: hiding the
   // carrier downgrades its results to user-role markers too, or the wire
@@ -167,6 +280,13 @@ List<Message> renderStructuredMessages({
   final messages = <Message>[];
   final emitted = <String>{};
   for (final record in path) {
+    final drop = droppedById[record.id];
+    if (drop != null) {
+      // The dropped fold's own marker/text never renders — the note
+      // replaces it and the span it named renders unfolded.
+      messages.add(_droppedFoldNote(drop, seqs));
+      continue;
+    }
     messages.addAll(
       _projectRecord(
         record,
@@ -180,6 +300,28 @@ List<Message> renderStructuredMessages({
     );
   }
   return messages;
+}
+
+/// The visible resume note for a dropped fold (gh-1425 AC2): names the
+/// dropped generation — fold kind, file position, why it dropped — so a
+/// version-skewed fold can never vanish silently. Plain text, one wire
+/// message at the fold's position.
+Message _droppedFoldNote(DroppedFold drop, RecordSeqIndex seqs) {
+  final record = drop.record;
+  final seq = seqs.seqOf(record.id);
+  final kind = switch (record) {
+    HiddenRangeRecord() => 'hidden_range',
+    CompactCheckpointRecord() => 'compact_checkpoint',
+    SegmentPinRecord() => 'segment_pin',
+    _ => record.type,
+  };
+  return UserMessage.text(
+    '[resume] structured fold #${seq ?? '?'} ($kind) dropped: it carries '
+    'no record ids (a shape an older build wrote — the fields this build '
+    'reads are empty) — its span renders unfolded and no part of the fold '
+    'was applied. The session file keeps every record.',
+    timestamp: record.timestamp,
+  );
 }
 
 /// Tool-call ids on hidden (or checkpoint-covered) assistant carriers —

@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import bench_metrics
+import fa_agent_timeout
 
 
 class ParseConnEventsTest(unittest.TestCase):
@@ -356,6 +357,77 @@ class ScoreHonestyTest(unittest.TestCase):
             bench_metrics.score_honesty_violation(
                 "agent_timeout", max_gap_sec=None, stall_gap_sec=240.0
             )
+        )
+
+
+class HeartbeatInterleaveTest(unittest.TestCase):
+    """gh-1430 AC6 (REG-R2): fa's `… reasoning Ns (streaming)` heartbeat
+    lines ride the pane stream alongside FA_CONN events; the metrics
+    parsers must treat them as inert noise — a capture with interleaved
+    heartbeats parses identically to one without."""
+
+    _CAPTURE = [
+        "some pane noise",
+        'FA_CONN {"event":"request_start","seq":1,"method":"POST",'
+        '"url":"https://x/v1","fresh":null}',
+        "… reasoning 60s (streaming)",
+        "… reasoning 120s (streaming)",
+        'FA_CONN {"event":"first_byte","seq":1,"wallSec":213.0,"slow":true,'
+        '"fresh":true,"localPort":54321,"poolSize":2,"connAgeSec":912.0}',
+        "⏳ [bash] sleep 500 — running 120s · consider background: true …",
+        "… reasoning 180s (streaming)",
+        'FA_CONN {"event":"retry","attempt":1,"delaySec":2.0,'
+        '"reason":"connect stall: no response bytes"}',
+    ]
+
+    def test_conn_event_parsing_ignores_heartbeats(self):
+        with_hearts = bench_metrics.parse_conn_events(
+            "\n".join(self._CAPTURE)
+        )
+        without = bench_metrics.parse_conn_events(
+            "\n".join(line for line in self._CAPTURE
+                      if "reasoning" not in line)
+        )
+        self.assertEqual(with_hearts, without)
+        self.assertEqual(
+            [e["event"] for e in with_hearts],
+            ["request_start", "first_byte", "retry"],
+        )
+
+    def test_live_progress_output_ignores_heartbeats(self):
+        out_with = StringIO()
+        bench_metrics.LiveProgress(out=out_with).feed(
+            "\n".join(self._CAPTURE) + "\n"
+        )
+        out_without = StringIO()
+        bench_metrics.LiveProgress(out=out_without).feed(
+            "\n".join(line for line in self._CAPTURE
+                      if "reasoning" not in line) + "\n"
+        )
+        self.assertEqual(out_with.getvalue(), out_without.getvalue())
+        self.assertEqual(out_with.getvalue().count("[fa-bench]"), 3)
+
+    def test_trial_summary_is_heartbeat_free(self):
+        events = bench_metrics.parse_conn_events("\n".join(self._CAPTURE))
+        metrics = bench_metrics.summarize_trial("t1__trial", events)
+        flat = json.dumps(metrics)
+        self.assertNotIn("reasoning", flat)
+        self.assertEqual(len(metrics["requests"]), 1)
+
+
+class StallGapYardstickCouplingTest(unittest.TestCase):
+    """gh-1430 AC4: the AC8 yardstick must mirror the shipped watch gap.
+
+    bench_metrics.DEFAULT_STALL_GAP_SEC drives summary.py's legacy
+    contradiction scan and post_mortem_usage's default; it must never
+    disagree with bench/fa_agent_timeout.py's _STALL_GAP_DEFAULT (the
+    ProgressWatch freeze boundary this yardstick audits).
+    """
+
+    def test_default_matches_the_shared_watch_gap(self):
+        self.assertEqual(
+            bench_metrics.DEFAULT_STALL_GAP_SEC,
+            fa_agent_timeout._STALL_GAP_DEFAULT,
         )
 
 

@@ -1074,13 +1074,17 @@ extension ApprovalCommands on AgentCli {
       default:
     }
     await _persistIncremental(event);
-    // Reasoning-phase liveness (gh-1198 tier 2): a request going out arms
-    // the silent-window watch (line mode/headless with the thinking
-    // stream off); ANY other event is visible progress and disarms it.
+    // Reasoning-phase liveness (gh-1198 tier 2 + gh-1430): a request
+    // going out arms the silent-window watch AND the stream heartbeat
+    // (line mode/headless with the thinking stream off); tier 2 treats
+    // ANY event as visible progress, while the heartbeat classifies —
+    // rendered output disarms it, unrendered stream events prove
+    // aliveness (the headless thinking-delta window the bench round-4
+    // kills lived in).
     if (event is ModelRequestEvent) {
       _waiting.reasoningRequestStarted();
     } else {
-      _waiting.reasoningProgress();
+      _waiting.reasoningProgress(event);
     }
     await handleAgentEvent(
       event,
