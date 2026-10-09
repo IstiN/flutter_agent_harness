@@ -93,9 +93,7 @@ class GatedThinkingStreamFunction {
   void pushThinking(String delta) {
     _deltas++;
     final partial = testAssistant(
-      content: [
-        ThinkingContent(thinking: 'pondering${' more' * _deltas}'),
-      ],
+      content: [ThinkingContent(thinking: 'pondering${' more' * _deltas}')],
     );
     _stream?.push(
       ThinkingDeltaEvent(contentIndex: 0, delta: delta, partial: partial),
@@ -709,10 +707,7 @@ void main() {
         now = now.add(const Duration(seconds: 60));
         cli.streamLivenessTickForTest();
       }
-      expect(
-        '(streaming)'.allMatches(io.out.toString()),
-        hasLength(1),
-      );
+      expect('(streaming)'.allMatches(io.out.toString()), hasLength(1));
 
       fake.release();
       await run;
@@ -786,58 +781,63 @@ void main() {
       await run;
     });
 
-    test('E2: tool rows disarm the heartbeat; the next request re-arms it',
-        () async {
-      // Turn 1 streams thinking then a tool call; turn 2 thinks again.
-      final empty = testAssistant();
-      final withThinking = testAssistant(
-        content: [ThinkingContent(thinking: 'why')],
-      );
-      const call = ToolCall(
-        id: 't1',
-        name: 'bash',
-        arguments: {'command': 'echo hi'},
-      );
-      final toolPartial = testAssistant(
-        content: [ThinkingContent(thinking: 'why'), call],
-        stopReason: StopReason.toolUse,
-      );
-      final firstTurn = <AssistantMessageEvent>[
-        StartEvent(partial: empty),
-        ThinkingDeltaEvent(
-          contentIndex: 0,
-          delta: 'why',
-          partial: withThinking,
-        ),
-        ToolCallStartEvent(contentIndex: 1, partial: withThinking),
-        ToolCallEndEvent(
-          contentIndex: 1,
-          toolCall: call,
-          partial: toolPartial,
-        ),
-        DoneEvent(reason: StopReason.toolUse, message: toolPartial),
-      ];
-      final fake = FakeStreamFunction([
-        firstTurn,
-        thinkingTurn('again', 'Done'),
-      ]);
-      final cli = cliFor(
-        fake.call,
-        waiting: const WaitingConfig(
-          toolLivenessSeconds: 60,
-          toolLivenessTickSeconds: 60,
-        ),
-      );
-      final run = cli.runHeadless('hi');
-      await waitForIt(() => !cli.isBusy, reason: 'the run completes');
-      await run;
-      // The run completes too fast to tick mid-flight; the observable is
-      // the END state: disarmed, zero lines, byte-identical legacy output.
-      expect(cli.streamLivenessActiveForTest, isFalse);
-      expect(io.out.toString(), isNot(contains('… reasoning')));
-      cli.streamLivenessTickForTest();
-      expect(io.out.toString(), isNot(contains('… reasoning')));
-    });
+    test(
+      'E2: tool rows disarm the heartbeat; the next request re-arms it',
+      () async {
+        // Turn 1 streams thinking then a tool call; turn 2 thinks again.
+        final empty = testAssistant();
+        final withThinking = testAssistant(
+          content: [ThinkingContent(thinking: 'why')],
+        );
+        const call = ToolCall(
+          id: 't1',
+          name: 'bash',
+          arguments: {'command': 'echo hi'},
+        );
+        final toolPartial = testAssistant(
+          content: [
+            ThinkingContent(thinking: 'why'),
+            call,
+          ],
+          stopReason: StopReason.toolUse,
+        );
+        final firstTurn = <AssistantMessageEvent>[
+          StartEvent(partial: empty),
+          ThinkingDeltaEvent(
+            contentIndex: 0,
+            delta: 'why',
+            partial: withThinking,
+          ),
+          ToolCallStartEvent(contentIndex: 1, partial: withThinking),
+          ToolCallEndEvent(
+            contentIndex: 1,
+            toolCall: call,
+            partial: toolPartial,
+          ),
+          DoneEvent(reason: StopReason.toolUse, message: toolPartial),
+        ];
+        final fake = FakeStreamFunction([
+          firstTurn,
+          thinkingTurn('again', 'Done'),
+        ]);
+        final cli = cliFor(
+          fake.call,
+          waiting: const WaitingConfig(
+            toolLivenessSeconds: 60,
+            toolLivenessTickSeconds: 60,
+          ),
+        );
+        final run = cli.runHeadless('hi');
+        await waitForIt(() => !cli.isBusy, reason: 'the run completes');
+        await run;
+        // The run completes too fast to tick mid-flight; the observable is
+        // the END state: disarmed, zero lines, byte-identical legacy output.
+        expect(cli.streamLivenessActiveForTest, isFalse);
+        expect(io.out.toString(), isNot(contains('… reasoning')));
+        cli.streamLivenessTickForTest();
+        expect(io.out.toString(), isNot(contains('… reasoning')));
+      },
+    );
 
     test('line mode arms the same heartbeat (shared code path)', () async {
       final fake = GatedThinkingStreamFunction();

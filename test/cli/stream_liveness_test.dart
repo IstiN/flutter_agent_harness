@@ -163,8 +163,7 @@ void main() {
     });
 
     test('a request that heartbeats and then goes event-silent prints at '
-        'most one more line, then silence — the watchdog still arbitrates',
-        () {
+        'most one more line, then silence — the watchdog still arbitrates', () {
       final tracker = build();
       tracker.requestStarted();
 
@@ -193,9 +192,7 @@ void main() {
       tracker.unrenderedEvent();
       now = now.add(const Duration(seconds: defaultToolLivenessSeconds));
       tracker.tick();
-      expect(lines, [
-        '… reasoning ${defaultToolLivenessSeconds}s (streaming)',
-      ]);
+      expect(lines, ['… reasoning ${defaultToolLivenessSeconds}s (streaming)']);
       // No fresh events: an immediate re-tick must not spin another line.
       tracker.tick();
       expect(lines, hasLength(1));
@@ -207,9 +204,7 @@ void main() {
       tracker.unrenderedEvent();
       now = now.add(const Duration(seconds: defaultToolLivenessSeconds));
       tracker.tick();
-      expect(lines, [
-        '… reasoning ${defaultToolLivenessSeconds}s (streaming)',
-      ]);
+      expect(lines, ['… reasoning ${defaultToolLivenessSeconds}s (streaming)']);
     });
 
     test('tickSeconds 0 disables the production chain; the tick seam still '
