@@ -31,6 +31,7 @@ import 'package:meta/meta.dart';
 import '../env/execution_env.dart';
 import '../env/job_log_ceiling.dart';
 import '../env/job_log_redaction.dart';
+import 'job_id_resolution.dart';
 // The boot-sweep process-table probe is VM-only infrastructure (`ps` via
 // dart:io); web builds get a stub that always reports "no process table".
 import '../env/process_probe_stub.dart'
@@ -74,6 +75,13 @@ final class ShellJobEntry {
 
   /// When the job registered (drives the terminal card's elapsed).
   final DateTime startedAt;
+
+  /// When the registry observed the job's exit (gh-1438) — null while
+  /// running. Drives the status line's "exited Nm ago" context and the
+  /// retained-entry GC's LRU order. Stamped by the registry's settle
+  /// listener; first observation wins.
+  DateTime? _settledAt;
+  DateTime? get settledAt => _settledAt;
 
   /// The working directory the job was started from (the dim detail's cwd
   /// tail, issue #429 AC2).
