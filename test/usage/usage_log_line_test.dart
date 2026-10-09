@@ -98,6 +98,15 @@ void main() {
         expect(usageTokensLogPattern.hasMatch(line), isTrue);
       });
 
+      test('a blank model id is omitted, never emitted empty', () {
+        final line = usageTokensLogLine(
+          sessionId: 's-1',
+          segment: segment(model: ''),
+        );
+        expect(line, isNot(contains('"model"')));
+        expect(usageTokensLogPattern.hasMatch(line), isTrue);
+      });
+
       test('the optional group stays position-strict', () {
         // A model key in any other slot must NOT parse: the pinned shape is
         // the reporter's contract, and a drifted placement means a drifted

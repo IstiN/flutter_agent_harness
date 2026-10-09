@@ -284,6 +284,16 @@ void main() {
       expect(ledger.segments.single.model, isNull);
     });
 
+    test('a blank model id on a record is no observation at all', () {
+      final ledger = foldChain([
+        sessionHeaderLine('sess-1'),
+        segmentMarkerLine(1),
+        requestSummaryLine(2),
+        assistantLine(3, model: '', usage: reportedUsage(input: 10, output: 5)),
+      ]);
+      expect(ledger.segments.single.model, isNull);
+    });
+
     test('the model rides the fold, not the usage.json schema (I6)', () {
       final ledger = foldChain([
         sessionHeaderLine('sess-1'),

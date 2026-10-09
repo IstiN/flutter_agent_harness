@@ -338,9 +338,10 @@ final class _ScanSegment {
   DateTime? closedAt;
 
   /// The LAST-SEEN model on a real request (gh-1460): zero-filled fallbacks
-  /// (`unknownUsageModel`) are not observations — they never overwrite a
-  /// model the segment actually saw, and a segment of only fallbacks stays
-  /// model-less so the segment-close line keeps its legacy shape.
+  /// (`unknownUsageModel`) and blank ids are not observations — they never
+  /// overwrite a model the segment actually saw, and a segment of only
+  /// fallbacks stays model-less so the segment-close line keeps its legacy
+  /// shape.
   String? lastModel;
 
   /// Whether anything contributed to this segment (a marker claiming an
@@ -351,7 +352,9 @@ final class _ScanSegment {
   /// segment's last-seen model.
   void addRequest(FoldRequest request) {
     requests.add(request);
-    if (request.model != unknownUsageModel) lastModel = request.model;
+    if (request.model.isNotEmpty && request.model != unknownUsageModel) {
+      lastModel = request.model;
+    }
   }
 
   void setOpenedAt(DateTime? at) {
