@@ -538,12 +538,10 @@ AgentTool bashJobTool(ShellJobRegistry jobs) {
     tier: ApprovalTier.write,
     description:
         'Manage background shell jobs (started with bash background: true '
-        'or moved to background when you were interrupted). Actions: '
-        '"status" lists jobs (running + last 20 exited; all: true lists '
-        'every job; or one with id), "output" shows the tail of a job log '
-        '(id, optional lines), "stop" terminates a running job (id). '
-        'Stale/near-miss ids resolve read-only to the matching job; stop '
-        'always requires the exact id.',
+        'or moved to background when interrupted). Actions: "status" lists '
+        'running + last 20 exited (all: true for every job; id for one), '
+        '"output" tails a job log (id, lines), "stop" terminates a running '
+        'job (id; near-miss ids resolve read-only).',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -563,8 +561,8 @@ AgentTool bashJobTool(ShellJobRegistry jobs) {
         'all': {
           'type': 'boolean',
           'description':
-              'For status without id: list every job including all exited '
-              '(default bounds the listing to running + last 20 exited)',
+              'List every exited job too (status without id; the default '
+              'caps the exited tail)',
         },
       },
       'required': ['action'],
