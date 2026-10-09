@@ -164,12 +164,14 @@ AgentTool shellTool(
   Duration retryBackoff = _bashRetryBackoff,
   PasswordPromptCallback? onPasswordPrompt,
   Duration passwordQuiet = _bashPasswordQuiet,
+
   /// The host's resolved redaction config for the shape interceptor
   /// (issue #1408 AC3, review 5456649624): the same `redact:` section
   /// steers command rewriting and result/job-log masking. Null = the
   /// default config (vendor shapes on) for direct tool users; the CLI
   /// passes its boot-resolved config (disabled when redaction is off).
   RedactionConfig? redactionConfig,
+
   /// Live snapshot of the values the host registered as secrets
   /// (`request_secret`, preconfig keys): those literals are EXEMPT from
   /// command rewriting so an approved value still materializes while the
@@ -599,11 +601,10 @@ AgentTool bashJobTool(ShellJobRegistry jobs) {
     // (task_send precedent); status/output are plain reads.
     tier: ApprovalTier.write,
     description:
-        'Manage background shell jobs (started with bash background: true '
-        'or moved to background when you were interrupted). Actions: '
-        '"status" lists all jobs (or one with id), "output" shows the tail '
-        'of a job log (id, optional lines), "stop" terminates a running job '
-        '(id).',
+        'Manage background shell jobs (from bash background: true). '
+        'Actions: "status" lists running + last 20 exited (all: true = '
+        'every job; id = one), "output" tails a log (id, lines), "stop" '
+        'kills a running job (id).',
     parameters: const {
       'type': 'object',
       'properties': {
@@ -620,6 +621,10 @@ AgentTool bashJobTool(ShellJobRegistry jobs) {
           'type': 'number',
           'description': 'Log tail size for output (default 50)',
         },
+        'all': {
+          'type': 'boolean',
+          'description': 'status without id: list every exited job too',
+        },
       },
       'required': ['action'],
     },
@@ -627,8 +632,9 @@ AgentTool bashJobTool(ShellJobRegistry jobs) {
       final action = arguments['action'] as String;
       final id = arguments['id'] as String?;
       final lines = (arguments['lines'] as num?)?.toInt();
+      final all = arguments['all'] as bool? ?? false;
       return switch (action) {
-        'status' => _bashJobStatusResult(jobs, id),
+        'status' => _bashJobStatusResult(jobs, id, all: all),
         'output' => await _bashJobOutputResult(jobs, id, lines),
         'stop' => await _bashJobStopResult(jobs, id),
         _ => throw StateError('unknown bash_job action: $action'),
@@ -637,18 +643,80 @@ AgentTool bashJobTool(ShellJobRegistry jobs) {
   );
 }
 
-ToolExecutionResult _bashJobStatusResult(ShellJobRegistry jobs, String? id) {
+/// How many exited jobs the no-id `status` listing shows beyond the running
+/// ones (gh-1438 AC3 — the production storm dumped 1600+ exited rows).
+const _statusExitedLimit = 20;
+
+ToolExecutionResult _bashJobStatusResult(
+  ShellJobRegistry jobs,
+  String? id, {
+  required bool all,
+}) {
   if (id == null) {
-    if (jobs.jobs.isEmpty) {
+    final everything = jobs.jobs;
+    if (everything.isEmpty) {
       return ToolExecutionResult.text('No background jobs this session.');
     }
-    return ToolExecutionResult.text(
-      jobs.jobs.map(_shellJobStatusLine).join('\n'),
-    );
+    if (all) {
+      return ToolExecutionResult.text(
+        everything.map(_shellJobStatusLine).join('\n'),
+      );
+    }
+    final running = [
+      for (final entry in everything)
+        if (entry.isRunning) entry,
+    ];
+    final exited = [
+      for (final entry in everything)
+        if (!entry.isRunning) entry,
+    ]..sort(_bySettledDescending);
+    final shown = exited.take(_statusExitedLimit).toList();
+    final lines = [
+      ...running.map(_shellJobStatusLine),
+      ...shown.map(_shellJobStatusLine),
+      if (exited.length > shown.length)
+        '… ${exited.length - shown.length} more exited job(s) not shown '
+            '(${exited.length} exited total, logs stay in .fah/bash_jobs/) — '
+            'pass all: true to list every job.',
+    ];
+    return ToolExecutionResult.text(lines.join('\n'));
   }
-  final entry = jobs.job(id);
-  if (entry == null) throw StateError('unknown background job: $id');
-  return ToolExecutionResult.text(_shellJobStatusLine(entry));
+  final lookup = jobs.lookup(id);
+  return switch (lookup) {
+    ShellJobHit(:final entry) => ToolExecutionResult.text(
+      _shellJobStatusLine(entry),
+    ),
+    ShellJobNearMiss(:final entry) => ToolExecutionResult.text(
+      '${_staleIdNote(lookup.id, entry.id)}\n'
+      '${_shellJobStatusLine(entry)}\n'
+      '${_resolvedStateLine(entry)}',
+    ),
+    ShellJobPrefixAmbiguous(:final entries) => ToolExecutionResult.text(
+      _ambiguousText(lookup.id, entries),
+    ),
+    ShellJobUnknownId(:final closestIds) => ToolExecutionResult.text(
+      _unknownIdText(
+        jobs,
+        lookup.id,
+        closestIds,
+        gcNote: _statusUnknownText(jobs, lookup.id, closestIds),
+      ),
+    ),
+  };
+}
+
+/// The `status` unknown-id flow: malformed ids dead-end with the shortest
+/// error (E3), GC'd ids render the honest compacted note, everything else
+/// gets the plain closest-ids result (AC2).
+String _statusUnknownText(
+  ShellJobRegistry jobs,
+  String id,
+  List<String> closestIds,
+) {
+  if (parseShellJobIdParts(id) == null) {
+    throw StateError('unknown background job: $id');
+  }
+  return _unknownIdText(jobs, id, closestIds, gcNote: _gcStatusNote(jobs, id));
 }
 
 Future<ToolExecutionResult> _bashJobOutputResult(
@@ -657,8 +725,51 @@ Future<ToolExecutionResult> _bashJobOutputResult(
   int? lines,
 ) async {
   if (id == null) throw StateError('bash_job output requires an id');
-  final tail = await jobs.tail(id, maxLines: lines ?? 50);
-  return ToolExecutionResult.text(tail.isEmpty ? '(no output yet)' : tail);
+  final maxLines = lines ?? 50;
+  final lookup = jobs.lookup(id);
+  switch (lookup) {
+    case ShellJobHit(:final entry):
+      return ToolExecutionResult.text(
+        await _exactOutputText(jobs, entry, maxLines),
+      );
+    case ShellJobNearMiss(:final entry):
+      final tail = await jobs.tail(entry.id, maxLines: maxLines);
+      return ToolExecutionResult.text(
+        '${_staleIdNote(lookup.id, entry.id)}\n'
+        '${tail.isEmpty ? '(no output yet)' : tail}\n'
+        '${_resolvedStateLine(entry)}',
+      );
+    case ShellJobPrefixAmbiguous(:final entries):
+      return ToolExecutionResult.text(_ambiguousText(lookup.id, entries));
+    case ShellJobUnknownId(:final closestIds):
+      return _unknownOutputResult(jobs, lookup.id, closestIds, maxLines);
+  }
+}
+
+/// The unknown-id `output` flow: malformed ids dead-end with the shortest
+/// error (E3), GC'd ids fall back to the on-disk log while it exists (AC4)
+/// or degrade to the clean error once it is gone (E2), and everything else
+/// gets the plain closest-ids result (AC2).
+Future<ToolExecutionResult> _unknownOutputResult(
+  ShellJobRegistry jobs,
+  String id,
+  List<String> closestIds,
+  int maxLines,
+) async {
+  if (parseShellJobIdParts(id) == null) {
+    throw StateError('unknown background job: $id');
+  }
+  final gcPath = jobs.prunedLogPath(id);
+  if (gcPath != null) {
+    final tail = await jobs.tailFromLog(gcPath, maxLines: maxLines);
+    if (tail == null) throw StateError('unknown background job: $id');
+    return ToolExecutionResult.text(
+      'Job $id already exited; its log was compacted out of the registry. '
+      'Tail from disk:\n'
+      '${tail.isEmpty ? '(no output)' : tail}',
+    );
+  }
+  return ToolExecutionResult.text(_unknownIdText(jobs, id, closestIds));
 }
 
 Future<ToolExecutionResult> _bashJobStopResult(
@@ -667,14 +778,135 @@ Future<ToolExecutionResult> _bashJobStopResult(
 ) async {
   if (id == null) throw StateError('bash_job stop requires an id');
   final entry = jobs.job(id);
-  if (entry == null) throw StateError('unknown background job: $id');
-  if (!entry.isRunning) {
+  if (entry != null) {
+    if (!entry.isRunning) {
+      return ToolExecutionResult.text(
+        '$id already finished (exit code ${entry.exitCode})',
+      );
+    }
+    await entry.stop();
+    return ToolExecutionResult.text('Stopped $id');
+  }
+  // gh-1438 AC5: the destructive action NEVER acts on a resolved guess —
+  // malformed ids keep the shortest error, GC'd ids are honestly done, and
+  // every other unknown id gets the closest-ids hint only.
+  if (parseShellJobIdParts(id) == null) {
+    throw StateError('unknown background job: $id');
+  }
+  if (jobs.prunedLogPath(id) != null) {
     return ToolExecutionResult.text(
-      '$id already finished (exit code ${entry.exitCode})',
+      'Job $id already exited (its log was compacted out of the registry) — '
+      'nothing to stop.',
     );
   }
-  await entry.stop();
-  return ToolExecutionResult.text('Stopped $id');
+  final hint = closestShellJobIds(id, [for (final j in jobs.jobs) j.id]);
+  final buffer = StringBuffer(
+    'Unknown background job: $id — stop requires the exact job id '
+    '(it never acts on a resolved guess).',
+  );
+  if (hint.isEmpty) {
+    buffer.write(' No jobs are retained this session.');
+  } else {
+    buffer.write(' Closest retained job ids:');
+    for (final candidate in hint) {
+      final entry = jobs.job(candidate);
+      buffer.write(
+        '\n- ${entry == null ? candidate : _shellJobStatusLine(entry)}',
+      );
+    }
+  }
+  return ToolExecutionResult.text(buffer.toString());
+}
+
+/// "[Job id X] was not found — resolved to [Y] (same `sh-<n>-` prefix)."
+String _staleIdNote(String requested, String resolved) =>
+    'Job id $requested was not found — resolved to $resolved '
+    '(same sh-<n>- prefix).';
+
+/// The exit-state sentence a resolved near-miss carries after its tail
+/// (AC1 for exited, edge case E4 for running).
+String _resolvedStateLine(ShellJobEntry entry) {
+  if (entry.isRunning) {
+    return '${entry.id} is still running — use ${entry.id} for further calls.';
+  }
+  return '${entry.id} already exited '
+      '(exit code ${entry.exitCode}, ${_settledAgo(entry)}) — '
+      'stop polling the stale id.';
+}
+
+/// The one-line context an exact-id `output` gains once the job exited
+/// ("unchanged, plus exited-Nm-ago context").
+Future<String> _exactOutputText(
+  ShellJobRegistry jobs,
+  ShellJobEntry entry,
+  int maxLines,
+) async {
+  final tail = await jobs.tail(entry.id, maxLines: maxLines);
+  if (entry.isRunning) return tail.isEmpty ? '(no output yet)' : tail;
+  return '${tail.isEmpty ? '(no output)' : tail}\n'
+      '${entry.id} already exited '
+      '(exit code ${entry.exitCode}, ${_settledAgo(entry)}).';
+}
+
+String _settledAgo(ShellJobEntry entry) {
+  final settledAt = entry.settledAt;
+  if (settledAt == null) return 'just now';
+  return shellJobSettledAgo(DateTime.now().difference(settledAt));
+}
+
+/// E1: a requested id shares its numeric part with several retained jobs —
+/// listed, never silently picked.
+String _ambiguousText(String requested, List<ShellJobEntry> entries) {
+  final buffer = StringBuffer(
+    'Job id $requested matches several jobs (shared sh-<n>- prefix) — '
+    'no resolution; use the exact id:',
+  );
+  for (final entry in entries) {
+    buffer.write('\n- ${_shellJobStatusLine(entry)}');
+  }
+  return buffer.toString();
+}
+
+/// AC2: the never-registered wording with the ≤3 closest retained ids.
+/// [gcNote] (a GC'd id seen through a read action) replaces the whole text.
+String _unknownIdText(
+  ShellJobRegistry jobs,
+  String id,
+  List<String> closestIds, {
+  String? gcNote,
+}) {
+  if (gcNote != null) return gcNote;
+  final buffer = StringBuffer(
+    'Job id $id was never registered in this session — do not retry it.',
+  );
+  if (closestIds.isEmpty) {
+    buffer.write(' No jobs are retained this session.');
+  } else {
+    buffer.write(' Closest retained job ids:');
+    for (final candidate in closestIds) {
+      final entry = jobs.job(candidate);
+      buffer.write(
+        '\n- ${entry == null ? candidate : _shellJobStatusLine(entry)}',
+      );
+    }
+  }
+  return buffer.toString();
+}
+
+/// The `status` rendering of a GC'd id (no tail read — AC4 scopes the
+/// on-disk fallback to `output`).
+String? _gcStatusNote(ShellJobRegistry jobs, String id) {
+  final gcPath = jobs.prunedLogPath(id);
+  if (gcPath == null) return null;
+  return 'Job $id already exited; its log was compacted out of the registry '
+      '(log file: $gcPath — read it with bash_job output or the read tool).';
+}
+
+/// Exited jobs newest-settled first — the job the agent is most likely
+/// polling for leads. Never-settled stragglers sort last.
+int _bySettledDescending(ShellJobEntry a, ShellJobEntry b) {
+  final epoch = DateTime.fromMillisecondsSinceEpoch(0);
+  return (b.settledAt ?? epoch).compareTo(a.settledAt ?? epoch);
 }
 
 String _shellJobStatusLine(ShellJobEntry entry) {
@@ -682,5 +914,8 @@ String _shellJobStatusLine(ShellJobEntry entry) {
   final command = entry.command.length > 80
       ? '${entry.command.substring(0, 79)}…'
       : entry.command;
-  return '${entry.id}: $state — $command (log: ${entry.logPath})';
+  // gh-1438: exited rows carry their age — a settled-but-never-collected
+  // job is the exact thing stale-id polling hunts for.
+  final ago = entry.isRunning ? '' : ' — exited ${_settledAgo(entry)}';
+  return '${entry.id}: $state — $command (log: ${entry.logPath})$ago';
 }

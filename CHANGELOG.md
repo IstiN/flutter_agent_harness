@@ -4817,4 +4817,8 @@
 - gh-1409 [GOAL] Compaction-pinned skill operative lines — instructions must survive folding (image-carrier precedent) (#1428)
 - feat(1374): animated two-tone kaomoji thinking indicator — app + web TUI (#1419)
 
+## 1.0.539
+
+- gh-1438 bash_job: resolve near-miss/stale job ids instead of 'unknown background job' dead-ends bound status output GC exited jobs (#1447)
+
 ## Unreleased
