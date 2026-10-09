@@ -58,13 +58,16 @@ String bridgeFailureLine({
       '(rid $rid)$suffix';
 }
 
-/// The host[:port] of a bridged authority (`https://api.github.com:443`)
-/// for failure lines — the scheme and any path never render.
+/// The host of a bridged authority (`https://api.github.com:443`) for
+/// failure lines — the scheme, default port, and any path never render.
 String bridgeHostOfAuthority(String authority) {
   var host = authority;
   final scheme = host.indexOf('://');
   if (scheme != -1) host = host.substring(scheme + 3);
   final slash = host.indexOf('/');
   if (slash != -1) host = host.substring(0, slash);
+  if (host.endsWith(':443') || host.endsWith(':80')) {
+    host = host.substring(0, host.indexOf(':'));
+  }
   return host;
 }

@@ -242,6 +242,11 @@ final class SandboxBuiltins {
   /// payloads fail with a clean error instead of corrupting the request.
   static const int maxCurlBodyBytes = 1024 * 1024;
 
+  /// Hard cap for a response body (gh-1444 E7): the stream is aborted at
+  /// the cap and the command fails with curl's exit 63 and both byte
+  /// numbers, instead of OOM-killing the sandbox on a huge tarball.
+  static const int maxCurlResponseBytes = 256 * 1024 * 1024;
+
   static SandboxBuiltinResult _ok(
     List<int> stdout, [
     List<int> stderr = const [],
@@ -379,11 +384,19 @@ final class SandboxBuiltins {
 
     // Drain the body manually: a connection reset MID-BODY (gh-1444 E2)
     // must deliver the partial bytes with a `[bridge]` truncation line —
-    // never a clean empty success.
+    // never a clean empty success — and a body past the size cap (E7)
+    // aborts with a quota error naming both byte numbers.
     final builder = BytesBuilder(copy: false);
     var truncated = false;
+    var quotaExceeded = false;
     try {
-      await streamedResponse.stream.forEach(builder.add);
+      await for (final chunk in streamedResponse.stream) {
+        builder.add(chunk);
+        if (builder.length > maxCurlResponseBytes) {
+          quotaExceeded = true;
+          break;
+        }
+      }
     } on Object catch (e) {
       truncated = true;
       final line = bridgeFailureLine(
@@ -395,6 +408,13 @@ final class SandboxBuiltins {
       );
       _logFailure(line);
       stderrLines.add(line);
+    }
+    if (quotaExceeded) {
+      return _error(
+        'curl: (63) response body exceeds the sandbox limit: received '
+        '${builder.length} bytes, cap is $maxCurlResponseBytes\n',
+        63,
+      );
     }
 
     final bytes = builder.toBytes();
