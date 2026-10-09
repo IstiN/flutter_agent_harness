@@ -6,6 +6,11 @@
 /// (AC3), and with the stream OFF a provider request that produces no
 /// events gets the periodic `… reasoning Ns` liveness line on the waiting
 /// cadence (AC4).
+///
+/// gh-1430 extends the family: a request whose events flow but render
+/// NOTHING (thinking deltas with the stream off) gets the
+/// `… reasoning Ns (streaming)` heartbeat instead of going byte-silent
+/// mid-thinking — the window the bench round-4 kills lived in.
 library;
 
 import 'dart:async';
@@ -64,6 +69,73 @@ class GatedSilentStreamFunction {
           TextDeltaEvent(contentIndex: 0, delta: 'answered', partial: partial),
         );
         stream.push(DoneEvent(reason: StopReason.stop, message: partial));
+        stream.end();
+      }),
+    );
+    return stream;
+  }
+}
+
+/// A provider stream that streams its thinking deltas (which headless
+/// does not render by default) and then STALLS until [release]: the
+/// gh-1430 mid-thinking window — events flow, the pane used to go
+/// byte-silent. [pushThinking] streams further deltas while gated (a
+/// reasoning burst keeps emitting); the answer streams normally once
+/// released.
+class GatedThinkingStreamFunction {
+  final _gate = Completer<void>();
+
+  void release() => _gate.complete();
+
+  var _deltas = 0;
+
+  /// Streams one more unrendered thinking delta while the burst runs.
+  void pushThinking(String delta) {
+    _deltas++;
+    final partial = testAssistant(
+      content: [
+        ThinkingContent(thinking: 'pondering${' more' * _deltas}'),
+      ],
+    );
+    _stream?.push(
+      ThinkingDeltaEvent(contentIndex: 0, delta: delta, partial: partial),
+    );
+  }
+
+  AssistantMessageEventStream? _stream;
+
+  AssistantMessageEventStream call(
+    Model model,
+    Context context, {
+    CancelToken? cancelToken,
+  }) {
+    final stream = AssistantMessageEventStream();
+    _stream = stream;
+    final empty = testAssistant();
+    final withThinking = testAssistant(
+      content: [ThinkingContent(thinking: 'pondering')],
+    );
+    stream.push(StartEvent(partial: empty));
+    stream.push(ThinkingStartEvent(contentIndex: 0, partial: empty));
+    stream.push(
+      ThinkingDeltaEvent(
+        contentIndex: 0,
+        delta: 'pondering',
+        partial: withThinking,
+      ),
+    );
+    unawaited(
+      _gate.future.then((_) {
+        final withText = testAssistant(
+          content: [
+            ThinkingContent(thinking: 'pondering'),
+            TextContent(text: 'Answer'),
+          ],
+        );
+        stream.push(
+          TextDeltaEvent(contentIndex: 1, delta: 'Answer', partial: withText),
+        );
+        stream.push(DoneEvent(reason: StopReason.stop, message: withText));
         stream.end();
       }),
     );
@@ -544,6 +616,240 @@ void main() {
       now = now.add(const Duration(seconds: 45));
       cli.reasoningLivenessTickForTest();
       expect(io.out.toString(), contains('… reasoning 45s'));
+      fake.release();
+      io.sendLine('/exit');
+      await run;
+    });
+  });
+
+  group('gh-1430: stream liveness heartbeat (flag off)', () {
+    // The bare tier-2 line, so assertions can tell the two apart — the
+    // `(streaming)` suffix never appears on a tier-2 line.
+    final bareReasoningLine = RegExp(r'… reasoning \d+s\n');
+
+    test('AC3: thinking-only deltas keep stdout growing with `… reasoning '
+        'Ns (streaming)` heartbeat lines; the tier-2 line stops at the '
+        'first event', () async {
+      final fake = GatedThinkingStreamFunction();
+      final cli = cliFor(
+        fake.call,
+        waiting: const WaitingConfig(
+          toolLivenessSeconds: 60,
+          toolLivenessTickSeconds: 60,
+        ),
+      );
+      final run = cli.runHeadless('hi');
+      await waitForIt(
+        () => cli.streamLivenessActiveForTest,
+        reason: 'the stream heartbeat arms with the request',
+      );
+      // The first event landed: tier-2 is over, the stream heartbeat is
+      // the signal now.
+      await waitForIt(
+        () => !cli.reasoningLivenessActiveForTest,
+        reason: 'tier-2 disarms at the first event',
+      );
+
+      // Tick before the threshold: silent.
+      cli.streamLivenessTickForTest();
+      expect(io.out.toString(), isNot(contains('… reasoning')));
+
+      now = now.add(const Duration(seconds: 60));
+      cli.streamLivenessTickForTest();
+      expect(io.out.toString(), contains('… reasoning 60s (streaming)'));
+
+      // The burst keeps emitting: a fresh delta re-arms the window and
+      // the next tick prints again — the pane grows monotonically.
+      fake.pushThinking(' still going');
+      now = now.add(const Duration(seconds: 60));
+      cli.streamLivenessTickForTest();
+      expect(io.out.toString(), contains('… reasoning 120s (streaming)'));
+
+      // The events flow but render nothing, so the pane kept growing —
+      // and no BARE tier-2 line may appear after the first event.
+      expect(bareReasoningLine.hasMatch(io.out.toString()), isFalse);
+
+      // The text delta renders: the heartbeat disarms, the run completes.
+      fake.release();
+      await run;
+      final linesBefore = '(streaming)'.allMatches(io.out.toString()).length;
+      cli.streamLivenessTickForTest();
+      expect(
+        '(streaming)'.allMatches(io.out.toString()),
+        hasLength(linesBefore),
+      );
+      expect(cli.streamLivenessActiveForTest, isFalse);
+      expect(io.out.toString(), contains('Answer'));
+    });
+
+    test('AC2: an event-silent stream stops heartbeating — at most one '
+        'more line after the last event, then pane silence', () async {
+      final fake = GatedThinkingStreamFunction();
+      final cli = cliFor(
+        fake.call,
+        waiting: const WaitingConfig(
+          toolLivenessSeconds: 60,
+          toolLivenessTickSeconds: 60,
+        ),
+      );
+      final run = cli.runHeadless('hi');
+      await waitForIt(() => cli.streamLivenessActiveForTest);
+
+      now = now.add(const Duration(seconds: 120));
+      cli.streamLivenessTickForTest();
+      expect(io.out.toString(), contains('… reasoning 120s (streaming)'));
+
+      // No more events arrive (the gate stays shut): every later tick is
+      // silent — the heartbeat never masks a real death.
+      for (var i = 0; i < 3; i++) {
+        now = now.add(const Duration(seconds: 60));
+        cli.streamLivenessTickForTest();
+      }
+      expect(
+        '(streaming)'.allMatches(io.out.toString()),
+        hasLength(1),
+      );
+
+      fake.release();
+      await run;
+    });
+
+    test('AC2: a request with NO events still heartbeats via tier-2 only '
+        '(no `(streaming)` line)', () async {
+      final fake = GatedSilentStreamFunction();
+      final cli = cliFor(
+        fake.call,
+        waiting: const WaitingConfig(
+          toolLivenessSeconds: 60,
+          toolLivenessTickSeconds: 60,
+        ),
+      );
+      final run = cli.runHeadless('hi');
+      await waitForIt(() => cli.reasoningLivenessActiveForTest);
+
+      now = now.add(const Duration(seconds: 60));
+      cli.reasoningLivenessTickForTest();
+      expect(io.out.toString(), contains('… reasoning 60s\n'));
+      expect(io.out.toString(), isNot(contains('(streaming)')));
+      cli.streamLivenessTickForTest();
+      expect(io.out.toString(), isNot(contains('(streaming)')));
+
+      fake.release();
+      await run;
+    });
+
+    test('AC5: a NON-reasoning stream (text renders immediately) produces '
+        'zero heartbeat lines', () async {
+      final fake = FakeStreamFunction([
+        [
+          StartEvent(partial: testAssistant()),
+          TextDeltaEvent(
+            contentIndex: 0,
+            delta: 'plain answer',
+            partial: testAssistant(content: [TextContent(text: 'plain')]),
+          ),
+          DoneEvent(
+            reason: StopReason.stop,
+            message: testAssistant(content: [TextContent(text: 'plain')]),
+          ),
+        ],
+      ]);
+      final cli = cliFor(
+        fake.call,
+        waiting: const WaitingConfig(
+          toolLivenessSeconds: 1,
+          toolLivenessTickSeconds: 1,
+        ),
+      );
+      await cli.runHeadless('hi');
+      cli.streamLivenessTickForTest();
+      cli.reasoningLivenessTickForTest();
+      expect(io.out.toString(), isNot(contains('… reasoning')));
+    });
+
+    test('--stream-thinking: rendered deltas own the signal, no heartbeat '
+        '(AC5 output unchanged)', () async {
+      final fake = GatedThinkingStreamFunction();
+      final cli = cliFor(fake.call, streamThinking: true);
+      final run = cli.runHeadless('hi');
+      await waitForIt(() => cli.isBusy);
+      expect(cli.streamLivenessActiveForTest, isFalse);
+      cli.streamLivenessTickForTest();
+      now = now.add(const Duration(seconds: 120));
+      cli.streamLivenessTickForTest();
+      expect(io.out.toString(), isNot(contains('… reasoning')));
+      fake.release();
+      await run;
+    });
+
+    test('E2: tool rows disarm the heartbeat; the next request re-arms it',
+        () async {
+      // Turn 1 streams thinking then a tool call; turn 2 thinks again.
+      final empty = testAssistant();
+      final withThinking = testAssistant(
+        content: [ThinkingContent(thinking: 'why')],
+      );
+      const call = ToolCall(
+        id: 't1',
+        name: 'bash',
+        arguments: {'command': 'echo hi'},
+      );
+      final toolPartial = testAssistant(
+        content: [ThinkingContent(thinking: 'why'), call],
+        stopReason: StopReason.toolUse,
+      );
+      final firstTurn = <AssistantMessageEvent>[
+        StartEvent(partial: empty),
+        ThinkingDeltaEvent(
+          contentIndex: 0,
+          delta: 'why',
+          partial: withThinking,
+        ),
+        ToolCallStartEvent(contentIndex: 1, partial: withThinking),
+        ToolCallEndEvent(
+          contentIndex: 1,
+          toolCall: call,
+          partial: toolPartial,
+        ),
+        DoneEvent(reason: StopReason.toolUse, message: toolPartial),
+      ];
+      final fake = FakeStreamFunction([
+        firstTurn,
+        thinkingTurn('again', 'Done'),
+      ]);
+      final cli = cliFor(
+        fake.call,
+        waiting: const WaitingConfig(
+          toolLivenessSeconds: 60,
+          toolLivenessTickSeconds: 60,
+        ),
+      );
+      final run = cli.runHeadless('hi');
+      await waitForIt(() => !cli.isBusy, reason: 'the run completes');
+      await run;
+      // The run completes too fast to tick mid-flight; the observable is
+      // the END state: disarmed, zero lines, byte-identical legacy output.
+      expect(cli.streamLivenessActiveForTest, isFalse);
+      expect(io.out.toString(), isNot(contains('… reasoning')));
+      cli.streamLivenessTickForTest();
+      expect(io.out.toString(), isNot(contains('… reasoning')));
+    });
+
+    test('line mode arms the same heartbeat (shared code path)', () async {
+      final fake = GatedThinkingStreamFunction();
+      final cli = cliFor(
+        fake.call,
+        waiting: const WaitingConfig(
+          toolLivenessSeconds: 30,
+          toolLivenessTickSeconds: 30,
+        ),
+      );
+      final run = cli.run();
+      io.sendLine('hi');
+      await waitForIt(() => cli.streamLivenessActiveForTest);
+      now = now.add(const Duration(seconds: 45));
+      cli.streamLivenessTickForTest();
+      expect(io.out.toString(), contains('… reasoning 45s (streaming)'));
       fake.release();
       io.sendLine('/exit');
       await run;
