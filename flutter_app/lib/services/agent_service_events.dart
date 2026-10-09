@@ -55,17 +55,26 @@ extension AgentServiceEvents on AgentService {
         // gh-1449 AC6: persist a batch of FIRST-TIME orphan notes as the
         // hidden `orphan_report` record — the resume seed (see loadSession).
         // Re-drops of already-reported orphans write nothing.
+        // Redaction note: the keys are canonical tool-call ids/timestamps
+        // (no user content), so unlike the CLI path this write skips the
+        // redaction pipeline on purpose.
         final session = _session;
         if (report.notedOrphanKeys.isNotEmpty && session != null) {
           unawaited(
             session
                 .appendCustomEntry(
                   customType: orphanReportRecordType,
-                  data: orphanReportRecordData(
-                    report.notedOrphanKeys.toSet(),
-                  ),
+                  data: orphanReportRecordData(report.notedOrphanKeys.toSet()),
                 )
-                .then((_) {}, onError: (Object _) {}),
+                // A failed append must stay diagnosable: the batch is never
+                // persisted, and the next open would re-report the orphans
+                // it "already reported" with nothing pointing at the cause.
+                .then(
+                  (_) {},
+                  onError: (Object e) {
+                    AppLog.i('persist', 'orphan_report append failed: $e');
+                  },
+                ),
           );
         }
       case AgentEndEvent():

@@ -1,6 +1,8 @@
 import 'dart:math';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
+import 'package:flutter_agent_harness/src/compaction/structured/markers.dart'
+    show localTrimMarkerPrefix;
 import 'package:test/test.dart';
 
 AssistantMessage _a(List<ContentBlock> content) => AssistantMessage(
@@ -553,11 +555,11 @@ void main() {
     test('UT-TEXT: the nearest boundary wins over an earlier one', () {
       final repaired = repairToolPairing([
         compacted('older compaction'),
-        makeOrphan('ghost', 'read', DateTime.utc(2026)),
         UserMessage.text(
           '$localTrimMarkerPrefix tail dropped]',
           timestamp: DateTime.utc(2026),
         ),
+        makeOrphan('ghost', 'read', DateTime.utc(2026)),
       ]);
       final note = repaired.messages
           .map((m) => userMessageText((m as UserMessage).content))
@@ -784,6 +786,30 @@ void main() {
       expect(carriers.single, contains('"bash"'));
       expect(carriers.single, contains('"write"'));
       expect(validateToolPairing(repaired.messages), isEmpty);
+    });
+
+    test('E2: the combined note stays ONE line for any orphan count — '
+        'a multi-line note escapes the gh-1131 summary-sanitizer strip '
+        'window and would re-render forever', () {
+      final repaired = repairToolPairing([
+        _u('summary of earlier work'),
+        makeOrphan('bash_198', 'bash', DateTime.utc(2026)),
+        _a([_c('c1', 'read')]),
+        _r('c1', 'read'),
+        makeOrphan('ghost', 'write', DateTime.utc(2026)),
+        _u('go on'),
+      ]);
+      final carriers = repaired.messages
+          .whereType<UserMessage>()
+          .map((m) => userMessageText(m.content))
+          .where((t) => t.contains('[context note:'))
+          .toList();
+      expect(carriers, hasLength(1));
+      expect(
+        carriers.single.contains('\n'),
+        isFalse,
+        reason: 'the note must fit the sanitizer strip window: one line',
+      );
     });
 
     test('E5: a payload with NO user message degrades to the legacy '

@@ -268,14 +268,22 @@ extension AgentServiceSessions on AgentService {
     // `orphan_report` records — a resumed session never re-reports an
     // orphan it already reported. Best-effort: a scan failure must not
     // break the open.
+    //
+    // lastSegmentOnly (gh-1449 rework): this rides the UI OPEN PATH, so it
+    // reads the primary segment only — orphan_report records are
+    // tail-appended during runs and the primary is rotation-bounded
+    // (kSessionSegmentRotateBytes); a record already rotated into a
+    // `.part-NN` segment may cost one re-report, the accepted trade
+    // against a whole-chain scan here (issue #503 precedent).
+    // clear() first: the same Agent serves every subsequently opened
+    // session, so the latch must be strictly per-session.
     try {
-      _agent.reportedOrphanKeys.addAll(
-        orphanReportKeysFromRecords(
-          await _repo.readCustomRecordsOfType(metadata, {
-            orphanReportRecordType,
-          }),
-        ),
-      );
+      final reports = await _repo.readCustomRecordsOfType(metadata, {
+        orphanReportRecordType,
+      }, lastSegmentOnly: true);
+      _agent.reportedOrphanKeys
+        ..clear()
+        ..addAll(orphanReportKeysFromRecords(reports));
     } on Object catch (error) {
       AppLog.i('open', 'orphan_report seed failed: $error');
     }

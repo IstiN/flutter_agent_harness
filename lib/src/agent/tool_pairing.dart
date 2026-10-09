@@ -620,28 +620,41 @@ void _emitSlotResults(
 /// structured marker) BEFORE the orphan's position. The kept-in-summary
 /// probe is a substring scan of that boundary's text for the canonical call
 /// id — the one stable trace a summarizer plausibly carries.
+///
+/// The note is ONE line for any orphan count (gh-1449 rework): the
+/// compaction-summary sanitizer's whole-block strip
+/// (`_stripContextNotes` in `summary_sanitizer.dart`) follows an opener
+/// across at most two newlines, so a multi-line bullet note echoed into a
+/// summary would escape the strip and re-render forever (the gh-1131
+/// stale-claim class). Items join with `; `; each clause's halves join
+/// with `, ` so the separators never collide
+/// (pinned by `summary_sanitizer_test`).
 String _dropNote(
   List<({int messageIndex, ToolResultMessage message})> orphans,
   List<Message> messages,
 ) {
-  final lines = [
+  final first = orphans.first.message;
+  final clauses = [
     for (final orphan in orphans)
-      '"${orphan.message.toolName}" (id: ${orphan.message.toolCallId}): '
+      '"${orphan.message.toolName}" '
+          // The canonical id — the same identity the latch key and the
+          // kept-in-summary probe use (a raw provider id could sanitize
+          // to something else, and the note must name what was matched).
+          '(id: ${canonicalToolCallId(orphan.message.toolCallId)}): '
           '${_orphanNoteClause(orphan.message, orphan.messageIndex, messages)}',
   ];
   if (orphans.length == 1) {
-    return '[context note: a tool result for "${orphans.first.message.toolName}" (id: ${orphans.first.message.toolCallId}) was dropped — '
-        '${lines.single}. No reply needed.]';
+    return '[context note: a tool result for "${first.toolName}" '
+        '(id: ${canonicalToolCallId(first.toolCallId)}) was dropped — '
+        '${_orphanNoteClause(first, orphans.first.messageIndex, messages)}. '
+        'No reply needed.]';
   }
-  return [
-    '[context note: ${orphans.length} tool results were dropped — their '
-        'originating tool calls are no longer in context. No reply needed.',
-    ...lines.map((line) => '- $line'),
-    'end context note]',
-  ].join('\n');
+  return '[context note: ${orphans.length} tool results were dropped — '
+      'their originating tool calls are no longer in context. '
+      '${clauses.join('; ')}. No reply needed.]';
 }
 
-/// One orphan's named clause: `removed by the [cut] cut; kept in summary:
+/// One orphan's named clause: `removed by the [cut] cut, kept in summary:
 /// yes|no`.
 String _orphanNoteClause(
   ToolResultMessage orphan,
@@ -658,7 +671,7 @@ String _orphanNoteClause(
         UserMessage(:final content) => content,
         _ => '',
       }).contains(id);
-  return 'removed by the ${boundary?.label ?? 'context'} cut; '
+  return 'removed by the ${boundary?.label ?? 'context'} cut, '
       'kept in summary: ${kept ? 'yes' : 'no'}';
 }
 

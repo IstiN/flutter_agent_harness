@@ -284,5 +284,47 @@ void main() {
         'read|ghost|1767225602000',
       });
     });
+
+    test('lastSegmentOnly scans the primary segment only (gh-1449 boot '
+        'bound)', () async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      await session.appendCustomEntry(
+        customType: orphanReportRecordType,
+        data: orphanReportRecordData({'bash|198|1'}),
+      );
+      final meta = (await repo.list(cwd: '/work')).single;
+      // Append the "later" batch through the real API, then rotate: the
+      // early record archives to the part, the primary keeps the late
+      // batch — the boot-bound scan must see ONLY the primary's.
+      await session.appendCustomEntry(
+        customType: orphanReportRecordType,
+        data: orphanReportRecordData({'read|ghost|2'}),
+      );
+      final content = (await env.readTextFile(meta.path)).getOrThrow();
+      final lines = content.trim().split('\n');
+      await env.writeFile(
+        '${meta.path}.part-0001',
+        '${lines[0]}\n${lines[1]}\n',
+      );
+      await env.writeFile(
+        meta.path,
+        '${lines[0]}\n${lines[2]}\n',
+      );
+
+      final full = orphanReportKeysFromRecords(
+        await repo.readCustomRecordsOfType(meta, {orphanReportRecordType}),
+      );
+      expect(full, {'bash|198|1', 'read|ghost|2'});
+      final tail = orphanReportKeysFromRecords(
+        await repo.readCustomRecordsOfType(
+          meta,
+          {orphanReportRecordType},
+          lastSegmentOnly: true,
+        ),
+      );
+      expect(tail, {'read|ghost|2'});
+    });
   });
 }
