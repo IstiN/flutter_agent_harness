@@ -84,6 +84,7 @@ import '../task/delivery_slo.dart';
 import '../skills/builtin_skills.dart';
 import '../skills/skill_availability.dart';
 import '../skills/skills.dart';
+import '../skills/skills_freshness.dart';
 import '../skills/operative_pins.dart' show operativePinNotice;
 import '../skills/skill_renderer.dart';
 import '../prompts/prompts.g.dart'

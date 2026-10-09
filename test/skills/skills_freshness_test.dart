@@ -228,7 +228,13 @@ void main() {
             skillToggles: {'off': false},
           ),
           io: io,
-          streamFunction: FakeStreamFunction([textTurn('ok')]).call,
+          // Three invocations start runs (latecomer, known, and one spare
+          // for the boot-time none).
+          streamFunction: FakeStreamFunction([
+            textTurn('ok'),
+            textTurn('ok'),
+            textTurn('ok'),
+          ]).call,
         );
         final run = cli.run();
         await waitForIt(() => cli.systemPrompt.contains('<name>known</name>'));
@@ -241,6 +247,7 @@ void main() {
         io.sendLine('/skill:does-not-exist');
         await waitForIt(
           () => io.out.toString().contains('unknown skill: does-not-exist'),
+          reason: 'unknown-skill step; out=${io.out}',
         );
         expect(
           io.out.toString(),
@@ -253,15 +260,20 @@ void main() {
           () => io.out.toString().contains(
             'skill latecomer discovered since startup — index refreshed',
           ),
+          reason: 'cold-resolve warning; out=${io.out}',
         );
         await waitForIt(
           () => io.out.toString().contains('skill latecomer — '),
+          reason: 'latecomer render; out=${io.out}',
         );
 
         // indexed: the normal path, no warning.
         final outBefore = io.out.toString();
         io.sendLine('/skill:known');
-        await waitForIt(() => io.out.toString().contains('skill known — '));
+        await waitForIt(
+          () => io.out.toString().contains('skill known — '),
+          reason: 'known render; out=${io.out}',
+        );
         expect(
           io.out.toString(),
           isNot(contains('discovered since startup')),
@@ -272,6 +284,7 @@ void main() {
         io.sendLine('/skill:off');
         await waitForIt(
           () => io.out.toString().contains('skill off is disabled'),
+          reason: 'off disabled; out=${io.out}',
         );
         expect(io.out.toString(), contains('/skills on off'));
 
