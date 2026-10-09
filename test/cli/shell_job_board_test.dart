@@ -10,6 +10,8 @@ library;
 
 import 'package:flutter_agent_harness/src/cli/agent_hub_panel.dart';
 import 'package:flutter_agent_harness/src/cli/shell_job_board.dart';
+import 'package:flutter_agent_harness/src/cli/tui_text_width.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/cli/tool_rows.dart'
     show shellJobCommandPreview;
 import 'package:flutter_agent_harness/src/session/session_record.dart';
@@ -253,6 +255,7 @@ void main() {
       controller
         ..reset()
         ..profile = ColorProfile.trueColor;
+      addTearDown(controller.reset);
       expect(
         shellJobLiveSummaryLine(running: 1, lost: 0),
         startsWith('${controller.sym('status.running')} '),
@@ -270,24 +273,41 @@ void main() {
       );
     });
 
-    test('AC6: at width 40 the lost count is the LAST thing clipped', () {
-      // E2: 1 running, 999 lost — icon and parens may clip, lost never.
-      final line = shellJobLiveSummaryLine(running: 1, lost: 999, width: 40);
-      expect(line, contains('999 lost'));
-      expect(line, isNot(contains('(')), reason: 'parens clip before lost');
-      // A wide-but-fitting line keeps every segment.
+    test('AC6: the clip ladder — lost > parens > icon', () {
+      // 32 cells: '◐ Background jobs (1) · 999 lost'.
+      // Rung 0 — everything fits at 40: E2's digits survive trivially.
       expect(
-        shellJobLiveSummaryLine(running: 1, lost: 999, width: 80),
+        shellJobLiveSummaryLine(running: 1, lost: 999, width: 40),
         '◐ Background jobs (1) · 999 lost',
       );
-      // The ladder order: the icon goes first, then the parens.
+      // Rung 1 — the icon clips first, the parens count stays.
       expect(
-        shellJobLiveSummaryLine(running: 12, lost: 0, width: 22),
+        shellJobLiveSummaryLine(running: 1, lost: 999, width: 31),
+        'Background jobs (1) · 999 lost',
+      );
+      // Rung 2 — the parens go next, lost stays.
+      expect(
+        shellJobLiveSummaryLine(running: 1, lost: 999, width: 27),
+        'Background jobs · 999 lost',
+      );
+      // Rung 3 — even the name truncates from the left; the lost digits
+      // are the last thing that ever clips (E2).
+      final last = shellJobLiveSummaryLine(running: 1, lost: 999, width: 12)!;
+      expect(last, contains('999 lost'));
+      expect(last, startsWith('…'));
+      expect(tuiTextWidth(last), lessThanOrEqualTo(12));
+    });
+
+    test('AC6: zero-lost lines clip the same way', () {
+      // '◐ Background jobs (12)' = 22 cells.
+      expect(
+        shellJobLiveSummaryLine(running: 12, lost: 0, width: 20),
         'Background jobs (12)',
         reason: 'icon clips first',
       );
+      // 'Background jobs (12) · 3 lost' = 29 cells.
       expect(
-        shellJobLiveSummaryLine(running: 12, lost: 3, width: 20),
+        shellJobLiveSummaryLine(running: 12, lost: 3, width: 25),
         'Background jobs · 3 lost',
         reason: 'parens clip second',
       );
@@ -414,16 +434,6 @@ void main() {
       final olderAfter = board.liveLines().singleWhere(
         (l) => l.contains('· older'),
       );
-      expect(
-        olderAfter,
-        olderBefore,
-        reason: 'a printed `· older` row never changes counts',
-      );
-      // Full settle removes the row entirely — the truthful terminal
-      // summary card takes over in the transcript.
-      board.settle('sh-old-4', state: TaskBlockState.done, elapsed: 4.0);
-      expect(board.liveLines().where((l) => l.contains('· older')), isEmpty);
-    });
       expect(
         olderAfter,
         olderBefore,

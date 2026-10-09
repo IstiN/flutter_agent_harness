@@ -1,5 +1,7 @@
 library;
 
+import 'package:characters/characters.dart';
+
 import 'agent_hub_view.dart' show hubDuration;
 import 'tool_rows.dart' show shellJobCommandPreview;
 import 'tui_text_width.dart';
@@ -508,9 +510,30 @@ String? shellJobLiveSummaryLine({
   if (width == null || tuiTextWidth(full) <= width) return full;
   final noIcon = '$base $parens$lostSuffix';
   if (tuiTextWidth(noIcon) <= width) return noIcon;
-  // Icon and parens gone; what remains overflows only below ~26 cells,
-  // where no shape fits — the lost digits themselves never clip.
-  return '$base$lostSuffix';
+  final bare = '$base$lostSuffix';
+  if (tuiTextWidth(bare) <= width) return bare;
+  // Below ~26 cells no shape fits: the lost segment still survives whole —
+  // an ellipsis marks the omitted middle, the digits never clip (E2).
+  return _tailKeep('…$lostSuffix', width);
+}
+
+/// Tail-keeping clip (gh-1446 AC6): the LAST [width] cells of [text],
+/// prefixed with `…` when anything was dropped — the lost count lives at
+/// the line's tail and must never clip away.
+String _tailKeep(String text, int width) {
+  if (tuiTextWidth(text) <= width) return text;
+  if (width <= 0) return '';
+  final cells = [
+    for (final g in text.characters) (g, tuiGraphemeWidth(g)),
+  ];
+  var kept = 0;
+  var i = cells.length;
+  while (i > 0 && kept + cells[i - 1].$2 <= width) {
+    kept += cells[i - 1].$2;
+    i--;
+  }
+  final tail = cells.skip(i).map((c) => c.$1).join();
+  return i == 0 ? tail : '…$tail';
 }
 
 /// The settled summary card a collapsed turn leaves in the transcript:
