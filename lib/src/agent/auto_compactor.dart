@@ -940,15 +940,21 @@ class AutoCompactorFactory {
   AutoCompactor build() {
     final smolStream = sources.smolStream ?? sources.mainStream;
     final smolModel = sources.smolModel ?? sources.mainModel;
+    // gh-1433 E4: the summarizer adapters forward their streaming deltas
+    // (text + thinking) to the host hooks — on the classic engine the
+    // summarizer IS the whole compaction, and its stream used to vanish
+    // behind a busy row that does not exist in a captured log.
     final smolSummarizer = streamFunctionSummarizer(
       smolStream,
       smolModel,
       prompts: prompts,
+      onDelta: hooks.onDelta,
     );
     final mainSummarizer = streamFunctionSummarizer(
       sources.mainStream,
       sources.mainModel,
       prompts: prompts,
+      onDelta: hooks.onDelta,
     );
     return AutoCompactor(
       session: session,
