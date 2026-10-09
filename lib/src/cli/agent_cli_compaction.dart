@@ -57,8 +57,30 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
   DateTime? _lastDeltaPhase;
   String _compactionTail = '';
 
+  /// Whether [onDelta] streamed dimmed summary bytes on the log face
+  /// (gh-1433 E4): the next compaction-facing line closes the stream
+  /// line first, so the report never glues onto the live summary.
+  bool _deltaStreamed = false;
+
+  /// Closes the E4 live-summary stream line (one newline on the primary
+  /// channel) before the next compaction-facing output lands.
+  void _closeDeltaStreamLine() {
+    if (!_deltaStreamed) return;
+    _deltaStreamed = false;
+    cli.io.write('\n');
+  }
+
   @override
   void onDelta(String delta) {
+    // gh-1433 E4: the log face renders the summarizer's deltas live,
+    // dimmed, through the SAME redaction seam as every other rendered
+    // token — a compaction turn is a provider request, and the log must
+    // have no silent windows. The other faces keep the busy-row tail.
+    if (cli._logIsUi) {
+      cli.io.write(cli._style.dim(cli._redactRendered(delta)));
+      _deltaStreamed = true;
+      return;
+    }
     // Live tail of the summary being written, shown in the busy row so
     // compaction reads as work, not a hang. Throttled — deltas are hot.
     final merged = (_compactionTail + delta).replaceAll('\n', ' ');
@@ -75,6 +97,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
 
   @override
   void onAttemptStart(String label, int attempt, Duration budget) {
+    _closeDeltaStreamLine();
     // A slow/dead summarizer endpoint must read as a bounded wait, not a
     // silent hang: name the endpoint being tried and its time cap.
     cli._tuiController?.setBusyPhase(
@@ -92,6 +115,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
 
   @override
   void onPass(AutoCompactorPass pass) {
+    _closeDeltaStreamLine();
     _runTokensBefore ??= pass.tokensBefore;
     if (!pass.ok) {
       // The pass failed: onBothRolesFailed already prints the user-facing
@@ -149,6 +173,7 @@ class _AutoCompactorCliHooks implements AutoCompactorHooks {
 
   @override
   void onRetry(int attempt, int maxAttempts, Duration backoff, Object error) {
+    _closeDeltaStreamLine();
     cli.io.writeln(
       'compaction transient error (attempt $attempt/$maxAttempts); '
       'retrying in ${backoff.inSeconds}s — $error',

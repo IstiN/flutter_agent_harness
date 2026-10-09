@@ -724,6 +724,94 @@ void main() {
     });
   });
 
+  group('IT: E4 — compaction has no silent windows on the log face', () {
+    late FakeCliIO io;
+
+    setUp(() => io = FakeCliIO());
+    tearDown(() => io.close());
+
+    test('the summarizer\'s thinking renders live, dimmed, before the '
+        'compaction report and the continuation turn', () async {
+      const window32k = Model(
+        id: 'test-model',
+        api: 'test-api',
+        provider: 'test-provider',
+        baseUrl: 'https://example.test',
+        contextWindow: 32768,
+        maxTokens: 4096,
+      );
+      final env = MemoryExecutionEnv(
+        cwd: '/work',
+        shell: FakeShell(stdout: 'x' * 32800),
+      );
+      // Suppress session-start memory maintenance so the scripted turns
+      // feed only the run under test (agent_cli_test pattern).
+      await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+      final fake = FakeStreamFunction([
+        // Three tool calls whose outputs (~8200 tokens each) push the
+        // next request past the window — the over-window guard fires.
+        toolTurn(const [
+          ToolCall(
+            id: 'c1',
+            name: 'bash',
+            arguments: {'command': 'cat a.log'},
+          ),
+          ToolCall(
+            id: 'c2',
+            name: 'bash',
+            arguments: {'command': 'cat b.log'},
+          ),
+          ToolCall(
+            id: 'c3',
+            name: 'bash',
+            arguments: {'command': 'cat c.log'},
+          ),
+        ]),
+        // Consumed by the mid-run relief's no-op compaction attempt.
+        textTurn('S'),
+        // The real summarizer pass: the gh-1433 E4 contract is that its
+        // THINKING renders live on the log face instead of vanishing
+        // into a busy row that does not exist in a captured log.
+        thinkingOnlyTurn(
+          'compaction reasoning — folding three tool outputs',
+          'S',
+        ),
+        // The continuation turn after the fold.
+        textTurn('continued after compaction'),
+        textTurn('spare'),
+      ]);
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: window32k,
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: env,
+          sessionRoot: '/sessions',
+          providerKind: 'openai-completions',
+          approvalMode: ApprovalMode.yolo,
+          headlessRun: true,
+          compactionEngine: CompactionEngine.classic,
+        ),
+        io: io,
+        useColor: true,
+        streamFunction: fake.call,
+      );
+      final exit = await cli.runHeadless('go');
+      final out = io.out.toString();
+      expect(exit, 0, reason: out);
+      expect(
+        out,
+        contains('\x1B[2mcompaction reasoning'),
+        reason: 'the summarizer thinking must render dimmed on the log:\n'
+            '$out',
+      );
+      // The stream line closes before the continuation lands.
+      expect(
+        out.indexOf('continued after compaction'),
+        greaterThan(out.lastIndexOf('compaction reasoning')),
+      );
+    });
+  });
+
   group('UT: AC9/E7 — background-job cards never ellipsize the log face', () {
 
     const psCommand =
