@@ -3,14 +3,20 @@
 /// `allowed-tools`) plus the Claude Code extension vocabulary
 /// (`when_to_use`, `arguments`, `disable-model-invocation`, `user-invocable`,
 /// `disallowed-tools`, `model`, `effort`, `context: fork`, `agent`,
-/// `background`, `hooks`, `paths`, `shell`) and the GitHub Copilot
-/// instruction fields (`applyTo`, `excludeAgent`). Codex skills use only
+/// `background`, `hooks`, `paths`, `shell`), the GitHub Copilot
+/// instruction fields (`applyTo`, `excludeAgent`) and the gh-1409
+/// compaction-pin vocabulary (`operative`). Codex skills use only
 /// `name`/`description`, which this parser covers by construction.
 ///
 /// Unknown keys never break loading: they are collected into [notes] so the
 /// host can surface them, while the skill still works with the fields it
 /// understands (multi-format portability rule).
 library;
+
+/// Max length of one `operative:` line (gh-1409 E4): longer entries are
+/// rejected at parse time with a manifest note — a line nobody rereads is
+/// not operative.
+const operativeLineMaxChars = 512;
 
 /// One parsed skill frontmatter.
 final class SkillManifest {
@@ -36,6 +42,7 @@ final class SkillManifest {
     this.applyTo = const [],
     this.excludeAgent,
     this.notes = const [],
+    this.operative = const [],
   });
 
   /// An empty manifest (skill file without frontmatter).
@@ -111,6 +118,15 @@ final class SkillManifest {
 
   /// Non-fatal parse notes (unknown keys, pattern-only tool grants, …).
   final List<String> notes;
+
+  /// gh-1409 `operative`: the skill's compaction-pinned directive lines.
+  /// Each entry is ONE self-contained imperative line (one line = one
+  /// rule); lines ride every compaction fold verbatim via
+  /// `SkillOperativePins` (see `operative_pins.dart`). A skill without the
+  /// key pins nothing — downstream behavior is bit-identical. Lines over
+  /// [operativeLineMaxChars] are rejected at parse time with a note (E4:
+  /// an operative line nobody rereads is not operative).
+  final List<String> operative;
 
   /// [allowedTools] entries that are plain tool names (no pattern suffix) —
   /// the only ones our per-tool approval gate can honor today.
@@ -188,6 +204,8 @@ final class SkillManifest {
       'agent', 'background', 'hooks', 'paths', 'shell',
       // GitHub Copilot instruction files
       'applyTo', 'excludeAgent',
+      // gh-1409 compaction pins
+      'operative',
     };
     for (final key in frontmatter.keys) {
       if (!knownKeys.contains(key)) {
@@ -208,6 +226,30 @@ final class SkillManifest {
     }
 
     final metadataValue = frontmatter['metadata'];
+    // gh-1409 `operative:` lines: a YAML list is one line per entry; a
+    // plain scalar is ONE line (never space-split — the lines are prose
+    // imperatives, not tool names). Over-cap entries are rejected with a
+    // note, not truncated (E4).
+    final operative = <String>[];
+    final operativeValue = frontmatter['operative'];
+    if (operativeValue != null) {
+      final entries = operativeValue is List
+          ? [for (final item in operativeValue) '$item']
+          : ['$operativeValue'];
+      for (final entry in entries) {
+        final line = entry.trim();
+        if (line.isEmpty) continue;
+        if (line.length > operativeLineMaxChars) {
+          notes.add(
+            '${label('operative')} line over the $operativeLineMaxChars-char '
+            'cap rejected (${line.length} chars) — an operative line nobody '
+            'rereads is not operative',
+          );
+          continue;
+        }
+        operative.add(line);
+      }
+    }
     return SkillManifest(
       description: asString('description'),
       whenToUse: asString('when_to_use'),
@@ -235,6 +277,7 @@ final class SkillManifest {
       applyTo: asStringList('applyTo'),
       excludeAgent: asString('excludeAgent'),
       notes: notes,
+      operative: operative,
     );
   }
 }

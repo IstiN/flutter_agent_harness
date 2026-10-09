@@ -235,6 +235,7 @@ class AgentService extends ChangeNotifier
     _activeApiKey = '';
     _wireImageDropNotice();
     _wireTextOnlyImageDropNotice();
+    _wireOperativePinNotice();
     _wireDeliverySloNotice();
     _redactor = redactor;
     _attachRedactor(redactor, bootSecrets);
@@ -279,6 +280,13 @@ class AgentService extends ChangeNotifier
             '— per-request cap reached',
       );
     };
+  }
+
+  /// gh-1409 P4/P5/P6: pin notices (budget drops, lifecycle
+  /// supersedes/drops, AC3 repairs) must never be silent either — same
+  /// AppLog surface as the drop notices above.
+  static void _wireOperativePinNotice() {
+    operativePinNotice = (notice) => AppLog.i('skills', notice);
   }
 
   /// Text-only model image drops must never be silent either (issue #638):
@@ -380,12 +388,13 @@ class AgentService extends ChangeNotifier
     } on Object {
       // Best-effort seeding — continue without it.
     }
-    final promptSuffix = await _discoverPromptSuffix(
+    final promptSuffixResult = await _discoverPromptSuffix(
       resolvedEnv,
       savedSkillsAccess ?? SkillsAccess.granted,
       homeDir: desktopHomeDir(),
       skillToggles: savedSkillToggles,
     );
+    final (promptSuffix, enabledSkills) = promptSuffixResult;
     // Always wrap: the `request_secret` tool injects user-granted keys into
     // the LIVE env at runtime (see [_handleSecretRequest]), so the wrapper
     // must be in place even when the boot-time secret set is empty.
@@ -397,6 +406,12 @@ class AgentService extends ChangeNotifier
       secretsEnv: secretsEnv,
       sessionKeys: sessionKeys,
       config: config,
+      // gh-1409 (review round 2, BLOCKING): publish the boot discovery's
+      // enabled skills — the pin registry's source set — instead of
+      // dropping them (they rode only the prompt suffix before, so the
+      // app host's pin mechanism was silently inert until a settings
+      // change re-published the list).
+      operativeSkills: enabledSkills,
       providerRegistry: providerRegistry,
       redactor: redactor,
       bootSecrets: secrets,
@@ -485,6 +500,7 @@ class AgentService extends ChangeNotifier
     this._toolsAvailabilityStore,
     String? skillsHomeDir,
     this.powerAssertion,
+    List<Skill> operativeSkills = const [],
 
     /// The `~/.fah` home the yaml loader reads (issue #1078).
     String? configHomeDir,
@@ -498,6 +514,7 @@ class AgentService extends ChangeNotifier
        _config = config,
        _skillsAccess = initialSkillsAccess ?? SkillsAccess.granted,
        _skillToggles = initialSkillToggles,
+       _bootOperativeSkills = operativeSkills,
        _resolveSecretName = resolveSecretName,
        // ignore: prefer_initializing_formals
        _providerRegistry = providerRegistry,
@@ -528,6 +545,7 @@ class AgentService extends ChangeNotifier
     maybeCurrent = this;
     _wireImageDropNotice();
     _wireTextOnlyImageDropNotice();
+    _wireOperativePinNotice();
     _wireDeliverySloNotice();
     _providerKind = config.providerKind;
     _activeBaseUrl = config.baseUrl;
@@ -770,9 +788,7 @@ class AgentService extends ChangeNotifier
     // gh-1164 Part B: JS app render/runtime/load errors ride the shared
     // error channel — a gated notice re-enters the conversation the same
     // way (steered mid-run, a fresh system-notice turn while idle).
-    _jsAppErrorSub = JsAppErrorChannel.instance.onDeliver.listen(
-      _onJsAppError,
-    );
+    _jsAppErrorSub = JsAppErrorChannel.instance.onDeliver.listen(_onJsAppError);
     // Interactive dynamic messages (issue #102): the host machinery behind
     // the `dynamic_message` tool — session-scoped JS widgets rendered
     // inline in the transcript with the full installed-app engine surface.
@@ -957,6 +973,11 @@ class AgentService extends ChangeNotifier
       contextWindowCap: _contextWindowCap,
       overWindowRelief: (overWindow) => _relieveOverWindow(overWindow),
     );
+    // gh-1409: publish the boot discovery's enabled skills — the pin
+    // registry's source set. Derived state (P2): re-published on consent
+    // and toggle changes; without this the app host's pin mechanism is a
+    // silent no-op until a settings change.
+    _agent.operativeSkills = List.of(_bootOperativeSkills);
     // The main agent's inbox: messages from children (agent_message to
     // "main") and from other Fa instances arrive at turn boundaries.
     _agent.externalSteeringSource = _mainInboxMessages;
@@ -1015,7 +1036,6 @@ class AgentService extends ChangeNotifier
       providerKind == gemmaProviderKind ||
       providerKind == transformersJsProviderKind;
 
-
   /// The system prompt composition lives in the
   /// `agent_service_prompt.dart` part (issue #692 B): `{{commands}}` is
   /// filled from the central sandbox registry for the current platform,
@@ -1039,9 +1059,6 @@ class AgentService extends ChangeNotifier
   List<String> get registeredToolNamesForTest => [
     for (final tool in _agent.state.tools) tool.name,
   ];
-
-
-
 
   /// The approval gate attached to the agent. Default mode is
   /// [ApprovalMode.write] — read-only tools run freely, mutating and shell
@@ -1089,6 +1106,11 @@ class AgentService extends ChangeNotifier
   /// Home directory for user-level skill roots (desktop only; null on
   /// mobile/web). Null in tests keeps discovery deterministic.
   final String? _skillsHomeDir;
+
+  /// The enabled skills discovered at boot (`create` → `_withEnv`), the
+  /// pin registry's source set (gh-1409). Republished onto the agent once
+  /// it is constructed; consent/toggle changes re-publish over it.
+  late final List<Skill> _bootOperativeSkills;
 
   /// UI hook rendering the approval prompt (the chat screen installs a
   /// Material dialog). `null` → prompt-policy calls are denied.
@@ -1185,7 +1207,6 @@ class AgentService extends ChangeNotifier
   /// Task tool config (child surface set after registry is built).
   TaskToolConfig? _taskConfig;
 
-
   /// The session's background shell jobs (bash background / steer-yield);
   /// null before the agent is built.
   ShellJobRegistry? _shellJobs;
@@ -1235,8 +1256,6 @@ class AgentService extends ChangeNotifier
       _agent.state.tools = tools;
     }
   }
-
-
 
   /// The merged host secrets the agent runs with (dotenv + saved keys +
   /// `request_secret` grants) — the read surface behind the JS apps'
@@ -1314,7 +1333,7 @@ class AgentService extends ChangeNotifier
     if (store != null) unawaited(store.save(access));
     final config = _config;
     if (config == null) return;
-    final suffix = await _discoverPromptSuffix(
+    final (suffix, enabled) = await _discoverPromptSuffix(
       env,
       access,
       homeDir: _skillsHomeDir ?? desktopHomeDir(),
@@ -1322,6 +1341,8 @@ class AgentService extends ChangeNotifier
     // A newer choice made while discovery ran wins — don't clobber it.
     if (access != _skillsAccess) return;
     _promptSuffix = suffix;
+    // gh-1409: republish the operative-pin source set (derived state, P2).
+    _agent.operativeSkills = enabled;
     _agent.state.systemPrompt = _composeSystemPrompt(config);
   }
 
@@ -1433,7 +1454,6 @@ class AgentService extends ChangeNotifier
     await _subagentManager!.update(id, status: SubagentStatus.running);
   }
 
-
   /// A follow-up message needs a live-or-idle child; failed/aborted
   /// children have no session to append to.
   static void ensureSendableSubagent(SubagentHandle handle, String id) {
@@ -1536,14 +1556,10 @@ class AgentService extends ChangeNotifier
   /// [setSkillsAccess] when the third-party consent changes).
   String _promptSuffix;
 
-
-
   /// The cached `<memory>` prompt section (durable facts from past
   /// sessions), refreshed asynchronously after create and on every
   /// `memory_add` — the prompt composition itself stays synchronous.
   String _memorySection = '';
-
-
 
   /// Recomposes the system prompt after the project-folder mount changes
   /// (the file browser's open/unmount flow).
@@ -1642,8 +1658,6 @@ class AgentService extends ChangeNotifier
   int? _backgroundTaskId;
   Timer? _liveActivityEndTimer;
 
-
-
   /// True under `flutter test` (binding class name; web-safe). False when
   /// no binding exists (plain dart tests — there the real event loop just
   /// runs the end timer out).
@@ -1657,10 +1671,15 @@ class AgentService extends ChangeNotifier
     }
   }
 
-
-
   @override
   String? error;
+
+  /// The agent's operative-skill source set (gh-1409): published at boot
+  /// from `create`'s discovery and re-published on consent/toggle
+  /// changes — visible so the boot-publication regression test can assert
+  /// the app host is not silently inert (review round 2, BLOCKING).
+  @visibleForTesting
+  List<Skill> get operativeSkills => _agent.operativeSkills;
 
   /// Builtin tools whose completion may mean the sandbox filesystem changed
   /// (the actual tool names in `builtinTools`: `write`, `edit`, `bash`).
@@ -1781,7 +1800,6 @@ class AgentService extends ChangeNotifier
   /// is a view concern, not a context concern). `null` for full-open
   /// sessions (rows come straight from the loaded context).
   List<SessionRecord>? _viewBranch;
-
 
   /// Pages one chunk of records above the window into the transcript
   /// ([FaChatService.loadOlderHistory]). Re-entrant taps are ignored, as
@@ -1929,12 +1947,6 @@ class AgentService extends ChangeNotifier
     return reached;
   }
 
-
-
-
-
-
-
   Session? _session;
   String? _sessionId;
   String? _sessionFile;
@@ -1958,7 +1970,6 @@ class AgentService extends ChangeNotifier
   /// dump is redacted under the config active at capture time (E1).
   TrajectoryBlobPersister? _trajectoryBlobPersister;
   Session? _trajectoryBlobPersisterSession;
-
 
   /// The producer behind [trajectory]: rebuilt from the active branch on
   /// session open/switch, mirrored live from agent events, and fed the
@@ -2043,8 +2054,6 @@ class AgentService extends ChangeNotifier
   /// machinery behind the `dynamic_message` tool. UI reads it for the
   /// ✦ list, the inline widget tiles, and save-as-app.
   late final DynamicMessagesService dynamicMessages;
-
-
 
   /// Sends a plain-text user message. While the agent is already running the
   /// message is queued as a steering message and the UI shows it as pending
@@ -2349,7 +2358,6 @@ class AgentService extends ChangeNotifier
     }
   }
 
-
   /// Add-provider-flow latch (gh-1044 I1/AC6): > 0 while a provider
   /// add/connect flow runs (AIIN sign-in and friends). While held,
   /// [reconfigure] refuses restore-shaped calls — the active connection
@@ -2413,10 +2421,6 @@ class AgentService extends ChangeNotifier
     return buffer.toString();
   }
 
-
-
-
-
   @override
   Stream<TrajectorySnapshot> get trajectory => _trajectory.stream;
 }
@@ -2434,5 +2438,4 @@ String appMemoryUserRoot({
   required String? configHomeDir,
   required String? desktopHome,
   required String envCwd,
-}) =>
-    configHomeDir ?? desktopHome ?? '$envCwd/home';
+}) => configHomeDir ?? desktopHome ?? '$envCwd/home';

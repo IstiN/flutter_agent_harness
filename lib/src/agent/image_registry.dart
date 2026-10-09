@@ -41,10 +41,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
 import '../context.dart';
-import '../compaction/structured/markers.dart'
-    show isCompactionMarkerText, localTrimMarkerPrefix;
-import '../session/session_tree.dart'
-    show branchSummaryPrefix, compactionSummaryPrefix;
+import '../skills/operative_pins.dart' show isPinRenumberingBoundary;
 import '../types.dart';
 
 /// Default per-request cap on unique images (`images.maxPerRequest`).
@@ -233,26 +230,12 @@ List<Message> rewriteHistoryImages(
 /// local trim valve note. Any of these means history was evicted at some
 /// point, so `[Image N]` citations authored before it may now bind to a
 /// different image (issue #195 F2).
-bool _isRenumberingBoundary(Message message) {
-  if (message is UserMessage) {
-    final content = message.content;
-    if (content is String) {
-      return content.startsWith(compactionSummaryPrefix) ||
-          content.startsWith(branchSummaryPrefix) ||
-          content.startsWith(localTrimMarkerPrefix) ||
-          isCompactionMarkerText(content);
-    }
-    return false;
-  }
-  if (message is ToolResultMessage) {
-    // Structured hide keeps the tool_use visible and projects the hidden
-    // result as a lone marker text — that is a renumbering boundary too.
-    return message.content.any(
-      (block) => block is TextContent && isCompactionMarkerText(block.text),
-    );
-  }
-  return false;
-}
+///
+/// THE one predicate (gh-1409): shared with the operative-pin carrier
+/// (`../skills/operative_pins.dart`) so both payload rewrites see the
+/// same boundary set — the clone gate rejects a second copy.
+bool _isRenumberingBoundary(Message message) =>
+    isPinRenumberingBoundary(message);
 
 /// Scan pass: first-seen entries + per-key occurrence positions.
 void _scanImages(
