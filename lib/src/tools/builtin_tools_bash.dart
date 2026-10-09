@@ -111,12 +111,14 @@ AgentTool shellTool(
   Duration retryBackoff = _bashRetryBackoff,
   PasswordPromptCallback? onPasswordPrompt,
   Duration passwordQuiet = _bashPasswordQuiet,
+
   /// The host's resolved redaction config for the shape interceptor
   /// (issue #1408 AC3, review 5456649624): the same `redact:` section
   /// steers command rewriting and result/job-log masking. Null = the
   /// default config (vendor shapes on) for direct tool users; the CLI
   /// passes its boot-resolved config (disabled when redaction is off).
   RedactionConfig? redactionConfig,
+
   /// Live snapshot of the values the host registered as secrets
   /// (`request_secret`, preconfig keys): those literals are EXEMPT from
   /// command rewriting so an approved value still materializes while the
@@ -601,7 +603,10 @@ ToolExecutionResult _bashJobStatusResult(
         everything.map(_shellJobStatusLine).join('\n'),
       );
     }
-    final running = [for (final entry in everything) if (entry.isRunning) entry];
+    final running = [
+      for (final entry in everything)
+        if (entry.isRunning) entry,
+    ];
     final exited = [
       for (final entry in everything)
         if (!entry.isRunning) entry,
@@ -705,9 +710,7 @@ Future<ToolExecutionResult> _unknownOutputResult(
       '${tail.isEmpty ? '(no output)' : tail}',
     );
   }
-  return ToolExecutionResult.text(
-    _unknownIdText(jobs, id, closestIds),
-  );
+  return ToolExecutionResult.text(_unknownIdText(jobs, id, closestIds));
 }
 
 Future<ToolExecutionResult> _bashJobStopResult(
@@ -748,7 +751,9 @@ Future<ToolExecutionResult> _bashJobStopResult(
     buffer.write(' Closest retained job ids:');
     for (final candidate in hint) {
       final entry = jobs.job(candidate);
-      buffer.write('\n- ${entry == null ? candidate : _shellJobStatusLine(entry)}');
+      buffer.write(
+        '\n- ${entry == null ? candidate : _shellJobStatusLine(entry)}',
+      );
     }
   }
   return ToolExecutionResult.text(buffer.toString());
@@ -821,7 +826,9 @@ String _unknownIdText(
     buffer.write(' Closest retained job ids:');
     for (final candidate in closestIds) {
       final entry = jobs.job(candidate);
-      buffer.write('\n- ${entry == null ? candidate : _shellJobStatusLine(entry)}');
+      buffer.write(
+        '\n- ${entry == null ? candidate : _shellJobStatusLine(entry)}',
+      );
     }
   }
   return buffer.toString();

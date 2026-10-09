@@ -88,7 +88,8 @@ int _editDistance(String a, String b) {
   for (var i = 0; i < a.length; i++) {
     current[0] = i + 1;
     for (var j = 0; j < b.length; j++) {
-      final substitution = previous[j] + (a.codeUnitAt(i) == b.codeUnitAt(j) ? 0 : 1);
+      final substitution =
+          previous[j] + (a.codeUnitAt(i) == b.codeUnitAt(j) ? 0 : 1);
       current[j + 1] = [
         previous[j + 1] + 1,
         current[j] + 1,

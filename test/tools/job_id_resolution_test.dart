@@ -46,13 +46,7 @@ void main() {
   });
 
   group('closestShellJobIds', () {
-    const ids = [
-      'sh-2-dd',
-      'sh-1-aaaa',
-      'sh-1-bbbb',
-      'sh-3-eeee',
-      'sh-1-cccc',
-    ];
+    const ids = ['sh-2-dd', 'sh-1-aaaa', 'sh-1-bbbb', 'sh-3-eeee', 'sh-1-cccc'];
 
     test('same numeric part first, ties broken by id', () {
       expect(closestShellJobIds('sh-1-wrongtail', ids), [

@@ -278,7 +278,8 @@ final class ShellJobRegistry {
     // The hoisted local is what makes the null-check promote (public
     // fields never do).
     final sessionRedactor = jobLogRedactor;
-    final redactor = options?.jobLogRedactor ??
+    final redactor =
+        options?.jobLogRedactor ??
         (sessionRedactor == null ? null : JobLogRedactor(sessionRedactor));
     final mergedOptions = ShellExecOptions(
       cwd: options?.cwd,
@@ -347,7 +348,9 @@ final class ShellJobRegistry {
     final pruneIds = {for (var i = 0; i < overflow; i++) exited[order[i]].id};
     _jobs.removeWhere((entry) => pruneIds.contains(entry.id));
     for (final entry in exited) {
-      if (pruneIds.contains(entry.id)) _prunedLogPaths[entry.id] = entry.logPath;
+      if (pruneIds.contains(entry.id)) {
+        _prunedLogPaths[entry.id] = entry.logPath;
+      }
     }
   }
 

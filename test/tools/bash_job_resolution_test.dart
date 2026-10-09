@@ -70,6 +70,11 @@ final class _FakeBackgroundEnv implements ExecutionEnv, BackgroundShell {
   final MemoryExecutionEnv _delegate;
   final jobs = <_FakeShellJob>[];
 
+  /// When non-empty, [startShellJob] ignores the registry-minted id and
+  /// uses these (one per start) — the registry trusts the returned job's
+  /// id, which is how duplicate-`sh-<n>-` ids get built for E1 tests.
+  var forcedIds = <String>[];
+
   @override
   bool get backgroundJobsSupported => true;
   @override
@@ -79,7 +84,8 @@ final class _FakeBackgroundEnv implements ExecutionEnv, BackgroundShell {
     required String logPath,
     ShellExecOptions? options,
   }) async {
-    final job = _FakeShellJob(id, command, logPath, _delegate);
+    final forced = forcedIds.isNotEmpty ? forcedIds.removeAt(0) : id;
+    final job = _FakeShellJob(forced, command, logPath, _delegate);
     jobs.add(job);
     return Ok(job);
   }
@@ -102,8 +108,7 @@ final class _FakeBackgroundEnv implements ExecutionEnv, BackgroundShell {
       _delegate.appendFile(path, content);
 
   @override
-  Future<Result<bool, FileError>> exists(String path) =>
-      _delegate.exists(path);
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
 
   @override
   Future<Result<void, FileError>> remove(
@@ -132,12 +137,7 @@ Map<String, dynamic> _args(
   String? id,
   int? lines,
   bool? all,
-}) => {
-  'action': action,
-  'id': ?id,
-  'lines': ?lines,
-  'all': ?all,
-};
+}) => {'action': action, 'id': ?id, 'lines': ?lines, 'all': ?all};
 
 Future<void> _pumpSettles() async {
   for (var i = 0; i < 6; i++) {
@@ -166,11 +166,7 @@ void main() {
       env.jobs.single.complete(0);
       await _pumpSettles();
       final stale = '${entry.id.substring(0, entry.id.length - 2)}zz';
-      final result = await tool.execute(
-        _args('output', id: stale),
-        null,
-        null,
-      );
+      final result = await tool.execute(_args('output', id: stale), null, null);
       final text = _text(result);
       expect(text, contains('built ok'));
       expect(text, contains(entry.id));
@@ -182,11 +178,7 @@ void main() {
       final entry = await registry.start('make all');
       await env.jobs.single.writeLog('halfway\n');
       final stale = '${entry.id.substring(0, entry.id.length - 2)}zz';
-      final result = await tool.execute(
-        _args('output', id: stale),
-        null,
-        null,
-      );
+      final result = await tool.execute(_args('output', id: stale), null, null);
       final text = _text(result);
       expect(text, contains('halfway'));
       expect(text, contains(entry.id));
@@ -199,11 +191,7 @@ void main() {
       env.jobs.single.complete(0);
       await _pumpSettles();
       final stale = '${entry.id.substring(0, entry.id.length - 2)}zz';
-      final result = await tool.execute(
-        _args('status', id: stale),
-        null,
-        null,
-      );
+      final result = await tool.execute(_args('status', id: stale), null, null);
       final text = _text(result);
       expect(text, contains(entry.id));
       expect(text, contains('make all'));
@@ -249,10 +237,7 @@ void main() {
     });
 
     test('the hint lists at most 3 ids', () async {
-      final registry = ShellJobRegistry(
-        env: env,
-        maxRetainedExitedJobs: 1000,
-      );
+      final registry = ShellJobRegistry(env: env, maxRetainedExitedJobs: 1000);
       final tool = bashJobTool(registry);
       for (var i = 0; i < 5; i++) {
         await registry.start('job $i');
@@ -313,7 +298,10 @@ void main() {
 
   group('AC4 — post-GC exact-id output falls back to the on-disk log', () {
     test('pruned id still tails from disk', () async {
-      final localRegistry = ShellJobRegistry(env: env, maxRetainedExitedJobs: 1);
+      final localRegistry = ShellJobRegistry(
+        env: env,
+        maxRetainedExitedJobs: 1,
+      );
       final localTool = bashJobTool(localRegistry);
       final pruned = await localRegistry.start('first');
       await env.jobs[0].writeLog('from disk\n');
@@ -334,7 +322,10 @@ void main() {
     });
 
     test('deleted log degrades to the clean unknown-id error (E2)', () async {
-      final localRegistry = ShellJobRegistry(env: env, maxRetainedExitedJobs: 1);
+      final localRegistry = ShellJobRegistry(
+        env: env,
+        maxRetainedExitedJobs: 1,
+      );
       final localTool = bashJobTool(localRegistry);
       final pruned = await localRegistry.start('first');
       await env.jobs[0].writeLog('from disk\n');
@@ -357,7 +348,10 @@ void main() {
     });
 
     test('status names the compacted log without tailing', () async {
-      final localRegistry = ShellJobRegistry(env: env, maxRetainedExitedJobs: 1);
+      final localRegistry = ShellJobRegistry(
+        env: env,
+        maxRetainedExitedJobs: 1,
+      );
       final localTool = bashJobTool(localRegistry);
       final pruned = await localRegistry.start('first');
       await env.jobs[0].writeLog('from disk\n');
@@ -403,7 +397,10 @@ void main() {
     });
 
     test('stop of a GCd id reports there is nothing to stop', () async {
-      final localRegistry = ShellJobRegistry(env: env, maxRetainedExitedJobs: 1);
+      final localRegistry = ShellJobRegistry(
+        env: env,
+        maxRetainedExitedJobs: 1,
+      );
       final localTool = bashJobTool(localRegistry);
       final pruned = await localRegistry.start('first');
       await localRegistry.start('second');
@@ -417,6 +414,53 @@ void main() {
         null,
       );
       expect(_text(result), contains('nothing to stop'));
+    });
+  });
+
+  group('E1 — a shared sh-<n>- prefix never silently picks', () {
+    test('output lists the candidates without resolving', () async {
+      env.forcedIds = ['sh-1-aaa', 'sh-1-bbb'];
+      await registry.start('one');
+      await registry.start('two');
+      final result = await tool.execute(
+        _args('output', id: 'sh-1-stale'),
+        null,
+        null,
+      );
+      final text = _text(result);
+      expect(text, contains('matches several jobs'));
+      expect(text, contains('no resolution'));
+      expect(text, contains('sh-1-aaa'));
+      expect(text, contains('sh-1-bbb'));
+    });
+
+    test('status renders the same candidate list', () async {
+      env.forcedIds = ['sh-1-aaa', 'sh-1-bbb'];
+      await registry.start('one');
+      await registry.start('two');
+      final result = await tool.execute(
+        _args('status', id: 'sh-1-stale'),
+        null,
+        null,
+      );
+      final text = _text(result);
+      expect(text, contains('matches several jobs'));
+      expect(text, contains('sh-1-aaa'));
+      expect(text, contains('sh-1-bbb'));
+    });
+
+    test('stop still demands the exact id', () async {
+      env.forcedIds = ['sh-1-aaa', 'sh-1-bbb'];
+      await registry.start('one');
+      await registry.start('two');
+      final result = await tool.execute(
+        _args('stop', id: 'sh-1-stale'),
+        null,
+        null,
+      );
+      final text = _text(result);
+      expect(text, contains('exact job id'));
+      expect(env.jobs.every((job) => job.stopCalls == 0), isTrue);
     });
   });
 
