@@ -147,6 +147,10 @@ extension _AiinProviderCommands on AgentCli {
     return runAiinConnectCliFlow(
       onStatus: io.writeln,
       shouldOpenBrowserFn: () => shouldLaunchBrowser(noBrowserFlag: noBrowser),
+      // The configured HTTP client (faked in tests) carries the exchange
+      // and key-registration calls; only the loopback callback is a real
+      // socket.
+      client: config.modelsHttpClient,
     );
   }
 
