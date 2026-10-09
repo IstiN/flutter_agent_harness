@@ -1222,7 +1222,7 @@ extension ApprovalCommands on AgentCli {
   void _onToolCallGate(AssistantMessageEvent assistantMessageEvent) {
     if (_useTui) return;
     if (assistantMessageEvent is ToolCallStartEvent) {
-      _postToolHolds.add(PostToolNarrationHold());
+      _postToolHolds.add(_PostToolNarrationHold());
       return;
     }
     if (assistantMessageEvent is ToolCallEndEvent) {
@@ -1235,7 +1235,8 @@ extension ApprovalCommands on AgentCli {
       // Degenerate stream (End without Start): the narration after it
       // still holds — open a pre-stamped segment.
       _postToolHolds.add(
-        PostToolNarrationHold()..toolCallId = assistantMessageEvent.toolCall.id,
+        _PostToolNarrationHold()
+          ..toolCallId = assistantMessageEvent.toolCall.id,
       );
     }
   }

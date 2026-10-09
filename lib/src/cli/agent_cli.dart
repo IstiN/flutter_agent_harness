@@ -1236,7 +1236,8 @@ class AgentCli {
   /// instead of draining every segment after the first result. Live
   /// faces only; the TUI keeps today's behavior. (State lives on the
   /// class — the render methods are an extension.)
-  final List<PostToolNarrationHold> _postToolHolds = <PostToolNarrationHold>[];
+  final List<_PostToolNarrationHold> _postToolHolds =
+      <_PostToolNarrationHold>[];
 
   /// The E1 leading-whitespace hold (gh-1433): whitespace-only deltas
   /// before the first real text hold here so a whitespace-only narration
@@ -2052,7 +2053,7 @@ class AgentCli {
 /// is stamped by the block's `ToolCallEndEvent` — the same id the
 /// execution events carry — so the segment flushes after that call's
 /// result row (positional even for parallel/multi-call messages).
-final class PostToolNarrationHold {
+final class _PostToolNarrationHold {
   /// The held narration deltas, in stream order.
   final StringBuffer text = StringBuffer();
 
