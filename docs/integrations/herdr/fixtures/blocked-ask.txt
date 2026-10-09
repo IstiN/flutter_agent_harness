@@ -1,4 +1,4 @@
->_o  Working…      3s
+Working…      3s
 ┌─ Ask ────────────────────────────────────────────────────────────────────────┐
 │ Question 1 of 1                                                              │
 │ Which database should the migration target?                                  │

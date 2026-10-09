@@ -2,6 +2,7 @@
 library;
 
 import 'package:flutter_agent_harness/src/cli/agent_tree.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/task/subagent.dart';
 import 'package:test/test.dart';
 
@@ -30,7 +31,11 @@ SubagentHandle _handle({
 void main() {
   group('agentStatusIcon', () {
     test('maps every status to an emoji', () {
-      expect(agentStatusIcon(SubagentStatus.queued), '⏳');
+            expect(
+        agentStatusIcon(SubagentStatus.queued),
+        FaThemeController.instance.sym('status.pending'),
+        reason: 'gh-1446 AC8: routed through the symbol table',
+      );
       expect(agentStatusIcon(SubagentStatus.running), '🔄');
       expect(agentStatusIcon(SubagentStatus.idle), '⏸');
       expect(agentStatusIcon(SubagentStatus.completed), '✅');

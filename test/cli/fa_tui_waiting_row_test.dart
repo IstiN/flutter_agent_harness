@@ -1,8 +1,10 @@
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:test/test.dart';
 
 /// Unit tests for the pure visible-waiting row builder (issue #450): the
-/// `⏳ waiting` headline, capped detail rows, and the restart-honesty note.
+/// symbol-table-glyph `waiting` headline (gh-1446 AC8: `status.pending`,
+/// no hardcoded `⏳`), capped detail rows, and the restart-honesty note.
 void main() {
   const timers = [
     (dueMs: 90_000, preview: 'timer one'),
@@ -41,7 +43,13 @@ void main() {
       nowMs: 0,
     );
     expect(lines, hasLength(1));
-    expect(lines.single, contains('⏳ waiting · gh run watch 42'));
+        expect(
+      lines.single,
+      contains(
+        '${FaThemeController.instance.sym('status.pending')}'
+        ' waiting · gh run watch 42',
+      ),
+    );
     expect(lines.single, contains('next wake in 30s (timer)'));
   });
 

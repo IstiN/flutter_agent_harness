@@ -1,13 +1,14 @@
-// Fixed-cell busy-row layout (issue #365): digit growth at a power-of-ten
-// second, the 180 s quiet-threshold crossing, mid-run phase swaps AND
-// kaomoji face swaps (#1374) must never move a column outside the
-// changing cell — the row is laid out in fixed zones and padded to the
-// terminal width like the status row.
+// Fixed-cell busy-row layout (issue #365), motionless (gh-1446 AC4): the
+// row is PLAIN TEXT — the kaomoji face (#1374) and the spinner glyph
+// retired, the label starts at column 0 and ALL motion lives in the
+// status-line brand zone. Digit growth at a power-of-ten second, the
+// 180 s quiet-threshold crossing and mid-run phase swaps must never move
+// a column outside the changing cell — the row is laid out in fixed
+// zones and padded to the terminal width like the status row.
 //
-// Busy-row cell map (ANSI stripped): face zone [0,4) (the widest face
-// `o_o?`), space, label zone [5,29) (24 cells), space, elapsed field
-// [30,36) (6 cells), then the suffix zone from 37 ('· <source>' first,
-// '· quiet Nm' last).
+// Busy-row cell map (ANSI stripped): label zone [0,24) (24 cells), space,
+// elapsed field [25,31) (6 cells), then the suffix zone from 32
+// ('· <source>' first, '· quiet Nm' last).
 library;
 
 import 'dart:async';
@@ -15,8 +16,11 @@ import 'dart:async';
 import 'package:dart_tui/dart_tui.dart';
 
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
+import 'package:flutter_agent_harness/src/kaomoji_faces.dart';
 import 'package:flutter_agent_harness/src/cli/tui_prompt.dart';
 import 'package:flutter_agent_harness/src/cli/tui_repl.dart' show MenuItem;
+import 'package:flutter_agent_harness/src/cli/tui_symbols.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/tools/ask_tool.dart';
 import 'package:test/test.dart';
 
@@ -25,10 +29,10 @@ void main() {
   // visible character at its true column.
   final ansi = RegExp(r'\x1b\[[0-9;?]*[A-Za-z]');
 
-  const labelEnd = 29; // face zone + space + 24-cell label zone
-  const elapsedStart = 30;
-  const elapsedEnd = 36;
-  const hintCol = 37; // '· <source>' starts here whenever a source exists
+  const labelEnd = 24; // 24-cell label zone
+  const elapsedStart = 25;
+  const elapsedEnd = 31;
+  const hintCol = 32; // '· <source>' starts here whenever a source exists
 
   FaTuiCallbacks callbacks() => FaTuiCallbacks(
     onSubmit: (_, {images = const []}) async {},
@@ -134,14 +138,13 @@ void main() {
     final ask = busyRowOf(modelAt(978, phase: 'Running ask..'));
     expect(ask, contains('Running ask..'));
     // The swap lives inside the label zone only.
-    expect(working.substring(0, 2), ask.substring(0, 2));
     expect(working.substring(elapsedStart), ask.substring(elapsedStart));
     // An overlong label ellipsizes INSIDE the zone.
     final long = busyRowOf(
       modelAt(978, phase: 'Compacting context… 999999 tokens'),
     );
     expect(long.substring(elapsedStart), working.substring(elapsedStart));
-    expect(long.substring(2, labelEnd), endsWith('…'));
+    expect(long.substring(0, labelEnd), endsWith('…'));
     expect(long.length, working.length);
   });
 
@@ -176,7 +179,7 @@ void main() {
       );
       expect(withBadge.length, width, reason: 'width $width');
       expect(
-        withBadge.substring(2, labelEnd),
+        withBadge.substring(0, labelEnd),
         contains('[auto-compact'),
         reason: 'width $width: the badge is visible in the label zone',
       );
@@ -197,6 +200,50 @@ void main() {
     expect(row.length, 120);
     expect(row.indexOf('· run'), hintCol);
     expect(row.substring(elapsedStart, elapsedEnd), '  978s');
+  });
+
+  test('AC4 UT-busy-motionless: the row carries NO motion glyph', () {
+    // Byte-scan against the frame alphabets (gh-1446 AC4): no braille
+    // ring frame, no status spinner frame, and no kaomoji face survives
+    // anywhere in the row.
+    final forbidden = <String>{
+      ...FaThemeController.instance.symbols.statusSpinner,
+      ...FaThemeController.instance.symbols.activitySpinner,
+      for (final f in kKaomojiFaces) ...[
+        f.text,
+        for (final (_, t) in f.runs) t,
+        for (final (_, t) in f.fallbackRuns) t,
+      ],
+    };
+    for (final elapsed in [0, 9, 978, 3600]) {
+      for (final face in [0, 3, 7]) {
+        final row = busyRowOf(
+          modelAt(elapsed).copyWith(kaomojiFace: face),
+        );
+        for (final glyph in forbidden) {
+          expect(row.contains(glyph), isFalse,
+              reason: 'motion glyph "$glyph" in [$row]');
+        }
+      }
+    }
+  });
+
+  test('AC4: the label starts at column 0 and the face index is inert', () {
+    // The row ignores kaomojiFace entirely: two frames that differ ONLY
+    // in the face index render byte-identical rows.
+    final a = busyRowOf(modelAt(978).copyWith(kaomojiFace: 1));
+    final b = busyRowOf(modelAt(978).copyWith(kaomojiFace: 6));
+    expect(a, b);
+    expect(a, startsWith('Working…'), reason: 'plain label at column 0');
+    expect(a.length, 80);
+    // The whole row is the dim chrome color — no two-tone face SGR left.
+    final raw = modelAt(978)
+        .view()
+        .content
+        .split('\n')
+        .firstWhere((l) => l.replaceAll(ansi, '').contains('· run'));
+    expect(raw, isNot(contains('38;2;96;208;208')), reason: raw);
+    expect(raw, isNot(contains('38;2;112;160;224')), reason: raw);
   });
 
   test('AC3 IT-prompt-open: consecutive frames never move a column '
@@ -249,8 +296,7 @@ void main() {
     expect(rows.last.substring(elapsedStart, elapsedEnd), ' 1000s');
   });
 
-  test('the host-picker waiting row is padded to the width too', () {
-    var model = modelAt(978);
+  test('the host-picker waiting row is padded to the width too', () {    var model = modelAt(978);
     model =
         model
                 .update(
@@ -332,9 +378,10 @@ void main() {
       reason: 'long job lines are clipped to the live width',
     );
     expect(
-      plain.where((l) => l.contains('⏳ waiting')),
+      plain.where((l) => l.contains('waiting')),
       isNotEmpty,
-      reason: 'the waiting row follows the queue rows',
+      reason: 'the waiting row follows the queue rows (gh-1446 AC8: the '
+          'glyph resolves through the symbol table)',
     );
   });
 
