@@ -4821,4 +4821,8 @@
 
 - gh-1438 bash_job: resolve near-miss/stale job ids instead of 'unknown background job' dead-ends bound status output GC exited jobs (#1447)
 
+## 1.0.540
+
+- gh-1441 Voxel nodes render as the “Voxel world” placeholder — Fa app builds JsonWidgetRenderer without voxelWorld (fa-craft 0.2.18, voxel-sandbox 1.0.0) (#1445)
+
 ## Unreleased
