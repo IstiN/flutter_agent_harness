@@ -80,7 +80,7 @@ void main() {
       }
     });
 
-    await agent.prompt('go');
+    await agent.prompt('go').timeout(const Duration(seconds: 60), onTimeout: () => print('PROMPT TIMED OUT AFTER 60s'));
     await jobs.env.createDir('/tmp').then((_) {});
     final last = agent.state.messages.whereType<AssistantMessage>().last;
     // ignore: avoid_print
@@ -91,6 +91,6 @@ void main() {
     }
     // ignore: avoid_print
     print('tokenCancelledDuringStop: $runTokenCancelledAt');
-    await ws.delete(recursive: true);
+    try { await ws.delete(recursive: true).timeout(const Duration(seconds: 5)); } catch (e) { print('ws delete: \$e'); }
   });
 }
