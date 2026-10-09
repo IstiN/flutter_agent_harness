@@ -1310,6 +1310,14 @@ extension ApprovalCommands on AgentCli {
   /// End of an assistant message: flush the stream newline, then report the
   /// stop reason (errors, aborts, silent truncations, empty responses).
   void _onAssistantMessageEnd(AssistantMessage message) {
+    // AC3 orphan safety: a message that ends WITHOUT a tool execution
+    // following (any non-toolUse stop) can never render the result row its
+    // held narration waits for — flush it HERE, in the message's own
+    // position, before the stop-reason line. A toolUse message keeps the
+    // hold: its tools execute AFTER this end, and the result row flushes
+    // the narration itself (positional). The next-message-start flush
+    // stays as the second net.
+    if (message.stopReason != StopReason.toolUse) _flushPostToolText();
     _flushAssistantStreamAtEnd();
     switch (message.stopReason) {
       case StopReason.error:
@@ -1360,11 +1368,6 @@ extension ApprovalCommands on AgentCli {
   /// CRAP ratchet (gh-1198: the thinking-reset branches tipped it over).
   void _flushAssistantStreamAtEnd() {
     if (_useTui || !_buffersAnswer) {
-      // AC3 orphan safety: a result-less turn (the tool result row never
-      // rendered) flushes its held narration HERE — before the stop-reason
-      // line, in the message's own position. The next-message-start flush
-      // below stays as the second net.
-      if (!_useTui) _flushPostToolText();
       // E1: a whitespace-only narration hold decides at message end —
       // still whitespace-only, it paints nothing (and the separators of
       // a real text stream must not fire for it).

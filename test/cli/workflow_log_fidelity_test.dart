@@ -428,9 +428,10 @@ void main() {
     test('AC3 orphan: post-tool narration survives a result-less turn — '
         'flushed at message end, before the stop summary', () async {
       // A degenerate engine turn: the tool-call block opens, narration
-      // streams after it, and the message ends without the call ever
-      // completing — the result row never renders. Nothing swallowed:
-      // the hold flushes at message end.
+      // streams after it, and the message ends TERMINALLY (StopReason.stop,
+      // not toolUse) —
+      // no execution follows, the result row never renders. Nothing
+      // swallowed: the hold flushes at message end, before the summary.
       final empty = testAssistant();
       final withNarration = testAssistant(
         content: [TextContent(text: 'orphan narration')],
@@ -444,7 +445,7 @@ void main() {
           delta: 'orphan narration',
           partial: withNarration,
         ),
-        DoneEvent(reason: StopReason.toolUse, message: withNarration),
+        DoneEvent(reason: StopReason.stop, message: withNarration),
       ];
       final fake = FakeStreamFunction([events]);
       final cli = cliFor(fake, io: io);
