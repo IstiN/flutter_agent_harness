@@ -987,6 +987,16 @@ class _FaChatScreenState extends State<FaChatScreen>
             _lastSynced[commonPrefix].id == newList[commonPrefix].id) {
           commonPrefix++;
         }
+        // gh-1439: held appends are COUNTED (the model keeps everything —
+        // zero loss, AC4); the pill's counter is the affordance. Live
+        // appends never count (the viewport shows them — today's
+        // behavior). Counted for BOTH render paths (big-diff setMessages
+        // and the per-row insert loop alike).
+        final appendedRows = newLen - commonPrefix;
+        if (appendedRows > 0 && _follow.isHeld) {
+          _follow = _follow.appended(appendedRows);
+          followCounted = true;
+        }
 
         final changes =
             (commonPrefix - math.min(oldLen, commonPrefix)) +
@@ -1019,14 +1029,6 @@ class _FaChatScreenState extends State<FaChatScreen>
             await _chatController.insertMessage(newList[i], index: i);
           }
           _suppressInsertAnimations = oldSuppress;
-          // gh-1439: held appends are COUNTED (the model keeps
-          // everything — zero loss, AC4); the pill's counter is the
-          // affordance. Live appends never count (the viewport shows
-          // them — today's behavior).
-          if (appended > 0 && _follow.isHeld) {
-            _follow = _follow.appended(appended);
-            followCounted = true;
-          }
         }
       }
 
