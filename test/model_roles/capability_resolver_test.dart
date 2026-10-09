@@ -362,5 +362,27 @@ maxTokens: 512
       );
       expect(caps.maxTokensField, 'maxOutputTokens');
     });
+
+    test('spec-only callers resolve the ceiling table AND the field through '
+        'the SAME effective api (gh-1426 rework)', () {
+      // A caller that passes spec but no api must not document max_tokens
+      // while resolving WITHOUT the Claude ceiling table — both consumers
+      // read api ?? spec?.api.
+      final caps = resolveModelCapabilities(
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-4-5',
+        spec: const ProviderSpec(
+          name: 'anthropic',
+          kind: 'anthropic',
+          api: 'anthropic-messages',
+          defaultBaseUrl: 'https://api.anthropic.com',
+          apiKeyEnvNames: ['ANTHROPIC_API_KEY'],
+          contextWindow: 200000,
+          maxTokens: 16384,
+        ),
+      );
+      expect(caps.maxTokens, 64000); // the ceiling table applied
+      expect(caps.maxTokensField, 'max_tokens'); // the same effective api
+    });
   });
 }

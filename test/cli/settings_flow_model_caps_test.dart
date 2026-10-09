@@ -114,6 +114,14 @@ void main() {
     await waitForIt(
       () => io.out.toString().contains('Thinking level — high'),
     );
+    // The omit row names its adapter scope (gh-1426 rework): the flag is
+    // read by the openai-completions adapter only — a google/anthropic pin
+    // would do nothing.
+    await waitForIt(
+      () => io.out.toString().contains(
+        'Omit max-output field — off (openai-completions only)',
+      ),
+    );
     io.sendLine('6'); // done (caps loop — 5 is Remove now, Done shifted)
     // The flow menu re-renders identical text: match the second render.
     await waitForCount('Pin or edit', 2);

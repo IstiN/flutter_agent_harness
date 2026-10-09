@@ -328,4 +328,32 @@ overrides:
       expect(model.maxTokens, 65536);
     });
   });
+
+  group('capability notes ride the model (gh-1426 rework)', () {
+    test('the resolved notes are threaded onto the built Model — never '
+        'dropped at the build boundary', () {
+      // Today's catalog has no reasoning:false provider and the boot
+      // builders pass no endpoint report, so no note fires here — the
+      // assertion pins the THREADING: the field exists, is fed from the
+      // resolver's notes (empty ⇒ silent default build, REG-1 noise-free),
+      // and the E1/E3/E4 notes reach the status surfaces the moment a
+      // spec produces one (see the /model-edit surface test).
+      final previous = modelCapabilityOverrides;
+      modelCapabilityOverrides = ModelCapabilityOverrides()
+        ..set(
+          'zai',
+          'glm-5.3-flash',
+          const ModelCapabilityOverride(maxTokens: 65536),
+        );
+      addTearDown(() => modelCapabilityOverrides = previous);
+      expect(
+        buildCatalogModel('zai', 'glm-5.3-flash').capabilityNotes,
+        isEmpty,
+      );
+      expect(
+        buildCliDefaultModel('zai', modelId: 'glm-5.3-flash').capabilityNotes,
+        isEmpty,
+      );
+    });
+  });
 }
