@@ -845,12 +845,22 @@ class _JsAppViewState extends State<JsAppView> {
           // JsRuntimeConfig (see JsAppEngine.start); taps raycast into
           // `jsr.scene3d.onTap` handlers in the app.
           js3dHost: createFaJs3dHost(widget.env),
+          // Voxel worlds: the bridge-owned world the engine's backend
+          // created at start — the SAME world every `voxel.*` hostCall
+          // lands in (see JsAppEngine.voxelWorld). Without it the renderer
+          // swaps every `voxel` node for the "Voxel world" placeholder
+          // while the engine side reports success (gh-1441).
+          voxelWorld: engine.voxelWorld,
           onScene3dTap: (sceneId, payload) =>
               engine.dispatchHostEvent('scene3d.tap:$sceneId', payload),
           onEvent: (actionId, payload) {
             unawaited(engine.callEvent(actionId, payload));
           },
         );
+        // gh-1441 AC3: a null world on a voxel tree must never be silent —
+        // one line tells "host did not wire voxelWorld" from "broken
+        // widget" (one-shot; never fires on shipped backends).
+        engine.noteUnwiredVoxelWorld(tree);
         // gh-1164 Part B: a host-side render/build failure is reported to
         // the authoring agent through the same gate as JS-side errors —
         // the framework still renders its own error UI for the user.
