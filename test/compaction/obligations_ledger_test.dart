@@ -639,4 +639,78 @@ void main() {
       },
     );
   });
+
+  group('pending-wait entries (AC5 — armed timers know why they exist)', () {
+    test('an armed timer opens a pending-wait entry with the verbatim reason',
+        () {
+      final writer = ObligationsLedgerWriter();
+      final payload = writer.ingestPendingWait(
+        text: 'check the SM merge train after 25m',
+        sourceRecordId: 'sm-123',
+        at: DateTime.utc(2026),
+      );
+      expect(payload, isNotNull);
+      final entry = writer.ledger.entries.single;
+      expect(entry.kind, ObligationKind.pendingWait);
+      expect(entry.status, ObligationStatus.open);
+      expect(entry.text, 'check the SM merge train after 25m');
+      expect(entry.sourceRecordId, 'sm-123');
+      expect(entry.createdAt, DateTime.utc(2026));
+    });
+
+    test('re-arming the same timer never duplicates the entry', () {
+      final writer = ObligationsLedgerWriter();
+      writer.ingestPendingWait(text: 'watch the gate', sourceRecordId: 't1');
+      final again = writer.ingestPendingWait(
+        text: 'watch the gate differently',
+        sourceRecordId: 't1',
+      );
+      expect(again, isNull);
+      expect(writer.ledger.entries, hasLength(1));
+    });
+
+    test('an empty reason or empty source pointer writes nothing', () {
+      final writer = ObligationsLedgerWriter();
+      expect(
+        writer.ingestPendingWait(text: '   ', sourceRecordId: 't1'),
+        isNull,
+      );
+      expect(writer.ingestPendingWait(text: 'reason', sourceRecordId: ''),
+        isNull,
+      );
+      expect(writer.ledger.entries, isEmpty);
+    });
+
+    test('the pending-wait renders in the level-0 block', () async {
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      final recordId = await session.appendMessage(
+        UserMessage.text('a plain turn'),
+      );
+      final writer = ObligationsLedgerWriter();
+      final payload = writer.ingest(
+        text: 'could you watch the CI gate',
+        sourceRecordId: recordId,
+      );
+      final payload = writer.ingestPendingWait(
+        text: 're-check the gate after 25m',
+        sourceRecordId: 'timer-1',
+      )!;
+      await session.appendCustomEntry(
+        customType: obligationsLedgerRecordType,
+        data: payload,
+      );
+      final records = await repo.readCustomRecordsOfType(
+        await session.getMetadata(),
+        {obligationsLedgerRecordType},
+      );
+      final block = renderObligationsBlock(
+        ObligationsLedger.fromPayload(records.last.data),
+      );
+      expect(block, contains('pending-wait'));
+      expect(block, contains('re-check the gate after 25m'));
+      expect(block, contains('timer-1'));
+    });
+  });
 }

@@ -91,7 +91,8 @@ import '../prompts/prompts.g.dart'
         cliMessagingSectionPrompt,
         readSqliteSectionPrompt,
         cliPiModePrompt,
-        finalizeGateContractPrompt;
+        finalizeGateContractPrompt,
+        recallHygienePrompt;
 import '../prompts/project_context.dart';
 import '../approval/approval.dart';
 import '../wire/wire_serve.dart';
@@ -191,6 +192,8 @@ import '../tools/discover_tools_tool.dart';
 import '../tools/load_modes.dart';
 import '../tools/ask_tool.dart';
 import '../tools/request_secret_tool.dart';
+import '../tools/session_search_tool.dart';
+import '../session/session_search.dart';
 import '../tools/builtin_tools.dart';
 import '../tools/checkpoint_tool.dart';
 import '../tools/inspect_image.dart';
@@ -737,6 +740,16 @@ class AgentCli {
       session: () => _session,
     );
     _toolRegistry.register(_compactExpand.tool);
+    // Session-wide archive search (issue #1380 A2): registered under the
+    // same always-registered graceful contract as ask/request_secret —
+    // the search degrades to an honest cannot-search result when no
+    // session file backs the host.
+    _toolRegistry.register(
+      sessionSearchTool(search: searchSessionArchive),
+    );
+    // Pending-wait obligations (issue #1380 AC5): a successful
+    // schedule_message arms a timer — the ledger learns why it exists.
+    _attachObligationPendingWaits();
     _agent.state.tools = _toolRegistry.tools;
     // Capability-gated availability (issue #19): the gate hides/restores
     // tools per the tools: scope stack and tombstones disabled calls; the

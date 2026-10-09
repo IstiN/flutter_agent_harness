@@ -17,6 +17,7 @@ import '../exceptions.dart';
 import '../session_io_retry.dart';
 import 'session_chunk_reader.dart';
 import 'session_record.dart';
+import 'session_search.dart';
 import 'session_storage.dart';
 import 'windowed_session_storage.dart';
 import 'attach/session_presence.dart';
@@ -842,6 +843,15 @@ final class JsonlSessionRepo implements SessionRepo {
     }
     return records;
   }
+
+  /// Full-archive search over [metadata]'s session chain (issue #1380
+  /// A2): the streamed, bounded scan in `session_search.dart` run against
+  /// this repo's file system — the repo exists so hosts never need the
+  /// private fs to reach the file.
+  Future<SessionSearchOutcome> searchArchive(
+    SessionMetadata metadata,
+    SessionSearchQuery query,
+  ) => searchSessionFile(_fs, metadata.path, query);
 
   /// Scan block size for [_readCustomRecordsStreamed]; tests shrink it to
   /// exercise the block-seam logic (lines and gates spanning blocks).

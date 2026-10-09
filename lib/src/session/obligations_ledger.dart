@@ -466,4 +466,33 @@ final class ObligationsLedgerWriter {
     _ledger = next;
     return _ledger.toPayload();
   }
+
+  /// Records an armed timer/watch (issue #1380 AC5): a `pending-wait`
+  /// entry whose text is the timer's reason — verbatim from the
+  /// `schedule_message` call — and whose [sourceRecordId] points at the
+  /// scheduled-message record (the queue's own id; pending records live
+  /// under `<messagesRoot>/_scheduled/`, not the session file), so a
+  /// fired timer re-enters a context that already knows why it exists.
+  /// Returns the payload to append, or null when the text is empty or
+  /// [sourceRecordId] was already recorded (re-arming never duplicates).
+  List<Map<String, Object?>>? ingestPendingWait({
+    required String text,
+    required String sourceRecordId,
+    DateTime? at,
+  }) {
+    if (text.trim().isEmpty || sourceRecordId.isEmpty) return null;
+    if (_ledger.entries.any((e) => e.sourceRecordId == sourceRecordId)) {
+      return null;
+    }
+    _ledger = _ledger.withEntry(
+      ObligationEntry(
+        id: uuidv7(),
+        kind: ObligationKind.pendingWait,
+        text: text,
+        sourceRecordId: sourceRecordId,
+        createdAt: at ?? DateTime.now(),
+      ),
+    );
+    return _ledger.toPayload();
+  }
 }
