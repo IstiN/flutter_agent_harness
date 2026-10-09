@@ -65,7 +65,7 @@ void main() {
         'AAA': '2',
         secretPresenceEnvVar: '',
       });
-      expect(line.split('\n'), ['AAA=2', 'ZZZ=1\n']);
+      expect(line, 'AAA=2\nZZZ=1\n');
     });
   });
 

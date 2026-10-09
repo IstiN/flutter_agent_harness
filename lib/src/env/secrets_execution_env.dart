@@ -65,9 +65,11 @@ final class SecretsExecutionEnv
   /// stop seeing the value while the name STAYS in the roster, so the
   /// sandbox `env` listing renders `NAME: ABSENT` instead of the variable
   /// silently disappearing. An exec already dispatched with the merged env
-  /// keeps it (documented lifetime); register the name through
-  /// [registerSecretNames] first so the ABSENT line survives full removal.
-  void revokeSecret(String name) => _secrets.remove(name);
+  /// keeps it (documented lifetime).
+  void revokeSecret(String name) {
+    _knownNames.add(name);
+    _secrets.remove(name);
+  }
 
   /// A snapshot copy of the live secret map currently injected into [exec]
   /// (name → value). Hosts read it for their own secret bridges (e.g. an
