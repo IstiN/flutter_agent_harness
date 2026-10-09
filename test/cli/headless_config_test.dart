@@ -20,15 +20,16 @@ void main() {
 
     test('fromYaml parses shellJobDrainMs', () {
       expect(
-        HeadlessConfig.fromYaml({
-          'shellJobDrainMs': 60000,
-        }).shellJobDrainMs,
+        HeadlessConfig.fromYaml({'shellJobDrainMs': 60000}).shellJobDrainMs,
         60000,
       );
     });
 
     test('fromYaml accepts 0 (the drain kill switch)', () {
-      expect(HeadlessConfig.fromYaml({'shellJobDrainMs': 0}).shellJobDrainMs, 0);
+      expect(
+        HeadlessConfig.fromYaml({'shellJobDrainMs': 0}).shellJobDrainMs,
+        0,
+      );
     });
 
     test('fromYaml rejects unknown keys, negatives, and non-integers', () {

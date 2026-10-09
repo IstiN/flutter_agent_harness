@@ -2,6 +2,26 @@
 
 ## 1.0.508
 
+- fix(cli): gh-1459 — headless `fa -p` no longer orphans live background
+  shell jobs. `_awaitHeadlessBackgroundJobs` drained only in-flight
+  subagent jobs, so a run whose model was still waiting on a
+  `bash background:true` command (gh-1440's full test suite) printed the
+  detach summary and exited, killing the job with the container — the
+  result it was explicitly waiting for never reached anyone. Live shell
+  jobs now drain exactly like subagents: the settles ride the existing
+  `_onShellJobSettled` fresh-turn path (steered into reaction runs the
+  drain awaits, loop capped at 10 rounds), suppressed jobs
+  (`suppressSettleNotification` — result already landed in-turn) are not
+  awaited, and a settle landing outside a round still gets its reaction
+  run awaited before exit. BOTH loops share ONE wall-clock ceiling, the
+  new `headless:` config section (`shellJobDrainMs`, default 30 min,
+  strict parse; `0` restores the detach-immediately behavior) — a
+  never-settling watch-loop detaches with an observable
+  `⏳ … drain ceiling … — detaching` line instead of hanging headless,
+  and the detach summary stays the documented degradation, never the
+  default path. The drain prints a `⏳ waiting: …` line (#1055 parity)
+  naming what the run stays alive for.
+
 
 - feat(providers): issue #1398 — stall-recovery tuning becomes per-provider
   and data-driven. Registry entries (`customProviders:`, `models.custom:`,

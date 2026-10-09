@@ -54,7 +54,8 @@ final class HeadlessConfig {
     );
   }
 
-  String toYaml() => 'headless:\n'
+  String toYaml() =>
+      'headless:\n'
       '  shellJobDrainMs: $shellJobDrainMs\n';
 }
 

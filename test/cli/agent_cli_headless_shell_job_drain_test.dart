@@ -107,11 +107,7 @@ class _DrainShell implements Shell, BackgroundShell {
 }
 
 final class _DrainJob implements ShellJob {
-  _DrainJob({
-    required this.id,
-    required this.command,
-    required this.logPath,
-  });
+  _DrainJob({required this.id, required this.command, required this.logPath});
 
   @override
   final String id;
@@ -175,22 +171,24 @@ void main() {
   gh1440Shape() async {
     final io = FakeCliIO();
     final shell = _DrainShell();
-    final stream = _RoutingStream(leadTurns: [
-      toolTurn([
-        const ToolCall(
-          id: 't1',
-          name: 'bash',
-          arguments: {
-            'command': 'dart test --exclude-tags integration',
-            'background': true,
-          },
+    final stream = _RoutingStream(
+      leadTurns: [
+        toolTurn([
+          const ToolCall(
+            id: 't1',
+            name: 'bash',
+            arguments: {
+              'command': 'dart test --exclude-tags integration',
+              'background': true,
+            },
+          ),
+        ]),
+        textTurn(
+          'Started the full suite in the background. Waiting on it before '
+          'writing outputs/response.md.',
         ),
-      ]),
-      textTurn(
-        'Started the full suite in the background. Waiting on it before '
-        'writing outputs/response.md.',
-      ),
-    ]);
+      ],
+    );
     final cli = AgentCli(
       config: AgentCliConfig(
         model: testModel,
@@ -303,16 +301,18 @@ void main() {
   ) async {
     final io = FakeCliIO();
     final shell = _DrainShell();
-    final stream = _RoutingStream(leadTurns: [
-      toolTurn([
-        const ToolCall(
-          id: 't1',
-          name: 'bash',
-          arguments: {'command': 'gh run watch 42', 'background': true},
-        ),
-      ]),
-      textTurn('watching the CI run in the background'),
-    ]);
+    final stream = _RoutingStream(
+      leadTurns: [
+        toolTurn([
+          const ToolCall(
+            id: 't1',
+            name: 'bash',
+            arguments: {'command': 'gh run watch 42', 'background': true},
+          ),
+        ]),
+        textTurn('watching the CI run in the background'),
+      ],
+    );
     final cli = AgentCli(
       config: AgentCliConfig(
         model: testModel,
