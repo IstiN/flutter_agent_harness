@@ -129,16 +129,27 @@ final class Skill {
   }
 }
 
-/// Loads one skill file. Returns null when the file cannot be read.
+/// Loads one skill file. Returns null when the file cannot be read — or,
+/// gh-1440 AC6, when its frontmatter is malformed (skip + [onWarning];
+/// a broken file must never become a half-indexed entry).
 Future<Skill?> _loadSkillFile(
   ExecutionEnv env,
   String path,
   String fallbackName,
   SkillScope scope,
   SkillSource source,
+  void Function(String path, String message)? onWarning,
 ) async {
   final text = (await env.readTextFile(path)).valueOrNull;
   if (text == null) return null;
+  if (!frontmatterWellFormed(text)) {
+    onWarning?.call(
+      path,
+      'skills: $path has malformed frontmatter — skipped '
+      '(fix the yaml block and rescan)',
+    );
+    return null;
+  }
   return skillFromText(
     text,
     filePath: path,
@@ -202,14 +213,15 @@ Future<List<Skill>> _scanRoot(
   ExecutionEnv env,
   SkillRoot root,
   SkillScope scope,
+  void Function(String path, String message)? onWarning,
 ) async {
   final entries = (await env.listDir(root.path)).valueOrNull;
   if (entries == null) return const [];
   final seen = <String>{};
   return [
     if (!root.commandDir)
-      ...await _scanSkillDirs(env, root, scope, entries, seen),
-    ...await _scanFlatFiles(env, root, scope, entries, seen),
+      ...await _scanSkillDirs(env, root, scope, entries, seen, onWarning),
+    ...await _scanFlatFiles(env, root, scope, entries, seen, onWarning),
   ];
 }
 
@@ -220,6 +232,7 @@ Future<List<Skill>> _scanSkillDirs(
   SkillScope scope,
   List<FileInfo> entries,
   Set<String> seen,
+  void Function(String path, String message)? onWarning,
 ) async {
   final skills = <Skill>[];
   for (final entry in entries) {
@@ -234,6 +247,7 @@ Future<List<Skill>> _scanSkillDirs(
       entry.name,
       scope,
       root.source,
+      onWarning,
     );
     if (skill != null && seen.add(skill.name.toLowerCase())) {
       skills.add(skill);
@@ -258,13 +272,21 @@ Future<List<Skill>> _scanFlatFiles(
   SkillScope scope,
   List<FileInfo> entries,
   Set<String> seen,
+  void Function(String path, String message)? onWarning,
 ) async {
   final skills = <Skill>[];
   for (final entry in entries) {
     if (!_isFlatSkillFile(entry)) continue;
     final stem = entry.name.substring(0, entry.name.length - 3);
     final path = '${root.path}/${entry.name}';
-    final skill = await _loadSkillFile(env, path, stem, scope, root.source);
+    final skill = await _loadSkillFile(
+      env,
+      path,
+      stem,
+      scope,
+      root.source,
+      onWarning,
+    );
     if (skill != null && seen.add(skill.name.toLowerCase())) {
       skills.add(skill);
     }
@@ -282,12 +304,16 @@ Future<List<Skill>> _scanFlatFiles(
 /// LAST so every project/user/third-party skill of the same name shadows
 /// them (precedence ladder: project > user > third-party-granted > builtin).
 /// Built-ins are first-party and never gated by [allowedSources].
+///
+/// [onWarning] receives `(path, message)` per skipped malformed SKILL.md
+/// (gh-1440 AC6 — the caller dedups per file so rescan churn stays quiet).
 Future<List<Skill>> discoverSkills(
   ExecutionEnv env, {
   List<SkillRoot> projectRoots = const [],
   List<SkillRoot> userRoots = const [],
   Set<SkillSource>? allowedSources,
   List<Skill> builtins = const [],
+  void Function(String path, String message)? onWarning,
 }) {
   bool allowed(SkillRoot root) =>
       allowedSources == null || allowedSources.contains(root.source);
@@ -295,7 +321,7 @@ Future<List<Skill>> discoverSkills(
   final seen = <String>{};
   Future<void> scan(SkillScope scope, List<SkillRoot> roots) async {
     for (final root in roots.where(allowed)) {
-      for (final skill in await _scanRoot(env, root, scope)) {
+      for (final skill in await _scanRoot(env, root, scope, onWarning)) {
         if (seen.add(skill.name.toLowerCase())) skills.add(skill);
       }
     }

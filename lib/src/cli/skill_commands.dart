@@ -64,7 +64,8 @@ extension AgentCliSkillsExt on AgentCli {
   }
 
   /// Re-runs skill discovery with the current access gate and recomposes the
-  /// system prompt (`/skills reload`, consent changes, `/skills import`).
+  /// system prompt (`/skills reload`, consent changes, `/skills import`,
+  /// freshness rescans — gh-1440).
   Future<void> _reloadSkills() async {
     final roots = defaultSkillRoots(cwd: _env.cwd, homeDir: config.homeDir);
     _skills = await discoverSkills(
@@ -73,9 +74,92 @@ extension AgentCliSkillsExt on AgentCli {
       userRoots: roots.userRoots,
       allowedSources: _skillsAllowedSources,
       builtins: builtinSkills(),
+      onWarning: (path, message) {
+        if (_warnedMalformedSkillPaths.contains(path)) return;
+        _warnedMalformedSkillPaths = {..._warnedMalformedSkillPaths, path};
+        io.writeln(_style.dim(message));
+      },
     );
     await _resolveSkillAvailability();
+    await _noteSkillScan();
     _applyPromptComposition();
+  }
+
+  /// Bookkeeping after every discovery scan (boot, `/skills reload`,
+  /// consent change, import, freshness rescan) — metadata only, no content
+  /// reads: the fingerprint baseline, the prompt stamp timestamp, the boot
+  /// name set (frozen at the first scan — the `added mid-session`
+  /// baseline), the last-scan name set (the dropped-from-disk baseline),
+  /// and the one-line note for skills that vanished since the previous
+  /// scan (E-4).
+  Future<void> _noteSkillScan() async {
+    final names = {for (final s in _skills) s.name.toLowerCase()};
+    final dropped = _lastScanSkillNames.difference(names).toList()..sort();
+    if (_skillsScannedAt != null && dropped.isNotEmpty) {
+      io.writeln(
+        _style.dim(
+          'skills: no longer on disk — dropped from the index: '
+          '${dropped.join(', ')}',
+        ),
+      );
+    }
+    _lastScanSkillNames = names;
+    _bootSkillNames ??= names;
+    _skillsScannedAt = DateTime.now();
+    _skillRootsFingerprint = await _computeSkillRootsFingerprint();
+  }
+
+  /// The fingerprint of the consent-filtered default skill roots — the
+  /// exact root list discovery scans, so the check can only fire when the
+  /// scan's own input changed (I3: third-party roots stay unstat'ed while
+  /// consent is denied).
+  Future<SkillRootsFingerprint> _computeSkillRootsFingerprint() {
+    final roots = defaultSkillRoots(cwd: _env.cwd, homeDir: config.homeDir);
+    return computeSkillRootsFingerprint(_env, [
+      ...roots.projectRoots,
+      ...roots.userRoots,
+    ].where(_skillRootAllowed).toList());
+  }
+
+  bool _skillRootAllowed(SkillRoot root) =>
+      _skillsAllowedSources?.contains(root.source) ?? true;
+
+  /// Lowercase names discovered after the boot scan — the `added
+  /// mid-session` flag set the prompt skills section renders (sticky for
+  /// the session, gh-1440 OQ2).
+  Set<String> get _midSessionSkillNames {
+    final boot = _bootSkillNames;
+    if (boot == null) return const {};
+    return _lastScanSkillNames.difference(boot);
+  }
+
+  /// The per-composition freshness check (gh-1440): stat the allowed skill
+  /// roots (one `listDir` per root, zero content reads) and, when the
+  /// fingerprint changed since the last scan, rescan through
+  /// [_reloadSkills] exactly once. `skills.liveRediscovery: false` skips
+  /// the check entirely (the prompt's staleness footer discloses the
+  /// boot-snapshot semantics; AC7). Any failure keeps the last good
+  /// snapshot, warns once, and never blocks composition or the turn (I2).
+  Future<void> _checkSkillsFreshness() async {
+    if (!config.skillsLiveRediscovery) return;
+    try {
+      final fingerprint = await _computeSkillRootsFingerprint();
+      final baseline = _skillRootsFingerprint;
+      if (baseline == null || fingerprint == baseline) return;
+      // Recorded BEFORE the rescan so a re-entrant check sees a fresh
+      // baseline — at most one rescan per composition (I5).
+      _skillRootsFingerprint = fingerprint;
+      await _reloadSkills();
+    } on Object catch (error) {
+      if (_skillsFreshnessWarned) return;
+      _skillsFreshnessWarned = true;
+      io.writeln(
+        _style.dim(
+          'skills: freshness check failed ($error) — keeping the last '
+          'good index',
+        ),
+      );
+    }
   }
 
   /// Resolves the `skills:` toggle scopes (issue #1151 — global
@@ -253,7 +337,7 @@ extension AgentCliSkillsExt on AgentCli {
   /// subagent when the manifest says `context: fork`.
   Future<void> _runSkillCommand(String rest) async {
     final (name, args) = _parseSkillInvocation(rest);
-    final skill = _enabledSkills
+    var skill = _enabledSkills
         .where((s) => s.name.toLowerCase() == name.toLowerCase())
         .firstOrNull;
     if (skill == null) {
@@ -270,11 +354,29 @@ extension AgentCliSkillsExt on AgentCli {
         );
         return;
       }
-      io.writeln(
-        'unknown skill: $name'
-        '${_skills.isEmpty ? ' (no skills discovered)' : ''}',
-      );
-      return;
+      // gh-1440 cold-resolve: the index is a cache, not truth — re-run the
+      // FULL discovery once before answering `unknown skill` (no ad-hoc
+      // file-read side door, I4). Works with `skills.liveRediscovery` off
+      // too: the manual escape hatch is always available (AC7).
+      final (resolved, coldDisabled) = await _coldResolveSkill(name);
+      if (resolved != null) {
+        skill = resolved;
+      } else if (coldDisabled != null) {
+        final scope = _skillResolution.byName[coldDisabled.name]?.scope?.name;
+        io.writeln(
+          'skill ${coldDisabled.name} is'
+          '${scope == null ? '' : ' ($scope)'} disabled'
+          ' — enable with /skills on ${coldDisabled.name}',
+        );
+        return;
+      } else {
+        // True negative keeps today's exact wording — no new noise (AC4).
+        io.writeln(
+          'unknown skill: $name'
+          '${_skills.isEmpty ? ' (no skills discovered)' : ''}',
+        );
+        return;
+      }
     }
     if (!skill.userInvocable) {
       io.writeln('skill ${skill.name} is model-only (user-invocable: false)');
@@ -376,6 +478,30 @@ extension AgentCliSkillsExt on AgentCli {
     );
   }
 
+  /// gh-1440 cold-resolve, the `/skill:` miss path: re-runs discovery (full
+  /// provenance + manifest parse + toggle resolution through
+  /// [_reloadSkills]) and returns `(enabled, discovered)` post-reload. A
+  /// hit prints the dim refresh warning and the caller renders it exactly
+  /// as if indexed; a true miss keeps the caller's exact `unknown skill`
+  /// wording (AC4).
+  Future<(Skill?, Skill?)> _coldResolveSkill(String name) async {
+    await _reloadSkills();
+    final discovered = _skills
+        .where((s) => s.name.toLowerCase() == name.toLowerCase())
+        .firstOrNull;
+    final enabled = _enabledSkills
+        .where((s) => s.name.toLowerCase() == name.toLowerCase())
+        .firstOrNull;
+    if (enabled != null) {
+      io.writeln(
+        _style.dim(
+          'skill ${enabled.name} discovered since startup — index refreshed',
+        ),
+      );
+    }
+    return (enabled, discovered);
+  }
+
   /// Splits `/skill:<name> [args]` into the skill name and its args.
   (String, String) _parseSkillInvocation(String rest) {
     final splitAt = rest.indexOf(RegExp(r'\s'));
@@ -411,8 +537,11 @@ extension AgentCliSkillsExt on AgentCli {
   }
 
   /// The bare `/skills` branch: the plain text list (line mode manages via
-  /// `/skills access`; a TUI management menu is a follow-up).
+  /// `/skills access`; a TUI management menu is a follow-up). The freshness
+  /// check runs first so the listing is never staler than the disk (the
+  /// same stat-cheap check every prompt composition runs).
   Future<void> _skillsListOrMenu() async {
+    await _checkSkillsFreshness();
     _listSkills();
   }
 
@@ -559,6 +688,11 @@ extension AgentCliSkillsExt on AgentCli {
         if (!skill.modelInvocable) 'user-only',
         if (skill.manifest.contextFork) 'fork',
         if (skill.manifest.paths.isNotEmpty) 'path-gated',
+        // gh-1440: discovered after the boot scan — the same flag the
+        // prompt skills section carries, so the management view agrees
+        // with what the model sees.
+        if (_midSessionSkillNames.contains(skill.name.toLowerCase()))
+          'added mid-session',
         // The toggle state rides the dim tail (`; off (project)`) so the
         // line format stays one line per skill (issue #1151).
         if (decision != null && !decision.enabled)
@@ -742,6 +876,11 @@ extension AgentCliSkillsExt on AgentCli {
         buffer.write(
           '  disableShellExecution: ${section['disableShellExecution']}\n',
         );
+      }
+      // gh-1440: the freshness knob rides the same section — a toggle
+      // merge must not drop it.
+      if (section['liveRediscovery'] != null) {
+        buffer.write('  liveRediscovery: ${section['liveRediscovery']}\n');
       }
     }
     buffer.write(

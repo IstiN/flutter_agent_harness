@@ -1469,6 +1469,7 @@ Future<void> _runApp(List<String> args) async {
         // skill bodies follow `disableShellExecution`.
         skillsAccess: saved.skillsAccess,
         skillsDisableShellExecution: saved.skillsDisableShellExecution,
+        skillsLiveRediscovery: saved.skillsLiveRediscovery,
         // Global per-skill toggles (`skills:` config section, issue #1151):
         // the CLI owns the live view; persistConfig writes it back.
         skillToggles: saved.skillToggles,

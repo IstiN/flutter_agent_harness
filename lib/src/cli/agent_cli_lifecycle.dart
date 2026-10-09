@@ -142,15 +142,10 @@ extension AgentCliLifecycle on AgentCli {
   /// metadata only) to drive the startup consent dialog / hint.
   Future<void> _loadAgentContext() async {
     _templates = await loadPromptTemplates(_env, config.promptTemplateDirs);
-    final roots = defaultSkillRoots(cwd: _env.cwd, homeDir: config.homeDir);
-    _skills = await discoverSkills(
-      _env,
-      projectRoots: roots.projectRoots,
-      userRoots: roots.userRoots,
-      allowedSources: _skillsAllowedSources,
-      builtins: builtinSkills(),
-    );
-    await _resolveSkillAvailability();
+    // Boot discovery + the gh-1440 freshness bookkeeping ride the same
+    // `_reloadSkills` every rescan uses (the boot scan records the
+    // fingerprint baseline, the prompt stamp, and the boot name set).
+    await _reloadSkills();
     _thirdPartySkillDirsPresent = await _detectThirdPartySkillDirs();
     // Line mode / headless: this print is visible as-is. TUI: the terminal
     // is not ours yet — the alternate screen would wipe this line, so

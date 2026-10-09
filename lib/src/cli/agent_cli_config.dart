@@ -80,6 +80,7 @@ final class AgentCliConfig {
     this.onApprovalChanged,
     this.skillsAccess = SkillsAccess.granted,
     this.skillsDisableShellExecution = false,
+    this.skillsLiveRediscovery = true,
     this.skillToggles = const {},
     this.onSkillsAccessChanged,
     this.onSkillTogglesChanged,
@@ -539,6 +540,14 @@ final class AgentCliConfig {
   /// When true, `!`command`` shell injections inside skill bodies are not
   /// executed; the placeholder renders as a disabled note instead.
   final bool skillsDisableShellExecution;
+
+  /// Whether the per-composition skills freshness check runs (gh-1440,
+  /// `skills.liveRediscovery`). On by default — a skill landing on disk
+  /// mid-session joins the index at the next prompt recomposition and
+  /// `/skill:` cold-resolves misses. `false` returns to boot-snapshot
+  /// semantics with the prompt's staleness footer; `/skills reload` and
+  /// cold-resolve stay available either way.
+  final bool skillsLiveRediscovery;
 
   /// The GLOBAL per-skill on/off toggles (`skills:` section of
   /// `~/.fah/config.yaml`, issue #1151): skill name → enabled. The CLI
