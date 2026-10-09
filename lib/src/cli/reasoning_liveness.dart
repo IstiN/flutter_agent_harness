@@ -15,6 +15,10 @@
 /// waiting-clock seam — the same `waitingClock` the #450 waiting layer and
 /// the gh-1055 tool liveness use. The class is transport-free; the host
 /// (CLI) wires the print sink through [ReasoningLivenessTracker.onRemind].
+///
+/// gh-1430 adds the sibling [StreamLivenessHeartbeat] below: tier 2 owns
+/// request-out → first event; the sibling owns first event → first
+/// rendered byte (a thinking burst headless does not render).
 library;
 
 import 'dart:async';
