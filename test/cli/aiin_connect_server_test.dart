@@ -104,8 +104,10 @@ void main() {
         .where((s) => s.startsWith(authorizationUrlPrefix))
         .toList();
     expect(urlLines, hasLength(1));
-    expect(Uri.parse(urlLines.single.substring(authorizationUrlPrefix.length))
-        .host, 'auth.aiin.by');
+    expect(
+      Uri.parse(urlLines.single.substring(authorizationUrlPrefix.length)).host,
+      'auth.aiin.by',
+    );
     expect(statussJoined(statuses), isNot(contains('sk-aiin-')));
   });
 
@@ -189,8 +191,10 @@ void main() {
         .where((s) => s.startsWith(authorizationUrlPrefix))
         .toList();
     expect(urlLines, hasLength(2), reason: 'branch line + timeout rescue');
-    expect(Uri.parse(urlLines.first.substring(authorizationUrlPrefix.length))
-        .host, 'auth.aiin.by');
+    expect(
+      Uri.parse(urlLines.first.substring(authorizationUrlPrefix.length)).host,
+      'auth.aiin.by',
+    );
     expect(
       statussJoined(statuses),
       contains('no AIIN callback received (timeout or cancelled)'),
@@ -548,6 +552,33 @@ void main() {
     expect(callback!.succeeded, isTrue);
     await server.close();
   });
+
+  test(
+    'the timeout status carries the authorization URL (gh-1450 AC4)',
+    () async {
+      final statuses = <String>[];
+      final result = await runAiinConnectCliFlow(
+        onStatus: statuses.add,
+        shouldOpenBrowserFn: () => false,
+        openBrowserFn: (_) async => fail('launch must be skipped'),
+        client: mockAiinBackend(),
+        timeout: const Duration(milliseconds: 200),
+      );
+      expect(result, isNull);
+      expect(
+        statuses.join('\n'),
+        contains('no AIIN callback received (timeout or cancelled)'),
+      );
+      // The LAST status is the last-chance rescue line — a user who walked
+      // away can still open the URL from the transcript.
+      expect(statuses.last, startsWith(authorizationUrlPrefix));
+      final url = Uri.parse(
+        statuses.last.substring(authorizationUrlPrefix.length),
+      );
+      expect(url.host, 'auth.aiin.by');
+      expect(url.queryParameters['client_redirect_uri'], isNotNull);
+    },
+  );
 }
 
 String statussJoined(List<String> statuses) => statuses.join('\n');

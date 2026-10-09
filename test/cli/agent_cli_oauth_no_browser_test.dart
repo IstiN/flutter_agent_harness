@@ -168,8 +168,8 @@ void main() {
       if (host == 'auth.aiin.by' && path == '/api/oauth-proxy/exchange') {
         return http.Response(
           jsonEncode({
-            'access_token': 'acc.jwt.sig',
-            'refresh_token': 'ref',
+            'access_token': aiinTestJwt(email: 'user@aiin.by'),
+            'refresh_token': 'refresh.jwt.sig',
             'token_type': 'Bearer',
             'expires_in': 3600,
           }),
@@ -391,4 +391,13 @@ void main() {
       reason: 'usage errors never start a flow',
     );
   });
+}
+
+/// A minimal three-part JWT carrying an [email] claim (same shape the
+/// AIIN connect suite uses — `aiinJwtEmail` reads the payload claim).
+String aiinTestJwt({String? email}) {
+  String part(Object? json) =>
+      base64Url.encode(utf8.encode(jsonEncode(json))).replaceAll('=', '');
+  final payload = email == null ? <String, dynamic>{} : {'email': email};
+  return '${part({'alg': 'none'})}.${part(payload)}.sig';
 }
