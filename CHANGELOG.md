@@ -4771,7 +4771,8 @@
 - fix(1408): harness-induced bench failures — isolated job logs, redacted at rest, shape-only bash interceptor (AC1–AC3; AC4 documented) (#1410)
 - gh-1415 [GOAL] Subagent status line-language: one compact live row per subagent in the CLI TUI (omp-density, ten named deltas) (#1420)
 
-## Unreleased
+## 1.0.535
+
 
 - gh-1426 [GOAL] Model capability negotiation (rework): the resolver's loud
   notes now ride the built `Model` (`capabilityNotes`) and render on the
@@ -4802,3 +4803,5 @@
   openai-completions adapter "is not wired" to the config-carried level is
   corrected and now fires only for the genuinely unwired adapters (dial,
   copilot, chatgpt-codex).
+
+## Unreleased
