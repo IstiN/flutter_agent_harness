@@ -746,6 +746,41 @@ void main() {
       tempHome.deleteSync(recursive: true);
     });
 
+    testWidgets(
+      '/settings hub → model capabilities: the caps flow opens in the app '
+      'context (gh-1426 AC4: the embedded CLI is the app edit surface)',
+      (tester) async {
+        final tempHome = _tempHomeWithProvider();
+        final harness = await boot(tester, extraEnv: {'HOME': tempHome.path});
+
+        await harness.runSlashCommand('/settings');
+        await harness.liveWaitForText(
+          'Model capabilities',
+          timeout: const Duration(seconds: 15),
+        );
+
+        // The picker viewport is shorter than the hub list, so
+        // type-to-filter narrows it to the gh-1426 entry.
+        harness.sendText('model cap');
+        await harness.liveWaitForText(
+          'Settings: Model capabilities',
+          timeout: const Duration(seconds: 15),
+        );
+        harness.sendEnter();
+
+        // The caps flow menu renders inside the app-hosted CLI — the same
+        // validated upsert + live-apply flow the CLI settings expose.
+        await harness.liveWaitForText(
+          'Pin or edit an override',
+          timeout: const Duration(seconds: 15),
+        );
+        await harness.screenshot(shotsDir, '90_settings_model_caps');
+
+        await harness.close();
+        tempHome.deleteSync(recursive: true);
+      },
+    );
+
     testWidgets('/settings hub → compaction engine: pick → scope → set', (
       tester,
     ) async {
