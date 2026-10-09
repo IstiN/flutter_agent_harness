@@ -28,9 +28,9 @@
 # that later reads idle), derived from `visible_working` + `visible_idle`.
 
 id = "fa"
-version = "2026.10.07.1"
+version = "2026.10.09.1"
 min_engine_version = 2
-updated_at = "2026-10-07T00:00:00Z"
+updated_at = "2026-10-09T00:00:00Z"
 aliases = ["flutter_agent_harness", "herdr:fa"]
 
 # --- blocked: the prompt-zone sheets. The frame is bottom-anchored (it
