@@ -19,6 +19,7 @@ import 'package:path/path.dart' as p;
 import 'package:wasm_run/wasm_run.dart';
 
 import 'package:fa/sandbox/glob_expand.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:fa/sandbox/sandbox_builtins.dart';
 import 'package:fa/sandbox/sandbox_host_paths.dart';
 import 'package:fa/sandbox/sandbox_pip.dart';
@@ -1520,7 +1521,13 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         captureStdout &&
         (sandboxHostPath?.isNotEmpty ?? false);
     return enabled
-        ? FaHttpBridge(sandboxRoot: sandboxHostPath!, httpClient: _httpClient)
+        ? FaHttpBridge(
+            sandboxRoot: sandboxHostPath!,
+            httpClient: _httpClient,
+            // gh-1444 AC3: bridged python requests that die on the
+            // transport are logged, not just folded into the OSError.
+            logFailure: (line) => AppLog.i('bridge', line),
+          )
         : null;
   }
 
@@ -1882,6 +1889,9 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       dnsQuery: _systemDnsQuery,
       whoisConnector: (query, server) =>
           _tcpWhois(query, server, timeout: timeout),
+      // gh-1444 AC3: curl/wget transport failures land in app.log with a
+      // `[bridge]` line, not just in the tool result.
+      logFailure: (line) => AppLog.i('bridge', line),
       readTextFile: (path) => _readSandboxText(_resolveSandboxPath(path, cwd)),
       writeBinaryFile: (path, bytes) =>
           _writeSandboxBytes(_resolveSandboxPath(path, cwd), bytes),

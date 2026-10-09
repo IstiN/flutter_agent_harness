@@ -9,6 +9,8 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
+import 'bridge_errors.dart';
+
 /// Host side of the python HTTP bridge.
 ///
 /// The bundled CPython-WASI build has no socket support and no `ssl` module,
@@ -30,9 +32,17 @@ import 'package:http/http.dart' as http;
 /// response bytes that `http.client.HTTPResponse` parses normally.
 final class FaHttpBridge {
   /// Creates a bridge writing responses under `<sandboxRoot>/dev/.fahttp`.
-  FaHttpBridge({required String sandboxRoot, required http.Client httpClient})
-    : _root = sandboxRoot,
-      _httpClient = httpClient;
+  ///
+  /// [logFailure] receives one [bridgeFailureLine] per transport failure
+  /// (gh-1444 AC3) — the shell wires it to app.log so a swallowed request
+  /// is diagnosable after the fact.
+  FaHttpBridge({
+    required String sandboxRoot,
+    required http.Client httpClient,
+    void Function(String line)? logFailure,
+  }) : _root = sandboxRoot,
+       _httpClient = httpClient,
+       _logFailure = logFailure;
 
   static final RegExp _marker = RegExp(
     '\x01FAHTTP1 ([0-9a-f]{1,32}) ([^ ]{1,512}) ([A-Za-z0-9+/=]+)\n',
@@ -40,6 +50,7 @@ final class FaHttpBridge {
 
   final String _root;
   final http.Client _httpClient;
+  final void Function(String line)? _logFailure;
 
   /// Bytes held back because they may be the start of a split control line.
   String _carry = '';
@@ -86,9 +97,31 @@ final class FaHttpBridge {
         );
         await _writeResponse(rid, response);
       } on Object catch (error) {
-        await _writeResponse(rid, utf8.encode('!$error'));
+        // gh-1444 AC3: a transport failure is LOUD. The `[bridge]` line
+        // rides back to python (the OSError message lands in the command's
+        // stderr) AND into app.log via [logFailure] — a reset connection is
+        // indistinguishable from a fast success nowhere in the harness.
+        // Exactly ONE attempt is made here; retries of non-idempotent verbs
+        // are the model's decision, never the bridge's.
+        final method = _requestMethod(base64.decode(encoded));
+        final line = bridgeFailureLine(
+          method: method,
+          host: bridgeHostOfAuthority(authority),
+          error: error,
+          rid: rid,
+        );
+        _logFailure?.call(line);
+        await _writeResponse(rid, utf8.encode('!$line'));
       }
     }());
+  }
+
+  /// The request-line method of a bridged raw request (`GET /x HTTP/1.1`),
+  /// best-effort for failure lines.
+  static String _requestMethod(List<int> raw) {
+    final text = latin1.decode(raw);
+    final space = text.indexOf(' ');
+    return space <= 0 ? 'GET' : text.substring(0, space);
   }
 
   /// Performs the bridged request and returns raw HTTP/1.1 response bytes.
