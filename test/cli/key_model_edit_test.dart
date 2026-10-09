@@ -17,10 +17,10 @@ void main() {
 
   tearDown(() => io.close());
 
-  AgentCli cliFor(StreamFunction streamFunction) {
+  AgentCli cliFor(StreamFunction streamFunction, {Model? model}) {
     return AgentCli(
       config: AgentCliConfig(
-        model: testModel,
+        model: model ?? testModel,
         apiKey: 'test-key',
         env: env,
         sessionRoot: '/sessions',
@@ -122,6 +122,53 @@ void main() {
       io.sendLine('/model-edit maxTokens 8192');
       await waitForIt(
         () => io.out.toString().contains('model max tokens set to 8192'),
+      );
+      io.sendLine('/exit');
+      await run;
+    });
+
+    test('/model-edit surfaces the resolved capability notes and pin source',
+        () async {
+      // gh-1426 rework: the resolver's loud notes (E1 divergence, E3 gate,
+      // E4 catalog miss) ride the Model and render next to the resolved
+      // triple — never dropped at the build boundary.
+      final previous = modelCapabilityOverrides;
+      modelCapabilityOverrides = ModelCapabilityOverrides()
+        ..set(
+          'test-provider',
+          'test-model',
+          const ModelCapabilityOverride(maxTokens: 65536),
+        );
+      addTearDown(() => modelCapabilityOverrides = previous);
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final cli = cliFor(
+        fake.call,
+        model: const Model(
+          id: 'test-model',
+          api: 'test-api',
+          provider: 'test-provider',
+          baseUrl: 'https://example.test',
+          contextWindow: 100000,
+          maxTokens: 65536,
+          capabilityNotes: [
+            'capability override wins over the endpoint report for '
+                'test-provider/test-model maxTokens: 65536 '
+                '(endpoint reported 32000)',
+          ],
+        ),
+      );
+      final run = cli.run();
+
+      io.sendLine('/model-edit');
+      await waitForIt(
+        () => io.out.toString().contains(
+          'caps source: models.overrides pin (out 65536)',
+        ),
+      );
+      await waitForIt(
+        () => io.out.toString().contains(
+          'note: capability override wins over the endpoint report',
+        ),
       );
       io.sendLine('/exit');
       await run;
