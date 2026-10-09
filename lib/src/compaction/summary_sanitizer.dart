@@ -19,6 +19,8 @@
 /// the tests" all stay verbatim.
 library;
 
+import 'structured/markers.dart' show pinBlockCloseTag, pinBlockOpenTag;
+
 /// A summary after sanitization: the cleaned [text] plus the [stripped]
 /// ephemeral sentences (persist sites log them, e.g. in the compaction
 /// record's `details`).
@@ -74,17 +76,64 @@ final RegExp _ephemeralClaim = RegExp(
 /// always the stale-re-render class). Then any sentence that both addresses
 /// the reader in the second person and claims recency or a drop is removed.
 /// Everything else survives byte-identical.
-SanitizedSummary sanitizeSummary(String summary) {
+///
+/// gh-1409 pin exemption (AC4/F6): a sentence containing any of
+/// [protectedLines] verbatim is never stripped or rewritten — these are
+/// compaction-pinned skill directives riding the summary, and the
+/// sanitizer must not mangle them while stripping ephemeral claims around
+/// them. Lines inside a `<pinned-skill-directives>` envelope are
+/// structurally exempt too (the pin block framing is harness-generated),
+/// which protects pins in summaries healed on the projection path, where
+/// the pin set is not known.
+SanitizedSummary sanitizeSummary(
+  String summary, {
+  Set<String> protectedLines = const {},
+}) {
   if (summary.isEmpty) return (text: summary, stripped: const []);
   final stripped = <String>[];
   final text = _stripContextNotes(summary, stripped);
   final keptLines = <String>[];
+  var insidePinEnvelope = false;
+  var envelopeLines = 0;
   for (final line in text.split('\n')) {
-    final keptLine = _sanitizeLine(line, stripped);
+    // Standalone-line equality only (review gh-1409 round 2): the harness
+    // renders the tags as whole lines, so a tag quoted mid-prose — a pin
+    // line copied into a sentence, or a hostile `operative:` line
+    // smuggling the marker — must not flip the exemption.
+    final trimmed = line.trim();
+    if (trimmed == pinEnvelopeOpenTag) {
+      insidePinEnvelope = true;
+      envelopeLines = 0;
+    }
+    // The exemption is BOUNDED: a legit pin block is budget-capped
+    // ([defaultPinBudgetChars] ⇒ ≤ ~273 rendered lines), so an unclosed
+    // envelope (truncated checkpoint, hostile open without close) re-arms
+    // sanitization after [_maxPinEnvelopeLines] lines instead of staying
+    // exempt for the rest of the summary.
+    final keptLine =
+        insidePinEnvelope && envelopeLines < _maxPinEnvelopeLines
+        ? line
+        : _sanitizeLine(line, stripped, protectedLines);
     if (keptLine != null) keptLines.add(keptLine);
+    if (insidePinEnvelope) envelopeLines++;
+    if (trimmed == pinEnvelopeCloseTag) insidePinEnvelope = false;
   }
   return (text: keptLines.join('\n'), stripped: stripped);
 }
+
+/// The pin-envelope exemption's line bound (defense in depth): a
+/// budget-capped legit pin block is ≤ ~273 rendered lines at
+/// [defaultPinBudgetChars] (8192 chars over the ~30-char minimal
+/// rendering), so 512 is provably above any legit block while a hostile
+/// unclosed open cannot latch the exemption over the whole summary.
+const _maxPinEnvelopeLines = 512;
+
+/// Aliases of the renderer's envelope tags — single source of truth in
+/// `structured/markers.dart` ([pinBlockOpenTag]/[pinBlockCloseTag]);
+/// compile-time linked, so a renderer rename cannot silently orphan the
+/// exemption (review gh-1409 round 2, suggestion 5).
+const pinEnvelopeOpenTag = pinBlockOpenTag;
+const pinEnvelopeCloseTag = pinBlockCloseTag;
 
 /// Removes every `[context note …]` block — opened by a real bracket and
 /// closed by a `]` within the same line or the two lines after it (LLM
@@ -98,8 +147,9 @@ String _stripContextNotes(String text, List<String> stripped) {
     if (match.start < start) continue; // opener inside a removed block
     final close = text.indexOf(']', match.end);
     final searchEnd = close < 0 ? text.length : close;
-    final newlines =
-        '\n'.allMatches(text.substring(match.end, searchEnd)).length;
+    final newlines = '\n'
+        .allMatches(text.substring(match.end, searchEnd))
+        .length;
     if (close < 0 || newlines > 2) continue;
     out.write(text.substring(start, match.start));
     var end = close + 1;
@@ -119,24 +169,61 @@ String _stripContextNotes(String text, List<String> stripped) {
 }
 
 /// Strips ephemeral sentences from one [line]; `null` when nothing survives
-/// (the line carried only ephemeral content and is dropped whole).
-String? _sanitizeLine(String line, List<String> stripped) {
+/// (the line carried only ephemeral content and is dropped whole). A line
+/// containing any of [protectedLines] verbatim (gh-1409 AC4: pinned skill
+/// directives) is returned unchanged.
+String? _sanitizeLine(
+  String line,
+  List<String> stripped,
+  Set<String> protectedLines,
+) {
+  final pinKept = _pinProtectedLine(line, protectedLines);
+  if (pinKept != null) return pinKept;
   final sentences = line.split(RegExp(r'(?<=[.!?])\s+'));
+  final kept = _stripEphemeralSentences(sentences, stripped);
+  if (kept == null) return line; // nothing stripped → byte-identical.
+  if (kept.isEmpty) return null; // the line carried only ephemeral text.
+  return _reassembleStrippedLine(line, kept.join(' '));
+}
+
+/// The gh-1409 AC4 guard: [line] survives verbatim when it contains any of
+/// [protectedLines] (a pin carrying the summary must not be mangled by the
+/// ephemeral-claim strips around it). `null` → not protected.
+String? _pinProtectedLine(String line, Set<String> protectedLines) {
+  for (final protected in protectedLines) {
+    if (protected.isNotEmpty && line.contains(protected)) return line;
+  }
+  return null;
+}
+
+/// Drops the ephemeral-claim sentences ([_secondPerson] + [_ephemeralClaim])
+/// from [sentences], recording each in [stripped]. `null` → nothing was
+/// ephemeral (the caller keeps the line byte-identical).
+List<String>? _stripEphemeralSentences(
+  List<String> sentences,
+  List<String> stripped,
+) {
   final kept = <String>[];
+  var removed = 0;
   for (final sentence in sentences) {
-    if (_secondPerson.hasMatch(sentence) && _ephemeralClaim.hasMatch(sentence)) {
+    if (_secondPerson.hasMatch(sentence) &&
+        _ephemeralClaim.hasMatch(sentence)) {
       if (sentence.trim().isNotEmpty) stripped.add(sentence.trim());
+      removed++;
       continue;
     }
     kept.add(sentence);
   }
-  if (kept.length == sentences.length) return line;
-  if (kept.isEmpty) return null;
-  final text = kept.join(' ');
-  // A surviving bare list marker ("2." after its content was stripped)
-  // is noise, and re-attaching the original marker would duplicate it.
+  if (removed == 0) return null;
+  return kept;
+}
+
+/// Reassembles a line whose ephemeral sentences were stripped: a bare
+/// surviving list marker ("2." after its content was stripped) is noise
+/// (`null` — the line drops), and a partially stripped bullet keeps its
+/// marker so the list stays valid.
+String? _reassembleStrippedLine(String line, String text) {
   if (RegExp(r'^\s*(?:[-*+]|\d+\.)$').hasMatch(text)) return null;
-  // A partially stripped bullet keeps its marker so the list stays valid.
   final bullet = RegExp(r'^(\s*(?:[-*+]|\d+\.)\s+)');
   if (bullet.hasMatch(line) && !bullet.hasMatch(text)) {
     return bullet.firstMatch(line)!.group(1)! + text.trimLeft();

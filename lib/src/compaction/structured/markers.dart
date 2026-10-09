@@ -58,6 +58,14 @@ String markerPreview(String content) {
 String imagePreview(String mimeType) =>
     '$mimeType, ${estimatedImageChars ~/ 4} tokens est.';
 
+/// The pin block's fixed wrapper tags (gh-1409 E8): the single source of
+/// truth shared by the renderer (`skills/operative_pins.dart`, re-export)
+/// and the summary sanitizer's envelope match (`summary_sanitizer.dart`) —
+/// one declaration, compile-time linked, so a rename cannot silently
+/// orphan the sanitizer's exemption (review gh-1409 round 2, suggestion 5).
+const pinBlockOpenTag = '<pinned-skill-directives>';
+const pinBlockCloseTag = '</pinned-skill-directives>';
+
 /// The kind labels shown in hidden markers.
 const markerKinds = (
   user: 'user',

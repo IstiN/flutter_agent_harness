@@ -305,6 +305,9 @@ extension CompactionWindowSizing on AgentService {
         engine:
             loadAppCompactionEngine(env.sessionCwd) ??
             CompactionEngine.structured,
+        // gh-1409: the enabled skills' operative lines ride every
+        // summarization prompt as the verbatim-preserve pinned block.
+        operativeSkills: _agent.operativeSkills,
       ).run();
     } on Object catch (error) {
       // A throwing run (unresolvable summarizer chain, engine crash) is a

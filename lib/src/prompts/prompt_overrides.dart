@@ -58,6 +58,9 @@ const overridablePromptNames = <String, String>{
       'System prompt of the structured-engine hide judge (issue #148).',
   'compaction/structured_checkpoint':
       'Structured-engine checkpoint instructions (issue #148).',
+  'compaction/pinned_operative':
+      'gh-1409 verbatim-preserve duty for compaction-pinned skill '
+      'operative lines.',
 };
 
 /// Validates the raw `prompts:` yaml section into a prompt name → raw source

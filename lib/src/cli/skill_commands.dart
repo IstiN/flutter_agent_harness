@@ -112,6 +112,11 @@ extension AgentCliSkillsExt on AgentCli {
     }
     _skillResolution = resolution;
     _enabledSkills = enabledSkills(_skills, resolution);
+    // gh-1409: republish the operative-pin source set (derived state, P2) —
+    // every recompute of the enabled list publishes it, so boot, reload,
+    // consent/import and the /skills on|off toggle all keep the agent's
+    // pin registry source in lockstep.
+    _agent.operativeSkills = List.of(_enabledSkills);
   }
 
   /// Re-runs agent-type discovery with the current access gate.
