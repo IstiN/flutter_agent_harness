@@ -16,17 +16,19 @@ void main() {
   var now = DateTime.utc(2026, 1, 1, 12);
   var lines = <String>[];
 
-  final livenessSeconds = () => 60;
-  final tickSeconds = () => 60;
+  DateTime clockForTest() => now;
+  void recordLine(int elapsed) => lines.add(streamLivenessLine(elapsed));
+  int cadenceSeconds() => 60;
+  int tickCadenceSeconds() => 60;
 
   StreamLivenessHeartbeat build({
     int Function()? cadence,
     int Function()? tick,
   }) => StreamLivenessHeartbeat(
-    onRemind: (elapsed) => lines.add(streamLivenessLine(elapsed)),
-    livenessSeconds: cadence ?? livenessSeconds,
-    tickSeconds: tick ?? tickSeconds,
-    clock: () => now,
+    onRemind: recordLine,
+    livenessSeconds: cadence ?? cadenceSeconds,
+    tickSeconds: tick ?? tickCadenceSeconds,
+    clock: clockForTest,
   );
 
   setUp(() {

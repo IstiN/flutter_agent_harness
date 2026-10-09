@@ -858,6 +858,36 @@ void main() {
       io.sendLine('/exit');
       await run;
     });
+
+    test('E3: the compaction window arms the tier-2 reasoning line — no '
+        'silent multi-minute summarization span in the pane', () async {
+      final fake = FakeStreamFunction([thinkingTurn('some thinking', 'done')]);
+      final cli = cliFor(
+        fake.call,
+        waiting: const WaitingConfig(
+          toolLivenessSeconds: 60,
+          toolLivenessTickSeconds: 60,
+        ),
+      );
+      await cli.runHeadless('hi');
+
+      // No agent events fire inside a compaction pass — the window arms
+      // the pre-first-event watch explicitly.
+      cli.compactionLivenessStartForTest();
+      now = now.add(const Duration(seconds: 60));
+      cli.reasoningLivenessTickForTest();
+      // The BARE tier-2 line (the `\n` anchor excludes a `(streaming)`
+      // line) — the summarizer window reads as plain reasoning silence.
+      expect(io.out.toString(), contains('… reasoning 60s\n'));
+      expect(io.out.toString(), isNot(contains('(streaming)')));
+
+      // Window over: the watch drops, the idle session stays silent.
+      cli.compactionLivenessEndForTest();
+      now = now.add(const Duration(seconds: 60));
+      cli.reasoningLivenessTickForTest();
+      final bare = RegExp(r'… reasoning \d+s\n').allMatches(io.out.toString());
+      expect(bare, hasLength(1));
+    });
   });
 
   group('reasoningLivenessLine', () {
