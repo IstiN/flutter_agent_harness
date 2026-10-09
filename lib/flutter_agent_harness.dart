@@ -252,6 +252,7 @@ export 'src/tools/builtin_tools.dart';
 export 'src/tools/checkpoint_tool.dart';
 export 'src/tools/dynamic_message_tool.dart';
 export 'src/tools/inspect_image.dart';
+export 'src/tools/job_id_resolution.dart';
 export 'src/tools/mobile/mobile_tools.dart';
 export 'src/tools/misuse_policy.dart';
 export 'src/tools/password_prompt.dart';
@@ -290,3 +291,5 @@ export 'src/wire/wire_adapter.dart';
 export 'src/wire/wire_protocol.dart';
 export 'src/wire/wire_serve.dart';
 export 'src/web_search/web_search.dart';
+// ── viewport ──
+export 'src/viewport/follow_mode.dart';

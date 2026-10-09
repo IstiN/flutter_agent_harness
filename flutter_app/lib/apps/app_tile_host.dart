@@ -398,7 +398,18 @@ class _AppTileHostState extends State<AppTileHost> {
                       unawaited(engine.callEvent(actionId, payload));
                     }
                   : (actionId, payload) => widget.onOpen(),
+              // Voxel worlds: the bridge-owned world the engine's backend
+              // created at start — the SAME world every `voxel.*` hostCall
+              // lands in (see JsAppEngine.voxelWorld). Without it the
+              // renderer swaps every `voxel` node for the "Voxel world"
+              // placeholder while the engine side reports success (gh-1441;
+              // same wiring as js_app_view/dynamic_widget_tile).
+              voxelWorld: engine.voxelWorld,
             );
+            // gh-1441 AC3: a null world on a voxel tree must never be
+            // silent — one line tells "host did not wire voxelWorld" from
+            // "broken widget" (one-shot; never fires on shipped backends).
+            engine.noteUnwiredVoxelWorld(tree);
             return ViewportReporter(
               onSize: (size) => engine.dispatchHostEvent('viewport', {
                 'width': size.width,

@@ -35,17 +35,18 @@ typedef FaLlmMessage = ({String role, String content});
 /// LLM completion used by the `jsr.fa.llm*` bridge calls. Receives the
 /// conversation and resolves with the assistant's reply text. When [onDelta]
 /// is given (the `llm.stream` call), it reports text deltas as they arrive.
-typedef FaLlmHandler =
-    Future<Object?> Function(
-      List<FaLlmMessage> messages, {
-      void Function(String delta)? onDelta,
-    });
+typedef FaLlmHandler = Future<Object?> Function(
+  List<FaLlmMessage> messages, {
+  void Function(String delta)? onDelta,
+});
 
 /// Handler for platform bridges still without a real backend (health
 /// actions other than `health.summary`). Receives the action name
 /// (`health.stepsToday`, …) and args.
-typedef FaPlatformHandler =
-    Future<Object?> Function(String action, Map<String, Object?> args);
+typedef FaPlatformHandler = Future<Object?> Function(
+  String action,
+  Map<String, Object?> args,
+);
 
 /// Read source for the host's merged secrets (dotenv + saved keys) behind
 /// the `jsr.fa.keys.list/get` bridge calls; returns a fresh name → value
@@ -54,11 +55,10 @@ typedef FaHostKeysSource = Map<String, String> Function();
 
 /// One `home`/`homekit` action handler: resolves the bridge map from the
 /// gated [HomeApi] (see [_homeActions]).
-typedef _HomeAction =
-    Future<Map<String, Object?>> Function(
-      HomeApi api,
-      Map<String, Object?> args,
-    );
+typedef _HomeAction = Future<Map<String, Object?>> Function(
+  HomeApi api,
+  Map<String, Object?> args,
+);
 
 /// Theme-pack bridge behind `jsr.fa.theme.list/current/apply` (issue #169).
 /// The host implements it; the apply leg ALWAYS renders a consent prompt —
@@ -366,12 +366,96 @@ class JsAppEngine {
   Map<String, dynamic>? get exportedState => _engine?.exportedState;
   List<Map<String, dynamic>> peekLogs() => _engine?.peekLogs() ?? const [];
 
+  /// The bridge-owned voxel world behind `voxel` nodes (`jsr.hostCall(
+  /// 'voxel.*')`): the SAME world the running engine's backend created at
+  /// start and every `voxel.attach`/`voxel.mesh`/`voxel.camera` call lands
+  /// in (gh-1441). Surfaces pass it to [JsonWidgetRenderer.voxelWorld] —
+  /// without it the renderer swaps every `voxel` node for the "Voxel
+  /// world" placeholder while the engine side reports success.
+  ///
+  /// Null before [start] and after [dispose]/restart, so a re-render after
+  /// a reload always wires the CURRENT world — never a stale one from a
+  /// disposed engine.
+  JsVoxelWorld? get voxelWorld => _engine?.voxelWorld;
+
+  /// Whether the one-shot unwired-voxel diagnostic already fired (see
+  /// [noteUnwiredVoxelWorld]).
+  bool _unwiredVoxelNoted = false;
+
+  /// gh-1441 AC3: when a tree carries a `voxel` node while this engine has
+  /// NO voxel world, the renderer draws its "Voxel world" placeholder —
+  /// indistinguishable from a broken widget unless the host says why. A
+  /// minimal custom backend ships no world (`JsWidgetEngine.voxelWorld`
+  /// returns null there); shipped backends always have one, so on them
+  /// this never fires. Logs ONCE per engine boot.
+  void noteUnwiredVoxelWorld(Map<String, dynamic> tree) {
+    // Live engine only. `_start()` nulls `_engine` before the async
+    // dispose/boot while `tree.value` still publishes the old tree — a
+    // rebuild in that gap renders the placeholder transiently and must
+    // NOT spend the one-shot (it would warn on shipped backends, and the
+    // flag would stay spent for the rest of the instance). AC3's actual
+    // subject is a LIVE engine whose backend ships no world (gh-1441
+    // review).
+    final engine = _engine;
+    if (_unwiredVoxelNoted || engine == null || engine.voxelWorld != null) {
+      return;
+    }
+    if (!_containsVoxelNode(tree, depth: 0)) return;
+    _unwiredVoxelNoted = true;
+    AppLog.i(
+      'apps',
+      'WARNING: ${app.id}/$entryFile: voxel node in the rendered tree but '
+          'no voxelWorld is wired — the bridge world is missing on this '
+          'engine (minimal backend?); the "Voxel world" placeholder is host '
+          'wiring, not a broken widget',
+    );
+  }
+
+  /// Whether [node] — a JSON widget tree — contains a `voxel` node
+  /// anywhere (recursing through child maps/lists, depth-capped).
+  ///
+  /// Complexity is held ≤5 deliberately: the CI app-crap-gate measures
+  /// this file against the ubuntu shard coverage, where the walk is
+  /// unreachable in tests (it needs a LIVE engine whose backend ships no
+  /// world — a state no host constructs), so an uncovered CC-9 first cut
+  /// measured CRAP 90 > 30 and failed the ratchet (CI run 37974606427).
+  /// The [containsVoxelNodeForTest] pins below keep it covered anyway;
+  /// only-down from here.
+  static bool _containsVoxelNode(Object? node, {required int depth}) {
+    if (depth > 64) return false;
+    if (node is Map) {
+      return node['type'] == 'voxel' ||
+          node.values.any(
+            (value) => _containsVoxelNode(value, depth: depth + 1),
+          );
+    }
+    if (node is List) {
+      return node.any((value) => _containsVoxelNode(value, depth: depth + 1));
+    }
+    return false;
+  }
+
+  /// Direct unit seam for the JSON-tree walk behind
+  /// [noteUnwiredVoxelWorld]: the walk is reachable in production only
+  /// with a LIVE engine whose backend ships no voxel world — a state no
+  /// host can construct (no backend injection seam on [JsAppEngine]) —
+  /// so the recursion is pinned through here, bridge-independent (the
+  /// [assembleEntryJsForTest] pattern, issue #184). The pins run on the
+  /// bare ubuntu CI shards, where the engine-boot tests skip.
+  @visibleForTesting
+  static bool containsVoxelNodeForTest(Object? node) =>
+      _containsVoxelNode(node, depth: 0);
+
   /// Starts (or restarts) the JS engine with the current [entryFile].
   Future<void> start() => _guardLifecycle(_start);
 
   Future<void> _start() async {
     final old = _engine;
     _engine = null;
+    // A fresh boot re-arms the one-shot unwired-voxel diagnostic: start()
+    // restarts the SAME instance, so a flag spent by an earlier boot would
+    // silence a genuinely-unwired state after a reload (gh-1441 review).
+    _unwiredVoxelNoted = false;
     if (old != null) await old.dispose();
     backHandlerRegistered.value = false;
 
