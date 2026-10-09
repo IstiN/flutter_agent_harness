@@ -33,6 +33,21 @@ Host-side inputs (environment):
   (StallSentinel), and an export-guard.json row when the agent produced
   output but the session export came back empty (ExportGuard).
 
+  gh-1430 — the ordering invariant this adapter operates under:
+
+      fa's watchdog is the sole arbiter of stream death; the bench gap
+      only catches pane/process death.
+
+  fa errors a truly dead provider stream itself at
+  providerStreamIdleTimeout (300s, lib/src/providers/provider_common.dart)
+  and, since gh-1430, heartbeats `… reasoning Ns (streaming)` to the pane
+  while its stream emits events the headless output mode does not render.
+  The shipped stall gap (360s = watchdog + margin, bench/fa_agent_timeout.py)
+  therefore fires only when the PANE went silent — process death or a
+  wedged pane — never while fa itself considers the stream live. The REG
+  in test_fa_agent_timeout.py pins the gap >= watchdog against the Dart
+  source and fails if either side drifts.
+
   Issue #1406 (never-again): the launch line itself carries the
   non-secret FA_CONN_* env into the tmux pane (`export …; env |
   grep FA_CONN > /tmp/fa-conn-env.txt;` prefix — pane env belongs to the
@@ -91,8 +106,11 @@ _VERSION = "0.1.0"
 
 # Host-side pane tap: tmux pipe-pane mirrors the pane stream (the agent's
 # rendered deltas/tool output) into this file; its byte size is the
-# progress signal. The harness emits nothing into the pane on a timer, so
-# there is no keep-alive noise (issue #1122 E1).
+# progress signal. The harness itself emits nothing into the pane on a
+# timer — fa's own liveness lines do (the ⏳ tool-liveness family, and
+# since gh-1430 the `… reasoning Ns (streaming)` heartbeat): fa's designed
+# in-band liveness signal, documented in the audit rather than subtracted
+# (issue #1122 E1, gh-1430).
 _PROGRESS_LOG = "/tmp/fa-progress.log"
 _POLL_SEC = 5.0
 # fa writes its session JSONL here inside the container (--session-root in

@@ -722,6 +722,10 @@ class AgentCli {
       // The rewind prunes the transcript after persisting the detour itself;
       // realign the batch-persistence cursor with the pruned count.
       onRewindApplied: (messageCount) => _persistedCount = messageCount,
+      // gh-1425 AC4: a user turn that auto-closes a checkpoint restores the
+      // full detour history live — the budget guard caps it (same window −
+      // reserve budget as the boot cap) before the next request.
+      onAutoClose: _guardCheckpointRestoreBudget,
     );
     // Register after agent construction (the controller needs the agent);
     // the registry's executor consults the live registry, while the agent's
