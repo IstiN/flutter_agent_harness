@@ -214,7 +214,9 @@ AgentTool shellTool(
           options: ShellExecOptions(
             cwd: env.cwd,
             timeout: timeout,
-            cancelToken: cancelToken,
+            // gh-1455: no caller cancel token — a background job outlives
+            // this call and is stopped through `bash_job stop` only; the
+            // registry firewalls stray tokens too.
             stdinData: stdinData,
           ),
         );
@@ -437,7 +439,8 @@ Future<ToolExecutionResult> _shellViaJob(
     options: ShellExecOptions(
       cwd: env.cwd,
       timeout: timeout,
-      cancelToken: cancelToken,
+      // gh-1455: no caller cancel token — the job must survive a run
+      // abort; the run unwind below hands it to the background instead.
       stdinData: stdinData,
       liveStdin: channel,
     ),
@@ -451,6 +454,7 @@ Future<ToolExecutionResult> _shellViaJob(
       jobs,
       entry,
       yieldToken,
+      cancelToken: cancelToken,
       timeoutArg: timeoutArg,
       rewriteNotice: rewriteNotice,
     );
@@ -465,12 +469,17 @@ Future<ToolExecutionResult> _awaitJobOutcome(
   ShellJobRegistry jobs,
   ShellJobEntry entry,
   CancelToken yieldToken, {
+  CancelToken? cancelToken,
   required num? timeoutArg,
   String? rewriteNotice,
 }) async {
   final finished = await Future.any<bool>([
     entry.settled.then((_) => true),
     yieldToken.onCancel.then((_) => false),
+    // gh-1455: the RUN aborting (Agent.abort, the idle watchdog) must not
+    // kill the job either — it unwinds this call exactly like a yield,
+    // handing the still-running process to the background.
+    if (cancelToken != null) cancelToken.onCancel.then((_) => false),
   ]);
 
   if (!finished) {
