@@ -30,6 +30,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:js_widget_runtime/js_widget_runtime.dart';
+
 import '../native_test_guard.dart';
 
 /// Skip value stamped on this file's engine-dependent tests: every one
@@ -174,6 +175,75 @@ void main() {
       expect(find.byIcon(Icons.landscape), findsOneWidget);
       expect(find.text('Voxel world'), findsOneWidget);
       expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('JsAppEngine._containsVoxelNode walk (direct pins — no bridge)', () {
+    // The walk is reachable in production only with a LIVE engine whose
+    // backend ships no world — no host constructs that state (no backend
+    // injection seam), which is exactly why the CI app-crap-gate measured
+    // the first cut CRAP 90 (CC 9, 0% ubuntu-shard coverage) and failed
+    // the ratchet (run 37974606427). These pins drive the walk DIRECTLY
+    // through the @visibleForTesting seam on any host, CI shards
+    // included, so the ratchet sees real coverage instead of a hole.
+    test('finds a voxel node at the root', () {
+      expect(
+        JsAppEngine.containsVoxelNodeForTest({'type': 'voxel', 'id': 'world'}),
+        isTrue,
+      );
+    });
+
+    test('recurses through maps and lists in both directions', () {
+      expect(
+        JsAppEngine.containsVoxelNodeForTest({
+          'type': 'column',
+          'children': [
+            {'type': 'text', 'data': 'hi'},
+            [
+              {'type': 'voxel', 'id': 'deep'},
+            ],
+          ],
+        }),
+        isTrue,
+      );
+    });
+
+    test('a tree without a voxel node is false (scalars too)', () {
+      expect(
+        JsAppEngine.containsVoxelNodeForTest({
+          'type': 'row',
+          'children': [
+            {'type': 'text', 'data': 'plain'},
+            [1, 2.5, 'three', true, null],
+          ],
+          'style': {'padding': 4},
+        }),
+        isFalse,
+      );
+      expect(JsAppEngine.containsVoxelNodeForTest('scalar'), isFalse);
+      expect(JsAppEngine.containsVoxelNodeForTest(null), isFalse);
+    });
+
+    test('the depth cap: a voxel at depth 64 counts, at 65 the walk '
+        'stops', () {
+      Object nested(Object leaf) {
+        Object node = leaf;
+        for (var i = 0; i < 64; i++) {
+          node = {'child': node};
+        }
+        return node;
+      }
+
+      // 64 wraps → the leaf sits at depth 64, still inside the cap.
+      expect(
+        JsAppEngine.containsVoxelNodeForTest(nested({'type': 'voxel'})),
+        isTrue,
+      );
+      // 65 wraps → the leaf sits at depth 65, past the cap.
+      final tooDeep = {
+        'child': nested({'type': 'voxel'}),
+      };
+      expect(JsAppEngine.containsVoxelNodeForTest(tooDeep), isFalse);
     });
   });
 
