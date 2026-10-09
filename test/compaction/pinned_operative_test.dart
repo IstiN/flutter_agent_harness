@@ -186,9 +186,12 @@ void main() {
       // summarizationPayloadBudget(window, defaultCompactionSettings) —
       // the value the real pipeline passes (a 4096-token smol summarizer
       // under the pi-default reserve).
+      // A HOST-SIZED budget (the reviewer's scenario): a knob well past
+      // the chunk envelope reserve (~4096 tokens) — the old envelope did
+      // not count the block at all, so the payload crossed the budget.
       final bigRegistry = SkillOperativePins.build([
-        _skill('fleet', [_pin, 'pad rule ${'x' * 2000}']),
-      ], budgetChars: defaultPinBudgetChars);
+        _skill('fleet', [_pin, 'pad rule ${'x' * 30000}']),
+      ], budgetChars: 100000);
       final payload = PinnedOperativePayload(
         block: pinnedOperativePromptBlock(bigRegistry)!,
         lines: {for (final pin in bigRegistry.pins) pin.line},
