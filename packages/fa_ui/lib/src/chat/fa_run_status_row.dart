@@ -4,10 +4,13 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show KaomojiFace, KaomojiFacePicker, kKaomojiSwapPeriod;
 
 import '../theme/app_theme.dart';
 import 'chat_strings.dart';
 import 'fa_chat_service.dart';
+import 'fa_kaomoji.dart';
 import 'run_phase.dart';
 
 /// The single transient run-status row (issues #865, #1042): the
@@ -52,16 +55,36 @@ class _FaRunStatusRowState extends State<FaRunStatusRow>
   /// the elapsed time (E1: no flicker per delta).
   (FaRunPhaseKind, String?)? _clockedPhase;
 
+  /// The kaomoji face the row shows (issue #1374): re-picked on the same
+  /// frame clock as the elapsed seconds — a random frame every
+  /// [kKaomojiSwapPeriod] — so the row introduces NO timer of its own:
+  /// the ticker stops with the phase (AC4), and tests pump the fake
+  /// frame clock exactly like they already do for the seconds.
+  final KaomojiFacePicker _facePicker = KaomojiFacePicker();
+  // Opens on the picker's first draw (uniform over all eight, pin-aware)
+  // — a literal `kKaomojiFaces[0]` here was dead state: the first tick
+  // re-picked immediately, so the constant never rendered (PR #1419
+  // re-review round 2).
+  late KaomojiFace _face = _facePicker.first();
+  Duration? _lastFaceSwap;
+
   void _onTick(Duration elapsed) {
     _lastElapsed = elapsed;
     final seconds = (elapsed - _phaseStart).inSeconds;
     if (seconds != _seconds) setState(() => _seconds = seconds);
+    if (_lastFaceSwap == null ||
+        elapsed - _lastFaceSwap! >= kKaomojiSwapPeriod) {
+      _lastFaceSwap = elapsed;
+      setState(() => _face = _facePicker.next());
+    }
   }
 
   /// Resets the phase clock: to the latest tick while running (a stopped
-  /// ticker restarts at elapsed zero), else to zero.
+  /// ticker restarts at elapsed zero), else to zero. The face cadence
+  /// restarts with it — a fresh phase opens on a fresh random face.
   void _restartClock() {
     _seconds = 0;
+    _lastFaceSwap = null;
     _phaseStart = _ticker.isActive
         ? (_lastElapsed ?? Duration.zero)
         : Duration.zero;
@@ -115,15 +138,33 @@ class _FaRunStatusRowState extends State<FaRunStatusRow>
         };
         final theme = Theme.of(context);
         final palette = fahChatColorsOf(context);
+        // The face zone scales with the ambient text scale (PR #1419
+        // re-review round 2): at accessibility scales the widest face
+        // outgrows a fixed 32 px box (TextOverflow.visible would then
+        // paint over the gutter and under the label).
+        final faceZone = MediaQuery.textScalerOf(
+          context,
+        ).scale(kKaomojiFaceTextZoneWidth);
         return Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
           child: Row(
             key: const ValueKey('faChatRunStatusContent'),
             children: [
-              const SizedBox(
-                width: 14,
-                height: 14,
-                child: CircularProgressIndicator(strokeWidth: 2),
+              // The two-tone kaomoji face (issue #1374) replaces the
+              // stock spinner: the same random-frame face set the CLI
+              // busy row styles, re-picked every ~0.9 s on the row's
+              // frame clock — no timer of its own, so an idle row (the
+              // ticker is stopped) never animates (AC4). Fixed zone:
+              // a swap never moves the label (the #365 fixed-cell rule).
+              SizedBox(
+                width: faceZone,
+                child: KaomojiFaceText(
+                  // Size/family from bodySmall; the span builder owns
+                  // every color (two-tone brand palette) — a color here
+                  // was dead configuration.
+                  face: _face,
+                  style: theme.textTheme.bodySmall,
+                ),
               ),
               const SizedBox(width: 8),
               Expanded(

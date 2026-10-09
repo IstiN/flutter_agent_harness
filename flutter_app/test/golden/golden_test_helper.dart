@@ -13,6 +13,8 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_agent_harness/flutter_agent_harness.dart'
+    show KaomojiFacePicker;
 import 'package:flutter_test/flutter_test.dart';
 
 /// Desktop frame for hero/marketing shots.
@@ -34,6 +36,27 @@ var _fontsLoaded = false;
 /// boxes. Fonts are loaded once per test process; safe to call from every
 /// `setUpAll`.
 Future<void> ensureGoldenFonts() async {
+  // The kaomoji indicator (issue #1374) picks its face randomly in
+  // production — goldens pin it (the CLI's FA_KAOMOJI_FACE seam
+  // mirrors this) so every frame is deterministic: `>_o`, everywhere.
+  //
+  // MAC REGEN DONE (PR #1419, issue #1374): the branch swapped the
+  // thinking tile (head-with-gear → KaomojiThinkingIcon) and the status
+  // row (spinner → KaomojiFaceText); the affected snapshots were
+  // regenerated on the host-locked mac (the pin above keeps every
+  // frame byte-stable across the regen), with eyes on each diff:
+  //   chat/run_status_empty_light, chat/run_status_empty_dark,
+  //   chat/run_status_thinking_light, chat/run_status_tool_light,
+  //   chat/run_status_tool_dark                       (status row)
+  //   launcher/sheet_session_streaming_dark            (status row)
+  //   chat_conversation, apps_fa_chat_overlay,
+  //   apps_fa_chat_overlay_light, apps_fa_chat_overlay_streaming,
+  //   apps_fa_chat_overlay_streaming_light            (thinking tiles)
+  // apps_fa_chat_overlay_rich/_rich_ru stayed byte-identical (their
+  // thinking bubble renders collapsed — no icon), and unrelated frames
+  // carry a pre-existing ~0.5% host drift that also fails on main and
+  // waits on a separate host-wide regen pass.
+  KaomojiFacePicker.debugPin = 0;
   if (_fontsLoaded) return;
   final inter = FontLoader('Inter')
     ..addFont(rootBundle.load('assets/fonts/Inter-Regular.ttf'))
