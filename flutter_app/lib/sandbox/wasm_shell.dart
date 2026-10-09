@@ -1344,6 +1344,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     final instance = built.valueOrNull!;
 
     final bridge = _stageBridge(command, captureStdout);
+    // gh-1444 AC8: python launches print the platform-libraries warning on
+    // every run — the line filter drops it from the captured stderr.
+    final noiseFilter = _isPythonCommand(command)
+        ? WasiPythonNoiseFilter()
+        : null;
     final io = _StageIo();
     final stdoutSub = _subscribeStdout(
       instance,
@@ -1357,6 +1362,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       io,
       options?.onStderr,
       captureStderr,
+      noiseFilter: noiseFilter,
     );
     // Not captured = not subscribed = nothing can arrive: done up front so
     // the drain's quiet window only covers streams that can still emit.
@@ -1382,15 +1388,27 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (outcome.isErr) {
       final error = outcome.errorOrNull!;
       // Errors speak sandbox paths, never the host root (issue #1156 E4).
+      // gh-1444 AC5: timeout/abort errors carry the captured partial
+      // output (tail-capped like LocalShell) so the honest "timed out
+      // after Ns" result shows WHERE the command was when the cap hit.
       return Err(
         ExecutionError(
           error.code,
           _sanitizeSandboxText(error.message),
           cause: error.cause,
+          stdout: _tailCapture(utf8.decode(io.stdoutBuffer, allowMalformed: true)),
+          stderr: _tailCapture(utf8.decode(io.stderrBuffer, allowMalformed: true)),
         ),
       );
     }
     _lastStageExitCode = outcome.valueOrNull!;
+
+    // The python noise filter holds back a trailing partial line — flush
+    // whatever survives into the captured stderr once the run settled.
+    final tail = noiseFilter?.flush();
+    if (tail != null && tail.isNotEmpty) {
+      io.stderrBuffer.addAll(tail);
+    }
 
     return Ok(
       StageResult(
@@ -1399,6 +1417,16 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         exitCode: _lastStageExitCode ?? 0,
       ),
     );
+  }
+
+  /// Tail-caps a killed stage's captured output for the error fields
+  /// (gh-1444 AC5), matching LocalShell's `_captureMax` budget so every
+  /// backend inherits the same bounded-retention contract.
+  static const _captureMax = 64 * 1024;
+
+  static String _tailCapture(String text) {
+    if (text.length <= _captureMax) return text;
+    return '…[truncated]${text.substring(text.length - _captureMax)}';
   }
 
   /// Prepares the stage environment: unpacks the python stdlib on first
@@ -1528,13 +1556,17 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     WasmInstance instance,
     _StageIo io,
     void Function(String)? onStderr,
-    bool captureStderr,
-  ) {
+    bool captureStderr, {
+    WasiPythonNoiseFilter? noiseFilter,
+  }) {
     return captureStderr
         ? instance.stderr.listen(
             (chunk) {
               debugPrint('[wasm_shell] stderr chunk: ${chunk.length} bytes');
-              io.collect(io.stderrBuffer, chunk, onStderr);
+              final clean = noiseFilter?.process(chunk) ?? chunk;
+              if (clean.isNotEmpty) {
+                io.collect(io.stderrBuffer, clean, onStderr);
+              }
             },
             onDone: () {
               io.stderrDone = true;
@@ -1555,7 +1587,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     required StreamSubscription<Uint8List>? stderrSub,
     required ShellExecOptions? options,
   }) async {
-    final timeout = options?.timeout ?? const Duration(seconds: 30);
+    // gh-1444 C5: the flat 30s default killed every fs-wide scan (`find /`,
+    // 184 `timeout 0:00:30` lines in one session log). The mobile sandbox
+    // default is now 120s — honest timeout text + captured partial output
+    // (see resolveStageOutcome/_runStage) tell the model what happened.
+    final timeout = options?.timeout ?? const Duration(seconds: 120);
     debugPrint('[wasm_shell] starting _start with timeout $timeout...');
     var timedOut = false;
     final timeoutFuture = Future<void>.delayed(timeout, () => timedOut = true);
@@ -1568,7 +1604,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
           await instance.runWasiStartAsync();
           debugPrint('[wasm_shell] _start completed');
         } on Object catch (e) {
-          debugPrint('[wasm_shell] _start error: $e');
+          // gh-1444 AC7: a normal exit status (proc_exit 1/2 — a grep miss,
+          // a failing test) is debug noise, not a harness fault; the log
+          // line must not say "error" for it (app.log triage greps it).
+          debugPrint(wasmStartLogLine(e));
           runError = e;
         } finally {
           if (!runCompleter.isCompleted) runCompleter.complete();
@@ -1621,31 +1660,12 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     }
   }
 
-  /// Parses the exit code from a wasmtime I32Exit trap.
+  /// Parses the exit code from a wasmtime I32Exit trap (the shared grammar
+  /// lives in wasm_shell_builtins.dart so the AC7 log-line classifier and
+  /// this resolver cannot drift).
   ///
   /// Returns `null` when [error] cannot be parsed as a normal WASI exit.
-  static int? _parseExitCode(Object? error) {
-    if (error == null) return 0;
-    final message = error.toString();
-
-    // wasmtime represents `proc_exit(n)` as `I32Exit(n)`. Older versions use
-    // "i32 exit with value N", newer versions wrap it as
-    // "Exited with i32 exit status N".
-    final i32Match = RegExp(
-      r'i32\s+(?:exit\s+with\s+value|exit\s+status)\s*(\d+)',
-    ).firstMatch(message);
-    if (i32Match != null) {
-      return int.tryParse(i32Match.group(1)!);
-    }
-
-    // wasmtime 14 with the wasi command adapter can report an invalid exit
-    // status; treat that as a non-zero failure.
-    if (message.contains('exit with invalid exit status')) {
-      return 1;
-    }
-
-    return null;
-  }
+  static int? _parseExitCode(Object? error) => parseWasiExitCode(error);
 
   /// Pure post-run outcome resolution for one WASM stage (issue #475).
   ///

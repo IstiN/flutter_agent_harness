@@ -186,9 +186,12 @@ AgentTool shellTool(
         '$defaultToolMaxLines lines or ${defaultToolMaxBytes ~/ 1024}KB '
         '(whichever is hit first). Optionally provide a timeout in seconds. '
         'Timeout-class failures are retried automatically '
-        '(${bashToolMaxRetries + 1} attempts total) — a hung network call '
-        'does not fail the call; retries are visible as [bash attempt N] '
-        'notices in the output. '
+        '(${bashToolMaxRetries + 1} attempts total) when you pass an '
+        'explicit timeout — a hung network call does not fail the call; '
+        'retries are visible as [bash attempt N] notices in the output. '
+        'Without an explicit timeout the environment default applies and a '
+        'timeout is reported once with the captured partial output, never '
+        'retried. '
         'For long-running commands (builds, servers, watchers) pass '
         'background: true — the command keeps running as a job, you get its '
         'id immediately and are notified when it finishes; check progress '
@@ -358,7 +361,15 @@ Future<ToolExecutionResult> _runForegroundBash(
 
     if (result.isErr) {
       final error = result.errorOrNull!;
-      if (error.code == ExecutionErrorCode.timeout && canRetry) {
+      // gh-1444 C5: a timeout the MODEL passed is a transient-failure
+      // candidate (a hung network call under a deliberate bail cap) and is
+      // retried; a SHELL-default timeout (no timeout argument) is the
+      // harness's own cap firing — re-running a long command up to 3×
+      // parks the turn ("looked stuck"), so it fails once with the honest
+      // text and the captured partial output.
+      if (error.code == ExecutionErrorCode.timeout &&
+          canRetry &&
+          timeoutArg != null) {
         notices.add(
           '[bash attempt $attempt/${bashToolMaxRetries + 1} timed out'
           '${timeoutArg != null ? ' after ${timeoutArg}s' : ''} — '
