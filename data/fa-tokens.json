@@ -669,6 +669,13 @@
       "prompt": 254233,
       "completion": 94914,
       "total": 349147
+    },
+    {
+      "leg": "dev",
+      "at": "2026-10-09T21:14:22Z",
+      "prompt": 77737,
+      "completion": 4711,
+      "total": 82448
     }
   ],
   "issue-1444": [
