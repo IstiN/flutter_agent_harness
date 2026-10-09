@@ -399,10 +399,12 @@ class AgentService extends ChangeNotifier
     // the LIVE env at runtime (see [_handleSecretRequest]), so the wrapper
     // must be in place even when the boot-time secret set is empty.
     final secretsEnv = SecretsExecutionEnv(resolvedEnv, secrets)
-      // gh-1444 AC4: the prompt's name list doubles as the sandbox `env`
-      // presence roster — a revoked name renders `NAME: ABSENT` instead of
-      // silently disappearing.
-      ..registerSecretNames(secrets.keys);
+      // gh-1444 AC4: the presence roster is the ADVERTISED name list — the
+      // boot values plus the well-known key names the app's Keys section
+      // always lists even when unset — so the sandbox `env` renders
+      // `NAME: ABSENT` for a not-yet-granted name instead of the variable
+      // silently not existing (the C4 empty-expansion retry loop).
+      ..registerSecretNames({...secrets.keys, ...knownKeyNames});
     final resolvedSessionsRoot =
         sessionsRoot ?? defaultSessionsRoot(resolvedEnv.sessionCwd);
     return AgentService._withEnv(
@@ -1031,6 +1033,16 @@ class AgentService extends ChangeNotifier
     // Durable facts from past sessions join the prompt asynchronously
     // (memory stores initialize lazily; recompose on arrival).
     unawaited(_refreshMemorySection());
+    // gh-1444 E3: the Keys settings section is the production revocation
+    // path — a delete there revokes the live value (the roster keeps the
+    // name visible as ABSENT) and a re-save re-injects it.
+    if (_sessionKeys != null) {
+      for (final name in _sessionKeys.names) {
+        final value = _sessionKeys.valueOf(name);
+        if (value != null && value.isNotEmpty) _storeSecretNames.add(name);
+      }
+      _sessionKeys.addListener(_reconcileSessionKeySecrets);
+    }
   }
 
   /// Whether [providerKind] is an on-device backend (WebLLM, Gemma, or
@@ -1153,6 +1165,12 @@ class AgentService extends ChangeNotifier
   /// tool still works, the value just is not persisted (the result text
   /// reflects that via [RequestSecretResult.persisted]).
   final SessionKeysStore? _sessionKeys;
+
+  /// The secret names this service injected from [_sessionKeys] (the diff
+  /// base for the revocation reconcile): a name REMOVED from the store is
+  /// revoked from the live env, a dotenv-only or `request_secret`-granted
+  /// name is never touched by a store edit.
+  final Set<String> _storeSecretNames = {};
 
   /// The custom-provider registry ([AgentService.create] path). Backs the
   /// issue #327 connection guards: reconfigure refuses a config whose

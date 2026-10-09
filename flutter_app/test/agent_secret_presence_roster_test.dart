@@ -17,7 +17,11 @@ import 'package:fa/services/session_keys_store.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-StreamFunction _noStream(Model _) {
+// ignore: avoid_unused_constructor_parameters — the StreamFunction shape.
+AssistantMessageEventStream _noStream(
+  Model _, Context __, {
+  CancelToken? cancelToken,
+}) {
   final stream = AssistantMessageEventStream();
   stream.end();
   return stream;
@@ -57,13 +61,24 @@ void main() {
   group('the presence roster is the advertised name list (AC4)', () {
     test('well-known key names render ABSENT before any grant', () async {
       // Nothing granted anywhere: the roster still announces the names the
-      // app always advertises, so `env` can prove absence.
+      // app always advertises, so `env` can prove absence. (The test
+      // host's `.env` asset may carry empty placeholder entries — empty
+      // values render ABSENT too; only a non-empty value is PRESENT.)
       final service = await buildService(SessionKeysStore.inMemory());
       addTearDown(service.dispose);
 
       final env = service.secretsEnvForTest!;
-      expect(env.secretsSnapshot(), isEmpty);
+      final live = env
+          .secretsSnapshot()
+          .entries
+          .where((entry) => entry.value.isNotEmpty)
+          .map((entry) => entry.key)
+          .toSet();
+      expect(live.intersection(knownKeyNames.toSet()), isEmpty);
       expect(env.secretNames, containsAll(knownKeyNames));
+      // The roster is not the whole environment: an unadvertised name
+      // stays unannounced.
+      expect(env.secretNames, isNot(contains('TOTALLY_UNKNOWN_VAR')));
     });
 
     test('granted names stay PRESENT in the roster', () async {
