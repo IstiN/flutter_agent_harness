@@ -11,9 +11,11 @@
 /// custom "agent-built" apps (nothing is bundled anymore — the catalog is
 /// the source of apps). The JsAppView coverage uses the deterministic
 /// start-error chrome (missing widget.js) instead of booting the
-/// JavaScriptCore backend; FaWorkBar states render over a hand-built
-/// calculator canvas. FaWorkBar owns an infinitely repeating orbit
-/// animation, so its states are pumped frame-by-frame (never pumpAndSettle).
+/// JavaScriptCore backend; the gh-1441 voxel shot feeds a JsVoxelWorld by
+/// hand (the exact `voxel.*` hostCall payloads a real engine's bridge
+/// world receives) so the terrain renders with no engine at all. FaWorkBar
+/// owns an infinitely repeating orbit animation, so its states are pumped
+/// frame-by-frame (never pumpAndSettle).
 ///
 /// Note: the golden font sandbox (Inter + JetBrainsMono only) has no emoji
 /// font — emoji manifest icons render as NO GLYPH boxes. Manifests with
@@ -40,6 +42,7 @@ import 'package:fa/ui/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:js_widget_runtime/js_widget_runtime.dart';
 
 import 'golden_test_helper.dart';
 import '../fake_media_controllers.dart';
@@ -1209,6 +1212,180 @@ void main() {
       wrap: (child) => child,
     );
     await expectGolden(tester, 'apps_view_error');
+  });
+
+  /// A stepped voxel terrain as one `voxel.mesh` chunk payload — the exact
+  /// flat-buffer shape a real widget uploads. Each block emits its 6 quad
+  /// faces (CCW from outside — the painter's backface cull keeps exactly
+  /// those): grass tops, dirt sides, stone for the tall spine.
+  List<double> chunkPositions = [];
+  List<double> chunkColors = [];
+  List<int> chunkIndices = [];
+  void addVoxel(
+    double x,
+    double y,
+    double z, {
+    required List<double> top,
+    required List<double> side,
+  }) {
+    const faces = [
+      // +z (front)
+      [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]],
+      // -z (back)
+      [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]],
+      // +y (top)
+      [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]],
+      // -y (bottom)
+      [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]],
+      // +x (right)
+      [[1, 0, 1], [1, 0, 0], [1, 1, 0], [1, 1, 1]],
+      // -x (left)
+      [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]],
+    ];
+    for (var f = 0; f < faces.length; f++) {
+      final color = f == 2 ? top : side;
+      final base = chunkPositions.length ~/ 3;
+      for (final corner in faces[f]) {
+        chunkPositions.addAll([
+          x + corner[0], y + corner[1], z + corner[2],
+        ]);
+        chunkColors.addAll(color);
+      }
+      chunkIndices.addAll([base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+  }
+
+  testWidgets('voxel node renders its bridge-owned world, not the '
+      'placeholder (gh-1441 AC4)', (tester) async {
+    const grass = [0.42, 0.66, 0.30];
+    const dirt = [0.46, 0.33, 0.21];
+    const stone = [0.55, 0.57, 0.60];
+    // A 10x10 heightmap with a stone spine: ~1.4k triangles, well inside
+    // the painter's steady state.
+    const heights = [
+      [1, 1, 2, 2, 1, 1, 1, 2, 2, 1],
+      [1, 2, 2, 3, 2, 1, 2, 3, 2, 1],
+      [2, 2, 3, 4, 3, 2, 3, 4, 2, 2],
+      [2, 3, 4, 5, 4, 3, 4, 5, 3, 2],
+      [1, 2, 3, 4, 4, 3, 3, 4, 2, 1],
+      [1, 1, 2, 3, 3, 2, 2, 3, 2, 1],
+      [1, 2, 2, 3, 2, 2, 2, 2, 1, 1],
+      [2, 2, 3, 3, 2, 1, 2, 2, 2, 2],
+      [1, 2, 2, 2, 1, 1, 1, 2, 2, 1],
+      [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    ];
+    for (var gx = 0; gx < heights.length; gx++) {
+      for (var gz = 0; gz < heights[gx].length; gz++) {
+        final h = heights[gx][gz];
+        for (var layer = 0; layer < h; layer++) {
+          final tall = layer >= 2 && h >= 3;
+          addVoxel(
+            gx.toDouble(),
+            layer.toDouble(),
+            gz.toDouble(),
+            top: tall ? stone : grass,
+            side: tall ? stone : dirt,
+          );
+        }
+      }
+    }
+
+    // The bridge world, fed BY HAND — the same state a real engine's world
+    // reaches through voxel.attach / voxel.mesh / voxel.camera (the bridge
+    // intercepts those hostCalls before any host handler), with no engine
+    // and no native JS bridge: fully deterministic (gh-1441 AC4 golden).
+    final world = JsVoxelWorld()
+      ..handleHostCall('voxel.attach', {'id': 'fa-craft'})
+      ..handleHostCall('voxel.mesh', {
+        'id': 'fa-craft',
+        'key': 'chunk-terrain',
+        'origin': [0.0, 0.0, 0.0],
+        'positions': chunkPositions,
+        'colors': chunkColors,
+        'indices': chunkIndices,
+      })
+      ..handleHostCall('voxel.camera', {
+        'id': 'fa-craft',
+        'position': [4.0, 7.0, 15.0],
+        'yaw': 0.0,
+        'pitch': -0.35,
+        'fov': 70,
+        'skyColor': '#87CEEB',
+      });
+
+    final theme = buildFahTheme();
+    final env = MemoryExecutionEnv();
+    final craftApp = _app(const {
+      'id': 'fa-craft',
+      'name': 'fa-craft',
+      'icon': _sparkleIcon,
+    }, fallbackId: 'fa-craft');
+    await pumpGolden(
+      tester,
+      Scaffold(
+        appBar: AppBar(
+          title: Row(
+            children: [
+              AppIcon(app: craftApp, env: env, size: 24),
+              const SizedBox(width: 8),
+              const Flexible(
+                child: Text('fa-craft', overflow: TextOverflow.ellipsis),
+              ),
+            ],
+          ),
+          actions: [
+            IconButton(icon: const Icon(Icons.shield_outlined), onPressed: () {}),
+            IconButton(icon: const Icon(Icons.refresh), onPressed: () {}),
+          ],
+        ),
+        body: ColoredBox(
+          color: theme.colorScheme.surface,
+          child: Builder(
+            builder: (context) => Center(
+              // RepaintBoundary: the pixel probe below captures THIS
+              // subtree to assert the terrain actually painted (the
+              // golden file pins the pixels; this pins the semantics).
+              child: RepaintBoundary(
+                key: _voxelProbeKey,
+                child: JsonWidgetRenderer(
+                  onEvent: (_, _) {},
+                  theme: JsonWidgetTheme.fromAccent(
+                    theme.colorScheme.primary,
+                    brightness: theme.brightness,
+                  ),
+                  // The SAME wiring every Fa surface now passes
+                  // (gh-1441): the engine's bridge-owned world — here
+                  // fed by hand.
+                  voxelWorld: world,
+                ).build(const {
+                  'type': 'column',
+                  'children': [
+                    {
+                      'type': 'text',
+                      'data': 'fa-craft 0.2.18 — 9 chunks · 1296 faces',
+                    },
+                    {
+                      'type': 'voxel',
+                      'id': 'fa-craft',
+                      'width': 820,
+                      'height': 430,
+                    },
+                  ],
+                }, context),
+              ),
+            ),
+          ),
+        ),
+      ),
+      size: goldenSizeWide,
+      wrap: (child) => child,
+    );
+    // The world is wired → the node renders (AC1's renderer-level hook);
+    // the "Voxel world" placeholder must not exist anywhere.
+    expect(find.byType(JsVoxelNode), findsOneWidget);
+    expect(find.byIcon(Icons.landscape), findsNothing);
+    expect(find.text('Voxel world'), findsNothing);
+    await expectGolden(tester, 'apps_voxel_world');
   });
 
   /// Pumps the bundled Map demo with offline tiles and snapshots it as

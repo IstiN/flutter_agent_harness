@@ -161,6 +161,26 @@ void main() {
       expect(AppLog.dump(), isEmpty);
     });
 
+    testWidgets('a null-world renderer still draws the placeholder without '
+        'crashing (degradation contract)', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => JsonWidgetRenderer(
+              onEvent: (_, _) {},
+              // The AC3 minimal backend: no world wired.
+              voxelWorld: null,
+            ).build(const {'type': 'voxel', 'id': 'world'}, context),
+          ),
+        ),
+      );
+      expect(find.byIcon(Icons.landscape), findsOneWidget);
+      expect(find.text('Voxel world'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  });
+
+  group('JsAppEngine.noteUnwiredVoxelWorld — live shipped backend', () {
     testWidgets('a LIVE shipped-backend engine with a wired world never '
         'fires the diagnostic — re-armed across restarts', (tester) async {
       AppLog.reset();
@@ -191,24 +211,6 @@ void main() {
             '"no voxelWorld is wired" WARNING must never fire on them '
             '(gh-1441 AC3 contract)',
       );
-    }, skip: _engineSkip);
-
-    testWidgets('a null-world renderer still draws the placeholder without '
-        'crashing (degradation contract)', (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Builder(
-            builder: (context) => JsonWidgetRenderer(
-              onEvent: (_, _) {},
-              // The AC3 minimal backend: no world wired.
-              voxelWorld: null,
-            ).build(const {'type': 'voxel', 'id': 'world'}, context),
-          ),
-        ),
-      );
-      expect(find.byIcon(Icons.landscape), findsOneWidget);
-      expect(find.text('Voxel world'), findsOneWidget);
-      expect(tester.takeException(), isNull);
     });
-  });
+  }, skip: _engineSkip);
 }
