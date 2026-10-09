@@ -1775,7 +1775,19 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
   // Broken tool pairing (orphan results at any position, displaced results,
   // duplicate ids, unanswered calls) makes providers hard-400 EVERY
   // subsequent request; repair the payload, never the transcript.
-  final repaired = repairToolPairing(requestContext.messages);
+  // gh-1449: the session's reported-orphan latch rides the repair — an
+  // orphan is noted once, then dropped silently; the new keys merge back
+  // into the owner set so the next request (and the pairing-heal retry)
+  // sees them.
+  final repaired = repairToolPairing(
+    requestContext.messages,
+    reportedOrphanKeys:
+        config.reportedOrphanKeys ??
+        const <String>{},
+  );
+  if (repaired.report.notedOrphanKeys.isNotEmpty) {
+    config.reportedOrphanKeys?.addAll(repaired.report.notedOrphanKeys);
+  }
   if (!identical(repaired.messages, requestContext.messages)) {
     requestContext = Context(
       systemPrompt: requestContext.systemPrompt,

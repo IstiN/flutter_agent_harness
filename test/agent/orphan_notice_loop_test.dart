@@ -76,6 +76,13 @@ class _FakeStream {
   }
 }
 
+/// A never-called tool executor (the Agent requires one).
+Future<ToolExecutionResult> _noTools(
+  ToolCall call,
+  CancelToken? token,
+  ToolUpdateCallback? onUpdate,
+) => throw StateError('no tools in this test');
+
 /// The production orphan shape: a compaction summary user message whose
 /// cut removed a tool call but left its result behind, then a fresh user
 /// turn (so the payload has a real pending input).
@@ -105,6 +112,7 @@ void main() {
       final agent = Agent(
         model: _model,
         streamFunction: stream.call,
+        toolExecutor: _noTools,
         messages: _orphanContext(),
       );
       for (var turn = 0; turn < 4; turn++) {
@@ -169,6 +177,7 @@ void main() {
       final agent = Agent(
         model: _model,
         streamFunction: flaky,
+        toolExecutor: _noTools,
         messages: _orphanContext(),
       );
       await agent.prompt('go');
@@ -187,6 +196,7 @@ void main() {
       final original = Agent(
         model: _model,
         streamFunction: first.call,
+        toolExecutor: _noTools,
         messages: _orphanContext(),
       );
       await original.prompt('turn 1');
@@ -201,6 +211,7 @@ void main() {
       final resumed = Agent(
         model: _model,
         streamFunction: second.call,
+        toolExecutor: _noTools,
         messages: _orphanContext(),
         reportedOrphanKeys: Set.of(persisted),
       );
@@ -218,19 +229,25 @@ void main() {
       final agent = Agent(
         model: _model,
         streamFunction: stream.call,
+        toolExecutor: _noTools,
         messages: _orphanContext(),
       );
       await agent.prompt('turn 1');
       final first = stream.contexts.first;
-      // The transcript's message count is unchanged by the repair: the
-      // summary message gained a text block, no message was added.
+      // The orphan is dropped from the payload and the note rides the last
+      // user message as an extra text block — no message added: the
+      // transcript's 4 messages minus the ghost result.
       expect(first.messages, hasLength(_orphanContext().length));
-      final carrier = first.messages[0] as UserMessage;
+      expect(first.messages.whereType<ToolResultMessage>(), isEmpty);
+      final carrier = first.messages.last as UserMessage;
       expect(carrier.content, isA<List<ContentBlock>>());
-      final noteBlock = (carrier.content as List<ContentBlock>).last;
-      expect(noteBlock, isA<TextContent>());
+      final blocks = carrier.content as List<ContentBlock>;
       expect(
-        (noteBlock as TextContent).text,
+        (blocks.first as TextContent).text,
+        'turn 1',
+      );
+      expect(
+        (blocks.last as TextContent).text,
         startsWith('[context note:'),
       );
     });

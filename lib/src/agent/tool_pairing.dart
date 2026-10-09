@@ -630,7 +630,8 @@ String _dropNote(
 ) {
   final lines = [
     for (final orphan in orphans)
-      _orphanNoteClause(orphan.message, orphan.messageIndex, messages),
+      '"${orphan.message.toolName}" (id: ${orphan.message.toolCallId}): '
+          '${_orphanNoteClause(orphan.message, orphan.messageIndex, messages)}',
   ];
   if (orphans.length == 1) {
     return '[context note: a tool result for "${orphans.first.message
@@ -645,7 +646,7 @@ String _dropNote(
   ].join('\n');
 }
 
-/// One orphan's named clause: `removed by the <cut> cut; kept in summary:
+/// One orphan's named clause: `removed by the [cut] cut; kept in summary:
 /// yes|no`.
 String _orphanNoteClause(
   ToolResultMessage orphan,
@@ -654,7 +655,8 @@ String _orphanNoteClause(
 ) {
   final boundary = _nearestCutBoundary(messages, messageIndex);
   final id = canonicalToolCallId(orphan.toolCallId);
-  final kept = boundary != null && _boundaryText(boundary).contains(id);
+  final kept = boundary != null && _boundaryText(messages[boundary.index])
+      .contains(id);
   return 'removed by the ${boundary?.label ?? 'context'} cut; '
       'kept in summary: ${kept ? 'yes' : 'no'}';
 }
@@ -693,13 +695,27 @@ _CutBoundary? _nearestCutBoundary(List<Message> messages, int fromIndex) {
 /// The plain text of a boundary message (summary bodies are plain strings;
 /// marker projections can ride other roles).
 String _boundaryText(Message message) {
-  final content = message.content;
-  if (content is String) return content;
-  if (content is! List) return '';
-  return [
-    for (final block in content)
-      if (block is TextContent) block.text,
-  ].join();
+  switch (message) {
+    case UserMessage(:final content):
+      if (content is String) return content;
+      if (content is! List) return '';
+      return [
+        for (final block in content)
+          if (block is TextContent) block.text,
+      ].join();
+    case ToolResultMessage(:final content):
+      return [
+        for (final block in content)
+          if (block is TextContent) block.text,
+      ].join();
+    case AssistantMessage(:final content):
+      return [
+        for (final block in content)
+          if (block is TextContent) block.text,
+      ].join();
+  }
+  // `Message` is an interface: unknown implementations have no text.
+  return '';
 }
 
 /// The wire-equivalent projection of harness messages: a run of consecutive

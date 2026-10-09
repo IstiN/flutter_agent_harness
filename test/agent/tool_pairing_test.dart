@@ -183,7 +183,8 @@ void main() {
       expect(repaired.messages, hasLength(4));
       expect(repaired.messages[0], same(messages[0]));
       expect(repaired.messages[2], same(messages[2]));
-      expect(repaired.messages[3], same(messages[4]));
+      // The trailing user message carries the note — a copy with the note
+      // as an extra block (payload-only; the transcript keeps the original).
       final carrier = userMessageText(
         (repaired.messages[3] as UserMessage).content,
       );
@@ -468,6 +469,13 @@ void main() {
   });
 
   group('orphan-result notices (gh-1449)', () {
+    // The REAL compaction-summary projection (session_tree.dart): the
+    // boundary probe keys on the production prefix, not on any text.
+    UserMessage _compacted(String summary) => UserMessage.text(
+      '$compactionSummaryPrefix$summary$compactionSummarySuffix',
+      timestamp: DateTime.utc(2026),
+    );
+
     ToolResultMessage _orphan(String id, String name, DateTime at) =>
         ToolResultMessage(
           toolCallId: id,
@@ -480,7 +488,7 @@ void main() {
     test('UT-TEXT: the note names the tool, the call id and the cut '
         'reference', () {
       final repaired = repairToolPairing([
-        _u('summary of earlier work'),
+        _compacted('earlier work'),
         _orphan('bash_198', 'bash', DateTime.utc(2026)),
       ]);
       final note = repaired.messages
@@ -494,14 +502,14 @@ void main() {
 
     test('UT-TEXT: the kept-in-summary hint probes the boundary text', () {
       final withId = repairToolPairing([
-        _u(
-          'summary of earlier work: the call bash_198 ran the deploy '
-          'script and it passed',
+        _compacted(
+          'earlier work: the call bash_198 ran the deploy script and it '
+          'passed',
         ),
         _orphan('bash_198', 'bash', DateTime.utc(2026)),
       ]);
       final withoutId = repairToolPairing([
-        _u('summary of earlier work'),
+        _compacted('earlier work'),
         _orphan('bash_198', 'bash', DateTime.utc(2026)),
       ]);
       expect(
@@ -533,22 +541,21 @@ void main() {
 
     test('UT-ROLE: the note never becomes a new message — it rides the '
         'last existing user message', () {
-      final summary = _u('summary of earlier work');
+      final summary = _compacted('earlier work');
       final repaired = repairToolPairing([
         summary,
         _orphan('bash_198', 'bash', DateTime.utc(2026)),
       ]);
-      // Two messages in, two messages out: no message added.
-      expect(repaired.messages, hasLength(2));
-      // The carrier is the pre-existing user message (same instance,
-      // content rewritten to carry the note as an extra text block).
+      // The orphan is dropped and the summary message carries the note:
+      // one message in the payload out of two, none added.
+      expect(repaired.messages, hasLength(1));
       final carrier = repaired.messages[0] as UserMessage;
       expect(carrier.content, isA<List<ContentBlock>>());
       final blocks = carrier.content as List<ContentBlock>;
       expect(blocks.first, isA<TextContent>());
       expect(
         (blocks.first as TextContent).text,
-        'summary of earlier work',
+        contains('earlier work'),
       );
       expect(
         (blocks.last as TextContent).text,
@@ -577,8 +584,8 @@ void main() {
       ]);
       final carrier = repaired.messages[0] as UserMessage;
       expect(userMessageText(carrier.content), contains('[context note:'));
-      // No new message: 4 in, 4 out.
-      expect(repaired.messages, hasLength(4));
+      // No new message: the ghost result is dropped, the rest survives.
+      expect(repaired.messages, hasLength(3));
       expect(validateToolPairing(repaired.messages), isEmpty);
     });
 
@@ -591,9 +598,13 @@ void main() {
         _r('c1', 'bash'),
         _orphan('ghost', 'read', DateTime.utc(2026)),
       ]);
+      // The hoisted steering message is the note carrier: copied with the
+      // note as an extra block, still after the results.
       final carrier = repaired.messages.last as UserMessage;
-      expect(same(carrier), steering);
-      expect(userMessageText(carrier.content), contains('[context note:'));
+      final text = userMessageText(carrier.content);
+      expect(text, contains('steering question'));
+      expect(text, contains('[context note:'));
+      expect(repaired.messages[1], isA<ToolResultMessage>());
       expect(validateToolPairing(repaired.messages), isEmpty);
     });
 
@@ -759,17 +770,17 @@ void main() {
       final data = orphanReportRecordData({'k1', 'k2'});
       expect(data['keys'], isA<List<dynamic>>());
       final restored = orphanReportKeysFromRecords([
-        const CustomRecord(
+        CustomRecord(
           id: 'r1',
           parentId: null,
-          timestamp: null,
+          timestamp: DateTime.utc(2026),
           customType: orphanReportRecordType,
           data: {'keys': ['k1', 'k2', 'k3']},
         ),
-        const CustomRecord(
+        CustomRecord(
           id: 'r2',
           parentId: null,
-          timestamp: null,
+          timestamp: DateTime.utc(2026),
           customType: 'other',
           data: {'keys': ['nope']},
         ),

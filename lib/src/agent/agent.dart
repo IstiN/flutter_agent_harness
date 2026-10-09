@@ -212,8 +212,10 @@ class Agent {
     this.stuckTool,
     this.finalizeGate = false,
     this.operativeSkills = const [],
+    Set<String>? reportedOrphanKeys,
   }) : toolExecutor =
            toolExecutor ?? toolRegistry?.executor ?? _missingToolExecutor(),
+       _reportedOrphanKeys = reportedOrphanKeys ?? <String>{},
        _state = AgentState(
          model: model ?? _defaultModel,
          systemPrompt: systemPrompt ?? '',
@@ -282,6 +284,15 @@ class Agent {
   /// requests. Mutable by design: `/skills reload` and availability
   /// toggles swap the list.
   List<Skill> operativeSkills;
+
+  /// gh-1449: the session's one-shot latch of already-reported orphan
+  /// results ([orphanReportKey]s, mutable — the agent loop adds every key
+  /// it reports back into this same set). Hosts seed it from the
+  /// persisted `orphan_report` custom records when a session resumes
+  /// ([orphanReportKeysFromRecords]), so a restored session never
+  /// re-reports an orphan it already reported (AC6).
+  Set<String> get reportedOrphanKeys => _reportedOrphanKeys;
+  final Set<String> _reportedOrphanKeys;
 
   /// Provider adapter used for every model call. See [StreamFunction].
   StreamFunction streamFunction;
@@ -594,6 +605,7 @@ class Agent {
           ? null
           : (context) => prepareNextTurn?.call(context),
       toolMisuseBreaker: toolMisuseBreaker,
+      reportedOrphanKeys: _reportedOrphanKeys,
       getSteeringMessages: () async {
         if (skip) {
           skip = false;
