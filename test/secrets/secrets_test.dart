@@ -249,7 +249,7 @@ void main() {
       );
       final options = shell.lastOptions!;
       expect(options.env, {
-        'SECRET': '[REDACTED:Sensitive Value]',
+        'SECRET': 's3cr3t-value',
         'OTHER': '1',
         secretPresenceEnvVar: 'SECRET',
       });
@@ -267,7 +267,7 @@ void main() {
         options: ShellExecOptions(env: const {'SECRET': 'override'}),
       );
       expect(shell.lastOptions!.env, {
-        'SECRET': '[REDACTED:Sensitive Value]',
+        'SECRET': 'override',
         secretPresenceEnvVar: 'SECRET',
       });
     });
@@ -280,7 +280,7 @@ void main() {
       );
       await env.exec('x');
       expect(shell.lastOptions!.env, {
-        'SECRET': '[REDACTED:Sensitive Value]',
+        'SECRET': 's3cr3t-value',
         secretPresenceEnvVar: 'SECRET',
       });
     });
@@ -303,7 +303,7 @@ void main() {
       );
       await env.exec('x');
       expect(shell.lastOptions!.env, {
-        'SECRET': '[REDACTED:Sensitive Value]',
+        'SECRET': 's3cr3t-value',
         secretPresenceEnvVar: 'SECRET',
       });
       env.addSecrets(const {'NEW_KEY': 'n3w-value'});
@@ -311,6 +311,7 @@ void main() {
       expect(shell.lastOptions!.env, {
         'SECRET': 's3cr3t-value',
         'NEW_KEY': 'n3w-value',
+        secretPresenceEnvVar: 'NEW_KEY SECRET',
       });
     });
 
@@ -323,7 +324,7 @@ void main() {
       env.addSecrets(const {'SECRET': 'new-value'});
       await env.exec('x');
       expect(shell.lastOptions!.env, {
-        'SECRET': '[REDACTED:Sensitive Value]',
+        'SECRET': 'new-value',
         secretPresenceEnvVar: 'SECRET',
       });
     });
@@ -351,7 +352,10 @@ void main() {
         'x',
         options: ShellExecOptions(env: const {'NEW_KEY': 'override'}),
       );
-      expect(shell.lastOptions!.env, {'NEW_KEY': 'override'});
+      expect(shell.lastOptions!.env, {
+        'NEW_KEY': 'override',
+        secretPresenceEnvVar: 'NEW_KEY',
+      });
     });
 
     test('filesystem operations delegate to the wrapped env', () async {
