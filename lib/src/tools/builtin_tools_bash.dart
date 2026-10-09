@@ -483,7 +483,28 @@ Future<ToolExecutionResult> _awaitJobOutcome(
   ]);
 
   if (!finished) {
-    final supervisorMoved = yieldToken.cancelReason is StuckCallFollowUp;
+    // The supervisor's cancel_retry cancel (StuckCallFollowUp on the CALL
+    // token) is a cancel-and-RETRY, not a background conversion: fail the
+    // call exactly like the pre-gh-1455 token-kill did, so the supervisor
+    // reclassifies the attempt and retries — but the job itself keeps
+    // running (the gh-1455 firewall keeps caller tokens out of job space).
+    if (cancelToken != null &&
+        cancelToken.isCancelled &&
+        cancelToken.cancelReason is StuckCallFollowUp &&
+        !yieldToken.isCancelled) {
+      final log = await env.readTextFile(entry.logPath);
+      var output = log.isErr ? '' : log.valueOrNull!;
+      if (output.endsWith('\n')) {
+        output = output.substring(0, output.length - 1);
+      }
+      throw StateError(_appendStatus(output, 'Command aborted'));
+    }
+    // gh-1455: the supervisor cancels the CALL token (StuckCallFollowUp)
+    // while steering cancels the phase yield — a cancel from either means
+    // the handback must name its real cause, so check both reasons.
+    final supervisorMoved =
+        yieldToken.cancelReason is StuckCallFollowUp ||
+        (cancelToken?.cancelReason is StuckCallFollowUp);
     final tail = await jobs.tail(entry.id, maxLines: 20);
     final handback = stuckBackgroundHandbackText(
       jobId: entry.id,
