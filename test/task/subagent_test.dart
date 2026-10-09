@@ -72,15 +72,13 @@ void main() {
 
     test('statusLine queued glyph routes through status.pending (gh-1446 '
         'AC8: no hardcoded ⏳ outside tui_symbols.dart)', () {
-      final handle =
-          SubagentHandle(
-              id: 'a1',
-              name: 'a1',
-              agentType: 'explore',
-              sessionId: 's1',
-              createdAt: '',
-            )
-            ..status = SubagentStatus.queued;
+      final handle = SubagentHandle(
+        id: 'a1',
+        name: 'a1',
+        agentType: 'explore',
+        sessionId: 's1',
+        createdAt: '',
+      )..status = SubagentStatus.queued;
       // The unicode default's `status.pending` glyph.
       expect(handle.statusLine, contains('○ queued'));
 

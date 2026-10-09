@@ -96,7 +96,6 @@ void main() {
       expect(kTuiSymbolsAscii.glyph('status.pending'), '[*]');
     });
 
-
     test('the controller seam switches presets and serves glyphs', () {
       final controller = FaThemeController.instance;
       expect(controller.sym('sep.dot'), kTuiSymbolsUnicode.glyphs['sep.dot']);

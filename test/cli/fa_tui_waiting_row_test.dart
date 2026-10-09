@@ -43,7 +43,7 @@ void main() {
       nowMs: 0,
     );
     expect(lines, hasLength(1));
-        expect(
+    expect(
       lines.single,
       contains(
         '${FaThemeController.instance.sym('status.pending')}'

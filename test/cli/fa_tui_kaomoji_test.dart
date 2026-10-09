@@ -73,11 +73,10 @@ void main() {
     final sgrs = RegExp(r'\x1b\[[0-9;]*m').allMatches(raw).toSet();
     // A single dim wrapper pair (open + reset) — no two-tone face palette
     // (teal 96;208;208 / blue 112;160;224 retired with the face render).
-    expect(
-      sgrs.map((m) => m.group(0)).toSet(),
-      {'\x1b[2m', '\x1b[0m'},
-      reason: raw,
-    );
+    expect(sgrs.map((m) => m.group(0)).toSet(), {
+      '\x1b[2m',
+      '\x1b[0m',
+    }, reason: raw);
     expect(raw, isNot(contains('38;2;96;208;208')), reason: raw);
     expect(raw, isNot(contains('38;2;112;160;224')), reason: raw);
   });

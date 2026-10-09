@@ -249,8 +249,7 @@ extension _TuiRowRenderers on FaTuiModel {
     final elapsedCell = _formatBusyElapsed(
       elapsedSeconds,
     ).padLeft(_busyElapsedCells);
-    final plain =
-        '$labelCell $elapsedCell${suffix.isEmpty ? '' : ' $suffix'}';
+    final plain = '$labelCell $elapsedCell${suffix.isEmpty ? '' : ' $suffix'}';
     return _dim(tuiPadRight(tuiFitWidth(plain, termWidth), termWidth));
   }
 

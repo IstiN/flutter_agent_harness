@@ -149,12 +149,10 @@ void main() {
     final code = await cli.runHeadless('hi', waitForJobs: true);
     expect(code, 0);
     final out = io.out.toString();
-        // gh-1446 AC8: the pending glyph resolves through the symbol table.
+    // gh-1446 AC8: the pending glyph resolves through the symbol table.
     expect(
       out,
-      contains(
-        '${FaThemeController.instance.sym('status.pending')} waiting:',
-      ),
+      contains('${FaThemeController.instance.sym('status.pending')} waiting:'),
     );
     expect(out, contains('waiters resolved'));
   });

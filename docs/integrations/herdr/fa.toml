@@ -93,6 +93,17 @@ contains = ["waiting for your selection"]
 # braille spinner before it: the opener keys on the label cell instead —
 # the four fixed labels plus the harness-authored phase shape
 # (capitalized words ending in an ellipsis, e.g. `Compacting context…`).
+#
+# KNOWN FALSE-POSITIVE CLASS (accepted trade-off, gh-1446 rework): the
+# generic `[A-Z][A-Za-z0-9 /,&+()-]+…` branch matches ANY capitalized
+# words ending in an ellipsis — so transcript/model-echo content near the
+# bottom (e.g. a quoted `Here is the plan…` line, elapsed cell absent)
+# satisfies the opener and, via the `not` lists below, can suppress the
+# `╰─` gutter and separator rules for a frame. The broad branch is
+# deliberate: the harness-authored `busyPhase` labels are free-form text
+# (`Compacting context… <tail>`, `Extracting memory…`) with no closed
+# vocabulary to enumerate. Revisit only if a mis-suppression is observed
+# in practice — the false NEGATIVE (a real busy row missed) is worse.
 
 [[rules]]
 id = "busy_row"

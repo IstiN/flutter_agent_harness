@@ -218,12 +218,13 @@ void main() {
     };
     for (final elapsed in [0, 9, 978, 3600]) {
       for (final face in [0, 3, 7]) {
-        final row = busyRowOf(
-          modelAt(elapsed).copyWith(kaomojiFace: face),
-        );
+        final row = busyRowOf(modelAt(elapsed).copyWith(kaomojiFace: face));
         for (final glyph in forbidden) {
-          expect(row.contains(glyph), isFalse,
-              reason: 'motion glyph "$glyph" in [$row]');
+          expect(
+            row.contains(glyph),
+            isFalse,
+            reason: 'motion glyph "$glyph" in [$row]',
+          );
         }
       }
     }
@@ -297,7 +298,8 @@ void main() {
     expect(rows.last.substring(elapsedStart, elapsedEnd), ' 1000s');
   });
 
-  test('the host-picker waiting row is padded to the width too', () {    var model = modelAt(978);
+  test('the host-picker waiting row is padded to the width too', () {
+    var model = modelAt(978);
     model =
         model
                 .update(
@@ -381,7 +383,8 @@ void main() {
     expect(
       plain.where((l) => l.contains('waiting')),
       isNotEmpty,
-      reason: 'the waiting row follows the queue rows (gh-1446 AC8: the '
+      reason:
+          'the waiting row follows the queue rows (gh-1446 AC8: the '
           'glyph resolves through the symbol table)',
     );
   });

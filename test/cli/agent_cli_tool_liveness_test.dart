@@ -10,8 +10,8 @@ import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/tool_liveness.dart';
-import 'package:flutter_agent_harness/src/cli/waiting_heartbeat.dart';
 import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
+import 'package:flutter_agent_harness/src/cli/waiting_heartbeat.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';

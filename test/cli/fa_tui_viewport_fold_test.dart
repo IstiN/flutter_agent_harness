@@ -75,8 +75,7 @@ int _ruleRowCount(List<String> rows) => rows.where(_isRuleRow).length;
 bool _hasFoldRule(List<String> rows, List<String> calmRows) =>
     _ruleRowCount(rows) == _ruleRowCount(calmRows) + 1;
 
-bool _hasPercent(List<String> rows) =>
-    rows.any((r) => _percent.hasMatch(r));
+bool _hasPercent(List<String> rows) => rows.any((r) => _percent.hasMatch(r));
 
 void main() {
   group('AC1 — above-the-fold indicator during tail-follow', () {
@@ -505,8 +504,11 @@ void main() {
       );
       final rows = _rowsOf(model);
       expect(_isRuleRow(rows[19]), isTrue);
-      expect(rows.join('\n'), isNot(contains('above fold')),
-          reason: 'the textless rule carries no words');
+      expect(
+        rows.join('\n'),
+        isNot(contains('above fold')),
+        reason: 'the textless rule carries no words',
+      );
     });
 
     test('AC1 byte-scan: the streaming rule row carries NO text glyphs', () {

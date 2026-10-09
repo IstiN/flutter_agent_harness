@@ -40,4 +40,3 @@ int? _kaomojiFacePin() {
   final pin = int.tryParse(Platform.environment['FA_KAOMOJI_FACE'] ?? '');
   return pin?.clamp(0, kKaomojiFaces.length - 1);
 }
-

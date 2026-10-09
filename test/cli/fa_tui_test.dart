@@ -318,50 +318,50 @@ void main() {
     expect(cursor!.x, 1);
   });
 
-  test('gh-1446 AC4: busy ticks leave the Working… row motionless — the '
-      'ring lives in the brand zone; the caret stays hidden in the composer', () {
-    var model = FaTuiModel(
-      callbacks: callbacks(),
-      isExited: () => false,
-      kaomojiPick: (_) => 0,
-    );
-    model = model.update(BusyMsg(true)).$1 as FaTuiModel;
-    final busyRows = <String>{};
-    for (var i = 0; i < kKaomojiSwapTicks + 1; i++) {
-      model = model.update(SpinnerTickMsg()).$1 as FaTuiModel;
-      busyRows.add(
-        model
-            .view()
-            .content
-            .split('\n')
-            .firstWhere((line) => line.contains('Working')),
+  test(
+    'gh-1446 AC4: busy ticks leave the Working… row motionless — the '
+    'ring lives in the brand zone; the caret stays hidden in the composer',
+    () {
+      var model = FaTuiModel(
+        callbacks: callbacks(),
+        isExited: () => false,
+        kaomojiPick: (_) => 0,
       );
-    }
-    // gh-1446 AC4: ALL motion left the busy row — the face zone is gone,
-    // so the whole swap window renders byte-identical rows (the label
-    // stays plain text at column 0). The ticker still advances the model
-    // frame (the brand ring consumes it, AC5); the caret stays in the
-    // input zone while a run streams (typing mid-stream is first-class) —
-    // the View carries a real cursor, and the program derives DECTCEM
-    // visibility from it.
-    expect(busyRows.length, 1);
-    expect(model.spinnerFrame, kKaomojiSwapTicks + 1);
-    expect(
-      busyRows.single.replaceAll(
-        RegExp(r'\x1b\[[0-9;?]*[A-Za-z]'),
-        '',
-      ),
-      startsWith('Working…'),
-      reason: 'the label starts at column 0 — no face/spinner pad cell',
-    );
-    expect(model.view().cursor, isNotNull);
-    // The busy row carries the elapsed seconds — a wedged endpoint is
-    // visible instead of looking like a frozen UI.
-    expect(
-      busyRows.every((row) => RegExp(r'Working…\s*\d+s').hasMatch(row)),
-      isTrue,
-    );
-  });
+      model = model.update(BusyMsg(true)).$1 as FaTuiModel;
+      final busyRows = <String>{};
+      for (var i = 0; i < kKaomojiSwapTicks + 1; i++) {
+        model = model.update(SpinnerTickMsg()).$1 as FaTuiModel;
+        busyRows.add(
+          model
+              .view()
+              .content
+              .split('\n')
+              .firstWhere((line) => line.contains('Working')),
+        );
+      }
+      // gh-1446 AC4: ALL motion left the busy row — the face zone is gone,
+      // so the whole swap window renders byte-identical rows (the label
+      // stays plain text at column 0). The ticker still advances the model
+      // frame (the brand ring consumes it, AC5); the caret stays in the
+      // input zone while a run streams (typing mid-stream is first-class) —
+      // the View carries a real cursor, and the program derives DECTCEM
+      // visibility from it.
+      expect(busyRows.length, 1);
+      expect(model.spinnerFrame, kKaomojiSwapTicks + 1);
+      expect(
+        busyRows.single.replaceAll(RegExp(r'\x1b\[[0-9;?]*[A-Za-z]'), ''),
+        startsWith('Working…'),
+        reason: 'the label starts at column 0 — no face/spinner pad cell',
+      );
+      expect(model.view().cursor, isNotNull);
+      // The busy row carries the elapsed seconds — a wedged endpoint is
+      // visible instead of looking like a frozen UI.
+      expect(
+        busyRows.every((row) => RegExp(r'Working…\s*\d+s').hasMatch(row)),
+        isTrue,
+      );
+    },
+  );
 
   test('history cap trims in batches, not on every overflowing append', () {
     var model = FaTuiModel(callbacks: callbacks(), isExited: () => false);

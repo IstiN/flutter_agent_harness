@@ -31,7 +31,7 @@ SubagentHandle _handle({
 void main() {
   group('agentStatusIcon', () {
     test('maps every status to an emoji', () {
-            expect(
+      expect(
         agentStatusIcon(SubagentStatus.queued),
         FaThemeController.instance.sym('status.pending'),
         reason: 'gh-1446 AC8: routed through the symbol table',

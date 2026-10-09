@@ -1270,8 +1270,10 @@ LaidSegment? _renderPi(StatusLineSnapshot s, StatusLineSpec spec) {
   // constant in both states. The fade is handled at paint time (the
   // painter blends toward the dim endpoint via [statusLineBrandFadeT]).
   final frame = s.brandFrame;
-  assert(frame == null || tuiTextWidth(frame) == 1,
-      'brand frame must stay exactly 1 cell (E3)');
+  assert(
+    frame == null || tuiTextWidth(frame) == 1,
+    'brand frame must stay exactly 1 cell (E3)',
+  );
   return LaidSegment('pi', [
     ('>_', StatusLineRoleKey.brandA),
     (frame ?? ' ', StatusLineRoleKey.brandA),
@@ -1512,16 +1514,22 @@ LaidSegment? _renderCacheRead(StatusLineSnapshot s, StatusLineSpec spec) =>
     s.cacheRead <= 0
     ? null
     : LaidSegment('cache_read', [
-        ('${FaThemeController.instance.sym('icon.cacheRead')}'
-            '${formatTokens(s.cacheRead)}', StatusLineRoleKey.output),
+        (
+          '${FaThemeController.instance.sym('icon.cacheRead')}'
+              '${formatTokens(s.cacheRead)}',
+          StatusLineRoleKey.output,
+        ),
       ]);
 
 LaidSegment? _renderCacheWrite(StatusLineSnapshot s, StatusLineSpec spec) =>
     s.cacheWrite <= 0
     ? null
     : LaidSegment('cache_write', [
-        ('${FaThemeController.instance.sym('icon.cacheWrite')}'
-            '${formatTokens(s.cacheWrite)}', StatusLineRoleKey.output),
+        (
+          '${FaThemeController.instance.sym('icon.cacheWrite')}'
+              '${formatTokens(s.cacheWrite)}',
+          StatusLineRoleKey.output,
+        ),
       ]);
 
 LaidSegment? _renderCacheHit(StatusLineSnapshot s, StatusLineSpec spec) =>

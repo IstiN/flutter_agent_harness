@@ -868,8 +868,11 @@ M  staged-one
       // keys — the pre-1446 hardcoded `⟲`/`⟳` pair is preserved verbatim
       // (the `icon.cache` database glyph was an unticketed visual change,
       // +4 cells on the ascii preset). Pins sit next to the `pi` pin.
-      const snapshot = StatusLineSnapshot(cwd: '/', cacheRead: 3000,
-          cacheWrite: 1200);
+      const snapshot = StatusLineSnapshot(
+        cwd: '/',
+        cacheRead: 3000,
+        cacheWrite: 1200,
+      );
       expect(
         kStatusLineSegments['cache_read']!(snapshot, _defaultSpec())!.text,
         '⟲3k',

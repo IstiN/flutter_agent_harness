@@ -192,7 +192,8 @@ void main() {
       expect(
         RegExp('─{$width}').hasMatch(screen),
         isTrue,
-        reason: 'the reserved row renders as the textless dim rule '
+        reason:
+            'the reserved row renders as the textless dim rule '
             '(the frame stream places it with cursor addressing, so the '
             'probe matches a dash RUN, not a newline-aligned row)',
       );

@@ -185,8 +185,11 @@ void main() {
     for (var i = 0; i < kKaomojiSwapTicks; i++) {
       m = send(m, SpinnerTickMsg());
     }
-    expect(busyRowOf(m), busyAt0,
-        reason: 'gh-1446 AC4: ticks never mutate the busy row bytes');
+    expect(
+      busyRowOf(m),
+      busyAt0,
+      reason: 'gh-1446 AC4: ticks never mutate the busy row bytes',
+    );
   });
 
   test('AC2: composer region carries ONLY composer-owned content', () {

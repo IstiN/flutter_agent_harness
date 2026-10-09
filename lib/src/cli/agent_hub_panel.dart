@@ -524,9 +524,7 @@ String? shellJobLiveSummaryLine({
 String _tailKeep(String text, int width) {
   if (tuiTextWidth(text) <= width) return text;
   if (width <= 0) return '';
-  final cells = [
-    for (final g in text.characters) (g, tuiGraphemeWidth(g)),
-  ];
+  final cells = [for (final g in text.characters) (g, tuiGraphemeWidth(g))];
   const ellipsisCells = 1;
   final budget = width - ellipsisCells;
   var kept = 0;

@@ -22,8 +22,7 @@ String? subagentReceiveGuard(SubagentHandle? handle, String id) {
 /// header). gh-1446 AC8: the queued hourglass resolves through the symbol
 /// table (`status.pending`) — no hardcoded `⏳` survives in chrome code.
 String agentStatusIcon(SubagentStatus status) => switch (status) {
-  SubagentStatus.queued =>
-    FaThemeController.instance.sym('status.pending'),
+  SubagentStatus.queued => FaThemeController.instance.sym('status.pending'),
   SubagentStatus.running => '🔄',
   SubagentStatus.idle => '⏸',
   SubagentStatus.completed => '✅',

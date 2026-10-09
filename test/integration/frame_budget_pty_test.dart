@@ -125,9 +125,13 @@ tui:
         break;
       }
     }
-    expect(composerTop, greaterThan(0),
-        reason: 'input frame: rules around an empty composer zone; '
-            'frame was:\n${grid.join('\n')}');
+    expect(
+      composerTop,
+      greaterThan(0),
+      reason:
+          'input frame: rules around an empty composer zone; '
+          'frame was:\n${grid.join('\n')}',
+    );
     final zone = grid.sublist(composerTop, composerTop + 1);
     expect(zone, hasLength(1), reason: 'composer zone: ${grid.join('\n')}');
     expect(zone.single.trim(), isEmpty, reason: 'empty composer row');

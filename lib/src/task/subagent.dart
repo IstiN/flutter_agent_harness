@@ -260,9 +260,7 @@ final class SubagentHandle {
       case SubagentStatus.queued:
         // gh-1446 AC8: the pending glyph resolves through the central
         // symbol table — no hardcoded `⏳` outside tui_symbols.dart.
-        parts.add(
-          '${FaThemeController.instance.sym('status.pending')} queued',
-        );
+        parts.add('${FaThemeController.instance.sym('status.pending')} queued');
       case SubagentStatus.running:
         parts.add('🔄 running');
       case SubagentStatus.idle:

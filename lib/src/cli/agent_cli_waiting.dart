@@ -757,7 +757,8 @@ final class _WaitingCoordinator {
   /// Arms the heartbeat while waiters exist (a resolved-then-remaining
   /// wait restarts the full period, E2) and stops it when the last
   /// waiter resolves (AC3: a resolved wait never beats again).
-  void _syncHeartbeat(WaiterSnapshot snap) {    if (snap.isEmpty) {
+  void _syncHeartbeat(WaiterSnapshot snap) {
+    if (snap.isEmpty) {
       waitingSince = null;
       heartbeat.stop();
     } else {
@@ -821,7 +822,9 @@ final class _WaitingCoordinator {
     if (snap.isEmpty) return;
     _cli.io.writeln('${_pendingGlyph()} waiting: ${describe(snap)}');
     final settled = await _ceilingWait(snap);
-    _cli.io.writeln('${_pendingGlyph()} waiters resolved — ${waitingDetachSummary(settled)}');
+    _cli.io.writeln(
+      '${_pendingGlyph()} waiters resolved — ${waitingDetachSummary(settled)}',
+    );
   }
 
   /// The ceiling wait loop: sleeps to the nearest wake source (a job
@@ -959,7 +962,8 @@ String _pendingGlyph() => FaThemeController.instance.sym('status.pending');
 
 /// One-line human description of a snapshot (issue #450): "1 background
 /// job (…), 2 timers armed". Pure — unit-tested directly.
-String waitingDescribe(WaiterSnapshot snap) {  final parts = <String>[
+String waitingDescribe(WaiterSnapshot snap) {
+  final parts = <String>[
     if (snap.jobs.isNotEmpty)
       '${snap.jobs.length} background job'
           '${snap.jobs.length == 1 ? '' : 's'} (${snap.jobs.first})',
