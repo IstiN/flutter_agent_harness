@@ -26,6 +26,10 @@ enum TuiRegionKind {
   /// One queued message row; [TuiHitRegion.index] is the queue index —
   /// the click drops the message.
   queueRow,
+
+  /// The held-mode jump chip (gh-1439): the rule row's `● N new · End`
+  /// counter — a click re-engages live (one action, count flushed).
+  jumpLive,
 }
 
 /// One clickable rectangle in screen cells (origin top-left).
