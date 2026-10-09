@@ -85,9 +85,21 @@ void main() {
       // The glyph DERIVES from the active preset — an ascii switch changes
       // it, proving the line reads the symbol table instead of a literal.
       final controller = FaThemeController.instance..reset();
-      addTearDown(controller.reset);
+      // The symbol preset is NOT part of reset(): restore it explicitly so
+      // a test appended later in this file does not silently inherit ascii
+      // glyphs (same teardown shape as shell_job_board_test.dart's preset
+      // test — FaThemeController.reset() leaves the preset in place).
+      addTearDown(() => controller.switchSymbols('unicode'));
       expect(controller.switchSymbols('ascii'), isTrue);
       expect(handle.statusLine, contains('[*] queued'));
+    });
+
+    test('queued-glyph test teardown restores the unicode preset', () {
+      // The preset-switch test above must not leak the ascii preset into
+      // any test appended after it (FaThemeController.reset() does NOT
+      // restore the symbol preset — its teardown switches back explicitly;
+      // this is the canary that would catch a regression of that shape).
+      expect(FaThemeController.instance.symbols.name, 'unicode');
     });
 
     test('isTerminal is true for completed/failed/aborted', () {

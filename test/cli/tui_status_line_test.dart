@@ -885,7 +885,11 @@ M  staged-one
       // The ascii preset keeps the icon cells at 1 — the width-budgeted
       // status line can never inherit the 5-cell `icon.cache` value.
       final controller = FaThemeController.instance..reset();
-      addTearDown(controller.reset);
+      // The symbol preset is NOT part of reset(): restore it explicitly so
+      // a test appended later in this file does not silently inherit ascii
+      // glyphs (same teardown shape as shell_job_board_test.dart's preset
+      // test — FaThemeController.reset() leaves the preset in place).
+      addTearDown(() => controller.switchSymbols('unicode'));
       expect(controller.switchSymbols('ascii'), isTrue);
       expect(
         kStatusLineSegments['cache_read']!(snapshot, _defaultSpec())!.text,
