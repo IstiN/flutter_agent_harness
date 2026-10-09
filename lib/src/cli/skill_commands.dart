@@ -114,6 +114,8 @@ extension AgentCliSkillsExt on AgentCli {
   /// scan's own input changed (I3: third-party roots stay unstat'ed while
   /// consent is denied).
   Future<SkillRootsFingerprint> _computeSkillRootsFingerprint() {
+    // ignore: avoid_print
+    print('FP-COMPUTE from ' + StackTrace.current.toString().split('\n').skip(1).take(4).join(' | '));
     final roots = defaultSkillRoots(cwd: _env.cwd, homeDir: config.homeDir);
     return computeSkillRootsFingerprint(_env, [
       ...roots.projectRoots,

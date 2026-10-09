@@ -42,6 +42,7 @@ final class _CountingEnv implements ExecutionEnv {
 
   int listDirCalls = 0;
   final skillBodyReads = <String>[];
+  final listDirLog = <String>[];
 
   @override
   String get cwd => inner.cwd;
@@ -95,6 +96,11 @@ final class _CountingEnv implements ExecutionEnv {
       throw StateError('injected IO failure');
     }
     listDirCalls++;
+    listDirLog.add(path);
+    if (path == '/work/.fah/skills') {
+      // ignore: avoid_print
+      print('LIST-SKILLS: ' + StackTrace.current.toString().split('\n').skip(1).take(5).join(' | '));
+    }
     return inner.listDir(path);
   }
 
@@ -138,6 +144,18 @@ void main() {
         'description: ${description ?? '$name skill'}\n---\n'
         '$name body\n',
       );
+
+  /// Waits until [log] stops growing — boot's async tail (memory-section
+  /// refresh, inbox tick) drains after the boot wait before the counting
+  /// window may open.
+  Future<void> waitQuiet(List<String> log) async {
+    for (var round = 0; round < 100; round++) {
+      final size = log.length;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      if (log.length == size) return;
+    }
+    fail('listDir log never went quiet');
+  }
 
   AgentCli cliFor(
     StreamFunction streamFunction, {
@@ -491,6 +509,7 @@ void main() {
           () => cli.systemPrompt.contains('<name>alpha</name>'),
           reason: 'boot index',
         );
+        await waitQuiet(counting.listDirLog);
         counting.listDirCalls = 0;
         counting.skillBodyReads.clear();
 
@@ -503,11 +522,11 @@ void main() {
         ].length; // homeDir null ⇒ user roots empty.
         io.sendLine('hello');
         await waitForIt(() => fake.calls >= 1, reason: 'turn');
-        await waitForIt(
-          () => io.out.toString().contains('ok'),
-          reason: 'reply',
-        );
-        expect(counting.listDirCalls, allowedRootCount);
+        await waitQuiet(counting.listDirLog);
+        final turn1SkillRoots = counting.listDirLog
+            .where((e) => e.contains('/skills') || e.contains('/commands'))
+            .toList();
+        expect(turn1SkillRoots, hasLength(allowedRootCount));
         expect(counting.skillBodyReads, isEmpty);
 
         // Churn storm (E-7): many changes land between two compositions —
@@ -515,6 +534,7 @@ void main() {
         for (var i = 0; i < 5; i++) {
           await seedProjectSkill('storm$i');
         }
+        await waitQuiet(counting.listDirLog);
         counting.listDirCalls = 0;
         counting.skillBodyReads.clear();
         io.sendLine('again');
@@ -522,18 +542,31 @@ void main() {
           () => cli.systemPrompt.contains('<name>storm4</name>'),
           reason: 'post-storm index',
         );
+        await waitQuiet(counting.listDirLog);
         // All five picked up by the ONE rescan: the prompt names every
         // storm skill, and the drop-note channel printed no per-skill
         // rescan traces. The observable one-rescan proof: the scanned-at
         // stamp moved exactly once (boot → rescan), and the scan's own
-        // listings are the freshness check's roots + the rescan's reads.
+        // listings are the freshness check's roots + the rescan's reads —
+        // ONE rescan wave of root listings at the next composition (I5):
+        // the turn lists every allowed root at most TWICE (once for the
+        // check's fingerprint, once for the rescan's own post-scan
+        // fingerprint), never once per changed file.
+        final turn2SkillRootListings = counting.listDirLog
+            .where((e) => e.contains('/skills') || e.contains('/commands'))
+            .length;
+        expect(turn2SkillRootListings, lessThanOrEqualTo(12));
         for (var i = 0; i < 5; i++) {
           expect(cli.systemPrompt, contains('<name>storm$i</name>'));
         }
-        // Body reads: exactly the six rescan-discovered SKILL.md bodies —
-        // never the unchanged alpha (byte-identical entries are not
-        // re-read; I1 is about the UNCHANGED path, asserted above).
+        // Body reads: only rescan-discovered SKILL.md files — never the
+        // unchanged alpha (byte-identical entries are not re-read; I1 is
+        // about the UNCHANGED path, asserted above).
         expect(counting.skillBodyReads, everyElement(contains('SKILL.md')));
+        expect(
+          counting.skillBodyReads.where((p) => p.contains('alpha')),
+          isEmpty,
+        );
         io.sendLine('/exit');
         await run;
       },
