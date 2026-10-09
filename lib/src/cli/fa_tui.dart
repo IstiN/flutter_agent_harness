@@ -267,7 +267,7 @@ final class FaTuiModel extends Model {
     this.outputLines = const [],
     TuiLineEditor? editor,
     this.scrollOffset = 0,
-    this.followTail = true,
+    this.follow = const FollowMode.live(),
     this.menuOpen = false,
     this.menuModelMode = false,
     this.menuSelected = 0,
@@ -370,13 +370,30 @@ final class FaTuiModel extends Model {
   /// new output while [followTail] holds; kept (clamped) otherwise.
   final int scrollOffset;
 
+  /// The follow-mode state (gh-1439): `live` snaps new output to the
+  /// bottom; `held` (user scrolled up) keeps the window anchored while
+  /// arrivals count into [FollowMode.unseen] — the `● N new` counter on
+  /// the rule row. Only USER scrolling changes it (wheel/PgUp detach,
+  /// wheel-to-bottom / PgDn into the near-bottom band re-arm — the shared
+  /// [FollowMode] classifier decides); transient viewport shrinkage
+  /// (picker menu, busy row, queue) never does. Held carries a
+  /// transcript-line anchor ([heldAnchorLine]) so trims and resizes
+  /// re-anchor the same logical position (E1/E2).
+  final FollowMode follow;
+
   /// Auto-follow latch: new output snaps the viewport to the bottom. Only
   /// USER scrolling changes it (wheel/arrows detach, scrolling back to the
   /// exact bottom re-attaches) — transient viewport shrinkage (picker menu,
   /// busy row, queue) must NOT detach it, which the old per-event
   /// `offset >= bottom` check got wrong: opening a picker broke follow
   /// until the user scrolled to the bottom by hand.
-  final bool followTail;
+  bool get followTail => follow.isLive;
+
+  /// While held: the transcript LINE anchored at the window's top edge
+  /// (gh-1439 E1/E2) — trims shift it by the cut, resizes recompute the
+  /// wrapped row through the new wrap, so the user keeps reading the same
+  /// logical position. -1 when live (no anchor).
+  final int heldAnchorLine;
   final bool menuOpen;
   final bool menuModelMode;
   final int menuSelected;
