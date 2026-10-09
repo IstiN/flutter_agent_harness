@@ -84,7 +84,12 @@ class OperativePinConfig {
   final int? budgetChars;
 }
 
-/// Process-wide skill-pin settings, published by hosts at boot.
+/// Process-wide skill-pin settings. An IN-CODE knob for now: no host or
+/// config section publishes it yet (unlike the `imageRegistryConfig`
+/// precedent, which is wired from the `images:` yaml section at boot).
+/// Tests and embedders may assign it before first use; the `enabled`
+/// kill switch and [OperativePinConfig.budgetChars] are unreachable from
+/// host config until a `skills.pins:` section is wired.
 OperativePinConfig operativePinConfig = const OperativePinConfig();
 
 /// Host-visible pin notice (drops, supersedes, repairs — never silent).
