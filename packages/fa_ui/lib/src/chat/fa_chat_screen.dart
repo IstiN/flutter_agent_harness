@@ -1669,17 +1669,12 @@ class _FaChatScreenState extends State<FaChatScreen>
         onTap: tappable
             ? (top
                   ? widget.service.loadOlderHistory
-                  : () async {
-                      await widget.service.loadNewerHistory();
-                      if (!mounted) return;
-                      // The tap's promise is the live tail (issue #1159
-                      // AC1): relatch follow and land on the newest row
-                      // of the rejoined window.
-                      setState(() => _follow = _follow.jumpToLive());
-                      if (_chatScrollController.hasClients) {
-                        _chatScrollController.jumpTo(0);
-                      }
-                    })
+                  // The tap's promise is the live tail (issue #1159 AC1):
+                  // one owner for the re-engage — relatch + the E4
+                  // deep-page-then-jump ordering. _jumpToLive already
+                  // awaits the page-in before landing at 0; the tear-off
+                  // is fire-and-forget (gh-1439 re-review).
+                  : _jumpToLive)
             : null,
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),

@@ -86,12 +86,18 @@ final class FollowMode {
     required int armExtent,
   }) {
     if (distanceFromLiveEdge <= armExtent) return const FollowMode.live();
-    return heldPreservingUnseen();
+    return _heldPreservingUnseen();
   }
 
   /// Output appended while the viewport stands in this state: counted
   /// when held (the affordance's live counter), invisible when live (the
   /// viewport shows it — today's behavior, REG-pinned).
+  ///
+  /// The counting UNIT is surface-defined, like the scroll units: the
+  /// TUI counts `OutputMsg` events, the app counts message rows — so the
+  /// `● N new` and `⌄ N new` numbers are not comparable across faces.
+  /// Keep the unit per-surface; never "unify" them by accident (gh-1439
+  /// re-review).
   FollowMode appended(int count) {
     if (isLive) return this;
     if (count <= 0) return this;
@@ -102,7 +108,10 @@ final class FollowMode {
   /// the bottom): exactly one action, live again, count flushed.
   FollowMode jumpToLive() => const FollowMode.live();
 
-  FollowMode heldPreservingUnseen() =>
+  /// The held twin of the current state, preserving the unseen count —
+  /// private: [userScrolled] is the only transition into held, so the
+  /// public transition surface stays minimal (gh-1439 re-review).
+  FollowMode _heldPreservingUnseen() =>
       isHeld ? this : FollowMode.held(unseen: unseen);
 
   @override
