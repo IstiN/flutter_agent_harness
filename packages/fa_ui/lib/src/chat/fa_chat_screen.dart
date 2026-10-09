@@ -8,6 +8,7 @@ import 'dart:math' as math;
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderAbstractViewport;
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show
@@ -303,6 +304,25 @@ class _FaChatScreenState extends State<FaChatScreen>
   bool _suppressInsertAnimations = true;
   Timer? _syncDebounce;
   bool _isSyncing = false;
+
+  /// Programmatic-move window (gh-1439 E6, re-review): a big-diff
+  /// setMessages re-anchors the scrollable and the correction glides the
+  /// position across frames (probe: 400→44px over ~8 frames on a
+  /// 25-row prepend); those moves are the SYNC's, not the user's —
+  /// classification is suppressed while the flag is up so the glide can
+  /// neither flush the held count by "landing" inside the arm band nor
+  /// hold. Frame-scoped, not timed: fake-async tests fire due timers
+  /// BEFORE the correction frame, so a timed window races the very moves
+  /// it brackets — a post-frame close with notification-driven re-arms
+  /// ends exactly one quiet frame after the corrections stop.
+  bool _suppressFollowClassification = false;
+
+  void _suppressForProgrammaticFrame() {
+    _suppressFollowClassification = true;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _suppressFollowClassification = false;
+    });
+  }
   bool _isStreaming = false;
   String? _error;
 
@@ -539,6 +559,12 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// non-drag updates can only relatch at the near-bottom.
   void _trackUserScroll(ScrollNotification notification) {
     if (notification.depth != 0) return;
+    if (_suppressFollowClassification) {
+      // A multi-frame settle re-arms the window; one quiet frame closes
+      // it (E6: none of these are user moves).
+      _suppressForProgrammaticFrame();
+      return;
+    }
     if (notification is! ScrollUpdateNotification &&
         notification is! ScrollEndNotification) {
       return;
@@ -1027,6 +1053,11 @@ class _FaChatScreenState extends State<FaChatScreen>
         // ONE setMessages pass: per-message inserts rebuild the list per
         // row and stream in bottom-up, visibly slow on long transcripts.
         if (changes > 12) {
+          // (re-review) The replacement re-anchors the scrollable: its
+          // corrections glide for several frames and are programmatic —
+          // bracket the classification so the glide cannot flush the
+          // held count by "landing" inside the arm band.
+          _suppressForProgrammaticFrame();
           await _chatController.setMessages(newList, animated: false);
         } else {
           for (var i = 0; i < commonPrefix; i++) {
