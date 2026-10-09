@@ -8,19 +8,15 @@ part of 'fa_tui.dart';
 
 extension _TuiViewport on FaTuiModel {
   /// Applies a user scroll: moves the offset (clamped) and classifies the
-  /// gesture through the shared [FollowMode] contract (gh-1439) —
-  /// scrolling away from the live edge holds; toward it re-arms when the
-  /// landing spot sits inside the near-bottom band ([pageGesture] arms
-  /// the shared ~10%-of-viewport band; line steps re-arm on the exact
-  /// edge, the pinned arrow-key semantics). Any user scroll dissolves the
-  /// boot anchor: the park is the boot's, not the user's. Holding stores
-  /// the transcript line at the window's top edge ([heldAnchorLine]) so
-  /// trims/resizes re-anchor the same logical position (E1/E2).
-  FaTuiModel _scrolledTo(
-    int offset, {
-    required bool towardLive,
-    bool pageGesture = false,
-  }) {
+  /// landing position through the shared [FollowMode] contract (gh-1439) —
+  /// a park inside the near-bottom band re-arms live, beyond it holds.
+  /// [pageGesture] arms the shared ~10%-of-viewport band; line steps
+  /// (arrows) re-arm on the exact edge — the pinned arrow-key semantics
+  /// (REG). Any user scroll dissolves the boot anchor: the park is the
+  /// boot's, not the user's. Holding stores the transcript line at the
+  /// window's top edge ([heldAnchorLine]) so trims/resizes re-anchor the
+  /// same logical position (E1/E2).
+  FaTuiModel _scrolledTo(int offset, {bool pageGesture = false}) {
     final wrapped = _wrappedLines();
     final bottom = _scrollBottom(wrapped);
     final next = offset.clamp(0, _scrollTopMax(wrapped));
@@ -30,7 +26,6 @@ extension _TuiViewport on FaTuiModel {
     final followMode = follow.userScrolled(
       distanceFromLiveEdge: bottom - next,
       armExtent: arm,
-      movedTowardLive: towardLive,
     );
     return copyWith(
       scrollOffset: next,

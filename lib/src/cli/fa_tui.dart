@@ -1301,9 +1301,9 @@ final class FaTuiModel extends Model {
     // re-arms inside the shared near-bottom band.
     switch (msg.mouse.button) {
       case MouseButton.wheelUp:
-        return (_scrolledTo(scrollOffset - 3, towardLive: false, pageGesture: true), null);
+        return (_scrolledTo(scrollOffset - 3, pageGesture: true), null);
       case MouseButton.wheelDown:
-        return (_scrolledTo(scrollOffset + 3, towardLive: true, pageGesture: true), null);
+        return (_scrolledTo(scrollOffset + 3, pageGesture: true), null);
       default:
         return (this, null);
     }
@@ -1494,7 +1494,7 @@ final class FaTuiModel extends Model {
               null,
             );
           }
-          return (_scrolledTo(scrollOffset - 1, towardLive: false), null);
+          return (_scrolledTo(scrollOffset - 1), null);
         }
         return (this, null);
       case 'down':
@@ -1525,7 +1525,7 @@ final class FaTuiModel extends Model {
           );
         }
         if (inputText.isEmpty) {
-          return (_scrolledTo(scrollOffset + 1, towardLive: true), null);
+          return (_scrolledTo(scrollOffset + 1), null);
         }
         return (this, null);
       default:
@@ -1534,26 +1534,19 @@ final class FaTuiModel extends Model {
   }
 
   /// Normal-mode page scroll keys (pgup/pgdown); null when the key belongs
-  /// to another cluster. gh-1439: PgUp disengages follow; PgDn re-engages
-  /// when it lands inside the near-bottom band (past the newest content).
+  /// to another cluster. gh-1439: PgUp parks beyond the near-bottom band
+  /// (disengages); PgDn re-engages when it lands inside the band (past
+  /// the newest content).
   (Model, Cmd?)? _handlePageScrollKey(KeyMsg msg) {
     switch (msg.key) {
       case 'pgup':
         return (
-          _scrolledTo(
-            scrollOffset - _viewportHeight,
-            towardLive: false,
-            pageGesture: true,
-          ),
+          _scrolledTo(scrollOffset - _viewportHeight, pageGesture: true),
           null,
         );
       case 'pgdown':
         return (
-          _scrolledTo(
-            scrollOffset + _viewportHeight,
-            towardLive: true,
-            pageGesture: true,
-          ),
+          _scrolledTo(scrollOffset + _viewportHeight, pageGesture: true),
           null,
         );
       default:

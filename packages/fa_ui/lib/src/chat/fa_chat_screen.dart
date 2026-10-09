@@ -532,11 +532,11 @@ class _FaChatScreenState extends State<FaChatScreen>
   /// Classifies scroll activity on the transcript's own scrollable
   /// (depth 0 — inner tool-output scrollables don't count) through the
   /// shared [FollowMode] machine (gh-1439): a user drag parking beyond
-  /// the near-bottom arm band holds (no more yank); a drag/momentum
-  /// landing inside the band re-arms live and flushes the count. E6
-  /// debounce: re-arm wins only when the GESTURE produced the position —
-  /// programmatic moves (delta null) never re-arm, and the live edge
-  /// itself (distance 0) can never hold.
+  /// the near-bottom arm band holds (no more yank); landing inside the
+  /// band re-arms live and flushes the count. E6 debounce: only the
+  /// USER's position classifies — programmatic moves (the tail follow
+  /// and the #379 clamp's own animateTo) never hold and never re-arm;
+  /// non-drag updates can only relatch at the near-bottom.
   void _trackUserScroll(ScrollNotification notification) {
     if (notification.depth != 0) return;
     if (notification is! ScrollUpdateNotification &&
@@ -548,18 +548,21 @@ class _FaChatScreenState extends State<FaChatScreen>
     final distance = position.pixels.round();
     final arm = _armExtent(position);
     final wasAway = _follow.isHeld;
-    if (notification is ScrollUpdateNotification) {
+    if (notification is ScrollUpdateNotification &&
+        notification.dragDetails != null) {
+      // USER drag: the landing position classifies — inside the band
+      // re-arms live (flushed), beyond it holds.
       final next = _follow.userScrolled(
         distanceFromLiveEdge: distance,
         armExtent: arm,
-        movedTowardLive: (notification.scrollDelta ?? 0) < 0,
       );
       if (next != _follow && mounted) {
         setState(() => _follow = next);
       }
     } else if (distance <= arm && _follow.isHeld && mounted) {
-      // A coast settling inside the band re-arms (the drag update already
-      // classified the gesture; this catches momentum-only endings).
+      // Momentum/programmatic updates only ever RELATCH at the
+      // near-bottom — they never classify away (the #379 follow clamp's
+      // own animateTo must keep working, E6 debounce).
       setState(() => _follow = _follow.jumpToLive());
     }
     if (wasAway && !_follow.isHeld) {

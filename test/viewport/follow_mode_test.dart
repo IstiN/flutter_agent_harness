@@ -28,27 +28,18 @@ void main() {
     });
   });
 
-  group('user scroll classification', () {
-    test('any user scroll away from the live edge disengages (held)', () {
+  group('user scroll classification (position-governed)', () {
+    test('a user park beyond the arm band disengages (held)', () {
       const live = FollowMode.live();
-      final held = live.userScrolled(
-        distanceFromLiveEdge: 5,
-        armExtent: 2,
-        movedTowardLive: false,
-      );
+      final held = live.userScrolled(distanceFromLiveEdge: 5, armExtent: 2);
       expect(held.isHeld, isTrue);
       expect(held.unseen, 0, reason: 'nothing has arrived yet');
     });
 
-    test('a one-unit scroll away disengages — the arm band never swallows '
-        'the disengage trigger', () {
+    test('a park inside the band re-arms live — the near-bottom rule', () {
       const live = FollowMode.live();
       expect(
-        live.userScrolled(
-          distanceFromLiveEdge: 1,
-          armExtent: 2,
-          movedTowardLive: false,
-        ).isHeld,
+        live.userScrolled(distanceFromLiveEdge: 2, armExtent: 2).isLive,
         isTrue,
       );
     });
@@ -59,20 +50,14 @@ void main() {
       final rearmed = held.userScrolled(
         distanceFromLiveEdge: 2,
         armExtent: 2,
-        movedTowardLive: true,
       );
       expect(rearmed.isLive, isTrue);
       expect(rearmed.unseen, 0, reason: 're-engage flushes the count');
     });
 
-    test('scrolling toward the live edge but stopping outside the band '
-        'stays held and keeps counting', () {
+    test('stopping outside the band stays held and keeps counting', () {
       const held = FollowMode.held(unseen: 30);
-      final still = held.userScrolled(
-        distanceFromLiveEdge: 3,
-        armExtent: 2,
-        movedTowardLive: true,
-      );
+      final still = held.userScrolled(distanceFromLiveEdge: 3, armExtent: 2);
       expect(still.isHeld, isTrue);
       expect(still.unseen, 30, reason: 'unseen is preserved while held');
     });
@@ -80,25 +65,19 @@ void main() {
     test('landing exactly on the live edge always re-engages (arm 0)', () {
       const held = FollowMode.held(unseen: 7);
       expect(
-        held.userScrolled(
-          distanceFromLiveEdge: 0,
-          armExtent: 0,
-          movedTowardLive: true,
-        ).isLive,
+        held.userScrolled(distanceFromLiveEdge: 0, armExtent: 0).isLive,
+        isTrue,
+      );
+      expect(
+        held.userScrolled(distanceFromLiveEdge: 1, armExtent: 0).isHeld,
         isTrue,
       );
     });
 
-    test('a zero distance is live regardless of direction', () {
+    test('a zero distance is live with any band', () {
       const live = FollowMode.live();
       expect(
-        live
-            .userScrolled(
-              distanceFromLiveEdge: 0,
-              armExtent: 2,
-              movedTowardLive: false,
-            )
-            .isLive,
+        live.userScrolled(distanceFromLiveEdge: 0, armExtent: 2).isLive,
         isTrue,
         reason: 'the live edge itself can never hold',
       );
@@ -107,13 +86,7 @@ void main() {
     test('further scrolls away while held keep the unseen count', () {
       const held = FollowMode.held(unseen: 12);
       expect(
-        held
-            .userScrolled(
-              distanceFromLiveEdge: 40,
-              armExtent: 2,
-              movedTowardLive: false,
-            )
-            .unseen,
+        held.userScrolled(distanceFromLiveEdge: 40, armExtent: 2).unseen,
         12,
       );
     });

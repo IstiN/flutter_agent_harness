@@ -68,25 +68,23 @@ final class FollowMode {
 
   /// Classifies a USER scroll landing [distanceFromLiveEdge] units from
   /// the live edge, with [armExtent] the near-bottom re-arm band (0 =
-  /// exact-edge re-arm only).
+  /// exact-edge re-arm only). Position-governed — the standard chat
+  /// heuristic:
   ///
-  /// - Away from the live edge (`movedTowardLive: false`): always held —
-  ///   a disengage must never be swallowed by the arm band.
-  /// - Toward the live edge within the band: live again (flushed) — the
-  ///   common «scroll down to catch up» case needs no button press.
-  /// - Toward the live edge but stopping outside the band: still held,
-  ///   unseen preserved.
+  /// - Landing within the band (or on the edge): live again, flushed —
+  ///   the common «scroll down to catch up» case needs no button press,
+  ///   and a small park near the bottom never yanks the user.
+  /// - Landing beyond the band: held, unseen preserved — the user is
+  ///   reading; the stream must not move the window.
   ///
   /// E6 debounce: only user gestures classify. The stream/programmatic
-  /// viewport moves never call this, so a re-arm can only ever be
-  /// produced by the user's own position.
+  /// viewport moves never call this (the app's own clamps included —
+  /// issue #379's follow clamp must keep working), so a re-arm or a hold
+  /// can only ever be produced by the user's own position.
   FollowMode userScrolled({
     required int distanceFromLiveEdge,
     required int armExtent,
-    required bool movedTowardLive,
   }) {
-    if (distanceFromLiveEdge <= 0) return const FollowMode.live();
-    if (!movedTowardLive) return heldPreservingUnseen();
     if (distanceFromLiveEdge <= armExtent) return const FollowMode.live();
     return heldPreservingUnseen();
   }
