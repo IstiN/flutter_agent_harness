@@ -125,8 +125,11 @@ final class _FakeBackgroundEnv implements ExecutionEnv, BackgroundShell {
       _delegate.exists(path);
 
   @override
-  Future<Result<void, FileError>> remove(String path, {bool recursive = false}) =>
-      _delegate.remove(path, recursive: recursive);
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _delegate.remove(path, recursive: recursive, force: force);
 
   @override
   Future<Result<ShellExecResult, ExecutionError>> exec(
@@ -281,6 +284,7 @@ void main() {
       final a = await registry.start('a');
       final b = await registry.start('b');
       final c = await registry.start('c');
+      await env.jobs[0].writeLog('a out\n');
       env.jobs[0].complete(0);
       await _pumpSettles();
       env.jobs[1].complete(0);
@@ -296,7 +300,7 @@ void main() {
       expect(registry.prunedLogPath(b.id), isNull);
       expect(registry.prunedLogPath(c.id), isNull);
       // …and the log file itself stays on disk.
-      expect(await env.exists(a.logPath), isTrue);
+      expect((await env.exists(a.logPath)).valueOrNull, isTrue);
     });
 
     test('running jobs are never pruned even when the cap is exceeded',
