@@ -425,6 +425,39 @@ void main() {
       expect(finalText, greaterThan(toolEnd));
     });
 
+    test('AC3 orphan: post-tool narration survives a result-less turn — '
+        'flushed at message end, before the stop summary', () async {
+      // A degenerate engine turn: the tool-call block opens, narration
+      // streams after it, and the message ends without the call ever
+      // completing — the result row never renders. Nothing swallowed:
+      // the hold flushes at message end.
+      final empty = testAssistant();
+      final withNarration = testAssistant(
+        content: [TextContent(text: 'orphan narration')],
+      );
+      final events = <AssistantMessageEvent>[
+        StartEvent(partial: empty),
+        ToolCallStartEvent(contentIndex: 0, partial: empty),
+        TextStartEvent(contentIndex: 1, partial: empty),
+        TextDeltaEvent(
+          contentIndex: 1,
+          delta: 'orphan narration',
+          partial: withNarration,
+        ),
+        DoneEvent(reason: StopReason.toolUse, message: withNarration),
+      ];
+      final fake = FakeStreamFunction([events]);
+      final cli = cliFor(fake, io: io);
+      final exit = await cli.runHeadless('go');
+      expect(exit, 0);
+      final out = io.out.toString();
+      final orphanAt = out.indexOf('orphan narration');
+      expect(orphanAt, greaterThanOrEqualTo(0),
+          reason: 'nothing swallowed:\n$out');
+      expect(out.indexOf('fa-tokens:'), greaterThan(orphanAt),
+          reason: 'the narration precedes the run summary:\n$out');
+    });
+
     test('E1: whitespace-only narration paints nothing — no stray blank '
         'lines, no separator newlines', () async {
       final fake = FakeStreamFunction([

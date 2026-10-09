@@ -1360,6 +1360,11 @@ extension ApprovalCommands on AgentCli {
   /// CRAP ratchet (gh-1198: the thinking-reset branches tipped it over).
   void _flushAssistantStreamAtEnd() {
     if (_useTui || !_buffersAnswer) {
+      // AC3 orphan safety: a result-less turn (the tool result row never
+      // rendered) flushes its held narration HERE — before the stop-reason
+      // line, in the message's own position. The next-message-start flush
+      // below stays as the second net.
+      if (!_useTui) _flushPostToolText();
       // E1: a whitespace-only narration hold decides at message end —
       // still whitespace-only, it paints nothing (and the separators of
       // a real text stream must not fire for it).
