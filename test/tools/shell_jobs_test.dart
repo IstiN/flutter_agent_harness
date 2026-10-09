@@ -78,6 +78,11 @@ final class _FakeBackgroundEnv implements ExecutionEnv, BackgroundShell {
   final MemoryExecutionEnv _delegate;
   final jobs = <_FakeShellJob>[];
 
+  /// When non-empty, [startShellJob] ignores the registry-minted id and
+  /// uses these (one per start) — builds duplicate-`sh-<n>-` registries
+  /// for the E1 ambiguity tests.
+  var forcedIds = <String>[];
+
   /// When set, [listDir] serves this listing instead of the real fs —
   /// the stale-old-format-log detection scans the bash_jobs dir.
   List<FileInfo>? dirListing;
@@ -98,7 +103,8 @@ final class _FakeBackgroundEnv implements ExecutionEnv, BackgroundShell {
     required String logPath,
     ShellExecOptions? options,
   }) async {
-    final job = _FakeShellJob(id, command, logPath, _delegate);
+    final forced = forcedIds.isNotEmpty ? forcedIds.removeAt(0) : id;
+    final job = _FakeShellJob(forced, command, logPath, _delegate);
     jobs.add(job);
     return Ok(job);
   }
@@ -119,6 +125,16 @@ final class _FakeBackgroundEnv implements ExecutionEnv, BackgroundShell {
   @override
   Future<Result<void, FileError>> appendFile(String path, String content) =>
       _delegate.appendFile(path, content);
+
+  @override
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
+
+  @override
+  Future<Result<void, FileError>> remove(
+    String path, {
+    bool recursive = false,
+    bool force = false,
+  }) => _delegate.remove(path, recursive: recursive, force: force);
 
   @override
   Future<Result<ShellExecResult, ExecutionError>> exec(
@@ -147,6 +163,14 @@ Future<_FakeShellJob> _waitForJob(_FakeBackgroundEnv env) async {
 
 String _text(ToolExecutionResult result) =>
     result.content.whereType<TextContent>().map((b) => b.text).join('\n');
+
+/// Pumps the event loop until every settled job's registry listener ran
+/// (the settle path yields one event-loop turn before firing).
+Future<void> _pumpSettles() async {
+  for (var i = 0; i < 4; i++) {
+    await Future<void>.delayed(Duration.zero);
+  }
+}
 
 void main() {
   group('ShellJobRegistry', () {
@@ -236,6 +260,193 @@ void main() {
       await env.jobs.single.writeLog('l1\nl2\nl3\n');
       expect(await registry.tail(entry.id, maxLines: 2), 'l2\nl3');
     });
+
+    test('tail of an unknown id still throws the bare error', () {
+      final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+      final registry = ShellJobRegistry(env: env);
+      expect(registry.tail('sh-1-nope'), throwsA(isA<StateError>()));
+    });
+
+    test('settledAt stamps when the registry observes the settle', () async {
+      final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+      final registry = ShellJobRegistry(env: env);
+      final entry = await registry.start('x');
+      expect(entry.settledAt, isNull);
+      env.jobs.single.complete(0);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+      expect(entry.settledAt, isNotNull);
+    });
+  });
+
+  group('ShellJobRegistry exited-entry GC (gh-1438 second tier)', () {
+    test('prunes exited entries beyond the cap, oldest settle first', () async {
+      final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+      final registry = ShellJobRegistry(env: env, maxRetainedExitedJobs: 2);
+      final a = await registry.start('a');
+      final b = await registry.start('b');
+      final c = await registry.start('c');
+      await env.jobs[0].writeLog('a out\n');
+      env.jobs[0].complete(0);
+      await _pumpSettles();
+      env.jobs[1].complete(0);
+      await _pumpSettles();
+      env.jobs[2].complete(0);
+      await _pumpSettles();
+      // LRU by settle time: a settled first, so it is the pruned one.
+      expect(registry.jobs.map((j) => j.id), isNot(contains(a.id)));
+      expect(registry.jobs.map((j) => j.id), containsAll([b.id, c.id]));
+      // The prune leaves a tombstone so exact-id output can fall back to
+      // the on-disk log (AC4)…
+      expect(registry.prunedLogPath(a.id), a.logPath);
+      expect(registry.prunedLogPath(b.id), isNull);
+      expect(registry.prunedLogPath(c.id), isNull);
+      // …and the log file itself stays on disk.
+      expect((await env.exists(a.logPath)).valueOrNull, isTrue);
+    });
+
+    test(
+      'running jobs are never pruned even when the cap is exceeded',
+      () async {
+        final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+        final registry = ShellJobRegistry(env: env, maxRetainedExitedJobs: 1);
+        final a = await registry.start('a');
+        final running = await registry.start('b');
+        final c = await registry.start('c');
+        env.jobs[0].complete(0);
+        await _pumpSettles();
+        env.jobs[2].complete(0);
+        await _pumpSettles();
+        expect(registry.jobs.map((j) => j.id), contains(running.id));
+        // Only one exited slot: a gave way to c.
+        expect(registry.jobs.map((j) => j.id), isNot(contains(a.id)));
+        expect(registry.jobs.map((j) => j.id), contains(c.id));
+      },
+    );
+
+    test('pruned exact-id tail falls back to the on-disk log (AC4)', () async {
+      final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+      final registry = ShellJobRegistry(env: env, maxRetainedExitedJobs: 1);
+      final a = await registry.start('a');
+      await env.jobs[0].writeLog('done\n');
+      final b = await registry.start('b');
+      env.jobs[0].complete(0);
+      await _pumpSettles();
+      env.jobs[1].complete(0);
+      await _pumpSettles();
+      expect(registry.jobs.map((j) => j.id), isNot(contains(a.id)));
+      expect(await registry.tailFromLog(a.logPath, maxLines: 10), 'done');
+      // The registry-level API the tool uses:
+      expect(registry.prunedLogPath(a.id), isNotNull);
+      expect(b.id, isNot(a.id));
+    });
+
+    test('a deleted pruned log reads as unavailable (E2)', () async {
+      final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+      final registry = ShellJobRegistry(env: env, maxRetainedExitedJobs: 1);
+      final a = await registry.start('a');
+      await env.jobs[0].writeLog('done\n');
+      await registry.start('b');
+      env.jobs[0].complete(0);
+      await _pumpSettles();
+      env.jobs[1].complete(0);
+      await _pumpSettles();
+      await env.remove(a.logPath);
+      expect(await registry.tailFromLog(a.logPath), isNull);
+      expect(registry.prunedLogPath(a.id), isNotNull);
+    });
+
+    test('cap 0 tombstones every exited entry', () async {
+      final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+      final registry = ShellJobRegistry(env: env, maxRetainedExitedJobs: 0);
+      await registry.start('a');
+      await registry.start('b');
+      env.jobs[0].complete(0);
+      await _pumpSettles();
+      env.jobs[1].complete(0);
+      await _pumpSettles();
+      expect(registry.jobs, isEmpty);
+      expect(registry.prunedLogPath(env.jobs[0].id), isNotNull);
+      expect(registry.prunedLogPath(env.jobs[1].id), isNotNull);
+    });
+
+    test('default cap bounds long-session growth', () async {
+      final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+      final registry = ShellJobRegistry(env: env);
+      expect(ShellJobRegistry.defaultMaxRetainedExitedJobs, greaterThan(0));
+      for (
+        var i = 0;
+        i < ShellJobRegistry.defaultMaxRetainedExitedJobs + 5;
+        i++
+      ) {
+        await registry.start('job $i');
+        env.jobs[i].complete(0);
+        await _pumpSettles();
+      }
+      expect(
+        registry.jobs.where((j) => !j.isRunning),
+        hasLength(ShellJobRegistry.defaultMaxRetainedExitedJobs),
+      );
+    });
+  });
+
+  group('ShellJobRegistry lookup (gh-1438)', () {
+    test('exact id hits', () async {
+      final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+      final registry = ShellJobRegistry(env: env);
+      final entry = await registry.start('a');
+      final lookup = registry.lookup(entry.id);
+      expect(lookup, isA<ShellJobHit>());
+      expect((lookup as ShellJobHit).entry.id, entry.id);
+    });
+
+    test(
+      'unique same-n near-miss resolves to the retained job (AC1)',
+      () async {
+        final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+        final registry = ShellJobRegistry(env: env);
+        final entry = await registry.start('a');
+        final stale = '${entry.id.substring(0, entry.id.length - 2)}zz';
+        final lookup = registry.lookup(stale);
+        expect(lookup, isA<ShellJobNearMiss>());
+        expect((lookup as ShellJobNearMiss).entry.id, entry.id);
+        expect(lookup.id, stale);
+      },
+    );
+
+    test('no shared n lists closest retained ids (AC2)', () async {
+      final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+      final registry = ShellJobRegistry(env: env);
+      final a = await registry.start('a');
+      final b = await registry.start('b');
+      final lookup = registry.lookup('sh-9-nope');
+      expect(lookup, isA<ShellJobUnknownId>());
+      expect((lookup as ShellJobUnknownId).closestIds, hasLength(2));
+      expect(lookup.closestIds, containsAll([a.id, b.id]));
+    });
+
+    test('a malformed id skips resolution (E3)', () async {
+      final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+      final registry = ShellJobRegistry(env: env);
+      await registry.start('a');
+      final lookup = registry.lookup('sh-99');
+      expect(lookup, isA<ShellJobUnknownId>());
+      expect((lookup as ShellJobUnknownId).closestIds, isEmpty);
+    });
+
+    test('two retained ids sharing the n stay ambiguous (E1)', () async {
+      final env = _FakeBackgroundEnv(MemoryExecutionEnv(cwd: '/work'));
+      env.forcedIds = ['sh-1-aaa', 'sh-1-bbb'];
+      final registry = ShellJobRegistry(env: env);
+      await registry.start('a');
+      await registry.start('b');
+      final lookup = registry.lookup('sh-1-stale');
+      expect(lookup, isA<ShellJobPrefixAmbiguous>());
+      expect(
+        (lookup as ShellJobPrefixAmbiguous).entries.map((e) => e.id).toSet(),
+        {'sh-1-aaa', 'sh-1-bbb'},
+      );
+    });
   });
 
   group('bash background', () {
@@ -282,16 +493,18 @@ void main() {
 
     // In a jobs-capable host the denial's escape advice is background: true
     // (the no-jobs fallback lives in the plain-shellTool tests).
-    test('an unbounded bare long sleep is denied with the background advice',
-        () async {
-      final result = await tool.execute({'command': 'sleep 300'}, null, null);
-      final text = _text(result);
-      expect(text, contains('Denied: a bare foreground sleep of 300s'));
-      expect(text, contains('background: true'));
-      expect(text, contains('bash_job'));
-      expect(text, contains('Never poll in the foreground'));
-      expect(env.jobs, isEmpty);
-    });
+    test(
+      'an unbounded bare long sleep is denied with the background advice',
+      () async {
+        final result = await tool.execute({'command': 'sleep 300'}, null, null);
+        final text = _text(result);
+        expect(text, contains('Denied: a bare foreground sleep of 300s'));
+        expect(text, contains('background: true'));
+        expect(text, contains('bash_job'));
+        expect(text, contains('Never poll in the foreground'));
+        expect(env.jobs, isEmpty);
+      },
+    );
 
     test('background on an unsupported env answers a clean note', () async {
       final plainEnv = MemoryExecutionEnv(cwd: '/work');
