@@ -115,6 +115,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # base...head diff for the classifier below
+          # gh-1477: blobless — historical blobs are never read; git
+          # lazy-fetches the rare blob a diff actually touches.
+          filter: blob:none
       # Non-PR events (main push, tags, schedule, dispatch): everything is
       # affected — the full gate always guards main and releases.
       - id: filter
@@ -1090,7 +1093,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
         with:
+          # gh-1477: blobless full history — the ratchet reads coverage
+          # metadata + base...head commit ranges, never historical blobs.
           fetch-depth: 0
+          filter: blob:none
 
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         if: needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true'
@@ -1540,6 +1546,8 @@ jobs:
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
         with:
           fetch-depth: 0 # only-down guard diffs thresholds against the base
+          # gh-1477: blobless — historical blobs are never read.
+          filter: blob:none
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         if: needs.changes.outputs.app == 'true' || needs.changes.outputs.shared == 'true'
         with:
@@ -3449,6 +3457,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # gh-1477: blobless — the bump touches a handful of files; every
+          # historical blob is dead transfer weight.
+          filter: blob:none
           # App token (not GITHUB_TOKEN) so the pushed commit triggers the
           # follow-up ci.yml run whose release-tag job cuts the tag —
           # GITHUB_TOKEN pushes never trigger downstream workflow runs.
@@ -3518,6 +3529,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # gh-1477: blobless — tag math reads commit metadata only.
+          filter: blob:none
           # App token so the pushed tag triggers the publish job —
           # GITHUB_TOKEN pushes never trigger downstream workflow runs.
           token: ${{ steps.app-token.outputs.token }}
