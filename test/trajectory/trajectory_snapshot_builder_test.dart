@@ -970,6 +970,167 @@ void main() {
       expect(builder30.snapshotsBuilt, 1);
       expect(builder60.snapshotsBuilt, 1);
     });
+
+    test(
+      'appendAll 50k records stays within the open budget (issue #1497)',
+      () {
+        final records = bulkRecords(12500); // 50 001.
+        final builder = TrajectorySnapshotBuilder();
+        final sw = Stopwatch()..start();
+        final snapshot = builder.appendAll(records);
+        sw.stop();
+        expect(sw.elapsed, lessThan(const Duration(seconds: 5)));
+        expect(snapshot.records, hasLength(50001));
+        expect(builder.snapshotsBuilt, 1);
+      },
+    );
+
+    test(
+      'live-tail appends scale near-linearly, not quadratically (#1497)',
+      () {
+        // The per-append snapshot used to copy every ledger row, rebuild the
+        // whole recordLocations map, and re-sort + refold every request fact
+        // on EVERY append — O(n) per append, O(n²) per live session: ~1.5ms
+        // per append at 20k records, 381s for a 65k-record live tail. The
+        // snapshot now shares frozen row chunks and rebuilds only the dirty
+        // request suffix.
+        //
+        // Primary guard is the deterministic operation the quadratic
+        // wasted (the #358 approach): snapshotRowCopies counts row
+        // references copied per publish. Chunk sharing keeps it a small
+        // constant per append (bounded chunk clones + pointer copies);
+        // the pre-#1497 shape copies every row per append (~n/2 rows per
+        // append on average) and must still fail the envelope. Wall clock
+        // only bounds the absolute budget — ratios flake on shared
+        // runners (issue #358) AND carry a JIT-tier cliff on cold first
+        // runs (a cold 20k-append loop measured 60x its warmed cost),
+        // so no ratio is asserted here.
+        List<SessionRecord> script(int turns) {
+          final records = bulkRecords(turns);
+          return records.sublist(1); // drop the bootstrap user record
+        }
+
+        final large = script(5000); // 20000 records.
+        final builder = TrajectorySnapshotBuilder();
+        final sw = Stopwatch()..start();
+        for (final record in large) {
+          builder.append(record);
+        }
+        sw.stop();
+        expect(builder.snapshotsBuilt, large.length);
+        // Row-copy envelope: chunked sharing copies a bounded constant of
+        // rows per append (the ≤512-row copy-on-write clone for patched
+        // rows + the chunk-pointer list); 600/append absorbs that with
+        // slack while the quadratic shape (≈n/2 rows per append on
+        // average — 10k at this size) fails it by 3 orders of magnitude.
+        expect(
+          builder.snapshotRowCopies,
+          lessThan(large.length * 600),
+          reason:
+              'per-append snapshot publishing must share rows, not '
+              'copy them (${builder.snapshotRowCopies} row copies for '
+              '${large.length} appends)',
+        );
+        // Absolute budget (the issue's open-budget form): warmed runs do
+        // this in well under 100ms; even a cold JIT-tier cliff stays
+        // under 3s. The pre-#1497 shape measured 31s for the same loop.
+        expect(sw.elapsed, lessThan(const Duration(seconds: 8)));
+      },
+    );
+
+    test(
+      'a published snapshot never observes later appends (#1497 sharing)',
+      () {
+        // The chunk-sharing / cached-request rewrite must keep snapshots
+        // immutable: rows appended, tool results patched in, and request
+        // facts finalized after a snapshot was handed out must not leak
+        // into it — including the lazily derived recordLocations map.
+        final builder = TrajectorySnapshotBuilder();
+        final records = bulkRecords(3);
+        final stale = builder.append(records[0]);
+        final firstRows = stale.records.length;
+        final firstRevision = stale.revision;
+        stale.recordLocations[stale.records.first.recordId]; // force derive
+        expect(
+          () => stale.recordLocations['x'] = 0,
+          throwsUnsupportedError,
+          reason: 'the lazy locations view stays unmodifiable',
+        );
+        for (final record in records.skip(1)) {
+          builder.append(record);
+        }
+        final tail = builder.build();
+        expect(tail.records.length, greaterThan(firstRows));
+        expect(tail.requests, isNotEmpty);
+        // The stale snapshot is untouched by the later appends.
+        expect(stale.records, hasLength(firstRows));
+        expect(stale.revision, firstRevision);
+        expect(stale.requests, isEmpty);
+        expect(
+          stale.recordLocations,
+          hasLength(firstRows),
+          reason: 'the lazily derived map freezes at first access',
+        );
+        expect(stale.recordLocations.values.toSet().toList(), [
+          for (var i = 0; i < firstRows; i++) i,
+        ], reason: 'locations stay byte-identical to the eager derivation');
+      },
+    );
+
+    test('bulk replay folds request facts created between snapshots', () {
+      // appendAll materializes no intermediate snapshots, so a summary
+      // fact is created and finalized inside one fold — the touched-fact
+      // path runs against a fact with no cached sorted position yet.
+      const detail = TrajectoryRequestDetail(
+        messageCount: 1,
+        systemPromptChars: 4,
+        systemPromptHash: 'h1',
+        toolCount: 0,
+        toolNames: [],
+        messages: [],
+      );
+      final records = <SessionRecord>[
+        _userRecord('bu1'),
+        CustomRecord(
+          id: 'bs1',
+          parentId: 'bu1',
+          timestamp: _at(0),
+          customType: 'model_request_summary',
+          data: detail.toJson(),
+        ),
+        _assistantRecord(
+          'ba1',
+          parentId: 'bu1',
+          usage: const Usage(
+            input: 10,
+            output: 5,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 15,
+            cost: UsageCost(),
+          ),
+        ),
+      ];
+      final bulk = TrajectorySnapshotBuilder().appendAll(records);
+      expect(bulk.requests, hasLength(1));
+      expect(bulk.requests.single.status, TrajectoryRequestStatus.completed);
+      expect(bulk.requests.single.seq, 1);
+      expect(bulk.requests.single.usage?.totalTokens, 15);
+      expect(
+        bulk.requests.single.cumulativeUsage?.totalTokens,
+        15,
+        reason: 'the suffix fold seeds cumulative usage from zero',
+      );
+      // Same session through per-append snapshots: identical requests.
+      final live = TrajectorySnapshotBuilder();
+      for (final record in records) {
+        live.append(record);
+      }
+      final liveSnapshot = live.build();
+      expect(liveSnapshot.requests, hasLength(1));
+      expect(liveSnapshot.requests.single.status, bulk.requests.single.status);
+      expect(liveSnapshot.requests.single.cumulativeUsage?.totalTokens, 15);
+    });
   });
   test('a persisted model_request_summary carries blob pointers', () {
     const detail = TrajectoryRequestDetail(
