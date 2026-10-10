@@ -201,6 +201,24 @@ void main() {
         '2025-12-31',
       );
     });
+
+    test('dateless post fails the build instead of fabricating a lastmod', () {
+      final dateless = site.BlogPost(
+        slug: 'untitled-post',
+        meta: {'title': 'No date'},
+        body: 'b',
+      );
+      expect(() => dateless.lastmod, throwsA(isA<StateError>()));
+    });
+
+    test('escapes the cover path in every HTML attribute', () {
+      final p = post(meta: {'cover': 'assets/evil"-cover.png'});
+      final html = site.renderBlogPostPage(p);
+      expect(html, contains('posts/assets/evil&quot;-cover.png'));
+      expect(html, isNot(contains('posts/assets/evil"-cover.png')));
+      final block = site.blogIndexBlock([p]);
+      expect(block, contains('src="posts/assets/evil&quot;-cover.png"'));
+    });
   });
 
   group('docs page', () {
@@ -230,6 +248,39 @@ void main() {
         html,
         contains('${site.repoUrl}/blob/main/docs/backend-agent-mode.md'),
       );
+    });
+
+    test('renders exactly one visible h1 with the doc title', () {
+      final d = site.DocsPage(
+        source: site.docsRegistry.first,
+        title: 'Tool availability',
+        body: 'Body text.',
+        description: 'desc',
+        raw: '# Tool availability\n\nraw',
+      );
+      final html = site.renderDocsPage(d);
+      expect(RegExp('<h1>').allMatches(html), hasLength(1));
+      expect(html, contains('<h1>Tool availability</h1>'));
+      // The headline opens the article, ahead of the post-meta line.
+      expect(
+        html,
+        contains(
+          '<h1>Tool availability</h1>\n    <div class="post-meta">Updated',
+        ),
+      );
+    });
+
+    test('rewrites parent-relative .md links without leaking .. segments', () {
+      final rewrite = site.docsLinkRewriter();
+      expect(rewrite('../foo.md'), '${site.repoUrl}/blob/main/foo.md');
+      expect(rewrite('../../x.md'), '${site.repoUrl}/blob/main/x.md');
+      expect(
+        rewrite('./sub/bar.md'),
+        '${site.repoUrl}/blob/main/docs/sub/bar.md',
+      );
+      expect(rewrite('redaction.md'), '/docs/redaction/');
+      expect(rewrite('https://example.com/x.md'), 'https://example.com/x.md');
+      expect(rewrite('#anchor'), '#anchor');
     });
   });
 
@@ -310,6 +361,36 @@ void main() {
       expect(text, contains('# ${site.siteOrigin}/docs/tool-availability/'));
       expect(text, contains('Full doc body.'));
       expect(text.length, lessThan(site.llmsFullBudgetBytes));
+    });
+
+    test('budget guard measures UTF-8 bytes, not UTF-16 code units', () {
+      final posts = [
+        site.BlogPost(
+          slug: '2026-01-02-b',
+          meta: {'title': 'B', 'date': '2026-01-02'},
+          body: 'x',
+        ),
+      ];
+      final docs = [
+        site.DocsPage(
+          source: site.docsRegistry.first,
+          title: 'T',
+          body: 'x',
+          description: 'd',
+          raw: 'r',
+        ),
+      ];
+      // 80k em-dashes: 80,000 UTF-16 code units (under budget) but
+      // 160,000 UTF-8 bytes (over the 153,600-byte budget) — the guard
+      // must reject on real bytes.
+      expect(
+        () => site.buildLlmsFull(
+          llmsTxt: '${'—' * 80000}\n',
+          posts: posts,
+          docs: docs,
+        ),
+        throwsA(isA<StateError>()),
+      );
     });
   });
 

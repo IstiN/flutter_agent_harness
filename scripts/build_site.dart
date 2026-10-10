@@ -131,14 +131,21 @@ class BlogPost {
   String? get video => meta['video'];
 
   /// Real lastmod: `updated:` front-matter wins, then `date:`, then the
-  /// `YYYY-MM-DD-` filename prefix.
+  /// `YYYY-MM-DD-` filename prefix. A post with none of these is a build
+  /// error — a fabricated date would leak into the sitemap and JSON-LD,
+  /// and a wrong date is worse for search than none (gh-1476 review).
   String get lastmod {
     final updated = meta['updated'];
     if (updated != null && updated.isNotEmpty) return updated;
     final date = meta['date'];
     if (date != null && date.isNotEmpty) return date;
     final prefix = RegExp(r'^(\d{4}-\d{2}-\d{2})').firstMatch(slug);
-    return prefix != null ? prefix.group(1)! : blogIndexFloor;
+    if (prefix != null) return prefix.group(1)!;
+    throw StateError(
+      'blog post "$slug" has no lastmod — add `updated:` or `date:` '
+      'front-matter, or use a YYYY-MM-DD- filename prefix (gh-1476 '
+      'lastmod discipline)',
+    );
   }
 
   String get url => '$siteOrigin/blog/$slug/';
@@ -240,7 +247,7 @@ String blogIndexBlock(List<BlogPost> posts) {
       ..writeln('<a class="post-card" href="./${p.slug}/">')
       ..writeln(
         cover != null
-            ? '<img src="posts/$cover" alt="" loading="lazy">'
+            ? '<img src="posts/${escapeHtml(cover)}" alt="" loading="lazy">'
             : '<h2>${escapeHtml(p.title)}</h2>',
       );
     if (cover != null) out.writeln('<h2>${escapeHtml(p.title)}</h2>');
@@ -345,6 +352,10 @@ String renderBlogPostPage(BlogPost p) {
   final title = escapeHtml(p.title);
   final desc = escapeHtml(p.description);
   final cover = p.cover;
+  // The raw path matches against the post body (cover lifting); the
+  // escaped variant is what reaches HTML attributes, like every other
+  // front-matter value in these templates.
+  final coverEsc = cover != null ? escapeHtml(cover) : null;
   final video = p.video;
   final linkedin = p.linkedin;
 
@@ -419,14 +430,14 @@ String renderBlogPostPage(BlogPost p) {
 <meta property="og:title" content="$title">
 <meta property="og:description" content="$desc">
 <meta property="og:url" content="${p.url}">
-<meta property="og:image" content="${cover != null ? '$siteOrigin/blog/posts/$cover' : '$siteOrigin/og-image.png?v=2'}">
+<meta property="og:image" content="${coverEsc != null ? '$siteOrigin/blog/posts/$coverEsc' : '$siteOrigin/og-image.png?v=2'}">
 ${cover != null ? '<meta property="og:image:alt" content="$title">' : ''}
 
 <!-- Twitter -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="$title">
 <meta name="twitter:description" content="$desc">
-<meta name="twitter:image" content="${cover != null ? '$siteOrigin/blog/posts/$cover' : '$siteOrigin/og-image.png?v=2'}">
+<meta name="twitter:image" content="${coverEsc != null ? '$siteOrigin/blog/posts/$coverEsc' : '$siteOrigin/og-image.png?v=2'}">
 ${cover != null ? '<meta name="twitter:image:alt" content="$title">' : ''}
 
 <link rel="stylesheet" href="../../styles.css?v=3">
@@ -444,7 +455,7 @@ ${_nav('../', current: 'blog')}
   <p><a class="back-link" href="../">← all posts</a></p>
   <article class="post-body" id="post">
     <h1>$title</h1>
-    ${cover != null && (coverFromBody || !body.contains(']($cover)')) ? '<img class="post-cover" src="../posts/$cover" alt="$title">' : ''}
+    ${coverEsc != null && (coverFromBody || !body.contains(']($cover)')) ? '<img class="post-cover" src="../posts/$coverEsc" alt="$title">' : ''}
 $meta$bodyHtml  </article>
 </main>
 </body>
@@ -464,10 +475,27 @@ String Function(String) docsLinkRewriter() {
       final file = href.split('/').last;
       final slug = byFile[file];
       if (slug != null) return '/docs/$slug/';
-      return '$repoUrl/blob/main/docs/${href.replaceAll(RegExp(r'^\./'), '')}';
+      return _docsSourceUrl(href);
     }
     return href;
   };
+}
+
+/// Resolves `.`/`..` segments of a relative markdown href against the
+/// `docs/` directory (GitHub source parity) so parent-relative links
+/// like `../foo.md` never leak `..` into a published URL. `..` is
+/// clamped at the repo root.
+String _docsSourceUrl(String href) {
+  final stack = ['docs'];
+  for (final seg in href.replaceAll(RegExp(r'^\./'), '').split('/')) {
+    if (seg.isEmpty || seg == '.') continue;
+    if (seg == '..') {
+      if (stack.isNotEmpty) stack.removeLast();
+      continue;
+    }
+    stack.add(seg);
+  }
+  return '$repoUrl/blob/main/${stack.join('/')}';
 }
 
 /// Renders a curated docs page as static HTML with TechArticle JSON-LD.
@@ -516,6 +544,7 @@ ${_nav('../../')}
 <main class="blog-wrap">
   <p><a class="back-link" href="$repoUrl/blob/main/${d.source.source}" target="_blank" rel="noopener">← source on GitHub ↗</a></p>
   <article class="post-body" id="doc">
+    <h1>$title</h1>
     <div class="post-meta">Updated ${d.updated} · ${escapeHtml(orgName)}</div>
 $bodyHtml  </article>
 </main>
@@ -600,9 +629,12 @@ String buildLlmsFull({
       ..writeln();
   }
   final text = out.toString();
-  if (text.length > llmsFullBudgetBytes) {
+  // The budget is a byte budget (context-window threat model) — the file
+  // is written as UTF-8, so measure encoded bytes, not UTF-16 code units.
+  final byteLength = utf8.encode(text).length;
+  if (byteLength > llmsFullBudgetBytes) {
     throw StateError(
-      'llms-full.txt is ${text.length} bytes — over the '
+      'llms-full.txt is $byteLength bytes — over the '
       '$llmsFullBudgetBytes-byte budget (gh-1476 threat model). Curate '
       'fewer/smaller sources or raise the cap deliberately.',
     );
