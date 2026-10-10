@@ -494,7 +494,7 @@ void main() {
       // the stamp contract (the stage is a publish surface).
       final stamp = File('scripts/stamp_staged_release.sh').readAsStringSync();
       expect(stamp, contains('check_changelog_size.sh'));
-      expect(stamp, contains('trimming oldest staged sections'));
+      expect(stamp, contains('keeping only the fresh section'));
     });
 
     test('ci.yml publish stage passes the tag version and verifies the staged stamp', () {

@@ -60,14 +60,15 @@ const workflows = [
 const expectedUsesPerWorkflow = {
   // 10 pre-migration resolutions + 1 (gh-1310 rework, review thread 1): the
   // release-tag job warms the pub cache through the action BEFORE
-  // tag_release.sh's own enforce-lockfile smoke. The smoke stays in the
-  // script (release_hygiene_test.dart NG2/AC3 pins it) but no longer
-  // cold-clones the git deps unretried on the release path.
+  // tag_release.sh's own enforce-lockfile smoke.
   // 11 + 1 (issue #1267 N1, review round 3): the new flutter-app-exzone leg
   // resolves flutter_app through the shared action (bounded retry + skew
   // fail-fast) before its macOS `flutter test test/apps` run — a bare pub
   // get there would be exactly the network roulette AC2 exists to stop.
-  '.github/workflows/ci.yml': 12,
+  // 12 - 1 (gh-1522): the release-tag job is retired with the bot bump flow
+  // — releases cut tags without touching files, so nothing on the release
+  // path resolves flutter_app anymore.
+  '.github/workflows/ci.yml': 11,
   '.github/workflows/nightly.yml': 4,
   '.github/workflows/build-mobile.yml': 4,
   '.github/workflows/build-macos.yml': 1,

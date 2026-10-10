@@ -50,55 +50,65 @@ echo "staged pubspec stamped to $version"
 #      TIME — not in-repo", gh-1522 §2);
 #   c. generated conventional-commit bullets since the previous tag
 #      (release_notes.sh fallback, RELEASE_NOTES_MAX capped).
+#
+# One python step does the whole staged edit: prepend the generated section
+# under the file's `# Changelog` preamble (file order is newest-first — the
+# stamp prepends), drop the staged `## Unreleased` header+body (it became
+# the tag's section or stays in-repo curation for the NEXT release — the
+# published artifact never shows an Unreleased section), and keep only what
+# fits under pub.dev's cap, newest first — the fresh tag section always
+# survives. The trimmed tail is not lost: the repo file (git) and
+# CHANGELOG_ARCHIVE.md carry the full history.
 section="$(bash "$repo_root/scripts/release_notes.sh" "$version" 2>/dev/null || true)"
 if [ -z "$section" ]; then
   echo "::error::could not generate a changelog section for v$version"
   exit 1
 fi
-# Drop leading blank lines (the awk section extraction carries the blank
-# line right under the section header) so the staged section is tight.
-section="$(printf '%s\n' "$section" | awk 'NF { p = 1 } p')"
-
-printf '## %s\n\n%s\n\n' "$version" "$section" > "$changelog.new"
-# Drop the staged `## Unreleased` header+body (it became the tag's section
-# or stays in-repo curation for the NEXT release — the published artifact
-# never shows an Unreleased section).
-awk '
-  BEGIN { skip = 0 }
-  /^## Unreleased[ \t]*$/ { skip = 1; next }
-  skip && /^## / { skip = 0 }
-  skip { next }
-  { print }
-' "$changelog" >> "$changelog.new"
-mv "$changelog.new" "$changelog"
-
-# gh-1452: pub.dev server-rejects an upload whose CHANGELOG.md exceeds its
-# hard 262144-byte content cap. The repo file is capped by
-# scripts/check_changelog_size.sh at authoring time; the STAGED file gets
-# the same cap enforced HERE (it just grew by a fresh section) — trim the
-# oldest sections until it fits. The trimmed tail is not lost: the repo
-# file (git) and CHANGELOG_ARCHIVE.md carry the full history.
-bash "$repo_root/scripts/check_changelog_size.sh" "$changelog" || {
-  echo "staged CHANGELOG over the pub.dev cap — trimming oldest staged sections"
-  STAGED_CHANGELOG="$changelog" python3 - <<'PY'
+FA_SECTION="$section" FA_VERSION="$version" FA_CHANGELOG="$changelog" python3 - <<'PY'
 import os
 import re
 
-path = os.environ["STAGED_CHANGELOG"]
 cap = 262144
+path = os.environ["FA_CHANGELOG"]
+version = os.environ["FA_VERSION"]
+section = os.environ["FA_SECTION"].strip("\n")
+
 text = open(path, encoding="utf-8").read()
-sections = re.split(r"(?=^## )", text, flags=re.M)
-head, versions = sections[0], [s for s in sections[1:] if s.startswith("## ")]
-# Always keep the newest section plus whatever fits under the cap.
+parts = re.split(r"(?=^## )", text, flags=re.M)
+preamble = parts[0]
+versions = [
+    s
+    for s in parts[1:]
+    if s.startswith("## ")
+    and not re.match(r"^## Unreleased[ \t]*$", s.split("\n", 1)[0])
+]
+new = f"## {version}\n{section}\n"
+size = len((preamble + new).encode("utf-8"))
 kept = []
-size = len(head.encode("utf-8"))
-for s in reversed(versions):
+for s in versions:  # file order: newest first (the stamp prepends)
     b = len(s.encode("utf-8"))
     if kept and size + b >= cap:
         break
     kept.append(s)
     size += b
-open(path, "w", encoding="utf-8").write(head + "".join(reversed(kept)))
+open(path, "w", encoding="utf-8").write(preamble + new + "".join(kept))
+PY
+
+# gh-1452: pub.dev server-rejects an upload whose CHANGELOG.md exceeds its
+# hard 262144-byte content cap — the guard above already trims to fit, so a
+# failure here means even the preamble + the single fresh section is over
+# (pathological); a second pass keeping ONLY the fresh section is the last
+# resort before the loud fail.
+bash "$repo_root/scripts/check_changelog_size.sh" "$changelog" || {
+  echo "staged CHANGELOG still over the pub.dev cap — keeping only the fresh section"
+  FA_CHANGELOG="$changelog" python3 - <<'PY'
+import os
+import re
+
+path = os.environ["FA_CHANGELOG"]
+text = open(path, encoding="utf-8").read()
+parts = re.split(r"(?=^## )", text, flags=re.M)
+open(path, "w", encoding="utf-8").write(parts[0] + parts[1])
 PY
   bash "$repo_root/scripts/check_changelog_size.sh" "$changelog"
 }

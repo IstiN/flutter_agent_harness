@@ -97,25 +97,27 @@ void main() {
     expect(read('CHANGELOG.md'), contains('CHANGELOG_ARCHIVE.md'));
   });
 
-  test('stamp_staged_release.sh runs the guard after prepending the tag section', () {
+  test('stamp_staged_release.sh caps the staged changelog after prepending the tag section', () {
     final stamp = read('scripts/stamp_staged_release.sh');
-    final prepend = stamp.indexOf('mv "\$changelog.new" "\$changelog"');
-    final guard = stamp.indexOf('check_changelog_size.sh');
+    final prepend = stamp.indexOf('FA_SECTION=');
+    final guard = stamp.indexOf(
+      'bash "\$repo_root/scripts/check_changelog_size.sh" "\$changelog"',
+    );
     expect(prepend, greaterThan(0),
-        reason: 'fixture: the section prepend must be locatable');
+        reason: 'fixture: the python section-prepend must be locatable');
     expect(guard, greaterThan(prepend),
         reason: 'the guard must measure the POST-section staged changelog — '
             'the stage just grew by the fresh tag section (gh-1522)');
   });
 
-  test('stamp_staged_release.sh trims staged sections and re-checks when over the cap', () {
+  test('stamp_staged_release.sh keeps only the fresh section as the last resort before failing loud', () {
     final stamp = read('scripts/stamp_staged_release.sh');
-    expect(stamp, contains('trimming oldest staged sections'));
-    final trim = stamp.indexOf('trimming oldest staged sections');
-    final recheck = stamp.indexOf('"\$changelog"', trim);
-    expect(recheck, greaterThan(trim),
-        reason: 'after the trim the staged changelog must be re-measured — '
-            'a trim that cannot reach under the cap fails loudly');
+    expect(stamp, contains('keeping only the fresh section'));
+    final lastResort = stamp.indexOf('keeping only the fresh section');
+    final recheck = stamp.indexOf('"\$changelog"', lastResort);
+    expect(recheck, greaterThan(lastResort),
+        reason: 'after the last-resort trim the staged changelog must be '
+            're-measured — a file that cannot reach under the cap fails loudly');
   });
 
   test('ci.yml publish gate runs the guard before staging/upload', () {

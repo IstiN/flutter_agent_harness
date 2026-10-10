@@ -157,8 +157,8 @@ any_run_of() { # $1 = runs JSON array
 }
 
 # Tag presence + age. creatordate = the annotated tag's tagger date (the
-# moment release-tag cut it); a lightweight tag falls back to its commit date.
-# The timestamp is sampled per call — after the appear-wait a just-cut tag
+# moment auto_release.sh cut it); a lightweight tag falls back to its commit
+# date. The timestamp is sampled per call — after a wait a just-pushed tag
 # must not read as a negative age (#1370 review).
 read_tag_age() {
   if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
@@ -182,9 +182,9 @@ if [ -z "$tag_run" ]; then
   # AC1 — the 2026-10-03 #1189 false positive: between `git push <tag>` and
   # the tag's ci.yml run becoming visible there is a seconds-to-minutes
   # window (tag 05:32, verify 05:35 read «no run», the healthy run
-  # completed 05:37). release-tag cuts the GitHub Release concurrently with
-  # the tag push, so the RELEASE twin can register while the push twin has
-  # not — the grace window governs before ANY «never triggered» verdict
+  # completed 05:37). auto_release.sh cuts the GitHub Release concurrently
+  # with the tag push, so the RELEASE twin can register while the push twin
+  # has not — the grace window governs before ANY «never triggered» verdict
   # (#1370 review r2): a young tag is release-in-flight, full stop.
   if [ "$tag_age" -lt "$grace" ]; then
     in_flight "$tag exists (${tag_age}s old < ${grace}s grace) but its push ci.yml run is not visible yet"

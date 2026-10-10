@@ -1,11 +1,13 @@
 // Issue #282 release-hygiene guards (AC1/AC2/AC3/AC4/AC5) + review of
-// #294 hardening: static lint over the workflows/scripts plus behavioral
-// tests of the release lifecycle scripts (notes generation, ownership-
-// scoped draft guard, race-idempotent attach-or-create, daily sweeper)
-// against fixture git repos and a stubbed `gh` (same style as
-// store_automation_guard_test.dart). The stub enforces the GITHUB_TOKEN
-// permissions declared in the workflows, so a missing grant fails tests
-// instead of silently killing a production feature.
+// #294 hardening + gh-1172/gh-1522: static lint over the workflows/scripts
+// plus behavioral tests of the release lifecycle scripts (notes generation,
+// ownership-scoped draft guard, race-idempotent attach-or-create, daily
+// sweeper, and the gh-1522 TAG-ONLY auto-release: latest tag + 1 →
+// `git tag -a` on origin/main → push the tag → `gh release create`, with
+// ZERO commits landing on main) against fixture git repos and a stubbed
+// `gh` (same style as store_automation_guard_test.dart). The stub enforces
+// the GITHUB_TOKEN permissions declared in the workflows, so a missing
+// grant fails tests instead of silently killing a production feature.
 import 'dart:convert';
 import 'dart:io';
 
@@ -188,22 +190,23 @@ RegExp globToRegExp(String glob) =>
 
 final _fixtureRoot = Directory.systemTemp.createTempSync('release-hygiene-');
 
-/// Full behavioral sandbox for the gh-1172 direct-push path of
-/// scripts/auto_release.sh: a bare origin whose main carries pubspec 0.1.495
-/// tagged v0.1.495 [tagAgeHours] ago (3h = past the 2h coalesce window) plus
-/// one pending commit, a seed clone the script runs in, and a `git` shim that
-/// can advance origin/main from a second clone right before each
-/// `git push origin HEAD:main` ([raceMode] `once`/`always` — E1 race
-/// injection). No `gh` stub: the direct-push path is git + python3 only.
+/// Full behavioral sandbox for the gh-1522 tag-only release flow of
+/// scripts/auto_release.sh: a bare origin whose main carries 2 commits
+/// ('seed' backdated [tagAgeHours] + 'pending work') and an annotated tag
+/// v0.1.495 [tagAgeHours] ago (3h = past the 2h coalesce window), a seed
+/// clone the script runs in, a `gh` stub that logs every invocation (the
+/// script's create is `|| true`), and a `git` shim that can pre-push the
+/// same tag from a second clone right before each
+/// `git push origin refs/tags/v*` ([raceMode] `once`/`always` — the E1
+/// tag-push race: the remote answers 'already exists' and the retry loop
+/// re-derives the next version from the freshly fetched tags). NO sed /
+/// flutter / file-mutation shims: the tag-only script mutates ZERO files —
+/// the git tag is the single source of truth.
 AutoReleaseRun runAutoReleaseDirect(
   String name, {
   int tagAgeHours = 3,
   bool dryRun = false,
   String raceMode = 'never',
-  bool flutterFails = false,
-  bool flutterDirty = false,
-  bool brokenInventory = false,
-  bool hugeChangelog = false,
 }) {
   final root = Directory(
     '${_fixtureRoot.path}/direct-$name-${DateTime.now().microsecondsSinceEpoch}',
@@ -214,24 +217,25 @@ AutoReleaseRun runAutoReleaseDirect(
   final bin = '${root.path}/bin';
   Directory(bin).createSync(recursive: true);
 
-  // auto_release.sh uses GNU `sed -i` (CI-authored, ubuntu); BSD hosts need
-  // the empty-suffix form — transparent shim, real sed either way.
-  File('$bin/sed').writeAsStringSync(r'''
+  // gh stub: log every invocation and exit 0 — auto_release.sh's
+  // `gh release create ... || true` must reach the log so tests can assert
+  // exactly one create per release, with the right tag.
+  final ghLogPath = '${root.path}/gh.log';
+  File('$bin/gh').writeAsStringSync('''
 #!/usr/bin/env bash
-if [ "${1:-}" = "-i" ]; then shift
-  if /usr/bin/sed --version >/dev/null 2>&1; then exec /usr/bin/sed -i "$@"
-  else exec /usr/bin/sed -i '' "$@"; fi
-fi
-exec /usr/bin/sed "$@"
+echo "\$*" >> "\$FA_GH_LOG"
+exit 0
 ''');
-  Process.runSync('chmod', ['+x', '$bin/sed']);
+  Process.runSync('chmod', ['+x', '$bin/gh']);
 
   final realGit = _resolveRealGit(bin);
-  // git shim: forward everything to real git, but in race mode advance
-  // origin/main from the racer clone right before each push so the script's
-  // FF-only push races for real (the recompute-on-fresh-head path of E1).
-  // The countdown lives in a FILE, not an env var: every push spawns a fresh
-  // shim process, so an exported decrement would never persist.
+  // git shim: forward everything to real git, but in race mode pre-push the
+  // same annotated tag from the racer clone right before each tag push, so
+  // the script's push rejects with 'already exists' for real (the
+  // re-derive-on-fresh-tags path of E1). The countdown lives in a FILE, not
+  // an env var: every push spawns a fresh shim process, so an exported
+  // decrement would never persist. The racer's own push goes through the
+  // REAL git binary so the hook never fires recursively.
   final raceFile = '${root.path}/race-left';
   File(raceFile).writeAsStringSync(
     raceMode == 'once' ? '1' : (raceMode == 'always' ? '9' : '0'),
@@ -239,12 +243,20 @@ exec /usr/bin/sed "$@"
   final raceHook = raceMode == 'never'
       ? ''
       : '''
-if [ "\$1" = "push" ] && [ -f "\$FA_RACE_FILE" ]; then
-  race_left=\$(cat "\$FA_RACE_FILE")
-  if [ "\$race_left" -gt 0 ]; then
-    echo \$((race_left-1)) > "\$FA_RACE_FILE"
-    "\$FA_REAL_GIT" -C "\$FA_RACER" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "raced commit"
-    "\$FA_REAL_GIT" -C "\$FA_RACER" push -q origin main
+if [ "\$1" = "push" ]; then
+  raced_tag=""
+  for a in "\$@"; do
+    case "\$a" in
+      refs/tags/v*) raced_tag="\${a#refs/tags/}" ;;
+    esac
+  done
+  if [ -n "\$raced_tag" ] && [ -f "\$FA_RACE_FILE" ]; then
+    race_left=\$(cat "\$FA_RACE_FILE")
+    if [ "\$race_left" -gt 0 ]; then
+      echo \$((race_left-1)) > "\$FA_RACE_FILE"
+      "\$FA_REAL_GIT" -C "\$FA_RACER" tag -a "\$raced_tag" -m "Release \$raced_tag" origin/main
+      "\$FA_REAL_GIT" -C "\$FA_RACER" push -q origin "refs/tags/\$raced_tag"
+    fi
   fi
 fi
 ''';
@@ -254,32 +266,6 @@ $raceHook
 exec "\$FA_REAL_GIT" "\$@"
 ''');
   Process.runSync('chmod', ['+x', '$bin/git']);
-
-  // gh-1299 flutter stub: `pub get` regenerates flutter_app/pubspec.lock
-  // from flutter_app/pubspec.yaml — the path-dep version line carries the
-  // pubspec version, exactly the drift class the real refresh fixes.
-  // FA_FLUTTER_FAIL present -> exit 65 (the real enforce-lockfile exit
-  // code); FA_FLUTTER_DIRTY present -> leaves a TRACKED inventory lockfile
-  // modified (the pod-install-only drift class pub get cannot fix).
-  File('$bin/flutter').writeAsStringSync(r'''
-#!/usr/bin/env bash
-case " $* " in
-  *" pub get"*) ;;
-  *) echo "flutter-stub: unexpected invocation: $*" >&2; exit 64 ;;
-esac
-if [ -f "$FA_FLUTTER_FAIL" ]; then
-  echo "Unable to satisfy \`pubspec.yaml\` using \`pubspec.lock\`. (stub)" >&2
-  exit 65
-fi
-ver=$(sed -n 's/^version: \([0-9.]*\)+.*/\1/p' pubspec.yaml)
-printf '# Generated by pub (sandbox stub)\npackages:\n  flutter_agent_harness:\n    description:\n      path: ".."\n    source: path\n    version: "%s"\n' "$ver" > pubspec.lock
-if [ -f "$FA_FLUTTER_DIRTY" ]; then
-  echo "  - StalePod (9.9.9): pod-install-only drift" >> ios/Podfile.lock
-fi
-''');
-  Process.runSync('chmod', ['+x', '$bin/flutter']);
-  if (flutterFails) File('${root.path}/flutter-fail').writeAsStringSync('1');
-  if (flutterDirty) File('${root.path}/flutter-dirty').writeAsStringSync('1');
 
   void git(
     List<String> args, {
@@ -301,67 +287,11 @@ fi
   git(['clone', '-q', origin, seed], cwd: root.path);
   git(['config', 'user.email', 't@t']);
   git(['config', 'user.name', 't']);
-  Directory('$seed/flutter_app').createSync();
-  File('$seed/pubspec.yaml').writeAsStringSync('version: 0.1.495\n');
-  File(
-    '$seed/flutter_app/pubspec.yaml',
-  ).writeAsStringSync('version: 0.1.495+1\n');
-  File(
-    '$seed/CHANGELOG.md',
-  ).writeAsStringSync(
-    hugeChangelog
-        // gh-1452: an append-only changelog that crossed pub.dev's hard
-        // 262144-byte content cap — the release must abort at the size
-        // guard, BEFORE the bump commit/push (pre-tag), not at the server.
-        ? 'x' * 262200
-        : '# Changelog\n\n## Unreleased\n',
-  );
-  // gh-1299: the seed ships the committed-lockfile shape of the real repo —
-  // a STALE pubspec.lock (pins the PRE-bump parent version, exactly the
-  // v1.0.515 drift) plus the tracked Podfile.lock inventory sibling.
-  File('$seed/flutter_app/pubspec.lock').writeAsStringSync(
-    '# Generated by pub (sandbox seed)\n'
-    'packages:\n'
-    '  flutter_agent_harness:\n'
-    '    description:\n'
-    '      path: ".."\n'
-    '    source: path\n'
-    '    version: "0.1.495"\n',
-  );
-  Directory('$seed/flutter_app/ios').createSync();
-  File(
-    '$seed/flutter_app/ios/Podfile.lock',
-  ).writeAsStringSync('PODS:\n  - Flutter (3.47.6)\n');
-  // The release script consumes the REAL lockfile inventory
-  // (scripts/check_lockfiles.sh) for its dirty-tree gate — ship the real
-  // gate script so the sandbox exercises the production list, not a copy.
-  Directory('$seed/scripts').createSync();
-  File('$seed/scripts/check_lockfiles.sh').writeAsStringSync(
-    File(
-      '${Directory.current.path}/scripts/check_lockfiles.sh',
-    ).readAsStringSync(),
-  );
-  // Same for the gh-1452 CHANGELOG cap guard: auto_release.sh runs the REAL
-  // scripts/check_changelog_size.sh between the changelog rewrite and the
-  // bump commit — the sandbox must exercise the production guard (the seed
-  // changelog is tiny, so the guard passes; the guard's own behavior is
-  // covered by test/changelog_cap_guard_test.dart).
-  File('$seed/scripts/check_changelog_size.sh').writeAsStringSync(
-    File(
-      '${Directory.current.path}/scripts/check_changelog_size.sh',
-    ).readAsStringSync(),
-  );
-  if (brokenInventory) {
-    // PR #1304 rework threads 1+5: model a BROKEN inventory source — a bad
-    // merge / partial checkout where `check_lockfiles.sh list` exits 0
-    // printing NOTHING. The dirty-tree gate must refuse to release
-    // unguarded, never degrade to an unrestricted whole-tree scan.
-    File('$seed/scripts/check_lockfiles.sh').writeAsStringSync(
-      '#!/usr/bin/env bash\n'
-      '# sandbox: broken inventory — silent success, zero paths\n'
-      'exit 0\n',
-    );
-  }
+  // gh-1522: the script reads NO repo file — the fixture seeds only git
+  // history: 'seed' (backdated so the v0.1.495 tag sits past the 2h
+  // coalesce window), an annotated v0.1.495 tag on it, and one pending
+  // commit on main.
+  File('$seed/README.md').writeAsStringSync('seed\n');
   git(['add', '-A']);
   git(
     ['commit', '-q', '-m', 'seed'],
@@ -374,11 +304,22 @@ fi
               .toString(),
     },
   );
-  git(['tag', 'v0.1.495']);
+  git(
+    ['tag', '-a', 'v0.1.495', '-m', 'Release v0.1.495'],
+    env: {
+      'GIT_COMMITTER_DATE':
+          (DateTime.now()
+                      .subtract(Duration(hours: tagAgeHours))
+                      .millisecondsSinceEpoch ~/
+                  1000)
+              .toString(),
+    },
+  );
   File('$seed/README.md').writeAsStringSync('pending\n');
   git(['add', '-A']);
   git(['commit', '-q', '-m', 'pending work']);
   git(['push', '-q', 'origin', 'main']);
+  git(['push', '-q', 'origin', 'v0.1.495']);
   git(['clone', '-q', origin, racer], cwd: root.path);
 
   String originMain() {
@@ -398,9 +339,8 @@ fi
   // GIT_AUTHOR_*/GIT_COMMITTER_* (the COMMITTING repo's identity) into hook
   // processes, and ci_fast_gate.sh unsets only GIT_DIR/GIT_INDEX_FILE/
   // GIT_WORK_TREE — under the pre-commit gate those vars overrode the
-  // sandbox script's own `git config user.name fa-release-bot[bot]` and the
-  // bump came out authored as the host repo's identity, flaking the
-  // authorship assertion (hook runs only; direct `dart test` was green).
+  // sandbox script's own `git config user.name fa-release-bot[bot]`, making
+  // tag authorship flake (hook runs only; direct `dart test` was green).
   final baseEnv = <String, String>{
     for (final e in Platform.environment.entries)
       if (!e.key.startsWith('GIT_')) e.key: e.value,
@@ -408,8 +348,9 @@ fi
     'FA_REAL_GIT': realGit,
     'FA_RACER': racer,
     'FA_RACE_FILE': raceFile,
-    'FA_FLUTTER_FAIL': '${root.path}/flutter-fail',
-    'FA_FLUTTER_DIRTY': '${root.path}/flutter-dirty',
+    'FA_GH_LOG': ghLogPath,
+    'GITHUB_REPOSITORY': 'OWNER/REPO',
+    'GH_TOKEN': 'stub',
   };
   final env = Map<String, String>.from(baseEnv);
   if (dryRun) env['RELEASE_DRY_RUN'] = '1';
@@ -430,6 +371,7 @@ fi
     seed,
     origin,
     baseEnv,
+    ghLogPath,
   );
 }
 
@@ -443,6 +385,7 @@ class AutoReleaseRun {
     this._seedPath,
     this._originGitDir,
     this._baseEnv,
+    this._ghLogPath,
   );
 
   final int exitCode;
@@ -453,6 +396,7 @@ class AutoReleaseRun {
   final String _seedPath;
   final String _originGitDir;
   final Map<String, String> _baseEnv;
+  final String _ghLogPath;
 
   /// Subjects of the last [n] commits on origin/main, newest first.
   List<String> originSubjects([int n = 3]) => _git([
@@ -476,9 +420,46 @@ class AutoReleaseRun {
     'main',
   ]);
 
-  /// Subject of the seed clone's HEAD (the local would-be/landed bump).
-  String seedLastSubject() =>
-      _git(['-C', _seedPath, 'log', '--pretty=%s', '-n', '1', 'HEAD']);
+  /// All tags on origin, sorted.
+  List<String> originTags() => _git([
+    '--git-dir',
+    _originGitDir,
+    'tag',
+    '--sort=v:refname',
+  ]).split('\n');
+
+  /// Whether [tag] exists on origin.
+  bool originTagExists(String tag) =>
+      Process.runSync(_gitBin, [
+        '--git-dir',
+        _originGitDir,
+        'rev-parse',
+        '-q',
+        '--verify',
+        'refs/tags/$tag',
+      ]).exitCode ==
+      0;
+
+  /// The commit [tag] on origin points at (peeled).
+  String originTagTarget(String tag) =>
+      _git(['--git-dir', _originGitDir, 'rev-parse', 'refs/tags/$tag^{}']);
+
+  /// Every line the `gh` stub logged (empty when the script never called gh).
+  List<String> ghLog() => File(_ghLogPath).existsSync()
+      ? File(_ghLogPath).readAsLinesSync()
+      : const [];
+
+  /// Whether the seed clone still carries [tag] locally.
+  bool seedTagExists(String tag) =>
+      Process.runSync(_gitBin, [
+        '-C',
+        _seedPath,
+        'rev-parse',
+        '-q',
+        '--verify',
+        'refs/tags/$tag',
+      ]).exitCode ==
+      0;
 
   String _git(List<String> args) {
     final r = Process.runSync(_gitBin, args);
@@ -487,8 +468,7 @@ class AutoReleaseRun {
   }
 
   /// Re-runs auto_release.sh in the SAME sandbox (seed + origin keep their
-  /// state from the previous run) — for multi-release sequences like the
-  /// CHANGELOG '## Unreleased' dedupe test.
+  /// state from the previous run) — for multi-release tag sequences.
   AutoReleaseRun rerun({bool dryRun = false}) {
     final before = _git(['--git-dir', _originGitDir, 'rev-parse', 'main']);
     final env = Map<String, String>.from(_baseEnv);
@@ -509,12 +489,9 @@ class AutoReleaseRun {
       _seedPath,
       _originGitDir,
       _baseEnv,
+      _ghLogPath,
     );
   }
-
-  /// Reads [path] from origin/main (post-run remote file state).
-  String originFile(String path) =>
-      _git(['--git-dir', _originGitDir, 'show', 'main:$path']);
 }
 
 /// The real git binary for sandbox shims AND for the fixture helpers: the
@@ -1213,7 +1190,6 @@ jobs:
       final haystacks = [
         ...workflows.map(read),
         read('scripts/auto_release.sh'),
-        read('scripts/tag_release.sh'),
       ];
       for (final text in haystacks) {
         expect(
@@ -1242,24 +1218,18 @@ jobs:
           }
         });
       }
-      // Direct-push path (gh-1172): auto_release.sh pushes the bump commit
-      // straight to main as the fa-release-bot App and creates nothing;
-      // tag_release.sh (the release-tag job) owns the single gh release
-      // create cut from the pushed bump commit.
+      // gh-1522: auto_release.sh owns the SINGLE gh release create — cut
+      // from the pushed tag, after the tag push, with release_notes.sh
+      // notes; the retired tag_release.sh (release-tag job) is gone.
+      final autoCreates = extractCreates(read('scripts/auto_release.sh'));
       expect(
-        extractCreates(read('scripts/auto_release.sh')),
-        isEmpty,
-        reason:
-            'auto_release.sh must not create releases — it only pushes '
-            'the bump; tag_release.sh owns the create',
-      );
-      final tagCreates = extractCreates(read('scripts/tag_release.sh'));
-      expect(
-        tagCreates,
+        autoCreates,
         hasLength(1),
-        reason: 'tag_release.sh is the one race-free release-create path',
+        reason:
+            'auto_release.sh is the one release-create path (gh-1522: the '
+            'retired release-tag job is deleted)',
       );
-      for (final c in tagCreates) {
+      for (final c in autoCreates) {
         expect(c.title, c.tag);
       }
       final attachCreates = extractCreates(
@@ -1337,6 +1307,70 @@ gh release create "v9.9.9" \
       expect(out, isNot(contains('Older')));
       expect(out, isNot(contains('feat: real work')));
     });
+
+    test(
+      'gh-1522 preference 1b — a pending curated ## Unreleased section is this release\'s notes',
+      () {
+        // The tag-only flow never rewrites CHANGELOG.md in-repo — the
+        // stage-time stamper (stamp_staged_release.sh) folds Unreleased
+        // under the tag's section — so at cut time a pending Unreleased
+        // section with NO '## <version>' section yet IS the release body.
+        final repo = fixtureRepo(
+          'notes-unreleased-only',
+          ['feat: real work'],
+          ['v1.2.2'],
+          '''
+# Changelog
+
+## Unreleased
+
+- Pending curated note alpha
+- Pending curated note beta
+''',
+        );
+        final out = notes(repo, ['1.2.3']);
+        expect(out, contains('Pending curated note alpha'));
+        expect(out, contains('Pending curated note beta'));
+        expect(
+          out,
+          isNot(contains('feat: real work')),
+          reason:
+              'the curated Unreleased body must win over the conventional-'
+              'commit fallback',
+        );
+      },
+    );
+
+    test(
+      'gh-1522 preference 1b — the curated ## <version> section still wins over a non-empty Unreleased',
+      () {
+        final repo = fixtureRepo(
+          'notes-version-over-unreleased',
+          ['feat: real work'],
+          ['v1.2.2'],
+          '''
+# Changelog
+
+## 1.2.3
+
+- Versioned curated note
+
+## Unreleased
+
+- Pending curated note
+''',
+        );
+        final out = notes(repo, ['1.2.3']);
+        expect(out, contains('Versioned curated note'));
+        expect(
+          out,
+          isNot(contains('Pending curated note')),
+          reason:
+              'preference 1 (the versioned section) outranks 1b (Unreleased) '
+              '— both curated, the per-release one is the truth',
+        );
+      },
+    );
 
     test('fallback: conventional commits since the previous tag, grouped', () {
       final repo =
@@ -1580,8 +1614,8 @@ gh release create "v9.9.9" \
       }
     });
 
-    test('tag_release.sh marks the new release latest explicitly', () {
-      final creates = extractCreates(read('scripts/tag_release.sh'));
+    test('auto_release.sh marks the new release latest explicitly', () {
+      final creates = extractCreates(read('scripts/auto_release.sh'));
       expect(creates, isNotEmpty);
       for (final c in creates) {
         expect(c.text, contains('--latest'));
@@ -1595,7 +1629,6 @@ gh release create "v9.9.9" \
       final haystacks = [
         ...workflows.map(read),
         read('scripts/auto_release.sh'),
-        read('scripts/tag_release.sh'),
       ];
       for (final text in haystacks) {
         expect(text, isNot(contains('--notes "Release v')));
@@ -1603,24 +1636,30 @@ gh release create "v9.9.9" \
     });
 
     test(
-      'release flow is direct-push: auto_release.sh pushes the bump to main as the App, tag_release.sh cuts tag+release',
+      'release flow is tag-only (gh-1522): auto_release.sh cuts + pushes the tag, never touches main or any file',
       () {
-        // gh-1172: the fa-release-bot GitHub App is the only bypass actor on
-        // the main ruleset, so the bump commit pushes directly (the 2026-09-29
-        // PR stopgap is retired — it burned a full CI queue cycle + machine
-        // review round per chore bump). The release-tag job cuts the tag +
-        // GitHub Release from the pushed bump commit; the tag rides the same
-        // App token so the tag-scoped binaries/publish jobs fire.
+        // gh-1522: the git TAG is the single source of truth for versions.
+        // The retired direct-push bump flow (sed/python3/flutter file
+        // mutations + a 'chore(release):' commit pushed straight to main,
+        // then tag_release.sh cutting the tag) is gone: the release IS
+        // `git tag -a v$next origin/main` + `git push origin refs/tags/...`
+        // + `gh release create`. ZERO commits land on main, ZERO files are
+        // mutated in-repo (the changelog-cap guard moved to stamp time —
+        // stamp_staged_release.sh — and the lockfile gates retired with the
+        // file bumps).
         final auto = read('scripts/auto_release.sh');
         expect(
           auto,
-          contains('git push origin HEAD:main'),
-          reason: 'the bump pushes straight to main (App bypass) — no PR',
+          isNot(contains('git push origin HEAD')),
+          reason:
+              'releases never push to main — the tag pins origin/main as of '
+              'the fetch; a main that advances mid-run is picked up by a '
+              'later release (gh-1522)',
         );
         expect(
           auto,
           isNot(contains('gh pr create')),
-          reason: 'release PRs are retired (gh-1172)',
+          reason: 'release PRs stayed retired (gh-1172/gh-1522)',
         );
         expect(
           auto,
@@ -1629,99 +1668,142 @@ gh release create "v9.9.9" \
         );
         expect(
           auto,
-          isNot(contains('git tag -a')),
-          reason: 'tagging moved to tag_release.sh (tag rides the App token)',
+          isNot(contains(RegExp(r'\bflutter\b'))),
+          reason:
+              'no flutter invocation — the lockfile-refresh gate retired '
+              'with the file bumps (gh-1522) (the header comment may name '
+              r"flutter_app's retired files, but no bare `flutter` call)",
+        );
+        expect(
+          auto,
+          isNot(contains('sed -i')),
+          reason: 'no in-place file edits — nothing is bumped in-repo',
+        );
+        expect(
+          auto,
+          isNot(
+            contains(
+              RegExp(r'^[^#\n]*pubspec\.lock', multiLine: true),
+            ),
+          ),
+          reason:
+              'no lockfile mutation outside comments — the gh-1299 churn '
+              'class is retired',
+        );
+        expect(
+          auto,
+          contains('git tag -a'),
+          reason: 'the release cuts the annotated tag itself',
+        );
+        expect(
+          auto,
+          contains('refs/tags/'),
+          reason: 'the tag push is ref-scoped (never a branch push)',
         );
         expect(
           auto,
           contains('RELEASE_DRY_RUN'),
-          reason: 'AC1: the dry-run switch must gate the push',
+          reason: 'AC1: the dry-run switch must gate the tag push',
         );
-        final tagScript = read('scripts/tag_release.sh');
-        expect(tagScript, contains(r'git tag -a "$tag"'));
-        expect(tagScript, contains(r'git push origin "$tag"'));
+        expect(
+          jobsOf('.github/workflows/ci.yml').containsKey('release-tag'),
+          isFalse,
+          reason:
+              'the release-tag job (tag_release.sh) is deleted — the release '
+              'job owns tag cut + GitHub Release in one step (gh-1522)',
+        );
       },
     );
 
     test(
-      'release jobs authenticate via the fa-release-bot App token (mint step + checkout + GH_TOKEN)',
+      'release job authenticates via the fa-release-bot App token (mint step + checkout + GH_TOKEN), no SDK steps',
       () {
-        // gh-1172 fix-contract item 1: both release jobs mint a job-scoped
+        // gh-1172 fix-contract item 1: the release job mints a job-scoped
         // installation token via actions/create-github-app-token from
-        // RELEASE_APP_ID / RELEASE_APP_PRIVATE_KEY and use it for checkout
-        // (push auth) — and release-tag additionally exports it as GH_TOKEN
-        // for `gh release create` (the #1093 BLOCK finding: without an
-        // explicit token the create was a guaranteed silent no-op).
+        // RELEASE_APP_ID / RELEASE_APP_PRIVATE_KEY and uses it for checkout
+        // (tag-push auth) — and exports it as GH_TOKEN for the
+        // auto_release.sh step's `gh release create` (the #1093 BLOCK
+        // finding: without an explicit token the create was a guaranteed
+        // silent no-op). gh-1522: tag cutting is git+gh only — the job no
+        // longer installs Flutter or Python (the file-bump tooling is gone).
         final ci = jobsOf('.github/workflows/ci.yml');
-        for (final jobName in ['release', 'release-tag']) {
-          final job = ci[jobName] as YamlMap;
-          final steps = job['steps'] as YamlList;
-          final mint = steps
-              .map((s) => s as YamlMap)
-              .firstWhere(
-                (s) =>
-                    s['uses']?.toString().startsWith(
-                      'actions/create-github-app-token@',
-                    ) ??
-                    false,
-                orElse: () => throw TestFailure(
-                  '$jobName must mint the fa-release-bot token via '
-                  'actions/create-github-app-token',
-                ),
-              );
-          expect(
-            mint['id']?.toString(),
-            'app-token',
-            reason:
-                '$jobName token step id must be app-token for the wiring below',
-          );
-          expect(
-            mint['with']['app-id']?.toString(),
-            equals(r'${{ secrets.RELEASE_APP_ID }}'),
-          );
-          expect(
-            mint['with']['private-key']?.toString(),
-            equals(r'${{ secrets.RELEASE_APP_PRIVATE_KEY }}'),
-          );
-          expect(
-            mint['with']['permissions']?.toString(),
-            'contents:write',
-            reason:
-                '$jobName mint must scope the token to contents:write — the App '
-                'is the ruleset bypass actor, so an unscoped token carries every '
-                'permission the installation has (gh-1172 round-2 review, least privilege)',
-          );
-          final checkout = steps
-              .map((s) => s as YamlMap)
-              .firstWhere(
-                (s) =>
-                    s['uses']?.toString().startsWith('actions/checkout') ??
-                    false,
-              );
-          expect(
-            checkout['with']['token']?.toString(),
-            jobName == 'release'
-                ? equals(
-                    r'${{ steps.app-token.outputs.token || github.token }}',
-                  )
-                : equals(r'${{ steps.app-token.outputs.token }}'),
-            reason:
-                '$jobName checkout must ride the App token — GITHUB_TOKEN '
-                'tags/pushes never fire tag-scoped jobs (release additionally '
-                'falls back to github.token when the dry-run gate skips the mint)',
-          );
-        }
-        final tagSteps = ci['release-tag']['steps'] as YamlList;
-        final tagStep = tagSteps
+        final job = ci['release'] as YamlMap;
+        final steps = job['steps'] as YamlList;
+        final mint = steps
             .map((s) => s as YamlMap)
             .firstWhere(
-              (s) => s['run']?.toString().contains('tag_release.sh') ?? false,
+              (s) =>
+                  s['uses']?.toString().startsWith(
+                    'actions/create-github-app-token@',
+                  ) ??
+                  false,
+              orElse: () => throw TestFailure(
+                'release must mint the fa-release-bot token via '
+                'actions/create-github-app-token',
+              ),
             );
         expect(
-          (tagStep['env'] as YamlMap)['GH_TOKEN']?.toString(),
+          mint['id']?.toString(),
+          'app-token',
+          reason:
+              'release token step id must be app-token for the wiring below',
+        );
+        expect(
+          mint['with']['app-id']?.toString(),
+          equals(r'${{ secrets.RELEASE_APP_ID }}'),
+        );
+        expect(
+          mint['with']['private-key']?.toString(),
+          equals(r'${{ secrets.RELEASE_APP_PRIVATE_KEY }}'),
+        );
+        expect(
+          mint['with']['permissions']?.toString(),
+          'contents:write',
+          reason:
+              'release mint must scope the token to contents:write — the App '
+              'is the release-path actor, so an unscoped token carries every '
+              'permission the installation has (gh-1172 round-2 review, least privilege)',
+        );
+        final checkout = steps
+            .map((s) => s as YamlMap)
+            .firstWhere(
+              (s) =>
+                  s['uses']?.toString().startsWith('actions/checkout') ??
+                  false,
+            );
+        expect(
+          checkout['with']['token']?.toString(),
+          equals(r'${{ steps.app-token.outputs.token || github.token }}'),
+          reason:
+              'release checkout must ride the App token — GITHUB_TOKEN tag '
+              'pushes never fire tag-scoped jobs (it additionally falls back '
+              'to github.token when the dry-run gate skips the mint)',
+        );
+        final cutStep = steps
+            .map((s) => s as YamlMap)
+            .firstWhere(
+              (s) => s['run']?.toString().contains('auto_release.sh') ?? false,
+            );
+        expect(
+          (cutStep['env'] as YamlMap)['GH_TOKEN']?.toString(),
           equals(r'${{ steps.app-token.outputs.token }}'),
           reason: 'gh release create needs GH_TOKEN=App token (#1093 review)',
         );
+        for (final banned in [
+          'subosito/flutter-action',
+          'actions/setup-python',
+        ]) {
+          expect(
+            steps
+                .map((s) => (s as YamlMap)['uses']?.toString() ?? '')
+                .any((uses) => uses.startsWith(banned)),
+            isFalse,
+            reason:
+                'gh-1522: the tag-only release job never installs an SDK — '
+                'tag cutting is git+gh only (no flutter pub get / no python '
+                'file bumps)',
+          );
+        }
       },
     );
     test(
@@ -1777,30 +1859,6 @@ gh release create "v9.9.9" \
               'the push rides the checkout App token exclusively — the job '
               'GITHUB_TOKEN never needs write, so a dry-run dispatch of a PR '
               'head holds no write-capable credential at all',
-        );
-      },
-    );
-
-    test(
-      'auto_release.sh untagged guard keys on pubspec version with a wedge escape',
-      () {
-        // IMPORTANT finding on PR #1093 (2026-09-30): subject-keying wedged
-        // auto-release forever when release-tag missed (any non-squash or
-        // interleaved merge changes the subject, not the version). Keyed on
-        // the pubspec version with a 1h escape hatch instead.
-        final auto = read('scripts/auto_release.sh');
-        expect(
-          auto,
-          contains(
-            r'''head_version=$(git show origin/main:pubspec.yaml | sed -n 's/^version: //p')''',
-          ),
-          reason: 'the untagged guard must key on the pubspec version',
-        );
-        expect(
-          auto,
-          contains('-lt 3600'),
-          reason:
-              'after 1h untagged the guard must let the next bump absorb the range (no indefinite wedge)',
         );
       },
     );
@@ -1869,7 +1927,7 @@ gh release create "v9.9.9" \
 
         // Dispatch arms are the parenthesized `(...)` groups whose condition
         // STARTS with the workflow_dispatch check — balanced-paren scan so a
-        // nested `chore(release):` string can never confuse the split.
+        // nested string containing ')' can never confuse the split.
         const wd = "github.event_name == 'workflow_dispatch'";
         final dispatchArms = <String>[];
         for (var i = 0; i < releaseIf.length; i++) {
@@ -1926,7 +1984,7 @@ gh release create "v9.9.9" \
               isTrue,
               reason:
                   'the real-push dispatch arm must be ref-restricted to main — a '
-                  'PR-head dispatch must never reach the bump push; got: $arm',
+                  'PR-head dispatch must never reach the tag push; got: $arm',
             );
             expect(
               arm.contains('inputs.releaseDispatch'),
@@ -1961,13 +2019,13 @@ gh release create "v9.9.9" \
               "the dead `inputs.releaseDryRun || '0'` fallback must not return",
         );
         final steps = (ci['release'] as YamlMap)['steps'] as YamlList;
-        final bumpStep = steps
+        final cutStep = steps
             .map((s) => s as YamlMap)
             .firstWhere(
               (s) => s['run']?.toString().contains('auto_release.sh') ?? false,
             );
         expect(
-          (bumpStep['env'] as YamlMap)['RELEASE_DRY_RUN']?.toString(),
+          (cutStep['env'] as YamlMap)['RELEASE_DRY_RUN']?.toString(),
           equals(
             r"${{ github.event.inputs.releaseDryRun == 'true' && '1' || '0' }}",
           ),
@@ -1977,182 +2035,171 @@ gh release create "v9.9.9" \
       },
     );
 
-    test(
-      'release-tag contract comment documents the direct-push mechanism, not the retired PR path',
-      () {
-        // gh-1172 round-2 IMPORTANT: the block comment above `release-tag:`
-        // still described the retired release-PR mechanism (merged release PR,
-        // RELEASE_PAT, "bump PR job") and contradicted the job it documents.
-        // This repo treats CI comments as binding contract docs — pin the
-        // rewrite so the retired text cannot return.
-        final lines = read('.github/workflows/ci.yml').split('\n');
-        final jobLine = lines.indexWhere((l) => l == '  release-tag:');
-        expect(jobLine, greaterThan(0), reason: 'release-tag job must exist');
-        var start = jobLine - 1;
-        while (start >= 0 && lines[start].trimLeft().startsWith('#')) {
-          start--;
-        }
-        final comment = lines.sublist(start + 1, jobLine).join('\n');
-        for (final retired in [
-          'RELEASE_PAT',
-          'merged release PR',
-          'bump PR job',
-          'rejects direct bot pushes',
-        ]) {
-          expect(
-            comment,
-            isNot(contains(retired)),
-            reason:
-                'retired PR-path text "$retired" must not return above release-tag',
-          );
-        }
-        expect(
-          comment,
-          contains('fa-release-bot'),
-          reason: 'the comment must name the App the tag rides',
-        );
-        expect(
-          comment,
-          contains('direct push'),
-          reason: 'the comment must describe the direct-push contract',
-        );
-      },
-    );
   });
 
-  // ── gh-1172 — direct-push behavioral coverage ────────────────────────────
+  // ── gh-1172/gh-1522 — tag-only behavioral coverage ───────────────────────
   // Round-2 review: the PR deleted the gh-1134 PR-path sandbox (bare origin +
   // stubbed gh) together with the code it exercised — correct — but shipped
-  // the new direct-push path with string-assertions only. The riskiest logic
-  // gets the same treatment here: a bare origin IS a real git remote, so
-  // `git push origin HEAD:main` genuinely executes; a git shim races the push
-  // by advancing origin/main from a second clone between the script's fetch
-  // and its push (E1).
-  group('gh-1172 — direct-push behavioral coverage (dry-run, coalesce, E1 race)', () {
+  // the new path with string-assertions only. The riskiest logic gets the
+  // same treatment here: a bare origin IS a real git remote, so
+  // `git push origin refs/tags/vX` genuinely executes; a git shim races the
+  // tag push by pre-pushing the same tag from a second clone between the
+  // script's fetch and its push (E1), and a gh stub logs the release create.
+  group('gh-1522 — tag-only release behavioral coverage (dry-run, coalesce, E1 race)', () {
     test(
-      'AC1 — dry-run commits the bump locally, exits before the push, origin/main unchanged',
+      'AC1 — dry-run computes the tag, exits before the push; no tag on origin, no gh create, no local leftover',
       () {
         final r = runAutoReleaseDirect('dry-run', dryRun: true);
         expect(r.exitCode, 0, reason: r.output);
-        expect(r.output, contains('DRY-RUN: would push'));
-        expect(r.output, contains('v0.1.496'));
-        expect(r.output, contains('would then cut annotated tag v0.1.496'));
+        expect(r.output, contains('DRY-RUN: would push tag v0.1.496'));
         expect(
           r.originHeadAfter,
           r.originHeadBefore,
-          reason: 'AC1: a dry run must not land anything on origin/main',
+          reason: 'AC1: a dry run must not move origin/main',
         );
         expect(
-          r.seedLastSubject(),
-          'chore(release): v0.1.496',
-          reason: 'the would-be commit+tag are computed and committed locally',
+          r.originTagExists('v0.1.496'),
+          isFalse,
+          reason: 'a dry run must never push the tag',
         );
-      },
-    );
-
-    test('coalesce guard — a tag younger than 2h skips the run entirely', () {
-      final r = runAutoReleaseDirect('coalesce', tagAgeHours: 1);
-      expect(r.exitCode, 0, reason: r.output);
-      expect(r.output, contains('coalesced'));
-      expect(
-        r.originHeadAfter,
-        r.originHeadBefore,
-        reason: 'no bump may land inside the coalesce window',
-      );
-      expect(r.originSubjects(1), isNot(contains('chore(release): v0.1.496')));
-    });
-
-    test(
-      'gh-1452 — a CHANGELOG.md at/over the pub.dev 262144-byte cap aborts the release BEFORE the bump push',
-      () {
-        final r = runAutoReleaseDirect('changelog-cap', hugeChangelog: true);
-        expect(r.exitCode, isNot(0), reason: r.output);
-        expect(r.output, contains('::error::'));
-        expect(r.output, contains('262144'));
-        expect(r.output, contains('CHANGELOG_ARCHIVE.md'),
-            reason: 'the error must name the fix (archive the tail)');
+        expect(r.originTags(), ['v0.1.495']);
         expect(
-          r.originHeadAfter,
-          r.originHeadBefore,
+          r.ghLog(),
+          isEmpty,
+          reason: 'a dry run must never create the GitHub Release',
+        );
+        expect(
+          r.seedTagExists('v0.1.496'),
+          isFalse,
           reason:
-              'pre-tag fast-fail: the push is what fires tag_release + the '
-              'publish job — v1.0.538 died mid-upload because nothing '
-              'bounded the changelog before it',
-        );
-        expect(
-          r.originSubjects(2),
-          isNot(contains('chore(release): v0.1.496')),
+              'the dry run deletes its computed local tag — no leftover '
+              'pollutes the next real run',
         );
       },
     );
 
     test(
-      'E1 race — a main that advanced mid-run rejects the push; the bump recomputes on the fresh head and lands',
+      'coalesce guard — a tag younger than 2h skips the run entirely (no new tag on origin)',
+      () {
+        final r = runAutoReleaseDirect('coalesce', tagAgeHours: 1);
+        expect(r.exitCode, 0, reason: r.output);
+        expect(r.output, contains('coalesced'));
+        expect(
+          r.originHeadAfter,
+          r.originHeadBefore,
+          reason: 'no release may land inside the coalesce window',
+        );
+        expect(
+          r.originTags(),
+          ['v0.1.495'],
+          reason: 'the guard must not cut v0.1.496',
+        );
+        expect(r.ghLog(), isEmpty);
+      },
+    );
+
+    test(
+      'E1 race — a tag that appeared mid-run rejects the push; the run re-derives the next version and lands THAT',
       () {
         final r = runAutoReleaseDirect('race-retry', raceMode: 'once');
         expect(r.exitCode, 0, reason: r.output);
-        expect(r.output, contains('Main push raced, retrying'));
-        final subjects = r.originSubjects(4);
+        expect(r.output, contains('Tag push raced'));
         expect(
-          subjects.where((s) => s.startsWith('chore(release):')),
+          r.originTagExists('v0.1.496'),
+          isTrue,
+          reason: 'the racer pre-pushed v0.1.496 — it must exist on origin',
+        );
+        expect(
+          r.originTagExists('v0.1.497'),
+          isTrue,
+          reason:
+              'the raced run must re-derive from the freshly fetched tags '
+              'and push v0.1.497',
+        );
+        final creates = r
+            .ghLog()
+            .where((l) => l.contains('release create'))
+            .toList();
+        expect(
+          creates,
           hasLength(1),
-          reason:
-              'exactly one bump lands — the raced attempt is discarded, not stacked',
-        );
-        expect(subjects.first, 'chore(release): v0.1.496');
-        expect(
-          subjects,
-          contains('raced commit'),
-          reason:
-              'the bump must sit on top of the raced main — recomputed, never a blind push',
+          reason: 'exactly one GitHub Release is created per run',
         );
         expect(
-          r.originHeadAuthor(),
-          'fa-release-bot[bot] <fa-release-bot[bot]@users.noreply.github.com>',
+          creates.single,
+          startsWith('release create v0.1.497 '),
+          reason: 'the raced-out v0.1.496 must never get a release object '
+              '(the notes may mention it as the previous release)',
+        );
+        expect(
+          r.originHeadAfter,
+          r.originHeadBefore,
           reason:
-              'the bump commit is authored by the App (auditability contract)',
+              'the race burned only tags — zero commits land on main '
+              '(gh-1522)',
         );
       },
     );
 
     test(
-      'E1 exhaustion — a main that advances on every attempt exits 1 after 3 tries without landing a bump',
+      'E1 exhaustion — a tag race on every attempt exits 1 after 3 tries, creating nothing',
       () {
         final r = runAutoReleaseDirect('race-exhaust', raceMode: 'always');
         expect(r.exitCode, 1, reason: 'exhaustion must fail loud: ${r.output}');
         expect(r.output, contains('failed after 3 attempts'));
+        expect(r.output, contains('Tag push raced'));
         expect(
-          r.originSubjects(6).where((s) => s.startsWith('chore(release):')),
+          r.ghLog().where((l) => l.contains('release create')),
           isEmpty,
-          reason: 'a raced-out run must never land a bump',
+          reason: 'a raced-out run must never create a release',
         );
-        expect(r.originSubjects(6), contains('raced commit'));
+        expect(
+          r.originHeadAfter,
+          r.originHeadBefore,
+          reason: 'a raced-out run must never touch main',
+        );
       },
     );
 
     test(
-      "CHANGELOG '## Unreleased' dedupe — a second release never stacks duplicate sections",
+      'tag sequence — releases cut consecutive tags on origin/main with zero commits on main and one create each',
       () {
-        // Round-4 review: the dedupe side-fix (append a fresh empty
-        // Unreleased exactly once) shipped untested. Drive TWO real releases
-        // through the sandbox: after the first push, play the release-tag
-        // job catching up — backdate the landed bump (so the 2h coalesce
-        // window and the untagged guard both open), tag it, queue new work —
-        // then release again. Both runs regenerate CHANGELOG.md, which is
-        // where a naive append would stack a second '## Unreleased'.
-        final r1 = runAutoReleaseDirect('dedupe');
+        // gh-1522: the release IS the tag. r1 cuts v0.1.496 on origin/main
+        // without landing a single commit; after the coalesce window opens
+        // (the tagged commit backdated 3h) and new work lands, a second run
+        // cuts v0.1.497 — main history stays clean of bot commits the whole
+        // time.
+        final r1 = runAutoReleaseDirect('sequence');
         expect(r1.exitCode, 0, reason: r1.output);
-        expect(r1.originSubjects(1).single, 'chore(release): v0.1.496');
         expect(
-          '## Unreleased'.allMatches(r1.originFile('CHANGELOG.md')),
-          hasLength(1),
+          r1.originHeadAfter,
+          r1.originHeadBefore,
           reason:
-              'one release from a changelog WITH an Unreleased section '
-              'must end with exactly one',
+              'gh-1522: zero commits land on main — the tag pins the '
+              'existing head',
+        );
+        expect(r1.originTagExists('v0.1.496'), isTrue);
+        expect(
+          r1.originTagTarget('v0.1.496'),
+          r1.originHeadAfter,
+          reason: 'the tag must point at origin/main as of the cut',
+        );
+        expect(
+          r1.ghLog().where((l) => l.contains('release create v0.1.496')),
+          hasLength(1),
+        );
+        expect(
+          r1.originSubjects(3).where((s) => s.startsWith('chore(release):')),
+          isEmpty,
+          reason:
+              'no chore(release) bot commit may land on main anymore '
+              '(gh-1522)',
         );
 
-        // release-tag catch-up: tag the bump (commit backdated 3h so the
-        // coalesce guard opens), then queue the next pending work.
+        // Open the 2h coalesce window: the guard keys on the tagged COMMIT's
+        // date (git log %ct dereferences the annotated tag), so amend the
+        // tagged commit backdated, then re-create the tag object (also
+        // backdated) and force-push both. Then queue the next pending work.
         final backdate = {
           'GIT_COMMITTER_DATE':
               (DateTime.now()
@@ -2169,13 +2216,13 @@ gh release create "v9.9.9" \
             environment: env,
             includeParentEnvironment: true,
           );
-          expect(res.exitCode, 0, reason: 'dedupe git $args: ${res.stderr}');
+          expect(res.exitCode, 0, reason: 'sequence git $args: ${res.stderr}');
         }
 
         git(['commit', '-q', '--amend', '--no-edit'], env: backdate);
         git(['push', '-q', '-f', 'origin', 'HEAD:main']);
-        git(['tag', 'v0.1.496'], env: backdate);
-        git(['push', '-q', 'origin', 'v0.1.496']);
+        git(['tag', '-a', '-f', 'v0.1.496', '-m', 'Release v0.1.496'], env: backdate);
+        git(['push', '-q', '-f', 'origin', 'v0.1.496']);
         File('${r1._seedPath}/README.md').writeAsStringSync('more work\n');
         git(['add', '-A']);
         git(['commit', '-q', '-m', 'more pending work']);
@@ -2183,14 +2230,23 @@ gh release create "v9.9.9" \
 
         final r2 = r1.rerun();
         expect(r2.exitCode, 0, reason: r2.output);
-        expect(r2.originSubjects(1).single, 'chore(release): v0.1.497');
-        final changelog = r2.originFile('CHANGELOG.md');
-        expect(changelog, contains('## 0.1.497'));
-        expect(changelog, contains('## 0.1.496'));
+        expect(r2.originTagExists('v0.1.497'), isTrue);
         expect(
-          '## Unreleased'.allMatches(changelog),
-          hasLength(1),
-          reason: 'repeated runs must not stack duplicate Unreleased sections',
+          r2.originTagTarget('v0.1.497'),
+          r2.originHeadAfter,
+          reason: 'v0.1.497 pins the new main head (with more pending work)',
+        );
+        final creates = r2
+            .ghLog()
+            .where((l) => l.contains('release create'))
+            .toList();
+        expect(creates, hasLength(2));
+        expect(creates[0], contains('release create v0.1.496'));
+        expect(creates[1], contains('release create v0.1.497'));
+        expect(
+          r2.originSubjects(4).where((s) => s.startsWith('chore(release):')),
+          isEmpty,
+          reason: 'main history stays clean across the whole sequence',
         );
       },
     );
@@ -2218,213 +2274,6 @@ gh release create "v9.9.9" \
     );
   });
 
-  // ── gh-1299 — release lockfile gates (NG1 refresh, NG2 tag smoke) ──────
-  // v1.0.515: auto_release.sh bumped both pubspecs but committed only
-  // pubspec.yaml/flutter_app/pubspec.yaml/CHANGELOG.md — the committed
-  // flutter_app/pubspec.lock kept pinning `flutter_agent_harness 1.0.514
-  // from path ..` and #1268's repo-wide `pub get --enforce-lockfile` red
-  // all 13 main legs. Owner directive (same class as #1265/#1296): a
-  // release that leaves the tree --enforce-lockfile-dirty is a FAILED
-  // release, and the tag/publish path must smoke the enforce-lockfile gate
-  // on the release commit BEFORE tagging.
-  group('gh-1299 — release lockfile gates (NG1 refresh, NG2 tag smoke)', () {
-    test(
-      'NG1 — the bump commit carries flutter_app/pubspec.lock refreshed to the NEW version',
-      () {
-        final r = runAutoReleaseDirect('lockfile-refresh');
-        expect(r.exitCode, 0, reason: r.output);
-        expect(r.originSubjects(1).single, 'chore(release): v0.1.496');
-        final lock = r.originFile('flutter_app/pubspec.lock');
-        expect(
-          lock,
-          contains('version: "0.1.496"'),
-          reason:
-              'the shipped lockfile must pin the NEW parent version — '
-              'a stale pin is exactly the v1.0.515 13-leg red',
-        );
-        expect(
-          lock,
-          isNot(contains('version: "0.1.495"')),
-          reason: 'the pre-bump pin must be gone from the release commit',
-        );
-      },
-    );
-
-    test(
-      'NG1 — a failed `flutter pub get` aborts the release BEFORE the push (origin/main unchanged)',
-      () {
-        final r = runAutoReleaseDirect('pubget-fail', flutterFails: true);
-        expect(
-          r.exitCode,
-          1,
-          reason:
-              'a release whose lockfile refresh fails must fail loud: '
-              '${r.output}',
-        );
-        expect(r.output, contains('flutter pub get failed'));
-        expect(
-          r.originHeadAfter,
-          r.originHeadBefore,
-          reason: 'never push a bump that leaves pubspec.lock stale',
-        );
-        expect(
-          r.originSubjects(1),
-          isNot(contains('chore(release): v0.1.496')),
-        );
-      },
-    );
-
-    test(
-      'NG1 — a committed lockfile still dirty after the refresh aborts the release (pod-install-only drift)',
-      () {
-        final r = runAutoReleaseDirect('dirty-pod', flutterDirty: true);
-        expect(r.exitCode, 1, reason: r.output);
-        expect(r.output, contains('still dirty'));
-        expect(
-          r.originHeadAfter,
-          r.originHeadBefore,
-          reason:
-              'a release that leaves the tree --enforce-lockfile-dirty '
-              'is a failed release (gh-1299 NG1)',
-        );
-        expect(
-          r.originSubjects(1),
-          isNot(contains('chore(release): v0.1.496')),
-        );
-      },
-    );
-
-    test(
-      'NG1 — an EMPTY lockfile inventory (broken `check_lockfiles.sh list`) refuses to release — the dirty gate must never silently no-op',
-      () {
-        // PR #1304 rework threads 1+5: the inventory is consumed inside a
-        // process substitution whose exit status `set -euo pipefail` cannot
-        // observe — a `check_lockfiles.sh list` that fails or prints nothing
-        // left `lockfiles` empty and degenerated `git status --porcelain --`
-        // into an unrestricted whole-tree scan (clean right after the
-        // commit), shipping releases with zero lockfile protection. The
-        // precondition must be explicit: no inventory, no release.
-        final r = runAutoReleaseDirect(
-          'empty-inventory',
-          brokenInventory: true,
-        );
-        expect(r.exitCode, 1, reason: r.output);
-        expect(r.output, contains('lockfile inventory is EMPTY'));
-        expect(
-          r.originHeadAfter,
-          r.originHeadBefore,
-          reason:
-              'refusing to release without the dirty-tree gate (gh-1299 NG1)',
-        );
-        expect(
-          r.originSubjects(1),
-          isNot(contains('chore(release): v0.1.496')),
-        );
-      },
-    );
-
-    test(
-      'NG1 — auto_release.sh refreshes the lockfile, stages it IN the bump commit, then runs the dirty gate',
-      () {
-        final script = read('scripts/auto_release.sh');
-        expect(
-          script,
-          contains('flutter pub get'),
-          reason: 'the bump must regenerate flutter_app/pubspec.lock (gh-1299)',
-        );
-        final refresh = script.indexOf('flutter pub get');
-        final add = script.indexOf('git add');
-        expect(refresh, greaterThan(0));
-        expect(
-          add,
-          greaterThan(refresh),
-          reason: 'the regenerated lockfile is staged after the refresh',
-        );
-        expect(
-          RegExp(r'git add[^\n]*flutter_app/pubspec\.lock').hasMatch(script),
-          isTrue,
-          reason: 'the lockfile rides the SAME commit as the bump (NG1)',
-        );
-        final dirtyGate = script.indexOf('check_lockfiles.sh list');
-        expect(
-          dirtyGate,
-          greaterThan(add),
-          reason:
-              'the dirty-tree gate consumes the ONE inventory ('
-              'scripts/check_lockfiles.sh) after staging — never a '
-              'duplicated list',
-        );
-      },
-    );
-
-    test(
-      'NG2/AC3 — tag_release.sh asserts --enforce-lockfile on the bump tree BEFORE tagging/publishing',
-      () {
-        final script = read('scripts/tag_release.sh');
-        final smoke = script.indexOf('pub get --enforce-lockfile');
-        expect(
-          smoke,
-          greaterThan(0),
-          reason: 'the post-release smoke must exist',
-        );
-        final tag = script.indexOf('git tag -a');
-        final create = script.indexOf('gh release create');
-        expect(
-          tag,
-          greaterThan(smoke),
-          reason: 'a red enforce-lockfile bump must never be tagged',
-        );
-        expect(
-          create,
-          greaterThan(smoke),
-          reason: '... nor published (the tag fires the publish jobs)',
-        );
-        expect(
-          script,
-          contains('refusing to tag'),
-          reason: 'the refusal is loud, never a silent skip',
-        );
-      },
-    );
-
-    test(
-      'AC3 — the release workflow jobs that run the gates get flutter on PATH',
-      () {
-        final jobs = jobsOf('.github/workflows/ci.yml');
-        for (final name in ['release', 'release-tag']) {
-          final steps = jobs[name]['steps'] as YamlList;
-          final flutterSteps = steps
-              .whereType<YamlMap>()
-              .where(
-                (s) => (s['uses']?.toString() ?? '').startsWith(
-                  'subosito/flutter-action',
-                ),
-              )
-              .toList();
-          expect(
-            flutterSteps,
-            isNotEmpty,
-            reason:
-                'job $name runs a gh-1299 lockfile gate — it needs flutter '
-                'installed (hosted stable, same pin as every other leg)',
-          );
-          // PR #1304 rework thread 8: these jobs AUTHOR flutter_app/pubspec.lock
-          // for every future release — the authoring SDK must be pinned to the
-          // same 3.47.x the consuming (`--enforce-lockfile`) build legs pin,
-          // closing the author/consumer SDK drift class for one line per step.
-          for (final s in flutterSteps) {
-            expect(
-              (s['with'] as YamlMap?)?['flutter-version']?.toString(),
-              '3.47.x',
-              reason:
-                  'job $name authors flutter_app/pubspec.lock — its SDK must '
-                  'be pinned to the same 3.47.x the consuming build legs use',
-            );
-          }
-        }
-      },
-    );
-  });
 
   // ── gh-995 — artifact action pins + PTY shard pipeline coherence ────────
   // 2026-09-27 outage: the PTY legs were the only jobs still uploading
