@@ -272,6 +272,10 @@ pre-tag + publish gates) fails fast when the cap is approached again.
 
 - gh-1478 [ENH] daily-publish auto-filer: signal-first failure excerpts + cancelled-run digests + root-cause dedup (never-again for noise filings) (#1480)
 
+## 1.0.549
+
+- chore: pin factory_ref to agents-rel-20261010-170624 (fb32c3c8) — brings gh-843 ghost fix + gh-840 sweep to the fa tick; live: #1457 ghost #2 BLOCKED with green-on-head (previously cost ~2h) (#1513)
+
 ## Unreleased
 
 - feat(usage): gh-1460 — the `fa-tokens:` segment-close line carries the
