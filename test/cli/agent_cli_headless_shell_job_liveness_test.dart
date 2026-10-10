@@ -528,62 +528,65 @@ void main() {
       final h = await livenessShape();
       final job = h.shell.jobs.single;
       await h.env.writeFile(job.logPath, 'quiet so far');
-      // One reaction script per notice the burst may steer (4 total).
-      for (var i = 0; i < 4; i++) {
+      // One reaction script per notice the burst may steer (3 total).
+      for (var i = 0; i < 3; i++) {
         h.livenessScripts.add(textTurn('still waiting.'));
       }
 
-      // The 5m sleep parks; release it → exactly the 5m notice.
+      // The 5m sleep parks (the request itself advances the clock to
+      // the 5m threshold). Before releasing it, push the clock PAST two
+      // more thresholds (a 10-minute reaction run outlived its
+      // windows): the released wake lands at ~15m with buckets 1, 2,
+      // and 3 all un-consumed — each must get its OWN notice. (The
+      // +30s slack covers the few ms between the harness clock's t0
+      // and the job's real-time startedAt.)
       await _waitFor(
         () => h.pendingSleeps >= 1,
         reason: 'the first drain sleep parks',
         dump: h.dump,
       );
+      h.advanceClockBy(const Duration(minutes: 10, seconds: 30));
       h.releaseNextSleep();
-      await _waitFor(
-        () => h.livenessRuns.length == 1,
-        reason: 'the 5m notice is steered',
-        dump: h.dump,
-      );
-      expect(h.livenessNotice(1), contains('5m elapsed'));
+      // The notice user-messages of the LATEST context (the transcript
+      // accumulates every steer — notices steered into one busy run
+      // share a run but not a message).
+      List<String> noticeTexts() {
+        if (stream.contexts.isEmpty) return const [];
+        return [
+          for (final message in stream.contexts.last.messages)
+            if (message is UserMessage &&
+                messageText(message).contains(_livenessMarker))
+              messageText(message),
+        ];
+      }
 
-      // The 10m sleep parks (the request itself advances the clock to the
-      // 10m threshold). Before releasing it, push the clock PAST two more
-      // thresholds (a 10-minute reaction run outlived its windows): the
-      // released wake lands at ~20m with buckets 2, 3, and 4 all
-      // un-consumed — each must get its OWN notice.
       await _waitFor(
-        () => h.pendingSleeps >= 1,
-        reason: 'the second drain sleep parks',
-        dump: h.dump,
-      );
-      h.advanceClockBy(const Duration(minutes: 10));
-      h.releaseNextSleep();
-      await _waitFor(
-        () => h.livenessRuns.length == 4,
+        () => noticeTexts().length == 3,
         reason: 'the late wake steers one notice per crossed bucket',
         dump: h.dump,
       );
+      final notices = noticeTexts();
       expect(
-        h.livenessRuns.length,
-        4,
+        notices.length,
+        3,
         reason:
-            'the 5m notice plus buckets 2, 3, and 4 crossed at once ⇒ '
-            'exactly 3 more notices (10m, 15m, 20m), one per crossing — '
-            'never one collapsed steer',
+            'three thresholds crossed at once ⇒ exactly 3 notices (5m, '
+            '10m, 15m), one per crossing — never one collapsed steer '
+            'that silently eats buckets 2..N',
       );
-      expect(h.livenessNotice(2), contains('10m elapsed'));
-      expect(h.livenessNotice(3), contains('15m elapsed'));
-      expect(h.livenessNotice(4), contains('20m elapsed'));
+      expect(notices[0], contains('5m elapsed'));
+      expect(notices[1], contains('10m elapsed'));
+      expect(notices[2], contains('15m elapsed'));
 
       job.finish(0);
       final code = await h.run;
 
       expect(code, 0);
       expect(
-        h.livenessRuns.length,
-        4,
-        reason: '5m + burst(10m, 15m) + 20m — one steer per crossing total',
+        noticeTexts().length,
+        3,
+        reason: 'the budget holds exactly: 3 crossings, 3 notices — '
+            'the settle ends the drain before the 20m crossing',
       );
       h.io.close();
     },
