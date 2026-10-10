@@ -22,6 +22,59 @@ String _appendStatus(String text, String status) {
   return text.isEmpty ? status : '$text\n\n$status';
 }
 
+/// Extracts the effective timeout in whole seconds from a shell timeout
+/// error message (`timeout: 0:00:30` — the shape both LocalShell and the
+/// WASI sandbox emit), or null when no parseable duration is present.
+/// Sub-second caps round up to 1 so the text never claims "after 0s".
+int? timeoutSecondsFromMessage(String message) {
+  final match = RegExp(
+    r'timeout:\s*(\d+):(\d{1,2}):(\d{1,2})',
+  ).firstMatch(message);
+  if (match == null) return null;
+  final seconds =
+      int.parse(match.group(1)!) * 3600 +
+      int.parse(match.group(2)!) * 60 +
+      int.parse(match.group(3)!);
+  return seconds > 0 ? seconds : 1;
+}
+
+/// The honest timeout status line (gh-1444 AC5): the model's own cap when
+/// it passed one, else the shell's effective cap — the job's recorded exec
+/// timeout, or the duration parsed from the exec error's
+/// `timeout: <duration>` message — never "unknown seconds". When no cap is
+/// recoverable at all the line states the timeout without inventing a
+/// number.
+String bashTimeoutStatus({
+  num? timeoutArg,
+  Duration? effectiveTimeout,
+  String? errorMessage,
+}) {
+  if (timeoutArg != null) {
+    return 'Command timed out after ${_formatTimeoutSeconds(timeoutArg)} '
+        'seconds';
+  }
+  final seconds = effectiveTimeout?.inSeconds;
+  if (seconds != null && seconds > 0) {
+    return 'Command timed out after $seconds seconds';
+  }
+  final parsed = errorMessage == null
+      ? null
+      : timeoutSecondsFromMessage(errorMessage);
+  if (parsed != null) {
+    return 'Command timed out after $parsed seconds';
+  }
+  return 'Command timed out';
+}
+
+/// Renders a timeout argument the way the model passed it (whole numbers
+/// stay whole, fractions keep their digits).
+String _formatTimeoutSeconds(num seconds) {
+  if (seconds == seconds.truncate()) {
+    return '${seconds.truncate()}';
+  }
+  return '$seconds';
+}
+
 /// Foreground sleep deny threshold (issue #1349): a bare `sleep` longer
 /// than this is rejected at call validation. A bare long sleep is never
 /// legitimate foreground work — it parks the whole turn (steering and the
@@ -134,10 +187,10 @@ AgentTool shellTool(
         'stdout and stderr. Output is truncated to the last '
         '$defaultToolMaxLines lines or ${defaultToolMaxBytes ~/ 1024}KB '
         '(whichever is hit first). Optionally provide a timeout in seconds. '
-        'Timeout-class failures are retried automatically '
-        '(${bashToolMaxRetries + 1} attempts total) — a hung network call '
-        'does not fail the call; retries are visible as [bash attempt N] '
-        'notices in the output. '
+        'Timeouts you set are retried automatically '
+        '(${bashToolMaxRetries + 1} attempts total); retries appear as '
+        '[bash attempt N]. Environment-default timeouts fail once with the '
+        'partial output. '
         'For long-running commands (builds, servers, watchers) pass '
         'background: true — the command keeps running as a job, you get its '
         'id immediately and are notified when it finishes; check progress '
@@ -309,10 +362,18 @@ Future<ToolExecutionResult> _runForegroundBash(
 
     if (result.isErr) {
       final error = result.errorOrNull!;
-      if (error.code == ExecutionErrorCode.timeout && canRetry) {
+      // gh-1444 C5: a timeout the MODEL passed is a transient-failure
+      // candidate (a hung network call under a deliberate bail cap) and is
+      // retried; a SHELL-default timeout (no timeout argument) is the
+      // harness's own cap firing — re-running a long command up to 3×
+      // parks the turn ("looked stuck"), so it fails once with the honest
+      // text and the captured partial output.
+      if (error.code == ExecutionErrorCode.timeout &&
+          canRetry &&
+          timeoutArg != null) {
         notices.add(
           '[bash attempt $attempt/${bashToolMaxRetries + 1} timed out'
-          '${timeoutArg != null ? ' after ${timeoutArg}s' : ''} — '
+          ' after ${timeoutArg}s — '
           'retrying]',
         );
         await Future<void>.delayed(retryBackoff);
@@ -355,7 +416,10 @@ StateError _bashFailureError(
         error,
         _appendStatus(
           _retryNoticePrefix(notices),
-          'Command timed out after ${timeoutArg ?? 'unknown'} seconds',
+          bashTimeoutStatus(
+            timeoutArg: timeoutArg,
+            errorMessage: error.message,
+          ),
         ),
       ),
     ),
@@ -591,7 +655,10 @@ ToolExecutionResult _settledOutcome(
     throw StateError(
       _appendStatus(
         output,
-        'Command timed out after ${timeoutArg ?? 'unknown'} seconds',
+        bashTimeoutStatus(
+          timeoutArg: timeoutArg,
+          effectiveTimeout: entry.timeout,
+        ),
       ),
     );
   }

@@ -853,6 +853,18 @@ void main() {
         );
         expect(notFound, startsWith('Tool error (weather): '));
         expect(notFound, isNot(contains('uncaught exception')));
+
+        // gh-1444 AC5: a shell timeout is the command's verdict — the
+        // honest "timed out after Ns" carrier (partial output + status
+        // line) must never wear the "uncaught exception" hint.
+        final timeout = await textOf(
+          () => StateError(
+            '--- partial stdout ---\nsome lines\n\nCommand timed out '
+            'after 30 seconds',
+          ),
+        );
+        expect(timeout, contains('Command timed out after 30 seconds'));
+        expect(timeout, isNot(contains('uncaught exception')));
       },
     );
 
