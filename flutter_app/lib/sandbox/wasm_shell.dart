@@ -5,6 +5,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
+import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
@@ -18,6 +19,7 @@ import 'package:path/path.dart' as p;
 import 'package:wasm_run/wasm_run.dart';
 
 import 'package:fa/sandbox/glob_expand.dart';
+import 'package:fa/services/app_log.dart';
 import 'package:fa/sandbox/sandbox_builtins.dart';
 import 'package:fa/sandbox/sandbox_host_paths.dart';
 import 'package:fa/sandbox/sandbox_pip.dart';
@@ -30,6 +32,7 @@ import 'package:fa/sandbox/wasm_shell_builtins.dart';
 import 'package:fa/sandbox/wasm_shell_git.dart';
 import 'package:fa/sandbox/wasm_shell_ssh.dart';
 
+part 'wasm_shell_cat.dart';
 part 'wasm_shell_grep.dart';
 part 'wasm_shell_stages.dart';
 
@@ -419,6 +422,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     required String? inputSource,
   }) async {
     return switch (stage.command) {
+      'cat' => _catBuiltin(stage, options, inputSource),
       'curl' => _curlBuiltin(stage, options, inputSource),
       'wget' => _wgetBuiltin(stage, options),
       'git' => _gitBuiltin(stage, options),
@@ -508,6 +512,18 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
           stderr: const [],
           exitCode: 0,
         ),
+      );
+    }
+    // gh-1444 C1: a cat whose operands touch pointer semantics is served
+    // by the Dart builtin (the file seam follows `.pointer` siblings; the
+    // coreutils.wasm applet cannot). Plain cats keep the applet path so
+    // the host-cwd argument projection below keeps applying.
+    if (command == 'cat' &&
+        await _catNeedsPointerSeam(args, options, inputSource)) {
+      return _runBuiltin(
+        stage: Stage(command: command, args: args),
+        options: options,
+        inputSource: inputSource,
       );
     }
     final cwd = _effectiveCwd(options);
@@ -1342,6 +1358,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     final instance = built.valueOrNull!;
 
     final bridge = _stageBridge(command, captureStdout);
+    // gh-1444 AC8: python launches print the platform-libraries warning on
+    // every run — the line filter drops it from the captured stderr.
+    final noiseFilter = _isPythonCommand(command)
+        ? WasiPythonNoiseFilter()
+        : null;
     final io = _StageIo();
     final stdoutSub = _subscribeStdout(
       instance,
@@ -1355,6 +1376,7 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       io,
       options?.onStderr,
       captureStderr,
+      noiseFilter: noiseFilter,
     );
     // Not captured = not subscribed = nothing can arrive: done up front so
     // the drain's quiet window only covers streams that can still emit.
@@ -1380,15 +1402,31 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     if (outcome.isErr) {
       final error = outcome.errorOrNull!;
       // Errors speak sandbox paths, never the host root (issue #1156 E4).
+      // gh-1444 AC5: timeout/abort errors carry the captured partial
+      // output (tail-capped like LocalShell) so the honest "timed out
+      // after Ns" result shows WHERE the command was when the cap hit.
       return Err(
         ExecutionError(
           error.code,
           _sanitizeSandboxText(error.message),
           cause: error.cause,
+          stdout: _tailCapture(
+            utf8.decode(io.stdoutBuffer, allowMalformed: true),
+          ),
+          stderr: _tailCapture(
+            utf8.decode(io.stderrBuffer, allowMalformed: true),
+          ),
         ),
       );
     }
     _lastStageExitCode = outcome.valueOrNull!;
+
+    // The python noise filter holds back a trailing partial line — flush
+    // whatever survives into the captured stderr once the run settled.
+    final tail = noiseFilter?.flush();
+    if (tail != null && tail.isNotEmpty) {
+      io.stderrBuffer.addAll(tail);
+    }
 
     return Ok(
       StageResult(
@@ -1397,6 +1435,16 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         exitCode: _lastStageExitCode ?? 0,
       ),
     );
+  }
+
+  /// Tail-caps a killed stage's captured output for the error fields
+  /// (gh-1444 AC5), matching LocalShell's `_captureMax` budget so every
+  /// backend inherits the same bounded-retention contract.
+  static const _captureMax = 64 * 1024;
+
+  static String _tailCapture(String text) {
+    if (text.length <= _captureMax) return text;
+    return '…[truncated]${text.substring(text.length - _captureMax)}';
   }
 
   /// Prepares the stage environment: unpacks the python stdlib on first
@@ -1490,7 +1538,13 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
         captureStdout &&
         (sandboxHostPath?.isNotEmpty ?? false);
     return enabled
-        ? FaHttpBridge(sandboxRoot: sandboxHostPath!, httpClient: _httpClient)
+        ? FaHttpBridge(
+            sandboxRoot: sandboxHostPath!,
+            httpClient: _httpClient,
+            // gh-1444 AC3: bridged python requests that die on the
+            // transport are logged, not just folded into the OSError.
+            logFailure: (line) => AppLog.i('bridge', line),
+          )
         : null;
   }
 
@@ -1526,13 +1580,21 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     WasmInstance instance,
     _StageIo io,
     void Function(String)? onStderr,
-    bool captureStderr,
-  ) {
+    bool captureStderr, {
+    WasiPythonNoiseFilter? noiseFilter,
+  }) {
     return captureStderr
         ? instance.stderr.listen(
             (chunk) {
               debugPrint('[wasm_shell] stderr chunk: ${chunk.length} bytes');
-              io.collect(io.stderrBuffer, chunk, onStderr);
+              if (noiseFilter == null) {
+                io.collect(io.stderrBuffer, chunk, onStderr);
+              } else {
+                final clean = Uint8List.fromList(noiseFilter.process(chunk));
+                if (clean.isNotEmpty) {
+                  io.collect(io.stderrBuffer, clean, onStderr);
+                }
+              }
             },
             onDone: () {
               io.stderrDone = true;
@@ -1553,7 +1615,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     required StreamSubscription<Uint8List>? stderrSub,
     required ShellExecOptions? options,
   }) async {
-    final timeout = options?.timeout ?? const Duration(seconds: 30);
+    // gh-1444 C5: the flat 30s default killed every fs-wide scan (`find /`,
+    // 184 `timeout 0:00:30` lines in one session log). The mobile sandbox
+    // default is now 120s — honest timeout text + captured partial output
+    // (see resolveStageOutcome/_runStage) tell the model what happened.
+    final timeout = options?.timeout ?? const Duration(seconds: 120);
     debugPrint('[wasm_shell] starting _start with timeout $timeout...');
     var timedOut = false;
     final timeoutFuture = Future<void>.delayed(timeout, () => timedOut = true);
@@ -1566,7 +1632,10 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
           await instance.runWasiStartAsync();
           debugPrint('[wasm_shell] _start completed');
         } on Object catch (e) {
-          debugPrint('[wasm_shell] _start error: $e');
+          // gh-1444 AC7: a normal exit status (proc_exit 1/2 — a grep miss,
+          // a failing test) is debug noise, not a harness fault; the log
+          // line must not say "error" for it (app.log triage greps it).
+          debugPrint(wasmStartLogLine(e));
           runError = e;
         } finally {
           if (!runCompleter.isCompleted) runCompleter.complete();
@@ -1619,31 +1688,12 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     }
   }
 
-  /// Parses the exit code from a wasmtime I32Exit trap.
+  /// Parses the exit code from a wasmtime I32Exit trap (the shared grammar
+  /// lives in wasm_shell_builtins.dart so the AC7 log-line classifier and
+  /// this resolver cannot drift).
   ///
   /// Returns `null` when [error] cannot be parsed as a normal WASI exit.
-  static int? _parseExitCode(Object? error) {
-    if (error == null) return 0;
-    final message = error.toString();
-
-    // wasmtime represents `proc_exit(n)` as `I32Exit(n)`. Older versions use
-    // "i32 exit with value N", newer versions wrap it as
-    // "Exited with i32 exit status N".
-    final i32Match = RegExp(
-      r'i32\s+(?:exit\s+with\s+value|exit\s+status)\s*(\d+)',
-    ).firstMatch(message);
-    if (i32Match != null) {
-      return int.tryParse(i32Match.group(1)!);
-    }
-
-    // wasmtime 14 with the wasi command adapter can report an invalid exit
-    // status; treat that as a non-zero failure.
-    if (message.contains('exit with invalid exit status')) {
-      return 1;
-    }
-
-    return null;
-  }
+  static int? _parseExitCode(Object? error) => parseWasiExitCode(error);
 
   /// Pure post-run outcome resolution for one WASM stage (issue #475).
   ///
@@ -1836,15 +1886,11 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
     }
 
     final merged = <String, String>{...env, ...assignments};
-    final lines =
-        merged.entries
-            .where((e) => e.key != '?') // POSIX `$?` is not a real env var.
-            .map((e) => '${e.key}=${e.value}')
-            .toList()
-          ..sort();
+    // gh-1444 AC4: rostered secret vars render as PRESENT/ABSENT lines —
+    // presence is verifiable, values never render.
     return Ok(
       StageResult(
-        stdout: utf8.encode(lines.join('\n') + (lines.isNotEmpty ? '\n' : '')),
+        stdout: utf8.encode(renderEnvListingWithSecretPresence(merged)),
         stderr: const [],
         exitCode: 0,
       ),
@@ -1860,6 +1906,9 @@ final class WasiSandboxShell implements Shell, BackgroundShell, GitShellHost {
       dnsQuery: _systemDnsQuery,
       whoisConnector: (query, server) =>
           _tcpWhois(query, server, timeout: timeout),
+      // gh-1444 AC3: curl/wget transport failures land in app.log with a
+      // `[bridge]` line, not just in the tool result.
+      logFailure: (line) => AppLog.i('bridge', line),
       readTextFile: (path) => _readSandboxText(_resolveSandboxPath(path, cwd)),
       writeBinaryFile: (path, bytes) =>
           _writeSandboxBytes(_resolveSandboxPath(path, cwd), bytes),

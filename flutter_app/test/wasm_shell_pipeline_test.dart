@@ -15,6 +15,8 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 
 import 'package:fa/sandbox/wasm_shell.dart';
+import 'package:fa/sandbox/wasm_shell_builtins.dart'
+    show applyCatNumbering;
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:wasm_run/wasm_run.dart';
@@ -250,18 +252,18 @@ void main() {
 
   group('stage engine over scripted modules', () {
     test('build failure surfaces a spawn error', () async {
-      final r = await shell().exec('cat notes.txt');
+      final r = await shell().exec('tail notes.txt');
       expect(r.isErr, isTrue);
       expect(r.errorOrNull?.code, ExecutionErrorCode.spawnError);
     });
 
-    test('cat operand is rewritten against the current directory', () async {
+    test('tail operand is rewritten against the current directory', () async {
       io.Directory('${sandbox.path}/work').createSync();
       rec.next = _ScriptedInstance();
-      final r = await shell().exec('cd /work && cat notes.txt');
+      final r = await shell().exec('cd /work && tail notes.txt');
       expect(r.isOk, isTrue); // the stub's start returns, exit 0
       expect(rec.configs, hasLength(1));
-      expect(rec.configs.single.args, ['cat', '/work/notes.txt']);
+      expect(rec.configs.single.args, ['tail', '/work/notes.txt']);
     });
 
     test('dd if=/of= operands are rewritten', () async {
@@ -312,7 +314,7 @@ void main() {
 
     test('non-python stages get no PYTHONPATH', () async {
       rec.next = _ScriptedInstance();
-      await shell().exec('cat notes.txt');
+      await shell().exec('tail notes.txt');
       expect(
         rec.configs.single.env.map((e) => e.name),
         isNot(contains('PYTHONPATH')),
@@ -324,7 +326,7 @@ void main() {
       final instance = _ScriptedInstance();
       rec.next = instance;
       final future = shell().exec(
-        'cat x',
+        'tail x',
         options: ShellExecOptions(onStdout: seen.add),
       );
       instance.out.add(utf8.encode('hello'));
@@ -340,14 +342,14 @@ void main() {
       final instance = _ScriptedInstance()
         ..startError = Exception('Exited with i32 exit status 7');
       rec.next = instance;
-      final r = await shell().exec('cat x');
+      final r = await shell().exec('tail x');
       expect(r.valueOrNull!.exitCode, 7);
     });
 
     test('unparsable traps with output degrade to exit 1', () async {
       final instance = _ScriptedInstance()..startError = StateError('trap');
       rec.next = instance;
-      final future = shell().exec('cat x');
+      final future = shell().exec('tail x');
       instance.out.add(utf8.encode('partial'));
       final r = await future;
       expect(r.valueOrNull!.exitCode, 1);
@@ -357,7 +359,7 @@ void main() {
       final instance = _ScriptedInstance()..gate = Completer<void>();
       rec.next = instance;
       final r = await shell().exec(
-        'cat x',
+        'tail x',
         options: ShellExecOptions(timeout: const Duration(milliseconds: 30)),
       );
       expect(r.isErr, isTrue);
@@ -366,12 +368,33 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 10));
     });
 
+    test(
+      'a timed-out stage carries its captured partial output (AC5)',
+      () async {
+        final instance = _ScriptedInstance()..gate = Completer<void>();
+        rec.next = instance;
+        final future = shell().exec(
+          'tail x',
+          options: ShellExecOptions(timeout: const Duration(milliseconds: 50)),
+        );
+        // Output lands BEFORE the timeout fires — the kill must keep it.
+        instance.out.add(utf8.encode('scanned-half-of-the-fs'));
+        final r = await future;
+        expect(r.isErr, isTrue);
+        expect(r.errorOrNull?.code, ExecutionErrorCode.timeout);
+        expect(r.errorOrNull?.message, contains('timeout: 0:00:00'));
+        expect(r.errorOrNull?.stdout, contains('scanned-half-of-the-fs'));
+        instance.gate!.complete();
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      },
+    );
+
     test('caller callback failure wins the outcome', () async {
       final instance = _ScriptedInstance()..gate = Completer<void>();
       rec.next = instance;
       final delivered = Completer<void>();
       final future = shell().exec(
-        'cat x',
+        'tail x',
         options: ShellExecOptions(
           onStdout: (s) {
             if (!delivered.isCompleted) delivered.complete();
@@ -788,7 +811,9 @@ void main() {
     test('light commands never touch the lazy loader (AC1)', () async {
       final loads = <String>[];
       rec.next = _ScriptedInstance();
-      final r = await lazyShell(loads).exec('cat notes.txt');
+      // gh-1444: cat is a Dart builtin now; tail still rides the eager
+      // coreutils slot — neither may trigger a lazy interpreter compile.
+      final r = await lazyShell(loads).exec('tail notes.txt');
       expect(r.isOk, isTrue);
       expect(loads, isEmpty);
     });
@@ -979,6 +1004,167 @@ void main() {
       final names = rec.configs.single.env.map((e) => e.name);
       expect(names, isNot(contains('?')));
       expect(names, contains('PATH'));
+    });
+  });
+  group('skill pointer reads (gh-1444 C1/AC1)', () {
+    Future<ShellExecResult> run(String script) async {
+      final r = await shell().exec(script);
+      expect(r.isOk, isTrue, reason: script);
+      return r.valueOrNull!;
+    }
+
+    void seedPointer(String name) {
+      final dir = io.Directory('${sandbox.path}/.fah/skills/$name')
+        ..createSync(recursive: true);
+      io.File(
+        '${dir.path}/SKILL.md.pointer',
+      ).writeAsStringSync('builtin://skills/$name/SKILL.md\n');
+    }
+
+    test(
+      'cat of a skill path follows the pointer to the builtin body',
+      () async {
+        seedPointer('create-goal');
+        final r = await run('cat .fah/skills/create-goal/SKILL.md');
+        expect(
+          r.stdout,
+          builtinSkillTextAt('builtin://skills/create-goal/SKILL.md'),
+        );
+        expect(r.exitCode, 0);
+      },
+    );
+
+    test('a real file wins; a refused pointer fails loudly (E1)', () async {
+      io.File('${sandbox.path}/real.txt').writeAsStringSync('bytes');
+      // A plain cat rides the coreutils applet path (the gh-1274 projection
+      // contract): it reaches the WASM stage with the raw operand and the
+      // pointer seam is not consulted.
+      rec.next = _ScriptedInstance();
+      await shell().exec('cat real.txt');
+      expect(rec.configs.single.args, contains('/real.txt'));
+
+      final dir = io.Directory('${sandbox.path}/.fah/skills/create-goal')
+        ..createSync(recursive: true);
+      io.File(
+        '${dir.path}/SKILL.md.pointer',
+      ).writeAsStringSync('file:///etc/passwd\n');
+      final r = await run('cat .fah/skills/create-goal/SKILL.md');
+      expect(r.exitCode, 1);
+      expect(r.stderr, contains('skill pointer refused'));
+      expect(r.stderr, isNot(contains('No such file or directory')));
+    });
+
+    test('pointer bodies ride pipes into Dart builtins', () async {
+      seedPointer('js-apps');
+      final body = builtinSkillTextAt('builtin://skills/js-apps/SKILL.md')!;
+      final reversed = body
+          .substring(0, body.length - 1)
+          .split('\n')
+          .reversed
+          .join('\n');
+      final r = await run('cat .fah/skills/js-apps/SKILL.md | tac');
+      expect(r.stdout, '$reversed\n');
+    });
+
+    test(
+      'cat of a binary file never routes bytes through a UTF-8 API',
+      () async {
+        // The file class AC6's own recipe produces (a codeload tarball):
+        // gzip magic plus bytes that are not valid UTF-8. The probe must not
+        // read the operand as text — the coreutils applet is binary-safe and
+        // keeps handling plain cats.
+        final tarball = Uint8List.fromList([
+          0x1f, 0x8b, 0x08, 0x00, 0xff, 0xfe, 0x00, 0x82, //
+          0xed, 0x7f, 0x9c, 0x3a, 0x00, 0xc0, 0x80, 0xff,
+        ]);
+        io.File('${sandbox.path}/repo.tar.gz').writeAsBytesSync(tarball);
+        final instance = _ScriptedInstance();
+        rec.next = instance;
+        final future = shell().exec('cat repo.tar.gz');
+        instance.out.add(tarball);
+        final r = await future;
+        expect(r.isOk, isTrue, reason: r.errorOrNull?.message);
+        expect(r.valueOrNull!.exitCode, 0);
+        // ShellExecResult.stdout is a String: binary bytes surface as the
+        // lossy decoding of exactly the bytes the applet echoed.
+        expect(
+          r.valueOrNull!.stdout,
+          utf8.decode(tarball, allowMalformed: true),
+        );
+        // The operand stayed on the applet path (raw projection preserved).
+        expect(rec.configs.single.args, contains('/repo.tar.gz'));
+      },
+    );
+
+    test(
+      'cat of a binary operand beside a pointer seam delivers the bytes',
+      () async {
+        // Mixed operands: the pointer file pulls the invocation onto the Dart
+        // cat builtin, but the BINARY operand must still be delivered — the
+        // seam reads it as bytes, never as text.
+        seedPointer('create-goal');
+        final tarball = Uint8List.fromList([
+          0x42, 0x5a, 0x68, 0x00, 0xff, 0x00, 0x80, 0x7f, //
+        ]);
+        io.File('${sandbox.path}/dl.tar').writeAsBytesSync(tarball);
+        final body = builtinSkillTextAt(
+          'builtin://skills/create-goal/SKILL.md',
+        )!;
+        final r = await run('cat .fah/skills/create-goal/SKILL.md dl.tar');
+        expect(r.exitCode, 0);
+        expect(
+          r.stdout,
+          utf8.decode(utf8.encode(body) + tarball, allowMalformed: true),
+        );
+      },
+    );
+
+    test('the builtin:// URI is a direct cat operand on the WASI shell too',
+        () async {
+      final r = await run('cat builtin://skills/create-goal/SKILL.md');
+      expect(r.exitCode, 0);
+      expect(r.stdout, builtinSkillTextAt(
+        'builtin://skills/create-goal/SKILL.md',
+      ));
+      // No WASM stage was launched for the builtin operand.
+      expect(rec.configs, isEmpty);
+    });
+
+    test('an unknown builtin:// operand is a plain ENOENT', () async {
+      final r = await run('cat builtin://skills/nope/SKILL.md');
+      expect(r.exitCode, 1);
+      expect(r.stderr, contains('No such file or directory'));
+    });
+
+    test('cat -n numbers a seamed skill body like the applet would',
+        () async {
+      seedPointer('create-goal');
+      final r = await run('cat -n .fah/skills/create-goal/SKILL.md');
+      expect(r.exitCode, 0);
+      expect(r.stdout, contains('     1\t'));
+      // The numbering rides the same body bytes.
+      expect(
+        r.stdout.endsWith(
+          applyCatNumbering(
+            builtinSkillTextAt('builtin://skills/create-goal/SKILL.md')!,
+            nonBlankOnly: false,
+          ),
+        ),
+        isTrue,
+      );
+    });
+
+    test('a missing operand beside a seam errors GNU-shaped, exit 1',
+        () async {
+      seedPointer('create-goal');
+      final r = await run('cat .fah/skills/create-goal/SKILL.md /nope.txt');
+      expect(r.exitCode, 1);
+      expect(r.stderr, contains('cat: /nope.txt: No such file or directory'));
+      // The seamed operand still printed before the failure.
+      expect(
+        r.stdout,
+        builtinSkillTextAt('builtin://skills/create-goal/SKILL.md'),
+      );
     });
   });
 }
