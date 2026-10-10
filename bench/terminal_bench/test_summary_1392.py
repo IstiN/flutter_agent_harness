@@ -272,7 +272,7 @@ class ProviderLabelTest(unittest.TestCase):
         from unittest import mock
 
         with mock.patch.dict(
-            os.environ, {"BENCH_RUN_LABEL": "zai glm (glm-5.3-flash)"}
+            os.environ, {"BENCH_RUN_LABEL": "zai-glm-5.3-flash (glm-5.3-flash)"}
         ), mock.patch.object(
             summary.sys, "argv", ["summary.py", "--no-fail", str(self.runs)]
         ):

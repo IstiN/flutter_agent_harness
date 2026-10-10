@@ -90,13 +90,18 @@ on:
         required: false
         default: 'hello-world'
       provider:
-        description: 'LLM provider for this run (gh-1471: default = todays behavior bit-for-bit; kimi needs the FA_BENCH_KIMI_KEY secret)'
+        description: 'LLM provider for this run (gh-1471: default = todays behavior bit-for-bit; kimi needs the FA_BENCH_KIMI_KEY secret; custom needs FA_BENCH_CUSTOM_KEY + provider-config)'
         required: false
         default: 'zai-glm-5.3-flash'
         type: choice
         options:
           - 'zai-glm-5.3-flash'
           - 'kimi-for-coding'
+          - 'custom'
+      provider-config:
+        description: 'gh-1471 D1/AC 2a: ONLY when provider=custom — the provider config JSON {"type","baseUrl","model","contextWindow","maxTokens"}. The API key NEVER rides this input (run metadata is visible) — it comes only from the FA_BENCH_CUSTOM_KEY secret'
+        required: false
+        default: ''
       dataset:
         description: 'Dataset spec passed to tb -d (name==version)'
         required: false
@@ -182,14 +187,17 @@ jobs:
         id: provider
         env:
           PROVIDER: ${{ inputs.provider }}
+          PROVIDER_CONFIG: ${{ inputs.provider-config }}
           BENCH_MODEL: ${{ env.BENCH_MODEL }}
           FA_BENCH_ZAI_KEY: ${{ secrets.FA_BENCH_ZAI_KEY }}
           FA_BENCH_KIMI_KEY: ${{ secrets.FA_BENCH_KIMI_KEY }}
+          FA_BENCH_CUSTOM_KEY: ${{ secrets.FA_BENCH_CUSTOM_KEY }}
         run: |
           set -euo pipefail
           case "$PROVIDER" in
             ''|zai-glm-5.3-flash)
               provider_type=zai
+              choice=zai-glm-5.3-flash
               base_url='https://api.z.ai/api/coding/paas/v4'
               model="$BENCH_MODEL"
               key_env=FA_KEY_API_Z_AI_Z_AI
@@ -199,7 +207,9 @@ jobs:
               # 3-field config — a zai run stays byte-identical.
               provider_config=$(printf '{"baseUrl":"%s","model":"%s","apiKeyEnvVar":"%s"}' \
                 "$base_url" "$model" "$key_env")
-              run_label="zai glm ($model)"
+              # D5: one spelling everywhere — the label derives from the
+              # dispatch choice id, matching run-name.
+              run_label="$choice ($model)"
               ;;
             kimi-for-coding)
               provider_type=kimi
@@ -215,8 +225,59 @@ jobs:
                 "$base_url" "$model" "$key_env")
               run_label="kimi-for-coding ($model)"
               ;;
+            custom)
+              # gh-1471 D1 / AC 2a: the custom escape hatch — a new
+              # provider tomorrow needs zero workflow edits. The key
+              # NEVER rides the dispatch input (inputs are visible in
+              # run metadata): it comes only from the FA_BENCH_CUSTOM_KEY
+              # secret, injected as the fixed apiKeyEnvVar below.
+              secret_name=FA_BENCH_CUSTOM_KEY
+              secret_value=$FA_BENCH_CUSTOM_KEY
+              key_env=FA_KEY_BENCH_CUSTOM
+              if [ -z "$PROVIDER_CONFIG" ]; then
+                echo "::error::provider custom selected but the provider-config input is empty — pass the provider JSON (at least baseUrl and model)"; exit 1
+              fi
+              # jq-level validation (AC 2a): every failure names the
+              # offending input and dies BEFORE any shard starts.
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'type == "object"' >/dev/null 2>&1; then
+                echo "::error::provider-config must be a JSON object — got: $PROVIDER_CONFIG"; exit 1
+              fi
+              # Key-like fields hard-fail: a pasted key in a dispatch
+              # input would leak through run metadata. Whole-word match
+              # on the key's split words (camelCase/snake_case divided) —
+              # so the legitimate `maxTokens` capability key passes while
+              # `token`/`accessToken`/`api_key` are caught.
+              leaked=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '
+                def words: gsub("(?<l>[a-z0-9])(?<u>[A-Z])"; "\(.l)_\(.u)")
+                  | gsub("[ _-]+"; " ") | ascii_downcase | split(" ");
+                [keys[]
+                  | select(. | words
+                      | map(test("^(api.?key|apikey|key|token|secret)$"))
+                      | any)]
+                  | join(", ")')
+              if [ -n "$leaked" ]; then
+                echo "::error::provider-config must not carry key material — dispatch inputs are visible in run metadata; offending field(s): $leaked. The key comes only from the FA_BENCH_CUSTOM_KEY secret"; exit 1
+              fi
+              # Required: a non-empty https:// baseUrl and a model — the
+              # plain-http ban keeps the bench key off a cleartext wire.
+              for field in baseUrl model; do
+                if ! printf '%s' "$PROVIDER_CONFIG" | jq -e --arg f "$field" '.[$f] | type == "string" and length > 0' >/dev/null 2>&1; then
+                  echo "::error::provider-config is missing a non-empty \"$field\" — required: baseUrl, model"; exit 1
+                fi
+              done
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e '.baseUrl | startswith("https://")' >/dev/null 2>&1; then
+                echo "::error::provider-config baseUrl must start with https:// (a plaintext endpoint would expose the bench key) — got: $(printf '%s' "$PROVIDER_CONFIG" | jq -r '.baseUrl')"; exit 1
+              fi
+              # Verbatim passthrough (every declared field rides the
+              # config) plus the fixed key-env injection; `type` defaults
+              # to the openai-compatible catalog entry.
+              provider_type=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '.type // "openai"')
+              model=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '.model')
+              provider_config=$(printf '%s' "$PROVIDER_CONFIG" | jq -c --arg k "$key_env" '. + {apiKeyEnvVar: $k}')
+              run_label="custom ($model)"
+              ;;
             *)
-              echo "::error::unknown provider '$PROVIDER' — expected 'zai-glm-5.3-flash' or 'kimi-for-coding'"; exit 1 ;;
+              echo "::error::unknown provider '$PROVIDER' — expected 'zai-glm-5.3-flash', 'kimi-for-coding' or 'custom'"; exit 1 ;;
           esac
           if [ -z "$secret_value" ]; then
             echo "::error::provider $PROVIDER selected but secret $secret_name is not set"; exit 1
@@ -355,14 +416,16 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/bench/terminal_bench
           # gh-1471: the provider triple is resolved once in the setup
           # job (preflighted secret + hard fail on an unmapped choice) —
-          # the shard only consumes it. Both bench keys are mapped here;
-          # the run block picks the resolved one by name, fa_agent.py
-          # ships exactly that key into the container.
+          # the shard only consumes it. All three bench keys are mapped
+          # here (custom's AC 2a: key only from FA_BENCH_CUSTOM_KEY); the
+          # run block picks the resolved one by name, fa_agent.py ships
+          # exactly that key into the container.
           FA_PROVIDER_TYPE: ${{ needs.setup.outputs.provider_type }}
           FA_PROVIDER_CONFIG: ${{ needs.setup.outputs.provider_config }}
           FA_PROVIDER_KEY_ENV: ${{ needs.setup.outputs.provider_key_env }}
           FA_KEY_API_Z_AI_Z_AI: ${{ secrets.FA_BENCH_ZAI_KEY }}
           FA_KEY_API_KIMI_COM_BENCH: ${{ secrets.FA_BENCH_KIMI_KEY }}
+          FA_KEY_BENCH_CUSTOM: ${{ secrets.FA_BENCH_CUSTOM_KEY }}
           DATASET: ${{ inputs.dataset }}
           AGENT_TIMEOUT: ${{ inputs.agent-timeout }}
           PROGRESS_EXTENSION: ${{ inputs.progress-extension }}

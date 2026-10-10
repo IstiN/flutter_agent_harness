@@ -277,54 +277,66 @@ _parseConfig(String raw) {
       'FA_PROVIDER_CONFIG must be a JSON object, got: $raw',
     );
   }
-  final values = <String, String>{};
+  // One mutable accumulator so the per-entry routing ([_takeConfigEntry])
+  // stays a plain branch on the key — _parseConfig itself carries only
+  // the shape checks (the CRAP ratchet counts every branch).
+  final parsed = _ParsedConfig();
+  for (final entry in decoded.entries) {
+    // jsonDecode produces string keys for JSON objects.
+    _takeConfigEntry(entry.key as String, entry.value, parsed);
+  }
+  return (
+    values: parsed.values,
+    input: parsed.input,
+    thinkingLevel: parsed.thinkingLevel,
+    contextWindow: parsed.contextWindow,
+    maxTokens: parsed.maxTokens,
+  );
+}
+
+/// The mutable destination for [_takeConfigEntry]: the plain string
+/// values plus each typed, validated optional field.
+final class _ParsedConfig {
+  final Map<String, String> values = {};
   List<String>? input;
   String? thinkingLevel;
   int? contextWindow;
   int? maxTokens;
-  for (final entry in decoded.entries) {
-    // jsonDecode produces string keys for JSON objects.
-    final key = entry.key as String;
-    if (!_supportedConfigKeys.contains(key)) {
-      throw ConfigException(
-        'unknown FA_PROVIDER_CONFIG key: "$key" — supported keys: '
-        '${_supportedConfigKeys.join(', ')}',
-      );
-    }
-    if (key == 'input') {
-      input = _parseInputList(entry.value);
-      continue;
-    }
-    if (key == 'thinkingLevel') {
-      thinkingLevel = _parseThinkingLevel(entry.value);
-      continue;
-    }
-    if (key == 'contextWindow' || key == 'maxTokens') {
-      final parsed = _parseCapabilityInt(key, entry.value);
+}
+
+/// Routes one `FA_PROVIDER_CONFIG` entry to its typed parser, writing
+/// the result into [into]: the structured keys delegate to their
+/// validators, everything else is a required-shape plain string (blank =
+/// absent, like every other text value).
+void _takeConfigEntry(String key, Object? value, _ParsedConfig into) {
+  if (!_supportedConfigKeys.contains(key)) {
+    throw ConfigException(
+      'unknown FA_PROVIDER_CONFIG key: "$key" — supported keys: '
+      '${_supportedConfigKeys.join(', ')}',
+    );
+  }
+  switch (key) {
+    case 'input':
+      into.input = _parseInputList(value);
+    case 'thinkingLevel':
+      into.thinkingLevel = _parseThinkingLevel(value);
+    case 'contextWindow' || 'maxTokens':
+      final parsed = _parseCapabilityInt(key, value);
       if (parsed != null) {
         if (key == 'contextWindow') {
-          contextWindow = parsed;
+          into.contextWindow = parsed;
         } else {
-          maxTokens = parsed;
+          into.maxTokens = parsed;
         }
       }
-      continue;
-    }
-    final value = entry.value;
-    if (value is! String) {
-      throw ConfigException(
-        'FA_PROVIDER_CONFIG key "$key" must be a string, got: $value',
-      );
-    }
-    if (value.trim().isNotEmpty) values[key] = value;
+    default:
+      if (value is! String) {
+        throw ConfigException(
+          'FA_PROVIDER_CONFIG key "$key" must be a string, got: $value',
+        );
+      }
+      if (value.trim().isNotEmpty) into.values[key] = value;
   }
-  return (
-    values: values,
-    input: input,
-    thinkingLevel: thinkingLevel,
-    contextWindow: contextWindow,
-    maxTokens: maxTokens,
-  );
 }
 
 /// One `contextWindow`/`maxTokens` declaration: a JSON integer at or

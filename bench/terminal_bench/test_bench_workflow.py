@@ -358,7 +358,9 @@ class ProviderResolveStepTest(unittest.TestCase):
             self.assertEqual(outputs["provider_config"], self.LEGACY_ZAI_CONFIG)
             self.assertEqual(outputs["provider_key_env"], "FA_KEY_API_Z_AI_Z_AI")
             self.assertEqual(outputs["bench_model"], "glm-5.3-flash")
-            self.assertEqual(outputs["run_label"], "zai glm (glm-5.3-flash)")
+            # D5: one spelling everywhere — the run label derives from
+            # the dispatch choice id, matching run-name.
+            self.assertEqual(outputs["run_label"], "zai-glm-5.3-flash (glm-5.3-flash)")
 
     def test_default_config_has_no_capability_fields(self):
         # REG-1's sharpened form: the zai JSON must stay the 3-field
@@ -623,6 +625,13 @@ class ProviderSelectionShapeTest(unittest.TestCase):
         )
         self.assertIn("type: choice", text)
         self.assertIn("- 'kimi-for-coding'", text)
+        # gh-1471 D1 / AC 2a: the custom escape hatch is a dispatch
+        # choice, fed by the free-text provider-config input.
+        self.assertIn("- 'custom'", text)
+        self.assertRegex(
+            text,
+            r"provider-config:\n(?:[^\n]*\n){1,4}\s+default: ''",
+        )
 
     def test_setup_job_exports_the_resolved_provider(self):
         text = _yml_text()
@@ -643,6 +652,11 @@ class ProviderSelectionShapeTest(unittest.TestCase):
         resolve_env = text.split('id: provider', 1)[1].split('run: |', 1)[0]
         self.assertIn("FA_BENCH_ZAI_KEY: ${{ secrets.FA_BENCH_ZAI_KEY }}", resolve_env)
         self.assertIn("FA_BENCH_KIMI_KEY: ${{ secrets.FA_BENCH_KIMI_KEY }}", resolve_env)
+        # AC 2a: the custom path preflights FA_BENCH_CUSTOM_KEY and
+        # receives the provider-config input via env (the run block must
+        # stay free of GitHub expressions for the UT harness).
+        self.assertIn("FA_BENCH_CUSTOM_KEY: ${{ secrets.FA_BENCH_CUSTOM_KEY }}", resolve_env)
+        self.assertIn("PROVIDER_CONFIG: ${{ inputs.provider-config }}", resolve_env)
 
     def test_shard_env_consumes_the_resolved_provider(self):
         text = _yml_text()
@@ -658,9 +672,12 @@ class ProviderSelectionShapeTest(unittest.TestCase):
         # The zai hardcode is gone from the shard env.
         self.assertNotIn('FA_PROVIDER_TYPE: zai', text)
         self.assertNotIn('{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"${{ env.BENCH_MODEL }}"', text)
-        # Both bench keys are mapped; the run block picks by name.
+        # Both bench keys are mapped; the run block picks by name. The
+        # custom path adds its fixed key env (AC 2a: key only from
+        # FA_BENCH_CUSTOM_KEY).
         self.assertIn("FA_KEY_API_Z_AI_Z_AI: ${{ secrets.FA_BENCH_ZAI_KEY }}", text)
         self.assertIn("FA_KEY_API_KIMI_COM_BENCH: ${{ secrets.FA_BENCH_KIMI_KEY }}", text)
+        self.assertIn("FA_KEY_BENCH_CUSTOM: ${{ secrets.FA_BENCH_CUSTOM_KEY }}", text)
 
     def test_shard_run_block_resolves_the_key_by_name(self):
         block = _shard_run_block()
