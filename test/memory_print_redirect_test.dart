@@ -97,7 +97,7 @@ void main() {
             env: MemoryExecutionEnv(),
             llmProvider: _ThrowingProvider(),
           );
-          await controller.search('keyword');
+          await controller.add(text: 'durable keyword fact');
         },
         zoneSpecification: ZoneSpecification(
           print: (self, parent, zone, line) => stdoutLines.add(line),
@@ -105,7 +105,10 @@ void main() {
       );
       // Null sink = pass-through (embedders/headless keep the package's
       // debug output; the TUI host always wires the diagnostic log).
-      expect(stdoutLines.any((l) => l.contains('KBSearchEngine')), isTrue);
+      expect(
+        stdoutLines.any((l) => l.contains('KBTagGeneratorAgent')),
+        isTrue,
+      );
     });
   });
 }
