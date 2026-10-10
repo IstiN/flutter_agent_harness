@@ -148,6 +148,18 @@
         37798533323,
         37774628085
       ]
+    },
+    {
+      "file": "test/integration/header_badge_pty_test.dart",
+      "test": "a mid-run fold badges the status row until the turn settles",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1469",
+      "since": "2026-10-10",
+      "runs": [
+        38027168550,
+        38026164420,
+        38018978560,
+        37962382097
+      ]
     }
   ]
 }
