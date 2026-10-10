@@ -196,7 +196,12 @@ jobs:
       - name: Setup Flutter environment
         uses: ./.github/actions/setup-flutter-selfhosted
         with:
-          flutter-version: '3.47.x'
+          # EXACT patch pin (#1431): this leg builds + gates fa-extension.zip
+          # against scripts/size_budget/fa-extension.tsv — a wildcard pin
+          # re-resolves a new engine build on every 3.47.x patch and moves
+          # the canvaskit/skwasm rev-hash dir the gate tracks. Bump
+          # consciously, with any floor reseed in the same PR.
+          flutter-version: '3.47.7'
 
       - name: Setup host toolchains
         run: |

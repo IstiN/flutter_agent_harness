@@ -376,7 +376,7 @@ String renderApprovalFixture() {
     arguments: {'command': 'rm -rf ./build'},
     reason: 'exec tier requires approval in mode: code',
   );
-  return '>_o  Working…      3s\n${_sheet(ApprovalPromptSpec(request: request))}\n';
+  return 'Working…      3s\n${_sheet(ApprovalPromptSpec(request: request))}\n';
 }
 
 String renderSecretFixture() {
@@ -384,7 +384,7 @@ String renderSecretFixture() {
     name: 'SERPAPI_KEY',
     reason: 'the web_search tool needs a SerpApi key',
   );
-  return '>_o  Working…      3s\n${_sheet(spec)}\n';
+  return 'Working…      3s\n${_sheet(spec)}\n';
 }
 
 String renderAskFixture() {
@@ -399,7 +399,7 @@ String renderAskFixture() {
     ],
     recommended: 0,
   );
-  return '>_o  Working…      3s\n${_sheet(spec)}\n';
+  return 'Working…      3s\n${_sheet(spec)}\n';
 }
 
 String renderInputFixture() =>
@@ -586,7 +586,7 @@ void main() {
         _classifyFaScreen(
           manifest,
           '$filler\n┌─ Approval ───┐\n│ Approve once (y) │\n'
-          '$fillerAfter\n-_-  Working…      5s\n╰─ \n',
+          '$fillerAfter\nWorking…      5s\n╰─ \n',
         ),
         'working',
       );
