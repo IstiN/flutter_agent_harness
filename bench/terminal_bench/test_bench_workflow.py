@@ -23,6 +23,20 @@ tmux pane itself (string-level asserts on the generated TerminalCommand
 bench_metrics.json folded zero requests despite real model usage must
 fire a LOUD workflow warning, never ship an empty shell silently.
 
+gh-1471: the setup-job provider resolve step maps the dispatch choice
+(zai-glm-5.3-flash default / kimi-for-coding / custom) to the full
+provider triple and preflights the selected secret BEFORE any shard
+starts — each choice pins (type, baseUrl, model, apiKeyEnvVar), an
+unmapped value fails hard, a missing secret fails fast naming the
+secret, and a key value never reaches the log. The custom path (D1 /
+AC 2a) validates the provider-config JSON (parseable object, non-empty
+https:// baseUrl + model, no key-like fields case-insensitively at any
+depth, plus the Dart preconfig contract mirror: closed key whitelist,
+capability integer+floor pair, type/input/thinkingLevel shapes) and
+injects the fixed apiKeyEnvVar FA_KEY_BENCH_CUSTOM — the key comes only
+from FA_BENCH_CUSTOM_KEY. REG-1: the default's provider_config is
+byte-identical to the pre-gh-1471 3-field zai JSON.
+
 Run: python3 -m unittest discover -s bench/terminal_bench
 """
 import importlib.util
@@ -83,6 +97,86 @@ def _shard_run_block() -> str:
     return block
 
 
+def _resolve_run_block() -> str:
+    """Extracts the `run: |` block of the gh-1471 provider resolve step.
+
+    Same text-slicing contract as [_shard_run_block]: the block is
+    identified by its body (the provider_config printf), so unrelated
+    `run:` blocks never match. The block is env-driven (inputs/secrets
+    arrive via the step env), so no GitHub expression may appear inside.
+    """
+    lines = _BENCH_YML.read_text().splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() != "run: |":
+            continue
+        indent = len(line) - len(line.lstrip())
+        body = []
+        for candidate in lines[i + 1 :]:
+            if candidate.strip() and (len(candidate) - len(candidate.lstrip())) <= indent:
+                break
+            body.append(candidate)
+        while body and not body[-1].strip():
+            body.pop()
+        block = "\n".join(body)
+        if "provider_config=$(printf" in block:
+            break
+    else:
+        raise AssertionError("provider resolve step's run: | block not found in bench.yml")
+    leftover = re.findall(r"\$\{\{[^}]*\}\}", block)
+    assert not leftover, f"unmapped GitHub expression(s) in resolve block: {leftover}"
+    return block
+
+
+# The resolve block runs with GITHUB_OUTPUT pointed at a temp file (the
+# test reads the step outputs from it) and all three bench secrets in env
+# (gh-1471 D1/AC 2a: the custom path preflights FA_BENCH_CUSTOM_KEY).
+def _run_resolve(
+    provider="",
+    zai_key="zai-test-key",
+    kimi_key="kimi-test-key",
+    custom_key="custom-test-key",
+    provider_config="",
+):
+    env = dict(os.environ)
+    env.update(
+        {
+            "PROVIDER": provider,
+            "BENCH_MODEL": "glm-5.3-flash",
+            "PROVIDER_CONFIG": provider_config,
+            "FA_BENCH_ZAI_KEY": zai_key,
+            "FA_BENCH_KIMI_KEY": kimi_key,
+            "FA_BENCH_CUSTOM_KEY": custom_key,
+        }
+    )
+    tmp = tempfile.TemporaryDirectory()
+    output = Path(tmp.name) / "github_output"
+    env["GITHUB_OUTPUT"] = str(output)
+    driver = Path(tmp.name) / "resolve_step.sh"
+    driver.write_text("#!/usr/bin/env bash\n" + _resolve_run_block() + "\n")
+    proc = subprocess.run(
+        ["bash", str(driver)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    proc._tmp = tmp  # caller cleans up after reading the outputs
+    proc.github_output = output
+    return proc
+
+
+def _resolve_outputs(proc) -> dict:
+    if not proc.github_output.exists():
+        return {}
+    result = {}
+    for line in proc.github_output.read_text().splitlines():
+        if "=" in line:
+            key, _, value = line.partition("=")
+            result[key] = value
+    proc._tmp.cleanup()
+    return result
+
+
 # The tb stub records the exact argv the block computed plus the two env
 # vars fa_agent.py's TimeoutKnobs reads, then exits 0 — the real tb never
 # runs in tests.
@@ -108,6 +202,10 @@ def _run_shard(agent_timeout="", progress_extension=""):
             "DATASET": "/tmp/fa-bench-workflow-test-dataset",
             "SHARD_TASKS": "task-0 task-1",
             "FA_KEY_API_Z_AI_Z_AI": "test-key",
+            # gh-1471: the resolve step (setup job) names the key env var
+            # for the run block's indirection; the zai default names the
+            # zai var.
+            "FA_PROVIDER_KEY_ENV": "FA_KEY_API_Z_AI_Z_AI",
             "AGENT_TIMEOUT": agent_timeout,
             "PROGRESS_EXTENSION": progress_extension,
         }
@@ -235,6 +333,380 @@ class BenchWorkflowShardStepTest(unittest.TestCase):
         self.assertNotIn("TB_BEGIN", proc.stdout)
 
 
+@unittest.skipUnless(
+    _BENCH_YML.exists(), "bench.yml not found (standalone bench checkout)"
+)
+@unittest.skipUnless(shutil.which("bash"), "bash not available")
+class ProviderResolveStepTest(unittest.TestCase):
+    """gh-1471: the setup-job resolve step maps the provider choice to
+    the full triple and preflights the selected secret BEFORE any shard
+    starts. Each choice pins (type, baseUrl, model, apiKeyEnvVar); an
+    unmapped value fails hard (never a silent fallthrough to the zai
+    default); a missing secret fails fast naming the secret; the key
+    value never reaches the log (presence only, plus the base64 mask
+    line)."""
+
+    maxDiff = None
+
+    # REG-1: the default must reproduce today's exact 3-field zai config
+    # (the value the shard env carried before gh-1471).
+    LEGACY_ZAI_CONFIG = (
+        '{"baseUrl":"https://api.z.ai/api/coding/paas/v4",'
+        '"model":"glm-5.3-flash","apiKeyEnvVar":"FA_KEY_API_Z_AI_Z_AI"}'
+    )
+
+    def test_default_provider_is_byte_identical_to_today(self):
+        for provider in ("", "zai-glm-5.3-flash"):
+            proc = _run_resolve(provider=provider)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            outputs = _resolve_outputs(proc)
+            self.assertEqual(outputs["provider_type"], "zai")
+            self.assertEqual(outputs["provider_config"], self.LEGACY_ZAI_CONFIG)
+            self.assertEqual(outputs["provider_key_env"], "FA_KEY_API_Z_AI_Z_AI")
+            self.assertEqual(outputs["bench_model"], "glm-5.3-flash")
+            # D5: one spelling everywhere — the run label derives from
+            # the dispatch choice id, matching run-name.
+            self.assertEqual(outputs["run_label"], "zai-glm-5.3-flash (glm-5.3-flash)")
+
+    def test_default_config_has_no_capability_fields(self):
+        # REG-1's sharpened form: the zai JSON must stay the 3-field
+        # legacy shape — no contextWindow/maxTokens keys.
+        proc = _run_resolve()
+        outputs = _resolve_outputs(proc)
+        config = json.loads(outputs["provider_config"])
+        self.assertEqual(
+            set(config), {"baseUrl", "model", "apiKeyEnvVar"}
+        )
+
+    def test_kimi_for_coding_resolves_the_full_triple(self):
+        proc = _run_resolve(provider="kimi-for-coding")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        outputs = _resolve_outputs(proc)
+        self.assertEqual(outputs["provider_type"], "kimi")
+        self.assertEqual(outputs["provider_key_env"], "FA_KEY_API_KIMI_COM_BENCH")
+        self.assertEqual(outputs["bench_model"], "k3-256k")
+        self.assertEqual(outputs["run_label"], "kimi-for-coding (k3-256k)")
+        config = json.loads(outputs["provider_config"])
+        self.assertEqual(config["baseUrl"], "https://api.kimi.com/coding/v1")
+        self.assertEqual(config["model"], "k3-256k")
+        self.assertEqual(config["apiKeyEnvVar"], "FA_KEY_API_KIMI_COM_BENCH")
+        # D4: the capability fields ride the config explicitly.
+        self.assertEqual(config["contextWindow"], 200000)
+        self.assertEqual(config["maxTokens"], 16384)
+
+    def test_unknown_provider_fails_hard_with_no_outputs(self):
+        proc = _run_resolve(provider="gpt-5")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("unknown provider", proc.stdout + proc.stderr)
+        self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_missing_kimi_secret_fails_naming_the_secret(self):
+        proc = _run_resolve(provider="kimi-for-coding", kimi_key="")
+        self.assertNotEqual(proc.returncode, 0)
+        message = proc.stdout + proc.stderr
+        self.assertIn("FA_BENCH_KIMI_KEY", message)
+        self.assertIn("kimi-for-coding", message)
+        self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_missing_zai_secret_fails_naming_the_secret(self):
+        proc = _run_resolve(provider="", zai_key="")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("FA_BENCH_ZAI_KEY", proc.stdout + proc.stderr)
+        self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_key_values_never_reach_the_log(self):
+        # Presence only: the raw key must not appear in stdout/stderr
+        # (the ::add-mask:: line carries the base64 form, like the shard
+        # step's long-standing contract).
+        for provider in ("", "kimi-for-coding", "custom"):
+            provider_config = (
+                '{"baseUrl":"https://api.example.com/v1","model":"m-1"}'
+                if provider == "custom"
+                else ""
+            )
+            proc = _run_resolve(provider=provider, provider_config=provider_config)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertNotIn("zai-test-key", proc.stdout + proc.stderr)
+            self.assertNotIn("kimi-test-key", proc.stdout + proc.stderr)
+            self.assertNotIn("custom-test-key", proc.stdout + proc.stderr)
+            _resolve_outputs(proc)
+
+    # gh-1471 D1 / AC 2a: the custom escape hatch — a new provider
+    # tomorrow needs zero workflow edits. The key NEVER rides the
+    # dispatch input (inputs are visible in run metadata): it comes only
+    # from the FA_BENCH_CUSTOM_KEY secret, injected as the fixed
+    # apiKeyEnvVar FA_KEY_BENCH_CUSTOM.
+    CUSTOM_CONFIG = (
+        '{"type":"openai","baseUrl":"https://api.example.com/v1",'
+        '"model":"m-1","contextWindow":128000,"maxTokens":8192}'
+    )
+
+    def test_custom_provider_config_flows_verbatim_with_fixed_key_env(self):
+        proc = _run_resolve(provider="custom", provider_config=self.CUSTOM_CONFIG)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        outputs = _resolve_outputs(proc)
+        config = json.loads(outputs["provider_config"])
+        # Every declared field rides FA_PROVIDER_CONFIG verbatim — EXCEPT
+        # "type": the Dart env preconfig's FA_PROVIDER_CONFIG whitelist
+        # has no "type" key (it rides the dedicated FA_PROVIDER_TYPE
+        # output/env), so the passthrough strips it. Cross-layer contract
+        # pinned here, in test_custom_config_omits_type_key and by the
+        # Dart test "the workflow custom resolve output boots" in
+        # test/cli/env_provider_preconfig_test.dart.
+        declared = json.loads(self.CUSTOM_CONFIG)
+        for key, value in declared.items():
+            if key == "type":
+                self.assertNotIn(key, config)
+            else:
+                self.assertEqual(config[key], value)
+        # …plus the fixed key env injection — the only key path.
+        self.assertEqual(config["apiKeyEnvVar"], "FA_KEY_BENCH_CUSTOM")
+        self.assertEqual(outputs["provider_type"], "openai")
+        self.assertEqual(outputs["provider_key_env"], "FA_KEY_BENCH_CUSTOM")
+        self.assertEqual(outputs["bench_model"], "m-1")
+        self.assertEqual(outputs["run_label"], "custom (m-1)")
+
+    # Mirror of _supportedConfigKeys in lib/src/cli/env_provider_preconfig.dart
+    # — the workflow's emitted FA_PROVIDER_CONFIG must stay inside the
+    # Dart consumer's closed whitelist (the "type" clash the gh-1471
+    # re-review flagged slipped through exactly this gap).
+    DART_PRECONFIG_WHITELIST = frozenset(
+        {
+            "baseUrl",
+            "model",
+            "apiKeyEnvVar",
+            "contextWindow",
+            "maxTokens",
+            "input",
+            "thinkingLevel",
+        }
+    )
+
+    def test_custom_emitted_config_keys_stay_within_dart_whitelist(self):
+        for provider_config in (
+            self.CUSTOM_CONFIG,
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"input":["text"],"thinkingLevel":"high"}',
+        ):
+            with self.subTest(provider_config=provider_config):
+                proc = _run_resolve(provider="custom", provider_config=provider_config)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                outputs = _resolve_outputs(proc)
+                config = json.loads(outputs["provider_config"])
+                self.assertLessEqual(
+                    set(config), self.DART_PRECONFIG_WHITELIST, config
+                )
+
+    def test_custom_rejects_unknown_config_keys(self):
+        # The Dart _parseConfig enforces a closed whitelist at container
+        # boot — a typo'd or provider-doc-suggested extra key must fail in
+        # minute one, not loud inside every trial after shards start.
+        for config in (
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"baseurl":"https://typo.example.com"}',
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"organization":"acme"}',
+        ):
+            with self.subTest(config=config):
+                proc = _run_resolve(provider="custom", provider_config=config)
+                self.assertNotEqual(proc.returncode, 0, config)
+                message = proc.stdout + proc.stderr
+                self.assertIn("provider-config", message)
+                self.assertIn("supported keys", message)
+                self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_rejects_api_key_env_var_input(self):
+        # apiKeyEnvVar is injected by the resolve step (fixed
+        # FA_KEY_BENCH_CUSTOM) — a user-supplied value would be silently
+        # overridden, which is exactly the silent-misconfiguration class
+        # the Dart parser's strictness exists to prevent.
+        proc = _run_resolve(
+            provider="custom",
+            provider_config='{"baseUrl":"https://api.example.com/v1",'
+            '"model":"m-1","apiKeyEnvVar":"EVIL_VAR"}',
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        message = proc.stdout + proc.stderr
+        self.assertIn("apiKeyEnvVar", message)
+        self.assertIn("FA_KEY_BENCH_CUSTOM", message)
+        self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_rejects_type_outside_string_shape(self):
+        # provider_type feeds the container's catalog lookup: a non-string
+        # or blank type would fail there instead of in minute one (jq's
+        # `//` treats "" as present, so an explicit check is required).
+        for type_value in ("123", '""', '"   "'):
+            with self.subTest(type_value=type_value):
+                config = (
+                    '{"type":%s,"baseUrl":"https://api.example.com/v1",'
+                    '"model":"m-1"}' % type_value
+                )
+                proc = _run_resolve(provider="custom", provider_config=config)
+                self.assertNotEqual(proc.returncode, 0, config)
+                message = proc.stdout + proc.stderr
+                self.assertIn("type", message)
+                self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_rejects_capability_values_outside_dart_contract(self):
+        # Mirror of _parseCapabilityInt (lib/src/cli/env_provider_preconfig.dart
+        # + capability_resolver.dart floors): JSON integers at or above
+        # minOverrideContextWindow (16384) / minOverrideMaxTokens (1024);
+        # blank string / null are absent; anything else throws at boot.
+        bad = (
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"contextWindow":8192}',  # below the 16384 floor
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"maxTokens":512}',  # below the 1024 floor
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"contextWindow":"128000"}',  # non-blank string: must be int
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"maxTokens":8192.5}',  # non-integer number
+        )
+        for config in bad:
+            with self.subTest(config=config):
+                proc = _run_resolve(provider="custom", provider_config=config)
+                self.assertNotEqual(proc.returncode, 0, config)
+                message = proc.stdout + proc.stderr
+                field = "contextWindow" if "contextWindow" in config else "maxTokens"
+                self.assertIn(field, message)
+                self.assertIn("floor", message)
+                self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_capability_blank_or_null_is_absent(self):
+        # Dart-side, a blank string / null capability is ABSENT, not an
+        # error — the preflight must not reject what the consumer accepts.
+        for capability in ('"contextWindow":""', '"contextWindow":null'):
+            with self.subTest(capability=capability):
+                config = (
+                    '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+                    "%s}" % capability
+                )
+                proc = _run_resolve(provider="custom", provider_config=config)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                outputs = _resolve_outputs(proc)
+                self.assertNotIn("contextWindow", json.loads(outputs["provider_config"]))
+
+    def test_custom_rejects_bad_input_or_thinking_level(self):
+        # Mirrors _parseInputList / _parseThinkingLevel: input is a
+        # non-empty list of "text"/"image"; thinkingLevel is one of the
+        # configThinkingLevels ladder (minimal/low/medium/high/xhigh/max).
+        bad = (
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1","input":"text"}',
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1","input":[]}',
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"input":["text","video"]}',
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"thinkingLevel":"ultra"}',
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"thinkingLevel":123}',
+        )
+        for config in bad:
+            with self.subTest(config=config):
+                proc = _run_resolve(provider="custom", provider_config=config)
+                self.assertNotEqual(proc.returncode, 0, config)
+                field = "input" if "input" in config else "thinkingLevel"
+                self.assertIn(field, proc.stdout + proc.stderr)
+                self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_passes_input_and_thinking_level_verbatim(self):
+        config = (
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"input":["text","image"],"thinkingLevel":"high"}'
+        )
+        proc = _run_resolve(provider="custom", provider_config=config)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        outputs = _resolve_outputs(proc)
+        emitted = json.loads(outputs["provider_config"])
+        self.assertEqual(emitted["input"], ["text", "image"])
+        self.assertEqual(emitted["thinkingLevel"], "high")
+
+    def test_custom_rejects_nested_key_like_fields(self):
+        # The key-like scan descends into nested objects — a key field
+        # name pasted inside a header map rides through a top-level-only
+        # scan exactly like a top-level one.
+        proc = _run_resolve(
+            provider="custom",
+            provider_config='{"baseUrl":"https://api.example.com/v1",'
+            '"model":"m-1","headers":{"apiKey":"sk-leaked"}}',
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        message = proc.stdout + proc.stderr
+        self.assertIn("apiKey", message)
+        self.assertNotIn("sk-leaked", message)
+        self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_type_defaults_to_openai_compatible(self):
+        proc = _run_resolve(
+            provider="custom",
+            provider_config='{"baseUrl":"https://api.example.com/v1","model":"m-1"}',
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        outputs = _resolve_outputs(proc)
+        self.assertEqual(outputs["provider_type"], "openai")
+        config = json.loads(outputs["provider_config"])
+        self.assertEqual(config["model"], "m-1")
+
+    def test_custom_rejects_non_json(self):
+        proc = _run_resolve(provider="custom", provider_config="not json {")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("provider-config", proc.stdout + proc.stderr)
+        self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_rejects_non_object_json(self):
+        proc = _run_resolve(provider="custom", provider_config='["baseUrl"]')
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_rejects_missing_base_url_or_model(self):
+        for config in (
+            '{"model":"m-1"}',
+            '{"baseUrl":"https://api.example.com/v1"}',
+            '{"baseUrl":"","model":"m-1"}',
+        ):
+            proc = _run_resolve(provider="custom", provider_config=config)
+            self.assertNotEqual(proc.returncode, 0, config)
+            message = proc.stdout + proc.stderr
+            self.assertIn("baseUrl", message)
+            self.assertIn("model", message)
+            self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_rejects_non_https_base_url(self):
+        proc = _run_resolve(
+            provider="custom",
+            provider_config='{"baseUrl":"http://api.example.com/v1","model":"m-1"}',
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("https://", proc.stdout + proc.stderr)
+        self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_rejects_key_like_fields_case_insensitive(self):
+        # The key must never ride a dispatch input — run metadata is
+        # visible. apiKey/key/token/secret (any case) hard-fail.
+        for field in ("apiKey", "APIKEY", "key", "Key", "token", "SECRET",
+                      "api_key", "accessToken"):
+            with self.subTest(field=field):
+                config = (
+                    '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+                    f'"{field}":"sk-leaked"}}'
+                )
+                proc = _run_resolve(provider="custom", provider_config=config)
+                self.assertNotEqual(proc.returncode, 0, field)
+                message = proc.stdout + proc.stderr
+                self.assertIn(field.lower(), message.lower())
+                self.assertNotIn("sk-leaked", message)
+                self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_missing_secret_fails_naming_the_secret(self):
+        proc = _run_resolve(
+            provider="custom", provider_config=self.CUSTOM_CONFIG, custom_key=""
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        message = proc.stdout + proc.stderr
+        self.assertIn("FA_BENCH_CUSTOM_KEY", message)
+        self.assertIn("custom", message)
+        self.assertEqual(_resolve_outputs(proc), {})
+
+
 def _yml_text() -> str:
     return _BENCH_YML.read_text()
 
@@ -324,6 +796,101 @@ class BenchWorkflowRound3ShapeTest(unittest.TestCase):
 @unittest.skipUnless(
     _BENCH_YML.exists(), "bench.yml not found (standalone bench checkout)"
 )
+class ProviderSelectionShapeTest(unittest.TestCase):
+    """gh-1471 wiring: the provider choice input, the resolved env in the
+    shard step, the provider+model in the run identity, and the secret
+    preflight before any shard starts."""
+
+    def test_provider_choice_input_live_with_zai_default(self):
+        text = _yml_text()
+        self.assertRegex(
+            text,
+            r"provider:\n(?:[^\n]*\n){1,5}\s+default: 'zai-glm-5.3-flash'",
+        )
+        self.assertIn("type: choice", text)
+        self.assertIn("- 'kimi-for-coding'", text)
+        # gh-1471 D1 / AC 2a: the custom escape hatch is a dispatch
+        # choice, fed by the free-text provider-config input.
+        self.assertIn("- 'custom'", text)
+        self.assertRegex(
+            text,
+            r"provider-config:\n(?:[^\n]*\n){1,4}\s+default: ''",
+        )
+
+    def test_setup_job_exports_the_resolved_provider(self):
+        text = _yml_text()
+        for output in (
+            "provider_type: ${{ steps.provider.outputs.provider_type }}",
+            "provider_config: ${{ steps.provider.outputs.provider_config }}",
+            "provider_key_env: ${{ steps.provider.outputs.provider_key_env }}",
+            "bench_model: ${{ steps.provider.outputs.bench_model }}",
+            "run_label: ${{ steps.provider.outputs.run_label }}",
+        ):
+            self.assertIn(output, text)
+
+    def test_resolve_step_preflights_both_bench_secrets(self):
+        # The preflight reads both secrets via env (presence only) and
+        # runs in the setup job — before the bundle builds or any shard
+        # starts.
+        text = _yml_text()
+        resolve_env = text.split('id: provider', 1)[1].split('run: |', 1)[0]
+        self.assertIn("FA_BENCH_ZAI_KEY: ${{ secrets.FA_BENCH_ZAI_KEY }}", resolve_env)
+        self.assertIn("FA_BENCH_KIMI_KEY: ${{ secrets.FA_BENCH_KIMI_KEY }}", resolve_env)
+        # AC 2a: the custom path preflights FA_BENCH_CUSTOM_KEY and
+        # receives the provider-config input via env (the run block must
+        # stay free of GitHub expressions for the UT harness).
+        self.assertIn("FA_BENCH_CUSTOM_KEY: ${{ secrets.FA_BENCH_CUSTOM_KEY }}", resolve_env)
+        self.assertIn("PROVIDER_CONFIG: ${{ inputs.provider-config }}", resolve_env)
+
+    def test_shard_env_consumes_the_resolved_provider(self):
+        text = _yml_text()
+        self.assertIn(
+            "FA_PROVIDER_TYPE: ${{ needs.setup.outputs.provider_type }}", text
+        )
+        self.assertIn(
+            "FA_PROVIDER_CONFIG: ${{ needs.setup.outputs.provider_config }}", text
+        )
+        self.assertIn(
+            "FA_PROVIDER_KEY_ENV: ${{ needs.setup.outputs.provider_key_env }}", text
+        )
+        # The zai hardcode is gone from the shard env.
+        self.assertNotIn('FA_PROVIDER_TYPE: zai', text)
+        self.assertNotIn('{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"${{ env.BENCH_MODEL }}"', text)
+        # Both bench keys are mapped; the run block picks by name. The
+        # custom path adds its fixed key env (AC 2a: key only from
+        # FA_BENCH_CUSTOM_KEY).
+        self.assertIn("FA_KEY_API_Z_AI_Z_AI: ${{ secrets.FA_BENCH_ZAI_KEY }}", text)
+        self.assertIn("FA_KEY_API_KIMI_COM_BENCH: ${{ secrets.FA_BENCH_KIMI_KEY }}", text)
+        self.assertIn("FA_KEY_BENCH_CUSTOM: ${{ secrets.FA_BENCH_CUSTOM_KEY }}", text)
+
+    def test_shard_run_block_resolves_the_key_by_name(self):
+        block = _shard_run_block()
+        self.assertIn('provider_key="${FA_PROVIDER_KEY_ENV', block)
+        self.assertIn('provider_key_value="${!provider_key}"', block)
+
+    def test_shard_job_name_carries_provider_and_model(self):
+        text = _yml_text()
+        self.assertIn(
+            "name: fa on terminal-bench · ${{ needs.setup.outputs.run_label }},"
+            " shard ${{ matrix.i }}",
+            text,
+        )
+
+    def test_summary_steps_pin_the_resolved_model_and_label(self):
+        text = _yml_text()
+        self.assertGreaterEqual(text.count("MODEL: ${{ needs.setup.outputs.bench_model }}"), 2)
+        self.assertEqual(text.count("BENCH_RUN_LABEL: ${{ needs.setup.outputs.run_label }}"), 2)
+
+    def test_run_name_names_the_provider_choice(self):
+        self.assertIn(
+            "run-name: fa bench · ${{ inputs.provider }} · ${{ inputs.tasks }}",
+            _yml_text(),
+        )
+
+
+@unittest.skipUnless(
+    _BENCH_YML.exists(), "bench.yml not found (standalone bench checkout)"
+)
 @unittest.skipUnless(shutil.which("bash"), "bash not available")
 class AbsCeilingHarnessCapTest(unittest.TestCase):
     """The run-block contract when the progress watch is on."""
@@ -336,6 +903,7 @@ class AbsCeilingHarnessCapTest(unittest.TestCase):
                 "DATASET": "/tmp/fa-bench-workflow-test-dataset",
                 "SHARD_TASKS": "task-0 task-1",
                 "FA_KEY_API_Z_AI_Z_AI": "test-key",
+                "FA_PROVIDER_KEY_ENV": "FA_KEY_API_Z_AI_Z_AI",
                 "AGENT_TIMEOUT": agent_timeout,
                 "PROGRESS_EXTENSION": progress_extension,
             }
