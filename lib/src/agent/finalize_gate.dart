@@ -229,55 +229,81 @@ List<_LedgerSpan> _ledgerSpans(String text) {
   final spans = <_LedgerSpan>[];
   var i = 0;
   while (i < lines.length) {
-    final line = lines[i];
-    final fence = _fenceLine.firstMatch(line);
-    if (fence != null && fence.group(2)!.trim() == taskLedgerFence) {
-      final body = <String>[];
-      var j = i + 1;
-      var closed = false;
-      while (j < lines.length) {
-        if (_fenceLine.hasMatch(lines[j])) {
-          closed = true;
-          break;
-        }
-        body.add(lines[j]);
-        j++;
-      }
-      spans.add(
-        _LedgerSpan(
-          startLine: i,
-          endLine: closed ? j : lines.length - 1,
-          body: body.join('\n'),
-        ),
-      );
-      i = closed ? j + 1 : lines.length;
+    final fenced = _fencedLedgerSpanAt(lines, i);
+    if (fenced != null) {
+      spans.add(fenced.span);
+      i = fenced.nextLine;
       continue;
     }
-    if (_isLedgerHeading(line)) {
-      final body = <String>[];
-      var j = i + 1;
-      var lastEntry = i; // A heading with no entries spans itself only.
-      while (j < lines.length) {
-        final next = lines[j];
-        if (_entryLine.hasMatch(next) || _fieldLine.hasMatch(next)) {
-          body.add(next);
-          lastEntry = j;
-        } else if (next.trim().isEmpty) {
-          // Blanks may separate entries; the span ends at the last entry.
-        } else {
-          break;
-        }
-        j++;
-      }
-      spans.add(
-        _LedgerSpan(startLine: i, endLine: lastEntry, body: body.join('\n')),
-      );
-      i = j;
+    final unfenced = _unfencedLedgerSpanAt(lines, i);
+    if (unfenced != null) {
+      spans.add(unfenced.span);
+      i = unfenced.nextLine;
       continue;
     }
     i++;
   }
   return spans;
+}
+
+/// A ledger span found at a line plus the line index to continue the
+/// document scan from (past the span).
+typedef _SpanScan = ({_LedgerSpan span, int nextLine});
+
+/// Scans a fenced ```task-ledger block opening at [i], or null when the
+/// line is not the opening fence. An unclosed fence swallows the rest of
+/// [lines].
+_SpanScan? _fencedLedgerSpanAt(List<String> lines, int i) {
+  final fence = _fenceLine.firstMatch(lines[i]);
+  if (fence == null || fence.group(2)!.trim() != taskLedgerFence) {
+    return null;
+  }
+  final body = <String>[];
+  var j = i + 1;
+  var closed = false;
+  while (j < lines.length) {
+    if (_fenceLine.hasMatch(lines[j])) {
+      closed = true;
+      break;
+    }
+    body.add(lines[j]);
+    j++;
+  }
+  return (
+    span: _LedgerSpan(
+      startLine: i,
+      endLine: closed ? j : lines.length - 1,
+      body: body.join('\n'),
+    ),
+    nextLine: closed ? j + 1 : lines.length,
+  );
+}
+
+/// Scans an unfenced `task-ledger` heading at [i] plus its ledger bullets,
+/// or null when the line is not the bare heading. A heading with no
+/// entries spans itself only; blanks may separate entries and the span
+/// ends at the last entry line.
+_SpanScan? _unfencedLedgerSpanAt(List<String> lines, int i) {
+  if (!_isLedgerHeading(lines[i])) return null;
+  final body = <String>[];
+  var j = i + 1;
+  var lastEntry = i;
+  while (j < lines.length) {
+    final next = lines[j];
+    if (_entryLine.hasMatch(next) || _fieldLine.hasMatch(next)) {
+      body.add(next);
+      lastEntry = j;
+    } else if (next.trim().isEmpty) {
+      // Blanks may separate entries; the span ends at the last entry.
+    } else {
+      break;
+    }
+    j++;
+  }
+  return (
+    span: _LedgerSpan(startLine: i, endLine: lastEntry, body: body.join('\n')),
+    nextLine: j,
+  );
 }
 
 /// Whether [line] is a bare `task-ledger` heading — `#`-prefixed, bold, or

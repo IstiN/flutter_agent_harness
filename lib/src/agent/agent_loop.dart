@@ -1166,30 +1166,39 @@ Future<List<Message>> _runAgentLoop({
   }
 
   // The FinalizeGate (gh-1412, gh-1516): unattended runs fold the task
-  // ledger out of the FINAL assistant message — the event feeds the
-  // hidden `task_ledger` record, and the message itself is rewritten so
-  // the transcript never shows the ledger (fenced or the unfenced
-  // near-miss shape). A trivial turn (no tool calls — pure Q&A, nothing
-  // produced to verify) does not fire the gate: no event, though an
-  // over-eager ledger is still stripped from the answer.
+  // ledger out of the FINAL assistant message — see [_emitFinalizeGateFold].
   if (currentConfig.finalizeGate) {
-    final fold = _foldTaskLedger(newMessages);
-    if (fold != null) {
-      if (fold.producedState && fold.ledger != null) {
-        await emit(TaskLedgerEvent(fold.ledger!));
-      }
-      if (fold.stripped != null) {
-        newMessages[fold.messageIndex] = fold.stripped!;
-        final at = currentContext.messages.lastIndexWhere(
-          (message) => identical(message, fold.original),
-        );
-        if (at >= 0) currentContext.messages[at] = fold.stripped!;
-      }
-    }
+    await _emitFinalizeGateFold(newMessages, currentContext.messages, emit);
   }
 
   await emit(AgentEndEvent(List.unmodifiable(newMessages)));
   return newMessages;
+}
+
+/// Applies the FinalizeGate end-of-run fold (gh-1412, gh-1516): the event
+/// feeds the hidden `task_ledger` record, and the final answer itself is
+/// rewritten so the transcript never shows the ledger (fenced or the
+/// unfenced near-miss shape). A trivial turn (no tool calls — pure Q&A,
+/// nothing produced to verify) does not fire the gate: no event, though an
+/// over-eager ledger is still stripped from the answer. Extracted from
+/// `_runAgentLoop` so the loop stays under the CRAP ratchet — the fold is
+/// a self-contained end-of-run ritual, not loop logic.
+Future<void> _emitFinalizeGateFold(
+  List<Message> newMessages,
+  List<Message> contextMessages,
+  AgentEventSink emit,
+) async {
+  final fold = _foldTaskLedger(newMessages);
+  if (fold == null) return;
+  if (fold.producedState && fold.ledger != null) {
+    await emit(TaskLedgerEvent(fold.ledger!));
+  }
+  if (fold.stripped == null) return;
+  newMessages[fold.messageIndex] = fold.stripped!;
+  final at = contextMessages.lastIndexWhere(
+    (message) => identical(message, fold.original),
+  );
+  if (at >= 0) contextMessages[at] = fold.stripped!;
 }
 
 /// The FinalizeGate end-of-run fold (gh-1412, gh-1516): parses the ledger
