@@ -6,10 +6,15 @@
 // and the near-daily auto-release grows it without bound.
 //
 // The guard lives in scripts/check_changelog_size.sh and must stay wired
-// into BOTH release surfaces:
-//   - scripts/auto_release.sh — pre-tag: the bump push triggers tag_release,
-//     so an over-cap changelog must fail the release BEFORE the push;
-//   - ci.yml `publish` job gate — pre-upload: before staging + publish.
+// into BOTH changelog surfaces (gh-1522 rework):
+//   - scripts/stamp_staged_release.sh — pre-upload: the stage-time stamper
+//     prepends the tag's generated section to the STAGED changelog, then
+//     re-measures it (trimming oldest staged sections if over) — the repo
+//     file stays curated-only and the published artifact can never trip
+//     the server-side cap;
+//   - ci.yml `publish` job gate — pre-staging: the repo CHANGELOG.md is
+//     authored by humans now; an over-cap repo file fails fast before the
+//     stage even runs.
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -92,16 +97,25 @@ void main() {
     expect(read('CHANGELOG.md'), contains('CHANGELOG_ARCHIVE.md'));
   });
 
-  test('auto_release.sh runs the guard after the changelog rewrite, before the bump commit', () {
-    final auto = read('scripts/auto_release.sh');
-    final rewrite = auto.indexOf('BULLETS');
-    final guard = auto.indexOf('check_changelog_size.sh');
-    final commit = auto.indexOf('git add pubspec.yaml');
-    expect(guard, greaterThan(rewrite),
-        reason: 'the guard must measure the POST-release-entry changelog');
-    expect(guard, lessThan(commit),
-        reason: 'an over-cap changelog must abort before the bump commit is '
-            'authored and pushed (the push is what fires tag_release)');
+  test('stamp_staged_release.sh runs the guard after prepending the tag section', () {
+    final stamp = read('scripts/stamp_staged_release.sh');
+    final prepend = stamp.indexOf('mv "$changelog.new" "$changelog"');
+    final guard = stamp.indexOf('check_changelog_size.sh');
+    expect(prepend, greaterThan(0),
+        reason: 'fixture: the section prepend must be locatable');
+    expect(guard, greaterThan(prepend),
+        reason: 'the guard must measure the POST-section staged changelog — '
+            'the stage just grew by the fresh tag section (gh-1522)');
+  });
+
+  test('stamp_staged_release.sh trims staged sections and re-checks when over the cap', () {
+    final stamp = read('scripts/stamp_staged_release.sh');
+    expect(stamp, contains('trimming oldest staged sections'));
+    final trim = stamp.indexOf('trimming oldest staged sections');
+    final recheck = stamp.indexOf('check_changelog_size.sh "$changelog"', trim);
+    expect(recheck, greaterThan(trim),
+        reason: 'after the trim the staged changelog must be re-measured — '
+            'a trim that cannot reach under the cap fails loudly');
   });
 
   test('ci.yml publish gate runs the guard before staging/upload', () {

@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# Verify pub.dev serves the pubspec version — the daily-publish pubdev leg's
-# check (gh-1192). Extracted verbatim from the inline step in
-# daily-publish.yml so the classification is shell-harness testable (fake
-# gh/curl fixtures, test/release_flow_race_test.dart).
+# Verify pub.dev serves the LATEST TAG version — the daily-publish pubdev
+# leg's check (gh-1192, reworked gh-1522). Extracted verbatim from the
+# inline step in daily-publish.yml so the classification is shell-harness
+# testable (fake gh/curl fixtures, test/release_flow_race_test.dart).
+#
+# gh-1522: the git tag is the single source of truth — the committed
+# pubspec carries the 0.0.0-dev placeholder, so the version under test is
+# the LATEST REMOTE TAG (git ls-remote), never a file read. The retired
+# bump-commit flow's «tag not cut yet / bump on main» states are gone:
+# the version IS a tag that exists on the remote by construction, so the
+# appear-wait branch is deleted as impossible.
 #
 # The ONLY publish path is the ci.yml tag job (pub.dev trusted publishing
 # accepts OIDC only from tag-push runs — the release-event twin of a tag can
-# never publish, #1368). This script VERIFIES pub.dev serves the pubspec
+# never publish, #1368). This script VERIFIES pub.dev serves the tag
 # version and, when behind, recovers by re-running the failed tag-push
 # publish run — a rerun keeps the original push-tag event and OIDC claims.
 # Unrecoverable states fail loudly and self-file an issue with a
 # manual-publish instruction instead of silently hanging.
 #
-# States (gh-1192; refined by #1368 — the 2026-10-07 false alarm):
-#   up-to-date          pub.dev already serves the pubspec version
+# States (gh-1192; refined by #1368 — the 2026-10-07 false alarm; gh-1522):
+#   up-to-date          pub.dev already serves the latest tag version
 #   release-in-flight   the publish outcome is NOT yet observable — neutral
 #                       skip (no ::error::, no auto-filed issue); the next
 #                       scheduled daily re-verifies. Covers:
-#                         · the release-tag job has not cut the tag off the
-#                           bump yet — at ANY bump age (the old 1h «wedge»
-#                           horizon false-alarmed #1368: the verify read
-#                           «never triggered» 3 minutes before the tag
-#                           landed, off a 10.5h-old bump that self-healed on
-#                           the next green main run); the script now WAITS a
-#                           bounded window for the tag to appear
 #                         · tag exists but its ci.yml run is not visible yet
 #                           and the tag is younger than the grace window
 #                         · the tag's PUSH ci.yml run is queued/in_progress —
@@ -33,13 +33,10 @@
 #                           timeout); past the budget the outcome stays
 #                           unobserved and the skip stays neutral — runner
 #                           starvation may hold a queued run for hours
-#                         · the tag is not cut yet but the bump commit is
-#                           on main (release-tag pending)
 #   recovered           the failed tag-push publish run was re-run and
 #                       pub.dev caught up
 #   private             publish_to: none — nothing to verify
 # Alarms — each error says WHICH state (Never-again #2):
-#   «never triggered (no tag and no chore(release) bump on main)»
 #   «never triggered (only release-event run(s) …)»  — pub.dev OIDC rejects
 #                       release-event tokens, so those runs cannot publish
 #   «never triggered (no run registered past the grace window)»
@@ -50,8 +47,7 @@
 # has a fresh run the moment it is visible, so the classification reads the
 # run, never the stale tag age, and a completed fresh run verifies normally.
 #
-# E2: only the tag matching the CURRENT pubspec version is evaluated; stale
-# older tags are out of scope.
+# E2: only the LATEST tag is evaluated; stale older tags are out of scope.
 set -euo pipefail
 
 repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set}"
@@ -59,25 +55,16 @@ out="${GITHUB_OUTPUT:?GITHUB_OUTPUT must be set}"
 grace="${RELEASE_FLIGHT_GRACE_SECS:-900}" # AC1: «no run at all» window bound
 read_sleep="${PUBDEV_READ_SLEEP_SECS:-10}"  # test seam (production: 10s)
 poll_sleep="${PUBDEV_POLL_SLEEP_SECS:-20}"  # test seam (production: 20s)
-tag_appear_wait="${TAG_APPEAR_WAIT_SECS:-600}"      # wait for a pending tag cut
 run_terminal_wait="${RUN_TERMINAL_WAIT_SECS:-900}"  # wait for the tag run to go terminal
 max_polls="${PUBDEV_MAX_POLLS:-90}"         # iteration cap (bounds the waits in tests)
 #
 # Budget vs the pubdev leg's 60m ceiling (daily-publish.yml): the waits can
-# STACK — appear-wait 600s + terminal-wait 900s + bounded rerun watch 900s +
-# post-rerun verify poll 600s ≈ 50m of the 60m wall (checkout + the spaced
-# reads take ~2m more), so the rerun watch is capped at 15m, not 20m. A job
-# killed at 60m is a CANCELLED leg the report files as a watcher death —
-# the «past any budget → neutral skip, never an error» guarantee must
-# survive end-to-end (#1370 review).
-#
-# Tradeoff note (#1370 review r2): there is NO daily-side wedge alarm for a
-# tag that is never cut — an untagged bump reads release-in-flight ⏭️
-# indefinitely (the old 1h horizon false-alarmed #1368 on a bump that
-# self-healed 3 minutes later). The remaining tripwires: auto_release.sh's
-# one-time «pushed but untagged … proceeding so the next range absorbs it»
-# log, the plan job's release-unresolved re-arm (every daily re-verifies),
-# and docs/ci.md § release flow.
+# STACK — terminal-wait 900s + bounded rerun watch 900s + post-rerun verify
+# poll 600s ≈ 40m of the 60m wall (checkout + the spaced reads take ~2m
+# more), so the rerun watch is capped at 15m, not 20m. A job killed at 60m
+# is a CANCELLED leg the report files as a watcher death — the «past any
+# budget → neutral skip, never an error» guarantee must survive end-to-end
+# (#1370 review).
 
 emit() { printf '%s\n' "$1" >> "$out"; }
 
@@ -95,13 +82,26 @@ poll_attempts() { # $1 = wait seconds
   echo "$a"
 }
 
-pubspec=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+# gh-1522: the version under test is the LATEST REMOTE TAG — the committed
+# pubspec is the 0.0.0-dev placeholder. The `pubspec=` output key name is
+# kept (daily-publish report consumers read it), its value is the tag
+# version. No remote tags → nothing has ever been released → up-to-date.
+latest_remote_tag=$(git ls-remote --tags origin 'refs/tags/v*' 2>/dev/null \
+  | grep -v '\^' | awk '{print $2}' | sed 's|refs/tags/||' \
+  | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+pubspec="${latest_remote_tag#v}"
 emit "pubspec=$pubspec"
 emit "published=" # re-exported below after query
 
 if grep -q '^publish_to: *none' pubspec.yaml; then
   emit "status=private"
   echo "::notice::pubspec declares publish_to: none — package is private, nothing to verify on pub.dev"
+  exit 0
+fi
+
+if [ -z "$pubspec" ]; then
+  emit "status=up-to-date"
+  echo "::notice::no vX.Y.Z tags on the remote — nothing has been released yet, nothing to verify on pub.dev"
   exit 0
 fi
 
@@ -168,33 +168,12 @@ read_tag_age() {
 }
 tag_age=$(read_tag_age)
 
+# gh-1522: the version IS the latest remote tag, so the tag exists by
+# construction — a missing tag here means it was deleted between the
+# ls-remote above and this read (or a transient fetch failure). That is
+# unobserved, not an alarm: neutral skip, the next daily re-verifies.
 if [ -z "$tag_age" ]; then
-  # Tag not cut yet. Pending while a release bump exists on main — at ANY
-  # age (#1368: a 10.5h-old bump was cut 3 minutes after the old 1h-horizon
-  # alarm fired; the ≥1h untagged state is auto-release's own «proceed, the
-  # next range absorbs it» self-heal, not a wedged publish). A bounded wait
-  # catches the tag that lands minutes later; only a missing bump — nothing
-  # in flight at all — is the «never triggered» alarm.
-  git fetch -q --depth=300 origin main
-  bump=$(git log --format='%H %s' FETCH_HEAD \
-    | awk -v want="$tag" 'NF == 3 && $2 == "chore(release):" && $3 == want { print $1; exit }' || true)
-  if [ -z "$bump" ]; then
-    never_triggered "no tag and no chore(release) bump on main"
-  fi
-  bump_age=$(( $(date +%s) - $(git log -1 --format=%ct "$bump") ))
-  echo "release-tag has not cut $tag yet (bump ${bump_age}s old) — waiting up to ${tag_appear_wait}s for the tag"
-  attempts=$(poll_attempts "$tag_appear_wait")
-  attempt=1
-  while [ "$attempt" -le "$attempts" ]; do
-    sleep "$poll_sleep"
-    tag_age=$(read_tag_age)
-    if [ -n "$tag_age" ]; then break; fi
-    attempt=$(( attempt + 1 ))
-  done
-  if [ -z "$tag_age" ]; then
-    in_flight "release-tag has not cut $tag yet (bump ${bump_age}s old, waited ~${tag_appear_wait}s) — publish pending, not failed"
-  fi
-  echo "::notice::$tag appeared after the wait — continuing with its run"
+  in_flight "$tag is not visible (deleted mid-run or a transient fetch failure)"
 fi
 
 runs_json=$(fetch_runs)

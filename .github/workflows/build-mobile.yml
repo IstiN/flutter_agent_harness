@@ -226,7 +226,12 @@ jobs:
       - name: Build Android AAB
         working-directory: flutter_app
         env:
+          # gh-1522: the AAB's versionName rides the derived tag version
+          # (BUILD_NAME) — the committed pubspec is the static 0.0.0-dev
+          # placeholder and never churns. BUILD_NUMBER stays the run number
+          # (Play versionCode).
           BUILD_NUMBER: ${{ github.run_number }}
+          BUILD_NAME: ${{ needs.version.outputs.version }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -437,6 +442,11 @@ jobs:
       - name: Build flavor APK
         working-directory: flutter_app
         env:
+          # gh-1522: stamp the APK version strings from the derived tag
+          # version — the committed pubspec is the static 0.0.0-dev
+          # placeholder and never churns.
+          BUILD_NUMBER: ${{ github.run_number }}
+          BUILD_NAME: ${{ needs.version.outputs.version }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -446,7 +456,8 @@ jobs:
         # the gradle flavor and the FA_FLAVOR dart-define.
         run: |
           set -euo pipefail
-          flutter build apk --release --flavor "$FLAVOR" --dart-define=FA_FLAVOR="$FLAVOR"
+          flutter build apk --release --flavor "$FLAVOR" --dart-define=FA_FLAVOR="$FLAVOR" \
+            --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER"
 
       - name: Verify flavor APK
         run: |
