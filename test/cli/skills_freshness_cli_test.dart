@@ -510,6 +510,68 @@ void main() {
     });
   });
 
+  group('IT-7 (review): a failed rescan retries on the next turn (I2)', () {
+    test(
+      'a rescan that throws keeps the old baseline — the next turn '
+      'rescans again and picks the skill up',
+      () async {
+        await seedProjectSkill('alpha');
+        final counting = _CountingEnv(env);
+        final fake = FakeStreamFunction([
+          textTurn('ok'),
+          textTurn('ok'),
+          textTurn('ok'),
+        ]);
+        final cli = cliFor(fake.call, envOverride: counting);
+        final run = cli.run();
+        await waitForIt(
+          () => cli.systemPrompt.contains('<name>alpha</name>'),
+          reason: 'boot index',
+        );
+
+        // A latecomer lands mid-session, but its body read dies inside the
+        // rescan (disk hiccup mid-turn): the check must keep the last good
+        // index, warn once, and — the reviewed fix — NOT latch the new
+        // fingerprint, so the next turn retries the rescan instead of
+        // staying blind to the stale index.
+        await seedProjectSkill('latecomer');
+        counting.throwOnReadTextFile =
+            '/work/.fah/skills/latecomer/SKILL.md';
+        io.sendLine('hello');
+        await waitForIt(() => fake.calls >= 1, reason: 'turn 1');
+        await waitForIt(
+          () => io.out.toString().contains('freshness check failed'),
+          reason: 'rescan failure warning; out=${io.out}',
+        );
+        expect(
+          RegExp('freshness check failed').allMatches(io.out.toString()),
+          hasLength(1),
+        );
+        // The last good snapshot stands: alpha in, latecomer not.
+        expect(cli.systemPrompt, contains('<name>alpha</name>'));
+        expect(cli.systemPrompt, isNot(contains('<name>latecomer</name>')));
+
+        // The read heals; the next turn's check sees the still-stale
+        // baseline (the failure did NOT latch it) and rescans again —
+        // exactly one more rescan, and the warn-once latch stays quiet.
+        counting.throwOnReadTextFile = null;
+        io.sendLine('again');
+        await waitForIt(
+          () => cli.systemPrompt.contains('<name>latecomer</name>'),
+          reason: 'retry rescan; out=${io.out}',
+        );
+        expect(cli.systemPrompt, contains('added mid-session (fah)'));
+        expect(
+          RegExp('freshness check failed').allMatches(io.out.toString()),
+          hasLength(1),
+          reason: 'warn once across both turns',
+        );
+        io.sendLine('/exit');
+        await run;
+      },
+    );
+  });
+
   group('UT-3/AC5: bounded check cost', () {
     test(
       'unchanged turn: one listing per root, zero skill-body reads; '
