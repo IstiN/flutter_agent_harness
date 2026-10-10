@@ -1,6 +1,6 @@
 @TestOn('vm')
 @Tags(['integration'])
-@Timeout(Duration(minutes: 5))
+@Timeout(Duration(minutes: 6)) // never clip a wait: budgets sum to ~310 s (gh-1469)
 /// Issue #438 AC3 — the over-window badge: a mid-run auto-compaction that
 /// frees the window shows «[auto-compacted · continuing]» in the TUI
 /// status row while the run continues, and it clears when the turn
@@ -121,6 +121,12 @@ agent:
 /// agent turns issue `read` tool calls, the hide-judge gets picks, the
 /// checkpoint summarizer gets text, and the post-fold continuation reply
 /// streams SLOWLY so the badge-on-screen window is catchable.
+/// The fold checkpoint summary text — also the dispatch marker for the
+/// post-fold continuation request; the reply and the check must never
+/// drift apart, or the continuation silently falls through to the reads
+/// reply (the gh-1469 starvation class, but silent).
+const _foldCheckpoint = 'checkpoint: the word-count investigation';
+
 final class _FoldingMock {
   HttpServer? _server;
 
@@ -150,9 +156,7 @@ final class _FoldingMock {
       }
       // The checkpoint/classic summarizer: the summary text.
       if (body.contains('<conversation>')) {
-        await _sse(request, [
-          _textChunk('checkpoint: the word-count investigation'),
-        ]);
+        await _sse(request, [_textChunk(_foldCheckpoint)]);
         return;
       }
       // Agent turns, CONTENT-addressed (gh-1469): the over-window guard's
@@ -170,7 +174,7 @@ final class _FoldingMock {
         await _sse(request, [_textChunk('hi!')]);
         return;
       }
-      if (body.contains('checkpoint: the word-count investigation')) {
+      if (body.contains(_foldCheckpoint)) {
         await _sse(request, [
           _textChunk('done: recovered'),
         ], delay: const Duration(milliseconds: 2500));
