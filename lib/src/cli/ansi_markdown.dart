@@ -1117,14 +1117,20 @@ final class TranscriptMarkdown {
   String? get debugBoundaryFirstForTest => _boundaryFirst;
 
   /// Formatted lines rendered so far.
+  ///
+  /// Live view: the lists published by the last [sync] — clean commits
+  /// publish the durable caches directly (gh-1496 removed the per-sync
+  /// spread copies, so a clean sync is zero-copy), never partially
+  /// mutated between syncs. Treat as read-only: mutate your own copy.
   List<String> get formattedLines => _viewFormatted;
 
-  /// Wrapped physical rows rendered so far.
+  /// Wrapped physical rows rendered so far. Live view — see
+  /// [formattedLines].
   List<String> get wrappedRows => _viewRows;
 
   /// `lineStartRows[i]` = first wrapped row of rendered line `i`; final
   /// entry is the total-row-count sentinel (the exact shape `_WrapCache`
-  /// stores).
+  /// stores). Live view — see [formattedLines].
   List<int> get lineStartRows => _viewStarts;
 
   /// Brings every view in line with [src]; returns [formattedLines].
@@ -1397,7 +1403,6 @@ final class TranscriptMarkdown {
     _expose(r, src);
   }
 }
-
 /// How [MarkdownSurface.render] emits assistant markdown.
 enum MarkdownSurfaceMode {
   /// ANSI-rendered: an interactive terminal with color.
@@ -1469,9 +1474,10 @@ final class MarkdownSurface {
   String render(String text) => switch (mode) {
     MarkdownSurfaceMode.raw => text,
     MarkdownSurfaceMode.ansi => _renderWhole(text),
-    MarkdownSurfaceMode.plain => _renderWhole(
-      text,
-    ).replaceAll(_ansiEscapeRe, ''),
+    MarkdownSurfaceMode.plain => _renderWhole(text).replaceAll(
+      _ansiEscapeRe,
+      '',
+    ),
   };
 
   String _renderWhole(String text) {
@@ -1480,9 +1486,9 @@ final class MarkdownSurface {
     // the HOST pins once (bin/fah.dart resolves the surface; AgentCli's
     // constructor pins the controller from surface.profile) — render()
     // only formats.
-    return AnsiMarkdown(
-      width: width,
-    ).formatAll(resolveSetextHeadings(text.split('\n'))).join('\n');
+    return AnsiMarkdown(width: width)
+        .formatAll(resolveSetextHeadings(text.split('\n')))
+        .join('\n');
   }
 }
 
@@ -1513,7 +1519,8 @@ MarkdownSurface resolveMarkdownSurface({
   return MarkdownSurface.resolving(
     tty: ansiSupported,
     color: profile != null,
-    format: !noFormatFlag && !isTruthyEnvValue(environment['FA_NO_FORMAT']),
+    format:
+        !noFormatFlag && !isTruthyEnvValue(environment['FA_NO_FORMAT']),
     width: width,
     profile: profile,
   );
