@@ -621,29 +621,36 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   /// ([bootExtensionRelay]); this wrapper owns the widget shell —
   /// navigation and `mounted`-guarded error state.
   Future<void> _bootRelay() async {
-    await bootExtensionRelay(
-      env: widget.env,
-      onHome: (manager, registry) async {
-        if (!mounted) return;
-        AppAnalytics.instance.bootstrapResult('chat');
-        final navigator = Navigator.of(context);
-        await navigator.pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => faHomeScreen(
-              context: navigator.context,
-              manager: manager,
-              registry: registry,
-              restoreAppsMode: true,
-              networkMode: widget.networkMode,
-              networkSessions: widget.networkSessions,
+    try {
+      // gh-1507: same restore-phase coverage as [_boot] — the SW relay
+      // restores the session too.
+      kBootWatchdog.beginRestore();
+      await bootExtensionRelay(
+        env: widget.env,
+        onHome: (manager, registry) async {
+          if (!mounted) return;
+          AppAnalytics.instance.bootstrapResult('chat');
+          final navigator = Navigator.of(context);
+          await navigator.pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => faHomeScreen(
+                context: navigator.context,
+                manager: manager,
+                registry: registry,
+                restoreAppsMode: true,
+                networkMode: widget.networkMode,
+                networkSessions: widget.networkSessions,
+              ),
             ),
-          ),
-        );
-      },
-      onError: (message) {
-        if (mounted) setState(() => _relayError = message);
-      },
-    );
+          );
+        },
+        onError: (message) {
+          if (mounted) setState(() => _relayError = message);
+        },
+      );
+    } finally {
+      kBootWatchdog.restoreDone();
+    }
   }
 
   /// Set when the extension-panel relay could not attach (SW dead/broken
@@ -653,6 +660,10 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   Future<void> _boot() async {
     final config = _config!;
     try {
+      // gh-1507: arm the watchdog's restore phase for the whole restore
+      // chain — a wedge after the first frame (the reported freeze shape)
+      // breadcrumbs instead of sitting silent.
+      kBootWatchdog.beginRestore();
       BootSteps.begin('restore:env');
       final env = widget.env ?? await createPlatformEnv();
       BootSteps.mark('restore:env');
@@ -718,6 +729,11 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
         AppAnalytics.instance.bootstrapResult('setup_restore_failed');
         setState(() => _config = null);
       }
+    } finally {
+      // gh-1507: disarm the watchdog's post-frame restore phase (no-op if
+      // the first frame never landed or the restore never started) — a
+      // restore that completes never breadcrumbs, one that wedges did.
+      kBootWatchdog.restoreDone();
     }
   }
 

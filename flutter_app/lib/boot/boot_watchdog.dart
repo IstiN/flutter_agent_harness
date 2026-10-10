@@ -8,14 +8,23 @@
 /// A TestFlight freeze report ("Just freezed", uptime 3000 ms) carried no
 /// crash log and no clue which boot step wedged. [BootSteps] records every
 /// completed boot step with its timestamp, and [BootWatchdog] watches the
-/// first frame: when it does not land within [BootWatchdog.threshold], a
-/// breadcrumb naming the uptime and the last completed / in-flight boot
-/// step is logged through the process-wide `debugPrint` tee (console +
+/// boot in two phases: the first frame (when it does not land within
+/// [BootWatchdog.threshold], a breadcrumb naming the uptime and the last
+/// completed / in-flight boot step is logged) and, while a restore is in
+/// flight ([BootWatchdog.beginRestore] → [BootWatchdog.restoreDone]), the
+/// post-frame restore — a restore wedge, the reported freeze's most likely
+/// shape, breadcrumbs the same way. Breadcrumbs ride the process-wide `debugPrint` tee (console +
 /// `logs/app.log` + the Crashlytics breadcrumb trail — both tees are
 /// installed by `bootWindow`/`bootTelemetry`, so the breadcrumb reaches
 /// every sink without direct dependencies here).
 ///
 /// The watchdog only ever LOGS — it must never change boot semantics.
+///
+/// Blind spot: the probe is a `Timer` + `addPostFrameCallback`, so it
+/// detects stalls where the event loop still turns (an await-chain
+/// deadlock or event-loop starvation). A synchronously blocked main
+/// isolate suppresses both the probe and the breadcrumb — a silent
+/// watchdog does not prove a healthy boot.
 library;
 
 import 'dart:async';
@@ -69,13 +78,20 @@ abstract final class BootSteps {
   }
 }
 
-/// Watches the first frame during boot. [install] schedules the frame
-/// probe and arms the threshold timer; while no frame lands, the timer
-/// re-arms at [repeatInterval] and logs one breadcrumb per firing.
+/// Watches the boot in two phases: the first frame, then the post-frame
+/// restore. [install] schedules the frame probe and arms the threshold
+/// timer; while a phase does not complete, the timer re-arms at
+/// [repeatInterval] and logs one breadcrumb per firing, up to
+/// [_maxFirings] per phase — a permanently wedged boot then logs a final
+/// "giving up" line instead of a breadcrumb every 30 s for the lifetime
+/// of the process.
 final class BootWatchdog {
   BootWatchdog({
     this.threshold = const Duration(
       milliseconds: _defaultThresholdMs,
+    ),
+    this.restoreThreshold = const Duration(
+      milliseconds: _defaultRestoreThresholdMs,
     ),
     this.repeatInterval = const Duration(seconds: 30),
     void Function(String message)? onBreadcrumb,
@@ -92,17 +108,40 @@ final class BootWatchdog {
   static const int _defaultThresholdMs =
       int.fromEnvironment('FA_BOOT_WATCHDOG_MS', defaultValue: 4000);
 
+  /// Restore-phase threshold, armed when the first frame lands and
+  /// disarmed by [restoreDone]. The restore chain (env → session manager
+  /// → `createOrResumeSession`) runs more awaited disk reads behind the
+  /// boot spinner, and the reported freeze (~3 s uptime) plausibly
+  /// wedged there — after the first frame, so a first-frame-only watchdog
+  /// would have stayed silent. Overridable at build time
+  /// (`--dart-define=FA_BOOT_RESTORE_WATCHDOG_MS=…`).
+  static const int _defaultRestoreThresholdMs =
+      int.fromEnvironment('FA_BOOT_RESTORE_WATCHDOG_MS', defaultValue: 10000);
+
+  /// Cap on repeat firings per phase; a permanently wedged boot (or an
+  /// app backgrounded mid-boot) stops at a final "giving up" line instead
+  /// of growing the log and the Crashlytics breadcrumb trail without
+  /// bound.
+  static const int _maxFirings = 10;
+
   /// Time allowed for the first frame before the first breadcrumb fires.
   final Duration threshold;
 
-  /// Re-arm interval while no frame has landed (one breadcrumb per firing).
+  /// Time allowed for the post-frame restore (see [restoreDone]) before
+  /// the first restore-phase breadcrumb fires.
+  final Duration restoreThreshold;
+
+  /// Re-arm interval while a phase has not completed (one breadcrumb per
+  /// firing, up to [_maxFirings]).
   final Duration repeatInterval;
 
   final void Function(String message) _onBreadcrumb;
   final Stopwatch _uptime;
   Timer? _timer;
   bool _firstFrameSeen = false;
+  bool _restoreArmed = false;
   int _firings = 0;
+  int _restoreFirings = 0;
 
   /// Arms the watchdog and schedules the first-frame probe. Must be called
   /// with the widgets binding initialized (after `bootWindow`). Idempotent
@@ -111,11 +150,14 @@ final class BootWatchdog {
     if (_defaultThresholdMs <= 0) return;
     if (_timer != null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) => firstFrame());
-    _arm(threshold);
+    _arm(threshold, _fire);
   }
 
-  /// Records that the first frame landed: cancels the timer. Also wired by
-  /// tests in place of a real frame.
+  /// Records that the first frame landed: cancels the pre-frame timer.
+  /// Also wired by tests in place of a real frame. Does NOT arm the
+  /// restore phase — that is [beginRestore]'s job, so a session with no
+  /// restore ahead (first-launch onboarding, the setup form) never sees
+  /// spurious restore breadcrumbs.
   void firstFrame() {
     _firstFrameSeen = true;
     _timer?.cancel();
@@ -128,8 +170,37 @@ final class BootWatchdog {
     }
   }
 
-  void _arm(Duration delay) {
-    _timer = Timer(delay, _fire);
+  /// Arms the restore phase: call when the post-frame restore chain
+  /// (env → session manager → `createOrResumeSession`) actually starts.
+  /// The TestFlight freeze wedged at ~3 s uptime — plausibly after the
+  /// first frame, where a first-frame-only watchdog stays silent — so a
+  /// restore wedge breadcrumbs the same way a pre-frame one does.
+  /// Idempotent — a second call on an armed phase is a no-op.
+  void beginRestore() {
+    if (_restoreArmed) return;
+    _restoreArmed = true;
+    _arm(restoreThreshold, _fireRestore);
+  }
+
+  /// Disarms the restore phase: call when the post-frame restore
+  /// (`restore:session`) completes, on success or failure. A no-op unless
+  /// the phase is armed via [beginRestore] (and on repeat calls), so the
+  /// boot path can end it in a `finally` without bookkeeping.
+  void restoreDone() {
+    if (!_restoreArmed) return;
+    _restoreArmed = false;
+    _timer?.cancel();
+    _timer = null;
+    if (_restoreFirings > 0) {
+      _onBreadcrumb(
+        'restore completed at ${_uptime.elapsedMilliseconds}ms '
+        '(restore watchdog had fired $_restoreFirings×)',
+      );
+    }
+  }
+
+  void _arm(Duration delay, void Function() onFire) {
+    _timer = Timer(delay, onFire);
   }
 
   void _fire() {
@@ -140,6 +211,31 @@ final class BootWatchdog {
       '(threshold ${threshold.inMilliseconds}ms, firing #$_firings); '
       'boot steps ${BootSteps.describe()}',
     );
-    _arm(repeatInterval);
+    _repeatOrGiveUp(_firings, _fire);
+  }
+
+  void _fireRestore() {
+    if (!_restoreArmed) return;
+    _restoreFirings++;
+    _onBreadcrumb(
+      'restore not completed after ${_uptime.elapsedMilliseconds}ms '
+      '(threshold ${restoreThreshold.inMilliseconds}ms, '
+      'firing #$_restoreFirings); boot steps ${BootSteps.describe()}',
+    );
+    _repeatOrGiveUp(_restoreFirings, _fireRestore);
+  }
+
+  /// Re-arms at [repeatInterval] until the phase hits [_maxFirings]; a
+  /// wedged boot then gets a final "giving up" line and no more timers.
+  void _repeatOrGiveUp(int firings, void Function() onFire) {
+    if (firings >= _maxFirings) {
+      _onBreadcrumb(
+        'giving up after $_maxFirings firings '
+        '(boot is permanently wedged or the app is backgrounded); '
+        'boot steps ${BootSteps.describe()}',
+      );
+      return;
+    }
+    _arm(repeatInterval, onFire);
   }
 }
