@@ -33,6 +33,28 @@ void main() {
       expect(uri.queryParameters['token'], 'fresh');
     });
 
+    test('accepts a lowercase bearer scheme (RFC 6750 auth-scheme is '
+        'case-insensitive)', () {
+      final uri = liftBearerIntoQuery(Uri.parse('wss://network.fa1.dev/ws'), {
+        'Authorization': 'bearer sess-tok-123',
+      });
+      expect(uri.queryParameters['token'], 'sess-tok-123');
+    });
+
+    test('accepts an uppercase bearer scheme', () {
+      final uri = liftBearerIntoQuery(Uri.parse('wss://network.fa1.dev/ws'), {
+        'Authorization': 'BEARER sess-tok-123',
+      });
+      expect(uri.queryParameters['token'], 'sess-tok-123');
+    });
+
+    test('accepts a mixed-case bearer scheme', () {
+      final uri = liftBearerIntoQuery(Uri.parse('wss://network.fa1.dev/ws'), {
+        'Authorization': 'BeArEr sess-tok-123',
+      });
+      expect(uri.queryParameters['token'], 'sess-tok-123');
+    });
+
     test('returns the URI unchanged without an Authorization header', () {
       final uri = liftBearerIntoQuery(
         Uri.parse('wss://network.fa1.dev/ws?channel=abc'),

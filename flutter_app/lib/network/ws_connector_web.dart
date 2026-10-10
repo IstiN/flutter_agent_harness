@@ -20,14 +20,24 @@ import 'fa_network_ws.dart';
 /// `token` query parameter (browser WebSockets cannot set headers).
 ///
 /// Existing query parameters are preserved; a stale `token` param is
-/// replaced by the header value. Returns [wsUri] unchanged when there is
-/// no usable bearer header — the server then 401s with a clear error
+/// replaced by the header value. The bearer auth-scheme match is
+/// case-insensitive per RFC 6750, so `Authorization: bearer <t>` (or any
+/// casing) is accepted too. Returns [wsUri] unchanged when there is no
+/// usable bearer header — the server then 401s with a clear error
 /// surfaced through `WsError`, same as before.
+///
+/// SECURITY: the token lands in the URI query, so any fa_network access
+/// log (or intermediate proxy/CDN log) for `/ws` will capture it. The
+/// deployed server contract requires `token` to be redacted/masked in
+/// access logs with bounded retention; that redaction is server-side and
+/// cannot be enforced from the browser client.
 Uri liftBearerIntoQuery(Uri wsUri, Map<String, String> headers) {
   final auth = headers['Authorization'] ?? '';
-  const prefix = 'Bearer ';
-  if (!auth.startsWith(prefix)) return wsUri;
-  final token = auth.substring(prefix.length).trim();
+  // RFC 6750: the auth-scheme is case-insensitive. FaNetworkWs._open
+  // builds the exact 'Authorization' / 'Bearer ' casing today, but the
+  // scheme match below deliberately tolerates any casing.
+  if (!auth.toLowerCase().startsWith('bearer ')) return wsUri;
+  final token = auth.substring('bearer '.length).trim();
   if (token.isEmpty) return wsUri;
   return wsUri.replace(
     queryParameters: {...wsUri.queryParameters, 'token': token},
