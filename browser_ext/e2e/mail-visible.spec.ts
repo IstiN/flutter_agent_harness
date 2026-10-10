@@ -39,6 +39,16 @@ test.describe('inbound mail visibility (#320)', () => {
       + 'before the reply, exactly once — duplicates stay deduped', async ({
     fa,
   }) => {
+    // The bubbles under test are the legacy fallback transcript (.bubble.user,
+    // #transcript). With an app bundle the panel redirects to the Flutter app
+    // before that DOM can ever render — the selectors never resolve there
+    // (gh-1521). Same convention as panel-focus/paste; the app branch's mail
+    // rendering (incl. the AC18 dedup-by-message-id invariant) is covered at
+    // unit level by flutter_app/test/relay_agent_service_test.dart _mailTests.
+    test.skip(
+      appBundlePresent,
+      'legacy transcript only — the app build redirects the panel to app/',
+    );
     await fa.swEval((mode) => {
       const sw = globalThis as unknown as {
         faAgent: { boot(c: unknown): Promise<unknown> };
