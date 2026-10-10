@@ -9,6 +9,7 @@
 @Timeout(Duration(minutes: 5))
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
@@ -21,7 +22,7 @@ void main() {
     'PTY: scroll-up mid-run holds the fold, arrivals count, End returns live',
     () async {
       final tempHome = Directory.systemTemp.createTempSync('fa_tui_1439_');
-      final workspace = Directory('/tmp').createTempSync('fa1439ws');
+      final workspace = Directory.systemTemp.createTempSync('fa1439ws');
       addTearDown(() => workspace.deleteSync(recursive: true));
       final server = await MockLlmServer.start()
         // Turn 1 seeds a transcript taller than the viewport (24 rows ->
@@ -128,18 +129,30 @@ tui:
       // by the live-fold hint (the #827 "N lines above fold" announce for
       // the following state) and the newest content is at the live edge.
       harness.sendText('\x1b[F'); // end
-      await Future<void>.delayed(const Duration(milliseconds: 1500));
-      final live = harness.screenText;
-      expect(
-        live,
-        isNot(contains(RegExp(r'● \d+ new'))),
-        reason: 'the counter resets when the unseen tail is revealed',
-      );
-      expect(
-        live,
-        isNot(contains(RegExp(r'\d+% · '))),
-        reason: 'the held percent rule leaves the glass on re-engage',
-      );
+      // The re-engage frame rides the 10 Hz spinner repaints, so a blind
+      // sleep + ONE screen sample races the paint path — the exact flake
+      // (#1467: the red runs sampled the glass once, 1500 ms after End,
+      // and caught it without the hint). Anchor on the hint itself: the
+      // same discipline step (2) uses for the counted rule. The guard
+      // stays — a fold that never re-engages fails LOUDLY on the wait,
+      // with the screen attached — while the single-sample race dies.
+      String live;
+      try {
+        live = await harness.waitForScreen(
+          RegExp(r'\d+ lines? above fold'),
+          timeout: const Duration(seconds: 10),
+        );
+      } on TimeoutException {
+        // One lost PTY keypress is transport, not product: retry the
+        // navigation key once, then still demand the hint on the glass.
+        harness.sendText('\x1b[F'); // end (retry)
+        live = await harness.waitForScreen(
+          RegExp(r'\d+ lines? above fold'),
+          timeout: const Duration(seconds: 30),
+        );
+      }
+      // The anchored capture IS the re-engage proof (capture, don't
+      // re-read — the gh-1049 convention).
       expect(
         live,
         contains('above fold'),
@@ -147,8 +160,24 @@ tui:
             'back to FOLLOWING: the live-fold hint replaces the '
             'held rule (the #827 etiquette)',
       );
+      // Absence assertions need a SETTLED screen (the #550/#557 family —
+      // the cell-diff path repaints only changed cells, so the pre-End
+      // held rule can linger one frame after the re-engage). The hint is
+      // a SUSTAINED live-edge row, so the settle keeps it on the glass.
+      await harness.waitForOutput(settleMs: 400);
+      final settledLive = harness.screenText;
       expect(
-        live,
+        settledLive,
+        isNot(contains(RegExp(r'● \d+ new'))),
+        reason: 'the counter resets when the unseen tail is revealed',
+      );
+      expect(
+        settledLive,
+        isNot(contains(RegExp(r'\d+% · '))),
+        reason: 'the held percent rule leaves the glass on re-engage',
+      );
+      expect(
+        settledLive,
         contains('Background jobs'),
         reason:
             're-engage lands on the LIVE edge: the busy tail is on '
