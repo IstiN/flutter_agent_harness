@@ -222,6 +222,12 @@ const Set<String> mobileCoreutilsApplets = {
 
 /// Mobile shell builtins implemented in Dart. These do not need a WASM
 /// module and do not increase the IPA size.
+///
+/// `cat` deliberately stays a coreutils.wasm applet (gh-1274/#1335 pinned
+/// contracts: the host-cwd argument projection applies at the WASM stage
+/// boundary). Pointer-bearing cats (gh-1444 C1) are intercepted in the
+/// shell's dispatch and served by the Dart builtin — see
+/// [WasiSandboxShell] `_catNeedsPointerSeam`.
 const Set<String> mobileBuiltinCommands = {
   'curl',
   'wget',
@@ -496,12 +502,12 @@ const String _iosHostProfile =
     '- Platform: iOS (mobile app). Your shell and files run inside a WASI '
     'sandbox, not on the phone OS: no OS processes, no raw sockets, no '
     'python ssl module. The writable workspace is the sandbox root /.\n'
-    '- Available tool classes here: file tools (read/write/edit/ls), '
-    'sandboxed bash, web_search/web_fetch, ask/request_secret, chat '
-    'widgets and JS apps, and the device bridges the OS grants '
-    '(calendar/contacts/health/home/mic/notifications). Desktop-only '
-    'surfaces (LSP, MCP, DAP, sqlite engine, checkpoints) are NOT '
-    'registered.\n'
+    '- Tool classes: file tools (read/write/edit/ls), sandboxed bash, '
+    'web_search/web_fetch, ask/request_secret, chat widgets and JS apps, '
+    'and device bridges (calendar/contacts/health/home/mic/'
+    'notifications). Absent (desktop-only): LSP, MCP, DAP, sqlite '
+    'engine, checkpoints.\n'
+    '- $_mobileNetworkMatrix'
     '- $_mobileFailureFirstAid';
 
 const String _androidHostProfile =
@@ -509,21 +515,31 @@ const String _androidHostProfile =
     '- Platform: Android (mobile app). Your shell and files run inside a '
     'WASI sandbox, not on the device OS: no OS processes, no raw sockets, '
     'no python ssl module. The writable workspace is the sandbox root /.\n'
-    '- Available tool classes here: file tools (read/write/edit/ls), '
-    'sandboxed bash, web_search/web_fetch, ask/request_secret, chat '
-    'widgets and JS apps, and the device bridges the OS grants (mobile '
-    'automation, mic, notifications). Desktop-only surfaces (LSP, MCP, '
-    'DAP, sqlite engine, checkpoints) are NOT registered.\n'
+    '- Tool classes: file tools (read/write/edit/ls), sandboxed bash, '
+    'web_search/web_fetch, ask/request_secret, chat widgets and JS apps, '
+    'and device bridges (mobile automation, mic, notifications). Absent '
+    '(desktop-only): LSP, MCP, DAP, sqlite engine, checkpoints.\n'
+    '- $_mobileNetworkMatrix'
     '- $_mobileFailureFirstAid';
+
+/// The documented network host matrix of the mobile sandboxes (gh-1444
+/// C6): the trust-family hosts that ARE reachable, and the cheapest
+/// unblock when `git clone` over HTTPS fails — the codeload tarball — so
+/// the model never rebuilds a repo through per-file API fetches again.
+const String _mobileNetworkMatrix =
+    'Network: api.github.com, raw.githubusercontent.com, '
+    'codeload.github.com, objects.githubusercontent.com are reachable. '
+    'Repo snapshot: `curl -L '
+    'https://codeload.github.com/<org>/<repo>/tar.gz/refs/heads/<branch>` '
+    '+ `tar -xzf` when `git clone` HTTPS fails.\n';
 
 /// The WASI failure → fallback mapping shared by the mobile host profiles
 /// (the error catalog of issue #692 B).
 const String _mobileFailureFirstAid =
-    'WASI failure first aid: a tool failing with an IO/os error (e.g. rg '
-    '"os error 44") → use the grep tool or coreutils grep; a python '
-    'network call failing or timing out → use curl or the web_fetch tool; '
-    'exit 127 "command not found" → the command does not exist here, '
-    're-check the shell list above.';
+    'Failure first aid: IO/os error (e.g. rg "os error 44") → the grep '
+    'tool or coreutils grep; a python network call failing or timing out '
+    '→ curl or the web_fetch tool; exit 127 "command not found" → not '
+    'available here, re-check the shell list above.';
 
 const String _webHostProfile =
     '## Host profile\n'

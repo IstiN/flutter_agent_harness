@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -248,7 +250,11 @@ void main() {
         ),
       );
       final options = shell.lastOptions!;
-      expect(options.env, {'SECRET': 's3cr3t-value', 'OTHER': '1'});
+      expect(options.env, {
+        'SECRET': 's3cr3t-value',
+        'OTHER': '1',
+        secretPresenceEnvVar: 'SECRET',
+      });
       expect(options.timeout, const Duration(seconds: 5));
     });
 
@@ -262,7 +268,10 @@ void main() {
         'x',
         options: ShellExecOptions(env: const {'SECRET': 'override'}),
       );
-      expect(shell.lastOptions!.env, {'SECRET': 'override'});
+      expect(shell.lastOptions!.env, {
+        'SECRET': 'override',
+        secretPresenceEnvVar: 'SECRET',
+      });
     });
 
     test('exec with no options still injects secrets', () async {
@@ -272,7 +281,10 @@ void main() {
         const {'SECRET': 's3cr3t-value'},
       );
       await env.exec('x');
-      expect(shell.lastOptions!.env, {'SECRET': 's3cr3t-value'});
+      expect(shell.lastOptions!.env, {
+        'SECRET': 's3cr3t-value',
+        secretPresenceEnvVar: 'SECRET',
+      });
     });
 
     test('empty secrets pass options through untouched', () async {
@@ -285,6 +297,54 @@ void main() {
       expect(shell.lastOptions, isNull);
     });
 
+    test('startShellJob merges secrets into ShellExecOptions.env', () async {
+      final shell = _RecordingShell();
+      final env = SecretsExecutionEnv(
+        MemoryExecutionEnv(cwd: '/', shell: shell),
+        const {'SECRET': '[REDACTED:Sensitive Value]'},
+      );
+      await env.startShellJob(
+        'echo x',
+        id: 'sh-x',
+        logPath: '.fah/bash_jobs/sh-x.log',
+        options: ShellExecOptions(env: const {'OTHER': '1'}),
+      );
+      expect(shell.lastBgOptions!.env, {
+        'SECRET': '[REDACTED:Sensitive Value]',
+        'OTHER': '1',
+        secretPresenceEnvVar: 'SECRET',
+      });
+    });
+
+    test('startShellJob with no secrets passes options through untouched',
+        () async {
+      final shell = _RecordingShell();
+      final env = SecretsExecutionEnv(
+        MemoryExecutionEnv(cwd: '/', shell: shell),
+        const {},
+      );
+      final options = ShellExecOptions(env: const {'OTHER': '1'});
+      await env.startShellJob(
+        'x',
+        id: 'sh-x',
+        logPath: '.fah/bash_jobs/sh-x.log',
+        options: options,
+      );
+      // No merge happened: the exact instance went through.
+      expect(identical(shell.lastBgOptions, options), isTrue);
+    });
+
+    test('startShellJob injects registered names for roster-only envs',
+        () async {
+      final shell = _RecordingShell();
+      final env = SecretsExecutionEnv(
+        MemoryExecutionEnv(cwd: '/', shell: shell),
+        const {},
+      )..registerSecretNames(const ['VAULT_TOKEN']);
+      await env.startShellJob('x', id: 'sh-x', logPath: '.fah/x.log');
+      expect(shell.lastBgOptions!.env, {secretPresenceEnvVar: 'VAULT_TOKEN'});
+    });
+
     test('addSecrets merges into the live map for later exec calls', () async {
       final shell = _RecordingShell();
       final env = SecretsExecutionEnv(
@@ -292,12 +352,16 @@ void main() {
         const {'SECRET': 's3cr3t-value'},
       );
       await env.exec('x');
-      expect(shell.lastOptions!.env, {'SECRET': 's3cr3t-value'});
+      expect(shell.lastOptions!.env, {
+        'SECRET': 's3cr3t-value',
+        secretPresenceEnvVar: 'SECRET',
+      });
       env.addSecrets(const {'NEW_KEY': 'n3w-value'});
       await env.exec('x');
       expect(shell.lastOptions!.env, {
         'SECRET': 's3cr3t-value',
         'NEW_KEY': 'n3w-value',
+        secretPresenceEnvVar: 'NEW_KEY SECRET',
       });
     });
 
@@ -309,7 +373,10 @@ void main() {
       );
       env.addSecrets(const {'SECRET': 'new-value'});
       await env.exec('x');
-      expect(shell.lastOptions!.env, {'SECRET': 'new-value'});
+      expect(shell.lastOptions!.env, {
+        'SECRET': 'new-value',
+        secretPresenceEnvVar: 'SECRET',
+      });
     });
 
     test('secretsSnapshot reflects runtime grants and is a copy', () async {
@@ -335,7 +402,10 @@ void main() {
         'x',
         options: ShellExecOptions(env: const {'NEW_KEY': 'override'}),
       );
-      expect(shell.lastOptions!.env, {'NEW_KEY': 'override'});
+      expect(shell.lastOptions!.env, {
+        'NEW_KEY': 'override',
+        secretPresenceEnvVar: 'NEW_KEY',
+      });
     });
 
     test('filesystem operations delegate to the wrapped env', () async {
@@ -365,8 +435,11 @@ void main() {
   });
 }
 
-final class _RecordingShell implements Shell {
+final class _RecordingShell implements Shell, BackgroundShell {
   ShellExecOptions? lastOptions;
+
+  /// Options captured by [startShellJob], if it was called.
+  ShellExecOptions? lastBgOptions;
 
   @override
   Future<Result<ShellExecResult, ExecutionError>> exec(
@@ -375,5 +448,61 @@ final class _RecordingShell implements Shell {
   }) async {
     lastOptions = options;
     return const Ok(ShellExecResult(stdout: '', stderr: '', exitCode: 0));
+  }
+
+  @override
+  bool get backgroundJobsSupported => true;
+
+  @override
+  Future<Result<ShellJob, ExecutionError>> startShellJob(
+    String command, {
+    required String id,
+    required String logPath,
+    ShellExecOptions? options,
+  }) async {
+    lastBgOptions = options;
+    return Ok(_FakeShellJob(id, command));
+  }
+}
+
+/// Minimal settle-able job for the [BackgroundShell] recording fake.
+final class _FakeShellJob implements ShellJob {
+  _FakeShellJob(this.id, this.command);
+
+  final _settled = Completer<void>();
+
+  @override
+  final String id;
+
+  @override
+  final String command;
+
+  @override
+  String get logPath => '.fah/bash_jobs/$id.log';
+
+  @override
+  int? get pid => null;
+
+  @override
+  bool get isRunning => !_settled.isCompleted;
+
+  @override
+  int? get exitCode => _settled.isCompleted ? 0 : null;
+
+  @override
+  String? get stopReason => null;
+
+  @override
+  Future<void> get settled => _settled.future;
+
+  @override
+  Stream<String> get output => const Stream<String>.empty();
+
+  @override
+  bool writeStdin(String data) => true;
+
+  @override
+  Future<void> stop() async {
+    if (!_settled.isCompleted) _settled.complete();
   }
 }
