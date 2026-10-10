@@ -189,5 +189,24 @@ void main() {
         isNull,
       );
     });
+
+    test('buildCliDefaultModel threads the preconfig contextWindow/'
+        'maxTokens (gh-1471 D4: the FA_PROVIDER_CONFIG declaration)', () {
+      // The bench kimi mapping pins 200000/16384 — the declaration wins
+      // over every resolver layer below it (spec, ceiling table).
+      final declared = buildCliDefaultModel(
+        'kimi',
+        modelId: 'k3-256k',
+        contextWindow: 200000,
+        maxTokens: 16384,
+      );
+      expect(declared.contextWindow, 200000);
+      expect(declared.maxTokens, 16384);
+      // Absent declarations keep the catalog spec (the kimi spec already
+      // carries 200000/16384 — a zai boot is byte-identical either way).
+      final inherited = buildCliDefaultModel('kimi', modelId: 'k3-256k');
+      expect(inherited.contextWindow, 200000);
+      expect(inherited.maxTokens, 16384);
+    });
   });
 }
