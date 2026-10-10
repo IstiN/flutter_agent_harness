@@ -356,8 +356,43 @@ String renderBlogPostPage(BlogPost p) {
   final video = p.video;
   final linkedin = p.linkedin;
 
+  // The post markdown usually opens with its own `# <title>` H1 and a
+  // leading cover image — both are lifted into the page template (the
+  // cover becomes the .post-cover figure, mirroring blog/post.html).
+  final bodyLines = p.body.split('\n');
+  var start = 0;
+  var strippedH1 = false;
+  var coverFromBody = false;
+  while (start < bodyLines.length) {
+    final line = bodyLines[start].trim();
+    if (line.isEmpty) {
+      start++;
+      continue;
+    }
+    if (!strippedH1) {
+      final h1 = RegExp(r'^#\s+(.+)$').firstMatch(line);
+      if (h1 != null && plainText(h1.group(1)!) == plainText(p.title)) {
+        strippedH1 = true;
+        start++;
+        continue;
+      }
+    }
+    if (cover != null && !coverFromBody) {
+      final img = RegExp(
+        r'^!\[[^\]]*\]\(' + RegExp.escape(cover) + r'\)\s*$',
+      ).firstMatch(line);
+      if (img != null) {
+        coverFromBody = true;
+        start++;
+        continue;
+      }
+    }
+    break;
+  }
+  final body = bodyLines.sublist(start).join('\n').trimLeft();
+
   final bodyHtml = renderMarkdown(
-    p.body,
+    body,
     rewriteImg: (src) => RegExp(r'^(?:https?:)?//|^/|^data:').hasMatch(src)
         ? src
         : '../posts/$src',
@@ -415,7 +450,7 @@ ${_nav('../', current: 'blog')}
   <p><a class="back-link" href="../">← all posts</a></p>
   <article class="post-body" id="post">
     <h1>$title</h1>
-    ${cover != null && !p.body.contains(']($cover)') ? '<img class="post-cover" src="../posts/$cover" alt="$title">' : ''}
+    ${cover != null && (coverFromBody || !body.contains(']($cover)')) ? '<img class="post-cover" src="../posts/$cover" alt="$title">' : ''}
 $meta$bodyHtml  </article>
 </main>
 </body>

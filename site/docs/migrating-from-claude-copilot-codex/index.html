@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migrating from Claude Code, GitHub Copilot, or OpenAI Codex — Fa docs</title>
+<meta name="description" content="Fa reads your existing agent configuration in place — nothing is copied, converted, or moved. If a project (or your home directory) already has skills, commands, agents, or instruction files from another tool, Fa picks them up at startup — discovery is on by default, no setup needed.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<meta name="theme-color" content="#070a10">
+<link rel="canonical" href="https://fa1.dev/docs/migrating-from-claude-copilot-codex/">
+<link rel="icon" href="../../favicon.svg?v=2" type="image/svg+xml">
+
+<!-- Open Graph -->
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Fa">
+<meta property="og:title" content="Migrating from Claude Code, GitHub Copilot, or OpenAI Codex">
+<meta property="og:description" content="Fa reads your existing agent configuration in place — nothing is copied, converted, or moved. If a project (or your home directory) already has skills, commands, agents, or instruction files from another tool, Fa picks them up at startup — discovery is on by default, no setup needed.">
+<meta property="og:url" content="https://fa1.dev/docs/migrating-from-claude-copilot-codex/">
+<meta property="og:image" content="https://fa1.dev/og-image.png?v=2">
+<meta property="og:image:alt" content="Fa — one agent harness, every device.">
+
+<!-- Twitter -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Migrating from Claude Code, GitHub Copilot, or OpenAI Codex">
+<meta name="twitter:description" content="Fa reads your existing agent configuration in place — nothing is copied, converted, or moved. If a project (or your home directory) already has skills, commands, agents, or instruction files from another tool, Fa picks them up at startup — discovery is on by default, no setup needed.">
+<meta name="twitter:image" content="https://fa1.dev/og-image.png?v=2">
+
+<link rel="stylesheet" href="../../styles.css?v=3">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Migrating from Claude Code, GitHub Copilot, or OpenAI Codex",
+  "description": "Fa reads your existing agent configuration in place — nothing is copied, converted, or moved. If a project (or your home directory) already has skills, commands, agents, or instruction files from another tool, Fa picks them up at startup — discovery is on by default, no setup needed.",
+  "datePublished": "2026-10-10",
+  "dateModified": "2026-10-10",
+  "author": {
+    "@type": "Organization",
+    "name": "IstiN",
+    "url": "https://github.com/IstiN"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "IstiN",
+    "url": "https://fa1.dev",
+    "sameAs": [
+      "https://github.com/IstiN"
+    ]
+  },
+  "about": {
+    "@type": "SoftwareApplication",
+    "name": "Fa",
+    "url": "https://fa1.dev"
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://fa1.dev/docs/migrating-from-claude-copilot-codex/"
+  },
+  "url": "https://fa1.dev/docs/migrating-from-claude-copilot-codex/"
+}
+</script>
+</head>
+<body>
+<div class="bg" aria-hidden="true"></div>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="../../">
+      <span class="brand-mark" aria-hidden="true">&gt;_</span>
+      <span class="brand-name">Fa</span>
+      <span class="brand-sub">fa1.dev</span>
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="../../#demo">Demo</a>
+      <a href="../../#install">Install</a>
+      <a href="../../#features">Features</a>
+      <a href="../../widgets/">Widgets</a>
+      <a href="../../blog/">Blog</a>
+    </nav>
+    <nav class="nav-ext" aria-label="Project links">
+      <a href="https://github.com/IstiN/flutter_agent_harness" rel="noopener">GitHub</a>
+      <a href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>
+    </nav>
+  </div>
+</header>
+
+<main class="blog-wrap">
+  <p><a class="back-link" href="https://github.com/IstiN/flutter_agent_harness/blob/main/docs/migrating-from-claude-copilot-codex.md" target="_blank" rel="noopener">← source on GitHub ↗</a></p>
+  <article class="post-body" id="doc">
+    <div class="post-meta">Updated 2026-10-10 · IstiN</div>
+<p>Fa reads your existing agent configuration <strong>in place</strong> — nothing is copied, converted, or moved. If a project (or your home directory) already has skills, commands, agents, or instruction files from another tool, Fa picks them up at startup — discovery is <strong>on by default</strong>, no setup needed.</p>
+<h2>The access setting (opt-out)</h2>
+<p>Third-party directories contain instructions and scripts written for other tools, so while Fa reads them by default, you stay in control:</p>
+<ul><li><strong>Default</strong>: <em>granted</em> — <code>.claude</code>, <code>.github</code>, <code>.codex</code> skill/agent roots are discovered automatically, in the CLI and the Flutter app alike.</li><li><strong>Change anytime</strong>: CLI <code>/skills</code> opens the management menu (TUI) with an access row; <code>/skills access ask|granted|denied</code> sets it directly (bare <code>/skills access</code> opens an interactive picker, line mode included). App: Settings → Skills access (Allowed / Ask / Denied). Persisted in <code>~/.fah/config.yaml</code> (<code>skills: access:</code>) for the CLI and <code>skills_access.json</code> for the app.</li><li><strong><code>ask</code> mode</strong>: the CLI shows a one-time startup dialog when third-party roots exist (<em>Allow</em> / <em>Not now</em> / <em>Never</em>); the app shows the same choice as a one-time boot dialog. Headless runs (<code>fa -p …</code>) skip them.</li><li><strong><code>denied</code> mode</strong>: the roots are never read; the CLI prints a hint naming <code>/skills</code> as the way to re-enable them when such directories exist.</li></ul><p>Fa&#39;s own roots (<code>.fah/skills</code>, <code>.agents/skills</code>, <code>.fah/agents</code>, <code>.agents/agents</code>) are always read — the setting only covers other tools&#39; directories. On Android/iOS the third-party roots don&#39;t exist, so the setting surface is hidden there (discovery itself is unaffected).</p>
+<h2>What is picked up</h2>
+<table>
+<thead><tr><th>Tool</th><th>Skills</th><th>Agents / subagents</th><th>Instruction files</th></tr></thead>
+<tbody>
+<tr><td>Claude Code</td><td><code>.claude/skills/*/SKILL.md</code>, <code>~/.claude/skills</code>, <code>.claude/commands/*.md</code></td><td><code>.claude/agents/*.md</code>, <code>~/.claude/agents</code></td><td><code>CLAUDE.md</code></td></tr>
+<tr><td>GitHub Copilot</td><td><code>.github/skills</code>, <code>~/.copilot/skills</code></td><td><code>.github/agents/*.agent.md</code></td><td><code>.github/copilot-instructions.md</code>, <code>.github/instructions/*.instructions.md</code></td></tr>
+<tr><td>OpenAI Codex</td><td><code>.codex/skills</code>, <code>~/.codex/skills</code></td><td><code>.codex/agents</code>, <code>~/.codex/agents</code></td><td><code>AGENTS.md</code> (native to Fa)</td></tr>
+<tr><td>Gemini CLI</td><td>—</td><td>—</td><td><code>GEMINI.md</code></td></tr>
+</tbody>
+</table>
+<p>Project roots win name clashes over user roots, first name wins; Fa&#39;s own roots take precedence over third-party ones. (Note: Claude Code itself prefers user-level over project-level on clashes — Fa keeps its project-first rule.)</p>
+<h2>Skills: using them</h2>
+<ul><li>List: <code>/skills</code> (CLI) — the TUI opens a management menu: every discovered skill (picking one prefills <code>/skill:&lt;name&gt; </code> into the composer), the access level, and an import action; line mode prints a plain list with name, description, location, source (<code>claude</code>/<code>copilot</code>/<code>codex</code>) and flags (<code>model-only</code>, <code>user-only</code>, <code>fork</code>, <code>path-gated</code>). Typing <code>/</code> followed by the skill name also autocompletes invocable skills.</li><li>Invoke: <code>/skill:&lt;name&gt; [args]</code> or the Claude-style alias <code>/&lt;name&gt; [args]</code>.</li><li>The model sees skill metadata in the system prompt and loads bodies on demand (progressive disclosure), same as native Fa skills.</li></ul><h3>Supported frontmatter</h3>
+<p><code>name</code>, <code>description</code>, <code>when_to_use</code>, <code>argument-hint</code>, <code>arguments</code>, <code>disable-model-invocation</code>, <code>user-invocable</code>, <code>allowed-tools</code>, <code>disallowed-tools</code>, <code>model</code>, <code>effort</code>, <code>context: fork</code>, <code>agent</code>, <code>background</code>, <code>paths</code>, <code>shell</code>, <code>license</code>, <code>compatibility</code>, <code>metadata</code>, <code>applyTo</code> (Copilot), <code>excludeAgent</code> (ignored). Unknown keys produce a discovery note, never a crash.</p>
+<h3>Invocation semantics</h3>
+<ul><li><code>$ARGUMENTS</code>, <code>$ARGUMENTS[N]</code>, <code>$0..$9</code>, named <code>$name</code> (from <code>arguments:</code>) and <code>${CLAUDE_SESSION_ID}</code> / <code>${CLAUDE_PROJECT_DIR}</code> / <code>${CLAUDE_SKILL_DIR}</code> are substituted; <code>\$</code> escapes. With no placeholder, raw args are appended as <code>ARGUMENTS: …</code>.</li><li>`<code> !</code>cmd<code> </code><code> lines and </code>``<code> </code>`<code>! </code>``<code> fenced blocks run through the shell before the content reaches the model (2-minute timeout per command; a failing command aborts the invocation). Disable globally with </code>skills: disableShellExecution: true<code> in </code>~/.fah/config.yaml`.</li><li><code>allowed-tools: [Read, Bash]</code> becomes a <strong>per-turn approval grant</strong> (and <code>disallowed-tools</code> a per-turn deny) on Fa&#39;s approval gate; grants clear on the next regular user message. Patterns with parentheses (<code>Bash(git fetch:*)</code>) cannot be mapped onto Fa&#39;s tool-name gate and are reported as a note instead of being granted.</li><li><code>context: fork</code> runs the rendered skill as a subagent (the <code>task</code> tool); <code>agent:</code> picks the agent type (Claude&#39;s <code>Explore</code>/<code>Plan</code>/<code>general-purpose</code> names are folded onto Fa&#39;s <code>explore</code>/<code>plan</code>/<code>task</code> types), <code>background: true</code> makes it a background job whose completion re-enters as a message.</li><li><code>paths:</code> (Claude path-gated skills) keeps the skill out of the prompt until the agent has touched a matching file this session.</li><li><code>hooks</code> are not executed (Fa has no hook runner); they are reported as a discovery note.</li></ul><h2>Agents (subagent types)</h2>
+<p><code>&lt;name&gt;.md</code> (Claude/Codex layout) and <code>&lt;name&gt;.agent.md</code> (Copilot) files define agent types for the <code>task</code> tool: frontmatter <code>name</code>, <code>description</code>, <code>tools</code> (list or comma string; <code>*</code> = full surface, <code>[]</code> = none), <code>readOnly</code>, <code>modelRole</code> (or Claude&#39;s <code>model</code> when it names a Fa role). The body becomes the subagent&#39;s system prompt. <code>/agents types</code> lists them; discovered names like <code>Reviewer</code> override the matching built-in.</p>
+<p>Copilot specifics: <code>target: vscode</code> profiles are skipped (VS Code-only), <code>mcp-servers</code> is reported as unsupported, <code>argument-hint</code>/<code>handoffs</code> are ignored (IDE-only).</p>
+<h2>Instruction files</h2>
+<p><code>CLAUDE.md</code>, <code>GEMINI.md</code>, <code>.github/copilot-instructions.md</code> and <code>.github/instructions/*.instructions.md</code> merge into the system prompt along the existing <code>AGENTS.md</code> walk (working directory → git root, farthest-first, 32 KiB leaf-first budget). Copilot <code>applyTo</code> globs are not evaluated — scoped files are included with an <code>&lt;!-- applies to: … --&gt;</code> marker instead.</p>
+<h2>Optional: taking ownership</h2>
+<p><code>/skills import</code> (or the Import row in the TUI <code>/skills</code> menu) copies discovered third-party skills into <code>.fah/skills/&lt;name&gt;/SKILL.md</code> (name clashes with existing own skills are skipped). Only the manifest file is copied — auxiliary skill files stay with the original directory. After import the skills no longer depend on the access setting.</p>
+  </article>
+</main>
+</body>
+</html>

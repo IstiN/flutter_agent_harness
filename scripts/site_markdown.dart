@@ -192,12 +192,33 @@ String renderMarkdown(
         final ol = _olItem.firstMatch(l);
         if (ul != null) {
           items.add(_ListItem(ul.group(1)!.length, false, ul.group(2)!));
-        } else if (ol != null) {
-          items.add(_ListItem(ol.group(1)!.length, true, ol.group(2)!));
-        } else {
-          break;
+          j++;
+          continue;
         }
-        j++;
+        if (ol != null) {
+          items.add(_ListItem(ol.group(1)!.length, true, ol.group(2)!));
+          j++;
+          continue;
+        }
+        // Lazy continuation: a wrapped list-item line (indented or not)
+        // extends the previous item instead of ending the list.
+        if (items.isNotEmpty &&
+            l.trim().isNotEmpty &&
+            !_heading.hasMatch(l.trim()) &&
+            !_fence.hasMatch(l.trim()) &&
+            !_hr.hasMatch(l.trim()) &&
+            !l.trim().startsWith('>') &&
+            !_isTableStart(lines, j)) {
+          final last = items.last;
+          items[items.length - 1] = _ListItem(
+            last.indent,
+            last.ordered,
+            '${last.text} ${l.trim()}',
+          );
+          j++;
+          continue;
+        }
+        break;
       }
       _emitList(items, out, rewriteLink, rewriteImg);
       i = j;
@@ -263,8 +284,7 @@ int _renderTable(
   final header = _splitRow(lines[i]);
   final delimiters = _splitRow(lines[i + 1]);
   final aligns = delimiters.map(_cellAlign).toList();
-  String alignFor(int col) =>
-      col < aligns.length && aligns[col] != null ? aligns[col]! : '';
+  String? alignFor(int col) => col < aligns.length ? aligns[col] : null;
 
   out.writeln('<table>');
   out.write('<thead><tr>');

@@ -54,132 +54,164 @@
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  "name": "Fa",
-  "alternateName": "flutter_agent_harness",
-  "description": "Cross-platform AI agent harness for Dart and Flutter: streaming provider adapters, agent loop with tools, sandboxed shell, git, session persistence, and context compaction. Runs on iOS, Android, web, desktop, and CLI — plus a Chrome MV3 extension and an Outlook add-in.",
-  "url": "https://fa1.dev/",
-  "applicationCategory": "DeveloperApplication",
-  "operatingSystem": "iOS, Android, Web, macOS, Windows, Linux, Chrome (extension), Outlook (add-in)",
-  "license": "https://opensource.org/licenses/MIT",
-  "codeRepository": "https://github.com/IstiN/flutter_agent_harness",
-  "downloadUrl": "https://pub.dev/packages/flutter_agent_harness",
-  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-  "author": {
-    "@type": "Organization",
-    "name": "IstiN",
-    "url": "https://github.com/IstiN"
-  },
-  "featureList": "Sandboxed shell with curl/jq/rg/sed/awk/git, python3 and sqlite3 in the browser, secrets redaction, file browser, session tree with compaction, Chrome extension with 34 browser tools, Outlook add-in with mail tools, BYOK live demo"
-}
-</script>
-
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "FAQPage",
-  "mainEntity": [
+  "@graph": [
     {
-      "@type": "Question",
-      "name": "What is Fa?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Fa (Flutter Agent Harness) is an open-source coding agent for Dart and Flutter. It pairs a pure-Dart agent core (provider adapters, tool loop, session tree, compaction) with a real sandboxed workbench: shell commands, git, python3 and sqlite3 — running identically on iOS, Android, web, desktop, and as a CLI."
+      "@type": "Organization",
+      "@id": "https://fa1.dev/#org",
+      "name": "IstiN",
+      "url": "https://github.com/IstiN",
+      "sameAs": [
+        "https://github.com/IstiN"
+      ]
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://fa1.dev/#website",
+      "name": "Fa — one agent harness, every device",
+      "url": "https://fa1.dev/",
+      "publisher": {
+        "@id": "https://fa1.dev/#org"
       }
     },
     {
-      "@type": "Question",
-      "name": "Is my API key safe in the web demo?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Yes. The key is held in page memory only — never written to localStorage, cookies, or disk, and gone on reload. API calls go directly from your browser to the LLM provider: the page is static files, so there is no server or proxy in between that could log it."
+      "@type": "SoftwareApplication",
+      "name": "Fa",
+      "alternateName": "flutter_agent_harness",
+      "description": "Cross-platform AI agent harness for Dart and Flutter: streaming provider adapters, agent loop with tools, sandboxed shell, git, session persistence, and context compaction. Runs on iOS, Android, web, desktop, and CLI — plus a Chrome MV3 extension and an Outlook add-in.",
+      "url": "https://fa1.dev/",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "iOS, Android, Web, macOS, Windows, Linux, Chrome (extension), Outlook (add-in)",
+      "license": "https://opensource.org/licenses/MIT",
+      "codeRepository": "https://github.com/IstiN/flutter_agent_harness",
+      "sameAs": [
+        "https://github.com/IstiN/flutter_agent_harness",
+        "https://pub.dev/packages/flutter_agent_harness"
+      ],
+      "downloadUrl": "https://pub.dev/packages/flutter_agent_harness",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "author": {
+        "@id": "https://fa1.dev/#org"
+      },
+      "featureList": "Sandboxed shell with curl/jq/rg/sed/awk/git, python3 and sqlite3 in the browser, secrets redaction, file browser, session tree with compaction, Chrome extension with 34 browser tools, Outlook add-in with mail tools, BYOK live demo"
+    },
+    {
+      "@type": "SoftwareSourceCode",
+      "name": "flutter_agent_harness",
+      "url": "https://github.com/IstiN/flutter_agent_harness",
+      "codeRepository": "https://github.com/IstiN/flutter_agent_harness",
+      "runtimePlatform": "Dart",
+      "programmingLanguage": "Dart",
+      "license": "https://opensource.org/licenses/MIT",
+      "author": {
+        "@id": "https://fa1.dev/#org"
       }
     },
     {
-      "@type": "Question",
-      "name": "Which LLM providers does Fa support?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "OpenAI-compatible endpoints (OpenRouter, Ollama Cloud, self-hosted llama.cpp / LM Studio / vLLM), Anthropic, and Google. Custom OpenAI-compatible providers can be added with a base URL — the model list, context window, and output limits are detected from the endpoint automatically."
-      }
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is Fa?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Fa (Flutter Agent Harness) is an open-source coding agent for Dart and Flutter. It pairs a pure-Dart agent core (provider adapters, tool loop, session tree, compaction) with a real sandboxed workbench: shell commands, git, python3 and sqlite3 — running identically on iOS, Android, web, desktop, and as a CLI."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is my API key safe in the web demo?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. The key is held in page memory only — never written to localStorage, cookies, or disk, and gone on reload. API calls go directly from your browser to the LLM provider: the page is static files, so there is no server or proxy in between that could log it."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which LLM providers does Fa support?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "OpenAI-compatible endpoints (OpenRouter, Ollama Cloud, self-hosted llama.cpp / LM Studio / vLLM), Anthropic, and Google. Custom OpenAI-compatible providers can be added with a base URL — the model list, context window, and output limits are detected from the endpoint automatically."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which platforms does Fa run on?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "iOS, Android, web (as static files, no server), macOS, Windows, Linux, and a terminal CLI — plus a Chrome MV3 extension that hosts the full agent in your browser and an Outlook add-in that runs it inside your mailbox. The core library is pure Dart with no dart:io, so the same agent loop and tools run everywhere behind a small environment abstraction."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "What can the agent actually do?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Run shell commands (curl, jq, rg, sed, awk, tar, zip, diff, patch), clone and push git repositories over HTTP/SSH, run python3 with pip, query sqlite3, execute QuickJS, edit files, browse the web, spawn task subagents, use LSP and MCP servers, keep persistent memory, and — through the Chrome extension — drive tabs, history, bookmarks, downloads, cookies, and screenshots with approval-gated injection. Inside Outlook it reads the open email and its attachments and writes draft bodies."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is Fa free?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Fa itself is free and open source (MIT license). You bring your own provider key and pay your LLM provider only for the tokens you use — there is no markup, subscription, or account."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I install the CLI?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "One line: curl -fsSL \"https://fa1.dev/install.sh\" | sh (macOS / Linux / WSL) or the PowerShell equivalent on Windows, then run the setup wizard to pick a provider and key. Alternatively dart pub global activate flutter_agent_harness from pub.dev. Both give you the fa and fah commands."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I install the Chrome extension?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Download fa-extension.zip from https://fa1.dev/extension/fa-extension.zip, unzip it, open chrome://extensions, enable Developer mode, choose Load unpacked, and pick the unzipped folder. The side panel hosts the full Fa app, and the agent gains 34 browser tools — tabs, windows, history, bookmarks, downloads, cookies, screenshots, and approval-gated code injection."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does Fa run inside Outlook?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes — Fa ships as an Outlook Office Add-in. Download manifest.xml from https://fa1.dev/outlook/manifest.xml, open https://aka.ms/olksideload (My add-ins), then Custom add-ins → \"+ Add a custom add-in\" → Add from file → manifest.xml → Install. Microsoft removed the manual \"Add from a URL\" entry, so download-then-file is the only self-service path (admin-deployed catalogs can still use the URL). Works in Outlook on the web, new Outlook for Windows, and classic Outlook: in new Outlook and OWA the «fa» button sits in a message's Apps flyout, classic Outlook shows it on the Home ribbon. The taskpane runs the full agent with three approval-gated mail tools: read the open email, read attachments, and insert draft bodies. Full step-by-step guide with troubleshooting: https://fa1.dev/outlook/support.html"
+          }
+        }
+      ]
     },
     {
-      "@type": "Question",
-      "name": "Which platforms does Fa run on?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "iOS, Android, web (as static files, no server), macOS, Windows, Linux, and a terminal CLI — plus a Chrome MV3 extension that hosts the full agent in your browser and an Outlook add-in that runs it inside your mailbox. The core library is pure Dart with no dart:io, so the same agent loop and tools run everywhere behind a small environment abstraction."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "What can the agent actually do?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Run shell commands (curl, jq, rg, sed, awk, tar, zip, diff, patch), clone and push git repositories over HTTP/SSH, run python3 with pip, query sqlite3, execute QuickJS, edit files, browse the web, spawn task subagents, use LSP and MCP servers, keep persistent memory, and — through the Chrome extension — drive tabs, history, bookmarks, downloads, cookies, and screenshots with approval-gated injection. Inside Outlook it reads the open email and its attachments and writes draft bodies."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Is Fa free?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Fa itself is free and open source (MIT license). You bring your own provider key and pay your LLM provider only for the tokens you use — there is no markup, subscription, or account."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "How do I install the CLI?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "One line: curl -fsSL \"https://fa1.dev/install.sh\" | sh (macOS / Linux / WSL) or the PowerShell equivalent on Windows, then run the setup wizard to pick a provider and key. Alternatively dart pub global activate flutter_agent_harness from pub.dev. Both give you the fa and fah commands."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "How do I install the Chrome extension?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Download fa-extension.zip from https://fa1.dev/extension/fa-extension.zip, unzip it, open chrome://extensions, enable Developer mode, choose Load unpacked, and pick the unzipped folder. The side panel hosts the full Fa app, and the agent gains 34 browser tools — tabs, windows, history, bookmarks, downloads, cookies, screenshots, and approval-gated code injection."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Does Fa run inside Outlook?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Yes — Fa ships as an Outlook Office Add-in. Download manifest.xml from https://fa1.dev/outlook/manifest.xml, open https://aka.ms/olksideload (My add-ins), then Custom add-ins → \"+ Add a custom add-in\" → Add from file → manifest.xml → Install. Microsoft removed the manual \"Add from a URL\" entry, so download-then-file is the only self-service path (admin-deployed catalogs can still use the URL). Works in Outlook on the web, new Outlook for Windows, and classic Outlook: in new Outlook and OWA the «fa» button sits in a message's Apps flyout, classic Outlook shows it on the Home ribbon. The taskpane runs the full agent with three approval-gated mail tools: read the open email, read attachments, and insert draft bodies. Full step-by-step guide with troubleshooting: https://fa1.dev/outlook/support.html"
-      }
-    }
-  ]
-}
-</script>
-
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "HowTo",
-  "name": "Install the Fa CLI",
-  "description": "Install the Fa coding-agent CLI on macOS, Linux/WSL, or Windows and configure a provider.",
-  "totalTime": "PT2M",
-  "step": [
-    {
-      "@type": "HowToStep",
-      "position": 1,
-      "name": "Run the installer",
-      "text": "macOS / Linux / WSL: curl -fsSL \"https://fa1.dev/install.sh\" | sh — Windows PowerShell: irm \"https://fa1.dev/install.ps1\" | iex. The non-interactive installer downloads a prebuilt binary from GitHub Releases, installs fa/fah to a directory on your PATH, and—on macOS—removes Gatekeeper quarantine and re-signs the binary ad-hoc."
-    },
-    {
-      "@type": "HowToStep",
-      "position": 2,
-      "name": "Configure the provider",
-      "text": "Run the setup wizard (curl -fsSL \"https://fa1.dev/setup.sh\" | sh) or start fa and use /provider to pick a provider, endpoint, and API key."
-    },
-    {
-      "@type": "HowToStep",
-      "position": 3,
-      "name": "Start the agent",
-      "text": "Run fa in any project directory. Sessions persist automatically and can be resumed with fa --session '<id>'."
+      "@type": "HowTo",
+      "name": "Install the Fa CLI",
+      "description": "Install the Fa coding-agent CLI on macOS, Linux/WSL, or Windows and configure a provider.",
+      "totalTime": "PT2M",
+      "step": [
+        {
+          "@type": "HowToStep",
+          "position": 1,
+          "name": "Run the installer",
+          "text": "macOS / Linux / WSL: curl -fsSL \"https://fa1.dev/install.sh\" | sh — Windows PowerShell: irm \"https://fa1.dev/install.ps1\" | iex. The non-interactive installer downloads a prebuilt binary from GitHub Releases, installs fa/fah to a directory on your PATH, and—on macOS—removes Gatekeeper quarantine and re-signs the binary ad-hoc."
+        },
+        {
+          "@type": "HowToStep",
+          "position": 2,
+          "name": "Configure the provider",
+          "text": "Run the setup wizard (curl -fsSL \"https://fa1.dev/setup.sh\" | sh) or start fa and use /provider to pick a provider, endpoint, and API key."
+        },
+        {
+          "@type": "HowToStep",
+          "position": 3,
+          "name": "Start the agent",
+          "text": "Run fa in any project directory. Sessions persist automatically and can be resumed with fa --session '<id>'."
+        }
+      ]
     }
   ]
 }

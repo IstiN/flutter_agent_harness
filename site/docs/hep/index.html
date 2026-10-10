@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HEP v1 — Harness Event Protocol — Fa docs</title>
+<meta name="description" content="The machine-readable stream fa --output events prints on stdout: one JSON object per line, nothing else. It is the integration contract for server-side supervisors (the Go backend agent driver, backend-agent-mode.md (backend-agent-mode.md)) that mirror UI progress, capture tool traffic, and react to cancels — without scraping human prose.">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<meta name="theme-color" content="#070a10">
+<link rel="canonical" href="https://fa1.dev/docs/hep/">
+<link rel="icon" href="../../favicon.svg?v=2" type="image/svg+xml">
+
+<!-- Open Graph -->
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Fa">
+<meta property="og:title" content="HEP v1 — Harness Event Protocol">
+<meta property="og:description" content="The machine-readable stream fa --output events prints on stdout: one JSON object per line, nothing else. It is the integration contract for server-side supervisors (the Go backend agent driver, backend-agent-mode.md (backend-agent-mode.md)) that mirror UI progress, capture tool traffic, and react to cancels — without scraping human prose.">
+<meta property="og:url" content="https://fa1.dev/docs/hep/">
+<meta property="og:image" content="https://fa1.dev/og-image.png?v=2">
+<meta property="og:image:alt" content="Fa — one agent harness, every device.">
+
+<!-- Twitter -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="HEP v1 — Harness Event Protocol">
+<meta name="twitter:description" content="The machine-readable stream fa --output events prints on stdout: one JSON object per line, nothing else. It is the integration contract for server-side supervisors (the Go backend agent driver, backend-agent-mode.md (backend-agent-mode.md)) that mirror UI progress, capture tool traffic, and react to cancels — without scraping human prose.">
+<meta name="twitter:image" content="https://fa1.dev/og-image.png?v=2">
+
+<link rel="stylesheet" href="../../styles.css?v=3">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "HEP v1 — Harness Event Protocol",
+  "description": "The machine-readable stream fa --output events prints on stdout: one JSON object per line, nothing else. It is the integration contract for server-side supervisors (the Go backend agent driver, backend-agent-mode.md (backend-agent-mode.md)) that mirror UI progress, capture tool traffic, and react to cancels — without scraping human prose.",
+  "datePublished": "2026-10-10",
+  "dateModified": "2026-10-10",
+  "author": {
+    "@type": "Organization",
+    "name": "IstiN",
+    "url": "https://github.com/IstiN"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "IstiN",
+    "url": "https://fa1.dev",
+    "sameAs": [
+      "https://github.com/IstiN"
+    ]
+  },
+  "about": {
+    "@type": "SoftwareApplication",
+    "name": "Fa",
+    "url": "https://fa1.dev"
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://fa1.dev/docs/hep/"
+  },
+  "url": "https://fa1.dev/docs/hep/"
+}
+</script>
+</head>
+<body>
+<div class="bg" aria-hidden="true"></div>
+
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="../../">
+      <span class="brand-mark" aria-hidden="true">&gt;_</span>
+      <span class="brand-name">Fa</span>
+      <span class="brand-sub">fa1.dev</span>
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="../../#demo">Demo</a>
+      <a href="../../#install">Install</a>
+      <a href="../../#features">Features</a>
+      <a href="../../widgets/">Widgets</a>
+      <a href="../../blog/">Blog</a>
+    </nav>
+    <nav class="nav-ext" aria-label="Project links">
+      <a href="https://github.com/IstiN/flutter_agent_harness" rel="noopener">GitHub</a>
+      <a href="https://pub.dev/packages/flutter_agent_harness" rel="noopener">pub.dev</a>
+    </nav>
+  </div>
+</header>
+
+<main class="blog-wrap">
+  <p><a class="back-link" href="https://github.com/IstiN/flutter_agent_harness/blob/main/docs/hep.md" target="_blank" rel="noopener">← source on GitHub ↗</a></p>
+  <article class="post-body" id="doc">
+    <div class="post-meta">Updated 2026-10-10 · IstiN</div>
+<p>The machine-readable stream <code>fa --output events</code> prints on stdout: one JSON object per line, nothing else. It is the integration contract for server-side supervisors (the Go backend agent driver, <a href="https://github.com/IstiN/flutter_agent_harness/blob/main/docs/backend-agent-mode.md" target="_blank" rel="noopener">backend-agent-mode.md</a>) that mirror UI progress, capture tool traffic, and react to cancels — without scraping human prose.</p>
+<p>Normative source: <code>lib/src/cli/hep.dart</code> (frame builders + <code>HepWriter</code>); the golden tests in <code>test/cli/hep_test.dart</code> pin the exact byte shape of every frame.</p>
+<h2>Enabling</h2>
+<pre><code>fa --output events -p &quot;fix the tests&quot;     # HEP v1 JSONL on stdout
+fa --output events=full -p &quot;…&quot;            # + raw tool-call arguments
+fa --version --output json                # {&quot;version&quot;:&quot;…&quot;,&quot;hep&quot;:&quot;v1&quot;}</code></pre>
+<p>In events mode stdout carries ONLY the frame stream: assistant prose deltas are suppressed (they ride <code>message_delta</code> frames), diagnostics (tool traces, banners, errors) keep flowing to stderr, and <code>--log-file</code> still tees the full human trace. Every line is flushed immediately — a supervisor tailing the pipe never waits on a buffer.</p>
+<h2>The turn model (read this first)</h2>
+<p>A <strong>turn is one assistant LLM round</strong> — one model response plus the tool calls it triggered — <strong>NOT one user message</strong>. A user message that runs tools produces several rounds (model calls a tool, the result is fed back, the model answers), so one user message yields <strong>several terminal frames</strong>: one <code>turn_done</code> per round, with <code>turn_id</code> incrementing per round. The last terminal frame of a run carries the user-visible answer. A supervisor that treats <code>turn_done</code> as &quot;the whole reply is ready&quot; after the first round will truncate multi-round runs.</p>
+<p>Turn ids are small incrementing integers starting at 1; every frame of a round carries the same id.</p>
+<h2>Frame catalog</h2>
+<table>
+<thead><tr><th>type</th><th>fields</th><th>when</th></tr></thead>
+<tbody>
+<tr><td><code>hep_header</code></td><td><code>hep</code>, <code>fah</code>, <code>session</code></td><td>Always the FIRST line. Protocol version, fah version, session id.</td></tr>
+<tr><td><code>agent_start</code></td><td><code>turn_id</code></td><td>The run began; the first <code>turn_id</code>. Once per run, never re-emitted on later rounds.</td></tr>
+<tr><td><code>message_start</code></td><td><code>turn_id</code>, <code>role</code></td><td>An assistant message starts (<code>role</code> is always <code>&quot;assistant&quot;</code>).</td></tr>
+<tr><td><code>message_delta</code></td><td><code>turn_id</code>, <code>delta</code></td><td>A chunk of assistant TEXT. Thinking deltas are never emitted here.</td></tr>
+<tr><td><code>tool_start</code></td><td><code>turn_id</code>, <code>id</code>, <code>name</code>, <code>args_summary</code></td><td>A tool call starts. <code>args_summary</code>: one-line <code>key=value</code> summary; <code>events=full</code> carries the raw JSON arguments instead (bounded, see Bounds).</td></tr>
+<tr><td><code>tool_delta</code></td><td><code>turn_id</code>, <code>id</code>, <code>update</code></td><td>Partial tool output (text only; omitted while empty).</td></tr>
+<tr><td><code>tool_liveness</code></td><td><code>turn_id</code>, <code>id</code>, <code>name</code>, <code>action</code>, <code>elapsed_ms</code>, <code>output_bytes</code>, <code>detail</code></td><td>Liveness heartbeat (<code>action: &quot;heartbeat&quot;</code>) or stuck-call follow-up (<code>cancel_retry</code>, <code>background_convert</code>, <code>escalate</code>, <code>advisory</code>) for a long-outstanding tool call (gh-1054). <code>output_bytes</code> (heartbeat frames) is the captured-output size; omitted when the tool reports no partial output. <code>detail</code> is human-readable; omitted while empty.</td></tr>
+<tr><td><code>turn_done</code></td><td><code>turn_id</code>, <code>message</code>, <code>tool_results</code>, <code>usage</code>, <code>stop_reason</code></td><td>Terminal for the round. <code>message</code> is the round&#39;s assistant text (empty for tool-call-only rounds). <code>tool_results[]</code>: <code>{id, name, ok, text}</code>. <code>usage</code>: <code>{input, output, cost}</code> (cost is a number, dollars). <code>stop_reason</code>: the provider stop reason (<code>stop</code>, <code>toolUse</code>, …).</td></tr>
+<tr><td><code>turn_error</code></td><td><code>turn_id</code>, <code>error</code>, <code>fatal</code></td><td>The round failed (provider error). <code>fatal</code> is <code>true</code> today: headless runs end the run.</td></tr>
+<tr><td><code>cancelled</code></td><td><code>turn_id</code></td><td>The run was aborted (SIGINT/SIGTERM); exit code 130.</td></tr>
+<tr><td><code>compaction_start</code> / <code>compaction_end</code></td><td><code>turn_id</code> / <code>turn_id</code>, <code>tokens_freed</code></td><td>A context compaction run, bracketed like a round. Pre-flight compaction allocates the id of the round it precedes, so the following <code>agent_start</code> reuses it.</td></tr>
+</tbody>
+</table>
+<h2>Ordering and flush guarantees</h2>
+<ol><li><code>hep_header</code> is strictly the first stdout line; every subsequent line is exactly one JSON object (no blank lines, no prose).</li><li>Frames appear in causal order; frames of one round share its <code>turn_id</code>.</li><li>Each round ends with exactly ONE terminal frame: <code>turn_done</code>, <code>turn_error</code>, or <code>cancelled</code> — never a mix.</li><li>A run emits <code>agent_start</code> exactly once; its terminal frame is the last <code>turn_done</code>/<code>turn_error</code>/<code>cancelled</code> of the stream.</li><li>Every line is flushed to the pipe as it is emitted (no batching).</li></ol><p>Exit codes: <code>0</code> ok, <code>1</code> provider error (the terminal frame is <code>turn_error</code>), <code>130</code> cancelled (the terminal frame is <code>cancelled</code>).</p>
+<h2>Bounds</h2>
+<p>A pathological tool output must not blow the supervisor&#39;s pipe:</p>
+<ul><li><code>tool_results[].text</code>: capped at 2000 chars, truncated with a <code>…(+&lt;n&gt; chars)</code> suffix.</li><li><code>args_summary</code> in <code>events=full</code> mode: capped at 4000 chars, same suffix.</li></ul><h2>Versioning policy</h2>
+<ul><li>The <code>hep</code> field of <code>hep_header</code> names the protocol version; it is <code>&quot;v1&quot;</code> today. Check it on the first line and refuse unknown MAJOR versions.</li><li>Within v1 the evolution is ADDITIVE ONLY: new frame types and new fields on existing frames may appear at any time. Consumers MUST ignore unknown frame types and unknown fields.</li><li>Any breaking change (field semantics, field/type removal, ordering guarantees) bumps <code>hep</code> to <code>v2</code> — never mutate v1 in place.</li><li>The <code>fah</code> field is the binary version and carries no protocol meaning.</li></ul>  </article>
+</main>
+</body>
+</html>
