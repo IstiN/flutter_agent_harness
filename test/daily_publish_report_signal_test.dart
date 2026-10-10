@@ -264,8 +264,7 @@ case "$cmd" in
         fi
         ;;
       close)
-        num="$1"
-        echo "issue close $num" >> "$GH_LOG_FILE"
+        : # logged by the stub preamble; nothing to serve
         ;;
       *) echo "stub: unexpected gh invocation: issue $sub $*" >&2; exit 1 ;;
     esac
@@ -320,8 +319,8 @@ ReportRun runReport(
       'ADDIN',
     ])
       'LEG_$leg': legResults[leg.toLowerCase()] ?? 'skipped',
-    if (legUrls.containsKey('pubdev')) ...{
-      'LEG_PUBDEV_URL': legUrls['pubdev']!,
+    ...legUrls.map((k, v) => MapEntry('LEG_${k.toUpperCase()}_URL', v)),
+    if (legResults['pubdev'] == 'success') ...{
       'LEG_PUBDEV_PUBSPEC': '0.1.497',
       'LEG_PUBDEV_PUBLISHED': '0.1.496',
       'LEG_PUBDEV_STATUS': pubdevStatusOverride,
@@ -394,7 +393,8 @@ final noise line
       final r = runReport(
         'priority',
         legResults: const {'play': 'failure'},
-        fixtures: {'failed-log-555.txt': log},
+        legUrls: const {'play': 'https://github.com/OWNER/REPO/actions/runs/888'},
+        fixtures: {'failed-log-888.txt': log},
       );
       expect(r.created, isTrue, reason: r.output);
       // The signature comes from the highest-priority signal (::error::)...
@@ -410,7 +410,8 @@ final noise line
       final r = runReport(
         'tail-fallback',
         legResults: const {'website': 'failure'},
-        fixtures: {'failed-log-555.txt': _noSignalLog},
+        legUrls: const {'website': 'https://github.com/OWNER/REPO/actions/runs/889'},
+        fixtures: {'failed-log-889.txt': _noSignalLog},
       );
       expect(r.created, isTrue, reason: r.output);
       expect(r.createdBody, contains('progress line 80'),
@@ -445,7 +446,7 @@ final noise line
       // the #1472 empty-shrug class must be gone.
       expect(r.createdBody, contains('Cancelled while running'));
       expect(r.createdBody, contains('Leg: TestFlight'));
-      expect(r.createdBody, contains('359m53s'),
+      expect(r.createdBody, contains('5h59m53s'),
           reason: '05:17:00Z -> 11:16:53Z elapsed');
       expect(r.createdBody, contains('360'),
           reason: 'the timeout-minutes ceiling from daily-publish.yml');
@@ -463,7 +464,7 @@ final noise line
       );
       expect(r.created, isTrue, reason: r.output);
       expect(r.createdBody, contains('Leg: TestFlight'));
-      expect(r.createdBody, contains('359m53s'));
+      expect(r.createdBody, contains('5h59m53s'));
       // No ceiling known -> say so, never invent one.
       expect(r.createdBody, isNot(contains('timeout ceiling')));
     });
@@ -525,8 +526,9 @@ tail noise
       final r = runReport(
         'sig-dedup-multi',
         legResults: const {'cli': 'failure'},
+        legUrls: const {'cli': 'https://github.com/OWNER/REPO/actions/runs/890'},
         fixtures: {
-          'failed-log-555.txt': log,
+          'failed-log-890.txt': log,
           'search.json': '[{"number": 1400}]',
         },
       );

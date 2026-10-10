@@ -135,6 +135,7 @@ error_signature() { # stdin: excerpt/log; stdout: normalized root-cause signatur
     | awk -F '\t' '{print $NF}' \
     | sed -e 's/^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}T[0-9:.]\{1,\}Z *//' \
         -e 's/^::error:://' \
+        -e 's/^Message from server: *//' \
         -e 's/[[:space:]][[:space:]]*/ /g' \
         -e 's/^ //' -e 's/ $//' \
     | cut -c1-200
@@ -146,7 +147,7 @@ find_issue_by_signature() { # $1 = normalized signature; echoes an open issue nu
   # the caller comments there instead of filing a symptom duplicate.
   local q
   q=$(printf '%s' "$1" \
-      | tr -cs '[:alnum:]./+-' ' \
+      | tr -cs '[:alnum:]./+-' ' ' \
       | sed -e 's/^ *//' -e 's/ *$//' \
       | cut -c1-200)
   [ -n "$q" ] || return 0
@@ -168,7 +169,7 @@ leg_ceiling_minutes() { # $1 = job-name fragment; echoes timeout-minutes from th
   local wf="${DAILY_PUBLISH_WORKFLOW:-${GITHUB_WORKSPACE:-.}/.github/workflows/daily-publish.yml}"
   [ -f "$wf" ] || return 0
   awk -v frag="$1" '
-    index($0, "name: .Leg: " frag) { injob = 1; next }
+    index($0, "name: ." frag) { injob = 1; next }
     injob && /^  [A-Za-z0-9_-]+:/ { injob = 0 }
     injob && /^    timeout-minutes:/ {
       line = $0

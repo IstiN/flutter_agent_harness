@@ -587,3 +587,32 @@ jobs:
           LEG_ADDIN: ${{ needs.addin.result }}
           LEG_ADDIN_URL: ${{ needs.addin.outputs.run_url }}
         run: bash scripts/daily_publish_report.sh
+
+      # gh-1478: the inject_failure TEST hook must prove the filed digest
+      # QUOTES the injected ::error:: line (signal-first excerpt via the
+      # per-job log endpoint), not merely that an issue exists — the #1473
+      # tree-noise regression class.
+      - name: Verify injected-failure excerpt (TEST)
+        if: always() && inputs.inject_failure != 'none'
+        env:
+          INJECTED: ${{ inputs.inject_failure }}
+        run: |
+          set -euo pipefail
+          title="[daily-publish] ${INJECTED} leg failed"
+          n=$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open \
+                --label daily-publish --limit 200 \
+                --json number,title --jq '.[] | [.number, .title] | @tsv' \
+                | while IFS=$'\t' read -r num t; do
+                    [ "$t" = "$title" ] && echo "$num"
+                  done | head -1)
+          if [ -z "$n" ]; then
+            echo "::error::inject_failure verify: no open issue titled '${title}' — the self-filing path regressed"
+            exit 1
+          fi
+          text=$(gh issue view "$n" --repo "${GITHUB_REPOSITORY}" \
+                   --json body,comments --jq '.body, (.comments[]?.body // empty)')
+          if ! grep -qF "injected failure (inject_failure=${INJECTED})" <<< "$text"; then
+            echo "::error::inject_failure verify: issue #${n} never quotes the injected ::error:: line — the signal-first excerpt regressed (gh-1478)"
+            exit 1
+          fi
+          echo "inject_failure verify OK: issue #${n} quotes the injected error line (gh-1478)"
