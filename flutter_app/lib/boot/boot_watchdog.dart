@@ -87,9 +87,7 @@ abstract final class BootSteps {
 /// of the process.
 final class BootWatchdog {
   BootWatchdog({
-    this.threshold = const Duration(
-      milliseconds: _defaultThresholdMs,
-    ),
+    this.threshold = const Duration(milliseconds: _defaultThresholdMs),
     this.restoreThreshold = const Duration(
       milliseconds: _defaultRestoreThresholdMs,
     ),
@@ -105,18 +103,22 @@ final class BootWatchdog {
   /// the default sits just above a healthy cold start on a fast device;
   /// overridable at build time (`--dart-define=FA_BOOT_WATCHDOG_MS=…`),
   /// 0 disables the watchdog entirely.
-  static const int _defaultThresholdMs =
-      int.fromEnvironment('FA_BOOT_WATCHDOG_MS', defaultValue: 4000);
+  static const int _defaultThresholdMs = int.fromEnvironment(
+    'FA_BOOT_WATCHDOG_MS',
+    defaultValue: 4000,
+  );
 
-  /// Restore-phase threshold, armed when the first frame lands and
-  /// disarmed by [restoreDone]. The restore chain (env → session manager
-  /// → `createOrResumeSession`) runs more awaited disk reads behind the
-  /// boot spinner, and the reported freeze (~3 s uptime) plausibly
-  /// wedged there — after the first frame, so a first-frame-only watchdog
-  /// would have stayed silent. Overridable at build time
+  /// Restore-phase threshold: the time [beginRestore] allows before the
+  /// first restore-phase breadcrumb fires. The restore chain (env →
+  /// session manager → `createOrResumeSession`) runs more awaited disk
+  /// reads behind the boot spinner, and the reported freeze (~3 s uptime)
+  /// plausibly wedged there — after the first frame, so a first-frame-only
+  /// watchdog would have stayed silent. Overridable at build time
   /// (`--dart-define=FA_BOOT_RESTORE_WATCHDOG_MS=…`).
-  static const int _defaultRestoreThresholdMs =
-      int.fromEnvironment('FA_BOOT_RESTORE_WATCHDOG_MS', defaultValue: 10000);
+  static const int _defaultRestoreThresholdMs = int.fromEnvironment(
+    'FA_BOOT_RESTORE_WATCHDOG_MS',
+    defaultValue: 10000,
+  );
 
   /// Cap on repeat firings per phase; a permanently wedged boot (or an
   /// app backgrounded mid-boot) stops at a final "giving up" line instead

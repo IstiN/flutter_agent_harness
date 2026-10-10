@@ -98,23 +98,26 @@ void main() {
       });
     });
 
-    test('the first frame cancels the pre-frame phase without any breadcrumb', () {
-      fakeAsync((async) {
-        final breadcrumbs = <String>[];
-        final watchdog = BootWatchdog(
-          threshold: const Duration(seconds: 4),
-          repeatInterval: const Duration(seconds: 30),
-          onBreadcrumb: breadcrumbs.add,
-        );
-        watchdog.install();
-        async.elapse(const Duration(seconds: 3));
-        watchdog.firstFrame();
-        // No restore armed (no beginRestore) — the watchdog is fully
-        // disarmed, even over a long elapse.
-        async.elapse(const Duration(minutes: 5));
-        expect(breadcrumbs, isEmpty);
-      });
-    });
+    test(
+      'the first frame cancels the pre-frame phase without any breadcrumb',
+      () {
+        fakeAsync((async) {
+          final breadcrumbs = <String>[];
+          final watchdog = BootWatchdog(
+            threshold: const Duration(seconds: 4),
+            repeatInterval: const Duration(seconds: 30),
+            onBreadcrumb: breadcrumbs.add,
+          );
+          watchdog.install();
+          async.elapse(const Duration(seconds: 3));
+          watchdog.firstFrame();
+          // No restore armed (no beginRestore) — the watchdog is fully
+          // disarmed, even over a long elapse.
+          async.elapse(const Duration(minutes: 5));
+          expect(breadcrumbs, isEmpty);
+        });
+      },
+    );
 
     test(
       'a late first frame after firings logs the recovery with the uptime',

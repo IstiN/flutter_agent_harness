@@ -133,7 +133,9 @@ final class BootStores {
 }
 
 /// The process-wide boot watchdog (gh-1507): one instance, installed once
-/// — [BootWatchdog.install] is idempotent, and the first frame cancels it.
+/// — [BootWatchdog.install] is idempotent. The first frame cancels the
+/// pre-frame phase; the restore phase ([BootWatchdog.beginRestore] →
+/// [BootWatchdog.restoreDone]) covers the post-frame restore chain.
 final BootWatchdog kBootWatchdog = BootWatchdog();
 
 /// The boot pipeline. `main()` constructs it with the app's routes stage
