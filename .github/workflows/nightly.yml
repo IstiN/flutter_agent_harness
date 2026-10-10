@@ -25,8 +25,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # gh-1522: the publish dry-run rehearses the tag-stamped stage —
-          # tag math needs the full tag graph.
+          # tag math needs the full tag graph (blobless per gh-1477).
           fetch-depth: 0
+          filter: blob:none
 
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
