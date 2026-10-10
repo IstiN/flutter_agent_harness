@@ -551,9 +551,9 @@ void main() {
       // accumulates every steer — notices steered into one busy run
       // share a run but not a message).
       List<String> noticeTexts() {
-        if (stream.contexts.isEmpty) return const [];
+        if (h.stream.contexts.isEmpty) return const [];
         return [
-          for (final message in stream.contexts.last.messages)
+          for (final message in h.stream.contexts.last.messages)
             if (message is UserMessage &&
                 messageText(message).contains(_livenessMarker))
               messageText(message),

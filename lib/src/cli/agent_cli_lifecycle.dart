@@ -320,23 +320,38 @@ extension AgentCliLifecycle on AgentCli {
       if (probed) continue;
       final tail = (await _shellJobs.tail(job.id, maxLines: 5)).trimRight();
       for (var bucket = lastBucket + 1; bucket <= currentBucket; bucket++) {
-        final noticeElapsed = Duration(milliseconds: bucket * liveness.quietMs);
-        final message =
-            '<system-notice>\n'
-            'Job ${job.id} running · ${headlessLivenessElapsedText(noticeElapsed)} '
-            'elapsed · tail: ${tail.isEmpty ? '(no output yet)' : tail}\n'
-            'Escape hatch: bash_job output ${job.id} (inspect) / '
-            'bash_job stop ${job.id} (kill). Log: ${job.logPath}\n'
-            '</system-notice>';
-        // Same persistence/steering path as the settle notice
-        // (`_onShellJobSettled`): the echo keeps resume matching live.
-        _tuiController?.sendOutput('$message\n');
-        if (isBusy) {
-          _agent.steer(UserMessage.text(message));
-        } else {
-          _startRun(message);
-        }
+        _steerHeadlessLivenessNotice(
+          job,
+          noticeElapsed: Duration(milliseconds: bucket * liveness.quietMs),
+          tail: tail,
+        );
       }
+    }
+  }
+
+  /// Steers ONE interim liveness notice (gh-1459 ask #4): a compact
+  /// `<system-notice>` (`job <id> running · <elapsed> elapsed · tail: …`
+  /// plus the bash_job escape hatch), stamped from its OWN threshold.
+  /// Same persistence/steering path as the settle notice
+  /// (`_onShellJobSettled`): the echo keeps resume matching live — the
+  /// first notice starts a fresh run while idle, the rest steer into it.
+  void _steerHeadlessLivenessNotice(
+    ShellJobEntry job, {
+    required Duration noticeElapsed,
+    required String tail,
+  }) {
+    final message =
+        '<system-notice>\n'
+        'Job ${job.id} running · ${headlessLivenessElapsedText(noticeElapsed)} '
+        'elapsed · tail: ${tail.isEmpty ? '(no output yet)' : tail}\n'
+        'Escape hatch: bash_job output ${job.id} (inspect) / '
+        'bash_job stop ${job.id} (kill). Log: ${job.logPath}\n'
+        '</system-notice>';
+    _tuiController?.sendOutput('$message\n');
+    if (isBusy) {
+      _agent.steer(UserMessage.text(message));
+    } else {
+      _startRun(message);
     }
   }
 
