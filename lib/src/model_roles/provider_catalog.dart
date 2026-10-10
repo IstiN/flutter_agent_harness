@@ -391,9 +391,8 @@ int? resolveModelMaxOutputTokens(String modelId, {required String api}) {
     major = int.parse(after);
     minor = match.group(3) == null ? 0 : int.parse(match.group(3)!);
   } else {
-    final before = RegExp(
-      r'(\d{1,2})(?:[.-](\d{1,2}))?(?=-|$)',
-    ).firstMatch(id.substring(0, match.start));
+    final before = RegExp(r'(\d{1,2})(?:[.-](\d{1,2}))?(?=-|$)')
+        .firstMatch(id.substring(0, match.start));
     if (before == null) return _unknownClaudeOutputCeiling;
     major = int.parse(before.group(1)!);
     minor = before.group(2) == null ? 0 : int.parse(before.group(2)!);
@@ -643,6 +642,9 @@ String canonicalProviderKind(String id) {
 /// `maxTokens` resolves like [buildCatalogModel]: the capability override
 /// layer first ([modelCapabilityOverrides], gh-1426), then the ceiling
 /// table ([resolveModelMaxOutputTokens]), then the provider spec default.
+/// [contextWindow]/[maxTokens] (gh-1471 D4: an `FA_PROVIDER_CONFIG`
+/// capability declaration from the env preconfig) win per-field over the
+/// yaml override; null keeps the yaml layer byte-identical.
 Model buildCliDefaultModel(
   String providerKind, {
   String? modelId,
@@ -650,6 +652,8 @@ Model buildCliDefaultModel(
   List<String>? input,
   String? thinkingLevel,
   String? authHeader,
+  int? contextWindow,
+  int? maxTokens,
 }) {
   final spec = resolveCliProviderSpec(providerKind, baseUrl: baseUrl);
   if (spec == null) {
@@ -662,10 +666,24 @@ Model buildCliDefaultModel(
     // No provider has a default model — the choice is always explicit.
     throw ConfigException('provider "$providerKind" requires --model <id>');
   }
+  // gh-1471 D4: an FA_PROVIDER_CONFIG capability declaration rides the
+  // resolver's override layer, winning per-field over the yaml
+  // `models.overrides` entry (the container's explicit declaration is
+  // the strongest user intent; absent declarations keep the yaml
+  // override untouched — byte-identical legacy boot).
+  final yamlOverride = modelCapabilityOverrides?.lookup(spec.name, id);
+  final override = contextWindow == null && maxTokens == null
+      ? yamlOverride
+      : ModelCapabilityOverride(
+          contextWindow: contextWindow ?? yamlOverride?.contextWindow,
+          maxTokens: maxTokens ?? yamlOverride?.maxTokens,
+          thinkingLevel: yamlOverride?.thinkingLevel,
+          omitMaxOutputTokens: yamlOverride?.omitMaxOutputTokens,
+        );
   final caps = resolveModelCapabilities(
     provider: spec.name,
     modelId: id,
-    override: modelCapabilityOverrides?.lookup(spec.name, id),
+    override: override,
     roleThinkingLevel: thinkingLevel,
     spec: spec,
     api: spec.api,
