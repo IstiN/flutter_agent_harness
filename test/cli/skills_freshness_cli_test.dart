@@ -43,6 +43,11 @@ final class _CountingEnv implements ExecutionEnv {
   /// AFTER a healthy boot.
   String? throwOnListDir;
 
+  /// When set, a `readTextFile` of this path throws — the rescan-failure
+  /// fixture: a SKILL.md that lists fine (the fingerprint fires) but whose
+  /// body read dies mid-scan, so `_reloadSkills` itself throws.
+  String? throwOnReadTextFile;
+
   int listDirCalls = 0;
   final skillBodyReads = <String>[];
   final listDirLog = <String>[];
@@ -60,6 +65,10 @@ final class _CountingEnv implements ExecutionEnv {
 
   @override
   Future<Result<String, FileError>> readTextFile(String path) async {
+    final doomed = throwOnReadTextFile;
+    if (doomed != null && doomed == path) {
+      throw StateError('injected read failure');
+    }
     if (path.endsWith('.md')) skillBodyReads.add(path);
     return inner.readTextFile(path);
   }

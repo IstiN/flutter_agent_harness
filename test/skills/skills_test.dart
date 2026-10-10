@@ -40,6 +40,35 @@ void main() {
       expect(review.source, SkillSource.agents);
     });
 
+    test('an empty frontmatter fence loads with fallbacks, not a skip',
+        () async {
+      // gh-1440 review: `---\n---` is well-formed "no metadata" — the
+      // pre-gh-1440 tolerant behavior (fallback name from the directory,
+      // empty description). Only a torn write (unclosed fence) or
+      // unparseable yaml is skipped with a warning (AC6, E-1).
+      await env.createDir('/work/.fah/skills/bare');
+      await env.writeFile('/work/.fah/skills/bare/SKILL.md', '---\n---\nBody.\n');
+      await env.createDir('/work/.fah/skills/torn');
+      await env.writeFile(
+        '/work/.fah/skills/torn/SKILL.md',
+        '---\nname: torn\ndescription: never closed\n',
+      );
+
+      final warnings = <String>[];
+      final skills = await discoverSkills(
+        env,
+        projectRoots: const [SkillRoot('/work/.fah/skills', SkillSource.fah)],
+        userRoots: const [],
+        onWarning: (path, message) => warnings.add(message),
+      );
+      expect(skills.map((s) => s.name), ['bare']);
+      // Fallbacks: name from the directory, description from the first
+      // body line (the flat-file convention).
+      expect(skills.single.description, 'Body.');
+      expect(warnings, hasLength(1));
+      expect(warnings.single, contains('malformed frontmatter'));
+    });
+
     test('project wins a name clash with the user scope', () async {
       for (final root in ['/work/.fah/skills/a', '/home/u/.fah/skills/a']) {
         await env.createDir(root);

@@ -142,14 +142,21 @@ extension AgentCliSkillsExt on AgentCli {
   /// snapshot, warns once, and never blocks composition or the turn (I2).
   Future<void> _checkSkillsFreshness() async {
     if (!config.skillsLiveRediscovery) return;
+    if (_rescanning) return; // I5: at most one rescan, even re-entrant
     try {
       final fingerprint = await _computeSkillRootsFingerprint();
       final baseline = _skillRootsFingerprint;
       if (baseline == null || fingerprint == baseline) return;
-      // Recorded BEFORE the rescan so a re-entrant check sees a fresh
-      // baseline — at most one rescan per composition (I5).
-      _skillRootsFingerprint = fingerprint;
-      await _reloadSkills();
+      // The baseline updates only on SUCCESS (the `_noteSkillScan`
+      // recompute inside `_reloadSkills`): a failed rescan keeps the old
+      // baseline, so the next turn retries instead of the check going
+      // blind to the stale index (I2).
+      _rescanning = true;
+      try {
+        await _reloadSkills();
+      } finally {
+        _rescanning = false;
+      }
     } on Object catch (error) {
       if (_skillsFreshnessWarned) return;
       _skillsFreshnessWarned = true;

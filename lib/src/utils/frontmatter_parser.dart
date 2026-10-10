@@ -57,10 +57,13 @@ Object? _plainYamlValue(Object? value) {
 }
 
 /// Whether [text]'s frontmatter is well-formed: no `---` fence at the top,
-/// or a fence whose YAML loads into a map. An OPENED fence that is never
-/// closed counts as malformed — the overwhelmingly likely cause is a torn
-/// write (gh-1440 E-1), and indexing the half-written tail as plain body
-/// would publish a half-entry.
+/// or a fence whose YAML loads into a map (or loads to nothing at all —
+/// an empty or comment-only fence is well-formed "no metadata": the skill
+/// loads with the directory fallback name and an empty description, the
+/// pre-gh-1440 behavior; review thread on #1461). An OPENED fence that is
+/// never closed counts as malformed — the overwhelmingly likely cause is a
+/// torn write (gh-1440 E-1), and indexing the half-written tail as plain
+/// body would publish a half-entry.
 ///
 /// Skills discovery uses this to SKIP malformed files with a warning
 /// instead of silently indexing them (gh-1440 AC6); the tolerant
@@ -70,7 +73,8 @@ bool frontmatterWellFormed(String text) {
   final end = text.indexOf('\n---', 3);
   if (end <= 0) return false;
   try {
-    return loadYaml(text.substring(3, end)) is Map;
+    final yaml = loadYaml(text.substring(3, end));
+    return yaml == null || yaml is Map;
   } on Object {
     return false;
   }

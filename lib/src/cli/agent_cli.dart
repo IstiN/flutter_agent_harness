@@ -1473,6 +1473,7 @@ class AgentCli {
   Set<String>? _bootSkillNames;
   Set<String> _lastScanSkillNames = const {};
   bool _skillsFreshnessWarned = false;
+  bool _rescanning = false;
   Set<String> _warnedMalformedSkillPaths = const {};
 
   /// Whether any third-party skill/agent root exists on disk — drives the
