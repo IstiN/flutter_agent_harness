@@ -411,5 +411,32 @@ void main() {
             'onto the excluded vendor dir (v0.1.407)',
       );
     });
+
+    test('CHANGELOG_ARCHIVE.md never rides the publish payload (gh-1452)', () {
+      // The archive is the lossless tail of the trimmed CHANGELOG.md (PR
+      // #1462) — GitHub carries the per-version history, pub consumers
+      // never read it, and it grows ~230 KB/year at the current release
+      // cadence. It must be excluded from BOTH publish surfaces together:
+      // .pubignore mirrors stage_publish_package.sh (gh-1220), and the
+      // root-level dry-run packs whatever .pubignore does not exclude.
+      expect(
+        File('CHANGELOG_ARCHIVE.md').existsSync(),
+        isTrue,
+        reason: 'fixture sanity: the archive stays on disk (git history)',
+      );
+      expect(
+        _landsInStage(_stagingFilters(), 'CHANGELOG_ARCHIVE.md'),
+        isFalse,
+        reason: 'the archive must stay out of the staged publish tree',
+      );
+      expect(
+        _publishedByPub('CHANGELOG_ARCHIVE.md'),
+        isFalse,
+        reason:
+            '.pubignore must mirror the stage — otherwise the root-level '
+            '`dart publish --dry-run` packs the archive into the payload '
+            '(gh-1220 mirror drift)',
+      );
+    });
   });
 }
