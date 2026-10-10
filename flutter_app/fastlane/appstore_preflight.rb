@@ -40,7 +40,7 @@ module AppstorePreflight
       return fail_decision("CONFIRM MISMATCH: confirm (#{confirm.inspect}) does not equal version (#{version.inspect}) — aborting before any mutation")
     end
     if app_store_version.nil?
-      return fail_decision("App Store version #{version} does not exist yet — run store-metadata.yml (metadata_only) first so the version exists. Nothing was mutated.")
+      return fail_decision("App Store version #{version} does not exist yet — run store-metadata.yml (metadata_only) first: its app_store lane creates the version when absent (gh-1519). Nothing was mutated.")
     end
     if builds.empty?
       return fail_decision("No TestFlight build exists for version #{version} — dispatch build-mobile.yml / build-macos.yml first. Nothing was mutated.")

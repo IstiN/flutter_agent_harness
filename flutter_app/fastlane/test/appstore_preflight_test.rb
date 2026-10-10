@@ -32,6 +32,14 @@ if $PROGRAM_NAME == __FILE__
   raise "FAIL: version missing must fail, got #{d.inspect}" unless d["action"] == "fail" && d["reason"].include?("9.9.9") && d["reason"].include?("store-metadata.yml")
   ok("version missing → fail before mutation, points at store-metadata.yml")
 
+  # gh-1519 — the remediation must name the CREATING step: store-metadata's
+  # app_store lane creates the version when absent (before gh-1519 the
+  # message implied store-metadata already did it — a dead-end remediation)
+  d = AppstorePreflight.decide(version: "9.9.9", confirm: "9.9.9", app_store_version: nil, builds: [])
+  raise "FAIL: remediation must name the creating step, got #{d['reason'].inspect}" \
+    unless d["reason"].include?("creates the version when absent")
+  ok("remediation names the creating step (store-metadata app_store lane, gh-1519)")
+
   # AC3 — build still processing → fail with an ETA hint
   d = AppstorePreflight.decide(
     version: "1.2.3",
