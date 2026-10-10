@@ -1646,7 +1646,9 @@ Future<void> _runApp(List<String> args) async {
       // "resume this session with ..." would point at a deleted file.
       final hint = await cli.sessionResumeHint();
       stdout.writeln(hint ?? kNothingToResumeHint);
-      await stdout.flush();
+      // gh-1455: drain through the shared chain — a bare flush here races
+      // the in-flight per-line flushes and crashes the exit path.
+      await drainStdoutLines();
     } finally {
       exit(130);
     }
@@ -1723,7 +1725,7 @@ Future<void> _runApp(List<String> args) async {
     } finally {
       await sigtermSub.cancel();
       await sigintSub.cancel();
-      await stdout.flush();
+      await drainStdoutLines();
       logTeeFile?.closeSync();
     }
     exit(code);
@@ -1746,7 +1748,7 @@ Future<void> _runApp(List<String> args) async {
       code = (await _headlessRun)!;
     } finally {
       await sigintSub.cancel();
-      await stdout.flush();
+      await drainStdoutLines();
       logTeeFile?.closeSync();
     }
     exit(code);

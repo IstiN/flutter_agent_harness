@@ -302,7 +302,13 @@ final class ShellJobRegistry {
       cwd: options?.cwd,
       env: options?.env,
       timeout: options?.timeout,
-      cancelToken: options?.cancelToken,
+      // gh-1455: caller cancel tokens NEVER reach job space. A job outlives
+      // the call that started it (`background: true` returns immediately;
+      // a foreground-as-job bash hands the process to the registry on a
+      // yield), so forwarding the run's token let an aborted run tear down
+      // every live job — and a `bash_job stop` issued from inside the dying
+      // batch then cancelled the whole run on top. Jobs are stopped through
+      // [ShellJobEntry.stop] only.
       onStdout: options?.onStdout,
       onStderr: options?.onStderr,
       stdinData: options?.stdinData,
