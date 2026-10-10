@@ -3,33 +3,48 @@
 // welcomes the named AI crawlers, llms.txt/llms-full.txt are served as
 // text/plain with canonical-URL section headers, every JSON-LD block
 // parses, and every sitemap <loc> resolves. Served over a real loopback
-// HttpServer from the committed site/ tree — zero JavaScript involved.
+// HttpServer from the resolved site root — zero JavaScript involved.
+//
+// The root comes from test/site_test_support.dart: FA_SITE_ROOT, the
+// in-tree site/, or an on-the-fly temp build (generated artifacts are
+// deploy-time products, never committed — PR #1479 owner directive).
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:test/test.dart';
 
-/// URL path → file under site/, mirroring GitHub Pages' static serving.
-String? resolveSiteFile(String path) {
+import '../site_test_support.dart';
+
+/// URL path → file under [root], mirroring GitHub Pages' static serving.
+String? resolveSiteFile(String root, String path) {
   if (path.contains('..')) return null;
   final rel = path.endsWith('/')
       ? '${path.substring(0, path.length - 1)}/index.html'
       : path;
-  if (rel.isEmpty || rel == 'index.html') return 'site/index.html';
-  final file = 'site$rel';
+  if (rel.isEmpty || rel == 'index.html') return '$root/index.html';
+  final file = '$root$rel';
   return File(file).existsSync() ? file : null;
 }
 
 void main() {
+  late Directory siteRoot;
   late HttpServer server;
   late String origin;
+  late String sitemap;
+  late List<String> locs;
 
   setUpAll(() async {
+    siteRoot = await resolveSiteRoot();
+    sitemap = File('${siteRoot.path}/sitemap.xml').readAsStringSync();
+    locs = RegExp(
+      r'<loc>(https://fa1\.dev[^<]+)</loc>',
+    ).allMatches(sitemap).map((m) => m.group(1)!).toList();
+
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     origin = 'http://127.0.0.1:${server.port}';
     server.listen((req) async {
       final path = Uri.decodeComponent(req.uri.path);
-      final file = resolveSiteFile(path);
+      final file = resolveSiteFile(siteRoot.path, path);
       if (file == null) {
         req.response
           ..statusCode = HttpStatus.notFound
@@ -65,11 +80,6 @@ void main() {
     }
   }
 
-  final sitemap = File('site/sitemap.xml').readAsStringSync();
-  final locs = RegExp(
-    r'<loc>(https://fa1\.dev[^<]+)</loc>',
-  ).allMatches(sitemap).map((m) => m.group(1)!).toList();
-
   group('no-JS crawl (gh-1476 test matrix)', () {
     test('every sitemap <loc> returns 200', () async {
       expect(locs, isNotEmpty);
@@ -104,10 +114,10 @@ void main() {
 
     test('every blog post page serves its full text without JS', () async {
       for (final entity in Directory(
-        'site/blog',
+        '${siteRoot.path}/blog',
       ).listSync().whereType<Directory>()) {
         final slug = entity.uri.pathSegments.last;
-        final mdFile = File('site/blog/posts/$slug.md');
+        final mdFile = File('${siteRoot.path}/blog/posts/$slug.md');
         if (!mdFile.existsSync()) continue;
         final (status, body, _) = await get('/blog/$slug/');
         expect(status, 200, reason: '/blog/$slug/');
@@ -126,7 +136,7 @@ void main() {
     });
 
     test('every docs page serves its core text without JS', () async {
-      final docsDir = Directory('site/docs');
+      final docsDir = Directory('${siteRoot.path}/docs');
       expect(docsDir.existsSync(), isTrue);
       for (final entity in docsDir.listSync().whereType<Directory>()) {
         final slug = entity.uri.pathSegments.where((s) => s.isNotEmpty).last;
@@ -199,7 +209,7 @@ void main() {
           );
         }
         expect(
-          File('site/llms-full.txt').lengthSync(),
+          File('${siteRoot.path}/llms-full.txt').lengthSync(),
           lessThan(150 * 1024),
           reason: 'context-window budget (gh-1476 threat model)',
         );
@@ -256,8 +266,8 @@ void main() {
       },
     );
 
-    test('every page in site/ has only parseable JSON-LD', () {
-      final files = Directory('site')
+    test('every page in the site root has only parseable JSON-LD', () {
+      final files = siteRoot
           .listSync(recursive: true)
           .whereType<File>()
           .where((f) => f.path.endsWith('.html'));
@@ -279,10 +289,12 @@ void main() {
       'blog posts carry BlogPosting, docs pages carry TechArticle',
       () async {
         for (final entity in Directory(
-          'site/blog',
+          '${siteRoot.path}/blog',
         ).listSync().whereType<Directory>()) {
           final slug = entity.uri.pathSegments.where((s) => s.isNotEmpty).last;
-          if (!File('site/blog/posts/$slug.md').existsSync()) continue;
+          if (!File('${siteRoot.path}/blog/posts/$slug.md').existsSync()) {
+            continue;
+          }
           final (_, body, _) = await get('/blog/$slug/');
           final blocks = jsonLdBlocks(body);
           expect(
@@ -292,7 +304,7 @@ void main() {
           );
         }
         for (final entity in Directory(
-          'site/docs',
+          '${siteRoot.path}/docs',
         ).listSync().whereType<Directory>()) {
           final slug = entity.uri.pathSegments.where((s) => s.isNotEmpty).last;
           final (_, body, _) = await get('/docs/$slug/');

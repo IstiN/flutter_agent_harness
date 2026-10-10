@@ -1,8 +1,9 @@
 // Unit tests for the fa1.dev GEO build (gh-1476): the minimal Markdown
 // renderer (scripts/site_markdown.dart) and the site builder
 // (scripts/build_site.dart) — renderer constructs, page templates,
-// sitemap/llms-full assembly, and the freshness invariant (generated
-// artifacts byte-match what the builder produces from committed sources).
+// sitemap/llms-full assembly, and the emit modes (in-tree local preview
+// and `--out <dir>` for deploy/CI — generated artifacts are deploy-time
+// products, never committed: gh-1476 owner directive, PR #1479).
 import 'dart:convert';
 import 'dart:io';
 
@@ -469,21 +470,101 @@ void main() {
     });
   });
 
-  group('freshness gate', () {
-    test('committed artifacts byte-match the builder output (gh-1476 AC5)', () {
-      final outputs = site.buildSite(root: Directory.current.path);
-      final stale = <String>[
-        for (final o in outputs)
-          if (!File(o.path).existsSync() ||
-              File(o.path).readAsStringSync() != o.content)
-            o.path,
-      ];
+  group('emitSite (--out)', () {
+    // gh-1476 owner directive (PR #1479): generated artifacts are
+    // deploy-time products, never committed. `--out <dir>` must produce a
+    // complete servable tree (statics copied + artifacts written) without
+    // touching the source tree, and prune stale generated pages.
+    late Directory root;
+    late Directory out;
+
+    setUp(() {
+      root = Directory.systemTemp.createTempSync('build_site_emit_test');
+      final posts = Directory('${root.path}/site/blog/posts')
+        ..createSync(recursive: true);
+      File('${posts.path}/2026-01-02-one.md').writeAsStringSync(
+        '---\ntitle: One\ndate: 2026-01-02\ndescription: d1\n---\n\n# One\n\nBody one.',
+      );
+      File('${root.path}/site/blog/index.html').writeAsStringSync(
+        '<html>\n<!-- #blog-post-list:start -->\nold\n<!-- #blog-post-list:end -->\n</html>\n',
+      );
+      File('${root.path}/site/styles.css').writeAsStringSync('body{}\n');
+      File('${root.path}/site/robots.txt').writeAsStringSync(
+        'User-agent: *\n',
+      );
+      File('${root.path}/site/llms.txt').writeAsStringSync('# Fa\n');
+      for (final d in site.docsRegistry) {
+        final f = File('${root.path}/${d.source}')..createSync(recursive: true);
+        f.writeAsStringSync('# ${d.slug}\n\nDoc body for ${d.slug}.\n');
+      }
+      // A stale generated page from a since-removed post, sitting in the
+      // source tree (e.g. a local in-tree build) — it must not be copied
+      // into the out dir.
+      final stale = Directory('${root.path}/site/blog/2024-01-01-old')
+        ..createSync(recursive: true);
+      File('${stale.path}/index.html').writeAsStringSync('stale');
+      out = Directory('${root.path}-out');
+    });
+
+    tearDown(() {
+      root.deleteSync(recursive: true);
+      if (out.existsSync()) out.deleteSync(recursive: true);
+    });
+
+    test('writes a complete servable tree without touching the sources', () {
+      final outputs = site.buildSite(root: root.path);
+      site.emitSite(root: root.path, outDir: out.path, outputs: outputs);
+
+      // Statics copied.
       expect(
-        stale,
-        isEmpty,
-        reason:
-            'stale generated artifact(s): $stale — rerun '
-            '`dart scripts/build_site.dart` and commit the result',
+        File('${out.path}/site/styles.css').readAsStringSync(),
+        'body{}\n',
+      );
+      expect(File('${out.path}/site/robots.txt').existsSync(), isTrue);
+      expect(File('${out.path}/site/llms.txt').existsSync(), isTrue);
+      // Generated artifacts written.
+      expect(
+        File('${out.path}/site/blog/2026-01-02-one/index.html').existsSync(),
+        isTrue,
+      );
+      expect(File('${out.path}/site/docs/dap/index.html').existsSync(), isTrue);
+      expect(File('${out.path}/site/sitemap.xml').existsSync(), isTrue);
+      expect(File('${out.path}/site/llms-full.txt').existsSync(), isTrue);
+      // The rendered blog index replaces the template's marker block.
+      final index = File('${out.path}/site/blog/index.html').readAsStringSync();
+      expect(index, isNot(contains('old')));
+      expect(index, contains('href="./2026-01-02-one/"'));
+      // The stale source-tree page did not ride along.
+      expect(
+        Directory('${out.path}/site/blog/2024-01-01-old').existsSync(),
+        isFalse,
+      );
+      // The source tree got no generated artifacts.
+      expect(File('${root.path}/site/sitemap.xml').existsSync(), isFalse);
+      expect(File('${root.path}/site/llms-full.txt').existsSync(), isFalse);
+    });
+
+    test('prunes stale generated pages already in the out dir', () {
+      final staleOut = Directory('${out.path}/site/blog/2024-01-01-old')
+        ..createSync(recursive: true);
+      File('${staleOut.path}/index.html').writeAsStringSync('stale');
+      final outputs = site.buildSite(root: root.path);
+      site.emitSite(root: root.path, outDir: out.path, outputs: outputs);
+      expect(staleOut.existsSync(), isFalse);
+    });
+
+    test('in-tree emit writes artifacts next to the sources (local preview)', () {
+      final outputs = site.buildSite(root: root.path);
+      site.emitSite(root: root.path, outputs: outputs);
+      expect(File('${root.path}/site/sitemap.xml').existsSync(), isTrue);
+      expect(
+        File('${root.path}/site/blog/2026-01-02-one/index.html').existsSync(),
+        isTrue,
+      );
+      // Stale generated pages are pruned in-tree too.
+      expect(
+        Directory('${root.path}/site/blog/2024-01-01-old').existsSync(),
+        isFalse,
       );
     });
   });

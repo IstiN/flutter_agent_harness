@@ -2,20 +2,36 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
+import '../site_test_support.dart';
+
 /// Guard (issue #113): fa1.dev must mention every shipped surface — every
 /// agent tool from every platform, the CLI entry points, and the
 /// downloadable artifacts. `site/llms.txt` is the machine-readable full
 /// list; `site/index.html` carries the human-facing copy and artifact
 /// links.
 ///
+/// All files are read from the resolved site root (see
+/// test/site_test_support.dart): llms.txt/index.html/robots.txt are
+/// committed statics; sitemap.xml is a deploy-time generated artifact —
+/// on a fresh checkout the harness builds it (and the rest of the GEO
+/// layer) to a temp dir on the fly.
+///
 /// When you add a tool, a host surface, or an artifact, mention it in
 /// site/llms.txt (and site/index.html where user-visible) AND add its id
 /// to the matching list below — this guard fails until both exist.
 void main() {
-  final llms = File('site/llms.txt').readAsStringSync();
-  final index = File('site/index.html').readAsStringSync();
-  final robots = File('site/robots.txt').readAsStringSync();
-  final sitemap = File('site/sitemap.xml').readAsStringSync();
+  late String llms;
+  late String index;
+  late String robots;
+  late String sitemap;
+
+  setUpAll(() async {
+    final siteRoot = await resolveSiteRoot();
+    llms = File('${siteRoot.path}/llms.txt').readAsStringSync();
+    index = File('${siteRoot.path}/index.html').readAsStringSync();
+    robots = File('${siteRoot.path}/robots.txt').readAsStringSync();
+    sitemap = File('${siteRoot.path}/sitemap.xml').readAsStringSync();
+  });
 
   /// Core tools registered on every platform (lib/src/tools/, lib/src/lsp/,
   /// lib/src/task/, lib/src/messaging/, lib/src/web_search/, lib/src/model_roles/).
