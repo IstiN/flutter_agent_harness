@@ -241,8 +241,9 @@ factual: paths, commands, invariants — no essays.
   jobs after the final answer like in-flight subagents — the settles
   steer fresh reaction turns, loop (10 rounds) under ONE shared
   wall-clock ceiling `headless.shellJobDrainMs` (default 30 min; 0 =
-  pre-gh-1459 detach-immediately), then the detach summary applies
-  (gh-1459). While the drain waits, every `headless.shellJobQuietMs`
+  shell-job-scoped kill switch: live shell jobs detach at once while the
+  pre-existing subagent drain stays unconditional), then the detach
+  summary applies (gh-1459). While the drain waits, every `headless.shellJobQuietMs`
   (default 5 min; 0 = off) of a still-running awaited job steers ONE
   interim liveness notice (`job <id> running · <elapsed> · tail: …` +
   the bash_job escape hatch), skipped for a crossing the model probed

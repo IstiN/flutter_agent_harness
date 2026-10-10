@@ -112,7 +112,10 @@ void main() {
       );
     });
     test('ceiling exceeded with active jobs → detach (the shared ceiling)', () {
-      expect(decide(sub: true, shell: true, at: deadline), HeadlessDrainAction.detach);
+      expect(
+        decide(sub: true, shell: true, at: deadline),
+        HeadlessDrainAction.detach,
+      );
       expect(
         decide(shell: true, at: deadline.add(const Duration(seconds: 1))),
         HeadlessDrainAction.detach,
@@ -131,23 +134,24 @@ void main() {
         expect(decide(sub: true, disabled: true), HeadlessDrainAction.drain);
         // Even with the ceiling spent: subagent-only waits ignore it.
         expect(
-          decide(sub: true, at: deadline.add(const Duration(hours: 1)), disabled: true),
+          decide(
+            sub: true,
+            at: deadline.add(const Duration(hours: 1)),
+            disabled: true,
+          ),
           HeadlessDrainAction.drain,
         );
       },
     );
-    test(
-      'shellDrainDisabled with shell jobs → detach immediately (even with '
-      'ceiling budget)',
-      () {
-        expect(decide(shell: true, disabled: true), HeadlessDrainAction.detach);
-        expect(
-          decide(sub: true, shell: true, disabled: true),
-          HeadlessDrainAction.detach,
-        );
-        expect(decide(disabled: true), HeadlessDrainAction.exit);
-      },
-    );
+    test('shellDrainDisabled with shell jobs → detach immediately (even with '
+        'ceiling budget)', () {
+      expect(decide(shell: true, disabled: true), HeadlessDrainAction.detach);
+      expect(
+        decide(sub: true, shell: true, disabled: true),
+        HeadlessDrainAction.detach,
+      );
+      expect(decide(disabled: true), HeadlessDrainAction.exit);
+    });
   });
 
   group('headlessDrainDetachCause (the detach-line attribution, gh-1459)', () {
@@ -157,12 +161,15 @@ void main() {
         'drain ceiling (1800000 ms)',
       );
     });
-    test('the 10-round cap ending the drain names the cap, not the ceiling', () {
-      expect(
-        headlessDrainDetachCause(drainMs: 1800000, roundCapEnded: true),
-        'round cap (10 rounds)',
-      );
-    });
+    test(
+      'the 10-round cap ending the drain names the cap, not the ceiling',
+      () {
+        expect(
+          headlessDrainDetachCause(drainMs: 1800000, roundCapEnded: true),
+          'round cap (10 rounds)',
+        );
+      },
+    );
   });
 
   group(
@@ -245,7 +252,10 @@ void main() {
       // ShellJobEntry.startedAt is real DateTime.now() while the drain ITs
       // run on a fake waiting clock — the text must survive the clock
       // sitting behind startedAt.
-      expect(headlessLivenessElapsedText(const Duration(milliseconds: -3)), '0s');
+      expect(
+        headlessLivenessElapsedText(const Duration(milliseconds: -3)),
+        '0s',
+      );
       expect(headlessLivenessElapsedText(const Duration(seconds: -90)), '0s');
     });
   });

@@ -156,6 +156,128 @@ Future<void> _waitFor(
   fail('timed out waiting: $reason');
 }
 
+/// A [StreamFunction] for the round-cap shape: the reaction run of job
+/// k's settle notice SPAWNS job k+1 (a tool round), so every drain round
+/// ends with a fresh live job — the drain only ends via the 10-round
+/// cap, while the wall-clock ceiling still has budget.
+class _ChainedRouter {
+  _ChainedRouter({required List<List<AssistantMessageEvent>> freshTurns})
+    : _freshTurns = List.of(freshTurns);
+
+  final List<List<AssistantMessageEvent>> _freshTurns;
+  final contexts = <Context>[];
+
+  String _lastUserText(Context context) {
+    for (final message in context.messages.reversed) {
+      if (message is UserMessage) return messageText(message);
+    }
+    return '';
+  }
+
+  /// A continuation call's messages carry a [ToolResultMessage] ahead of
+  /// the last user message; a fresh call's last message IS the user
+  /// payload that started the run.
+  bool _isToolContinuation(Context context) {
+    for (final message in context.messages.reversed) {
+      if (message is ToolResultMessage) return true;
+      if (message is UserMessage) return false;
+    }
+    return false;
+  }
+
+  AssistantMessageEventStream call(
+    Model model,
+    Context context, {
+    CancelToken? cancelToken,
+  }) {
+    contexts.add(context);
+    final last = _lastUserText(context);
+    final List<AssistantMessageEvent> script;
+    if (!_isToolContinuation(context) &&
+        (last.contains(_noticeMarker) || last.contains(' elapsed · tail: '))) {
+      // A settle or liveness notice run: its reaction spawns the NEXT
+      // background job (or answers once the chain is scripted out).
+      script = _freshTurns.isNotEmpty
+          ? _freshTurns.removeAt(0)
+          : textTurn('noted.');
+    } else if (!_isToolContinuation(context) && _freshTurns.isNotEmpty) {
+      // The initial lead run (the headless prompt).
+      script = _freshTurns.removeAt(0);
+    } else {
+      // Tool continuations: acknowledge the spawn result, end the turn.
+      script = textTurn('ack.');
+    }
+    final stream = AssistantMessageEventStream();
+    for (final event in script) {
+      stream.push(event);
+    }
+    stream.end();
+    return stream;
+  }
+}
+
+/// A [StreamFunction] for the subagent leg: the child run (its
+/// assignment carries [childMarker]) does timed work then settles; the
+/// wake run (the `<task-result` notice) acknowledges; parent runs
+/// replay [parentTurns].
+class _SubagentDrainRouter {
+  _SubagentDrainRouter({
+    required this.childMarker,
+    required List<List<AssistantMessageEvent>> parentTurns,
+  }) : _parentTurns = List.of(parentTurns);
+
+  final String childMarker;
+  final List<List<AssistantMessageEvent>> _parentTurns;
+  final contexts = <Context>[];
+
+  String _lastUserText(Context context) {
+    for (final message in context.messages.reversed) {
+      if (message is UserMessage) return messageText(message);
+    }
+    return '';
+  }
+
+  AssistantMessageEventStream call(
+    Model model,
+    Context context, {
+    CancelToken? cancelToken,
+  }) {
+    contexts.add(context);
+    final last = _lastUserText(context);
+    final stream = AssistantMessageEventStream();
+    // The async-result notice QUOTES the child's task text, so the
+    // wake branch must win over the child-marker match.
+    if (last.contains('<task-result')) {
+      for (final event in textTurn('results acknowledged')) {
+        stream.push(event);
+      }
+      stream.end();
+      return stream;
+    }
+    if (last.contains(childMarker)) {
+      // The child: does its (timed) work, then settles with findings.
+      stream.push(StartEvent(partial: testAssistant()));
+      unawaited(
+        Future<void>.delayed(const Duration(milliseconds: 800), () {
+          for (final event in textTurn('findings')) {
+            stream.push(event);
+          }
+          stream.end();
+        }),
+      );
+      return stream;
+    }
+    final script = _parentTurns.isNotEmpty
+        ? _parentTurns.removeAt(0)
+        : textTurn('ack.');
+    for (final event in script) {
+      stream.push(event);
+    }
+    stream.end();
+    return stream;
+  }
+}
+
 /// The transcript's user-message text of a run context — the settle
 /// notice is a persisted user message, so this is where it shows.
 String _userTexts(Context context) => [
@@ -371,6 +493,149 @@ void main() {
         io.out.toString(),
         isNot(contains('⏳ waiting:')),
         reason: 'the disabled drain never enters a wait',
+      );
+      io.close();
+    },
+  );
+
+  test(
+    'the drain ended by the 10-round cap names the cap (not the '
+    'ceiling) — chained background jobs keep every round busy',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final io = FakeCliIO();
+      final shell = _DrainShell();
+      final stream = _ChainedRouter(
+        freshTurns: [
+          // The initial lead run spawns job 1; every settle reaction
+          // spawns the next job (9 chained spawns for 10 rounds).
+          toolTurn([
+            const ToolCall(
+              id: 't1',
+              name: 'bash',
+              arguments: {'command': 'stage-1', 'background': true},
+            ),
+          ]),
+          for (var k = 2; k <= 10; k++)
+            toolTurn([
+              ToolCall(
+                id: 't$k',
+                name: 'bash',
+                arguments: {'command': 'stage-$k', 'background': true},
+              ),
+            ]),
+        ],
+      );
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: MemoryExecutionEnv(cwd: '/work', shell: shell),
+          sessionRoot: '/sessions',
+          approvalMode: ApprovalMode.yolo,
+          // A long ceiling and a 1s quiet cadence: the cap, not the
+          // wall clock, ends this drain.
+          headless: const HeadlessConfig(
+            shellJobDrainMs: 30 * 60 * 1000,
+            shellJobQuietMs: 1000,
+          ),
+        ),
+        io: io,
+        streamFunction: stream.call,
+      );
+      final run = cli.runHeadless('run the staged pipeline');
+      await _waitFor(() => shell.jobs.isNotEmpty, reason: 'job 1 registers');
+      // Rounds 1..9: finish each job as its successor registers — every
+      // round ends with a settle and a fresh live job.
+      for (var k = 0; k < 9; k++) {
+        shell.jobs[k].finish(0);
+        await _waitFor(
+          () => shell.jobs.length == k + 2,
+          reason: 'job ${k + 2} registers (the chained spawn)',
+        );
+      }
+      // Round 10: job 10 never settles; the drain wakes at the 1s
+      // liveness threshold, and the 10-round cap ends the loop while
+      // the 30-minute ceiling still has budget.
+      final code = await run;
+
+      expect(code, 0);
+      expect(shell.jobs.length, 10);
+      final out = io.out.toString();
+      expect(
+        out,
+        contains('round cap (10 rounds)'),
+        reason: 'the detach line names the real cause (debuggability)',
+      );
+      expect(out, isNot(contains('drain ceiling')));
+      expect(out, contains('1 background job detached'));
+      io.close();
+    },
+  );
+
+  test(
+    'shellJobDrainMs: 0 keeps the legacy subagent drain — an in-flight '
+    'subagent still drains before exit (the kill switch is '
+    'shell-job-scoped)',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final io = FakeCliIO();
+      const childMarker = 'CHILDTASK investigate the flake';
+      final stream = _SubagentDrainRouter(
+        childMarker: childMarker,
+        parentTurns: [
+          toolTurn([
+            const ToolCall(
+              id: 't1',
+              name: 'task',
+              arguments: {
+                'context': 'ctx',
+                'background': true,
+                'tasks': [
+                  {
+                    'name': 'fix503',
+                    'agent': 'task',
+                    'task': 'CHILDTASK investigate the flake',
+                  },
+                ],
+              },
+            ),
+          ]),
+          textTurn('delegated in the background, ending my turn'),
+        ],
+      );
+      final cli = AgentCli(
+        config: AgentCliConfig(
+          model: testModel,
+          apiKey: '[REDACTED:Sensitive Value]',
+          env: MemoryExecutionEnv(
+            cwd: '/work',
+            shell: const UnavailableShell(),
+          ),
+          sessionRoot: '/sessions',
+          approvalMode: ApprovalMode.yolo,
+          headless: const HeadlessConfig(shellJobDrainMs: 0),
+        ),
+        io: io,
+        streamFunction: stream.call,
+      );
+      final code = await cli.runHeadless('delegate the investigation');
+
+      expect(code, 0);
+      expect(
+        stream.contexts.any(
+          (context) => _userTexts(context).contains('<task-result'),
+        ),
+        isTrue,
+        reason:
+            'the subagent result still re-enters before exit — the '
+            '0 kill switch must not detach an in-flight subagent',
+      );
+      expect(io.out.toString(), contains('results acknowledged'));
+      expect(
+        io.out.toString(),
+        isNot(contains('detaching')),
+        reason: 'nothing detached: the subagent drained',
       );
       io.close();
     },

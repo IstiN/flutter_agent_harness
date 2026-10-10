@@ -39,8 +39,10 @@ final class HeadlessConfig {
 
   /// How long a headless run may keep draining live background jobs
   /// (subagents + shell jobs) after the final answer before it detaches
-  /// with the waiting summary (gh-1459). `0` disables the drain entirely —
-  /// the pre-gh-1459 detach-immediately behavior.
+  /// with the waiting summary (gh-1459). `0` is the shell-job kill
+  /// switch: live shell jobs detach immediately (the pre-gh-1459 shell
+  /// behavior), while the pre-existing subagent drain stays
+  /// unconditional — a subagent-only wait is never cut short by `0`.
   final int shellJobDrainMs;
 
   /// The interim liveness cadence of the drain (gh-1459 ask #4): every
@@ -101,16 +103,40 @@ enum HeadlessDrainAction {
 
 /// The drain decision for one round (gh-1459): active jobs keep draining
 /// while the ceiling has budget; nothing active exits; a spent ceiling
-/// detaches. Pure — unit-tested directly.
+/// detaches. With [shellDrainDisabled] (`shellJobDrainMs: 0`) the kill
+/// switch is shell-job-scoped: shell jobs detach immediately, while the
+/// pre-gh-1459 subagent drain stays unconditional (the `0` edge never
+/// detaches more than the predecessor did for subagent-only waits).
+/// Pure — unit-tested directly.
 HeadlessDrainAction headlessJobDrainAction({
-  required bool hasActiveJobs,
+  required bool hasActiveSubAgents,
+  required bool hasActiveShellJobs,
   required DateTime now,
   required DateTime deadline,
+  bool shellDrainDisabled = false,
 }) {
-  if (!hasActiveJobs) return HeadlessDrainAction.exit;
+  if (!hasActiveSubAgents && !hasActiveShellJobs) {
+    return HeadlessDrainAction.exit;
+  }
+  if (shellDrainDisabled) {
+    // Shell-job-scoped kill switch: a live shell job detaches at once;
+    // in-flight subagents keep the legacy unconditional drain.
+    return hasActiveShellJobs
+        ? HeadlessDrainAction.detach
+        : HeadlessDrainAction.drain;
+  }
   if (!now.isBefore(deadline)) return HeadlessDrainAction.detach;
   return HeadlessDrainAction.drain;
 }
+
+/// The cause clause of the drain's detach line (gh-1459): the wall-clock
+/// ceiling when it spent the budget, the 10-round cap when the loop
+/// exhausted while the ceiling still had one — never a misattribution.
+/// Pure — unit-tested directly.
+String headlessDrainDetachCause({
+  required int drainMs,
+  required bool roundCapEnded,
+}) => roundCapEnded ? 'round cap (10 rounds)' : 'drain ceiling ($drainMs ms)';
 
 /// What the drain's liveness leg does for one still-running awaited shell
 /// job right now (gh-1459 ask #4). Pure — unit-tested directly.
@@ -150,6 +176,12 @@ HeadlessLivenessAction headlessJobLivenessAction({
 }
 
 /// The elapsed clause of the liveness notice (gh-1459 ask #4): "12m"
-/// from the first minute up, "45s" below it. Pure — unit-tested directly.
-String headlessLivenessElapsedText(Duration elapsed) =>
-    elapsed.inMinutes >= 1 ? '${elapsed.inMinutes}m' : '${elapsed.inSeconds}s';
+/// from the first minute up, "45s" below it. A negative input (the
+/// fake-clock test seam — `ShellJobEntry.startedAt` is real
+/// `DateTime.now()` while the waiting clock may sit behind it) clamps
+/// to "0s", never a "-3s" clause. Pure — unit-tested directly.
+String headlessLivenessElapsedText(Duration elapsed) {
+  final clamped = elapsed.inMilliseconds < 0 ? 0 : elapsed.inMilliseconds;
+  final d = Duration(milliseconds: clamped);
+  return d.inMinutes >= 1 ? '${d.inMinutes}m' : '${d.inSeconds}s';
+}

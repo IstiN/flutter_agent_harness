@@ -127,8 +127,10 @@ extension AgentCliLifecycle on AgentCli {
   /// (`_onShellJobSettled`) — and BOTH loops share ONE wall-clock ceiling
   /// (`headless.shellJobDrainMs`, default 30 min): a job that never
   /// settles (an infinite watch-loop) cannot hang headless forever. Past
-  /// the ceiling the loop gives up and the detach summary below applies;
-  /// `shellJobDrainMs: 0` disables the drain entirely.
+  /// the ceiling the loop gives up and the detach summary below applies.
+  /// `shellJobDrainMs: 0` is the shell-job kill switch: live shell jobs
+  /// detach immediately, while the pre-existing subagent drain stays
+  /// unconditional.
   ///
   /// gh-1459 ask #4: while the drain waits, every
   /// `headless.shellJobQuietMs` (default 5 min) of a still-running
@@ -141,20 +143,42 @@ extension AgentCliLifecycle on AgentCli {
   /// one steer budget per crossing, never a spam loop.
   Future<void> _awaitHeadlessBackgroundJobs() async {
     final drainMs = config.headless.shellJobDrainMs;
+    // gh-1459 rework: `0` is the SHELL-job kill switch — the pre-existing
+    // subagent drain stays unconditional (see `_headlessDrainAction`).
+    final shellDrainDisabled = drainMs == 0;
     final deadline = _waitingClock().add(Duration(milliseconds: drainMs));
     final liveness = _HeadlessDrainLiveness(config.headless.shellJobQuietMs);
     var namedWaiting = false;
     for (var round = 0; round < 10; round++) {
-      if (_headlessDrainAction(deadline) != HeadlessDrainAction.drain) break;
+      if (_headlessDrainAction(
+            deadline,
+            shellDrainDisabled: shellDrainDisabled,
+          ) !=
+          HeadlessDrainAction.drain) {
+        break;
+      }
       // The #1055-parity waiting line, once per drain: the run stays
       // alive for these and says so.
       if (!namedWaiting) {
         namedWaiting = true;
         await _nameHeadlessWaiting();
       }
-      await _headlessDrainRound(deadline, liveness);
+      await _headlessDrainRound(
+        deadline,
+        liveness,
+        shellDrainDisabled: shellDrainDisabled,
+      );
     }
-    await _finishHeadlessDrain(drainMs);
+    // The loop can also end because the 10-round cap exhausted while the
+    // wall-clock ceiling still had budget — thread the real cause into
+    // the detach line instead of always blaming the ceiling.
+    final roundCapEnded =
+        _headlessDrainAction(
+          deadline,
+          shellDrainDisabled: shellDrainDisabled,
+        ) ==
+        HeadlessDrainAction.drain;
+    await _finishHeadlessDrain(drainMs, roundCapEnded: roundCapEnded);
   }
 
   /// The active shell jobs of this drain round: still running and still
@@ -173,14 +197,19 @@ extension AgentCliLifecycle on AgentCli {
 
   /// One round of the pure drain decision (gh-1459): active jobs keep
   /// draining while the ceiling has budget; nothing active exits; a
-  /// spent ceiling detaches.
-  HeadlessDrainAction _headlessDrainAction(DateTime deadline) =>
-      headlessJobDrainAction(
-        hasActiveJobs:
-            _headlessSubAgentsActive() || _headlessActiveShellJobs().isNotEmpty,
-        now: _waitingClock(),
-        deadline: deadline,
-      );
+  /// spent ceiling detaches. With the shell-job kill switch (`0`) live
+  /// shell jobs detach at once while in-flight subagents keep the
+  /// legacy unconditional drain.
+  HeadlessDrainAction _headlessDrainAction(
+    DateTime deadline, {
+    required bool shellDrainDisabled,
+  }) => headlessJobDrainAction(
+    hasActiveSubAgents: _headlessSubAgentsActive(),
+    hasActiveShellJobs: _headlessActiveShellJobs().isNotEmpty,
+    now: _waitingClock(),
+    deadline: deadline,
+    shellDrainDisabled: shellDrainDisabled,
+  );
 
   /// The `⏳ waiting: …` line (#1055 parity), once per drain.
   Future<void> _nameHeadlessWaiting() async {
@@ -197,17 +226,27 @@ extension AgentCliLifecycle on AgentCli {
   /// lets it land first.
   Future<void> _headlessDrainRound(
     DateTime deadline,
-    _HeadlessDrainLiveness liveness,
-  ) async {
+    _HeadlessDrainLiveness liveness, {
+    required bool shellDrainDisabled,
+  }) async {
     final subActive = _headlessSubAgentsActive();
     final shellActive = _headlessActiveShellJobs();
-    await Future.any([
-      Future.wait([
-        if (subActive) _taskConfig.jobManager.settled,
-        for (final job in shellActive) job.settled,
-      ]),
-      _waitingSleep(liveness.wakeIn(shellActive, _waitingClock(), deadline)),
-    ]);
+    final waits = <Future<void>>[
+      if (subActive) _taskConfig.jobManager.settled,
+      for (final job in shellActive) job.settled,
+    ];
+    if (shellDrainDisabled && subActive) {
+      // The `0` kill switch is shell-job-scoped: a subagent-only round
+      // is the legacy pre-gh-1459 drain — await the settles directly,
+      // with no ceiling sleep (a zero deadline would wake it at once
+      // and spin the round cap).
+      await Future.wait(waits);
+    } else {
+      await Future.any([
+        Future.wait(waits),
+        _waitingSleep(liveness.wakeIn(shellActive, _waitingClock(), deadline)),
+      ]);
+    }
     await Future<void>.delayed(Duration.zero);
     await _steerHeadlessLiveness(shellActive, liveness);
     if (isBusy) {
@@ -219,10 +258,14 @@ extension AgentCliLifecycle on AgentCli {
   /// The drain wrap-up (gh-1459): a settle notice that landed outside a
   /// drain round (the window between the last active check and here)
   /// still starts its reaction run — never return mid-run — and anything
-  /// still live was cut short by the ceiling (or its 10-round cap racing
-  /// the same wall budget): say so once, then let the detach summary
-  /// name the jobs — the documented degradation, never a silent hang.
-  Future<void> _finishHeadlessDrain(int drainMs) async {
+  /// still live was cut short by the ceiling OR by its 10-round cap
+  /// racing the same wall budget: name the actual cause once (`_finish`
+  /// threads [roundCapEnded]), then let the detach summary name the jobs
+  /// — the documented degradation, never a silent hang.
+  Future<void> _finishHeadlessDrain(
+    int drainMs, {
+    required bool roundCapEnded,
+  }) async {
     if (isBusy) {
       await _settled;
       await _afterRun();
@@ -230,8 +273,8 @@ extension AgentCliLifecycle on AgentCli {
     if (_headlessSubAgentsActive() || _headlessActiveShellJobs().isNotEmpty) {
       io.writeln(
         _style.dim(
-          '⏳ background-job drain ceiling ($drainMs ms) reached — '
-          'detaching',
+          '⏳ background-job drain ${headlessDrainDetachCause(drainMs: drainMs, roundCapEnded: roundCapEnded)} '
+          'reached — detaching',
         ),
       );
     }
@@ -256,35 +299,43 @@ extension AgentCliLifecycle on AgentCli {
       if (!job.isRunning || !job.notifyOnSettle) continue;
       final elapsed = _waitingClock().difference(job.startedAt);
       final elapsedMs = elapsed.isNegative ? 0 : elapsed.inMilliseconds;
-      final action = headlessJobLivenessAction(
-        elapsedMs: elapsedMs,
-        quietMs: liveness.quietMs,
-        lastConsumedBucket: liveness.consumedBucket[job.id] ?? 0,
-        probedSinceLastConsumption:
-            job.probeGeneration !=
-            (liveness.seenProbeGen[job.id] ??= job.probeGeneration),
-      );
-      if (action == HeadlessLivenessAction.wait) continue;
-      // Both a steer and a skip consume the crossing — exactly one
-      // notice budget per threshold per job.
-      liveness.consumedBucket[job.id] = elapsedMs ~/ liveness.quietMs;
+      final currentBucket = elapsedMs ~/ liveness.quietMs;
+      final lastBucket = liveness.consumedBucket[job.id] ?? 0;
+      if (currentBucket <= lastBucket) continue; // no new crossing
+      final probed =
+          job.probeGeneration !=
+          (liveness.seenProbeGen[job.id] ??= job.probeGeneration);
+      // The whole burst is consumed either way — exactly one steer
+      // budget per threshold crossing per job, never a per-timer retry.
+      liveness.consumedBucket[job.id] = currentBucket;
       liveness.seenProbeGen[job.id] = job.probeGeneration;
-      if (action == HeadlessLivenessAction.skip) continue;
+      // A late wake (a reaction run that outlived its windows) crosses
+      // SEVERAL thresholds at once: the ticket's budget is one notice
+      // PER crossing ("N crossings ⇒ exactly N notices"), so steer each
+      // newly-crossed bucket separately, stamped from its OWN threshold
+      // — never one collapsed steer that silently eats buckets 2..N.
+      // A model probe since the last consumption suppresses the whole
+      // burst instead: it was watching, not blind — the next steer
+      // waits for the next uncrossed threshold.
+      if (probed) continue;
       final tail = (await _shellJobs.tail(job.id, maxLines: 5)).trimRight();
-      final message =
-          '<system-notice>\n'
-          'Job ${job.id} running · ${headlessLivenessElapsedText(elapsed)} '
-          'elapsed · tail: ${tail.isEmpty ? '(no output yet)' : tail}\n'
-          'Escape hatch: bash_job output ${job.id} (inspect) / '
-          'bash_job stop ${job.id} (kill). Log: ${job.logPath}\n'
-          '</system-notice>';
-      // Same persistence/steering path as the settle notice
-      // (`_onShellJobSettled`): the echo keeps resume matching live.
-      _tuiController?.sendOutput('$message\n');
-      if (isBusy) {
-        _agent.steer(UserMessage.text(message));
-      } else {
-        _startRun(message);
+      for (var bucket = lastBucket + 1; bucket <= currentBucket; bucket++) {
+        final noticeElapsed = Duration(milliseconds: bucket * liveness.quietMs);
+        final message =
+            '<system-notice>\n'
+            'Job ${job.id} running · ${headlessLivenessElapsedText(noticeElapsed)} '
+            'elapsed · tail: ${tail.isEmpty ? '(no output yet)' : tail}\n'
+            'Escape hatch: bash_job output ${job.id} (inspect) / '
+            'bash_job stop ${job.id} (kill). Log: ${job.logPath}\n'
+            '</system-notice>';
+        // Same persistence/steering path as the settle notice
+        // (`_onShellJobSettled`): the echo keeps resume matching live.
+        _tuiController?.sendOutput('$message\n');
+        if (isBusy) {
+          _agent.steer(UserMessage.text(message));
+        } else {
+          _startRun(message);
+        }
       }
     }
   }

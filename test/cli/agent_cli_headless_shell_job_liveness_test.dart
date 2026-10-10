@@ -567,7 +567,8 @@ void main() {
       expect(
         h.livenessRuns.length,
         4,
-        reason: 'the 5m notice plus buckets 2, 3, and 4 crossed at once ⇒ '
+        reason:
+            'the 5m notice plus buckets 2, 3, and 4 crossed at once ⇒ '
             'exactly 3 more notices (10m, 15m, 20m), one per crossing — '
             'never one collapsed steer',
       );
