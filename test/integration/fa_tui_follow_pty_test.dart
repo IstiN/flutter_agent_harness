@@ -1,10 +1,12 @@
 // gh-1439 IT layer: the live-follow etiquette on the REAL glass — a PTY
 // proves what the model-level suite (test/cli/fa_tui_follow_mode_test.dart)
 // can only simulate. AC1's etiquette in one scenario:
-//   (1) scrolling up mid-run detaches (the live-fold hint leaves the glass,
-//       the held rule carries the position percent);
+//   (1) scrolling up mid-run detaches (the held rule carries the position
+//       percent; the fold row is a textless rule — gh-1446 retracted the
+//       #827 hint words);
 //   (2) late arrivals are COUNTED on the held rule (`· ● N new · End = live`);
-//   (3) End returns to the live edge and the hint row leaves the glass.
+//   (3) End returns to the live edge: the held rule leaves the glass and
+//       no fold-hint text ever appears (gh-1446 AC1).
 @Tags(['io', 'integration'])
 @Timeout(Duration(minutes: 5))
 library;
@@ -86,9 +88,9 @@ tui:
       );
 
       // (1) Detach mid-run: PageUp parks the view above the live edge.
-      // The held rule carries the position percent; the live-fold hint
-      // (`… above fold - PgUp`) belongs to the FOLLOWING state and must
-      // leave the glass once detached.
+      // The held rule carries the position percent; the fold row is
+      // textless (gh-1446 retracted the #827 hint words), so no
+      // `above fold` text is on the glass in ANY state.
       harness.sendText('\x1b[5~'); // pgup
 
       // (2) Late arrivals count up on the held rule while live content
@@ -125,9 +127,10 @@ tui:
         reason: 'unseen arrivals keep counting while held',
       );
 
-      // (3) End re-engages: the held rule (percent + counter) is replaced
-      // by the live-fold hint (the #827 "N lines above fold" announce for
-      // the following state) and the newest content is at the live edge.
+      // (3) End re-engages: the held rule (percent + counter) leaves the
+      // glass and the newest content is at the live edge. The fold row
+      // itself is a textless `─` rule — gh-1446 retracted the #827
+      // "N lines above fold" hint words, so no fold text ever returns.
       harness.sendText('\x1b[F'); // end
       // The re-engage frame rides the 10 Hz spinner repaints, so a blind
       // sleep + ONE screen sample races the paint path — the exact flake
@@ -155,10 +158,17 @@ tui:
       // re-read — the gh-1049 convention).
       expect(
         live,
-        contains('above fold'),
+        isNot(contains('above fold')),
         reason:
-            'back to FOLLOWING: the live-fold hint replaces the '
-            'held rule (the #827 etiquette)',
+            'back to FOLLOWING: the fold row is the textless dim rule — '
+            'the #827 hint words stay retracted (gh-1446 AC1)',
+      );
+      expect(
+        live,
+        contains(RegExp(r'^─{30,}\s*$', multiLine: true)),
+        reason:
+            'the reserved fold row renders as a plain rule — chrome, '
+            'not content (gh-1446 AC1 byte-scan contract)',
       );
       // Absence assertions need a SETTLED screen (the #550/#557 family —
       // the cell-diff path repaints only changed cells, so the pre-End

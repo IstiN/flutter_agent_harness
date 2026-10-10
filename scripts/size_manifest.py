@@ -10,6 +10,7 @@ Usage:
   size_manifest.py check  <artifact> --baseline FILE
                           [--budget-pct 5] [--init-if-missing]
                           [--manifest-out FILE] [--forbid REGEX]...
+                          [--vendored REGEX]... [--strict-vendored]
   size_manifest.py selftest
 
 `<artifact>` is a zip-family file (.zip/.ipa/.aab — uncompressed entry sizes
@@ -21,12 +22,30 @@ do not rely on its position, the parser keys by name):
   <uncompressed_bytes>\t<path>
   <total_bytes>\tTOTAL
 
+Rev-hash path normalization (#1431): a path segment of 20+ hex chars is
+a content/rev-hash directory — the Flutter engine renderer artifacts
+(canvaskit/skwasm) move under a new one on every 3.47.x patch drop while
+the byte sizes stay identical. Both the artifact scan and the baseline
+load collapse such segments to `<rev>` BEFORE diffing, so an engine rev
+bump lands as an in-place UPDATE (the usual size-band compare) instead
+of N brand-new heavyweight lines. Normalization is idempotent, so
+pre-fix baselines carrying the literal rev hash migrate on load — no
+baseline rewrite needed. Colliding normalized rows (two rev dirs in one
+artifact, e.g. stale files) merge to the heavier one.
+
 Gate semantics (`check`):
-  - growth > budget%% on any baseline line or on TOTAL  -> FAIL
-  - NEW line heavier than 5%% of the baseline TOTAL     -> FAIL
+  - growth > budget%% on any baseline line or on the first-party TOTAL
+    -> FAIL
+  - NEW line heavier than 5%% of the baseline first-party TOTAL -> FAIL
     (catches re-adding removed weight, e.g. a dropped interpreter coming
-    back; canvaskit rev-dir churn on Flutter upgrades trips this too —
-    that is by design: re-growth must be a conscious ack)
+    back — re-growth must be a conscious ack)
+  - VENDORED carve-out (#1431): rows under a vendored prefix (default:
+    the canvaskit/ engine-renderer subtree; extend with --vendored
+    REGEX) are engine payload, not our growth — their breaches print
+    ::warning and stay out of the failure count, and they are excluded
+    from the TOTAL the budget compares (first-party TOTAL = TOTAL minus
+    vendored rows). The engine reving is not the payload growing.
+    --strict-vendored turns the carve-out off (everything gates again).
   - removed lines are improvements, reported only
   - --init-if-missing: no baseline file yet -> write it and pass with a
     loud notice (ratchet bootstrap; commit the file to arm the gate)
@@ -55,9 +74,28 @@ from pathlib import Path
 # Per-line tracking floor: smaller files are noise (thousands of them
 # jitter by whole percentages); the TOTAL line covers their aggregate.
 MIN_BYTES = 64 * 1024
-# A brand-new tracked line heavier than this share of the old TOTAL is
-# re-growth, not rounding — fail it.
+# A brand-new tracked line heavier than this share of the old first-party
+# TOTAL is re-growth, not rounding — fail it.
 NEW_LINE_SHARE = 0.05
+# A path segment of 20+ hex chars is a content/rev-hash directory: the
+# Flutter engine renderer artifacts (canvaskit/skwasm wasm) ship under
+# `canvaskit/<rev>/` and the rev changes on every 3.47.x patch drop
+# (#1431). Collapsed to <rev> on BOTH the artifact scan and the baseline
+# load so rev churn diffs as an in-place UPDATE, not N new lines.
+REV_SEGMENT_RE = re.compile(r"(^|/)[0-9a-fA-F]{20,}(?=/|$)")
+REV_PLACEHOLDER = "<rev>"
+# Rows matching a vendored prefix are engine/vendor payload: their
+# breaches warn instead of failing (#1431). The canvaskit/ subtree
+# carries every engine renderer artifact (canvaskit/skwasm/wimp/
+# webparagraph, chromium variant included). First-party paths —
+# including our own shipped vendor/interpreters payload — keep the
+# full rule.
+VENDORED_DEFAULTS = [r"(^|/)canvaskit/"]
+
+
+def normalize_revpaths(name: str) -> str:
+    """Collapse 20+hex path segments (engine rev dirs) to <rev> (#1431)."""
+    return REV_SEGMENT_RE.sub(lambda m: m.group(1) + REV_PLACEHOLDER, name)
 
 
 def iter_sizes(artifact: Path):
@@ -80,7 +118,15 @@ def iter_sizes(artifact: Path):
 
 def build_manifest(artifact: Path, min_bytes: int) -> "dict[str, int]":
     sizes = dict(iter_sizes(artifact))
-    manifest = {p: n for p, n in sizes.items() if n >= min_bytes}
+    manifest = {}
+    for p, n in sizes.items():
+        if n < min_bytes:
+            continue
+        key = normalize_revpaths(p)
+        # Two rev dirs in one artifact (stale files) collide post-
+        # normalization: keep the heavier row on both floor and current.
+        if key not in manifest or manifest[key] < n:
+            manifest[key] = n
     manifest["TOTAL"] = sum(sizes.values())
     return manifest
 
@@ -99,7 +145,9 @@ def load_baseline(path: Path) -> "dict[str, int]":
         if not line.strip():
             continue
         size, _, name = line.partition("\t")
-        baseline[name] = int(size)
+        key = normalize_revpaths(name)  # pre-fix literal-rev rows migrate
+        if key not in baseline or baseline[key] < int(size):
+            baseline[key] = int(size)
     if "TOTAL" not in baseline:
         raise SystemExit(f"size_manifest: baseline {path} has no TOTAL line")
     return baseline
@@ -113,7 +161,8 @@ def write_baseline(path: Path, manifest: "dict[str, int]") -> None:
 
 def check(artifact: Path, baseline_path: Path, budget_pct: float,
           init_if_missing: bool = False, reseed: bool = False,
-          manifest_out=None, forbid=None) -> int:
+          manifest_out=None, forbid=None, vendored=None,
+          strict_vendored=False) -> int:
     manifest = build_manifest(artifact, MIN_BYTES)
     if manifest_out:
         write_baseline(manifest_out, manifest)
@@ -153,8 +202,21 @@ def check(artifact: Path, baseline_path: Path, budget_pct: float,
 
     baseline = load_baseline(baseline_path)
     base_total = baseline["TOTAL"]
-    failures = []
+    failures, vendored_failures = [], []
     grew, shrank, new, removed = [], [], [], []
+
+    # Vendored carve-out (#1431): engine/vendor rows breach with a
+    # ::warning and never redden the job; the budget's TOTAL compares the
+    # first-party aggregate only. --strict-vendored gives the teeth back.
+    vendored_res = ([] if strict_vendored
+                    else [re.compile(p) for p in VENDORED_DEFAULTS + list(vendored or [])])
+
+    def is_vendored(name: str) -> bool:
+        return any(r.search(name) for r in vendored_res)
+
+    def fp_total(manifest: "dict[str, int]") -> int:
+        return manifest["TOTAL"] - sum(n for k, n in manifest.items()
+                                       if k != "TOTAL" and is_vendored(k))
 
     for name in sorted(set(baseline) | set(manifest)):
         if name == "TOTAL":
@@ -172,18 +234,28 @@ def check(artifact: Path, baseline_path: Path, budget_pct: float,
     for name, old, cur in grew:
         pct = (cur - old) / old * 100 if old else float("inf")
         if pct > budget_pct:
-            failures.append(f"  GREW    +{pct:6.1f}%  {name}  {old} -> {cur}")
-    total_pct = (manifest["TOTAL"] - base_total) / base_total * 100 if base_total else 0.0
-    if total_pct > budget_pct:
-        failures.append(f"  TOTAL   +{total_pct:6.1f}%  {base_total} -> {manifest['TOTAL']}")
+            line = f"  GREW    +{pct:6.1f}%  {name}  {old} -> {cur}"
+            (vendored_failures if is_vendored(name) else failures).append(line)
+    cur_fp, base_fp = fp_total(manifest), fp_total(baseline)
+    fp_total_pct = (cur_fp - base_fp) / base_fp * 100 if base_fp else 0.0
+    if fp_total_pct > budget_pct:
+        failures.append(f"  TOTAL-1P +{fp_total_pct:6.1f}%  {base_fp} -> {cur_fp} "
+                        f"(first-party TOTAL; raw {base_total} -> {manifest['TOTAL']})")
     for name, cur in new:
-        if cur > NEW_LINE_SHARE * base_total:
-            failures.append(f"  NEW     {'':>8}  {name}  {cur} bytes "
-                            f"(> {NEW_LINE_SHARE:.0%} of baseline TOTAL)")
+        if cur > NEW_LINE_SHARE * base_fp:
+            line = (f"  NEW     {'':>8}  {name}  {cur} bytes "
+                    f"(> {NEW_LINE_SHARE:.0%} of baseline first-party TOTAL)")
+            (vendored_failures if is_vendored(name) else failures).append(line)
 
     print(f"size manifest: {artifact}  (budget: +{budget_pct}% per line, "
           f"baseline: {baseline_path})")
     print(fmt_table(manifest))
+    if vendored_failures:
+        print(f"::warning::size budget: {len(vendored_failures)} vendored "
+              f"line(s) breached in {artifact} — engine/vendor churn, not "
+              f"gating (first-party floor untouched):")
+        for f in vendored_failures:
+            print(f)
     if shrank:
         print(f"improvements: {len(shrank)} line(s) shrank, "
               f"{len(removed)} line(s) removed")
@@ -200,7 +272,7 @@ def check(artifact: Path, baseline_path: Path, budget_pct: float,
               "scripts/size_manifest.py check <artifact> --baseline "
               f"{baseline_path} --reseed")
         return 1
-    print(f"size budget OK (TOTAL {total_pct:+.1f}% vs baseline)")
+    print(f"size budget OK (first-party TOTAL {fp_total_pct:+.1f}% vs baseline)")
     return 0
 
 
@@ -280,6 +352,45 @@ def selftest() -> int:
         expect("--forbid blocks reseeding the banned shape",
                check(cur_zip, deny_base, 5.0, reseed=True, forbid=["^evicted/"]), 1)
 
+        # Rev-hash churn (#1431): the engine renderer moves under a new
+        # 20+hex rev dir on every 3.47.x patch — pure path substitution,
+        # identical bytes. Normalization must diff it as a no-op UPDATE,
+        # not N brand-new heavyweight lines; vendored breaches warn; the
+        # first-party rule keeps its teeth.
+        rev_zip, rev_base = td / "rev.zip", td / "rev.tsv"
+        old_rev, new_rev = "a" * 40, "b" * 40
+
+        def make_rev_zip(path: Path, rev: str):
+            with zipfile.ZipFile(path, "w") as zf:
+                zf.writestr(f"panel/app/canvaskit/{rev}/canvaskit.wasm",
+                            b"\0" * (7 * 1024 * 1024))
+                zf.writestr(f"panel/app/canvaskit/{rev}/canvaskit.js",
+                            b"\0" * (90 * 1024))
+                zf.writestr("panel/app/main.dart.js", b"\0" * (1024 * 1024))
+
+        make_rev_zip(rev_zip, old_rev)
+        expect("rev baseline seeds", check(rev_zip, rev_base, 5.0, init_if_missing=True), 0)
+        make_rev_zip(rev_zip, new_rev)
+        expect("rev-dir rename is a no-op UPDATE", check(rev_zip, rev_base, 5.0), 0)
+        with zipfile.ZipFile(rev_zip, "a") as zf:
+            zf.writestr(f"panel/app/canvaskit/{new_rev}/skwasm_new.wasm",
+                        b"\0" * (6 * 1024 * 1024))
+        expect("new vendored heavyweight warns (passes)", check(rev_zip, rev_base, 5.0), 0)
+        expect("strict mode gates the vendored file",
+               check(rev_zip, rev_base, 5.0, strict_vendored=True), 1)
+        with zipfile.ZipFile(rev_zip, "a") as zf:
+            zf.writestr("panel/app/newbin/heavy.bin", b"\0" * (6 * 1024 * 1024))
+        expect("new first-party heavyweight still fails", check(rev_zip, rev_base, 5.0), 1)
+        # A pre-fix baseline carrying the literal rev hash migrates on load.
+        literal_base = td / "rev_literal.tsv"
+        literal_base.write_text(
+            f"{7 * 1024 * 1024}\tpanel/app/canvaskit/{old_rev}/canvaskit.wasm\n"
+            f"{90 * 1024}\tpanel/app/canvaskit/{old_rev}/canvaskit.js\n"
+            f"{1024 * 1024}\tpanel/app/main.dart.js\n"
+            f"{7 * 1024 * 1024 + 90 * 1024 + 1024 * 1024}\tTOTAL\n")
+        make_rev_zip(rev_zip, new_rev)
+        expect("literal-rev baseline migrates on load", check(rev_zip, literal_base, 5.0), 0)
+
     print("selftest:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
 
@@ -305,6 +416,13 @@ def main() -> int:
     p_chk.add_argument("--forbid", action="append", default=[], metavar="REGEX",
                        help="deny-list: fail if any manifest row path matches "
                             "REGEX (repeatable; enforced on check/init/reseed)")
+    p_chk.add_argument("--vendored", action="append", default=[], metavar="REGEX",
+                       help="extra vendored-prefix regex: breaches on matching "
+                            "rows warn instead of failing (#1431; repeatable, "
+                            "extends the built-in canvaskit/ default)")
+    p_chk.add_argument("--strict-vendored", action="store_true",
+                       help="disable the vendored carve-out — every breach "
+                            "fails, engine-renderer churn included")
 
     sub.add_parser("selftest", help="synthetic end-to-end assertions")
 
@@ -317,7 +435,9 @@ def main() -> int:
     if args.cmd == "check":
         return check(args.artifact, args.baseline, args.budget_pct,
                      args.init_if_missing, reseed=args.reseed,
-                     manifest_out=args.manifest_out, forbid=args.forbid)
+                     manifest_out=args.manifest_out, forbid=args.forbid,
+                     vendored=args.vendored,
+                     strict_vendored=args.strict_vendored)
     return selftest()
 
 
