@@ -286,10 +286,8 @@ Future<void> _runApp(List<String> args) async {
         // which only runs when the abandoned fetch itself settles.
         final probe = http.Client();
         try {
-          final latest = await fetchLatestTag(client: probe).timeout(
-            const Duration(seconds: 3),
-            onTimeout: () => null,
-          );
+          final latest = await fetchLatestTag(client: probe)
+              .timeout(const Duration(seconds: 3), onTimeout: () => null);
           if (latest != null &&
               compareVersions(latest, packageVersion) > 0 &&
               !autoUpdateTuiOwnsScreen) {
@@ -500,6 +498,11 @@ Future<void> _runApp(List<String> args) async {
           effective,
           input: faPreconfig?.input,
           thinkingLevel: faPreconfig?.thinkingLevel,
+          // gh-1471 D4: a declared capability pair (bench's kimi mapping)
+          // reaches the booted model; undeclared stays null — the catalog
+          // layers decide, byte-identical to before.
+          contextWindow: faPreconfig?.contextWindow,
+          maxTokens: faPreconfig?.maxTokens,
         );
 
   // Initial cube (fa_cube Phase 1): --cube-config path > --cube name > the

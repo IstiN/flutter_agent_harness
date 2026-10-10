@@ -40,6 +40,10 @@ Issue #1392 AC2: the report also carries request-latency p50/p95 per
 concurrency level (from each trial's bench_metrics.json) and tags the
 run's concurrency level (BENCH_CONCURRENCY env, set by bench.yml's
 max-concurrent input).
+
+gh-1471: the report header tags the run's provider+model
+(BENCH_RUN_LABEL env, set by bench.yml's provider resolve step) so glm
+and kimi runs never blend in the ledger/cost views.
 """
 import glob
 import json
@@ -379,12 +383,18 @@ def _score_honesty(runs_dir: Path, rows) -> list:
     return contradictions
 
 
-def render(runs_dir: Path, expected=None, model_override=None, concurrency=None):
+def render(runs_dir: Path, expected=None, model_override=None, concurrency=None,
+           run_label=None):
     """Build the summary (lines, problems) for a runs dir — pure, testable."""
     runs_dir = Path(runs_dir)
     paths = sorted(glob.glob(str(runs_dir / "*" / "results.json")))
     lines = ["### fa on terminal-bench", ""]
     problems = []
+    if run_label:
+        # gh-1471: the report names the provider+model (BENCH_RUN_LABEL,
+        # set by bench.yml's resolve step) — glm and kimi runs must never
+        # blend in the ledger/cost views.
+        lines.append(f"Provider: {run_label} (gh-1471).")
     if concurrency is not None:
         # Issue #1392: the report tags the run's concurrency level — the
         # 8-shard/2-concurrent experiment is only comparable when tagged.
@@ -589,8 +599,10 @@ def main():
                 " integer — ignoring the concurrency tag",
                 file=sys.stderr,
             )
+    run_label = os.environ.get("BENCH_RUN_LABEL", "").strip() or None
 
-    lines, problems = render(runs_dir, expected, model, concurrency)
+    lines, problems = render(runs_dir, expected, model, concurrency,
+                             run_label=run_label)
 
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:

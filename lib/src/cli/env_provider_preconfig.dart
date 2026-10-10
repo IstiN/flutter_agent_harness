@@ -17,6 +17,7 @@ library;
 import 'dart:convert';
 
 import '../exceptions.dart';
+import '../model_roles/capability_resolver.dart';
 import '../model_roles/provider_catalog.dart';
 import '../providers/thinking.dart';
 
@@ -33,6 +34,8 @@ final class EnvProviderPreconfig {
     required this.apiKey,
     this.input,
     this.thinkingLevel,
+    this.contextWindow,
+    this.maxTokens,
   });
 
   /// The catalog spec [parseEnvProviderPreconfig] resolved the type
@@ -72,6 +75,17 @@ final class EnvProviderPreconfig {
   /// thinking requested and the boot behaves byte-identically to before
   /// (issue #734).
   final String? thinkingLevel;
+
+  /// Declared context window in tokens (gh-1471 D4), or null when
+  /// undeclared — the catalog/endpoint layers stand, exactly as before.
+  /// Riding the resolver's override layer, a declared value wins over
+  /// every layer below it (bench's kimi mapping pins 200000 so a catalog
+  /// drift can never silently truncate the served window).
+  final int? contextWindow;
+
+  /// Declared max output tokens (gh-1471 D4), or null when undeclared —
+  /// the ceiling table/spec layers stand, exactly as before.
+  final int? maxTokens;
 }
 
 /// The supported `FA_PROVIDER_CONFIG` keys, in error-message order.
@@ -79,6 +93,8 @@ const _supportedConfigKeys = [
   'baseUrl',
   'model',
   'apiKeyEnvVar',
+  'contextWindow',
+  'maxTokens',
   'input',
   'thinkingLevel',
 ];
@@ -93,9 +109,10 @@ const _requiredConfigKeys = ['baseUrl', 'model'];
 /// Throws [ConfigException] naming the offending input for every invalid
 /// value: an unknown provider type, a missing/empty `FA_PROVIDER_CONFIG`,
 /// malformed or non-object config JSON (plain or base64 twin), an unknown
-/// config key, a missing required `baseUrl`/`model`, and a declared key
-/// env var (or its `_BASE64` twin) left empty. Nothing falls back to the
-/// catalog spec values.
+/// config key, a missing required `baseUrl`/`model`, a non-integer or
+/// below-floor `contextWindow`/`maxTokens` (gh-1471 D4), and a declared
+/// key env var (or its `_BASE64` twin) left empty. Nothing falls back to
+/// the catalog spec values.
 EnvProviderPreconfig? parseEnvProviderPreconfig({
   required String? providerType,
   required String? providerName,
@@ -190,6 +207,8 @@ EnvProviderPreconfig? parseEnvProviderPreconfig({
     apiKey: apiKey,
     input: config.input,
     thinkingLevel: config.thinkingLevel,
+    contextWindow: config.contextWindow,
+    maxTokens: config.maxTokens,
   );
 }
 
@@ -235,8 +254,17 @@ String _decodeBase64(String name, String encoded) {
 /// [_supportedConfigKeys] allowed; string values with blanks treated as
 /// absent, except `input`, a non-empty list of `"text"`/`"image"` (issue
 /// #638 — validated by the same named-error rules as the `models.custom`
-/// yaml field). The caller guarantees a non-empty declaration.
-({Map<String, String> values, List<String>? input, String? thinkingLevel})
+/// yaml field), and `contextWindow`/`maxTokens`, JSON integers at or
+/// above the resolver floors (gh-1471 D4: a capability declaration is
+/// explicit or absent — never a silent catalog default). The caller
+/// guarantees a non-empty declaration.
+({
+  Map<String, String> values,
+  List<String>? input,
+  String? thinkingLevel,
+  int? contextWindow,
+  int? maxTokens,
+})
 _parseConfig(String raw) {
   final Object? decoded;
   try {
@@ -252,6 +280,8 @@ _parseConfig(String raw) {
   final values = <String, String>{};
   List<String>? input;
   String? thinkingLevel;
+  int? contextWindow;
+  int? maxTokens;
   for (final entry in decoded.entries) {
     // jsonDecode produces string keys for JSON objects.
     final key = entry.key as String;
@@ -269,6 +299,17 @@ _parseConfig(String raw) {
       thinkingLevel = _parseThinkingLevel(entry.value);
       continue;
     }
+    if (key == 'contextWindow' || key == 'maxTokens') {
+      final parsed = _parseCapabilityInt(key, entry.value);
+      if (parsed != null) {
+        if (key == 'contextWindow') {
+          contextWindow = parsed;
+        } else {
+          maxTokens = parsed;
+        }
+      }
+      continue;
+    }
     final value = entry.value;
     if (value is! String) {
       throw ConfigException(
@@ -277,7 +318,41 @@ _parseConfig(String raw) {
     }
     if (value.trim().isNotEmpty) values[key] = value;
   }
-  return (values: values, input: input, thinkingLevel: thinkingLevel);
+  return (
+    values: values,
+    input: input,
+    thinkingLevel: thinkingLevel,
+    contextWindow: contextWindow,
+    maxTokens: maxTokens,
+  );
+}
+
+/// One `contextWindow`/`maxTokens` declaration: a JSON integer at or
+/// above the resolver floor ([minOverrideContextWindow] /
+/// [minOverrideMaxTokens] — the same boundary floors as the yaml
+/// `models.overrides` layer; a declaration below the floor would strand
+/// the compaction reserve / the answer budget). Null / blank-string
+/// values are ABSENT, like every other optional input; a non-integer or
+/// below-floor value fails loud naming the key.
+int? _parseCapabilityInt(String key, Object? value) {
+  if (value == null) return null;
+  if (value is String && value.trim().isEmpty) return null;
+  if (value is! int) {
+    throw ConfigException(
+      'FA_PROVIDER_CONFIG "$key" must be an integer, got: $value',
+    );
+  }
+  final floor = key == 'contextWindow'
+      ? minOverrideContextWindow
+      : minOverrideMaxTokens;
+  if (value < floor) {
+    throw ConfigException(
+      'FA_PROVIDER_CONFIG "$key" must be at least $floor '
+      '(the ${key == 'contextWindow' ? 'compaction reserve' : 'answer budget'}'
+      ' floor), got: $value',
+    );
+  }
+  return value;
 }
 
 /// The `input` modality list: a non-empty JSON array whose entries are

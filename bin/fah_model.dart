@@ -19,13 +19,21 @@ void _printCapabilityBootNotes(Model model, void Function(String) write) {
   }
 }
 
-Model _buildModel(CliArgs args, {List<String>? input, String? thinkingLevel}) {
+Model _buildModel(
+  CliArgs args, {
+  List<String>? input,
+  String? thinkingLevel,
+  int? contextWindow,
+  int? maxTokens,
+}) {
   return buildCliDefaultModel(
     args.provider,
     modelId: args.model,
     baseUrl: args.baseUrl,
     input: input,
     thinkingLevel: thinkingLevel,
+    contextWindow: contextWindow,
+    maxTokens: maxTokens,
   );
 }
 
