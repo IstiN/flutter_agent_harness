@@ -36,6 +36,7 @@ Task complete.
   }) async {
     final env = MemoryExecutionEnv(cwd: '/work');
     await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+    await env.writeFile('/work/key.txt', 'rotated');
     final io = FakeCliIO();
     final cli = AgentCli(
       config: AgentCliConfig(
@@ -45,10 +46,20 @@ Task complete.
         sessionRoot: '/sessions',
         providerKind: 'openai-completions',
         approvalMode: ApprovalMode.unattended,
+        headlessRun: true,
         redactionPipeline: pipeline,
       ),
       io: io,
-      streamFunction: FakeStreamFunction([textTurn(ledgerAnswer)]).call,
+      // gh-1516: the gate skips trivial turns — the run must produce
+      // state (a tool call) for the ledger record to persist.
+      streamFunction: FakeStreamFunction([
+        toolTurn([
+          ToolCall(id: 'c1', name: 'read', arguments: const {
+            'path': 'key.txt',
+          }),
+        ]),
+        textTurn(ledgerAnswer),
+      ]).call,
     );
     final exitCode = await cli.runHeadless('rotate the key');
     expect(exitCode, 0);

@@ -108,6 +108,84 @@ void main() {
     });
   });
 
+  group('gh-1516: tolerant strip — near-miss ledger shapes', () {
+    // The shape models actually emit when they miss the fence: an unfenced
+    // `task-ledger` heading followed by plain bullet entries. The parser
+    // must catch it (persist the record) and the stripper must remove it
+    // (the transcript never shows the ledger, either way).
+    const unfencedLedger = '''
+## task-ledger
+- requirement: create script.py in the workspace root
+  command: test -f script.py
+  expected: exit 0
+  actual: exit 0
+  status: pass
+- requirement: script.py is executable
+  command: test -x script.py
+  expected: exit 0
+  actual: exit 1
+  status: fixed
+''';
+
+    test('parses the unfenced heading + bullet shape', () {
+      final ledger = parseTaskLedger('Answer text.\n$unfencedLedger\nDone.');
+      expect(ledger, isNotNull);
+      expect(ledger!.items, hasLength(2));
+      expect(
+        ledger.items[0].requirement,
+        'create script.py in the workspace root',
+      );
+      expect(ledger.items[0].status, TaskLedgerItemStatus.pass);
+      expect(ledger.items[1].status, TaskLedgerItemStatus.fixed);
+    });
+
+    test('accepts a bold heading variant (**task-ledger**)', () {
+      final ledger = parseTaskLedger(
+        '**task-ledger**\n'
+        '- requirement: only item\n'
+        '  command: true\n'
+        '  status: pass\n',
+      );
+      expect(ledger!.items.single.requirement, 'only item');
+    });
+
+    test('a task-ledger heading without requirement bullets is not a ledger', () {
+      expect(parseTaskLedger('## task-ledger\n- some unrelated note\n'), isNull);
+      // …and must not be mistaken for one in prose either.
+      expect(
+        parseTaskLedger('the task-ledger record is persisted hidden'),
+        isNull,
+      );
+    });
+
+    test('the fenced block still wins when both shapes appear', () {
+      final ledger = parseTaskLedger(
+        '$unfencedLedger\n```task-ledger\n- requirement: fenced item\n  status: pass\n```\n',
+      );
+      expect(ledger!.items.single.requirement, 'fenced item');
+    });
+
+    test('stripTaskLedger removes the fenced block and its blank line', () {
+      final stripped = stripTaskLedger('Answer.\n\n$ledgerBlock\n');
+      expect(stripped, isNot(contains('task-ledger')));
+      expect(stripped, isNot(contains('test -f script.py')));
+      expect(stripped, contains('Answer.'));
+      expect(stripped.trimRight(), 'Answer.');
+    });
+
+    test('stripTaskLedger removes the unfenced heading + bullets', () {
+      final stripped = stripTaskLedger('Answer text.\n\n$unfencedLedger\n');
+      expect(stripped, isNot(contains('task-ledger')));
+      expect(stripped, isNot(contains('test -x script.py')));
+      expect(stripped.trimRight(), 'Answer text.');
+    });
+
+    test('stripTaskLedger leaves plain answers byte-identical', () {
+      const plain = 'just a plain final answer\nwith two lines';
+      expect(stripTaskLedger(plain), plain);
+    });
+  });
+
   group('TaskLedger model', () {
     test('verifiedCount/failedCount/allVerified (2+ item case)', () {
       final ledger = parseTaskLedger(
