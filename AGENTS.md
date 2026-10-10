@@ -1872,6 +1872,14 @@ trajectory are SDK invariants with no override point (AC9).
   `1.0.<counter>` (gh-785: App Store Connect approved 1.0.0 and enforces a
   monotonic `CFBundleShortVersionString`, so the pre-promotion `0.1.<counter>`
   train can never upload again); the core and app pubspecs bump in lockstep.
+- `packages/fa_llm` publishes per `fa_llm-v*` tag via
+  `.github/workflows/publish-fa-llm.yml` (OIDC, no secrets). First
+  publish of a NEW package is manual — pub.dev OIDC only uploads new
+  versions of an existing package (issue #1511): owner runs
+  `cd packages/fa_llm && dart pub publish` once, adds the OIDC publisher
+  entry on pub.dev, then the workflow takes over. The workflow
+  pre-flights the package-exists probe and exits 10 with the
+  instructions on 404; see `packages/fa_llm/README.md` §Publishing.
 - CLI binaries build per tag (`ci.yml` `binaries` job), attach to the
   GitHub Release (`fa-<os>-<arch>[.exe]`); `installer-smoke` verifies
   installers.
