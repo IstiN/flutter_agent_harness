@@ -203,8 +203,9 @@ void main() {
       );
       // gh-1007: loaded runners deliver the post-secret dial's hello in
       // bursts past 30s — poll with a 90s global ceiling instead of one
-      // fixed window (the issue's 'longer/poller timeout' hardening).
-      await fakeHub.waitForHellos(1, timeout: const Duration(seconds: 30));
+      // fixed window (the issue's 'longer/poller timeout' hardening;
+      // waitForHellosUnderLoad rides 15s chunks until the ceiling).
+      await fakeHub.waitForHellosUnderLoad(1);
       await harness.waitForText(
         'connected',
         timeout: const Duration(seconds: 30),
