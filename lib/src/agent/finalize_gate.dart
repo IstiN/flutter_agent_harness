@@ -16,8 +16,11 @@
 ///   near-miss proximity (items verified / checks passed), and CI can
 ///   REG-gate the contract's presence.
 ///
-/// The loop parses the `task-ledger` fenced block out of the run's final
-/// assistant message ([parseTaskLedger]) and emits [TaskLedgerEvent]
+/// The loop parses the `task-ledger` block out of the run's final
+/// assistant message ([parseTaskLedger], tolerant to the unfenced
+/// near-miss shape models emit — gh-1516), rewrites the answer so the
+/// transcript never shows the ledger ([stripTaskLedger]), and emits
+/// [TaskLedgerEvent]
 /// (declared in `agent_loop.dart` — the event family is sealed there);
 /// hosts persist [taskLedgerRecordType] records and the trajectory
 /// snapshot builder folds them.
@@ -140,19 +143,160 @@ final class TaskLedger {
   }
 }
 
-final RegExp _fenceLine = RegExp(r'^\s*(`{3,})(.*)$');
-
-/// Parses the LAST `task-ledger` fenced block out of [text] — the shape the
-/// FinalizeGate contract mandates for the final answer. Returns null when
-/// the text carries no block (legacy answers replay unchanged) or the block
-/// holds no requirement-bearing entries.
+/// Parses the LAST parseable `task-ledger` block out of [text] — the
+/// fenced shape the FinalizeGate contract mandates for the final answer,
+/// or the near-miss unfenced `task-ledger` heading + bullet shape models
+/// actually emit (gh-1516). Returns null when the text carries no
+/// requirement-bearing ledger (legacy answers replay unchanged).
 ///
 /// Entries are `- key: value` lines; further `key: value` lines (deeper
 /// indented) extend the current entry. Missing statuses parse as
 /// [TaskLedgerItemStatus.fail]; unknown keys are ignored.
 TaskLedger? parseTaskLedger(String text) {
-  final block = _lastLedgerBlock(text);
-  if (block == null) return null;
+  final span = _lastParseableLedgerSpan(text);
+  if (span == null) return null;
+  final items = _parseLedgerItems(span.body);
+  if (items.isEmpty) return null;
+  return TaskLedger(items: items);
+}
+
+/// Removes the last parseable ledger (fenced or the unfenced near-miss
+/// shape) from [text] — the run's final answer must never SHOW the
+/// checklist it self-checked with (gh-1516): the record lives in the
+/// hidden `task_ledger` session record, the transcript stays clean.
+/// Returns [text] unchanged when no ledger parses out of it.
+String stripTaskLedger(String text) {
+  final span = _lastParseableLedgerSpan(text);
+  if (span == null) return text;
+  final lines = text.split('\n');
+  final kept = <String>[
+    for (var i = 0; i < lines.length; i++)
+      if (i < span.startLine || i > span.endLine) lines[i],
+  ];
+  // The removal site leaves blank runs behind — collapse them and trim
+  // the edges the ledger vacated.
+  final collapsed = <String>[];
+  for (final line in kept) {
+    if (line.trim().isEmpty &&
+        (collapsed.isEmpty || collapsed.last.trim().isEmpty)) {
+      continue;
+    }
+    collapsed.add(line);
+  }
+  while (collapsed.isNotEmpty && collapsed.first.trim().isEmpty) {
+    collapsed.removeAt(0);
+  }
+  return collapsed.join('\n').trimRight();
+}
+
+final RegExp _fenceLine = RegExp(r'^\s*(`{3,})(.*)$');
+final RegExp _entryLine = RegExp(r'^\s*-\s+([A-Za-z_]+)\s*:\s?(.*)$');
+final RegExp _fieldLine = RegExp(r'^\s+([A-Za-z_]+)\s*:\s?(.*)$');
+
+/// One candidate ledger span in the answer text: the fenced block (span =
+/// opening fence through closing fence) or the unfenced heading + bullets
+/// (span = the heading through the last entry line). [body] carries the
+/// entry lines only — the parser's exact input shape.
+final class _LedgerSpan {
+  _LedgerSpan({
+    required this.startLine,
+    required this.endLine,
+    required this.body,
+  });
+
+  final int startLine;
+  final int endLine;
+  final String body;
+}
+
+/// The last ledger candidate that parses to a requirement-bearing ledger,
+/// or null. Candidates are tried newest-first so a revised (fenced) ledger
+/// still wins over an earlier near-miss — the "last block decides" rule of
+/// gh-1412, widened to both shapes (gh-1516).
+_LedgerSpan? _lastParseableLedgerSpan(String text) {
+  final spans = _ledgerSpans(text);
+  for (final span in spans.reversed) {
+    if (_parseLedgerItems(span.body).isNotEmpty) return span;
+  }
+  return null;
+}
+
+/// Every ledger-shaped span in [text], in document order: fenced
+/// ```task-ledger blocks and unfenced `task-ledger` headings followed by
+/// ledger bullets.
+List<_LedgerSpan> _ledgerSpans(String text) {
+  final lines = text.split('\n');
+  final spans = <_LedgerSpan>[];
+  var i = 0;
+  while (i < lines.length) {
+    final line = lines[i];
+    final fence = _fenceLine.firstMatch(line);
+    if (fence != null && fence.group(2)!.trim() == taskLedgerFence) {
+      final body = <String>[];
+      var j = i + 1;
+      var closed = false;
+      while (j < lines.length) {
+        if (_fenceLine.hasMatch(lines[j])) {
+          closed = true;
+          break;
+        }
+        body.add(lines[j]);
+        j++;
+      }
+      spans.add(
+        _LedgerSpan(
+          startLine: i,
+          endLine: closed ? j : lines.length - 1,
+          body: body.join('\n'),
+        ),
+      );
+      i = closed ? j + 1 : lines.length;
+      continue;
+    }
+    if (_isLedgerHeading(line)) {
+      final body = <String>[];
+      var j = i + 1;
+      var lastEntry = i; // A heading with no entries spans itself only.
+      while (j < lines.length) {
+        final next = lines[j];
+        if (_entryLine.hasMatch(next) || _fieldLine.hasMatch(next)) {
+          body.add(next);
+          lastEntry = j;
+        } else if (next.trim().isEmpty) {
+          // Blanks may separate entries; the span ends at the last entry.
+        } else {
+          break;
+        }
+        j++;
+      }
+      spans.add(
+        _LedgerSpan(startLine: i, endLine: lastEntry, body: body.join('\n')),
+      );
+      i = j;
+      continue;
+    }
+    i++;
+  }
+  return spans;
+}
+
+/// Whether [line] is a bare `task-ledger` heading — `#`-prefixed, bold, or
+/// bare — and not a prose mention (the token alone on its line).
+bool _isLedgerHeading(String line) {
+  var token = line.trim();
+  if (token.startsWith('#')) {
+    token = token.replaceFirst(RegExp(r'^#{1,6}\s*'), '').trim();
+  }
+  if (token.startsWith('**') && token.endsWith('**') && token.length > 4) {
+    token = token.substring(2, token.length - 2).trim();
+  }
+  return token.toLowerCase() == 'task-ledger';
+}
+
+/// Parses the entry grammar out of a span [body]: `- key: value` opens an
+/// entry, deeper-indented `key: value` lines extend it. Rows without a
+/// requirement are dropped; unknown keys ignored.
+List<TaskLedgerItem> _parseLedgerItems(String body) {
   final items = <TaskLedgerItem>[];
   Map<String, String> current = {};
   void flush() {
@@ -171,9 +315,9 @@ TaskLedger? parseTaskLedger(String text) {
     current = {};
   }
 
-  for (final line in block.split('\n')) {
-    final entry = RegExp(r'^\s*-\s+([A-Za-z_]+)\s*:\s?(.*)$').firstMatch(line);
-    final field = RegExp(r'^\s+([A-Za-z_]+)\s*:\s?(.*)$').firstMatch(line);
+  for (final line in body.split('\n')) {
+    final entry = _entryLine.firstMatch(line);
+    final field = _fieldLine.firstMatch(line);
     if (entry != null) {
       flush();
       current[entry.group(1)!] = entry.group(2) ?? '';
@@ -182,29 +326,7 @@ TaskLedger? parseTaskLedger(String text) {
     }
   }
   flush();
-  if (items.isEmpty) return null;
-  return TaskLedger(items: items);
-}
-
-/// The body of the last ` ```task-ledger ` fenced block in [text], or null.
-String? _lastLedgerBlock(String text) {
-  String? last;
-  var inside = false;
-  for (final line in text.split('\n')) {
-    final match = _fenceLine.firstMatch(line);
-    if (match == null) {
-      if (inside) last = '${last ?? ''}$line\n';
-      continue;
-    }
-    final info = match.group(2)!.trim();
-    if (inside) {
-      inside = false; // Closing fence — the block is complete.
-    } else if (info == taskLedgerFence) {
-      inside = true;
-      last = null;
-    }
-  }
-  return last?.trimRight();
+  return items;
 }
 
 /// Renders [ledger] back into the fenced `task-ledger` block the contract

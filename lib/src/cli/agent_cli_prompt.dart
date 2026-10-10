@@ -44,16 +44,15 @@ extension AgentCliPromptComposition on AgentCli {
     );
   }
 
-  /// The FinalizeGate contract (gh-1412): unattended/bench sessions run
-  /// with the verify-produced-state-before-declaring-done contract
-  /// appended to the base prompt. Keyed on the BOOT approval mode — the
-  /// bench and headless runs set `approvalMode: autopilot` before boot;
+  /// The FinalizeGate contract (gh-1412, gh-1516): unattended sessions
+  /// run with the verify-produced-state-before-declaring-done contract
+  /// appended to the base prompt. Keyed on ATTENDANCE — the boot's
+  /// `headlessRun` (`fa -p`, the bench), never on the approval mode: an
+  /// interactive TUI in autopilot is attended and stays contract-free;
   /// an interactive `/approval` switch never recomposes the contract
   /// (v1: no interactive-mode behavior change).
   String _withFinalizeGate(String base) =>
-      config.approvalMode == ApprovalMode.unattended
-      ? '$base\n\n$finalizeGateContractPrompt'
-      : base;
+      config.headlessRun ? '$base\n\n$finalizeGateContractPrompt' : base;
 
   /// The `## Agent messaging` prompt section: the agent's own mailbox in
   /// the fabric + how discovery/addressing work. Empty until the session

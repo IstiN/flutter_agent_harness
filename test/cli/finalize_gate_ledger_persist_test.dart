@@ -54,9 +54,11 @@ Task complete.
       // state (a tool call) for the ledger record to persist.
       streamFunction: FakeStreamFunction([
         toolTurn([
-          ToolCall(id: 'c1', name: 'read', arguments: const {
-            'path': 'key.txt',
-          }),
+          ToolCall(
+            id: 'c1',
+            name: 'read',
+            arguments: const {'path': 'key.txt'},
+          ),
         ]),
         textTurn(ledgerAnswer),
       ]).call,

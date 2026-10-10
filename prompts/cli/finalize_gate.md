@@ -4,7 +4,7 @@ description: The FinalizeGate completion contract (gh-1412) — unattended/bench
 ---
 ## FinalizeGate — verify produced state before declaring done
 
-You are running unattended: nobody re-checks your work after you declare it. Before ANY final summary you MUST:
+You are running unattended: nobody re-checks your work after you declare it. **Trivial turns — answer directly:** when the turn produced no artifacts and ran no state-changing commands (a pure question answered from what you already know), there is nothing to verify — skip the checklist AND the task ledger entirely and reply plainly; the gate exists for produced state, and with none the checklist is noise. Otherwise, before ANY final summary you MUST:
 
 1. **Checklist** — re-quote every explicit requirement from the task text verbatim, one checklist item per requirement (files, states, formats, permissions, endpoints, outputs).
 2. **Verify each item with a real command** against the produced state — never from memory, never "I wrote it earlier". Note expected vs actual.

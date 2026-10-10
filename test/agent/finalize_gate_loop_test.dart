@@ -120,59 +120,45 @@ Task complete.
     },
   );
 
-  test(
-    'gh-1516: a produced-state turn emits the event AND strips the ledger '
-    'from the final message (the transcript never shows it)',
-    () async {
-      final events = await runTurns([
-        toolTurn([ToolCall(id: 't1', name: 'bash', arguments: const {})]),
-        textTurn(ledgerText),
-      ], finalizeGate: true);
-      expect(events.whereType<TaskLedgerEvent>(), hasLength(1));
-      final end = events.whereType<AgentEndEvent>().single;
-      final lastAssistant = end.messages.lastWhere(
-        (message) => message is AssistantMessage,
-      ) as AssistantMessage;
-      final text = lastAssistant.content.whereType<TextContent>().map((
-        block,
-      ) {
-        return block.text;
-      }).join();
-      expect(text, isNot(contains('task-ledger')));
-      expect(text, isNot(contains('```')));
-      expect(text, contains('Task complete.'));
-    },
-  );
+  test('gh-1516: a produced-state turn emits the event AND strips the ledger '
+      'from the final message (the transcript never shows it)', () async {
+    final events = await runTurns([
+      toolTurn([ToolCall(id: 't1', name: 'bash', arguments: const {})]),
+      textTurn(ledgerText),
+    ], finalizeGate: true);
+    expect(events.whereType<TaskLedgerEvent>(), hasLength(1));
+    final end = events.whereType<AgentEndEvent>().single;
+    final lastAssistant =
+        end.messages.lastWhere((message) => message is AssistantMessage)
+            as AssistantMessage;
+    final text = lastAssistant.content.whereType<TextContent>().map((block) {
+      return block.text;
+    }).join();
+    expect(text, isNot(contains('task-ledger')));
+    expect(text, isNot(contains('```')));
+    expect(text, contains('Task complete.'));
+  });
 
-  test(
-    'gh-1516: a trivial turn (no tool calls, pure Q&A) does not fire the '
-    'gate — no event — and an over-eager ledger is still stripped',
-    () async {
-      final events = await runTurns([
-        textTurn(ledgerText),
-      ], finalizeGate: true);
-      // No produced state ⇒ nothing to verify ⇒ the gate does not fire.
-      expect(events.whereType<TaskLedgerEvent>(), isEmpty);
-      // …but the transcript must never show the ledger either way.
-      final end = events.whereType<AgentEndEvent>().single;
-      final lastAssistant = end.messages.lastWhere(
-        (message) => message is AssistantMessage,
-      ) as AssistantMessage;
-      final text = lastAssistant.content.whereType<TextContent>().map((
-        block,
-      ) {
-        return block.text;
-      }).join();
-      expect(text, isNot(contains('task-ledger')));
-      expect(text, contains('Task complete.'));
-    },
-  );
+  test('gh-1516: a trivial turn (no tool calls, pure Q&A) does not fire the '
+      'gate — no event — and an over-eager ledger is still stripped', () async {
+    final events = await runTurns([textTurn(ledgerText)], finalizeGate: true);
+    // No produced state ⇒ nothing to verify ⇒ the gate does not fire.
+    expect(events.whereType<TaskLedgerEvent>(), isEmpty);
+    // …but the transcript must never show the ledger either way.
+    final end = events.whereType<AgentEndEvent>().single;
+    final lastAssistant =
+        end.messages.lastWhere((message) => message is AssistantMessage)
+            as AssistantMessage;
+    final text = lastAssistant.content.whereType<TextContent>().map((block) {
+      return block.text;
+    }).join();
+    expect(text, isNot(contains('task-ledger')));
+    expect(text, contains('Task complete.'));
+  });
 
-  test(
-    'gh-1516: the unfenced near-miss ledger shape fires the gate and is '
-    'stripped from the final message',
-    () async {
-      const unfenced = '''
+  test('gh-1516: the unfenced near-miss ledger shape fires the gate and is '
+      'stripped from the final message', () async {
+    const unfenced = '''
 Task complete.
 ## task-ledger
 - requirement: create script.py
@@ -181,26 +167,26 @@ Task complete.
   actual: exit 0
   status: pass
 ''';
-      final events = await runTurns([
-        toolTurn([ToolCall(id: 't1', name: 'bash', arguments: const {})]),
-        textTurn(unfenced),
-      ], finalizeGate: true);
-      final ledgerEvents = events.whereType<TaskLedgerEvent>().toList();
-      expect(ledgerEvents, hasLength(1));
-      expect(ledgerEvents.single.ledger.items.single.requirement, 'create script.py');
-      final end = events.whereType<AgentEndEvent>().single;
-      final lastAssistant = end.messages.lastWhere(
-        (message) => message is AssistantMessage,
-      ) as AssistantMessage;
-      final text = lastAssistant.content.whereType<TextContent>().map((
-        block,
-      ) {
-        return block.text;
-      }).join();
-      expect(text, isNot(contains('task-ledger')));
-      expect(text.trimRight(), 'Task complete.');
-    },
-  );
+    final events = await runTurns([
+      toolTurn([ToolCall(id: 't1', name: 'bash', arguments: const {})]),
+      textTurn(unfenced),
+    ], finalizeGate: true);
+    final ledgerEvents = events.whereType<TaskLedgerEvent>().toList();
+    expect(ledgerEvents, hasLength(1));
+    expect(
+      ledgerEvents.single.ledger.items.single.requirement,
+      'create script.py',
+    );
+    final end = events.whereType<AgentEndEvent>().single;
+    final lastAssistant =
+        end.messages.lastWhere((message) => message is AssistantMessage)
+            as AssistantMessage;
+    final text = lastAssistant.content.whereType<TextContent>().map((block) {
+      return block.text;
+    }).join();
+    expect(text, isNot(contains('task-ledger')));
+    expect(text.trimRight(), 'Task complete.');
+  });
 
   test(
     'finalizeGate off: no TaskLedgerEvent even with a ledger present',

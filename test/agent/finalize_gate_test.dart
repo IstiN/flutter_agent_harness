@@ -149,14 +149,20 @@ void main() {
       expect(ledger!.items.single.requirement, 'only item');
     });
 
-    test('a task-ledger heading without requirement bullets is not a ledger', () {
-      expect(parseTaskLedger('## task-ledger\n- some unrelated note\n'), isNull);
-      // …and must not be mistaken for one in prose either.
-      expect(
-        parseTaskLedger('the task-ledger record is persisted hidden'),
-        isNull,
-      );
-    });
+    test(
+      'a task-ledger heading without requirement bullets is not a ledger',
+      () {
+        expect(
+          parseTaskLedger('## task-ledger\n- some unrelated note\n'),
+          isNull,
+        );
+        // …and must not be mistaken for one in prose either.
+        expect(
+          parseTaskLedger('the task-ledger record is persisted hidden'),
+          isNull,
+        );
+      },
+    );
 
     test('the fenced block still wins when both shapes appear', () {
       final ledger = parseTaskLedger(

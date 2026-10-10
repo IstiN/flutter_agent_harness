@@ -31,10 +31,7 @@ void main() {
     streamFunction: fake.call,
   );
 
-  Future<String> promptOf(
-    ApprovalMode mode, {
-    bool headlessRun = false,
-  }) async {
+  Future<String> promptOf(ApprovalMode mode, {bool headlessRun = false}) async {
     final io = FakeCliIO();
     final fake = FakeStreamFunction([textTurn('ok')]);
     final cli = cliFor(io, fake, approvalMode: mode, headlessRun: headlessRun);
@@ -47,14 +44,14 @@ void main() {
     return prompt;
   }
 
-  test('unattended headless boot prompt carries the FinalizeGate contract', () async {
-    final prompt = await promptOf(
-      ApprovalMode.unattended,
-      headlessRun: true,
-    );
-    expect(prompt, contains('FinalizeGate'));
-    expect(prompt, contains(finalizeGateContractPrompt));
-  });
+  test(
+    'unattended headless boot prompt carries the FinalizeGate contract',
+    () async {
+      final prompt = await promptOf(ApprovalMode.unattended, headlessRun: true);
+      expect(prompt, contains('FinalizeGate'));
+      expect(prompt, contains(finalizeGateContractPrompt));
+    },
+  );
 
   test('headless boots carry the contract under any approval mode', () async {
     for (final mode in [ApprovalMode.alwaysAsk, ApprovalMode.write]) {

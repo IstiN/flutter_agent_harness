@@ -1165,36 +1165,85 @@ Future<List<Message>> _runAgentLoop({
     break;
   }
 
-  // The FinalizeGate (gh-1412): unattended runs parse the task ledger out
-  // of the FINAL assistant message so hosts persist the hidden
-  // `task_ledger` record. No ledger in the answer (or the gate off) is
-  // not an error — legacy answers replay unchanged.
+  // The FinalizeGate (gh-1412, gh-1516): unattended runs fold the task
+  // ledger out of the FINAL assistant message — the event feeds the
+  // hidden `task_ledger` record, and the message itself is rewritten so
+  // the transcript never shows the ledger (fenced or the unfenced
+  // near-miss shape). A trivial turn (no tool calls — pure Q&A, nothing
+  // produced to verify) does not fire the gate: no event, though an
+  // over-eager ledger is still stripped from the answer.
   if (currentConfig.finalizeGate) {
-    final ledger = _finalTaskLedger(newMessages);
-    if (ledger != null) await emit(TaskLedgerEvent(ledger));
+    final fold = _foldTaskLedger(newMessages);
+    if (fold != null) {
+      if (fold.producedState && fold.ledger != null) {
+        await emit(TaskLedgerEvent(fold.ledger!));
+      }
+      if (fold.stripped != null) {
+        newMessages[fold.messageIndex] = fold.stripped!;
+        final at = currentContext.messages.lastIndexWhere(
+          (message) => identical(message, fold.original),
+        );
+        if (at >= 0) currentContext.messages[at] = fold.stripped!;
+      }
+    }
   }
 
   await emit(AgentEndEvent(List.unmodifiable(newMessages)));
   return newMessages;
 }
 
-/// Parses the FinalizeGate ledger from the run's last assistant message
-/// (gh-1412). The run must END on that message — a ledger quoted in an
-/// earlier turn's text never satisfies the gate, and a run that stopped on
-/// tool calls (terminate batch, abort) has no terminal answer to gate on:
-/// the last self-check it quoted predates tool activity that may have
-/// changed the produced state.
-TaskLedger? _finalTaskLedger(List<Message> messages) {
-  for (final message in messages.reversed) {
-    // The run's final message decides: anything after the last assistant
-    // message (tool results) means the run never ended on an answer.
-    if (message is! AssistantMessage) return null;
-    for (final block in message.content.reversed) {
-      if (block is! TextContent) continue;
-      final ledger = parseTaskLedger(block.text);
-      if (ledger != null) return ledger;
+/// The FinalizeGate end-of-run fold (gh-1412, gh-1516): parses the ledger
+/// out of the run's terminal assistant answer and rewrites the answer's
+/// text so the transcript never shows it. The run must END on that
+/// message — a ledger quoted in an earlier turn's text never satisfies
+/// the gate, and a run that stopped on tool calls (terminate batch,
+/// abort) has no terminal answer to gate on: the last self-check it
+/// quoted predates tool activity that may have changed the produced
+/// state. Returns null when there is no terminal assistant answer or no
+/// ledger in it.
+///
+/// [producedState] is whether the run executed any tool call at all —
+/// the gh-1516 trivial-turn rule: no produced state, nothing to verify,
+/// the gate does not fire (no [TaskLedgerEvent]); the ledger is still
+/// stripped, so an over-eager checklist never renders.
+({
+  TaskLedger? ledger,
+  bool producedState,
+  int messageIndex,
+  AssistantMessage? stripped,
+  Message? original,
+})?
+_foldTaskLedger(List<Message> messages) {
+  if (messages.isEmpty || messages.last is! AssistantMessage) return null;
+  final messageIndex = messages.length - 1;
+  final message = messages[messageIndex] as AssistantMessage;
+  final producedState = messages.any(
+    (m) => m is AssistantMessage && m.content.any((block) => block is ToolCall),
+  );
+  for (var i = message.content.length - 1; i >= 0; i--) {
+    if (message.content[i] is! TextContent) continue;
+    final block = message.content[i] as TextContent;
+    final ledger = parseTaskLedger(block.text);
+    if (ledger == null) continue;
+    final strippedText = stripTaskLedger(block.text);
+    if (strippedText == block.text) {
+      return (
+        ledger: ledger,
+        producedState: producedState,
+        messageIndex: messageIndex,
+        stripped: null,
+        original: null,
+      );
     }
-    return null;
+    final content = List<ContentBlock>.of(message.content);
+    content[i] = block.copyWith(text: strippedText);
+    return (
+      ledger: ledger,
+      producedState: producedState,
+      messageIndex: messageIndex,
+      stripped: message.copyWith(content: content),
+      original: message,
+    );
   }
   return null;
 }
@@ -2594,7 +2643,8 @@ ToolExecutionResult _errorToolResult(Object message, {String? toolName}) {
     return ToolExecutionResult(
       content: [
         TextContent(
-          text: 'Tool error ($name): run was aborted — tool not started'
+          text:
+              'Tool error ($name): run was aborted — tool not started'
               '${reason == null ? '' : ' (cancel reason: $reason)'}',
         ),
       ],

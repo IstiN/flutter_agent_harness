@@ -641,12 +641,14 @@ class AgentCli {
     );
     _toolRegistry = stack.registry;
     _agent = stack.agent;
-    // The FinalizeGate (gh-1412): unattended sessions (the bench / headless
-    // autopilot mode) emit the task ledger — the loop parses the final
+    // The FinalizeGate (gh-1412, attendance-corrected gh-1516): headless
+    // sessions only — `fa -p`, the bench — the run being actually
+    // UNATTENDED. The approval mode is a permission policy, never an
+    // attendance signal: an interactive TUI in autopilot has a human
+    // watching every turn and stays gate-free. The loop parses the final
     // answer's `task-ledger` block and the CLI persists it as a hidden
-    // `task_ledger` session record. Interactive sessions stay off
-    // (byte-identical, no prompt noise).
-    _agent.finalizeGate = config.approvalMode == ApprovalMode.unattended;
+    // `task_ledger` session record.
+    _agent.finalizeGate = config.headlessRun;
     // The main agent's inbox in the messaging fabric: messages from
     // children (agent_message to "main") and from other Fa instances
     // sharing the messaging root arrive at turn boundaries.
