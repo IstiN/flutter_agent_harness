@@ -23,6 +23,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # gh-1522: the publish dry-run rehearses the tag-stamped stage —
+          # tag math needs the full tag graph.
+          fetch-depth: 0
 
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
@@ -38,21 +42,30 @@ jobs:
 
       - run: dart pub get
 
-      # Publish gate at PR time: publish-blocking problems (undeclared lib/
-      # imports, stray PEM-like strings) used to surface only in the tag-time
-      # publish job — the v0.1.331 era: an undeclared package:cryptography
-      # import shipped red on ~26 consecutive tags. --ignore-warnings: the
-      # two known layout warnings (gitignored install_local.sh, docs/
-      # naming) must not redden every PR, while validation ERRORS — "does
-      # not have X in the dependencies section of pubspec.yaml" — still
-      # fail. setup-dart (sdk >= 3.13) registers a publish-scoped PUB_TOKEN
-      # job-wide and pub.dev rejects authenticated metadata reads, so
-      # resolve unauthenticated (same pattern as the publish job);
-      # --dry-run never uploads.
-      - name: Publish dry-run (unauthenticated)
+      # gh-1522: the dry-run now rehearses the REAL publish payload — the
+      # staged tree stamped with the NEXT tag version — so a stamp failure
+      # (placeholder leak, changelog-section generation, staged-version
+      # desync) surfaces nightly, not at tag time. Publish-blocking problems
+      # (undeclared lib/ imports, stray PEM-like strings) used to surface
+      # only in the tag-time publish job — the v0.1.331 era: an undeclared
+      # package:cryptography import shipped red on ~26 consecutive tags.
+      # --ignore-warnings: the two known layout warnings (gitignored
+      # install_local.sh, docs/ naming) must not redden the nightly, while
+      # validation ERRORS — "does not have X in the dependencies section of
+      # pubspec.yaml" — still fail. setup-dart (sdk >= 3.13) registers a
+      # publish-scoped PUB_TOKEN job-wide and pub.dev rejects authenticated
+      # metadata reads, so resolve unauthenticated (same pattern as the
+      # publish job); --dry-run never uploads.
+      - name: Publish dry-run on the staged tree (gh-1522)
         run: |
           dart pub token remove https://pub.dev || true
-          dart pub publish --dry-run --ignore-warnings
+          latest=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          latest="${latest#v}"
+          IFS='.' read -r major minor patch <<< "$latest"
+          next="$major.$minor.$((patch + 1))"
+          echo "rehearsing the publish of the NEXT tag: v$next"
+          bash scripts/stage_publish_package.sh /tmp/publish-stage "$next"
+          (cd /tmp/publish-stage && dart pub get && dart pub publish --dry-run --ignore-warnings)
 
       # The example Flutter app lives in this repo; without its package
       # config the repo-wide `dart analyze` cannot resolve Flutter imports.
@@ -176,7 +189,11 @@ jobs:
       - name: dart build cli (AOT bundle, gh-1300)
         run: |
           dart build cli --target=bin/fah.dart --output=fa-local
-          version=$(sed -n 's/^version: //p' pubspec.yaml)
+          # gh-1522: the committed pubspec is the 0.0.0-dev placeholder —
+          # stamp the bundle version from git describe (exact tag when
+          # HEAD is tagged, distance+sha otherwise).
+          version=$(git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
+          version="${version#v}"
           echo "$version" > fa-local/bundle/version.txt
           test -x fa-local/bundle/bin/fah
           ./fa-local/bundle/bin/fah --version

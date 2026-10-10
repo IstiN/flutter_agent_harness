@@ -361,6 +361,25 @@ jobs:
       - name: Lockfile inventory gate (gh-1296 NG1)
         run: bash scripts/check_lockfiles.sh inventory
 
+      # gh-1522 AC5: committed pubspecs carry the FIXED 0.0.0-dev
+      # placeholder — the git tag is the single source of truth and CI
+      # stamps the staged publish tree from it. A hand-bumped version in
+      # either pubspec is a mistake now: it desyncs the tag↔staged-file
+      # invariant the publish stamper relies on (and reintroduces the
+      # lockfile churn gh-1522 retires). Runs on every PR — a bump attempt
+      # is exactly the diff this must catch.
+      - name: Version placeholder guard (gh-1522)
+        run: |
+          set -euo pipefail
+          for f in pubspec.yaml flutter_app/pubspec.yaml; do
+            v=$(grep '^version:' "$f" | awk '{print $2}')
+            base="${v%%+*}"
+            if [ "$base" != "0.0.0-dev" ]; then
+              echo "::error::$f carries '$v' — the committed version must stay the 0.0.0-dev placeholder (gh-1522). Releases are tags; CI stamps the real version at publish/build time."
+              exit 1
+            fi
+          done
+
       - name: Lockfile gate self-test (gh-1296 AC2)
         run: bash scripts/check_lockfiles_selftest.sh
 
@@ -2861,7 +2880,8 @@ jobs:
     #    (exit 65) on every release since the gate graph grew legs that can
     #    redden the push twin. The v0.1.370-402 era this arm once covered
     #    (API-created lightweight tags with no push event) is gone: every tag
-    #    is PAT-pushed annotated (release-tag/auto_release), so the push twin
+    #    is PAT-pushed annotated (gh-1522: the auto_release.sh App-token tag
+    #    push), so the push twin
     #    always exists. A release-only tag would now skip publish and the
     #    daily verifyPubDev leg alarms «only release-event run(s)» loudly.
     # 2. The gate is dart_ok — the pure-Dart package verdict quality-gate
@@ -3441,20 +3461,22 @@ jobs:
           "$fa_path" --version
 
   release:
-    name: Auto-release (bump push)
+    name: Auto-release (tag cut)
     runs-on: ubuntu-latest
     needs: quality-gate
-    timeout-minutes: 15
-    # Every push to main gets a release with an auto-incremented patch version
-    # (0.1.x -> 0.1.y), coalesced to <=1 per 2h — pub.dev rate-limits publishes
-    # (~12/day; hit on 2026-07-18). Release commits are skipped (loop guard).
-    # gh-1172: the bump pushes DIRECTLY to protected main authenticated as the
-    # fa-release-bot GitHub App — the only bypass actor on the main ruleset
-    # (the PR stopgap from 2026-09-29 is retired: it burned a full CI queue
-    # cycle + machine review round on every chore bump). The App token is
-    # minted job-locally; nothing else in the repo can read RELEASE_APP_*.
-    # release-tag below cuts the tag from the pushed commit. Scheduled runs
-    # catch up commits that outpaced the coalesce window.
+    timeout-minutes: 10
+    # gh-1522: the release IS the tag. Every push to main cuts an annotated
+    # tag (latest tag + 1) on origin/main plus the GitHub Release — coalesced
+    # to <=1 per 2h (pub.dev rate-limits publishes, ~12/day; hit on
+    # 2026-07-18). ZERO commits land on main: the retired flow pushed a
+    # 4-file 'chore(release):' bot commit (pubspec.yaml, CHANGELOG.md,
+    # flutter_app/pubspec.{yaml,lock}); the tag now drives everything and CI
+    # stamps version/changelog into the STAGED publish tree at publish time.
+    # The tag push rides the fa-release-bot App token because GITHUB_TOKEN
+    # pushes never trigger the tag-scoped publish/binaries jobs (gh-1172);
+    # the App no longer needs the main-ruleset bypass (no branch push), but
+    # remains the release-path actor (gh-1402). Scheduled runs catch up
+    # commits that outpaced the coalesce window.
     # !cancelled() + explicit gate check: GitHub propagates "skipped"
     # TRANSITIVELY through an always()-job's needs graph. quality-gate uses
     # if: always() and its needs include path-gated legs (perf-gate etc.)
@@ -3466,29 +3488,30 @@ jobs:
     # (gh-1172 round-2 BLOCK): this is the repo's dispatch-only CI — the SM
     # runs `gh workflow run ci.yml --ref <pr-branch>` with no inputs, so a
     # bare dispatch arm would execute the dispatched (PR-head) ref's
-    # auto_release.sh with the bypass App's push credentials. releaseDryRun
+    # auto_release.sh with the App's tag-push credentials. releaseDryRun
     # exercises the rollout switch (AC1 — any ref, never pushes);
     # releaseDispatch on refs/heads/main is the manual catch-up release.
     if: >-
       !cancelled() && needs.quality-gate.result == 'success' &&
-      ((github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(release):'))
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main')
       || github.event_name == 'schedule'
       || (github.event_name == 'workflow_dispatch' && inputs.releaseDryRun == true)
       || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.releaseDispatch == true))
     concurrency:
       group: release-main
       cancel-in-progress: false
-    # Defense in depth (gh-1172 round-3 BLOCK): the push rides the checkout
-    # App token EXCLUSIVELY, so this job's GITHUB_TOKEN never needs write —
-    # on a dry-run dispatch of a PR head (AC1, any ref) that keeps the job's
-    # own token read-only, leaving no write-capable credential in the run.
+    # Defense in depth (gh-1172 round-3 BLOCK): the tag push rides the
+    # checkout App token EXCLUSIVELY, so this job's GITHUB_TOKEN never needs
+    # write — on a dry-run dispatch of a PR head (AC1, any ref) that keeps
+    # the job's own token read-only, leaving no write-capable credential in
+    # the run.
     permissions:
       contents: read
     steps:
       # Job-scoped App token (gh-1172 fix-contract item 1): minted per run,
       # expires with the job, never shared with other workflows.
       # NEVER minted on a dry-run dispatch: that arm fires on ANY ref, so the
-      # bypass credential must not exist in a run that executes the (possibly
+      # credential must not exist in a run that executes the (possibly
       # untrusted) dispatched ref's auto_release.sh — "dry-run never pushes"
       # may not depend on the script under test honoring the flag. The real
       # arms (push, schedule, releaseDispatch) see a non-true releaseDryRun
@@ -3499,124 +3522,32 @@ jobs:
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          # Least privilege (gh-1172 round-2 review): the App is the ruleset
-          # bypass actor, so scope the token to what the push needs instead
-          # of every permission the installation carries.
+          # Least privilege (gh-1172 round-2 review): contents:write covers
+          # the tag push + `gh release create`, nothing else.
           permissions: contents:write
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410b1 # v7.0.1
         with:
           fetch-depth: 0
-          # gh-1477: blobless — the bump touches a handful of files; every
-          # historical blob is dead transfer weight.
+          # gh-1477: blobless — tag math reads commit metadata only.
           filter: blob:none
-          # App token (not GITHUB_TOKEN) so the pushed commit triggers the
-          # follow-up ci.yml run whose release-tag job cuts the tag —
-          # GITHUB_TOKEN pushes never trigger downstream workflow runs.
+          # App token (not GITHUB_TOKEN) so the pushed tag triggers the
+          # tag-scoped publish/binaries jobs — GITHUB_TOKEN pushes never
+          # trigger downstream workflow runs.
           # Dry-run dispatch: the mint above is skipped, its outputs are
           # empty (falsy) and checkout falls back to the plain GITHUB_TOKEN
           # (read-only per the job permissions block).
           token: ${{ steps.app-token.outputs.token || github.token }}
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.x'
-
-      # gh-1299 NG1: the bump regenerates flutter_app/pubspec.lock in-commit
-      # (the lockfile pins the parent path package version, so every bump
-      # invalidates it) and refuses to ship while any inventory lockfile is
-      # dirty — both need flutter on PATH. This job AUTHORS the lockfile for
-      # every future release, so its SDK is pinned to the same 3.47.x the
-      # consuming (--enforce-lockfile) build legs pin (PR #1304 rework
-      # thread 8 — closes the author/consumer SDK drift class).
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
-        with:
-          flutter-version: '3.47.x'
-          channel: stable
-          cache: true
-
-      - name: Bump version, changelog, push to main
+      - name: Cut release tag + GitHub Release
         env:
           RELEASE_DRY_RUN: ${{ github.event.inputs.releaseDryRun == 'true' && '1' || '0' }}
-        run: bash scripts/auto_release.sh
-
-  # Cuts the annotated tag + GitHub Release from the pushed 'chore(release):'
-  # bump commit (see scripts/tag_release.sh). The bump lands via direct push
-  # to protected main as the fa-release-bot App (gh-1172), so the tag phase
-  # keys on that push. Tag push rides the App token (checkout token) —
-  # GITHUB_TOKEN pushes never trigger the tag-scoped binaries/publish jobs.
-  # Serialized with the bump push job via the release-main group: tag first,
-  # next bump after.
-  release-tag:
-    name: Auto-release (tag on push)
-    runs-on: ubuntu-latest
-    needs: quality-gate
-    timeout-minutes: 10
-    if: >-
-      !cancelled() && needs.quality-gate.result == 'success' &&
-      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
-      startsWith(github.event.head_commit.message, 'chore(release):')
-    concurrency:
-      group: release-main
-      cancel-in-progress: false
-    permissions:
-      contents: write
-    steps:
-      # Same fa-release-bot App as the bump job (gh-1172): the tag push and
-      # `gh release create` ride the App installation token — without an
-      # explicit GH_TOKEN the create || true in tag_release.sh was a
-      # guaranteed silent no-op and the curated CHANGELOG notes never reached
-      # the release object (BLOCK finding on PR #1093, live review 2026-09-30).
-      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        id: app-token
-        with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          # Least privilege (gh-1172 round-2 review): contents:write only —
-          # the tag push + `gh release create` need nothing else.
-          permissions: contents:write
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          # gh-1477: blobless — tag math reads commit metadata only.
-          filter: blob:none
-          # App token so the pushed tag triggers the publish job —
-          # GITHUB_TOKEN pushes never trigger downstream workflow runs.
-          token: ${{ steps.app-token.outputs.token }}
-
-      # gh-1299 NG2/AC3: the tag step smokes `flutter pub get --enforce-lockfile`
-      # on the bump commit BEFORE tagging/publishing (a release commit that
-      # cannot resolve its own lockfile is never tagged, never published) —
-      # the gate needs flutter on PATH, pinned to the same 3.47.x the
-      # consuming build legs use (PR #1304 rework thread 8).
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
-        with:
-          flutter-version: '3.47.x'
-          channel: stable
-          cache: true
-
-      # gh-1310 rework (review thread 1): warm the pub cache with the shared
-      # bounded-retry action so tag_release.sh's own enforce-lockfile smoke
-      # rides it — the smoke stays in the script (release_hygiene NG2/AC3
-      # pins it) but is no longer the job's first resolution, so one
-      # transient git-dep clone reset cannot abort the pre-tag gate on a
-      # cold cache (the v1.0.516 build-macos exit-69 class, on the release
-      # path).
-      - uses: ./.github/actions/flutter-pub-get
-
-      - name: Cut annotated tag + GitHub Release
-        env:
+          # gh release create rides the App token (gh-1172): without an
+          # explicit GH_TOKEN the create || true in auto_release.sh would be
+          # a guaranteed silent no-op and the curated notes would never reach
+          # the release object.
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          # gh-1192 AC3: pin the tag to the bump commit the push event
-          # carried. head_commit.id is frozen at event time; a default
-          # checkout can land on a main that moved in the seconds between the
-          # bump push and this job starting (v1.0.498 captured the #1178
-          # interloper that way). tag_release.sh validates the sha (exact
-          # bump subject + matching pubspec version) before tagging and
-          # refuses to tag a moving HEAD when nothing qualifies.
-          BUMP_SHA: ${{ github.event.head_commit.id || github.sha }}
-        run: bash scripts/tag_release.sh
+        run: bash scripts/auto_release.sh
 
   # PR-gate twin of the release `binaries` job: the CLI bundle must compile
   # on every supported platform and actually run (`fa --help`) BEFORE a PR
