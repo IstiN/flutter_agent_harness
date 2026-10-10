@@ -24,6 +24,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_agent_harness/flutter_agent_harness.dart'
     show bundledCatalogEndpoints, bundledCatalogModelIds;
+import 'package:flutter_agent_harness/src/cli/pty_wait_budget.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pty2/pty2.dart';
 import 'package:xterm/xterm.dart';
@@ -203,6 +204,16 @@ final class CliVisualHarness {
   /// right after [spawn].
   void attach(WidgetTester tester) => _tester = tester;
 
+  /// Load-aware wait budgets (issue #1391): every [timeout] this harness
+  /// waits by is multiplied by the ambient `FA_PTY_BUDGET_SCALE` (unset →
+  /// 1.0 → exact legacy budgets). The merge-blocking Terminal-visual leg
+  /// exports 2 — SM dispatch waves pack the hosted-arm pool and stretch
+  /// every JIT spawn / round-trip / repaint past the quiet-runner budgets;
+  /// see `lib/src/cli/pty_wait_budget.dart` for the rationale.
+  static double get waitBudgetScale => resolvePtyWaitBudgetScale(
+    envValue: Platform.environment[kPtyWaitBudgetScaleEnv],
+  );
+
   /// Runs [body] in the real-async zone (PTY I/O and timer-based waits
   /// freeze in the widget test's fake zone). runAsync completes with null
   /// for void bodies (the common case here), so the nullable result is
@@ -378,7 +389,9 @@ final class CliVisualHarness {
     Duration timeout = const Duration(seconds: 10),
     bool settle = false,
   }) => _live(() async {
-    final deadline = DateTime.now().add(timeout);
+    final deadline = DateTime.now().add(
+      scalePtyWaitBudget(timeout, waitBudgetScale),
+    );
     while (DateTime.now().isBefore(deadline)) {
       final screen = screenText;
       if (screen.contains(pattern)) {
@@ -411,7 +424,10 @@ final class CliVisualHarness {
   Future<bool> waitForRawSettle({
     int settleMs = 200,
     Duration grace = const Duration(seconds: 2),
-  }) => _rawQuiet(settleMs, DateTime.now().add(grace));
+  }) => _rawQuiet(
+    settleMs,
+    DateTime.now().add(scalePtyWaitBudget(grace, waitBudgetScale)),
+  );
 
   /// True when no new raw bytes arrived for [settleMs] twice in a row
   /// before [deadline] (bounded by it). The ONE stability loop behind
@@ -447,7 +463,10 @@ final class CliVisualHarness {
     int settleMs = 200,
     Duration timeout = const Duration(seconds: 10),
   }) async {
-    await _rawQuiet(settleMs, DateTime.now().add(timeout));
+    await _rawQuiet(
+      settleMs,
+      DateTime.now().add(scalePtyWaitBudget(timeout, waitBudgetScale)),
+    );
     return _rawBuffer.toString();
   }
 
@@ -458,7 +477,9 @@ final class CliVisualHarness {
     Pattern pattern, {
     Duration timeout = const Duration(seconds: 10),
   }) async {
-    final deadline = DateTime.now().add(timeout);
+    final deadline = DateTime.now().add(
+      scalePtyWaitBudget(timeout, waitBudgetScale),
+    );
     while (DateTime.now().isBefore(deadline)) {
       final output = _rawBuffer.toString();
       if (output.contains(pattern) || screenText.contains(pattern)) {

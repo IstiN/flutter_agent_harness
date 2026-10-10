@@ -792,6 +792,14 @@ jobs:
           # ~1 s per spawn instead of the JIT VM+CFE compile (~30 s on
           # loaded ARM runners). Per-test isolation is unchanged.
           FA_BIN: ${{ github.workspace }}/fa-local/bundle/bin/fah
+          # Issue #1391: stretch every PTY-harness wait budget 2x on this
+          # merge-blocking leg. SM dispatch waves pack the hosted-arm pool
+          # (refresh waves supersede PR heads mid-run), and drilled reds
+          # are all single tests popping quiet-runner budgets inside
+          # otherwise-green 60-70-test shards. Local runs and the nightly
+          # leave the var unset and keep the exact legacy budgets (the
+          # nightly's unsupervised verdicts feed quarantine decisions).
+          FA_PTY_BUDGET_SCALE: '2'
         run: |
           # gh-1199 AC1: --exclude-tag llm keeps every live-provider file
           # out of the merge-blocking selection (manifest unit AND runtime
@@ -1070,6 +1078,11 @@ jobs:
           dart bin/fah.dart --help > /dev/null
           dart run bin/fah.dart --help > /dev/null
       - name: flutter test test/cli_visual --tags integration
+        env:
+          # Issue #1391: same load-stretch as the PTY/CLI shards above —
+          # this merge-blocking leg drives the real CLI through the same
+          # harness waits and shares the dispatch-wave packing.
+          FA_PTY_BUDGET_SCALE: '2'
         run: cd flutter_app && flutter test test/cli_visual --tags integration
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
