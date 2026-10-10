@@ -173,6 +173,7 @@ void main() {
       // Attempt 1 dies with a classified transient wording; attempt 2
       // recovers. The bench (fa -p) must SEE the retry.
       var calls = 0;
+      final ctxSizes = <int>[];
       final base = FakeStreamFunction([
         textTurn('unused'),
       ]).call;
@@ -201,6 +202,13 @@ void main() {
           cancelToken,
         }) {
           calls++;
+          ctxSizes.add(context.messages.length);
+          // ignore: avoid_print
+          print('CALL ' + calls.toString() + ' msgs=' + context.messages.length.toString());
+          if (calls >= 3) {
+            // ignore: avoid_print
+            print('CALL' + calls.toString() + ' TRIGGER:\n' + StackTrace.current.toString().split('\n').take(14).join('\n'));
+          }
           if (calls == 1) {
             final stream = AssistantMessageEventStream();
             scheduleMicrotask(() {
