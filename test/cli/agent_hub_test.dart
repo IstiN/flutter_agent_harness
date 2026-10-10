@@ -467,7 +467,11 @@ void main() {
       );
       final lines = deferredPanelLines(panel, width: 40);
       expect(lines.first, contains('steering from you · pending'));
-      expect(deferredPanelStateIcon(DeferredPanelState.pending), '⏳');
+      // gh-1446 AC8: the pending icon resolves through the symbol table.
+      expect(
+        deferredPanelStateIcon(DeferredPanelState.pending),
+        FaThemeController.instance.sym('status.pending'),
+      );
       expect(deferredPanelStateIcon(DeferredPanelState.delivered), '✅');
       expect(deferredPanelStateIcon(DeferredPanelState.dead), '⚠');
       expect(
@@ -565,17 +569,14 @@ void main() {
       expect(lines.join('\n'), contains('bash_job status'));
     });
 
-    test('live summary line keeps every segment present', () {
-      final line = shellJobLiveSummaryLine(
-        total: 17,
-        running: 2,
-        done: 15,
-        lost: 0,
-      );
-      expect(line, contains('⟳ Background jobs (17)'));
-      expect(line, contains('2 running'));
-      expect(line, contains('15 done'));
-      expect(line, contains('0 lost'));
+    test('live summary line is signal-only (gh-1446 AC2)', () {
+      final line = shellJobLiveSummaryLine(running: 2, lost: 15);
+      expect(line, '◐ Background jobs (2) · 15 lost');
+      // The forbidden chrome substrings never appear.
+      expect(line, isNot(contains('running')));
+      expect(line, isNot(contains('done')));
+      // Nothing live at all → the row is absent.
+      expect(shellJobLiveSummaryLine(running: 0, lost: 0), isNull);
     });
   });
 
