@@ -134,23 +134,31 @@ tui:
       harness.sendText('\x1b[F'); // end
       // The re-engage frame rides the 10 Hz spinner repaints, so a blind
       // sleep + ONE screen sample races the paint path — the exact flake
-      // (#1467: the red runs sampled the glass once, 1500 ms after End,
-      // and caught it without the hint). Anchor on the hint itself: the
-      // same discipline step (2) uses for the counted rule. The guard
-      // stays — a fold that never re-engages fails LOUDLY on the wait,
-      // with the screen attached — while the single-sample race dies.
+      // (#1467: the red runs sampled the glass once, 1500 ms after End).
+      // Anchor on the post-gh-1446 re-engage observable itself: the
+      // TEXTLESS fold rule at the indicator slot pinned by the LIVE board
+      // summary directly under it. The held rule carries percent/counter
+      // TEXT on that same row, so the pair can only match once the fold
+      // actually re-engaged — a true proof, not a chrome echo (a bare
+      // `^─+$` anchor would match the legacy chrome rule in every frame
+      // and prove nothing). The guard stays: a fold that never
+      // re-engages fails LOUDLY on the wait, with the screen attached.
+      final foldLive = RegExp(
+        r'^─+\n.{0,4}Background jobs \(\d+\)',
+        multiLine: true,
+      );
       String live;
       try {
         live = await harness.waitForScreen(
-          RegExp(r'\d+ lines? above fold'),
+          foldLive,
           timeout: const Duration(seconds: 10),
         );
       } on TimeoutException {
         // One lost PTY keypress is transport, not product: retry the
-        // navigation key once, then still demand the hint on the glass.
+        // navigation key once, then still demand the live fold row.
         harness.sendText('\x1b[F'); // end (retry)
         live = await harness.waitForScreen(
-          RegExp(r'\d+ lines? above fold'),
+          foldLive,
           timeout: const Duration(seconds: 30),
         );
       }
@@ -172,8 +180,9 @@ tui:
       );
       // Absence assertions need a SETTLED screen (the #550/#557 family —
       // the cell-diff path repaints only changed cells, so the pre-End
-      // held rule can linger one frame after the re-engage). The hint is
-      // a SUSTAINED live-edge row, so the settle keeps it on the glass.
+      // held rule can linger one frame after the re-engage). The textless
+      // fold rule is a SUSTAINED live-edge row, so the settle keeps the
+      // re-engaged shape on the glass.
       await harness.waitForOutput(settleMs: 400);
       final settledLive = harness.screenText;
       expect(
