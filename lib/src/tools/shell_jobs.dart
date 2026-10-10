@@ -68,7 +68,7 @@ String newShellJobId(int n) {
 
 /// One registered background shell job.
 final class ShellJobEntry {
-  ShellJobEntry._(this.job, {this.cwd}) : startedAt = DateTime.now();
+  ShellJobEntry._(this.job, {this.cwd, this.timeout}) : startedAt = DateTime.now();
 
   /// The backend handle.
   final ShellJob job;
@@ -122,6 +122,13 @@ final class ShellJobEntry {
   /// Why the job was stopped early ('timeout'/'cancelled'/'stopped'), or
   /// null when it exited on its own.
   String? get stopReason => job.stopReason;
+
+  /// The exec timeout the job was started with (gh-1444 AC5): the honest
+  /// "timed out after Ns" text reports THIS cap when the job's own
+  /// `stopReason` is 'timeout', instead of "unknown seconds" — the model's
+  /// `timeout` argument is absent on exactly the runs where a shell default
+  /// fired. Null when the job was started without a cap.
+  final Duration? timeout;
 
   /// Completes when the process exits.
   Future<void> get settled => job.settled;
@@ -328,7 +335,11 @@ final class ShellJobRegistry {
     if (started.isErr) {
       throw StateError(started.errorOrNull!.message);
     }
-    final entry = ShellJobEntry._(started.valueOrNull!, cwd: options?.cwd);
+    final entry = ShellJobEntry._(
+      started.valueOrNull!,
+      cwd: options?.cwd,
+      timeout: options?.timeout,
+    );
     _jobs.add(entry);
     unawaited(
       entry.settled.then((_) async {

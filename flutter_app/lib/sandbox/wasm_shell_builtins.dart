@@ -749,3 +749,173 @@ const Map<String, Set<String>> nonPathFlagValues = {
   'find': {'-iname', '-mmin', '-mtime', '-name', '-size', '-type'},
   'mktemp': {'-t'},
 };
+
+/// Parsed `cat` invocation (gh-1444 C1: the mobile shell runs cat as a Dart
+/// builtin so skill-path reads follow `.pointer` files — the coreutils.wasm
+/// applet reads through WASI and cannot). GNU subset: `-n` numbers every
+/// line, `-b` numbers non-blank lines, `-` reads stdin, `--` ends flags.
+final class CatInvocation {
+  const CatInvocation({
+    this.number = false,
+    this.numberNonBlank = false,
+    this.files = const <String>[],
+    this.error,
+  });
+
+  /// `-n`.
+  final bool number;
+
+  /// `-b` (overrides `-n` where both apply, like GNU cat).
+  final bool numberNonBlank;
+
+  /// Operand files in order; `-` means stdin.
+  final List<String> files;
+
+  /// GNU-shaped usage error, or null when the invocation is executable.
+  final String? error;
+}
+
+/// Pure `cat` argument parser. See [CatInvocation].
+CatInvocation parseCatArgs(List<String> args) {
+  var number = false;
+  var numberNonBlank = false;
+  final files = <String>[];
+  var noMoreFlags = false;
+  for (final arg in args) {
+    if (!noMoreFlags && arg == '--') {
+      noMoreFlags = true;
+    } else if (!noMoreFlags && arg.startsWith('-') && arg != '-' && arg != '') {
+      if (arg == '-n' || arg == '--number') {
+        number = true;
+      } else if (arg == '-b' || arg == '--number-nonblank') {
+        numberNonBlank = true;
+      } else {
+        final short = arg.startsWith('--') ? arg : arg.substring(0, 2);
+        return CatInvocation(
+          error: "invalid option -- '${short.replaceAll('-', '')}'",
+        );
+      }
+    } else {
+      files.add(arg);
+    }
+  }
+  return CatInvocation(
+    number: number,
+    numberNonBlank: numberNonBlank,
+    files: files,
+  );
+}
+
+/// Applies `-n`/`-b` numbering to [input] the way GNU cat renders it:
+/// right-aligned 6-width number, tab, line; `-b` numbers only non-blank
+/// lines and the counter advances ONLY for numbered lines (GNU semantics:
+/// `printf 'a\n\nb\n' | cat -b` labels b as 2, not 3).
+String applyCatNumbering(String input, {required bool nonBlankOnly}) {
+  final endsWithNewline = input.endsWith('\n');
+  final lines = endsWithNewline
+      ? input.substring(0, input.length - 1).split('\n')
+      : input.split('\n');
+  final out = StringBuffer();
+  var counter = 0;
+  for (final line in lines) {
+    if (nonBlankOnly && line.isEmpty) {
+      out.write('$line\n');
+      continue;
+    }
+    counter++;
+    out.write('${counter.toString().padLeft(6)}\t$line\n');
+  }
+  return out.toString();
+}
+
+/// Parses the WASI exit status from a wasmtime trap message:
+/// `I32Exit(n)` / "i32 exit with value N" / "Exited with i32 exit status N"
+/// (older and newer wasmtime shapes), 1 for the invalid-exit-status trap,
+/// null for everything else. Extracted from WasiSandboxShell so the log
+/// line classifier and the outcome resolver share one grammar.
+int? parseWasiExitCode(Object? error) {
+  if (error == null) return 0;
+  final message = error.toString();
+
+  final i32Match = RegExp(
+    r'i32\s+(?:exit\s+with\s+value|exit\s+status)\s*(\d+)',
+  ).firstMatch(message);
+  if (i32Match != null) {
+    return int.tryParse(i32Match.group(1)!);
+  }
+
+  // wasmtime 14 with the wasi command adapter can report an invalid exit
+  // status; treat that as a non-zero failure.
+  if (message.contains('exit with invalid exit status')) {
+    return 1;
+  }
+
+  return null;
+}
+
+/// The app.log line for a finished WASI `_start` (gh-1444 AC7): a NORMAL
+/// exit status is logged WITHOUT the word "error" — grep misses and other
+/// exit-1/2 commands are debug noise, not harness faults, and triage greps
+/// for "error". Only a non-exit trap keeps the `_start error:` shape.
+String wasmStartLogLine(Object? runError) {
+  if (runError == null) return '[wasm_shell] _start completed';
+  final code = parseWasiExitCode(runError);
+  if (code != null) {
+    return '[wasm_shell] _start exited with status $code';
+  }
+  return '[wasm_shell] _start error: $runError';
+}
+
+/// The WASI python build prints this platform-libraries warning on every
+/// launch (gh-1444 C8, second tier): it is build noise the agent cannot
+/// act on — the stderr filter drops these exact lines for python stages.
+const wasiPythonStderrNoise = <String>[
+  'Could not find platform dependent libraries',
+  'Consider setting PYTHONHOME',
+];
+
+/// True when [line] is one of the WASI python launch warnings suppressed
+/// from captured stderr (gh-1444 AC8).
+bool isWasiPythonStderrNoise(String line) {
+  final trimmed = line.trim();
+  if (trimmed.isEmpty) return false;
+  return wasiPythonStderrNoise.any(trimmed.startsWith);
+}
+
+/// Line-wise stderr filter dropping the WASI python launch warnings
+/// (gh-1444 AC8, second tier): chunks are latin-1 decoded (binary-safe
+/// round trip), complete lines are tested against
+/// [isWasiPythonStderrNoise], and a trailing partial line is held back
+/// until it completes or the stage ends ([flush]).
+class WasiPythonNoiseFilter {
+  String _carry = '';
+
+  /// Filters one stderr chunk; returns the bytes that survive.
+  List<int> process(List<int> chunk) {
+    var text = _carry + latin1.decode(chunk);
+    _carry = '';
+    final newline = text.lastIndexOf('\n');
+    if (newline == -1) {
+      _carry = text;
+      return const <int>[];
+    }
+    final complete = text.substring(0, newline + 1);
+    _carry = text.substring(newline + 1);
+    final parts = complete.split('\n');
+    final lines = parts.sublist(0, parts.length - 1);
+    final kept = [
+      for (final line in lines)
+        if (!isWasiPythonStderrNoise(line)) line,
+    ].map((line) => '$line\n').join();
+    return latin1.encode(kept);
+  }
+
+  /// Returns the held-back tail (a final line without its newline), minus
+  /// warning noise; call once when the stage ends.
+  List<int> flush() {
+    final rest = _carry;
+    _carry = '';
+    if (rest.isEmpty || isWasiPythonStderrNoise(rest)) return const <int>[];
+    return latin1.encode(rest);
+  }
+}
