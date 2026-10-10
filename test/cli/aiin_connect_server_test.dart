@@ -89,6 +89,7 @@ void main() {
     final statuses = <String>[];
     final result = await runAiinConnectCliFlow(
       onStatus: statuses.add,
+      shouldOpenBrowserFn: () => true,
       openBrowserFn: fakeBrowser(code: 'c-1'),
       client: client,
     );
@@ -98,6 +99,15 @@ void main() {
     expect(result.email, 'user@aiin.by');
     expect(result.tokens.refreshToken, isNotEmpty);
     expect(statuses, contains('browser opened; sign in on the AIIN page'));
+    // gh-1450 AC1: the URL prints in the success branch too.
+    final urlLines = statuses
+        .where((s) => s.startsWith(authorizationUrlPrefix))
+        .toList();
+    expect(urlLines, hasLength(1));
+    expect(
+      Uri.parse(urlLines.single.substring(authorizationUrlPrefix.length)).host,
+      'auth.aiin.by',
+    );
     expect(statussJoined(statuses), isNot(contains('sk-aiin-')));
   });
 
@@ -106,6 +116,7 @@ void main() {
     var dismissed = false;
     final result = await runAiinConnectCliFlow(
       onStatus: (_) {},
+      shouldOpenBrowserFn: () => true,
       openBrowserFn: fakeBrowser(code: 'c-1'),
       client: mockAiinBackend(),
       onCallback: () => dismissed = true,
@@ -120,6 +131,7 @@ void main() {
       var dismissed = false;
       final result = await runAiinConnectCliFlow(
         onStatus: (_) {},
+        shouldOpenBrowserFn: () => true,
         openBrowserFn: (url) async => true, // opened, never redirected
         client: mockAiinBackend(),
         timeout: const Duration(milliseconds: 100),
@@ -132,10 +144,13 @@ void main() {
 
   test('an open failure surfaces ahead of the callback timeout', () async {
     // The flow must rethrow the open failure promptly instead of waiting
-    // out the (deliberately huge) callback timeout.
+    // out the (deliberately huge) callback timeout — and the URL must be
+    // printed before the rethrow (gh-1450 E3).
+    final statuses = <String>[];
     await expectLater(
       runAiinConnectCliFlow(
-        onStatus: (_) {},
+        onStatus: statuses.add,
+        shouldOpenBrowserFn: () => true,
         openBrowserFn: (url) => throw StateError('no surface'),
         client: mockAiinBackend(),
         timeout: const Duration(minutes: 5), // must NOT be waited out
@@ -146,6 +161,46 @@ void main() {
       ),
       throwsA(isA<StateError>()),
     );
+    expect(
+      statussJoined(statuses),
+      contains('could not open browser automatically'),
+    );
+    expect(statussJoined(statuses), contains(authorizationUrlPrefix));
+  });
+
+  test('skip policy: the launch function is never called, the URL still '
+      'prints (gh-1450 AC2/AC3)', () async {
+    final client = mockAiinBackend();
+    final statuses = <String>[];
+    var launches = 0;
+    final result = await runAiinConnectCliFlow(
+      onStatus: statuses.add,
+      shouldOpenBrowserFn: () => false,
+      openBrowserFn: (url) async {
+        launches++;
+        return true;
+      },
+      client: client,
+      timeout: const Duration(milliseconds: 120),
+    );
+    // The fake browser never fired the redirect → timeout result.
+    expect(result, isNull);
+    expect(launches, 0);
+    expect(statussJoined(statuses), contains('browser launch skipped'));
+    final urlLines = statuses
+        .where((s) => s.startsWith(authorizationUrlPrefix))
+        .toList();
+    expect(urlLines, hasLength(2), reason: 'branch line + timeout rescue');
+    expect(
+      Uri.parse(urlLines.first.substring(authorizationUrlPrefix.length)).host,
+      'auth.aiin.by',
+    );
+    expect(
+      statussJoined(statuses),
+      contains('no AIIN callback received (timeout or cancelled)'),
+    );
+    // The rescue URL is the FINAL line a returning user can act on.
+    expect(statuses.last, contains(authorizationUrlPrefix));
   });
 
   test('cancelWhenOpenSettles: the sheet closing without a callback is a '
@@ -153,6 +208,7 @@ void main() {
     await expectLater(
       runAiinConnectCliFlow(
         onStatus: (_) {},
+        shouldOpenBrowserFn: () => true,
         openBrowserFn: (url) async => true, // sheet opens...
         // ...and closes by the user without ever redirecting.
         client: mockAiinBackend(),
@@ -171,6 +227,7 @@ void main() {
       'sheet closing', () async {
     final result = await runAiinConnectCliFlow(
       onStatus: (_) {},
+      shouldOpenBrowserFn: () => true,
       openBrowserFn: fakeBrowser(code: 'c-1'),
       client: mockAiinBackend(),
       cancelWhenOpenSettles: true,
@@ -189,6 +246,7 @@ void main() {
     final statuses = <String>[];
     final result = await runAiinConnectCliFlow(
       onStatus: statuses.add,
+      shouldOpenBrowserFn: () => true,
       openBrowserFn: (url) {
         // The fallback leg: the redirect loads the loopback server for
         // real — while the sheet's open future stays pending forever.
@@ -229,6 +287,7 @@ void main() {
     final result =
         await runAiinConnectCliFlow(
           onStatus: statuses.add,
+          shouldOpenBrowserFn: () => true,
           openBrowserFn: (url) async {
             final login = Uri.parse(url);
             final redirect = Uri.parse(
@@ -272,6 +331,7 @@ void main() {
       await expectLater(
         runAiinConnectCliFlow(
           onStatus: (_) {},
+          shouldOpenBrowserFn: () => true,
           openBrowserFn: (url) async {
             intercepted.complete(null); // the sheet closed with no callback
             return true;
@@ -301,6 +361,7 @@ void main() {
     await expectLater(
       runAiinConnectCliFlow(
         onStatus: (_) {},
+        shouldOpenBrowserFn: () => true,
         openBrowserFn: (url) async {
           intercepted.completeError(StateError('auth channel failed'));
           return true;
@@ -321,6 +382,7 @@ void main() {
     var loginUrl = '';
     await runAiinConnectCliFlow(
       onStatus: (_) {},
+      shouldOpenBrowserFn: () => true,
       openBrowserFn: (url) async {
         loginUrl = url;
         return true; // never redirected — the timeout settles the flow
@@ -383,6 +445,7 @@ void main() {
     var loginUrl = '';
     await runAiinConnectCliFlow(
       onStatus: (_) {},
+      shouldOpenBrowserFn: () => true,
       openBrowserFn: (url) async {
         loginUrl = url;
         return fakeBrowser(code: 'c-1')(url);
@@ -408,6 +471,7 @@ void main() {
     final browser = fakeBrowser(code: 'c-1');
     final result = await runAiinConnectCliFlow(
       onStatus: statuses.add,
+      shouldOpenBrowserFn: () => true,
       openBrowserFn: (url) async {
         // No browser available — the user opens the printed URL by hand,
         // which fires the same redirect.
@@ -418,7 +482,15 @@ void main() {
     );
     expect(result, isNotNull);
     expect(statussJoined(statuses), contains('could not open browser'));
-    expect(statussJoined(statuses), contains('open this URL manually'));
+    // gh-1450: the consistent prefix replaced the old manual line.
+    final urlLines = statuses
+        .where((s) => s.startsWith(authorizationUrlPrefix))
+        .toList();
+    expect(urlLines, hasLength(1));
+    expect(
+      Uri.parse(urlLines.single.substring(authorizationUrlPrefix.length)).host,
+      'auth.aiin.by',
+    );
   });
 
   test('state mismatch rejects the callback', () async {
@@ -426,6 +498,7 @@ void main() {
     final statuses = <String>[];
     final result = await runAiinConnectCliFlow(
       onStatus: statuses.add,
+      shouldOpenBrowserFn: () => true,
       openBrowserFn: fakeBrowser(code: 'c-1', stateOverride: 'forged'),
       client: client,
     );
@@ -438,6 +511,7 @@ void main() {
     final statuses = <String>[];
     final result = await runAiinConnectCliFlow(
       onStatus: statuses.add,
+      shouldOpenBrowserFn: () => true,
       openBrowserFn: fakeBrowser(
         error: 'access_denied',
         errorDescription: 'user said no',
@@ -453,6 +527,7 @@ void main() {
     final statuses = <String>[];
     final result = await runAiinConnectCliFlow(
       onStatus: statuses.add,
+      shouldOpenBrowserFn: () => true,
       openBrowserFn: fakeBrowser(code: 'c-1'),
       client: client,
     );
@@ -477,6 +552,33 @@ void main() {
     expect(callback!.succeeded, isTrue);
     await server.close();
   });
+
+  test(
+    'the timeout status carries the authorization URL (gh-1450 AC4)',
+    () async {
+      final statuses = <String>[];
+      final result = await runAiinConnectCliFlow(
+        onStatus: statuses.add,
+        shouldOpenBrowserFn: () => false,
+        openBrowserFn: (_) async => fail('launch must be skipped'),
+        client: mockAiinBackend(),
+        timeout: const Duration(milliseconds: 200),
+      );
+      expect(result, isNull);
+      expect(
+        statuses.join('\n'),
+        contains('no AIIN callback received (timeout or cancelled)'),
+      );
+      // The LAST status is the last-chance rescue line — a user who walked
+      // away can still open the URL from the transcript.
+      expect(statuses.last, startsWith(authorizationUrlPrefix));
+      final url = Uri.parse(
+        statuses.last.substring(authorizationUrlPrefix.length),
+      );
+      expect(url.host, 'auth.aiin.by');
+      expect(url.queryParameters['client_redirect_uri'], isNotNull);
+    },
+  );
 }
 
 String statussJoined(List<String> statuses) => statuses.join('\n');

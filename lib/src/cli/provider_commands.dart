@@ -155,6 +155,8 @@ extension on AgentCli {
   /// connect-time [_applyCodeMieSsoCredentials] (which also saves a
   /// registry entry and asks for a name) does not fit here.
   Future<String?> _mintCodeMieSsoCookie() async {
+    // No argv surface on the editor path: the default policy
+    // (FA_NO_BROWSER env + headless auto-detect) governs the launch.
     final authenticate =
         config.codeMieSsoAuthenticateFn ??
         (url, onStatus) =>
@@ -914,7 +916,7 @@ extension on AgentCli {
   /// The `/provider openrouter ...` dispatcher. Supports:
   ///
   /// - `/provider openrouter` (no args) — asks whether to use OAuth or an API key.
-  /// - `/provider openrouter oauth [headless]` — browser OAuth flow.
+  /// - `/provider openrouter oauth [headless] [--no-browser]` — browser OAuth flow.
   /// - `/provider openrouter <baseUrl> [token]` — API-key flow.
   ///
   /// Returns true when the command targeted OpenRouter.
@@ -923,12 +925,18 @@ extension on AgentCli {
 
     // Explicit OAuth subcommand.
     if (args.length >= 2 && args[1] == 'oauth') {
-      final headless = args.length > 2 && args[2] == 'headless';
-      if (args.length > 3 || (args.length == 3 && !headless)) {
-        io.writeln('usage: /provider openrouter oauth [headless]');
+      final options = args.skip(2).toList();
+      final headless = options.contains('headless');
+      final noBrowser = options.contains('--no-browser');
+      if (options.any((o) => o != 'headless' && o != '--no-browser')) {
+        io.writeln(
+          'usage: /provider openrouter oauth [headless] [--no-browser]',
+        );
         return true;
       }
-      unawaited(_handleOpenRouterOAuthCommand(headless: headless));
+      unawaited(
+        _handleOpenRouterOAuthCommand(headless: headless, noBrowser: noBrowser),
+      );
       return true;
     }
 
@@ -1055,21 +1063,31 @@ extension on AgentCli {
   /// When [headless] is true, prints a URL the user opens manually and prompts
   /// for the authorization code OpenRouter displays. Otherwise starts a local
   /// HTTP server, opens the browser, captures the callback, and exchanges the
-  /// code automatically.
+  /// code automatically. [noBrowser] (the `--no-browser` flag) skips the
+  /// automatic launch — the URL prints prominently instead (gh-1450).
   ///
   /// [exchangeFn] is injectable for tests; production uses [exchangeOpenRouterCode].
-  Future<void> _handleOpenRouterOAuthCommand({required bool headless}) async {
+  Future<void> _handleOpenRouterOAuthCommand({
+    required bool headless,
+    bool noBrowser = false,
+  }) async {
     if (_providerFlowActive) return;
     _providerFlowActive = true;
     try {
-      await _runOpenRouterOAuthCommand(headless: headless);
+      await _runOpenRouterOAuthCommand(
+        headless: headless,
+        noBrowser: noBrowser,
+      );
     } finally {
       _providerFlowActive = false;
       _promptLineBuffer.clear();
     }
   }
 
-  Future<void> _runOpenRouterOAuthCommand({required bool headless}) async {
+  Future<void> _runOpenRouterOAuthCommand({
+    required bool headless,
+    bool noBrowser = false,
+  }) async {
     final spec = providerCatalog['openrouter'];
     if (spec == null) {
       io.writeln('OpenRouter provider not found in catalog');
@@ -1086,6 +1104,8 @@ extension on AgentCli {
       key = await runOpenRouterOAuthCliFlow(
         onStatus: io.writeln,
         exchangeFn: exchangeFn,
+        shouldOpenBrowserFn: () =>
+            shouldLaunchBrowser(noBrowserFlag: noBrowser),
       );
     }
 
@@ -1223,38 +1243,50 @@ extension on AgentCli {
     _activeCustomName = entryName;
   }
 
-  /// The `/provider chatgpt oauth [headless]` branch: authenticates the
-  /// user with their ChatGPT account via PKCE (the Codex CLI client id) and
-  /// stores the resulting OAuth credentials — access + refresh tokens as
-  /// one JSON blob in the account's own secure-store slot. Returns true
-  /// when the command targeted the OAuth flow.
+  /// The `/provider chatgpt oauth [headless] [--no-browser]` branch:
+  /// authenticates the user with their ChatGPT account via PKCE (the Codex
+  /// CLI client id) and stores the resulting OAuth credentials — access +
+  /// refresh tokens as one JSON blob in the account's own secure-store
+  /// slot. Returns true when the command targeted the OAuth flow.
+  /// [noBrowser] skips the interactive flow's automatic browser launch —
+  /// the URL prints prominently instead (gh-1450).
   bool _startChatGptOAuthArg(List<String> args) {
     if (args.first != 'chatgpt') return false;
     if (args.length < 2 || args[1] != 'oauth') {
       return false;
     }
-    final headless = args.length > 2 && args[2] == 'headless';
-    if (args.length > 3 || (args.length == 3 && !headless)) {
-      io.writeln('usage: /provider chatgpt oauth [headless]');
+    final options = args.skip(2).toList();
+    final headless = options.contains('headless');
+    final noBrowser = options.contains('--no-browser');
+    if (options.any((o) => o != 'headless' && o != '--no-browser')) {
+      io.writeln('usage: /provider chatgpt oauth [headless] [--no-browser]');
       return true;
     }
-    unawaited(_handleChatGptOAuthCommand(headless: headless));
+    unawaited(
+      _handleChatGptOAuthCommand(headless: headless, noBrowser: noBrowser),
+    );
     return true;
   }
 
   /// Runs the ChatGPT OAuth flow and saves the resulting credentials.
-  Future<void> _handleChatGptOAuthCommand({required bool headless}) async {
+  Future<void> _handleChatGptOAuthCommand({
+    required bool headless,
+    bool noBrowser = false,
+  }) async {
     if (_providerFlowActive) return;
     _providerFlowActive = true;
     try {
-      await _runChatGptOAuthCommand(headless: headless);
+      await _runChatGptOAuthCommand(headless: headless, noBrowser: noBrowser);
     } finally {
       _providerFlowActive = false;
       _promptLineBuffer.clear();
     }
   }
 
-  Future<void> _runChatGptOAuthCommand({required bool headless}) async {
+  Future<void> _runChatGptOAuthCommand({
+    required bool headless,
+    bool noBrowser = false,
+  }) async {
     final spec = providerCatalog['chatgpt']!;
 
     // Existing ChatGPT accounts first: pick one, or add another —
@@ -1298,6 +1330,8 @@ extension on AgentCli {
       credentials = await runChatGptOAuthCliFlow(
         onStatus: io.writeln,
         exchangeFn: exchangeFn,
+        shouldOpenBrowserFn: () =>
+            shouldLaunchBrowser(noBrowserFlag: noBrowser),
       );
     }
 
@@ -1548,17 +1582,24 @@ extension on AgentCli {
   /// auth-method picker): the automatic re-authorizations (startup, saved
   /// entry switch, mid-stream expiry) keep the existing entry's name — or
   /// the derived default — without interrupting the recovery with a prompt.
+  /// [noBrowser] (the `--no-browser` flag) skips the automatic browser
+  /// launch — the URL prints prominently instead (gh-1450).
   Future<void> _handleCodeMieSsoCommand(
     String codeMieUrl, {
     bool offerName = false,
+    bool noBrowser = false,
   }) async {
     if (_providerFlowActive) return;
     _providerFlowActive = true;
     try {
       final authenticate =
           config.codeMieSsoAuthenticateFn ??
-          (url, onStatus) =>
-              runCodeMieSsoCliFlow(codeMieUrl: url, onStatus: onStatus);
+          (url, onStatus) => runCodeMieSsoCliFlow(
+            codeMieUrl: url,
+            onStatus: onStatus,
+            shouldOpenBrowserFn: () =>
+                shouldLaunchBrowser(noBrowserFlag: noBrowser),
+          );
       final credentials = await authenticate(codeMieUrl, io.writeln);
       if (credentials != null) {
         await _applyCodeMieSsoCredentials(credentials, offerName: offerName);
