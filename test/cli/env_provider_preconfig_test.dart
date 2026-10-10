@@ -671,4 +671,159 @@ void main() {
       );
     });
   });
+
+  group('capability fields (gh-1471 D4)', () {
+    // The bench workflow's kimi mapping declares contextWindow/maxTokens
+    // in FA_PROVIDER_CONFIG so a catalog drift can never silently
+    // truncate; a zai run declares nothing and stays byte-identical.
+    const kimiConfig =
+        '{"baseUrl":"https://api.kimi.com/coding/v1","model":"k3-256k",'
+        '"apiKeyEnvVar":"FA_KEY_API_KIMI_COM_BENCH",'
+        '"contextWindow":200000,"maxTokens":16384}';
+
+    test('contextWindow/maxTokens parse as the declared ints', () {
+      final preconfig = parse(
+        providerType: 'kimi',
+        providerConfig: kimiConfig,
+        vars: {'FA_KEY_API_KIMI_COM_BENCH': 'test-key'},
+      )!;
+      expect(preconfig.contextWindow, 200000);
+      expect(preconfig.maxTokens, 16384);
+      expect(preconfig.baseUrl, 'https://api.kimi.com/coding/v1');
+      expect(preconfig.modelId, 'k3-256k');
+    });
+
+    test('absent capability fields stay null (byte-identical legacy)', () {
+      // The exact 3-field zai config bench.yml produced before gh-1471.
+      final preconfig = parse(
+        providerType: 'zai',
+        providerConfig:
+            '{"baseUrl":"https://api.z.ai/api/coding/paas/v4",'
+            '"model":"glm-5.3-flash","apiKeyEnvVar":"FA_KEY_API_Z_AI_Z_AI"}',
+        vars: {'FA_KEY_API_Z_AI_Z_AI': 'test-key'},
+      )!;
+      expect(preconfig.contextWindow, isNull);
+      expect(preconfig.maxTokens, isNull);
+    });
+
+    test('capability fields parse identically through the BASE64 twin', () {
+      final preconfig = parse(
+        providerType: 'kimi',
+        providerConfigBase64: b64(kimiConfig),
+        vars: {'FA_KEY_API_KIMI_COM_BENCH': 'test-key'},
+      )!;
+      expect(preconfig.contextWindow, 200000);
+      expect(preconfig.maxTokens, 16384);
+    });
+
+    test('a non-integer capability field fails loud naming the key', () {
+      expect(
+        () => parse(
+          providerType: 'kimi',
+          providerConfig:
+              '{"baseUrl":"https://api.kimi.com/coding/v1",'
+              '"model":"k3-256k","contextWindow":"200000"}',
+        ),
+        throwsA(
+          throwsConfig.having(
+            (e) => e.message,
+            'message',
+            allOf(contains('contextWindow'), contains('200000')),
+          ),
+        ),
+      );
+      expect(
+        () => parse(
+          providerType: 'kimi',
+          providerConfig:
+              '{"baseUrl":"https://api.kimi.com/coding/v1",'
+              '"model":"k3-256k","maxTokens":16384.5}',
+        ),
+        throwsA(
+          throwsConfig.having(
+            (e) => e.message,
+            'message',
+            allOf(contains('maxTokens'), contains('16384.5')),
+          ),
+        ),
+      );
+    });
+
+    test('a below-floor capability field fails loud naming the floor', () {
+      expect(
+        () => parse(
+          providerType: 'kimi',
+          providerConfig:
+              '{"baseUrl":"https://api.kimi.com/coding/v1",'
+              '"model":"k3-256k","contextWindow":8192}',
+        ),
+        throwsA(
+          throwsConfig.having(
+            (e) => e.message,
+            'message',
+            allOf(contains('contextWindow'), contains('16384')),
+          ),
+        ),
+      );
+    });
+
+    test('a blank capability field is absent, not an error', () {
+      final preconfig = parse(
+        providerType: 'kimi',
+        providerConfig:
+            '{"baseUrl":"https://api.kimi.com/coding/v1",'
+            '"model":"k3-256k","contextWindow":""}',
+      )!;
+      expect(preconfig.contextWindow, isNull);
+    });
+  });
+
+  group('cross-layer: bench workflow custom resolve output (gh-1471)', () {
+    // The workflow's custom arm emits FA_PROVIDER_CONFIG with "type"
+    // STRIPPED (it rides the dedicated FA_PROVIDER_TYPE output/env —
+    // this parser's config whitelist has no "type" key). The workflow
+    // side is pinned by ProviderResolveStepTest in
+    // bench/terminal_bench/test_bench_workflow.py (which executes the
+    // actual resolve step from bench.yml and asserts the emitted keys
+    // stay inside this parser's whitelist); this test pins the consumer
+    // side: the exact emitted JSON for the documented dispatch example
+    // must boot. A drift between the two sides — the "type" clash the
+    // gh-1471 re-review caught — fails here or there, never at a
+    // trial's container boot.
+    const emittedForDocumentedExample =
+        '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+        '"contextWindow":128000,"maxTokens":8192,'
+        '"apiKeyEnvVar":"FA_KEY_BENCH_CUSTOM"}';
+
+    test('the documented custom example output boots end to end', () {
+      final preconfig = parse(
+        providerType: 'openai',
+        providerConfig: emittedForDocumentedExample,
+        vars: {'FA_KEY_BENCH_CUSTOM': 'custom-test-key'},
+      )!;
+      expect(preconfig.baseUrl, 'https://api.example.com/v1');
+      expect(preconfig.modelId, 'm-1');
+      expect(preconfig.contextWindow, 128000);
+      expect(preconfig.maxTokens, 8192);
+      expect(preconfig.apiKeyEnvVar, 'FA_KEY_BENCH_CUSTOM');
+      expect(preconfig.apiKey, 'custom-test-key');
+    });
+
+    test('the preflight whitelist admits every key the workflow can emit', () {
+      // The workflow preflight mirrors this parser's whitelist (plus
+      // "type", stripped before emission) — a workflow-side addition
+      // without a parser-side one must trip THIS parser, and the Python
+      // pin trips the other direction.
+      final preconfig = parse(
+        providerType: 'openai',
+        providerConfig:
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"input":["text","image"],"thinkingLevel":"high",'
+            '"apiKeyEnvVar":"FA_KEY_BENCH_CUSTOM"}',
+        vars: {'FA_KEY_BENCH_CUSTOM': 'custom-test-key'},
+      )!;
+      expect(preconfig.input, ['text', 'image']);
+      expect(preconfig.thinkingLevel, 'high');
+    });
+  });
 }

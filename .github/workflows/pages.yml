@@ -43,9 +43,13 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           # Same pinned SDK as ci.yml web-spa (#1100): fa1.dev and
-          # fa-web-spa.zip must never drift onto different Flutter stables
-          # (resolves to the same SDK the floating channel picked today).
-          flutter-version: '3.47.x'
+          # fa-web-spa.zip must never drift onto different Flutter stables.
+          # EXACT patch pin (#1431): a wildcard pin re-resolves a new
+          # engine build on every 3.47.x patch drop, the canvaskit/skwasm
+          # artifacts move under a new rev-hash dir and every size gate on
+          # the artifact false-reds. Bump this pin consciously in the same
+          # PR that reseeds any floor a real size delta moved.
+          flutter-version: '3.47.7'
           channel: stable
 
       # gh-1275 AC3 (web leg): fail fast before the web build — the full
