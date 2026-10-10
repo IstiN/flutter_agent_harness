@@ -17,6 +17,7 @@ library;
 import 'dart:convert';
 
 import '../exceptions.dart';
+import '../model_roles/capability_resolver.dart';
 import '../model_roles/provider_catalog.dart';
 import '../providers/thinking.dart';
 
@@ -33,6 +34,8 @@ final class EnvProviderPreconfig {
     required this.apiKey,
     this.input,
     this.thinkingLevel,
+    this.contextWindow,
+    this.maxTokens,
   });
 
   /// The catalog spec [parseEnvProviderPreconfig] resolved the type
@@ -72,6 +75,17 @@ final class EnvProviderPreconfig {
   /// thinking requested and the boot behaves byte-identically to before
   /// (issue #734).
   final String? thinkingLevel;
+
+  /// Declared context window in tokens (gh-1471 D4), or null when
+  /// undeclared — the catalog/endpoint layers stand, exactly as before.
+  /// Riding the resolver's override layer, a declared value wins over
+  /// every layer below it (bench's kimi mapping pins 200000 so a catalog
+  /// drift can never silently truncate the served window).
+  final int? contextWindow;
+
+  /// Declared max output tokens (gh-1471 D4), or null when undeclared —
+  /// the ceiling table/spec layers stand, exactly as before.
+  final int? maxTokens;
 }
 
 /// The supported `FA_PROVIDER_CONFIG` keys, in error-message order.
@@ -79,6 +93,8 @@ const _supportedConfigKeys = [
   'baseUrl',
   'model',
   'apiKeyEnvVar',
+  'contextWindow',
+  'maxTokens',
   'input',
   'thinkingLevel',
 ];
@@ -93,9 +109,10 @@ const _requiredConfigKeys = ['baseUrl', 'model'];
 /// Throws [ConfigException] naming the offending input for every invalid
 /// value: an unknown provider type, a missing/empty `FA_PROVIDER_CONFIG`,
 /// malformed or non-object config JSON (plain or base64 twin), an unknown
-/// config key, a missing required `baseUrl`/`model`, and a declared key
-/// env var (or its `_BASE64` twin) left empty. Nothing falls back to the
-/// catalog spec values.
+/// config key, a missing required `baseUrl`/`model`, a non-integer or
+/// below-floor `contextWindow`/`maxTokens` (gh-1471 D4), and a declared
+/// key env var (or its `_BASE64` twin) left empty. Nothing falls back to
+/// the catalog spec values.
 EnvProviderPreconfig? parseEnvProviderPreconfig({
   required String? providerType,
   required String? providerName,
@@ -190,6 +207,8 @@ EnvProviderPreconfig? parseEnvProviderPreconfig({
     apiKey: apiKey,
     input: config.input,
     thinkingLevel: config.thinkingLevel,
+    contextWindow: config.contextWindow,
+    maxTokens: config.maxTokens,
   );
 }
 
@@ -235,8 +254,17 @@ String _decodeBase64(String name, String encoded) {
 /// [_supportedConfigKeys] allowed; string values with blanks treated as
 /// absent, except `input`, a non-empty list of `"text"`/`"image"` (issue
 /// #638 — validated by the same named-error rules as the `models.custom`
-/// yaml field). The caller guarantees a non-empty declaration.
-({Map<String, String> values, List<String>? input, String? thinkingLevel})
+/// yaml field), and `contextWindow`/`maxTokens`, JSON integers at or
+/// above the resolver floors (gh-1471 D4: a capability declaration is
+/// explicit or absent — never a silent catalog default). The caller
+/// guarantees a non-empty declaration.
+({
+  Map<String, String> values,
+  List<String>? input,
+  String? thinkingLevel,
+  int? contextWindow,
+  int? maxTokens,
+})
 _parseConfig(String raw) {
   final Object? decoded;
   try {
@@ -249,35 +277,94 @@ _parseConfig(String raw) {
       'FA_PROVIDER_CONFIG must be a JSON object, got: $raw',
     );
   }
-  final values = <String, String>{};
-  List<String>? input;
-  String? thinkingLevel;
+  // One mutable accumulator so the per-entry routing ([_takeConfigEntry])
+  // stays a plain branch on the key — _parseConfig itself carries only
+  // the shape checks (the CRAP ratchet counts every branch).
+  final parsed = _ParsedConfig();
   for (final entry in decoded.entries) {
     // jsonDecode produces string keys for JSON objects.
-    final key = entry.key as String;
-    if (!_supportedConfigKeys.contains(key)) {
-      throw ConfigException(
-        'unknown FA_PROVIDER_CONFIG key: "$key" — supported keys: '
-        '${_supportedConfigKeys.join(', ')}',
-      );
-    }
-    if (key == 'input') {
-      input = _parseInputList(entry.value);
-      continue;
-    }
-    if (key == 'thinkingLevel') {
-      thinkingLevel = _parseThinkingLevel(entry.value);
-      continue;
-    }
-    final value = entry.value;
-    if (value is! String) {
-      throw ConfigException(
-        'FA_PROVIDER_CONFIG key "$key" must be a string, got: $value',
-      );
-    }
-    if (value.trim().isNotEmpty) values[key] = value;
+    _takeConfigEntry(entry.key as String, entry.value, parsed);
   }
-  return (values: values, input: input, thinkingLevel: thinkingLevel);
+  return (
+    values: parsed.values,
+    input: parsed.input,
+    thinkingLevel: parsed.thinkingLevel,
+    contextWindow: parsed.contextWindow,
+    maxTokens: parsed.maxTokens,
+  );
+}
+
+/// The mutable destination for [_takeConfigEntry]: the plain string
+/// values plus each typed, validated optional field.
+final class _ParsedConfig {
+  final Map<String, String> values = {};
+  List<String>? input;
+  String? thinkingLevel;
+  int? contextWindow;
+  int? maxTokens;
+}
+
+/// Routes one `FA_PROVIDER_CONFIG` entry to its typed parser, writing
+/// the result into [into]: the structured keys delegate to their
+/// validators, everything else is a required-shape plain string (blank =
+/// absent, like every other text value).
+void _takeConfigEntry(String key, Object? value, _ParsedConfig into) {
+  if (!_supportedConfigKeys.contains(key)) {
+    throw ConfigException(
+      'unknown FA_PROVIDER_CONFIG key: "$key" — supported keys: '
+      '${_supportedConfigKeys.join(', ')}',
+    );
+  }
+  switch (key) {
+    case 'input':
+      into.input = _parseInputList(value);
+    case 'thinkingLevel':
+      into.thinkingLevel = _parseThinkingLevel(value);
+    case 'contextWindow' || 'maxTokens':
+      final parsed = _parseCapabilityInt(key, value);
+      if (parsed != null) {
+        if (key == 'contextWindow') {
+          into.contextWindow = parsed;
+        } else {
+          into.maxTokens = parsed;
+        }
+      }
+    default:
+      if (value is! String) {
+        throw ConfigException(
+          'FA_PROVIDER_CONFIG key "$key" must be a string, got: $value',
+        );
+      }
+      if (value.trim().isNotEmpty) into.values[key] = value;
+  }
+}
+
+/// One `contextWindow`/`maxTokens` declaration: a JSON integer at or
+/// above the resolver floor ([minOverrideContextWindow] /
+/// [minOverrideMaxTokens] — the same boundary floors as the yaml
+/// `models.overrides` layer; a declaration below the floor would strand
+/// the compaction reserve / the answer budget). Null / blank-string
+/// values are ABSENT, like every other optional input; a non-integer or
+/// below-floor value fails loud naming the key.
+int? _parseCapabilityInt(String key, Object? value) {
+  if (value == null) return null;
+  if (value is String && value.trim().isEmpty) return null;
+  if (value is! int) {
+    throw ConfigException(
+      'FA_PROVIDER_CONFIG "$key" must be an integer, got: $value',
+    );
+  }
+  final floor = key == 'contextWindow'
+      ? minOverrideContextWindow
+      : minOverrideMaxTokens;
+  if (value < floor) {
+    throw ConfigException(
+      'FA_PROVIDER_CONFIG "$key" must be at least $floor '
+      '(the ${key == 'contextWindow' ? 'compaction reserve' : 'answer budget'}'
+      ' floor), got: $value',
+    );
+  }
+  return value;
 }
 
 /// The `input` modality list: a non-empty JSON array whose entries are
