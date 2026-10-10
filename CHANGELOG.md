@@ -370,4 +370,8 @@ pre-tag + publish gates) fails fast when the cap is approached again.
 - gh-1471 [GOAL] bench.yml: provider selection for tbench runs (zai-glm default, kimi-for-coding) with a dedicated bench key (#1475)
 - gh-1452 Release blocked: CHANGELOG.md exceeds pub.dev 256 KiB cap (262 672 B on main) — v1.0.538 not on pub.dev trim + pre-flight guard needed (#1462)
 
+## 1.0.548
+
+- gh-1478 [ENH] daily-publish auto-filer: signal-first failure excerpts + cancelled-run digests + root-cause dedup (never-again for noise filings) (#1480)
+
 ## Unreleased
