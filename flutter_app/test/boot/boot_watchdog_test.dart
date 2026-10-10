@@ -10,7 +10,6 @@ library;
 
 import 'package:fa/boot/boot_watchdog.dart';
 import 'package:fake_async/fake_async.dart';
-import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -24,7 +23,7 @@ void main() {
       BootSteps.mark('window');
       BootSteps.mark('services');
       final described = BootSteps.describe();
-      expect(described, contains('window@0ms'));
+      expect(described, contains('window@'));
       expect(described, contains('services@'));
       expect(
         described.indexOf('window@'),

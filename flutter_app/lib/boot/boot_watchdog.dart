@@ -20,7 +20,6 @@ library;
 
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 /// Process-wide boot-step ledger. Steps are short names in boot order
@@ -99,7 +98,7 @@ final class BootWatchdog {
   /// Re-arm interval while no frame has landed (one breadcrumb per firing).
   final Duration repeatInterval;
 
-  final void Function(String _message) _onBreadcrumb;
+  final void Function(String message) _onBreadcrumb;
   final Stopwatch _uptime;
   Timer? _timer;
   bool _firstFrameSeen = false;
