@@ -340,44 +340,11 @@ extension AgentCliSkillsExt on AgentCli {
     var skill = _enabledSkills
         .where((s) => s.name.toLowerCase() == name.toLowerCase())
         .firstOrNull;
-    if (skill == null) {
-      // Discovered but toggled off: name the way back instead of a bare
-      // "unknown skill" (the toggle scopes, issue #1151).
-      final disabled = _skills
-          .where((s) => s.name.toLowerCase() == name.toLowerCase())
-          .firstOrNull;
-      if (disabled != null) {
-        final scope = _skillResolution.byName[disabled.name]?.scope?.name;
-        io.writeln(
-          'skill ${disabled.name} is disabled${scope == null ? '' : ' ($scope)'}'
-          ' — enable with /skills on ${disabled.name}',
-        );
-        return;
-      }
-      // gh-1440 cold-resolve: the index is a cache, not truth — re-run the
-      // FULL discovery once before answering `unknown skill` (no ad-hoc
-      // file-read side door, I4). Works with `skills.liveRediscovery` off
-      // too: the manual escape hatch is always available (AC7).
-      final (resolved, coldDisabled) = await _coldResolveSkill(name);
-      if (resolved != null) {
-        skill = resolved;
-      } else if (coldDisabled != null) {
-        final scope = _skillResolution.byName[coldDisabled.name]?.scope?.name;
-        io.writeln(
-          'skill ${coldDisabled.name} is'
-          '${scope == null ? '' : ' ($scope)'} disabled'
-          ' — enable with /skills on ${coldDisabled.name}',
-        );
-        return;
-      } else {
-        // True negative keeps today's exact wording — no new noise (AC4).
-        io.writeln(
-          'unknown skill: $name'
-          '${_skills.isEmpty ? ' (no skills discovered)' : ''}',
-        );
-        return;
-      }
-    }
+    // gh-1440: on a miss, the resolution (toggled-off report, cold-resolve,
+    // exact `unknown skill` wording) runs in [_resolveSkillMiss] — it
+    // prints why a null came back.
+    skill ??= await _resolveSkillMiss(name);
+    if (skill == null) return;
     if (!skill.userInvocable) {
       io.writeln('skill ${skill.name} is model-only (user-invocable: false)');
       return;
@@ -475,6 +442,50 @@ extension AgentCliSkillsExt on AgentCli {
     _startRun(
       'The skill "${skill.name}" ran in a forked subagent. '
       'Its result:\n\n$text',
+    );
+  }
+
+  /// gh-1440: resolves a `/skill:` name that missed the enabled index —
+  /// the toggled-off report, the cold-resolve via full re-discovery, or
+  /// the exact `unknown skill` wording (AC4). Prints the outcome and
+  /// returns the skill only when it should render as if indexed; null
+  /// means the caller returns silently (the reason is already on screen).
+  Future<Skill?> _resolveSkillMiss(String name) async {
+    // Discovered but toggled off: name the way back instead of a bare
+    // "unknown skill" (the toggle scopes, issue #1151).
+    final disabled = _skills
+        .where((s) => s.name.toLowerCase() == name.toLowerCase())
+        .firstOrNull;
+    if (disabled != null) {
+      _reportDisabledSkill(disabled);
+      return null;
+    }
+    // gh-1440 cold-resolve: the index is a cache, not truth — re-run the
+    // FULL discovery once before answering `unknown skill` (no ad-hoc
+    // file-read side door, I4). Works with `skills.liveRediscovery` off
+    // too: the manual escape hatch is always available (AC7).
+    final (resolved, coldDisabled) = await _coldResolveSkill(name);
+    if (resolved != null) return resolved;
+    if (coldDisabled != null) {
+      _reportDisabledSkill(coldDisabled);
+      return null;
+    }
+    // True negative keeps today's exact wording — no new noise (AC4).
+    io.writeln(
+      'unknown skill: $name'
+      '${_skills.isEmpty ? ' (no skills discovered)' : ''}',
+    );
+    return null;
+  }
+
+  /// One wording for the disabled-skill report — the indexed `/skill:`
+  /// path and the cold-resolve path must never drift apart (review:
+  /// duplicated message with inconsistent word order).
+  void _reportDisabledSkill(Skill skill) {
+    final scope = _skillResolution.byName[skill.name]?.scope?.name;
+    io.writeln(
+      'skill ${skill.name} is disabled${scope == null ? '' : ' ($scope)'}'
+      ' — enable with /skills on ${skill.name}',
     );
   }
 
