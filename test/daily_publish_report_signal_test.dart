@@ -394,7 +394,7 @@ final noise line
       final r = runReport(
         'priority',
         legResults: const {'play': 'failure'},
-        fixtures: const {'failed-log-555.txt': log},
+        fixtures: {'failed-log-555.txt': log},
       );
       expect(r.created, isTrue, reason: r.output);
       // The signature comes from the highest-priority signal (::error::)...
@@ -410,7 +410,7 @@ final noise line
       final r = runReport(
         'tail-fallback',
         legResults: const {'website': 'failure'},
-        fixtures: const {'failed-log-555.txt': _noSignalLog},
+        fixtures: {'failed-log-555.txt': _noSignalLog},
       );
       expect(r.created, isTrue, reason: r.output);
       expect(r.createdBody, contains('progress line 80'),
@@ -525,7 +525,7 @@ tail noise
       final r = runReport(
         'sig-dedup-multi',
         legResults: const {'cli': 'failure'},
-        fixtures: const {
+        fixtures: {
           'failed-log-555.txt': log,
           'search.json': '[{"number": 1400}]',
         },

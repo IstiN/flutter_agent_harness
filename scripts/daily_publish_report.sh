@@ -63,13 +63,126 @@ failing_steps() { # $1 = child run id ("" = this run), $2 = log prefix
   fi
 }
 
-log_excerpt() { # $1 = child run id ("" = this run), $2 = log prefix
+log_excerpt() { # $1 = child run id ("" = this run), $2 = job-name fragment
+  # gh-1478: signal-first excerpt. Grep the failed log for error signal
+  # lines and quote the first matches with context; the raw tail is only
+  # the fallback when nothing matches (the #1473 tree-noise digest).
+  local raw=""
   if [ -n "$1" ]; then
-    gh run view "$1" --repo "$repo" --log-failed 2>/dev/null | tail -n 50 || true
-  else
-    gh run view "$GITHUB_RUN_ID" --repo "$repo" --log-failed 2>/dev/null \
-      | grep -F "$2" | tail -n 50 || true
+    raw=$(gh run view "$1" --repo "$repo" --log-failed 2>/dev/null \
+      | tail -n 400 || true)
   fi
+  if [ -z "$raw" ]; then
+    # No child log (child in flight/cancelled, or never dispatched). The
+    # RUN-level log zip is 409 while the daily run is in progress, but the
+    # per-JOB log endpoint serves completed jobs — resolve the failed or
+    # cancelled leg job and take ITS log (the #1472 empty-shrug class, and
+    # the inject_failure TEST hook shape: a failed leg job, no child run).
+    local job_id
+    job_id=$(gh run view "$GITHUB_RUN_ID" --repo "$repo" --json jobs \
+      2>/dev/null | jq -r --arg frag "$2" '
+        [.jobs[] | select((.conclusion == "failure" or .conclusion == "cancelled")
+                          and (.name | contains($frag))) | .databaseId]
+        | last // empty' 2>/dev/null || true)
+    if [ -n "$job_id" ]; then
+      raw=$(gh run view --job "$job_id" --repo "$repo" --log 2>/dev/null \
+        | tail -n 400 || true)
+    fi
+  fi
+  [ -n "$raw" ] || return 0
+  printf '%s\n' "$raw" | signal_excerpt
+}
+
+signal_excerpt() { # stdin: log text; stdout: first signal matches w/ context, else tail
+  awk '
+    { lines[NR] = $0
+      if ($0 ~ /::error::|Message from server|(^|[^A-Za-z])error:|(^|[^A-Za-z])FAIL|[Ee]xit code|exited with/) {
+        if (++hits <= 3)
+          for (i = NR - 3; i <= NR + 3; i++) if (i >= 1) want[i] = 1
+      }
+    }
+    END {
+      if (hits == 0) { # no signal line — the raw tail is the fallback
+        start = NR - 49; if (start < 1) start = 1
+        for (i = start; i <= NR; i++) print lines[i]
+        exit
+      }
+      i = 1; snip = 0
+      while (i <= NR) {
+        if (!want[i]) { i++; continue }
+        if (snip++) print "[...]"
+        while (i <= NR && want[i]) { print lines[i]; i++ }
+      }
+    }'
+}
+
+error_signature() { # stdin: excerpt/log; stdout: normalized root-cause signature
+  # Priority order: ::error::, Message from server, error:, FAIL, exit-code
+  # lines. The signature is the first line of the highest-priority class,
+  # stripped of gh log prefixes (job<TAB>step<TAB>timestamp) — the dedup
+  # key for the root-cause search (#1473 vs #1452).
+  awk '
+    {
+      pr = 0
+      if ($0 ~ /::error::/) pr = 1
+      else if ($0 ~ /Message from server/) pr = 2
+      else if ($0 ~ /(^|[^A-Za-z])error:/) pr = 3
+      else if ($0 ~ /(^|[^A-Za-z])FAIL/) pr = 4
+      else if ($0 ~ /[Ee]xit code|exited with/) pr = 5
+      if (pr && (best == 0 || pr < best)) { best = pr; sig = $0 }
+    }
+    END { if (best) print sig }' \
+    | awk -F '\t' '{print $NF}' \
+    | sed -e 's/^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}T[0-9:.]\{1,\}Z *//' \
+        -e 's/^::error:://' \
+        -e 's/[[:space:]][[:space:]]*/ /g' \
+        -e 's/^ //' -e 's/ $//' \
+    | cut -c1-200
+}
+
+find_issue_by_signature() { # $1 = normalized signature; echoes an open issue number or nothing
+  # gh-1478 root-cause dedup: GitHub issue search matches open issues'
+  # bodies AND comments — a hit means the root cause is already tracked, so
+  # the caller comments there instead of filing a symptom duplicate.
+  local q
+  q=$(printf '%s' "$1" \
+      | tr -cs '[:alnum:]./+-' ' \
+      | sed -e 's/^ *//' -e 's/ *$//' \
+      | cut -c1-200)
+  [ -n "$q" ] || return 0
+  gh search issues "\"$q\"" --repo "$repo" --state open \
+    --match body,comments --limit 5 --json number \
+    --jq '.[0].number // empty' 2>/dev/null || true
+}
+
+cancelled_job_info() { # $1 = job-name fragment; "name<TAB>startedAt<TAB>completedAt" or nothing
+  gh run view "$GITHUB_RUN_ID" --repo "$repo" --json jobs 2>/dev/null \
+    | jq -r --arg frag "$1" '
+        [.jobs[] | select(.conclusion == "cancelled"
+                          and (.name | contains($frag)))]
+        | .[0] | if . == null then "" else [.name, .startedAt, .completedAt] | @tsv end' \
+    2>/dev/null || true
+}
+
+leg_ceiling_minutes() { # $1 = job-name fragment; echoes timeout-minutes from the workflow or nothing
+  local wf="${DAILY_PUBLISH_WORKFLOW:-${GITHUB_WORKSPACE:-.}/.github/workflows/daily-publish.yml}"
+  [ -f "$wf" ] || return 0
+  awk -v frag="$1" '
+    index($0, "name: .Leg: " frag) { injob = 1; next }
+    injob && /^  [A-Za-z0-9_-]+:/ { injob = 0 }
+    injob && /^    timeout-minutes:/ {
+      line = $0
+      sub(/^ *timeout-minutes: */, "", line)
+      sub(/[^0-9].*/, "", line)
+      if (line != "") print line
+      exit
+    }' "$wf"
+}
+
+fmt_elapsed() { # $1 = seconds -> "359m53s" / "1h02m03s"
+  local s="$1" h m
+  h=$((s / 3600)); m=$(((s % 3600) / 60)); s=$((s % 60))
+  if [ "$h" -gt 0 ]; then echo "${h}h${m}m${s}s"; else echo "${m}m${s}s"; fi
 }
 
 # ── issue lifecycle ────────────────────────────────────────────────────────
@@ -83,11 +196,16 @@ find_open_issue() { # $1 = exact title; echoes the issue number or nothing
 
 file_or_comment() { # $1 = leg id, $2 = log prefix, $3 = child run url, $4 = leg result
   local leg="$1" prefix="$2" url="$3" result="${4:-failure}"
-  local child_id title steps excerpt body
+  # Job-name fragment for the own-run jobs API (the yaml display names add
+  # parentheticals the report's display names don't carry).
+  local frag="${prefix%% (*}"
+  local child_id title steps excerpt body sig
   child_id="${url##*/}"
   title="[daily-publish] $leg leg failed"
   steps=$(failing_steps "$child_id" "$prefix")
-  excerpt=$(log_excerpt "$child_id" "$prefix")
+  excerpt=$(log_excerpt "$child_id" "$frag")
+  sig=""
+  [ -z "$excerpt" ] || sig=$(printf '%s\n' "$excerpt" | error_signature)
 
   body="$(mktemp)"
   {
@@ -99,12 +217,50 @@ file_or_comment() { # $1 = leg id, $2 = log prefix, $3 = child run url, $4 = leg
     # letting "unknown (job cancelled or timed out)" read like a leg defect.
     if [ "$result" = "cancelled" ]; then
       echo "**Leg job result:** cancelled — the leg's watcher was killed mid-watch (whole-run cancellation or leg timeout), NOT a child-workflow failure verdict. The child run may have been healthy or still in flight; correlate its timeline before treating this as a leg defect."
+      # gh-1478: a cancelled run gets a real digest — which job was in
+      # flight, its timeout-minutes ceiling, elapsed-vs-ceiling — instead of
+      # the #1472 empty "no failed-step log available" shrug.
+      local cinfo cname cstart cend csec ceiling
+      cinfo=$(cancelled_job_info "$frag")
+      ceiling=$(leg_ceiling_minutes "$frag")
+      if [ -n "$cinfo" ]; then
+        IFS=$'\t' read -r cname cstart cend <<< "$cinfo"
+        local celapsed="unknown"
+        local cs="" ce=""
+        cs=$(date -u -d "$cstart" +%s 2>/dev/null || true)
+        ce=$(date -u -d "$cend" +%s 2>/dev/null || true)
+        if [ -n "$cs" ] && [ -n "$ce" ] && [ "$ce" -ge "$cs" ]; then
+          celapsed=$(fmt_elapsed $((ce - cs)))
+        fi
+        echo "**Cancelled while running:** job \`$cname\` — killed after ${celapsed} elapsed."
+        if [ -n "$ceiling" ]; then
+          echo "**Timeout ceiling:** \`${ceiling}m\` (timeout-minutes in daily-publish.yml)."
+          if [ "$celapsed" != "unknown" ]; then
+            local csec_elapsed=$((ce - cs)) csec_ceiling=$((ceiling * 60))
+            if [ "$csec_elapsed" -ge $((csec_ceiling - 60)) ]; then
+              echo "**Elapsed vs ceiling:** ${celapsed} of ${ceiling}m — at the ceiling, so the leg hit its own timeout (a wedged child or too-tight ceiling; the child chain timeouts are the #351 arithmetic)."
+            elif [ "$((csec_elapsed * 2))" -le "$csec_ceiling" ]; then
+              echo "**Elapsed vs ceiling:** ${celapsed} of ${ceiling}m — far below the ceiling, so this looks like a whole-run/operator cancellation or an infrastructure kill, not the leg's own timeout."
+            else
+              echo "**Elapsed vs ceiling:** ${celapsed} of ${ceiling}m — below the ceiling; check the run timeline for a whole-run cancellation before treating this as a leg defect."
+            fi
+          fi
+        fi
+      else
+        echo "**Cancelled while running:** could not resolve which job was in flight from the jobs API — see the run timeline."
+      fi
     fi
     echo "**Daily run:** $daily_url"
     [ -n "$url" ] && echo "**Leg run:** $url"
     echo "**Failing job/step:** ${steps:-unknown (job cancelled or timed out)}"
+    if [ -n "$sig" ]; then
+      # The normalized signature is both human-visible and machine-matchable
+      # (root-cause dedup searches open issues' bodies/comments for it).
+      echo "**Error signature:** \`$sig\`"
+      echo "<!-- daily-publish-sig: $sig -->"
+    fi
     echo
-    echo "Last lines of the failed step's log:"
+    echo "Failure excerpt (signal-first: error lines with context; raw tail when no signal line matches):"
     echo
     if [ -n "$excerpt" ]; then
       sed -e 's/\t/  /g' -e 's/^/    /' <<< "$excerpt"
@@ -115,6 +271,26 @@ file_or_comment() { # $1 = leg id, $2 = log prefix, $3 = child run url, $4 = leg
     echo "---"
     echo "Auto-filed by the daily auto-publish pipeline; auto-closes when this leg goes green. Pause the pipeline with \`gh workflow disable daily-publish.yml -R $repo\`."
   } > "$body"
+
+  # gh-1478 root-cause dedup: when the normalized signature matches an OPEN
+  # issue's body/comments (any label — #1452 is not a daily-publish issue),
+  # the root cause is already tracked: comment there with the new run link
+  # instead of filing a symptom duplicate that re-fires every day.
+  if [ -n "$sig" ]; then
+    local sigmatch
+    sigmatch=$(find_issue_by_signature "$sig")
+    if [ -n "$sigmatch" ]; then
+      {
+        echo "**Root-cause dedup (gh-1478):** this failure's error signature matches #$sigmatch — the digest below is a fresh data point for that issue, not a new bug."
+        echo
+        cat "$body"
+      } > "$body.sig"
+      gh issue comment "$sigmatch" --repo "$repo" --body-file "$body.sig" >/dev/null
+      actions+="updated #${sigmatch} ($leg — signature matches an open root cause)"$'\n'
+      rm -f "$body" "$body.sig"
+      return 0
+    fi
+  fi
 
   local existing
   existing=$(find_open_issue "$title")
