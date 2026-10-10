@@ -241,5 +241,48 @@ class ScoreHonestyTest(unittest.TestCase):
         self.assertTrue(any("score honesty" in line for line in lines))
 
 
+class ProviderLabelTest(unittest.TestCase):
+    """gh-1471 D5: the report header names the provider+model (the
+    BENCH_RUN_LABEL env from bench.yml's resolve step) so glm and kimi
+    runs never blend in the ledger/cost views."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.runs = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+        _results(self.runs / "shard-0", [_row("t1", "t1__t", mode="unset")])
+
+    def test_render_tags_the_provider_label(self):
+        lines, _ = summary.render(
+            self.runs, run_label="kimi-for-coding (k3-256k)"
+        )
+        self.assertEqual(
+            lines[2], "Provider: kimi-for-coding (k3-256k) (gh-1471)."
+        )
+
+    def test_no_label_keeps_the_header_stock(self):
+        # Legacy callers/replays (and every existing golden) see the
+        # byte-identical header when the tag is absent.
+        lines, _ = summary.render(self.runs)
+        self.assertEqual(lines[0], "### fa on terminal-bench")
+        self.assertFalse(any("Provider:" in line for line in lines))
+
+    def test_main_reads_env_label(self):
+        import os
+        from unittest import mock
+
+        with mock.patch.dict(
+            os.environ, {"BENCH_RUN_LABEL": "zai glm (glm-5.3-flash)"}
+        ), mock.patch.object(
+            summary.sys, "argv", ["summary.py", "--no-fail", str(self.runs)]
+        ):
+            code = None
+            try:
+                summary.main()
+            except SystemExit as exc:
+                code = exc.code
+            self.assertEqual(code, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

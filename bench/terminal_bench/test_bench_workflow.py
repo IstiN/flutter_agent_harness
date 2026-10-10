@@ -23,6 +23,14 @@ tmux pane itself (string-level asserts on the generated TerminalCommand
 bench_metrics.json folded zero requests despite real model usage must
 fire a LOUD workflow warning, never ship an empty shell silently.
 
+gh-1471: the setup-job provider resolve step maps the dispatch choice
+(zai-glm-5.3-flash default / kimi-for-coding) to the full provider
+triple and preflights the selected secret BEFORE any shard starts —
+each choice pins (type, baseUrl, model, apiKeyEnvVar), an unmapped
+value fails hard, a missing secret fails fast naming the secret, and a
+key value never reaches the log. REG-1: the default's provider_config
+is byte-identical to the pre-gh-1471 3-field zai JSON.
+
 Run: python3 -m unittest discover -s bench/terminal_bench
 """
 import importlib.util
@@ -83,6 +91,77 @@ def _shard_run_block() -> str:
     return block
 
 
+def _resolve_run_block() -> str:
+    """Extracts the `run: |` block of the gh-1471 provider resolve step.
+
+    Same text-slicing contract as [_shard_run_block]: the block is
+    identified by its body (the provider_config printf), so unrelated
+    `run:` blocks never match. The block is env-driven (inputs/secrets
+    arrive via the step env), so no GitHub expression may appear inside.
+    """
+    lines = _BENCH_YML.read_text().splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() != "run: |":
+            continue
+        indent = len(line) - len(line.lstrip())
+        body = []
+        for candidate in lines[i + 1 :]:
+            if candidate.strip() and (len(candidate) - len(candidate.lstrip())) <= indent:
+                break
+            body.append(candidate)
+        while body and not body[-1].strip():
+            body.pop()
+        block = "\n".join(body)
+        if "provider_config=$(printf" in block:
+            break
+    else:
+        raise AssertionError("provider resolve step's run: | block not found in bench.yml")
+    leftover = re.findall(r"\$\{\{[^}]*\}\}", block)
+    assert not leftover, f"unmapped GitHub expression(s) in resolve block: {leftover}"
+    return block
+
+
+# The resolve block runs with GITHUB_OUTPUT pointed at a temp file (the
+# test reads the step outputs from it) and both bench secrets in env.
+def _run_resolve(provider="", zai_key="zai-test-key", kimi_key="kimi-test-key"):
+    env = dict(os.environ)
+    env.update(
+        {
+            "PROVIDER": provider,
+            "BENCH_MODEL": "glm-5.3-flash",
+            "FA_BENCH_ZAI_KEY": zai_key,
+            "FA_BENCH_KIMI_KEY": kimi_key,
+        }
+    )
+    tmp = tempfile.TemporaryDirectory()
+    output = Path(tmp.name) / "github_output"
+    env["GITHUB_OUTPUT"] = str(output)
+    driver = Path(tmp.name) / "resolve_step.sh"
+    driver.write_text("#!/usr/bin/env bash\n" + _resolve_run_block() + "\n")
+    proc = subprocess.run(
+        ["bash", str(driver)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    proc._tmp = tmp  # caller cleans up after reading the outputs
+    proc.github_output = output
+    return proc
+
+
+def _resolve_outputs(proc) -> dict:
+    if not proc.github_output.exists():
+        return {}
+    result = {}
+    for line in proc.github_output.read_text().splitlines():
+        if "=" in line:
+            key, _, value = line.partition("=")
+            result[key] = value
+    proc._tmp.cleanup()
+    return result
+
+
 # The tb stub records the exact argv the block computed plus the two env
 # vars fa_agent.py's TimeoutKnobs reads, then exits 0 — the real tb never
 # runs in tests.
@@ -108,6 +187,10 @@ def _run_shard(agent_timeout="", progress_extension=""):
             "DATASET": "/tmp/fa-bench-workflow-test-dataset",
             "SHARD_TASKS": "task-0 task-1",
             "FA_KEY_API_Z_AI_Z_AI": "test-key",
+            # gh-1471: the resolve step (setup job) names the key env var
+            # for the run block's indirection; the zai default names the
+            # zai var.
+            "FA_PROVIDER_KEY_ENV": "FA_KEY_API_Z_AI_Z_AI",
             "AGENT_TIMEOUT": agent_timeout,
             "PROGRESS_EXTENSION": progress_extension,
         }
@@ -235,6 +318,97 @@ class BenchWorkflowShardStepTest(unittest.TestCase):
         self.assertNotIn("TB_BEGIN", proc.stdout)
 
 
+@unittest.skipUnless(
+    _BENCH_YML.exists(), "bench.yml not found (standalone bench checkout)"
+)
+@unittest.skipUnless(shutil.which("bash"), "bash not available")
+class ProviderResolveStepTest(unittest.TestCase):
+    """gh-1471: the setup-job resolve step maps the provider choice to
+    the full triple and preflights the selected secret BEFORE any shard
+    starts. Each choice pins (type, baseUrl, model, apiKeyEnvVar); an
+    unmapped value fails hard (never a silent fallthrough to the zai
+    default); a missing secret fails fast naming the secret; the key
+    value never reaches the log (presence only, plus the base64 mask
+    line)."""
+
+    maxDiff = None
+
+    # REG-1: the default must reproduce today's exact 3-field zai config
+    # (the value the shard env carried before gh-1471).
+    LEGACY_ZAI_CONFIG = (
+        '{"baseUrl":"https://api.z.ai/api/coding/paas/v4",'
+        '"model":"glm-5.3-flash","apiKeyEnvVar":"FA_KEY_API_Z_AI_Z_AI"}'
+    )
+
+    def test_default_provider_is_byte_identical_to_today(self):
+        for provider in ("", "zai-glm-5.3-flash"):
+            proc = _run_resolve(provider=provider)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            outputs = _resolve_outputs(proc)
+            self.assertEqual(outputs["provider_type"], "zai")
+            self.assertEqual(outputs["provider_config"], self.LEGACY_ZAI_CONFIG)
+            self.assertEqual(outputs["provider_key_env"], "FA_KEY_API_Z_AI_Z_AI")
+            self.assertEqual(outputs["bench_model"], "glm-5.3-flash")
+            self.assertEqual(outputs["run_label"], "zai glm (glm-5.3-flash)")
+
+    def test_default_config_has_no_capability_fields(self):
+        # REG-1's sharpened form: the zai JSON must stay the 3-field
+        # legacy shape — no contextWindow/maxTokens keys.
+        proc = _run_resolve()
+        outputs = _resolve_outputs(proc)
+        config = json.loads(outputs["provider_config"])
+        self.assertEqual(
+            set(config), {"baseUrl", "model", "apiKeyEnvVar"}
+        )
+
+    def test_kimi_for_coding_resolves_the_full_triple(self):
+        proc = _run_resolve(provider="kimi-for-coding")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        outputs = _resolve_outputs(proc)
+        self.assertEqual(outputs["provider_type"], "kimi")
+        self.assertEqual(outputs["provider_key_env"], "FA_KEY_API_KIMI_COM_BENCH")
+        self.assertEqual(outputs["bench_model"], "k3-256k")
+        self.assertEqual(outputs["run_label"], "kimi-for-coding (k3-256k)")
+        config = json.loads(outputs["provider_config"])
+        self.assertEqual(config["baseUrl"], "https://api.kimi.com/coding/v1")
+        self.assertEqual(config["model"], "k3-256k")
+        self.assertEqual(config["apiKeyEnvVar"], "FA_KEY_API_KIMI_COM_BENCH")
+        # D4: the capability fields ride the config explicitly.
+        self.assertEqual(config["contextWindow"], 200000)
+        self.assertEqual(config["maxTokens"], 16384)
+
+    def test_unknown_provider_fails_hard_with_no_outputs(self):
+        proc = _run_resolve(provider="gpt-5")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("unknown provider", proc.stdout + proc.stderr)
+        self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_missing_kimi_secret_fails_naming_the_secret(self):
+        proc = _run_resolve(provider="kimi-for-coding", kimi_key="")
+        self.assertNotEqual(proc.returncode, 0)
+        message = proc.stdout + proc.stderr
+        self.assertIn("FA_BENCH_KIMI_KEY", message)
+        self.assertIn("kimi-for-coding", message)
+        self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_missing_zai_secret_fails_naming_the_secret(self):
+        proc = _run_resolve(provider="", zai_key="")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("FA_BENCH_ZAI_KEY", proc.stdout + proc.stderr)
+        self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_key_values_never_reach_the_log(self):
+        # Presence only: the raw key must not appear in stdout/stderr
+        # (the ::add-mask:: line carries the base64 form, like the shard
+        # step's long-standing contract).
+        for provider in ("", "kimi-for-coding"):
+            proc = _run_resolve(provider=provider)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertNotIn("zai-test-key", proc.stdout + proc.stderr)
+            self.assertNotIn("kimi-test-key", proc.stdout + proc.stderr)
+            _resolve_outputs(proc)
+
+
 def _yml_text() -> str:
     return _BENCH_YML.read_text()
 
@@ -324,6 +498,86 @@ class BenchWorkflowRound3ShapeTest(unittest.TestCase):
 @unittest.skipUnless(
     _BENCH_YML.exists(), "bench.yml not found (standalone bench checkout)"
 )
+class ProviderSelectionShapeTest(unittest.TestCase):
+    """gh-1471 wiring: the provider choice input, the resolved env in the
+    shard step, the provider+model in the run identity, and the secret
+    preflight before any shard starts."""
+
+    def test_provider_choice_input_live_with_zai_default(self):
+        text = _yml_text()
+        self.assertRegex(
+            text,
+            r"provider:\n(?:[^\n]*\n){1,5}\s+default: 'zai-glm-5.3-flash'",
+        )
+        self.assertIn("type: choice", text)
+        self.assertIn("- 'kimi-for-coding'", text)
+
+    def test_setup_job_exports_the_resolved_provider(self):
+        text = _yml_text()
+        for output in (
+            "provider_type: ${{ steps.provider.outputs.provider_type }}",
+            "provider_config: ${{ steps.provider.outputs.provider_config }}",
+            "provider_key_env: ${{ steps.provider.outputs.provider_key_env }}",
+            "bench_model: ${{ steps.provider.outputs.bench_model }}",
+            "run_label: ${{ steps.provider.outputs.run_label }}",
+        ):
+            self.assertIn(output, text)
+
+    def test_resolve_step_preflights_both_bench_secrets(self):
+        # The preflight reads both secrets via env (presence only) and
+        # runs in the setup job — before the bundle builds or any shard
+        # starts.
+        text = _yml_text()
+        resolve_env = text.split('id: provider', 1)[1].split('run: |', 1)[0]
+        self.assertIn("FA_BENCH_ZAI_KEY: ${{ secrets.FA_BENCH_ZAI_KEY }}", resolve_env)
+        self.assertIn("FA_BENCH_KIMI_KEY: ${{ secrets.FA_BENCH_KIMI_KEY }}", resolve_env)
+
+    def test_shard_env_consumes_the_resolved_provider(self):
+        text = _yml_text()
+        self.assertIn(
+            "FA_PROVIDER_TYPE: ${{ needs.setup.outputs.provider_type }}", text
+        )
+        self.assertIn(
+            "FA_PROVIDER_CONFIG: ${{ needs.setup.outputs.provider_config }}", text
+        )
+        self.assertIn(
+            "FA_PROVIDER_KEY_ENV: ${{ needs.setup.outputs.provider_key_env }}", text
+        )
+        # The zai hardcode is gone from the shard env.
+        self.assertNotIn('FA_PROVIDER_TYPE: zai', text)
+        self.assertNotIn('{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"${{ env.BENCH_MODEL }}"', text)
+        # Both bench keys are mapped; the run block picks by name.
+        self.assertIn("FA_KEY_API_Z_AI_Z_AI: ${{ secrets.FA_BENCH_ZAI_KEY }}", text)
+        self.assertIn("FA_KEY_API_KIMI_COM_BENCH: ${{ secrets.FA_BENCH_KIMI_KEY }}", text)
+
+    def test_shard_run_block_resolves_the_key_by_name(self):
+        block = _shard_run_block()
+        self.assertIn('provider_key="${FA_PROVIDER_KEY_ENV', block)
+        self.assertIn('provider_key_value="${!provider_key}"', block)
+
+    def test_shard_job_name_carries_provider_and_model(self):
+        text = _yml_text()
+        self.assertIn(
+            "name: fa on terminal-bench · ${{ needs.setup.outputs.run_label }},"
+            " shard ${{ matrix.i }}",
+            text,
+        )
+
+    def test_summary_steps_pin_the_resolved_model_and_label(self):
+        text = _yml_text()
+        self.assertGreaterEqual(text.count("MODEL: ${{ needs.setup.outputs.bench_model }}"), 2)
+        self.assertEqual(text.count("BENCH_RUN_LABEL: ${{ needs.setup.outputs.run_label }}"), 2)
+
+    def test_run_name_names_the_provider_choice(self):
+        self.assertIn(
+            "run-name: fa bench · ${{ inputs.provider }} · ${{ inputs.tasks }}",
+            _yml_text(),
+        )
+
+
+@unittest.skipUnless(
+    _BENCH_YML.exists(), "bench.yml not found (standalone bench checkout)"
+)
 @unittest.skipUnless(shutil.which("bash"), "bash not available")
 class AbsCeilingHarnessCapTest(unittest.TestCase):
     """The run-block contract when the progress watch is on."""
@@ -336,6 +590,7 @@ class AbsCeilingHarnessCapTest(unittest.TestCase):
                 "DATASET": "/tmp/fa-bench-workflow-test-dataset",
                 "SHARD_TASKS": "task-0 task-1",
                 "FA_KEY_API_Z_AI_Z_AI": "test-key",
+                "FA_PROVIDER_KEY_ENV": "FA_KEY_API_Z_AI_Z_AI",
                 "AGENT_TIMEOUT": agent_timeout,
                 "PROGRESS_EXTENSION": progress_extension,
             }
