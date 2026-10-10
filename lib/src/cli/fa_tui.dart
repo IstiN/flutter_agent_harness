@@ -2587,16 +2587,13 @@ final class FaTuiController {
   int get termHeight => _liveTermHeight ?? _model.termHeight;
 
   /// The live spinner tick frame (gh-1446 AC5): the brand-zone animation
-  /// reads the SAME frame the busy ticker advances (100 ms chain), so the
-  /// status-line ring stays on the busy cadence. Frozen while idle (the
-  /// tick chain dies with the busy bracket) — the snapshot builder gates
-  /// the blank cell on its own busy state.
+  /// reads the SAME frame the busy ticker advances (100 ms chain); frozen
+  /// while idle — the snapshot builder gates the blank cell on busy state.
   int get spinnerFrame => _model.spinnerFrame;
 
-  /// The brand-zone ring glyph (gh-1446 AC5): [spinnerFrame] mapped
-  /// through the session preset's compile-time activity ring. Resolved
-  /// HERE — one seam — so no renderer reads a frame list directly and a
-  /// model-authored string can never become a frame.
+  /// The brand-zone ring glyph (gh-1446 AC5): [spinnerFrame] mapped through
+  /// the preset's compile-time activity ring, resolved HERE at one seam —
+  /// no renderer reads a frame list and model text can never become a frame.
   String get brandFrameGlyph {
     final ring = FaThemeController.instance.symbols.activitySpinner;
     if (ring.isEmpty) return ' ';
