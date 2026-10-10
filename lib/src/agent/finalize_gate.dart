@@ -152,41 +152,33 @@ final class TaskLedger {
 /// Entries are `- key: value` lines; further `key: value` lines (deeper
 /// indented) extend the current entry. Missing statuses parse as
 /// [TaskLedgerItemStatus.fail]; unknown keys are ignored.
-TaskLedger? parseTaskLedger(String text) {
-  final span = _lastParseableLedgerSpan(text);
-  if (span == null) return null;
-  final items = _parseLedgerItems(span.body);
-  if (items.isEmpty) return null;
-  return TaskLedger(items: items);
-}
+TaskLedger? parseTaskLedger(String text) => resolveTaskLedger(text)?.ledger;
 
 /// Removes the last parseable ledger (fenced or the unfenced near-miss
 /// shape) from [text] — the run's final answer must never SHOW the
 /// checklist it self-checked with (gh-1516): the record lives in the
 /// hidden `task_ledger` session record, the transcript stays clean.
 /// Returns [text] unchanged when no ledger parses out of it.
-String stripTaskLedger(String text) {
-  final span = _lastParseableLedgerSpan(text);
-  if (span == null) return text;
-  final lines = text.split('\n');
-  final kept = <String>[
-    for (var i = 0; i < lines.length; i++)
-      if (i < span.startLine || i > span.endLine) lines[i],
-  ];
-  // The removal site leaves blank runs behind — collapse them and trim
-  // the edges the ledger vacated.
-  final collapsed = <String>[];
-  for (final line in kept) {
-    if (line.trim().isEmpty &&
-        (collapsed.isEmpty || collapsed.last.trim().isEmpty)) {
-      continue;
-    }
-    collapsed.add(line);
-  }
-  while (collapsed.isNotEmpty && collapsed.first.trim().isEmpty) {
-    collapsed.removeAt(0);
-  }
-  return collapsed.join('\n').trimRight();
+///
+/// Only the blank runs TOUCHING the removed span are collapsed — the
+/// rest of the answer stays byte-identical (gh-1516 review): multi-blank
+/// formatting elsewhere is user-facing text, not strip fallout.
+String stripTaskLedger(String text) =>
+    resolveTaskLedger(text)?.strippedText ?? text;
+
+/// Resolves the last parseable ledger of [text] in ONE scan (gh-1516
+/// review): the parsed [TaskLedger] plus the answer text with the ledger
+/// span removed. Null when no requirement-bearing ledger parses. The
+/// `MessageEndEvent` interceptor and the end-of-run fold both derive
+/// their payloads from a single call here — pairing the event with the
+/// stripped answer never re-parses the text.
+({TaskLedger ledger, String strippedText})? resolveTaskLedger(String text) {
+  final hit = _lastParseableLedgerSpan(text);
+  if (hit == null) return null;
+  return (
+    ledger: TaskLedger(items: hit.items),
+    strippedText: _stripSpan(text, hit.span),
+  );
 }
 
 final RegExp _fenceLine = RegExp(r'^\s*(`{3,})(.*)$');
