@@ -186,6 +186,9 @@ Future<ChatGptOAuthCredentials?> _acquireCredentials(
   );
   return runChatGptOAuthCliFlow(
     onStatus: (msg) => debugPrint('[ChatGPT OAuth] $msg'),
+    // Desktop host: always launch — the CLI's headless auto-detect must
+    // not gate the flow here (gh-1450).
+    shouldOpenBrowserFn: () => true,
     openBrowserFn: (url) async {
       return url_launcher.launchUrl(
         Uri.parse(url),

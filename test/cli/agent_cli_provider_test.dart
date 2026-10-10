@@ -1766,7 +1766,8 @@ void main() {
       io.sendLine('/provider codemie bogus');
       await waitForIt(
         () => io.out.toString().contains(
-          'usage: /provider codemie [sso [orgUrl] | jwt [orgUrl] [token]]',
+          'usage: /provider codemie [sso [orgUrl] [--no-browser] | '
+          'jwt [orgUrl] [token]]',
         ),
       );
       io.sendLine('/exit');

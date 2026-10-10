@@ -14,6 +14,7 @@ Never runCodeMieSsoCliFlow({
   required String codeMieUrl,
   required void Function(String) onStatus,
   Future<bool> Function(String)? openBrowserFn,
+  bool Function()? shouldOpenBrowserFn,
 }) => throw UnsupportedError(
   'CodeMie SSO sign-in is not supported on the web platform.',
 );
@@ -71,6 +72,7 @@ class ChatGptOAuthLocalCallbackServer {
 Never runChatGptOAuthCliFlow({
   required void Function(String) onStatus,
   Future<bool> Function(String)? openBrowserFn,
+  bool Function()? shouldOpenBrowserFn,
   Future<void> Function({
     required String code,
     required String redirectUri,
@@ -95,6 +97,7 @@ Never runAiinConnectCliFlow({
   required void Function(String) onStatus,
   http.Client? client,
   Future<bool> Function(String)? openBrowserFn,
+  bool Function()? shouldOpenBrowserFn,
   void Function()? onCallback,
   bool cancelWhenOpenSettles = false,
   Duration? timeout,
