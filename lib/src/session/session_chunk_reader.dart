@@ -13,7 +13,7 @@
 /// path.
 library;
 
-import "dart:convert";
+import 'dart:convert';
 import 'dart:typed_data';
 
 import '../env/execution_env.dart';
@@ -102,6 +102,13 @@ final class SessionChunk {
 /// sits on a record start, so a record straddling the initial read window is
 /// never truncated (issue #135 E1) — the window doubles until the whole
 /// record is inside, bounded only by the file length.
+///
+/// The parse cache (issue #1498) assumes the session JSONL is APPEND-ONLY:
+/// entries survive observed growth and are dropped on any observed shrink
+/// or mtime anomaly (see [_noteParseCacheStamp]). A writer that rewrites
+/// earlier bytes in place while keeping size AND mtime is unobservable at
+/// that granularity — the same signal the windowed storage itself relies
+/// on — and would serve stale records.
 final class SessionChunkReader {
   /// Creates a reader over [path]. [startWindowBytes] is the first backward
   /// read size; it doubles up to the file length as needed. The parse cache
@@ -120,6 +127,8 @@ final class SessionChunkReader {
   final int parseCacheEntries;
 
   /// Remembered raw-line bytes across all cached lines (issue #1498).
+  /// `0` means no byte budget (the entry cap still applies); combined
+  /// with [parseCacheEntries] `0` the cache is fully disabled.
   final int parseCacheBytes;
 
   /// The store backing [path].
@@ -210,16 +219,24 @@ final class SessionChunkReader {
     }
   }
 
-  /// Re-validates the cache against the observed file facts: growth keeps
-  /// entries (append-only — the same signal [readForward] resumes from);
-  /// a SHRINK (truncation or segment rotation) or a same-size mtime move
-  /// (the rewrite signal `WindowedSessionStorage.ingestAppended` uses)
-  /// drops everything — line offsets into the old bytes are garbage then.
+  /// Re-validates the cache against the observed file facts. The cache
+  /// leans on the session format's APPEND-ONLY contract: growth with an
+  /// mtime move keeps entries (older lines never change); a SHRINK
+  /// (truncation or segment rotation), a same-size mtime move (the
+  /// rewrite signal `WindowedSessionStorage.ingestAppended` uses), or
+  /// growth WITHOUT an mtime move (indistinguishable from an in-place
+  /// rewrite at this granularity) drops everything. Residual risk,
+  /// shared with the storage's own rewrite detection: a same-size
+  /// rewrite landing inside one mtime tick is unobservable — a writer
+  /// that rewrites earlier bytes MUST shrink the file or move mtime
+  /// (the format's writers do both by construction).
   void _noteParseCacheStamp(int size, int mtimeMs) {
     if (_parseCacheStampSize >= 0 &&
         (size < _parseCacheStampSize ||
             (size == _parseCacheStampSize &&
-                mtimeMs != _parseCacheStampMtimeMs))) {
+                mtimeMs != _parseCacheStampMtimeMs) ||
+            (size > _parseCacheStampSize &&
+                mtimeMs == _parseCacheStampMtimeMs))) {
       _parseCache.clear();
       _parseCacheBytesUsed = 0;
     }
@@ -998,6 +1015,24 @@ final class SessionChunkReader {
     required int maxBytes,
   }) async {
     if (lines.isEmpty) return const [];
+    final probe = _probeParseCache(lines);
+    final plan = _planMissBatches(lines, probe.missIdx);
+    return _walkNewestWithinCaps(
+      lines,
+      probe: probe,
+      plan: plan,
+      maxRecords: maxRecords,
+      maxBytes: maxBytes,
+    );
+  }
+
+  /// Resolves every line of a window against the parse cache (issue
+  /// #1498): hits splice, empties mark torn, everything else is a miss
+  /// for the batch planner. Counter-free — a miss costs work only when
+  /// the cap walk reaches it.
+  _WindowCacheProbe _probeParseCache(
+    List<(int offset, Uint8List bytes)> lines,
+  ) {
     final resolved = List<SessionChunkEntry?>.filled(lines.length, null);
     final torn = List<bool>.filled(lines.length, false);
     final missIdx = <int>[];
@@ -1014,9 +1049,18 @@ final class SessionChunkReader {
       } else {
         missIdx.add(i);
       }
-    } // The misses, decoded once (offset → decoded slot); batch parsing
-    // stays lazy — a batch parses when the walk below first reaches one
-    // of its lines, so the caps stop it at the same volume as before.
+    }
+    return _WindowCacheProbe(resolved: resolved, torn: torn, missIdx: missIdx);
+  }
+
+  /// Decodes the miss lines once and partitions them into bounded parse
+  /// batches (issue #199); batch parsing itself stays lazy — a batch
+  /// parses when the cap walk first reaches one of its lines, so the
+  /// caps stop it at the same volume as the uncached walk.
+  _MissBatchPlan _planMissBatches(
+    List<(int offset, Uint8List bytes)> lines,
+    List<int> missIdx,
+  ) {
     final decoded = _decodeLines([for (final i in missIdx) lines[i]]);
     final decodedJByOffset = <int, int>{
       for (var j = 0; j < decoded.length; j++) decoded[j].$1: j,
@@ -1045,56 +1089,93 @@ final class SessionChunkReader {
         posInBatch[start + p] = p;
       }
     }
-    final batchResults = List<SessionParseResult?>.filled(batches.length, null);
-    Future<SessionParseResult> parseBatch(int b) async {
-      final existing = batchResults[b];
-      if (existing != null) return existing;
-      final result = parseExecutor == null
-          ? parseSessionEntryLinesSync(batches[b])
-          : await parseExecutor!.parse(batches[b]);
-      return batchResults[b] = result;
-    }
+    return _MissBatchPlan(
+      decoded: decoded,
+      missJByLine: missJByLine,
+      batches: batches,
+      batchOfMiss: batchOfMiss,
+      posInBatch: posInBatch,
+      results: List<SessionParseResult?>.filled(batches.length, null),
+    );
+  }
 
+  /// Parses batch [b] of [plan] on first touch; later touches splice the
+  /// memoized result (the executor path stays one transfer per batch).
+  Future<SessionParseResult> _parseMissBatch(_MissBatchPlan plan, int b) async {
+    final existing = plan.results[b];
+    if (existing != null) return existing;
+    final result = parseExecutor == null
+        ? parseSessionEntryLinesSync(plan.batches[b])
+        : await parseExecutor!.parse(plan.batches[b]);
+    return plan.results[b] = result;
+  }
+
+  /// The newest-first cap walk over a probed window: records splice from
+  /// the cache, miss batches parse on first reach, and the caps break at
+  /// exactly the uncached walk's volume (issue #1498).
+  Future<List<SessionChunkEntry>> _walkNewestWithinCaps(
+    List<(int offset, Uint8List bytes)> lines, {
+    required _WindowCacheProbe probe,
+    required _MissBatchPlan plan,
+    required int maxRecords,
+    required int maxBytes,
+  }) async {
     final picked = <SessionChunkEntry>[];
     var totalBytes = 0;
     for (var i = lines.length - 1; i >= 0; i--) {
       if (picked.length >= maxRecords) break;
       if (maxBytes >= 0 && picked.isNotEmpty && totalBytes >= maxBytes) break;
-      if (torn[i]) continue;
-      var entry = resolved[i];
+      if (probe.torn[i]) continue;
+      var entry = probe.resolved[i];
       if (entry == null) {
-        // A miss that costs work: this is the only place a line turns
-        // into decode+parse (the probe above is counter-free).
-        _parseCacheMisses++;
-        final j = missJByLine[i];
-        if (j < 0) {
-          // Undecodable bytes: remember the failed decode too, so a
-          // re-visited window skips the attempt.
-          torn[i] = true;
-          _parseCacheStoreTorn(lines[i].$1, lines[i].$2.length, false);
-          continue;
-        }
-        final record = (await parseBatch(
-          batchOfMiss[j],
-        )).records[posInBatch[j]];
-        final (offset, _, weight) = decoded[j];
-        if (record == null) {
-          torn[i] = true;
-          _parseCacheStoreTorn(offset, weight, false);
-          continue;
-        }
-        entry = SessionChunkEntry(
-          offset: offset,
-          bytes: weight,
-          record: record,
-        );
-        resolved[i] = entry;
-        _parseCacheStore(entry, false);
+        entry = await _materializeMiss(lines, probe: probe, plan: plan, i: i);
+        if (entry == null) continue; // torn or undecodable — marked above
       }
       picked.add(entry);
       totalBytes += entry.bytes + 1;
     }
     return picked.reversed.toList(growable: false);
+  }
+
+  /// Parses one miss line through its batch (issue #1498) — the only
+  /// spot a line turns into decode+parse work — and lands the result in
+  /// the cache. Returns null for a line that stays torn (parse failure)
+  /// or whose bytes never decoded; both are marked in [probe.torn].
+  Future<SessionChunkEntry?> _materializeMiss(
+    List<(int offset, Uint8List bytes)> lines, {
+    required _WindowCacheProbe probe,
+    required _MissBatchPlan plan,
+    required int i,
+  }) async {
+    // A miss that costs work: this is the only place a line turns
+    // into decode+parse (the probe above is counter-free).
+    _parseCacheMisses++;
+    final j = plan.missJByLine[i];
+    if (j < 0) {
+      // Undecodable bytes: remember the failed decode too, so a
+      // re-visited window skips the attempt.
+      probe.torn[i] = true;
+      _parseCacheStoreTorn(lines[i].$1, lines[i].$2.length, false);
+      return null;
+    }
+    final record = (await _parseMissBatch(
+      plan,
+      plan.batchOfMiss[j],
+    )).records[plan.posInBatch[j]];
+    final (offset, _, weight) = plan.decoded[j];
+    if (record == null) {
+      probe.torn[i] = true;
+      _parseCacheStoreTorn(offset, weight, false);
+      return null;
+    }
+    final entry = SessionChunkEntry(
+      offset: offset,
+      bytes: weight,
+      record: record,
+    );
+    probe.resolved[i] = entry;
+    _parseCacheStore(entry, false);
+    return entry;
   }
 
   /// Parses lines oldest-first through the executor, skipping torn ones.
@@ -1128,6 +1209,13 @@ final class SessionChunkReader {
       final decoded = _decodeLines([
         for (final i in missIdx) lines[i],
       ], shallowGiantCustoms: shallowGiantCustoms);
+      final decodedOffsets = {for (final (offset, _, _) in decoded) offset};
+      _storeUndecodableTorn(
+        lines,
+        missIdx,
+        decodedOffsets,
+        shallowGiantCustoms,
+      );
       if (decoded.isNotEmpty) {
         final parsed = await parseSessionLines(
           [
@@ -1147,7 +1235,6 @@ final class SessionChunkReader {
           executor: parseExecutor,
           shallowGiantCustoms: shallowGiantCustoms,
         );
-        final decodedOffsets = {for (final (offset, _, _) in decoded) offset};
         final lineIdxByOffset = <int, int>{
           for (final i in missIdx)
             if (decodedOffsets.contains(lines[i].$1)) lines[i].$1: i,
@@ -1170,6 +1257,22 @@ final class SessionChunkReader {
       }
     }
     return [for (final entry in results) ?entry];
+  }
+
+  /// Remembers decode-failed miss lines as torn (issue #1498 review):
+  /// their (offset, len) key is deterministic, so a re-visited window
+  /// skips the doomed utf8 attempt instead of re-paying it — and adding
+  /// misses — on every pass.
+  void _storeUndecodableTorn(
+    List<(int offset, Uint8List bytes)> lines,
+    List<int> missIdx,
+    Set<int> decodedOffsets,
+    bool shallow,
+  ) {
+    for (final i in missIdx) {
+      if (decodedOffsets.contains(lines[i].$1)) continue;
+      _parseCacheStoreTorn(lines[i].$1, lines[i].$2.length, shallow);
+    }
   }
 
   /// Strict-UTF8 decodes candidate lines, dropping empty or undecodable
@@ -1235,4 +1338,49 @@ final class SessionChunkReader {
 
   static int _bytesOf(List<SessionChunkEntry> entries) =>
       entries.fold(0, (sum, entry) => sum + entry.bytes + 1);
+}
+
+/// Per-line cache resolution of one scan window (issue #1498).
+final class _WindowCacheProbe {
+  const _WindowCacheProbe({
+    required this.resolved,
+    required this.torn,
+    required this.missIdx,
+  });
+
+  /// Cache-provided entries per line; null where the line must parse.
+  final List<SessionChunkEntry?> resolved;
+
+  /// Known-skip lines (empty, torn, foreign) — never picked.
+  final List<bool> torn;
+
+  /// Line indices that need decode+parse.
+  final List<int> missIdx;
+}
+
+/// The decoded misses of one window, partitioned into bounded parse
+/// batches (issue #1498); [results] memoizes per batch so the lazy walk
+/// parses each batch at most once.
+final class _MissBatchPlan {
+  const _MissBatchPlan({
+    required this.decoded,
+    required this.missJByLine,
+    required this.batches,
+    required this.batchOfMiss,
+    required this.posInBatch,
+    required this.results,
+  });
+
+  /// (offset, text, byteWeight) triples for the decodable misses.
+  final List<(int, String, int)> decoded;
+
+  /// Line index → decoded slot; -1 where the bytes never decoded.
+  final List<int> missJByLine;
+
+  final List<SessionParseBatch> batches;
+  final List<int> batchOfMiss;
+  final List<int> posInBatch;
+
+  /// One slot per batch, filled on first parse.
+  final List<SessionParseResult?> results;
 }

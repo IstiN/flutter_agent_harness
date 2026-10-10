@@ -11,6 +11,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
@@ -185,6 +186,11 @@ void main() {
         '${[for (var i = 20; i < 30; i++) userJson('u$i')].map(jsonEncode).join('\n')}\n',
       );
       append.getOrThrow();
+      // Pin the mtime below the first read's stamp: the write landed in
+      // the same millisecond tick as that read (same-size-tick rewrites
+      // are the unobservable case the stamp rule guards), so a moved
+      // mtime keeps this test deterministic about the growth path.
+      fs.setMtime(path, 1234567890123);
       final second = await r.readTail(maxRecords: 50);
       expect(idsOf(second).take(20), idsOf(first));
       expect(idsOf(second), containsAll(['u25', 'u29']));
@@ -351,6 +357,34 @@ void main() {
       expect(idsOf(await r.readTail()), ['u0', 'u1']);
       final misses = r.parseCacheMissCount;
       expect(idsOf(await r.readTail()), ['u0', 'u1']);
+      expect(r.parseCacheMissCount, misses);
+    });
+
+    test('a decode-failed (invalid utf8) line is torn-cached too', () async {
+      // A line whose BYTES never decode (strict UTF-8 failure): the
+      // failed attempt is remembered per (offset, len), so a repeat scan
+      // adds zero misses — the mirror of the parse-torn case above.
+      final bytes = <int>[
+        ...utf8.encode('$header\n'),
+        0x7B,
+        0x22,
+        0x62,
+        0x61,
+        0x64,
+        0x3A,
+        0x20,
+        0xFF,
+        0xFE,
+        0x7D,
+        0x0A,
+        ...utf8.encode('${jsonEncode(userJson('u0'))}\n'),
+      ];
+      final write = await fs.writeBinaryFile(path, Uint8List.fromList(bytes));
+      write.getOrThrow();
+      final r = reader();
+      expect(idsOf(await r.readTail()), ['u0']);
+      final misses = r.parseCacheMissCount;
+      expect(idsOf(await r.readTail()), ['u0']);
       expect(r.parseCacheMissCount, misses);
     });
   });
