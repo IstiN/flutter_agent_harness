@@ -36,9 +36,10 @@ void main() {
   setUpAll(() async {
     siteRoot = await resolveSiteRoot();
     sitemap = File('${siteRoot.path}/sitemap.xml').readAsStringSync();
-    locs = RegExp(
-      r'<loc>(https://fa1\.dev[^<]+)</loc>',
-    ).allMatches(sitemap).map((m) => m.group(1)!).toList();
+    locs = RegExp(r'<loc>(https://fa1\.dev[^<]+)</loc>')
+        .allMatches(sitemap)
+        .map((m) => m.group(1)!)
+        .toList();
 
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     origin = 'http://127.0.0.1:${server.port}';
@@ -319,9 +320,10 @@ void main() {
     );
 
     test('sitemap lastmod values are real dates', () {
-      final lastmods = RegExp(
-        r'<lastmod>(\d{4}-\d{2}-\d{2})</lastmod>',
-      ).allMatches(sitemap).map((m) => m.group(1)!).toList();
+      final lastmods = RegExp(r'<lastmod>(\d{4}-\d{2}-\d{2})</lastmod>')
+          .allMatches(sitemap)
+          .map((m) => m.group(1)!)
+          .toList();
       expect(lastmods.length, locs.length);
     });
   });

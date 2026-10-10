@@ -14,6 +14,14 @@ coverage_cov/
 coverage-verify/
 # The Pages workflow assembles the Flutter web demo here; never commit it.
 site/app/
+# gh-1476 (PR #1479 owner directive): the generated GEO layer — static
+# blog/docs pages, sitemap.xml, llms-full.txt — is a deploy-time product
+# (pages.yml builds it into build/pages via `dart scripts/build_site.dart
+# --out`), never committed; site/ holds the sources + templates only.
+site/blog/*/index.html
+site/docs/*/index.html
+site/sitemap.xml
+site/llms-full.txt
 # library package: lockfile is not committed
 pubspec.lock
 # ...except the app: flutter_app is publish_to: none, so its lockfile IS

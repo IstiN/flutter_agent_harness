@@ -489,9 +489,7 @@ void main() {
         '<html>\n<!-- #blog-post-list:start -->\nold\n<!-- #blog-post-list:end -->\n</html>\n',
       );
       File('${root.path}/site/styles.css').writeAsStringSync('body{}\n');
-      File('${root.path}/site/robots.txt').writeAsStringSync(
-        'User-agent: *\n',
-      );
+      File('${root.path}/site/robots.txt').writeAsStringSync('User-agent: *\n');
       File('${root.path}/site/llms.txt').writeAsStringSync('# Fa\n');
       for (final d in site.docsRegistry) {
         final f = File('${root.path}/${d.source}')..createSync(recursive: true);
@@ -516,27 +514,24 @@ void main() {
       site.emitSite(root: root.path, outDir: out.path, outputs: outputs);
 
       // Statics copied.
-      expect(
-        File('${out.path}/site/styles.css').readAsStringSync(),
-        'body{}\n',
-      );
-      expect(File('${out.path}/site/robots.txt').existsSync(), isTrue);
-      expect(File('${out.path}/site/llms.txt').existsSync(), isTrue);
+      expect(File('${out.path}/styles.css').readAsStringSync(), 'body{}\n');
+      expect(File('${out.path}/robots.txt').existsSync(), isTrue);
+      expect(File('${out.path}/llms.txt').existsSync(), isTrue);
       // Generated artifacts written.
       expect(
-        File('${out.path}/site/blog/2026-01-02-one/index.html').existsSync(),
+        File('${out.path}/blog/2026-01-02-one/index.html').existsSync(),
         isTrue,
       );
-      expect(File('${out.path}/site/docs/dap/index.html').existsSync(), isTrue);
-      expect(File('${out.path}/site/sitemap.xml').existsSync(), isTrue);
-      expect(File('${out.path}/site/llms-full.txt').existsSync(), isTrue);
+      expect(File('${out.path}/docs/dap/index.html').existsSync(), isTrue);
+      expect(File('${out.path}/sitemap.xml').existsSync(), isTrue);
+      expect(File('${out.path}/llms-full.txt').existsSync(), isTrue);
       // The rendered blog index replaces the template's marker block.
-      final index = File('${out.path}/site/blog/index.html').readAsStringSync();
+      final index = File('${out.path}/blog/index.html').readAsStringSync();
       expect(index, isNot(contains('old')));
       expect(index, contains('href="./2026-01-02-one/"'));
       // The stale source-tree page did not ride along.
       expect(
-        Directory('${out.path}/site/blog/2024-01-01-old').existsSync(),
+        Directory('${out.path}/blog/2024-01-01-old').existsSync(),
         isFalse,
       );
       // The source tree got no generated artifacts.
@@ -545,7 +540,7 @@ void main() {
     });
 
     test('prunes stale generated pages already in the out dir', () {
-      final staleOut = Directory('${out.path}/site/blog/2024-01-01-old')
+      final staleOut = Directory('${out.path}/blog/2024-01-01-old')
         ..createSync(recursive: true);
       File('${staleOut.path}/index.html').writeAsStringSync('stale');
       final outputs = site.buildSite(root: root.path);
@@ -553,20 +548,23 @@ void main() {
       expect(staleOut.existsSync(), isFalse);
     });
 
-    test('in-tree emit writes artifacts next to the sources (local preview)', () {
-      final outputs = site.buildSite(root: root.path);
-      site.emitSite(root: root.path, outputs: outputs);
-      expect(File('${root.path}/site/sitemap.xml').existsSync(), isTrue);
-      expect(
-        File('${root.path}/site/blog/2026-01-02-one/index.html').existsSync(),
-        isTrue,
-      );
-      // Stale generated pages are pruned in-tree too.
-      expect(
-        Directory('${root.path}/site/blog/2024-01-01-old').existsSync(),
-        isFalse,
-      );
-    });
+    test(
+      'in-tree emit writes artifacts next to the sources (local preview)',
+      () {
+        final outputs = site.buildSite(root: root.path);
+        site.emitSite(root: root.path, outputs: outputs);
+        expect(File('${root.path}/site/sitemap.xml').existsSync(), isTrue);
+        expect(
+          File('${root.path}/site/blog/2026-01-02-one/index.html').existsSync(),
+          isTrue,
+        );
+        // Stale generated pages are pruned in-tree too.
+        expect(
+          Directory('${root.path}/site/blog/2024-01-01-old').existsSync(),
+          isFalse,
+        );
+      },
+    );
   });
 }
 

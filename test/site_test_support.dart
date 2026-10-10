@@ -49,6 +49,7 @@ Future<Directory> resolveSiteRoot() async {
   final tmp = Directory.systemTemp.createTempSync('fa_site_test');
   addTearDown(() => tmp.deleteSync(recursive: true));
   final outputs = builder.buildSite(root: _repoRoot());
+  // The out dir IS the site root (same layout as site/).
   builder.emitSite(root: _repoRoot(), outDir: tmp.path, outputs: outputs);
-  return Directory('${tmp.path}/site');
+  return tmp;
 }

@@ -120,19 +120,26 @@ jobs:
           cd office_addin/dart && dart pub get && cd ../..
           bash scripts/build_office_addin.sh
 
-      # gh-1476: the static GEO layer is generated at deploy time too (the
-      # committed artifacts are the CI freshness pin; the deploy rebuilds
-      # from the same sources so the two can never drift). Dep-free pure
-      # Dart scripts — no `dart pub get` needed.
+      # gh-1476 (PR #1479 owner directive): the static GEO layer is
+      # generated ONLY here, straight into build/pages — the artifacts
+      # (blog/docs pages, sitemap.xml, llms-full.txt) are gitignored
+      # deploy-time products and never exist in the repo tree; sources
+      # (blog/posts, docs/*.md, site/*.html|txt|css) are the single
+      # source of truth. `--out` copies the static tree and overlays the
+      # generated layer, so the Assemble step below picks up the freshly
+      # built files, not repo paths. Dep-free pure Dart scripts — no
+      # `dart pub get` needed.
       - name: Build the static GEO layer (gh-1476)
         run: |
           dart scripts/build_blog.dart
-          dart scripts/build_site.dart
+          dart scripts/build_site.dart --out build/pages/root
 
       - name: Assemble Pages artifact
         run: |
+          # build/pages/root already holds the complete site: the GEO
+          # step above built the generated layer AND the static tree
+          # into it. Only the deploy-specific additions land here.
           mkdir -p build/pages/root
-          cp -R site/. build/pages/root/
           # The App Store frames page (issue #691): the images are the
           # COMMITTED GOLDENS, copied at deploy — never hand-copied PNGs,
           # so the site assets cannot drift from the store assets (the
