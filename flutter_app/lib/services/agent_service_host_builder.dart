@@ -2,6 +2,8 @@
 // Use of this source code is governed by a MIT license that can be found
 // in the LICENSE file.
 
+part of 'agent_service.dart';
+
 /// The builder seam (issue #1079, slice 5): the typed
 /// [AgentCoreServices] this shell hands to `wireAgentCore`, and the
 /// app-platform tool families packaged as a DECLARED [HostExtension]
