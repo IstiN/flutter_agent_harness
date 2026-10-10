@@ -1,10 +1,12 @@
 // gh-1439 IT layer: the live-follow etiquette on the REAL glass — a PTY
 // proves what the model-level suite (test/cli/fa_tui_follow_mode_test.dart)
 // can only simulate. AC1's etiquette in one scenario:
-//   (1) scrolling up mid-run detaches (the live-fold hint leaves the glass,
-//       the held rule carries the position percent);
+//   (1) scrolling up mid-run detaches (the held rule carries the position
+//       percent; the fold row is a textless rule — gh-1446 retracted the
+//       #827 hint words);
 //   (2) late arrivals are COUNTED on the held rule (`· ● N new · End = live`);
-//   (3) End returns to the live edge and the hint row leaves the glass.
+//   (3) End returns to the live edge: the held rule leaves the glass and
+//       no fold-hint text ever appears (gh-1446 AC1).
 @Tags(['io', 'integration'])
 @Timeout(Duration(minutes: 5))
 library;
