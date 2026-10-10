@@ -132,12 +132,19 @@ scenarios:
         '✔ task: Prove the task loop',
         timeout: const Duration(seconds: 30),
       );
-      final screen = await harness.waitForScreen(
+      // `subagent finished: …` is a pure-ASCII streamed row — the one row
+      // class whose interior spaces the cell-diff path can lose to an
+      // erased-cell skip (gh-1372; the tool rows' wide ✔ glyphs force the
+      // contiguous repaint and never collapse). Match it tolerantly.
+      final finishMarker = lostSpaceTolerant(
         'subagent finished: agent://explorer1',
+      );
+      final screen = await harness.waitForScreen(
+        finishMarker,
         timeout: const Duration(seconds: 30),
       );
+      expect(screen, matches(finishMarker));
       expect(screen, contains('✔ task: Prove the task loop'));
-      expect(screen, contains('subagent finished: agent://explorer1'));
       // >= 3 chat round-trips: parent tool-call turn, subagent turn, parent
       // reply turn (session title/summary calls may add more).
       expect(server.chatBodies.length, greaterThanOrEqualTo(3));
@@ -237,8 +244,17 @@ scenarios:
     // a parent turn must carry the memory_add tool call and the follow-up
     // turn its role:tool result (same chatBodies convention as the
     // task-tool leg; issue #551 AC: the full loop, not just boot).
+    //
+    // gh-1372: the reply marker itself is a pure-ASCII streamed row — on
+    // the two 2026-10-09/10 nightlies the renderer skipped its interior
+    // space cell (erased-cell skip, `[17;24Hcomplete` right after
+    // `round-trip` on the wire) and the extraction carried
+    // `round-tripcomplete`, so the exact-string wait burnt its full 30 s
+    // while BOTH tool rows had already rendered ✔. lostSpaceTolerant
+    // accepts the collapsed render; the `✔ memory_search` row keeps the
+    // exact match (wide-glyph rows repaint contiguously, never collapse).
     final screen = await harness.waitForScreen(
-      'memory round-trip complete',
+      lostSpaceTolerant('memory round-trip complete'),
       timeout: const Duration(seconds: 30),
     );
     expect(screen, contains('✔ memory_search'));

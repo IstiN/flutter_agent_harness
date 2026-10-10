@@ -65,6 +65,21 @@ List<String> frameContentLines(List<String> viewport) => [
   for (final line in viewport) line.trimRight(),
 ];
 
+/// A screen [Pattern] for [phrase] that still matches when the renderer's
+/// cell-diff path skipped ONE interior space cell (gh-1372). A pure-ASCII
+/// streamed row (no wide glyph forcing the contiguous repaint) can have a
+/// space cell compared "unchanged" against a grid whose physical cell is
+/// erased/never-written — and the vendored emulator's `BufferLine.getText`
+/// drops those cells, so the extracted screen carries `round-tripcomplete`
+/// where the phrase says `round-trip complete` (nightlies 37880055409 +
+/// 38021029680 timed out on byte-identical screens showing exactly that).
+/// Every single-space gap in [phrase] becomes optional (0 or 1 space);
+/// anything else must still match exactly — shifted spaces, other words,
+/// and unrelated rows are refused (`pty_harness_lost_space_test.dart`
+/// pins the semantics and the red-run wire shape).
+Pattern lostSpaceTolerant(String phrase) =>
+    RegExp(phrase.split(' ').map(RegExp.escape).join(' ?'));
+
 /// One finished background shell job's settle notice (`[bash] sh-…
 /// exited(code) — log`) as painted into the raw stream by the CLI; exactly
 /// one per job proves the command started AND finished. ANY exit code is
