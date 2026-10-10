@@ -19,12 +19,6 @@ library;
 import 'dart:io';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
-// The busy row's spinner is now the kaomoji face (issue #1374): the
-// invariance mask strips its FIXED 4-cell zone + separator, not "up to
-// the first space" — a 3-cell face pads the zone with a space, so the
-// first-space boundary moved with every face swap.
-import 'package:flutter_agent_harness/src/cli/fa_tui.dart'
-    show kKaomojiFaceZoneCells;
 import 'package:test/test.dart';
 
 import 'pty_harness.dart';
@@ -154,12 +148,10 @@ tui:
       }
       expect(busyIdx, greaterThanOrEqualTo(0),
           reason: 'the sampled pair must differ in the busy row');
-      // The spinner is the kaomoji face zone (issue #1374): strip the
-      // fixed zone + separator (face + seconds are the only movers);
-      // the label/suffix columns right of it stay pinned byte-for-byte.
-      String masked(String row) => row
-          .substring(kKaomojiFaceZoneCells + 1)
-          .replaceAll(RegExp(r'\d'), '#');
+      // gh-1446 retired the face zone (issue #1374): the row is plain
+      // text at column 0, only the seconds digits move; every other
+      // column stays pinned byte-for-byte.
+      String masked(String row) => row.replaceAll(RegExp(r'\d'), '#');
       final busyA = gridA[busyIdx];
       final busyB = gridB[busyIdx];
       expect(busyA.isNotEmpty, isTrue);

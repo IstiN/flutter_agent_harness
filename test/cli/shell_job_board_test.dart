@@ -10,6 +10,8 @@ library;
 
 import 'package:flutter_agent_harness/src/cli/agent_hub_panel.dart';
 import 'package:flutter_agent_harness/src/cli/shell_job_board.dart';
+import 'package:flutter_agent_harness/src/cli/tui_text_width.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/cli/tool_rows.dart'
     show shellJobCommandPreview;
 import 'package:flutter_agent_harness/src/session/session_record.dart';
@@ -162,17 +164,19 @@ void main() {
   });
 
   group('AC3 UT-collapse-counts', () {
-    test('N>3 jobs collapse into one summary with live counts', () {
+    test('N>3 jobs collapse into one signal-only summary (gh-1446)', () {
       final board = ShellJobBoard();
       for (var i = 0; i < 17; i++) {
         board.start(_card('sh-$i'));
       }
       expect(board.collapsed, isTrue);
       final live = board.liveLines();
-      expect(live.first, contains('Background jobs (17)'));
-      expect(live.first, contains('17 running'));
-      expect(live.first, contains('0 done'));
-      expect(live.first, contains('0 lost'));
+      expect(live.first, '◐ Background jobs (17)');
+      // The done count and the `older` marker are retired chrome noise:
+      // the live line names ONLY the running (and lost) counts.
+      expect(live.first, isNot(contains('running')));
+      expect(live.first, isNot(contains('done')));
+      expect(live.first, isNot(contains('older')));
     });
 
     test('counts update live on settle', () {
@@ -187,10 +191,8 @@ void main() {
         detail: 'sh-1 · exit 1',
       );
       final live = board.liveLines();
-      expect(live.first, contains('Background jobs (5)'));
-      expect(live.first, contains('3 running'));
-      expect(live.first, contains('1 done'));
-      expect(live.first, contains('0 lost'));
+      // 3 still running (done + failed dropped from the live signal).
+      expect(live.first, '◐ Background jobs (3)');
     });
 
     test('lost>0 is always visible — never hidden in a green count', () {
@@ -200,12 +202,20 @@ void main() {
       }
       board.settle('sh-0', state: TaskBlockState.lost);
       expect(board.liveLines().first, contains('1 lost'));
-      // Even a zero count keeps the segment so the field never disappears.
+      // A fully-lost turn has NO live cards left: the live row goes away
+      // and the transcript carries the individual lost cards (a zombie is
+      // never dropped — it moves to history, not into silence).
       final board2 = ShellJobBoard();
       for (var i = 0; i < 4; i++) {
         board2.start(_card('sh-$i'));
       }
-      expect(board2.liveLines().first, contains('0 lost'));
+      for (var i = 0; i < 4; i++) {
+        board2.settle('sh-$i', state: TaskBlockState.lost);
+      }
+      expect(board2.liveLines(), isEmpty);
+      final transcript = board2.takeTranscriptLines(width: 100).join('\n');
+      expect(transcript, contains('4 lost'));
+      expect('bash task lost'.allMatches(transcript), hasLength(4));
     });
 
     test('three or fewer jobs stay individual (no summary)', () {
@@ -217,6 +227,99 @@ void main() {
       expect(
         board.liveLines().join('\n'),
         isNot(contains('Background jobs (')),
+      );
+    });
+  });
+
+  group('gh-1446 jobs-line contract (pure)', () {
+    test('the three state cells of the capability table', () {
+      // R > 0, L = 0.
+      expect(shellJobLiveSummaryLine(running: 2, lost: 0),
+          '◐ Background jobs (2)');
+      // L > 0, any R including 0.
+      expect(shellJobLiveSummaryLine(running: 1, lost: 16),
+          '◐ Background jobs (1) · 16 lost');
+      expect(shellJobLiveSummaryLine(running: 0, lost: 16),
+          '◐ Background jobs (0) · 16 lost');
+      // R == 0 && L == 0 → absent.
+      expect(shellJobLiveSummaryLine(running: 0, lost: 0), isNull);
+      // The forbidden chrome substrings never appear.
+      for (final line in [
+        shellJobLiveSummaryLine(running: 3, lost: 0)!,
+        shellJobLiveSummaryLine(running: 0, lost: 9)!,
+      ]) {
+        expect(line, isNot(contains('running')));
+        expect(line, isNot(contains('done')));
+        expect(line, isNot(contains('older')));
+      }
+    });
+
+    test('the glyph resolves through the session symbol preset', () {
+      final controller = FaThemeController.instance;
+      controller
+        ..reset()
+        ..profile = ColorProfile.trueColor;
+      // The symbol preset is NOT part of reset(): restore it explicitly so
+      // later groups in this file see the default unicode glyph.
+      addTearDown(() => controller.switchSymbols('unicode'));
+      expect(
+        shellJobLiveSummaryLine(running: 1, lost: 0),
+        startsWith('${controller.sym('status.running')} '),
+      );
+      controller.switchSymbols('ascii');
+      expect(
+        shellJobLiveSummaryLine(running: 1, lost: 0),
+        '[~] Background jobs (1)',
+        reason: 'the ascii preset never emits a non-ASCII glyph',
+      );
+      controller.switchSymbols('nerd');
+      expect(
+        shellJobLiveSummaryLine(running: 1, lost: 0),
+        startsWith('\uf110 '),
+      );
+    });
+
+    test('AC6: the clip ladder — lost > parens > icon', () {
+      // 32 cells: '◐ Background jobs (1) · 999 lost'.
+      // Rung 0 — everything fits at 40: E2's digits survive trivially.
+      expect(
+        shellJobLiveSummaryLine(running: 1, lost: 999, width: 40),
+        '◐ Background jobs (1) · 999 lost',
+      );
+      // Rung 1 — the icon clips first, the parens count stays.
+      expect(
+        shellJobLiveSummaryLine(running: 1, lost: 999, width: 31),
+        'Background jobs (1) · 999 lost',
+      );
+      // Rung 2 — the parens go next, lost stays.
+      expect(
+        shellJobLiveSummaryLine(running: 1, lost: 999, width: 27),
+        'Background jobs · 999 lost',
+      );
+      // Rung 3 — even the name truncates from the left; the lost digits
+      // are the last thing that ever clips (E2).
+      final last = shellJobLiveSummaryLine(running: 1, lost: 999, width: 12)!;
+      expect(last, contains('999 lost'));
+      expect(last, startsWith('…'));
+      expect(tuiTextWidth(last), lessThanOrEqualTo(12));
+      // Degenerate widths keep tail-keeping: the last cell survives.
+      final one = shellJobLiveSummaryLine(running: 1, lost: 999, width: 1)!;
+      expect(tuiTextWidth(one), 1, reason: one);
+      expect(shellJobLiveSummaryLine(running: 1, lost: 999, width: 0), '');
+    });
+
+    test('AC6: zero-lost lines clip the same way', () {
+      // '◐ Background jobs (12)' = 22 cells.
+      expect(
+        shellJobLiveSummaryLine(running: 12, lost: 0, width: 20),
+        'Background jobs (12)',
+        reason: 'icon clips first',
+      );
+      // 'Background jobs (12) · 3 lost' = 29 cells.
+      expect(
+        shellJobLiveSummaryLine(running: 12, lost: 3, width: 25),
+        'Background jobs · 3 lost',
+        reason: 'parens clip second',
       );
     });
   });
@@ -235,7 +338,7 @@ void main() {
       // re-emit of settled old rows.
       final live = board.liveLines().join('\n');
       expect(live, contains('· older'));
-      expect(live, contains('5 running'));
+      expect(live, contains('Background jobs (5)'));
       expect(live, contains('sh-new'));
       expect(live, isNot(contains('sh-old-0')));
     });
@@ -329,7 +432,9 @@ void main() {
       final olderBefore = board.liveLines().singleWhere(
         (l) => l.contains('· older'),
       );
-      expect(olderBefore, contains('5 running'));
+      // gh-1446: the frozen row carries the signal-only format — the
+      // running count, no done/lost segments.
+      expect(olderBefore, '◐ Background jobs (5) · older');
       // Settle four of five — the printed `· older` row is a frozen
       // snapshot and must not re-derive from the live registry.
       board.settle('sh-old-0', state: TaskBlockState.done, elapsed: 1.0);
