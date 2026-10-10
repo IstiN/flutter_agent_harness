@@ -242,25 +242,90 @@ jobs:
                 echo "::error::provider custom selected but the provider-config input is empty — pass the provider JSON (at least baseUrl and model)"; exit 1
               fi
               # jq-level validation (AC 2a): every failure names the
-              # offending input and dies BEFORE any shard starts.
+              # offending input and dies BEFORE any shard starts. From
+              # here down the checks mirror the Dart env preconfig's
+              # consumer contract (lib/src/cli/env_provider_preconfig.dart)
+              # so a bad dispatch burns one setup minute, never
+              # shard-hours failing loud inside every trial.
               if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'type == "object"' >/dev/null 2>&1; then
                 echo "::error::provider-config must be a JSON object — the raw input is not echoed (it could carry key material)"; exit 1
+              fi
+              # `apiKeyEnvVar` is injected by this step (fixed
+              # FA_KEY_BENCH_CUSTOM), never accepted from the input — a
+              # user-supplied value would be silently overridden (checked
+              # before the key-like scan below, which would otherwise
+              # flag the field first with a less precise message).
+              if printf '%s' "$PROVIDER_CONFIG" | jq -e 'has("apiKeyEnvVar")' >/dev/null 2>&1; then
+                echo "::error::provider-config must not declare apiKeyEnvVar — the resolve step injects it as the fixed FA_KEY_BENCH_CUSTOM; the key comes only from the FA_BENCH_CUSTOM_KEY secret"; exit 1
               fi
               # Key-like fields hard-fail: a pasted key in a dispatch
               # input would leak through run metadata. Whole-word match
               # on the key's split words (camelCase/snake_case divided) —
               # so the legitimate `maxTokens` capability key passes while
-              # `token`/`accessToken`/`api_key` are caught.
+              # `token`/`accessToken`/`api_key` are caught. The scan
+              # descends into nested objects: a key field name pasted
+              # inside a header map rides through a top-level-only scan
+              # exactly like a top-level one.
               leaked=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '
                 def words: gsub("(?<l>[a-z0-9])(?<u>[A-Z])"; "\(.l)_\(.u)")
                   | gsub("[ _-]+"; " ") | ascii_downcase | split(" ");
-                [keys[]
+                [.. | objects | keys[]
                   | select(. | words
                       | map(test("^(api.?key|apikey|key|token|secret)$"))
                       | any)]
-                  | join(", ")')
+                  | unique | join(", ")')
               if [ -n "$leaked" ]; then
                 echo "::error::provider-config must not carry key material — dispatch inputs are visible in run metadata; offending field(s): $leaked. The key comes only from the FA_BENCH_CUSTOM_KEY secret"; exit 1
+              fi
+              # Closed key whitelist, mirroring the Dart _parseConfig
+              # consumer (baseUrl, model, apiKeyEnvVar, contextWindow,
+              # maxTokens, input, thinkingLevel): an unknown or typo'd
+              # key would otherwise fail loud at every trial's container
+              # boot after shards start. `type` is allowed here (it rides
+              # the FA_PROVIDER_TYPE output) but stripped from the
+              # emitted config below.
+              unsupported=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '
+                [. | keys[]
+                  | select(. as $k
+                      | ["baseUrl","model","contextWindow","maxTokens","input","thinkingLevel","type"]
+                      | index($k) | not)]
+                  | join(", ")')
+              if [ -n "$unsupported" ]; then
+                echo "::error::provider-config has unsupported key(s): $unsupported — supported keys: baseUrl, model, contextWindow, maxTokens, input, thinkingLevel (type selects FA_PROVIDER_TYPE and is not echoed into FA_PROVIDER_CONFIG)"; exit 1
+              fi
+              # `type` feeds the container's catalog lookup via
+              # FA_PROVIDER_TYPE: when declared it must be a non-empty
+              # string (jq's `//` treats "" as present, so an explicit
+              # check is required); undeclared/null defaults to the
+              # openai-compatible catalog entry.
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'if has("type") and .type != null then (.type | type == "string" and test("\\S")) else true end' >/dev/null 2>&1; then
+                echo "::error::provider-config \"type\" must be a non-empty string naming a catalog provider (e.g. \"openai\") when declared"; exit 1
+              fi
+              # The capability pair mirrors _parseCapabilityInt: JSON
+              # integers at or above the Dart resolver floors
+              # (minOverrideContextWindow 16384 / minOverrideMaxTokens
+              # 1024 — the same boundaries as the yaml overrides layer);
+              # blank string / null are ABSENT, like every other optional
+              # input; anything else throws at container boot today.
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e '
+                def capok(min): . as $v
+                  | $v == null or (($v | type) == "string" and ($v | test("^\\s*$")))
+                  or (($v | type) == "number" and ($v | floor) == $v and $v >= min);
+                (.contextWindow | capok(16384)) and (.maxTokens | capok(1024))
+              ' >/dev/null 2>&1; then
+                echo "::error::provider-config contextWindow/maxTokens must be integers at or above the Dart resolver floors (contextWindow >= 16384, maxTokens >= 1024) — a below-floor or non-integer declaration would fail loud at every trial's container boot"; exit 1
+              fi
+              # `input` mirrors _parseInputList: a non-empty list whose
+              # entries are exactly "text"/"image".
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'if has("input") then (.input | type == "array" and length > 0 and all(.[]; . == "text" or . == "image")) else true end' >/dev/null 2>&1; then
+                echo "::error::provider-config \"input\" must be a non-empty list of \"text\"/\"image\" entries (the Dart preconfig's contract)"; exit 1
+              fi
+              # `thinkingLevel` mirrors _parseThinkingLevel: a blank
+              # string is absent; otherwise one of the
+              # configThinkingLevels ladder (xhigh/max fold to high
+              # Dart-side).
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'if has("thinkingLevel") then (.thinkingLevel | if type == "string" then (test("^\\s*$") or (. as $l | ["minimal","low","medium","high","xhigh","max"] | index($l) != null)) else false end) else true end' >/dev/null 2>&1; then
+                echo "::error::provider-config \"thinkingLevel\" must be one of minimal, low, medium, high, xhigh, max (the Dart preconfig's ladder)"; exit 1
               fi
               # Required: a non-empty https:// baseUrl and a model — the
               # plain-http ban keeps the bench key off a cleartext wire.
@@ -272,12 +337,16 @@ jobs:
               if ! printf '%s' "$PROVIDER_CONFIG" | jq -e '.baseUrl | startswith("https://")' >/dev/null 2>&1; then
                 echo "::error::provider-config baseUrl must start with https:// (a plaintext endpoint would expose the bench key) — got: $(printf '%s' "$PROVIDER_CONFIG" | jq -r '.baseUrl')"; exit 1
               fi
-              # Verbatim passthrough (every declared field rides the
-              # config) plus the fixed key-env injection; `type` defaults
-              # to the openai-compatible catalog entry.
+              # Passthrough: every declared field rides the config
+              # verbatim EXCEPT "type" — it already rides the dedicated
+              # FA_PROVIDER_TYPE output/env, and the Dart preconfig's
+              # FA_PROVIDER_CONFIG whitelist has no "type" key (it would
+              # throw at every trial's container boot). Plus the fixed
+              # key-env injection; `type` defaults to the
+              # openai-compatible catalog entry.
               provider_type=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '.type // "openai"')
               model=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '.model')
-              provider_config=$(printf '%s' "$PROVIDER_CONFIG" | jq -c --arg k "$key_env" '. + {apiKeyEnvVar: $k}')
+              provider_config=$(printf '%s' "$PROVIDER_CONFIG" | jq -c --arg k "$key_env" 'del(.type) + {apiKeyEnvVar: $k}')
               run_label="custom ($model)"
               ;;
             *)

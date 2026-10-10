@@ -444,16 +444,194 @@ class ProviderResolveStepTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         outputs = _resolve_outputs(proc)
         config = json.loads(outputs["provider_config"])
-        # Every declared field rides FA_PROVIDER_CONFIG verbatim…
+        # Every declared field rides FA_PROVIDER_CONFIG verbatim — EXCEPT
+        # "type": the Dart env preconfig's FA_PROVIDER_CONFIG whitelist
+        # has no "type" key (it rides the dedicated FA_PROVIDER_TYPE
+        # output/env), so the passthrough strips it. Cross-layer contract
+        # pinned here, in test_custom_config_omits_type_key and by the
+        # Dart test "the workflow custom resolve output boots" in
+        # test/cli/env_provider_preconfig_test.dart.
         declared = json.loads(self.CUSTOM_CONFIG)
         for key, value in declared.items():
-            self.assertEqual(config[key], value)
+            if key == "type":
+                self.assertNotIn(key, config)
+            else:
+                self.assertEqual(config[key], value)
         # …plus the fixed key env injection — the only key path.
         self.assertEqual(config["apiKeyEnvVar"], "FA_KEY_BENCH_CUSTOM")
         self.assertEqual(outputs["provider_type"], "openai")
         self.assertEqual(outputs["provider_key_env"], "FA_KEY_BENCH_CUSTOM")
         self.assertEqual(outputs["bench_model"], "m-1")
         self.assertEqual(outputs["run_label"], "custom (m-1)")
+
+    # Mirror of _supportedConfigKeys in lib/src/cli/env_provider_preconfig.dart
+    # — the workflow's emitted FA_PROVIDER_CONFIG must stay inside the
+    # Dart consumer's closed whitelist (the "type" clash the gh-1471
+    # re-review flagged slipped through exactly this gap).
+    DART_PRECONFIG_WHITELIST = frozenset(
+        {
+            "baseUrl",
+            "model",
+            "apiKeyEnvVar",
+            "contextWindow",
+            "maxTokens",
+            "input",
+            "thinkingLevel",
+        }
+    )
+
+    def test_custom_emitted_config_keys_stay_within_dart_whitelist(self):
+        for provider_config in (
+            self.CUSTOM_CONFIG,
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"input":["text"],"thinkingLevel":"high"}',
+        ):
+            with self.subTest(provider_config=provider_config):
+                proc = _run_resolve(provider="custom", provider_config=provider_config)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                outputs = _resolve_outputs(proc)
+                config = json.loads(outputs["provider_config"])
+                self.assertLessEqual(
+                    set(config), self.DART_PRECONFIG_WHITELIST, config
+                )
+
+    def test_custom_rejects_unknown_config_keys(self):
+        # The Dart _parseConfig enforces a closed whitelist at container
+        # boot — a typo'd or provider-doc-suggested extra key must fail in
+        # minute one, not loud inside every trial after shards start.
+        for config in (
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"baseurl":"https://typo.example.com"}',
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"organization":"acme"}',
+        ):
+            with self.subTest(config=config):
+                proc = _run_resolve(provider="custom", provider_config=config)
+                self.assertNotEqual(proc.returncode, 0, config)
+                message = proc.stdout + proc.stderr
+                self.assertIn("provider-config", message)
+                self.assertIn("supported keys", message)
+                self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_rejects_api_key_env_var_input(self):
+        # apiKeyEnvVar is injected by the resolve step (fixed
+        # FA_KEY_BENCH_CUSTOM) — a user-supplied value would be silently
+        # overridden, which is exactly the silent-misconfiguration class
+        # the Dart parser's strictness exists to prevent.
+        proc = _run_resolve(
+            provider="custom",
+            provider_config='{"baseUrl":"https://api.example.com/v1",'
+            '"model":"m-1","apiKeyEnvVar":"EVIL_VAR"}',
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        message = proc.stdout + proc.stderr
+        self.assertIn("apiKeyEnvVar", message)
+        self.assertIn("FA_KEY_BENCH_CUSTOM", message)
+        self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_rejects_type_outside_string_shape(self):
+        # provider_type feeds the container's catalog lookup: a non-string
+        # or blank type would fail there instead of in minute one (jq's
+        # `//` treats "" as present, so an explicit check is required).
+        for type_value in ("123", '""', '"   "'):
+            with self.subTest(type_value=type_value):
+                config = (
+                    '{"type":%s,"baseUrl":"https://api.example.com/v1",'
+                    '"model":"m-1"}' % type_value
+                )
+                proc = _run_resolve(provider="custom", provider_config=config)
+                self.assertNotEqual(proc.returncode, 0, config)
+                message = proc.stdout + proc.stderr
+                self.assertIn("type", message)
+                self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_rejects_capability_values_outside_dart_contract(self):
+        # Mirror of _parseCapabilityInt (lib/src/cli/env_provider_preconfig.dart
+        # + capability_resolver.dart floors): JSON integers at or above
+        # minOverrideContextWindow (16384) / minOverrideMaxTokens (1024);
+        # blank string / null are absent; anything else throws at boot.
+        bad = (
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"contextWindow":8192}',  # below the 16384 floor
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"maxTokens":512}',  # below the 1024 floor
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"contextWindow":"128000"}',  # non-blank string: must be int
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"maxTokens":8192.5}',  # non-integer number
+        )
+        for config in bad:
+            with self.subTest(config=config):
+                proc = _run_resolve(provider="custom", provider_config=config)
+                self.assertNotEqual(proc.returncode, 0, config)
+                message = proc.stdout + proc.stderr
+                field = "contextWindow" if "contextWindow" in config else "maxTokens"
+                self.assertIn(field, message)
+                self.assertIn("floor", message)
+                self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_capability_blank_or_null_is_absent(self):
+        # Dart-side, a blank string / null capability is ABSENT, not an
+        # error — the preflight must not reject what the consumer accepts.
+        for capability in ('"contextWindow":""', '"contextWindow":null'):
+            with self.subTest(capability=capability):
+                config = (
+                    '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+                    "%s}" % capability
+                )
+                proc = _run_resolve(provider="custom", provider_config=config)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                outputs = _resolve_outputs(proc)
+                self.assertNotIn("contextWindow", json.loads(outputs["provider_config"]))
+
+    def test_custom_rejects_bad_input_or_thinking_level(self):
+        # Mirrors _parseInputList / _parseThinkingLevel: input is a
+        # non-empty list of "text"/"image"; thinkingLevel is one of the
+        # configThinkingLevels ladder (minimal/low/medium/high/xhigh/max).
+        bad = (
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1","input":"text"}',
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1","input":[]}',
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"input":["text","video"]}',
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"thinkingLevel":"ultra"}',
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"thinkingLevel":123}',
+        )
+        for config in bad:
+            with self.subTest(config=config):
+                proc = _run_resolve(provider="custom", provider_config=config)
+                self.assertNotEqual(proc.returncode, 0, config)
+                field = "input" if "input" in config else "thinkingLevel"
+                self.assertIn(field, proc.stdout + proc.stderr)
+                self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_passes_input_and_thinking_level_verbatim(self):
+        config = (
+            '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+            '"input":["text","image"],"thinkingLevel":"high"}'
+        )
+        proc = _run_resolve(provider="custom", provider_config=config)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        outputs = _resolve_outputs(proc)
+        emitted = json.loads(outputs["provider_config"])
+        self.assertEqual(emitted["input"], ["text", "image"])
+        self.assertEqual(emitted["thinkingLevel"], "high")
+
+    def test_custom_rejects_nested_key_like_fields(self):
+        # The key-like scan descends into nested objects — a key field
+        # name pasted inside a header map rides through a top-level-only
+        # scan exactly like a top-level one.
+        proc = _run_resolve(
+            provider="custom",
+            provider_config='{"baseUrl":"https://api.example.com/v1",'
+            '"model":"m-1","headers":{"apiKey":"sk-leaked"}}',
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        message = proc.stdout + proc.stderr
+        self.assertIn("apiKey", message)
+        self.assertNotIn("sk-leaked", message)
+        self.assertEqual(_resolve_outputs(proc), {})
 
     def test_custom_type_defaults_to_openai_compatible(self):
         proc = _run_resolve(
