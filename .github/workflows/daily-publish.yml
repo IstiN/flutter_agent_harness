@@ -146,20 +146,24 @@ jobs:
   # wait (180s) + poll slack ≈ 15m.
   #
   #   leg        child worst-case (serialized chain)          budget    leg timeout
-  #   testflight version 10 → build-ios 90 → submit-ios 120   220m  →  240m (14400s) ; 360m
+  #   testflight version 20 → build-ios 90 → submit-ios 120   230m  →  250m (15000s) ; 360m
   #             (∥ release-mobile 15, covered by the max)
-  #   play       version 10 → build-android 45 →              85m   →  100m (6000s)  ; 240m
+  #   play       version 20 → build-android 45 →              95m   →  110m (6600s) ; 240m
   #             submit-android 30 (∥ release-mobile 15)
-  #   cli        version 10 → build-macos 150×2 (arm64 +      325m  →  340m (20400s) ; 360m
+  #   cli        version 20 → build-macos 150×2 (arm64 +      335m  →  350m (21000s) ; 360m
   #             x86_64 SERIALIZE on the single self-hosted
   #             runner) → release-macos 15
   #             (∥ cli matrix 45, extension 30 — shorter paths)
+  #   (gh-1477: the version/plan jobs' ceiling moved 10 → 20m — a
+  #   full-history fetch outgrew the 10m bomb; the fetch is now blobless
+  #   and 20m is the seatbelt. Worst-cases and budgets grew by exactly
+  #   the +10m.)
   #   website    pages build 45 → deploy 15                   60m   →   75m (4500s)  ; 180m
   #   addin      office-addin-suite 45 (single job)           45m   →   60m (3600s)  ; 150m
   #
-  # Second-wedge headroom (2×budget + ~15m vs leg timeout): play 213 ≤
-  # 240 ✓, website 163 ≤ 180 ✓, addin 133 ≤ 150 ✓. testflight (493 > 360)
-  # and cli (693 > 360) CANNOT fit two full budgets under GitHub's 360m
+  # Second-wedge headroom (2×budget + ~15m vs leg timeout): play 235 ≤
+  # 240 ✓, website 163 ≤ 180 ✓, addin 133 ≤ 150 ✓. testflight (515 > 360)
+  # and cli (715 > 360) CANNOT fit two full budgets under GitHub's 360m
   # job cap — their first wedge still self-heals (cancel at budget +
   # re-dispatch ≈ budget+13m), and a second wedge is bounded by the leg
   # timeout instead of the watcher's fail-fast; both children carry
@@ -170,9 +174,9 @@ jobs:
     name: 'Leg: TestFlight'
     needs: plan
     runs-on: ubuntu-latest
-    # #351 arithmetic: child wc 220m (version 10 + build-ios 90 +
-    # submit-ios 120) → budget 240m; 360m leg > budget. Two full budgets
-    # (493m) exceed GitHub's 360m cap — a second wedge is bounded by this
+    # #351 arithmetic: child wc 230m (version 20 + build-ios 90 +
+    # submit-ios 120) → budget 250m; 360m leg > budget. Two full budgets
+    # (515m) exceed GitHub's 360m cap — a second wedge is bounded by this
     # leg timeout, not the watcher fail-fast.
     timeout-minutes: 360
     permissions:
@@ -203,15 +207,17 @@ jobs:
           # the only distinguisher in the run-list API), newest match in a
           # tight window; a wedged run (self-hosted slot lost, #344) is
           # cancelled and re-dispatched once before failing.
-          # Budget 240m = child worst-case 220m (version 10 + build-ios 90
-          # + submit-ios 120, #351) + 20m margin — a healthy slow TestFlight
+          # Budget 250m = child worst-case 230m (version 20 + build-ios 90
+          # + submit-ios 120, #351; gh-1477 moved the version ceiling
+          # 10 → 20m — blobless fetch + seatbelt) + 20m margin — a healthy
+          # slow TestFlight
           # submit (Apple processing can legitimately take the full 90m
           # ASC wait + 15m verify) is never cancelled by the watcher.
           rc=0
           bash scripts/dispatch_and_watch.sh build-mobile.yml \
             --repo "${GITHUB_REPOSITORY}" --ref main \
             --title 'build-mobile (none/all)' \
-            --budget-seconds 14400 \
+            --budget-seconds 15000 \
             -f android_content=none -f ios_content=all \
             --out-run-id run_id.txt || rc=$?
           if [ -s run_id.txt ]; then
@@ -246,8 +252,8 @@ jobs:
     needs: plan
     runs-on: ubuntu-latest
     # #351 arithmetic (unchanged by #359 — only the leg's START moved):
-    # child wc 85m (version 10 + build-android 45 + submit-android 30) →
-    # budget 100m; 240m leg ≥ 2×budget + 15m, so the second-wedge
+    # child wc 95m (version 20 + build-android 45 + submit-android 30) →
+    # budget 110m; 240m leg ≥ 2×budget + 15m, so the second-wedge
     # fail-fast fits inside the leg.
     timeout-minutes: 240
     permissions:
@@ -313,9 +319,10 @@ jobs:
           # test), never by "first run in the window", with newest-match +
           # the 30s window; a wedged run is cancelled and re-dispatched
           # once (with the same distinct inputs → same distinct title).
-          # Budget 110m = child worst-case 85m (#351: version 10 +
+          # Budget 110m = child worst-case 95m (#351: version 20 +
           # build-android 45 + submit-android 30; the #947 listing
-          # deploy rides the submit-android job's slack) + 25m margin.
+          # deploy rides the submit-android job's slack; gh-1477 moved
+          # the version ceiling 10 → 20m) + 15m margin.
           rc=0
           bash scripts/dispatch_and_watch.sh build-mobile.yml \
             --repo "${GITHUB_REPOSITORY}" --ref main \
@@ -332,10 +339,10 @@ jobs:
     name: 'Leg: CLI + macOS desktop'
     needs: plan
     runs-on: ubuntu-latest
-    # #351 arithmetic: child wc 325m (version 10 + build-macos 150×2 — the
+    # #351 arithmetic: child wc 335m (version 20 + build-macos 150×2 — the
     # arm64 AND x86_64 matrix legs SERIALIZE on the single self-hosted
-    # macOS runner — + release-macos 15) → budget 340m; 360m leg > budget.
-    # Two full budgets (693m) far exceed GitHub's 360m cap — a second
+    # macOS runner — + release-macos 15) → budget 350m; 360m leg > budget.
+    # Two full budgets (715m) far exceed GitHub's 360m cap — a second
     # wedge is bounded by this leg timeout, not the watcher fail-fast
     # (both build-macos jobs carry 150m server-side timeouts, #344).
     timeout-minutes: 360
@@ -368,15 +375,16 @@ jobs:
           # Shared watcher (issues #343/#344): correlates OUR run by the
           # child's run-name ("build-macos (create_release=true)") so a
           # concurrent human dispatch is never adopted; a wedged self-hosted
-          # run is cancelled and re-dispatched once. Budget 340m = child
-          # worst-case 325m (#351: version 10 + build-macos 150 ×2 arches
-          # serialized on the one self-hosted runner + release-macos 15)
+          # run is cancelled and re-dispatched once. Budget 350m = child
+          # worst-case 335m (#351: version 20 + build-macos 150 ×2 arches
+          # serialized on the one self-hosted runner + release-macos 15;
+          # gh-1477 moved the version ceiling 10 → 20m)
           # + 15m margin.
           rc=0
           bash scripts/dispatch_and_watch.sh build-macos.yml \
             --repo "${GITHUB_REPOSITORY}" --ref main \
             --title 'build-macos (create_release=true)' \
-            --budget-seconds 20400 \
+            --budget-seconds 21000 \
             -f create_release=true \
             --out-run-id run_id.txt || rc=$?
           if [ -s run_id.txt ]; then
