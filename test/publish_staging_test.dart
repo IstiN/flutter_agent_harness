@@ -462,16 +462,22 @@ void main() {
       }
     });
 
-    test('stage script forwards an optional version to the stamper, after the size guard', () {
-      final script = File(_stagingScript).readAsStringSync();
-      final guard = script.indexOf('size=\$(du -sm');
-      final stamp = script.indexOf('/stamp_staged_release.sh"');
-      expect(stamp, greaterThan(guard),
+    test(
+      'stage script forwards an optional version to the stamper, after the size guard',
+      () {
+        final script = File(_stagingScript).readAsStringSync();
+        final guard = script.indexOf('size=\$(du -sm');
+        final stamp = script.indexOf('/stamp_staged_release.sh"');
+        expect(
+          stamp,
+          greaterThan(guard),
           reason:
               'the stamp must run on the COMPLETE staged tree (after the '
-              'rsync + size guard), never before');
-      expect(script, contains('if [ "\${2:-}" ]'));
-    });
+              'rsync + size guard), never before',
+        );
+        expect(script, contains('if [ "\${2:-}" ]'));
+      },
+    );
 
     test('stamper enforces the tag↔staged-version invariant before upload', () {
       final stamp = File('scripts/stamp_staged_release.sh').readAsStringSync();
@@ -489,37 +495,75 @@ void main() {
       expect(stamp, contains('## Unreleased'));
     });
 
-    test('staged changelog is capped: guard runs, oldest sections trim, re-check', () {
-      // Mirrors the changelog_cap_guard wiring — asserted here as part of
-      // the stamp contract (the stage is a publish surface).
-      final stamp = File('scripts/stamp_staged_release.sh').readAsStringSync();
-      expect(stamp, contains('check_changelog_size.sh'));
-      expect(stamp, contains('keeping only the fresh section'));
-    });
+    test(
+      'staged changelog is capped: guard runs, oldest sections trim, re-check',
+      () {
+        // Mirrors the changelog_cap_guard wiring — asserted here as part of
+        // the stamp contract (the stage is a publish surface).
+        final stamp = File(
+          'scripts/stamp_staged_release.sh',
+        ).readAsStringSync();
+        expect(stamp, contains('check_changelog_size.sh'));
+        expect(stamp, contains('keeping only the fresh section'));
+      },
+    );
 
-    test('ci.yml publish stage passes the tag version and verifies the staged stamp', () {
-      final ci = File('.github/workflows/ci.yml').readAsStringSync();
-      final publish = ci.indexOf('  publish:');
-      expect(publish, greaterThan(0));
-      expect(
-        ci.contains('stage_publish_package.sh /tmp/publish-stage "\${GITHUB_REF_NAME#v}"'),
-        isTrue,
-        reason:
-            'the publish job must stamp the stage from the TAG '
-            '(v1.0.550 → 1.0.550), not ship the placeholder',
-      );
-      final stage = ci.indexOf('stage_publish_package.sh /tmp/publish-stage', publish);
-      final verify = ci.indexOf('Verify staged version matches tag', stage);
-      expect(verify, greaterThan(stage),
+    test(
+      'ci.yml publish stage passes the tag version and verifies the staged stamp',
+      () {
+        final ci = File('.github/workflows/ci.yml').readAsStringSync();
+        final publish = ci.indexOf('  publish:');
+        expect(publish, greaterThan(0));
+        expect(
+          ci.contains(
+            'stage_publish_package.sh /tmp/publish-stage "\${GITHUB_REF_NAME#v}"',
+          ),
+          isTrue,
+          reason:
+              'the publish job must stamp the stage from the TAG '
+              '(v1.0.550 → 1.0.550), not ship the placeholder',
+        );
+        final stage = ci.indexOf(
+          'stage_publish_package.sh /tmp/publish-stage',
+          publish,
+        );
+        final verify = ci.indexOf('Verify staged version matches tag', stage);
+        expect(
+          verify,
+          greaterThan(stage),
           reason:
               'the staged-version↔tag guard must run after staging, before '
-              'the upload (gh-1522)');
-    });
+              'the upload (gh-1522)',
+        );
+      },
+    );
+
+    test(
+      'install_local.sh stamps version.txt from git describe, not the pubspec',
+      () {
+        // gh-1522 AC4: `fa --version` shows the stamped value from
+        // install_local.sh builds — the committed pubspec is the 0.0.0-dev
+        // placeholder, so the build entry point must derive the version from
+        // the tags (`git describe`), never from a pubspec grep.
+        final install = File('install_local.sh').readAsStringSync();
+        expect(install, contains('git describe --tags'));
+        expect(
+          RegExp(r"grep .^.version:").hasMatch(install),
+          isFalse,
+          reason:
+              'install_local.sh must not read the version from pubspec.yaml — '
+              'that is the 0.0.0-dev placeholder now (gh-1522)',
+        );
+        expect(install, contains('version.txt'));
+      },
+    );
 
     test('nightly dry-run rehearses the tag-stamped stage', () {
       final nightly = File('.github/workflows/nightly.yml').readAsStringSync();
       expect(
-        nightly.contains('stage_publish_package.sh /tmp/publish-stage "\$next"'),
+        nightly.contains(
+          'stage_publish_package.sh /tmp/publish-stage "\$next"',
+        ),
         isTrue,
         reason:
             'the nightly publish dry-run must validate the STAMPED staged '

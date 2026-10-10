@@ -94,7 +94,8 @@ Iterable<YamlMap> stepsOf(String workflowPath) sync* {
 
 /// Every run-step in [workflowPath] as (run, workingDirectory).
 Iterable<({String run, String? workingDirectory})> runStepsOf(
-    String workflowPath) sync* {
+  String workflowPath,
+) sync* {
   for (final step in stepsOf(workflowPath)) {
     if (step['run'] is! String) continue;
     yield (
@@ -108,20 +109,27 @@ Iterable<({String run, String? workingDirectory})> runStepsOf(
 /// bare `flutter pub get` instead of the shared action. A step counts
 /// when the command mentions flutter_app OR runs inside flutter_app.
 List<({String run, String? workingDirectory})> bareFlutterAppPubGetRunSteps(
-    Iterable<({String run, String? workingDirectory})> steps) {
+  Iterable<({String run, String? workingDirectory})> steps,
+) {
   return steps
       // Normalize the `./` spelling so `working-directory: ./flutter_app`
       // counts the same as `working-directory: flutter_app` (review
       // thread 3 — the heuristic must not depend on spelling).
-      .map((step) => (
-            run: step.run,
-            workingDirectory:
-                step.workingDirectory?.replaceFirst(RegExp(r'^\./'), ''),
-          ))
-      .where((step) =>
-          step.run.contains('flutter pub get') &&
-          (step.run.contains('flutter_app') ||
-              (step.workingDirectory ?? '').startsWith('flutter_app')))
+      .map(
+        (step) => (
+          run: step.run,
+          workingDirectory: step.workingDirectory?.replaceFirst(
+            RegExp(r'^\./'),
+            '',
+          ),
+        ),
+      )
+      .where(
+        (step) =>
+            step.run.contains('flutter pub get') &&
+            (step.run.contains('flutter_app') ||
+                (step.workingDirectory ?? '').startsWith('flutter_app')),
+      )
       .toList();
 }
 
@@ -137,16 +145,24 @@ void main() {
     test('AC1: the action carries the #726 bounded retry', () {
       final body = read(actionPath);
       expect(body, contains('for attempt in 1 2 3'));
-      expect(body, contains('sleep 15'),
-          reason: 'the retry must back off — a tight loop hammers a '
-              'runner whose network is already flapping (#726)');
+      expect(
+        body,
+        contains('sleep 15'),
+        reason:
+            'the retry must back off — a tight loop hammers a '
+            'runner whose network is already flapping (#726)',
+      );
       // pub runs its git-dep clones non-interactively; a credential
       // prompt would hang the leg until the job timeout.
       expect(body, contains('GIT_TERMINAL_PROMPT'));
-      expect(body, contains('--enforce-lockfile'),
-          reason: 'the shared action is the ONE sanctioned flutter_app '
-              'resolution shape — it must keep enforcing the committed '
-              'lockfile (gh-1265 AC2)');
+      expect(
+        body,
+        contains('--enforce-lockfile'),
+        reason:
+            'the shared action is the ONE sanctioned flutter_app '
+            'resolution shape — it must keep enforcing the committed '
+            'lockfile (gh-1265 AC2)',
+      );
     });
 
     test('AC1: the action fails fast on a deterministic lockfile skew', () {
@@ -158,7 +174,8 @@ void main() {
       expect(
         body,
         contains(RegExp(r'Unable to satisfy .+pubspec')),
-        reason: 'the retry loop must match the deterministic '
+        reason:
+            'the retry loop must match the deterministic '
             'lockfile-skew signature ("Unable to satisfy ... using ... '
             'pubspec.lock") in the failed output and fail fast instead '
             'of retrying (gh-1265 AC2, moved here from build-mobile.yml '
@@ -171,19 +188,23 @@ void main() {
       final inputs = action['inputs'] as YamlMap?;
       expect(inputs, isNotNull);
       final workingDirectory = inputs!['working-directory'] as YamlMap;
-      expect(workingDirectory['default'], 'flutter_app',
-          reason: 'every call site in the repo resolves flutter_app — '
-              'the bare `uses:` form must not need an input');
+      expect(
+        workingDirectory['default'],
+        'flutter_app',
+        reason:
+            'every call site in the repo resolves flutter_app — '
+            'the bare `uses:` form must not need an input',
+      );
     });
 
     for (final workflow in workflows) {
-      test('AC2: $workflow has NO run-step resolving flutter_app itself',
-          () {
+      test('AC2: $workflow has NO run-step resolving flutter_app itself', () {
         final offending = bareFlutterAppPubGetRunSteps(runStepsOf(workflow));
         expect(
           offending,
           isEmpty,
-          reason: '$workflow resolves flutter_app in a bare run-step — '
+          reason:
+              '$workflow resolves flutter_app in a bare run-step — '
               'route it through `uses: $actionUses` so the #726 bounded '
               'retry and the deterministic-skew fail-fast apply (gh-1310; '
               'the bare shapes lost the v1.0.516 build-macos leg to one '
@@ -193,13 +214,14 @@ void main() {
 
       test('AC3: $workflow still resolves flutter_app '
           '(${expectedUsesPerWorkflow[workflow]} resolution steps)', () {
-        final usesCount = stepsOf(workflow)
-            .where((step) => (step['uses'] as String?) == actionUses)
-            .length;
+        final usesCount = stepsOf(
+          workflow,
+        ).where((step) => (step['uses'] as String?) == actionUses).length;
         expect(
           usesCount,
           expectedUsesPerWorkflow[workflow],
-          reason: '$workflow references `$actionUses` '
+          reason:
+              '$workflow references `$actionUses` '
               '${expectedUsesPerWorkflow[workflow]} time(s) — a count '
               'below that means a resolution step was DELETED by a '
               'refactor instead of migrated (the build would float or '
@@ -229,10 +251,10 @@ void main() {
         (run: 'flutter pub get', workingDirectory: 'packages/fa_ui'),
         (run: 'flutter build web', workingDirectory: './flutter_app'),
       ]);
-      expect(
-        offending.map((step) => step.workingDirectory),
-        ['flutter_app', 'flutter_app'],
-      );
+      expect(offending.map((step) => step.workingDirectory), [
+        'flutter_app',
+        'flutter_app',
+      ]);
     });
 
     test('AC4: office-addin.yml resolves flutter_app BEFORE its first '
@@ -244,32 +266,43 @@ void main() {
       // without the bounded retry. The shared action must run first so
       // the job's first resolution is the enforced, retried one.
       final steps = stepsOf('.github/workflows/office-addin.yml').toList();
-      final actionIndex = steps
-          .indexWhere((step) => (step['uses'] as String?) == actionUses);
-      expect(actionIndex, isNonNegative,
-          reason: 'office-addin.yml must resolve flutter_app through '
-              '`$actionUses`');
+      final actionIndex = steps.indexWhere(
+        (step) => (step['uses'] as String?) == actionUses,
+      );
+      expect(
+        actionIndex,
+        isNonNegative,
+        reason:
+            'office-addin.yml must resolve flutter_app through '
+            '`$actionUses`',
+      );
       final consumers = <int>[];
       for (var i = 0; i < steps.length; i++) {
         final run = steps[i]['run'];
         if (run is! String) continue;
         final workingDirectory =
             (steps[i]['working-directory'] as String?) ?? '';
-        final inFlutterApp = workingDirectory.startsWith('flutter_app') ||
+        final inFlutterApp =
+            workingDirectory.startsWith('flutter_app') ||
             run.contains('cd flutter_app');
         final runsFlutter = RegExp(r'\bflutter\b').hasMatch(run);
         if (inFlutterApp && runsFlutter) consumers.add(i);
       }
-      expect(consumers, isNotEmpty,
-          reason: 'precondition: the job runs flutter against flutter_app '
-              '(Chrome boot tests, office wiring tests) — otherwise this '
-              'guard pins nothing');
+      expect(
+        consumers,
+        isNotEmpty,
+        reason:
+            'precondition: the job runs flutter against flutter_app '
+            '(Chrome boot tests, office wiring tests) — otherwise this '
+            'guard pins nothing',
+      );
       for (final consumer in consumers) {
         final name = (steps[consumer]['name'] as String?) ?? 'step $consumer';
         expect(
           actionIndex,
           lessThan(consumer),
-          reason: 'office-addin.yml "$name" runs flutter against '
+          reason:
+              'office-addin.yml "$name" runs flutter against '
               'flutter_app BEFORE the shared pub-get action — flutter '
               'test/build triggers an implicit, unenforced, unretried pub '
               'get there (gh-1310 rework review thread 2).',
@@ -277,16 +310,19 @@ void main() {
       }
     });
 
-    test('AC3: every workflow that needs flutter_app references the action',
-        () {
-      for (final workflow in workflows) {
-        expect(
-          read(workflow),
-          contains('uses: $actionUses'),
-          reason: '$workflow resolved flutter_app before gh-1310 — it '
-              'must keep doing so through the shared action',
-        );
-      }
-    });
+    test(
+      'AC3: every workflow that needs flutter_app references the action',
+      () {
+        for (final workflow in workflows) {
+          expect(
+            read(workflow),
+            contains('uses: $actionUses'),
+            reason:
+                '$workflow resolved flutter_app before gh-1310 — it '
+                'must keep doing so through the shared action',
+          );
+        }
+      },
+    );
   });
 }

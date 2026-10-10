@@ -23,21 +23,19 @@ String read(String path) => File(path).readAsStringSync();
 
 final _tmpRoot = Directory.systemTemp.createTempSync('changelog-cap-');
 
-int _run(List<String> args, String cwd) => Process.runSync(
-      'bash',
-      <String>[File('scripts/check_changelog_size.sh').absolute.path, ...args],
-      workingDirectory: cwd,
-    ).exitCode;
+int _run(List<String> args, String cwd) => Process.runSync('bash', <String>[
+  File('scripts/check_changelog_size.sh').absolute.path,
+  ...args,
+], workingDirectory: cwd).exitCode;
 
 ProcessResult _runOut(List<String> args, String cwd) => Process.runSync(
-      'bash',
-      <String>[File('scripts/check_changelog_size.sh').absolute.path, ...args],
-      workingDirectory: cwd,
-    );
+  'bash',
+  <String>[File('scripts/check_changelog_size.sh').absolute.path, ...args],
+  workingDirectory: cwd,
+);
 
 String _fixture(String name) {
-  final dir = Directory('${_tmpRoot.path}/$name')
-    ..createSync(recursive: true);
+  final dir = Directory('${_tmpRoot.path}/$name')..createSync(recursive: true);
   return dir.path;
 }
 
@@ -67,13 +65,16 @@ void main() {
     expect(r.stdout, contains('CHANGELOG_ARCHIVE.md'));
   });
 
-  test('default cap is the pub.dev constant: 262145 bytes fails, 262143 passes', () {
-    final dir = _fixture('default-cap');
-    File('$dir/CHANGELOG.md').writeAsStringSync('x' * 262145);
-    expect(_run(const [], dir), 1);
-    File('$dir/CHANGELOG.md').writeAsStringSync('x' * 262143);
-    expect(_run(const [], dir), 0);
-  });
+  test(
+    'default cap is the pub.dev constant: 262145 bytes fails, 262143 passes',
+    () {
+      final dir = _fixture('default-cap');
+      File('$dir/CHANGELOG.md').writeAsStringSync('x' * 262145);
+      expect(_run(const [], dir), 1);
+      File('$dir/CHANGELOG.md').writeAsStringSync('x' * 262143);
+      expect(_run(const [], dir), 0);
+    },
+  );
 
   test('missing changelog fails loudly', () {
     final dir = _fixture('missing');
@@ -86,7 +87,8 @@ void main() {
     expect(
       f.lengthSync(),
       lessThan(262144),
-      reason: 'CHANGELOG.md regrew to the pub.dev cap on main — archive the '
+      reason:
+          'CHANGELOG.md regrew to the pub.dev cap on main — archive the '
           'tail to CHANGELOG_ARCHIVE.md again (gh-1452) before the next '
           'release server-rejects mid-upload.',
     );
@@ -97,40 +99,67 @@ void main() {
     expect(read('CHANGELOG.md'), contains('CHANGELOG_ARCHIVE.md'));
   });
 
-  test('stamp_staged_release.sh caps the staged changelog after prepending the tag section', () {
-    final stamp = read('scripts/stamp_staged_release.sh');
-    final prepend = stamp.indexOf('FA_SECTION=');
-    final guard = stamp.indexOf(
-      'bash "\$repo_root/scripts/check_changelog_size.sh" "\$changelog"',
-    );
-    expect(prepend, greaterThan(0),
-        reason: 'fixture: the python section-prepend must be locatable');
-    expect(guard, greaterThan(prepend),
-        reason: 'the guard must measure the POST-section staged changelog — '
-            'the stage just grew by the fresh tag section (gh-1522)');
-  });
+  test(
+    'stamp_staged_release.sh caps the staged changelog after prepending the tag section',
+    () {
+      final stamp = read('scripts/stamp_staged_release.sh');
+      final prepend = stamp.indexOf('FA_SECTION=');
+      final guard = stamp.indexOf(
+        'bash "\$repo_root/scripts/check_changelog_size.sh" "\$changelog"',
+      );
+      expect(
+        prepend,
+        greaterThan(0),
+        reason: 'fixture: the python section-prepend must be locatable',
+      );
+      expect(
+        guard,
+        greaterThan(prepend),
+        reason:
+            'the guard must measure the POST-section staged changelog — '
+            'the stage just grew by the fresh tag section (gh-1522)',
+      );
+    },
+  );
 
-  test('stamp_staged_release.sh keeps only the fresh section as the last resort before failing loud', () {
-    final stamp = read('scripts/stamp_staged_release.sh');
-    expect(stamp, contains('keeping only the fresh section'));
-    final lastResort = stamp.indexOf('keeping only the fresh section');
-    final recheck = stamp.indexOf('"\$changelog"', lastResort);
-    expect(recheck, greaterThan(lastResort),
-        reason: 'after the last-resort trim the staged changelog must be '
-            're-measured — a file that cannot reach under the cap fails loudly');
-  });
+  test(
+    'stamp_staged_release.sh keeps only the fresh section as the last resort before failing loud',
+    () {
+      final stamp = read('scripts/stamp_staged_release.sh');
+      expect(stamp, contains('keeping only the fresh section'));
+      final lastResort = stamp.indexOf('keeping only the fresh section');
+      final recheck = stamp.indexOf('"\$changelog"', lastResort);
+      expect(
+        recheck,
+        greaterThan(lastResort),
+        reason:
+            'after the last-resort trim the staged changelog must be '
+            're-measured — a file that cannot reach under the cap fails loudly',
+      );
+    },
+  );
 
   test('ci.yml publish gate runs the guard before staging/upload', () {
     final ci = read('.github/workflows/ci.yml');
     final publish = ci.indexOf('  publish:');
     expect(publish, greaterThan(0));
     final gate = ci.indexOf('check_changelog_size.sh', publish);
-    expect(gate, greaterThan(publish),
-        reason: 'the publish job must fast-fail before dart pub publish — '
-            'the server reject (v1.0.538) is the worst possible discovery '
-            'point');
-    final stage = ci.indexOf('stage_publish_package.sh /tmp/publish-stage', publish);
-    expect(gate, lessThan(stage),
-        reason: 'the guard belongs in the gate step, ahead of staging');
+    expect(
+      gate,
+      greaterThan(publish),
+      reason:
+          'the publish job must fast-fail before dart pub publish — '
+          'the server reject (v1.0.538) is the worst possible discovery '
+          'point',
+    );
+    final stage = ci.indexOf(
+      'stage_publish_package.sh /tmp/publish-stage',
+      publish,
+    );
+    expect(
+      gate,
+      lessThan(stage),
+      reason: 'the guard belongs in the gate step, ahead of staging',
+    );
   });
 }
