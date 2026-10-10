@@ -12,6 +12,8 @@ import 'package:diffutil_dart/diffutil.dart' as diffutil;
 import 'package:http/http.dart' as http;
 import 'package:yaml/yaml.dart' as yaml;
 
+import 'bridge_errors.dart';
+
 part 'sandbox_builtins_filetype.dart';
 part 'sandbox_builtins_patch.dart';
 
@@ -194,9 +196,15 @@ final class SandboxBuiltins {
     this.makeDirectory,
     this.dnsQuery,
     this.whoisConnector,
+    this.logFailure,
   }) : _httpClient = httpClient ?? http.Client();
 
   final http.Client _httpClient;
+
+  /// Transport-failure sink (gh-1444 AC3): receives one [bridgeFailureLine]
+  /// per failed curl/wget exchange; the shell wires it to app.log so a
+  /// swallowed request is diagnosable after the fact.
+  final void Function(String line)? logFailure;
 
   /// Injected DNS resolver; when null, [dohQuery] (cloudflare-dns.com) is
   /// used. See [SandboxDnsQuery].
@@ -234,11 +242,21 @@ final class SandboxBuiltins {
   /// payloads fail with a clean error instead of corrupting the request.
   static const int maxCurlBodyBytes = 1024 * 1024;
 
+  /// Hard cap for a response body (gh-1444 E7): the stream is aborted at
+  /// the cap and the command fails with curl's exit 63 and both byte
+  /// numbers, instead of OOM-killing the sandbox on a huge tarball.
+  static const int maxCurlResponseBytes = 256 * 1024 * 1024;
+
   static SandboxBuiltinResult _ok(
     List<int> stdout, [
     List<int> stderr = const [],
+    int exitCode = 0,
   ]) {
-    return SandboxBuiltinResult(stdout: stdout, stderr: stderr, exitCode: 0);
+    return SandboxBuiltinResult(
+      stdout: stdout,
+      stderr: stderr,
+      exitCode: exitCode,
+    );
   }
 
   static SandboxBuiltinResult _error(String message, int exitCode) {
@@ -328,49 +346,148 @@ final class SandboxBuiltins {
     final request = _curlRequest(parsed, uri, bodyBytes);
 
     final effectiveTimeout = timeout ?? const Duration(seconds: 30);
-    final http.Response response;
+    // gh-1444 AC3: every exchange gets a request id so the tool result's
+    // `[bridge]` line correlates with the app.log entry.
+    final rid = _nextCurlRid();
+    final host = uri.host.isEmpty ? parsed.url! : uri.host;
+
+    final stderrLines = <String>[];
+    final http.StreamedResponse streamedResponse;
     try {
-      final streamedResponse = await _httpClient
+      streamedResponse = await _httpClient
           .send(request)
           .timeout(effectiveTimeout);
-      response = await http.Response.fromStream(streamedResponse);
-    } on TimeoutException {
-      return _error('curl: (28) Operation timed out\n', 28);
+    } on TimeoutException catch (e) {
+      // A real curl exits 28 on timeouts; the `[bridge]` line names the
+      // host and class so the failure is diagnosable (AC3).
+      final line = bridgeFailureLine(
+        method: request.method,
+        host: host,
+        error: e,
+        rid: rid,
+      );
+      _logFailure(line);
+      return _error('curl: (28) Operation timed out\n$line\n', 28);
     } on Object catch (e) {
-      // Includes connection failures and browser CORS rejections.
-      return _error('curl: (7) $e\n', 7);
+      // Includes connection failures and browser CORS rejections. Exactly
+      // ONE attempt is made — never an automatic retry of a non-idempotent
+      // verb; retrying is the model's decision.
+      final line = bridgeFailureLine(
+        method: request.method,
+        host: host,
+        error: e,
+        rid: rid,
+      );
+      _logFailure(line);
+      return _error('curl: (7) $line\n', 7);
     }
 
+    // Drain the body manually: a connection reset MID-BODY (gh-1444 E2)
+    // must deliver the partial bytes with a `[bridge]` truncation line —
+    // never a clean empty success — and a body past the size cap (E7)
+    // aborts with a quota error naming both byte numbers.
+    final builder = BytesBuilder(copy: false);
+    var truncated = false;
+    var quotaExceeded = false;
+    try {
+      await for (final chunk in streamedResponse.stream) {
+        builder.add(chunk);
+        if (builder.length > maxCurlResponseBytes) {
+          quotaExceeded = true;
+          break;
+        }
+      }
+    } on Object catch (e) {
+      truncated = true;
+      final line = bridgeFailureLine(
+        method: request.method,
+        host: host,
+        error: e,
+        rid: rid,
+        partialBytes: builder.length,
+      );
+      _logFailure(line);
+      stderrLines.add(line);
+    }
+    if (quotaExceeded) {
+      return _error(
+        'curl: (63) response body exceeds the sandbox limit: received '
+        '${builder.length} bytes, cap is $maxCurlResponseBytes\n',
+        63,
+      );
+    }
+
+    final bytes = builder.toBytes();
     final statusLine =
-        'HTTP ${response.statusCode} '
-        '${response.reasonPhrase ?? ""}\n';
-    final stderr = parsed.silent ? const <int>[] : utf8.encode(statusLine);
+        'HTTP ${streamedResponse.statusCode} '
+        '${streamedResponse.reasonPhrase ?? ""}\n';
+    final stderr = parsed.silent
+        ? utf8.encode('${stderrLines.join('\n')}${stderrLines.isEmpty ? '' : '\n'}')
+        : utf8.encode('$statusLine${stderrLines.join('\n')}${stderrLines.isEmpty ? '' : '\n'}');
 
     // `-w` prints its template (variables + escapes expanded) to stdout
-    // after the body/-o write, like real curl.
+    // after the body/-o write, like real curl — including the truncated
+    // case, where `size_download` reports the partial byte count.
     final writeOut = parsed.writeOut == null
         ? const <int>[]
-        : utf8.encode(_renderCurlWriteOut(parsed.writeOut!, response));
+        : utf8.encode(
+            _renderCurlWriteOut(
+              parsed.writeOut!,
+              statusCode: streamedResponse.statusCode,
+              headers: streamedResponse.headers,
+              url: request.url,
+              bodyLength: bytes.length,
+            ),
+          );
 
     if (parsed.outputFile != null) {
-      await writeBinaryFile(parsed.outputFile!, response.bodyBytes);
-      return _ok(writeOut, stderr);
+      await writeBinaryFile(parsed.outputFile!, bytes);
+      return truncated
+          ? _ok(writeOut, stderr, 18)
+          : _ok(writeOut, stderr);
     }
 
-    return _ok([...response.bodyBytes, ...writeOut], stderr);
+    return truncated
+        ? _ok([...bytes, ...writeOut], stderr, 18)
+        : _ok([...bytes, ...writeOut], stderr);
   }
 
-  /// Renders a curl `-w` template against [response]: `%{variable}` for the
-  /// supported set (unknown → empty, like real curl), `%%` → `%`, and the
-  /// `\n`/`\r`/`\t` escapes.
-  static String _renderCurlWriteOut(String template, http.Response response) {
+  /// Monotonic request-id source for curl failure lines (AC3 correlation).
+  static int _curlRidCounter = 0;
+
+  static String _nextCurlRid() {
+    final n = _curlRidCounter++;
+    final t = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+    return 'c$t${n.toRadixString(36)}';
+  }
+
+  /// Routes a failure line to the injected sink (never throws — logging
+  /// must not break the command).
+  void _logFailure(String line) {
+    try {
+      logFailure?.call(line);
+    } on Object {
+      // Best-effort diagnostics.
+    }
+  }
+
+  /// Renders a curl `-w` template: `%{variable}` for the supported set
+  /// (unknown → empty, like real curl), `%%` → `%`, and the `\n`/`\r`/`\t`
+  /// escapes. [url] is the effective request URL (`%{url_effective}`).
+  static String _renderCurlWriteOut(
+    String template, {
+    required int statusCode,
+    required Map<String, String> headers,
+    required Uri url,
+    required int bodyLength,
+  }) {
     final variables = <String, String>{
-      'http_code': '${response.statusCode}',
-      'size_download': '${response.bodyBytes.length}',
+      'http_code': '$statusCode',
+      'size_download': '$bodyLength',
       'size_upload': '0',
-      'content_type': response.headers['content-type'] ?? '',
-      'url_effective': response.request?.url.toString() ?? '',
-      'response_code': '${response.statusCode}',
+      'content_type': headers['content-type'] ?? '',
+      'url_effective': url.toString(),
+      'response_code': '$statusCode',
     };
     final out = StringBuffer();
     for (var i = 0; i < template.length; i++) {
