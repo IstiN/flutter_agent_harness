@@ -74,8 +74,10 @@ jobs:
     name: Derive version
     runs-on: ubuntu-latest
     # Explicit ceiling so the daily watchers' budget arithmetic (#351) has
-    # a real per-job bound instead of GitHub's 360m default.
-    timeout-minutes: 10
+    # a real per-job bound instead of GitHub's 360m default. gh-1477: 10m
+    # was a time bomb — the full-history fetch outgrew it and cancelled the
+    # job mid-fetch (run 38027695551). 20m + the blobless filter below.
+    timeout-minutes: 20
     permissions:
       contents: read
     outputs:
@@ -85,7 +87,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # gh-1477: this job reads ONLY `git tag` — a full clone transfers
+          # every blob ever written and the repo grows daily, so the fetch
+          # outgrew the old 10m ceiling (run 38027695551). Blobless keeps
+          # full tag/commit metadata without the blobs.
           fetch-depth: 0
+          filter: blob:none
 
       - name: Derive build version
         id: version
@@ -1115,7 +1122,10 @@ jobs:
         with:
           # Full history: release_notes.sh falls back to "commits since the
           # previous tag" when the CHANGELOG has no section for this version.
+          # gh-1477: blobless — the notes read commit MESSAGES, never
+          # historical file blobs.
           fetch-depth: 0
+          filter: blob:none
 
       - name: Download iOS IPA artifact
         if: needs.build-ios.result == 'success'

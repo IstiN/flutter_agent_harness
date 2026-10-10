@@ -29,6 +29,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # quarantine PR branches from origin/main
+          # gh-1477: blobless — the watcher scripts read test metadata /
+          # commit ranges, never historical blobs.
+          filter: blob:none
 
       # The scheduled token reads GITHUB_TOKEN with the job permissions
       # above; gh auth setup-git lets the script push the branch.

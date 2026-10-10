@@ -23,7 +23,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # gh-1477: blobless — rebalance math reads test metadata + commit
+          # ranges, never historical blobs.
           fetch-depth: 0
+          filter: blob:none
           # PAT (not GITHUB_TOKEN) so the pushed manifest triggers downstream
           # workflows; an unset secret falls back to GITHUB_TOKEN here and the
           # push step skips itself.

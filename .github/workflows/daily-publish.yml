@@ -93,7 +93,10 @@ jobs:
   plan:
     name: Plan (change detection + versions)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # gh-1477: 10m was the same time bomb as the derive-version jobs — a
+    # full-history fetch under a 10m ceiling. 20m + the blobless filter
+    # below.
+    timeout-minutes: 20
     permissions:
       contents: read
       actions: read
@@ -105,7 +108,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # gh-1477: daily_plan.sh reads tags / commit metadata / one file
+          # at origin/main — never historical blobs. Blobless keeps full
+          # tag/commit metadata without the blobs (the full fetch outgrew
+          # the old 10m ceiling in the twin derive-version job, run
+          # 38027695551).
           fetch-depth: 0
+          filter: blob:none
 
       - name: Detect main movement and derive versions
         id: plan
