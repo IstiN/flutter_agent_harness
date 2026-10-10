@@ -196,6 +196,42 @@ void main() {
   );
 
   test(
+    'IT-8: /reset re-reports the brand-new session, never releases',
+    () async {
+      final reports = <List<String>>[];
+      final finish = await bootCli(pane: _paneEnv(), reports: reports);
+      io.sendLine('/reset');
+      await waitForIt(
+        () => reports.any((argv) => _op(argv) == 'report-agent-session'),
+        reason: 'reset session report',
+      );
+      expect(
+        reports.where((argv) => _op(argv) == 'release-agent'),
+        isEmpty,
+        reason: 'a reset never releases',
+      );
+      final resetReport = reports.singleWhere(
+        (argv) => _op(argv) == 'report-agent-session',
+      );
+      final newId = resetReport[resetReport.indexOf('--agent-session-id') + 1];
+      final bootId =
+          reports.first[reports.first.indexOf('--agent-session-id') + 1];
+      expect(newId, isNot(bootId), reason: 'the reset session is brand-new');
+      await finish();
+      // The release carries the POST-reset id — herdr's pane restore must
+      // resume the session the pane actually ended on.
+      final release = reports.singleWhere(
+        (argv) => _op(argv) == 'release-agent',
+      );
+      expect(release, isNot(contains(bootId)));
+      expect(reports.where((argv) => argv.contains('--agent-session-id')), [
+        reports.first,
+        resetReport,
+      ]);
+    },
+  );
+
+  test(
     'IT-2/AC2: every inert gate combination spawns nothing through a full run',
     () async {
       const cases = <String, Map<String, String>>{

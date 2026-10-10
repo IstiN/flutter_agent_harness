@@ -428,6 +428,10 @@ extension SlashCommandDispatch on AgentCli {
         _checkpoints.clear();
         _ttsr?.reset();
         _session = await _createSession();
+        // /reset is an in-process switch to a brand-new session — herdr
+        // must re-report it, or every later report (release included)
+        // carries the stale pre-reset id (#1483 review).
+        _herdrSessionSwitched();
         _syncMailboxPrefix();
         // Re-claim ownership for the new session (#428).
         await _releaseSessionLease();

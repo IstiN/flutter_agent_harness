@@ -133,11 +133,12 @@ final class HerdrReporter {
     return true;
   }
 
-  /// herdr's pane-id charset: `[A-Za-z0-9._:-]+`. The colon is required —
-  /// herdr's real ids are `window:pane` (`w6:p16`, the incident session's
-  /// shape) — and argv-inert: the id travels as ONE argv element with no
-  /// shell, so it can never shape the command. Spaces, quotes, and shell
-  /// metacharacters still make the integration inert.
+  /// herdr's pane-id charset: `[A-Za-z0-9._:-]+`. The colon is permitted —
+  /// and expected: herdr's real ids are `window:pane` (`w6:p16`, the
+  /// incident session's shape). Either way the id is argv-inert: it
+  /// travels as ONE argv element with no shell, so it can never shape the
+  /// command. Spaces, quotes, and shell metacharacters still make the
+  /// integration inert.
   static bool validPaneId(String value) => _idPattern.hasMatch(value);
 
   /// Session ids obey the same charset (the `--session` contract's

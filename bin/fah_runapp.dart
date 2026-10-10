@@ -286,10 +286,9 @@ Future<void> _runApp(List<String> args) async {
         // which only runs when the abandoned fetch itself settles.
         final probe = http.Client();
         try {
-          final latest = await fetchLatestTag(client: probe).timeout(
-            const Duration(seconds: 3),
-            onTimeout: () => null,
-          );
+          final latest = await fetchLatestTag(
+            client: probe,
+          ).timeout(const Duration(seconds: 3), onTimeout: () => null);
           if (latest != null &&
               compareVersions(latest, packageVersion) > 0 &&
               !autoUpdateTuiOwnsScreen) {
@@ -1249,7 +1248,19 @@ Future<void> _runApp(List<String> args) async {
         // on failure). Outside herdr the reporter is inert.
         herdrEnvLookup: (name) => Platform.environment[name],
         herdrSpawn: (argv) async {
-          await Process.run(argv.first, argv.sublist(1));
+          // Kill-on-timeout: the reporter abandons a slow report (2s,
+          // silent), but the subprocess must not linger — if herdr's exit
+          // hasn't arrived within the kill window below, the process is
+          // killed here so a wedged herdr can't leak one process per
+          // state transition.
+          final process = await Process.start(argv.first, argv.sublist(1));
+          await process.exitCode.timeout(
+            const Duration(seconds: 5),
+            onTimeout: () {
+              process.kill();
+              return process.exitCode;
+            },
+          );
         },
         // `/key` manages the platform secure store; `/provider ... <token>`
         // persists the token there.

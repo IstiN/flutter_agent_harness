@@ -25,9 +25,11 @@ dead herdr is indistinguishable from no herdr (no retry, no queue, no log
 line, no user-visible output).
 
 **Gate** — the reporter is active only when `HERDR_ENV=1` AND
-`HERDR_PANE_ID` is set and charset-valid (`[A-Za-z0-9._-]+`) AND
-`HERDR_BIN_PATH` is set, absolute, and argv-safe, AND the kill switch is
-not engaged (`FA_HERDR=0`). herdr exports the vars to every pane process,
+`HERDR_PANE_ID` is set and charset-valid (`[A-Za-z0-9._:-]+`; the colon
+is part of the accepted set because herdr's real ids are `window:pane`)
+AND `HERDR_BIN_PATH` is set, absolute, and argv-safe, AND the kill switch
+is not engaged (`FA_HERDR=0`). herdr exports the vars to every pane
+process,
 so the CLI reads its own process env; `FA_HERDR=0` turns the integration
 off per-pane or per-machine. Any unmet condition is byte-identical to no
 herdr: the reporter is constructed inert and spawns nothing for the
