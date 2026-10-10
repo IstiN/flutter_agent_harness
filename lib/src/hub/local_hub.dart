@@ -418,6 +418,11 @@ class LocalHub {
     Duration ceiling = const Duration(seconds: 90),
     Duration chunk = const Duration(seconds: 15),
   }) async {
+    // PR #1520 review: a zero/negative chunk hands waitForHellos a
+    // non-positive timeout, fires TimeoutException immediately, and the
+    // poll loop below hot-spins until the ceiling (a burned CI core).
+    assert(chunk > Duration.zero, 'chunk must be positive');
+    assert(ceiling > Duration.zero, 'ceiling must be positive');
     final stopwatch = Stopwatch()..start();
     while (true) {
       final remaining = ceiling - stopwatch.elapsed;

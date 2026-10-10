@@ -132,8 +132,7 @@ void main() {
         throwsA(isA<AssertionError>()),
       );
       expect(
-        () =>
-            hub.waitForHellosUnderLoad(1, chunk: const Duration(seconds: -1)),
+        () => hub.waitForHellosUnderLoad(1, chunk: const Duration(seconds: -1)),
         throwsA(isA<AssertionError>()),
       );
     });
@@ -145,10 +144,8 @@ void main() {
         throwsA(isA<AssertionError>()),
       );
       expect(
-        () => hub.waitForHellosUnderLoad(
-          1,
-          ceiling: const Duration(seconds: -1),
-        ),
+        () =>
+            hub.waitForHellosUnderLoad(1, ceiling: const Duration(seconds: -1)),
         throwsA(isA<AssertionError>()),
       );
     });
