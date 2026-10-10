@@ -67,6 +67,48 @@ void main() {
     );
   });
 
+  test('readCommandInput follows the pointer for cat/head/grep (gh-1444 '
+      'AC1)', () async {
+    await seedBuiltinSkillPointers(env);
+    final body = builtinSkillTextAt('builtin://skills/js-apps/SKILL.md')!;
+
+    final cat = await shell.exec('cat .fah/skills/js-apps/SKILL.md');
+    expect(cat.valueOrNull!.exitCode, 0);
+    expect(cat.valueOrNull!.stdout, body);
+
+    final head = await shell.exec('head -n 1 .fah/skills/js-apps/SKILL.md');
+    expect(head.valueOrNull!.stdout, '${body.split('\n').first}\n');
+
+    // The direct builtin:// URI is equivalent for reads (C1).
+    final direct = await shell.exec('cat builtin://skills/js-apps/SKILL.md');
+    expect(direct.valueOrNull!.exitCode, 0);
+    expect(direct.valueOrNull!.stdout, body);
+  });
+
+  test('a foreign pointer target is refused loudly, never silent (E1)',
+      () async {
+    await env.createDir('/.fah/skills/rogue');
+    await env.writeFile(
+      '/.fah/skills/rogue/SKILL.md.pointer',
+      'file:///etc/passwd\n',
+    );
+
+    final result = await shell.exec('cat .fah/skills/rogue/SKILL.md');
+    expect(result.valueOrNull!.exitCode, isNot(0));
+    expect(result.valueOrNull!.stderr, contains('skill pointer refused'));
+    expect(result.valueOrNull!.stdout, isEmpty);
+  });
+
+  test('a corrupt pointer (no builtin URI) refuses with the reason (E1)',
+      () async {
+    await env.createDir('/.fah/skills/broken');
+    await env.writeFile('/.fah/skills/broken/SKILL.md.pointer', 'not a uri\n');
+
+    final result = await shell.exec('cat .fah/skills/broken/SKILL.md');
+    expect(result.valueOrNull!.exitCode, isNot(0));
+    expect(result.valueOrNull!.stderr, contains('skill pointer refused'));
+  });
+
   test('seeding twice keeps the workspace unchanged (idempotent)', () async {
     await seedBuiltinSkillPointers(env);
     final first = await env.listDir('/.fah/skills');

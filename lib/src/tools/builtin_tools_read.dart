@@ -72,11 +72,23 @@ String _readDescription({SqliteEngine? sqlite}) {
 /// current model has no `image` input (pi's `getNonVisionImageNote`); the
 /// image itself stays in the result — providers substitute an explicit
 /// placeholder at request time (see `downgradeUnsupportedImages`).
+///
+/// Built-in skill reads (issue #1151, extended by gh-1444): a `builtin://`
+/// path resolves from the embedded copy before any filesystem access, and a
+/// failed read of a path whose sibling `<path>.pointer` exists follows the
+/// pointer — but only to a `builtin://skills/<name>/SKILL.md` target
+/// matching the pointer's own directory ([followSkillPointer]); any other
+/// pointer target is refused loudly. A builtin resource that resolves EMPTY
+/// is retried once and then fails with an explicit error naming the
+/// resource (gh-1444 AC2/E5) — never a silent empty success. [builtinText]
+/// overrides the embedded-text lookup (the AC2 fault-injection seam for
+/// tests); production callers omit it.
 AgentTool readFileTool(
   ExecutionEnv env, {
   HashlineSnapshotStore? snapshots,
   Model? Function()? model,
   SqliteEngine? sqlite,
+  String? Function(String path)? builtinText,
 }) {
   final store = snapshots ?? HashlineSnapshotStore();
   return AgentTool(
@@ -144,16 +156,51 @@ AgentTool readFileTool(
 
       final path = split.path;
       // Built-in skills (issue #1151): builtin:// paths resolve from the
-      // embedded copy before any filesystem access.
-      final embedded = builtinSkillTextAt(path);
+      // embedded copy before any filesystem access. gh-1444 AC2: a builtin
+      // resource that resolves EMPTY is retried once, then fails loudly
+      // naming the resource — an empty payload on a non-empty resource is
+      // never a silent success.
+      var embedded = (builtinText ?? builtinSkillTextAt)(path);
+      if (embedded != null && embedded.isEmpty) {
+        embedded = (builtinText ?? builtinSkillTextAt)(path);
+        if (embedded == null || embedded.isEmpty) {
+          throw StateError(
+            'read $path: builtin resource resolved empty after retry — '
+            'the compiled-in skill content is missing; report this as a '
+            'harness defect',
+          );
+        }
+      }
       if (embedded == null) {
         final binaryRead = await env.readBinaryFile(path);
-        if (binaryRead.isErr) throw StateError('${binaryRead.errorOrNull}');
-        final bytes = binaryRead.valueOrNull!;
-        cancelToken?.throwIfCancelled();
+        if (binaryRead.isErr) {
+          // gh-1444 AC1: a skill pointer sibling (<path>.pointer) resolves
+          // the read onto the compiled-in builtin body — the seeded
+          // `.fah/skills/<name>/SKILL.md.pointer` files become transparent.
+          // A present-but-invalid pointer is refused loudly (E1); no
+          // pointer keeps the original error.
+          final followed = await followSkillPointer(
+            path,
+            (pointerPath) async =>
+                (await env.readTextFile(pointerPath)).valueOrNull,
+          );
+          switch (followed) {
+            case SkillPointerResolved(:final text):
+              embedded = text;
+            case SkillPointerRefused(:final reason):
+              throw StateError(
+                'read $path: skill pointer refused: $reason',
+              );
+            case SkillPointerAbsent():
+              throw StateError('${binaryRead.errorOrNull}');
+          }
+        } else {
+          final bytes = binaryRead.valueOrNull!;
+          cancelToken?.throwIfCancelled();
 
-        final imageResult = _readImageResult(path, bytes, parsed, model);
-        if (imageResult != null) return _withNotice(imageResult, windowNotice);
+          final imageResult = _readImageResult(path, bytes, parsed, model);
+          if (imageResult != null) return _withNotice(imageResult, windowNotice);
+        }
       }
 
       return _withNotice(

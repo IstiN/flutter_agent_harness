@@ -58,6 +58,7 @@ import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../prompts/prompts.g.dart';
 import '../skills/builtin_skills.dart';
+import '../skills/skill_pointer.dart';
 import '../redact/redaction_types.dart';
 import '../types.dart';
 import '../web_search/web_search.dart';

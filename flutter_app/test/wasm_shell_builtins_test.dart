@@ -752,4 +752,124 @@ void main() {
       // identity is sandbox-shaped.
     });
   });
+
+group('cat argument parsing (gh-1444 C1)', () {
+  test('plain operands pass through', () {
+    final r = parseCatArgs(['a.txt', 'b.txt']);
+    expect(r.error, isNull);
+    expect(r.files, ['a.txt', 'b.txt']);
+    expect(r.number, isFalse);
+  });
+
+  test('-n and -b are recognized', () {
+    expect(parseCatArgs(['-n', 'f']).number, isTrue);
+    expect(parseCatArgs(['--number', 'f']).number, isTrue);
+    expect(parseCatArgs(['-b', 'f']).numberNonBlank, isTrue);
+  });
+
+  test('unknown flags error GNU-shaped; - and -- are operands', () {
+    expect(parseCatArgs(['-E', 'f']).error, contains('invalid option'));
+    expect(parseCatArgs(['-']).files, ['-']);
+    expect(parseCatArgs(['--', '-n']).files, ['-n']);
+  });
+});
+
+group('cat numbering', () {
+  test('-n numbers every line like GNU cat', () {
+    expect(
+      applyCatNumbering('a\n\nb\n', nonBlankOnly: false),
+      '     1\ta\n     2\t\n     3\tb\n',
+    );
+  });
+
+  test('-b numbers only non-blank lines', () {
+    expect(
+      applyCatNumbering('a\n\nb\n', nonBlankOnly: true),
+      '     1\ta\n\n     2\tb\n',
+    );
+  });
+
+  test('input without a trailing newline stays unnumbered-tail-safe', () {
+    expect(applyCatNumbering('a\nb', nonBlankOnly: false), contains('2\tb'));
+  });
+});
+
+group('WASI _start log line (gh-1444 AC7)', () {
+  test('a normal exit status never says "error"', () {
+    final line = wasmStartLogLine(
+      Exception('Exited with i32 exit status 1'),
+    );
+    expect(line, contains('_start exited with status 1'));
+    expect(line.toLowerCase().contains('error'), isFalse);
+  });
+
+  test('exit status 2 (a grep miss) stays debug-class', () {
+    expect(
+      wasmStartLogLine(Exception('Exited with i32 exit status 2')),
+      contains('exited with status 2'),
+    );
+  });
+
+  test('a real trap keeps the _start error shape', () {
+    expect(
+      wasmStartLogLine(StateError('wasm exploded')),
+      contains('_start error:'),
+    );
+  });
+
+  test('a completed start logs completion', () {
+    expect(wasmStartLogLine(null), contains('completed'));
+  });
+});
+
+group('parseWasiExitCode (shared grammar)', () {
+  test('handles all three wasmtime shapes', () {
+    expect(parseWasiExitCode(null), 0);
+    expect(
+      parseWasiExitCode(Exception('Exited with i32 exit status 7')),
+      7,
+    );
+    expect(parseWasiExitCode(Exception('i32 exit with value 3')), 3);
+    expect(
+      parseWasiExitCode(Exception('exit with invalid exit status')),
+      1,
+    );
+    expect(parseWasiExitCode(StateError('boom')), isNull);
+  });
+});
+
+group('WASI python stderr noise filter (gh-1444 AC8)', () {
+  test('drops the platform-libraries warning lines', () {
+    final filter = WasiPythonNoiseFilter();
+    final out = latin1.decode(
+      filter.process(
+        latin1.encode(
+          'Could not find platform dependent libraries <exec_prefix>\n'
+          'Consider setting PYTHONHOME to <prefix>[:<exec_prefix>]\n'
+          'real error text\n',
+        ),
+      ),
+    );
+    expect(out, 'real error text\n');
+  });
+
+  test('holds back a partial line and completes it', () {
+    final filter = WasiPythonNoiseFilter();
+    expect(filter.process(latin1.encode('Could not find platform dep')), isEmpty);
+    final out = latin1.decode(
+      filter.process(
+        latin1.encode('endent libraries <exec_prefix>\nhello\n'),
+      ),
+    );
+    expect(out, 'hello\n');
+  });
+
+  test('blank lines and normal stderr pass through untouched', () {
+    final filter = WasiPythonNoiseFilter();
+    expect(
+      latin1.decode(filter.process(latin1.encode('a\n\nb\n'))),
+      'a\n\nb\n',
+    );
+  });
+});
 }
