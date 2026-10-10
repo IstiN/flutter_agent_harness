@@ -99,8 +99,17 @@ void main() {
 
   group('tool card (omp render/status-line.ts + getStateBgColor)', () {
     test('status glyphs match the omp symbol defaults', () {
-      expect(tuiCardGlyph(TuiCardPhase.pending), '⏳');
-      expect(tuiCardGlyph(TuiCardPhase.running), '⟳');
+      // gh-1446 AC8: the pending/running glyphs resolve through the
+      // symbol table (modernized defaults `○`/`◐`); success/error stay
+      // omp-pinned.
+      expect(
+        tuiCardGlyph(TuiCardPhase.pending),
+        FaThemeController.instance.sym('status.pending'),
+      );
+      expect(
+        tuiCardGlyph(TuiCardPhase.running),
+        FaThemeController.instance.sym('status.running'),
+      );
       expect(tuiCardGlyph(TuiCardPhase.success), '✔');
       expect(tuiCardGlyph(TuiCardPhase.error), '✘');
     });

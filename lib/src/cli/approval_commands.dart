@@ -605,6 +605,10 @@ extension ApprovalCommands on AgentCli {
       costUsd: cost > 0 ? cost : null,
       sessionId: _session?.cachedId,
       idle: !isBusy,
+      // gh-1446 AC5: the brand zone's ring frame, resolved from the
+      // compile-time activity ring off the controller's live tick frame —
+      // blank while idle (the `>_ Fa` final state) and never model text.
+      brandFrame: isBusy ? _tuiController?.brandFrameGlyph : null,
     );
   }
 

@@ -27,20 +27,22 @@ final _ansi = RegExp(r'\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)');
 
 String _stripAnsi(String s) => s.replaceAll(_ansi, '');
 
-StatusLineSnapshot _snapshot({bool idle = true}) => StatusLineSnapshot(
-  cwd: '/Users/ag/work/flutter_agent_harness/lib/src/cli',
-  homeDir: '/Users/ag',
-  workRoot: '/Users/ag/work/flutter_agent_harness',
-  modelName: 'zai/glm-5.3-flash',
-  approvalMode: 'yolo',
-  contextTokens: 4200,
-  contextWindow: 10000,
-  tokensIn: 1500,
-  tokensOut: 300,
-  costUsd: 1.25,
-  sessionName: 'band-composer',
-  idle: idle,
-);
+StatusLineSnapshot _snapshot({bool idle = true, String? brandFrame}) =>
+    StatusLineSnapshot(
+      cwd: '/Users/ag/work/flutter_agent_harness/lib/src/cli',
+      homeDir: '/Users/ag',
+      workRoot: '/Users/ag/work/flutter_agent_harness',
+      modelName: 'zai/glm-5.3-flash',
+      approvalMode: 'yolo',
+      contextTokens: 4200,
+      contextWindow: 10000,
+      tokensIn: 1500,
+      tokensOut: 300,
+      costUsd: 1.25,
+      sessionName: 'band-composer',
+      idle: idle,
+      brandFrame: brandFrame,
+    );
 
 final _engine = TuiStatusLine(spec: resolveStatusLineSpec(null));
 
@@ -150,6 +152,41 @@ void main() {
       // Idle maps every non-brand span through theme.muted; the lit pass
       // paints the role colors — the rows must differ.
       expect(bandOf(true), isNot(bandOf(false)));
+    });
+
+    test('gh-1446 AC5: the brand zone animates in its fixed 3-cell slot', () {
+      String bandOf({bool idle = true, String? frame}) {
+        final callbacks = _callbacks(
+          snapshot: () => _snapshot(idle: idle, brandFrame: frame),
+        );
+        final m = _model(callbacks);
+        final raw = m.view().content.split('\n');
+        return raw[_gutterRowIndex(_plainRows(m)) - 1];
+      }
+
+      String plain(String row) => _stripAnsi(row);
+      // Idle: the blank frame cell — `>_ Fa` (owner-accepted final state,
+      // with the space).
+      final idleBand = plain(bandOf());
+      expect(idleBand, contains('>_ Fa'));
+      // Running: the ring frame replaces the blank cell in the SAME slot
+      // (the zone stays 3 cells; the `Fa` column never moves).
+      final runningBand = plain(bandOf(idle: false, frame: '⠋'));
+      expect(runningBand, contains('>_⠋Fa'));
+      // The `Fa` column is byte-identical in BOTH states (constant-column
+      // assert) and across frame ticks.
+      expect(idleBand.indexOf('Fa'), runningBand.indexOf('Fa'));
+      for (final frame in const ['⠙', '⠹', '⠸']) {
+        final band = plain(bandOf(idle: false, frame: frame));
+        expect(band.indexOf('Fa'), idleBand.indexOf('Fa'), reason: band);
+        expect(band, contains('>_$frame' 'Fa'), reason: band);
+      }
+      // Frames arrive verbatim from the compile-time activity ring —
+      // the frames the preset ships are the frames the zone shows.
+      final ring = FaThemeController.instance.symbols.activitySpinner;
+      for (final frame in ring.take(3)) {
+        expect(plain(bandOf(idle: false, frame: frame)), contains('>_$frame'));
+      }
     });
   });
 
