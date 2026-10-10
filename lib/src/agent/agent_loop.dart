@@ -2581,8 +2581,26 @@ ToolExecutionResult _errorToolResult(Object message, {String? toolName}) {
   if (message is String) {
     return ToolExecutionResult(content: [TextContent(text: message)]);
   }
-  final text = _toolErrorText(message);
   final name = toolName ?? 'unknown tool';
+  // gh-1455: a CancelledException escaping a tool call is the run's
+  // deliberate shutdown (the shell tool's own first-line guard, the
+  // stuck-call supervisor, a tool's throwIfCancelled) — not a tool failure
+  // and not a harness defect. It must not wear the "uncaught exception
+  // inside the harness tool implementation" hint: that told the model its
+  // bash tool was broken and to route around it. The cancel reason (when
+  // present — e.g. the run-idle watchdog's summary) stays on the record.
+  if (message is CancelledException) {
+    final reason = message.reason;
+    return ToolExecutionResult(
+      content: [
+        TextContent(
+          text: 'Tool error ($name): run was aborted — tool not started'
+              '${reason == null ? '' : ' (cancel reason: $reason)'}',
+        ),
+      ],
+    );
+  }
+  final text = _toolErrorText(message);
   final isOperational =
       message is ToolValidationException ||
       message is ToolNotFoundException ||
