@@ -47,26 +47,40 @@ void _requireDesktop(String provider) {
 }
 
 /// Runs the CodeMie browser SSO (localhost callback) — the CLI flow.
+///
+/// `shouldOpenBrowserFn: () => true`: a desktop app always has a display —
+/// the CLI's headless auto-detect (stdout TTY probe) must not gate the
+/// launch here (gh-1450).
 Future<CodeMieSsoCredentials?> desktopCodeMieSso(
   String orgUrl,
   void Function(String) onStatus,
 ) {
   _requireDesktop('CodeMie');
-  return runCodeMieSsoCliFlow(codeMieUrl: orgUrl, onStatus: onStatus);
+  return runCodeMieSsoCliFlow(
+    codeMieUrl: orgUrl,
+    onStatus: onStatus,
+    shouldOpenBrowserFn: () => true,
+  );
 }
 
 /// Runs the ChatGPT (Codex) OAuth (localhost callback + PKCE) — the CLI
-/// flow.
+/// flow. Always launches (desktop host — see [desktopCodeMieSso]).
 Future<ChatGptOAuthCredentials?> desktopChatGptOAuth(
   void Function(String) onStatus,
 ) {
   _requireDesktop('ChatGPT');
-  return runChatGptOAuthCliFlow(onStatus: onStatus);
+  return runChatGptOAuthCliFlow(
+    onStatus: onStatus,
+    shouldOpenBrowserFn: () => true,
+  );
 }
 
 /// Runs the AIIN sign-in + API-key auto-register (localhost callback) —
-/// the CLI flow.
+/// the CLI flow. Always launches (desktop host — see [desktopCodeMieSso]).
 Future<AiinConnectResult?> desktopAiinConnect(void Function(String) onStatus) {
   _requireDesktop('AIIN');
-  return runAiinConnectCliFlow(onStatus: onStatus);
+  return runAiinConnectCliFlow(
+    onStatus: onStatus,
+    shouldOpenBrowserFn: () => true,
+  );
 }

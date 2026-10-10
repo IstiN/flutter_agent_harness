@@ -6,6 +6,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_agent_harness/src/cli/codemie_sso_server.dart';
+import 'package:flutter_agent_harness/src/cli/openrouter_oauth_server.dart'
+    show authorizationUrlPrefix;
 import 'package:test/test.dart';
 
 /// Builds a base64-encoded callback `token` carrying [cookies].
@@ -107,6 +109,7 @@ void main() {
         codeMieUrl: 'https://codemie.example.com',
         onStatus: (s) => driver.record(statuses, s),
         openBrowserFn: (_) async => false,
+        shouldOpenBrowserFn: () => true,
       );
 
       final response = await driver.hitCallback(token);
@@ -118,6 +121,13 @@ void main() {
       expect(result.apiUrl, contains('code-assistant-api'));
       expect(statuses, contains(contains('listening for the CodeMie SSO')));
       expect(statuses, contains('CodeMie authorized'));
+      // gh-1450 AC1: the URL prints in every outcome. The login URL
+      // embeds the callback port (`<apiBase>/v1/auth/login/<port>`);
+      // the token never rides it.
+      _expectExactlyOneAuthorizationUrlLine(
+        statuses,
+        'code-assistant-api/v1/auth/login/',
+      );
     });
 
     test('returns null when browser opens successfully', () async {
@@ -132,6 +142,7 @@ void main() {
         codeMieUrl: 'https://codemie.example.com',
         onStatus: (s) => driver.record(statuses, s),
         openBrowserFn: (_) async => true,
+        shouldOpenBrowserFn: () => true,
       );
 
       await driver.hitCallback(token);
@@ -140,6 +151,11 @@ void main() {
       expect(
         statuses,
         contains('browser opened; complete the CodeMie sign-in'),
+      );
+      // gh-1450 AC1: the URL is printed even when the launch "succeeded".
+      _expectExactlyOneAuthorizationUrlLine(
+        statuses,
+        'https://codemie.example.com',
       );
     });
 
@@ -155,6 +171,7 @@ void main() {
         codeMieUrl: 'https://codemie.example.com',
         onStatus: (s) => driver.record(statuses, s),
         openBrowserFn: (_) async => false,
+        shouldOpenBrowserFn: () => true,
       );
 
       await driver.hitCallback(token);
@@ -164,7 +181,113 @@ void main() {
         statuses,
         contains(contains('could not open browser automatically')),
       );
-      expect(statuses, contains(contains('open this URL manually:')));
+      // gh-1450 AC1: the consistent prefix in the failure branch too.
+      _expectExactlyOneAuthorizationUrlLine(
+        statuses,
+        'https://codemie.example.com',
+      );
+    });
+
+    test('skips the launch when the policy says so (gh-1450 AC2/AC3)', () async {
+      final statuses = <String>[];
+      final driver = _CodeMieFlowDriver();
+      final jwt = _jwt(
+        exp: DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600,
+      );
+      final token = _tokenCookie({'codemie_access_token': jwt});
+      var launches = 0;
+
+      final flowFuture = runCodeMieSsoCliFlow(
+        codeMieUrl: 'https://codemie.example.com',
+        onStatus: (s) => driver.record(statuses, s),
+        openBrowserFn: (_) async {
+          launches++;
+          return true;
+        },
+        shouldOpenBrowserFn: () => false,
+      );
+
+      await driver.hitCallback(token);
+      await flowFuture;
+
+      // The launch function is never called; the URL still prints.
+      expect(launches, 0);
+      expect(statuses, contains(contains('browser launch skipped')));
+      _expectExactlyOneAuthorizationUrlLine(
+        statuses,
+        'https://codemie.example.com',
+      );
+    });
+
+    test('a throwing launcher degrades to the failure branch with the URL '
+        '(gh-1450 E3)', () async {
+      final statuses = <String>[];
+      final driver = _CodeMieFlowDriver();
+      final jwt = _jwt(
+        exp: DateTime.now().millisecondsSinceEpoch ~/ 1000 + 3600,
+      );
+      final token = _tokenCookie({'codemie_access_token': jwt});
+
+      final flowFuture = runCodeMieSsoCliFlow(
+        codeMieUrl: 'https://codemie.example.com',
+        onStatus: (s) => driver.record(statuses, s),
+        openBrowserFn: (_) => throw StateError('no browser'),
+        shouldOpenBrowserFn: () => true,
+      );
+
+      await driver.hitCallback(token);
+      await flowFuture;
+
+      expect(
+        statuses,
+        contains(contains('could not open browser automatically')),
+      );
+      _expectExactlyOneAuthorizationUrlLine(
+        statuses,
+        'https://codemie.example.com',
+      );
+    });
+
+    test('the timeout status carries the authorization URL (gh-1450 AC4)',
+        () async {
+      final statuses = <String>[];
+
+      final result = await runCodeMieSsoCliFlow(
+        codeMieUrl: 'https://codemie.example.com',
+        onStatus: statuses.add,
+        openBrowserFn: (_) async => true,
+        shouldOpenBrowserFn: () => true,
+        timeout: const Duration(milliseconds: 60),
+      );
+
+      expect(result, isNull);
+      expect(statuses, contains(contains('no SSO callback received')));
+      // The LAST status is the last-chance rescue line.
+      expect(statuses.last, contains('authorization URL:'));
+      expect(statuses.last, contains('https://codemie.example.com'));
+    });
+
+    test('no token/cookie value ever appears in the printed lines '
+        '(gh-1450 AC5)', () async {
+      for (final openResult in [true, false]) {
+        final statuses = <String>[];
+        final driver = _CodeMieFlowDriver();
+        const cookieValue = 'super-secret-cookie-value-1234567890';
+        final token = _tokenCookie({'_oauth2_proxy': cookieValue});
+
+        final flowFuture = runCodeMieSsoCliFlow(
+          codeMieUrl: 'https://codemie.example.com',
+          onStatus: (s) => driver.record(statuses, s),
+          openBrowserFn: (_) async => openResult,
+          shouldOpenBrowserFn: () => true,
+        );
+
+        await driver.hitCallback(token);
+        await flowFuture;
+
+        expect(statussJoined(statuses), isNot(contains(cookieValue)));
+        expect(statussJoined(statuses), isNot(contains(token)));
+      }
     });
 
     test(
@@ -180,6 +303,7 @@ void main() {
           codeMieUrl: 'https://codemie.example.com',
           onStatus: (s) => driver.record(statuses, s),
           openBrowserFn: (_) async => false,
+          shouldOpenBrowserFn: () => true,
         );
 
         await driver.hitCallback(token);
@@ -198,6 +322,7 @@ void main() {
         codeMieUrl: 'https://codemie.example.com',
         onStatus: (s) => driver.record(statuses, s),
         openBrowserFn: (_) async => false,
+        shouldOpenBrowserFn: () => true,
       );
 
       // Send a raw (non-base64) token that decodeCodeMieSsoToken will reject.
@@ -249,4 +374,24 @@ final class _SimpleResponse {
   _SimpleResponse(this.statusCode, this.body);
   final int statusCode;
   final String body;
+}
+
+/// Joins the captured statuses for substring scans (byte-scan shape).
+String statussJoined(List<String> statuses) => statuses.join('\n');
+
+/// Asserts exactly one copyable `authorization URL: <url>` line carrying
+/// [urlPart] was printed (gh-1450 AC1) — a single line, full URL, no
+/// truncation.
+void _expectExactlyOneAuthorizationUrlLine(
+  List<String> statuses,
+  String urlPart,
+) {
+  final lines = statuses
+      .where((s) => s.startsWith(authorizationUrlPrefix))
+      .toList();
+  expect(lines, hasLength(1), reason: 'exactly one authorization URL line');
+  expect(lines.single, contains(urlPart));
+  final url = lines.single.substring(authorizationUrlPrefix.length);
+  expect(url, startsWith('http'));
+  expect(url, isNot(contains('…')), reason: 'never truncated');
 }
