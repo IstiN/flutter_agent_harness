@@ -69,16 +69,15 @@ final class HerdrReporter {
   ///
   /// [envLookup] resolves the pane env vars on the host (the executable
   /// injects `Platform.environment` reads; null = every var unset). Null
-  /// [runProcess] (web hosts, plain tests) keeps the reporter spawn-free
+  /// [_runProcess] (web hosts, plain tests) keeps the reporter spawn-free
   /// even behind an active gate. [clock] feeds the millisecond seq (the
   /// CLI passes its waiting-clock seam so tests pin seq discipline).
   HerdrReporter({
     String? Function(String name)? envLookup,
-    Future<void> Function(List<String> argv)? runProcess,
+    this._runProcess,
     DateTime Function()? clock,
     this.timeout = const Duration(seconds: 2),
-  }) : _runProcess = runProcess,
-       _clock = clock ?? DateTime.now {
+  }) : _clock = clock ?? DateTime.now {
     final lookup = envLookup ?? (_) => null;
     final pane = lookup('HERDR_PANE_ID');
     final bin = lookup('HERDR_BIN_PATH');
@@ -134,9 +133,11 @@ final class HerdrReporter {
     return true;
   }
 
-  /// herdr's pane-id charset: `[A-Za-z0-9._-]+` (pane ids like `w6:p16`
-  /// carry a colon, which is intentionally NOT allowed — a hostile pane id
-  /// can never shape the argv). Any other byte makes the integration inert.
+  /// herdr's pane-id charset: `[A-Za-z0-9._:-]+`. The colon is required —
+  /// herdr's real ids are `window:pane` (`w6:p16`, the incident session's
+  /// shape) — and argv-inert: the id travels as ONE argv element with no
+  /// shell, so it can never shape the command. Spaces, quotes, and shell
+  /// metacharacters still make the integration inert.
   static bool validPaneId(String value) => _idPattern.hasMatch(value);
 
   /// Session ids obey the same charset (the `--session` contract's
@@ -347,15 +348,13 @@ final class HerdrReporter {
 
   void _spawn(List<String> argv) {
     if (!_active) return;
-    final run = _runProcess;
-    if (run == null) return;
-    unawaited(_send(run, argv));
+    if (_runProcess == null) return;
+    unawaited(_send(argv));
   }
 
-  Future<void> _send(
-    Future<void> Function(List<String> argv) run,
-    List<String> argv,
-  ) async {
+  Future<void> _send(List<String> argv) async {
+    final run = _runProcess;
+    if (run == null) return;
     try {
       await run(argv).timeout(timeout);
     } on Object {
@@ -367,7 +366,7 @@ final class HerdrReporter {
     }
   }
 
-  static final RegExp _idPattern = RegExp(r'^[A-Za-z0-9._-]+$');
+  static final RegExp _idPattern = RegExp(r'^[A-Za-z0-9._:-]+$');
   static final RegExp _binPattern = RegExp(r'^[A-Za-z0-9._/+~-]+$');
   static const int _resumeArgvMaxBytes = 8 * 1024;
 }

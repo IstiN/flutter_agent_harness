@@ -37,7 +37,7 @@ void main() {
       'HERDR_ENV': env,
       'HERDR_PANE_ID': pane,
       'HERDR_BIN_PATH': bin,
-      if (kill != null) 'FA_HERDR': kill,
+      'FA_HERDR': ?kill,
     };
   }
 
@@ -125,27 +125,30 @@ void main() {
       });
     });
 
-    test('kill switch beats a fully-populated herdr env; other values keep it on', () {
-      expect(
-        HerdrReporter.gateActive(
-          herdrEnv: '1',
-          paneId: 'p',
-          binPath: '/h',
-          killSwitch: '0',
-        ),
-        isFalse,
-      );
-      expect(
-        HerdrReporter.gateActive(
-          herdrEnv: '1',
-          paneId: 'p',
-          binPath: '/h',
-          killSwitch: 'true',
-        ),
-        isTrue,
-        reason: 'only the literal 0 is the off-switch',
-      );
-    });
+    test(
+      'kill switch beats a fully-populated herdr env; other values keep it on',
+      () {
+        expect(
+          HerdrReporter.gateActive(
+            herdrEnv: '1',
+            paneId: 'p',
+            binPath: '/h',
+            killSwitch: '0',
+          ),
+          isFalse,
+        );
+        expect(
+          HerdrReporter.gateActive(
+            herdrEnv: '1',
+            paneId: 'p',
+            binPath: '/h',
+            killSwitch: 'true',
+          ),
+          isTrue,
+          reason: 'only the literal 0 is the off-switch',
+        );
+      },
+    );
   });
 
   group('UT-2 argv builders — exact bytes', () {
@@ -184,10 +187,13 @@ void main() {
       reporter.blocked(HerdrBlockedLabel.ask);
       reporter.blocked(HerdrBlockedLabel.secret);
       reporter.blocked(HerdrBlockedLabel.hostModel);
-      expect(
-        sink.map((argv) => argv[argv.indexOf('--state') + 1]).toList(),
-        ['working', 'blocked', 'blocked', 'blocked', 'blocked'],
-      );
+      expect(sink.map((argv) => argv[argv.indexOf('--state') + 1]).toList(), [
+        'working',
+        'blocked',
+        'blocked',
+        'blocked',
+        'blocked',
+      ]);
       String? labelOf(List<String> argv) {
         if (!argv.contains('--message')) return null;
         return argv[argv.indexOf('--message') + 1];
@@ -225,36 +231,39 @@ void main() {
       expect(sink, expected);
     });
 
-    test('session switch re-reports with report-agent-session, never a release', () {
-      final (reporter, sink) = wired(
-        herdrEnv(),
-        clock: () => DateTime.fromMillisecondsSinceEpoch(7000),
-      );
-      reporter.sessionSwitch('173000_ab12');
-      expect(sink, hasLength(1));
-      const expected = <List<String>>[
-        [
-          '/opt/homebrew/bin/herdr',
-          'pane',
-          'report-agent-session',
-          'w6:p16',
-          '--source',
-          'fa',
-          '--agent',
-          'fa',
-          '--agent-session-id',
-          '173000_ab12',
-          '--seq',
-          '7000',
-          '--',
-          'fa',
-          '--session',
-          '173000_ab12',
-        ],
-      ];
-      expect(sink.single, expected);
-      expect(sink.where((argv) => argv.contains('release-agent')), isEmpty);
-    });
+    test(
+      'session switch re-reports with report-agent-session, never a release',
+      () {
+        final (reporter, sink) = wired(
+          herdrEnv(),
+          clock: () => DateTime.fromMillisecondsSinceEpoch(7000),
+        );
+        reporter.sessionSwitch('173000_ab12');
+        expect(sink, hasLength(1));
+        const expected = <List<String>>[
+          [
+            '/opt/homebrew/bin/herdr',
+            'pane',
+            'report-agent-session',
+            'w6:p16',
+            '--source',
+            'fa',
+            '--agent',
+            'fa',
+            '--agent-session-id',
+            '173000_ab12',
+            '--seq',
+            '7000',
+            '--',
+            'fa',
+            '--session',
+            '173000_ab12',
+          ],
+        ];
+        expect(sink, expected);
+        expect(sink.where((argv) => argv.contains('release-agent')), isEmpty);
+      },
+    );
 
     test('labelFor maps the sealed prompt specs onto the four labels', () {
       expect(
@@ -286,22 +295,25 @@ void main() {
       );
     });
 
-    test('reportSheet reports blocked, then the post-resolve state; answer untouched', () async {
-      final (reporter, sink) = wired(
-        herdrEnv(),
-        clock: () => DateTime.fromMillisecondsSinceEpoch(100),
-      );
-      final answer = await reporter.reportSheet(
-        SecretPromptSpec(name: 'n', reason: 'r'),
-        open: (spec) async => const TextPromptAnswer('v'),
-        busyAfter: () => true,
-      );
-      expect(answer, isA<TextPromptAnswer>());
-      expect(
-        sink.map((argv) => argv[argv.indexOf('--state') + 1]).toList(),
-        ['blocked', 'working'],
-      );
-    });
+    test(
+      'reportSheet reports blocked, then the post-resolve state; answer untouched',
+      () async {
+        final (reporter, sink) = wired(
+          herdrEnv(),
+          clock: () => DateTime.fromMillisecondsSinceEpoch(100),
+        );
+        final answer = await reporter.reportSheet(
+          SecretPromptSpec(name: 'n', reason: 'r'),
+          open: (spec) async => const TextPromptAnswer('v'),
+          busyAfter: () => true,
+        );
+        expect(answer, isA<TextPromptAnswer>());
+        expect(sink.map((argv) => argv[argv.indexOf('--state') + 1]).toList(), [
+          'blocked',
+          'working',
+        ]);
+      },
+    );
 
     test('reportSheet resolves to idle when no run is active', () async {
       final (reporter, sink) = wired(
@@ -313,10 +325,10 @@ void main() {
         open: (spec) async => null,
         busyAfter: () => false,
       );
-      expect(
-        sink.map((argv) => argv[argv.indexOf('--state') + 1]).toList(),
-        ['blocked', 'idle'],
-      );
+      expect(sink.map((argv) => argv[argv.indexOf('--state') + 1]).toList(), [
+        'blocked',
+        'idle',
+      ]);
     });
   });
 
@@ -344,49 +356,58 @@ void main() {
       expect(HerdrReporter.validBinPath(r'/a$b/herdr'), isFalse);
     });
 
-    test('resume argv rules: plain first word, no apostrophes/controls, ≤64 args, ≤8 KiB', () {
-      expect(HerdrReporter.resumeArgvValid(['fa', '--session', 'abc']), isTrue);
-      expect(HerdrReporter.resumeArgvValid([]), isFalse, reason: 'empty');
-      expect(
-        HerdrReporter.resumeArgvValid(['/usr/bin/fa', '--session', 'abc']),
-        isFalse,
-        reason: 'first word must be a plain command name',
-      );
-      expect(
-        HerdrReporter.resumeArgvValid(["fa'x", '--session', 'abc']),
-        isFalse,
-        reason: 'apostrophes',
-      );
-      expect(
-        HerdrReporter.resumeArgvValid(['fa', '--session', 'a\x01b']),
-        isFalse,
-        reason: 'control characters',
-      );
-      expect(
-        HerdrReporter.resumeArgvValid(List.filled(65, 'a')),
-        isFalse,
-        reason: '>64 args',
-      );
-      expect(
-        HerdrReporter.resumeArgvValid(['a' * 9000]),
-        isFalse,
-        reason: '>8 KiB total',
-      );
-    });
+    test(
+      'resume argv rules: plain first word, no apostrophes/controls, ≤64 args, ≤8 KiB',
+      () {
+        expect(
+          HerdrReporter.resumeArgvValid(['fa', '--session', 'abc']),
+          isTrue,
+        );
+        expect(HerdrReporter.resumeArgvValid([]), isFalse, reason: 'empty');
+        expect(
+          HerdrReporter.resumeArgvValid(['/usr/bin/fa', '--session', 'abc']),
+          isFalse,
+          reason: 'first word must be a plain command name',
+        );
+        expect(
+          HerdrReporter.resumeArgvValid(["fa'x", '--session', 'abc']),
+          isFalse,
+          reason: 'apostrophes',
+        );
+        expect(
+          HerdrReporter.resumeArgvValid(['fa', '--session', 'a\x01b']),
+          isFalse,
+          reason: 'control characters',
+        );
+        expect(
+          HerdrReporter.resumeArgvValid(List.filled(65, 'a')),
+          isFalse,
+          reason: '>64 args',
+        );
+        expect(
+          HerdrReporter.resumeArgvValid(['a' * 9000]),
+          isFalse,
+          reason: '>8 KiB total',
+        );
+      },
+    );
   });
 
   group('seq discipline', () {
-    test('a frozen clock still yields strictly increasing seq (same-ms reports)', () {
-      final (reporter, sink) = wired(
-        herdrEnv(),
-        clock: () => DateTime.fromMillisecondsSinceEpoch(1700000000000),
-      );
-      reporter.state(HerdrPaneState.idle);
-      reporter.state(HerdrPaneState.working);
-      reporter.state(HerdrPaneState.idle);
-      const expected = [1700000000000, 1700000000001, 1700000000002];
-      expect(sink.map(seqOf).toList(), expected);
-    });
+    test(
+      'a frozen clock still yields strictly increasing seq (same-ms reports)',
+      () {
+        final (reporter, sink) = wired(
+          herdrEnv(),
+          clock: () => DateTime.fromMillisecondsSinceEpoch(1700000000000),
+        );
+        reporter.state(HerdrPaneState.idle);
+        reporter.state(HerdrPaneState.working);
+        reporter.state(HerdrPaneState.idle);
+        const expected = [1700000000000, 1700000000001, 1700000000002];
+        expect(sink.map(seqOf).toList(), expected);
+      },
+    );
 
     test('an advancing clock owns the seq; a rollback never decreases it', () {
       var now = 1700000000100;
@@ -407,52 +428,59 @@ void main() {
   });
 
   group('resume metadata — once per session', () {
-    test('first report carrying a session id appends the resume argv; later ones do not', () {
-      final (reporter, sink) = wired(
-        herdrEnv(),
-        clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
-      );
-      reporter.updateSession('173000_ab12');
-      reporter.state(HerdrPaneState.idle);
-      reporter.state(HerdrPaneState.working);
-      expect(sink, hasLength(2));
-      expect(sink[0].sublist(sink[0].indexOf('--')), [
-        '--',
-        'fa',
-        '--session',
-        '173000_ab12',
-      ]);
-      expect(sink[1].contains('--'), isFalse);
-      expect(sink[0].contains('--agent-session-id'), isTrue);
-      expect(sink[1].contains('--agent-session-id'), isTrue);
-    });
+    test(
+      'first report carrying a session id appends the resume argv; later ones do not',
+      () {
+        final (reporter, sink) = wired(
+          herdrEnv(),
+          clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
+        );
+        reporter.updateSession('173000_ab12');
+        reporter.state(HerdrPaneState.idle);
+        reporter.state(HerdrPaneState.working);
+        expect(sink, hasLength(2));
+        expect(sink[0].sublist(sink[0].indexOf('--')), [
+          '--',
+          'fa',
+          '--session',
+          '173000_ab12',
+        ]);
+        expect(sink[1].contains('--'), isFalse);
+        expect(sink[0].contains('--agent-session-id'), isTrue);
+        expect(sink[1].contains('--agent-session-id'), isTrue);
+      },
+    );
 
-    test('a session switch re-arms the resume argv; a following state report does not repeat it', () {
-      final (reporter, sink) = wired(
-        herdrEnv(),
-        clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
-      );
-      reporter.sessionSwitch('a');
-      reporter.state(HerdrPaneState.idle);
-      reporter.sessionSwitch('b');
-      reporter.state(HerdrPaneState.idle);
-      reporter.sessionSwitch('a');
-      String? resumeBlock(List<String> argv) {
-        if (!argv.contains('--')) return null;
-        return argv.sublist(argv.indexOf('--'));
-      }
+    test(
+      'a session switch re-arms the resume argv; a following state report does not repeat it',
+      () {
+        final (reporter, sink) = wired(
+          herdrEnv(),
+          clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
+        );
+        reporter.sessionSwitch('a');
+        reporter.state(HerdrPaneState.idle);
+        reporter.sessionSwitch('b');
+        reporter.state(HerdrPaneState.idle);
+        reporter.sessionSwitch('a');
+        List<String>? resumeBlock(List<String> argv) {
+          if (!argv.contains('--')) return null;
+          return argv.sublist(argv.indexOf('--'));
+        }
 
-      final resumes = sink.map(resumeBlock).toList();
-      expect(resumes[0], ['--', 'fa', '--session', 'a']);
-      expect(
-        resumes[1],
-        isNull,
-        reason: 'the state report after a switch carries the id, not the argv',
-      );
-      expect(resumes[2], ['--', 'fa', '--session', 'b']);
-      expect(resumes[3], isNull);
-      expect(resumes[4], ['--', 'fa', '--session', 'a']);
-    });
+        final resumes = sink.map(resumeBlock).toList();
+        expect(resumes[0], ['--', 'fa', '--session', 'a']);
+        expect(
+          resumes[1],
+          isNull,
+          reason:
+              'the state report after a switch carries the id, not the argv',
+        );
+        expect(resumes[2], ['--', 'fa', '--session', 'b']);
+        expect(resumes[3], isNull);
+        expect(resumes[4], ['--', 'fa', '--session', 'a']);
+      },
+    );
 
     test('a session id that fails the charset never reaches an argv', () {
       final (reporter, sink) = wired(
@@ -467,33 +495,39 @@ void main() {
   });
 
   group('fire-and-forget contract', () {
-    test('inert reporter: every hook is a no-op and the builders produce no bytes', () async {
-      final (reporter, sink) = wired({'HERDR_ENV': '1'});
-      reporter.updateSession('a');
-      reporter.state(HerdrPaneState.idle);
-      reporter.blocked(HerdrBlockedLabel.approval);
-      reporter.sessionSwitch('a');
-      await _release(reporter);
-      expect(sink, isEmpty);
-      expect(
-        reporter.reportStateArgs(state: HerdrPaneState.idle, seq: 1),
-        isEmpty,
-      );
-      expect(reporter.sessionSwitchArgs(sessionId: 'a', seq: 1), isEmpty);
-      expect(reporter.releaseArgs(seq: 1), isEmpty);
-    });
+    test(
+      'inert reporter: every hook is a no-op and the builders produce no bytes',
+      () async {
+        final (reporter, sink) = wired({'HERDR_ENV': '1'});
+        reporter.updateSession('a');
+        reporter.state(HerdrPaneState.idle);
+        reporter.blocked(HerdrBlockedLabel.approval);
+        reporter.sessionSwitch('a');
+        await _release(reporter);
+        expect(sink, isEmpty);
+        expect(
+          reporter.reportStateArgs(state: HerdrPaneState.idle, seq: 1),
+          isEmpty,
+        );
+        expect(reporter.sessionSwitchArgs(sessionId: 'a', seq: 1), isEmpty);
+        expect(reporter.releaseArgs(seq: 1), isEmpty);
+      },
+    );
 
-    test('active gate without a transport: argv built, nothing spawned, no crash', () {
-      final reporter = HerdrReporter(
-        envLookup: (name) => herdrEnv()[name],
-        runProcess: null,
-      );
-      reporter.state(HerdrPaneState.working);
-      expect(
-        reporter.reportStateArgs(state: HerdrPaneState.working, seq: 1),
-        isNotEmpty,
-      );
-    });
+    test(
+      'active gate without a transport: argv built, nothing spawned, no crash',
+      () {
+        final reporter = HerdrReporter(
+          envLookup: (name) => herdrEnv()[name],
+          runProcess: null,
+        );
+        reporter.state(HerdrPaneState.working);
+        expect(
+          reporter.reportStateArgs(state: HerdrPaneState.working, seq: 1),
+          isNotEmpty,
+        );
+      },
+    );
 
     test('a throwing recorder never propagates', () async {
       final reporter = HerdrReporter(
@@ -506,17 +540,20 @@ void main() {
       expect(reporter.active, isTrue);
     });
 
-    test('a hanging recorder is cut by the timeout and never surfaces', () async {
-      final reporter = HerdrReporter(
-        envLookup: (name) => herdrEnv()[name],
-        runProcess: (argv) => Completer<void>().future,
-        clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
-        timeout: const Duration(milliseconds: 5),
-      );
-      reporter.state(HerdrPaneState.idle);
-      await _release(reporter);
-      expect(reporter.active, isTrue);
-    });
+    test(
+      'a hanging recorder is cut by the timeout and never surfaces',
+      () async {
+        final reporter = HerdrReporter(
+          envLookup: (name) => herdrEnv()[name],
+          runProcess: (argv) => Completer<void>().future,
+          clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
+          timeout: const Duration(milliseconds: 5),
+        );
+        reporter.state(HerdrPaneState.idle);
+        await _release(reporter);
+        expect(reporter.active, isTrue);
+      },
+    );
   });
 
   group('AC5 exfiltration gate — byte scan over every constructible argv', () {
@@ -527,10 +564,10 @@ void main() {
     const canaryCwd = '/Users/somebody/secret-project';
 
     test('every report shape carries only the pinned vocabulary', () async {
-      final (reporter, sink) = wired(
-        {...herdrEnv(), 'HERDR_CANARY_SECRET': canarySecret},
-        clock: () => DateTime.fromMillisecondsSinceEpoch(1000),
-      );
+      final (reporter, sink) = wired({
+        ...herdrEnv(),
+        'HERDR_CANARY_SECRET': canarySecret,
+      }, clock: () => DateTime.fromMillisecondsSinceEpoch(1000));
       reporter.updateSession('173000_ab12');
       for (final state in HerdrPaneState.values) {
         reporter.state(state);
