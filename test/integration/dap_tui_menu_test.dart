@@ -152,8 +152,9 @@ void main() {
       },
     );
 
-    // QUARANTINED under gh-1007: LocalHub.waitForHellos 30s timeout under
-    // runner load — fix the timing flake and re-enable (mirrors gh-982).
+    // gh-1007 hardening: the master-secret dial's hello wait rides
+    // waitForHellosUnderLoad (90s ceiling, 15s chunks) instead of one
+    // fixed 30s window that flaked a CI shard under runner load.
     test('set master secret: masked input, then connects to the hub', () async {
       final fakeHub = FakeHub();
       await fakeHub.start();
