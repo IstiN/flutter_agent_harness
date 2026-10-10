@@ -1082,8 +1082,14 @@ final class CliConfig {
   /// The `headless:` section (gh-1459), only when explicitly configured;
   /// defaults are never written so the file stays minimal.
   String _headlessYaml() {
-    if (headless.shellJobDrainMs == defaultShellJobDrainMs) return '';
-    return headless.toYaml();
+    final lines = <String>[
+      if (headless.shellJobDrainMs != defaultShellJobDrainMs)
+        '  shellJobDrainMs: ${headless.shellJobDrainMs}',
+      if (headless.shellJobQuietMs != defaultShellJobQuietMs)
+        '  shellJobQuietMs: ${headless.shellJobQuietMs}',
+    ];
+    if (lines.isEmpty) return '';
+    return 'headless:\n${lines.join('\n')}\n';
   }
 
   /// The `compaction:` section, only when explicitly configured; defaults

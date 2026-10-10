@@ -365,14 +365,16 @@ const fileOnlyConfigKeys = <String, String>{
       '(issue #450), and the per-call tool-liveness thresholds '
       '(gh-1055) — operational knobs, tuned in the file.',
 
-  // Headless drain ceiling (gh-1459): how long `fa -p` may keep draining
-  // live background jobs (subagents + shell jobs) after the final answer
-  // before it detaches — an operational ceiling tuned per environment; 0
-  // disables the drain.
+  // Headless drain ceiling + liveness cadence (gh-1459): how long `fa -p`
+  // may keep draining live background jobs after the final answer before
+  // it detaches, and how often an interim still-running notice is steered
+  // while it waits — operational ceilings tuned per environment; 0
+  // disables the drain / the liveness steers.
   'headless':
-      'The headless background-job drain ceiling (gh-1459) — how long '
-      '`fa -p` stays alive for awaited background jobs after the final '
-      'answer; operational, tuned in the file.',
+      'The headless background-job drain ceiling and interim liveness '
+      'cadence (gh-1459) — how long `fa -p` stays alive for awaited '
+      'background jobs after the final answer, and how often it reminds '
+      'the model what it waits for; operational, tuned in the file.',
   // The fabric section carries the HOST's discovery announcements (issue
   // #27 phase 2) — written by hosts, read by the runtime, never user-edited.
   'fabric':

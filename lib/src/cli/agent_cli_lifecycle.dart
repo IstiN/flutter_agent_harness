@@ -129,9 +129,26 @@ extension AgentCliLifecycle on AgentCli {
   /// settles (an infinite watch-loop) cannot hang headless forever. Past
   /// the ceiling the loop gives up and the detach summary below applies;
   /// `shellJobDrainMs: 0` disables the drain entirely.
+  ///
+  /// gh-1459 ask #4: while the drain waits, every
+  /// `headless.shellJobQuietMs` (default 5 min) of a still-running
+  /// awaited shell job steers ONE compact system-notice (elapsed + log
+  /// tail + the bash_job escape hatch) into a fresh turn — the model can
+  /// keep waiting, inspect, or kill instead of blocking blindly to the
+  /// ceiling. A notice is skipped when the model itself probed the job
+  /// (a `bash_job status/output` call bumps
+  /// [ShellJobEntry.probeGeneration]) since the last consumed threshold —
+  /// one steer budget per crossing, never a spam loop.
   Future<void> _awaitHeadlessBackgroundJobs() async {
     final drainMs = config.headless.shellJobDrainMs;
+    final quietMs = config.headless.shellJobQuietMs;
     final deadline = _waitingClock().add(Duration(milliseconds: drainMs));
+    // Per-job liveness bookkeeping: the last quiet bucket consumed
+    // (steered or skipped) and the probe generation seen at that
+    // consumption. Generation counters, not timestamps — the comparison
+    // stays valid under a fake DateTime test clock.
+    final consumedBucket = <String, int>{};
+    final seenProbeGen = <String, int>{};
     var namedWaiting = false;
     for (var round = 0; round < 10; round++) {
       final subActive = _taskConfig.jobManager.jobs.any(
@@ -158,18 +175,28 @@ extension AgentCliLifecycle on AgentCli {
         final snap = await _waiting.snapshot();
         io.writeln('⏳ waiting: ${_waiting.describe(snap)}');
       }
-      // All active settles at once — bounded by the remaining ceiling.
+      // All active settles at once — bounded by the remaining ceiling AND
+      // by the next liveness threshold (ask #4), so a due steer fires on
+      // cadence even while the job keeps running.
       await Future.any([
         Future.wait([
           if (subActive) _taskConfig.jobManager.settled,
           for (final job in shellActive) job.settled,
         ]),
-        _waitingSleep(deadline.difference(_waitingClock())),
+        _waitingSleep(
+          _headlessLivenessWake(shellActive, quietMs, consumedBucket, deadline),
+        ),
       ]);
       // A settle notice starts its reaction run one event-loop turn later
-      // (the registry's settle listener leg); pump it, then let the
-      // reaction run finish before re-checking.
+      // (the registry's settle listener leg); pump it, then steer any due
+      // liveness notices BEFORE awaiting the reaction run.
       await Future<void>.delayed(Duration.zero);
+      await _steerHeadlessLiveness(
+        shellActive,
+        quietMs,
+        consumedBucket,
+        seenProbeGen,
+      );
       if (isBusy) {
         await _settled;
         await _afterRun();
@@ -201,6 +228,81 @@ extension AgentCliLifecycle on AgentCli {
           'detaching',
         ),
       );
+    }
+  }
+
+  /// The next drain wake bound: the remaining ceiling, pulled earlier by
+  /// the next liveness threshold of any active shell job (gh-1459 ask #4)
+  /// so a due notice fires on cadence. Pure time arithmetic on the
+  /// waiting clock — unit-tested through the drain ITs.
+  Duration _headlessLivenessWake(
+    List<ShellJobEntry> active,
+    int quietMs,
+    Map<String, int> consumedBucket,
+    DateTime deadline,
+  ) {
+    var wake = deadline.difference(_waitingClock());
+    if (quietMs <= 0 || active.isEmpty) return wake;
+    final now = _waitingClock();
+    for (final job in active) {
+      final bucket = (consumedBucket[job.id] ?? 0) + 1;
+      final due = job.startedAt.add(Duration(milliseconds: quietMs * bucket));
+      final d = due.difference(now);
+      if (d < wake) wake = d;
+    }
+    return wake;
+  }
+
+  /// Steers the due interim liveness notices of the active shell jobs
+  /// (gh-1459 ask #4): one compact `<system-notice>` per newly-crossed
+  /// quiet threshold (`job <id> running · <elapsed> elapsed · tail: …`
+  /// plus the bash_job escape hatch). A crossing the model already
+  /// inspected itself (a `bash_job status/output` probe — the probe
+  /// generation advanced since the last consumption) is SKIPPED but
+  /// still consumed: the next steer waits for the NEXT threshold, never
+  /// a per-timer retry. The notices ride the same path as the settle
+  /// notice — the first starts a fresh run while idle, the rest steer
+  /// into it — and the caller then awaits the reaction run.
+  Future<void> _steerHeadlessLiveness(
+    List<ShellJobEntry> active,
+    int quietMs,
+    Map<String, int> consumedBucket,
+    Map<String, int> seenProbeGen,
+  ) async {
+    if (quietMs <= 0) return;
+    for (final job in active) {
+      if (!job.isRunning || !job.notifyOnSettle) continue;
+      final elapsed = _waitingClock().difference(job.startedAt);
+      final elapsedMs = elapsed.isNegative ? 0 : elapsed.inMilliseconds;
+      final action = headlessJobLivenessAction(
+        elapsedMs: elapsedMs,
+        quietMs: quietMs,
+        lastConsumedBucket: consumedBucket[job.id] ?? 0,
+        probedSinceLastConsumption:
+            job.probeGeneration != (seenProbeGen[job.id] ??= job.probeGeneration),
+      );
+      if (action == HeadlessLivenessAction.wait) continue;
+      // Both a steer and a skip consume the crossing — exactly one
+      // notice budget per threshold per job.
+      consumedBucket[job.id] = elapsedMs ~/ quietMs;
+      seenProbeGen[job.id] = job.probeGeneration;
+      if (action == HeadlessLivenessAction.skip) continue;
+      final tail = (await _shellJobs.tail(job.id, maxLines: 5)).trimRight();
+      final message =
+          '<system-notice>\n'
+          'Job ${job.id} running · ${headlessLivenessElapsedText(elapsed)} '
+          'elapsed · tail: ${tail.isEmpty ? '(no output yet)' : tail}\n'
+          'Escape hatch: bash_job output ${job.id} (inspect) / '
+          'bash_job stop ${job.id} (kill). Log: ${job.logPath}\n'
+          '</system-notice>';
+      // Same persistence/steering path as the settle notice
+      // (`_onShellJobSettled`): the echo keeps resume matching live.
+      _tuiController?.sendOutput('$message\n');
+      if (isBusy) {
+        _agent.steer(UserMessage.text(message));
+      } else {
+        _startRun(message);
+      }
     }
   }
 

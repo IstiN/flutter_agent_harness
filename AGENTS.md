@@ -242,7 +242,12 @@ factual: paths, commands, invariants — no essays.
   steer fresh reaction turns, loop (10 rounds) under ONE shared
   wall-clock ceiling `headless.shellJobDrainMs` (default 30 min; 0 =
   pre-gh-1459 detach-immediately), then the detach summary applies
-  (gh-1459). Job logs on disk are NOT secret-redacted.
+  (gh-1459). While the drain waits, every `headless.shellJobQuietMs`
+  (default 5 min; 0 = off) of a still-running awaited job steers ONE
+  interim liveness notice (`job <id> running · <elapsed> · tail: …` +
+  the bash_job escape hatch), skipped for a crossing the model probed
+  itself (`bash_job status/output` bumps the entry's probe generation)
+  (gh-1459 ask #4). Job logs on disk are NOT secret-redacted.
 - `lib/src/tools/availability.dart` + `availability_gate.dart` —
   capability-gated tool availability (issue #19): `resolveToolAvailability`
   merges the `tools:` scope stack (global `~/.fah/config.yaml` < project

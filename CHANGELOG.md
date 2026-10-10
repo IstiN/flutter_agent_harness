@@ -20,7 +20,16 @@
   `⏳ … drain ceiling … — detaching` line instead of hanging headless,
   and the detach summary stays the documented degradation, never the
   default path. The drain prints a `⏳ waiting: …` line (#1055 parity)
-  naming what the run stays alive for.
+  naming what the run stays alive for. While it waits, the drain also
+  steers interim liveness notices (gh-1459 ask #4): every
+  `headless.shellJobQuietMs` (default 5 min; `0` = off) of a
+  still-running awaited shell job, ONE compact system-notice
+  (`job <id> running · <elapsed> elapsed · tail: …` plus the bash_job
+  output/stop escape hatch) keeps the model able to wait, inspect, or
+  kill instead of blocking blindly to the ceiling; a crossing the model
+  probed itself (`bash_job status/output` bumps the entry's probe
+  generation) is skipped, one steer budget per threshold, never a spam
+  loop.
 - feat(providers): issue #1398 — stall-recovery tuning becomes per-provider
   and data-driven. Registry entries (`customProviders:`, `models.custom:`,
   roles chain entries, `providersQueue:` entries) accept optional

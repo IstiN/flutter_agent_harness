@@ -150,12 +150,16 @@ final class _LivenessJob implements ShellJob {
   Future<void> stop() async => finish(9);
 }
 
-Future<void> _waitFor(bool Function() condition, {required String reason}) async {
+Future<void> _waitFor(
+  bool Function() condition, {
+  required String reason,
+  String Function()? dump,
+}) async {
   for (var i = 0; i < 4000; i++) {
     if (condition()) return;
     await Future<void>.delayed(const Duration(milliseconds: 5));
   }
-  fail('timed out waiting: $reason');
+  fail('timed out waiting: $reason${dump == null ? '' : '\n${dump()}'}');
 }
 
 String _lastUserTextOf(Context context) {
@@ -178,6 +182,8 @@ class _LivenessHarness {
     required this.run,
     required DateTime Function() clockOf,
     required List<Completer<void>> gates,
+    required this.runCode,
+    required this.runFailure,
   }) : _clockOf = clockOf,
        _gates = gates;
 
@@ -189,9 +195,18 @@ class _LivenessHarness {
   final Future<int> run;
   final DateTime Function() _clockOf;
   final List<Completer<void>> _gates;
+  final int Function() runCode;
+  final Object? Function() runFailure;
 
   DateTime get clock => _clockOf();
   int get pendingSleeps => _gates.where((g) => !g.isCompleted).length;
+
+  /// Debug dump for wait timeouts.
+  String dump() =>
+      'runCode=$runCode runFailure=${runFailure()}\n'
+      'clock=$clock\n'
+      'contexts=${stream.contexts.length}\n'
+      'io.out:\n${io.out.toString()}';
 
   /// Lets the oldest parked drain sleep complete (time advances by the
   /// duration the drain asked for).
@@ -267,7 +282,17 @@ Future<_LivenessHarness> livenessShape({
       return gate.future;
     },
   );
-  final run = cli.runHeadless('run the full test suite');
+  final runFuture = cli.runHeadless('run the full test suite');
+  // Surface a crashed run to the waits instead of hanging silently.
+  Object? runFailure;
+  var runCode = -1;
+  final run = runFuture.then((c) {
+    runCode = c;
+    return c;
+  }, onError: (Object e) {
+    runFailure = e;
+    return 999;
+  });
   await _waitFor(() => shell.jobs.isNotEmpty, reason: 'the job registers');
   return _LivenessHarness._(
     cli: cli,
@@ -276,6 +301,8 @@ Future<_LivenessHarness> livenessShape({
     shell: shell,
     env: env,
     run: run,
+    runCode: () => runCode,
+    runFailure: () => runFailure,
     clockOf: () => clock,
     gates: gates,
   );
