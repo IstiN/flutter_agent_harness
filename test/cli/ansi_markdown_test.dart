@@ -189,10 +189,7 @@ void main() {
         // dropped — inconsistent layout for a rare input.
         final rows = wrapAnsiLine('\x1b[1maaaa \x1b[0m', 4);
         expect(rows, hasLength(1));
-        expect(
-          rows.single.replaceAll(AnsiMarkdown.ansiSgrPattern, ''),
-          'aaaa',
-        );
+        expect(rows.single.replaceAll(AnsiMarkdown.ansiSgrPattern, ''), 'aaaa');
       });
 
       test('property: seeded random text at random widths round-trips '

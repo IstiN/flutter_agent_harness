@@ -47,18 +47,16 @@ extension AgentCliDiagLog on AgentCli {
   /// Rotates [path] to `fa.log.1` when it exceeds
   /// [AgentCli.diagnosticLogMaxBytes]. Runs once per process (first log
   /// write), so parallel fa processes can race the rename — losing a few
-  /// diagnostics lines is acceptable for a post-mortem file. A rename keeps
-  /// the previous log available; backends without an atomic rename fall
-  /// back to truncating in place.
+  /// diagnostics lines is acceptable for a post-mortem file. The rename
+  /// keeps the previous log available; a backend that reports rename as
+  /// unsupported (CwdOverrideEnv forwards the capability only when the
+  /// delegate has it) falls back to truncating in place.
   Future<void> _rotateDiagnosticLogIfOversized(String path) async {
     final info = await _env.fileInfo(path);
     final size = info.valueOrNull?.size ?? 0;
     if (size <= AgentCli.diagnosticLogMaxBytes) return;
-    final env = _env;
-    if (env is RenamableFileSystem) {
-      final renamed = await env.renamePath(path, '$path.1');
-      if (renamed.isOk) return;
-    }
+    final renamed = await _env.renamePath(path, '$path.1');
+    if (renamed.isOk) return;
     await _env.writeFile(path, '');
   }
 
