@@ -346,6 +346,9 @@ Future<bool> _runAiinDesktopConnect(
             debugPrint('[AIIN] $message');
             trace.add(message);
           },
+          // Desktop host: always launch — the CLI's headless auto-detect
+          // must not gate the flow here (gh-1450).
+          shouldOpenBrowserFn: () => true,
           openBrowserFn: (url) => url_launcher.launchUrl(
             Uri.parse(url),
             mode: url_launcher.LaunchMode.externalApplication,
@@ -593,6 +596,10 @@ Future<bool> runAiinMobileConnect({
               trace.add(message);
             },
             client: aiinHttpClient,
+            // App host (desktop browser hop or the iOS auth session):
+            // always open the surface — the CLI's headless auto-detect
+            // must not gate the flow here (gh-1450).
+            shouldOpenBrowserFn: () => true,
             // The redirect advertises the literal loopback address on
             // every surface: interception is scheme-based (host plays no
             // role) and the fallback leg needs an address that reaches
