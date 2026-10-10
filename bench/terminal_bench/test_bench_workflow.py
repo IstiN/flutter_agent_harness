@@ -122,15 +122,24 @@ def _resolve_run_block() -> str:
 
 
 # The resolve block runs with GITHUB_OUTPUT pointed at a temp file (the
-# test reads the step outputs from it) and both bench secrets in env.
-def _run_resolve(provider="", zai_key="zai-test-key", kimi_key="kimi-test-key"):
+# test reads the step outputs from it) and all three bench secrets in env
+# (gh-1471 D1/AC 2a: the custom path preflights FA_BENCH_CUSTOM_KEY).
+def _run_resolve(
+    provider="",
+    zai_key="zai-test-key",
+    kimi_key="kimi-test-key",
+    custom_key="custom-test-key",
+    provider_config="",
+):
     env = dict(os.environ)
     env.update(
         {
             "PROVIDER": provider,
             "BENCH_MODEL": "glm-5.3-flash",
+            "PROVIDER_CONFIG": provider_config,
             "FA_BENCH_ZAI_KEY": zai_key,
             "FA_BENCH_KIMI_KEY": kimi_key,
+            "FA_BENCH_CUSTOM_KEY": custom_key,
         }
     )
     tmp = tempfile.TemporaryDirectory()
@@ -401,12 +410,115 @@ class ProviderResolveStepTest(unittest.TestCase):
         # Presence only: the raw key must not appear in stdout/stderr
         # (the ::add-mask:: line carries the base64 form, like the shard
         # step's long-standing contract).
-        for provider in ("", "kimi-for-coding"):
-            proc = _run_resolve(provider=provider)
+        for provider in ("", "kimi-for-coding", "custom"):
+            provider_config = (
+                '{"baseUrl":"https://api.example.com/v1","model":"m-1"}'
+                if provider == "custom"
+                else ""
+            )
+            proc = _run_resolve(provider=provider, provider_config=provider_config)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertNotIn("zai-test-key", proc.stdout + proc.stderr)
             self.assertNotIn("kimi-test-key", proc.stdout + proc.stderr)
+            self.assertNotIn("custom-test-key", proc.stdout + proc.stderr)
             _resolve_outputs(proc)
+
+    # gh-1471 D1 / AC 2a: the custom escape hatch — a new provider
+    # tomorrow needs zero workflow edits. The key NEVER rides the
+    # dispatch input (inputs are visible in run metadata): it comes only
+    # from the FA_BENCH_CUSTOM_KEY secret, injected as the fixed
+    # apiKeyEnvVar FA_KEY_BENCH_CUSTOM.
+    CUSTOM_CONFIG = (
+        '{"type":"openai","baseUrl":"https://api.example.com/v1",'
+        '"model":"m-1","contextWindow":128000,"maxTokens":8192}'
+    )
+
+    def test_custom_provider_config_flows_verbatim_with_fixed_key_env(self):
+        proc = _run_resolve(provider="custom", provider_config=self.CUSTOM_CONFIG)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        outputs = _resolve_outputs(proc)
+        config = json.loads(outputs["provider_config"])
+        # Every declared field rides FA_PROVIDER_CONFIG verbatim…
+        declared = json.loads(self.CUSTOM_CONFIG)
+        for key, value in declared.items():
+            self.assertEqual(config[key], value)
+        # …plus the fixed key env injection — the only key path.
+        self.assertEqual(config["apiKeyEnvVar"], "FA_KEY_BENCH_CUSTOM")
+        self.assertEqual(outputs["provider_type"], "openai")
+        self.assertEqual(outputs["provider_key_env"], "FA_KEY_BENCH_CUSTOM")
+        self.assertEqual(outputs["bench_model"], "m-1")
+        self.assertEqual(outputs["run_label"], "custom (m-1)")
+
+    def test_custom_type_defaults_to_openai_compatible(self):
+        proc = _run_resolve(
+            provider="custom",
+            provider_config='{"baseUrl":"https://api.example.com/v1","model":"m-1"}',
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        outputs = _resolve_outputs(proc)
+        self.assertEqual(outputs["provider_type"], "openai")
+        config = json.loads(outputs["provider_config"])
+        self.assertEqual(config["model"], "m-1")
+
+    def test_custom_rejects_non_json(self):
+        proc = _run_resolve(provider="custom", provider_config="not json {")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("provider-config", proc.stdout + proc.stderr)
+        self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_rejects_non_object_json(self):
+        proc = _run_resolve(provider="custom", provider_config='["baseUrl"]')
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_rejects_missing_base_url_or_model(self):
+        for config in (
+            '{"model":"m-1"}',
+            '{"baseUrl":"https://api.example.com/v1"}',
+            '{"baseUrl":"","model":"m-1"}',
+        ):
+            proc = _run_resolve(provider="custom", provider_config=config)
+            self.assertNotEqual(proc.returncode, 0, config)
+            message = proc.stdout + proc.stderr
+            self.assertIn("baseUrl", message)
+            self.assertIn("model", message)
+            self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_rejects_non_https_base_url(self):
+        proc = _run_resolve(
+            provider="custom",
+            provider_config='{"baseUrl":"http://api.example.com/v1","model":"m-1"}',
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("https://", proc.stdout + proc.stderr)
+        self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_rejects_key_like_fields_case_insensitive(self):
+        # The key must never ride a dispatch input — run metadata is
+        # visible. apiKey/key/token/secret (any case) hard-fail.
+        for field in ("apiKey", "APIKEY", "key", "Key", "token", "SECRET",
+                      "api_key", "accessToken"):
+            with self.subTest(field=field):
+                config = (
+                    '{"baseUrl":"https://api.example.com/v1","model":"m-1",'
+                    f'"{field}":"sk-leaked"}}'
+                )
+                proc = _run_resolve(provider="custom", provider_config=config)
+                self.assertNotEqual(proc.returncode, 0, field)
+                message = proc.stdout + proc.stderr
+                self.assertIn(field.lower(), message.lower())
+                self.assertNotIn("sk-leaked", message)
+                self.assertEqual(_resolve_outputs(proc), {})
+
+    def test_custom_missing_secret_fails_naming_the_secret(self):
+        proc = _run_resolve(
+            provider="custom", provider_config=self.CUSTOM_CONFIG, custom_key=""
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        message = proc.stdout + proc.stderr
+        self.assertIn("FA_BENCH_CUSTOM_KEY", message)
+        self.assertIn("custom", message)
+        self.assertEqual(_resolve_outputs(proc), {})
 
 
 def _yml_text() -> str:
