@@ -333,12 +333,31 @@ void main() {
           sessionRoot: '/sessions',
           providerKind: 'openai-completions',
           stuckTool: _stuckTool,
+          // gh-1459: the converted job hangs until stopped, so the headless
+          // drain (which now waits for live background shell jobs) would
+          // hold the run to the 30-min default ceiling. A short ceiling
+          // keeps this test about the supervisor's blameless hand-back —
+          // the run must still exit 0 through the documented detach
+          // degradation while the converted job is live.
+          headless: const HeadlessConfig(shellJobDrainMs: 200),
         ),
         io: io,
         streamFunction: FakeStreamFunction(_turns()).call,
       );
       final exitCode = await cli.runHeadless('run the long thing');
       expect(exitCode, 0, reason: 'the turn continues past the conversion');
+      expect(
+        io.out.toString(),
+        contains('drain ceiling'),
+        reason:
+            'the never-settling converted job outlives the short drain '
+            'ceiling — the documented degradation, not a hang (gh-1459)',
+      );
+      expect(
+        io.out.toString(),
+        contains('detached'),
+        reason: 'the detach summary names the outliving jobs',
+      );
       final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
       final sessions = await repo.list(cwd: '/work');
       final session = await repo.open(sessions.first);
