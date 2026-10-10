@@ -1110,16 +1110,38 @@ void main() {
             cost: UsageCost(),
           ),
         ),
+        // A second usage-carrying fact: with only one, cumulative and own
+        // usage are indistinguishable and a broken fold (seeded per
+        // request from null) cannot fail this test.
+        _assistantRecord(
+          'ba2',
+          parentId: 'ba1',
+          usage: const Usage(
+            input: 20,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 20,
+            cost: UsageCost(),
+          ),
+        ),
       ];
       final bulk = TrajectorySnapshotBuilder().appendAll(records);
-      expect(bulk.requests, hasLength(1));
-      expect(bulk.requests.single.status, TrajectoryRequestStatus.completed);
-      expect(bulk.requests.single.seq, 1);
-      expect(bulk.requests.single.usage?.totalTokens, 15);
+      expect(bulk.requests, hasLength(2));
+      expect(bulk.requests[0].status, TrajectoryRequestStatus.completed);
+      expect(bulk.requests[0].seq, 1);
+      expect(bulk.requests[0].usage?.totalTokens, 15);
       expect(
-        bulk.requests.single.cumulativeUsage?.totalTokens,
+        bulk.requests[0].cumulativeUsage?.totalTokens,
         15,
-        reason: 'the suffix fold seeds cumulative usage from zero',
+        reason: 'the full-rebuild fold seeds cumulative usage from zero',
+      );
+      expect(bulk.requests[1].seq, 2);
+      expect(bulk.requests[1].usage?.totalTokens, 20);
+      expect(
+        bulk.requests[1].cumulativeUsage?.totalTokens,
+        35,
+        reason: 'the full-rebuild fold threads the running cumulative',
       );
       // Same session through per-append snapshots: identical requests.
       final live = TrajectorySnapshotBuilder();
@@ -1127,9 +1149,14 @@ void main() {
         live.append(record);
       }
       final liveSnapshot = live.build();
-      expect(liveSnapshot.requests, hasLength(1));
-      expect(liveSnapshot.requests.single.status, bulk.requests.single.status);
-      expect(liveSnapshot.requests.single.cumulativeUsage?.totalTokens, 15);
+      expect(liveSnapshot.requests, hasLength(2));
+      expect(liveSnapshot.requests[0].status, bulk.requests[0].status);
+      expect(liveSnapshot.requests[0].cumulativeUsage?.totalTokens, 15);
+      expect(
+        liveSnapshot.requests[1].cumulativeUsage?.totalTokens,
+        35,
+        reason: 'the suffix fold threads the same running cumulative',
+      );
     });
   });
   test('a persisted model_request_summary carries blob pointers', () {

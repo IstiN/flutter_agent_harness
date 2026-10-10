@@ -150,7 +150,9 @@ final class TrajectorySnapshotBuilder {
   int _chainWalkHops = 0;
 
   /// Total row references the snapshot publisher copied (chunk clones +
-  /// per-publish chunk-pointer copies) over this builder's life.
+  /// per-publish chunk-pointer copies) over this builder's life. Lifetime
+  /// total: `reset()` and full request rebuilds never zero it (dropping
+  /// rows copies nothing).
   ///
   /// The #1497 per-append snapshot copied EVERY row on every append —
   /// O(n) per append, O(n²) over a live session (~10ms per append at 65k
@@ -1154,9 +1156,10 @@ final class TrajectorySnapshotBuilder {
     _reqPositions.clear();
     _reqNumberRows.reset();
     _reqCumulative = <Usage?>[];
+    Usage? cumulative;
     for (var i = 0; i < facts.length; i++) {
       _reqPositions[facts[i]] = i;
-      _foldRequestNumber(i, facts[i], null);
+      cumulative = _foldRequestNumber(i, facts[i], cumulative);
     }
   }
 
@@ -1166,8 +1169,9 @@ final class TrajectorySnapshotBuilder {
     for (final fact in _reqAdded) {
       // Fact orders fold in from the row count at their creation, which
       // only grows, so a new fact lands at the sorted tail; an
-      // out-of-order arrival reverts to the full sort.
-      if (sorted.isNotEmpty && fact.order < sorted.last.order) {
+      // out-of-order arrival — or a tie, since List.sort is not stable —
+      // reverts to the full sort.
+      if (sorted.isNotEmpty && fact.order <= sorted.last.order) {
         _reqResort = true;
         return;
       }
@@ -1231,10 +1235,16 @@ final class TrajectorySnapshotBuilder {
     final position = _reqPositions[fact];
     if (position == null) return; // Not built into a cached order yet.
     final sorted = _reqSorted!;
-    if (position + 1 < sorted.length &&
-        sorted[position + 1].order < fact.order) {
-      // The order bump moved the fact past its successor: the cached order
-      // is no longer provably the full sort's order — rebuild from scratch.
+    final passedOrTiedSuccessor =
+        position + 1 < sorted.length &&
+        sorted[position + 1].order <= fact.order;
+    final tiedPredecessor =
+        position > 0 && sorted[position - 1].order == fact.order;
+    if (passedOrTiedSuccessor || tiedPredecessor) {
+      // The fact's order reached or passed a neighbor. List.sort is not
+      // stable on equal orders, so a tie could order the pair differently
+      // than the cached one — rebuild from scratch so tied facts always
+      // get exactly the full sort's derivation.
       _reqResort = true;
     }
     if (position < _reqDirtyFrom) _reqDirtyFrom = position;
@@ -1311,7 +1321,8 @@ final class _ChunkStore<T> {
 
   /// Total row references copied into published/cloned structures over
   /// this store's life — the deterministic cost metric for the #1497
-  /// scaling guard.
+  /// scaling guard. Lifetime total: never zeroed by [reset] or
+  /// [truncate] (dropping rows copies nothing).
   int copiedRows = 0;
 
   int get length => _length;
@@ -1364,14 +1375,15 @@ final class _ChunkStore<T> {
     _length = newLength;
   }
 
-  /// Drops everything (builder reset).
+  /// Drops everything (builder reset). [copiedRows] is deliberately NOT
+  /// zeroed: it is a lifetime copy counter, so resets and full request
+  /// rebuilds cannot silently under-report the scaling metric.
   void reset() {
     _chunks.length = 1;
     _chunks[0] = <T>[];
     _chunkEpoch.length = 1;
     _chunkEpoch[0] = _epoch;
     _length = 0;
-    copiedRows = 0;
   }
 
   /// Publishes the current rows as an immutable shared list and starts a
