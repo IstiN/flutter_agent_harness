@@ -68,6 +68,17 @@ class _LivenessRoutingStream {
     return '';
   }
 
+  /// A continuation call's messages carry a [ToolResultMessage] ahead of
+  /// the last user message; a fresh call's last message IS the user
+  /// payload that started the run.
+  bool _isToolContinuation(Context context) {
+    for (final message in context.messages.reversed) {
+      if (message is ToolResultMessage) return true;
+      if (message is UserMessage) return false;
+    }
+    return false;
+  }
+
   AssistantMessageEventStream call(
     Model model,
     Context context, {
@@ -75,13 +86,15 @@ class _LivenessRoutingStream {
   }) {
     contexts.add(context);
     final last = _lastUserText(context);
+    final continuation = _isToolContinuation(context);
     lastUserTexts.add(last);
+    continuations.add(continuation);
     final List<AssistantMessageEvent> script;
-    if (last.contains(_livenessMarker)) {
+    if (!continuation && last.contains(_livenessMarker)) {
       script = _livenessScripts.isNotEmpty
           ? _livenessScripts.removeAt(0)
           : textTurn('noted.');
-    } else if (last.contains('finished with exit code')) {
+    } else if (!continuation && last.contains('finished with exit code')) {
       script = _settleScript;
     } else if (_leadScripts.isNotEmpty) {
       script = _leadScripts.removeAt(0);
@@ -130,7 +143,11 @@ class _LivenessShell implements Shell, BackgroundShell {
 }
 
 final class _LivenessJob implements ShellJob {
-  _LivenessJob({required this.id, required this.command, required this.logPath});
+  _LivenessJob({
+    required this.id,
+    required this.command,
+    required this.logPath,
+  });
 
   @override
   final String id;
@@ -222,10 +239,7 @@ class _LivenessHarness {
       'clock=$clock\n'
       'contexts=${stream.contexts.length} lastUserTexts=${stream.lastUserTexts.length} '
       'livenessRuns=${livenessRuns.length}\n'
-      'markerMatch=[${[
-        for (final t in stream.lastUserTexts)
-          t.contains(_livenessMarker),
-      ]}]\n'
+      'markerMatch=[${[for (final t in stream.lastUserTexts) t.contains(_livenessMarker)]}]\n'
       'lastUserTexts:\n${stream.lastUserTexts.join('\n---\n')}\n'
       'io.out:\n${io.out.toString()}';
 
@@ -243,17 +257,21 @@ class _LivenessHarness {
 
   /// The runs steered by interim liveness notices (in order), classified
   /// by the CALL-TIME user text (the Context objects mutate as tool
-  /// rounds append results).
+  /// rounds append results); continuation calls of a notice run (its
+  /// tool rounds) do not count.
   List<Context> get livenessRuns => [
     for (var i = 0; i < stream.contexts.length; i++)
-      if (stream.lastUserTexts[i].contains(_livenessMarker)) stream.contexts[i],
+      if (!stream.continuations[i] &&
+          stream.lastUserTexts[i].contains(_livenessMarker))
+        stream.contexts[i],
   ];
 
   /// The call-time user text of the n-th liveness run (1-based).
   String livenessNotice(int n) {
     var seen = 0;
     for (var i = 0; i < stream.contexts.length; i++) {
-      if (stream.lastUserTexts[i].contains(_livenessMarker)) {
+      if (!stream.continuations[i] &&
+          stream.lastUserTexts[i].contains(_livenessMarker)) {
         seen++;
         if (seen == n) return stream.lastUserTexts[i];
       }
@@ -282,7 +300,10 @@ Future<_LivenessHarness> livenessShape({
         const ToolCall(
           id: 't1',
           name: 'bash',
-          arguments: {'command': 'dart test --exclude-tags integration', 'background': true},
+          arguments: {
+            'command': 'dart test --exclude-tags integration',
+            'background': true,
+          },
         ),
       ]),
       textTurn('Started the suite in the background. Waiting on it.'),
@@ -318,13 +339,16 @@ Future<_LivenessHarness> livenessShape({
   // Surface a crashed run to the waits instead of hanging silently.
   Object? runFailure;
   var runCode = -1;
-  final run = runFuture.then((c) {
-    runCode = c;
-    return c;
-  }, onError: (Object e) {
-    runFailure = e;
-    return 999;
-  });
+  final run = runFuture.then(
+    (c) {
+      runCode = c;
+      return c;
+    },
+    onError: (Object e) {
+      runFailure = e;
+      return 999;
+    },
+  );
   await _waitFor(() => shell.jobs.isNotEmpty, reason: 'the job registers');
   return _LivenessHarness._(
     cli: cli,
@@ -351,16 +375,23 @@ void main() {
       final h = await livenessShape();
       final job = h.shell.jobs.single;
       // Six log lines — the notice tail shows the LAST FIVE.
-      await h.env.writeFile(job.logPath, [
-        for (var i = 1; i <= 6; i++) 'log-line-$i',
-      ].join('\n'));
+      await h.env.writeFile(
+        job.logPath,
+        [for (var i = 1; i <= 6; i++) 'log-line-$i'].join('\n'),
+      );
       h.livenessScripts.add(textTurn('still waiting.'));
       h.livenessScripts.add(textTurn('still waiting.'));
 
       // Release the 5m sleep → the first notice is steered.
-      await _waitFor(() => h.pendingSleeps >= 1, reason: 'the first drain sleep parks');
+      await _waitFor(
+        () => h.pendingSleeps >= 1,
+        reason: 'the first drain sleep parks',
+      );
       h.releaseNextSleep();
-      await _waitFor(() => h.livenessRuns.length == 1, reason: 'the 5m notice is steered');
+      await _waitFor(
+        () => h.livenessRuns.length == 1,
+        reason: 'the 5m notice is steered',
+      );
       expect(h.livenessNotice(1), contains(job.id));
       expect(h.livenessNotice(1), contains('5m elapsed'));
       expect(h.livenessNotice(1), contains('log-line-2'));
@@ -369,9 +400,15 @@ void main() {
       expect(h.livenessNotice(1), contains('stop'));
 
       // Release the 10m sleep → the second notice is steered.
-      await _waitFor(() => h.pendingSleeps >= 1, reason: 'the second drain sleep parks');
+      await _waitFor(
+        () => h.pendingSleeps >= 1,
+        reason: 'the second drain sleep parks',
+      );
       h.releaseNextSleep();
-      await _waitFor(() => h.livenessRuns.length == 2, reason: 'the 10m notice is steered');
+      await _waitFor(
+        () => h.livenessRuns.length == 2,
+        reason: 'the 10m notice is steered',
+      );
       expect(h.livenessNotice(2), contains(job.id));
       expect(h.livenessNotice(2), contains('10m elapsed'));
 
@@ -382,7 +419,11 @@ void main() {
       final code = await h.run;
 
       expect(code, 0);
-      expect(h.livenessRuns.length, 2, reason: 'exactly one steer per threshold crossing');
+      expect(
+        h.livenessRuns.length,
+        2,
+        reason: 'exactly one steer per threshold crossing',
+      );
       final texts = h.stream.lastUserTexts.last;
       expect(
         texts,
@@ -441,7 +482,10 @@ void main() {
 
       // Release the 10m sleep → the crossing is SKIPPED (the model
       // probed since the 5m steer); the drain parks on the next sleep.
-      await _waitFor(() => h.pendingSleeps >= 1, reason: 'the second drain sleep parks');
+      await _waitFor(
+        () => h.pendingSleeps >= 1,
+        reason: 'the second drain sleep parks',
+      );
       h.releaseNextSleep();
       await _waitFor(
         () => h.pendingSleeps >= 1 || !job.isRunning,
@@ -457,11 +501,12 @@ void main() {
       final code = await h.run;
 
       expect(code, 0);
-      expect(h.livenessRuns.length, 1, reason: 'steer budget respected: 1, never 2');
       expect(
-        h.stream.lastUserTexts.last,
-        contains('finished with exit code'),
+        h.livenessRuns.length,
+        1,
+        reason: 'steer budget respected: 1, never 2',
       );
+      expect(h.stream.lastUserTexts.last, contains('finished with exit code'));
       h.io.close();
     },
   );

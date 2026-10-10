@@ -59,9 +59,7 @@ void main() {
     });
 
     test('fromYaml parses shellJobQuietMs', () {
-      final config = HeadlessConfig.fromYaml({
-        'shellJobQuietMs': 30000,
-      });
+      final config = HeadlessConfig.fromYaml({'shellJobQuietMs': 30000});
       expect(config.shellJobQuietMs, 30000);
       // Untouched knobs keep their defaults.
       expect(config.shellJobDrainMs, 30 * 60 * 1000);
@@ -209,15 +207,9 @@ void main() {
 
   group('headlessLivenessElapsedText (the notice elapsed clause)', () {
     test('minutes at and past the first minute, seconds below', () {
-      expect(
-        headlessLivenessElapsedText(const Duration(minutes: 12)),
-        '12m',
-      );
+      expect(headlessLivenessElapsedText(const Duration(minutes: 12)), '12m');
       expect(headlessLivenessElapsedText(const Duration(minutes: 5)), '5m');
-      expect(
-        headlessLivenessElapsedText(const Duration(seconds: 45)),
-        '45s',
-      );
+      expect(headlessLivenessElapsedText(const Duration(seconds: 45)), '45s');
     });
   });
 }

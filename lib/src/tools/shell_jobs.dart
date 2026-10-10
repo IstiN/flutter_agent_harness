@@ -145,11 +145,7 @@ final class ShellJobEntry {
   /// The model's read-only `bash_job` status/output call on THIS job
   /// (gh-1459 ask #4): bumps the probe generation so a drain liveness
   /// steer for a threshold the model already inspected itself is skipped.
-  void markProbed() {
-    // ignore: avoid_print
-    print('DEBUG markProbed ${job.id}');
-    _probeGeneration++;
-  }
+  void markProbed() => _probeGeneration++;
 }
 
 /// `sh-7.log` — the pre-unique-id job-log name scheme. Every fa build older

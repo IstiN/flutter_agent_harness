@@ -279,7 +279,8 @@ extension AgentCliLifecycle on AgentCli {
         quietMs: quietMs,
         lastConsumedBucket: consumedBucket[job.id] ?? 0,
         probedSinceLastConsumption:
-            job.probeGeneration != (seenProbeGen[job.id] ??= job.probeGeneration),
+            job.probeGeneration !=
+            (seenProbeGen[job.id] ??= job.probeGeneration),
       );
       if (action == HeadlessLivenessAction.wait) continue;
       // Both a steer and a skip consume the crossing — exactly one
