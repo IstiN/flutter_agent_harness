@@ -1249,6 +1249,14 @@
       "completion": 10143,
       "total": 36307,
       "model": ""
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-10T14:24:44Z",
+      "prompt": 48332,
+      "completion": 18147,
+      "total": 66479,
+      "model": ""
     }
   ],
   "pr-1490": [
