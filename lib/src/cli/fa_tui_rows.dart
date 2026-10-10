@@ -163,35 +163,27 @@ extension _TuiRowRenderers on FaTuiModel {
 
   /// Scroll progress indicator — only while the user scrolled away from
   /// the live edge (a "you are here" hint); while following, the row stays
-  /// blank so the layout never shifts. Issue #827: while the tail latch
-  /// holds and wrapped rows hide above the window, the same reserved row
-  /// names them (`──── ^ N lines above fold - PgUp ────`) — the streaming
-  /// default was the one state the old gate left unannounced. Both
-  /// directions read [_foldAccount]; the hint rides the row the budget
-  /// already reserves, so it never costs a content row.
+  /// blank so the layout never shifts. Issue #827 reserved the row and
+  /// named the hidden rows (`──── ^ N lines above fold - PgUp ────`);
+  /// gh-1446 retracts the streaming state's TEXT (owner directive: «не
+  /// надо — просто горизонтальная линия») — the row renders as a plain
+  /// dim RULE while the tail latch holds and wrapped rows hide above the
+  /// window. The row reservation, the single [_foldAccount] computation
+  /// and the detached `── NN% ──` percent all stay.
   ///
-  /// Both states embed into the dim RULE row (the detached percent reads
+  /// Every state embeds into the dim RULE row (the detached percent reads
   /// `── NN% ──`): a transcript region is a row stream, and a standalone
   /// hint row reads as CONTENT to every screen consumer — the wave-14 PTY
   /// resume-equivalence diff treated the padded hint as a transcript row,
-  /// shifting its tail slice by one (issue #827 wave-14). A rule-embedded
-  /// hint stays chrome (`────…`) to every grammar that already strips the
-  /// separator.
+  /// shifting its tail slice by one (issue #827 wave-14). A textless rule
+  /// is chrome (`────…`) to every grammar that already strips the
+  /// separator — and cannot leak counts to shoulder-surfers.
   int _writeScrollIndicator(StringBuffer b, List<String> wrapped, int offset) {
     final (above, below) = _foldAccount(wrapped, offset);
     if (followTail && above > 0 && offset < wrapped.length) {
       // A window that shows no rows (zero-height history) announces
-      // nothing — the budget rule yields the hint, never the prompt row.
-      // Four leading rules keep the row unambiguous chrome even at widths
-      // where the centered form would run out of left padding.
-      final noun = above == 1 ? 'line' : 'lines';
-      final hint = '──── ^ $above $noun above fold - PgUp ';
-      final fitted = tuiFitWidth(hint, termWidth);
-      // Dash-padded, not space-padded: the row previously carried rules
-      // end to end, and the renderer only overwrites written cells — a
-      // space pad leaves stale dashes right of a shorter hint.
-      final fill = (termWidth - tuiTextWidth(fitted)).clamp(0, termWidth);
-      b.writeln(_dim('$fitted${'─' * fill}'));
+      // nothing — the budget rule yields the row, never the prompt row.
+      b.writeln(_dim('─' * termWidth));
     } else if (!followTail && below > 0) {
       final bottom = _scrollBottom(wrapped);
       final scrollPercent = bottom == 0
@@ -226,33 +218,25 @@ extension _TuiRowRenderers on FaTuiModel {
     return 1;
   }
 
-  /// The busy indicator line (one row): two-tone kaomoji face + label +
-  /// honesty suffixes in FIXED cells (issue #365, faces #1374). The face
-  /// zone, the label zone and the elapsed field hold constant cell
-  /// counts, so digit growth at a power-of-ten second, the 180 s
-  /// quiet-threshold crossing, a mid-run phase swap AND a face swap
-  /// never reflow the row — nothing right of a changing cell moves. The
-  /// suffixes render provenance-first (a zone that appears or grows must
-  /// never sit left of a stable one), and the row is fitted AND padded to
-  /// the terminal width like the status row: stale tails are overwritten
-  /// and the cursor parks at a stable column.
+  /// The busy indicator line (one row): plain-text label + honesty
+  /// suffixes in FIXED cells (issue #365). gh-1446 strips ALL motion from
+  /// the row — the kaomoji face (#1374) and the spinner glyph retire, the
+  /// label starts at column 0 (owner directive: «Working… пусть будет
+  /// просто текст») and the activity ring lives in the status-line brand
+  /// zone (AC5). What stays is the #365 no-reflow property: the label
+  /// zone and the elapsed field hold constant cell counts, so digit
+  /// growth at a power-of-ten second, the 180 s quiet-threshold crossing
+  /// and a mid-run phase swap never reflow the row — nothing right of a
+  /// changing cell moves. The suffixes render provenance-first (a zone
+  /// that appears or grows must never sit left of a stable one), and the
+  /// row is fitted AND padded to the terminal width like the status row:
+  /// stale tails are overwritten and the cursor parks at a stable column.
   String _busyRowLine() {
     if (menuOpen && menuModelMode) {
       // An interactive host picker is open: the run is blocked on the
       // user's choice, not working.
       return _dim(tuiPadRight('waiting for your selection…', termWidth));
     }
-    // Defensive index (herdr fixtures pin faces via copyWith): an
-    // out-of-range index must never crash the frame painter.
-    final faceIdx = kaomojiFace >= 0 && kaomojiFace < kKaomojiFaces.length
-        ? kaomojiFace
-        : 0;
-    final face = kKaomojiFaces[faceIdx];
-    // Narrow terminals get the ASCII-safe face set (issue #1374): below
-    // the fixed-layout width the unicode glyphs are also the likeliest
-    // to be missing from the font.
-    final ascii = termWidth < kKaomojiAsciiMinWidth;
-    final faceText = _kaomojiPlainText(face, ascii);
     final elapsedSeconds = busyStartedAtMs < 0
         ? 0
         : ((DateTime.now().millisecondsSinceEpoch - busyStartedAtMs) / 1000)
@@ -277,16 +261,8 @@ extension _TuiRowRenderers on FaTuiModel {
     final elapsedCell = _formatBusyElapsed(
       elapsedSeconds,
     ).padLeft(_busyElapsedCells);
-    // The face pads into a FIXED zone (the widest face, `o_o?`, is 4
-    // cells), so a swap never moves a column right of it — the #365
-    // fixed-cell rule now covers face swaps, not just digit growth.
-    final plain =
-        '${faceText.padRight(kKaomojiFaceZoneCells)} '
-        '$labelCell $elapsedCell${suffix.isEmpty ? '' : ' $suffix'}';
-    final padded = tuiPadRight(tuiFitWidth(plain, termWidth), termWidth);
-    if (padded.length <= kKaomojiFaceZoneCells) return _dim(padded);
-    return '${_kaomojiColored(face, ascii)}'
-        '${_dim(padded.substring(faceText.length))}';
+    final plain = '$labelCell $elapsedCell${suffix.isEmpty ? '' : ' $suffix'}';
+    return _dim(tuiPadRight(tuiFitWidth(plain, termWidth), termWidth));
   }
 
   int _writeBusyAndQueue(StringBuffer b, int baseRow, _FramePlan plan) {
@@ -443,10 +419,11 @@ extension _TuiRowRenderers on FaTuiModel {
     return _dim('⏰ $scheduledCount scheduled$eta');
   }
 
-  /// The visible-waiting rows (issue #450): headline row (`⏳ waiting ·
-  /// purpose · next wake in 4m (timer)`) plus capped detail rows and the
-  /// restart-honesty note; empty while busy or with no waiters. The pure
-  /// builder `waitingRowLines` holds the logic.
+  /// The visible-waiting rows (issue #450): headline row
+  /// (`<pending-glyph> waiting · purpose · next wake in 4m (timer)` — the
+  /// glyph resolves through the symbol table, gh-1446 AC8) plus capped
+  /// detail rows and the restart-honesty note; empty while busy or with
+  /// no waiters. The pure builder `waitingRowLines` holds the logic.
   List<String> _waitingRowLines() => waitingRowLines(
     busy: busy,
     waitingJobs: waitingJobs,
@@ -500,13 +477,17 @@ List<String> waitingRowLines({
   return lines;
 }
 
-/// The `⏳ waiting` headline: job purpose and/or the nearest timer wake.
+/// The `waiting` headline (gh-1446 AC8): the pending glyph resolves
+/// through the symbol table (`status.pending` = `○`, no hardcoded `⏳`);
+/// job purpose and/or the nearest timer wake follow.
 String _waitingHeadLine(
   List<String> jobs,
   List<({int dueMs, String preview})> timers,
   String Function(int) etaOf,
 ) {
-  final head = StringBuffer('⏳ waiting');
+  final head = StringBuffer(
+    '${FaThemeController.instance.sym('status.pending')} waiting',
+  );
   if (jobs.length == 1) {
     final singleJob = jobs.single.replaceAll(RegExp(r'\s+'), ' ').trim();
     head.write(' · $singleJob');

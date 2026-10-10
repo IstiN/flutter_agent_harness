@@ -42,9 +42,14 @@ var tuiChromeEnabled = true;
 enum TuiCardPhase { pending, running, success, error }
 
 /// Status glyphs per omp's `theme/symbols.ts` defaults (`status.*`).
+/// gh-1446 AC8: the pending hourglass and the running spinner resolve
+/// through the symbol table (`status.pending` = `○`, `status.running` =
+/// `◐`) — no hardcoded `⏳`/`⟳` survives in chrome code.
 String tuiCardGlyph(TuiCardPhase phase) => switch (phase) {
-  TuiCardPhase.pending => '⏳',
-  TuiCardPhase.running => '⟳',
+  TuiCardPhase.pending =>
+    FaThemeController.instance.sym('status.pending'),
+  TuiCardPhase.running =>
+    FaThemeController.instance.sym('status.running'),
   TuiCardPhase.success => '✔',
   TuiCardPhase.error => '✘',
 };
