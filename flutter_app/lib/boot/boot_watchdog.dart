@@ -83,7 +83,7 @@ final class BootWatchdog {
     Stopwatch? uptime,
   }) : _onBreadcrumb =
            onBreadcrumb ??
-           (message) => debugPrint('[fah] BOOT-WATCHDOG $message'),
+           ((message) => debugPrint('[fah] BOOT-WATCHDOG $message')),
        _uptime = uptime ?? BootSteps.uptime;
 
   /// First-frame threshold. The freeze report landed at ~3 s uptime, so

@@ -10,6 +10,7 @@ import 'package:fa/services/relay/ext_runtime.dart';
 import 'package:fa/services/relay/relay_probe.dart';
 import 'package:fa/boot/app_boot.dart';
 import 'package:fa/boot/boot_config_codec.dart';
+import 'package:fa/boot/boot_watchdog.dart';
 import 'package:fa/network/network_mode.dart';
 import 'package:fa/network/network_session_manager.dart';
 import 'package:fa/ui/app_theme.dart';
@@ -652,13 +653,18 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
   Future<void> _boot() async {
     final config = _config!;
     try {
+      BootSteps.begin('restore:env');
       final env = widget.env ?? await createPlatformEnv();
+      BootSteps.mark('restore:env');
+      BootSteps.begin('restore:manager');
       final manager = FlutterSessionManager(
         env: env,
         sessionsRoot: defaultSessionsRoot(env.sessionCwd),
       );
+      BootSteps.mark('restore:manager');
       // Resume the day's session (or an untouched empty one) instead of
       // stacking a fresh empty session on every cold launch.
+      BootSteps.begin('restore:session');
       await manager.createOrResumeSession(
         config: config,
         createFactory: () => AgentService.create(
@@ -676,6 +682,7 @@ class _BootstrapScreenState extends State<BootstrapScreen> {
           taskModelsStore: widget.taskModelsStore,
         ),
       );
+      BootSteps.mark('restore:session');
       if (!mounted) return;
       AppAnalytics.instance.bootstrapResult('chat');
       // Use the Navigator's context, not the State's — after a hot restart
