@@ -45,6 +45,11 @@ class _LivenessRoutingStream {
   final List<AssistantMessageEvent> _settleScript;
   final contexts = <Context>[];
 
+  /// The last user-message text AT call time, per [contexts] entry. The
+  /// Context objects themselves are mutated as a run progresses (tool
+  /// results append user messages), so call-time snapshots are the only
+  /// reliable way to know what a run was steered for.
+  final lastUserTexts = <String>[];
   String _lastUserText(Context context) {
     for (final message in context.messages.reversed) {
       if (message is UserMessage) return messageText(message);
@@ -59,6 +64,7 @@ class _LivenessRoutingStream {
   }) {
     contexts.add(context);
     final last = _lastUserText(context);
+    lastUserTexts.add(last);
     final List<AssistantMessageEvent> script;
     if (last.contains(_livenessMarker)) {
       script = _livenessScripts.isNotEmpty
@@ -162,13 +168,6 @@ Future<void> _waitFor(
   fail('timed out waiting: $reason${dump == null ? '' : '\n${dump()}'}');
 }
 
-String _lastUserTextOf(Context context) {
-  for (final message in context.messages.reversed) {
-    if (message is UserMessage) return messageText(message);
-  }
-  return '';
-}
-
 /// The fake-clock/gated-sleep harness of a liveness drain run. Time only
 /// advances when [releaseNextSleep] lets a drain sleep complete, so the
 /// test observes every steer deterministically.
@@ -182,6 +181,7 @@ class _LivenessHarness {
     required this.run,
     required DateTime Function() clockOf,
     required List<Completer<void>> gates,
+    required this.livenessScripts,
     required this.runCode,
     required this.runFailure,
   }) : _clockOf = clockOf,
@@ -198,12 +198,16 @@ class _LivenessHarness {
   final int Function() runCode;
   final Object? Function() runFailure;
 
+  /// The router's liveness reaction queue — populate after the job id is
+  /// known; popped in order as the interim notices are steered.
+  final List<List<AssistantMessageEvent>> livenessScripts;
+
   DateTime get clock => _clockOf();
   int get pendingSleeps => _gates.where((g) => !g.isCompleted).length;
 
   /// Debug dump for wait timeouts.
   String dump() =>
-      'runCode=$runCode runFailure=${runFailure()}\n'
+      'runCode=${runCode()} runFailure=${runFailure()}\n'
       'clock=$clock\n'
       'contexts=${stream.contexts.length}\n'
       'io.out:\n${io.out.toString()}';
@@ -220,23 +224,33 @@ class _LivenessHarness {
     fail('no parked drain sleep to release');
   }
 
-  /// The runs steered by interim liveness notices (in order).
+  /// The runs steered by interim liveness notices (in order), classified
+  /// by the CALL-TIME user text (the Context objects mutate as tool
+  /// rounds append results).
   List<Context> get livenessRuns => [
-    for (final context in stream.contexts)
-      if (_lastUserTextOf(context).contains(_livenessMarker)) context,
+    for (var i = 0; i < stream.contexts.length; i++)
+      if (stream.lastUserTexts[i].contains(_livenessMarker)) stream.contexts[i],
   ];
 
-  /// The user-visible text of the n-th liveness notice (1-based).
-  String livenessNotice(int n) => _lastUserTextOf(livenessRuns[n - 1]);
+  /// The call-time user text of the n-th liveness run (1-based).
+  String livenessNotice(int n) {
+    var seen = 0;
+    for (var i = 0; i < stream.contexts.length; i++) {
+      if (stream.lastUserTexts[i].contains(_livenessMarker)) {
+        seen++;
+        if (seen == n) return stream.lastUserTexts[i];
+      }
+    }
+    fail('only $seen liveness notice(s) were steered');
+  }
 }
 
 /// Boots the gh-1459 drain shape under a fake clock: the model starts a
 /// long background job and ends its turn; the drain then parks on the
-/// gated sleeps. [livenessScripts] replay the reaction runs of the
-/// interim notices in order; [settleScript] answers the settle notice.
+/// gated sleeps. The caller populates [h.livenessScripts] (and
+/// [h.settleScript]) once the job id is known — the router pops them in
+/// order when the matching notices are steered.
 Future<_LivenessHarness> livenessShape({
-  required List<List<AssistantMessageEvent>> livenessScripts,
-  List<AssistantMessageEvent>? settleScript,
   HeadlessConfig headless = const HeadlessConfig(
     shellJobDrainMs: 20 * 60 * 1000,
   ),
@@ -244,6 +258,7 @@ Future<_LivenessHarness> livenessShape({
   final io = FakeCliIO();
   final shell = _LivenessShell();
   final env = MemoryExecutionEnv(cwd: '/work', shell: shell);
+  final livenessScripts = <List<AssistantMessageEvent>>[];
   final stream = _LivenessRoutingStream(
     leadScripts: [
       toolTurn([
@@ -256,7 +271,7 @@ Future<_LivenessHarness> livenessShape({
       textTurn('Started the suite in the background. Waiting on it.'),
     ],
     livenessScripts: livenessScripts,
-    settleScript: settleScript ?? textTurn('suite finished green — response.md written'),
+    settleScript: textTurn('suite finished green — response.md written'),
   );
   // The fake clock starts at real now — job.startedAt (real DateTime.now
   // at registration) sits a few ms ahead, so each wake lands EXACTLY on
@@ -301,6 +316,7 @@ Future<_LivenessHarness> livenessShape({
     shell: shell,
     env: env,
     run: run,
+    livenessScripts: livenessScripts,
     runCode: () => runCode,
     runFailure: () => runFailure,
     clockOf: () => clock,
@@ -315,14 +331,14 @@ void main() {
     'still drains normally',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
-      final h = await livenessShape(
-        livenessScripts: [textTurn('still waiting.'), textTurn('still waiting.')],
-      );
+      final h = await livenessShape();
       final job = h.shell.jobs.single;
       // Six log lines — the notice tail shows the LAST FIVE.
       await h.env.writeFile(job.logPath, [
         for (var i = 1; i <= 6; i++) 'log-line-$i',
       ].join('\n'));
+      h.livenessScripts.add(textTurn('still waiting.'));
+      h.livenessScripts.add(textTurn('still waiting.'));
 
       // Release the 5m sleep → the first notice is steered.
       await _waitFor(() => h.pendingSleeps >= 1, reason: 'the first drain sleep parks');
@@ -350,7 +366,7 @@ void main() {
 
       expect(code, 0);
       expect(h.livenessRuns.length, 2, reason: 'exactly one steer per threshold crossing');
-      final texts = _lastUserTextOf(h.stream.contexts.last);
+      final texts = h.stream.lastUserTexts.last;
       expect(
         texts,
         contains('finished with exit code'),
@@ -370,27 +386,35 @@ void main() {
     'the next threshold crossing',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
-      // The unique `sh-1` prefix resolves to the only job through the
-      // real bash_job near-miss path (gh-1438).
-      final h = await livenessShape(
-        livenessScripts: [
-          toolTurn([
-            const ToolCall(
-              id: 'p1',
-              name: 'bash_job',
-              arguments: {'action': 'status', 'id': 'sh-1'},
-            ),
-          ]),
-        ],
-      );
+      // The reaction to the 5m notice: the model probes the job itself
+      // through the real bash_job tool path — that counts as liveness
+      // (gh-1459 ask #4).
+      final h = await livenessShape();
       final job = h.shell.jobs.single;
+      h.livenessScripts.add(
+        toolTurn([
+          ToolCall(
+            id: 'p1',
+            name: 'bash_job',
+            arguments: {'action': 'status', 'id': job.id},
+          ),
+        ]),
+      );
       await h.env.writeFile(job.logPath, 'quiet so far');
 
       // Release the 5m sleep → the first notice is steered; the model
       // answers it with a bash_job status probe.
-      await _waitFor(() => h.pendingSleeps >= 1, reason: 'the first drain sleep parks');
+      await _waitFor(
+        () => h.pendingSleeps >= 1,
+        reason: 'the first drain sleep parks',
+        dump: h.dump,
+      );
       h.releaseNextSleep();
-      await _waitFor(() => h.livenessRuns.length == 1, reason: 'the 5m notice is steered');
+      await _waitFor(
+        () => h.livenessRuns.length == 1,
+        reason: 'the 5m notice is steered',
+        dump: h.dump,
+      );
       // The probe executed through the real bash_job tool path.
       await _waitFor(
         () => h.cli.shellJobsRegistryForTest.job(job.id)!.probeGeneration > 0,
@@ -417,7 +441,7 @@ void main() {
       expect(code, 0);
       expect(h.livenessRuns.length, 1, reason: 'steer budget respected: 1, never 2');
       expect(
-        _lastUserTextOf(h.stream.contexts.last),
+        h.stream.lastUserTexts.last,
         contains('finished with exit code'),
       );
       h.io.close();
