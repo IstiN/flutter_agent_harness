@@ -1541,6 +1541,14 @@
       "completion": 18606,
       "total": 90736,
       "model": ""
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-10T22:49:15Z",
+      "prompt": 43728,
+      "completion": 14400,
+      "total": 58128,
+      "model": ""
     }
   ],
   "issue-1516": [
