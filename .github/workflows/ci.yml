@@ -345,6 +345,16 @@ jobs:
         run: |
           d=$(mktemp -d)
           trap 'rm -rf "$d"' EXIT
+          # The builder's post input is the site/blog/posts COPY of the
+          # canonical blog/posts — keep them pinned together so the gate
+          # can never validate a stale or hand-edited copy (gh-1476
+          # review). PRE-sync diff: an in-place edit of the copy is red
+          # (the deploy's build_blog would silently discard it). Sync,
+          # then POST-sync diff: a new or edited canonical post that was
+          # never copied into site/blog/posts is red.
+          git diff --exit-code -- site/blog/posts site/blog/posts.json
+          dart scripts/build_blog.dart
+          git diff --exit-code -- site/blog/posts site/blog/posts.json
           dart scripts/build_site.dart --out "$d/site"
           FA_SITE_ROOT="$d/site" dart test/site/
 

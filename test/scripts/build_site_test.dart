@@ -470,6 +470,84 @@ void main() {
     });
   });
 
+  group('CLI args', () {
+    test('--out pairs its value; no args means in-tree build', () {
+      expect(site.parseArgs([]), isNull);
+      expect(site.parseArgs(['--out', '/tmp/x']), '/tmp/x');
+    });
+
+    test('unknown args fail fast — a typo must not build in-tree', () {
+      expect(
+        () => site.parseArgs(['--outdir', '/tmp/x']),
+        throwsFormatException,
+      );
+      expect(
+        () => site.parseArgs(['--out', '/tmp/x', '--force']),
+        throwsFormatException,
+      );
+      expect(
+        () => site.parseArgs(['junk']),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('unknown argument'),
+          ),
+        ),
+      );
+    });
+
+    test('--out without a value fails fast', () {
+      expect(() => site.parseArgs(['--out']), throwsFormatException);
+    });
+
+    test('--check fails with the migration hint', () {
+      expect(
+        () => site.parseArgs(['--check']),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('--check'), contains('--out')),
+          ),
+        ),
+      );
+    });
+  });
+
+  group('CI gate (ci.yml GEO step)', () {
+    test(
+      'syncs canonical blog/posts before building and fails on copy drift',
+      () {
+        final ci = File('.github/workflows/ci.yml').readAsStringSync();
+        final step = ci.split('GEO site build + validation').last;
+        // The gate must validate the CANONICAL sources: sync blog/posts →
+        // site/blog/posts first, then build (gh-1476 review — without the
+        // sync a new unsynced post or an in-place edit of the copy passes
+        // silently).
+        final syncIdx = step.indexOf('dart scripts/build_blog.dart');
+        final buildIdx = step.indexOf('dart scripts/build_site.dart --out');
+        expect(
+          syncIdx,
+          greaterThanOrEqualTo(0),
+          reason: 'missing build_blog sync',
+        );
+        expect(buildIdx, greaterThanOrEqualTo(0), reason: 'missing build_site');
+        expect(
+          syncIdx,
+          lessThan(buildIdx),
+          reason: 'sync must run BEFORE the build',
+        );
+        // Drift between the canonical tree and the committed copy is red.
+        expect(
+          step,
+          contains('git diff --exit-code'),
+          reason: 'unsynced site/blog/posts drift must fail the gate',
+        );
+      },
+    );
+  });
+
   group('emitSite (--out)', () {
     // gh-1476 owner directive (PR #1479): generated artifacts are
     // deploy-time products, never committed. `--out <dir>` must produce a

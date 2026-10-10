@@ -14,6 +14,7 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
+import '../scripts/build_blog.dart' as blog_builder;
 import '../scripts/build_site.dart' as builder;
 
 String _repoRoot() {
@@ -48,8 +49,14 @@ Future<Directory> resolveSiteRoot() async {
   if (File('${root.path}/sitemap.xml').existsSync()) return root;
   final tmp = Directory.systemTemp.createTempSync('fa_site_test');
   addTearDown(() => tmp.deleteSync(recursive: true));
-  final outputs = builder.buildSite(root: _repoRoot());
+  final repoRoot = _repoRoot();
+  // The builder consumes the site/blog/posts COPY of the canonical
+  // blog/posts — sync first so the guards can never validate a stale
+  // copy (same discipline as the ci.yml gate; byte-identical rewrites
+  // when the copy is in sync).
+  blog_builder.syncBlogPosts(repoRoot);
+  final outputs = builder.buildSite(root: repoRoot);
   // The out dir IS the site root (same layout as site/).
-  builder.emitSite(root: _repoRoot(), outDir: tmp.path, outputs: outputs);
+  builder.emitSite(root: repoRoot, outDir: tmp.path, outputs: outputs);
   return tmp;
 }

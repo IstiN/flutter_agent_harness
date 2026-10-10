@@ -804,26 +804,42 @@ String _repoRoot() {
   }
 }
 
-void main(List<String> args) {
-  if (args.contains('--check')) {
-    stderr.writeln(
-      '`--check` was removed (gh-1476 owner directive, PR #1479): '
-      'generated artifacts are deploy-time products — gitignored, never '
-      'committed — so there is nothing to drift against. Build to a temp '
-      'dir and validate the output instead: '
-      '`dart scripts/build_site.dart --out <dir>` (+ test/site/* via '
-      'FA_SITE_ROOT).',
-    );
-    exit(2);
-  }
+/// Parses the CLI args. Throws [FormatException] on anything
+/// unrecognized — a mistyped flag must never silently fall back to an
+/// in-tree build and dirty the working tree (gh-1476 review).
+String? parseArgs(List<String> args) {
   String? outDir;
-  final outIdx = args.indexOf('--out');
-  if (outIdx >= 0) {
-    if (outIdx + 1 >= args.length) {
-      stderr.writeln('--out requires a target directory');
-      exit(2);
+  for (var i = 0; i < args.length; i++) {
+    final a = args[i];
+    if (a == '--out') {
+      if (i + 1 >= args.length) {
+        throw const FormatException('--out requires a target directory');
+      }
+      outDir = args[++i];
+    } else if (a == '--check') {
+      throw const FormatException(
+        '`--check` was removed (gh-1476 owner directive, PR #1479): '
+        'generated artifacts are deploy-time products — gitignored, '
+        'never committed — so there is nothing to drift against. Build '
+        'to a temp dir and validate the output instead: '
+        '`dart scripts/build_site.dart --out <dir>` (+ test/site/* via '
+        'FA_SITE_ROOT).',
+      );
+    } else {
+      throw FormatException('unknown argument: $a');
     }
-    outDir = args[outIdx + 1];
+  }
+  return outDir;
+}
+
+void main(List<String> args) {
+  final String? outDir;
+  try {
+    outDir = parseArgs(args);
+  } on FormatException catch (e) {
+    stderr.writeln(e.message);
+    stderr.writeln('usage: dart scripts/build_site.dart [--out <dir>]');
+    exit(2);
   }
   final root = _repoRoot();
   emitSite(
