@@ -439,7 +439,7 @@ extension AgentCliHubDriver on AgentCli {
         fit: _cardTextFit,
       ),
     );
-    _tuiController?.setJobBoard(_jobBoard.liveLines());
+    _tuiController?.setJobBoard(_jobBoard.liveLines(width: _hubBlockWidth));
     unawaited(_persistJobBoard());
   }
 
