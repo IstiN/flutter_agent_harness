@@ -55,6 +55,9 @@ if [ -z "$section" ]; then
   echo "::error::could not generate a changelog section for v$version"
   exit 1
 fi
+# Drop leading blank lines (the awk section extraction carries the blank
+# line right under the section header) so the staged section is tight.
+section="$(printf '%s\n' "$section" | awk 'NF { p = 1 } p')"
 
 printf '## %s\n\n%s\n\n' "$version" "$section" > "$changelog.new"
 # Drop the staged `## Unreleased` header+body (it became the tag's section

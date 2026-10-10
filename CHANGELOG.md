@@ -3,8 +3,25 @@
 Older entries: [CHANGELOG_ARCHIVE.md](CHANGELOG_ARCHIVE.md) — moved out
 on 2026-10-09 (gh-1452): pub.dev server-rejects a publish whose
 CHANGELOG.md exceeds its 262144-byte content cap, so this file keeps a
-bounded recent window and `scripts/check_changelog_size.sh` (release
-pre-tag + publish gates) fails fast when the cap is approached again.
+bounded recent window and `scripts/check_changelog_size.sh` (repo-file +
+publish gates) fails fast when the cap is approached again. Since
+gh-1522 this file is CURATED-ONLY: add new lines under `## Unreleased`
+and the release folds them into the tag's section at publish-staging
+time — the published artifact's changelog is generated, so this file's
+size can never block a release again.
+
+## Unreleased
+
+- gh-1522: tag-sourced versions — the git tag is the single source of
+  truth. The release-bot file bumps are retired: cutting a release = a
+  tag + GitHub Release (zero commits to main, zero file mutations).
+  Both pubspecs carry the fixed `0.0.0-dev` placeholder (CI guards
+  hand-bumps), the publish job stamps the staged pubspec + generated
+  changelog section from the tag (`scripts/stamp_staged_release.sh`,
+  staged version == tag guarded pre-upload), store builds stamp
+  `--build-name/--build-number` from the derived tag version
+  (`pubspec.lock` stops churning across releases), and
+  `install_local.sh` stamps `version.txt` from `git describe`.
 
 ## 1.0.506
 
