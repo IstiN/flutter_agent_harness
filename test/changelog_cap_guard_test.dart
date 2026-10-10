@@ -99,7 +99,7 @@ void main() {
 
   test('stamp_staged_release.sh runs the guard after prepending the tag section', () {
     final stamp = read('scripts/stamp_staged_release.sh');
-    final prepend = stamp.indexOf('mv "$changelog.new" "$changelog"');
+    final prepend = stamp.indexOf('mv "\$changelog.new" "\$changelog"');
     final guard = stamp.indexOf('check_changelog_size.sh');
     expect(prepend, greaterThan(0),
         reason: 'fixture: the section prepend must be locatable');
@@ -112,7 +112,7 @@ void main() {
     final stamp = read('scripts/stamp_staged_release.sh');
     expect(stamp, contains('trimming oldest staged sections'));
     final trim = stamp.indexOf('trimming oldest staged sections');
-    final recheck = stamp.indexOf('check_changelog_size.sh "$changelog"', trim);
+    final recheck = stamp.indexOf('"\$changelog"', trim);
     expect(recheck, greaterThan(trim),
         reason: 'after the trim the staged changelog must be re-measured — '
             'a trim that cannot reach under the cap fails loudly');

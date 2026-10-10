@@ -439,4 +439,93 @@ void main() {
       );
     });
   });
+
+  // ── gh-1522 — the tag is the version; the stage is stamped from it ───────
+  // The committed pubspecs carry the FIXED 0.0.0-dev placeholder (CI guards
+  // hand-bumps in the static job) and the real version is stamped into the
+  // STAGED tree at publish time. These tests pin the stamp contract so the
+  // tag↔staged-file invariant cannot silently rot.
+  group('gh-1522 — tag-sourced version stamp', () {
+    test('committed pubspecs carry the 0.0.0-dev placeholder', () {
+      for (final f in ['pubspec.yaml', 'flutter_app/pubspec.yaml']) {
+        final pubspec = loadYaml(File(f).readAsStringSync()) as YamlMap;
+        final version = pubspec['version']?.toString() ?? '';
+        expect(
+          version.split('+').first,
+          '0.0.0-dev',
+          reason:
+              '$f must carry the 0.0.0-dev placeholder (gh-1522) — the git '
+              'tag is the single source of truth; a hand-bump desyncs the '
+              'staged stamp and reintroduces the lockfile churn this ticket '
+              'retires',
+        );
+      }
+    });
+
+    test('stage script forwards an optional version to the stamper, after the size guard', () {
+      final script = File(_stagingScript).readAsStringSync();
+      final guard = script.indexOf('size=\$(du -sm');
+      final stamp = script.indexOf('/stamp_staged_release.sh"');
+      expect(stamp, greaterThan(guard),
+          reason:
+              'the stamp must run on the COMPLETE staged tree (after the '
+              'rsync + size guard), never before');
+      expect(script, contains('if [ "\${2:-}" ]'));
+    });
+
+    test('stamper enforces the tag↔staged-version invariant before upload', () {
+      final stamp = File('scripts/stamp_staged_release.sh').readAsStringSync();
+      // The stamp writes the version, then GUARDS staged == <version> —
+      // a desync (missing version line, second version field) fails before
+      // the upload instead of shipping 0.0.0-dev to pub.dev.
+      final sed = stamp.indexOf('sed -i "s/^version:');
+      final guard = stamp.indexOf("!= \"\$version\"");
+      expect(sed, greaterThan(-1));
+      expect(guard, greaterThan(sed));
+      // The changelog section comes from release_notes.sh (curated section →
+      // curated Unreleased → conventional-commits fallback) and the staged
+      // file never shows an `## Unreleased` header.
+      expect(stamp, contains('release_notes.sh'));
+      expect(stamp, contains('## Unreleased'));
+    });
+
+    test('staged changelog is capped: guard runs, oldest sections trim, re-check', () {
+      // Mirrors the changelog_cap_guard wiring — asserted here as part of
+      // the stamp contract (the stage is a publish surface).
+      final stamp = File('scripts/stamp_staged_release.sh').readAsStringSync();
+      expect(stamp, contains('check_changelog_size.sh'));
+      expect(stamp, contains('trimming oldest staged sections'));
+    });
+
+    test('ci.yml publish stage passes the tag version and verifies the staged stamp', () {
+      final ci = File('.github/workflows/ci.yml').readAsStringSync();
+      final publish = ci.indexOf('  publish:');
+      expect(publish, greaterThan(0));
+      expect(
+        ci.contains('stage_publish_package.sh /tmp/publish-stage "\${GITHUB_REF_NAME#v}"'),
+        isTrue,
+        reason:
+            'the publish job must stamp the stage from the TAG '
+            '(v1.0.550 → 1.0.550), not ship the placeholder',
+      );
+      final stage = ci.indexOf('stage_publish_package.sh /tmp/publish-stage', publish);
+      final verify = ci.indexOf('Verify staged version matches tag', stage);
+      expect(verify, greaterThan(stage),
+          reason:
+              'the staged-version↔tag guard must run after staging, before '
+              'the upload (gh-1522)');
+    });
+
+    test('nightly dry-run rehearses the tag-stamped stage', () {
+      final nightly = File('.github/workflows/nightly.yml').readAsStringSync();
+      expect(
+        nightly.contains('stage_publish_package.sh /tmp/publish-stage "\$next"'),
+        isTrue,
+        reason:
+            'the nightly publish dry-run must validate the STAMPED staged '
+            'tree (gh-1522 risk note: the dry-run now also validates the '
+            'stamp, not only the payload)',
+      );
+    });
+  });
 }
