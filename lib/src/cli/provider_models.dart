@@ -1333,7 +1333,7 @@ extension on AgentCli {
   /// with the live controller + model.
   Future<void> _modelEditInteractive() => interactiveModelEdit(
     current: _agent.state.model,
-    prompt: _tuiController!.openPrompt,
+    prompt: (spec) => _openHerdrPrompt(_tuiController!, spec),
     onResult: io.writeln,
     onApply: _replaceModelLimitsFromEdit,
   );

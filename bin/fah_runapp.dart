@@ -1243,6 +1243,14 @@ Future<void> _runApp(List<String> args) async {
           if (value != null && value.isNotEmpty) return value;
           return keyCache.read(name);
         },
+        // herdr pane self-report (issue #1481): the gate reads the pane env
+        // herdr exports to every pane process; each report spawns the pane's
+        // herdr binary fire-and-forget (reporter-side short timeout, silent
+        // on failure). Outside herdr the reporter is inert.
+        herdrEnvLookup: (name) => Platform.environment[name],
+        herdrSpawn: (argv) async {
+          await Process.run(argv.first, argv.sublist(1));
+        },
         // `/key` manages the platform secure store; `/provider ... <token>`
         // persists the token there.
         secureKeys: keyCache,

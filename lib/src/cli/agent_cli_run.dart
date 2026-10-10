@@ -57,6 +57,8 @@ extension AgentCliRun on AgentCli {
     bool isAutoContinue = false,
     List<TuiImageAttachment> images = const [],
   }) async {
+    // herdr pane state (issue #1481): a turn is working.
+    _herdrRunWorking();
     // gh-1241: the owner opens the usage segment lazily at the FIRST
     // drive — an idle boot or a `/sessions` switch that never drives must
     // leave the chain byte-untouched (issue #428 invariant), and the

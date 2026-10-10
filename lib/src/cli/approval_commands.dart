@@ -27,7 +27,10 @@ extension ApprovalCommands on AgentCli {
     FaTuiController tui,
     ApprovalRequest request,
   ) async {
-    final result = await tui.openPrompt(ApprovalPromptSpec(request: request));
+    final result = await _openHerdrPrompt(
+      tui,
+      ApprovalPromptSpec(request: request),
+    );
     if (result is! ApprovalPromptAnswer) return ApprovalDecision.deny;
     final note = result.note.trim();
     if (note.isNotEmpty) {
@@ -167,7 +170,8 @@ extension ApprovalCommands on AgentCli {
     int index,
     int total,
   ) async {
-    final result = await tui.openPrompt(
+    final result = await _openHerdrPrompt(
+      tui,
       AskPromptSpec(
         header: 'Ask',
         question: question.question,
@@ -201,7 +205,8 @@ extension ApprovalCommands on AgentCli {
     String name,
     String reason,
   ) async {
-    final result = await tui.openPrompt(
+    final result = await _openHerdrPrompt(
+      tui,
       SecretPromptSpec(name: name, reason: reason),
     );
     if (result is! SecretPromptAnswer) return null;
@@ -236,7 +241,8 @@ extension ApprovalCommands on AgentCli {
   Future<String?> _answerPasswordPrompt(String promptLine) async {
     final tui = _tuiController;
     if (_useTui && tui != null) {
-      final result = await tui.openPrompt(
+      final result = await _openHerdrPrompt(
+        tui,
         TextPromptSpec(header: 'Password', question: promptLine, secret: true),
       );
       return result is TextPromptAnswer ? result.value : null;
