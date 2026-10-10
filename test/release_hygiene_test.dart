@@ -203,6 +203,7 @@ AutoReleaseRun runAutoReleaseDirect(
   bool flutterFails = false,
   bool flutterDirty = false,
   bool brokenInventory = false,
+  bool hugeChangelog = false,
 }) {
   final root = Directory(
     '${_fixtureRoot.path}/direct-$name-${DateTime.now().microsecondsSinceEpoch}',
@@ -307,7 +308,14 @@ fi
   ).writeAsStringSync('version: 0.1.495+1\n');
   File(
     '$seed/CHANGELOG.md',
-  ).writeAsStringSync('# Changelog\n\n## Unreleased\n');
+  ).writeAsStringSync(
+    hugeChangelog
+        // gh-1452: an append-only changelog that crossed pub.dev's hard
+        // 262144-byte content cap — the release must abort at the size
+        // guard, BEFORE the bump commit/push (pre-tag), not at the server.
+        ? 'x' * 262200
+        : '# Changelog\n\n## Unreleased\n',
+  );
   // gh-1299: the seed ships the committed-lockfile shape of the real repo —
   // a STALE pubspec.lock (pins the PRE-bump parent version, exactly the
   // v1.0.515 drift) plus the tracked Podfile.lock inventory sibling.
@@ -331,6 +339,16 @@ fi
   File('$seed/scripts/check_lockfiles.sh').writeAsStringSync(
     File(
       '${Directory.current.path}/scripts/check_lockfiles.sh',
+    ).readAsStringSync(),
+  );
+  // Same for the gh-1452 CHANGELOG cap guard: auto_release.sh runs the REAL
+  // scripts/check_changelog_size.sh between the changelog rewrite and the
+  // bump commit — the sandbox must exercise the production guard (the seed
+  // changelog is tiny, so the guard passes; the guard's own behavior is
+  // covered by test/changelog_cap_guard_test.dart).
+  File('$seed/scripts/check_changelog_size.sh').writeAsStringSync(
+    File(
+      '${Directory.current.path}/scripts/check_changelog_size.sh',
     ).readAsStringSync(),
   );
   if (brokenInventory) {
@@ -2043,6 +2061,30 @@ gh release create "v9.9.9" \
       );
       expect(r.originSubjects(1), isNot(contains('chore(release): v0.1.496')));
     });
+
+    test(
+      'gh-1452 — a CHANGELOG.md at/over the pub.dev 262144-byte cap aborts the release BEFORE the bump push',
+      () {
+        final r = runAutoReleaseDirect('changelog-cap', hugeChangelog: true);
+        expect(r.exitCode, isNot(0), reason: r.output);
+        expect(r.output, contains('::error::'));
+        expect(r.output, contains('262144'));
+        expect(r.output, contains('CHANGELOG_ARCHIVE.md'),
+            reason: 'the error must name the fix (archive the tail)');
+        expect(
+          r.originHeadAfter,
+          r.originHeadBefore,
+          reason:
+              'pre-tag fast-fail: the push is what fires tag_release + the '
+              'publish job — v1.0.538 died mid-upload because nothing '
+              'bounded the changelog before it',
+        );
+        expect(
+          r.originSubjects(2),
+          isNot(contains('chore(release): v0.1.496')),
+        );
+      },
+    );
 
     test(
       'E1 race — a main that advanced mid-run rejects the push; the bump recomputes on the fresh head and lands',
