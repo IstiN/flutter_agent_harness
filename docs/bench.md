@@ -71,10 +71,19 @@ Dispatch **Bench Harbor** (`workflow_dispatch`). Inputs:
   intermediate family (2.0/2.1/3.0); a full family sweep is hours of GPU
   + LLM spend. Smoke runs and 4.0 are unaffected (the historical 4.0
   default dispatch keeps its no-confirmation behaviour).
-- `model` — default `glm-5.3-flash` (recorded with the run; the provider
-  preconfig below is what fa actually connects with).
+- `provider` — `zai-glm-5.3-flash` (default; byte-identical to the
+  pre-gh-1503 wiring), `kimi-for-coding` (`k3-256k`, needs the
+  `FA_BENCH_KIMI_KEY` secret), or `custom` (needs `FA_BENCH_CUSTOM_KEY`
+  + `provider-config`). Same contract as the legacy bench's gh-1471
+  provider selection — the model is derived from the provider, so the
+  old free-text `model` input is gone (gh-1503).
+- `provider-config` — ONLY when `provider=custom`: the provider config
+  JSON `{"type","baseUrl","model","contextWindow","maxTokens"}`. The
+  API key never rides this input — it comes only from the
+  `FA_BENCH_CUSTOM_KEY` secret.
 - `attempts` — harbor `-k` trials per task, default `5` (leaderboard protocol).
-- `n-concurrent` — default `1` (z.ai rate limits; raise with care).
+- `n-concurrent` — default `1` (z.ai rate limits; the kimi coding plan
+  tolerates more — the owner picks the level at dispatch).
 - `shards` — CPU docker shards, default `16` (~4 tasks/shard keeps each
   job inside the job window; raise to ~22 for the 89-task 2.x sets).
   Shards run up to 5 in parallel on the default ubuntu runners.
