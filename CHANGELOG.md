@@ -261,6 +261,13 @@ pre-tag + publish gates) fails fast when the cap is approached again.
 - gh-1477 [BUG] build-mobile Derive version: fetch-depth:0 checkout outgrew its own 10-min timeout — daily leg cancelled mid-fetch (time bomb, grows with every tag) (#1482)
 - gh-1444 [GOAL] iOS sandbox ergonomics: skills resolve, networks fail loudly, secrets prove presence, timeouts tell the truth (#1453)
 
+## 1.0.547
+
+- gh-1446 [GOAL] TUI chrome diet: textless fold rule, running/lost-only jobs line, live activity animation in the reserved _ Fa brand slot (#1454)
+- fix(1431): size gate survives Flutter rev-hash churn — normalize 20+hex rev dirs, vendored carve-out, exact-patch SDK pin (#1486)
+- gh-1471 [GOAL] bench.yml: provider selection for tbench runs (zai-glm default, kimi-for-coding) with a dedicated bench key (#1475)
+- gh-1452 Release blocked: CHANGELOG.md exceeds pub.dev 256 KiB cap (262 672 B on main) — v1.0.538 not on pub.dev trim + pre-flight guard needed (#1462)
+
 ## Unreleased
 
 - feat(usage): gh-1460 — the `fa-tokens:` segment-close line carries the
