@@ -10,7 +10,8 @@ import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/status_line_git_probe.dart';
 import 'package:flutter_agent_harness/src/cli/tui_text_width.dart'
     show tuiTextWidth;
-import 'package:flutter_agent_harness/src/cli/tui_theme.dart' show TuiTheme;
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart'
+    show FaThemeController, TuiTheme;
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
 
@@ -837,8 +838,67 @@ M  staged-one
 
   group('review pins (#831 round 2)', () {
     test('pi brand mark text is pinned', () {
-      const s = StatusLineSnapshot(cwd: '/');
-      expect(kStatusLineSegments['pi']!(s, _defaultSpec())!.text, '>_Fa');
+      // gh-1446 AC5: idle renders the blank frame cell (`>_ Fa`, with the
+      // space); a run frame sits between `>_` and `Fa` at the same column.
+      const idle = StatusLineSnapshot(cwd: '/');
+      expect(kStatusLineSegments['pi']!(idle, _defaultSpec())!.text, '>_ Fa');
+      final running = StatusLineSnapshot(cwd: '/', brandFrame: '⠋');
+      expect(
+        kStatusLineSegments['pi']!(running, _defaultSpec())!.text,
+        '>_⠋Fa',
+        reason: 'the frame cell replaces the blank — ` Fa` never moves',
+      );
+      // The frame zone is exactly 1 cell: every frame keeps the total at
+      // 5 chars (`>_` + frame + `Fa`) — ` Fa`'s column never moves (E3
+      // guards the 1-cell width via the render's debug assert).
+      for (final frame in const ['⠋', '⠙', '⠹']) {
+        expect(
+          kStatusLineSegments['pi']!(
+            StatusLineSnapshot(cwd: '/', brandFrame: frame),
+            _defaultSpec(),
+          )!.text.length,
+          5,
+          reason: '3-cell zone + `Fa` = 5 chars for every frame',
+        );
+      }
+    });
+
+    test('cache_read/cache_write text pins: matched ⟲/⟳ pair', () {
+      // gh-1446 rework: both cache segments ride dedicated 1-cell symbol
+      // keys — the pre-1446 hardcoded `⟲`/`⟳` pair is preserved verbatim
+      // (the `icon.cache` database glyph was an unticketed visual change,
+      // +4 cells on the ascii preset). Pins sit next to the `pi` pin.
+      const snapshot = StatusLineSnapshot(
+        cwd: '/',
+        cacheRead: 3000,
+        cacheWrite: 1200,
+      );
+      expect(
+        kStatusLineSegments['cache_read']!(snapshot, _defaultSpec())!.text,
+        '⟲3k',
+      );
+      expect(
+        kStatusLineSegments['cache_write']!(snapshot, _defaultSpec())!.text,
+        '⟳1.2k',
+      );
+
+      // The ascii preset keeps the icon cells at 1 — the width-budgeted
+      // status line can never inherit the 5-cell `icon.cache` value.
+      final controller = FaThemeController.instance..reset();
+      // The symbol preset is NOT part of reset(): restore it explicitly so
+      // a test appended later in this file does not silently inherit ascii
+      // glyphs (same teardown shape as shell_job_board_test.dart's preset
+      // test — FaThemeController.reset() leaves the preset in place).
+      addTearDown(() => controller.switchSymbols('unicode'));
+      expect(controller.switchSymbols('ascii'), isTrue);
+      expect(
+        kStatusLineSegments['cache_read']!(snapshot, _defaultSpec())!.text,
+        'r3k',
+      );
+      expect(
+        kStatusLineSegments['cache_write']!(snapshot, _defaultSpec())!.text,
+        'w1.2k',
+      );
     });
 
     test('role table covers every StatusLineRoleKey', () {
