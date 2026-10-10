@@ -25,10 +25,6 @@ library;
 import 'dart:io';
 
 import 'package:fa_llm_mock/fa_llm_mock.dart';
-// Same mask contract as composer_tui_grid_pty_test.dart: the spinner is
-// the kaomoji face zone (issue #1374) — strip the fixed zone + separator.
-import 'package:flutter_agent_harness/src/cli/fa_tui.dart'
-    show kKaomojiFaceZoneCells;
 import 'package:test/test.dart';
 
 import 'pty_harness.dart';
@@ -222,7 +218,8 @@ tui:
       // red run 37774628085 caught (5 changed rows instead of 1). The #496
       // regression class lives in the PINNED BLOCK from the ticker row
       // down: queue chrome, input row and footer must not move at all,
-      // and the ticker row itself must move only where the spinner lives.
+      // and the ticker row itself must move only in its seconds cell
+      // (gh-1446 retired the spinner glyph).
       expect(gridB.length, gridA.length, reason: 'no row count drift');
       final busyIdx = busyRows.single;
       expect(gridB[busyIdx], contains('· submit'),
@@ -238,11 +235,13 @@ tui:
       expect(gridA[busyIdx], isNot(gridB[busyIdx]),
           reason: 'the ticker row moved between ticks:\n'
               'A:\n${dump(gridA)}\nB:\n${dump(gridB)}');
-      // The spinner is the kaomoji face zone (issue #1374): strip the
-      // fixed zone + separator; only face + seconds may move.
-      String masked(String row) => row
-          .substring(kKaomojiFaceZoneCells + 1)
-          .replaceAll(RegExp(r'\d'), '#');
+      // gh-1446 retired the face zone: the row is plain text, only the
+      // seconds digits move. (kKaomojiFaceZoneCells survives only as the
+      // retired-zone constant; nothing is stripped here anymore. gh-1413:
+      // the busy row's label is stable across one tick — the phase can
+      // only change via a relabel message, never spontaneously — so the
+      // whole-row digit strip compares label + suffix byte-for-byte.)
+      String masked(String row) => row.replaceAll(RegExp(r'\d'), '#');
       expect(masked(gridA[busyIdx]), masked(gridB[busyIdx]),
           reason: 'inside the ticker only spinner + seconds move');
     });
