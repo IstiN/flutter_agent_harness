@@ -593,6 +593,12 @@ ToolExecutionResult _bashJobStatusResult(
     if (everything.isEmpty) {
       return ToolExecutionResult.text('No background jobs this session.');
     }
+    // gh-1459 ask #4: a no-id status sweep is the model looking at every
+    // running job — each counts as a probe for the headless drain's
+    // liveness leg.
+    for (final entry in everything) {
+      if (entry.isRunning) entry.markProbed();
+    }
     if (all) {
       return ToolExecutionResult.text(
         everything.map(_shellJobStatusLine).join('\n'),
@@ -618,6 +624,16 @@ ToolExecutionResult _bashJobStatusResult(
     return ToolExecutionResult.text(lines.join('\n'));
   }
   final lookup = jobs.lookup(id);
+  // gh-1459 ask #4: a status probe of a resolved job counts as liveness
+  // for the headless drain's liveness leg.
+  switch (lookup) {
+    case ShellJobHit(:final entry):
+      entry.markProbed();
+    case ShellJobNearMiss(:final entry):
+      entry.markProbed();
+    case ShellJobPrefixAmbiguous():
+    case ShellJobUnknownId():
+  }
   return switch (lookup) {
     ShellJobHit(:final entry) => ToolExecutionResult.text(
       _shellJobStatusLine(entry),
@@ -665,10 +681,14 @@ Future<ToolExecutionResult> _bashJobOutputResult(
   final lookup = jobs.lookup(id);
   switch (lookup) {
     case ShellJobHit(:final entry):
+      // gh-1459 ask #4: reading the job's log is the model probing it —
+      // it counts as liveness for the drain's liveness leg.
+      entry.markProbed();
       return ToolExecutionResult.text(
         await _exactOutputText(jobs, entry, maxLines),
       );
     case ShellJobNearMiss(:final entry):
+      entry.markProbed();
       final tail = await jobs.tail(entry.id, maxLines: maxLines);
       return ToolExecutionResult.text(
         '${_staleIdNote(lookup.id, entry.id)}\n'

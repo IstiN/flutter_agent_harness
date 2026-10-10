@@ -93,6 +93,15 @@ final class ShellJobEntry {
   /// [ShellJobRegistry.onSettled].
   bool _notifyOnSettle = true;
 
+  /// How often the model probed this job with a read-only `bash_job`
+  /// status/output call (gh-1459 ask #4). A generation COUNTER, not a
+  /// timestamp — the headless drain's liveness leg compares generations
+  /// so the probe clock stays valid under a fake [DateTime] test clock:
+  /// a quiet-threshold steer is skipped when the generation advanced
+  /// since the last consumed threshold (the model looked itself, so the
+  /// notice would be noise).
+  int _probeGeneration = 0;
+
   String get id => job.id;
 
   /// The command line being executed.
@@ -129,6 +138,14 @@ final class ShellJobEntry {
   /// Whether the model-facing settle notice is still pending; hosts check
   /// this before steering the completion into the conversation.
   bool get notifyOnSettle => _notifyOnSettle;
+
+  /// The current probe generation (gh-1459 ask #4) — see [_probeGeneration].
+  int get probeGeneration => _probeGeneration;
+
+  /// The model's read-only `bash_job` status/output call on THIS job
+  /// (gh-1459 ask #4): bumps the probe generation so a drain liveness
+  /// steer for a threshold the model already inspected itself is skipped.
+  void markProbed() => _probeGeneration++;
 }
 
 /// `sh-7.log` — the pre-unique-id job-log name scheme. Every fa build older
