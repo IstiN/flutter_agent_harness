@@ -31,7 +31,7 @@ String stripFrontmatter(String text) {
   final end = text.indexOf('\n---', 4);
   if (end < 0) return text;
   final body = text.substring(end + 4);
-  return body.replaceFirst(RegExp(r'^\n'), '');
+  return body.replaceFirst(RegExp(r'^\n+'), '');
 }
 
 String escapeHtml(String s) => s
@@ -221,6 +221,7 @@ String renderMarkdown(
         break;
       }
       _emitList(items, out, rewriteLink, rewriteImg);
+      out.writeln();
       i = j;
       continue;
     }
@@ -350,6 +351,6 @@ String plainText(String md) {
     RegExp(r'\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)'),
     (m) => '${m.group(1)!} (${m.group(2)!})',
   );
-  s = s.replaceAll(RegExp(r'[`*_~#>]'), '');
+  s = s.replaceAll(RegExp(r'[`*_~]'), '');
   return s.replaceAll(RegExp(r'\s+'), ' ').trim();
 }

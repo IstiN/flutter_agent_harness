@@ -150,6 +150,30 @@ void main() {
     expect(robots, contains('Sitemap: https://fa1.dev/sitemap.xml'));
   });
 
+  test('robots.txt welcomes the named AI crawlers (gh-1476 D2)', () {
+    for (final bot in [
+      'GPTBot',
+      'OAI-SearchBot',
+      'ChatGPT-User',
+      'Google-Extended',
+      'ClaudeBot',
+      'anthropic-ai',
+      'PerplexityBot',
+      'Perplexity-User',
+      'CCBot',
+      'Applebot-Extended',
+      'Meta-ExternalAgent',
+    ]) {
+      expect(
+        robots,
+        contains('User-agent: $bot\nAllow: /\n'),
+        reason: '$bot must be welcomed by name (marinamogilko.co parity)',
+      );
+    }
+    expect(robots, contains('https://fa1.dev/llms.txt'));
+    expect(robots, contains('https://fa1.dev/llms-full.txt'));
+  });
+
   test('sitemap.xml covers the landing page', () {
     expect(sitemap, contains('<loc>https://fa1.dev/</loc>'));
   });

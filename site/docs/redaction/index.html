@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Secret redaction (layered pipeline) — Fa docs</title>
-<meta name="description" content="Layered detection + masking of secret-shaped content in everything that flows through the agent — tool results, the provider context, and user prompts — so secrets never reach the LLM, the transcript, or the session JSONL (issue 24).">
+<meta name="description" content="Layered detection + masking of secret-shaped content in everything that flows through the agent — tool results, the provider context, and user prompts — so secrets never reach the LLM, the transcript, or the session JSONL (issue #24).">
 <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
 <meta name="theme-color" content="#070a10">
 <link rel="canonical" href="https://fa1.dev/docs/redaction/">
@@ -14,7 +14,7 @@
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="Fa">
 <meta property="og:title" content="Secret redaction (layered pipeline)">
-<meta property="og:description" content="Layered detection + masking of secret-shaped content in everything that flows through the agent — tool results, the provider context, and user prompts — so secrets never reach the LLM, the transcript, or the session JSONL (issue 24).">
+<meta property="og:description" content="Layered detection + masking of secret-shaped content in everything that flows through the agent — tool results, the provider context, and user prompts — so secrets never reach the LLM, the transcript, or the session JSONL (issue #24).">
 <meta property="og:url" content="https://fa1.dev/docs/redaction/">
 <meta property="og:image" content="https://fa1.dev/og-image.png?v=2">
 <meta property="og:image:alt" content="Fa — one agent harness, every device.">
@@ -22,7 +22,7 @@
 <!-- Twitter -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Secret redaction (layered pipeline)">
-<meta name="twitter:description" content="Layered detection + masking of secret-shaped content in everything that flows through the agent — tool results, the provider context, and user prompts — so secrets never reach the LLM, the transcript, or the session JSONL (issue 24).">
+<meta name="twitter:description" content="Layered detection + masking of secret-shaped content in everything that flows through the agent — tool results, the provider context, and user prompts — so secrets never reach the LLM, the transcript, or the session JSONL (issue #24).">
 <meta name="twitter:image" content="https://fa1.dev/og-image.png?v=2">
 
 <link rel="stylesheet" href="../../styles.css?v=3">
@@ -31,7 +31,7 @@
   "@context": "https://schema.org",
   "@type": "TechArticle",
   "headline": "Secret redaction (layered pipeline)",
-  "description": "Layered detection + masking of secret-shaped content in everything that flows through the agent — tool results, the provider context, and user prompts — so secrets never reach the LLM, the transcript, or the session JSONL (issue 24).",
+  "description": "Layered detection + masking of secret-shaped content in everything that flows through the agent — tool results, the provider context, and user prompts — so secrets never reach the LLM, the transcript, or the session JSONL (issue #24).",
   "datePublished": "2026-10-10",
   "dateModified": "2026-10-10",
   "author": {
@@ -90,7 +90,8 @@
     <div class="post-meta">Updated 2026-10-10 · IstiN</div>
 <p>Layered detection + masking of secret-shaped content in everything that flows through the agent — tool results, the provider context, and user prompts — so secrets never reach the LLM, the transcript, or the session JSONL (issue #24).</p>
 <p>Two systems run side by side:</p>
-<ul><li>The <strong>legacy exact-value <code>SecretRedactor</code></strong> masks values it was told about by name (provider API keys, <code>request_secret</code> grants). Attached lazily on runtime tokens (CLI) or at construction (app).</li><li>The <strong>layered <code>RedactionPipeline</code></strong> catches secret-shaped content it was never told about: vendor tokens, PEM/ASN.1 blobs, credential-file paths and whole-file dumps, connection strings, high-entropy strings, private-key contexts. Attach point: <code>attachRedactionPipeline</code>.</li></ul><h2>Layers</h2>
+<ul><li>The <strong>legacy exact-value <code>SecretRedactor</code></strong> masks values it was told about by name (provider API keys, <code>request_secret</code> grants). Attached lazily on runtime tokens (CLI) or at construction (app).</li><li>The <strong>layered <code>RedactionPipeline</code></strong> catches secret-shaped content it was never told about: vendor tokens, PEM/ASN.1 blobs, credential-file paths and whole-file dumps, connection strings, high-entropy strings, private-key contexts. Attach point: <code>attachRedactionPipeline</code>.</li></ul>
+<h2>Layers</h2>
 <p>Priority order (higher wins overlaps): <code>registered</code> (exact values) → <code>path</code> (credential files) → <code>credential</code> (DOM form-field values) → <code>vendor</code> (GitHub/AWS/OpenAI/JWT/…) → <code>prefix</code> (<code>indexOf</code> pre-screen feeding vendor) → <code>pem</code> → <code>asn1</code> → <code>connection</code> → <code>context</code> (password/secret key names) → <code>entropy</code> → <code>pii</code> (off by default). Output markers are <code>[REDACTED:&lt;kind&gt;]</code>, idempotent, and line-count preserving. Allowlisted shapes (Git SHAs, UUIDs) and <code>data:</code> base64 URLs survive.</p>
 <h2>Config (<code>redact:</code> in <code>~/.fah/config.yaml</code> or project <code>.fah/config.yaml</code>)</h2>
 <pre><code class="language-yaml">redact:
@@ -105,7 +106,8 @@
   toolDeny: [write]    # never redacted (wins over toolAllow)</code></pre>
 <p>Defaults are never written back to the config file. <code>enabled: false</code> keeps the pipeline unattached entirely.</p>
 <h2>Semantics</h2>
-<ul><li><strong>Session safety (AC1)</strong>: tool results are masked by the <code>afterToolCall</code> hook BEFORE they are persisted — the JSONL never sees the raw secret.</li><li><strong>Write-side exclusion (AC7)</strong>: <code>write</code>, <code>edit</code>, <code>checkpoint</code>, and MCP write-ish tool outputs are NEVER redacted — that text is code the model produced; key-shaped strings in it are the deliverable. An exception to the exclusion stays an exception.</li><li><strong>blockMode (AC6)</strong>: <code>read</code>/<code>bash</code> calls that would touch a credential file (<code>.env</code>, <code>id_rsa</code>, <code>.aws/credentials</code>, <code>.npmrc</code>, <code>.netrc</code>, <code>.docker/config.json</code>, <code>.pem</code>/<code>.key</code>) are denied with a human reason. Mask mode (default) only masks the result.</li><li><strong>Prompt entry (AC8)</strong>: user prompt text is masked before it reaches the agent/session (<code>redactPrompt</code>, counted under <code>user_input</code>).</li><li><strong>Registered secrets</strong>: every value registered into the legacy redactor (catalog keys, role secrets, keychain preload, <code>/provider</code> tokens, <code>request_secret</code> grants) also feeds the pipeline&#39;s <code>registered</code> layer.</li></ul><h2>CLI</h2>
+<ul><li><strong>Session safety (AC1)</strong>: tool results are masked by the <code>afterToolCall</code> hook BEFORE they are persisted — the JSONL never sees the raw secret.</li><li><strong>Write-side exclusion (AC7)</strong>: <code>write</code>, <code>edit</code>, <code>checkpoint</code>, and MCP write-ish tool outputs are NEVER redacted — that text is code the model produced; key-shaped strings in it are the deliverable. An exception to the exclusion stays an exception.</li><li><strong>blockMode (AC6)</strong>: <code>read</code>/<code>bash</code> calls that would touch a credential file (<code>.env</code>, <code>id_rsa</code>, <code>.aws/credentials</code>, <code>.npmrc</code>, <code>.netrc</code>, <code>.docker/config.json</code>, <code>.pem</code>/<code>.key</code>) are denied with a human reason. Mask mode (default) only masks the result.</li><li><strong>Prompt entry (AC8)</strong>: user prompt text is masked before it reaches the agent/session (<code>redactPrompt</code>, counted under <code>user_input</code>).</li><li><strong>Registered secrets</strong>: every value registered into the legacy redactor (catalog keys, role secrets, keychain preload, <code>/provider</code> tokens, <code>request_secret</code> grants) also feeds the pipeline&#39;s <code>registered</code> layer.</li></ul>
+<h2>CLI</h2>
 <p><code>/redact</code> — status (on/off, blockMode, registered secret count, session match count). Subcommands: <code>on|off</code>, <code>block on|off</code>, <code>stats</code> (matches per layer and per tool), <code>layers</code> (per-layer toggle state).</p>
   </article>
 </main>
