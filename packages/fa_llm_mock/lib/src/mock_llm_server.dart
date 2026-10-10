@@ -68,6 +68,13 @@ final class MockLlmServer {
   var _chatCalls = 0;
   final _chatBodies = <String>[];
 
+  var _abortedRequests = 0;
+
+  /// Connections the CLIENT hung up on mid-request or mid-response (the
+  /// crash-test norm: a PTY test SIGKILLs the CLI while a turn is in
+  /// flight). Diagnostics only — served behavior is unchanged.
+  int get abortedRequests => _abortedRequests;
+
   /// The base URL to pass as the CLI's `--base-url` (trailing `/v1`, so the
   /// adapter's `{baseUrl}/chat/completions` lands on `/v1/chat/completions`).
   final String baseUrl;
@@ -87,7 +94,7 @@ final class MockLlmServer {
             'http://127.0.0.1:${server.port}/v1',
             script,
           );
-    server.listen(mock._handle);
+    server.listen((HttpRequest request) => unawaited(mock._serve(request)));
     return mock;
   }
 
@@ -118,6 +125,35 @@ final class MockLlmServer {
 
   /// Closes the server and every open connection.
   Future<void> stop() => _server.close(force: true);
+
+  /// Serves one request, tolerating CLIENT-side connection aborts (issue
+  /// #1385). A PTY test's `hardKill` (SIGKILL of the CLI) lands wherever
+  /// the scheduler decides — including mid-request-send, so the server's
+  /// parser sees a half-delivered body and `_HttpIncoming.listen` rethrows
+  /// the parser's `HttpException("Connection closed while receiving data")`
+  /// carrying the request-line path (`uri = /v1/chat/completions` — the
+  /// exact 2026-10-07 shard-red signature). Unguarded, that error escaped
+  /// `_handle` into `HttpServer.listen`'s handler-error sink — an UNHANDLED
+  /// ZONE ERROR in the test isolate, which dart test attributes to whichever
+  /// test is active. Tolerated here instead: the client is gone, nothing can
+  /// consume a response, and the scripted queue stays aligned (the aborted
+  /// request never reached `_nextEntry`, so no response is popped).
+  ///
+  /// Deliberately CLASS-based (HttpException / SocketException — dart:io's
+  /// dead-peer shapes for the read and write legs) rather than
+  /// message-matching: SDK versions word these differently, and a mock must
+  /// never turn a client death into a red test. Any other error still
+  /// propagates loudly (script misuse surfaces as 500 responses, never as
+  /// handler exceptions).
+  Future<void> _serve(HttpRequest request) async {
+    try {
+      await _handle(request);
+    } on HttpException {
+      _abortedRequests++;
+    } on SocketException {
+      _abortedRequests++;
+    }
+  }
 
   Future<void> _handle(HttpRequest request) async {
     final path = request.uri.path;

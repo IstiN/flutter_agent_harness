@@ -356,4 +356,93 @@ responses:
     final response = await request.close();
     expect(response.statusCode, 404);
   });
+
+  test(
+    'client abort mid-request leaks no unhandled error, queue stays aligned '
+    '(issue #1385)',
+    () async {
+      server.enqueueText('after the abort');
+      // A client that dies mid-request the way a SIGKILLed CLI does
+      // (steering PTY test phase 2: hardKill races the soft-yield turn's
+      // request): headers declare a 64-byte body, 5 bytes arrive, then a
+      // clean FIN. TCP orders data before EOF, so the server parser is
+      // deterministically mid-body when the socket closes — the exact
+      // shape that used to rethrow
+      // `HttpException("Connection closed while receiving data",
+      // uri: /v1/chat/completions)` out of the handler and into the test
+      // zone as an unhandled error (the 2026-10-07 shard reds).
+      final socket = await Socket.connect('127.0.0.1', server.port);
+      socket.add(
+        utf8.encode(
+          'POST /v1/chat/completions HTTP/1.1\r\n'
+          'Host: 127.0.0.1:${server.port}\r\n'
+          'Content-Type: application/json\r\n'
+          'Content-Length: 64\r\n'
+          '\r\n'
+          '{"a":',
+        ),
+      );
+      await socket.flush();
+      await socket.close();
+      // The abort surfaces asynchronously on the server side — pump the
+      // event loop so a leaked (unhandled) error would land inside THIS
+      // test: dart test fails the active test on any unhandled zone error,
+      // which is precisely the leak this guard pins.
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(server.abortedRequests, 1);
+      socket.destroy();
+      // The next, well-formed client is served the scripted response — the
+      // aborted request consumed nothing from the queue.
+      final (status, body) = await postChat([
+        {'role': 'user', 'content': 'still here'},
+      ]);
+      expect(status, 200);
+      expect(
+        _sseChunks(body).first['choices'].first['delta']['content'],
+        'after the abort',
+      );
+    },
+  );
+
+  test(
+    'client abort mid-response leaks no unhandled error (issue #1385)',
+    () async {
+      server.enqueueText('doomed');
+      server.enqueueText('next');
+      // A full request whose client is gone by the time the response is
+      // written — the other hardKill window (kill after dispatch, before
+      // the CLI consumed the SSE bytes). An orderly close keeps the request
+      // delivery deterministic (FIN never discards receive buffers, so the
+      // server always parses the full body and pops the scripted entry)
+      // while the response write races a closing socket — which must stay
+      // a tolerated abort, never an unhandled zone error. Whether the
+      // write itself errors is platform-timing, so only the LEAK and the
+      // queue alignment are pinned here.
+      final socket = await Socket.connect('127.0.0.1', server.port);
+      socket.add(
+        utf8.encode(
+          'POST /v1/chat/completions HTTP/1.1\r\n'
+          'Host: 127.0.0.1:${server.port}\r\n'
+          'Content-Type: application/json\r\n'
+          'Content-Length: ${'{"a":1}'.length}\r\n'
+          '\r\n'
+          '{"a":1}',
+        ),
+      );
+      await socket.flush();
+      await socket.close();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      socket.destroy();
+      // The full request dispatched, so its scripted response is spent;
+      // the next client gets the following scripted entry.
+      final (status, body) = await postChat([
+        {'role': 'user', 'content': 'still here'},
+      ]);
+      expect(status, 200);
+      expect(
+        _sseChunks(body).first['choices'].first['delta']['content'],
+        'next',
+      );
+    },
+  );
 }
