@@ -39,6 +39,10 @@ mkdir -p "$target"
 # shipping v0.1.411 with broken memory imports (issue #613). build/ and
 # .dart_tool stay unanchored: build artifacts may appear at any depth and
 # never belong in the stage.
+# gh-1452: /CHANGELOG_ARCHIVE.md (the lossless trimmed tail of CHANGELOG.md)
+# has no consumer in the pub package — GitHub carries the history. It is
+# excluded below; must mirror /CHANGELOG_ARCHIVE.md in .pubignore (guarded
+# by test/publish_staging_test.dart).
 rsync -a "$repo_root"/ "$target"/ \
   --include 'vendor/xterm/' --include 'vendor/xterm/**' \
   --include 'packages/fa_llm_mock/' --include 'packages/fa_llm_mock/**' \
@@ -48,6 +52,7 @@ rsync -a "$repo_root"/ "$target"/ \
   --exclude 'vendor/*' --exclude '/docs' --exclude '/fa-local' \
   --exclude 'packages/*' \
   --exclude '/pubspec_overrides.yaml' \
+  --exclude '/CHANGELOG_ARCHIVE.md' \
   --exclude '.dart_tool' --exclude 'build' \
   --exclude '/memory' --exclude '/.trash' --exclude '/coverage'
 

@@ -37,3 +37,10 @@
 # Workspace-only dart_tui vendor pin — never published (see its header);
 # shipped, it re-dangles dart_tui onto the excluded vendor dir (v0.1.407).
 /pubspec_overrides.yaml
+
+# gh-1452: the lossless archive of trimmed CHANGELOG.md sections (PR #1462)
+# — GitHub carries the per-version history; pub consumers never read it and
+# it grows at every future trim. Keep out of the payload; must mirror the
+# rsync exclude in scripts/stage_publish_package.sh (guarded by
+# test/publish_staging_test.dart).
+/CHANGELOG_ARCHIVE.md
