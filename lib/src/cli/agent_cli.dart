@@ -1901,10 +1901,19 @@ class AgentCli {
       // continuation paths recurse through [_runPrompt], which finalizes
       // with its own [_afterRun]; only a normally-finished turn does.
       if (finished) await _afterRun();
-      await _awaitHeadlessBackgroundJobs();
-      // Visible waiting (issue #450): stay for the waiters when opted in,
-      // otherwise print the honest detach summary before exiting.
-      await _waiting.waitForJobsOrSummarize(waitForJobs: waitForJobs);
+      // gh-1455: an aborted turn is a deliberate run shutdown (a signal,
+      // harness teardown, or the watchdog) — headless fa must EXIT
+      // promptly, not drain job-reaction rounds or stand at the waiter
+      // ceiling. Jobs own their lifecycle: they keep running, and the
+      // honest detach summary says so.
+      if (terminalStopReason == StopReason.aborted) {
+        await _waiting.printHeadlessDetachSummary();
+      } else {
+        await _awaitHeadlessBackgroundJobs();
+        // Visible waiting (issue #450): stay for the waiters when opted in,
+        // otherwise print the honest detach summary before exiting.
+        await _waiting.waitForJobsOrSummarize(waitForJobs: waitForJobs);
+      }
     } catch (error) {
       io.writeln(
         _keyStatusView.errorLine('$error', _agent.state.model.baseUrl),
