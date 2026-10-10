@@ -24,8 +24,10 @@ import 'package:test/test.dart';
 import 'agent_cli_test_support.dart';
 
 /// The user-visible marker of an interim liveness notice
-/// (`_steerHeadlessLiveness`).
-const _livenessMarker = ' running · ';
+/// (`_steerHeadlessLiveness`). Chosen to NOT match a `bash_job status`
+/// tool-result line (which also says "running · Nm elapsed") — the
+/// notice alone carries the `elapsed · tail:` clause.
+const _livenessMarker = ' elapsed · tail: ';
 
 /// Routes every run by its last user message: liveness notices replay
 /// [livenessScripts] in order, the settle notice replays [settleScript],
@@ -53,6 +55,12 @@ class _LivenessRoutingStream {
   /// results append user messages), so call-time snapshots are the only
   /// reliable way to know what a run was steered for.
   final lastUserTexts = <String>[];
+
+  /// Whether each call CONTINUES a run after a tool result (vs starting
+  /// fresh): a continuation's messages carry a [ToolResultMessage] ahead
+  /// of the last user message — its last UserMessage is the STEER PAYLOAD
+  /// of the run, not new information.
+  final continuations = <bool>[];
   String _lastUserText(Context context) {
     for (final message in context.messages.reversed) {
       if (message is UserMessage) return messageText(message);
@@ -212,7 +220,12 @@ class _LivenessHarness {
   String dump() =>
       'runCode=${runCode()} runFailure=${runFailure()}\n'
       'clock=$clock\n'
-      'contexts=${stream.contexts.length}\n'
+      'contexts=${stream.contexts.length} lastUserTexts=${stream.lastUserTexts.length} '
+      'livenessRuns=${livenessRuns.length}\n'
+      'markerMatch=[${[
+        for (final t in stream.lastUserTexts)
+          t.contains(_livenessMarker),
+      ]}]\n'
       'lastUserTexts:\n${stream.lastUserTexts.join('\n---\n')}\n'
       'io.out:\n${io.out.toString()}';
 
