@@ -54,14 +54,17 @@ final _turns = [
   ],
 ];
 
-/// The live collapsed board row: ten started, nothing settled yet.
-const _allRunning = 'Background jobs (10) · 10 running · 0 done · 0 lost';
+/// The live collapsed board row at peak (gh-1446 signal format: the
+/// parens carry the RUNNING count — no done/lost noise on the live line).
+const _allRunning = 'Background jobs (10)';
 
 /// One settle notice per finished job (`[bash] sh-… exited(code)`); exactly
 /// ten of these prove every command started AND finished — the proof set
 /// lives in the harness as [shellJobSettleNotice] / `settledJobNumbers`
-/// (top-level, unit-provable without a PTY).
-final _liveBoard = RegExp(r'Background jobs \(10\) · (\d+) running');
+/// (top-level, unit-provable without a PTY). Reused as the mid-countdown
+/// poll: the live parens count DECREMENTS as jobs settle (gh-1446 — the
+/// live line counts running jobs only).
+final _liveBoard = RegExp(r'Background jobs \((\d+)\)');
 
 /// Any live running count above zero — forbidden on the final frame.
 final _stuckRunning = RegExp(r'[1-9]\d* running');
