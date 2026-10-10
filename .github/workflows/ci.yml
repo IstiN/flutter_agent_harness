@@ -345,7 +345,7 @@ jobs:
         run: |
           d=$(mktemp -d)
           trap 'rm -rf "$d"' EXIT
-          dart scripts/build_site.dart --out "$d"
+          dart scripts/build_site.dart --out "$d/site"
           FA_SITE_ROOT="$d/site" dart test/site/
 
       # gh-1199 AC2: the deterministic-gate boundary is self-enforcing —

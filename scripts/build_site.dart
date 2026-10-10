@@ -18,7 +18,8 @@
 //   site/blog/<slug>/index.html  — static post pages, raw-HTML content,
 //                                  BlogPosting JSON-LD (no JS needed)
 //   site/docs/<slug>/index.html  — curated docs/*.md as TechArticle pages
-//   site/blog/index.html         — the post-list block between the
+//   site/blog/index.html         — rendered from index.template.html: the
+//                                  post-list block between the
 //                                  #blog-post-list markers
 //   site/sitemap.xml             — every indexable page, real lastmod
 //   site/llms-full.txt           — llms.txt + full curated post/doc text
@@ -241,7 +242,8 @@ List<DocsPage> loadDocs(String root) {
   ];
 }
 
-/// The generated post-list block in site/blog/index.html.
+/// The generated post-list block in site/blog/index.html (rendered from
+/// the committed site/blog/index.template.html).
 const blogIndexStart = '<!-- #blog-post-list:start';
 const blogIndexEnd = '<!-- #blog-post-list:end -->';
 
@@ -658,13 +660,18 @@ List<OutputFile> buildSite({required String root}) {
   final posts = loadPosts(root);
   final docs = loadDocs(root);
 
-  final blogIndex = File('$root/site/blog/index.html').readAsStringSync();
+  // The committed template holds the markers; the rendered index.html is
+  // a generated artifact (gitignored, never committed — PR #1479 owner
+  // directive), so the template lives at a non-colliding path.
+  final blogIndex = File(
+    '$root/site/blog/index.template.html',
+  ).readAsStringSync();
   final block = blogIndexBlock(posts);
   final startIdx = blogIndex.indexOf(blogIndexStart);
   final endIdx = blogIndex.indexOf(blogIndexEnd);
   if (startIdx < 0 || endIdx < 0 || endIdx < startIdx) {
     throw StateError(
-      'site/blog/index.html is missing the #blog-post-list generated '
+      'site/blog/index.template.html is missing the #blog-post-list '
       'block markers — restore them from git.',
     );
   }
@@ -692,7 +699,7 @@ List<OutputFile> buildSite({required String root}) {
   ];
 }
 
-/// Generated page directories ('blog/<slug>', 'docs/<slug>') directly
+/// Generated page directories (`blog/<slug>`, `docs/<slug>`) directly
 /// under [siteDir] — used to prune stale pages after a write and to keep
 /// them out of an `--out` static copy.
 List<String> _generatedPageDirs(String siteDir) {
@@ -729,8 +736,13 @@ void _copyStaticSite(String root, String outDir) {
       if (!skip(rel)) Directory('$outDir/$rel').createSync(recursive: true);
     } else if (entity is File) {
       if (skip(rel)) continue;
-      // Generated top-level artifacts are written from [outputs].
-      if (rel == 'sitemap.xml' || rel == 'llms-full.txt') continue;
+      // Generated top-level artifacts are written from [outputs]; the
+      // committed blog-index template renders into blog/index.html.
+      if (rel == 'sitemap.xml' ||
+          rel == 'llms-full.txt' ||
+          rel == 'blog/index.template.html') {
+        continue;
+      }
       final dest = File('$outDir/$rel')..createSync(recursive: true);
       dest.writeAsBytesSync(entity.readAsBytesSync());
     }
@@ -747,17 +759,23 @@ void emitSite({
   String? outDir,
   required List<OutputFile> outputs,
 }) {
+  // Write target: in-tree the outputs' site-relative paths land under
+  // [root]; with `--out`, [outDir] IS the site root (paths lose the
+  // leading 'site/'). The prune scan always runs against the siteDir.
   final siteDir = outDir ?? '$root/site';
-  final strip = outDir != null ? 'site/' : '';
-  String rel(OutputFile o) =>
-      strip.isEmpty ? o.path : o.path.substring(strip.length);
+  String targetPath(OutputFile o) => outDir != null
+      ? '$outDir/${o.path.substring('site/'.length)}'
+      : '$root/${o.path}';
   if (outDir != null) _copyStaticSite(root, outDir);
   for (final o in outputs) {
-    final f = File('$siteDir/${rel(o)}')..createSync(recursive: true);
+    final f = File(targetPath(o))..createSync(recursive: true);
     f.writeAsStringSync(o.content);
   }
-  // Prune generated pages whose source disappeared.
-  final expectedPaths = {for (final o in outputs) rel(o)};
+  // Prune generated pages whose source disappeared (paths relative to
+  // the site root on both sides of the comparison).
+  final expectedPaths = {
+    for (final o in outputs) o.path.substring('site/'.length),
+  };
   for (final dir in _generatedPageDirs(siteDir)) {
     if (!expectedPaths.any((p) => p.startsWith('$dir/'))) {
       Directory('$siteDir/$dir').deleteSync(recursive: true);

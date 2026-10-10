@@ -423,7 +423,7 @@ void main() {
       File('${posts.path}/2025-12-31-two.md').writeAsStringSync(
         '---\ntitle: Two\ndate: 2025-12-31\ndescription: d2\n---\n\n# Two\n\nBody two.',
       );
-      File('${root.path}/site/blog/index.html').writeAsStringSync(
+      File('${root.path}/site/blog/index.template.html').writeAsStringSync(
         '<html>\n<!-- #blog-post-list:start -->\nold\n<!-- #blog-post-list:end -->\n</html>\n',
       );
       File('${root.path}/site/llms.txt').writeAsStringSync('# Fa\n');
@@ -485,7 +485,7 @@ void main() {
       File('${posts.path}/2026-01-02-one.md').writeAsStringSync(
         '---\ntitle: One\ndate: 2026-01-02\ndescription: d1\n---\n\n# One\n\nBody one.',
       );
-      File('${root.path}/site/blog/index.html').writeAsStringSync(
+      File('${root.path}/site/blog/index.template.html').writeAsStringSync(
         '<html>\n<!-- #blog-post-list:start -->\nold\n<!-- #blog-post-list:end -->\n</html>\n',
       );
       File('${root.path}/site/styles.css').writeAsStringSync('body{}\n');

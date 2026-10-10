@@ -15,10 +15,13 @@ coverage-verify/
 # The Pages workflow assembles the Flutter web demo here; never commit it.
 site/app/
 # gh-1476 (PR #1479 owner directive): the generated GEO layer — static
-# blog/docs pages, sitemap.xml, llms-full.txt — is a deploy-time product
-# (pages.yml builds it into build/pages via `dart scripts/build_site.dart
-# --out`), never committed; site/ holds the sources + templates only.
+# blog/docs pages, the rendered blog index, sitemap.xml, llms-full.txt —
+# is a deploy-time product (pages.yml builds it into build/pages via
+# `dart scripts/build_site.dart --out`), never committed; site/ holds the
+# sources + templates only (blog/index.template.html is the committed
+# blog-index template).
 site/blog/*/index.html
+site/blog/index.html
 site/docs/*/index.html
 site/sitemap.xml
 site/llms-full.txt
