@@ -174,7 +174,7 @@ jobs:
     with:
       # The literal uses-ref: the factory requires it (it cannot derive its
       # own ref — github.workflow_ref in a called workflow is the CALLER's).
-      factory_ref: e166ef7774822fabd39bebe7b950074be6892731
+      factory_ref: 206a8c62df869a15bef676ef5cb09444775e0067
       flutter-version: 'stable'  # explicit: awf no longer defaults to a Flutter toolchain
       # STRING — number/choice-typed reusable inputs cannot take expressions.
       issue: ${{ needs.gate.outputs.issue || github.event.inputs.issue }}
