@@ -37,7 +37,10 @@ class _LivenessRoutingStream {
     required List<List<AssistantMessageEvent>> livenessScripts,
     required List<AssistantMessageEvent> settleScript,
   }) : _leadScripts = List.of(leadScripts),
-       _livenessScripts = List.of(livenessScripts),
+       // SHARED, not copied: the caller populates the liveness reactions
+       // after boot, once the job id is known — the router pops them in
+       // order as the interim notices are steered.
+       _livenessScripts = livenessScripts,
        _settleScript = settleScript;
 
   final List<List<AssistantMessageEvent>> _leadScripts;
@@ -210,6 +213,7 @@ class _LivenessHarness {
       'runCode=${runCode()} runFailure=${runFailure()}\n'
       'clock=$clock\n'
       'contexts=${stream.contexts.length}\n'
+      'lastUserTexts:\n${stream.lastUserTexts.join('\n---\n')}\n'
       'io.out:\n${io.out.toString()}';
 
   /// Lets the oldest parked drain sleep complete (time advances by the
@@ -419,6 +423,7 @@ void main() {
       await _waitFor(
         () => h.cli.shellJobsRegistryForTest.job(job.id)!.probeGeneration > 0,
         reason: 'the model probe marks the job probed',
+        dump: h.dump,
       );
 
       // Release the 10m sleep → the crossing is SKIPPED (the model
