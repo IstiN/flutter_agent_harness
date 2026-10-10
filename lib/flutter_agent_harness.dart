@@ -276,6 +276,7 @@ export 'src/hosts/host_capability_profile.dart';
 export 'src/hosts/host_wiring_builder.dart';
 export 'src/hosts/host_agent_wiring.dart';
 export 'src/hosts/host_extension_api.dart';
+export 'src/hosts/app_host_profile.dart';
 // ── telemetry ──
 export 'src/telemetry/agent_telemetry.dart';
 export 'src/types.dart';

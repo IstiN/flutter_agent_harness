@@ -1849,7 +1849,20 @@ not the child-lenient `ToolRegistry`), and an extension `off` on the
 wired profile hides from the registry with its reason surfaced on
 `WiredAgentCore.extensions` (E8). The extension surface is additive-only:
 memory, context management, compaction, the JSONL tool session and
-trajectory are SDK invariants with no override point (AC9).
+trajectory are SDK invariants with no override point (AC9). The
+flutter_app is the second shell (slice 5): it wires through
+`flutterAppHostProfile` (lib/src/hosts/app_host_profile.dart — the app
+host's own honest today-state, not the built-ins, whose cells pin the
+matrix TARGET) and packages its platform tool families as a declared
+`app-platform` extension — per-platform conditioning stays construction
+glue in the shell, never a bare `if` around registration. Capabilities
+the builder registers no tool for are declared with PRESENCE MARKER
+services (`dynamicMessageSink`, `onDeviceProviderFactory`, the
+`extRuntimeFactory` precedent): the host's extension carries the tool,
+the marker keeps the cell honestly wired instead of run-narrowing off.
+A host whose session scope differs from `ExecutionEnv.cwd` (the app's
+mounted project folders) passes `sessionCwd` so the fabric groups mail by
+workspace.
 
 ## Commits and releases
 

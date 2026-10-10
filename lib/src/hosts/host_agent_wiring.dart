@@ -1,7 +1,9 @@
 /// Live agent-stack wiring through the builder (issue #1079, slice 2 —
 /// the CLI converts to this as the first host shell; slice 3 — the
 /// fabric/subagent/task complex joins the builder-owned set; slice 4 —
-/// host extensions become builder-gated, declared surface; slice 6 —
+/// host extensions become builder-gated, declared surface; slice 5 —
+/// the flutter_app shell constructs through the same seam over its own
+/// `flutter-app` profile, `app_host_profile.dart`; slice 6 —
 /// the extension host's RUNTIME behavior is pinned record-identical to
 /// the CLI host's, `test/hosts/extension_host_parity_test.dart`).
 ///
@@ -59,7 +61,7 @@ import '../memory/memory_tools.dart';
 import '../model_roles/model_resolver.dart' show ModelRolesResolver;
 import '../messaging/agent_fabric.dart' show buildAgentFabric;
 import '../messaging/file_messaging_repository.dart'
-    show SwappableMessagingRepository;
+    show FileMessagingRepository, SwappableMessagingRepository;
 import '../messaging/messaging_repository.dart' show MessagingRepository;
 import '../messaging/schedule_message_tool.dart';
 import '../messaging/scheduled_messages.dart';
@@ -339,6 +341,29 @@ final class AgentCoreServices {
   final Object? extRuntimeFactory;
   final String? sessionRoot;
 
+  /// The JS-app host surface marker (the `dynamic_message` machinery +
+  /// the jsr app runtime, issue #102): the builder registers no tool for
+  /// it — the host's extension carries the tool — but its presence keeps
+  /// the `js_apps` cell honestly WIRED instead of run-narrowing off on
+  /// hosts that have the surface (issue #1079 slice 5: the app passes its
+  /// [DynamicMessagesService]-equivalent; `extRuntimeFactory` is the same
+  /// kind of marker for `js_extensions`).
+  final Object? dynamicMessageSink;
+
+  /// The on-device inference bridges (webllm / gemma / transformers.js):
+  /// a presence marker like [dynamicMessageSink] — the stream functions
+  /// are per-connection host choices, the marker keeps the
+  /// `on_device_providers` cell honest on the hosts that ship the
+  /// runtimes.
+  final Object? onDeviceProviderFactory;
+
+  /// The host's session scope for the messaging root (issue #1079 slice
+  /// 5): usually null — the fabric encodes [ExecutionEnv.cwd]. Hosts with
+  /// a mount concept (the app's project folders, where sessionCwd is the
+  /// mounted host path) name the scoped dir so mail is grouped by
+  /// workspace, matching the sessions root the host already computes.
+  final String? sessionCwd;
+
   /// The host's resolved redaction config for the bash shape interceptor
   /// (issue #1408 AC3, review 5456649624): the same `redact:` section
   /// steers command rewriting and result/job-log masking. Null = the
@@ -382,6 +407,9 @@ final class AgentCoreServices {
     this.subagents,
     this.extRuntimeFactory,
     this.sessionRoot,
+    this.dynamicMessageSink,
+    this.onDeviceProviderFactory,
+    this.sessionCwd,
     this.redactionConfig,
     this.approvedSecretLiterals,
     this.telemetry,
@@ -424,6 +452,8 @@ final class AgentCoreServices {
     if (subagents != null) 'subagentServices',
     if (extRuntimeFactory != null) 'extRuntimeFactory',
     if (sessionRoot != null) 'sessionRoot',
+    if (dynamicMessageSink != null) 'dynamicMessageSink',
+    if (onDeviceProviderFactory != null) 'onDeviceProviderFactory',
   };
 }
 
@@ -506,6 +536,12 @@ final class WiredAgentCore {
   /// The messaging root the file inboxes live under.
   final String? messagesRoot;
 
+  /// The raw file layer under [fileFabric] — the handle the app host's
+  /// hub-membership controller needs (issue #402: it swaps the hub
+  /// primary over the swappable holder and swaps BACK to this layer).
+  /// Null when the fabric is hub-only (no file transport survived).
+  final FileMessagingRepository? fileLayer;
+
   final SubagentManager? subagentManager;
   final A2aManager? a2aManager;
   final SubagentHeartbeat? subagentHeartbeat;
@@ -533,6 +569,7 @@ final class WiredAgentCore {
     required this.tools,
     required this.fabric,
     required this.fileFabric,
+    required this.fileLayer,
     required this.messagesRoot,
     required this.subagentManager,
     required this.a2aManager,
@@ -748,6 +785,7 @@ final class _WiredTaskSurface {
 ({
   MessagingRepository fabric,
   SwappableMessagingRepository? fileFabric,
+  FileMessagingRepository? fileLayer,
   String? messagesRoot,
 })?
 _wireFabric({
@@ -788,11 +826,12 @@ _wireFabric({
     // mainMailbox resolver).
     final hub = services.hubFabric;
     if (hub == null) return null;
-    return (fabric: hub, fileFabric: null, messagesRoot: null);
+    return (fabric: hub, fileFabric: null, fileLayer: null, messagesRoot: null);
   }
   return buildAgentFabric(
     env: services.baseEnv,
     sessionRoot: services.sessionRoot!,
+    sessionCwd: services.sessionCwd,
     homeDir: services.subagents?.homeDir,
     hubFabric: transports.contains('hub') ? services.hubFabric : null,
     // The hub primary merges mail into the MAIN inbox only — resolved
@@ -1044,6 +1083,7 @@ WiredAgentCore wireAgentCore({
     tools: tools,
     fabric: fabricAssembly?.fabric,
     fileFabric: fabricAssembly?.fileFabric,
+    fileLayer: fabricAssembly?.fileLayer,
     messagesRoot: fabricAssembly?.messagesRoot,
     subagentManager: taskComplex?.subagentManager,
     a2aManager: taskComplex?.a2aManager,
