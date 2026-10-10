@@ -18,7 +18,12 @@ import 'package:http/http.dart' as http;
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 
-import 'openrouter_oauth_server.dart' show openBrowser;
+import 'openrouter_oauth_server.dart'
+    show
+        authorizationUrlPrefix,
+        browserLaunchSkippedMessage,
+        defaultBrowserLaunchPolicy,
+        openBrowser;
 
 /// One OAuth proxy redirect caught by [AiinCallbackServer].
 final class AiinCallback {
@@ -204,6 +209,7 @@ final class AiinSurfaceClosedException implements Exception {
 Future<AiinConnectResult?> runAiinConnectCliFlow({
   required void Function(String) onStatus,
   Future<bool> Function(String) openBrowserFn = openBrowser,
+  bool Function() shouldOpenBrowserFn = defaultBrowserLaunchPolicy,
   http.Client? client,
   String authBaseUrl = aiinAuthBaseUrl,
   Duration timeout = const Duration(minutes: 5),
@@ -286,6 +292,7 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
       loginUrl.toString(),
       openBrowserFn,
       onStatus,
+      launchBrowser: shouldOpenBrowserFn(),
     );
     final intercepted = interceptedCallback?.call();
     AiinCallback? callback;
@@ -342,6 +349,7 @@ Future<AiinConnectResult?> runAiinConnectCliFlow({
     return await _settleAiinCallback(
       callback,
       state,
+      authorizationUrl: loginUrl.toString(),
       client: client,
       authBaseUrl: authBaseUrl,
       onStatus: onStatus,
@@ -474,33 +482,48 @@ void _wireInterceptedChannel({
   );
 }
 
-/// Opens the system browser, falling back to printing the URL when no
-/// browser is available (headless hosts).
+/// Opens the sign-in surface, reporting the launch outcome and ALWAYS the
+/// authorization URL (gh-1450): the skip/opened/could-not-open hint line,
+/// then the consistent `authorization URL:` line in every outcome —
+/// including a throwing [openBrowserFn], which still surfaces through the
+/// race (the prompt-failure contract) after both lines are printed.
 Future<void> _openAiinBrowser(
   String authUrl,
   Future<bool> Function(String) openBrowserFn,
-  void Function(String) onStatus,
-) async {
-  if (await openBrowserFn(authUrl)) {
-    onStatus('browser opened; sign in on the AIIN page');
-  } else {
+  void Function(String) onStatus, {
+  required bool launchBrowser,
+}) async {
+  try {
+    if (!launchBrowser) {
+      onStatus(browserLaunchSkippedMessage);
+    } else if (await openBrowserFn(authUrl)) {
+      onStatus('browser opened; sign in on the AIIN page');
+    } else {
+      onStatus('could not open browser automatically');
+    }
+  } on Object {
     onStatus('could not open browser automatically');
-    onStatus('open this URL manually: $authUrl');
+    onStatus('$authorizationUrlPrefix$authUrl');
+    rethrow;
   }
+  onStatus('$authorizationUrlPrefix$authUrl');
 }
 
 /// Validates the caught redirect and finishes the connect. Null = the
 /// callback never arrived, reported a provider error, or failed the
-/// state check.
+/// state check. [authorizationUrl] rides the timeout status as the
+/// last-chance rescue line (gh-1450 AC4).
 Future<AiinConnectResult?> _settleAiinCallback(
   AiinCallback? callback,
   String expectedState, {
+  required String authorizationUrl,
   required http.Client? client,
   required String authBaseUrl,
   required void Function(String) onStatus,
 }) async {
   if (callback == null) {
     onStatus('no AIIN callback received (timeout or cancelled)');
+    onStatus('$authorizationUrlPrefix$authorizationUrl');
     return null;
   }
   if (!callback.succeeded) {
