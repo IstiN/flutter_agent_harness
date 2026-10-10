@@ -677,7 +677,12 @@ jobs:
           # The installer writes version.txt into the bundle; mirror it so
           # `fa --version` from the AOT binary reports the real version
           # (the _packageVersion() fallback chain reads bundle/version.txt).
-          version=$(sed -n 's/^version: //p' pubspec.yaml)
+          # gh-1522: the committed pubspec is the 0.0.0-dev placeholder —
+          # PR runs stamp from git describe (falls back to the short sha
+          # on shallow checkouts); release runs get the exact tag from the
+          # release binaries job.
+          version=$(git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
+          version="${version#v}"
           echo "$version" > fa-local/bundle/version.txt
           ./fa-local/bundle/bin/fah --version
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -2904,16 +2909,21 @@ jobs:
         with:
           sdk: stable
 
+      # gh-1522: the repo pubspec carries the 0.0.0-dev placeholder — the
+      # tag is the version. Guard the invariant instead of comparing the
+      # tag to the placeholder: the committed pubspec must still BE the
+      # placeholder (a hand-bump desyncs the tag↔staged-file invariant the
+      # stamper relies on), and the staged version must equal the tag.
       - name: Verify tag matches pubspec version
         if: steps.gate.outputs.publishable == 'true'
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          version=$(grep '^version:' pubspec.yaml | awk '{print $2}')
-          echo "tag=$tag pubspec=$version"
-          if [ "$tag" != "$version" ]; then
-            echo "Tag v$tag does not match pubspec version $version"
+          placeholder=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+          if [ "$placeholder" != "0.0.0-dev" ]; then
+            echo "::error::committed pubspec.yaml version is '$placeholder', expected the 0.0.0-dev placeholder — the tag is the single source of truth (gh-1522); a hand-bump desyncs the staged stamp. Revert pubspec.yaml."
             exit 1
           fi
+          echo "tag=$tag placeholder=$placeholder"
 
       # setup-dart (sdk >= 3.13) provisions a publish-scoped credential for
       # the whole job: it exports PUB_TOKEN and registers
@@ -2939,11 +2949,28 @@ jobs:
       # "Content-length exceeds upper bound"). Publish from a staged copy
       # that carries only the package surface; the size guard makes any
       # future bloat a LOCI error instead of a pub.dev rejection.
+      # gh-1522: publish from a staged copy stamped with the TAG version —
+      # the staged pubspec version and the generated changelog section are
+      # written at stage time (scripts/stamp_staged_release.sh), the repo
+      # files keep the 0.0.0-dev placeholder and are never mutated.
       - name: Stage publishable package (sub-projects stay out)
         if: steps.gate.outputs.publishable == 'true'
         run: |
-          bash scripts/stage_publish_package.sh /tmp/publish-stage
+          bash scripts/stage_publish_package.sh /tmp/publish-stage "${GITHUB_REF_NAME#v}"
           (cd /tmp/publish-stage && dart pub get)
+
+      # gh-1522 guard: the staged pubspec version MUST equal the tag name
+      # (v1.0.550 → 1.0.550) — fail BEFORE the upload, never mid-publish.
+      - name: Verify staged version matches tag
+        if: steps.gate.outputs.publishable == 'true'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          staged=$(grep '^version:' /tmp/publish-stage/pubspec.yaml | awk '{print $2}')
+          echo "tag=$tag staged=$staged"
+          if [ "$tag" != "$staged" ]; then
+            echo "::error::staged pubspec version $staged does not match tag v$tag — refusing to publish (gh-1522)"
+            exit 1
+          fi
 
       - name: Publish (automated publishing via OIDC)
         if: steps.gate.outputs.publishable == 'true'
@@ -3040,16 +3067,18 @@ jobs:
         with:
           sdk: stable
 
-      - name: Verify tag matches pubspec version
+      # gh-1522: the committed pubspec carries the 0.0.0-dev placeholder —
+      # the TAG is the version (the retired flow compared tag vs pubspec
+      # because a bot commit bumped the file; that commit path is gone).
+      # Guard the placeholder here and stamp the bundle version from the tag.
+      - name: Verify committed pubspec carries the placeholder
         # Explicit bash: the default shell on Windows runners is pwsh and
         # the POSIX test below dies there with a ParserError.
         shell: bash
         run: |
-          tag="${GITHUB_REF_NAME#v}"
-          version=$(grep '^version:' pubspec.yaml | awk '{print $2}')
-          echo "tag=$tag pubspec=$version"
-          if [ "$tag" != "$version" ]; then
-            echo "Tag v$tag does not match pubspec version $version"
+          placeholder=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+          if [ "$placeholder" != "0.0.0-dev" ]; then
+            echo "::error::committed pubspec.yaml version is '$placeholder', expected the 0.0.0-dev placeholder (gh-1522) — a hand-bump desyncs the tag-derived builds. Revert pubspec.yaml."
             exit 1
           fi
 
@@ -3065,7 +3094,9 @@ jobs:
       - name: Build CLI bundle
         shell: bash
         run: |
-          version=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+          # gh-1522: the bundle version rides the TAG (GITHUB_REF_NAME), not
+          # the committed placeholder pubspec.
+          version="${GITHUB_REF_NAME#v}"
           # dart build cli produces: <output>/bundle/{bin/fah, lib/*.dylib}
           # We rename the executable to `fa`, write version.txt, then archive
           # the whole bundle so the installer can extract bin/ + lib/ together.
@@ -3663,7 +3694,12 @@ jobs:
             mv build/out/bundle/bin/fah build/out/bundle/bin/fa
             chmod +x build/out/bundle/bin/fa
           fi
-          echo "$(grep '^version:' pubspec.yaml | awk '{print $2}')" > build/out/bundle/version.txt
+          # gh-1522: the committed pubspec is the 0.0.0-dev placeholder —
+          # stamp the PR bundle's version.txt from git describe (short sha
+          # on shallow checkouts) so `fa --version` stays meaningful.
+          version=$(git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
+          version="${version#v}"
+          echo "$version" > build/out/bundle/version.txt
 
       - name: Ad-hoc sign CLI binary (macOS)
         if: matrix.os == 'macos'

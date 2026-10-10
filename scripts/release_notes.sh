@@ -8,8 +8,11 @@
 #               newest tag other than vX.Y.Z itself)
 #
 # Order of preference:
-#   1. the CHANGELOG.md `## <version>` section (curated `## Unreleased`
-#      content or generated bullets land there via auto_release.sh);
+#   1. the CHANGELOG.md `## <version>` section (curated per-release notes);
+#   1b. (gh-1522) the curated `## Unreleased` body — the release flow moves
+#      Unreleased into the tag's section AT STAGE TIME (never in-repo), so
+#      a pending Unreleased section IS this release's notes when no
+#      versioned section exists yet;
 #   2. conventional commits since the previous tag, grouped
 #      Features / Fixes / Maintenance, capped at 50 lines with an
 #      "…and N more" line (issue #282 E4);
@@ -26,6 +29,18 @@ if [ -f CHANGELOG.md ]; then
   section=$(awk -v ver="$version" '
     BEGIN { esc = ver; gsub(/\./, "\\.", esc) }
     $0 ~ "^## " esc "[[:space:]]*$" { found = 1; next }
+    found && /^## / { exit }
+    found { print }
+  ' CHANGELOG.md)
+  if [ -n "$(printf '%s' "$section" | tr -d '[:space:]')" ]; then
+    printf '%s\n' "$section"
+    exit 0
+  fi
+  # gh-1522 preference 1b: a pending curated `## Unreleased` section is
+  # this release's notes (the stage-time stamper folds it under the tag's
+  # generated section header).
+  section=$(awk '
+    /^## Unreleased[ \t]*$/ { found = 1; next }
     found && /^## / { exit }
     found { print }
   ' CHANGELOG.md)

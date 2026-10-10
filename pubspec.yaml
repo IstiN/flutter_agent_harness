@@ -2,7 +2,11 @@ name: flutter_agent_harness
 description: >-
   Cross-platform AI agent harness for Dart and Flutter: streaming provider
   adapters, agent loop with tools, session persistence, context compaction.
-version: 1.0.549
+# gh-1522: placeholder — the release TAG is the single source of truth.
+# CI stamps the real version into the staged publish tree at publish time
+# (scripts/stamp_staged_release.sh); install_local.sh stamps it from
+# `git describe` for local builds. Never hand-bump this (CI guards it).
+version: 0.0.0-dev
 homepage: https://fa1.dev
 repository: https://github.com/IstiN/flutter_agent_harness
 issue_tracker: https://github.com/IstiN/flutter_agent_harness/issues
