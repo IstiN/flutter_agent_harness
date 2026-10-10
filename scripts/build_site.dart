@@ -115,14 +115,10 @@ const staticPages = [
 /// max(this, newest post date) so a new post lifts /blog/ automatically.
 const blogIndexFloor = '2026-09-20';
 
-/// A loaded blog post (source: site/blog/posts/<slug>.md, kept in sync
+/// A loaded blog post (source: `site/blog/posts/<slug>.md`, kept in sync
 /// with blog/posts/ by scripts/build_blog.dart).
 class BlogPost {
-  BlogPost({
-    required this.slug,
-    required this.meta,
-    required this.body,
-  });
+  BlogPost({required this.slug, required this.meta, required this.body});
   final String slug;
   final Map<String, String> meta;
   final String body;
@@ -178,12 +174,13 @@ class OutputFile {
 
 List<BlogPost> loadPosts(String root) {
   final dir = Directory('$root/site/blog/posts');
-  final files = dir
-      .listSync()
-      .whereType<File>()
-      .where((f) => f.path.endsWith('.md'))
-      .toList()
-    ..sort((a, b) => b.path.compareTo(a.path)); // newest first
+  final files =
+      dir
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.md'))
+          .toList()
+        ..sort((a, b) => b.path.compareTo(a.path)); // newest first
   return [
     for (final f in files)
       BlogPost(
@@ -199,8 +196,13 @@ List<DocsPage> loadDocs(String root) {
     for (final source in docsRegistry)
       () {
         final raw = File('$root/${source.source}').readAsStringSync();
-        final titleMatch = RegExp(r'^#\s+(.+)$', multiLine: true).firstMatch(raw);
-        final title = titleMatch != null ? plainText(titleMatch.group(1)!) : source.slug;
+        final titleMatch = RegExp(
+          r'^#\s+(.+)$',
+          multiLine: true,
+        ).firstMatch(raw);
+        final title = titleMatch != null
+            ? plainText(titleMatch.group(1)!)
+            : source.slug;
         // Drop the leading H1 — the page template renders it as the headline.
         final body = titleMatch != null
             ? raw.replaceFirst(titleMatch.group(0)!, '').trimLeft()
@@ -256,75 +258,63 @@ String blogIndexBlock(List<BlogPost> posts) {
   return out.toString();
 }
 
-Map<String, Object?> _orgJson() => {
-      '@type': 'Organization',
-      '@id': '$siteOrigin/#org',
-      'name': orgName,
-      'url': orgUrl,
-      'sameAs': [orgUrl],
-    };
-
 Map<String, Object?> _publisherJson() => {
-      '@type': 'Organization',
-      'name': orgName,
-      'url': siteOrigin,
-      'sameAs': [orgUrl],
-    };
+  '@type': 'Organization',
+  'name': orgName,
+  'url': siteOrigin,
+  'sameAs': [orgUrl],
+};
 
 String _jsonLd(Map<String, Object?> obj) =>
     const JsonEncoder.withIndent('  ').convert(obj);
 
 Map<String, Object?> blogPostingJson(BlogPost p) => {
-      '@context': 'https://schema.org',
-      '@type': 'BlogPosting',
-      'headline': p.title,
-      if (p.description.isNotEmpty) 'description': p.description,
-      if (p.cover != null)
-        'image': ['$siteOrigin/blog/posts/${p.cover}'],
-      'datePublished': p.meta['date'] ?? p.lastmod,
-      'dateModified': p.lastmod,
-      'author': {'@type': 'Organization', 'name': orgName, 'url': orgUrl},
-      'publisher': _publisherJson(),
-      'mainEntityOfPage': {'@type': 'WebPage', '@id': p.url},
-      'url': p.url,
-      if ((metaTags(p)).isNotEmpty) 'keywords': metaTags(p),
-    };
+  '@context': 'https://schema.org',
+  '@type': 'BlogPosting',
+  'headline': p.title,
+  if (p.description.isNotEmpty) 'description': p.description,
+  if (p.cover != null) 'image': ['$siteOrigin/blog/posts/${p.cover}'],
+  'datePublished': p.meta['date'] ?? p.lastmod,
+  'dateModified': p.lastmod,
+  'author': {'@type': 'Organization', 'name': orgName, 'url': orgUrl},
+  'publisher': _publisherJson(),
+  'mainEntityOfPage': {'@type': 'WebPage', '@id': p.url},
+  'url': p.url,
+  if ((metaTags(p)).isNotEmpty) 'keywords': metaTags(p),
+};
 
 String metaTags(BlogPost p) =>
     (p.meta['tags'] ?? '').replaceAll(RegExp(r'[\[\]]'), '').trim();
 
 Map<String, Object?> techArticleJson(DocsPage d) => {
-      '@context': 'https://schema.org',
-      '@type': 'TechArticle',
-      'headline': d.title,
-      'description': d.description,
-      'datePublished': d.updated,
-      'dateModified': d.updated,
-      'author': {'@type': 'Organization', 'name': orgName, 'url': orgUrl},
-      'publisher': _publisherJson(),
-      'about': {
-        '@type': 'SoftwareApplication',
-        'name': 'Fa',
-        'url': siteOrigin,
-      },
-      'mainEntityOfPage': {'@type': 'WebPage', '@id': d.url},
-      'url': d.url,
-    };
+  '@context': 'https://schema.org',
+  '@type': 'TechArticle',
+  'headline': d.title,
+  'description': d.description,
+  'datePublished': d.updated,
+  'dateModified': d.updated,
+  'author': {'@type': 'Organization', 'name': orgName, 'url': orgUrl},
+  'publisher': _publisherJson(),
+  'about': {'@type': 'SoftwareApplication', 'name': 'Fa', 'url': siteOrigin},
+  'mainEntityOfPage': {'@type': 'WebPage', '@id': d.url},
+  'url': d.url,
+};
 
 /// Shared nav header. [prefix] is the relative path back to the site root
 /// ('' for root pages, '../' one level, '../../' two).
-String _nav(String prefix, {String? current}) => '''
+String _nav(String prefix, {String? current}) =>
+    '''
 <header class="nav">
   <div class="nav-inner">
-    <a class="brand" href="${prefix}">
+    <a class="brand" href="$prefix">
       <span class="brand-mark" aria-hidden="true">&gt;_</span>
       <span class="brand-name">Fa</span>
       <span class="brand-sub">fa1.dev</span>
     </a>
     <nav class="nav-links" aria-label="Sections">
-      <a href="${prefix}#demo">Demo</a>
-      <a href="${prefix}#install">Install</a>
-      <a href="${prefix}#features">Features</a>
+      <a href="$prefix#demo">Demo</a>
+      <a href="$prefix#install">Install</a>
+      <a href="$prefix#features">Features</a>
       <a href="${prefix}widgets/">Widgets</a>
       <a href="${prefix}blog/"${current == 'blog' ? ' aria-current="page"' : ''}>Blog</a>
     </nav>
@@ -337,7 +327,9 @@ String _nav(String prefix, {String? current}) => '''
 
 String _videoEmbed(String url) {
   final esc = escapeHtml(url);
-  final yt = RegExp(r'(?:youtube\.com/watch\?v=|youtu\.be/)([\w-]+)').firstMatch(url);
+  final yt = RegExp(
+    r'(?:youtube\.com/watch\?v=|youtu\.be/)([\w-]+)',
+  ).firstMatch(url);
   if (yt != null) {
     return '<div class="post-video"><iframe src="https://www.youtube.com/embed/${yt.group(1)}" allowfullscreen></iframe></div>';
   }
@@ -405,7 +397,9 @@ String renderBlogPostPage(BlogPost p) {
       '${linkedin != null ? ' · <a href="${escapeHtml(linkedin)}" target="_blank" rel="noopener">also on LinkedIn ↗</a>' : ''}'
       '</div>',
     );
-  if (video != null && !video.contains('HERE')) meta.writeln(_videoEmbed(video));
+  if (video != null && !video.contains('HERE')) {
+    meta.writeln(_videoEmbed(video));
+  }
 
   return '''<!doctype html>
 <html lang="en">
@@ -425,14 +419,14 @@ String renderBlogPostPage(BlogPost p) {
 <meta property="og:title" content="$title">
 <meta property="og:description" content="$desc">
 <meta property="og:url" content="${p.url}">
-<meta property="og:image" content="$siteOrigin/blog/posts/${cover ?? '../og-image.png?v=2'}">
+<meta property="og:image" content="${cover != null ? '$siteOrigin/blog/posts/$cover' : '$siteOrigin/og-image.png?v=2'}">
 ${cover != null ? '<meta property="og:image:alt" content="$title">' : ''}
 
 <!-- Twitter -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="$title">
 <meta name="twitter:description" content="$desc">
-<meta name="twitter:image" content="$siteOrigin/blog/posts/${cover ?? '../og-image.png?v=2'}">
+<meta name="twitter:image" content="${cover != null ? '$siteOrigin/blog/posts/$cover' : '$siteOrigin/og-image.png?v=2'}">
 ${cover != null ? '<meta name="twitter:image:alt" content="$title">' : ''}
 
 <link rel="stylesheet" href="../../styles.css?v=3">
@@ -461,7 +455,9 @@ $meta$bodyHtml  </article>
 /// Docs cross-link rewrite: relative `*.md` links point at the surfaced
 /// /docs/ page when curated, else at the GitHub source.
 String Function(String) docsLinkRewriter() {
-  final byFile = {for (final d in docsRegistry) d.source.split('/').last: d.slug};
+  final byFile = {
+    for (final d in docsRegistry) d.source.split('/').last: d.slug,
+  };
   return (href) {
     if (RegExp(r'^(?:https?:)?//|^#|^mailto:').hasMatch(href)) return href;
     if (href.endsWith('.md')) {
@@ -532,17 +528,16 @@ $bodyHtml  </article>
 /// (newest first), then docs.
 List<SitePage> collectPages(List<BlogPost> posts, List<DocsPage> docs) {
   final newestPost = posts.isEmpty ? '' : posts.first.lastmod;
-  final blogLastmod =
-      newestPost.compareTo(blogIndexFloor) > 0 ? newestPost : blogIndexFloor;
+  final blogLastmod = newestPost.compareTo(blogIndexFloor) > 0
+      ? newestPost
+      : blogIndexFloor;
   return [
     for (final p in staticPages)
       p.loc == '$siteOrigin/blog/'
           ? SitePage(p.loc, blogLastmod, p.changefreq, p.priority)
           : p,
-    for (final p in posts)
-      SitePage(p.url, p.lastmod, 'monthly', '0.8'),
-    for (final d in docs)
-      SitePage(d.url, d.updated, 'monthly', '0.7'),
+    for (final p in posts) SitePage(p.url, p.lastmod, 'monthly', '0.8'),
+    for (final d in docs) SitePage(d.url, d.updated, 'monthly', '0.7'),
   ];
 }
 
@@ -698,7 +693,9 @@ void main(List<String> args) {
       final f = File('$root/${o.path}');
       if (!f.existsSync() || f.readAsStringSync() != o.content) {
         drift++;
-        stderr.writeln('STALE: ${o.path} — rerun `dart scripts/build_site.dart`');
+        stderr.writeln(
+          'STALE: ${o.path} — rerun `dart scripts/build_site.dart`',
+        );
       }
     }
     for (final dir in _generatedPageDirs(root)) {
@@ -708,7 +705,9 @@ void main(List<String> args) {
       }
     }
     if (drift > 0) {
-      stderr.writeln('site build drift: $drift artifact(s) — CI gate (gh-1476)');
+      stderr.writeln(
+        'site build drift: $drift artifact(s) — CI gate (gh-1476)',
+      );
       exit(1);
     }
     stdout.writeln('site build fresh: ${outputs.length} artifact(s)');

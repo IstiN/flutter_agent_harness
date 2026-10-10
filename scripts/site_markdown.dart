@@ -84,8 +84,10 @@ String renderInline(
       out.write(a(renderInline(m.group(4)!), m.group(5)!, m.group(6)));
     } else if (m.group(7) != null) {
       final url = m.group(7)!;
-      out.write('<a href="${escapeHtml(url)}" target="_blank" rel="noopener">'
-          '${escapeHtml(url)}</a>');
+      out.write(
+        '<a href="${escapeHtml(url)}" target="_blank" rel="noopener">'
+        '${escapeHtml(url)}</a>',
+      );
     } else if (m.group(8) != null) {
       out.write('<code>${escapeHtml(m.group(8)!)}</code>');
     } else if (m.group(9) != null) {
@@ -278,7 +280,8 @@ int _renderTable(
   String Function(String href)? rewriteLink,
   String Function(String src)? rewriteImg,
 ) {
-  String cell(String tag, String content, String? align) => '<$tag'
+  String cell(String tag, String content, String? align) =>
+      '<$tag'
       '${align != null ? ' style="text-align: $align"' : ''}>'
       '${renderInline(content, rewriteLink: rewriteLink, rewriteImg: rewriteImg)}</$tag>';
 
@@ -295,7 +298,9 @@ int _renderTable(
   out.writeln('</tr></thead>');
   out.writeln('<tbody>');
   var j = i + 2;
-  while (j < lines.length && lines[j].contains('|') && lines[j].trim().isNotEmpty) {
+  while (j < lines.length &&
+      lines[j].contains('|') &&
+      lines[j].trim().isNotEmpty) {
     final row = _splitRow(lines[j]);
     out.write('<tr>');
     for (var c = 0; c < row.length; c++) {
@@ -324,8 +329,13 @@ void _emitList(
         items[k].indent == level &&
         items[k].ordered == ordered) {
       out.write('<li>');
-      out.write(renderInline(items[k].text,
-          rewriteLink: rewriteLink, rewriteImg: rewriteImg));
+      out.write(
+        renderInline(
+          items[k].text,
+          rewriteLink: rewriteLink,
+          rewriteImg: rewriteImg,
+        ),
+      );
       k++;
       final sub = <_ListItem>[];
       while (k < items.length && items[k].indent > level) {
@@ -343,10 +353,7 @@ void _emitList(
 /// fallbacks: links keep their text, images are dropped, markers removed.
 String plainText(String md) {
   var s = md;
-  s = s.replaceAllMapped(
-    RegExp(r'!\[[^\]]*\]\([^)]+\)'),
-    (_) => '',
-  );
+  s = s.replaceAllMapped(RegExp(r'!\[[^\]]*\]\([^)]+\)'), (_) => '');
   s = s.replaceAllMapped(
     RegExp(r'\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)'),
     (m) => '${m.group(1)!} (${m.group(2)!})',

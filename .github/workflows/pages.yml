@@ -8,6 +8,8 @@ on:
     branches: [main]
     paths:
       - 'site/**'
+      - 'blog/**'
+      - 'docs/**'
       - 'flutter_app/**'
       - 'packages/**'
       - 'lib/**'
@@ -16,6 +18,8 @@ on:
       - 'scripts/build_browser_ext.sh'
       - 'office_addin/**'
       - 'scripts/build_office_addin.sh'
+      - 'scripts/build_site.dart'
+      - 'scripts/site_markdown.dart'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -115,6 +119,15 @@ jobs:
         run: |
           cd office_addin/dart && dart pub get && cd ../..
           bash scripts/build_office_addin.sh
+
+      # gh-1476: the static GEO layer is generated at deploy time too (the
+      # committed artifacts are the CI freshness pin; the deploy rebuilds
+      # from the same sources so the two can never drift). Dep-free pure
+      # Dart scripts — no `dart pub get` needed.
+      - name: Build the static GEO layer (gh-1476)
+        run: |
+          dart scripts/build_blog.dart
+          dart scripts/build_site.dart
 
       - name: Assemble Pages artifact
         run: |

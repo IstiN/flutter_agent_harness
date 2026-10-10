@@ -14,7 +14,9 @@ import '../../scripts/site_markdown.dart' as md;
 void main() {
   group('frontmatter', () {
     test('parses key: value pairs', () {
-      final fm = md.parseFrontmatter('---\ntitle: Hello\ndate: 2026-01-02\n---\nbody');
+      final fm = md.parseFrontmatter(
+        '---\ntitle: Hello\ndate: 2026-01-02\n---\nbody',
+      );
       expect(fm['title'], 'Hello');
       expect(fm['date'], '2026-01-02');
     });
@@ -25,16 +27,16 @@ void main() {
     });
 
     test('stripFrontmatter removes only the front-matter block', () {
-      expect(
-        md.stripFrontmatter('---\ntitle: X\n---\n\n# Hello'),
-        '# Hello',
-      );
+      expect(md.stripFrontmatter('---\ntitle: X\n---\n\n# Hello'), '# Hello');
     });
   });
 
   group('renderMarkdown', () {
     test('renders ATX headings', () {
-      expect(md.renderMarkdown('# One\n\n## Two'), '<h1>One</h1>\n<h2>Two</h2>\n');
+      expect(
+        md.renderMarkdown('# One\n\n## Two'),
+        '<h1>One</h1>\n<h2>Two</h2>\n',
+      );
     });
 
     test('escapes raw HTML in paragraphs', () {
@@ -86,10 +88,7 @@ void main() {
     });
 
     test('renders unordered lists with 2+ items', () {
-      expect(
-        md.renderMarkdown('- a\n- b'),
-        '<ul><li>a</li><li>b</li></ul>\n',
-      );
+      expect(md.renderMarkdown('- a\n- b'), '<ul><li>a</li><li>b</li></ul>\n');
     });
 
     test('renders ordered lists and nested lists by indent', () {
@@ -105,7 +104,9 @@ void main() {
 
     test('lazy continuation lines merge into the list item', () {
       expect(
-        md.renderMarkdown('- item text that\n  wraps onto a second line\n- next'),
+        md.renderMarkdown(
+          '- item text that\n  wraps onto a second line\n- next',
+        ),
         '<ul><li>item text that wraps onto a second line</li><li>next</li></ul>\n',
       );
     });
@@ -121,7 +122,9 @@ void main() {
   group('plainText', () {
     test('strips markdown formatting', () {
       expect(
-        md.plainText('**Tool availability** (issue #19) decides [`x`](https://a)'),
+        md.plainText(
+          '**Tool availability** (issue #19) decides [`x`](https://a)',
+        ),
         'Tool availability (issue #19) decides x (https://a)',
       );
     });
@@ -132,23 +135,25 @@ void main() {
       String slug = '2026-01-02-hello',
       String body = 'Hello world.',
       Map<String, String>? meta,
-    }) =>
-        site.BlogPost(
-          slug: slug,
-          meta: {
-            'title': 'Hello & <welcome>',
-            'date': '2026-01-02',
-            'description': 'A "quoted" description.',
-            'author': 'Uladimir Klyshevich',
-            'cover': 'assets/cover.png',
-            ...?meta,
-          },
-          body: body,
-        );
+    }) => site.BlogPost(
+      slug: slug,
+      meta: {
+        'title': 'Hello & <welcome>',
+        'date': '2026-01-02',
+        'description': 'A "quoted" description.',
+        'author': 'Uladimir Klyshevich',
+        'cover': 'assets/cover.png',
+        ...?meta,
+      },
+      body: body,
+    );
 
     test('carries the raw content without JS and exactly one h1', () {
       final html = site.renderBlogPostPage(
-        post(body: '![Hello & <welcome>](assets/cover.png)\n\n# Hello & <welcome>\n\nDistinctive core text.'),
+        post(
+          body:
+              '![Hello & <welcome>](assets/cover.png)\n\n# Hello & <welcome>\n\nDistinctive core text.',
+        ),
       );
       expect(html, contains('Distinctive core text'));
       expect(html, isNot(contains('fetch(')));
@@ -168,8 +173,18 @@ void main() {
       expect(json['dateModified'], '2026-01-02');
       expect(json['url'], '${site.siteOrigin}/blog/2026-01-02-hello/');
       expect(json['author'], containsPair('@type', 'Organization'));
-      expect(html, contains('<link rel="canonical" href="${site.siteOrigin}/blog/2026-01-02-hello/">'));
-      expect(html, contains('og:image" content="${site.siteOrigin}/blog/posts/assets/cover.png'));
+      expect(
+        html,
+        contains(
+          '<link rel="canonical" href="${site.siteOrigin}/blog/2026-01-02-hello/">',
+        ),
+      );
+      expect(
+        html,
+        contains(
+          'og:image" content="${site.siteOrigin}/blog/posts/assets/cover.png',
+        ),
+      );
     });
 
     test('escapes title and description in head meta', () {
@@ -193,7 +208,8 @@ void main() {
       final d = site.DocsPage(
         source: site.docsRegistry.first,
         title: 'Tool availability',
-        body: 'Body text with [a relative link](redaction.md) and [an outside one](backend-agent-mode.md).',
+        body:
+            'Body text with [a relative link](redaction.md) and [an outside one](backend-agent-mode.md).',
         description: 'desc',
         raw: '# Tool availability\n\nraw',
       );
@@ -204,7 +220,9 @@ void main() {
       expect(json['dateModified'], site.docsRegistry.first.updated);
       expect(
         html,
-        contains('<link rel="canonical" href="${site.siteOrigin}/docs/tool-availability/">'),
+        contains(
+          '<link rel="canonical" href="${site.siteOrigin}/docs/tool-availability/">',
+        ),
       );
       // Curated .md target → /docs/ page; uncurated → GitHub source.
       expect(html, contains('href="/docs/redaction/"'));
@@ -244,13 +262,20 @@ void main() {
       // Newest post lifts /blog/ lastmod above its floor.
       expect(
         xml,
-        contains('<loc>${site.siteOrigin}/blog/</loc>\n    <lastmod>2027-01-02</lastmod>'),
+        contains(
+          '<loc>${site.siteOrigin}/blog/</loc>\n    <lastmod>2027-01-02</lastmod>',
+        ),
       );
       expect(
         xml,
-        contains('<loc>${site.siteOrigin}/blog/2027-01-02-b/</loc>\n    <lastmod>2027-01-02</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.8</priority>'),
+        contains(
+          '<loc>${site.siteOrigin}/blog/2027-01-02-b/</loc>\n    <lastmod>2027-01-02</lastmod>\n    <changefreq>monthly</changefreq>\n    <priority>0.8</priority>',
+        ),
       );
-      expect(xml, contains('<loc>${site.siteOrigin}/docs/tool-availability/</loc>'));
+      expect(
+        xml,
+        contains('<loc>${site.siteOrigin}/docs/tool-availability/</loc>'),
+      );
       expect(xml, contains('<loc>${site.siteOrigin}/widgets/</loc>'));
     });
   });
@@ -291,10 +316,10 @@ void main() {
   group('blog index block', () {
     test('renders a card per post with 2+ posts, escaping titles', () {
       site.BlogPost p(String slug, String title) => site.BlogPost(
-            slug: slug,
-            meta: {'title': title, 'date': '2026-01-02', 'description': 'd<\$>'},
-            body: 'x',
-          );
+        slug: slug,
+        meta: {'title': title, 'date': '2026-01-02', 'description': 'd<\$>'},
+        body: 'x',
+      );
       final block = site.blogIndexBlock([p('a', 'A & B'), p('b', 'Second')]);
       expect(RegExp('class="post-card"').allMatches(block), hasLength(2));
       expect(block, contains('<h2>A &amp; B</h2>'));
@@ -321,8 +346,7 @@ void main() {
       );
       File('${root.path}/site/llms.txt').writeAsStringSync('# Fa\n');
       for (final d in site.docsRegistry) {
-        final f = File('${root.path}/${d.source}')
-          ..createSync(recursive: true);
+        final f = File('${root.path}/${d.source}')..createSync(recursive: true);
         f.writeAsStringSync('# ${d.slug}\n\nDoc body for ${d.slug}.\n');
       }
     });
@@ -338,11 +362,20 @@ void main() {
         byPath.keys.where((k) => k.startsWith('site/docs/')),
         hasLength(site.docsRegistry.length),
       );
-      expect(byPath['site/blog/2026-01-02-one/index.html'], contains('Body one.'));
+      expect(
+        byPath['site/blog/2026-01-02-one/index.html'],
+        contains('Body one.'),
+      );
       expect(byPath['site/blog/index.html'], isNot(contains('old')));
-      expect(byPath['site/blog/index.html'], contains('href="./2026-01-02-one/"'));
+      expect(
+        byPath['site/blog/index.html'],
+        contains('href="./2026-01-02-one/"'),
+      );
       expect(byPath['site/sitemap.xml'], contains('2026-01-02-one'));
-      expect(byPath['site/llms-full.txt'], contains('# ${site.siteOrigin}/docs/dap/'));
+      expect(
+        byPath['site/llms-full.txt'],
+        contains('# ${site.siteOrigin}/docs/dap/'),
+      );
     });
 
     test('regeneration is deterministic (idempotent)', () {
@@ -367,7 +400,8 @@ void main() {
       expect(
         stale,
         isEmpty,
-        reason: 'stale generated artifact(s): $stale — rerun '
+        reason:
+            'stale generated artifact(s): $stale — rerun '
             '`dart scripts/build_site.dart` and commit the result',
       );
     });
