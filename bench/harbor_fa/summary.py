@@ -141,16 +141,23 @@ def _trial_rows(job_dir: Path) -> list[dict]:
     return rows
 
 
-def render(splits: dict, expected=None, title=None, ledger=None):
+def render(splits: dict, expected=None, title=None, ledger=None, run_label=None):
     """Build the summary (lines, problems) — pure, testable.
 
     title: report heading (family mode, issue #1124); defaults to the
     legacy 4.0 heading. ledger: dict(dataset=, model=, fa_ref=, run_url=)
     — when set, a paste-ready per-version results-ledger row is appended
     with the real cost totals computed below (issue #1124 + #1123).
+    run_label: provider+model tag (gh-1503, BENCH_RUN_LABEL env) so glm
+    and kimi runs never blend in the ledger/cost views.
     """
     lines = [title or "### fa on Terminal-Bench 4.0", ""]
     problems: list[str] = []
+    if run_label:
+        # gh-1503: the report names the provider+model (BENCH_RUN_LABEL,
+        # set by bench-harbor.yml's provider resolve step — the same
+        # contract bench.yml's gh-1471 summary uses).
+        lines.append(f"Provider: {run_label} (gh-1503).")
     has_jobs = any(rows for rows in splits.values())
 
     if not has_jobs:
@@ -317,7 +324,13 @@ def main(argv=None) -> int:
             "run_url": args.run_url or "—",
         }
 
-    lines, problems = render(splits, args.expected_trials, title=title, ledger=ledger)
+    lines, problems = render(
+        splits,
+        args.expected_trials,
+        title=title,
+        ledger=ledger,
+        run_label=os.environ.get("BENCH_RUN_LABEL", "").strip() or None,
+    )
 
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:

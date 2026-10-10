@@ -486,6 +486,9 @@ jobs:
           FA_KEY_API_Z_AI_Z_AI: ${{ secrets.FA_BENCH_ZAI_KEY }}
           FA_KEY_API_KIMI_COM_BENCH: ${{ secrets.FA_BENCH_KIMI_KEY }}
           FA_KEY_BENCH_CUSTOM: ${{ secrets.FA_BENCH_CUSTOM_KEY }}
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          HARBOR_API_KEY: ${{ secrets.HARBOR_API_KEY }}
           MODEL: ${{ needs.setup.outputs.bench_model }}
           ATTEMPTS: ${{ inputs.attempts }}
           NCONC: ${{ inputs.n-concurrent }}
@@ -497,13 +500,18 @@ jobs:
           SHARD_TASKS: ${{ matrix.tasks }}
         run: |
           set -euo pipefail
-          [ -n "$FA_KEY_API_Z_AI_Z_AI" ] || { echo '::error::FA_BENCH_ZAI_KEY secret is not set'; exit 1; }
+          # gh-1503 defense-in-depth behind the setup preflight: the
+          # resolved key env var must carry the selected provider's key
+          # (indirect expansion — the name came from the resolve step).
+          provider_key="${FA_PROVIDER_KEY_ENV:?resolve step did not run}"
+          provider_key_value="${!provider_key}"
+          [ -n "$provider_key_value" ] || { echo "::error::provider key env $provider_key is empty — the selected provider's bench secret is not set"; exit 1; }
           if [ "$ENV_TYPE" = modal ]; then
             [ -n "$MODAL_TOKEN_ID" ] && [ -n "$MODAL_TOKEN_SECRET" ] || { echo '::error::Modal secrets are not set'; exit 1; }
           fi
           # fa_agent.py ships the key into the container base64-encoded; GitHub
           # auto-masks only the raw value, so mask the base64 form too.
-          echo "::add-mask::$(printf %s "$FA_KEY_API_Z_AI_Z_AI" | base64 -w0)"
+          echo "::add-mask::$(printf %s "$provider_key_value" | base64 -w0)"
           args=()
           for t in $SHARD_TASKS; do args+=(-i "$t"); done
           # Issue #1122 knobs, same env contract as bench.yml (shared
@@ -585,7 +593,13 @@ jobs:
           EXPECTED_TASKS: ${{ needs.setup.outputs.count }}
           ATTEMPTS: ${{ inputs.attempts }}
           FAMILY: ${{ needs.setup.outputs.family }}
-          MODEL: ${{ inputs.model }}
+          # gh-1503: pinned to the setup resolve step's outputs — the
+          # free-text model input is gone; provider+model is derived
+          # from the provider choice (same contract as bench.yml).
+          MODEL: ${{ needs.setup.outputs.bench_model }}
+          # gh-1503: the report names the provider+model — glm and kimi
+          # runs never blend in the ledger/cost views.
+          BENCH_RUN_LABEL: ${{ needs.setup.outputs.run_label }}
           FA_REF: ${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
