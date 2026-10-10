@@ -44,4 +44,75 @@ void main() {
       reason: 'the boot line names its session like every lifecycle line',
     );
   });
+
+  test('an oversized diagnostics log is rotated on the first write of a '
+      'process', () async {
+    final env = MemoryExecutionEnv(cwd: '/work');
+    await env.createDir('/home/.fah/logs', recursive: true);
+    // Seed fa.log beyond the cap (the memory print sink can now append
+    // prompt-sized lines per memory op, so unbounded growth is real).
+    await env.writeFile(
+      '/home/.fah/logs/fa.log',
+      'x' * (AgentCli.diagnosticLogMaxBytes + 1),
+    );
+    final io = FakeCliIO();
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: '[REDACTED:Sensitive Value]',
+        env: env,
+        sessionRoot: '/sessions',
+        homeDir: '/home',
+        providerKind: 'openai-completions',
+      ),
+      io: io,
+      streamFunction: fake.call,
+      version: '9.9.9-test',
+    );
+    final run = cli.run();
+    await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+    io.sendLine('/exit');
+    await run;
+
+    final result = await env.readTextFile('/home/.fah/logs/fa.log');
+    final log = result.valueOrNull ?? '';
+    expect(
+      log.length,
+      lessThan(AgentCli.diagnosticLogMaxBytes),
+      reason: 'the oversized log must not survive rotation',
+    );
+    expect(log, isNot(contains('xxxx')));
+    expect(log, contains('fa boot'));
+  });
+
+  test('a diagnostics log under the cap is not rotated', () async {
+    final env = MemoryExecutionEnv(cwd: '/work');
+    await env.createDir('/home/.fah/logs', recursive: true);
+    await env.writeFile('/home/.fah/logs/fa.log', 'precious prior line\n');
+    final io = FakeCliIO();
+    final fake = FakeStreamFunction([textTurn('ok')]);
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: '[REDACTED:Sensitive Value]',
+        env: env,
+        sessionRoot: '/sessions',
+        homeDir: '/home',
+        providerKind: 'openai-completions',
+      ),
+      io: io,
+      streamFunction: fake.call,
+      version: '9.9.9-test',
+    );
+    final run = cli.run();
+    await waitForIt(() => !cli.isBusy && io.out.toString().isNotEmpty);
+    io.sendLine('/exit');
+    await run;
+
+    final result = await env.readTextFile('/home/.fah/logs/fa.log');
+    final log = result.valueOrNull ?? '';
+    expect(log, contains('precious prior line'));
+    expect(log, contains('fa boot'));
+  });
 }

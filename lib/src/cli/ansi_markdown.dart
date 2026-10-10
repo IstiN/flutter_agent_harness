@@ -693,7 +693,10 @@ const _blockMarkerChars = {0x23, 0x3E, 0x2D, 0x2A, 0x2B, 0x20};
 ///   at the wrap edge CARRIES to the continuation row (terminal autowrap)
 ///   instead of being dropped — a dropped space collapses the two words in
 ///   the rendered screen buffer ("memory round-tripcomplete", gh-1510).
-///   Reassembling the rows therefore always reproduces the original text.
+///   Reassembling the rows therefore reproduces the original text up to
+///   trailing whitespace — the one documented drop is a row holding only
+///   the line's trailing boundary space (invisible either way), with or
+///   without trailing SGR codes.
 /// - SGR state carries across the cut EXPLICITLY: the closed row ends with
 ///   a reset and the continuation row re-opens the active styles. dart_tui
 ///   redraws rows independently, so relying on the terminal to keep SGR
@@ -734,7 +737,10 @@ List<String> wrapAnsiLine(String line, int width) {
   }
 
   void writeToken(String token, int visibleLen) {
-    if (token != ' ') carriedBoundarySpace = false;
+    // Only a visible token ends the carried-space state: a zero-width SGR
+    // token must not disturb it (a trailing reset after a boundary space
+    // would otherwise resurrect the dropped-space row, gh-1517 review).
+    if (visibleLen > 0) carriedBoundarySpace = false;
     row.write(token);
     col += visibleLen;
     if (token.startsWith('\x1b')) {
@@ -749,7 +755,10 @@ List<String> wrapAnsiLine(String line, int width) {
   void flushWord() {
     if (wordTokens.isEmpty) return;
     final carried = carriedBoundarySpace;
-    carriedBoundarySpace = false;
+    // A zero-visible-width word (pure SGR tokens, e.g. a trailing reset)
+    // keeps the carried-space state untouched, so the end-of-line drop
+    // guard treats 'aaaa \x1b[0m' exactly like 'aaaa '.
+    if (wordVisible > 0) carriedBoundarySpace = false;
     // A word one cell short of the full width still fits after a carried
     // space; at `width` or more it hard-cuts across rows starting here.
     if (wordVisible > width || (carried && wordVisible >= width)) {

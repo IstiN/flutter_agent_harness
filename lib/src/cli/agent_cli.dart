@@ -2063,6 +2063,15 @@ class AgentCli {
 
   var _diagnosticLogDirEnsured = false;
 
+  /// Size cap of the shared diagnostics log (`~/.fah/logs/fa.log`): on the
+  /// first write of a process, an oversized log rotates to `fa.log.1`.
+  /// The memory package's print sink (gh-1510) appends prompt-sized debug
+  /// lines per memory op, so the append-only design now needs a bound —
+  /// without one, an active-memory session grows fa.log far faster than
+  /// the pre-existing lifecycle lines ever did.
+  @visibleForTesting
+  static const diagnosticLogMaxBytes = 4 * 1024 * 1024;
+
   String? _activeCustomName;
   Completer<String?>? _wizardPickerAnswer;
 }

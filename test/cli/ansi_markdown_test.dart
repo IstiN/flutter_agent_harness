@@ -180,6 +180,21 @@ void main() {
         expect(wrapAnsiLine('aaaa ', 4), ['aaaa']);
       });
 
+      test('a trailing boundary space followed only by SGR codes drops the '
+          'carried-space row, exactly like the unstyled case', () {
+        // Regression: flushWord() snapshotted and cleared the carried-space
+        // flag even for a zero-visible-width word (a trailing reset), so a
+        // styled line ending 'aaaa \x1b[0m' at the exact wrap edge emitted
+        // a one-space continuation row while the unstyled 'aaaa ' case was
+        // dropped — inconsistent layout for a rare input.
+        final rows = wrapAnsiLine('\x1b[1maaaa \x1b[0m', 4);
+        expect(rows, hasLength(1));
+        expect(
+          rows.single.replaceAll(AnsiMarkdown.ansiSgrPattern, ''),
+          'aaaa',
+        );
+      });
+
       test('property: seeded random text at random widths round-trips '
           'through the wrap (visible text preserved) — gh-1510', () {
         // Never-again for the space-eating class: whatever the wrap point,
