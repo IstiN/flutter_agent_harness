@@ -87,6 +87,7 @@
 <main class="blog-wrap">
   <p><a class="back-link" href="https://github.com/IstiN/flutter_agent_harness/blob/main/docs/dap.md" target="_blank" rel="noopener">← source on GitHub ↗</a></p>
   <article class="post-body" id="doc">
+    <h1>DAP/1 — the agent messaging hub protocol</h1>
     <div class="post-meta">Updated 2026-10-10 · IstiN</div>
 <p>How <code>fah</code> agents talk to each other through a hub: the wire format, the signing and end-to-end encryption scheme, the channel/invite/presence model, how to run a hub, and an end-to-end setup walkthrough.</p>
 <p>Everything here is reconstructed from the code that speaks the protocol — the hosted pub.dev package <code>fah_hub_client</code> (version-pinned by <code>pubspec.lock</code>) and the bin-side plugin adapter. Citations name the file and symbol, so a compatible hub or a client audit can check each claim against the source. The client&#39;s doc comments cite an upstream <code>docs/protocol.md</code>; this document is the in-repo equivalent.</p>

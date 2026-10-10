@@ -87,6 +87,7 @@
 <main class="blog-wrap">
   <p><a class="back-link" href="https://github.com/IstiN/flutter_agent_harness/blob/main/docs/tool-availability.md" target="_blank" rel="noopener">← source on GitHub ↗</a></p>
   <article class="post-body" id="doc">
+    <h1>Tool availability</h1>
     <div class="post-meta">Updated 2026-10-10 · IstiN</div>
 <p><strong>Tool availability</strong> (issue #19) decides, per tool id, whether the model sees a tool at all: a <code>tools:</code> config section stacks four scopes — global, project, session, runtime — over the host&#39;s hard capability floor, the deepest scope that mentions a tool wins, and a live gate applies the merged decision. Disabling a tool unregisters it (the prompt no longer offers it) and a late call answers a tombstone note instead of executing. Config can only turn a present tool OFF: a tool the platform cannot provide stays off no matter what any scope asks. Load modes (issue #680) are the orthogonal axis — how much of the ENABLED set is loaded into the schema at boot (see <strong>Load modes</strong> below).</p>
 <h2>A full example</h2>

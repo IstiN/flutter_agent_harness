@@ -87,6 +87,7 @@
 <main class="blog-wrap">
   <p><a class="back-link" href="https://github.com/IstiN/flutter_agent_harness/blob/main/docs/hep.md" target="_blank" rel="noopener">← source on GitHub ↗</a></p>
   <article class="post-body" id="doc">
+    <h1>HEP v1 — Harness Event Protocol</h1>
     <div class="post-meta">Updated 2026-10-10 · IstiN</div>
 <p>The machine-readable stream <code>fa --output events</code> prints on stdout: one JSON object per line, nothing else. It is the integration contract for server-side supervisors (the Go backend agent driver, <a href="https://github.com/IstiN/flutter_agent_harness/blob/main/docs/backend-agent-mode.md" target="_blank" rel="noopener">backend-agent-mode.md</a>) that mirror UI progress, capture tool traffic, and react to cancels — without scraping human prose.</p>
 <p>Normative source: <code>lib/src/cli/hep.dart</code> (frame builders + <code>HepWriter</code>); the golden tests in <code>test/cli/hep_test.dart</code> pin the exact byte shape of every frame.</p>
