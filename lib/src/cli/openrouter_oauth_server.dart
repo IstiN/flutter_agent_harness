@@ -10,6 +10,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../providers/openrouter_oauth.dart';
+import 'pi_mode.dart' show isTruthyEnvValue;
 
 /// A one-shot HTTP server that captures the OpenRouter OAuth callback on
 /// localhost.
@@ -149,11 +150,132 @@ final class OpenRouterOAuthLocalCallbackServer {
   }
 }
 
+/// The env var that skips the automatic browser launch of the OAuth/SSO
+/// login flows (gh-1450). Truthy per [isTruthyEnvValue] — the same
+/// convention as `FA_NO_FORMAT`.
+const noBrowserEnvVar = 'FA_NO_BROWSER';
+
+/// The consistent prefix of the authorization-URL output line (gh-1450):
+/// every family flow prints `$authorizationUrlPrefix<url>` in EVERY
+/// outcome (launch attempted, launch failed, launch skipped, timeout), so
+/// the line is greppable and the URL always copyable.
+const authorizationUrlPrefix = 'authorization URL: ';
+
+/// The status line printed when a flow skips the automatic browser launch
+/// (the `--no-browser` flag, a truthy `FA_NO_BROWSER`, or the
+/// headless/remote auto-detect). The [authorizationUrlPrefix] line always
+/// follows it.
+const browserLaunchSkippedMessage =
+    'browser launch skipped; open the authorization URL manually';
+
+/// Whether the current session looks headless or remote (gh-1450): no
+/// graphical display on Linux, an SSH session marker, or a non-interactive
+/// stdout. Such sessions cannot show a browser window the user controls —
+/// exactly the incident's setting (the launch "succeeds" into a browser
+/// the user never sees) — so flows skip the automatic launch and print the
+/// authorization URL prominently instead.
+///
+/// [environment]/[stdoutHasTerminal]/[isLinux] are injectable seams for
+/// tests; production resolves them from `Platform.environment`,
+/// `stdout.hasTerminal`, and `Platform.isLinux`.
+bool isHeadlessOrRemoteSession({
+  Map<String, String>? environment,
+  bool? stdoutHasTerminal,
+  bool? isLinux,
+}) {
+  String? value(String name) {
+    final v = (environment ?? Platform.environment)[name]?.trim();
+    return v == null || v.isEmpty ? null : v;
+  }
+
+  if (isLinux ?? Platform.isLinux) {
+    // Linux: a graphical display is mandatory for a visible browser.
+    if (value('DISPLAY') == null && value('WAYLAND_DISPLAY') == null) {
+      return true;
+    }
+  }
+  if (value('SSH_TTY') != null || value('SSH_CONNECTION') != null) {
+    return true;
+  }
+  return !(stdoutHasTerminal ?? stdout.hasTerminal);
+}
+
+/// Whether an OAuth/SSO flow may auto-launch the system browser (gh-1450).
+///
+/// Precedence: an explicit [noBrowserFlag] (`--no-browser`) beats the
+/// truthy `FA_NO_BROWSER` env var, which beats the headless/remote
+/// auto-detect ([isHeadlessOrRemoteSession]). `false` means the flow skips
+/// the launch ([openBrowserFn] is never called) and prints the
+/// authorization URL prominently instead — the URL is never suppressed.
+bool shouldLaunchBrowser({
+  bool noBrowserFlag = false,
+  Map<String, String>? environment,
+  bool? stdoutHasTerminal,
+  bool? isLinux,
+}) {
+  if (noBrowserFlag) return false;
+  if (isTruthyEnvValue(
+    (environment ?? Platform.environment)[noBrowserEnvVar],
+  )) {
+    return false;
+  }
+  return !isHeadlessOrRemoteSession(
+    environment: environment,
+    stdoutHasTerminal: stdoutHasTerminal,
+    isLinux: isLinux,
+  );
+}
+
+/// The default launch-policy resolver the OAuth/SSO flows use: resolves
+/// [shouldLaunchBrowser] from the real process environment and stdout.
+bool defaultBrowserLaunchPolicy() => shouldLaunchBrowser();
+
+/// Runs the browser-launch step shared by every OAuth/SSO CLI flow
+/// (gh-1450): prints the skip/opened/could-not-open status line, then
+/// ALWAYS the consistent `authorization URL:` line — the URL is a
+/// first-class output line in every outcome, because a launch that exited
+/// 0 says nothing about which browser (or whether any) opened. A throwing
+/// [openBrowserFn] degrades to the failure branch and still prints the URL.
+///
+/// [openedMessage] is the flow's success hint (kept verbatim from the
+/// pre-gh-1450 texts); [skippedMessage] overrides
+/// [browserLaunchSkippedMessage].
+Future<void> openAuthUrlWithStatus({
+  required String url,
+  required bool launchBrowser,
+  required Future<bool> Function(String) openBrowserFn,
+  required void Function(String) onStatus,
+  required String openedMessage,
+  String skippedMessage = browserLaunchSkippedMessage,
+}) async {
+  var opened = false;
+  if (launchBrowser) {
+    try {
+      opened = await openBrowserFn(url);
+    } on Object {
+      opened = false;
+    }
+  }
+  if (!launchBrowser) {
+    onStatus(skippedMessage);
+  } else if (opened) {
+    onStatus(openedMessage);
+  } else {
+    onStatus('could not open browser automatically');
+  }
+  onStatus('$authorizationUrlPrefix$url');
+}
+
 /// Opens [url] in the user's default browser.
 ///
-/// Uses `open` on macOS, `xdg-open` on Linux, and `start` on Windows. Returns
-/// true when the launch command was invoked (not whether the browser actually
-/// opened).
+/// Uses `open` on macOS, `xdg-open` on Linux, and `start` on Windows.
+///
+/// The result means "launch ATTEMPTED" (the command was invoked and exited
+/// 0), never "a browser window opened": SSH, headless, and
+/// wrong-default-profile sessions report true without anything the user
+/// can see. Callers must therefore never gate the authorization URL on
+/// this result — the OAuth/SSO flows print the URL in every outcome
+/// (gh-1450); this boolean only chooses the accompanying hint line.
 Future<bool> openBrowser(String url) async {
   String executable;
   List<String> args;
@@ -180,8 +302,12 @@ Future<bool> openBrowser(String url) async {
 /// Runs the full automatic OAuth flow for the CLI: starts a localhost server,
 /// opens the browser, waits for the callback, and exchanges the code.
 ///
-/// [onStatus] receives human-readable status lines ("open this URL", "waiting",
-/// etc.). [openBrowserFn] and [exchangeFn] are injectable for tests.
+/// [onStatus] receives human-readable status lines ("authorization URL",
+/// "waiting", etc.). [openBrowserFn], [exchangeFn], [shouldOpenBrowserFn]
+/// and [timeout] are injectable for tests. The authorization URL is printed
+/// in every outcome (gh-1450); a `false` [shouldOpenBrowserFn] skips the
+/// launch entirely (the `--no-browser` flag / `FA_NO_BROWSER` env /
+/// headless auto-detect precedence resolves upstream).
 Future<OpenRouterOAuthKey?> runOpenRouterOAuthCliFlow({
   required void Function(String) onStatus,
   Future<bool> Function(String) openBrowserFn = openBrowser,
@@ -193,12 +319,14 @@ Future<OpenRouterOAuthKey?> runOpenRouterOAuthCliFlow({
       exchangeFn =
       _defaultExchange,
   String keyLabel = openRouterDefaultKeyLabel,
+  bool Function() shouldOpenBrowserFn = defaultBrowserLaunchPolicy,
+  Duration timeout = const Duration(minutes: 5),
 }) async {
   final verifier = generateOpenRouterCodeVerifier();
   final challenge = generateOpenRouterCodeChallenge(verifier);
   final server = OpenRouterOAuthLocalCallbackServer();
 
-  final callbackUrl = await server.start();
+  final callbackUrl = await server.start(timeout: timeout);
   onStatus('listening for OAuth callback on $callbackUrl');
 
   final authUrl = buildOpenRouterAuthUrl(
@@ -207,17 +335,19 @@ Future<OpenRouterOAuthKey?> runOpenRouterOAuthCliFlow({
     keyLabel: keyLabel,
   );
 
-  final opened = await openBrowserFn(authUrl.toString());
-  if (opened) {
-    onStatus('browser opened; complete authorization on the OpenRouter page');
-  } else {
-    onStatus('could not open browser automatically');
-    onStatus('open this URL manually: $authUrl');
-  }
+  await openAuthUrlWithStatus(
+    url: authUrl.toString(),
+    launchBrowser: shouldOpenBrowserFn(),
+    openBrowserFn: openBrowserFn,
+    onStatus: onStatus,
+    openedMessage:
+        'browser opened; complete authorization on the OpenRouter page',
+  );
 
   final code = await server.waitForCode();
   if (code == null || code.isEmpty) {
     onStatus('no authorization code received (timeout or cancelled)');
+    onStatus('$authorizationUrlPrefix$authUrl');
     return null;
   }
   onStatus('authorization code received, exchanging for API key...');
