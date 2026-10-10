@@ -208,11 +208,13 @@ class _LivenessHarness {
     required this.env,
     required this.run,
     required DateTime Function() clockOf,
+    required void Function(Duration) advanceClock,
     required List<Completer<void>> gates,
     required this.livenessScripts,
     required this.runCode,
     required this.runFailure,
   }) : _clockOf = clockOf,
+       _advanceClock = advanceClock,
        _gates = gates;
 
   final AgentCli cli;
@@ -222,6 +224,7 @@ class _LivenessHarness {
   final MemoryExecutionEnv env;
   final Future<int> run;
   final DateTime Function() _clockOf;
+  final void Function(Duration) _advanceClock;
   final List<Completer<void>> _gates;
   final int Function() runCode;
   final Object? Function() runFailure;
@@ -232,6 +235,11 @@ class _LivenessHarness {
 
   DateTime get clock => _clockOf();
   int get pendingSleeps => _gates.where((g) => !g.isCompleted).length;
+
+  /// Advances the fake waiting clock WITHOUT a drain sleep — simulates a
+  /// wake that lands late (a reaction run that outlived its window), so
+  /// several quiet thresholds are crossed at once.
+  void advanceClockBy(Duration d) => _advanceClock(d);
 
   /// Debug dump for wait timeouts.
   String dump() =>
@@ -361,6 +369,7 @@ Future<_LivenessHarness> livenessShape({
     runCode: () => runCode,
     runFailure: () => runFailure,
     clockOf: () => clock,
+    advanceClock: (d) => clock = clock.add(d),
     gates: gates,
   );
 }
@@ -507,6 +516,74 @@ void main() {
         reason: 'steer budget respected: 1, never 2',
       );
       expect(h.stream.lastUserTexts.last, contains('finished with exit code'));
+      h.io.close();
+    },
+  );
+
+  test(
+    'a late drain wake (a long reaction run) steers ONE notice PER '
+    'newly-crossed quiet bucket — a burst never collapses crossings',
+    timeout: const Timeout(Duration(seconds: 120)),
+    () async {
+      final h = await livenessShape();
+      final job = h.shell.jobs.single;
+      await h.env.writeFile(job.logPath, 'quiet so far');
+      // One reaction script per notice the burst may steer (4 total).
+      for (var i = 0; i < 4; i++) {
+        h.livenessScripts.add(textTurn('still waiting.'));
+      }
+
+      // The 5m sleep parks; release it → exactly the 5m notice.
+      await _waitFor(
+        () => h.pendingSleeps >= 1,
+        reason: 'the first drain sleep parks',
+        dump: h.dump,
+      );
+      h.releaseNextSleep();
+      await _waitFor(
+        () => h.livenessRuns.length == 1,
+        reason: 'the 5m notice is steered',
+        dump: h.dump,
+      );
+      expect(h.livenessNotice(1), contains('5m elapsed'));
+
+      // The 10m sleep parks (the request itself advances the clock to the
+      // 10m threshold). Before releasing it, push the clock PAST two more
+      // thresholds (a 10-minute reaction run outlived its windows): the
+      // released wake lands at ~20m with buckets 2, 3, and 4 all
+      // un-consumed — each must get its OWN notice.
+      await _waitFor(
+        () => h.pendingSleeps >= 1,
+        reason: 'the second drain sleep parks',
+        dump: h.dump,
+      );
+      h.advanceClockBy(const Duration(minutes: 10));
+      h.releaseNextSleep();
+      await _waitFor(
+        () => h.livenessRuns.length == 4,
+        reason: 'the late wake steers one notice per crossed bucket',
+        dump: h.dump,
+      );
+      expect(
+        h.livenessRuns.length,
+        4,
+        reason: 'the 5m notice plus buckets 2, 3, and 4 crossed at once ⇒ '
+            'exactly 3 more notices (10m, 15m, 20m), one per crossing — '
+            'never one collapsed steer',
+      );
+      expect(h.livenessNotice(2), contains('10m elapsed'));
+      expect(h.livenessNotice(3), contains('15m elapsed'));
+      expect(h.livenessNotice(4), contains('20m elapsed'));
+
+      job.finish(0);
+      final code = await h.run;
+
+      expect(code, 0);
+      expect(
+        h.livenessRuns.length,
+        4,
+        reason: '5m + burst(10m, 15m) + 20m — one steer per crossing total',
+      );
       h.io.close();
     },
   );

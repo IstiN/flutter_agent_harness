@@ -87,50 +87,80 @@ void main() {
   group('headlessJobDrainAction (the pure drain decision, gh-1459)', () {
     final now = DateTime.utc(2026, 10, 9, 13, 42);
     final deadline = now.add(const Duration(minutes: 30));
+    HeadlessDrainAction decide({
+      bool sub = false,
+      bool shell = false,
+      DateTime? at,
+      bool disabled = false,
+    }) => headlessJobDrainAction(
+      hasActiveSubAgents: sub,
+      hasActiveShellJobs: shell,
+      now: at ?? now,
+      deadline: deadline,
+      shellDrainDisabled: disabled,
+    );
     test('active jobs with ceiling budget → drain', () {
-      expect(
-        headlessJobDrainAction(
-          hasActiveJobs: true,
-          now: now,
-          deadline: deadline,
-        ),
-        HeadlessDrainAction.drain,
-      );
+      expect(decide(sub: true), HeadlessDrainAction.drain);
+      expect(decide(shell: true), HeadlessDrainAction.drain);
+      expect(decide(sub: true, shell: true), HeadlessDrainAction.drain);
     });
     test('no active jobs → exit (regardless of the ceiling)', () {
+      expect(decide(), HeadlessDrainAction.exit);
       expect(
-        headlessJobDrainAction(
-          hasActiveJobs: false,
-          now: now,
-          deadline: deadline,
-        ),
-        HeadlessDrainAction.exit,
-      );
-      expect(
-        headlessJobDrainAction(
-          hasActiveJobs: false,
-          now: deadline.add(const Duration(hours: 1)),
-          deadline: deadline,
-        ),
+        decide(at: deadline.add(const Duration(hours: 1))),
         HeadlessDrainAction.exit,
       );
     });
-    test('ceiling exceeded with active jobs → detach', () {
+    test('ceiling exceeded with active jobs → detach (the shared ceiling)', () {
+      expect(decide(sub: true, shell: true, at: deadline), HeadlessDrainAction.detach);
       expect(
-        headlessJobDrainAction(
-          hasActiveJobs: true,
-          now: deadline,
-          deadline: deadline,
-        ),
+        decide(shell: true, at: deadline.add(const Duration(seconds: 1))),
         HeadlessDrainAction.detach,
       );
+      // Subagents too — under a non-zero ceiling BOTH legs share it.
       expect(
-        headlessJobDrainAction(
-          hasActiveJobs: true,
-          now: deadline.add(const Duration(seconds: 1)),
-          deadline: deadline,
-        ),
+        decide(sub: true, at: deadline.add(const Duration(seconds: 1))),
         HeadlessDrainAction.detach,
+      );
+    });
+    test(
+      'shellDrainDisabled (shellJobDrainMs: 0) with ONLY subagents → drain — '
+      'the kill switch is shell-job-scoped; the pre-gh-1459 subagent '
+      'drain stays unconditional',
+      () {
+        expect(decide(sub: true, disabled: true), HeadlessDrainAction.drain);
+        // Even with the ceiling spent: subagent-only waits ignore it.
+        expect(
+          decide(sub: true, at: deadline.add(const Duration(hours: 1)), disabled: true),
+          HeadlessDrainAction.drain,
+        );
+      },
+    );
+    test(
+      'shellDrainDisabled with shell jobs → detach immediately (even with '
+      'ceiling budget)',
+      () {
+        expect(decide(shell: true, disabled: true), HeadlessDrainAction.detach);
+        expect(
+          decide(sub: true, shell: true, disabled: true),
+          HeadlessDrainAction.detach,
+        );
+        expect(decide(disabled: true), HeadlessDrainAction.exit);
+      },
+    );
+  });
+
+  group('headlessDrainDetachCause (the detach-line attribution, gh-1459)', () {
+    test('the ceiling spent names the ceiling', () {
+      expect(
+        headlessDrainDetachCause(drainMs: 1800000, roundCapEnded: false),
+        'drain ceiling (1800000 ms)',
+      );
+    });
+    test('the 10-round cap ending the drain names the cap, not the ceiling', () {
+      expect(
+        headlessDrainDetachCause(drainMs: 1800000, roundCapEnded: true),
+        'round cap (10 rounds)',
       );
     });
   });
@@ -210,6 +240,13 @@ void main() {
       expect(headlessLivenessElapsedText(const Duration(minutes: 12)), '12m');
       expect(headlessLivenessElapsedText(const Duration(minutes: 5)), '5m');
       expect(headlessLivenessElapsedText(const Duration(seconds: 45)), '45s');
+    });
+    test('a negative elapsed (fake-clock seam) clamps to 0s, never "-3s"', () {
+      // ShellJobEntry.startedAt is real DateTime.now() while the drain ITs
+      // run on a fake waiting clock — the text must survive the clock
+      // sitting behind startedAt.
+      expect(headlessLivenessElapsedText(const Duration(milliseconds: -3)), '0s');
+      expect(headlessLivenessElapsedText(const Duration(seconds: -90)), '0s');
     });
   });
 }
