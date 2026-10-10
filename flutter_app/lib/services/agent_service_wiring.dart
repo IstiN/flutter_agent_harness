@@ -286,6 +286,32 @@ extension AgentServiceWiring on AgentService {
   Map<String, String> hostSecrets() =>
       _secretsEnv?.secretsSnapshot() ?? const {};
 
+  /// The Keys settings section is the production revocation path
+  /// (gh-1444 E3): the store's ChangeNotifier fires on every save/delete
+  /// and this reconcile mirrors the delta into the live env — a deleted
+  /// name has its value revoked ([SecretsExecutionEnv.revokeSecret] keeps
+  /// the NAME on the roster so `env` renders `NAME: ABSENT`), a saved name
+  /// is (re-)injected. Names the store never carried (dotenv entries,
+  /// `request_secret` grants) are never revoked by a store edit.
+  void _reconcileSessionKeySecrets() {
+    final env = _secretsEnv;
+    final store = _sessionKeys;
+    if (env == null || store == null) return;
+    final savedNames = store.names.toSet();
+    for (final name in _storeSecretNames.difference(savedNames).toList()) {
+      env.revokeSecret(name);
+      _storeSecretNames.remove(name);
+    }
+    for (final name in savedNames) {
+      final value = store.valueOf(name);
+      if (value == null || value.isEmpty) continue;
+      if (env.secretsSnapshot()[name] == value) continue;
+      env.addSecrets({name: value});
+      _registerRedactionSecret(name, value);
+      _storeSecretNames.add(name);
+    }
+  }
+
   /// Persists and activates a credential the user granted through a
   /// host-rendered prompt: saved into the Keys store, injected into the
   /// running shell environment, and registered with the redactor — the
