@@ -10,7 +10,12 @@ Host-side inputs (environment):
                          extracted to /opt/fa by the setup script.
   FA_PROVIDER_TYPE       provider kind (default: anthropic).
   FA_PROVIDER_CONFIG     JSON {"baseUrl": ..., "model": ..., "apiKeyEnvVar": ...}
-                         (or FA_PROVIDER_CONFIG_BASE64).
+                         (or FA_PROVIDER_CONFIG_BASE64) — the object may
+                         also declare the optional capability pair
+                         "contextWindow"/"maxTokens" (gh-1471 D4: bench's
+                         kimi mapping pins 200000/16384 so a catalog drift
+                         can never silently truncate the served window;
+                         absent fields keep the catalog defaults).
   <apiKeyEnvVar>         the API key itself, e.g. ANTHROPIC_API_KEY.
 
   Timeout knobs (issue #1122, see bench/fa_agent_timeout.py): when any

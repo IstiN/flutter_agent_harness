@@ -24,12 +24,16 @@ bench_metrics.json folded zero requests despite real model usage must
 fire a LOUD workflow warning, never ship an empty shell silently.
 
 gh-1471: the setup-job provider resolve step maps the dispatch choice
-(zai-glm-5.3-flash default / kimi-for-coding) to the full provider
-triple and preflights the selected secret BEFORE any shard starts —
-each choice pins (type, baseUrl, model, apiKeyEnvVar), an unmapped
-value fails hard, a missing secret fails fast naming the secret, and a
-key value never reaches the log. REG-1: the default's provider_config
-is byte-identical to the pre-gh-1471 3-field zai JSON.
+(zai-glm-5.3-flash default / kimi-for-coding / custom) to the full
+provider triple and preflights the selected secret BEFORE any shard
+starts — each choice pins (type, baseUrl, model, apiKeyEnvVar), an
+unmapped value fails hard, a missing secret fails fast naming the
+secret, and a key value never reaches the log. The custom path (D1 /
+AC 2a) validates the provider-config JSON (parseable object, non-empty
+https:// baseUrl + model, no key-like fields case-insensitively) and
+injects the fixed apiKeyEnvVar FA_KEY_BENCH_CUSTOM — the key comes only
+from FA_BENCH_CUSTOM_KEY. REG-1: the default's provider_config is
+byte-identical to the pre-gh-1471 3-field zai JSON.
 
 Run: python3 -m unittest discover -s bench/terminal_bench
 """

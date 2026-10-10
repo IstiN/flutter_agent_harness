@@ -74,12 +74,16 @@ name: Bench
 # mid-run): the provider stops being a hardcode — every dispatch picks
 # zai glm-5.3-flash (default, byte-identical to today) or kimi-for-coding
 # k3-256k via a dedicated FA_BENCH_KIMI_KEY (never the review factory's
-# KIMI_REVIEW_KEY — one quota must not serve both). A setup-job resolve
-# step maps the choice to the full provider triple and preflights the
-# selected secret BEFORE any shard starts (presence only, never a value);
-# the shard job names the provider+model (job `name:` CAN read needs
-# outputs — unlike env), and the summary report tags it (BENCH_RUN_LABEL)
-# so glm and kimi runs never blend in the history/cost views.
+# KIMI_REVIEW_KEY — one quota must not serve both), or `custom`: a
+# provider-config JSON validated in the resolve step (https-only baseUrl,
+# no key-like fields — dispatch inputs are visible in run metadata) whose
+# key comes only from FA_BENCH_CUSTOM_KEY as FA_KEY_BENCH_CUSTOM. A
+# setup-job resolve step maps the choice to the full provider triple and
+# preflights the selected secret BEFORE any shard starts (presence only,
+# never a value); the shard job names the provider+model (job `name:`
+# CAN read needs outputs — unlike env), and the summary report tags it
+# (BENCH_RUN_LABEL) so glm and kimi runs never blend in the history/cost
+# views.
 run-name: fa bench · ${{ inputs.provider }} · ${{ inputs.tasks }}
 
 on:
