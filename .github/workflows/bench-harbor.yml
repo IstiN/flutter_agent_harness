@@ -18,9 +18,18 @@ name: Bench Harbor
 # in bench.yml.
 #
 # Same bundle/env contract as the legacy bench: `dart build cli` Linux
-# bundle + FA_PROVIDER_TYPE=zai env-provider-preconfig (glm-5.3-flash),
-# secrets env-only and never echoed (keys pass base64-encoded into the
-# task container; CI masks both raw and base64 forms).
+# bundle + an env-provider-preconfig, secrets env-only and never echoed
+# (keys pass base64-encoded into the task container; CI masks both raw
+# and base64 forms).
+#
+# gh-1503: the provider is no longer a z.ai hardcode — the dispatch
+# picks zai glm-5.3-flash (default, byte-identical to the pre-gh-1503
+# wiring), kimi-for-coding k3-256k (FA_BENCH_KIMI_KEY), or `custom`
+# (provider-config JSON validated in the resolve step; key only from
+# FA_BENCH_CUSTOM_KEY). The setup job's resolve step is a byte-consistent
+# copy of bench.yml's gh-1471 step — keep both in sync (cross-reference
+# comment in both files). With the z.ai budget at zero, the kimi path is
+# what keeps this workflow dispatchable.
 #
 # Smoke first: dispatch with tasks=<family smoke>, attempts=1 (smoke task
 # per family in docs/bench.md). Full (tasks-less) runs of the
@@ -31,15 +40,33 @@ name: Bench Harbor
 #
 # Secrets (owner-provisioned; the workflow never hardcodes them):
 #   FA_BENCH_ZAI_KEY       — z.ai key for glm-5.3-flash (shared with bench.yml)
+#   FA_BENCH_KIMI_KEY      — kimi coding key for k3-256k (shared with bench.yml;
+#                            never the review factory's KIMI_REVIEW_KEY)
+#   FA_BENCH_CUSTOM_KEY    — key for provider=custom, injected as FA_KEY_BENCH_CUSTOM
 #   MODAL_TOKEN_ID/SECRET  — Modal token for the GPU shard (verified live)
 #   HARBOR_API_KEY         — Harbor Hub upload key; upload step skips (with a
 #                            warning) when absent, run artifacts keep results.
+
+run-name: fa bench-harbor · ${{ inputs.provider }} · ${{ inputs.tasks }}
 
 on:
   workflow_dispatch:
     inputs:
       tasks:
         description: 'Comma fnmatch globs narrowing the dataset (empty = full dataset; use the family smoke task first — docs/bench.md)'
+        required: false
+        default: ''
+      provider:
+        description: 'LLM provider for this run (gh-1503, same contract as bench.yml gh-1471: default = pre-gh-1503 behavior bit-for-bit; kimi needs the FA_BENCH_KIMI_KEY secret; custom needs FA_BENCH_CUSTOM_KEY + provider-config)'
+        required: false
+        default: 'zai-glm-5.3-flash'
+        type: choice
+        options:
+          - 'zai-glm-5.3-flash'
+          - 'kimi-for-coding'
+          - 'custom'
+      provider-config:
+        description: 'gh-1503 (bench.yml gh-1471 D1/AC 2a): ONLY when provider=custom — the provider config JSON {"type","baseUrl","model","contextWindow","maxTokens"}. The API key NEVER rides this input (run metadata is visible) — it comes only from the FA_BENCH_CUSTOM_KEY secret'
         required: false
         default: ''
       dataset:
@@ -51,16 +78,12 @@ on:
         required: false
         type: boolean
         default: false
-      model:
-        description: 'Model id recorded with the run (provider preconfig is authoritative for fa)'
-        required: false
-        default: 'glm-5.3-flash'
       attempts:
         description: 'harbor --n-attempts per trial (-k)'
         required: false
         default: '5'
       n-concurrent:
-        description: 'harbor --n-concurrent trials (1 = z.ai rate-limit safe)'
+        description: 'harbor --n-concurrent trials (1 = z.ai rate-limit safe; the kimi coding plan tolerates more — owner picks at dispatch)'
         required: false
         default: '1'
       shards:
@@ -107,8 +130,215 @@ jobs:
       gpu_count: ${{ steps.shards.outputs.gpu_count }}
       family: ${{ steps.family.outputs.family }}
       dataset: ${{ steps.family.outputs.dataset }}
+      provider_type: ${{ steps.provider.outputs.provider_type }}
+      provider_config: ${{ steps.provider.outputs.provider_config }}
+      provider_key_env: ${{ steps.provider.outputs.provider_key_env }}
+      bench_model: ${{ steps.provider.outputs.bench_model }}
+      run_label: ${{ steps.provider.outputs.run_label }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # gh-1503: byte-consistent copy of bench.yml's gh-1471 resolve step
+      # (same run block, same outputs) — the single-source extraction was
+      # rejected there to keep the workflow self-contained; the
+      # cross-reference comment in both files is the sync contract. Maps
+      # the provider choice to the full provider triple (type/baseUrl/
+      # model/key env) and preflights the selected secret BEFORE the
+      # bundle builds or any shard starts — a missing FA_BENCH_KIMI_KEY
+      # must cost one setup minute, not shard-hours of 429s. Presence
+      # only: the value is never echoed (the ::add-mask line masks its
+      # base64 form, the transport fa_agent.py uses into the container).
+      # An unmapped provider value fails hard — never a silent fallthrough
+      # to the zai default. REG-1: the default resolves the exact
+      # 3-field zai config bench-harbor.yml hardcoded before gh-1503.
+      - name: Resolve provider
+        id: provider
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          PROVIDER_CONFIG: ${{ inputs.provider-config }}
+          # bench.yml reads this from its top-level env block; harbor has
+          # no other consumer, so the value lives here (single spelling,
+          # same as bench.yml's BENCH_MODEL).
+          BENCH_MODEL: glm-5.3-flash
+          FA_BENCH_ZAI_KEY: ${{ secrets.FA_BENCH_ZAI_KEY }}
+          FA_BENCH_KIMI_KEY: ${{ secrets.FA_BENCH_KIMI_KEY }}
+          FA_BENCH_CUSTOM_KEY: ${{ secrets.FA_BENCH_CUSTOM_KEY }}
+        run: |
+          set -euo pipefail
+          case "$PROVIDER" in
+            ''|zai-glm-5.3-flash)
+              provider_type=zai
+              choice=zai-glm-5.3-flash
+              base_url='https://api.z.ai/api/coding/paas/v4'
+              model="$BENCH_MODEL"
+              key_env=FA_KEY_API_Z_AI_Z_AI
+              secret_name=FA_BENCH_ZAI_KEY
+              secret_value=$FA_BENCH_ZAI_KEY
+              # REG-1 (gh-1471): the default must resolve today's exact
+              # 3-field config — a zai run stays byte-identical.
+              provider_config=$(printf '{"baseUrl":"%s","model":"%s","apiKeyEnvVar":"%s"}' \
+                "$base_url" "$model" "$key_env")
+              # D5: one spelling everywhere — the label derives from the
+              # dispatch choice id, matching run-name.
+              run_label="$choice ($model)"
+              ;;
+            kimi-for-coding)
+              provider_type=kimi
+              base_url='https://api.kimi.com/coding/v1'
+              model='k3-256k'
+              key_env=FA_KEY_API_KIMI_COM_BENCH
+              secret_name=FA_BENCH_KIMI_KEY
+              secret_value=$FA_BENCH_KIMI_KEY
+              # gh-1471 D4: kimi's capability fields ride the config
+              # explicitly — the env preconfig applies them to the booted
+              # model, so a catalog drift can never silently truncate.
+              provider_config=$(printf '{"baseUrl":"%s","model":"%s","apiKeyEnvVar":"%s","contextWindow":200000,"maxTokens":16384}' \
+                "$base_url" "$model" "$key_env")
+              run_label="kimi-for-coding ($model)"
+              ;;
+            custom)
+              # gh-1471 D1 / AC 2a: the custom escape hatch — a new
+              # provider tomorrow needs zero workflow edits. The key
+              # NEVER rides the dispatch input (inputs are visible in
+              # run metadata): it comes only from the FA_BENCH_CUSTOM_KEY
+              # secret, injected as the fixed apiKeyEnvVar below.
+              secret_name=FA_BENCH_CUSTOM_KEY
+              secret_value=$FA_BENCH_CUSTOM_KEY
+              key_env=FA_KEY_BENCH_CUSTOM
+              if [ -z "$PROVIDER_CONFIG" ]; then
+                echo "::error::provider custom selected but the provider-config input is empty — pass the provider JSON (at least baseUrl and model)"; exit 1
+              fi
+              # jq-level validation (AC 2a): every failure names the
+              # offending input and dies BEFORE any shard starts. From
+              # here down the checks mirror the Dart env preconfig's
+              # consumer contract (lib/src/cli/env_provider_preconfig.dart)
+              # so a bad dispatch burns one setup minute, never
+              # shard-hours failing loud inside every trial.
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'type == "object"' >/dev/null 2>&1; then
+                echo "::error::provider-config must be a JSON object — the raw input is not echoed (it could carry key material)"; exit 1
+              fi
+              # `apiKeyEnvVar` is injected by this step (fixed
+              # FA_KEY_BENCH_CUSTOM), never accepted from the input — a
+              # user-supplied value would be silently overridden (checked
+              # before the key-like scan below, which would otherwise
+              # flag the field first with a less precise message).
+              if printf '%s' "$PROVIDER_CONFIG" | jq -e 'has("apiKeyEnvVar")' >/dev/null 2>&1; then
+                echo "::error::provider-config must not declare apiKeyEnvVar — the resolve step injects it as the fixed FA_KEY_BENCH_CUSTOM; the key comes only from the FA_BENCH_CUSTOM_KEY secret"; exit 1
+              fi
+              # Key-like fields hard-fail: a pasted key in a dispatch
+              # input would leak through run metadata. Whole-word match
+              # on the key's split words (camelCase/snake_case divided) —
+              # so the legitimate `maxTokens` capability key passes while
+              # `token`/`accessToken`/`api_key` are caught. The scan
+              # descends into nested objects: a key field name pasted
+              # inside a header map rides through a top-level-only scan
+              # exactly like a top-level one.
+              leaked=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '
+                def words: gsub("(?<l>[a-z0-9])(?<u>[A-Z])"; "\(.l)_\(.u)")
+                  | gsub("[ _-]+"; " ") | ascii_downcase | split(" ");
+                [.. | objects | keys[]
+                  | select(. | words
+                      | map(test("^(api.?key|apikey|key|token|secret)$"))
+                      | any)]
+                  | unique | join(", ")')
+              if [ -n "$leaked" ]; then
+                echo "::error::provider-config must not carry key material — dispatch inputs are visible in run metadata; offending field(s): $leaked. The key comes only from the FA_BENCH_CUSTOM_KEY secret"; exit 1
+              fi
+              # Closed key whitelist, mirroring the Dart _parseConfig
+              # consumer (baseUrl, model, apiKeyEnvVar, contextWindow,
+              # maxTokens, input, thinkingLevel): an unknown or typo'd
+              # key would otherwise fail loud at every trial's container
+              # boot after shards start. `type` is allowed here (it rides
+              # the FA_PROVIDER_TYPE output) but stripped from the
+              # emitted config below.
+              unsupported=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '
+                [. | keys[]
+                  | select(. as $k
+                      | ["baseUrl","model","contextWindow","maxTokens","input","thinkingLevel","type"]
+                      | index($k) | not)]
+                  | join(", ")')
+              if [ -n "$unsupported" ]; then
+                echo "::error::provider-config has unsupported key(s): $unsupported — supported keys: baseUrl, model, contextWindow, maxTokens, input, thinkingLevel (type selects FA_PROVIDER_TYPE and is not echoed into FA_PROVIDER_CONFIG)"; exit 1
+              fi
+              # `type` feeds the container's catalog lookup via
+              # FA_PROVIDER_TYPE: when declared it must be a non-empty
+              # string (jq's `//` treats "" as present, so an explicit
+              # check is required); undeclared/null defaults to the
+              # openai-compatible catalog entry.
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'if has("type") and .type != null then (.type | type == "string" and test("\\S")) else true end' >/dev/null 2>&1; then
+                echo "::error::provider-config \"type\" must be a non-empty string naming a catalog provider (e.g. \"openai\") when declared"; exit 1
+              fi
+              # The capability pair mirrors _parseCapabilityInt: JSON
+              # integers at or above the Dart resolver floors
+              # (minOverrideContextWindow 16384 / minOverrideMaxTokens
+              # 1024 — the same boundaries as the yaml overrides layer);
+              # blank string / null are ABSENT, like every other optional
+              # input; anything else throws at container boot today.
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e '
+                def capok(min): . as $v
+                  | $v == null or (($v | type) == "string" and ($v | test("^\\s*$")))
+                  or (($v | type) == "number" and ($v | floor) == $v and $v >= min);
+                (.contextWindow | capok(16384)) and (.maxTokens | capok(1024))
+              ' >/dev/null 2>&1; then
+                echo "::error::provider-config contextWindow/maxTokens must be integers at or above the Dart resolver floors (contextWindow >= 16384, maxTokens >= 1024) — a below-floor or non-integer declaration would fail loud at every trial's container boot"; exit 1
+              fi
+              # `input` mirrors _parseInputList: a non-empty list whose
+              # entries are exactly "text"/"image".
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'if has("input") then (.input | type == "array" and length > 0 and all(.[]; . == "text" or . == "image")) else true end' >/dev/null 2>&1; then
+                echo "::error::provider-config \"input\" must be a non-empty list of \"text\"/\"image\" entries (the Dart preconfig's contract)"; exit 1
+              fi
+              # `thinkingLevel` mirrors _parseThinkingLevel: a blank
+              # string is absent; otherwise one of the
+              # configThinkingLevels ladder (xhigh/max fold to high
+              # Dart-side).
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'if has("thinkingLevel") then (.thinkingLevel | if type == "string" then (test("^\\s*$") or (. as $l | ["minimal","low","medium","high","xhigh","max"] | index($l) != null)) else false end) else true end' >/dev/null 2>&1; then
+                echo "::error::provider-config \"thinkingLevel\" must be one of minimal, low, medium, high, xhigh, max (the Dart preconfig's ladder)"; exit 1
+              fi
+              # Required: a non-empty https:// baseUrl and a model — the
+              # plain-http ban keeps the bench key off a cleartext wire.
+              for field in baseUrl model; do
+                if ! printf '%s' "$PROVIDER_CONFIG" | jq -e --arg f "$field" '.[$f] | type == "string" and length > 0' >/dev/null 2>&1; then
+                  echo "::error::provider-config is missing a non-empty \"$field\" — required: baseUrl, model"; exit 1
+                fi
+              done
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e '.baseUrl | startswith("https://")' >/dev/null 2>&1; then
+                echo "::error::provider-config baseUrl must start with https:// (a plaintext endpoint would expose the bench key) — got: $(printf '%s' "$PROVIDER_CONFIG" | jq -r '.baseUrl')"; exit 1
+              fi
+              # Passthrough: every declared field rides the config
+              # verbatim EXCEPT "type" — it already rides the dedicated
+              # FA_PROVIDER_TYPE output/env, and the Dart preconfig's
+              # FA_PROVIDER_CONFIG whitelist has no "type" key (it would
+              # throw at every trial's container boot). Blank/null
+              # capability fields are dropped (Dart-side they are
+              # ABSENT, like every other optional input — the emitted
+              # config declares only what is effective). Plus the fixed
+              # key-env injection; `type` defaults to the
+              # openai-compatible catalog entry.
+              provider_type=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '.type // "openai"')
+              model=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '.model')
+              provider_config=$(printf '%s' "$PROVIDER_CONFIG" | jq -c --arg k "$key_env" '
+                del(.type)
+                | del(.contextWindow | select(. == null or ((. | type) == "string" and (. | test("^\\s*$")))))
+                | del(.maxTokens | select(. == null or ((. | type) == "string" and (. | test("^\\s*$")))))
+                | . + {apiKeyEnvVar: $k}')
+              run_label="custom ($model)"
+              ;;
+            *)
+              echo "::error::unknown provider '$PROVIDER' — expected 'zai-glm-5.3-flash', 'kimi-for-coding' or 'custom'"; exit 1 ;;
+          esac
+          if [ -z "$secret_value" ]; then
+            echo "::error::provider $PROVIDER selected but secret $secret_name is not set"; exit 1
+          fi
+          # fa_agent.py ships the key into the container base64-encoded;
+          # GitHub auto-masks only the raw value, so mask the base64 form.
+          echo "::add-mask::$(printf %s "$secret_value" | base64 -w0)"
+          {
+            echo "provider_type=$provider_type"
+            echo "provider_config=$provider_config"
+            echo "provider_key_env=$key_env"
+            echo "bench_model=$model"
+            echo "run_label=$run_label"
+          } >> "$GITHUB_OUTPUT"
 
       # stable satisfies the repo SDK constraint (>=3.12.0 <4.0.0).
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
@@ -203,7 +433,7 @@ jobs:
             --task-prefix "${DATASET%%/*}/"
 
   bench:
-    name: fa on tbench ${{ needs.setup.outputs.family }}, shard ${{ matrix.i }} (${{ matrix.env }}, ${{ inputs.model }})
+    name: fa on tbench ${{ needs.setup.outputs.family }}, shard ${{ matrix.i }} (${{ matrix.env }}, ${{ needs.setup.outputs.run_label }})
     needs: setup
     runs-on: ${{ inputs.cpu-runner }}
     # ~4 tasks/shard x --n-attempts x task runtime (tbench agent caps
@@ -244,13 +474,19 @@ jobs:
         env:
           FA_BUNDLE_TARBALL: ${{ github.workspace }}/fa-bundle.tar.gz
           PYTHONPATH: ${{ github.workspace }}/bench/harbor_fa
-          FA_PROVIDER_TYPE: zai
-          FA_PROVIDER_CONFIG: '{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"glm-5.3-flash","apiKeyEnvVar":"FA_KEY_API_Z_AI_Z_AI"}'
+          # gh-1503: the provider triple is resolved once in the setup
+          # job (preflighted secret + hard fail on an unmapped choice) —
+          # the shard only consumes it. All three bench keys are mapped
+          # here (custom's AC 2a: key only from FA_BENCH_CUSTOM_KEY); the
+          # run block picks the resolved one by name, fa_agent.py ships
+          # exactly that key into the container.
+          FA_PROVIDER_TYPE: ${{ needs.setup.outputs.provider_type }}
+          FA_PROVIDER_CONFIG: ${{ needs.setup.outputs.provider_config }}
+          FA_PROVIDER_KEY_ENV: ${{ needs.setup.outputs.provider_key_env }}
           FA_KEY_API_Z_AI_Z_AI: ${{ secrets.FA_BENCH_ZAI_KEY }}
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-          HARBOR_API_KEY: ${{ secrets.HARBOR_API_KEY }}
-          MODEL: ${{ inputs.model }}
+          FA_KEY_API_KIMI_COM_BENCH: ${{ secrets.FA_BENCH_KIMI_KEY }}
+          FA_KEY_BENCH_CUSTOM: ${{ secrets.FA_BENCH_CUSTOM_KEY }}
+          MODEL: ${{ needs.setup.outputs.bench_model }}
           ATTEMPTS: ${{ inputs.attempts }}
           NCONC: ${{ inputs.n-concurrent }}
           ENV_TYPE: ${{ matrix.env }}
