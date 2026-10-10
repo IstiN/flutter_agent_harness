@@ -1,0 +1,1 @@
+{"ts":"2026-10-10T04:36:42.887937Z","event":"scheduled","id":"1791607002886856_0000_13yy9wv","dueMs":1791608502886,"to":"main","text":"Check background job sh-47-hn2kvb8n28og9hy8 (test/cli/ two halves). If it finished, append the result to outputs/response.md Test Coverage section. If still running, check bash_job status/output again"}
