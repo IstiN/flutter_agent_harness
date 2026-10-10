@@ -341,12 +341,19 @@ jobs:
               # verbatim EXCEPT "type" — it already rides the dedicated
               # FA_PROVIDER_TYPE output/env, and the Dart preconfig's
               # FA_PROVIDER_CONFIG whitelist has no "type" key (it would
-              # throw at every trial's container boot). Plus the fixed
+              # throw at every trial's container boot). Blank/null
+              # capability fields are dropped (Dart-side they are
+              # ABSENT, like every other optional input — the emitted
+              # config declares only what is effective). Plus the fixed
               # key-env injection; `type` defaults to the
               # openai-compatible catalog entry.
               provider_type=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '.type // "openai"')
               model=$(printf '%s' "$PROVIDER_CONFIG" | jq -r '.model')
-              provider_config=$(printf '%s' "$PROVIDER_CONFIG" | jq -c --arg k "$key_env" 'del(.type) + {apiKeyEnvVar: $k}')
+              provider_config=$(printf '%s' "$PROVIDER_CONFIG" | jq -c --arg k "$key_env" '
+                del(.type)
+                | del(.contextWindow | select(. == null or ((. | type) == "string" and (. | test("^\\s*$")))))
+                | del(.maxTokens | select(. == null or ((. | type) == "string" and (. | test("^\\s*$")))))
+                | . + {apiKeyEnvVar: $k}')
               run_label="custom ($model)"
               ;;
             *)

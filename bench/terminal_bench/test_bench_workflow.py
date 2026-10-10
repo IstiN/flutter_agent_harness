@@ -30,7 +30,9 @@ starts — each choice pins (type, baseUrl, model, apiKeyEnvVar), an
 unmapped value fails hard, a missing secret fails fast naming the
 secret, and a key value never reaches the log. The custom path (D1 /
 AC 2a) validates the provider-config JSON (parseable object, non-empty
-https:// baseUrl + model, no key-like fields case-insensitively) and
+https:// baseUrl + model, no key-like fields case-insensitively at any
+depth, plus the Dart preconfig contract mirror: closed key whitelist,
+capability integer+floor pair, type/input/thinkingLevel shapes) and
 injects the fixed apiKeyEnvVar FA_KEY_BENCH_CUSTOM — the key comes only
 from FA_BENCH_CUSTOM_KEY. REG-1: the default's provider_config is
 byte-identical to the pre-gh-1471 3-field zai JSON.
