@@ -174,11 +174,23 @@ runs always run all legs.
 and auto-close cycle with zero publish side effects:
 
 1. dispatch `legs=pubdev force=true inject_failure=pubdev` → red, issue
-   filed;
+   filed **whose digest quotes the injected `::error::` line** (the report
+   job's `Verify injected-failure excerpt (TEST)` step fails the run if the
+   excerpt regressed to the old "no failed-step log available" shrug);
 2. dispatch the same again → the existing issue gets a comment (no
    duplicate);
 3. dispatch `legs=pubdev force=true` (no inject) → green up-to-date check,
    issue auto-closed.
+
+Digests are signal-first: the report greps the failed job's log for error
+lines (`::error::`, `Message from server`, `error:`, `FAIL`, exit-code) and
+quotes the first matches with context, falling back to the raw tail only
+when nothing matches. A cancelled leg job gets a dedicated section (which
+job was in flight, its `timeout-minutes` ceiling, elapsed-vs-ceiling)
+resolved from the jobs API and the workflow file. Before filing, the
+normalized error signature is searched against open issues' bodies/comments
+— a match (e.g. a symptom of the #1452 CHANGELOG > 256 KiB root cause)
+gets a comment on that issue instead of a daily symptom duplicate.
 
 ## Secrets
 
