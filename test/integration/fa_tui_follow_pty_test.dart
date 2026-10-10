@@ -85,9 +85,9 @@ tui:
       );
 
       // (1) Detach mid-run: PageUp parks the view above the live edge.
-      // The held rule carries the position percent; the live-fold hint
-      // (`… above fold - PgUp`) belongs to the FOLLOWING state and must
-      // leave the glass once detached.
+      // The held rule carries the position percent; the fold row is
+      // textless (gh-1446 retracted the #827 hint words), so no
+      // `above fold` text is on the glass in ANY state.
       harness.sendText('\x1b[5~'); // pgup
 
       // (2) Late arrivals count up on the held rule while live content
@@ -124,9 +124,10 @@ tui:
         reason: 'unseen arrivals keep counting while held',
       );
 
-      // (3) End re-engages: the held rule (percent + counter) is replaced
-      // by the live-fold hint (the #827 "N lines above fold" announce for
-      // the following state) and the newest content is at the live edge.
+      // (3) End re-engages: the held rule (percent + counter) leaves the
+      // glass and the newest content is at the live edge. The fold row
+      // itself is a textless `─` rule — gh-1446 retracted the #827
+      // "N lines above fold" hint words, so no fold text ever returns.
       harness.sendText('\x1b[F'); // end
       await Future<void>.delayed(const Duration(milliseconds: 1500));
       final live = harness.screenText;
@@ -142,10 +143,17 @@ tui:
       );
       expect(
         live,
-        contains('above fold'),
+        isNot(contains('above fold')),
         reason:
-            'back to FOLLOWING: the live-fold hint replaces the '
-            'held rule (the #827 etiquette)',
+            'back to FOLLOWING: the fold row is the textless dim rule — '
+            'the #827 hint words stay retracted (gh-1446 AC1)',
+      );
+      expect(
+        live,
+        contains(RegExp(r'^─{30,}\s*$', multiLine: true)),
+        reason:
+            'the reserved fold row renders as a plain rule — chrome, '
+            'not content (gh-1446 AC1 byte-scan contract)',
       );
       expect(
         live,
