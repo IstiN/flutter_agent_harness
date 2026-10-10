@@ -169,7 +169,7 @@ leg_ceiling_minutes() { # $1 = job-name fragment; echoes timeout-minutes from th
   local wf="${DAILY_PUBLISH_WORKFLOW:-${GITHUB_WORKSPACE:-.}/.github/workflows/daily-publish.yml}"
   [ -f "$wf" ] || return 0
   awk -v frag="$1" '
-    index($0, "name: ." frag) { injob = 1; next }
+    $0 ~ ("name: ." frag) { injob = 1; next }
     injob && /^  [A-Za-z0-9_-]+:/ { injob = 0 }
     injob && /^    timeout-minutes:/ {
       line = $0
@@ -221,7 +221,7 @@ file_or_comment() { # $1 = leg id, $2 = log prefix, $3 = child run url, $4 = leg
       # gh-1478: a cancelled run gets a real digest — which job was in
       # flight, its timeout-minutes ceiling, elapsed-vs-ceiling — instead of
       # the #1472 empty "no failed-step log available" shrug.
-      local cinfo cname cstart cend csec ceiling
+      local cinfo cname cstart cend ceiling
       cinfo=$(cancelled_job_info "$frag")
       ceiling=$(leg_ceiling_minutes "$frag")
       if [ -n "$cinfo" ]; then
