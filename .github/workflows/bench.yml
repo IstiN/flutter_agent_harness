@@ -73,9 +73,8 @@ name: Bench
 # gh-1471 (run 37953576205 lost 14/78 tasks when the z.ai quota died
 # mid-run): the provider stops being a hardcode — every dispatch picks
 # zai glm-5.3-flash (default, byte-identical to today) or kimi-for-coding
-# (model id kimi-for-coding — the plan's own model name) via a dedicated
-# FA_BENCH_KIMI_KEY (never the review factory's
-# KIMI_REVIEW_KEY — one quota must not serve both), or `custom`: a
+# (model id == plan name; dedicated FA_BENCH_KIMI_KEY — never the review
+# factory's KIMI_REVIEW_KEY, one quota must not serve both), or `custom`: a
 # provider-config JSON validated in the resolve step (https-only baseUrl,
 # no key-like fields — dispatch inputs are visible in run metadata) whose
 # key comes only from FA_BENCH_CUSTOM_KEY as FA_KEY_BENCH_CUSTOM. A

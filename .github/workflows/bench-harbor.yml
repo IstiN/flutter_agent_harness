@@ -24,8 +24,8 @@ name: Bench Harbor
 #
 # gh-1503: the provider is no longer a z.ai hardcode — the dispatch
 # picks zai glm-5.3-flash (default, byte-identical to the pre-gh-1503
-# wiring), kimi-for-coding (model id kimi-for-coding — the plan's own
-# model name) (FA_BENCH_KIMI_KEY), or `custom`
+# wiring), kimi-for-coding (model id == plan name; FA_BENCH_KIMI_KEY), or
+# `custom`
 # (provider-config JSON validated in the resolve step; key only from
 # FA_BENCH_CUSTOM_KEY). The setup job's resolve step is a byte-consistent
 # copy of bench.yml's gh-1471 step — keep both in sync (cross-reference
