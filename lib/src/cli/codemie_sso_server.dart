@@ -9,7 +9,12 @@ import 'dart:async';
 import 'dart:io';
 
 import '../providers/codemie_sso.dart';
-import 'openrouter_oauth_server.dart' show openBrowser;
+import 'openrouter_oauth_server.dart'
+    show
+        authorizationUrlPrefix,
+        defaultBrowserLaunchPolicy,
+        openAuthUrlWithStatus,
+        openBrowser;
 
 final class CodeMieSsoCallbackServer {
   HttpServer? _server;
@@ -72,21 +77,30 @@ final class CodeMieSsoCallbackServer {
 /// Runs the CodeMie SSO login: starts the callback server, opens (or
 /// prints) the organization's login URL, waits for the token, and decodes
 /// it into [CodeMieSsoCredentials]. Returns null on cancel/timeout/failure.
+///
+/// The authorization URL is printed in EVERY outcome (gh-1450) — launch
+/// attempted, failed, skipped (a `false` [shouldOpenBrowserFn]: the
+/// `--no-browser` flag / `FA_NO_BROWSER` env / headless auto-detect), and
+/// timeout. [openBrowserFn], [shouldOpenBrowserFn] and [timeout] are
+/// injectable for tests.
 Future<CodeMieSsoCredentials?> runCodeMieSsoCliFlow({
   required String codeMieUrl,
   required void Function(String) onStatus,
   Future<bool> Function(String) openBrowserFn = openBrowser,
+  bool Function() shouldOpenBrowserFn = defaultBrowserLaunchPolicy,
+  Duration timeout = const Duration(minutes: 5),
 }) async {
   final server = CodeMieSsoCallbackServer();
-  final port = await server.start();
+  final port = await server.start(timeout: timeout);
   final ssoUrl = buildCodeMieSsoUrl(codeMieUrl, port);
   onStatus('listening for the CodeMie SSO callback on port $port');
-  if (await openBrowserFn(ssoUrl)) {
-    onStatus('browser opened; complete the CodeMie sign-in');
-  } else {
-    onStatus('could not open browser automatically');
-    onStatus('open this URL manually: $ssoUrl');
-  }
+  await openAuthUrlWithStatus(
+    url: ssoUrl,
+    launchBrowser: shouldOpenBrowserFn(),
+    openBrowserFn: openBrowserFn,
+    onStatus: onStatus,
+    openedMessage: 'browser opened; complete the CodeMie sign-in',
+  );
   final token = await () async {
     // The CodeMie page often signs in BY ITSELF (existing browser session →
     // instant redirect) — wait patiently with a live status line, and bail
@@ -95,7 +109,7 @@ Future<CodeMieSsoCredentials?> runCodeMieSsoCliFlow({
       'waiting for the CodeMie SSO callback (the page may sign in by '
       'itself)…',
     );
-    const wait = Duration(minutes: 5);
+    final wait = timeout;
     final statusTimer = Timer.periodic(const Duration(seconds: 15), (t) {
       onStatus('still waiting for the SSO callback… (${t.tick * 15}s)');
     });
@@ -107,6 +121,9 @@ Future<CodeMieSsoCredentials?> runCodeMieSsoCliFlow({
   }();
   if (token == null) {
     onStatus('no SSO callback received (timeout or cancelled)');
+    // Last-chance rescue (gh-1450 AC4): the URL one more time, as the
+    // final line a returning user can still act on.
+    onStatus('$authorizationUrlPrefix$ssoUrl');
     return null;
   }
   try {

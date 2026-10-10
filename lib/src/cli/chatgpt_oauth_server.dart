@@ -6,7 +6,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../providers/chatgpt_oauth.dart';
-import 'openrouter_oauth_server.dart' show openBrowser;
+import 'openrouter_oauth_server.dart'
+    show
+        authorizationUrlPrefix,
+        defaultBrowserLaunchPolicy,
+        openAuthUrlWithStatus,
+        openBrowser;
 
 final class ChatGptOAuthCallback {
   const ChatGptOAuthCallback({
@@ -145,7 +150,10 @@ String _callbackPage(ChatGptOAuthCallback callback) {
 ///
 /// [ports] forwards to [ChatGptOAuthLocalCallbackServer.start] — the
 /// loopback candidates tried in order; the first successful bind serves
-/// the callback.
+/// the callback. The authorization URL is printed in every outcome
+/// (gh-1450); a `false` [shouldOpenBrowserFn] skips the launch (the
+/// `--no-browser` flag / `FA_NO_BROWSER` env / headless auto-detect
+/// precedence resolves upstream).
 Future<ChatGptOAuthCredentials?> runChatGptOAuthCliFlow({
   required void Function(String) onStatus,
   Future<bool> Function(String) openBrowserFn = openBrowser,
@@ -158,6 +166,7 @@ Future<ChatGptOAuthCredentials?> runChatGptOAuthCliFlow({
       _defaultExchange,
   Duration timeout = const Duration(minutes: 5),
   List<int> ports = const [1455, 1457],
+  bool Function() shouldOpenBrowserFn = defaultBrowserLaunchPolicy,
 }) async {
   final server = ChatGptOAuthLocalCallbackServer();
   final verifier = generateChatGptPkceVerifier();
@@ -169,15 +178,17 @@ Future<ChatGptOAuthCredentials?> runChatGptOAuthCliFlow({
     state: state,
   );
   onStatus('listening for ChatGPT OAuth callback on $redirectUri');
-  if (await openBrowserFn(authUrl.toString())) {
-    onStatus('browser opened; complete authorization with ChatGPT');
-  } else {
-    onStatus('could not open browser automatically');
-    onStatus('open this URL manually: $authUrl');
-  }
+  await openAuthUrlWithStatus(
+    url: authUrl.toString(),
+    launchBrowser: shouldOpenBrowserFn(),
+    openBrowserFn: openBrowserFn,
+    onStatus: onStatus,
+    openedMessage: 'browser opened; complete authorization with ChatGPT',
+  );
   final callback = await server.waitForCallback();
   if (callback == null) {
     onStatus('no authorization callback received (timeout or cancelled)');
+    onStatus('$authorizationUrlPrefix$authUrl');
     return null;
   }
   if (callback.error != null) {

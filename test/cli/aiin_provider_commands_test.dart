@@ -102,13 +102,12 @@ void main() {
     final cli = cliFor(
       fake.call,
       envVarValue: (_) => null,
-      modelsFetcher: (baseUrl, {required apiKey}) async => [
-        'm1',
-        'test-model',
-      ],
+      modelsFetcher: (baseUrl, {required apiKey}) async => ['m1', 'test-model'],
       secureKeys: cache,
       customProviders: registry,
-      onProviderChanged: (kind, key) async { changes.add((kind, key)); },
+      onProviderChanged: (kind, key) async {
+        changes.add((kind, key));
+      },
       modelsHttpClient: aiinProvidersMock(),
       aiinConnectFn: ({required provider, onStatus}) async {
         usedProvider = provider;
@@ -119,13 +118,9 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider aiin');
-    await waitForIt(
-      () => io.out.toString().contains('AIIN (aiin.by) sign-in'),
-    );
+    await waitForIt(() => io.out.toString().contains('AIIN (aiin.by) sign-in'));
     io.sendLine('1'); // the browser connect
-    await waitForIt(
-      () => io.out.toString().contains('AIIN sign-in provider'),
-    );
+    await waitForIt(() => io.out.toString().contains('AIIN sign-in provider'));
     io.sendLine('1'); // google (sorted first)
     await waitForIt(
       () => io.out.toString().contains('provider name [user@aiin.by]'),
@@ -154,38 +149,40 @@ void main() {
     expect(output, isNot(contains('sk-aiin-${'a' * 32}')));
   });
 
-  test('/provider aiin key <token>: no sign-in menu, explicit name kept',
-      () async {
-    final fake = FakeStreamFunction([textTurn('ok')]);
-    final store = FakeSecureKeyStore();
-    final cache = SecureKeyCache(store);
-    await cache.probe();
-    final registry = CustomProviderRegistry([]);
-    final cli = cliFor(
-      fake.call,
-      envVarValue: (_) => null,
-      modelsFetcher: (baseUrl, {required apiKey}) async => ['m1'],
-      secureKeys: cache,
-      customProviders: registry,
-    );
-    final run = cli.run();
+  test(
+    '/provider aiin key <token>: no sign-in menu, explicit name kept',
+    () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final store = FakeSecureKeyStore();
+      final cache = SecureKeyCache(store);
+      await cache.probe();
+      final registry = CustomProviderRegistry([]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        modelsFetcher: (baseUrl, {required apiKey}) async => ['m1'],
+        secureKeys: cache,
+        customProviders: registry,
+      );
+      final run = cli.run();
 
-    io.sendLine('/provider aiin key sk-aiin-manual');
-    await waitForIt(() => io.out.toString().contains('provider name'));
-    io.sendLine('my-aiin');
-    await waitForIt(() => io.out.toString().contains('AIIN model'));
-    io.sendLine('1');
-    await waitForIt(
-      () => io.out.toString().contains('switched provider to aiin'),
-    );
-    io.sendLine('/exit');
-    await run;
+      io.sendLine('/provider aiin key sk-aiin-manual');
+      await waitForIt(() => io.out.toString().contains('provider name'));
+      io.sendLine('my-aiin');
+      await waitForIt(() => io.out.toString().contains('AIIN model'));
+      io.sendLine('1');
+      await waitForIt(
+        () => io.out.toString().contains('switched provider to aiin'),
+      );
+      io.sendLine('/exit');
+      await run;
 
-    final entry = registry.find('my-aiin')!;
-    expect(entry.apiType, 'aiin');
-    expect(store.map[entry.keyName], 'sk-aiin-manual');
-    expect(io.out.toString(), isNot(contains('sk-aiin-manual')));
-  });
+      final entry = registry.find('my-aiin')!;
+      expect(entry.apiType, 'aiin');
+      expect(store.map[entry.keyName], 'sk-aiin-manual');
+      expect(io.out.toString(), isNot(contains('sk-aiin-manual')));
+    },
+  );
 
   test('/provider aiin key with an empty answer cancels', () async {
     final fake = FakeStreamFunction([textTurn('ok')]);
@@ -198,9 +195,7 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider aiin');
-    await waitForIt(
-      () => io.out.toString().contains('AIIN (aiin.by) sign-in'),
-    );
+    await waitForIt(() => io.out.toString().contains('AIIN (aiin.by) sign-in'));
     io.sendLine('2'); // paste an existing key
     io.sendLine(''); // empty answer
     await waitForIt(() => io.out.toString().contains('AIIN setup cancelled'));
@@ -223,9 +218,7 @@ void main() {
     io.sendLine('/provider aiin');
     await waitForIt(() => io.out.toString().contains('type a number:'));
     io.interrupt(); // cancel the menu
-    await waitForIt(
-      () => io.out.toString().contains('AIIN setup cancelled'),
-    );
+    await waitForIt(() => io.out.toString().contains('AIIN setup cancelled'));
     io.sendLine('/exit');
     await run;
 
@@ -244,17 +237,11 @@ void main() {
     final run = cli.run();
 
     io.sendLine('/provider aiin');
-    await waitForIt(
-      () => io.out.toString().contains('AIIN (aiin.by) sign-in'),
-    );
+    await waitForIt(() => io.out.toString().contains('AIIN (aiin.by) sign-in'));
     io.sendLine('1'); // the browser connect
-    await waitForIt(
-      () => io.out.toString().contains('AIIN sign-in provider'),
-    );
+    await waitForIt(() => io.out.toString().contains('AIIN sign-in provider'));
     io.interrupt(); // cancel the provider pick
-    await waitForIt(
-      () => io.out.toString().contains('AIIN setup cancelled'),
-    );
+    await waitForIt(() => io.out.toString().contains('AIIN setup cancelled'));
     io.sendLine('/exit');
     await run;
 
@@ -270,45 +257,47 @@ void main() {
     io.sendLine('/provider aiin key a b');
     await waitForIt(() {
       final output = io.out.toString();
-      return 'usage: /provider aiin [key [apiKey]]'.allMatches(output).length >=
+      return 'usage: /provider aiin [--no-browser] [key [apiKey]]'
+              .allMatches(output)
+              .length >=
           2;
     });
     io.sendLine('/exit');
     await run;
   });
 
-  test('/provider aiin connect failure (null result) applies nothing',
-      () async {
-    final fake = FakeStreamFunction([textTurn('ok')]);
-    final registry = CustomProviderRegistry([]);
-    final cli = cliFor(
-      fake.call,
-      envVarValue: (_) => null,
-      customProviders: registry,
-      modelsHttpClient: aiinProvidersMock(providers: []),
-      aiinConnectFn: ({required provider, onStatus}) async => null,
-    );
-    final run = cli.run();
+  test(
+    '/provider aiin connect failure (null result) applies nothing',
+    () async {
+      final fake = FakeStreamFunction([textTurn('ok')]);
+      final registry = CustomProviderRegistry([]);
+      final cli = cliFor(
+        fake.call,
+        envVarValue: (_) => null,
+        customProviders: registry,
+        modelsHttpClient: aiinProvidersMock(providers: []),
+        aiinConnectFn: ({required provider, onStatus}) async => null,
+      );
+      final run = cli.run();
 
-    io.sendLine('/provider aiin');
-    await waitForIt(
-      () => io.out.toString().contains('AIIN (aiin.by) sign-in'),
-    );
-    io.sendLine('1'); // the browser connect
-    // The provider list is empty -> the google fallback. The canned
-    // connect returns null -> the flow reports a cancel, nothing applied.
-    await waitForIt(
-      () => io.out.toString().contains('AIIN sign-in provider'),
-    );
-    io.sendLine('1');
-    await waitForIt(
-      () => io.out.toString().contains('AIIN setup cancelled'),
-    );
-    io.sendLine('/exit');
-    await run;
+      io.sendLine('/provider aiin');
+      await waitForIt(
+        () => io.out.toString().contains('AIIN (aiin.by) sign-in'),
+      );
+      io.sendLine('1'); // the browser connect
+      // The provider list is empty -> the google fallback. The canned
+      // connect returns null -> the flow reports a cancel, nothing applied.
+      await waitForIt(
+        () => io.out.toString().contains('AIIN sign-in provider'),
+      );
+      io.sendLine('1');
+      await waitForIt(() => io.out.toString().contains('AIIN setup cancelled'));
+      io.sendLine('/exit');
+      await run;
 
-    expect(registry.entries, isEmpty);
-  });
+      expect(registry.entries, isEmpty);
+    },
+  );
 }
 
 /// A minimal three-part JWT carrying an [email] claim.
