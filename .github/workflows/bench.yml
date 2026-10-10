@@ -70,6 +70,17 @@ name: Bench
 # bench_metrics.json, and names any agent_timeout trial whose session
 # gaps never reached the 240s stall threshold (the round-2 contradiction,
 # AC8).
+# gh-1471 (run 37953576205 lost 14/78 tasks when the z.ai quota died
+# mid-run): the provider stops being a hardcode — every dispatch picks
+# zai glm-5.3-flash (default, byte-identical to today) or kimi-for-coding
+# k3-256k via a dedicated FA_BENCH_KIMI_KEY (never the review factory's
+# KIMI_REVIEW_KEY — one quota must not serve both). A setup-job resolve
+# step maps the choice to the full provider triple and preflights the
+# selected secret BEFORE any shard starts (presence only, never a value);
+# the shard job names the provider+model (job `name:` CAN read needs
+# outputs — unlike env), and the summary report tags it (BENCH_RUN_LABEL)
+# so glm and kimi runs never blend in the history/cost views.
+run-name: fa bench · ${{ inputs.provider }} · ${{ inputs.tasks }}
 
 on:
   workflow_dispatch:
@@ -78,6 +89,14 @@ on:
         description: 'Task id or glob passed to tb -t (e.g. hello-world, crack-7z-hash*, * for the full dataset)'
         required: false
         default: 'hello-world'
+      provider:
+        description: 'LLM provider for this run (gh-1471: default = todays behavior bit-for-bit; kimi needs the FA_BENCH_KIMI_KEY secret)'
+        required: false
+        default: 'zai-glm-5.3-flash'
+        type: choice
+        options:
+          - 'zai-glm-5.3-flash'
+          - 'kimi-for-coding'
       dataset:
         description: 'Dataset spec passed to tb -d (name==version)'
         required: false
@@ -127,6 +146,11 @@ jobs:
     outputs:
       matrix: ${{ steps.shards.outputs.matrix }}
       count: ${{ steps.shards.outputs.count }}
+      provider_type: ${{ steps.provider.outputs.provider_type }}
+      provider_config: ${{ steps.provider.outputs.provider_config }}
+      provider_key_env: ${{ steps.provider.outputs.provider_key_env }}
+      bench_model: ${{ steps.provider.outputs.bench_model }}
+      run_label: ${{ steps.provider.outputs.run_label }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -145,6 +169,68 @@ jobs:
           if [ "$((10#${{ inputs.max-concurrent }}))" -lt 1 ] || [ "$((10#${{ inputs.max-concurrent }}))" -gt 8 ]; then
             echo "::error::max-concurrent must be between 1 and 8 (the split count), got '${{ inputs.max-concurrent }}'"; exit 1
           fi
+
+      # gh-1471: map the provider choice to the full provider triple
+      # (type/baseUrl/model/key env) and preflight the selected secret
+      # BEFORE the bundle builds or any shard starts — a missing
+      # FA_BENCH_KIMI_KEY must cost one setup minute, not 8 shards × hours
+      # of 429s. Presence only: the value is never echoed (the ::add-mask
+      # line masks its base64 form, the transport fa_agent.py uses into
+      # the container). An unmapped provider value fails hard — never a
+      # silent fallthrough to the zai default.
+      - name: Resolve provider
+        id: provider
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          BENCH_MODEL: ${{ env.BENCH_MODEL }}
+          FA_BENCH_ZAI_KEY: ${{ secrets.FA_BENCH_ZAI_KEY }}
+          FA_BENCH_KIMI_KEY: ${{ secrets.FA_BENCH_KIMI_KEY }}
+        run: |
+          set -euo pipefail
+          case "$PROVIDER" in
+            ''|zai-glm-5.3-flash)
+              provider_type=zai
+              base_url='https://api.z.ai/api/coding/paas/v4'
+              model="$BENCH_MODEL"
+              key_env=FA_KEY_API_Z_AI_Z_AI
+              secret_name=FA_BENCH_ZAI_KEY
+              secret_value=$FA_BENCH_ZAI_KEY
+              # REG-1 (gh-1471): the default must resolve today's exact
+              # 3-field config — a zai run stays byte-identical.
+              provider_config=$(printf '{"baseUrl":"%s","model":"%s","apiKeyEnvVar":"%s"}' \
+                "$base_url" "$model" "$key_env")
+              run_label="zai glm ($model)"
+              ;;
+            kimi-for-coding)
+              provider_type=kimi
+              base_url='https://api.kimi.com/coding/v1'
+              model='k3-256k'
+              key_env=FA_KEY_API_KIMI_COM_BENCH
+              secret_name=FA_BENCH_KIMI_KEY
+              secret_value=$FA_BENCH_KIMI_KEY
+              # gh-1471 D4: kimi's capability fields ride the config
+              # explicitly — the env preconfig applies them to the booted
+              # model, so a catalog drift can never silently truncate.
+              provider_config=$(printf '{"baseUrl":"%s","model":"%s","apiKeyEnvVar":"%s","contextWindow":200000,"maxTokens":16384}' \
+                "$base_url" "$model" "$key_env")
+              run_label="kimi-for-coding ($model)"
+              ;;
+            *)
+              echo "::error::unknown provider '$PROVIDER' — expected 'zai-glm-5.3-flash' or 'kimi-for-coding'"; exit 1 ;;
+          esac
+          if [ -z "$secret_value" ]; then
+            echo "::error::provider $PROVIDER selected but secret $secret_name is not set"; exit 1
+          fi
+          # fa_agent.py ships the key into the container base64-encoded;
+          # GitHub auto-masks only the raw value, so mask the base64 form.
+          echo "::add-mask::$(printf %s "$secret_value" | base64 -w0)"
+          {
+            echo "provider_type=$provider_type"
+            echo "provider_config=$provider_config"
+            echo "provider_key_env=$key_env"
+            echo "bench_model=$model"
+            echo "run_label=$run_label"
+          } >> "$GITHUB_OUTPUT"
 
       # stable satisfies the repo SDK constraint (>=3.12.0 <4.0.0).
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
@@ -207,11 +293,12 @@ jobs:
           # shard-0 by ~1 min with zero headroom.
 
   bench:
-    # Note: the display name cannot read ${{ env.BENCH_MODEL }} — the env
-    # context is not available in job names (run 37580748776 died at
-    # workflow startup on that). Cosmetic-only anyway; the functional
-    # reads (provider config, summary MODEL pins) all resolve BENCH_MODEL.
-    name: fa on terminal-bench, shard ${{ matrix.i }}
+    # gh-1471: the display name cannot read ${{ env.BENCH_MODEL }} — the
+    # env context is not available in job names (run 37580748776 died at
+    # workflow startup on that) — but needs outputs ARE (same pattern as
+    # bench-harbor.yml), so every shard names the provider+model: glm and
+    # kimi runs never blend in the run history.
+    name: fa on terminal-bench · ${{ needs.setup.outputs.run_label }}, shard ${{ matrix.i }}
     needs: setup
     runs-on: ubuntu-latest
     # Worst case per shard is LPT-packed to 340 min (job cap − 15 min
@@ -266,9 +353,16 @@ jobs:
         env:
           FA_BUNDLE_TARBALL: ${{ github.workspace }}/fa-bundle.tar.gz
           PYTHONPATH: ${{ github.workspace }}/bench/terminal_bench
-          FA_PROVIDER_TYPE: zai
-          FA_PROVIDER_CONFIG: '{"baseUrl":"https://api.z.ai/api/coding/paas/v4","model":"${{ env.BENCH_MODEL }}","apiKeyEnvVar":"FA_KEY_API_Z_AI_Z_AI"}'
+          # gh-1471: the provider triple is resolved once in the setup
+          # job (preflighted secret + hard fail on an unmapped choice) —
+          # the shard only consumes it. Both bench keys are mapped here;
+          # the run block picks the resolved one by name, fa_agent.py
+          # ships exactly that key into the container.
+          FA_PROVIDER_TYPE: ${{ needs.setup.outputs.provider_type }}
+          FA_PROVIDER_CONFIG: ${{ needs.setup.outputs.provider_config }}
+          FA_PROVIDER_KEY_ENV: ${{ needs.setup.outputs.provider_key_env }}
           FA_KEY_API_Z_AI_Z_AI: ${{ secrets.FA_BENCH_ZAI_KEY }}
+          FA_KEY_API_KIMI_COM_BENCH: ${{ secrets.FA_BENCH_KIMI_KEY }}
           DATASET: ${{ inputs.dataset }}
           AGENT_TIMEOUT: ${{ inputs.agent-timeout }}
           PROGRESS_EXTENSION: ${{ inputs.progress-extension }}
@@ -290,10 +384,15 @@ jobs:
           FA_BENCH_CONCURRENCY: ${{ inputs.max-concurrent }}
         run: |
           set -euo pipefail
-          [ -n "$FA_KEY_API_Z_AI_Z_AI" ] || { echo '::error::FA_BENCH_ZAI_KEY secret is not set'; exit 1; }
+          # gh-1471 defense-in-depth behind the setup preflight: the
+          # resolved key env var must carry the selected provider's key
+          # (indirect expansion — the name came from the resolve step).
+          provider_key="${FA_PROVIDER_KEY_ENV:?resolve step did not run}"
+          provider_key_value="${!provider_key}"
+          [ -n "$provider_key_value" ] || { echo "::error::provider key env $provider_key is empty — the selected provider's bench secret is not set"; exit 1; }
           # fa_agent.py ships the key into the container base64-encoded; GitHub
           # auto-masks only the raw value, so mask the base64 form too.
-          echo "::add-mask::$(printf %s "$FA_KEY_API_Z_AI_Z_AI" | base64 -w0)"
+          echo "::add-mask::$(printf %s "$provider_key_value" | base64 -w0)"
           args=()
           for t in $SHARD_TASKS; do args+=(-t "$t"); done
           # Issue #1122 knobs: absent inputs leave both env vars unset — the
@@ -375,7 +474,10 @@ jobs:
           # Issue #1339 AC3: cost needs the model id, and a trial's id only
           # surfaces from its fa session logs — when those never reach the
           # artifact every row prices n/a. Pinned to the run's own model.
-          MODEL: ${{ env.BENCH_MODEL }}
+          MODEL: ${{ needs.setup.outputs.bench_model }}
+          # gh-1471: the report names the provider+model — glm and kimi
+          # runs never blend in the ledger/cost views.
+          BENCH_RUN_LABEL: ${{ needs.setup.outputs.run_label }}
         run: |
           python bench/terminal_bench/summary.py --no-fail tb-runs
 
@@ -428,7 +530,9 @@ jobs:
           EXPECTED: ${{ needs.setup.outputs.count }}
           # Issue #1339 AC3: same pin as the shard summary — price every
           # trial even when its fa session logs are absent.
-          MODEL: ${{ env.BENCH_MODEL }}
+          MODEL: ${{ needs.setup.outputs.bench_model }}
+          # gh-1471: same provider tag as the shard summary.
+          BENCH_RUN_LABEL: ${{ needs.setup.outputs.run_label }}
           # Issue #1392: the report tags the run's concurrency level —
           # the 8-shard/at-most-2 experiment is only comparable when the
           # level it ran at is on the record.
