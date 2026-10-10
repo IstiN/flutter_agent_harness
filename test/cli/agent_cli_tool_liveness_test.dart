@@ -10,15 +10,21 @@ import 'dart:async';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/tool_liveness.dart';
+import 'package:flutter_agent_harness/src/cli/tui_theme.dart';
 import 'package:flutter_agent_harness/src/cli/waiting_heartbeat.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
 
 /// The liveness console records: every single-line reminder/hint the run
-/// printed (the `⏳` marker is the waiting layer's grep anchor).
+/// printed (the `status.pending` glyph + tool tag is the waiting layer's
+/// grep anchor — derived from the symbol table, gh-1446 AC8).
+final RegExp _livenessLine = RegExp(
+  '${RegExp.escape(FaThemeController.instance.sym('status.pending'))} \\[',
+);
+
 List<String> livenessLines(String out) =>
-    out.split('\n').where((line) => line.contains('⏳ [')).toList();
+    out.split('\n').where((line) => _livenessLine.hasMatch(line)).toList();
 
 void main() {
   late MemoryExecutionEnv env;
@@ -82,14 +88,14 @@ void main() {
       cli.toolLivenessTickForTest();
       expect(
         io.out.toString(),
-        contains('⏳ [bash] make release — running 120s'),
+        contains('○ [bash] make release — running 120s'),
       );
 
       now = now.add(const Duration(seconds: 60));
       cli.toolLivenessTickForTest();
       expect(
         io.out.toString(),
-        contains('⏳ [bash] make release — running 180s'),
+        contains('○ [bash] make release — running 180s'),
       );
 
       shell.release();
@@ -154,7 +160,7 @@ void main() {
       expect('cancel:'.allMatches(io.out.toString()), hasLength(1));
       expect(
         io.out.toString(),
-        contains('⏳ [bash] make release — running 360s'),
+        contains('○ [bash] make release — running 360s'),
       );
 
       shell.release();
@@ -179,7 +185,7 @@ void main() {
       // one clock, one source of truth.
       expect(
         toolLivenessReminderLine(call, now),
-        '⏳ [bash] make release — running 150s · $toolLivenessForegroundHint',
+        '○ [bash] make release — running 150s · $toolLivenessForegroundHint',
       );
 
       shell.release();
@@ -241,8 +247,8 @@ void main() {
     final headless = await drive(headless: true);
     final lineMode = await drive(headless: false);
     expect(headless, [
-      '⏳ [bash] make release — running 120s · $toolLivenessForegroundHint',
-      '⏳ [bash] make release — running 300s · background candidate: '
+      '○ [bash] make release — running 120s · $toolLivenessForegroundHint',
+      '○ [bash] make release — running 300s · background candidate: '
           'bash background: true, job board /tasks, --wait-for-jobs · '
           'cancel: fa bash_job stop <id> once backgrounded; '
           'Ctrl+C / inbox steering takes effect once the call unwinds '
@@ -269,7 +275,7 @@ void main() {
     cli.toolCallStartedForTest('t1', 'bash', 'sleep 500');
     now = now.add(const Duration(seconds: 120));
     cli.toolLivenessTickForTest();
-    expect(io.out.toString(), contains('⏳ [bash] sleep 500 — running 120s'));
+    expect(io.out.toString(), contains('○ [bash] sleep 500 — running 120s'));
     cli.toolCallEndedForTest('t1');
     cli.toolLivenessTickForTest();
     expect(livenessLines(io.out.toString()), hasLength(1));
@@ -407,7 +413,7 @@ void main() {
       expect(cli.toolNudgesSentForTest, 2, reason: 'a new call nudges afresh');
       expect(
         io.out.toString(),
-        contains('⏳ [bash] make docker-pull — running 300s'),
+        contains('○ [bash] make docker-pull — running 300s'),
         reason: 'the second call escalates on the same console channel',
       );
       shell.releaseNext();
@@ -591,7 +597,7 @@ void main() {
       expect(cli.toolNudgesSentForTest, 1, reason: 'TUI parity');
       expect(
         io.out.toString(),
-        isNot(contains('⏳ [')),
+        isNot(contains('○ [')),
         reason: 'the TUI waiting row owns the presentation',
       );
       io.interrupt();

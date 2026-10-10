@@ -181,7 +181,7 @@ void main() {
       now = now.add(const Duration(seconds: 120));
       tracker.tick();
       expect(reminds, [
-        '⏳ [bash] sleep 500 — running 120s · $toolLivenessForegroundHint',
+        '○ [bash] sleep 500 — running 120s · $toolLivenessForegroundHint',
       ]);
       expect(escalates, isEmpty);
       // The state carries the same clock's start — one clock, no second
@@ -196,8 +196,8 @@ void main() {
       now = now.add(const Duration(seconds: 60));
       tracker.tick();
       expect(reminds, [
-        '⏳ [bash] sleep 500 — running 60s · $toolLivenessForegroundHint',
-        '⏳ [bash] sleep 500 — running 120s · $toolLivenessForegroundHint',
+        '○ [bash] sleep 500 — running 60s · $toolLivenessForegroundHint',
+        '○ [bash] sleep 500 — running 120s · $toolLivenessForegroundHint',
       ]);
     });
 
@@ -249,8 +249,8 @@ void main() {
       now = now.add(const Duration(seconds: 60));
       tracker.tick();
       expect(reminds, [
-        '⏳ [bash] sleep 1 — running 70s · $toolLivenessForegroundHint',
-        '⏳ [bash] sleep 2 — running 60s · $toolLivenessForegroundHint',
+        '○ [bash] sleep 1 — running 70s · $toolLivenessForegroundHint',
+        '○ [bash] sleep 2 — running 60s · $toolLivenessForegroundHint',
       ]);
       // Both escalate at their own threshold, one line each this tick.
       now = now.add(const Duration(seconds: 240));
@@ -347,7 +347,7 @@ void main() {
       // The chain re-armed past the escalation: reminders resume.
       await waitForCount(reminds, 2, reason: 'the leg re-armed and re-fired');
       tracker.stop();
-      expect(reminds.first, startsWith('⏳ [bash] sleep 500 —'));
+      expect(reminds.first, startsWith('○ [bash] sleep 500 —'));
     });
 
     test('the last callEnded disarms the chain — no fire after', () async {
@@ -411,7 +411,7 @@ void main() {
       'the reminder line is single-line, tool + detail + elapsed + hint',
       () {
         final line = toolLivenessReminderLine(call('sleep 500'), at120);
-        expect(line, startsWith('⏳ [bash] sleep 500 — running 120s'));
+        expect(line, startsWith('○ [bash] sleep 500 — running 120s'));
         expect(line, contains(toolLivenessForegroundHint));
         expect(line.contains('\n'), isFalse);
       },
@@ -424,13 +424,13 @@ void main() {
       final line = toolLivenessReminderLine(call('make release'), at120);
       expect(
         line,
-        '⏳ [bash] make release — running 120s · $toolLivenessForegroundHint',
+        '○ [bash] make release — running 120s · $toolLivenessForegroundHint',
       );
     });
 
     test('the escalation line names the whole background escape hatch', () {
       final line = toolLivenessEscalationLine(call('sleep 500'), at120);
-      expect(line, startsWith('⏳ [bash] sleep 500 — running 120s'));
+      expect(line, startsWith('○ [bash] sleep 500 — running 120s'));
       expect(line, contains('background candidate'));
       expect(line, contains('bash background: true'));
       expect(line, contains('/tasks'));
@@ -461,18 +461,18 @@ void main() {
     test('a very long detail clips at the budget with an ellipsis', () {
       final line = toolLivenessReminderLine(call('x' * 500), at120);
       expect(line.length, lessThan(500));
-      expect(line, startsWith('⏳ [bash] '));
+      expect(line, startsWith('○ [bash] '));
       expect(line, contains('${'x' * toolLivenessDetailClip}…'));
     });
 
     test('an empty detail degrades to glyph + tool + elapsed', () {
       expect(
         toolLivenessReminderLine(call(''), at120),
-        '⏳ [bash] running 120s · $toolLivenessForegroundHint',
+        '○ [bash] running 120s · $toolLivenessForegroundHint',
       );
       expect(
         toolLivenessEscalationLine(call(''), at120),
-        contains('⏳ [bash] running 120s · background candidate'),
+        contains('○ [bash] running 120s · background candidate'),
       );
     });
 
@@ -483,7 +483,7 @@ void main() {
       );
       expect(
         line,
-        '⏳ [bash] sleep 500 — running 59s · $toolLivenessForegroundHint',
+        '○ [bash] sleep 500 — running 59s · $toolLivenessForegroundHint',
       );
     });
   });
