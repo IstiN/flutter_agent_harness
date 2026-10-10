@@ -4831,4 +4831,8 @@
 - gh-1449 [GOAL] Orphan-result notices: reported once, never a user turn, always identifies the call (#1451)
 - gh-1439 [GOAL] Live-follow etiquette: scrolling up while the agent works never yanks the user back down (TUI + app + web: follow-mode contract + «jump to live» affordance) (#1443)
 
+## 1.0.542
+
+- gh-1450 [GOAL] SSO/OAuth login must always show the full authorization URL and allow opting out of the default browser (CodeMie/OpenRouter/ChatGPT family) (#1464)
+
 ## Unreleased
