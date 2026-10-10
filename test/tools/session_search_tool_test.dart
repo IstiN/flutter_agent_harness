@@ -15,6 +15,7 @@ SessionSearchOutcome _outcome({
   bool truncated = false,
   int? nextContinuation,
   String truncationReason = '',
+  String unavailableReason = '',
   SessionArchiveMap? map,
 }) {
   return SessionSearchOutcome(
@@ -24,6 +25,7 @@ SessionSearchOutcome _outcome({
     truncated: truncated,
     nextContinuation: nextContinuation,
     truncationReason: truncationReason,
+    unavailableReason: unavailableReason,
     map: map,
   );
 }
@@ -43,11 +45,7 @@ void main() {
 
   group('argument validation surfaces as one-line errors', () {
     for (final (label, args, needle) in const [
-      (
-        'missing query',
-        <String, Object?>{},
-        'query is required',
-      ),
+      ('missing query', <String, Object?>{}, 'query is required'),
       (
         'invalid regex',
         <String, Object?>{'query': '(oops', 'regex': true},
@@ -112,6 +110,14 @@ void main() {
     test('a capped scan carries the continuation hint', () async {
       final tool = sessionSearchTool(
         search: (query) async => _outcome(
+          hits: [
+            SessionSearchHit(
+              id: 'rec_1',
+              kind: 'message',
+              timestamp: DateTime.utc(2026, 1, 2),
+              preview: 'partial',
+            ),
+          ],
           truncated: true,
           nextContinuation: 21,
           truncationReason: 'result cap',
@@ -123,10 +129,54 @@ void main() {
       expect(text, contains('result cap'));
     });
 
+    test(
+      'a capped ZERO-hit page still carries the stop reason and hint',
+      () async {
+        // The regression the rework pass caught: the empty-hits early
+        // return dropped the footer, so a scan that stopped early with no
+        // hits on this page read as a flat "no records match" — the model
+        // would believe the archive has no matches when the scan never
+        // finished (e.g. the budget expired before the first match).
+        final tool = sessionSearchTool(
+          search: (query) async => _outcome(
+            truncated: true,
+            nextContinuation: 21,
+            truncationReason: 'time budget',
+          ),
+        );
+        final result = await tool.execute(const {'query': 'x'}, null, null);
+        final text = (result.content.single as TextContent).text;
+        expect(text, startsWith('no records match'));
+        expect(text, contains('time budget'));
+        expect(text, contains('"continuation": 21'));
+        // Nothing to expand when there are no hits — no expand advice.
+        expect(text, isNot(contains('compact_expand')));
+      },
+    );
+
+    test(
+      'an unavailable archive is said verbatim, never as no-match',
+      () async {
+        // The CLI's no-session-file degradation lands here: the honest
+        // rendering is the dedicated reason, not "no records match
+        // (examined 0 of 0 records)" — which claims the archive was
+        // scanned and is empty.
+        final tool = sessionSearchTool(
+          search: (query) async => _outcome(
+            unavailableReason:
+                'no session file backs this host — nothing was searched',
+          ),
+        );
+        final result = await tool.execute(const {'query': 'x'}, null, null);
+        final text = (result.content.single as TextContent).text;
+        expect(text, startsWith('session_search unavailable:'));
+        expect(text, contains('no session file backs this host'));
+        expect(text, isNot(contains('no records match')));
+      },
+    );
+
     test('zero hits reports the honest no-match line', () async {
-      final tool = sessionSearchTool(
-        search: (query) async => _outcome(),
-      );
+      final tool = sessionSearchTool(search: (query) async => _outcome());
       final result = await tool.execute(const {'query': 'x'}, null, null);
       final text = (result.content.single as TextContent).text;
       expect(text, startsWith('no records match'));
@@ -134,8 +184,7 @@ void main() {
   });
 
   group('map-mode formatting', () {
-    test('counts, hidden totals and the checkpoint tree, no content',
-        () async {
+    test('counts, hidden totals and the checkpoint tree, no content', () async {
       final tool = sessionSearchTool(
         search: (query) async {
           expect(query.mode, SessionSearchMode.map);
@@ -168,11 +217,7 @@ void main() {
           );
         },
       );
-      final result = await tool.execute(
-        const {'mode': 'map'},
-        null,
-        null,
-      );
+      final result = await tool.execute(const {'mode': 'map'}, null, null);
       final text = (result.content.single as TextContent).text;
       expect(text, contains('session map: 34 records'));
       expect(text, contains('message 30'));

@@ -19,7 +19,9 @@ const _oldDecision =
     'we decided the WASM size stays under 2 MB (decision record, three '
     'weeks ago)';
 const _forkText = 'fork-only note: abandon this branch';
-const _giantText = 'x' * 2000;
+// Non-const on purpose: `String.operator *` is not const-evaluable, and
+// `const` here fails the whole suite at load time.
+final _giantText = 'x' * 2000;
 
 AssistantMessage _assistant(String text) {
   return AssistantMessage(
@@ -37,8 +39,9 @@ AssistantMessage _assistant(String text) {
 /// messages, a HIDDEN rule record, a nested-checkpoint region holding an
 /// old decision, a fork branch, and a giant record for the preview cap.
 /// Returns the seeded record ids by role.
-Future<({List<String> ids, Session session, String checkpointId})>
-_seedArchive(Session session) async {
+Future<({List<String> ids, Session session, String checkpointId})> _seedArchive(
+  Session session,
+) async {
   final ids = <String>[];
   Future<void> user(String text) async {
     ids.add(await session.appendMessage(UserMessage.text(text)));
@@ -66,11 +69,7 @@ _seedArchive(Session session) async {
     flattenedRecordIds: const [],
   );
   await session.appendHiddenRange(recordIds: [ids[0]]);
-  return (
-    ids: ids,
-    session: session,
-    checkpointId: checkpointId,
-  );
+  return (ids: ids, session: session, checkpointId: checkpointId);
 }
 
 void main() {
@@ -154,8 +153,60 @@ void main() {
     });
 
     test('maxHits clamps to the hard ceiling', () {
-      final query = SessionSearchQuery.fromArgs({'query': 'x', 'maxHits': 99});
+      final query = SessionSearchQuery.fromArgs({'query': 'x', 'maxHits': 999});
       expect(query.maxHits, maxSessionSearchMaxHits);
+    });
+
+    test('a nested-quantifier regex is rejected at parse time (E5)', () {
+      // The classic catastrophic-backtracking shape: a quantifier applied
+      // to a group whose body is itself quantified. Rejected UP FRONT —
+      // the wall-clock budget cannot interrupt one in-flight match.
+      expect(
+        () => SessionSearchQuery.fromArgs({'query': r'(a+)+$', 'regex': true}),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('nested quantifier'),
+          ),
+        ),
+      );
+    });
+
+    test('the other classic catastrophic shapes are rejected too', () {
+      for (final pattern in const [
+        r'([a-zA-Z]+)*', // quantified class inside a quantified group
+        r'(a?)*', // quantified optional atom
+        r'(?:\w+){2,}', // non-capturing group syntax is not a quantifier
+      ]) {
+        expect(
+          () => SessionSearchQuery.fromArgs({'query': pattern, 'regex': true}),
+          throwsA(
+            isA<FormatException>().having(
+              (e) => e.message,
+              'message',
+              contains('nested quantifier'),
+            ),
+          ),
+          reason: 'pattern $pattern must be rejected',
+        );
+      }
+    });
+
+    test('a benign quantified group still parses (no false positive)', () {
+      final query = SessionSearchQuery.fromArgs({
+        'query': r'(a+)b',
+        'regex': true,
+      });
+      expect(query.pattern, isNotNull);
+    });
+
+    test('the screen never touches literal mode', () {
+      // Literal queries are RegExp.escape'd — parentheses are text.
+      final query = SessionSearchQuery.fromArgs({
+        'query': '(a+)+ not a pattern',
+      });
+      expect(query.pattern, isNotNull);
     });
   });
 
@@ -206,7 +257,6 @@ void main() {
     });
 
     test('matching runs on DECODED text, not raw JSON', () async {
-      final records = await seededRecords();
       // A quote character: present in decoded text, escaped in the raw
       // JSONL line — a raw-line pre-filter would miss it.
       final session = await repo.create(
@@ -228,10 +278,7 @@ void main() {
       final records = await seededRecords();
       final outcome = searchRecords(
         records,
-        SessionSearchQuery.fromArgs({
-          'query': r'wasm\s+size',
-          'regex': true,
-        }),
+        SessionSearchQuery.fromArgs({'query': r'wasm\s+size', 'regex': true}),
       );
       expect(outcome.hits, isNotEmpty);
     });
@@ -330,83 +377,135 @@ void main() {
   });
 
   group('branch vs tree scope (AC4 / IT-tree-scope)', () {
-    test('branch scope excludes the abandoned fork; tree scope includes it',
-        () async {
-      final session = await repo.create(
-        JsonlSessionCreateOptions(cwd: '/work'),
-      );
-      final seeded = await _seedArchive(session);
-      // Move the active leaf back to the pre-fork record: the fork arc
-      // becomes an abandoned branch.
-      final records = await session.getEntries();
-      final preFork = seeded.ids[4];
-      await session.getStorage().setLeafId(preFork);
+    test(
+      'branch scope excludes the abandoned fork; tree scope includes it',
+      () async {
+        final session = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        final seeded = await _seedArchive(session);
+        // Move the active leaf back to the pre-fork record: the fork arc
+        // becomes an abandoned branch.
+        final records = await session.getEntries();
+        final preFork = seeded.ids[4];
+        await session.getStorage().setLeafId(preFork);
 
-      final branch = searchRecords(
-        await session.getEntries(),
-        SessionSearchQuery.fromArgs({'query': 'fork-only note'}),
-      );
-      expect(branch.hits, isEmpty);
+        final branch = searchRecords(
+          await session.getEntries(),
+          SessionSearchQuery.fromArgs({'query': 'fork-only note'}),
+        );
+        expect(branch.hits, isEmpty);
 
-      final tree = searchRecords(
-        await session.getEntries(),
-        SessionSearchQuery.fromArgs({
-          'query': 'fork-only note',
-          'scope': 'tree',
-        }),
-      );
-      expect(tree.hits, hasLength(1));
-      expect(tree.hits.single.preview, contains(_forkText));
-      expect(records, isNotEmpty);
-    });
+        final tree = searchRecords(
+          await session.getEntries(),
+          SessionSearchQuery.fromArgs({
+            'query': 'fork-only note',
+            'scope': 'tree',
+          }),
+        );
+        expect(tree.hits, hasLength(1));
+        expect(tree.hits.single.preview, contains(_forkText));
+        expect(records, isNotEmpty);
+      },
+    );
+
+    test(
+      'the result cap counts BRANCH hits only (fork hits are free)',
+      () async {
+        // Regression for the rework finding: the cap used to be consumed by
+        // abandoned-fork matches, so the default scope under-delivered and
+        // paged O(n²). Fork hits must be free; the cap delivers branch hits.
+        final session = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        final ids = <String>[];
+        Future<void> user(String text) async {
+          ids.add(await session.appendMessage(UserMessage.text(text)));
+        }
+
+        await user('needle on the trunk before the fork');
+        await user('needle on the abandoned fork one');
+        await user('needle on the abandoned fork two');
+        // Move the active leaf back to the pre-fork record: the fork arc
+        // becomes an abandoned branch (this appends a LeafRecord).
+        await session.getStorage().setLeafId(ids[0]);
+        await user('needle on the trunk after the fork');
+
+        final branch = searchRecords(
+          await session.getEntries(),
+          SessionSearchQuery.fromArgs({'query': 'needle', 'maxHits': 2}),
+        );
+        expect(branch.hits, hasLength(2));
+        expect(
+          branch.hits.map((h) => h.id),
+          everyElement(anyOf(ids[0], ids[3])),
+        );
+        expect(branch.truncated, isFalse, reason: 'both branch hits delivered');
+
+        final tree = searchRecords(
+          await session.getEntries(),
+          SessionSearchQuery.fromArgs({
+            'query': 'needle',
+            'maxHits': 2,
+            'scope': 'tree',
+          }),
+        );
+        // Tree scope sees the fork records too — cap semantics unchanged.
+        expect(tree.hits, hasLength(2));
+        expect(tree.truncated, isTrue);
+        expect(tree.nextContinuation, isNotNull);
+      },
+    );
   });
 
   group('mode: map (the archive forensics readout)', () {
-    test('counts, hidden totals and checkpoint tree with nesting depth',
-        () async {
-      final session = await repo.create(
-        JsonlSessionCreateOptions(cwd: '/work'),
-      );
-      final seeded = await _seedArchive(session);
-      // A checkpoint nested INSIDE the first one's span: depth 2.
-      final records = await session.getEntries();
-      final innerStart = seeded.ids[2];
-      await session.appendCompactCheckpoint(
-        firstRecordId: innerStart,
-        lastRecordId: innerStart,
-        text: 'inner checkpoint',
-        coversRecordIds: [innerStart],
-        flattenedRecordIds: const [],
-      );
-      final outcome = searchRecords(
-        await session.getEntries(),
-        SessionSearchQuery.fromArgs(const {'mode': 'map'}),
-      );
-      final map = outcome.map!;
-      expect(map.recordCount, records.length + 1);
-      expect(map.kindCounts['message'], greaterThanOrEqualTo(6));
-      expect(map.hiddenRangeCount, 1);
-      expect(map.hiddenRecordIdCount, 1);
-      expect(map.checkpoints, hasLength(2));
-      expect(map.maxCheckpointDepth, 2);
-      final depths = {
-        for (final checkpoint in map.checkpoints)
-          checkpoint.id: checkpoint.depth,
-      };
-      expect(depths[seeded.checkpointId], 1);
-      expect(depths.values, contains(2));
-      expect(map.leafId, isNotNull);
-      expect(map.branchRecordCount, greaterThanOrEqualTo(6));
-      // Map mode exposes structure, never content.
-      expect(
-        map.checkpoints.every(
-          (checkpoint) =>
-              checkpoint.firstRecordId.isNotEmpty &&
-              checkpoint.lastRecordId.isNotEmpty,
-        ),
-        isTrue,
-      );
-    });
+    test(
+      'counts, hidden totals and checkpoint tree with nesting depth',
+      () async {
+        final session = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        final seeded = await _seedArchive(session);
+        // A checkpoint nested INSIDE the first one's span: depth 2.
+        final records = await session.getEntries();
+        final innerStart = seeded.ids[2];
+        await session.appendCompactCheckpoint(
+          firstRecordId: innerStart,
+          lastRecordId: innerStart,
+          text: 'inner checkpoint',
+          coversRecordIds: [innerStart],
+          flattenedRecordIds: const [],
+        );
+        final outcome = searchRecords(
+          await session.getEntries(),
+          SessionSearchQuery.fromArgs(const {'mode': 'map'}),
+        );
+        final map = outcome.map!;
+        expect(map.recordCount, records.length + 1);
+        expect(map.kindCounts['message'], greaterThanOrEqualTo(6));
+        expect(map.hiddenRangeCount, 1);
+        expect(map.hiddenRecordIdCount, 1);
+        expect(map.checkpoints, hasLength(2));
+        expect(map.maxCheckpointDepth, 2);
+        final depths = {
+          for (final checkpoint in map.checkpoints)
+            checkpoint.id: checkpoint.depth,
+        };
+        expect(depths[seeded.checkpointId], 1);
+        expect(depths.values, contains(2));
+        expect(map.leafId, isNotNull);
+        expect(map.branchRecordCount, greaterThanOrEqualTo(6));
+        // Map mode exposes structure, never content.
+        expect(
+          map.checkpoints.every(
+            (checkpoint) =>
+                checkpoint.firstRecordId.isNotEmpty &&
+                checkpoint.lastRecordId.isNotEmpty,
+          ),
+          isTrue,
+        );
+      },
+    );
 
     test('no checkpoints maps to an honest empty readout', () async {
       final session = await repo.create(
@@ -448,8 +547,7 @@ void main() {
   });
 
   group('the streamed file scan', () {
-    test('finds what the pure core finds on the same seeded session',
-        () async {
+    test('finds what the pure core finds on the same seeded session', () async {
       final session = await repo.create(
         JsonlSessionCreateOptions(cwd: '/work'),
       );
@@ -468,43 +566,48 @@ void main() {
       expect(fromFile.recordsTotal, fromMemory.recordsTotal);
     });
 
-    test('runs on a non-ranged file system too (readTextLines fallback)',
-        () async {
-      final session = await repo.create(
-        JsonlSessionCreateOptions(cwd: '/work'),
-      );
-      await _seedArchive(session);
-      final outcome = await searchSessionFile(
-        _NonRangedFs(fs),
-        (await session.getMetadata()).path,
-        SessionSearchQuery.fromArgs({'query': 'always run tests'}),
-      );
-      expect(outcome.hits, hasLength(1));
-    });
+    test(
+      'runs on a non-ranged file system too (readTextLines fallback)',
+      () async {
+        final session = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        await _seedArchive(session);
+        final outcome = await searchSessionFile(
+          _NonRangedFs(fs),
+          (await session.getMetadata()).path,
+          SessionSearchQuery.fromArgs({'query': 'always run tests'}),
+        );
+        expect(outcome.hits, hasLength(1));
+      },
+    );
 
-    test('non-ASCII matches survive tiny scan blocks (UTF-8 seam test)', () async {
-      final session = await repo.create(
-        JsonlSessionCreateOptions(cwd: '/work'),
-      );
-      await session.appendMessage(
-        UserMessage.text('grün blau 日本語 🚀 the WASM ceiling decision'),
-      );
-      final outcome = await searchSessionFile(
-        fs,
-        (await session.getMetadata()).path,
-        SessionSearchQuery.fromArgs({'query': '🚀'}),
-        blockBytes: 7, // every line straddles several seams, mid-codepoint
-      );
-      expect(outcome.hits, hasLength(1));
-      expect(outcome.hits.single.preview, contains('grün'));
-      final umlaut = await searchSessionFile(
-        fs,
-        (await session.getMetadata()).path,
-        SessionSearchQuery.fromArgs({'query': 'grün'}),
-        blockBytes: 7,
-      );
-      expect(umlaut.hits, hasLength(1));
-    });
+    test(
+      'non-ASCII matches survive tiny scan blocks (UTF-8 seam test)',
+      () async {
+        final session = await repo.create(
+          JsonlSessionCreateOptions(cwd: '/work'),
+        );
+        await session.appendMessage(
+          UserMessage.text('grün blau 日本語 🚀 the WASM ceiling decision'),
+        );
+        final outcome = await searchSessionFile(
+          fs,
+          (await session.getMetadata()).path,
+          SessionSearchQuery.fromArgs({'query': '🚀'}),
+          blockBytes: 7, // every line straddles several seams, mid-codepoint
+        );
+        expect(outcome.hits, hasLength(1));
+        expect(outcome.hits.single.preview, contains('grün'));
+        final umlaut = await searchSessionFile(
+          fs,
+          (await session.getMetadata()).path,
+          SessionSearchQuery.fromArgs({'query': 'grün'}),
+          blockBytes: 7,
+        );
+        expect(umlaut.hits, hasLength(1));
+      },
+    );
 
     test('a malformed tail line never breaks the scan', () async {
       final session = await repo.create(
@@ -540,8 +643,41 @@ void main() {
         fromFile.map!.hiddenRecordIdCount,
         fromMemory.map!.hiddenRecordIdCount,
       );
-      expect(fromFile.map!.checkpoints.length,
-          fromMemory.map!.checkpoints.length);
+      expect(
+        fromFile.map!.checkpoints.length,
+        fromMemory.map!.checkpoints.length,
+      );
+    });
+
+    test('a time-budget stop carries a continuation token too', () async {
+      // A broad recall sweep over a giant chain used to stop with no way
+      // to page: only result-cap stops had a token. Any clean stop is
+      // resumable (absolute-record skipping), so the budget stop offers
+      // the token and the model pages instead of re-scanning from zero.
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work'),
+      );
+      await _seedArchive(session);
+      final outcome = await searchSessionFile(
+        fs,
+        (await session.getMetadata()).path,
+        SessionSearchQuery.fromArgs({'query': 'the'}),
+        timeBudget: Duration.zero, // the budget is already spent
+      );
+      expect(outcome.truncated, isTrue);
+      expect(outcome.truncationReason, 'time budget');
+      expect(outcome.nextContinuation, isNotNull);
+      // Resuming from the token makes progress: the continued scan
+      // examines records the first pass never reached (or finishes).
+      final resumed = await searchSessionFile(
+        fs,
+        (await session.getMetadata()).path,
+        SessionSearchQuery.fromArgs({
+          'query': 'the',
+          'continuation': outcome.nextContinuation!,
+        }),
+      );
+      expect(resumed.recordsExamined, lessThanOrEqualTo(outcome.recordsTotal));
     });
   });
 }

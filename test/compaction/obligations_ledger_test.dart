@@ -641,22 +641,24 @@ void main() {
   });
 
   group('pending-wait entries (AC5 — armed timers know why they exist)', () {
-    test('an armed timer opens a pending-wait entry with the verbatim reason',
-        () {
-      final writer = ObligationsLedgerWriter();
-      final payload = writer.ingestPendingWait(
-        text: 'check the SM merge train after 25m',
-        sourceRecordId: 'sm-123',
-        at: DateTime.utc(2026),
-      );
-      expect(payload, isNotNull);
-      final entry = writer.ledger.entries.single;
-      expect(entry.kind, ObligationKind.pendingWait);
-      expect(entry.status, ObligationStatus.open);
-      expect(entry.text, 'check the SM merge train after 25m');
-      expect(entry.sourceRecordId, 'sm-123');
-      expect(entry.createdAt, DateTime.utc(2026));
-    });
+    test(
+      'an armed timer opens a pending-wait entry with the verbatim reason',
+      () {
+        final writer = ObligationsLedgerWriter();
+        final payload = writer.ingestPendingWait(
+          text: 'check the SM merge train after 25m',
+          sourceRecordId: 'sm-123',
+          at: DateTime.utc(2026),
+        );
+        expect(payload, isNotNull);
+        final entry = writer.ledger.entries.single;
+        expect(entry.kind, ObligationKind.pendingWait);
+        expect(entry.status, ObligationStatus.open);
+        expect(entry.text, 'check the SM merge train after 25m');
+        expect(entry.sourceRecordId, 'sm-123');
+        expect(entry.createdAt, DateTime.utc(2026));
+      },
+    );
 
     test('re-arming the same timer never duplicates the entry', () {
       final writer = ObligationsLedgerWriter();
@@ -675,7 +677,8 @@ void main() {
         writer.ingestPendingWait(text: '   ', sourceRecordId: 't1'),
         isNull,
       );
-      expect(writer.ingestPendingWait(text: 'reason', sourceRecordId: ''),
+      expect(
+        writer.ingestPendingWait(text: 'reason', sourceRecordId: ''),
         isNull,
       );
       expect(writer.ledger.entries, isEmpty);
@@ -685,14 +688,7 @@ void main() {
       final session = await repo.create(
         JsonlSessionCreateOptions(cwd: '/work'),
       );
-      final recordId = await session.appendMessage(
-        UserMessage.text('a plain turn'),
-      );
       final writer = ObligationsLedgerWriter();
-      final payload = writer.ingest(
-        text: 'could you watch the CI gate',
-        sourceRecordId: recordId,
-      );
       final payload = writer.ingestPendingWait(
         text: 're-check the gate after 25m',
         sourceRecordId: 'timer-1',

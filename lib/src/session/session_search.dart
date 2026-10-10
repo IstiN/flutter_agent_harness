@@ -13,11 +13,22 @@
 ///
 /// Correctness over cleverness: every line is decoded and matched on the
 /// DECODED text (a raw-line pre-filter would miss matches across JSON
-/// escapes). Cost is bounded instead (E4): the scan streams the file in
-/// fixed blocks, keeps only hits, honors a result cap plus an explicit
-/// continuation token, and a time budget stops pathological regexes
-/// (E5) with an honest `truncated` report instead of a hang. Preview
-/// text passes to the model as an ordinary tool result, so the redaction
+/// escapes). Cost is bounded instead (E4): the scan streams file CONTENT
+/// in fixed blocks — content memory stays flat regardless of file size —
+/// honors a result cap plus an explicit continuation token, and the
+/// accumulator retains only IDs and structure: the id→parent map the
+/// branch resolution walks (one entry per record — this is the scan's
+/// one honest linear cost: record IDS, never record content) plus the
+/// checkpoint span table in map mode (bounded by the referenced ids).
+/// Both tree facts and spans resolve on a cheap structure-only census
+/// pass, so branch scope caps TRUE branch hits (never abandoned-fork
+/// hits) and map mode's span table stays bounded. E5 bounds the work: a
+/// query is
+/// length-capped, nested-quantifier regexes are REJECTED at parse time
+/// (the classic catastrophic-backtracking shape), per-record regex input
+/// is capped, and a wall-clock budget stops the scan between records
+/// with an honest `truncated` report instead of a hang. Preview text
+/// passes to the model as an ordinary tool result, so the redaction
 /// pipeline masks it exactly like every other tool output.
 library;
 
@@ -81,9 +92,20 @@ const int maxSessionSearchQueryChars = 512;
 /// Characters of one record's text a REGEX may run over (E5 DoS bound: a
 /// catastrophic backtracking pattern must not own the loop forever; the
 /// wall-clock budget below is the second guard).
+///
+/// Honest scoping: a length cap is NOT a time bound on a backtracking
+/// engine. The hard guarantee is layered — nested-quantifier patterns
+/// (the classic catastrophic shape) are rejected at query parse time,
+/// and this cap bounds any single match attempt. The wall-clock budget
+/// is checked BETWEEN records, so one unscreened pathological match
+/// (ambiguous-alternation shapes like `(a|aa)+` are deliberately not
+/// screened) on a capped record can still exceed the budget; that
+/// residual is scoped, documented, and preferable to reimplementing a
+/// regex engine.
 const int sessionSearchRegexTextCapChars = 128 * 1024;
 
-/// Default wall-clock budget of one file scan.
+/// Default wall-clock budget of one file scan. Checked BETWEEN records —
+/// see [sessionSearchRegexTextCapChars] for the honest per-match scoping.
 const Duration sessionSearchTimeBudget = Duration(seconds: 10);
 
 /// A validated, defaulted `session_search` argument set. Build with
@@ -127,6 +149,13 @@ final class SessionSearchQuery {
         RegExp(query);
       } on FormatException catch (error) {
         throw FormatException('invalid regex: ${error.message}');
+      }
+      if (_hasNestedQuantifier(query)) {
+        throw const FormatException(
+          'regex has a nested quantifier (a "(a+)+"-shape) — catastrophic '
+          'backtracking risk; rephrase the pattern without a quantifier '
+          'directly on a quantified group',
+        );
       }
     }
     var kinds = const <String>{};
@@ -206,6 +235,107 @@ final class SessionSearchQuery {
         : RegExp(RegExp.escape(query), caseSensitive: false);
   }
 }
+
+/// Whether [pattern] applies a quantifier to a group whose body contains
+/// a quantified atom — `(a+)+`, `(a?)*`, `(?:\w+){2,}` — the classic
+/// catastrophic-backtracking shape (E5). Escapes and character classes
+/// are respected; non-capturing/lookaround group syntax is not mistaken
+/// for a quantifier. Ambiguous-alternation shapes such as `(a|aa)+` are
+/// deliberately NOT screened (see the honesty note on
+/// [sessionSearchRegexTextCapChars]).
+bool _hasNestedQuantifier(String pattern) {
+  // Per open group: the body contains a quantified atom.
+  final groupHasQuantified = <bool>[];
+  var inClass = false;
+  var escaped = false;
+  var lastAtomQuantified = false;
+  var lastAtomWasGroup = false;
+  var lastGroupHasQuantified = false;
+  for (var i = 0; i < pattern.length; i++) {
+    final ch = pattern[i];
+    if (escaped) {
+      escaped = false;
+      lastAtomQuantified = false;
+      lastAtomWasGroup = false;
+      continue;
+    }
+    if (inClass) {
+      if (ch == r'\') {
+        escaped = true;
+      } else if (ch == ']') {
+        inClass = false;
+        lastAtomQuantified = false;
+        lastAtomWasGroup = false;
+      }
+      continue;
+    }
+    switch (ch) {
+      case r'\':
+        escaped = true;
+      case '[':
+        inClass = true;
+      case '(':
+        groupHasQuantified.add(false);
+        // `(?:`, `(?=`, `(?!` — group syntax, never a quantifier on the
+        // empty atom before the body.
+        if (i + 1 < pattern.length && pattern[i + 1] == '?') i++;
+        lastAtomQuantified = false;
+        lastAtomWasGroup = false;
+      case ')':
+        if (groupHasQuantified.isNotEmpty) {
+          lastGroupHasQuantified = groupHasQuantified.removeLast();
+          lastAtomWasGroup = true;
+          lastAtomQuantified = false;
+        }
+      case '+' || '*':
+        if (lastAtomWasGroup && lastGroupHasQuantified) return true;
+        lastAtomQuantified = true;
+        if (groupHasQuantified.isNotEmpty) groupHasQuantified.last = true;
+      case '?':
+        if (lastAtomQuantified) {
+          // Lazy/possessive modifier riding the previous quantifier.
+          lastAtomQuantified = false;
+          break;
+        }
+        // `?` never nests catastrophically (the group applies once).
+        lastAtomQuantified = true;
+        if (groupHasQuantified.isNotEmpty) groupHasQuantified.last = true;
+      case '{':
+        final isQuantifier = _boundedQuantifierAt(pattern, i);
+        if (!isQuantifier) {
+          lastAtomQuantified = false;
+          lastAtomWasGroup = false;
+          break;
+        }
+        if (lastAtomWasGroup && lastGroupHasQuantified) return true;
+        lastAtomQuantified = true;
+        if (groupHasQuantified.isNotEmpty) groupHasQuantified.last = true;
+      default:
+        lastAtomQuantified = false;
+        lastAtomWasGroup = false;
+    }
+  }
+  return false;
+}
+
+/// Whether [pattern] has a `{n}`, `{n,}` or `{n,m}` quantifier at [at]
+/// (a lone `{` is a literal in Dart regexes).
+bool _boundedQuantifierAt(String pattern, int at) {
+  var i = at + 1;
+  if (i >= pattern.length || !_isDigit(pattern.codeUnitAt(i))) return false;
+  while (i < pattern.length && _isDigit(pattern.codeUnitAt(i))) {
+    i++;
+  }
+  if (i < pattern.length && pattern[i] == ',') {
+    i++;
+    while (i < pattern.length && _isDigit(pattern.codeUnitAt(i))) {
+      i++;
+    }
+  }
+  return i < pattern.length && pattern[i] == '}';
+}
+
+bool _isDigit(int codeUnit) => codeUnit >= 0x30 && codeUnit <= 0x39;
 
 /// One search hit — a POINTER into the archive, never its content.
 final class SessionSearchHit {
@@ -299,6 +429,7 @@ final class SessionSearchOutcome {
     this.nextContinuation,
     this.map,
     this.truncationReason = '',
+    this.unavailableReason = '',
   });
 
   final List<SessionSearchHit> hits;
@@ -314,7 +445,9 @@ final class SessionSearchOutcome {
   final bool truncated;
 
   /// The continuation token for the next call (records already examined),
-  /// set whenever [truncated] is true and the stop was a clean cap.
+  /// set whenever [truncated] is true and the stop was clean (result cap
+  /// or time budget — both resume deterministically; a scan ERROR may
+  /// have stopped mid-segment, so no token is offered there).
   final int? nextContinuation;
 
   /// Set in map mode.
@@ -323,6 +456,12 @@ final class SessionSearchOutcome {
   /// Why the scan stopped early (`result cap`, `time budget`, …) — empty
   /// when it ran to the end.
   final String truncationReason;
+
+  /// Set when the archive could not be searched AT ALL (e.g. no session
+  /// file backs the host) — the formatter prints it verbatim instead of
+  /// rendering a completed-but-empty scan, which would dishonestly claim
+  /// the archive was searched and holds nothing.
+  final String unavailableReason;
 }
 
 /// The clipped single-line preview a hit carries (AC4: never full
@@ -375,14 +514,38 @@ bool _matches(SessionRecord record, RegExp pattern) {
 
 /// The accumulator one scan feeds: filters, collects, and tracks the
 /// continuation state. One instance per search call — NOT reusable.
+///
+/// Retention (the E4 honesty note): `_parentOf` keeps one id→parentId
+/// pair per record seen — record IDS only, never record content — and
+/// grows with the archive's record count, not its bytes. Map mode keeps
+/// ordinals ONLY for the ids checkpoints reference (seeded by a cheap
+/// census pass), so the span table stays bounded by checkpoint coverage.
 final class _ScanAccumulator {
-  _ScanAccumulator(this.query, {DateTime? deadline})
-    : _deadline = deadline,
-      _pattern = query.pattern;
+  _ScanAccumulator(
+    this.query, {
+    DateTime? deadline,
+    this.censusOnly = false,
+    Set<String> ordinalWanted = const {},
+    Set<String> branchIds = const {},
+    // A private NAMED initializing formal is not part of the parameter
+    // list, so the lint is suppressed at the parameter list instead.
+    // ignore: prefer_initializing_formals
+  }) : _deadline = deadline,
+       _pattern = query.pattern,
+       _ordinalWanted = Set<String>.of(ordinalWanted),
+       _branchIds = Set<String>.of(branchIds);
 
   final SessionSearchQuery query;
   final DateTime? _deadline;
   final RegExp? _pattern;
+
+  /// Census mode: a cheap first pass that collects ONLY structure — the
+  /// parent/leaf tree (always), plus the checkpoint records and the ids
+  /// they reference (map mode). Its product seeds the real pass: the
+  /// FINAL active branch set (branch scope — so the result cap counts
+  /// branch hits with full knowledge, not leaf-so-far guesses) and the
+  /// wanted-ordinal table (map mode). Never feeds hits.
+  final bool censusOnly;
 
   final _hits = <SessionSearchHit>[];
   final _parentOf = <String, String?>{};
@@ -391,9 +554,17 @@ final class _ScanAccumulator {
   var _hiddenRangeCount = 0;
   var _hiddenRecordIdCount = 0;
 
-  /// Record id → file-order ordinal — the position map the checkpoint
-  /// nesting depths compute their spans over (map mode only).
+  /// Map mode only: the ids whose file-order ordinals the checkpoint
+  /// depth fold needs. The census pass FILLS this set; the real pass is
+  /// seeded with it and records ordinals for these ids only.
+  final Set<String> _ordinalWanted;
   final _ordinalOf = <String, int>{};
+
+  /// Branch scope only: the FINAL active branch (tip-to-root chain of
+  /// the archive's true active leaf), computed by the census pass and
+  /// seeded here — a hit off this set never reaches the cap. Empty when
+  /// no census ran (tree scope, or a census stopped by the deadline).
+  final Set<String> _branchIds;
   var recordsExamined = 0;
   var recordsTotal = 0;
   var _skipped = 0;
@@ -421,6 +592,20 @@ final class _ScanAccumulator {
   void seeRecord(SessionRecord record) {
     if (_stopped) return;
     recordsTotal++;
+    if (censusOnly) {
+      _trackTree(record);
+      switch (record) {
+        case CompactCheckpointRecord checkpoint:
+          _checkpoints.add(checkpoint);
+          _ordinalWanted
+            ..add(checkpoint.firstRecordId)
+            ..add(checkpoint.lastRecordId)
+            ..addAll(checkpoint.coversRecordIds);
+        default:
+          break;
+      }
+      return;
+    }
     if (_skipped < query.continuation) {
       _skipped++;
       // Continued scans still need tree facts (leaf/parents) to stay
@@ -445,6 +630,16 @@ final class _ScanAccumulator {
     if (pattern == null) return;
     if (!_passesFilters(record, query)) return;
     if (!_matches(record, pattern)) return;
+    if (query.scope == SessionSearchScope.branch &&
+        _branchIds.isNotEmpty &&
+        !_branchIds.contains(record.id)) {
+      // An abandoned-fork hit, known OFF the archive's FINAL active
+      // branch (the census pass resolved the true leaf): finish() would
+      // drop it, so it must not consume the result cap — the default
+      // scope has to deliver full branch pages, not page fork records
+      // (the under-delivery + O(n²)-paging bug).
+      return;
+    }
     if (_hits.length >= query.maxHits) {
       // Cap reached BEFORE this record — stop here; the continuation
       // token re-enters AT this record (recordsTotal counts it), so a
@@ -463,17 +658,32 @@ final class _ScanAccumulator {
   }
 
   void _trackTree(SessionRecord record) {
+    // Leaf semantics match the storage's own (`leafIdAfterSessionRecord`):
+    // every appended record becomes the active tip unless an explicit
+    // LeafRecord moves the pointer. The tip must track the WHOLE scan —
+    // pinning it to the first record would walk the branch set from a
+    // stale root and silently drop every branch hit but the root's.
     switch (record) {
       case LeafRecord(:final targetId?):
         if (targetId.isNotEmpty) _activeLeaf = targetId;
       default:
-        break;
+        _activeLeaf = record.id;
     }
     _parentOf[record.id] = record.parentId;
-    if (query.mode == SessionSearchMode.map) {
+    if (query.mode == SessionSearchMode.map &&
+        _ordinalWanted.contains(record.id)) {
       _ordinalOf[record.id] = recordsTotal - 1;
     }
-    if (_activeLeaf.isEmpty) _activeLeaf = record.id;
+  }
+
+  /// The leaf→root chain of [fromId] (tip included), cycle-safe.
+  Set<String> _walkChain(String fromId) {
+    final chain = <String>{};
+    var cursor = fromId;
+    while (cursor.isNotEmpty && chain.add(cursor)) {
+      cursor = _parentOf[cursor] ?? '';
+    }
+    return chain;
   }
 
   /// Decodes one JSONL line and feeds it. Malformed lines (crash-torn
@@ -496,21 +706,12 @@ final class _ScanAccumulator {
     seeRecord(record);
   }
 
-  /// The branch-set walk: from the active leaf to the root via parents.
-  Set<String> _branchIds() {
-    final ids = <String>{};
-    var cursor = _activeLeaf;
-    while (cursor.isNotEmpty && ids.add(cursor)) {
-      cursor = _parentOf[cursor] ?? '';
-    }
-    return ids;
-  }
-
   /// Folds the collected state into the call outcome.
   SessionSearchOutcome finish() {
     final inMapMode = query.mode == SessionSearchMode.map;
     List<CheckpointMapEntry> checkpointEntries = const [];
     var maxDepth = 0;
+    final entries = <CheckpointMapEntry>[];
     if (inMapMode && _checkpoints.isNotEmpty) {
       // Nesting depth over file-order record spans: a checkpoint's span
       // runs from its first to its last covered record; another
@@ -536,8 +737,7 @@ final class _ScanAccumulator {
           if (strictlyContains) depth++;
         }
         maxDepth = depth > maxDepth ? depth : maxDepth;
-        checkpointEntries = [
-          ...checkpointEntries,
+        entries.add(
           CheckpointMapEntry(
             id: checkpoint.id,
             firstRecordId: checkpoint.firstRecordId,
@@ -545,19 +745,31 @@ final class _ScanAccumulator {
             coversCount: checkpoint.coversRecordIds.length,
             depth: depth,
           ),
-        ];
+        );
       }
+      checkpointEntries = entries;
     }
-    final branchIds = _branchIds();
+    // Branch scope, search mode: the census-seeded FINAL branch set is
+    // the truth (hits were already capped against it at collection);
+    // without a census (tree scope, map mode) the walk from the leaf
+    // decides, exactly as before.
+    final branchIds = _branchIds.isNotEmpty
+        ? _branchIds
+        : _walkChain(_activeLeaf);
     final hits = query.scope == SessionSearchScope.branch
-        ? [for (final hit in _hits) if (branchIds.contains(hit.id)) hit]
+        ? [
+            for (final hit in _hits)
+              if (branchIds.contains(hit.id)) hit,
+          ]
         : _hits;
     return SessionSearchOutcome(
       hits: hits,
       recordsExamined: recordsExamined,
       recordsTotal: recordsTotal,
       truncated: _stopped,
-      nextContinuation: _stopped && _stopReason == 'result cap'
+      nextContinuation:
+          _stopped &&
+              (_stopReason == 'result cap' || _stopReason == 'time budget')
           ? recordsTotal - 1
           : null,
       map: inMapMode
@@ -579,11 +791,34 @@ final class _ScanAccumulator {
 
 /// Searches an in-memory record list — the pure core the file scan feeds
 /// (and the unit tests drive directly). Records must be in file order.
+/// Map mode and branch scope run a cheap census pass first: map mode
+/// seeds the ordinal table the checkpoint-depth fold needs (bounded by
+/// checkpoint-referenced ids), branch scope resolves the archive's FINAL
+/// active branch so the result cap counts true branch hits at
+/// collection time (the E4 retention note covers the census's cost).
 SessionSearchOutcome searchRecords(
   List<SessionRecord> records,
   SessionSearchQuery query,
 ) {
-  final accumulator = _ScanAccumulator(query);
+  final needsCensus =
+      query.mode == SessionSearchMode.map ||
+      (query.mode == SessionSearchMode.search &&
+          query.scope == SessionSearchScope.branch);
+  var ordinalWanted = const <String>{};
+  var branchIds = const <String>{};
+  if (needsCensus) {
+    final census = _ScanAccumulator(query, censusOnly: true);
+    for (final record in records) {
+      census.seeRecord(record);
+    }
+    ordinalWanted = census._ordinalWanted;
+    branchIds = census._walkChain(census._activeLeaf);
+  }
+  final accumulator = _ScanAccumulator(
+    query,
+    ordinalWanted: ordinalWanted,
+    branchIds: branchIds,
+  );
   for (final record in records) {
     accumulator.seeRecord(record);
     if (accumulator.stopped) break;
@@ -593,10 +828,13 @@ SessionSearchOutcome searchRecords(
 
 /// Streams one session segment, feeding every decoded record to
 /// [accumulator]. Blocks stream through a bounded carry buffer (a line
-/// may span blocks — the custom-record scanner's technique), memory stays
-/// flat regardless of file size (E4). Malformed lines (crash-torn tails)
-/// are skipped, never fatal.
-Future<void> scanSessionSegment(
+/// may span blocks — the custom-record scanner's technique), so file
+/// CONTENT memory stays flat regardless of file size (E4); the
+/// accumulator's per-record ID bookkeeping is the documented linear cost
+/// (see [_ScanAccumulator]). Malformed lines (crash-torn tails) are
+/// skipped, never fatal. Library-private: an implementation detail of
+/// [searchSessionFile], not public API.
+Future<void> _scanSessionSegment(
   FileSystem fs,
   String path,
   _ScanAccumulator accumulator, {
@@ -663,6 +901,9 @@ Future<void> scanSessionSegment(
 /// `session_search` tool. Streams every segment (rotations included, per
 /// `listSessionSegmentPaths`) under the query's continuation token and a
 /// wall-clock [timeBudget] (E4/E5); never loads the file into memory.
+/// Map mode and branch scope pay one extra read-only census pass first
+/// (structure only — see [searchRecords]): the real pass then keeps its
+/// ordinal table bounded and caps true branch hits with full knowledge.
 Future<SessionSearchOutcome> searchSessionFile(
   FileSystem fs,
   String sessionPath,
@@ -670,13 +911,35 @@ Future<SessionSearchOutcome> searchSessionFile(
   Duration timeBudget = sessionSearchTimeBudget,
   int blockBytes = sessionSearchScanBlockBytes,
 }) async {
+  final deadline = DateTime.now().add(timeBudget);
+  final segments = await listSessionSegmentPaths(fs, sessionPath);
+  final needsCensus =
+      query.mode == SessionSearchMode.map ||
+      (query.mode == SessionSearchMode.search &&
+          query.scope == SessionSearchScope.branch);
+  var ordinalWanted = const <String>{};
+  var branchIds = const <String>{};
+  if (needsCensus) {
+    final census = _ScanAccumulator(
+      query,
+      deadline: deadline,
+      censusOnly: true,
+    );
+    for (final segment in segments) {
+      await _scanSessionSegment(fs, segment, census, blockBytes: blockBytes);
+      if (census.stopped) break;
+    }
+    ordinalWanted = census._ordinalWanted;
+    branchIds = census._walkChain(census._activeLeaf);
+  }
   final accumulator = _ScanAccumulator(
     query,
-    deadline: DateTime.now().add(timeBudget),
+    deadline: deadline,
+    ordinalWanted: ordinalWanted,
+    branchIds: branchIds,
   );
-  final segments = await listSessionSegmentPaths(fs, sessionPath);
   for (final segment in segments) {
-    await scanSessionSegment(fs, segment, accumulator, blockBytes: blockBytes);
+    await _scanSessionSegment(fs, segment, accumulator, blockBytes: blockBytes);
     if (accumulator.stopped) break;
   }
   return accumulator.finish();

@@ -30,40 +30,51 @@ typedef SessionSearchCallback =
 
 /// Renders [outcome] as the tool's text result (search mode): one
 /// pointer line per hit, an honest continuation footer when the scan
-/// stopped early.
+/// stopped early — on EVERY path, including the zero-hit page (a capped
+/// or time-budgeted scan with no hits on this page must never read as
+/// "the archive has no matches"), and the verbatim unavailable reason
+/// when no archive could be searched at all.
 String formatSessionSearchOutcome(SessionSearchOutcome outcome) {
   if (outcome.map != null) return _formatArchiveMap(outcome);
-  final scope = 'the session archive';
-  if (outcome.hits.isEmpty) {
-    return 'no records match (examined ${outcome.recordsExamined} of '
-        '${outcome.recordsTotal} records)';
+  final unavailable = outcome.unavailableReason;
+  if (unavailable.isNotEmpty) {
+    return 'session_search unavailable: $unavailable';
   }
   final lines = <String>[
-    '${outcome.hits.length} hit(s) in $scope '
-        '(examined ${outcome.recordsExamined} of ${outcome.recordsTotal} '
-        'records):',
-    for (final hit in outcome.hits)
-      '- ${hit.id} [${hit.kind}] ${hit.timestamp.toIso8601String()}: '
-          '${hit.preview}',
+    if (outcome.hits.isEmpty)
+      'no records match (examined ${outcome.recordsExamined} of '
+          '${outcome.recordsTotal} records)'
+    else ...[
+      '${outcome.hits.length} hit(s) in the session archive '
+          '(examined ${outcome.recordsExamined} of ${outcome.recordsTotal} '
+          'records):',
+      for (final hit in outcome.hits)
+        '- ${hit.id} [${hit.kind}] ${hit.timestamp.toIso8601String()}: '
+            '${hit.preview}',
+    ],
   ];
-  if (outcome.truncated) {
-    final reason = outcome.truncationReason.isEmpty
-        ? 'scan stopped early'
-        : outcome.truncationReason;
-    final continuation = outcome.nextContinuation;
+  if (outcome.truncated) lines.add(_truncationFooter(outcome));
+  if (outcome.hits.isNotEmpty) {
     lines.add(
-      continuation == null
-          ? 'more records may remain ($reason) — narrow with kinds/before/'
-              'after and search again'
-          : 'more records remain ($reason) — continue with '
-              '{"continuation": $continuation}',
+      'expand what matters with compact_expand {target: <id>} — previews '
+      'are pointers, not content',
     );
   }
-  lines.add(
-    'expand what matters with compact_expand {target: <id>} — previews '
-    'are pointers, not content',
-  );
   return lines.join('\n');
+}
+
+/// The shared stop-early footer: why the scan stopped and how to
+/// continue (token when the stop was clean, narrowing advice otherwise).
+String _truncationFooter(SessionSearchOutcome outcome) {
+  final reason = outcome.truncationReason.isEmpty
+      ? 'scan stopped early'
+      : outcome.truncationReason;
+  final continuation = outcome.nextContinuation;
+  return continuation == null
+      ? 'more records may remain ($reason) — narrow with kinds/before/'
+            'after and search again'
+      : 'more records remain ($reason) — continue with '
+            '{"continuation": $continuation}';
 }
 
 String _formatArchiveMap(SessionSearchOutcome outcome) {
@@ -160,7 +171,8 @@ AgentTool sessionSearchTool({SessionSearchCallback? search}) {
         },
         'regex': {
           'type': 'boolean',
-          'description': 'Match query as a case-insensitive regular '
+          'description':
+              'Match query as a case-insensitive regular '
               'expression (default: literal keyword).',
         },
         'maxHits': {

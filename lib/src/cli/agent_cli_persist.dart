@@ -132,9 +132,7 @@ extension AgentCliPersist on AgentCli {
   /// tail, and a resident-view rehydration would let the next snapshot
   /// silently erase every entry under it (#488 class, review-blocking on
   /// this slice). Rebuilt lazily when the session switches.
-  Future<ObligationsLedgerWriter> _obligationsWriterFor(
-    Session session,
-  ) async {
+  Future<ObligationsLedgerWriter> _obligationsWriterFor(Session session) async {
     final existing = _obligationsWriter;
     if (existing != null && identical(_obligationsWriterSession, session)) {
       return existing;
@@ -147,9 +145,7 @@ extension AgentCliPersist on AgentCli {
 
   /// The latest snapshot payload over the session's full file chain (the
   /// repo's streamed, rotation-aware scan), or an empty ledger.
-  Future<ObligationsLedger> _latestObligationsFromScan(
-    Session session,
-  ) async {
+  Future<ObligationsLedger> _latestObligationsFromScan(Session session) async {
     final repo = _repo;
     if (repo is! JsonlSessionRepo) return const ObligationsLedger([]);
     final records = await repo.readCustomRecordsOfType(
@@ -172,12 +168,18 @@ extension AgentCliPersist on AgentCli {
     final session = _session;
     final repo = _repo;
     if (session == null || repo is! JsonlSessionRepo) {
+      // The honest graceful-null degradation: the archive was NOT
+      // searched (there is nothing to search) — the formatter prints
+      // this verbatim instead of a completed-but-empty scan, which
+      // would read as "no records match" (the dishonest rendering the
+      // rework pass called out).
       return const SessionSearchOutcome(
         hits: [],
         recordsExamined: 0,
         recordsTotal: 0,
         truncated: false,
-        truncationReason: 'no session file',
+        unavailableReason:
+            'no session file backs this host — nothing was searched',
       );
     }
     return repo.searchArchive(await session.getMetadata(), query);
@@ -202,9 +204,7 @@ extension AgentCliPersist on AgentCli {
     }
     final session = _session;
     if (session == null) return 'no session is open — no ledger';
-    final scheduledId = RegExp(r'^scheduled (\S+) for ').firstMatch(
-      resultText,
-    );
+    final scheduledId = RegExp(r'^scheduled (\S+) for ').firstMatch(resultText);
     if (scheduledId == null) {
       return 'schedule_message result did not carry a scheduled id — no '
           'pending-wait entry written';
@@ -326,18 +326,25 @@ extension AgentCliPersist on AgentCli {
   /// `attachToolPhaseLabels` uses, so every earlier hook keeps running.
   /// Only a SUCCESSFUL `schedule_message` writes: the scheduled id comes
   /// from the tool's own result line, the reason from its arguments.
+  /// The outcome is reported on the CLI log when it is NOT a clean
+  /// recording — a silently-dropped ledger note must stay discoverable
+  /// (it used to be constructed and discarded, indistinguishable from
+  /// success).
   void _attachObligationPendingWaits() {
     final priorAfter = _agent.afterToolCall;
     _agent.afterToolCall = (context, cancelToken) async {
       if (!context.isError && context.toolCall.name == 'schedule_message') {
         try {
-          await recordPendingWait(
+          final outcome = await recordPendingWait(
             resultText: context.result.content
                 .whereType<TextContent>()
                 .map((block) => block.text)
                 .join('\n'),
             arguments: context.toolCall.arguments,
           );
+          if (!outcome.startsWith('pending-wait recorded')) {
+            io.writeln('[obligations] pending-wait not recorded: $outcome');
+          }
         } on Object {
           // The schedule itself succeeded; a failed ledger note must
           // never fail the tool call that armed the timer.
