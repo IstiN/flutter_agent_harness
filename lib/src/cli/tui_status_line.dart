@@ -171,6 +171,14 @@ final class StatusLineSnapshot {
   /// brand fade (see [statusLineBrandFadeT]).
   final int? idleChangedAgoMs;
 
+  /// The brand-zone animation frame (gh-1446 AC5): the CURRENT activity
+  /// ring glyph, resolved by the host from the compile-time
+  /// `TuiSymbols.activitySpinner` list — never model text (a model-authored
+  /// string can never become a frame). `null`/idle renders the BLANK frame
+  /// cell so the ` Fa` column is constant in both states; while streaming
+  /// the host passes ring[frame % ring.length] off the live spinner tick.
+  final String? brandFrame;
+
   const StatusLineSnapshot({
     required this.cwd,
     this.homeDir,
@@ -198,6 +206,7 @@ final class StatusLineSnapshot {
     this.hostname,
     this.idle = true,
     this.idleChangedAgoMs,
+    this.brandFrame,
   });
 
   /// Live context pressure as a percent (0–100+); `null` when the window
@@ -1249,10 +1258,25 @@ String formatStatusLineDuration(Duration d) {
 }
 
 LaidSegment? _renderPi(StatusLineSnapshot s, StatusLineSpec spec) {
-  // The brand mark: `>_Fa` with the fade handled at paint time (the
+  // The brand mark (gh-1446 AC5): `>_` + a FIXED 1-cell animation slot +
+  // `Fa`. Idle renders the blank cell (`>_ Fa` — owner-accepted final
+  // state, with the space); while a run is active the SAME cell cycles
+  // the EXISTING activity ring at its current cadence (`>_⠋Fa`) — the
+  // frame glyph arrives resolved in [StatusLineSnapshot.brandFrame] from
+  // the compile-time ring, so the pure engine never reads the symbol
+  // table and a model-authored string can never become a frame. The zone
+  // is exactly 3 cells (`>_<frame>`): a frame swap never reflows `Fa` or
+  // anything right of it, and the blank cell keeps the `Fa` column
+  // constant in both states. The fade is handled at paint time (the
   // painter blends toward the dim endpoint via [statusLineBrandFadeT]).
-  return const LaidSegment('pi', [
+  final frame = s.brandFrame;
+  assert(
+    frame == null || tuiTextWidth(frame) == 1,
+    'brand frame must stay exactly 1 cell (E3)',
+  );
+  return LaidSegment('pi', [
     ('>_', StatusLineRoleKey.brandA),
+    (frame ?? ' ', StatusLineRoleKey.brandA),
     ('Fa', StatusLineRoleKey.brandB),
   ]);
 }
@@ -1490,14 +1514,22 @@ LaidSegment? _renderCacheRead(StatusLineSnapshot s, StatusLineSpec spec) =>
     s.cacheRead <= 0
     ? null
     : LaidSegment('cache_read', [
-        ('⟲${formatTokens(s.cacheRead)}', StatusLineRoleKey.output),
+        (
+          '${FaThemeController.instance.sym('icon.cacheRead')}'
+              '${formatTokens(s.cacheRead)}',
+          StatusLineRoleKey.output,
+        ),
       ]);
 
 LaidSegment? _renderCacheWrite(StatusLineSnapshot s, StatusLineSpec spec) =>
     s.cacheWrite <= 0
     ? null
     : LaidSegment('cache_write', [
-        ('⟳${formatTokens(s.cacheWrite)}', StatusLineRoleKey.output),
+        (
+          '${FaThemeController.instance.sym('icon.cacheWrite')}'
+              '${formatTokens(s.cacheWrite)}',
+          StatusLineRoleKey.output,
+        ),
       ]);
 
 LaidSegment? _renderCacheHit(StatusLineSnapshot s, StatusLineSpec spec) =>
