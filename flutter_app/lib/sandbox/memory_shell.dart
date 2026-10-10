@@ -1953,8 +1953,9 @@ final class MemoryShell implements Shell, BackgroundShell {
         return _error('env: running commands is not supported\n');
       }
     }
-    final names = env.keys.where((n) => n != '?').toList()..sort();
-    return _text('${names.map((n) => '$n=${env[n]}').join('\n')}\n');
+    // gh-1444 AC4: rostered secret vars render as PRESENT/ABSENT lines —
+    // presence is verifiable, values never render.
+    return _text(renderEnvListingWithSecretPresence(env));
   }
 
   _StageResult _export(List<String> args) {

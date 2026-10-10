@@ -972,6 +972,28 @@ void main() {
       );
     });
 
+    // gh-1444 AC5: with NO model timeout argument the honest text comes
+    // from the shell's effective cap (parsed from the timeout error
+    // message) — the old "unknown seconds" lie is gone.
+    test('a shell-default timeout names its real seconds (gh-1444 AC5)', () {
+      shell.result = const Err(
+        ExecutionError(ExecutionErrorCode.timeout, 'timeout: 0:00:30'),
+      );
+      expect(
+        tool.execute({'command': 'find /'}, null, null),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('Command timed out after 30 seconds'),
+              isNot(contains('unknown')),
+            ),
+          ),
+        ),
+      );
+    });
+
     // Review rework (PR #1058): the shell's timeout/abort errors carry the
     // partial capture — the inline bash path must render it so the model
     // sees WHERE a hung call stalled, not just the timeout fact.

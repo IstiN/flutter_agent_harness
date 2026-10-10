@@ -224,6 +224,11 @@ void main() {
         'sockets, tool classes', () {
       final profile = formatSandboxHostProfile(SandboxPlatform.ios);
       expect(profile, contains('Platform: iOS'));
+      // gh-1444 AC6: the network host matrix is documented in the prompt —
+      // codeload is the cheap unblock when `git clone` HTTPS fails.
+      expect(profile, contains('codeload.github.com'));
+      expect(profile, contains('curl -L https://codeload.github.com'));
+      expect(profile, contains('objects.githubusercontent.com'));
       expect(profile, contains('WASI'));
       expect(profile, contains('no raw sockets'));
       expect(profile, contains('no OS processes'));
