@@ -35,6 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           code=$(curl -s -o /dev/null -w '%{http_code}' -I \
+            --retry 3 --retry-all-errors --connect-timeout 15 --max-time 60 \
             https://pub.dev/api/packages/fa_llm || true)
           if [ "$code" = "404" ]; then
             echo "::error::fa_llm does not exist on pub.dev yet."

@@ -390,10 +390,7 @@ void main() {
       // pinned by the explicit-allowlist test below.
       final rules = _pubIgnoreRules();
       expect(rules, isNotEmpty);
-      final negated = rules
-          .where((r) => r.negated)
-          .map((r) => r.body)
-          .toSet();
+      final negated = rules.where((r) => r.negated).map((r) => r.body).toSet();
       var checked = 0;
       for (final f in _stagingFilters()) {
         if (f.include || !f.anchored) continue;
