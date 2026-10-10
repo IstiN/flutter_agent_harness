@@ -65,25 +65,25 @@ final class LedgerEntry {
 
 /// The judge-facing index of visible records.
 final class ContextLedger {
-  const ContextLedger._(this.entries, this._groupByRecordId);
+  ContextLedger._(this.entries, this._groupByRecordId)
+    : _entryBySeq = {for (final entry in entries) entry.seq: entry};
 
   /// Visible projecting records, oldest first.
   final List<LedgerEntry> entries;
 
   final Map<String, Set<String>> _groupByRecordId;
 
+  final Map<int, LedgerEntry> _entryBySeq;
+
   /// The pair-atomic group of [recordId]: an assistant tool-call carrier
   /// plus every result answering its calls (D6 — all or none).
   Set<String> groupOf(String recordId) =>
       _groupByRecordId[recordId] ?? {recordId};
 
-  /// The entry with numeric alias [seq], or `null`.
-  LedgerEntry? entryAtSeq(int seq) {
-    for (final entry in entries) {
-      if (entry.seq == seq) return entry;
-    }
-    return null;
-  }
+  /// The entry with numeric alias [seq], or `null` (issue #1499: a map
+  /// lookup — the linear scan over all entries showed up on judge-pick
+  /// validation over marathon sessions).
+  LedgerEntry? entryAtSeq(int seq) => _entryBySeq[seq];
 
   /// The judge input cap (issue #541): the newest [judgePreviewEntries]
   /// entries render. The judge prompt stays O(bounded) regardless of
@@ -122,73 +122,142 @@ final class ContextLedger {
   }
 }
 
+/// Memoizes the derived ledger scalars of records across
+/// [buildContextLedger] rebuilds (issue #1499).
+///
+/// Every compaction pass rebuilds the ledger over the whole visible path,
+/// and the expensive part of each entry — token estimation, preview
+/// flattening, the synthetic-user scan — scales with the record's CONTENT.
+/// On a marathon session that is history re-processed from scratch on
+/// every pass (the 2.0s mean / 58.8s max profile). The session file is
+/// append-only and record ids are stable, so those scalars never change
+/// for a given id: computing them once per record turns every later
+/// rebuild into O(changed records) plus cheap map hits.
+///
+/// OWNERSHIP: one cache per ledger-rebuilding chain, scoped to ONE
+/// session — a [StructuredCompactor] instance (one compaction run), a
+/// [CompactExpandController] instance (one agent; cleared when the live
+/// session object changes). Never share a cache across sessions and never
+/// make it global: ids are only unique within a session.
+final class LedgerEntryCache {
+  final Map<String, _CachedEntry> _byId = {};
+
+  /// Forgets every memoized record (session switch).
+  void clear() => _byId.clear();
+}
+
+/// The id-keyed scalars a rebuilt [LedgerEntry] needs; the rebuilt entry
+/// carries the CURRENT record instance so identity stays honest.
+final class _CachedEntry {
+  const _CachedEntry({
+    required this.seq,
+    required this.kind,
+    required this.tokens,
+    required this.preview,
+    required this.toolNames,
+  });
+
+  final int seq;
+  final String kind;
+  final int tokens;
+  final String preview;
+  final String toolNames;
+}
+
 /// Builds the ledger over the VISIBLE branch path (post-projection-walk:
 /// hidden and checkpoint-covered records already removed).
+///
+/// [cache] memoizes per-record entry scalars across calls (issue #1499):
+/// pass one cache instance to every rebuild of the same session's ledger.
+/// Omitted — as by every direct caller and test — the build computes each
+/// entry from scratch, byte-identical to the pre-cache shape.
 ContextLedger buildContextLedger({
   required List<SessionRecord> visiblePath,
   required RecordSeqIndex seqs,
+  LedgerEntryCache? cache,
 }) {
   final entries = <LedgerEntry>[];
   for (final record in visiblePath) {
-    final entry = _entryFor(record, seqs);
+    final entry = _entryFor(record, seqs, cache);
     if (entry != null) entries.add(entry);
   }
   return ContextLedger._(entries, _pairGroups(visiblePath));
 }
 
-LedgerEntry? _entryFor(SessionRecord record, RecordSeqIndex seqs) {
+LedgerEntry? _entryFor(
+  SessionRecord record,
+  RecordSeqIndex seqs,
+  LedgerEntryCache? cache,
+) {
   final seq = seqs.seqOf(record.id);
   if (seq == null) return null;
-  switch (record) {
-    case MessageRecord(:final message):
-      return _messageEntry(record, message, seq);
-    case CustomMessageRecord():
-      return LedgerEntry._(
-        seq: seq,
-        recordId: record.id,
-        record: record,
-        kind: 'notice',
-        tokens: estimateTokens(
-          UserMessage(content: record.content, timestamp: record.timestamp),
-        ),
-        preview: _clip(_flattenUser(record.content)),
-        toolNames: '',
-      );
-    case CompactCheckpointRecord ckpt:
-      return LedgerEntry._(
-        seq: seq,
-        recordId: record.id,
-        record: record,
-        kind: 'ckpt',
-        tokens: estimateTokens(UserMessage.text(ckpt.text)),
-        preview: _clip(ckpt.text),
-        toolNames: '',
-      );
-    case CompactionRecord legacy:
-      return LedgerEntry._(
-        seq: seq,
-        recordId: record.id,
-        record: record,
-        kind: 'legacy-ckpt',
-        tokens: estimateTokens(UserMessage.text(legacy.summary)),
-        preview: _clip(legacy.summary),
-        toolNames: '',
-      );
-    case BranchSummaryRecord branch:
-      return LedgerEntry._(
-        seq: seq,
-        recordId: record.id,
-        record: record,
-        kind: 'branch-summary',
-        tokens: branch.summary.isEmpty
-            ? 0
-            : estimateTokens(UserMessage.text(branch.summary)),
-        preview: _clip(branch.summary),
-        toolNames: '',
-      );
-    default:
-      return null; // Non-projecting records have no ledger line.
+  final cached = cache?._byId[record.id];
+  if (cached != null && cached.seq == seq) {
+    // Cache hit: scalars reuse, identity fresh. The seq guard makes the
+    // cache self-correcting should an id ever move in file order.
+    return LedgerEntry._(
+      seq: seq,
+      recordId: record.id,
+      record: record,
+      kind: cached.kind,
+      tokens: cached.tokens,
+      preview: cached.preview,
+      toolNames: cached.toolNames,
+    );
   }
+  final entry = switch (record) {
+    MessageRecord(:final message) => _messageEntry(record, message, seq),
+    CustomMessageRecord() => LedgerEntry._(
+      seq: seq,
+      recordId: record.id,
+      record: record,
+      kind: 'notice',
+      tokens: estimateTokens(
+        UserMessage(content: record.content, timestamp: record.timestamp),
+      ),
+      preview: _clip(_flattenUser(record.content)),
+      toolNames: '',
+    ),
+    CompactCheckpointRecord ckpt => LedgerEntry._(
+      seq: seq,
+      recordId: record.id,
+      record: record,
+      kind: 'ckpt',
+      tokens: estimateTokens(UserMessage.text(ckpt.text)),
+      preview: _clip(ckpt.text),
+      toolNames: '',
+    ),
+    CompactionRecord legacy => LedgerEntry._(
+      seq: seq,
+      recordId: record.id,
+      record: record,
+      kind: 'legacy-ckpt',
+      tokens: estimateTokens(UserMessage.text(legacy.summary)),
+      preview: _clip(legacy.summary),
+      toolNames: '',
+    ),
+    BranchSummaryRecord branch => LedgerEntry._(
+      seq: seq,
+      recordId: record.id,
+      record: record,
+      kind: 'branch-summary',
+      tokens: branch.summary.isEmpty
+          ? 0
+          : estimateTokens(UserMessage.text(branch.summary)),
+      preview: _clip(branch.summary),
+      toolNames: '',
+    ),
+    _ => null, // Non-projecting records have no ledger line.
+  };
+  if (entry == null) return null;
+  cache?._byId[record.id] = _CachedEntry(
+    seq: seq,
+    kind: entry.kind,
+    tokens: entry.tokens,
+    preview: entry.preview,
+    toolNames: entry.toolNames,
+  );
+  return entry;
 }
 
 /// A message-carrying record to its ledger line, or null when the
