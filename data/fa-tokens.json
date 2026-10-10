@@ -973,6 +973,14 @@
       "completion": 74434,
       "total": 210049,
       "model": ""
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-10T09:17:22Z",
+      "prompt": 50207,
+      "completion": 13385,
+      "total": 63592,
+      "model": ""
     }
   ],
   "pr-1468": [
