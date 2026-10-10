@@ -5,8 +5,10 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:app_links/app_links.dart';
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
+import 'auth_deep_link.dart';
 import 'auth_flow.dart';
 
 /// The desktop OAuth loopback receiver (issue #955 iteration 3): binds an
@@ -73,9 +75,27 @@ final class LoopbackOAuthReceiver implements OAuthCallbackReceiver {
   }
 }
 
-/// Binds the loopback receiver (production seam for the auth flow).
-Future<OAuthCallbackReceiver> startOAuthCallbackReceiverImpl() =>
-    LoopbackOAuthReceiver.bind();
+/// Binds the receiver (production seam for the auth flow). Desktop keeps
+/// the RFC 8252 loopback; iOS/Android use the `fah://oauth/network`
+/// deep-link callback (the browser cannot reliably reach an on-device
+/// loopback).
+Future<OAuthCallbackReceiver> startOAuthCallbackReceiverImpl() async {
+  if (Platform.isIOS || Platform.isAndroid) {
+    final appLinks = AppLinks();
+    Uri? initial;
+    try {
+      initial = await appLinks.getInitialLink();
+    } on Object {
+      // Best-effort: the stream listener below is the primary path.
+      initial = null;
+    }
+    return DeepLinkOAuthReceiver.bind(
+      links: appLinks.uriLinkStream,
+      initialLink: initial,
+    );
+  }
+  return LoopbackOAuthReceiver.bind();
+}
 
 /// Opens [authUrl] in the system browser (production seam for the flow).
 Future<void> openAuthUrlImpl(Uri authUrl) async {
