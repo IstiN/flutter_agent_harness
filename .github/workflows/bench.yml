@@ -73,7 +73,8 @@ name: Bench
 # gh-1471 (run 37953576205 lost 14/78 tasks when the z.ai quota died
 # mid-run): the provider stops being a hardcode — every dispatch picks
 # zai glm-5.3-flash (default, byte-identical to today) or kimi-for-coding
-# k3-256k via a dedicated FA_BENCH_KIMI_KEY (never the review factory's
+# (model id kimi-for-coding — the plan's own model name) via a dedicated
+# FA_BENCH_KIMI_KEY (never the review factory's
 # KIMI_REVIEW_KEY — one quota must not serve both), or `custom`: a
 # provider-config JSON validated in the resolve step (https-only baseUrl,
 # no key-like fields — dispatch inputs are visible in run metadata) whose
@@ -218,7 +219,10 @@ jobs:
             kimi-for-coding)
               provider_type=kimi
               base_url='https://api.kimi.com/coding/v1'
-              model='k3-256k'
+              # The model id IS the plan name (owner correction, gh-1471
+              # follow-up): the coding endpoint serves it as
+              # 'kimi-for-coding', not k3-256k.
+              model='kimi-for-coding'
               key_env=FA_KEY_API_KIMI_COM_BENCH
               secret_name=FA_BENCH_KIMI_KEY
               secret_value=$FA_BENCH_KIMI_KEY
@@ -227,7 +231,8 @@ jobs:
               # model, so a catalog drift can never silently truncate.
               provider_config=$(printf '{"baseUrl":"%s","model":"%s","apiKeyEnvVar":"%s","contextWindow":200000,"maxTokens":16384}' \
                 "$base_url" "$model" "$key_env")
-              run_label="kimi-for-coding ($model)"
+              # model == choice by construction — no doubled label.
+              run_label="kimi-for-coding"
               ;;
             custom)
               # gh-1471 D1 / AC 2a: the custom escape hatch — a new
