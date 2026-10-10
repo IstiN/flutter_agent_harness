@@ -13,7 +13,7 @@
 /// path.
 library;
 
-import 'dart:convert';
+import "dart:convert";
 import 'dart:typed_data';
 
 import '../env/execution_env.dart';
@@ -29,6 +29,14 @@ const int defaultChunkRecords = 200;
 /// memory (one image record can be megabytes), so a chunk stops at whichever
 /// cap fills first.
 const int defaultChunkBytes = 8 << 20;
+
+/// Parse-cache capacity (issue #1498): distinct lines remembered per
+/// reader. Bounded so a marathon open cannot grow it without limit.
+const int defaultParseCacheEntries = 4096;
+
+/// Parse-cache raw-line byte budget (issue #1498): the sum of remembered
+/// line lengths stays under this regardless of the entry count.
+const int defaultParseCacheBytes = 32 << 20;
 
 /// One parsed record with the byte range it occupies in the session file.
 ///
@@ -96,13 +104,23 @@ final class SessionChunk {
 /// record is inside, bounded only by the file length.
 final class SessionChunkReader {
   /// Creates a reader over [path]. [startWindowBytes] is the first backward
-  /// read size; it doubles up to the file length as needed.
+  /// read size; it doubles up to the file length as needed. The parse cache
+  /// ([parseCacheEntries] × [parseCacheBytes], issue #1498) remembers
+  /// parsed lines across scans — `0` entries disables it.
   SessionChunkReader({
     required this.fs,
     required this.path,
     this.startWindowBytes = 128 << 10,
     this.parseExecutor,
+    this.parseCacheEntries = defaultParseCacheEntries,
+    this.parseCacheBytes = defaultParseCacheBytes,
   });
+
+  /// Remembered distinct lines (issue #1498).
+  final int parseCacheEntries;
+
+  /// Remembered raw-line bytes across all cached lines (issue #1498).
+  final int parseCacheBytes;
 
   /// The store backing [path].
   final FileSystem fs;
@@ -112,6 +130,102 @@ final class SessionChunkReader {
   /// (web); IO hosts inject the isolate executor (issue #199).
   final SessionParseExecutor? parseExecutor;
   final int startWindowBytes;
+
+  /// Cache marker for a line that failed to parse (torn or foreign):
+  /// the failed probe is remembered too, so re-visited windows skip the
+  /// decode attempt on junk lines as well. Values in [_parseCache] are
+  /// either a [SessionChunkEntry] or this marker — a record instance can
+  /// never collide with it.
+  static const Object _tornLine = 'torn';
+
+  /// A line wider than this is never cached (issue #1498): a handful of
+  /// megabyte-wide image records would flood the byte budget; they re-parse
+  /// instead, amortized by their rarity.
+  static const int _parseCacheMaxLineBytes = 4 << 20;
+
+  /// Parsed lines keyed by the line's (offset, byteLength, shallow) — the
+  /// shallow flag in the key keeps the resume walk's header-only giant
+  /// customs from ever serving a full-fidelity read (and vice versa, where
+  /// a full record would change what the walk observes). Insertion order
+  /// drives the FIFO eviction.
+  final Map<(int, int, bool), Object> _parseCache = {};
+  int _parseCacheBytesUsed = 0;
+
+  /// Last file facts the cache was validated against ([stat] reports the
+  /// transition; growth keeps entries — the append-only contract means
+  /// older lines never change — a shrink or same-size mtime move clears).
+  int _parseCacheStampSize = -1;
+  int _parseCacheStampMtimeMs = -1;
+
+  /// Lines the cache saved from decode+parse (issue #1498 instrumentation,
+  /// the [locatePassCount] precedent): a repeat scan must add misses, not
+  /// parse work.
+  int get parseCacheHitCount => _parseCacheHits;
+  int get parseCacheMissCount => _parseCacheMisses;
+  int get parseCacheEntryCount => _parseCache.length;
+  int _parseCacheHits = 0;
+  int _parseCacheMisses = 0;
+
+  /// Cache probe for one raw line: `(hit, entry)` — a hit with a null
+  /// entry is a known-torn line. Counter-free: the hit/miss counters
+  /// belong to the scan paths, where a miss means decode+parse work
+  /// actually done (a probed-but-never-reached line is not a parse).
+  (bool, SessionChunkEntry?) _parseCacheLookup(
+    int offset,
+    int bytes,
+    bool shallow,
+  ) {
+    final value = _parseCache[(offset, bytes, shallow)];
+    if (value == null) return (false, null);
+    _parseCacheHits++;
+    return (true, value == _tornLine ? null : value as SessionChunkEntry);
+  }
+
+  void _parseCacheStore(SessionChunkEntry entry, bool shallow) {
+    if (parseCacheEntries <= 0 || entry.bytes > _parseCacheMaxLineBytes) {
+      return;
+    }
+    _parseCache[(entry.offset, entry.bytes, shallow)] = entry;
+    _parseCacheBytesUsed += entry.bytes;
+    _evictParseCache();
+  }
+
+  void _parseCacheStoreTorn(int offset, int bytes, bool shallow) {
+    if (parseCacheEntries <= 0 || bytes > _parseCacheMaxLineBytes) return;
+    _parseCache[(offset, bytes, shallow)] = _tornLine;
+    _parseCacheBytesUsed += bytes;
+    _evictParseCache();
+  }
+
+  void _evictParseCache() {
+    while (_parseCache.length > parseCacheEntries ||
+        (parseCacheBytes > 0 && _parseCacheBytesUsed > parseCacheBytes)) {
+      if (_parseCache.isEmpty) {
+        _parseCacheBytesUsed = 0;
+        return;
+      }
+      final first = _parseCache.keys.first;
+      _parseCacheBytesUsed -= first.$2;
+      _parseCache.remove(first);
+    }
+  }
+
+  /// Re-validates the cache against the observed file facts: growth keeps
+  /// entries (append-only — the same signal [readForward] resumes from);
+  /// a SHRINK (truncation or segment rotation) or a same-size mtime move
+  /// (the rewrite signal `WindowedSessionStorage.ingestAppended` uses)
+  /// drops everything — line offsets into the old bytes are garbage then.
+  void _noteParseCacheStamp(int size, int mtimeMs) {
+    if (_parseCacheStampSize >= 0 &&
+        (size < _parseCacheStampSize ||
+            (size == _parseCacheStampSize &&
+                mtimeMs != _parseCacheStampMtimeMs))) {
+      _parseCache.clear();
+      _parseCacheBytesUsed = 0;
+    }
+    _parseCacheStampSize = size;
+    _parseCacheStampMtimeMs = mtimeMs;
+  }
 
   /// Whether the backing filesystem supports byte-range reads. Hosts without
   /// it keep the whole-file load path.
@@ -669,6 +783,7 @@ final class SessionChunkReader {
     if (result.isErr) return null;
     final info = result.valueOrNull!;
     if (info.kind != FileKind.file) return null;
+    _noteParseCacheStamp(info.size, info.mtimeMs);
     return (size: info.size, mtimeMs: info.mtimeMs);
   }
 
@@ -871,84 +986,190 @@ final class SessionChunkReader {
   /// the newest-side walk order — and therefore the caps' early break — is
   /// unchanged. One batch may parse a few records past the cap break; the
   /// overshoot is bounded by a single transfer.
+  ///
+  /// Issue #1498: every line resolves against the parse cache first, so a
+  /// re-visited window (repeat jump, doubling-pass overlap, scroll
+  /// bounce) splices its records instead of re-decoding; a batch parses
+  /// only when the walk reaches one of its uncached lines, which keeps
+  /// the caps' parse volume identical to the uncached walk.
   Future<List<SessionChunkEntry>> _collectNewest(
     List<(int offset, Uint8List bytes)> lines, {
     required int maxRecords,
     required int maxBytes,
   }) async {
-    final decoded = _decodeLines(lines);
-    if (decoded.isEmpty) return const [];
-    final batches = splitSessionParseBatches(
-      [for (final (_, text, _) in decoded) text],
-      filePath: path,
-      firstLineNumber: decoded.first.$1,
-    );
+    if (lines.isEmpty) return const [];
+    final resolved = List<SessionChunkEntry?>.filled(lines.length, null);
+    final torn = List<bool>.filled(lines.length, false);
+    final missIdx = <int>[];
+    for (var i = 0; i < lines.length; i++) {
+      final (offset, raw) = lines[i];
+      if (raw.isEmpty) {
+        torn[i] = true;
+        continue;
+      }
+      final (hit, entry) = _parseCacheLookup(offset, raw.length, false);
+      if (hit) {
+        torn[i] = entry == null;
+        resolved[i] = entry;
+      } else {
+        missIdx.add(i);
+      }
+    } // The misses, decoded once (offset → decoded slot); batch parsing
+    // stays lazy — a batch parses when the walk below first reaches one
+    // of its lines, so the caps stop it at the same volume as before.
+    final decoded = _decodeLines([for (final i in missIdx) lines[i]]);
+    final decodedJByOffset = <int, int>{
+      for (var j = 0; j < decoded.length; j++) decoded[j].$1: j,
+    };
+    final missJByLine = List<int>.filled(lines.length, -1);
+    for (final i in missIdx) {
+      final j = decodedJByOffset[lines[i].$1];
+      if (j != null) missJByLine[i] = j;
+    }
+    final base = decoded.isEmpty ? 0 : decoded.first.$1;
+    final batches = decoded.isEmpty
+        ? const <SessionParseBatch>[]
+        : splitSessionParseBatches(
+            [for (final (_, text, _) in decoded) text],
+            filePath: path,
+            firstLineNumber: base,
+          );
+    // Line → (batch, position in batch). Batches partition [decoded] in
+    // order, so a decoded slot maps to exactly one (batch, pos).
+    final batchOfMiss = List<int>.filled(decoded.length, -1);
+    final posInBatch = List<int>.filled(decoded.length, -1);
+    for (var b = 0; b < batches.length; b++) {
+      final start = batches[b].firstLineNumber - base;
+      for (var p = 0; p < batches[b].lines.length; p++) {
+        batchOfMiss[start + p] = b;
+        posInBatch[start + p] = p;
+      }
+    }
+    final batchResults = List<SessionParseResult?>.filled(batches.length, null);
+    Future<SessionParseResult> parseBatch(int b) async {
+      final existing = batchResults[b];
+      if (existing != null) return existing;
+      final result = parseExecutor == null
+          ? parseSessionEntryLinesSync(batches[b])
+          : await parseExecutor!.parse(batches[b]);
+      return batchResults[b] = result;
+    }
+
     final picked = <SessionChunkEntry>[];
     var totalBytes = 0;
-    for (var b = batches.length - 1; b >= 0; b--) {
-      final batch = batches[b];
-      // firstLineNumber was the first decoded offset; the delta recovers
-      // this batch's start index within [decoded].
-      final base = batch.firstLineNumber - decoded.first.$1;
-      final result = parseExecutor == null
-          ? parseSessionEntryLinesSync(batch)
-          : await parseExecutor!.parse(batch);
-      for (var i = result.records.length - 1; i >= 0; i--) {
-        if (picked.length >= maxRecords) {
-          return picked.reversed.toList(growable: false);
+    for (var i = lines.length - 1; i >= 0; i--) {
+      if (picked.length >= maxRecords) break;
+      if (maxBytes >= 0 && picked.isNotEmpty && totalBytes >= maxBytes) break;
+      if (torn[i]) continue;
+      var entry = resolved[i];
+      if (entry == null) {
+        // A miss that costs work: this is the only place a line turns
+        // into decode+parse (the probe above is counter-free).
+        _parseCacheMisses++;
+        final j = missJByLine[i];
+        if (j < 0) {
+          // Undecodable bytes: remember the failed decode too, so a
+          // re-visited window skips the attempt.
+          torn[i] = true;
+          _parseCacheStoreTorn(lines[i].$1, lines[i].$2.length, false);
+          continue;
         }
-        if (maxBytes >= 0 && picked.isNotEmpty && totalBytes >= maxBytes) {
-          return picked.reversed.toList(growable: false);
+        final record = (await parseBatch(
+          batchOfMiss[j],
+        )).records[posInBatch[j]];
+        final (offset, _, weight) = decoded[j];
+        if (record == null) {
+          torn[i] = true;
+          _parseCacheStoreTorn(offset, weight, false);
+          continue;
         }
-        final record = result.records[i];
-        if (record == null) continue;
-        final (offset, _, weight) = decoded[base + i];
-        picked.add(
-          SessionChunkEntry(offset: offset, bytes: weight, record: record),
+        entry = SessionChunkEntry(
+          offset: offset,
+          bytes: weight,
+          record: record,
         );
-        totalBytes += weight + 1;
+        resolved[i] = entry;
+        _parseCacheStore(entry, false);
       }
+      picked.add(entry);
+      totalBytes += entry.bytes + 1;
     }
     return picked.reversed.toList(growable: false);
   }
 
   /// Parses lines oldest-first through the executor, skipping torn ones.
+  ///
+  /// Issue #1498: cached lines splice from the parse cache; only the
+  /// misses decode + parse, and every fresh parse result is stored back —
+  /// a re-read window pays for its new lines only.
   Future<List<SessionChunkEntry>> _parseAllLines(
     List<(int offset, Uint8List bytes)> lines, {
     bool shallowGiantCustoms = false,
   }) async {
-    final decoded = _decodeLines(
-      lines,
-      shallowGiantCustoms: shallowGiantCustoms,
-    );
-    if (decoded.isEmpty) return const [];
-    final parsed = await parseSessionLines(
-      [
-        for (final (_, text, _) in decoded)
-          // Byte-level truncation in _decodeLines handles the canonical
-          // shape; this string-level pass catches any line the byte twin
-          // declined (defense in depth, cheap on short lines).
-          if (shallowGiantCustoms &&
-              text.length >= shallowCustomRecordThreshold &&
-              text.startsWith('{"type":"custom"'))
-            shallowCustomHeader(text) ?? text
-          else
-            text,
-      ],
-      filePath: path,
-      firstLineNumber: decoded.first.$1,
-      executor: parseExecutor,
-      shallowGiantCustoms: shallowGiantCustoms,
-    );
-    return [
-      for (var i = 0; i < parsed.length; i++)
-        if (parsed[i] != null)
-          SessionChunkEntry(
-            offset: decoded[i].$1,
-            bytes: decoded[i].$3,
-            record: parsed[i]!,
-          ),
-    ];
+    final results = List<SessionChunkEntry?>.filled(lines.length, null);
+    final missIdx = <int>[];
+    for (var i = 0; i < lines.length; i++) {
+      final (offset, raw) = lines[i];
+      if (raw.isEmpty) continue;
+      final (hit, entry) = _parseCacheLookup(
+        offset,
+        raw.length,
+        shallowGiantCustoms,
+      );
+      if (hit) {
+        results[i] = entry;
+      } else {
+        missIdx.add(i);
+      }
+    }
+    // Full-parse semantics: every miss below is decoded + parsed now.
+    _parseCacheMisses += missIdx.length;
+    if (missIdx.isNotEmpty) {
+      final decoded = _decodeLines([
+        for (final i in missIdx) lines[i],
+      ], shallowGiantCustoms: shallowGiantCustoms);
+      if (decoded.isNotEmpty) {
+        final parsed = await parseSessionLines(
+          [
+            for (final (_, text, _) in decoded)
+              // Byte-level truncation in _decodeLines handles the canonical
+              // shape; this string-level pass catches any line the byte twin
+              // declined (defense in depth, cheap on short lines).
+              if (shallowGiantCustoms &&
+                  text.length >= shallowCustomRecordThreshold &&
+                  text.startsWith('{"type":"custom"'))
+                shallowCustomHeader(text) ?? text
+              else
+                text,
+          ],
+          filePath: path,
+          firstLineNumber: decoded.first.$1,
+          executor: parseExecutor,
+          shallowGiantCustoms: shallowGiantCustoms,
+        );
+        final decodedOffsets = {for (final (offset, _, _) in decoded) offset};
+        final lineIdxByOffset = <int, int>{
+          for (final i in missIdx)
+            if (decodedOffsets.contains(lines[i].$1)) lines[i].$1: i,
+        };
+        for (var i = 0; i < parsed.length; i++) {
+          final record = parsed[i];
+          final (offset, _, weight) = decoded[i];
+          if (record == null) {
+            _parseCacheStoreTorn(offset, weight, shallowGiantCustoms);
+            continue;
+          }
+          final entry = SessionChunkEntry(
+            offset: offset,
+            bytes: weight,
+            record: record,
+          );
+          results[lineIdxByOffset[offset]!] = entry;
+          _parseCacheStore(entry, shallowGiantCustoms);
+        }
+      }
+    }
+    return [for (final entry in results) ?entry];
   }
 
   /// Strict-UTF8 decodes candidate lines, dropping empty or undecodable
