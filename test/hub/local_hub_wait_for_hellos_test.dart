@@ -120,5 +120,37 @@ void main() {
       await hub.waitForHellosUnderLoad(0, ceiling: const Duration(minutes: 5));
       expect(sw.elapsed, lessThan(const Duration(seconds: 1)));
     });
+
+    // PR #1520 review: a zero/negative chunk hands waitForHellos a
+    // non-positive timeout, fires TimeoutException immediately, and the
+    // poll loop hot-spins until the ceiling (a burned CI core). The
+    // guard rejects the call outright.
+    test('asserts when chunk is zero or negative', () {
+      final hub = LocalHub(port: 0);
+      expect(
+        () => hub.waitForHellosUnderLoad(1, chunk: Duration.zero),
+        throwsA(isA<AssertionError>()),
+      );
+      expect(
+        () =>
+            hub.waitForHellosUnderLoad(1, chunk: const Duration(seconds: -1)),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('asserts when ceiling is zero or negative', () {
+      final hub = LocalHub(port: 0);
+      expect(
+        () => hub.waitForHellosUnderLoad(1, ceiling: Duration.zero),
+        throwsA(isA<AssertionError>()),
+      );
+      expect(
+        () => hub.waitForHellosUnderLoad(
+          1,
+          ceiling: const Duration(seconds: -1),
+        ),
+        throwsA(isA<AssertionError>()),
+      );
+    });
   });
 }

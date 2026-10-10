@@ -91,5 +91,80 @@ if $PROGRAM_NAME == __FILE__
   raise "FAIL: REJECTED must be submittable, got #{d.inspect}" unless d["action"] == "submit"
   ok("REJECTED state stays resubmittable")
 
+  # gh-1519 rework (review thread, PR #1520): the pre-flight's bounded
+  # read-side retry must cover BOTH failure arms — a nil find (read lag)
+  # AND a raised call (transient ASC error, the macOS preflight probe's
+  # failure class). log/sleep_fn are injected so this matrix runs with
+  # no fastlane and no real sleeps.
+  logs = []
+  slept = []
+  log = ->(msg) { logs << msg }
+  no_sleep = ->(secs) { slept << secs }
+
+  # Arm 1 — nil find (read lag): retries until the version becomes visible.
+  calls = 0
+  found = AppstorePreflight.with_visibility_retries(attempts: 3, delay: 20, log: log, sleep_fn: no_sleep) do
+    calls += 1
+    calls < 3 ? nil : "1.2.3"
+  end
+  raise "FAIL: nil-find arm must retry to visibility, got #{found.inspect} in #{calls} calls" unless found == "1.2.3" && calls == 3
+  raise "FAIL: must sleep between retries, got #{slept.inspect}" unless slept == [20, 20]
+  ok("nil find (read lag) → retries until visible (3 × call, 2 × sleep)")
+
+  # Arm 2 — raised call (transient ASC error): retried, not instant-fail.
+  calls = 0
+  logs.clear
+  slept.clear
+  found = AppstorePreflight.with_visibility_retries(attempts: 3, delay: 20, log: log, sleep_fn: no_sleep) do
+    calls += 1
+    raise "Server error got 500" if calls == 1
+    "1.2.3"
+  end
+  raise "FAIL: raised arm must retry to visibility, got #{found.inspect} in #{calls} calls" unless found == "1.2.3" && calls == 2
+  raise "FAIL: the raise must be logged, got #{logs.inspect}" unless logs.any? { |m| m.include?("raised") && m.include?("attempt 1/3") }
+  ok("raised call (transient ASC 500) → retried, not instant-fail")
+
+  # Arm 2 boundary — a raise on the FINAL attempt propagates (a
+  # persistent API error is not a visibility miss).
+  calls = 0
+  begin
+    AppstorePreflight.with_visibility_retries(attempts: 3, delay: 20, log: log, sleep_fn: no_sleep) do
+      calls += 1
+      raise "persistent outage" if calls == 3
+      nil
+    end
+    raise "FAIL: final-attempt raise must propagate"
+  rescue RuntimeError => e
+    raise "FAIL: must be the original error, got #{e.message.inspect}" unless e.message == "persistent outage"
+  end
+  raise "FAIL: must have attempted exactly 3 times, got #{calls}" unless calls == 3
+  ok("raise on the final attempt propagates the original error")
+
+  # Exhaustion — never visible: bounded attempts, final 'still not
+  # visible' message (the genuine dead-end the pre-flight must report).
+  calls = 0
+  logs.clear
+  slept.clear
+  found = AppstorePreflight.with_visibility_retries(attempts: 3, delay: 20, log: log, sleep_fn: no_sleep) do
+    calls += 1
+    nil
+  end
+  raise "FAIL: exhaustion must return nil, got #{found.inspect}" unless found.nil?
+  raise "FAIL: must stop at the attempt bound, got #{calls}" unless calls == 3
+  raise "FAIL: exhaustion must be logged, got #{logs.inspect}" unless logs.last.to_s.include?("still not visible after 3 attempts")
+  ok("never visible → nil after 3 attempts with a final exhaustion log")
+
+  # Fast path — visible on the first read: no sleeps, no noise.
+  calls = 0
+  logs.clear
+  slept.clear
+  found = AppstorePreflight.with_visibility_retries(attempts: 3, delay: 20, log: log, sleep_fn: no_sleep) do
+    calls += 1
+    "1.2.3"
+  end
+  raise "FAIL: fast path must return immediately, got #{found.inspect} in #{calls} calls" unless found == "1.2.3" && calls == 1
+  raise "FAIL: fast path must not sleep or log" unless slept.empty? && logs.empty?
+  ok("visible on first read → immediate, no sleeps, no logs")
+
   puts "appstore_preflight: #{$checks} checks OK"
 end

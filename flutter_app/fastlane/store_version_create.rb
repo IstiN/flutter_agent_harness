@@ -25,4 +25,15 @@ module StoreVersionCreate
   def self.create_attributes(platform:, version:)
     { platform: platform, versionString: version }
   end
+
+  # gh-1519 rework (review thread, PR #1520): ASC read lag can hide a
+  # version a PREVIOUS run already created — needs_create? then answers
+  # true and the create POST collides with the existing record. Apple's
+  # rejection of that duplicate ("already exists" / "cannot create a new
+  # version") is idempotency, not failure: the Fastfile re-reads once and
+  # no-ops when the version now exists. A genuine error (500, validation)
+  # does NOT match and must still raise.
+  def self.create_conflict?(message:)
+    message.match?(/already exist|cannot create a new version/i)
+  end
 end

@@ -55,5 +55,26 @@ if $PROGRAM_NAME == __FILE__
     unless mac_attrs == { platform: "MAC_OS", versionString: "1.0.548" }
   ok("create_attributes → {platform, versionString} for IOS and MAC_OS")
 
+  # gh-1519 rework (review thread, PR #1520): ASC read lag can hide a
+  # version a previous run created, so needs_create? answers true and the
+  # create POST collides with the existing record. A conflict is
+  # idempotency, not failure — the Fastfile re-reads once and no-ops. A
+  # genuine error (500, validation) must still raise.
+  raise "FAIL: 'already exists' rejection must be a conflict, got #{StoreVersionCreate.create_conflict?(message: "The provided entity includes an entity that already exists").inspect}" \
+    unless StoreVersionCreate.create_conflict?(message: "The provided entity includes an entity that already exists")
+  ok("Apple 'already exists' rejection → conflict (idempotent no-op)")
+
+  raise "FAIL: 'cannot create a new version' must be a conflict" \
+    unless StoreVersionCreate.create_conflict?(message: "cannot create a new version")
+  raise "FAIL: 'You cannot create a new version' must be a conflict" \
+    unless StoreVersionCreate.create_conflict?(message: "You cannot create a new version")
+  ok("'cannot create a new version' rejections (both phrasings) → conflict")
+
+  raise "FAIL: an Apple 500 is NOT a conflict, got true" \
+    if StoreVersionCreate.create_conflict?(message: "Server error got 500")
+  raise "FAIL: a validation error is NOT a conflict, got true" \
+    if StoreVersionCreate.create_conflict?(message: "The request cannot be fulfilled because of a validation error")
+  ok("genuine errors (500, validation) → NOT a conflict, still raise")
+
   puts "store_version_create: #{$checks} checks OK"
 end
