@@ -187,6 +187,9 @@ jobs:
       # line masks its base64 form, the transport fa_agent.py uses into
       # the container). An unmapped provider value fails hard — never a
       # silent fallthrough to the zai default.
+      # gh-1503: bench-harbor.yml carries a byte-consistent copy of this
+      # step's run block (same inputs, same outputs) — keep both in sync;
+      # the cross-reference comment in both files is the sync contract.
       - name: Resolve provider
         id: provider
         env:
