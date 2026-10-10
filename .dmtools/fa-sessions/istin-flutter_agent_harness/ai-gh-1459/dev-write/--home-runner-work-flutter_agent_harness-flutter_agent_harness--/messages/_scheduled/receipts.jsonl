@@ -1,0 +1,1 @@
+{"ts":"2026-10-10T13:27:48.039621Z","event":"scheduled","id":"1791638868039064_0000_1dyx3db","dueMs":1791640368039,"to":"main","text":"Follow-up: check background job sh-40-hn2zh2r6ea54hyja (full `dart test --exclude-tags integration` run for the pr-1463 rework). If it finished, append the result to outputs/response.md; if it hung (n"}
