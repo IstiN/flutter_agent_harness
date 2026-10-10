@@ -4870,4 +4870,10 @@
 
 - ci(quarantine): skip header_badge_pty_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1469) (#1470)
 
+## 1.0.546
+
+- chore(factory): flip engine pin to agents-rel-20261009-181034 (206a8c62) (#1474)
+- gh-1477 [BUG] build-mobile Derive version: fetch-depth:0 checkout outgrew its own 10-min timeout — daily leg cancelled mid-fetch (time bomb, grows with every tag) (#1482)
+- gh-1444 [GOAL] iOS sandbox ergonomics: skills resolve, networks fail loudly, secrets prove presence, timeouts tell the truth (#1453)
+
 ## Unreleased
