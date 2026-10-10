@@ -2587,14 +2587,18 @@ ToolExecutionResult _errorToolResult(Object message, {String? toolName}) {
   // stuck-call supervisor, a tool's throwIfCancelled) — not a tool failure
   // and not a harness defect. It must not wear the "uncaught exception
   // inside the harness tool implementation" hint: that told the model its
-  // bash tool was broken and to route around it. The cancel reason (when
-  // present — e.g. the run-idle watchdog's summary) stays on the record.
+  // bash tool was broken and to route around it. The wording says the
+  // call was cancelled without claiming the tool never started — a cancel
+  // can land mid-execution, after a partial run (gh-1455 review). The
+  // cancel reason (when present — e.g. the run-idle watchdog's summary)
+  // stays on the record.
   if (message is CancelledException) {
     final reason = message.reason;
     return ToolExecutionResult(
       content: [
         TextContent(
-          text: 'Tool error ($name): run was aborted — tool not started'
+          text:
+              'Tool error ($name): run was aborted — call cancelled'
               '${reason == null ? '' : ' (cancel reason: $reason)'}',
         ),
       ],

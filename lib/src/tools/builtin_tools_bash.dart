@@ -529,7 +529,18 @@ Future<ToolExecutionResult> _backgroundHandbackResult(
     if (output.endsWith('\n')) {
       output = output.substring(0, output.length - 1);
     }
-    throw StateError(_appendStatus(output, 'Command aborted'));
+    // gh-1455 review: the supervisor targets hung/stuck commands — the
+    // most log-heavy case there is — so this error must carry the same
+    // shaping as the settled inline path: tail-truncated to the tool
+    // budget (a multi-MB log never lands in the model's context on
+    // every retry attempt) with the rewrite notice prepended. The
+    // pre-gh-1455 token-kill reached this text via _settledInlineResult.
+    throw StateError(
+      _appendStatus(
+        _shapeInlineJobLog(output, rewriteNotice: rewriteNotice),
+        'Command aborted',
+      ),
+    );
   }
   // gh-1455: the supervisor cancels the CALL token (StuckCallFollowUp)
   // while steering cancels the phase yield — a cancel from either means
@@ -549,6 +560,23 @@ Future<ToolExecutionResult> _backgroundHandbackResult(
   );
 }
 
+/// Shapes a job log for an inline tool result exactly like the classic
+/// foreground path: tail-truncated to the tool budget, with the rewrite
+/// notice prepended. Issue #1408 AC3: the notice rides AFTER truncation —
+/// `_truncateTail` keeps the TAIL, so a head-prefixed notice is cut
+/// exactly when the output is long enough to truncate, silently defeating
+/// the "the agent sees the rewrite" contract.
+String _shapeInlineJobLog(String rawOutput, {String? rewriteNotice}) {
+  final truncation = _truncateTail(rawOutput);
+  var output = !truncation.truncated
+      ? rawOutput
+      : '${truncation.content}\n[Showing lines '
+            '${truncation.totalLines - truncation.outputLines + 1}-'
+            '${truncation.totalLines} of ${truncation.totalLines}.]';
+  if (rewriteNotice != null) output = '$rewriteNotice\n$output';
+  return output;
+}
+
 /// The settled-inline branch of [_awaitJobOutcome]: report exactly like
 /// the synchronous path and suppress the registry's settle notification
 /// (the result is already here).
@@ -565,18 +593,11 @@ Future<ToolExecutionResult> _settledInlineResult(
   if (rawOutput.endsWith('\n')) {
     rawOutput = rawOutput.substring(0, rawOutput.length - 1);
   }
-  // Issue #1408 AC3 (review 5456649624): the notice rides AFTER
-  // tail-truncation — _truncateTail keeps the TAIL, so a head-prefixed
-  // notice is cut exactly when the output is long enough to truncate,
-  // silently defeating the "the agent sees the rewrite" contract.
-  final truncation = _truncateTail(rawOutput);
-  var output = !truncation.truncated
-      ? rawOutput
-      : '${truncation.content}\n\n[Showing lines '
-            '${truncation.totalLines - truncation.outputLines + 1}-'
-            '${truncation.totalLines} of ${truncation.totalLines}.]';
-  if (rewriteNotice != null) output = '$rewriteNotice\n$output';
-  return _settledOutcome(entry, output, timeoutArg: timeoutArg);
+  return _settledOutcome(
+    entry,
+    _shapeInlineJobLog(rawOutput, rewriteNotice: rewriteNotice),
+    timeoutArg: timeoutArg,
+  );
 }
 
 /// The settled-job verdict: timeout / cancel / non-zero exit all throw the

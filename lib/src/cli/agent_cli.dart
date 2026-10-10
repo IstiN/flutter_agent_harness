@@ -1889,6 +1889,15 @@ class AgentCli {
       // ceiling. Jobs own their lifecycle: they keep running, and the
       // honest detach summary says so.
       if (terminalStopReason == StopReason.aborted) {
+        // gh-1455 review: an explicit --wait-for-jobs is downgraded by
+        // the abort fast-exit — say so on the record instead of
+        // silently skipping the opt-in.
+        if (waitForJobs) {
+          io.writeln(
+            'aborted: skipping --wait-for-jobs (run shutdown) — '
+            'background jobs keep running',
+          );
+        }
         await _waiting.printHeadlessDetachSummary();
       } else {
         await _awaitHeadlessBackgroundJobs();

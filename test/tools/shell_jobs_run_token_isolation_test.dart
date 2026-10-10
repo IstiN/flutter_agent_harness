@@ -132,83 +132,87 @@ void main() {
     expect(entry.stopReason, 'stopped');
   });
 
-  test('a supervisor cancel-retry on a log-heavy hung command tail-truncates '
-      'the thrown log and keeps the rewrite notice (review, gh-1455)',
-      () async {
-    final runTokenSource = CancelTokenSource();
-    final yieldSource = CancelTokenSource();
-    final tool = shellTool(env, jobs: registry);
-    // A GitHub-token shape forces a command rewrite (so the rewrite
-    // notice must ride on the supervisor-abort error); the loop
-    // accumulates a log far beyond the 50 KiB tool budget before the
-    // command parks on sleep — exactly the hung, log-heavy case the
-    // stuck-call supervisor targets.
-    final token = 'ghp_${'A' * 36}';
-    final command = 'export GH_TOKEN=$token; '
-        'i=0; while [ \$i -lt 4000 ]; do echo "line-\$i-padding"; '
-        'i=\$((i+1)); done; sleep 60';
-    final resultFuture = runZoned(
-      () => tool.execute({'command': command}, runTokenSource.token, null),
-      zoneValues: {yieldTokenZoneKey: yieldSource.token},
-    );
-    final entry = await waitForJob();
-    expect(entry.isRunning, isTrue);
+  test(
+    'a supervisor cancel-retry on a log-heavy hung command tail-truncates '
+    'the thrown log and keeps the rewrite notice (review, gh-1455)',
+    () async {
+      final runTokenSource = CancelTokenSource();
+      final yieldSource = CancelTokenSource();
+      final tool = shellTool(env, jobs: registry);
+      // A GitHub-token shape forces a command rewrite (so the rewrite
+      // notice must ride on the supervisor-abort error); the loop
+      // accumulates a log far beyond the 50 KiB tool budget before the
+      // command parks on sleep — exactly the hung, log-heavy case the
+      // stuck-call supervisor targets. The token is quoted so the
+      // redacted command stays valid sh.
+      final token = 'ghp_${'A' * 36}';
+      final command =
+          'export GH_TOKEN="$token"; '
+          'i=0; while [ \$i -lt 4000 ]; do echo "line-\$i-padding"; '
+          'i=\$((i+1)); done; sleep 60';
+      final resultFuture = runZoned(
+        () => tool.execute({'command': command}, runTokenSource.token, null),
+        zoneValues: {yieldTokenZoneKey: yieldSource.token},
+      );
+      final entry = await waitForJob();
+      expect(entry.isRunning, isTrue);
 
-    // Let the log grow past the tool budget before the supervisor fires.
-    final logFile = File(entry.logPath);
-    final deadline = DateTime.now().add(const Duration(seconds: 15));
-    while (!logFile.existsSync() || logFile.lengthSync() < 60 * 1024) {
-      if (DateTime.now().isAfter(deadline)) {
-        fail('job log never reached the tool budget');
+      // Let the log grow past the tool budget before the supervisor fires.
+      final logFile = File(entry.logPath);
+      final deadline = DateTime.now().add(const Duration(seconds: 15));
+      while (!logFile.existsSync() || logFile.lengthSync() < 60 * 1024) {
+        if (DateTime.now().isAfter(deadline)) {
+          fail('job log never reached the tool budget');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 10));
       }
-      await Future<void>.delayed(const Duration(milliseconds: 10));
-    }
 
-    runTokenSource.cancel(const StuckCallFollowUp('cancel_retry: stuck'));
-    Object? error;
-    try {
-      await resultFuture;
-    } on StateError catch (e) {
-      error = e;
-    }
-    expect(
-      error,
-      isA<StateError>(),
-      reason: 'the supervisor retry must still fail the call',
-    );
-    final message = (error! as StateError).message!;
-    expect(message, contains('Command aborted'));
-    // gh-1455 review: the whole log must NOT be thrown into the model's
-    // context — the supervisor-abort error carries the same tail-
-    // truncation shaping as the settled inline path.
-    expect(message, contains('[Showing lines'));
-    expect(
-      message,
-      isNot(contains('line-0-')),
-      reason: 'the head of the log is cut',
-    );
-    expect(
-      message,
-      contains('line-3999-'),
-      reason: 'the tail of the log survives',
-    );
-    expect(
-      message.length,
-      lessThan(200 * 1024),
-      reason: 'the thrown message stays inside the tool budget',
-    );
-    // The rewrite notice ("secret-shaped value" prefix) is dropped by the
-    // untruncated branch — it must ride here exactly like on the settled
-    // path.
-    expect(message, contains('secret-shaped value'));
+      runTokenSource.cancel(const StuckCallFollowUp('cancel_retry: stuck'));
+      Object? error;
+      try {
+        await resultFuture;
+      } on StateError catch (e) {
+        error = e;
+      }
+      expect(
+        error,
+        isA<StateError>(),
+        reason: 'the supervisor retry must still fail the call',
+      );
+      final message = (error as StateError).message;
+      expect(message, contains('Command aborted'));
+      // gh-1455 review: the whole log must NOT be thrown into the model's
+      // context — the supervisor-abort error carries the same tail-
+      // truncation shaping as the settled inline path.
+      expect(message, contains('[Showing lines'));
+      expect(
+        message,
+        isNot(contains('line-0-')),
+        reason: 'the head of the log is cut',
+      );
+      expect(
+        message,
+        contains('line-3999-'),
+        reason: 'the tail of the log survives',
+      );
+      expect(
+        message.length,
+        lessThan(200 * 1024),
+        reason: 'the thrown message stays inside the tool budget',
+      );
+      // The rewrite notice ("secret-shaped value" prefix) is dropped by the
+      // untruncated branch — it must ride here exactly like on the settled
+      // path.
+      expect(message, contains('secret-shaped value'));
 
-    expect(
-      entry.isRunning,
-      isTrue,
-      reason: 'the supervisor retry must not kill the job either',
-    );
-    await entry.stop();
-    await entry.settled;
-    expect(entry.stopReason, 'stopped');
-  });
+      expect(
+        entry.isRunning,
+        isTrue,
+        reason: 'the supervisor retry must not kill the job either',
+      );
+      await entry.stop();
+      await entry.settled;
+      expect(entry.stopReason, 'stopped');
+    },
+  );
 }

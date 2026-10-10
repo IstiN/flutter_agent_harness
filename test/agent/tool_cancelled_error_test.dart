@@ -116,7 +116,11 @@ void main() {
     final text = (toolResult.content.single as TextContent).text;
     expect(text, contains('Tool error (bash):'));
     expect(text, contains('run was aborted'));
-    expect(text, contains('tool not started'));
+    // gh-1455 review: "tool not started" was inaccurate for a cancel that
+    // lands mid-execution (the tool WAS started and may have partially
+    // run) — the message says the call was cancelled, full stop.
+    expect(text, contains('call cancelled'));
+    expect(text, isNot(contains('tool not started')));
     expect(text, isNot(contains('uncaught exception inside the harness')));
     // The cancel reason survives so the model (and the transcript) can see
     // WHO cancelled the run — e.g. the run-idle watchdog.

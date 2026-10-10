@@ -152,6 +152,30 @@ void main() {
     expect(out, contains('waiters resolved'));
   });
 
+  test('an aborted headless run with an explicit --wait-for-jobs notes the '
+      'skipped wait (gh-1455 review)', () async {
+    final fake = AbortableStreamFunction();
+    final cli = AgentCli(
+      config: AgentCliConfig(
+        model: testModel,
+        apiKey: '[REDACTED:Sensitive Value]',
+        env: env,
+        sessionRoot: '/sessions',
+        providerKind: 'openai-completions',
+      ),
+      io: io,
+      streamFunction: fake.call,
+    );
+    final run = cli.runHeadless('hang', waitForJobs: true);
+    await waitForIt(() => fake.started, reason: 'run to start');
+    io.interrupt();
+    final code = await run;
+    expect(code, 130);
+    // The abort fast-exit downgrades the explicit opt-in — the note keeps
+    // the override observable on the record instead of silently skipping.
+    expect(io.out.toString(), contains('skipping --wait-for-jobs'));
+  });
+
   test('a torn manifest counts zero lost jobs — never invented', () async {
     final cli = cliFor(FakeStreamFunction([textTurn('ok')]));
     final dir = env.cwd;
