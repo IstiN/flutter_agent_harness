@@ -1371,6 +1371,14 @@
       "completion": 7758,
       "total": 39635,
       "model": ""
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-10T18:57:16Z",
+      "prompt": 50991,
+      "completion": 5136,
+      "total": 56127,
+      "model": ""
     }
   ]
 }
