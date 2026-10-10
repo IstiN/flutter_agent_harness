@@ -4,6 +4,7 @@ description: >-
   pubkey-ACL'd channels (DM and presence included) between agent-harness
   clients. Zero-knowledge router — the hub never sees plaintext.
 version: 0.1.0
+publish_to: none
 homepage: https://github.com/IstiN/flutter_agent
 repository: https://github.com/IstiN/flutter_agent/tree/main/packages/dap_hub
 topics:
