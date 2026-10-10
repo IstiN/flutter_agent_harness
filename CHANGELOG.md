@@ -251,4 +251,8 @@ pre-tag + publish gates) fails fast when the cap is approached again.
 
 - gh-1450 [GOAL] SSO/OAuth login must always show the full authorization URL and allow opting out of the default browser (CodeMie/OpenRouter/ChatGPT family) (#1464)
 
+## 1.0.545
+
+- ci(quarantine): skip header_badge_pty_test.dart in the gate (flake, https://github.com/IstiN/flutter_agent_harness/issues/1469) (#1470)
+
 ## Unreleased
