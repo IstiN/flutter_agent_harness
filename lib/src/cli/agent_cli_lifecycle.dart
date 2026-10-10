@@ -141,87 +141,93 @@ extension AgentCliLifecycle on AgentCli {
   /// one steer budget per crossing, never a spam loop.
   Future<void> _awaitHeadlessBackgroundJobs() async {
     final drainMs = config.headless.shellJobDrainMs;
-    final quietMs = config.headless.shellJobQuietMs;
     final deadline = _waitingClock().add(Duration(milliseconds: drainMs));
-    // Per-job liveness bookkeeping: the last quiet bucket consumed
-    // (steered or skipped) and the probe generation seen at that
-    // consumption. Generation counters, not timestamps — the comparison
-    // stays valid under a fake DateTime test clock.
-    final consumedBucket = <String, int>{};
-    final seenProbeGen = <String, int>{};
+    final liveness = _HeadlessDrainLiveness(config.headless.shellJobQuietMs);
     var namedWaiting = false;
     for (var round = 0; round < 10; round++) {
-      final subActive = _taskConfig.jobManager.jobs.any(
-        (job) =>
-            job.status == TaskJobStatus.queued ||
-            job.status == TaskJobStatus.running,
-      );
-      // A suppressed job's result already landed in-turn (the inline
-      // consumer reported it) — it is not a waiter (gh-1459 edge case).
-      final shellActive = [
-        for (final job in _shellJobs.jobs)
-          if (job.isRunning && job.notifyOnSettle) job,
-      ];
-      final action = headlessJobDrainAction(
-        hasActiveJobs: subActive || shellActive.isNotEmpty,
-        now: _waitingClock(),
-        deadline: deadline,
-      );
-      if (action != HeadlessDrainAction.drain) break;
+      if (_headlessDrainAction(deadline) != HeadlessDrainAction.drain) break;
       // The #1055-parity waiting line, once per drain: the run stays
       // alive for these and says so.
       if (!namedWaiting) {
         namedWaiting = true;
-        final snap = await _waiting.snapshot();
-        io.writeln('⏳ waiting: ${_waiting.describe(snap)}');
+        await _nameHeadlessWaiting();
       }
-      // All active settles at once — bounded by the remaining ceiling AND
-      // by the next liveness threshold (ask #4), so a due steer fires on
-      // cadence even while the job keeps running.
-      await Future.any([
-        Future.wait([
-          if (subActive) _taskConfig.jobManager.settled,
-          for (final job in shellActive) job.settled,
-        ]),
-        _waitingSleep(
-          _headlessLivenessWake(shellActive, quietMs, consumedBucket, deadline),
-        ),
-      ]);
-      // A settle notice starts its reaction run one event-loop turn later
-      // (the registry's settle listener leg); pump it, then steer any due
-      // liveness notices BEFORE awaiting the reaction run.
-      await Future<void>.delayed(Duration.zero);
-      await _steerHeadlessLiveness(
-        shellActive,
-        quietMs,
-        consumedBucket,
-        seenProbeGen,
-      );
-      if (isBusy) {
-        await _settled;
-        await _afterRun();
-      }
+      await _headlessDrainRound(deadline, liveness);
     }
-    // A settle notice that landed outside a drain round (the window
-    // between the last active check and here) still starts its reaction
-    // run — never return mid-run (gh-1459).
+    await _finishHeadlessDrain(drainMs);
+  }
+
+  /// The active shell jobs of this drain round: still running and still
+  /// owed a model-facing settle notice (gh-1459 — a suppressed job's
+  /// result already landed in-turn; it is not a waiter).
+  List<ShellJobEntry> _headlessActiveShellJobs() => [
+    for (final job in _shellJobs.jobs)
+      if (job.isRunning && job.notifyOnSettle) job,
+  ];
+
+  bool _headlessSubAgentsActive() => _taskConfig.jobManager.jobs.any(
+    (job) =>
+        job.status == TaskJobStatus.queued ||
+        job.status == TaskJobStatus.running,
+  );
+
+  /// One round of the pure drain decision (gh-1459): active jobs keep
+  /// draining while the ceiling has budget; nothing active exits; a
+  /// spent ceiling detaches.
+  HeadlessDrainAction _headlessDrainAction(DateTime deadline) =>
+      headlessJobDrainAction(
+        hasActiveJobs:
+            _headlessSubAgentsActive() || _headlessActiveShellJobs().isNotEmpty,
+        now: _waitingClock(),
+        deadline: deadline,
+      );
+
+  /// The `⏳ waiting: …` line (#1055 parity), once per drain.
+  Future<void> _nameHeadlessWaiting() async {
+    final snap = await _waiting.snapshot();
+    io.writeln('⏳ waiting: ${_waiting.describe(snap)}');
+  }
+
+  /// One drain round: wait for every active settle at once — bounded by
+  /// the remaining ceiling AND by the next liveness threshold (ask #4),
+  /// so a due steer fires on cadence even while the job keeps running —
+  /// then steer due liveness notices BEFORE awaiting the reaction run.
+  /// A settle notice starts its reaction run one event-loop turn after
+  /// the wake (the registry's settle listener leg); the zero-delay pump
+  /// lets it land first.
+  Future<void> _headlessDrainRound(
+    DateTime deadline,
+    _HeadlessDrainLiveness liveness,
+  ) async {
+    final subActive = _headlessSubAgentsActive();
+    final shellActive = _headlessActiveShellJobs();
+    await Future.any([
+      Future.wait([
+        if (subActive) _taskConfig.jobManager.settled,
+        for (final job in shellActive) job.settled,
+      ]),
+      _waitingSleep(liveness.wakeIn(shellActive, _waitingClock(), deadline)),
+    ]);
+    await Future<void>.delayed(Duration.zero);
+    await _steerHeadlessLiveness(shellActive, liveness);
     if (isBusy) {
       await _settled;
       await _afterRun();
     }
-    // Anything still live when the drain gives up was cut short by the
-    // ceiling (or its 10-round cap racing the same wall budget — the
-    // wake legs ride the monotonic timer clock, the deadline the wall
-    // clock): say so once, then let the detach summary below name the
-    // jobs — the documented degradation, never a silent hang (gh-1459).
-    final stillActive =
-        _taskConfig.jobManager.jobs.any(
-          (job) =>
-              job.status == TaskJobStatus.queued ||
-              job.status == TaskJobStatus.running,
-        ) ||
-        _shellJobs.jobs.any((job) => job.isRunning && job.notifyOnSettle);
-    if (stillActive) {
+  }
+
+  /// The drain wrap-up (gh-1459): a settle notice that landed outside a
+  /// drain round (the window between the last active check and here)
+  /// still starts its reaction run — never return mid-run — and anything
+  /// still live was cut short by the ceiling (or its 10-round cap racing
+  /// the same wall budget): say so once, then let the detach summary
+  /// name the jobs — the documented degradation, never a silent hang.
+  Future<void> _finishHeadlessDrain(int drainMs) async {
+    if (isBusy) {
+      await _settled;
+      await _afterRun();
+    }
+    if (_headlessSubAgentsActive() || _headlessActiveShellJobs().isNotEmpty) {
       io.writeln(
         _style.dim(
           '⏳ background-job drain ceiling ($drainMs ms) reached — '
@@ -229,28 +235,6 @@ extension AgentCliLifecycle on AgentCli {
         ),
       );
     }
-  }
-
-  /// The next drain wake bound: the remaining ceiling, pulled earlier by
-  /// the next liveness threshold of any active shell job (gh-1459 ask #4)
-  /// so a due notice fires on cadence. Pure time arithmetic on the
-  /// waiting clock — unit-tested through the drain ITs.
-  Duration _headlessLivenessWake(
-    List<ShellJobEntry> active,
-    int quietMs,
-    Map<String, int> consumedBucket,
-    DateTime deadline,
-  ) {
-    var wake = deadline.difference(_waitingClock());
-    if (quietMs <= 0 || active.isEmpty) return wake;
-    final now = _waitingClock();
-    for (final job in active) {
-      final bucket = (consumedBucket[job.id] ?? 0) + 1;
-      final due = job.startedAt.add(Duration(milliseconds: quietMs * bucket));
-      final d = due.difference(now);
-      if (d < wake) wake = d;
-    }
-    return wake;
   }
 
   /// Steers the due interim liveness notices of the active shell jobs
@@ -265,28 +249,26 @@ extension AgentCliLifecycle on AgentCli {
   /// into it — and the caller then awaits the reaction run.
   Future<void> _steerHeadlessLiveness(
     List<ShellJobEntry> active,
-    int quietMs,
-    Map<String, int> consumedBucket,
-    Map<String, int> seenProbeGen,
+    _HeadlessDrainLiveness liveness,
   ) async {
-    if (quietMs <= 0) return;
+    if (liveness.quietMs <= 0) return;
     for (final job in active) {
       if (!job.isRunning || !job.notifyOnSettle) continue;
       final elapsed = _waitingClock().difference(job.startedAt);
       final elapsedMs = elapsed.isNegative ? 0 : elapsed.inMilliseconds;
       final action = headlessJobLivenessAction(
         elapsedMs: elapsedMs,
-        quietMs: quietMs,
-        lastConsumedBucket: consumedBucket[job.id] ?? 0,
+        quietMs: liveness.quietMs,
+        lastConsumedBucket: liveness.consumedBucket[job.id] ?? 0,
         probedSinceLastConsumption:
             job.probeGeneration !=
-            (seenProbeGen[job.id] ??= job.probeGeneration),
+            (liveness.seenProbeGen[job.id] ??= job.probeGeneration),
       );
       if (action == HeadlessLivenessAction.wait) continue;
       // Both a steer and a skip consume the crossing — exactly one
       // notice budget per threshold per job.
-      consumedBucket[job.id] = elapsedMs ~/ quietMs;
-      seenProbeGen[job.id] = job.probeGeneration;
+      liveness.consumedBucket[job.id] = elapsedMs ~/ liveness.quietMs;
+      liveness.seenProbeGen[job.id] = job.probeGeneration;
       if (action == HeadlessLivenessAction.skip) continue;
       final tail = (await _shellJobs.tail(job.id, maxLines: 5)).trimRight();
       final message =
@@ -338,5 +320,35 @@ extension AgentCliLifecycle on AgentCli {
     // Durable facts from past sessions join the prompt asynchronously
     // (memory stores initialize lazily; recompose on arrival).
     unawaited(_refreshMemorySection());
+  }
+}
+
+/// Per-drain liveness bookkeeping for gh-1459 ask #4: the quiet cadence
+/// knob plus, per job, the last quiet bucket consumed (steered or
+/// skipped) and the probe generation seen at that consumption.
+/// Generation counters, not timestamps — the comparison stays valid
+/// under a fake DateTime test clock.
+final class _HeadlessDrainLiveness {
+  _HeadlessDrainLiveness(this.quietMs);
+
+  /// `headless.shellJobQuietMs`; `0` disables the interim steers.
+  final int quietMs;
+  final consumedBucket = <String, int>{};
+  final seenProbeGen = <String, int>{};
+
+  /// The next drain wake bound: [deadline] pulled earlier by the next
+  /// liveness threshold of any active shell job, so a due notice fires
+  /// on cadence even while the job keeps running. Pure time arithmetic
+  /// on the waiting clock — unit-tested through the drain ITs.
+  Duration wakeIn(List<ShellJobEntry> active, DateTime now, DateTime deadline) {
+    var wake = deadline.difference(now);
+    if (quietMs <= 0 || active.isEmpty) return wake;
+    for (final job in active) {
+      final bucket = (consumedBucket[job.id] ?? 0) + 1;
+      final due = job.startedAt.add(Duration(milliseconds: quietMs * bucket));
+      final d = due.difference(now);
+      if (d < wake) wake = d;
+    }
+    return wake;
   }
 }
