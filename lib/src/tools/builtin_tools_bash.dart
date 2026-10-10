@@ -267,7 +267,9 @@ AgentTool shellTool(
           options: ShellExecOptions(
             cwd: env.cwd,
             timeout: timeout,
-            cancelToken: cancelToken,
+            // gh-1455: no caller cancel token — a background job outlives
+            // this call and is stopped through `bash_job stop` only; the
+            // registry firewalls stray tokens too.
             stdinData: stdinData,
           ),
         );
@@ -501,7 +503,8 @@ Future<ToolExecutionResult> _shellViaJob(
     options: ShellExecOptions(
       cwd: env.cwd,
       timeout: timeout,
-      cancelToken: cancelToken,
+      // gh-1455: no caller cancel token — the job must survive a run
+      // abort; the run unwind below hands it to the background instead.
       stdinData: stdinData,
       liveStdin: channel,
     ),
@@ -515,6 +518,7 @@ Future<ToolExecutionResult> _shellViaJob(
       jobs,
       entry,
       yieldToken,
+      cancelToken: cancelToken,
       timeoutArg: timeoutArg,
       rewriteNotice: rewriteNotice,
     );
@@ -529,30 +533,95 @@ Future<ToolExecutionResult> _awaitJobOutcome(
   ShellJobRegistry jobs,
   ShellJobEntry entry,
   CancelToken yieldToken, {
+  CancelToken? cancelToken,
   required num? timeoutArg,
   String? rewriteNotice,
 }) async {
   final finished = await Future.any<bool>([
     entry.settled.then((_) => true),
     yieldToken.onCancel.then((_) => false),
+    // gh-1455: the RUN aborting (Agent.abort, the idle watchdog) must not
+    // kill the job either — it unwinds this call exactly like a yield,
+    // handing the still-running process to the background.
+    if (cancelToken != null) cancelToken.onCancel.then((_) => false),
   ]);
 
   if (!finished) {
-    final supervisorMoved = yieldToken.cancelReason is StuckCallFollowUp;
-    final tail = await jobs.tail(entry.id, maxLines: 20);
-    final handback = stuckBackgroundHandbackText(
-      jobId: entry.id,
-      logPath: entry.logPath,
-      supervisorMoved: supervisorMoved,
-      partialOutput: tail,
-    );
-    return ToolExecutionResult.text(
-      rewriteNotice == null ? handback : '$rewriteNotice\n$handback',
+    return _backgroundHandbackResult(
+      env,
+      jobs,
+      entry,
+      yieldToken,
+      cancelToken: cancelToken,
+      rewriteNotice: rewriteNotice,
     );
   }
+  return _settledInlineResult(
+    env,
+    entry,
+    timeoutArg: timeoutArg,
+    rewriteNotice: rewriteNotice,
+  );
+}
 
-  // Settled inline: report exactly like the synchronous path and suppress
-  // the registry's settle notification (the result is already here).
+/// gh-1455: the supervisor's cancel_retry cancel (StuckCallFollowUp on the
+/// CALL token) is a cancel-and-RETRY, not a background conversion — this
+/// predicate tells that case apart from a run abort / steering yield.
+bool _isSupervisorAbort(CancelToken? cancelToken, CancelToken yieldToken) =>
+    cancelToken != null &&
+    cancelToken.isCancelled &&
+    cancelToken.cancelReason is StuckCallFollowUp &&
+    !yieldToken.isCancelled;
+
+/// The unwound-call branch of [_awaitJobOutcome]: the supervisor's
+/// cancel-retry fails the call exactly like the pre-gh-1455 token-kill did
+/// (so the supervisor reclassifies the attempt and retries) — but the job
+/// itself keeps running (the gh-1455 firewall keeps caller tokens out of
+/// job space). Every other unwind hands the still-running job to the
+/// background with an honest summary.
+Future<ToolExecutionResult> _backgroundHandbackResult(
+  ExecutionEnv env,
+  ShellJobRegistry jobs,
+  ShellJobEntry entry,
+  CancelToken yieldToken, {
+  CancelToken? cancelToken,
+  String? rewriteNotice,
+}) async {
+  if (_isSupervisorAbort(cancelToken, yieldToken)) {
+    final log = await env.readTextFile(entry.logPath);
+    var output = log.isErr ? '' : log.valueOrNull!;
+    if (output.endsWith('\n')) {
+      output = output.substring(0, output.length - 1);
+    }
+    throw StateError(_appendStatus(output, 'Command aborted'));
+  }
+  // gh-1455: the supervisor cancels the CALL token (StuckCallFollowUp)
+  // while steering cancels the phase yield — a cancel from either means
+  // the handback must name its real cause, so check both reasons.
+  final supervisorMoved =
+      yieldToken.cancelReason is StuckCallFollowUp ||
+      (cancelToken?.cancelReason is StuckCallFollowUp);
+  final tail = await jobs.tail(entry.id, maxLines: 20);
+  final handback = stuckBackgroundHandbackText(
+    jobId: entry.id,
+    logPath: entry.logPath,
+    supervisorMoved: supervisorMoved,
+    partialOutput: tail,
+  );
+  return ToolExecutionResult.text(
+    rewriteNotice == null ? handback : '$rewriteNotice\n$handback',
+  );
+}
+
+/// The settled-inline branch of [_awaitJobOutcome]: report exactly like
+/// the synchronous path and suppress the registry's settle notification
+/// (the result is already here).
+Future<ToolExecutionResult> _settledInlineResult(
+  ExecutionEnv env,
+  ShellJobEntry entry, {
+  required num? timeoutArg,
+  String? rewriteNotice,
+}) async {
   entry.suppressSettleNotification();
   final log = await env.readTextFile(entry.logPath);
   // The log file is newline-terminated; the inline result is not.
@@ -571,6 +640,16 @@ Future<ToolExecutionResult> _awaitJobOutcome(
             '${truncation.totalLines - truncation.outputLines + 1}-'
             '${truncation.totalLines} of ${truncation.totalLines}.]';
   if (rewriteNotice != null) output = '$rewriteNotice\n$output';
+  return _settledOutcome(entry, output, timeoutArg: timeoutArg);
+}
+
+/// The settled-job verdict: timeout / cancel / non-zero exit all throw the
+/// evidence-carrying StateError the bash contract has always had.
+ToolExecutionResult _settledOutcome(
+  ShellJobEntry entry,
+  String output, {
+  required num? timeoutArg,
+}) {
   final exitCode = entry.exitCode ?? -1;
   if (entry.stopReason == 'timeout') {
     throw StateError(
