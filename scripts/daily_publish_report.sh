@@ -168,8 +168,12 @@ cancelled_job_info() { # $1 = job-name fragment; "name<TAB>startedAt<TAB>complet
 leg_ceiling_minutes() { # $1 = job-name fragment; echoes timeout-minutes from the workflow or nothing
   local wf="${DAILY_PUBLISH_WORKFLOW:-${GITHUB_WORKSPACE:-.}/.github/workflows/daily-publish.yml}"
   [ -f "$wf" ] || return 0
+  # The fragment is matched LITERALLY (index, not ~): it contains the CLI
+  # leg's `+` ("Leg: CLI + macOS desktop"), which as an unescaped awk ERE
+  # operator never matches the workflow yaml — that silently dropped the
+  # CLI leg's timeout ceiling from cancelled digests.
   awk -v frag="$1" '
-    $0 ~ ("name: ." frag) { injob = 1; next }
+    index($0, "name: ") > 0 && index($0, frag) > 0 { injob = 1; next }
     injob && /^  [A-Za-z0-9_-]+:/ { injob = 0 }
     injob && /^    timeout-minutes:/ {
       line = $0
@@ -180,7 +184,7 @@ leg_ceiling_minutes() { # $1 = job-name fragment; echoes timeout-minutes from th
     }' "$wf"
 }
 
-fmt_elapsed() { # $1 = seconds -> "359m53s" / "1h02m03s"
+fmt_elapsed() { # $1 = seconds -> "359m53s" / "1h2m3s" (unpadded components)
   local s="$1" h m
   h=$((s / 3600)); m=$(((s % 3600) / 60)); s=$((s % 60))
   if [ "$h" -gt 0 ]; then echo "${h}h${m}m${s}s"; else echo "${m}m${s}s"; fi

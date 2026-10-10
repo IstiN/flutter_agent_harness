@@ -592,8 +592,11 @@ jobs:
       # QUOTES the injected ::error:: line (signal-first excerpt via the
       # per-job log endpoint), not merely that an issue exists — the #1473
       # tree-noise regression class.
+      # The `!= ''` guard matters: on schedule triggers the `inputs` context
+      # is EMPTY (the dispatch `default: none` does not apply), so gating
+      # only on `!= 'none'` would run — and fail — this step every cron run.
       - name: Verify injected-failure excerpt (TEST)
-        if: always() && inputs.inject_failure != 'none'
+        if: always() && inputs.inject_failure != '' && inputs.inject_failure != 'none'
         env:
           INJECTED: ${{ inputs.inject_failure }}
         run: |

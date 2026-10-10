@@ -157,6 +157,23 @@ const _run555Jobs = '''
 }
 ''';
 
+/// Same run shape, but the CLI leg job is the cancelled one — exercises the
+/// `+` in `Leg: CLI + macOS desktop` against the workflow-yaml ceiling
+/// lookup (the fragment must match literally, not as an awk regex).
+const _run555JobsCliCancelled = '''
+{
+  "jobs": [
+    {"databaseId": 1, "name": "Plan (change detection + versions)", "conclusion": "success", "startedAt": "2026-10-10T05:17:00Z", "completedAt": "2026-10-10T05:18:00Z"},
+    {"databaseId": 11, "name": "Leg: TestFlight", "conclusion": "success", "startedAt": "2026-10-10T05:17:00Z", "completedAt": "2026-10-10T06:00:00Z"},
+    {"databaseId": 12, "name": "Leg: Play (Android external beta)", "conclusion": "success", "startedAt": "2026-10-10T05:17:00Z", "completedAt": "2026-10-10T06:00:00Z"},
+    {"databaseId": 22, "name": "Leg: pub.dev", "conclusion": "success", "startedAt": "2026-10-10T05:17:00Z", "completedAt": "2026-10-10T05:18:00Z"},
+    {"databaseId": 13, "name": "Leg: CLI + macOS desktop", "conclusion": "cancelled", "startedAt": "2026-10-10T05:17:00Z", "completedAt": "2026-10-10T11:16:53Z"},
+    {"databaseId": 14, "name": "Leg: Website", "conclusion": "success", "startedAt": "2026-10-10T05:17:00Z", "completedAt": "2026-10-10T05:45:00Z"},
+    {"databaseId": 15, "name": "Leg: Outlook add-in", "conclusion": "success", "startedAt": "2026-10-10T05:17:00Z", "completedAt": "2026-10-10T05:40:00Z"}
+  ]
+}
+''';
+
 void _installStub(String bin) {
   File('$bin/gh').writeAsStringSync(r'''
 #!/usr/bin/env bash
@@ -456,6 +473,22 @@ final noise line
       expect(r.summary, contains('⚠️'));
     });
 
+    test('ceiling lookup handles the CLI leg name with a literal +', () {
+      final r = runReport(
+        'cancelled-cli',
+        legResults: const {'cli': 'cancelled'},
+        fixtures: const {'run-555.json': _run555JobsCliCancelled},
+        withWorkflowYaml: true,
+      );
+      expect(r.created, isTrue, reason: r.output);
+      expect(r.createdBody, contains('Leg: CLI + macOS desktop'),
+          reason: 'the cancelled CLI leg job is resolved from the jobs API');
+      expect(r.createdBody, contains('Timeout ceiling'),
+          reason: 'the CLI leg name contains + which must match literally');
+      expect(r.createdBody, contains('360'),
+          reason: 'the fixture yaml gives the CLI leg timeout-minutes: 360');
+    });
+
     test('cancelled digest degrades gracefully without the workflow file', () {
       final r = runReport(
         'cancelled-no-yaml',
@@ -620,6 +653,10 @@ tail noise
           reason: 'the TEST hook must assert the digest content (gh-1478)');
       expect(daily, contains('inject_failure verify'));
       expect(daily, contains('injected failure (inject_failure='));
+      expect(daily, contains("inputs.inject_failure != ''"),
+          reason: 'on schedule triggers the inputs context is EMPTY (not '
+              "'none'), so the verify step must also gate on != '' or the "
+              'daily cron goes red every run hunting a nonexistent issue');
     });
 
     test('report script ships the gh-1478 machinery', () {
