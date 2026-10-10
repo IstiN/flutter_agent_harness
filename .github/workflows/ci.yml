@@ -364,11 +364,14 @@ jobs:
           fi
           # fa1.dev parity pin: both web builds must keep the identical
           # release flags AND the same pinned SDK — the bundle's only edit
-          # stays the base tag.
+          # stays the base tag. (#1431): the SDK pin must be an EXACT
+          # 3.47.x patch (no wildcard) — a floating patch re-resolves a new
+          # engine build and moves the canvaskit/skwasm rev-hash dir the
+          # size gates track.
           for wf in .github/workflows/pages.yml .github/workflows/ci.yml; do
             grep -q -- '--release' "$wf" || { echo "::error::$wf lost the --release web flag (#1100 parity)"; exit 1; }
             grep -q -- '--base-href /app/' "$wf" || { echo "::error::$wf lost --base-href /app/ (#1100 parity, pages + bundle must share it)"; exit 1; }
-            grep -q "flutter-version: '3.47.x'" "$wf" || { echo "::error::$wf unpinned Flutter SDK (#1100 parity, pages + bundle must share it)"; exit 1; }
+            grep -Eq "flutter-version: '3\.47\.[0-9]+'" "$wf" || { echo "::error::$wf unpinned Flutter SDK (#1100 parity + #1431 exact-patch rule, pages + bundle must share it)"; exit 1; }
           done
 
       # Issue #433 AC1: README CRAP badge must equal the crap4dart.yaml
@@ -409,6 +412,14 @@ jobs:
       # ratchet cannot rot silently (#1100 pattern).
       - name: Duration budget gate self-test (gh-1300 AC6)
         run: bash scripts/duration_budget_selftest.sh
+
+      # #1431: the size-budget gate's own red exits are fixture-tested
+      # (#1100 pattern) — an engine rev-hash rename must UPDATE not NEW,
+      # vendored engine churn warns instead of reddening, first-party
+      # payload still fails hard, and the 20+hex regex leaves first-party
+      # paths that merely contain hex alone.
+      - name: Size manifest gate self-test (#1431)
+        run: python3 scripts/test_size_manifest.py
 
       # Full analyze needs the example app's package config (Flutter imports);
       # a docs-only PR skips the flutter setup entirely and analyzes the pure
@@ -3274,10 +3285,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Same pinned SDK as build-web / the release path (#281).
+      # Same pinned SDK as build-web / the release path (#281); EXACT patch
+      # pin (#1431): a wildcard re-resolves a new engine build on every
+      # 3.47.x patch and moves the canvaskit/skwasm rev-hash dir the size
+      # gates track. Bump consciously, with any floor reseed in the same PR.
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
-          flutter-version: '3.47.x'
+          flutter-version: '3.47.7'
           channel: stable
           cache: true
 
