@@ -1533,6 +1533,14 @@
       "completion": 14081,
       "total": 67268,
       "model": ""
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-10T22:14:51Z",
+      "prompt": 72130,
+      "completion": 18606,
+      "total": 90736,
+      "model": ""
     }
   ],
   "issue-1516": [
