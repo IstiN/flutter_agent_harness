@@ -160,10 +160,64 @@ void main() {
         expect(rows, ['aaa ', 'bb cc']);
       });
 
-      test('a boundary space at the very edge is dropped, not leaked as a '
-          'leading space', () {
-        final rows = wrapAnsiLine('aaaa bbbb', 4);
-        expect(rows, ['aaaa', 'bbbb']);
+      test('a boundary space at the exact wrap edge carries to the '
+          'continuation row (terminal autowrap) — gh-1510', () {
+        // The word ends exactly at the last column, so the separating space
+        // no longer fits on the closing row. Dropping it collapses the two
+        // words in the rendered screen buffer ("memory round-tripcomplete" —
+        // the nightly subagent memory test failure); a real terminal wraps
+        // the space onto the continuation row instead.
+        expect(wrapAnsiLine('aaaa bbbb', 4), ['aaaa', ' bbb', 'b']);
+        // The carried space is visible in the buffer and the round trip
+        // reproduces the text exactly.
+        expect(wrapAnsiLine('aaaa bbbb', 4).join(), 'aaaa bbbb');
+        // The common case is unaffected: the space fits at the row tail.
+        expect(wrapAnsiLine('aaaa bbbb', 5), ['aaaa ', 'bbbb']);
+      });
+
+      test('a trailing boundary space at end of line is not turned into a '
+          'blank continuation row', () {
+        expect(wrapAnsiLine('aaaa ', 4), ['aaaa']);
+      });
+
+      test('property: seeded random text at random widths round-trips '
+          'through the wrap (visible text preserved) — gh-1510', () {
+        // Never-again for the space-eating class: whatever the wrap point,
+        // joining the stripped rows must reproduce the original text. The
+        // generator avoids trailing whitespace (the one documented drop).
+        var seed = 0xC0FFEE;
+        int next() {
+          seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+          return seed;
+        }
+
+        final words = ['a', 'bb', 'ccc', 'dddd', 'eeeee', 'ffffff', 'gg'];
+        for (var trial = 0; trial < 200; trial++) {
+          final wordCount = 1 + next() % 12;
+          final parts = <String>[
+            for (var w = 0; w < wordCount; w++)
+              words[next() % words.length],
+          ];
+          // Sprinkle multi-space runs every few trials.
+          final text = parts
+              .join(trial % 5 == 0 ? '  ' : ' ')
+              .trimRight();
+          final width = 3 + next() % 30;
+          final rows = wrapAnsiLine(text, width);
+          for (final row in rows) {
+            final visible = row.replaceAll(AnsiMarkdown.ansiSgrPattern, '');
+            expect(
+              visible.length,
+              lessThanOrEqualTo(width),
+              reason: 'width $width row overflows: "$row" (text "$text")',
+            );
+          }
+          expect(
+            rows.join().replaceAll(AnsiMarkdown.ansiSgrPattern, ''),
+            text,
+            reason: 'width $width mangled "$text"',
+          );
+        }
       });
 
       test('SGR state carries across the wrap: reset at the cut, re-opened '
@@ -203,9 +257,10 @@ void main() {
             reason: 'row overflows: $row',
           );
         }
-        // Reassembled visible text is unchanged except an edge-boundary
-        // space, which stays dropped by design.
-        expect(rows.join(), '${check * 5}tail');
+        // The five emoji fill the row exactly (5 × 2 cells), so the boundary
+        // space carries to the continuation row (gh-1510 terminal-autowrap)
+        // and the reassembled text is byte-identical to the input.
+        expect(rows.join(), '${check * 5} tail');
       });
 
       test('a wide word longer than the width hard-cuts on cell columns', () {

@@ -403,6 +403,11 @@ class AgentCli {
       onConfigChanged: () => unawaited(_refreshMemorySection()),
       // Semantic search + consolidate() need an LLM: memory → smol → main.
       llmProvider: HarnessLlmProvider(resolve: () => _resolveMemoryLlmSlot()),
+      // gh-1510: the memory package logs via print(); in TUI mode that
+      // writes raw bytes into the CellRenderer's frame stream and desyncs
+      // the screen (visibly eaten characters). Route those lines to the
+      // diagnostic log instead.
+      printSink: (line) => _logDiagnostic('[memory] $line'),
     );
 
     // Issue #1079 slice 2: the core stack — env chain, capability-gated
