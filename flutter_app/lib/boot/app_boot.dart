@@ -16,6 +16,7 @@ library;
 import 'dart:async';
 import 'dart:ui' show PlatformDispatcher;
 
+import 'package:fa/boot/boot_watchdog.dart';
 import 'package:fa/firebase_options.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/network/key_wallet.dart';
@@ -131,6 +132,10 @@ final class BootStores {
   final QuotaStore quotas;
 }
 
+/// The process-wide boot watchdog (gh-1507): one instance, installed once
+/// — [BootWatchdog.install] is idempotent, and the first frame cancels it.
+final BootWatchdog kBootWatchdog = BootWatchdog();
+
 /// The boot pipeline. `main()` constructs it with the app's routes stage
 /// and calls [run] — zero logic in `main()` itself.
 final class FaAppBoot {
@@ -160,7 +165,13 @@ final class FaAppBoot {
   /// never saw it.
   Future<void> run() async {
     bootWindow();
+    // gh-1507: the first-frame watchdog goes up right after the window
+    // stage (the binding exists now) so a pre-frame wedge is breadcrumbed
+    // with the last completed boot step.
+    kBootWatchdog.install();
+    BootSteps.mark('window');
     await bootServices();
+    BootSteps.mark('services');
     return _runStages(await createEnv());
   }
 
