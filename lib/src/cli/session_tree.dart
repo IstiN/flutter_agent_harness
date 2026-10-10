@@ -13,6 +13,7 @@ import '../session/session_grouping.dart';
 import '../session/session_repo.dart';
 import '../session/session_storage.dart';
 import 'tui_repl.dart';
+import 'tui_theme.dart';
 
 /// One display row of a session listing: a main (numbered), an indented
 /// child (`↳`), or an orphaned child surfaced top-level.
@@ -246,7 +247,11 @@ List<MenuItem> sessionPickerItems(
     if (toggle)
       MenuItem(
         key: flat ? 'tree' : 'flat',
-        label: flat ? '⟳ tree view' : '⟳ flat list',
+        // gh-1446 AC8: the view-toggle icon resolves through the symbol
+        // table (`icon.loop` = the cycle glyph) — no hardcoded `⟳`.
+        label:
+            '${FaThemeController.instance.sym('icon.loop')} '
+            '${flat ? 'tree view' : 'flat list'}',
         description: 'switch the sessions listing layout',
       ),
     for (var i = 0; i < rows.length; i++)
