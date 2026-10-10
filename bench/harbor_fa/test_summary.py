@@ -31,7 +31,10 @@ class SummaryTest(unittest.TestCase):
         # summary.py prefers that sink over stdout when set — the first
         # revision of these tests failed on real Actions runners. Pop it
         # by default; the sink test below re-points it at a temp file.
+        # BENCH_RUN_LABEL (gh-1503) gets the same treatment so a runner
+        # exporting it cannot leak into the label-absence test.
         self._summary_bak = os.environ.pop("GITHUB_STEP_SUMMARY", None)
+        self._label_bak = os.environ.pop("BENCH_RUN_LABEL", None)
         self.addCleanup(self._restore_summary)
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -40,7 +43,8 @@ class SummaryTest(unittest.TestCase):
     def _restore_summary(self):
         if self._summary_bak is not None:
             os.environ["GITHUB_STEP_SUMMARY"] = self._summary_bak
-
+        if self._label_bak is not None:
+            os.environ["BENCH_RUN_LABEL"] = self._label_bak
     def _run(self, *argv) -> tuple[int, str]:
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -62,6 +66,32 @@ class SummaryTest(unittest.TestCase):
         report = sink.read_text()
         self.assertIn("### fa on Terminal-Bench 3.0", report)
         self.assertIn("Ledger row", report)
+
+    def test_run_label_names_the_provider_when_set(self):
+        # gh-1503: the report names the provider+model (BENCH_RUN_LABEL,
+        # set by bench-harbor.yml's resolve step) — glm and kimi runs
+        # never blend in the ledger/cost views. Same env contract as
+        # bench.yml's gh-1471 summary.
+        make_jobs(self.jobs, "fa-2.1-modal-cpu-0", [{"resolved": True}])
+        os.environ["BENCH_RUN_LABEL"] = "kimi-for-coding (k3-256k)"
+        self.addCleanup(os.environ.pop, "BENCH_RUN_LABEL", None)
+        rc, out = self._run(
+            str(self.jobs), "--family", "2.1", "--model", "k3-256k",
+            "--fa-ref", "abc1234", "--run-url", "https://ci/run/1",
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("Provider: kimi-for-coding (k3-256k) (gh-1503).", out)
+
+    def test_run_label_absent_stays_silent(self):
+        # Runs without the env (CLI/manual invocations) keep the
+        # pre-gh-1503 report shape byte-for-byte.
+        make_jobs(self.jobs, "fa-2.1-modal-cpu-0", [{"resolved": True}])
+        rc, out = self._run(
+            str(self.jobs), "--family", "2.1", "--model", "glm-5.3-flash",
+            "--fa-ref", "abc1234", "--run-url", "https://ci/run/1",
+        )
+        self.assertEqual(rc, 0)
+        self.assertNotIn("Provider:", out)
 
     def test_ledger_separation_across_versions(self):
         # A merged jobs dir carrying two dataset versions: the 2.1 report
