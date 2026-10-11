@@ -499,12 +499,14 @@ jobs:
   # publish path retries. Unrecoverable states fail loudly and self-file an
   # issue with a manual-publish instruction instead of silently hanging.
   # gh-1192: a tag-publish still EXECUTING (tag pushed, ci run not visible
-  # yet or queued/in_progress, tag younger than the grace window; or the
-  # release-tag job has not cut the tag off a fresh bump yet) is classified
-  # «release in flight» by scripts/verify_pubdev_release.sh — a neutral skip
-  # (no error, no auto-filed issue); the next scheduled daily re-verifies.
-  # The 2026-10-03 collision fired the old «no ci.yml run» error one minute
-  # before the healthy run completed (#1189, false alarm).
+  # yet or queued/in_progress, tag younger than the grace window) is
+  # classified «release in flight» by scripts/verify_pubdev_release.sh —
+  # a neutral skip (no error, no auto-filed issue); the next scheduled
+  # daily re-verifies. The 2026-10-03 collision fired the old «no ci.yml
+  # run» error one minute before the healthy run completed (#1189, false
+  # alarm). gh-1522: the version under test is the LATEST REMOTE TAG (the
+  # committed pubspec is the 0.0.0-dev placeholder), so the «tag not cut
+  # yet» state no longer exists.
 
   pubdev:
     name: 'Leg: pub.dev'
