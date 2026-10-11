@@ -23,7 +23,8 @@ on:
           - 'false'
 
 # Release builds are never preempted (issue #194 pt 5, same principle as
-# ci.yml: main/tag/release runs must not be cancelled mid-flight).
+# ci.yml: tag/release runs must not be cancelled mid-flight; gh-1537
+# retired the post-merge main ci run).
 concurrency:
   group: Build macOS Release (Fa)-${{ github.ref }}
   cancel-in-progress: false
