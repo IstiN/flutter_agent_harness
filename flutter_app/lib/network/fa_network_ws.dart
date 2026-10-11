@@ -78,8 +78,9 @@ abstract interface class WsConnector {
 }
 
 /// The default platform connector: real `Authorization` headers on
-/// VM/desktop, headerless (server 401s) on web until the contract grows
-/// a browser-compatible auth path.
+/// VM/desktop; on web the browser cannot set headers, so the connector
+/// lifts the bearer token into the `?token=` query parameter (supported
+/// by fa_network and the DAP hub) instead of connecting unauthenticated.
 typedef WebSocketChannelConnector = PlatformWsConnector;
 
 class FaNetworkWs {
