@@ -267,9 +267,9 @@ cat >> "$d/flutter_app/pubspec.lock" <<'EOF'
 EOF
 expect_fail_clean "stale path-dep pin in the app lock fails" "$d" bash "$GATE" inventory
 
-# 13. The same fixture with the pin re-synced (exactly the shape the release
-#     bump in scripts/auto_release.sh ships in the chore(release): commit)
-#     must pass — no false positive on the healthy bump shape.
+# 13. The same fixture with the pin re-synced (exactly the shape gh-1522
+#     keeps forever — both sides carry the 0.0.0-dev placeholder, so the
+#     pin never churns across releases)
 d="$tmp/fresh-path-pin"
 make_fixture "$d" "  - native_pkg (0.0.2):"
 printf 'name: repo\nversion: 1.2.3\n' > "$d/pubspec.yaml"
