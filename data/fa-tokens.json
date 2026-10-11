@@ -1961,6 +1961,14 @@
       "completion": 9713,
       "total": 53290,
       "model": ""
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-11T09:29:40Z",
+      "prompt": 57615,
+      "completion": 2564,
+      "total": 60179,
+      "model": ""
     }
   ],
   "issue-1537": [
