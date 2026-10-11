@@ -63,7 +63,8 @@ void main() {
       expect(
         File('flutter_app/pubspec.lock').existsSync(),
         isTrue,
-        reason: 'flutter_app is an app (publish_to: none) — its lockfile '
+        reason:
+            'flutter_app is an app (publish_to: none) — its lockfile '
             'belongs in git so CI resolves reproducibly (gh-1265).',
       );
     });
@@ -73,7 +74,8 @@ void main() {
       expect(
         gitIgnored('flutter_app/pubspec.lock', root),
         isFalse,
-        reason: 'flutter_app/pubspec.lock must be re-included via a ! '
+        reason:
+            'flutter_app/pubspec.lock must be re-included via a ! '
             'negation in the root .gitignore.',
       );
       expect(
@@ -84,33 +86,35 @@ void main() {
       expect(
         gitIgnored('packages/fa_ui/pubspec.lock', root),
         isTrue,
-        reason: 'library packages under packages/ keep ignoring their '
+        reason:
+            'library packages under packages/ keep ignoring their '
             'lockfiles.',
       );
     });
 
     test('lockfile is in sync with the current package versions', () {
       // The lockfile records the resolved version of the root
-      // flutter_agent_harness path dependency. A merge from main that
-      // bumps the root/app version (chore(release) commits) without
-      // regenerating flutter_app/pubspec.lock makes every
-      // `flutter pub get --enforce-lockfile` step in CI exit 1 ("Unable
-      // to satisfy pubspec.yaml using pubspec.lock") — the exact
-      // Quality-gate red this PR landed with on head a702c3170.
+      // flutter_agent_harness path dependency. A merge that changes the
+      // root version without regenerating flutter_app/pubspec.lock makes
+      // every `flutter pub get --enforce-lockfile` step in CI exit 1
+      // ("Unable to satisfy pubspec.yaml using pubspec.lock") — the exact
+      // Quality-gate red this PR landed with on head a702c3170. Since
+      // gh-1522 both sides carry the fixed 0.0.0-dev placeholder, so this
+      // is a one-time sync, not per-release churn.
       final rootVersion =
           (loadYaml(read('pubspec.yaml')) as YamlMap)['version'] as String;
-      final rootName = (loadYaml(read('pubspec.yaml')) as YamlMap)['name']
-          as String;
+      final rootName =
+          (loadYaml(read('pubspec.yaml')) as YamlMap)['name'] as String;
       final appVersion =
           (loadYaml(read('flutter_app/pubspec.yaml')) as YamlMap)['version']
               as String?;
       final lock = loadYaml(read('flutter_app/pubspec.lock')) as YamlMap;
-      final lockedRoot =
-          (lock['packages'] as YamlMap)[rootName] as YamlMap?;
+      final lockedRoot = (lock['packages'] as YamlMap)[rootName] as YamlMap?;
       expect(
         lockedRoot,
         isNotNull,
-        reason: 'flutter_app/pubspec.lock must record the $rootName path '
+        reason:
+            'flutter_app/pubspec.lock must record the $rootName path '
             'dependency.',
       );
       // The root pubspec carries the bare version (e.g. 1.0.513); the app
@@ -119,7 +123,8 @@ void main() {
       expect(
         lockedRoot!['version'],
         rootVersion.split('+').first,
-        reason: 'the committed lockfile was generated against an older '
+        reason:
+            'the committed lockfile was generated against an older '
             '$rootName version — regenerate it with `cd flutter_app && '
             'flutter pub get` after any version bump, or CI\'s '
             '--enforce-lockfile steps fail (gh-1265 AC2 REG guard).',
@@ -129,7 +134,8 @@ void main() {
       expect(
         appVersion?.split('+').first,
         rootVersion.split('+').first,
-        reason: 'flutter_app/pubspec.yaml version must match the root '
+        reason:
+            'flutter_app/pubspec.yaml version must match the root '
             'pubspec.yaml version (release chore bumps both).',
       );
     });
@@ -147,21 +153,22 @@ void main() {
         'scripts/build_office_addin.sh',
       ]) {
         final body = read(script);
-        final invocations = RegExp(r'flutter pub get[^&|\n\\]*')
-            .allMatches(body)
-            .map((m) => m.group(0)!)
-            .toList();
+        final invocations = RegExp(
+          r'flutter pub get[^&|\n\\]*',
+        ).allMatches(body).map((m) => m.group(0)!).toList();
         expect(
           invocations,
           isNotEmpty,
-          reason: '$script must resolve flutter_app dependencies via '
+          reason:
+              '$script must resolve flutter_app dependencies via '
               '`flutter pub get` before building the web app.',
         );
         for (final invocation in invocations) {
           expect(
             invocation,
             contains('--enforce-lockfile'),
-            reason: '$script resolves flutter_app deps outside the '
+            reason:
+                '$script resolves flutter_app deps outside the '
                 'workflow guard — on a pubspec/lockfile skew it would '
                 'silently regenerate the lockfile instead of failing '
                 '(gh-1265 AC2).',
@@ -189,7 +196,8 @@ void main() {
       expect(
         duplicates,
         isEmpty,
-        reason: 'root .gitignore contains duplicated rules: $duplicates — '
+        reason:
+            'root .gitignore contains duplicated rules: $duplicates — '
             'collapse the doubled block (pure deletion) so the '
             '!flutter_app/pubspec.lock negation cannot be silently '
             're-broken by a future dedupe.',
@@ -207,7 +215,8 @@ void main() {
           expect(
             i,
             lessThan(negationIndex),
-            reason: 'a `pubspec.lock` ignore rule at line ${i + 1} sits '
+            reason:
+                'a `pubspec.lock` ignore rule at line ${i + 1} sits '
                 'AFTER the !flutter_app/pubspec.lock negation — last '
                 'match wins, so the app lockfile would be ignored again.',
           );
@@ -230,7 +239,8 @@ void main() {
       expect(
         body,
         contains(RegExp(r'Unable to satisfy .+pubspec')),
-        reason: 'the retry loop must match the deterministic '
+        reason:
+            'the retry loop must match the deterministic '
             'lockfile-skew signature ("Unable to satisfy ... using ... '
             'pubspec.lock") in the failed output and fail fast instead '
             'of retrying (gh-1265 AC2).',
@@ -257,8 +267,10 @@ void main() {
       'flutter_inappwebview_windows': '0.7.0-beta.3',
     };
 
-    final overrides = ((loadYaml(read('flutter_app/pubspec.yaml')) as YamlMap)[
-            'dependency_overrides'] as YamlMap?) ??
+    final overrides =
+        ((loadYaml(read('flutter_app/pubspec.yaml'))
+                as YamlMap)['dependency_overrides']
+            as YamlMap?) ??
         const {};
 
     for (final entry in stubs.entries) {
@@ -267,7 +279,8 @@ void main() {
         expect(
           override,
           isA<YamlMap>(),
-          reason: '${entry.key} must be a dependency_override in '
+          reason:
+              '${entry.key} must be a dependency_override in '
               'flutter_app/pubspec.yaml (gh-1265).',
         );
         final path = (override as YamlMap)['path'] as String?;
@@ -279,7 +292,8 @@ void main() {
         expect(
           stub['version'],
           entry.value,
-          reason: 'stub version should mirror the impl it replaces so the '
+          reason:
+              'stub version should mirror the impl it replaces so the '
               'umbrella constraint stays satisfied.',
         );
         expect(
@@ -291,7 +305,8 @@ void main() {
         expect(
           flutterSection is! YamlMap || !(flutterSection).containsKey('plugin'),
           isTrue,
-          reason: 'a stub with a flutter: plugin: section would register '
+          reason:
+              'a stub with a flutter: plugin: section would register '
               'native code on that desktop platform again — exactly what '
               'gh-1265 removes.',
         );
@@ -303,9 +318,8 @@ void main() {
     final lock = loadYaml(read('flutter_app/pubspec.lock')) as YamlMap;
     String? lockedVersion(String name) =>
         (lock['packages'] as YamlMap)[name] is YamlMap
-            ? ((lock['packages'] as YamlMap)[name] as YamlMap)['version']
-                as String?
-            : null;
+        ? ((lock['packages'] as YamlMap)[name] as YamlMap)['version'] as String?
+        : null;
 
     test('the committed lockfile pins the drift chain', () {
       // Parent dep: the umbrella gh-1235 added directly (data, not vibes —
@@ -323,8 +337,7 @@ void main() {
       final jobs =
           (loadYaml(read('.github/workflows/nightly.yml')) as YamlMap)['jobs']
               as YamlMap;
-      final build = (jobs['build-release'] as YamlMap)['strategy']
-          as YamlMap;
+      final build = (jobs['build-release'] as YamlMap)['strategy'] as YamlMap;
       final matrix = build['matrix'] as YamlMap;
       final include = (matrix['include'] ?? matrix['target']) as YamlList;
       final targets = [
