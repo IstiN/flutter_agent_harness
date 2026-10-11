@@ -558,15 +558,25 @@ void main() {
       },
     );
 
-    test('nightly dry-run rehearses the tag-stamped stage', () {
-      final nightly = File('.github/workflows/nightly.yml').readAsStringSync();
+    test('pre-merge publish dry-run rehearses the tag-stamped stage', () {
+      // gh-1538: the rehearsal MOVED from the retired nightly full-quality
+      // leg into the pre-merge gate — the SM validation (ci.yml dispatched
+      // per PR head) is the single test gate now, and the stamp rehearsal
+      // (gh-1522 risk note) must surface pre-merge, not at tag time.
+      final ci = File('.github/workflows/ci.yml').readAsStringSync();
+      final stage = ci.indexOf(
+        'stage_publish_package.sh /tmp/pr-dry-run-stage',
+      );
       expect(
-        nightly.contains(
-          'stage_publish_package.sh /tmp/publish-stage "\$next"',
-        ),
+        stage,
+        greaterThan(-1),
+        reason: 'the pre-merge publish dry-run must stage the publish tree',
+      );
+      expect(
+        ci.contains('stamp_staged_release.sh /tmp/pr-dry-run-stage "\$next"'),
         isTrue,
         reason:
-            'the nightly publish dry-run must validate the STAMPED staged '
+            'the pre-merge publish dry-run must validate the STAMPED staged '
             'tree (gh-1522 risk note: the dry-run now also validates the '
             'stamp, not only the payload)',
       );
