@@ -152,8 +152,9 @@ void main() {
       },
     );
 
-    // QUARANTINED under gh-1007: LocalHub.waitForHellos 30s timeout under
-    // runner load — fix the timing flake and re-enable (mirrors gh-982).
+    // gh-1007 hardening: the master-secret dial's hello wait rides
+    // waitForHellosUnderLoad (90s ceiling, 15s chunks) instead of one
+    // fixed 30s window that flaked a CI shard under runner load.
     test('set master secret: masked input, then connects to the hub', () async {
       final fakeHub = FakeHub();
       await fakeHub.start();
@@ -203,8 +204,9 @@ void main() {
       );
       // gh-1007: loaded runners deliver the post-secret dial's hello in
       // bursts past 30s — poll with a 90s global ceiling instead of one
-      // fixed window (the issue's 'longer/poller timeout' hardening).
-      await fakeHub.waitForHellos(1, timeout: const Duration(seconds: 30));
+      // fixed window (the issue's 'longer/poller timeout' hardening;
+      // waitForHellosUnderLoad rides 15s chunks until the ceiling).
+      await fakeHub.waitForHellosUnderLoad(1);
       await harness.waitForText(
         'connected',
         timeout: const Duration(seconds: 30),

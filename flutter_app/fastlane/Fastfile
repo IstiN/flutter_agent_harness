@@ -26,6 +26,7 @@
 require_relative "appstore_preflight"
 require_relative "play_listing_sync"
 require_relative "play_upload_preflight"
+require_relative "store_version_create"
 require_relative "version_floor"
 
 def asc_api_key
@@ -185,9 +186,22 @@ end
 # every check happens BEFORE any mutation).
 def appstore_submission_decision(bundle_id:, platform:, version:, confirm:)
   app = asc_app!(bundle_id: bundle_id)
-  app_store_version = app
-                      .get_app_store_versions(filter: { platform: platform })
-                      .find { |v| v.version_string == version }
+  # gh-1519 read-side: a version freshly created by store-metadata.yml can
+  # trail in ASC reads — bounded retry (3 × 20s) instead of an instant
+  # fail, covering BOTH arms like the macOS app_store lane's preflight
+  # probe: a nil find (read lag) AND a raised call (transient ASC 500).
+  # The retry decision lives in AppstorePreflight so the matrix is
+  # plain-ruby testable (test/appstore_preflight_test.rb).
+  app_store_version = AppstorePreflight.with_visibility_retries(
+    attempts: 3,
+    delay: 20,
+    log: ->(msg) { UI.important(msg) },
+    sleep_fn: ->(secs) { sleep(secs) }
+  ) do
+    app
+      .get_app_store_versions(filter: { platform: platform })
+      .find { |v| v.version_string == version }
+  end
   builds = Spaceship::ConnectAPI::Build.all(
     app_id: app.id,
     version: version,
@@ -267,6 +281,47 @@ def with_apple_retries(attempts: 3, delay: 25)
     end
     raise
   end
+end
+
+# gh-1519: store-metadata's app_store lanes must CREATE the App Store
+# version when absent — deliver runs with skip_app_version_update:true,
+# which never materializes the record, so release-appstore.yml's
+# pre-flight dead-ended on every fresh version (v1.0.548 needed a manual
+# ASC click). Idempotent: POSTs appStoreVersions only when the version is
+# missing, so re-running store-metadata on an existing version stays a
+# metadata-only update (no duplicate version error).
+def ensure_app_store_version!(bundle_id:, platform:, version:)
+  asc_token!
+  app = asc_app!(bundle_id: bundle_id)
+  existing = with_apple_retries(attempts: 3, delay: 20) do
+    app.get_app_store_versions(filter: { platform: platform }).map(&:version_string)
+  end
+  return app unless StoreVersionCreate.needs_create?(existing: existing, version: version)
+
+  UI.message("App Store version #{version} (#{platform}) does not exist yet — creating the version record before deliver (gh-1519)")
+  begin
+    app.create_app_store_version(
+      attributes: StoreVersionCreate.create_attributes(platform: platform, version: version)
+    )
+  rescue => e
+    # gh-1519 rework (review thread, PR #1520): ASC read lag can hide a
+    # version a PREVIOUS run created, so needs_create? above answers true
+    # and the POST collides with the existing record — on a workflow
+    # re-run that conflict is idempotency, not failure (the ticket's REG:
+    # re-running store-metadata on an existing version stays a
+    # metadata-only update). Re-read once (bounded retries) and no-op
+    # when the version now exists; anything else still raises.
+    if StoreVersionCreate.create_conflict?(message: e.message)
+      UI.important("create_app_store_version reports #{version} (#{platform}) already exists — re-reading once to confirm (ASC read lag)")
+      existing = with_apple_retries(attempts: 3, delay: 20) do
+        app.get_app_store_versions(filter: { platform: platform }).map(&:version_string)
+      end
+      return app unless StoreVersionCreate.needs_create?(existing: existing, version: version)
+    end
+    raise
+  end
+  UI.success("Created App Store version #{version} (#{platform}) — store-metadata can now attach metadata/screenshots to it")
+  app
 end
 
 # Directly updates App Store version localizations via the Spaceship API.
@@ -540,6 +595,15 @@ platform :ios do
     bundle_id = ENV["IOS_BUNDLE_ID"] || "dev.fa1.app"
     version_name = store_pubspec_version
 
+    # gh-1519: materialize the App Store version record when absent
+    # (idempotent — no-op on an existing version) so deliver has a version
+    # to attach the metadata/screenshots to; without this the lane went
+    # green while creating nothing and release-appstore's pre-flight
+    # dead-ended on every fresh version.
+    if do_metadata || do_screenshots
+      ensure_app_store_version!(bundle_id: bundle_id, platform: Spaceship::ConnectAPI::Platform::IOS, version: version_name)
+    end
+
     # Step 1: metadata only (fast, reliable)
     if do_metadata
       begin
@@ -704,6 +768,14 @@ platform :mac do
     api_key = asc_api_key
     bundle_id = ENV["MACOS_BUNDLE_ID"] || "dev.fa1.app"
     version_name = store_pubspec_version
+
+    # gh-1519: materialize the App Store version record when absent
+    # (idempotent — no-op on an existing version) BEFORE the editable-
+    # version probe below, so a fresh macOS version no longer dead-ends
+    # into "Create the macOS version in App Store Connect ...".
+    if do_metadata || do_screenshots
+      ensure_app_store_version!(bundle_id: bundle_id, platform: Spaceship::ConnectAPI::Platform::MAC_OS, version: version_name)
+    end
 
     # Preflight: without an editable (prepare-for-submission) macOS version in
     # App Store Connect, deliver dies on Apple's opaque "Server error got 500"

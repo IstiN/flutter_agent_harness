@@ -40,7 +40,7 @@ module AppstorePreflight
       return fail_decision("CONFIRM MISMATCH: confirm (#{confirm.inspect}) does not equal version (#{version.inspect}) — aborting before any mutation")
     end
     if app_store_version.nil?
-      return fail_decision("App Store version #{version} does not exist yet — run store-metadata.yml (metadata_only) first so the version exists. Nothing was mutated.")
+      return fail_decision("App Store version #{version} does not exist yet — run store-metadata.yml (metadata_only) first: its app_store lane creates the version when absent (gh-1519). Nothing was mutated.")
     end
     if builds.empty?
       return fail_decision("No TestFlight build exists for version #{version} — dispatch build-mobile.yml / build-macos.yml first. Nothing was mutated.")
@@ -57,6 +57,37 @@ module AppstorePreflight
 
     build_number = ready.map { |b| b["number"].to_i }.max.to_s
     submit("Submitting #{version} (build #{build_number}, latest processed) for App Store review", build_number)
+  end
+
+  # gh-1519 rework (review thread, PR #1520): bounded read-side retry for
+  # ASC visibility checks. Covers BOTH failure arms — a nil find (read
+  # lag: the version a previous run created trails in ASC reads) AND a
+  # raised call (transient ASC error, the failure class the macOS
+  # app_store lane's preflight probe retries). Yields once per attempt;
+  # returns the first truthy result, or nil after `attempts` tries. A
+  # raise on the FINAL attempt propagates (a persistent API error is not
+  # a visibility miss). Exhaustion logs a final message — the caller's
+  # decide() then reports the version as missing, the genuine dead-end
+  # the pre-flight exists to surface. log/sleep_fn are injected so the
+  # whole matrix is plain-ruby testable with no fastlane and no real
+  # sleeps (test/appstore_preflight_test.rb).
+  def self.with_visibility_retries(attempts:, delay:, log:, sleep_fn:)
+    attempts.times do |attempt|
+      begin
+        found = yield
+        return found if found
+      rescue StandardError => e
+        raise if attempt >= attempts - 1
+        log.call("ASC read raised #{e.class} (attempt #{attempt + 1}/#{attempts}) — retrying in #{delay}s...")
+        sleep_fn.call(delay)
+        next
+      end
+      break if attempt >= attempts - 1
+      log.call("not visible yet (attempt #{attempt + 1}/#{attempts}) — read lag, retrying in #{delay}s...")
+      sleep_fn.call(delay)
+    end
+    log.call("still not visible after #{attempts} attempts — treating the version as missing")
+    nil
   end
 
   def self.fail_decision(reason)

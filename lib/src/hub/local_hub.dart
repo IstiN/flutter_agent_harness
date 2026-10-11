@@ -405,6 +405,47 @@ class LocalHub {
     await hellos.firstWhere((_) => _hellosSeen >= n).timeout(timeout);
   }
 
+  /// gh-1007: resolves when the hub has seen [n] signature-verified
+  /// hellos — like [waitForHellos], but for PTY integration legs where
+  /// the CLI's dial rides a cold VM behind a TUI boot and loaded runners
+  /// deliver the hello in bursts past ONE fixed window (the
+  /// dap_tui_menu master-secret case flaked a CI shard at a single 30s
+  /// window). Polls [waitForHellos] in [chunk]-sized windows until
+  /// [ceiling] elapses, so a single slow burst no longer fails the leg —
+  /// only the full ceiling does.
+  Future<void> waitForHellosUnderLoad(
+    int n, {
+    Duration ceiling = const Duration(seconds: 90),
+    Duration chunk = const Duration(seconds: 15),
+  }) async {
+    // PR #1520 review: a zero/negative chunk hands waitForHellos a
+    // non-positive timeout, fires TimeoutException immediately, and the
+    // poll loop below hot-spins until the ceiling (a burned CI core).
+    assert(chunk > Duration.zero, 'chunk must be positive');
+    assert(ceiling > Duration.zero, 'ceiling must be positive');
+    final stopwatch = Stopwatch()..start();
+    while (true) {
+      final remaining = ceiling - stopwatch.elapsed;
+      if (remaining <= Duration.zero) {
+        // The last chunk's timeout may have raced a hello delivery —
+        // the fast path settles that before declaring the ceiling.
+        if (_hellosSeen >= n) return;
+        throw TimeoutException(
+          'timed out after ${ceiling.inSeconds}s waiting for $n '
+          'signature-verified hello(s)',
+          ceiling,
+        );
+      }
+      try {
+        await waitForHellos(n, timeout: remaining < chunk ? remaining : chunk);
+        return;
+      } on TimeoutException {
+        // Window missed (runner burst) — re-check the fast path and keep
+        // polling until the ceiling.
+      }
+    }
+  }
+
   /// The accept loop NEVER awaits request work (issue #794): every
   /// request routes detached, so a slow relay, a hung upgrade, or a dead
   /// socket cannot delay the next accept. Per-request errors are
