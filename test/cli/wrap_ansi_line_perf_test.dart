@@ -16,7 +16,10 @@ import 'package:test/test.dart';
 /// at is noise, not a gate), and the growth-shape asserts are the real
 /// regression guard — a per-row rescan or per-cell allocation coming back
 /// shows up as a superlinear doubling ratio long before any absolute
-/// budget trips.
+/// budget trips. The growth asserts take several independent attempts and
+/// gate on the min ratio (gh-1532): contention can only ADD wall time, so
+/// the min across attempts approaches the uncontended ratio and a
+/// scheduler preemption on a loaded runner can no longer flake the gate.
 final _rng = Random(1496);
 
 const _words = [
@@ -68,67 +71,126 @@ String cjkProse(int cells) {
 /// [_cells] cells in ONE word (exercises the hard-cut slice path).
 String oneGiantWord(int cells) => 'x' * cells;
 
+/// Elapsed microseconds for running [body] — a real Stopwatch by default,
+/// or an injected fake (see [contendedClock]) so the gh-1532 contention
+/// scenario is reproduced deterministically instead of by CI luck.
+typedef ElapsedUs = int Function(void Function() body);
+
+int _stopwatchUs(void Function() body) {
+  final sw = Stopwatch()..start();
+  body();
+  sw.stop();
+  return sw.elapsedMicroseconds;
+}
+
+/// Deterministic stand-in for a contended runner: delegates to a real
+/// stopwatch but adds [spikeMs] of fake preemption time to the timed
+/// measurements whose 1-based index is in [spiked] — a runner steal
+/// spanning several timed runs, the shape that flaked gh-1532 live.
+///
+/// [calls] exposes how many measurements the fake has timed. The
+/// preemption test asserts the expected total (attempts × sizes ×
+/// runs) so a future change to the measure loop's call layout turns
+/// the index-based [spiked] addressing into a LOUD failure instead of
+/// silently shifting the spikes onto the wrong measurements (where
+/// they could depress the ratio and leave the test green while
+/// asserting nothing).
+final class ContendedClock {
+  ContendedClock({required this._spiked, this.spikeMs = 30});
+
+  final Set<int> _spiked;
+
+  /// Fake preemption time added to each spiked measurement.
+  final double spikeMs;
+
+  /// Number of measurements timed so far (1-based [spiked] addressing).
+  var calls = 0;
+
+  /// Times [body] like [ElapsedUs], adding the spike when spiked.
+  int call(void Function() body) {
+    final sw = Stopwatch()..start();
+    body();
+    sw.stop();
+    calls++;
+    return sw.elapsedMicroseconds +
+        (_spiked.contains(calls) ? (spikeMs * 1000).round() : 0);
+  }
+}
+
 /// Median wrap time over [runs] executions (one untimed warm-up first).
-/// Used by the absolute-budget tests: their bounds carry generous
-/// gh-1357 headroom over the median, so jitter there is already priced in.
-double medianWrapMs(String line, int width, {int runs = 5}) {
-  final times = _wrapTimes(line, width, runs);
+double medianWrapMs(
+  String line,
+  int width, {
+  int runs = 5,
+  ElapsedUs? elapsedUs,
+}) {
+  final measure = elapsedUs ?? _stopwatchUs;
+  wrapAnsiLine(line, width); // JIT warm-up, untimed
+  final times = List<double>.filled(runs, 0);
+  for (var i = 0; i < runs; i++) {
+    times[i] = measure(() => wrapAnsiLine(line, width)) / 1000.0;
+  }
   times.sort();
   return times[runs ~/ 2];
 }
 
-/// Minimum wrap time over [runs] executions (one untimed warm-up first).
-///
-/// gh-1460 rework (CI run 38112524699, core shard 0/4): the growth-shape
-/// ratio used the MEDIAN of 5 at ~3–7ms windows and a loaded shared
-/// runner's scheduling pause landed inside the doubled-size median
-/// (12.09ms against a true ~7ms) — ratio 3.65 tripped the 3.2 bound on a
-/// genuinely linear wrap (every other leg, including the 1M-cell absolute
-/// budget, passed). Runner jitter only ever INFLATES a wall-clock
-/// sample, so the MINIMUM converges on the true compute time and cannot
-/// be tipped by a pause; genuine superlinearity inflates BOTH sizes with
-/// real work, so the min-ratio still trips on a regression (the
-/// gh-1496 quadratic candidates measure ~4x by min as well).
-double minWrapMs(String line, int width, {int runs = 9}) {
-  final times = _wrapTimes(line, width, runs);
-  times.sort();
-  return times.first;
-}
+/// Independent doubling samples per growth assertion (gh-1532): the
+/// superlinear guard is gated on the MIN ratio across the attempts —
+/// contention can only ADD wall time, so the min approaches the
+/// uncontended ratio. A genuine regression measures ~4x+ in every
+/// attempt and still fails.
+const _growthAttempts = 3;
 
-/// One untimed warm-up plus [runs] timed wraps, unsorted milliseconds.
-List<double> _wrapTimes(String line, int width, int runs) {
-  wrapAnsiLine(line, width); // JIT warm-up, untimed
-  final times = List<double>.filled(runs, 0);
-  for (var i = 0; i < runs; i++) {
-    final sw = Stopwatch()..start();
-    wrapAnsiLine(line, width);
-    sw.stop();
-    times[i] = sw.elapsedMicroseconds / 1000.0;
-  }
-  return times;
-}
+/// Upper bound of the doubling ratio for a linear wrap: linear wraps
+/// measure ~2x here; the old quadratic candidates (re-scan per emitted
+/// row) measure ~4x+. 3.2 sits between with room for CI scheduler
+/// jitter on both sides.
+const _maxLinearRatio = 3.2;
 
-/// Growth-shape contract: doubling the input must not more than [maxRatio]
-/// the time. Measured with [minWrapMs] — the pause-proof statistic (see
-/// its doc); linear wraps measure ~2x here; the old quadratic candidates
-/// (re-scan per emitted row) measure ~4x+. 3.2 sits between with room for
-/// CI scheduler jitter on both sides.
+/// Lower bound of the doubling ratio across the attempts (linear ≈ 2x):
+/// the max must clear it so a degenerate flat measurement cannot pass
+/// — the retry-min must not become a rubber stamp.
+const _minGrowthRatio = 1.5;
+
+/// Growth-shape contract: doubling the input must not more than
+/// [_maxLinearRatio] the median time — see the constants above for the
+/// guard bounds and the gh-1532 rationale (min across attempts gates
+/// the superlinear guard; the max across attempts must clear
+/// [_minGrowthRatio] so a degenerate flat measurement fails).
 void expectLinearGrowth(
   String Function(int cells) build,
   int baseCells,
-  String label,
-) {
-  final small = minWrapMs(build(baseCells), 80);
-  final doubled = minWrapMs(build(baseCells * 2), 80);
-  final ratio = doubled / small;
+  String label, {
+  ElapsedUs? elapsedUs,
+}) {
+  var minRatio = double.infinity;
+  var maxRatio = 0.0;
+  for (var a = 0; a < _growthAttempts; a++) {
+    final small = medianWrapMs(build(baseCells), 80, elapsedUs: elapsedUs);
+    final doubled = medianWrapMs(
+      build(baseCells * 2),
+      80,
+      elapsedUs: elapsedUs,
+    );
+    final ratio = doubled / small;
+    if (ratio < minRatio) minRatio = ratio;
+    if (ratio > maxRatio) maxRatio = ratio;
+  }
   expect(
-    ratio,
-    lessThan(3.2),
+    minRatio,
+    lessThan(_maxLinearRatio),
     reason:
-        '$label wrap is superlinear in input size: '
-        '$baseCells cells = ${small.toStringAsFixed(2)}ms, '
-        '${baseCells * 2} cells = ${doubled.toStringAsFixed(2)}ms '
-        '(ratio ${ratio.toStringAsFixed(2)}x)',
+        '$label wrap is superlinear in input size: best doubling ratio '
+        'across $_growthAttempts attempts is ${minRatio.toStringAsFixed(2)}x '
+        '($baseCells -> ${baseCells * 2} cells)',
+  );
+  expect(
+    maxRatio,
+    greaterThan(_minGrowthRatio),
+    reason:
+        '$label doubling ratio never exceeded ${_minGrowthRatio}x '
+        '(${maxRatio.toStringAsFixed(2)}x across $_growthAttempts '
+        'attempts) — the measurement is degenerate and asserts nothing',
   );
 }
 
@@ -218,5 +280,52 @@ void main() {
     }
     // Reassembly reproduces the visible text minus dropped edge spaces.
     expect(reassembled, greaterThanOrEqualTo(line.length - rows.length));
+  });
+
+  test(
+    'growth assertion survives a contended-runner preemption spike (gh-1532)',
+    () {
+      // gh-1532 live failure (fa run 38113730068): on a runner contended by
+      // release windows a scheduler steal spanning several timed runs
+      // inflated the one-shot doubling ratio past 3.2x on a ~4ms baseline.
+      // 30ms of fake preemption across the first three timed runs of the
+      // doubled measurement in attempt 1 (median-of-5 absorbs single-run
+      // spikes, so a sustained steal is the realistic shape) is a ~9x ratio
+      // for that attempt — the retry-min harness must discard it.
+      // Measurement call order: per attempt, 5 timed runs of the small
+      // input then 5 of the doubled one.
+      final spike = ContendedClock(spiked: {6, 7, 8});
+      expectLinearGrowth(
+        asciiProse,
+        100000,
+        'ASCII prose',
+        elapsedUs: spike.call,
+      );
+      // Layout guard: the spiked indices above encode the measure loop's
+      // exact call layout (3 attempts × 2 sizes × 5 timed runs). If that
+      // layout ever changes the spikes silently land on the wrong
+      // measurements — this assertion turns that into a loud failure.
+      expect(
+        spike.calls,
+        30,
+        reason: 'the spiked indices encode the call layout',
+      );
+    },
+  );
+
+  test('growth assertion rejects a degenerate flat measurement (gh-1532)', () {
+    // AC2: the guard must stay meaningful. A constant clock makes every
+    // doubling "take" the same time (ratio 1.0) — the pre-fix assertion
+    // let that pass, asserting nothing. The meaningful-growth lower bound
+    // must reject it.
+    expect(
+      () => expectLinearGrowth(
+        asciiProse,
+        100000,
+        'ASCII prose',
+        elapsedUs: (_) => 5000,
+      ),
+      throwsA(isA<TestFailure>()),
+    );
   });
 }
