@@ -381,12 +381,41 @@ void main() {
       // also be covered by .pubignore, or the root-level dry-run packs it
       // again. Non-root-scoped filters (build, .dart_tool, coverage) are
       // gitignored already and never reach pub's file list.
+      //
+      // gh-1511: .pubignore may carry NEGATIONS the stage deliberately
+      // does not mirror (publishing FROM packages/fa_llm needs the tree
+      // visible to pub's upward ignore walk, but fa_llm is not a core
+      // path dep and must NOT ride the staged core payload). A negated
+      // child of a `/*`-scoped exclude is tolerated here ONLY when it is
+      // pinned by the explicit-allowlist test below.
       final rules = _pubIgnoreRules();
       expect(rules, isNotEmpty);
+      final negated = rules.where((r) => r.negated).map((r) => r.body).toSet();
       var checked = 0;
       for (final f in _stagingFilters()) {
         if (f.include || !f.anchored) continue;
         checked++;
+        if (f.body.endsWith('/*')) {
+          // Child-scoped exclude (vendor/*, packages/*): enumerate the
+          // REAL children on disk — probing a literal `packages/*` path
+          // would let a stray un-negated sibling slip through unnamed.
+          final root = f.body.substring(0, f.body.length - 2);
+          final dir = Directory(root);
+          if (dir.existsSync()) {
+            for (final child in dir.listSync().whereType<Directory>()) {
+              if (negated.contains(child.path)) continue;
+              expect(
+                _ignoredByPubIgnore(rules, '${child.path}/pubspec.yaml', false),
+                isTrue,
+                reason:
+                    'the stage strips /${f.body} but .pubignore does not '
+                    'exclude ${child.path} — the root-level dry-run packs '
+                    'the tree again (gh-1220)',
+              );
+            }
+            continue;
+          }
+        }
         expect(
           _ignoredByPubIgnore(rules, '${f.body}/pubspec.yaml', false),
           isTrue,
@@ -437,6 +466,84 @@ void main() {
             '`dart publish --dry-run` packs the archive into the payload '
             '(gh-1220 mirror drift)',
       );
+    });
+  });
+
+  // ── gh-1511 — a sub-package publish must see its own tree ────────────
+  // Pub walks ignore rules up to the git root, so the root .pubignore's
+  // /packages/* hid packages/fa_llm from its OWN publish: `dart pub
+  // publish --dry-run` in packages/fa_llm failed with "The pubspec is
+  // hidden" + "missing LICENSE", and the tag-triggered OIDC publish
+  // (publish-fa-llm.yml) would have died the same way. The
+  // !/packages/fa_llm/ negation is pubignore-ONLY — the staging rsync
+  // keeps fa_llm out of the core payload (it is not a core path dep);
+  // the anti-drift mirror test above tolerates the divergence ONLY for
+  // negations pinned by the explicit-allowlist test below.
+  group('gh-1511 — sub-package publish sees its own tree', () {
+    test('fa_llm payload carries its own required files', () {
+      for (final probe in [
+        'packages/fa_llm/pubspec.yaml',
+        'packages/fa_llm/LICENSE',
+        'packages/fa_llm/README.md',
+        'packages/fa_llm/CHANGELOG.md',
+        'packages/fa_llm/lib/fa_llm.dart',
+      ]) {
+        expect(
+          File(probe).existsSync(),
+          isTrue,
+          reason: 'fixture sanity: $probe is on disk',
+        );
+        expect(
+          _publishedByPub(probe),
+          isTrue,
+          reason:
+              'pub walks ignore rules up to the git root — /packages/* '
+              'hides packages/fa_llm from its own publish (dry-run: "The '
+              'pubspec is hidden" + "missing LICENSE", gh-1511)',
+        );
+      }
+    });
+
+    test('.pubignore negations are an explicit allowlist', () {
+      // Every negated tree ships on the pub payload; only fa_llm_mock and
+      // vendor/xterm are mirrored by a stage INCLUDE (core path
+      // dev-deps), fa_llm is pubignore-only (gh-1511). A negation
+      // outside this set is mirror drift the anti-drift test would
+      // otherwise silently tolerate.
+      final negated = _pubIgnoreRules()
+          .where((r) => r.negated)
+          .map((r) => r.body)
+          .toSet();
+      expect(
+        negated,
+        unorderedEquals([
+          'vendor/xterm',
+          'packages/fa_llm_mock',
+          'packages/fa_llm',
+        ]),
+      );
+    });
+
+    test('other packages/* trees stay out of the pub payload', () {
+      // /packages/* + !fa_llm_mock + !fa_llm must keep hiding every
+      // sibling: dap_hub and fa_ui are repo tooling, fa_llm_flutter is
+      // publish_to: none (never published from this repo, so it needs no
+      // sub-package visibility either).
+      for (final probe in [
+        'packages/dap_hub/pubspec.yaml',
+        'packages/fa_ui/pubspec.yaml',
+        'packages/fa_llm_flutter/pubspec.yaml',
+      ]) {
+        if (!File(probe).existsSync()) continue;
+        expect(
+          _publishedByPub(probe),
+          isFalse,
+          reason:
+              '$probe is not part of the pub package — only fa_llm_mock '
+              '(core path dev-dep) and fa_llm (gh-1511 sub-package '
+              'publish) may negate /packages/*',
+        );
+      }
     });
   });
 }
