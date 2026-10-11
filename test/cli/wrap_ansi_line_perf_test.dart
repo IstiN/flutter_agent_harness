@@ -86,6 +86,15 @@ double medianWrapMs(String line, int width, {int runs = 5}) {
 /// the median time. Linear wraps measure ~2x here; the old quadratic
 /// candidates (re-scan per emitted row) measure ~4x+. 3.2 sits between
 /// with room for CI scheduler jitter on both sides.
+///
+/// [baseCells] must keep each leg's absolute time in the tens of ms on
+/// CI: at the original 100k cells the ASCII leg measured ~3.2ms, and a
+/// few ms of runner steal / GC-epoch noise on the doubled leg skewed the
+/// ratio to 3.6-3.8x (gh-1530, 2x red main) — a fixed-cost perturbation,
+/// not wrap superlinearity (the 1M-cell absolute leg passed <100ms in
+/// both red runs, impossible under a real 3.6x-per-doubling curve).
+/// Tens-of-ms legs drown that noise under the median; 1M keeps the
+/// quadratic signal (~4x) far above the budget.
 void expectLinearGrowth(
   String Function(int cells) build,
   int baseCells,
@@ -121,18 +130,18 @@ void main() {
   });
 
   test('wrap time grows linearly: ASCII prose, 2x input <= 3.2x time', () {
-    expectLinearGrowth(asciiProse, 100000, 'ASCII prose');
+    expectLinearGrowth(asciiProse, 1000000, 'ASCII prose');
   });
 
   test('wrap time grows linearly: CJK prose, 2x input <= 3.2x time', () {
     // CJK walks the wide-rune tables per rune — no ASCII batching — so a
     // regression that re-measures or re-scans per emitted row would show
     // here first.
-    expectLinearGrowth(cjkProse, 100000, 'CJK prose');
+    expectLinearGrowth(cjkProse, 1000000, 'CJK prose');
   });
 
   test('wrap time grows linearly: hard-cut single word, 2x <= 3.2x', () {
-    expectLinearGrowth(oneGiantWord, 100000, 'single word');
+    expectLinearGrowth(oneGiantWord, 1000000, 'single word');
   });
 
   test('wrapped output stays contract-clean at scale', () {
