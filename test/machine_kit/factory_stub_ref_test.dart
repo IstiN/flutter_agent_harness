@@ -111,7 +111,7 @@ void main() {
 
   test('engine pin: ai-teammate passes a 40-hex factory_ref; sm/merge '
       'carry none (AW resolves the engine from releases)', () {
-    final engineRef = RegExp(r'factory_ref:\s*([0-9a-f]{40})')
+    final engineRef = RegExp(r"factory_ref:\s*\$\{\{\s*vars\.AGENTS_FACTORY_REF\s*\|\|\s*'([0-9a-f]{40})'\s*\}\}")
         .firstMatch(teammate);
     expect(
       engineRef,
