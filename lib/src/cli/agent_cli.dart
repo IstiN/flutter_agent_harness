@@ -39,6 +39,7 @@ import 'tui_status_line.dart'
         resolveStatusLineSpec;
 import 'browser_bridge_commands.dart';
 import '../browser/browser_tools.dart';
+import 'headless_config.dart';
 import 'headless_prompt.dart';
 import 'hep.dart';
 import 'stream_json.dart';
