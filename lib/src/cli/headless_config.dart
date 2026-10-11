@@ -138,6 +138,27 @@ String headlessDrainDetachCause({
   required bool roundCapEnded,
 }) => roundCapEnded ? 'round cap (10 rounds)' : 'drain ceiling ($drainMs ms)';
 
+/// The ceiling sleep of one headless drain round (gh-1459): [wake] — the
+/// pure `wakeIn` bound — unless it is a non-positive instant wake with NO
+/// due liveness crossing ([steerDue] false). A zero/negative
+/// `Future.delayed` completes at once, and a round that neither settles a
+/// job nor consumes a crossing then burns the 10-round cap before the
+/// wall ceiling spends a millisecond — the 2026-10-11 red main (run
+/// 38120494810, hostile-env leg): a never-settling job detached on
+/// 'round cap (10 rounds)' instead of the documented 'drain ceiling'.
+/// Such a round sleeps the [remainingCeiling] instead, so a never-settling
+/// job always reaches its ceiling; a due steer keeps the instant wake (the
+/// steer fires right after the round, on cadence). Pure — unit-tested
+/// directly.
+Duration headlessDrainRoundSleep({
+  required Duration wake,
+  required bool steerDue,
+  required Duration remainingCeiling,
+}) {
+  if (wake > Duration.zero || steerDue) return wake;
+  return remainingCeiling;
+}
+
 /// What the drain's liveness leg does for one still-running awaited shell
 /// job right now (gh-1459 ask #4). Pure — unit-tested directly.
 enum HeadlessLivenessAction {
