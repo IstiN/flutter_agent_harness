@@ -93,39 +93,50 @@ void main() {
     });
 
     test('binds the first available port and falls back to the next', () async {
-      Future<int> freePort() async {
-        final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-        final port = socket.port;
-        await socket.close();
-        return port;
+      // gh-1528: the old version probed "free" ports by binding port 0,
+      // closing the socket, and rebinding the freed number later — on busy
+      // runners a parallel suite process stole the port inside that window
+      // and the re-bind threw SocketException (EADDRINUSE, errno 98),
+      // flaking the whole Quality gate. Hermetic instead: the occupant
+      // holds an OS-assigned ephemeral port for the whole scenario and the
+      // free candidates are port 0 (always bindable; the bound port is
+      // discovered from the socket) — no bind in this test ever targets a
+      // freed port.
+
+      // Held occupant: obtained exactly like the candidates (bind port 0),
+      // never closed until the scenario ends.
+      final occupant = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final occupiedPort = occupant.port;
+      try {
+        // First listed candidate occupied → the server falls back to the
+        // next listed port, and the callback actually serves there (AC2).
+        final fallbackServer = ChatGptOAuthLocalCallbackServer();
+        final url = await fallbackServer.start(
+          timeout: const Duration(seconds: 5),
+          ports: [occupiedPort, 0],
+        );
+        expect(Uri.parse(url).port, isNot(occupiedPort));
+
+        final uri = Uri.parse(
+          url,
+        ).replace(queryParameters: {'code': 'abc', 'state': 'xyz'});
+        final response = await _httpGet(uri);
+        expect(response.statusCode, 200);
+        expect(response.body, contains('Authorized'));
+        await fallbackServer.close();
+
+        // First listed candidate available → it wins even with a later
+        // listed port occupied.
+        final firstServer = ChatGptOAuthLocalCallbackServer();
+        final firstUrl = await firstServer.start(
+          timeout: const Duration(seconds: 5),
+          ports: [0, occupiedPort],
+        );
+        expect(Uri.parse(firstUrl).port, isNot(occupiedPort));
+        await firstServer.close();
+      } finally {
+        await occupant.close();
       }
-
-      final first = await freePort();
-      final second = await freePort();
-
-      // Both free → the first listed port wins (the Codex-registered
-      // order: 1455 preferred, 1457 fallback).
-      final firstServer = ChatGptOAuthLocalCallbackServer();
-      var url = await firstServer.start(
-        timeout: const Duration(seconds: 5),
-        ports: [first, second],
-      );
-      expect(Uri.parse(url).port, first);
-      await firstServer.close();
-
-      // First occupied → the next listed port serves the callback.
-      final occupant = await HttpServer.bind(
-        InternetAddress.loopbackIPv4,
-        first,
-      );
-      final secondServer = ChatGptOAuthLocalCallbackServer();
-      url = await secondServer.start(
-        timeout: const Duration(seconds: 5),
-        ports: [first, second],
-      );
-      expect(Uri.parse(url).port, second);
-      await secondServer.close();
-      await occupant.close();
     });
 
     test('throws when both callback ports are occupied', () async {

@@ -281,3 +281,5 @@ pre-tag + publish gates) fails fast when the cap is approached again.
 - chore: pin factory_ref to agents-rel-20261011-002034 (aa5ddd8bd78e64c9ce77a43b31bc63b40b0f8d7a) — minter fix (gh-848/#849): gh-748 never cancels pre-materialization; unblocks fa #1457/#1520 (ghost-seized) (#1527)
 
 ## Unreleased
+
+- gh-1528 [BUG] FLAKE: chatgpt_oauth_server_test binds port 40581 → SocketException (EADDRINUSE) under Hostile ambient env leg — port-fallback test rewritten hermetic (held ephemeral occupant + port-0 candidates, no bind ever targets a freed port)
