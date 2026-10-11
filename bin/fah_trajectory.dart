@@ -87,8 +87,8 @@ Future<int> _runTrajectoryCommand(
       );
       break;
     case 'tail':
-      // Never returns: follows until interrupted. Runs AFTER the
-      // render-stop below is unreachable on purpose.
+      // Never returns: follows until interrupted, so the render-stop and
+      // timing print below are unreachable on this path (as before).
       return _runTrajectoryTail(io, session, records);
   }
   renderSw.stop();
@@ -122,8 +122,8 @@ int _printTrajectory(CliIO io, List<String> lines) {
 /// whole ledger, and the windowed live-tail ingest picks up the
 /// appended suffix on every poll. Re-opening a fresh windowed session
 /// each poll returned only the ~200-record resident window, so the
-/// primed tailer (whole-ledger `_seen`) never saw the list grow and
-/// went permanently silent for any session larger than the window.
+/// whole-ledger-primed tailer never saw a longer list and went
+/// permanently silent for any session larger than the window.
 Future<int> _runTrajectoryTail(
   CliIO io,
   Session session,
