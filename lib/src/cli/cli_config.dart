@@ -18,6 +18,7 @@ import '../mcp/mcp_config.dart';
 import '../model_roles/model_roles.dart';
 import '../prompts/prompt_overrides.dart';
 import '../cube/config/cube_settings.dart';
+import 'headless_config.dart';
 import 'waiting_heartbeat.dart';
 import '../providers/provider_common.dart';
 import '../spill/spill.dart';
@@ -413,6 +414,7 @@ final class CliConfig {
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
+    this.headless = const HeadlessConfig(),
     this.powerSleepPrevention,
     this.powerHold,
     this.quota = const QuotaSection(),
@@ -552,6 +554,8 @@ final class CliConfig {
       subagents: SubagentsConfig.fromYaml(map['subagents']),
       waiting: WaitingConfig.fromYaml(map['waiting']),
       jobs: JobsConfig.fromYaml(map['jobs']),
+      // The headless section (gh-1459): the background-job drain ceiling.
+      headless: HeadlessConfig.fromYaml(map['headless']),
       // The fabric section (issue #27 phase 2 discovery announcements) is
       // strict too.
       fabric: map['fabric'] == null
@@ -827,6 +831,11 @@ final class CliConfig {
   /// and `maxLogBytes` (per-log ceiling, issue #919, default 50 MB).
   final JobsConfig jobs;
 
+  /// The `headless:` section (gh-1459): the wall-clock ceiling
+  /// (`shellJobDrainMs`, default 30 min; 0 = off) for the headless
+  /// background-job drain after the final answer.
+  final HeadlessConfig headless;
+
   /// The `subagents:` section (issue #383): heartbeat cadence
   /// (`heartbeatMinutes`, 0 = off) and stall threshold (`stallMinutes`,
   /// 0 = flags off) for background-subagent status digests.
@@ -927,6 +936,7 @@ final class CliConfig {
       tuiClassic: tuiClassic,
       statusLine: statusLine,
       links: links,
+      headless: headless,
       autoUpdate: autoUpdate,
     );
   }
@@ -1019,6 +1029,7 @@ final class CliConfig {
       buffer.write(subagentsConfig.toYaml());
     }
     buffer.write(_jobsYaml());
+    buffer.write(_headlessYaml());
     buffer.write(_linksYaml());
     buffer.write(_powerYaml());
     buffer.write(_quotaYaml());
@@ -1089,6 +1100,19 @@ final class CliConfig {
       return '';
     }
     return jobsConfig.toYaml();
+  }
+
+  /// The `headless:` section (gh-1459), only when explicitly configured;
+  /// defaults are never written so the file stays minimal.
+  String _headlessYaml() {
+    final lines = <String>[
+      if (headless.shellJobDrainMs != defaultShellJobDrainMs)
+        '  shellJobDrainMs: ${headless.shellJobDrainMs}',
+      if (headless.shellJobQuietMs != defaultShellJobQuietMs)
+        '  shellJobQuietMs: ${headless.shellJobQuietMs}',
+    ];
+    if (lines.isEmpty) return '';
+    return 'headless:\n${lines.join('\n')}\n';
   }
 
   /// The `compaction:` section, only when explicitly configured; defaults
