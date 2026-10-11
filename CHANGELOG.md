@@ -1,10 +1,112 @@
 # Changelog
 
+## 1.0.508
+
+- fix(cli): gh-1459 — headless `fa -p` no longer orphans live background
+  shell jobs. `_awaitHeadlessBackgroundJobs` drained only in-flight
+  subagent jobs, so a run whose model was still waiting on a
+  `bash background:true` command (gh-1440's full test suite) printed the
+  detach summary and exited, killing the job with the container — the
+  result it was explicitly waiting for never reached anyone. Live shell
+  jobs now drain exactly like subagents: the settles ride the existing
+  `_onShellJobSettled` fresh-turn path (steered into reaction runs the
+  drain awaits, loop capped at 10 rounds), suppressed jobs
+  (`suppressSettleNotification` — result already landed in-turn) are not
+  awaited, and a settle landing outside a round still gets its reaction
+  run awaited before exit. BOTH loops share ONE wall-clock ceiling, the
+  new `headless:` config section (`shellJobDrainMs`, default 30 min,
+  strict parse; `0` restores the detach-immediately behavior) — a
+  never-settling watch-loop detaches with an observable
+  `⏳ … drain ceiling … — detaching` line instead of hanging headless,
+  and the detach summary stays the documented degradation, never the
+  default path. The drain prints a `⏳ waiting: …` line (#1055 parity)
+  naming what the run stays alive for. While it waits, the drain also
+  steers interim liveness notices (gh-1459 ask #4): every
+  `headless.shellJobQuietMs` (default 5 min; `0` = off) of a
+  still-running awaited shell job, ONE compact system-notice
+  (`job <id> running · <elapsed> elapsed · tail: …` plus the bash_job
+  output/stop escape hatch) keeps the model able to wait, inspect, or
+  kill instead of blocking blindly to the ceiling; a crossing the model
+  probed itself (`bash_job status/output` bumps the entry's probe
+  generation) is skipped, one steer budget per threshold, never a spam
+  loop.
+- feat(providers): issue #1398 — stall-recovery tuning becomes per-provider
+  and data-driven. Registry entries (`customProviders:`, `models.custom:`,
+  roles chain entries, `providersQueue:` entries) accept optional
+  `connectTimeoutMs`/`streamIdleTimeoutMs` (strict positive-int parsing);
+  resolution is **entry > the `providerTimeouts:` section > the 180 s/300 s
+  defaults**, per field, and every seeded entry prints its effective values
+  at boot. The wire seams (`sendWatchedProviderRequest` connect watchdog,
+  `createSseIterator` idle watchdog) resolve per request URL, so all
+  adapters inherit the tuning; runs without entries are byte-identical
+  (AC6). Also: the retry backoff contract — a parseable delta-seconds
+  `Retry-After` wins over the ladder for that attempt, hard-capped at the
+  60 s ceiling (the clamp names the advertised value; `0` counts as
+  absent, malformed/HTTP-date headers fall back to the ladder with a trace
+  note) — and the dual retry budgets (connection-class cap 4, stream-class
+  cap 3, independent counters, the terminal story carries both). Trace
+  lines pin the format `budget=<connection|stream> attempt=<n>/<cap>
+  delay=<ladder|server|clamp>`; the tuning report prints per-model
+  p50/p95 inter-chunk gap + watchdog-fire counts with the
+  `streamIdleTimeoutMs ≈ 2× p95` recipe (the production feeder lands with
+  #1392's LatencyMeter).
+- feat(hosts): gh-1322 — the wireAgentCore host-adoption gaps: an embed
+  guide (`docs/embedding.md`, with the explicit "hosts ride wireAgentCore,
+  never adk_dart" rule), the host-facing key-slot resolver
+  (`AgentCoreServices.resolveKey` + `HostKeyResolver` — the effective slot
+  NAME, pinned-twin drift hints identical to the CLI's migration notes,
+  registry-leg `knownSlotNames`, injected env/store readers only), and
+  lifecycle telemetry for in-process hosts (`AgentCoreServices.telemetry`:
+  the pure interface + in-memory ring in core, the fa.log file sink behind
+  `lib/io.dart`; requestStart/firstToken/turn/tool/run records with
+  durations and the provider HTTP status).
+- chore(ci): document the sm-kicker head-completeness codeless-head crash
+  (upstream awf#15) — the factory job's `gh api` calls put `--jq` before
+  `--arg`/`--argjson`, so a CODELESS branch head (2 parents, 0 changed
+  files: a routine branch-sync merge with no content diff) crashes the
+  job with `accepts 1 arg(s), received 4` — even when CI is fully green
+  on that head, and the job's own rescue dispatch can never heal exactly
+  those heads. Workaround until the upstream fix: keep the branch head
+  code-bearing. Live instance: run 37193754301 on head 1fe9b1232.
+- fix(messaging): gh-1180 — `schedule_message` self-chains no longer die
+  silently at the agent-chatter wake cap. The idle inbox-wake gate
+  (`InboxWakePolicy`, shared by the CLI and the app hosts) now exempts a
+  delivered scheduled self-reminder (`[scheduled] ` prefix, from == to)
+  from the 10-consecutive-wake streak: a deliberate agent-chosen cadence
+  (night watch, periodic sweep) wakes forever, while foreign
+  agent-to-agent chatter stays capped (anti-storm REG) and user-kind
+  mail always wakes. A 30s cadence floor bounds a zero-delay
+  re-schedule spin (E5). Refused wakes are visible (`[mail] wake
+  refused`, once per episode) and every lifecycle step is receipted to
+  `<messagesRoot>/_scheduled/receipts.jsonl` (`ScheduledReceiptLog`):
+  scheduled / delivered / delivery_failed / scan_failed /
+  wake_attempted / turn_started / wake_refused. A failed scheduler scan
+  (transient `listDir` error) now re-arms at `failureBackoff` with an
+  `onError` log instead of silently disarming the delivery heartbeat.
+- fix(messaging): gh-1180 review round — refusal receipts and the
+  visible refusal line are gated once per refusal EPISODE (the latch
+  lives in `InboxWakePolicy` next to the streak and re-arms on the same
+  resets), so a held gate no longer appends per-tick `wake_attempted`
+  rows (~43k duplicate lines/day) and a repeat episode after user input
+  is announced and receipted again. The app host receipts its wake path
+  (`wake_attempted` / `turn_started` / `wake_refused`) onto the same
+  trail — AC4 is no longer CLI-only. A self-reminder adopted across a
+  session-id change delivers FROM the live mailbox (from re-addressed
+  alongside to), so the resumed chain stays self-shaped and exempt
+  instead of falling back to the capped chatter lane. Plugin-only
+  pending batches are explicitly classified as chatter (the contract is
+  stated, not accidental), the wake cap is single-sourced from
+  `InboxWakePolicy.defaultMaxInboxWakeStreak`, and the policy file lost
+  a stale copy-pasted `ignore_for_file`.
+
+
+
 Older entries: [CHANGELOG_ARCHIVE.md](CHANGELOG_ARCHIVE.md) — moved out
 on 2026-10-09 (gh-1452): pub.dev server-rejects a publish whose
 CHANGELOG.md exceeds its 262144-byte content cap, so this file keeps a
 bounded recent window and `scripts/check_changelog_size.sh` (release
 pre-tag + publish gates) fails fast when the cap is approached again.
+
 
 ## 1.0.506
 
@@ -279,5 +381,9 @@ pre-tag + publish gates) fails fast when the cap is approached again.
 ## 1.0.550
 
 - chore: pin factory_ref to agents-rel-20261011-002034 (aa5ddd8bd78e64c9ce77a43b31bc63b40b0f8d7a) — minter fix (gh-848/#849): gh-748 never cancels pre-materialization; unblocks fa #1457/#1520 (ghost-seized) (#1527)
+
+## 1.0.551
+
+- gh-1459 [BUG] Headless exits with live background shell jobs (detached, results lost) — must drain+steer like subagents (gh-1440 run orphaned its full-suite job) (#1463)
 
 ## Unreleased
