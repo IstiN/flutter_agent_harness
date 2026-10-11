@@ -5,8 +5,10 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:app_links/app_links.dart';
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 
+import 'auth_deep_link.dart';
 import 'auth_flow.dart';
 
 /// The desktop OAuth loopback receiver (issue #955 iteration 3): binds an
@@ -33,6 +35,7 @@ final class LoopbackOAuthReceiver implements OAuthCallbackReceiver {
   final HttpServer _server;
   final Completer<Uri> _completer = Completer<Uri>();
   StreamSubscription<HttpRequest>? _subscription;
+  Timer? _timer;
 
   @override
   final Uri redirectUri;
@@ -51,7 +54,8 @@ final class LoopbackOAuthReceiver implements OAuthCallbackReceiver {
       }
     });
     // The flow must not wait on the browser forever.
-    Timer(timeout, () {
+    _timer = Timer(timeout, () {
+      _timer = null;
       if (!_completer.isCompleted) {
         _completer.completeError(
           const AuthFlowException(
@@ -64,6 +68,8 @@ final class LoopbackOAuthReceiver implements OAuthCallbackReceiver {
 
   @override
   void close() {
+    _timer?.cancel();
+    _timer = null;
     // Fire-and-forget: cancel/close futures resolve on the zone's event
     // queue — awaiting them inside a fake-async test wedges the runner.
     final subscription = _subscription;
@@ -73,9 +79,23 @@ final class LoopbackOAuthReceiver implements OAuthCallbackReceiver {
   }
 }
 
-/// Binds the loopback receiver (production seam for the auth flow).
-Future<OAuthCallbackReceiver> startOAuthCallbackReceiverImpl() =>
-    LoopbackOAuthReceiver.bind();
+/// Binds the receiver (production seam for the auth flow). Desktop keeps
+/// the RFC 8252 loopback; iOS/Android use the `fah://oauth/network`
+/// deep-link callback (the browser cannot reliably reach an on-device
+/// loopback).
+Future<OAuthCallbackReceiver> startOAuthCallbackReceiverImpl() async {
+  if (Platform.isIOS || Platform.isAndroid) {
+    final appLinks = AppLinks();
+    // Subscribe to the link stream BEFORE checking the initial link —
+    // a link delivered in between is dropped otherwise (see
+    // DeepLinkOAuthReceiver.bindWithInitialLink).
+    return DeepLinkOAuthReceiver.bindWithInitialLink(
+      links: appLinks.uriLinkStream,
+      getInitialLink: appLinks.getInitialLink,
+    );
+  }
+  return LoopbackOAuthReceiver.bind();
+}
 
 /// Opens [authUrl] in the system browser (production seam for the flow).
 Future<void> openAuthUrlImpl(Uri authUrl) async {

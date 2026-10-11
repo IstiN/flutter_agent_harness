@@ -31,6 +31,7 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="fah" android:host="oauth" android:pathPrefix="/openrouter"/>
+                <data android:scheme="fah" android:host="oauth" android:pathPrefix="/network"/>
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
