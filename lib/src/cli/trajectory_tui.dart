@@ -53,22 +53,42 @@ TrajectorySnapshot? trajectorySnapshotAt(List<SessionRecord> records, int at) {
 /// session-name match (the `/session` lookup rule), else the most recent
 /// session in the store when [sessionId] is omitted. Null when nothing
 /// matches.
+///
+/// gh-1555 W1 (d5/d6): every open is WINDOWED — the resolver must survive
+/// the gh-1073 full-open refusal that makes an over-the-backstop ledger
+/// unresolvable through the old default full open (the incident's
+/// trajectory path). The returned session materializes only the header
+/// plus the newest chunk; callers that need the whole ledger (cost,
+/// inspect) page it in bounded blocks through
+/// [SessionTree.ensureWholeLedgerResident] — never a full open.
 Future<Session?> resolveTrajectorySession(
-  JsonlSessionRepo repo,
+  SessionRepo repo,
   String? sessionId,
 ) async {
   final sessions = await repo.list();
   if (sessions.isEmpty) return null;
   final wanted = sessionId?.trim();
   if (wanted == null || wanted.isEmpty) {
-    return repo.open(sessions.first);
+    return repo.open(sessions.first, windowed: true);
   }
   for (final metadata in sessions) {
-    if (metadata.id == wanted) return repo.open(metadata);
+    if (metadata.id == wanted) return repo.open(metadata, windowed: true);
+  }
+  if (repo is! JsonlSessionRepo) {
+    // Foreign repo: bounded windowed name scan (gh-1555 d4) instead of a
+    // full open per session.
+    for (final metadata in sessions) {
+      final session = await repo.open(metadata, windowed: true);
+      final name = await session.resolveSessionName();
+      if (name != null && name.trim() == wanted) return session;
+    }
+    return null;
   }
   for (final metadata in sessions) {
     final name = await repo.sessionNameQuick(metadata);
-    if (name != null && name.trim() == wanted) return repo.open(metadata);
+    if (name != null && name.trim() == wanted) {
+      return repo.open(metadata, windowed: true);
+    }
   }
   return null;
 }

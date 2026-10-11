@@ -13,6 +13,22 @@ block a release again.
 
 ## Unreleased
 
+- gh-1555 (W1, lazy/windowed-everywhere reads): the legacy full-open call
+  sites migrate to windowed opens, so a session ledger past the gh-1073
+  2 GiB full-open backstop stays openable on every user-facing read path.
+  The TUI session picker, `/resume`, and the boot name-resolution scan
+  open windowed and resolve the display name through paged reads; the
+  subagent transcript preview opens the child windowed (tail only); the
+  `_loadSession` marathon fallback no longer degenerates to a refused
+  full open when the boundary walk exhausts its page cap (it proceeds
+  with the tail-anchored windowed session; the boot cap owns over-window
+  residue); and the headless `fa trajectory` resolver opens windowed,
+  paging the whole ledger in bounded doubling blocks via the new
+  `SessionTree.ensureWholeLedgerResident` for the read-everything
+  cost/inspect views. Trajectory export streaming (AC3a), split-and-retain
+  rotation activation (W2), and the opt-in write-side caps (W3) remain
+  follow-up work.
+
 - gh-1522: tag-sourced versions — the git tag is the single source of
   truth. The release-bot file bumps are retired: cutting a release = a
   tag + GitHub Release (zero commits to main, zero file mutations).

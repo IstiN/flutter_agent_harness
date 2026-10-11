@@ -71,8 +71,14 @@ extension AgentCliPickers on AgentCli {
     if (row == null) return;
     final metadata = row.metadata;
     try {
-      final session = await _repo.open(metadata);
-      final label = await session.getSessionName() ?? metadata.id;
+      // gh-1555 W1 (d1 — the incident's exact failure path): the picker
+      // needs only the session NAME before the switch; open windowed so
+      // a ledger past the gh-1073 full-open backstop still picks (the
+      // default full open refuses outright). resolveSessionName pages
+      // older chunks when the name record sits outside the resident
+      // tail, matching what the old full open could see.
+      final session = await _repo.open(metadata, windowed: true);
+      final label = await session.resolveSessionName() ?? metadata.id;
       await _switchToMetadata(metadata, label);
     } on Object catch (error) {
       // Never let a broken session file kill the TUI through the picker's

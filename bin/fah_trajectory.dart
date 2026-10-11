@@ -31,6 +31,13 @@ Future<int> _runTrajectoryCommand(
   // Phased open timing (issue #262 AC0): FA_TIMING=1 prints the
   // storage-read+parse, ledger-projection, and render durations to stderr.
   final timing = _envTruthy('FA_TIMING');
+  // gh-1555 W1 (d6): view --at/cost/inspect read the WHOLE branch, but
+  // the resolver opened windowed (the only way past the gh-1073
+  // full-open backstop). Page the rest in bounded doubling blocks —
+  // chunked reads, never the refused materialized whole-file string.
+  final walkSw = Stopwatch()..start();
+  await session.ensureWholeLedgerResident();
+  walkSw.stop();
   final parseSw = Stopwatch()..start();
   final records = await session.getBranch();
   parseSw.stop();
@@ -91,7 +98,13 @@ Future<int> _runTrajectoryCommand(
         await Future<void>.delayed(trajectoryPollInterval);
         final List<SessionRecord> fresh;
         try {
-          fresh = await (await repo.open(metadata)).getBranch();
+          // gh-1555 W1: the poll re-open stays windowed — the tailer
+          // consumes only the appended suffix, so a giant ledger's poll
+          // must not ride a refused (and needless) full open.
+          fresh = await (await repo.open(
+            metadata,
+            windowed: true,
+          )).getBranch();
         } on Object catch (error) {
           io.writeln('trajectory: tail failed: $error');
           return 1;
