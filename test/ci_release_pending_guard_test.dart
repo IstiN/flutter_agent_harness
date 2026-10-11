@@ -32,6 +32,7 @@
 library;
 
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
@@ -74,6 +75,36 @@ List<String> _needsOf(YamlMap job) {
   if (needs is YamlList) return needs.map((n) => n.toString()).toList();
   return const [];
 }
+
+/// Legs whose `if` legitimately carries NO `needs.changes.outputs.*`
+/// reference — the classifier itself (it *produces* those outputs), the
+/// `always()` aggregates, the three-armed `release` job, and the
+/// path-blind legs that run on every pending tick by design. Every other
+/// guarded leg must keep its changes-keyed condition ANDed under the
+/// guard: a future edit that *replaced* the path condition with the
+/// guard (e.g. `if: needs.release-pending.outputs.pending == 'true'`)
+/// would pass the plain presence pin while silently killing path
+/// classification — the exact blind spot this never-again pin family
+/// exists to close.
+const pathBlindLegs = {
+  'changes',
+  'quality-gate',
+  'step-timings',
+  'release',
+  'static',
+  'test-core',
+  'pty-visual',
+  'coverage-gate',
+  'guards',
+  'dep-audit',
+  'supply-chain',
+  'installer-verify',
+  'install-pin-gate',
+  'fa-aot-build',
+  'pty-integration-linux',
+  'pty-coverage-gate',
+  'js-ext-integration',
+};
 
 void main() {
   final jobs = loadYaml(read('.github/workflows/ci.yml'))['jobs'] as YamlMap;
@@ -130,13 +161,25 @@ void main() {
               'needs edge the guard expression reads an empty output and '
               'the leg would run on empty ticks anyway',
         );
+        final ifText = job['if']?.toString() ?? '';
         expect(
-          job['if']?.toString() ?? '',
+          ifText,
           contains("needs.release-pending.outputs.pending == 'true'"),
           reason: 'gh-1551: `$id` must skip explicitly (visible SKIPPED) '
               'when the tick has nothing to release — an empty tick must '
               'not burn the full gate',
         );
+        if (!pathBlindLegs.contains(id)) {
+          expect(
+            ifText,
+            contains(RegExp(r"needs\.changes\.outputs\.[a-z0-9-]+")),
+            reason: 'gh-1551: the guard must be ANDed ON TOP of `$id`\'s '
+                'changes-keyed condition, not replace it — a replacement '
+                'edit would pass the presence pin while silently killing '
+                'path classification (every dispatch run pays the full '
+                'gate)',
+          );
+        }
       }
       // quality-gate aggregates with `if: always()` — the guard must be
       // ANDed, not replace always(), or leg results would stop being
@@ -254,7 +297,11 @@ void main() {
       final scheduleAt = ci.indexOf("cron: '23 */2 * * *'");
       expect(scheduleAt, greaterThanOrEqualTo(0));
       // The comment block immediately above the cron mentions gh-1551.
-      final comment = ci.substring(scheduleAt - 1200, scheduleAt);
+      // Clamp the window start: if a future edit ever shrinks the comment
+      // block so the cron sits fewer than 1200 chars into the file, an
+      // unclamped `scheduleAt - 1200` would throw a confusing RangeError
+      // instead of the real failure ("the comment moved/shrank").
+      final comment = ci.substring(math.max(0, scheduleAt - 1200), scheduleAt);
       expect(comment, contains('gh-1551'),
           reason: 'gh-1551 AC5: the schedule trigger comment must document '
               'that empty ticks short-circuit via release-pending');
