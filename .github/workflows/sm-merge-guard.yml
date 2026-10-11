@@ -1,0 +1,56 @@
+# gh-1537 AC5 — the cheap alarm for the SM serialized-validation
+# invariant. With the post-merge main CI run retired, nothing else stands
+# between a violated invariant ("SM queue is strictly serialized and
+# validates the exact tree being merged", #687) and a red main: this
+# workflow fires on EVERY push to main and asserts the pushed tree was
+# covered by a successful ci.yml workflow_dispatch run — the SM's
+# pre-merge validation. A push without one files/updates one deduplicated
+# `sm-guard` issue (event-driven, seconds of runner time — explicitly NOT
+# a nightly/polling backstop, per the owner's directive).
+#
+# The release-bot's chore(release) bump pushes skip the guard (the v* tag
+# run gates them: tag_release.sh's enforce-lockfile smoke pre-tag, the
+# full quality gate on the tag before publish). SM merge commits and any
+# human/admin push are checked — tree identity, so both fast-forward
+# (same SHA) and squash/merge-commit (same tree) landings validate.
+name: SM merge guard
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: Validate the pushed tree was SM-validated
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write # the sm-guard alarm issue
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410b181273ba90b1 # v7.0.1
+        with:
+          # The pushed head is the checked-out HEAD; only its tree sha is
+          # read — no history, no blobs.
+          fetch-depth: 1
+
+      - name: Assert a dispatched validation covers this tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # head_commit.id is frozen at push time — the checkout can drift
+          # to a main that moved in the seconds before the job starts
+          # (same lesson as the ci.yml release-tag BUMP_SHA pin, #1178).
+          PUSHED_SHA: ${{ github.event.head_commit.id || github.sha }}
+          PUSHED_SUBJECT: ${{ github.event.head_commit.message }}
+        run: |
+          tree=$(git rev-parse 'HEAD^{tree}')
+          python3 scripts/sm_merge_guard.py \
+            --repo "$REPO" \
+            --sha "$PUSHED_SHA" \
+            --subject "$PUSHED_SUBJECT" \
+            --tree "$tree" \
+            --alarm-issue
