@@ -1937,6 +1937,14 @@
       "completion": 19960,
       "total": 115862,
       "model": ""
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-11T08:38:55Z",
+      "prompt": 100905,
+      "completion": 31119,
+      "total": 132024,
+      "model": ""
     }
   ],
   "issue-1537": [
