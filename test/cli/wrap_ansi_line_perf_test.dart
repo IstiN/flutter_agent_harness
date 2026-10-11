@@ -87,16 +87,35 @@ int _stopwatchUs(void Function() body) {
 /// stopwatch but adds [spikeMs] of fake preemption time to the timed
 /// measurements whose 1-based index is in [spiked] — a runner steal
 /// spanning several timed runs, the shape that flaked gh-1532 live.
-ElapsedUs contendedClock({required Set<int> spiked, double spikeMs = 30}) {
+///
+/// [calls] exposes how many measurements the fake has timed. The
+/// preemption test asserts the expected total (attempts × sizes ×
+/// runs) so a future change to the measure loop's call layout turns
+/// the index-based [spiked] addressing into a LOUD failure instead of
+/// silently shifting the spikes onto the wrong measurements (where
+/// they could depress the ratio and leave the test green while
+/// asserting nothing).
+final class ContendedClock {
+  ContendedClock({required Set<int> spiked, this.spikeMs = 30})
+    : _spiked = spiked;
+
+  final Set<int> _spiked;
+
+  /// Fake preemption time added to each spiked measurement.
+  final double spikeMs;
+
+  /// Number of measurements timed so far (1-based [spiked] addressing).
   var calls = 0;
-  return (body) {
+
+  /// Times [body] like [ElapsedUs], adding the spike when spiked.
+  int call(void Function() body) {
     final sw = Stopwatch()..start();
     body();
     sw.stop();
     calls++;
     return sw.elapsedMicroseconds +
-        (spiked.contains(calls) ? (spikeMs * 1000).round() : 0);
-  };
+        (_spiked.contains(calls) ? (spikeMs * 1000).round() : 0);
+  }
 }
 
 /// Median wrap time over [runs] executions (one untimed warm-up first).
@@ -227,8 +246,18 @@ void main() {
       // for that attempt — the retry-min harness must discard it.
       // Measurement call order: per attempt, 5 timed runs of the small
       // input then 5 of the doubled one.
-      final spike = contendedClock(spiked: {6, 7, 8});
-      expectLinearGrowth(asciiProse, 100000, 'ASCII prose', elapsedUs: spike);
+      final spike = ContendedClock(spiked: {6, 7, 8});
+      expectLinearGrowth(
+        asciiProse,
+        100000,
+        'ASCII prose',
+        elapsedUs: spike.call,
+      );
+      // Layout guard: the spiked indices above encode the measure loop's
+      // exact call layout (3 attempts × 2 sizes × 5 timed runs). If that
+      // layout ever changes the spikes silently land on the wrong
+      // measurements — this assertion turns that into a loud failure.
+      expect(spike.calls, 30, reason: 'the spiked indices encode the call layout');
     },
   );
 
