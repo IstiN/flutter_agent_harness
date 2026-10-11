@@ -52,7 +52,11 @@ const hiddenCustomRecordTypes = {
 /// (tool-set changes carry names only), so [TrajectorySnapshot.callSchemas]
 /// stays empty until a host supplies schemas.
 final class TrajectorySnapshotBuilder {
-  final List<TrajectoryRecord> _records = [];
+  /// Ledger rows in append order, chunked for copy-on-write publishing
+  /// (issue #1497): per-append snapshots share frozen chunks instead of
+  /// copying the whole row list — a full copy per append was O(n) per
+  /// record, O(n²) per live session.
+  final _ChunkStore<TrajectoryRecord> _rows = _ChunkStore<TrajectoryRecord>();
   final Map<String, SessionRecord> _byId = {};
   final Map<String, int> _toolIndexByCallId = {};
   final Map<String, String> _toolOwnerByCallId = {};
@@ -106,6 +110,28 @@ final class TrajectorySnapshotBuilder {
   int _eventCounter = 0;
   int _revision = 0;
 
+  // ── Requests derivation cache (issue #1497) ───────────────────────────
+  // Sorting every request fact and refolding cumulative usage on every
+  // snapshot is O(k log k) per append — O(n²) over a live session. The
+  // sorted fact order and the built TrajectoryRequestNumbers are cached;
+  // a snapshot rebuilds only the dirty suffix. New facts fold in with
+  // order = the row count at their creation, which only grows, so they
+  // land at the sorted tail; any event the incremental path cannot prove
+  // order-stable flips back to the exact full sort.
+  List<_RequestFacts>? _reqSorted;
+  final Map<_RequestFacts, int> _reqPositions = {};
+  List<Usage?> _reqCumulative = <Usage?>[];
+  final List<_RequestFacts> _reqAdded = <_RequestFacts>[];
+  final _ChunkStore<TrajectoryRequestNumber> _reqNumberRows =
+      _ChunkStore<TrajectoryRequestNumber>();
+  UnmodifiableListView<TrajectoryRequestNumber>? _reqPublished;
+  int _reqDirtyFrom = _reqUntouched;
+  bool _reqDirty = true;
+  bool _reqResort = false;
+
+  /// Dirty-position sentinel: no cached position touched yet.
+  static const int _reqUntouched = 1 << 60;
+
   /// How many snapshots [_snapshot] has materialized. Hosts bulk-loading a
   /// session must see exactly one; the per-append live tail grows this by
   /// one per record/event.
@@ -122,6 +148,21 @@ final class TrajectorySnapshotBuilder {
   /// the larger window (issue #358).
   int get chainWalkHops => _chainWalkHops;
   int _chainWalkHops = 0;
+
+  /// Total row references the snapshot publisher copied (chunk clones +
+  /// per-publish chunk-pointer copies) over this builder's life. Lifetime
+  /// total: `reset()` and full request rebuilds never zero it (dropping
+  /// rows copies nothing).
+  ///
+  /// The #1497 per-append snapshot copied EVERY row on every append —
+  /// O(n) per append, O(n²) over a live session (~10ms per append at 65k
+  /// records). Publishing now shares frozen chunks: an append copies only
+  /// its chunk pointers plus a bounded copy-on-write clone for patched
+  /// rows, a small constant per append. Like [chainWalkHops], scaling
+  /// tests assert against this instead of wall-clock ratios, which cannot
+  /// tell a loaded shared runner from a quadratic algorithm (issue #358)
+  /// and here additionally carry a JIT-tier cliff on cold first runs.
+  int get snapshotRowCopies => _rows.copiedRows + _reqNumberRows.copiedRows;
 
   // Incremental turn/step fold over the appended record chain (issue #262):
   // `_turnStep`'s full parent-chain walk per user/assistant record is O(n)
@@ -155,11 +196,11 @@ final class TrajectorySnapshotBuilder {
   void _appendRecord(SessionRecord record, {required bool synthetic}) {
     _byId[record.id] = record;
     _revision++;
-    final rowsBefore = _records.length;
+    final rowsBefore = _rows.length;
     final discarded = _foldRecordRows(record, synthetic: synthetic);
     // Only durable appends advance the cursor; replacing mirrored
     // placeholders still counts as placing rows even when net growth is 0.
-    if (!synthetic && _records.length + discarded > rowsBefore) {
+    if (!synthetic && _rows.length + discarded > rowsBefore) {
       _prevAbsTime = record.timestamp;
     }
     _lastRecordId = record.id;
@@ -334,7 +375,7 @@ final class TrajectorySnapshotBuilder {
 
   /// Clears all projected state.
   void reset() {
-    _records.clear();
+    _rows.reset();
     _byId.clear();
     _toolIndexByCallId.clear();
     _toolOwnerByCallId.clear();
@@ -366,6 +407,15 @@ final class TrajectorySnapshotBuilder {
     _prevPromptHash = null;
     _activeManifestHash = null;
     _prevManifestHash = null;
+    _reqSorted = null;
+    _reqPositions.clear();
+    _reqCumulative = <Usage?>[];
+    _reqAdded.clear();
+    _reqNumberRows.reset();
+    _reqPublished = null;
+    _reqDirtyFrom = _reqUntouched;
+    _reqDirty = true;
+    _reqResort = false;
   }
 
   MessageRecord _syntheticRecord(String kind, Message message) {
@@ -394,8 +444,8 @@ final class TrajectorySnapshotBuilder {
     final resolved = _resolveTurnStep(record);
     final turn = resolved.turn;
     final discarded = _discardSyntheticRows('u\u0000$turn');
-    final index = _records.length + 1;
-    _records.add(
+    final index = _rows.length + 1;
+    _rows.add(
       projectUserRecord(
         record: record,
         index: index,
@@ -421,8 +471,8 @@ final class TrajectorySnapshotBuilder {
     final turn = resolved.turn;
     final step = resolved.step;
     final discarded = _discardSyntheticRows('$turn\u0000$step');
-    final index = _records.length + 1;
-    _records.add(
+    final index = _rows.length + 1;
+    _rows.add(
       projectAssistantRecord(
         record: record,
         message: message,
@@ -469,7 +519,7 @@ final class TrajectorySnapshotBuilder {
     required int step,
     required bool synthetic,
   }) {
-    final index = _records.length + 1;
+    final index = _rows.length + 1;
     var tool = TrajectoryToolRecord(
       index: index,
       recordId: trajectoryRecordId(kind: 'tool', callId: call.id, index: index),
@@ -487,7 +537,7 @@ final class TrajectorySnapshotBuilder {
         timeSeconds: known.timeSeconds,
       );
     }
-    _records.add(tool);
+    _rows.add(tool);
     _toolIndexByCallId[call.id] = index - 1;
     _toolOwnerByCallId[call.id] = owner.id;
   }
@@ -504,8 +554,8 @@ final class TrajectorySnapshotBuilder {
     _runningCalls.remove(result.toolCallId);
     final toolIndex = _toolIndexByCallId[result.toolCallId];
     if (toolIndex == null) return; // Result for a call we never saw.
-    final tool = _records[toolIndex] as TrajectoryToolRecord;
-    _records[toolIndex] = tool.withResult(
+    final tool = _rows[toolIndex] as TrajectoryToolRecord;
+    _rows[toolIndex] = tool.withResult(
       result: projected.result,
       isError: projected.isError,
       timeSeconds: projected.timeSeconds,
@@ -529,14 +579,14 @@ final class TrajectorySnapshotBuilder {
     final hiddenRecordIds = record is HiddenRangeRecord
         ? record.recordIds
         : null;
-    _records.add(
+    _rows.add(
       projectCompactedRecord(
         record: record,
-        index: _records.length + 1,
+        index: _rows.length + 1,
         recordId: trajectoryRecordId(
           kind: 'compacted',
           recordId: record.id,
-          index: _records.length + 1,
+          index: _rows.length + 1,
         ),
         summary: summary,
         firstKeptEntryId: firstKept,
@@ -544,19 +594,19 @@ final class TrajectorySnapshotBuilder {
         hiddenRecordIds: hiddenRecordIds,
       ),
     );
-    _compactionRequests.add(
-      _RequestFacts(
-        order: _records.length.toDouble(),
-        turn: _chainTurn(record),
-        step: 0,
-        purpose: TrajectoryRequestPurpose.compaction,
-        provider: '',
-        model: '',
-        status: TrajectoryRequestStatus.completed,
-        startedAt: record.timestamp,
-        completedAt: record.timestamp,
-      ),
+    final compactionFact = _RequestFacts(
+      order: _rows.length.toDouble(),
+      turn: _chainTurn(record),
+      step: 0,
+      purpose: TrajectoryRequestPurpose.compaction,
+      provider: '',
+      model: '',
+      status: TrajectoryRequestStatus.completed,
+      startedAt: record.timestamp,
+      completedAt: record.timestamp,
     );
+    _compactionRequests.add(compactionFact);
+    _requestFactAdded(compactionFact);
   }
 
   void _appendSystem(SessionRecord record) {
@@ -568,13 +618,13 @@ final class TrajectorySnapshotBuilder {
         TrajectorySystemChange.checkpointAutoClosed,
         textPayloadOf(record.content),
       );
-      _records.add(
+      _rows.add(
         TrajectorySystemRecord(
-          index: _records.length + 1,
+          index: _rows.length + 1,
           recordId: trajectoryRecordId(
             kind: 'system',
             recordId: record.id,
-            index: _records.length + 1,
+            index: _rows.length + 1,
           ),
           text: text,
           change: change,
@@ -582,7 +632,7 @@ final class TrajectorySnapshotBuilder {
           time: record.timestamp,
         ),
       );
-      _lastPromptRowIndex = _records.length - 1;
+      _lastPromptRowIndex = _rows.length - 1;
       return;
     }
     final (change, text) = switch (record) {
@@ -604,13 +654,13 @@ final class TrajectorySnapshotBuilder {
       ),
       _ => (TrajectorySystemChange.initial, ''),
     };
-    _records.add(
+    _rows.add(
       TrajectorySystemRecord(
-        index: _records.length + 1,
+        index: _rows.length + 1,
         recordId: trajectoryRecordId(
           kind: 'system',
           recordId: record.id,
-          index: _records.length + 1,
+          index: _rows.length + 1,
         ),
         text: text,
         change: change,
@@ -624,21 +674,21 @@ final class TrajectorySnapshotBuilder {
     );
     // The row stamps with the prompt/manifest pointers its following
     // request summary carries (F7a) — remember where it lives.
-    _lastPromptRowIndex = _records.length - 1;
+    _lastPromptRowIndex = _rows.length - 1;
     if (record is ActiveToolsChangeRecord) {
-      _lastToolsRowIndex = _records.length - 1;
+      _lastToolsRowIndex = _rows.length - 1;
     }
   }
 
   void _appendContext(CustomMessageRecord record) {
     final text = textPayloadOf(record.content);
-    _records.add(
+    _rows.add(
       TrajectoryContextRecord(
-        index: _records.length + 1,
+        index: _rows.length + 1,
         recordId: trajectoryRecordId(
           kind: 'context',
           recordId: record.id,
-          index: _records.length + 1,
+          index: _rows.length + 1,
         ),
         text: text,
         previewMarkdown: text,
@@ -651,13 +701,13 @@ final class TrajectorySnapshotBuilder {
   /// provably lossless — nothing vanishes without a trace.
   void _appendUnknown(String recordId, String customType, DateTime time) {
     final text = 'unknown record: $customType';
-    _records.add(
+    _rows.add(
       TrajectoryContextRecord(
-        index: _records.length + 1,
+        index: _rows.length + 1,
         recordId: trajectoryRecordId(
           kind: 'context',
           recordId: recordId,
-          index: _records.length + 1,
+          index: _rows.length + 1,
         ),
         text: text,
         previewMarkdown: text,
@@ -688,10 +738,11 @@ final class TrajectorySnapshotBuilder {
         ..provider = message.provider
         ..model = message.model
         ..startedAt ??= message.timestamp;
+      _requestFactTouched(existing);
       return;
     }
-    _assistantRequests[key] = _RequestFacts(
-      order: _records.length + 0.5,
+    final facts = _RequestFacts(
+      order: _rows.length + 0.5,
       turn: turn,
       step: step,
       purpose: TrajectoryRequestPurpose.assistant,
@@ -700,6 +751,8 @@ final class TrajectorySnapshotBuilder {
       status: TrajectoryRequestStatus.running,
       startedAt: message.timestamp,
     );
+    _assistantRequests[key] = facts;
+    _requestFactAdded(facts);
   }
 
   /// Turn/step the NEXT assistant response will occupy (the request always
@@ -715,8 +768,8 @@ final class TrajectorySnapshotBuilder {
   void _markToolStarted(String callId, DateTime startedAt) {
     final toolIndex = _toolIndexByCallId[callId];
     if (toolIndex == null) return;
-    final tool = _records[toolIndex] as TrajectoryToolRecord;
-    _records[toolIndex] = tool.withStartedAt(startedAt);
+    final tool = _rows[toolIndex] as TrajectoryToolRecord;
+    _rows[toolIndex] = tool.withStartedAt(startedAt);
   }
 
   /// Attaches a live [ModelRequestEvent] summary to the assistant request
@@ -728,10 +781,11 @@ final class TrajectorySnapshotBuilder {
     final key = '${turnStep.$1}\u0000${turnStep.$2}';
     final facts = _assistantRequests[key];
     if (facts != null) {
+      // requestDetail does not project into the snapshot's request list.
       facts.requestDetail = detail;
     } else {
-      _assistantRequests[key] = _RequestFacts(
-        order: _records.length + 0.5,
+      final created = _RequestFacts(
+        order: _rows.length + 0.5,
         turn: turnStep.$1,
         step: turnStep.$2,
         purpose: TrajectoryRequestPurpose.assistant,
@@ -740,6 +794,8 @@ final class TrajectorySnapshotBuilder {
         status: TrajectoryRequestStatus.running,
         requestDetail: detail,
       );
+      _assistantRequests[key] = created;
+      _requestFactAdded(created);
     }
     _stampSystemHashes(detail);
   }
@@ -762,20 +818,20 @@ final class TrajectorySnapshotBuilder {
       _activeManifestHash = manifestHash;
     }
     final promptIndex = _lastPromptRowIndex;
-    if (promptIndex != null && promptIndex < _records.length) {
-      final row = _records[promptIndex];
+    if (promptIndex != null && promptIndex < _rows.length) {
+      final row = _rows[promptIndex];
       if (row is TrajectorySystemRecord) {
-        _records[promptIndex] = row.withHashes(
+        _rows[promptIndex] = row.withHashes(
           systemPromptHash: _activePromptHash,
           previousSystemPromptHash: _prevPromptHash,
         );
       }
     }
     final toolsIndex = _lastToolsRowIndex;
-    if (toolsIndex != null && toolsIndex < _records.length) {
-      final row = _records[toolsIndex];
+    if (toolsIndex != null && toolsIndex < _rows.length) {
+      final row = _rows[toolsIndex];
       if (row is TrajectorySystemRecord) {
-        _records[toolsIndex] = row.withHashes(
+        _rows[toolsIndex] = row.withHashes(
           toolManifestHash: _activeManifestHash,
           previousToolManifestHash: _prevManifestHash,
         );
@@ -826,8 +882,8 @@ final class TrajectorySnapshotBuilder {
         : TrajectoryRequestStatus.completed;
     final facts = _assistantRequests['$turn\u0000$step'];
     if (facts == null) {
-      _assistantRequests['$turn\u0000$step'] = _RequestFacts(
-        order: _records.length.toDouble(),
+      final created = _RequestFacts(
+        order: _rows.length.toDouble(),
         turn: turn,
         step: step,
         purpose: TrajectoryRequestPurpose.assistant,
@@ -837,27 +893,63 @@ final class TrajectorySnapshotBuilder {
         completedAt: message.timestamp,
         usage: message.usage,
       );
+      _assistantRequests['$turn\u0000$step'] = created;
+      _requestFactAdded(created);
       return;
     }
     facts
-      ..order = _records.length.toDouble()
+      ..order = _rows.length.toDouble()
       ..status = status
       ..completedAt = message.timestamp
       ..usage = message.usage;
+    _requestFactTouched(facts);
   }
 
   /// Drops streamed rows for [key] so the real record can replace them.
   ///
-  /// Streamed rows are the live tail, so removal happens after all placed
-  /// rows; tool-row indexes are rebuilt to stay robust regardless.
+  /// Streamed rows are the live tail, so removal usually truncates a
+  /// contiguous suffix: the tool-row indexes below the cut stay valid and
+  /// no rebuild is needed (issue #1497 — the per-discard full rebuild was
+  /// O(n), O(n²) over a live session). Rows that are no longer the tail
+  /// fall back to the legacy filter + full index rebuild.
   int _discardSyntheticRows(String key) {
     final ids = _syntheticRowsByKey.remove(key);
     if (ids == null || ids.isEmpty) return 0;
-    final removed = _records
-        .where((row) => ids.contains(row.recordId))
-        .toList();
+    var cut = _rows.length;
+    while (cut > 0 && ids.contains(_rows[cut - 1].recordId)) {
+      cut--;
+    }
+    if (ids.length == _rows.length - cut) {
+      for (var i = cut; i < _rows.length; i++) {
+        final row = _rows[i];
+        if (row is TrajectoryToolRecord) {
+          _toolIndexByCallId.remove(row.callId);
+          _toolOwnerByCallId.remove(row.callId);
+        }
+      }
+      _rows.truncate(cut);
+      return ids.length;
+    }
+    return _discardSyntheticRowsLegacy(ids);
+  }
+
+  /// The non-tail fallback: filter the dropped rows out of the middle and
+  /// rebuild the tool-row indexes from scratch.
+  int _discardSyntheticRowsLegacy(Set<String> ids) {
+    final removed = <TrajectoryRecord>[
+      for (var i = 0; i < _rows.length; i++)
+        if (ids.contains(_rows[i].recordId)) _rows[i],
+    ];
     if (removed.isEmpty) return 0;
-    _records.removeWhere((row) => ids.contains(row.recordId));
+    var write = 0;
+    for (var i = 0; i < _rows.length; i++) {
+      final row = _rows[i];
+      if (!ids.contains(row.recordId)) {
+        if (write != i) _rows[write] = row;
+        write++;
+      }
+    }
+    _rows.truncate(write);
     for (final row in removed) {
       if (row is TrajectoryToolRecord) {
         _toolIndexByCallId.remove(row.callId);
@@ -865,8 +957,8 @@ final class TrajectorySnapshotBuilder {
       }
     }
     _toolIndexByCallId.clear();
-    for (var i = 0; i < _records.length; i++) {
-      final row = _records[i];
+    for (var i = 0; i < _rows.length; i++) {
+      final row = _rows[i];
       if (row is TrajectoryToolRecord) _toolIndexByCallId[row.callId] = i;
     }
     return removed.length;
@@ -874,8 +966,8 @@ final class TrajectorySnapshotBuilder {
 
   void _registerSyntheticRows(String key, int fromIndex) {
     final ids = _syntheticRowsByKey.putIfAbsent(key, () => <String>{});
-    for (var i = fromIndex; i < _records.length; i++) {
-      ids.add(_records[i].recordId);
+    for (var i = fromIndex; i < _rows.length; i++) {
+      ids.add(_rows[i].recordId);
     }
   }
 
@@ -1003,36 +1095,11 @@ final class TrajectorySnapshotBuilder {
 
   TrajectorySnapshot _snapshot() {
     _snapshotsBuilt++;
-    final locations = <String, int>{
-      for (final record in _records) record.recordId: record.index - 1,
-    };
-    final facts = [..._assistantRequests.values, ..._compactionRequests]
-      ..sort((left, right) => left.order.compareTo(right.order));
-    final requests = <TrajectoryRequestNumber>[];
-    Usage? cumulative;
-    for (var i = 0; i < facts.length; i++) {
-      final fact = facts[i];
-      cumulative = accumulateUsage(cumulative, fact.usage);
-      requests.add(
-        TrajectoryRequestNumber(
-          seq: i + 1,
-          turn: fact.turn,
-          step: fact.step,
-          purpose: fact.purpose,
-          provider: fact.provider,
-          model: fact.model,
-          status: fact.status,
-          startedAt: fact.startedAt,
-          completedAt: fact.completedAt,
-          usage: fact.usage,
-          cumulativeUsage: cumulative,
-        ),
-      );
-    }
+    final records = _rows.publish();
     final partial = _partial;
     return TrajectorySnapshot(
-      records: UnmodifiableListView(List.of(_records)),
-      requests: UnmodifiableListView(requests),
+      records: UnmodifiableListView(records),
+      requests: _publishRequests(),
       callSchemas: const {},
       partial: partial == null
           ? null
@@ -1044,12 +1111,143 @@ final class TrajectorySnapshotBuilder {
               startedAt: partial.startedAt,
             ),
       runningCalls: UnmodifiableListView(_runningCalls.values.toList()),
-      recordLocations: Map.unmodifiable(locations),
+      recordLocations: _LazyRecordLocations(records),
       revision: _revision,
       blobs: _blobs,
       taskLedger: _taskLedger,
       unknownRecordCount: _unknownRecordCount,
     );
+  }
+
+  /// The snapshot's request list, shared while no fact changed (issue
+  /// #1497): a clean state re-serves the published list, a dirty one
+  /// rebuilds only the suffix at/after the first touched fact, and any
+  /// state the incremental path cannot prove order-stable falls back to
+  /// the exact full sort the pre-#1497 derivation ran.
+  UnmodifiableListView<TrajectoryRequestNumber> _publishRequests() {
+    if (!_reqDirty) {
+      final published = _reqPublished;
+      if (published != null) return published;
+    }
+    if (_reqResort || _reqSorted == null) {
+      _rebuildAllRequests();
+    } else {
+      _insertAddedRequests();
+      if (_reqResort) return _publishRequests();
+      final from = _reqDirtyFrom < _reqNumberRows.length
+          ? _reqDirtyFrom
+          : _reqNumberRows.length;
+      _rebuildRequestsSuffix(from);
+    }
+    _reqAdded.clear();
+    _reqDirty = false;
+    _reqResort = false;
+    _reqDirtyFrom = _reqUntouched;
+    _reqPublished = UnmodifiableListView(_reqNumberRows.publish());
+    return _reqPublished!;
+  }
+
+  /// The fallback derivation — byte-identical to the pre-#1497 code: sort
+  /// every fact by order and refold cumulative usage from scratch.
+  void _rebuildAllRequests() {
+    final facts = [..._assistantRequests.values, ..._compactionRequests]
+      ..sort((left, right) => left.order.compareTo(right.order));
+    _reqSorted = facts;
+    _reqPositions.clear();
+    _reqNumberRows.reset();
+    _reqCumulative = <Usage?>[];
+    Usage? cumulative;
+    for (var i = 0; i < facts.length; i++) {
+      _reqPositions[facts[i]] = i;
+      cumulative = _foldRequestNumber(i, facts[i], cumulative);
+    }
+  }
+
+  /// Folds the facts created since the last snapshot into the cached sort.
+  void _insertAddedRequests() {
+    final sorted = _reqSorted!;
+    for (final fact in _reqAdded) {
+      // Fact orders fold in from the row count at their creation, which
+      // only grows, so a new fact lands at the sorted tail; an
+      // out-of-order arrival — or a tie, since List.sort is not stable —
+      // reverts to the full sort.
+      if (sorted.isNotEmpty && fact.order <= sorted.last.order) {
+        _reqResort = true;
+        return;
+      }
+      _reqPositions[fact] = sorted.length;
+      sorted.add(fact);
+    }
+  }
+
+  /// Rebuilds the cached numbers from [from] to the end: facts before it
+  /// are unchanged, so their numbers (and running cumulative usage) carry
+  /// over unchanged.
+  void _rebuildRequestsSuffix(int from) {
+    final sorted = _reqSorted!;
+    var cumulative = from == 0 ? null : _reqCumulative[from - 1];
+    for (var i = from; i < sorted.length; i++) {
+      cumulative = _foldRequestNumber(i, sorted[i], cumulative);
+    }
+  }
+
+  /// Folds fact [i]'s number and the running cumulative usage into the
+  /// cached rows; returns the updated cumulative.
+  Usage? _foldRequestNumber(int i, _RequestFacts fact, Usage? cumulative) {
+    cumulative = accumulateUsage(cumulative, fact.usage);
+    if (i < _reqCumulative.length) {
+      _reqCumulative[i] = cumulative;
+    } else {
+      _reqCumulative.add(cumulative);
+    }
+    final number = TrajectoryRequestNumber(
+      seq: i + 1,
+      turn: fact.turn,
+      step: fact.step,
+      purpose: fact.purpose,
+      provider: fact.provider,
+      model: fact.model,
+      status: fact.status,
+      startedAt: fact.startedAt,
+      completedAt: fact.completedAt,
+      usage: fact.usage,
+      cumulativeUsage: cumulative,
+    );
+    if (i < _reqNumberRows.length) {
+      _reqNumberRows[i] = number;
+    } else {
+      _reqNumberRows.add(number);
+    }
+    return cumulative;
+  }
+
+  /// Registers a request fact created since the last snapshot — it has no
+  /// cached sorted position yet.
+  void _requestFactAdded(_RequestFacts fact) {
+    _reqDirty = true;
+    _reqAdded.add(fact);
+  }
+
+  /// Invalidates the cached requests for a fact whose projected fields
+  /// changed.
+  void _requestFactTouched(_RequestFacts fact) {
+    _reqDirty = true;
+    final position = _reqPositions[fact];
+    if (position == null) return; // Not built into a cached order yet.
+    final sorted = _reqSorted!;
+    final passedOrTiedSuccessor =
+        position + 1 < sorted.length &&
+        sorted[position + 1].order <= fact.order;
+    final tiedPredecessor =
+        position > 0 && sorted[position - 1].order == fact.order;
+    if (passedOrTiedSuccessor || tiedPredecessor) {
+      // The fact's order reached or passed a neighbor. List.sort is not
+      // stable on equal orders, so a tie could order the pair differently
+      // than the cached one — rebuild from scratch so tied facts always
+      // get exactly the full sort's derivation.
+      _reqResort = true;
+    }
+    if (position < _reqDirtyFrom) _reqDirtyFrom = position;
   }
 }
 
@@ -1103,4 +1301,156 @@ class _RequestFacts {
 
   /// Outbound-request summary captured before the provider call.
   TrajectoryRequestDetail? requestDetail;
+}
+
+/// Chunked mutable storage whose published views share frozen chunks
+/// (issue #1497).
+///
+/// The builder appends and patches rows in O(1)/O(chunk); [publish] hands
+/// snapshots an immutable list sharing the current chunks, so a snapshot
+/// costs O(chunks) reference copies instead of a full row-list copy. The
+/// next publish cycle clones a chunk before its first in-place write
+/// (copy-on-write per cycle), keeping every published snapshot immutable.
+final class _ChunkStore<T> {
+  _ChunkStore();
+
+  final List<List<T>> _chunks = <List<T>>[<T>[]];
+  final List<int> _chunkEpoch = <int>[0];
+  int _length = 0;
+  int _epoch = 0;
+
+  /// Total row references copied into published/cloned structures over
+  /// this store's life — the deterministic cost metric for the #1497
+  /// scaling guard. Lifetime total: never zeroed by [reset] or
+  /// [truncate] (dropping rows copies nothing).
+  int copiedRows = 0;
+
+  int get length => _length;
+
+  void add(T value) {
+    var chunk = _chunks.last;
+    if (chunk.length == _chunkSize) {
+      chunk = <T>[];
+      _chunks.add(chunk);
+      _chunkEpoch.add(_epoch);
+    }
+    chunk.add(value);
+    _length++;
+  }
+
+  T operator [](int index) => _chunks[index >> _chunkShift][index & _chunkMask];
+
+  void operator []=(int index, T value) {
+    final chunkIndex = index >> _chunkShift;
+    if (_chunkEpoch[chunkIndex] != _epoch) {
+      // Copy-on-write: a published snapshot still shares this chunk.
+      copiedRows += _chunks[chunkIndex].length;
+      _chunks[chunkIndex] = List.of(_chunks[chunkIndex]);
+      _chunkEpoch[chunkIndex] = _epoch;
+    }
+    _chunks[chunkIndex][index & _chunkMask] = value;
+  }
+
+  /// Drops tail rows (streamed-row replacement); published snapshots keep
+  /// their view of the dropped chunks.
+  void truncate(int newLength) {
+    if (newLength == _length) return;
+    if (newLength == 0) {
+      _chunks.length = 1;
+      _chunks[0] = <T>[];
+      _chunkEpoch.length = 1;
+      _chunkEpoch[0] = _epoch;
+      _length = 0;
+      return;
+    }
+    final lastChunk = (newLength - 1) >> _chunkShift;
+    if (_chunkEpoch[lastChunk] != _epoch) {
+      copiedRows += _chunks[lastChunk].length;
+      _chunks[lastChunk] = List.of(_chunks[lastChunk]);
+      _chunkEpoch[lastChunk] = _epoch;
+    }
+    _chunks[lastChunk].length = newLength - (lastChunk << _chunkShift);
+    _chunks.length = lastChunk + 1;
+    _chunkEpoch.length = lastChunk + 1;
+    _length = newLength;
+  }
+
+  /// Drops everything (builder reset). [copiedRows] is deliberately NOT
+  /// zeroed: it is a lifetime copy counter, so resets and full request
+  /// rebuilds cannot silently under-report the scaling metric.
+  void reset() {
+    _chunks.length = 1;
+    _chunks[0] = <T>[];
+    _chunkEpoch.length = 1;
+    _chunkEpoch[0] = _epoch;
+    _length = 0;
+  }
+
+  /// Publishes the current rows as an immutable shared list and starts a
+  /// new copy-on-write cycle.
+  List<T> publish() {
+    _epoch++;
+    copiedRows += _chunks.length;
+    return _ChunkList<T>._(List.of(_chunks), _length);
+  }
+
+  static const int _chunkShift = 9;
+  static const int _chunkSize = 1 << _chunkShift;
+  static const int _chunkMask = _chunkSize - 1;
+}
+
+/// Immutable chunk-backed list view handed to snapshots (issue #1497): O(1)
+/// indexing over shared chunks; every mutator throws, like the
+/// `UnmodifiableListView` the snapshots wrap it in.
+final class _ChunkList<T> extends ListBase<T> {
+  _ChunkList._(this._chunks, this.length);
+
+  final List<List<T>> _chunks;
+
+  @override
+  final int length;
+
+  @override
+  T operator [](int index) =>
+      _chunks[index >> _ChunkStore._chunkShift][index & _ChunkStore._chunkMask];
+
+  @override
+  void operator []=(int index, T value) =>
+      throw UnsupportedError('Cannot modify an unmodifiable list');
+
+  @override
+  set length(int newLength) =>
+      throw UnsupportedError('Cannot modify an unmodifiable list');
+}
+
+/// Lazily derived `recordLocations` view (issue #1497): the full
+/// id→index map is built on first access per snapshot instead of eagerly
+/// per append — no lib/ reader touches it on the append path, and the
+/// derived content is identical to the eager map it replaces.
+final class _LazyRecordLocations extends MapBase<String, int> {
+  _LazyRecordLocations(this._rows);
+
+  final List<TrajectoryRecord> _rows;
+  Map<String, int>? _derived;
+
+  Map<String, int> get _map => _derived ??= {
+    for (final record in _rows) record.recordId: record.index - 1,
+  };
+
+  @override
+  int? operator [](Object? key) => _map[key];
+
+  @override
+  Iterable<String> get keys => _map.keys;
+
+  @override
+  void operator []=(String key, int value) =>
+      throw UnsupportedError('Cannot modify an unmodifiable map');
+
+  @override
+  int? remove(Object? key) =>
+      throw UnsupportedError('Cannot modify an unmodifiable map');
+
+  @override
+  void clear() => throw UnsupportedError('Cannot modify an unmodifiable map');
 }
