@@ -276,6 +276,10 @@ pre-tag + publish gates) fails fast when the cap is approached again.
 
 - chore: pin factory_ref to agents-rel-20261010-170624 (fb32c3c8) — brings gh-843 ghost fix + gh-840 sweep to the fa tick; live: #1457 ghost #2 BLOCKED with green-on-head (previously cost ~2h) (#1513)
 
+## 1.0.550
+
+- chore: pin factory_ref to agents-rel-20261011-002034 (aa5ddd8bd78e64c9ce77a43b31bc63b40b0f8d7a) — minter fix (gh-848/#849): gh-748 never cancels pre-materialization; unblocks fa #1457/#1520 (ghost-seized) (#1527)
+
 ## Unreleased
 
 - feat(usage): gh-1460 — the `fa-tokens:` segment-close line carries the
