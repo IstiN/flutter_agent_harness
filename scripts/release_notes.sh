@@ -26,6 +26,16 @@ range_start="${2:-}"
 
 # ── 1. CHANGELOG.md section for the version ────────────────────────────────
 if [ -f CHANGELOG.md ]; then
+  # gh-1522 rework (PR #1526): more than one `## Unreleased` header is a
+  # merge/bot artifact duplicating the curation window — the preference-1b
+  # awk below stops at the FIRST header, so the second section's entries
+  # would silently never ship. Fail loud instead of publishing notes that
+  # dropped content (pinned by the AC5 duplicate-Unreleased test).
+  unreleased_count=$(grep -c '^## Unreleased[ \t]*$' CHANGELOG.md || true)
+  if [ "$unreleased_count" -gt 1 ]; then
+    echo "::error::CHANGELOG.md carries $unreleased_count '## Unreleased' sections — entries past the first silently never ship; keep exactly one (gh-1522 curation convention)" >&2
+    exit 1
+  fi
   section=$(awk -v ver="$version" '
     BEGIN { esc = ver; gsub(/\./, "\\.", esc) }
     $0 ~ "^## " esc "[[:space:]]*$" { found = 1; next }

@@ -1381,6 +1381,55 @@ gh release create "v9.9.9" \
       },
     );
 
+    test(
+      'gh-1522 rework — TWO ## Unreleased sections fail loud (silent-drop trap)',
+      () {
+        // PR #1526 review: a second (usually empty, bottom-of-file)
+        // ## Unreleased is invisible to the preference-1b awk, which stops
+        // at the FIRST header — entries in the second section would never
+        // ship, with no error anywhere. Duplicate headers must abort the
+        // notes generation loudly instead.
+        final repo = fixtureRepo(
+          'notes-duplicate-unreleased',
+          ['feat: real work'],
+          ['v1.2.2'],
+          '''
+# Changelog
+
+## Unreleased
+
+- Pending curated note alpha
+
+## 1.2.2
+
+- Older
+
+## Unreleased
+''',
+        );
+        final r = Process.runSync(
+          'bash',
+          [File('scripts/release_notes.sh').absolute.path, '1.2.3'],
+          workingDirectory: repo,
+          environment: {
+            'PATH': '${gitShimBin.path}:${Platform.environment['PATH']}',
+          },
+        );
+        expect(
+          r.exitCode,
+          isNot(0),
+          reason:
+              'duplicate ## Unreleased sections must fail loud, not '
+              'silently drop the second section (PR #1526)',
+        );
+        expect(
+          '${r.stderr}${r.stdout}',
+          contains('Unreleased'),
+          reason: 'the error names the duplicated section',
+        );
+      },
+    );
+
     test('fallback: conventional commits since the previous tag, grouped', () {
       final repo =
           fixtureRepo('notes-group', ['chore: seed'], ['v2.0.0'], null, [
