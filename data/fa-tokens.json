@@ -2150,5 +2150,15 @@
       "total": 46546,
       "model": "kimi-for-coding"
     }
+  ],
+  "pr-1553": [
+    {
+      "leg": "rework",
+      "at": "2026-10-11T16:51:02Z",
+      "prompt": 45170,
+      "completion": 13817,
+      "total": 58987,
+      "model": "kimi-for-coding"
+    }
   ]
 }
