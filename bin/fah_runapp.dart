@@ -635,13 +635,26 @@ Future<void> _runApp(List<String> args) async {
   final rolesConfig = saved.modelRoles;
   final roleSecrets = rolesConfig == null
       ? const <String, String>{}
-      : collectRoleSecrets(rolesConfig, keyCache);
+      : collectRoleSecrets(
+          rolesConfig,
+          keyCache,
+          customProviders: saved.customProviders,
+        );
   ModelRolesResolver? rolesResolver;
   var defaultRoleResolved = false;
+  // Issue #1552 AC4: the roles-drop warning additionally surfaces in the
+  // TUI notice stream — stderr alone is invisible inside the alternate
+  // screen. Non-null hands the line to the CLI, which prints it in line
+  // mode and re-prints it after the TUI banner.
+  String? rolesDropNotice;
   if (rolesConfig != null) {
     rolesResolver = ModelRolesResolver(
       config: rolesConfig,
       secrets: roleSecrets,
+      // Issue #1552: chain entries may name `customProviders:` entries by
+      // name (`provider: aiai`) — the resolver resolves them through the
+      // registry exactly like the equivalent kind+baseUrl entry.
+      customProviders: saved.customProviders,
       cwd: cwd,
       homeDir: home,
     );
@@ -679,10 +692,10 @@ Future<void> _runApp(List<String> args) async {
       // review): the per-turn main-model path re-enters chainFor, so a
       // half-alive resolver would move the failure to mid-session; the
       // aux roles ride guarded best-effort paths either way.
-      stderr.writeln(
-        'warning: model roles config is unusable (${error.message}) — '
-        'falling back to the configured single provider/model',
-      );
+      rolesDropNotice =
+          'warning: model roles config is unusable (${error.message}) — '
+          'falling back to the configured single provider/model';
+      stderr.writeln(rolesDropNotice);
       rolesResolver = null;
       defaultRoleResolved = false;
     } on ConfigException catch (error) {
@@ -1198,8 +1211,11 @@ Future<void> _runApp(List<String> args) async {
       // to plain; --no-format / FA_NO_FORMAT (truthy values, like
       // FA_PI_MODE) force raw; width is the stdout terminal width at
       // process start, irrelevant in raw mode).
-      markdownSurface: markdownSurface,
-      config: AgentCliConfig(
+        markdownSurface: markdownSurface,
+        config: AgentCliConfig(
+        // Issue #1552 AC4: the roles-drop warning re-prints into the TUI
+        // notice stream (stderr alone is invisible in the alternate screen).
+        rolesDropNotice: rolesDropNotice,
         wakeExecutable: wakeExecutable(),
         // The dispatch below: a prompt argument is a headless run (autonomous
         // supervision default); an interactive REPL/TUI session defaults to

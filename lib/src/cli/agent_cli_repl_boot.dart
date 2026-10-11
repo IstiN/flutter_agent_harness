@@ -92,6 +92,9 @@ extension on AgentCli {
     // The first _loadAgentContext() ran before the TUI owned the terminal —
     // its "found but disabled" hint never reached the transcript. Re-print.
     _printThirdPartySkillsDisabledHint();
+    // Same rule for the roles-drop warning (issue #1552 AC4): stderr never
+    // reached the alternate screen — the notice stream gets it.
+    _printRolesDropNotice();
     // Issue #503: the reconciliation notices paint BEFORE the history
     // replay — the replay is the final paint, so the resumed session's
     // tail (the last assistant message) stays on the first glass.

@@ -23,7 +23,8 @@ import '../cancel_token.dart';
 import '../exceptions.dart';
 import '../model.dart';
 import '../secrets/secrets_store.dart';
-import '../cli/custom_providers.dart' show CustomProviderRegistry, sameEndpoint;
+import '../cli/custom_providers.dart'
+    show CustomProviderEntry, CustomProviderRegistry, sameEndpoint;
 import 'fallback_stream.dart';
 import 'key_rotation.dart';
 import 'roles_config.dart';
@@ -53,6 +54,7 @@ final class ModelRolesResolver {
   ModelRolesResolver({
     required this.config,
     required Map<String, String> secrets,
+    this.customProviders = const [],
     this.cwd,
     this.homeDir,
     this.onNotice,
@@ -91,6 +93,14 @@ final class ModelRolesResolver {
 
   /// The active configuration (replaced by [setDefaultChain]).
   ModelRolesConfig config;
+
+  /// The saved custom providers (the `customProviders:` config section) —
+  /// the registry leg of chain-name resolution (issue #1552): a chain
+  /// entry naming one of these entries (`provider: aiai`) resolves through
+  /// the entry's apiType spec, with the entry's `baseUrl`/`keyName` as
+  /// defaults where the ref omits them. Empty (default) = the legacy
+  /// catalog-only surface; nothing existing changes shape.
+  final List<CustomProviderEntry> customProviders;
 
   /// The working directory used for path-override matching.
   final String? cwd;
@@ -185,7 +195,21 @@ final class ModelRolesResolver {
     // writes) is KNOWN to this version and must not be skipped as unknown.
     // honorBuildFilter: roles are a user-facing surface — the filter the
     // old name-only + kind-loop pair applied, now in the one seam.
-    final spec = resolveCliProviderSpec(ref.provider, honorBuildFilter: true);
+    var spec = resolveCliProviderSpec(ref.provider, honorBuildFilter: true);
+    if (spec == null) {
+      // Issue #1552: the catalog missed — a hand-written config may name a
+      // `customProviders:` entry (`provider: aiai`). Resolve through the
+      // entry: its apiType's catalog spec, with the entry's baseUrl and
+      // keyName as defaults where the ref omits them (explicit ref fields
+      // always win). The reserved-name rule (isReservedCustomProviderName)
+      // bars registry entries from catalog names, so this leg only ever
+      // answers what the catalog missed — the two namespaces never shadow.
+      final entry = _findCustomProvider(ref.provider);
+      if (entry != null) {
+        spec = resolveCliProviderSpec(entry.apiType, honorBuildFilter: true);
+        if (spec != null) ref = _throughCustomEntry(ref, entry);
+      }
+    }
     if (spec == null) {
       // gh-760: degrade, never brick. An entry whose provider no version
       // knows (a config written by a newer app/CLI) skips like a
@@ -303,6 +327,40 @@ final class ModelRolesResolver {
     final current = ring.credentialByValue(currentValue);
     final next = ring.rotate(current?.name ?? ring.currentCredential.name);
     return next != null;
+  }
+
+  /// The saved custom entry named by a chain ref (case-insensitive), or
+  /// null — the registry leg of the resolver's name resolution (issue
+  /// #1552). No alias canonicalization here: chain refs are hand-written
+  /// names, and the registry's own load merge already folded alias twins.
+  CustomProviderEntry? _findCustomProvider(String name) {
+    final lower = name.trim().toLowerCase();
+    for (final entry in customProviders) {
+      if (entry.name.toLowerCase() == lower) return entry;
+    }
+    return null;
+  }
+
+  /// Defaults [ref]'s pin fields from the custom entry the ref named
+  /// (issue #1552): the entry supplies `baseUrl` and `keyName` where the
+  /// ref omits them; explicit ref fields always win. Every other field
+  /// (model, window/token/modality/thinking/auth-header/tuning overrides)
+  /// is the ref's own, exactly as for a kind+baseUrl entry.
+  ModelRef _throughCustomEntry(ModelRef ref, CustomProviderEntry entry) {
+    if (ref.baseUrl != null && ref.apiKeyName != null) return ref;
+    return ModelRef(
+      provider: ref.provider,
+      modelId: ref.modelId,
+      apiKeyName: ref.apiKeyName ?? entry.keyName,
+      baseUrl: ref.baseUrl ?? entry.baseUrl,
+      contextWindow: ref.contextWindow,
+      maxTokens: ref.maxTokens,
+      input: ref.input,
+      thinkingLevel: ref.thinkingLevel,
+      authHeader: ref.authHeader,
+      connectTimeout: ref.connectTimeout,
+      streamIdleTimeout: ref.streamIdleTimeout,
+    );
   }
 
   /// The key base name for [ref]: its explicit `apiKeyName`, else — for a
