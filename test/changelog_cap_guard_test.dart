@@ -7,14 +7,15 @@
 //
 // The guard lives in scripts/check_changelog_size.sh and must stay wired
 // into BOTH changelog surfaces (gh-1522 rework):
-//   - scripts/stamp_staged_release.sh — pre-upload: the stage-time stamper
-//     prepends the tag's generated section to the STAGED changelog, then
-//     re-measures it (trimming oldest staged sections if over) — the repo
-//     file stays curated-only and the published artifact can never trip
-//     the server-side cap;
-//   - ci.yml `publish` job gate — pre-staging: the repo CHANGELOG.md is
-//     authored by humans now; an over-cap repo file fails fast before the
-//     stage even runs.
+//   - scripts/stamp_staged_release.sh — pre-upload HARD gate: the stage-time
+//     stamper prepends the tag's generated section to the STAGED changelog,
+//     then re-measures it (trimming oldest staged sections if over) — the
+//     repo file stays curated-only and the published artifact can never
+//     trip the server-side cap;
+//   - ci.yml `publish` job gate — pre-staging ADVISORY check (gh-1522 rework,
+//     PR #1526 thread): the repo CHANGELOG.md is authored by humans now and
+//     is NOT what pub packs — an over-cap repo file must WARN, never fail
+//     the release train (that is the exact #1452 class gh-1522 retired).
 import 'dart:io';
 
 import 'package:test/test.dart';
@@ -139,27 +140,73 @@ void main() {
     },
   );
 
-  test('ci.yml publish gate runs the guard before staging/upload', () {
-    final ci = read('.github/workflows/ci.yml');
-    final publish = ci.indexOf('  publish:');
-    expect(publish, greaterThan(0));
-    final gate = ci.indexOf('check_changelog_size.sh', publish);
-    expect(
-      gate,
-      greaterThan(publish),
-      reason:
-          'the publish job must fast-fail before dart pub publish — '
-          'the server reject (v1.0.538) is the worst possible discovery '
-          'point',
-    );
-    final stage = ci.indexOf(
-      'stage_publish_package.sh /tmp/publish-stage',
-      publish,
-    );
-    expect(
-      gate,
-      lessThan(stage),
-      reason: 'the guard belongs in the gate step, ahead of staging',
-    );
-  });
+  test(
+    'ci.yml publish gate: repo-file check is advisory — an over-cap repo CHANGELOG.md must never fail the release (gh-1522)',
+    () {
+      final ci = read('.github/workflows/ci.yml');
+      final publish = ci.indexOf('  publish:');
+      expect(publish, greaterThan(0));
+      final advisory = ci.indexOf(
+        'if ! bash scripts/check_changelog_size.sh CHANGELOG.md',
+        publish,
+      );
+      expect(
+        advisory,
+        greaterThan(publish),
+        reason:
+            'the repo-file check must be wired non-blocking in the publish '
+            'job — the repo file is curated-only and is not what pub packs '
+            '(gh-1522: the 256 KiB cap can no longer block a release)',
+      );
+      final warn = ci.indexOf('::warning::', advisory);
+      expect(
+        warn,
+        greaterThan(advisory),
+        reason:
+            'the advisory check must surface a ::warning:: pointing at the '
+            'archive — a silent skip is how the repo file regrows to the '
+            'cap unnoticed (gh-1452)',
+      );
+      expect(
+        ci.indexOf('CHANGELOG_ARCHIVE.md', warn),
+        greaterThan(warn),
+        reason: 'the warning must name the fix (archive the tail)',
+      );
+    },
+  );
+
+  test(
+    'ci.yml publish job: the staged changelog is the hard gate, after staging and before upload',
+    () {
+      final ci = read('.github/workflows/ci.yml');
+      final publish = ci.indexOf('  publish:');
+      expect(publish, greaterThan(0));
+      final stage = ci.indexOf(
+        'stage_publish_package.sh /tmp/publish-stage',
+        publish,
+      );
+      expect(stage, greaterThan(publish));
+      final upload = ci.indexOf('dart pub publish --force', stage);
+      expect(
+        upload,
+        greaterThan(stage),
+        reason:
+            'the stage step (which invokes stamp_staged_release.sh — the '
+            'hard cap gate that measures and trims the POST-section staged '
+            'changelog) must run ahead of the upload — the server reject '
+            '(v1.0.538) is the worst possible discovery point',
+      );
+      // The stamper is invoked from WITHIN stage_publish_package.sh (it
+      // takes the tag version as $2), so the wiring is pinned on the
+      // script side: the stage script must shell out to the stamper.
+      final stager = read('scripts/stage_publish_package.sh');
+      expect(
+        stager,
+        contains('stamp_staged_release.sh'),
+        reason:
+            'stage_publish_package.sh must invoke the stamper at stage '
+            'time — that is the hard pre-upload cap gate (gh-1522)',
+      );
+    },
+  );
 }

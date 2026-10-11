@@ -62,7 +62,9 @@ invariant), and CI stamps the real version at every edge:
   curated `## <version>` → curated `## Unreleased` body → conventional
   commits since the previous tag. The pub.dev 262144-byte changelog cap is
   enforced on the STAGED file (oldest staged sections trim), so it can
-  never block a release again.
+  never block a release again — the publish job's repo-file check is
+  ADVISORY (`::warning::` pointing at `CHANGELOG_ARCHIVE.md`), never a
+  hard gate (gh-1522 rework, PR #1526).
 - **App builds** — `build-mobile.yml` / `build-macos.yml` derive
   `latest tag + 1` and pass it via `--build-name`/`--build-number`
   (BUILD_NUMBER = run number); the fastlane `store_pubspec_version` helper

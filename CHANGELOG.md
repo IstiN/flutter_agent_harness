@@ -3,12 +3,13 @@
 Older entries: [CHANGELOG_ARCHIVE.md](CHANGELOG_ARCHIVE.md) — moved out
 on 2026-10-09 (gh-1452): pub.dev server-rejects a publish whose
 CHANGELOG.md exceeds its 262144-byte content cap, so this file keeps a
-bounded recent window and `scripts/check_changelog_size.sh` (repo-file +
-publish gates) fails fast when the cap is approached again. Since
-gh-1522 this file is CURATED-ONLY: add new lines under `## Unreleased`
-and the release folds them into the tag's section at publish-staging
-time — the published artifact's changelog is generated, so this file's
-size can never block a release again.
+bounded recent window and `scripts/check_changelog_size.sh` fails fast when the cap is
+approached. Since gh-1522 this file is CURATED-ONLY: add new lines under
+`## Unreleased` and the release folds them into the tag's section at
+publish-staging time — the published artifact's changelog is generated
+(and trimmed under the cap by `stamp_staged_release.sh`), and the
+publish job only WARNS on this repo file, so this file's size can never
+block a release again.
 
 ## Unreleased
 
@@ -292,5 +293,9 @@ size can never block a release again.
 ## 1.0.549
 
 - chore: pin factory_ref to agents-rel-20261010-170624 (fb32c3c8) — brings gh-843 ghost fix + gh-840 sweep to the fa tick; live: #1457 ghost #2 BLOCKED with green-on-head (previously cost ~2h) (#1513)
+
+## 1.0.550
+
+- chore: pin factory_ref to agents-rel-20261011-002034 (aa5ddd8bd78e64c9ce77a43b31bc63b40b0f8d7a) — minter fix (gh-848/#849): gh-748 never cancels pre-materialization; unblocks fa #1457/#1520 (ghost-seized) (#1527)
 
 ## Unreleased

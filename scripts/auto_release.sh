@@ -50,7 +50,16 @@ if [ -n "$last_tag" ]; then
     echo "Auto-release: nothing new since $last_tag, skipping."
     exit 0
   fi
-  tag_age=$(( $(date +%s) - $(git log -1 --format=%ct "$last_tag") ))
+  # The 2h window runs from the RELEASE, not from the commit the tag points
+  # at: commits can sit pending on main for hours before the cron/dispatch
+  # cuts the tag (the common catch-up path), and reading the commit date
+  # would let extra releases through exactly when this guard (and the
+  # pub.dev ~12/day rate limit) exists to stop them (PR #1526 thread 5).
+  # Annotated tags carry a tagger date; a lightweight tag (never cut by
+  # this script, but defensive) falls back to the commit date.
+  tag_ts=$(git for-each-ref --format='%(taggerdate:unix)' "refs/tags/$last_tag")
+  [ -n "$tag_ts" ] || tag_ts=$(git log -1 --format=%ct "$last_tag")
+  tag_age=$(( $(date +%s) - tag_ts ))
   if [ "$tag_age" -lt 7200 ]; then
     echo "Auto-release: coalesced — $last_tag is ${tag_age}s old (<2h); $pending commit(s) pending. Next eligible push or the 2h cron will release them."
     exit 0

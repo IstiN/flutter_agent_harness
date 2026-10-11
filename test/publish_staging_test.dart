@@ -572,4 +572,158 @@ void main() {
       );
     });
   });
+
+  // ── gh-1522 rework (PR #1526 thread) — the stamper, exercised ────────────
+  // The string assertions above pin the WIRING; this group runs the real
+  // script against a fixture stage and asserts the staged BYTES — a bad
+  // stamp ships 0.0.0-dev or a malformed changelog to pub.dev. The fixture
+  // repo dir doubles as the CWD: release_notes.sh reads CHANGELOG.md from
+  // the CWD, exactly like the publish job running at the repo root.
+  group('gh-1522 rework — stamp_staged_release.sh behavior', () {
+    final tmp = Directory.systemTemp.createTempSync('stamp-fixture-');
+
+    /// A fixture "repo" (CWD for the run) plus a staged tree inside it.
+    _StampFixture fixture({String? repoChangelog, String? stagedChangelog}) {
+      final dir = Directory(
+        '${tmp.path}/fx-${tmp.listSync().length}',
+      )..createSync(recursive: true);
+      final repo = '${dir.path}/repo';
+      final stage = '${dir.path}/stage';
+      Directory(repo).createSync();
+      Directory(stage).createSync();
+      File('$repo/CHANGELOG.md').writeAsStringSync(
+        repoChangelog ??
+            '# Changelog\n\nCurated window.\n\n## Unreleased\n\n'
+                '- pending bullet\n\n## 1.0.998\n\n- old entry\n',
+      );
+      File('$stage/pubspec.yaml').writeAsStringSync(
+        'name: fa\nversion: 0.0.0-dev\n',
+      );
+      File('$stage/CHANGELOG.md').writeAsStringSync(
+        stagedChangelog ?? File('$repo/CHANGELOG.md').readAsStringSync(),
+      );
+      return _StampFixture(repo: repo, stage: stage);
+    }
+
+    ProcessResult stamp(_StampFixture fx, String version) => Process.runSync(
+      'bash',
+      [
+        File('scripts/stamp_staged_release.sh').absolute.path,
+        fx.stage,
+        version,
+      ],
+      workingDirectory: fx.repo,
+    );
+
+    test('stamps the pubspec to exactly the tag version', () {
+      final fx = fixture();
+      final r = stamp(fx, '1.0.999');
+      expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+      expect(
+        File('${fx.stage}/pubspec.yaml').readAsStringSync(),
+        contains('version: 1.0.999'),
+      );
+    });
+
+    test(
+      'folds the curated Unreleased body under the tag section; no Unreleased header survives',
+      () {
+        final fx = fixture();
+        final r = stamp(fx, '1.0.999');
+        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+        final staged = File('${fx.stage}/CHANGELOG.md').readAsStringSync();
+        expect(staged, isNot(contains('## Unreleased')));
+        expect(staged, contains('## 1.0.999'));
+        expect(staged, contains('- pending bullet'));
+        // the older curated section is preserved after the fresh one
+        expect(staged, contains('## 1.0.998'));
+        expect(
+          staged.indexOf('## 1.0.999'),
+          lessThan(staged.indexOf('## 1.0.998')),
+        );
+      },
+    );
+
+    test(
+      'generated section matches the repo formatting convention (blank lines, PR #1526 thread 4)',
+      () {
+        final fx = fixture();
+        final r = stamp(fx, '1.0.999');
+        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+        final staged = File('${fx.stage}/CHANGELOG.md').readAsStringSync();
+        // blank line after the fresh section header, and a blank line
+        // between the fresh section and the next `## ` — raw markdown must
+        // not run sections together (the repo's hand-curated convention).
+        expect(staged, contains('## 1.0.999\n\n- pending bullet'));
+        expect(staged, contains('- pending bullet\n\n## 1.0.998'));
+      },
+    );
+
+    test(
+      'over-cap staged file trims oldest-first, keeping the fresh section',
+      () {
+        // A ~300 KiB older section plus the small fresh one: the trim must
+        // drop the old section so the staged file lands under the pub.dev
+        // cap.
+        final old = 'x' * 300000;
+        final fx = fixture(
+          stagedChangelog:
+              '# Changelog\n\n## Unreleased\n\n- pending bullet\n\n'
+              '## 1.0.998\n\n- $old\n',
+        );
+        final r = stamp(fx, '1.0.999');
+        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+        final stagedFile = File('${fx.stage}/CHANGELOG.md');
+        expect(
+          stagedFile.lengthSync(),
+          lessThan(262144),
+          reason: 'the staged changelog must fit the pub.dev cap',
+        );
+        final staged = stagedFile.readAsStringSync();
+        expect(staged, contains('## 1.0.999'));
+        expect(staged, contains('- pending bullet'));
+        expect(staged, isNot(contains('## 1.0.998')));
+      },
+    );
+
+    test(
+      'a curated ## <version> section for the same version never duplicates',
+      () {
+        // The repo file already carries a curated section for the version
+        // being released (release_notes.sh prefers it): the stamper must
+        // not prepend a generated copy AND keep the existing one.
+        final fx = fixture(
+          repoChangelog:
+              '# Changelog\n\n## 1.0.999\n\n- curated notes\n\n'
+              '## 1.0.998\n\n- old entry\n',
+        );
+        final r = stamp(fx, '1.0.999');
+        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+        final staged = File('${fx.stage}/CHANGELOG.md').readAsStringSync();
+        expect('## 1.0.999\n'.allMatches(staged).length, 1);
+        expect(staged, contains('- curated notes'));
+      },
+    );
+
+    test('staged pubspec missing the version line fails loud', () {
+      final fx = fixture();
+      File('${fx.stage}/pubspec.yaml').writeAsStringSync('name: fa\n');
+      final r = stamp(fx, '1.0.999');
+      expect(r.exitCode, 1, reason: 'a stage without a version line must fail');
+      expect(
+        '${r.stdout}${r.stderr}',
+        contains('refusing to publish'),
+        reason:
+            'the loud fail must name the tag↔file invariant — a bare '
+            'set -e death with no message is a silent failure',
+      );
+    });
+  });
+}
+
+class _StampFixture {
+  _StampFixture({required this.repo, required this.stage});
+
+  final String repo;
+  final String stage;
 }

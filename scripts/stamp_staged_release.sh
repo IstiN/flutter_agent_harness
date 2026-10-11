@@ -35,7 +35,10 @@ sed -i "s/^version: .*/version: $version/" "$pubspec"
 # invariant's tripwire: a future staging change that drops the pubspec
 # version line, comments it, or carries a second version field fails LOUDLY
 # here instead of shipping a 0.0.0-dev package to pub.dev.
-stamped=$(grep '^version:' "$pubspec" | awk '{print $2}')
+# `|| true`: a stage whose pubspec dropped the version line must reach the
+# loud invariant message below, not die silently on grep's exit 1 under
+# `set -e` (PR #1526 rework behavioral test).
+stamped=$(grep '^version:' "$pubspec" | awk '{print $2}' || true)
 if [ "$stamped" != "$version" ]; then
   echo "::error::staged pubspec version '$stamped' != release tag version '$version' — refusing to publish (gh-1522 tag↔file invariant)"
   exit 1
@@ -75,14 +78,23 @@ section = os.environ["FA_SECTION"].strip("\n")
 
 text = open(path, encoding="utf-8").read()
 parts = re.split(r"(?=^## )", text, flags=re.M)
-preamble = parts[0]
+preamble = parts[0].rstrip("\n") + "\n"
 versions = [
     s
     for s in parts[1:]
     if s.startswith("## ")
     and not re.match(r"^## Unreleased[ \t]*$", s.split("\n", 1)[0])
+    # PR #1526 rework: the repo file may already carry a curated section
+    # for THIS version (release_notes.sh prefers it) — never keep a
+    # duplicate copy below the generated one.
+    and not re.match(
+        rf"^## {re.escape(version)}[ \t]*$", s.split("\n", 1)[0]
+    )
 ]
-new = f"## {version}\n{section}\n"
+# Blank lines around the header and between sections, matching the repo's
+# hand-curated convention (PR #1526 rework thread 4) — raw markdown must
+# not run sections together: preamble\n + \n## <version>\n\n<body>\n\n.
+new = f"\n## {version}\n\n{section.strip()}\n\n"
 size = len((preamble + new).encode("utf-8"))
 kept = []
 for s in versions:  # file order: newest first (the stamp prepends)

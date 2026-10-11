@@ -192,8 +192,10 @@ final _fixtureRoot = Directory.systemTemp.createTempSync('release-hygiene-');
 
 /// Full behavioral sandbox for the gh-1522 tag-only release flow of
 /// scripts/auto_release.sh: a bare origin whose main carries 2 commits
-/// ('seed' backdated [tagAgeHours] + 'pending work') and an annotated tag
-/// v0.1.495 [tagAgeHours] ago (3h = past the 2h coalesce window), a seed
+/// ('seed' backdated [commitAgeHours] (default [tagAgeHours]) + 'pending
+/// work') and an annotated tag v0.1.495 [tagAgeHours] ago (3h = past the
+/// 2h coalesce window; 0 = cut just now — the two ages diverge to pin the
+/// tagger-date-vs-commit-date coalesce measurement), a seed
 /// clone the script runs in, a `gh` stub that logs every invocation (the
 /// script's create is `|| true`), and a `git` shim that can pre-push the
 /// same tag from a second clone right before each
@@ -205,6 +207,7 @@ final _fixtureRoot = Directory.systemTemp.createTempSync('release-hygiene-');
 AutoReleaseRun runAutoReleaseDirect(
   String name, {
   int tagAgeHours = 3,
+  int? commitAgeHours,
   bool dryRun = false,
   String raceMode = 'never',
 }) {
@@ -254,7 +257,13 @@ if [ "\$1" = "push" ]; then
     race_left=\$(cat "\$FA_RACE_FILE")
     if [ "\$race_left" -gt 0 ]; then
       echo \$((race_left-1)) > "\$FA_RACE_FILE"
-      "\$FA_REAL_GIT" -C "\$FA_RACER" tag -a "\$raced_tag" -m "Release \$raced_tag" origin/main
+      # gh-1522 rework: the racer clone has no ambient git identity (the
+      # seed clone's `git config` does not leak into it), and an annotated
+      # tag fails without one on hosts with no global identity (GitHub
+      # runners, the hostile-env leg) — carry the identity inline, matching
+      # the retired pre-gh-1522 hook's pattern. One line: a trailing
+      # backslash continuation misbehaves inside the generated shim.
+      "\$FA_REAL_GIT" -c user.email=t@t -c user.name=t -C "\$FA_RACER" tag -a "\$raced_tag" -m "Release \$raced_tag" origin/main
       "\$FA_REAL_GIT" -C "\$FA_RACER" push -q origin "refs/tags/\$raced_tag"
     fi
   fi
@@ -298,7 +307,7 @@ exec "\$FA_REAL_GIT" "\$@"
     env: {
       'GIT_COMMITTER_DATE':
           (DateTime.now()
-                      .subtract(Duration(hours: tagAgeHours))
+                      .subtract(Duration(hours: commitAgeHours ?? tagAgeHours))
                       .millisecondsSinceEpoch ~/
                   1000)
               .toString(),
@@ -2093,6 +2102,30 @@ gh release create "v9.9.9" \
           r.originTags(),
           ['v0.1.495'],
           reason: 'the guard must not cut v0.1.496',
+        );
+        expect(r.ghLog(), isEmpty);
+      },
+    );
+
+    test(
+      'coalesce guard measures the TAG date, not the tagged commit date — a tag cut minutes ago coalesces even when its commit sat pending for hours (PR #1526 thread 5)',
+      () {
+        // The catch-up path: commits sat on main for hours before the
+        // cron/dispatch cut the tag. The 2h window runs from the RELEASE
+        // (tag), not from the commit the tag points at — reading the
+        // commit date would let extra releases through exactly when the
+        // guard (and the pub.dev ~12/day rate limit) exists to stop them.
+        final r = runAutoReleaseDirect(
+          'coalesce-tagger-date',
+          tagAgeHours: 0,
+          commitAgeHours: 5,
+        );
+        expect(r.exitCode, 0, reason: r.output);
+        expect(r.output, contains('coalesced'));
+        expect(
+          r.originTags(),
+          ['v0.1.495'],
+          reason: 'a fresh tag must coalesce pending commits',
         );
         expect(r.ghLog(), isEmpty);
       },
