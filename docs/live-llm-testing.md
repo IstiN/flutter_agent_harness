@@ -23,6 +23,11 @@ construction and runs in the deterministic gate.
 | bench harnesses (terminal-bench / harbor / MLS) | run under supervision | — |
 | your machine (debugging) | `dart test --tags "integration && llm"` | `dart test --tags integration --exclude-tags llm` |
 
+gh-1538: `nightly.yml` is builds + integration-only — the unit shards,
+analyze, coverage and CRAP/jscpd gates run exclusively in the pre-merge SM
+validation gate (#1537); nightly keeps the release build matrix plus these
+integration suites.
+
 The boundary is enforced, not aspirational:
 
 - `scripts/check_llm_tag_boundary.py` (static-gate step on every PR, plus
