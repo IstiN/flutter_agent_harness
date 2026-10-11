@@ -1781,10 +1781,11 @@ jobs:
   flutter-app-lock-smoke:
     name: Lockfile smoke (${{ matrix.os }} release)
     runs-on: ${{ matrix.runner }}
-    needs: changes
+    needs: [release-pending, changes]
     if: >-
       (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') &&
-      needs.changes.outputs.locksmoke == 'true'
+      needs.changes.outputs.locksmoke == 'true' &&
+      needs.release-pending.outputs.pending == 'true'
     timeout-minutes: 45
     permissions:
       contents: read
