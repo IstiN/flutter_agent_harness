@@ -472,5 +472,40 @@ class HarborProviderSelectionShapeTest(unittest.TestCase):
         self.assertIn("BENCH_RUN_LABEL: ${{ needs.setup.outputs.run_label }}", self.text)
 
 
+@unittest.skipUnless(
+    _HARBOR_YML.exists(), "bench-harbor.yml not found (standalone bench checkout)"
+)
+class ShardDatasetEnvRegTest(unittest.TestCase):
+    """REG (run 38126875911): the bench shard job's harbor step overrode
+    DATASET with `${{ steps.family.outputs.dataset }}` — a `steps.*` ref
+    to a step in ANOTHER job always evaluates empty, so every shard died
+    with harbor's `Dataset  not found` (empty name). The dataset id must
+    cross jobs via `needs.setup.outputs.dataset` (the `steps.family`
+    ref is only valid inside the setup job itself)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = _HARBOR_YML.read_text()
+
+    def _bench_job(self) -> str:
+        # The bench (shard) job body: from its `needs: setup` marker to
+        # the summary job boundary.
+        return self.text.split("\n  bench:", 1)[1].split("\n  summary:", 1)[0]
+
+    def test_no_cross_job_step_refs_in_the_bench_job(self):
+        self.assertNotIn("steps.family.outputs", self._bench_job())
+
+    def test_harbor_run_step_takes_dataset_from_setup_outputs(self):
+        self.assertIn(
+            "DATASET: ${{ needs.setup.outputs.dataset }}", self._bench_job()
+        )
+
+    def test_setup_job_internal_family_ref_stays(self):
+        # The setup job's shard step legitimately reads its OWN family
+        # step (same job) — that one must not be "fixed" away.
+        setup_job = self.text.split("\n  bench:", 1)[0]
+        self.assertIn("DATASET: ${{ steps.family.outputs.dataset }}", setup_job)
+
+
 if __name__ == "__main__":
     unittest.main()

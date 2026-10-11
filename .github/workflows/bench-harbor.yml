@@ -493,7 +493,10 @@ jobs:
           ATTEMPTS: ${{ inputs.attempts }}
           NCONC: ${{ inputs.n-concurrent }}
           ENV_TYPE: ${{ matrix.env }}
-          DATASET: ${{ steps.family.outputs.dataset }}
+          # needs.*, NOT steps.family.* — the family step lives in the
+          # setup job; a steps.* ref here is empty and harbor dies with
+          # "Dataset  not found" (run 38126875911).
+          DATASET: ${{ needs.setup.outputs.dataset }}
           AGENT_TIMEOUT: ${{ inputs.agent-timeout }}
           PROGRESS_EXTENSION: ${{ inputs.progress-extension }}
           # shard task names: dataset dir names, no whitespace — safe to word-split.
