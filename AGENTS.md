@@ -237,7 +237,18 @@ factual: paths, commands, invariants — no essays.
   count, waiting row) hangs off it (issue #562). The model-facing notice
   (steered mid-run or a fresh idle turn; app `sendText` system-notice)
   is skipped when a foreground call consumed the result inline
-  (`suppressSettleNotification`). Job logs on disk are NOT secret-redacted.
+  (`suppressSettleNotification`). Headless `fa -p` DRAINS live shell
+  jobs after the final answer like in-flight subagents — the settles
+  steer fresh reaction turns, loop (10 rounds) under ONE shared
+  wall-clock ceiling `headless.shellJobDrainMs` (default 30 min; 0 =
+  shell-job-scoped kill switch: live shell jobs detach at once while the
+  pre-existing subagent drain stays unconditional), then the detach
+  summary applies (gh-1459). While the drain waits, every `headless.shellJobQuietMs`
+  (default 5 min; 0 = off) of a still-running awaited job steers ONE
+  interim liveness notice (`job <id> running · <elapsed> · tail: …` +
+  the bash_job escape hatch), skipped for a crossing the model probed
+  itself (`bash_job status/output` bumps the entry's probe generation)
+  (gh-1459 ask #4). Job logs on disk are NOT secret-redacted.
 - `lib/src/tools/availability.dart` + `availability_gate.dart` —
   capability-gated tool availability (issue #19): `resolveToolAvailability`
   merges the `tools:` scope stack (global `~/.fah/config.yaml` < project
