@@ -128,6 +128,15 @@ final class CompactExpandController {
   int _spentTokens = 0;
   void Function()? _unsubscribe;
 
+  /// Issue #1499: ledger entry memo for the hide action's rebuilds — one
+  /// controller lives for one agent, so the memo survives across turns.
+  final LedgerEntryCache _ledgerCache = LedgerEntryCache();
+
+  /// The [Session] instance the memo was built against: hosts switch
+  /// sessions under a live controller, and ids are only unique within a
+  /// session — a switch invalidates every memoized record.
+  Session? _ledgerCacheSession;
+
   /// The `compact_expand` tool bound to this controller.
   late final AgentTool tool = AgentTool(
     name: compactExpandToolName,
@@ -369,6 +378,17 @@ final class CompactExpandController {
     );
   }
 
+  /// The memo for [live]'s ledger rebuilds — cleared when the live
+  /// session object changed since the last call (issue #1499: record ids
+  /// are unique within a session only).
+  LedgerEntryCache _ledgerCacheFor(Session live) {
+    if (!identical(live, _ledgerCacheSession)) {
+      _ledgerCacheSession = live;
+      _ledgerCache.clear();
+    }
+    return _ledgerCache;
+  }
+
   /// The agent-initiated hide (AC1): the engine's validation class,
   /// structured errors, then a state refresh so the very next request of
   /// this turn renders the new markers (the host's per-message
@@ -400,6 +420,7 @@ final class CompactExpandController {
     final ledger = buildContextLedger(
       visiblePath: visibleStructuredPath(path, viewState),
       seqs: seqs,
+      cache: _ledgerCacheFor(live),
     );
     final protectedTail = protectedTailIds(ledger, hideProtectTailEntries);
     // Whole pair groups or never (D6 / #85): the hide snaps OUTWARD, and

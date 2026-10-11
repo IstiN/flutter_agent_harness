@@ -219,6 +219,12 @@ final class StructuredCompactor {
 
   int _pass = 0;
 
+  /// Issue #1499: per-run ledger entry memo — the judge/LRU/checkpoint
+  /// passes each rebuild the ledger over the whole visible path, and the
+  /// memo turns every rebuild after the first into O(changed records)
+  /// instead of re-tokenizing the session's history.
+  final LedgerEntryCache _ledgerCache = LedgerEntryCache();
+
   /// The live request-size estimate in the ONE basis the ctx meter, the
   /// loop's over-window guard, and the classic compactor all enforce:
   /// transcript estimate plus the system-prompt / tool-schema overhead
@@ -659,7 +665,7 @@ final class StructuredCompactor {
     if (visible.isEmpty) return null;
     final seqs = RecordSeqIndex(await session.getEntries());
     return _LedgerView(
-      buildContextLedger(visiblePath: visible, seqs: seqs),
+      buildContextLedger(visiblePath: visible, seqs: seqs, cache: _ledgerCache),
       viewState,
       visible,
       seqs,
