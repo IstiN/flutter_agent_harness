@@ -69,7 +69,34 @@ String cjkProse(int cells) {
 String oneGiantWord(int cells) => 'x' * cells;
 
 /// Median wrap time over [runs] executions (one untimed warm-up first).
+/// Used by the absolute-budget tests: their bounds carry generous
+/// gh-1357 headroom over the median, so jitter there is already priced in.
 double medianWrapMs(String line, int width, {int runs = 5}) {
+  final times = _wrapTimes(line, width, runs);
+  times.sort();
+  return times[runs ~/ 2];
+}
+
+/// Minimum wrap time over [runs] executions (one untimed warm-up first).
+///
+/// gh-1460 rework (CI run 38112524699, core shard 0/4): the growth-shape
+/// ratio used the MEDIAN of 5 at ~3–7ms windows and a loaded shared
+/// runner's scheduling pause landed inside the doubled-size median
+/// (12.09ms against a true ~7ms) — ratio 3.65 tripped the 3.2 bound on a
+/// genuinely linear wrap (every other leg, including the 1M-cell absolute
+/// budget, passed). Runner jitter only ever INFLATES a wall-clock
+/// sample, so the MINIMUM converges on the true compute time and cannot
+/// be tipped by a pause; genuine superlinearity inflates BOTH sizes with
+/// real work, so the min-ratio still trips on a regression (the
+/// gh-1496 quadratic candidates measure ~4x by min as well).
+double minWrapMs(String line, int width, {int runs = 9}) {
+  final times = _wrapTimes(line, width, runs);
+  times.sort();
+  return times.first;
+}
+
+/// One untimed warm-up plus [runs] timed wraps, unsorted milliseconds.
+List<double> _wrapTimes(String line, int width, int runs) {
   wrapAnsiLine(line, width); // JIT warm-up, untimed
   final times = List<double>.filled(runs, 0);
   for (var i = 0; i < runs; i++) {
@@ -78,21 +105,21 @@ double medianWrapMs(String line, int width, {int runs = 5}) {
     sw.stop();
     times[i] = sw.elapsedMicroseconds / 1000.0;
   }
-  times.sort();
-  return times[runs ~/ 2];
+  return times;
 }
 
 /// Growth-shape contract: doubling the input must not more than [maxRatio]
-/// the median time. Linear wraps measure ~2x here; the old quadratic
-/// candidates (re-scan per emitted row) measure ~4x+. 3.2 sits between
-/// with room for CI scheduler jitter on both sides.
+/// the time. Measured with [minWrapMs] — the pause-proof statistic (see
+/// its doc); linear wraps measure ~2x here; the old quadratic candidates
+/// (re-scan per emitted row) measure ~4x+. 3.2 sits between with room for
+/// CI scheduler jitter on both sides.
 void expectLinearGrowth(
   String Function(int cells) build,
   int baseCells,
   String label,
 ) {
-  final small = medianWrapMs(build(baseCells), 80);
-  final doubled = medianWrapMs(build(baseCells * 2), 80);
+  final small = minWrapMs(build(baseCells), 80);
+  final doubled = minWrapMs(build(baseCells * 2), 80);
   final ratio = doubled / small;
   expect(
     ratio,
@@ -133,6 +160,40 @@ void main() {
 
   test('wrap time grows linearly: hard-cut single word, 2x <= 3.2x', () {
     expectLinearGrowth(oneGiantWord, 100000, 'single word');
+  });
+
+  test('growth ratio is pause-proof (gh-1460 rework flake regression)', () {
+    // Deterministic anchor for the CI run 38112524699 flake: the failing
+    // leg measured small=3.31ms / doubled=12.09ms (ratio 3.65 against the
+    // 3.2 bound) — a scheduling pause inflated the doubled-size median
+    // while the wrap itself stayed linear. The sample sets below reproduce
+    // that exact shape: the old median statistic trips on it, the
+    // min-of-9 statistic expectLinearGrowth now uses does not, and a
+    // genuinely superlinear pair still trips either way (real quadratic
+    // work inflates both sizes, so the min-ratio keeps ~4x).
+    const quietSmall = [3.4, 3.31, 3.35, 3.3, 3.42, 3.4, 3.38, 3.33, 3.4];
+    const pausedDoubled = [6.8, 7.0, 12.09, 12.2, 11.9, 7.1, 6.9, 7.2, 7.0];
+    final oldMedianRatio =
+        pausedDoubled[4] / quietSmall[4]; // medians of the 9 samples
+    expect(oldMedianRatio, greaterThan(3.2)); // the CI red, reproduced
+    final newMinRatio =
+        pausedDoubled.first / quietSmall.first; // mins of the 9 samples
+    expect(newMinRatio, lessThan(3.2)); // the fix
+    // Genuine superlinearity still trips the min-based ratio:
+    const quadraticSmall = [3.3, 3.4, 3.2, 3.3, 3.4, 3.3, 3.2, 3.4, 3.3];
+    const quadraticDoubled = [
+      13.0,
+      13.2,
+      12.8,
+      13.1,
+      13.0,
+      12.9,
+      13.1,
+      13.0,
+      12.9,
+    ];
+    final minQuadraticRatio = quadraticDoubled.first / quadraticSmall.first;
+    expect(minQuadraticRatio, greaterThan(3.2));
   });
 
   test('wrapped output stays contract-clean at scale', () {

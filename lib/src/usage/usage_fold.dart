@@ -56,12 +56,15 @@ final class UsageFolder {
   const UsageFolder();
 
   /// Folds one segment's [requests] (chain order irrelevant — addition is
-  /// commutative and every field is a sum).
+  /// commutative and every field is a sum). [model] is the segment's
+  /// last-seen model id (gh-1460), carried through to the segment for the
+  /// `fa-tokens:` segment-close line.
   UsageSegment foldSegment(
     int index,
     List<FoldRequest> requests, {
     DateTime? openedAt,
     DateTime? closedAt,
+    String? model,
   }) {
     var totals = UsageModelTotals.zero;
     var byModel = <String, UsageModelTotals>{};
@@ -86,6 +89,7 @@ final class UsageFolder {
       totals: totals,
       byModel: byModel,
       source: scopeSource(sawReported: sawReported, sawEstimated: sawEstimated),
+      model: model,
       openedAt: openedAt,
       closedAt: closedAt,
     );

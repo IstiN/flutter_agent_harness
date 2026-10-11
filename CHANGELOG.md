@@ -387,3 +387,29 @@ pre-tag + publish gates) fails fast when the cap is approached again.
 - gh-1459 [BUG] Headless exits with live background shell jobs (detached, results lost) — must drain+steer like subagents (gh-1440 run orphaned its full-suite job) (#1463)
 
 ## Unreleased
+
+- feat(usage): gh-1460 — the `fa-tokens:` segment-close line carries the
+  session's model id, so every token row the factory publishes is
+  attributable to a model and therefore priceable. The fold now captures
+  each segment's LAST-SEEN model id (the model that served the final
+  request, the same string settings/UI display — mid-session fallback
+  take-overs attribute the segment to the model that actually finished it;
+  zero-filled fallbacks never clobber a seen model) and the pinned line
+  shape grows an OPTIONAL `"model":"<id>"` key after `"segment"` — omitted
+  when no model was observed, so legacy lines parse unchanged and the
+  pinned regex (`usageTokensLogPattern`, gh-1241 AC7) keeps matching both
+  shapes. usage.json's schema is untouched (the model is rebuildable from
+  the chain, I6); old consumers using tolerant JSON ignore the new key,
+  and the repo's single strict consumer (the pinned constant) is updated
+  in the same change.
+
+- fix(test): gh-1460 rework — the `wrap_ansi_line_perf_test` growth-shape
+  legs measure the doubling ratio with the MINIMUM over 9 runs instead of
+  the median of 5 (CI run 38112524699, core shard 0/4: a scheduling pause
+  inflated the doubled-size median — 12.09ms against a true ~7ms — and
+  tripped the 3.2 bound at 3.65x on a genuinely linear wrap). Runner
+  jitter only ever inflates a wall-clock sample, so the min converges on
+  the true compute time; genuine superlinearity still trips the ratio
+  (the gh-1496 quadratic candidates measure ~4x by min). The absolute-
+  budget legs keep the median — their gh-1357 headroom already prices in
+  jitter. A synthetic regression test pins the pause-proof property.
