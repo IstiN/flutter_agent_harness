@@ -111,6 +111,7 @@ final class AgentCliConfig {
     this.subagents = const SubagentsConfig(),
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
+    this.headless = const HeadlessConfig(),
     this.streamThinking = false,
     this.noStreamThinking = false,
     this.cubeSpec,
@@ -844,6 +845,11 @@ final class AgentCliConfig {
   /// cross-run shell-job state (manifest age belt + log GC), plus the
   /// `maxLogBytes` per-log ceiling (issue #919).
   final JobsConfig jobs;
+
+  /// The `headless:` section (gh-1459): the wall-clock ceiling
+  /// (`shellJobDrainMs`, default 30 min; 0 = off) for the headless
+  /// background-job drain after the final answer.
+  final HeadlessConfig headless;
 
   /// The effective gh-1198 thinking-stream setting for the run
   /// (`--stream-thinking` flag OR the `output.streamThinking` config,
