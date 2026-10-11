@@ -264,17 +264,20 @@ class Agent {
   /// carry secrets and bloat the session file.
   final bool wireDump;
 
-  /// The FinalizeGate (gh-1412, default off): hosts set it on unattended
-  /// runs (approval mode `unattended`/autopilot, the bench mode). When on,
-  /// every run parses the `task-ledger` fenced block out of the final
-  /// assistant answer and emits [TaskLedgerEvent] for the host to persist
-  /// as the hidden `task_ledger` session record. Off = interactive
-  /// behavior is byte-identical.
+  /// The FinalizeGate (gh-1412, default off; attendance-corrected
+  /// gh-1516): hosts set it on UNATTENDED runs (headless `fa -p`/bench —
+  /// `AgentCliConfig.headlessRun`, never the approval mode). When on,
+  /// every run parses the `task-ledger` block out of the final assistant
+  /// answer (fenced or the unfenced near-miss shape), rewrites the
+  /// answer so the transcript never shows the ledger, and emits
+  /// [TaskLedgerEvent] for the host to persist as the hidden
+  /// `task_ledger` session record. Runs with no tool calls (pure Q&A)
+  /// fire nothing — no produced state, nothing to verify. Off =
+  /// interactive behavior is byte-identical.
   ///
-  /// Mutable: only the CLI host flips this today (boot approval mode
-  /// `unattended`); the builder's `AgentWiringSpec` has no knob for it in
-  /// v1 — hosts that want the gate must set the field after the stack
-  /// lands.
+  /// Mutable: only the CLI host flips this today (boot `headlessRun`);
+  /// the builder's `AgentWiringSpec` has no knob for it in v1 — hosts
+  /// that want the gate must set the field after the stack lands.
   bool finalizeGate;
 
   /// gh-1409: the skills known to the session — their `operative:` lines

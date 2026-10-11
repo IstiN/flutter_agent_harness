@@ -43,12 +43,17 @@ void main() {
     if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
   });
 
-  /// Runs one scripted CLI session headlessly and returns every raw session
-  /// JSONL line written under the run's session root.
+  /// Runs one scripted CLI session and returns every raw session JSONL line
+  /// written under the run's session root. Headless (`fa -p` shape,
+  /// `headlessRun: true`) is the unattended attendance the FinalizeGate
+  /// keys on (gh-1516) — IT-1 exercises the full contract there; IT-2 pins
+  /// the interactive REPL (any approval mode, autopilot included) staying
+  /// gate-free.
   Future<List<String>> runScripted(
     ApprovalMode approvalMode,
-    List<_Turn> script,
-  ) async {
+    List<_Turn> script, {
+    bool headless = false,
+  }) async {
     final sessionRoot = '${tempDir.path}/fah-sessions';
     mock.script = script;
     final cli = AgentCli(
@@ -65,28 +70,36 @@ void main() {
         env: env,
         sessionRoot: sessionRoot,
         approvalMode: approvalMode,
+        headlessRun: headless,
       ),
       io: _HeadlessIo(),
     );
-    final run = cli.run();
-    // Drive the fixture prompt once the REPL is reading, then exit after
-    // the script's last assistant turn has landed (each scripted POST
-    // advances the mock's cursor).
-    unawaited(
-      Future<void>.delayed(const Duration(milliseconds: 300)).then((_) {
-        _HeadlessIo.last?.sendLine(
-          'Fixture task: create script.py, make it executable, run it.',
-        );
-      }),
-    );
-    final deadline = DateTime.now().add(const Duration(seconds: 60));
-    while (mock.bodies.length < script.length &&
-        DateTime.now().isBefore(deadline)) {
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+    if (headless) {
+      final code = await cli.runHeadless(
+        'Fixture task: create script.py, make it executable, run it.',
+      );
+      expect(code, 0);
+    } else {
+      final run = cli.run();
+      // Drive the fixture prompt once the REPL is reading, then exit after
+      // the script's last assistant turn has landed (each scripted POST
+      // advances the mock's cursor).
+      unawaited(
+        Future<void>.delayed(const Duration(milliseconds: 300)).then((_) {
+          _HeadlessIo.last?.sendLine(
+            'Fixture task: create script.py, make it executable, run it.',
+          );
+        }),
+      );
+      final deadline = DateTime.now().add(const Duration(seconds: 60));
+      while (mock.bodies.length < script.length &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1500));
+      _HeadlessIo.last?.sendLine('/exit');
+      await run.timeout(const Duration(seconds: 90));
     }
-    await Future<void>.delayed(const Duration(milliseconds: 1500));
-    _HeadlessIo.last?.sendLine('/exit');
-    await run.timeout(const Duration(seconds: 90));
     final lines = <String>[];
     final root = Directory(sessionRoot);
     if (root.existsSync()) {
@@ -150,7 +163,7 @@ void main() {
           '  status: pass\n'
           '```\n',
         ),
-      ]);
+      ], headless: true);
       final records = recordsOf(lines);
 
       // AC3: the verification commands ACTUALLY executed — the session's
@@ -194,12 +207,17 @@ void main() {
   test(
     'IT-2: the same harness in interactive mode persists NO ledger',
     () async {
-      final lines = await runScripted(ApprovalMode.yolo, [
-        const _Turn.toolCalls([
-          (id: 'call_1', name: 'bash', arguments: 'echo interactive-run'),
-        ]),
-        const _Turn.text('done — no checklist'),
-      ]);
+      final lines = await runScripted(
+        // gh-1516: autopilot in an interactive REPL is attended — the
+        // regression this ticket fixes.
+        ApprovalMode.unattended,
+        [
+          const _Turn.toolCalls([
+            (id: 'call_1', name: 'bash', arguments: 'echo interactive-run'),
+          ]),
+          const _Turn.text('done — no checklist'),
+        ],
+      );
       final records = recordsOf(lines);
       expect(
         records.where(

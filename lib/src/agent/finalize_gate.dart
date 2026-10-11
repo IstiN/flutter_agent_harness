@@ -16,8 +16,11 @@
 ///   near-miss proximity (items verified / checks passed), and CI can
 ///   REG-gate the contract's presence.
 ///
-/// The loop parses the `task-ledger` fenced block out of the run's final
-/// assistant message ([parseTaskLedger]) and emits [TaskLedgerEvent]
+/// The loop parses the `task-ledger` block out of the run's final
+/// assistant message ([parseTaskLedger], tolerant to the unfenced
+/// near-miss shape models emit — gh-1516), rewrites the answer so the
+/// transcript never shows the ledger ([stripTaskLedger]), and emits
+/// [TaskLedgerEvent]
 /// (declared in `agent_loop.dart` — the event family is sealed there);
 /// hosts persist [taskLedgerRecordType] records and the trajectory
 /// snapshot builder folds them.
@@ -140,19 +143,252 @@ final class TaskLedger {
   }
 }
 
-final RegExp _fenceLine = RegExp(r'^\s*(`{3,})(.*)$');
-
-/// Parses the LAST `task-ledger` fenced block out of [text] — the shape the
-/// FinalizeGate contract mandates for the final answer. Returns null when
-/// the text carries no block (legacy answers replay unchanged) or the block
-/// holds no requirement-bearing entries.
+/// Parses the LAST parseable `task-ledger` block out of [text] — the
+/// fenced shape the FinalizeGate contract mandates for the final answer,
+/// or the near-miss unfenced `task-ledger` heading + bullet shape models
+/// actually emit (gh-1516). Returns null when the text carries no
+/// requirement-bearing ledger (legacy answers replay unchanged).
 ///
 /// Entries are `- key: value` lines; further `key: value` lines (deeper
 /// indented) extend the current entry. Missing statuses parse as
 /// [TaskLedgerItemStatus.fail]; unknown keys are ignored.
-TaskLedger? parseTaskLedger(String text) {
-  final block = _lastLedgerBlock(text);
-  if (block == null) return null;
+TaskLedger? parseTaskLedger(String text) => resolveTaskLedger(text)?.ledger;
+
+/// Removes the last parseable ledger (fenced or the unfenced near-miss
+/// shape) from [text] — the run's final answer must never SHOW the
+/// checklist it self-checked with (gh-1516): the record lives in the
+/// hidden `task_ledger` session record, the transcript stays clean.
+/// Returns [text] unchanged when no ledger parses out of it.
+///
+/// Only the blank runs TOUCHING the removed span are collapsed — the
+/// rest of the answer stays byte-identical (gh-1516 review): multi-blank
+/// formatting elsewhere is user-facing text, not strip fallout.
+String stripTaskLedger(String text) =>
+    resolveTaskLedger(text)?.strippedText ?? text;
+
+/// Resolves the last parseable ledger of [text] in ONE scan (gh-1516
+/// review): the parsed [TaskLedger] plus the answer text with the ledger
+/// span removed. Null when no requirement-bearing ledger parses. The
+/// `MessageEndEvent` interceptor and the end-of-run fold both derive
+/// their payloads from a single call here — pairing the event with the
+/// stripped answer never re-parses the text.
+({TaskLedger ledger, String strippedText})? resolveTaskLedger(String text) {
+  final hit = _lastParseableLedgerSpan(text);
+  if (hit == null) return null;
+  return (
+    ledger: TaskLedger(items: hit.items),
+    strippedText: _stripSpan(text, hit.span),
+  );
+}
+
+final RegExp _fenceLine = RegExp(r'^\s*(`{3,})(.*)$');
+final RegExp _entryLine = RegExp(r'^\s*-\s+([A-Za-z_]+)\s*:\s?(.*)$');
+final RegExp _fieldLine = RegExp(r'^\s+([A-Za-z_]+)\s*:\s?(.*)$');
+
+/// One candidate ledger span in the answer text: the fenced block (span =
+/// opening fence through closing fence) or the unfenced heading + bullets
+/// (span = the heading through the last entry line). [body] carries the
+/// entry lines only — the parser's exact input shape. [isUnfenced] marks
+/// the near-miss shape, which is also what a model DOCUMENTING the format
+/// emits — it is accepted only with real verification evidence
+/// ([_unfencedLooksLikeLedger]).
+final class _LedgerSpan {
+  _LedgerSpan({
+    required this.startLine,
+    required this.endLine,
+    required this.body,
+    this.isUnfenced = false,
+  });
+
+  final int startLine;
+  final int endLine;
+  final String body;
+  final bool isUnfenced;
+}
+
+/// The last ledger candidate that parses to a requirement-bearing ledger,
+/// or null — carrying the candidate's already-parsed [items] (each
+/// candidate is parsed exactly once; the winner's list is reused, never
+/// re-parsed). Candidates are tried newest-first so a revised (fenced)
+/// ledger still wins over an earlier near-miss — the "last block decides"
+/// rule of gh-1412, widened to both shapes (gh-1516).
+({_LedgerSpan span, List<TaskLedgerItem> items})? _lastParseableLedgerSpan(
+  String text,
+) {
+  final spans = _ledgerSpans(text);
+  for (final span in spans.reversed) {
+    final items = _parseLedgerItems(span.body);
+    if (items.isEmpty) continue;
+    if (span.isUnfenced && !_unfencedLooksLikeLedger(items)) continue;
+    return (span: span, items: items);
+  }
+  return null;
+}
+
+/// The unfenced near-miss shape is also exactly what a model answering
+/// "what does the task-ledger look like?" emits — a verbatim quote of the
+/// shape with placeholder fields (gh-1516 review). Accept the unfenced
+/// shape only when it carries real verification evidence: two-plus
+/// entries, or a single entry with an actual `command`/`expected`/`actual`
+/// field. A status claim alone is not evidence — it is also the shape of
+/// a format quote (`status: pass|fixed|fail`) — and a lone
+/// `- requirement:` bullet never classifies a prose section as a ledger:
+/// the strip is silent and user-facing.
+bool _unfencedLooksLikeLedger(List<TaskLedgerItem> items) {
+  if (items.length >= 2) return true;
+  final only = items.single;
+  return only.command.trim().isNotEmpty ||
+      only.expected.trim().isNotEmpty ||
+      only.actual.trim().isNotEmpty;
+}
+
+/// Removes the span's lines from [text], collapsing ONLY the blank runs
+/// touching the vacated range (gh-1516 review): a mid-answer seam keeps a
+/// single blank line of separation; a run the removal pushed to the very
+/// start or end of the answer drops entirely (the edge the ledger
+/// vacated). Everything away from the seam stays byte-identical.
+String _stripSpan(String text, _LedgerSpan span) {
+  final lines = text.split('\n');
+  final kept = <String>[
+    for (var i = 0; i < lines.length; i++)
+      if (i < span.startLine || i > span.endLine) lines[i],
+  ];
+  // Kept coordinates: lines[0, span.startLine) keep their indices; the
+  // first line after the span lands at kept index span.startLine.
+  _collapseSeamBlank(kept, span.startLine, span.startLine == 0);
+  _collapseSeamBlank(
+    kept,
+    span.startLine - 1,
+    span.endLine == lines.length - 1,
+  );
+  return kept.join('\n');
+}
+
+/// Collapses the maximal blank run touching kept-coordinate [index] to a
+/// single blank line — or removes it entirely under [dropEntirely] (the
+/// run is the answer's leading/trailing edge, blank only because the
+/// ledger vacated it). Out-of-range and non-blank indices are no-ops.
+void _collapseSeamBlank(List<String> lines, int index, bool dropEntirely) {
+  if (index < 0 || index >= lines.length) return;
+  if (lines[index].trim().isNotEmpty) return;
+  var start = index;
+  while (start > 0 && lines[start - 1].trim().isEmpty) {
+    start--;
+  }
+  var end = index;
+  while (end + 1 < lines.length && lines[end + 1].trim().isEmpty) {
+    end++;
+  }
+  lines.replaceRange(start, end + 1, dropEntirely ? const [] : const ['']);
+}
+
+/// Every ledger-shaped span in [text], in document order: fenced
+/// ```task-ledger blocks and unfenced `task-ledger` headings followed by
+/// ledger bullets.
+List<_LedgerSpan> _ledgerSpans(String text) {
+  final lines = text.split('\n');
+  final spans = <_LedgerSpan>[];
+  var i = 0;
+  while (i < lines.length) {
+    final fenced = _fencedLedgerSpanAt(lines, i);
+    if (fenced != null) {
+      spans.add(fenced.span);
+      i = fenced.nextLine;
+      continue;
+    }
+    final unfenced = _unfencedLedgerSpanAt(lines, i);
+    if (unfenced != null) {
+      spans.add(unfenced.span);
+      i = unfenced.nextLine;
+      continue;
+    }
+    i++;
+  }
+  return spans;
+}
+
+/// A ledger span found at a line plus the line index to continue the
+/// document scan from (past the span).
+typedef _SpanScan = ({_LedgerSpan span, int nextLine});
+
+/// Scans a fenced ```task-ledger block opening at [i], or null when the
+/// line is not the opening fence. An unclosed fence swallows the rest of
+/// [lines].
+_SpanScan? _fencedLedgerSpanAt(List<String> lines, int i) {
+  final fence = _fenceLine.firstMatch(lines[i]);
+  if (fence == null || fence.group(2)!.trim() != taskLedgerFence) {
+    return null;
+  }
+  final body = <String>[];
+  var j = i + 1;
+  var closed = false;
+  while (j < lines.length) {
+    if (_fenceLine.hasMatch(lines[j])) {
+      closed = true;
+      break;
+    }
+    body.add(lines[j]);
+    j++;
+  }
+  return (
+    span: _LedgerSpan(
+      startLine: i,
+      endLine: closed ? j : lines.length - 1,
+      body: body.join('\n'),
+    ),
+    nextLine: closed ? j + 1 : lines.length,
+  );
+}
+
+/// Scans an unfenced `task-ledger` heading at [i] plus its ledger bullets,
+/// or null when the line is not the bare heading. A heading with no
+/// entries spans itself only; blanks may separate entries and the span
+/// ends at the last entry line.
+_SpanScan? _unfencedLedgerSpanAt(List<String> lines, int i) {
+  if (!_isLedgerHeading(lines[i])) return null;
+  final body = <String>[];
+  var j = i + 1;
+  var lastEntry = i;
+  while (j < lines.length) {
+    final next = lines[j];
+    if (_entryLine.hasMatch(next) || _fieldLine.hasMatch(next)) {
+      body.add(next);
+      lastEntry = j;
+    } else if (next.trim().isEmpty) {
+      // Blanks may separate entries; the span ends at the last entry.
+    } else {
+      break;
+    }
+    j++;
+  }
+  return (
+    span: _LedgerSpan(
+      startLine: i,
+      endLine: lastEntry,
+      body: body.join('\n'),
+      isUnfenced: true,
+    ),
+    nextLine: j,
+  );
+}
+
+/// Whether [line] is a bare `task-ledger` heading — `#`-prefixed, bold, or
+/// bare — and not a prose mention (the token alone on its line).
+bool _isLedgerHeading(String line) {
+  var token = line.trim();
+  if (token.startsWith('#')) {
+    token = token.replaceFirst(RegExp(r'^#{1,6}\s*'), '').trim();
+  }
+  if (token.startsWith('**') && token.endsWith('**') && token.length > 4) {
+    token = token.substring(2, token.length - 2).trim();
+  }
+  return token.toLowerCase() == 'task-ledger';
+}
+
+/// Parses the entry grammar out of a span [body]: `- key: value` opens an
+/// entry, deeper-indented `key: value` lines extend it. Rows without a
+/// requirement are dropped; unknown keys ignored.
+List<TaskLedgerItem> _parseLedgerItems(String body) {
   final items = <TaskLedgerItem>[];
   Map<String, String> current = {};
   void flush() {
@@ -171,9 +407,9 @@ TaskLedger? parseTaskLedger(String text) {
     current = {};
   }
 
-  for (final line in block.split('\n')) {
-    final entry = RegExp(r'^\s*-\s+([A-Za-z_]+)\s*:\s?(.*)$').firstMatch(line);
-    final field = RegExp(r'^\s+([A-Za-z_]+)\s*:\s?(.*)$').firstMatch(line);
+  for (final line in body.split('\n')) {
+    final entry = _entryLine.firstMatch(line);
+    final field = _fieldLine.firstMatch(line);
     if (entry != null) {
       flush();
       current[entry.group(1)!] = entry.group(2) ?? '';
@@ -182,29 +418,7 @@ TaskLedger? parseTaskLedger(String text) {
     }
   }
   flush();
-  if (items.isEmpty) return null;
-  return TaskLedger(items: items);
-}
-
-/// The body of the last ` ```task-ledger ` fenced block in [text], or null.
-String? _lastLedgerBlock(String text) {
-  String? last;
-  var inside = false;
-  for (final line in text.split('\n')) {
-    final match = _fenceLine.firstMatch(line);
-    if (match == null) {
-      if (inside) last = '${last ?? ''}$line\n';
-      continue;
-    }
-    final info = match.group(2)!.trim();
-    if (inside) {
-      inside = false; // Closing fence — the block is complete.
-    } else if (info == taskLedgerFence) {
-      inside = true;
-      last = null;
-    }
-  }
-  return last?.trimRight();
+  return items;
 }
 
 /// Renders [ledger] back into the fenced `task-ledger` block the contract

@@ -31,11 +31,12 @@ Task complete.
 ```
 ''';
 
-  Future<List<CustomRecord>> runAndRecords({
+  Future<List<SessionRecord>> runAndAllRecords({
     RedactionPipeline? pipeline,
   }) async {
     final env = MemoryExecutionEnv(cwd: '/work');
     await env.writeFile('/work/.fah/memory/.last_maintenance', '');
+    await env.writeFile('/work/key.txt', 'rotated');
     final io = FakeCliIO();
     final cli = AgentCli(
       config: AgentCliConfig(
@@ -45,23 +46,68 @@ Task complete.
         sessionRoot: '/sessions',
         providerKind: 'openai-completions',
         approvalMode: ApprovalMode.unattended,
+        headlessRun: true,
         redactionPipeline: pipeline,
       ),
       io: io,
-      streamFunction: FakeStreamFunction([textTurn(ledgerAnswer)]).call,
+      // gh-1516: the gate skips trivial turns — the run must produce
+      // state (a tool call) for the ledger record to persist.
+      streamFunction: FakeStreamFunction([
+        toolTurn([
+          ToolCall(
+            id: 'c1',
+            name: 'read',
+            arguments: const {'path': 'key.txt'},
+          ),
+        ]),
+        textTurn(ledgerAnswer),
+      ]).call,
     );
     final exitCode = await cli.runHeadless('rotate the key');
     expect(exitCode, 0);
     final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
     final sessions = await repo.list(cwd: '/work');
     final session = await repo.open(sessions.first);
-    final records = await session.getEntries();
+    return session.getEntries();
+  }
+
+  Future<List<CustomRecord>> runAndRecords({
+    RedactionPipeline? pipeline,
+  }) async {
+    final records = await runAndAllRecords(pipeline: pipeline);
     return [
       for (final record in records)
         if (record is CustomRecord && record.customType == 'task_ledger')
           record,
     ];
   }
+
+  /// gh-1516 review (blocking thread): the hidden `task_ledger` custom
+  /// record may exist, but the persisted ASSISTANT message record must
+  /// never carry the ledger — resume, `fa trajectory`, and the bench
+  /// `agent-logs/fah-sessions` sync all render from the session JSONL,
+  /// which is written on `MessageEndEvent` BEFORE the end-of-run fold
+  /// ever ran. This test reads the persisted record back and fails on
+  /// the pre-fix ordering.
+  test(
+    'the persisted final assistant record contains no task-ledger block',
+    () async {
+      final records = await runAndAllRecords();
+      final assistantRecords = [
+        for (final record in records)
+          if (record is MessageRecord && record.message is AssistantMessage)
+            record,
+      ];
+      expect(assistantRecords, isNotEmpty);
+      final last = assistantRecords.last.message as AssistantMessage;
+      final text = last.content.whereType<TextContent>().map((block) {
+        return block.text;
+      }).join();
+      expect(text, isNot(contains('task-ledger')));
+      expect(text, isNot(contains('```')));
+      expect(text, contains('Task complete.'));
+    },
+  );
 
   test('ledger free-text is redacted through the host pipeline', () async {
     final ledgers = await runAndRecords(
