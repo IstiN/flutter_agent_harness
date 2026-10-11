@@ -329,7 +329,7 @@ jobs:
           title="Nightly builds+integration red: ${date}"
           repo="${GITHUB_REPOSITORY}"
           gh label create nightly-red --force \
-            --description "Nightly full-quality run is failing" \
+            --description "Nightly builds+integration run is failing" \
             --color B60205 --repo "$repo"
           # Failing job names of this run, plus the run URL.
           failing=$(gh api \

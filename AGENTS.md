@@ -1713,9 +1713,11 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   their targets through `scripts/apply_quarantine.py`, while nightly
   KEEPS running the file to produce the un-quarantine repeat-run proof.
 - `cd flutter_app && flutter test --exclude-tags integration` green
-  (includes golden suite; integration-tagged `test/cli_visual` runs in the
-  nightly workflow + on demand).
-- Line coverage of `lib/` ≥ 80% (full ratchet on main/nightly; PRs ratchet
+  (includes golden suite; integration-tagged `test/cli_visual` runs
+  pre-merge in ci.yml's `pty-visual` leg — gh-1538 retired the nightly
+  duplicate — and on demand).
+- Line coverage of `lib/` ≥ 80% (full ratchet in the pre-merge SM
+  validation gate; PRs ratchet
   CHANGED lines via `scripts/diff_coverage.py`); jscpd duplication < 1%
   core `lib/`, < 3.7% `flutter_app/lib/` (ratchet — only tighten).
 - Cross-module duplication (issue #487): clones spanning module roots
@@ -1770,7 +1772,7 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   weekly from junit durations; shard jobs emit junit-shard-N artifacts and
   `shard_files.py` bin-packs manifest-missing new test dirs at runtime),
   `coverage-gate`, `guards`, `flutter-tests` (ubuntu; goldens stay
-  host-locked in build-macos/nightly) → one aggregate `Quality gate`
+  host-locked in build-macos.yml) → one aggregate `Quality gate`
   required check, plus `step-timings` (per-step duration telemetry) and a
   `watchdog` (>2x-baseline timeouts; a timed-out PR leg gets ONE
   empty-commit retrigger — never `gh run rerun`, which reallocates into
@@ -1790,12 +1792,18 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   SM validation dispatch (gh-1280 binaries-pr idiom); the
   `flutter_app/lib/apps/**`/`lib/src/js_ext/**`/`flutter_app/pubspec.yaml`
   path set in the `changes` job only narrows a future real `pull_request`
-  trigger. Main/tag/schedule/release runs skip it — `nightly.yml` keeps
-  the full-suite macOS backstop there. `nightly.yml` runs the full monolith +
-  PTY/CLI integration (full real-provider suite with secrets) +
-  terminal-visual suites; `coverage-gardener.yml` measures the only-up CLI
-  coverage weekly and files an ai-teammate "raise coverage to X" issue —
-  the baseline itself only moves through a reviewed PR (issue #927).
+  trigger. Main/tag/schedule/release runs skip it — gh-1538 retired the
+  nightly full-suite macOS backstop, so this pre-merge leg is the macOS
+  coverage for the JS-engine surface. **Nightly (gh-1538) is builds +
+  integration-only**: `nightly.yml` keeps the release-mode build matrix
+  (all store/desktop targets) + PTY/CLI integration (full real-provider
+  suite with secrets, un-quarantined per gh-1199); unit shards, analyze,
+  coverage, CRAP/jscpd and the duplicated cli-visual / flutter-app-macos
+  legs moved out as pre-merge-gate duplication (#1537 makes the SM
+  validation the single test gate). `coverage-gardener.yml` measures the
+  only-up CLI coverage weekly and files an ai-teammate "raise coverage to
+  X" issue — the baseline itself only moves through a reviewed PR
+  (issue #927).
 
 ## Cross-platform parity
 
