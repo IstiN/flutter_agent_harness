@@ -1,6 +1,14 @@
-# Nightly full-matrix quality run (issue #177, Wave 3 / AC6): the PR-level
-# ci.yml was slimmed down for speed, so this workflow preserves the original
-# monolith semantics — every gate, full thresholds — on a nightly schedule.
+# Nightly builds + integration-only (gh-1538): the SM pre-merge validation
+# (ci.yml dispatched per PR head, #1537) is the single test gate — unit
+# shards, analyze, coverage, CRAP/jscpd all run there on every change. This
+# workflow keeps only what belongs to nightly by nature:
+#   build-release — the release-mode build matrix (all store/desktop
+#                   targets; PR legs build --debug only),
+#   pty-integration — the integration-tagged suites deliberately excluded
+#                   from the pre-commit/PR gates (slow, networked, flakier):
+#                   PTY/CLI integration incl. the live `llm` provider suite
+#                   with secrets, un-quarantined per gh-1199 (it caught the
+#                   #1510 TUI wrap regression unit tests could not see).
 # When a scheduled run goes red, the auto-issue job files (or updates) a
 # single deduped `nightly-red` issue.
 name: Nightly
@@ -16,137 +24,24 @@ permissions:
   contents: read
 
 jobs:
-  full-quality:
-    name: Full quality gates
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
-        with:
-          sdk: stable
-
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
-        with:
-          channel: stable
-
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.x'
-
-      - run: dart pub get
-
-      # Publish gate at PR time: publish-blocking problems (undeclared lib/
-      # imports, stray PEM-like strings) used to surface only in the tag-time
-      # publish job — the v0.1.331 era: an undeclared package:cryptography
-      # import shipped red on ~26 consecutive tags. --ignore-warnings: the
-      # two known layout warnings (gitignored install_local.sh, docs/
-      # naming) must not redden every PR, while validation ERRORS — "does
-      # not have X in the dependencies section of pubspec.yaml" — still
-      # fail. setup-dart (sdk >= 3.13) registers a publish-scoped PUB_TOKEN
-      # job-wide and pub.dev rejects authenticated metadata reads, so
-      # resolve unauthenticated (same pattern as the publish job);
-      # --dry-run never uploads.
-      - name: Publish dry-run (unauthenticated)
-        run: |
-          dart pub token remove https://pub.dev || true
-          dart pub publish --dry-run --ignore-warnings
-
-      # The example Flutter app lives in this repo; without its package
-      # config the repo-wide `dart analyze` cannot resolve Flutter imports.
-      - name: Example app pub get (for repo-wide analyze)
-        uses: ./.github/actions/flutter-pub-get
-
-      # The repo-wide `dart analyze` also walks office_addin/dart; without
-      # its package config the analyzer cannot resolve
-      # `package:fa_office_agent/...` imports (nightly full-quality was red
-      # on email_quarantine_test.dart since the add-in landed). ci.yml's
-      # analyze job already does this — nightly must match.
-      - name: Office add-in pub get (for repo-wide analyze)
-        run: dart pub get --directory=office_addin/dart
-
-      # .env is gitignored but declared as a Flutter asset (flutter_dotenv);
-      # without it the analyzer fails with asset_does_not_exist (a fresh
-      # clone hits the same warning locally).
-      - name: Create placeholder .env for the example app
-        run: touch flutter_app/.env
-
-      # firebase_options.dart is gitignored (real keys stay local); the
-      # repo-wide analyze fails on the unresolved import without it. The
-      # tracked placeholder makes it compile (Firebase init is skipped for
-      # YOUR_* values at runtime).
-      - name: Create placeholder firebase_options.dart for the example app
-        run: >-
-          cp flutter_app/firebase_options.template.dart
-          flutter_app/lib/firebase_options.dart
-
-      - name: File size guard (no dart file over 2800 lines)
-        run: |
-          violations=$(find lib test example -name '*.dart' \
-            ! -name '*.g.dart' ! -name '*.freezed.dart' ! -name '*.mocks.dart' \
-            -exec sh -c 'lines=$(wc -l < "$1"); if [ "$lines" -gt 2800 ]; then echo "$1: $lines lines"; fi' _ {} \;)
-          if [ -n "$violations" ]; then echo "$violations"; exit 1; fi
-
-      - name: dart analyze
-        run: dart analyze
-
-      - name: dart test --coverage (excluding integration)
-        run: dart test --coverage=coverage --exclude-tags integration
-
-      # gh-1033 (review thread 7 + gate wiring): integration-tagged jsr
-      # delegate suites feed the PTY leg's CLI coverage ratchet AND must
-      # reach this unit-side lcov (the 80% ratchet + CRAP below read it) —
-      # same rationale as scripts/ci_fast_gate.sh stage_test_core.
-      - name: dart test --tags integration (jsr delegate trio → unit lcov)
-        run: dart test --tags integration --coverage=coverage test/cli/jsr_cli_test.dart test/cli/cli_args_jsr_test.dart test/cli/agent_cli_jsr_test.dart
-
-      - name: Format coverage to lcov
-        run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
-
-      - name: Coverage ratchet (lib/ >= 80%)
-        run: python3 scripts/check_coverage.py 80
-
-      - name: CRAP ratchet (threshold pinned in crap4dart.yaml)
-        run: |
-          # gh-1061: >=0.10.0 — analyzer 7.3→14.4 refresh. Bounded: a
-          # floating >= would auto-adopt 0.11.0+ with no repo change.
-          # gh-1106: ceiling bumped to 0.12.0 — the root crap4dart.yaml
-          # duplication block now uses 0.11.0-only keys.
-          dart pub global activate crap4dart ">=0.11.0 <0.12.0"
-          dart pub global run crap4dart analyze
-
-      - name: Duplication guard (lib/ < 1%)
-        run: |
-          npx --yes jscpd@5 --min-tokens 50 --min-lines 5 --reporters json \
-            --output /tmp/jscpd-ci lib/ || true
-          python3 - <<'EOF'
-          import json, sys
-          try:
-              with open('/tmp/jscpd-ci/jscpd-report.json') as f:
-                  pct = json.load(f)['statistics']['total']['percentage']
-          except Exception:
-              pct = 0.0
-          print(f'Duplication: {pct}% (threshold < 1.0%)')
-          sys.exit(0 if float(pct) < 1.0 else 1)
-          EOF
-
-  # PTY/terminal integration suites (issue #177 follow-up): mock-endpoint
-  # tests need NO secrets and always run; live-provider tests self-skip
-  # gracefully without keys (their own `skip:` guards), so the blanket
-  # "no keys → skip everything" from the old CI job is gone. Coverage over
-  # lib/src/cli/** feeds the only-up ratchet (coverage-gardener.yml bumps
-  # the baseline weekly) — terminal-test coverage can never silently drop.
+  # PTY/CLI integration (issue #177 follow-up, gh-1538): the ONLY remaining
+  # test leg in nightly — integration-tagged suites are deliberately
+  # excluded from the pre-commit/PR gates (slow, networked, flakier).
+  # mock-endpoint tests need NO secrets and always run; live-provider tests
+  # self-skip gracefully without keys (their own `skip:` guards), so the
+  # blanket "no keys → skip everything" from the old CI job is gone.
   # ─────────────────────────────────────────────────────────────────────────
   # gh-1005 (2026-09-30): the fa-m5 runner-pick probe is GONE — the on-prem
   # M5 pool is ONE runner (fa-m5-1) reserved for genuinely macOS-only work
-  # (cube-kernel-live, release macOS/iOS legs). The PTY/CLI integration +
-  # Terminal-visual legs run on hosted ubuntu-24.04-arm, mirroring the PR
-  # legs in ci.yml so the coverage/duration ratchets measure ONE
-  # environment (PR gate == nightly backstop == coverage-gardener).
+  # (cube-kernel-live, release macOS/iOS legs). The PTY/CLI integration leg
+  # runs on hosted ubuntu-24.04-arm, mirroring the PR legs in ci.yml.
+  # gh-1538: the coverage/duration RATCHETS live in the pre-merge gate now
+  # (ci.yml pty-coverage-gate, stricter: ratchet-down + shard budgets +
+  # auto-filing) — this leg runs the suites and keeps the json/junit
+  # evidence artifacts, it does not re-enforce the thresholds nightly.
   pty-integration:
-    name: PTY/CLI integration + cli coverage
+    name: PTY/CLI integration (nightly-only suites)
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
@@ -193,7 +88,6 @@ jobs:
         run: |
           mkdir -p test-results
           dart test --tags integration --exclude-tags browser-ext \
-            --coverage=coverage \
             --file-reporter="json:test-results/integration.json"
       # Issue #928 review: the file-reporter writes the json even on a RED
       # leg — convert + upload must not be chained into the failing step.
@@ -219,105 +113,6 @@ jobs:
           name: junit-integration
           path: test-results/junit-integration.xml
           retention-days: 14
-      - name: Format coverage to lcov
-        run: dart run coverage:format_coverage --lcov -i coverage -o coverage/lcov.info
-      - name: CLI coverage ratchet (lib/src/cli/**, baseline only up)
-        run: python3 scripts/check_cli_coverage.py
-      - name: Test duration budget gate (issue #928, check-only on schedule)
-        run: python3 scripts/check_test_durations.py --baseline scripts/test_duration_baseline.json test-results/integration.json
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: cli-coverage-lcov
-          path: coverage/lcov.info
-          retention-days: 14
-
-  # Terminal-visual suite: the real CLI in a PTY screenshotted through the
-  # Flutter TerminalView. Never ran in CI before issue #177 (manual only) —
-  # it needs no LLM (local test-provider configs); the old "needs a real
-  # display stack" assumption never held (flutter test renders through the
-  # FlutterTester with the BUNDLED JetBrainsMono — no host fonts, no
-  # display), so gh-1005 pins it to hosted ubuntu-24.04-arm like the PR
-  # leg. Screenshots land as an artifact for eyeballing.
-  cli-visual:
-    name: Terminal visual (PTY screenshots)
-    runs-on: ubuntu-24.04-arm
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # arm64: no official linux-arm64 Flutter tarball — git bootstrap,
-      # same as ci.yml's flutter-tests / pty-visual legs.
-      - name: Flutter SDK (arm64 git bootstrap)
-        shell: bash
-        run: |
-          git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
-          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
-          export PATH="$HOME/flutter/bin:$PATH"
-          flutter --version
-          flutter precache
-      - name: Pub cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.pub-cache
-          key: pubcache-flutter-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
-          restore-keys: pubcache-flutter-${{ runner.os }}-
-      # cli-visual runs `flutter test` inside flutter_app — the asset is
-      # declared in flutter_app/pubspec.yaml, so the placeholder must land
-      # at flutter_app/.env, not the repo root. (This line previously
-      # carried a corrupted literal redaction marker as the path: the
-      # touch created junk files and the asset bundle failed with
-      # "No file or variants found for asset: .env".)
-      - run: touch flutter_app/.env
-      - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
-      - uses: ./.github/actions/flutter-pub-get
-      # The harness spawns `dart bin/fah.dart` FROM THE REPO ROOT; without
-      # a root package config that resolves package:flutter_agent_harness
-      # to the pub-cache copy (an old published build) and the CLI dies on
-      # compile errors before the first frame. flutter_app's pub get only
-      # writes flutter_app/.dart_tool — the root needs its own.
-      - run: dart pub get
-      - name: flutter test test/cli_visual --tags integration
-        run: cd flutter_app && flutter test test/cli_visual --tags integration
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
-        with:
-          name: cli-visual-screenshots
-          path: test/integration/screenshots/
-          retention-days: 7
-
-  # Full flutter_app suite on macOS (issue #177): the ubuntu PR leg excludes
-  # native-dependent tests (scripts/flutter_test_ubuntu_exclude.txt —
-  # quickjs_c_bridge .so, mic channel) and goldens (host-locked). This leg
-  # runs EVERYTHING non-golden on macOS, where the native stack builds —
-  # closing the signal gap the ubuntu exclusions create.
-  flutter-app-macos:
-    name: flutter_app suite (macOS, non-golden)
-    runs-on: macos-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
-        with:
-          channel: stable
-          cache: true
-      - name: Create placeholder .env asset
-        working-directory: flutter_app
-        run: |
-          set -euo pipefail
-          cat > .env << 'EOF'
-          OPENROUTER_API_KEY=
-          MODEL_ID=
-          BASE_URL=
-          HUGGINGFACE_TOKEN=
-          EOF
-      - run: cp flutter_app/firebase_options.template.dart flutter_app/lib/firebase_options.dart
-      - uses: ./.github/actions/flutter-pub-get
-      - name: flutter test (all except integration + goldens)
-        run: |
-          cd flutter_app
-          files=$(find test -name '*_test.dart' ! -path '*/golden/*' ! -path '*/cli_visual/*')
-          flutter test --exclude-tags integration $files
 
   # Issue #280 AC3: nightly RELEASE-mode build matrix. The PR legs in
   # ci.yml build --debug (compile-truth); release-only concerns —
@@ -499,7 +294,7 @@ jobs:
   # the open issue (the nightly-red tracker is only as good as its sunset).
   auto-issue:
     name: File nightly-red issue
-    needs: [full-quality, pty-integration, cli-visual, flutter-app-macos, build-release]
+    needs: [pty-integration, build-release]
     if: always() && github.event_name == 'schedule' && !cancelled()
     runs-on: ubuntu-latest
     permissions:
@@ -531,7 +326,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           date=$(date -u +%F)
-          title="Nightly full-matrix red: ${date}"
+          title="Nightly builds+integration red: ${date}"
           repo="${GITHUB_REPOSITORY}"
           gh label create nightly-red --force \
             --description "Nightly full-quality run is failing" \
@@ -541,7 +336,7 @@ jobs:
             "repos/$repo/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
             --jq '[.jobs[] | select(.conclusion == "failure") | .name] | join(", ")')
           [ -z "$failing" ] && failing="(unknown)"
-          body=$(printf 'Nightly full-matrix run is red.\n\nFailing jobs: %s\nRun: %s\n' \
+          body=$(printf 'Nightly builds+integration run is red.\n\nFailing jobs: %s\nRun: %s\n' \
             "$failing" "${GITHUB_SERVER_URL}/${repo}/actions/runs/${GITHUB_RUN_ID}")
           # Dedup: comment on the existing open nightly-red issue instead of
           # opening a duplicate. --repo everywhere: this job has no checkout,

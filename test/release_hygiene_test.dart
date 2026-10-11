@@ -2623,10 +2623,10 @@ gh release create "v9.9.9" \
         (nightly['pty-integration'] as YamlMap)['runs-on'].toString(),
         'ubuntu-24.04-arm',
       );
-      expect(
-        (nightly['cli-visual'] as YamlMap)['runs-on'].toString(),
-        'ubuntu-24.04-arm',
-      );
+      // gh-1538: the nightly cli-visual job is REMOVED — ci.yml's
+      // path-blind pty-visual PR leg runs the identical
+      // `flutter test test/cli_visual --tags integration` on the same
+      // runner pre-merge, so nightly was re-running a gate it duplicates.
     });
 
     test(
