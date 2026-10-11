@@ -6,9 +6,12 @@ Run: python3 -m unittest discover -s bench/terminal_bench
 UT-1 runs the SAME fixture through both adapters (legacy fa_agent.py and
 harbor fa_agent.py) plus the shared extractor; UT-2 covers the
 estimation/fail-soft paths; the pricing tests cover the cost math and the
-missing-model n/a rule (E3). The harbor/terminal_bench packages are not
-installed locally, so minimal stub modules stand in for the two adapter
-base classes — the code under test is the real fa_agent.py glue.
+missing-model n/a rule (E3). Minimal stub modules stand in for the two
+adapter base classes wherever the real harbor/terminal_bench packages are
+not installed — the code under test is the real fa_agent.py glue. The
+harbor stub is conditional (gh-1535): clobbering a real harbor install
+would break the parity tests in test_fa_agent_timeout loaded later by the
+same `unittest discover` process.
 """
 import importlib.util
 import json
@@ -103,8 +106,32 @@ def _stub_harbor():
     _module("harbor")
 
 
+def _real_harbor_available() -> bool:
+    """True when the REAL harbor package is importable.
+
+    gh-1535: the stub below must NOT clobber a real harbor install.
+    `unittest discover` imports every test module in this directory
+    before running any test, so an unconditional _stub_harbor() parks a
+    synthetic BaseInstalledAgent (a bare type with no __init__) in
+    sys.modules; HarborParityTest / HarnessArtifactIsolationTest in
+    test_fa_agent_timeout then load bench/harbor_fa/fa_agent.py against
+    that stub and `FaAgent(logs_dir)` dies with "takes no arguments".
+    The stub modules built by _module() are bare types.ModuleType objects
+    with no __file__; the real harbor package always has one.
+    """
+    try:
+        module = importlib.import_module("harbor.agents.installed.base")
+    except ImportError:
+        return False
+    return getattr(module, "__file__", None) is not None
+
+
 _stub_terminal_bench()
-_stub_harbor()
+# Stub ONLY when the real package is absent: with real harbor installed
+# (bench-harbor setup job) fa_agent.py must import the real
+# BaseInstalledAgent so the parity tests can construct FaAgent(logs_dir).
+if not _real_harbor_available():
+    _stub_harbor()
 
 
 def _load(name, path):
@@ -434,6 +461,33 @@ class PricingTest(unittest.TestCase):
             self.assertEqual(context.n_input_tokens, 10)
             self.assertEqual(context.n_output_tokens, 5)
             self.assertIsNone(context.cost_usd)
+
+
+class HarborStubHygieneTest(unittest.TestCase):
+    """gh-1535 regression: the harbor sys.modules stub in this module must
+    not poison tests loaded later in the same `unittest discover` process.
+
+    HarborParityTest / HarnessArtifactIsolationTest (test_fa_agent_timeout)
+    exec bench/harbor_fa/fa_agent.py and construct FaAgent(logs_dir); when
+    real harbor is installed they need the REAL BaseInstalledAgent with its
+    (logs_dir, ...) constructor — the bare-stub base raises
+    "FaAgent() takes no arguments". When harbor is absent this module's
+    own ITs still run against the stub, so nothing is skipped there.
+    """
+
+    def test_fa_agent_binds_real_base_when_harbor_installed(self):
+        if not _real_harbor_available():
+            self.skipTest("real harbor not installed")
+        import harbor.agents.installed.base as real_base
+
+        self.assertIs(
+            harbor_fa_agent.BaseInstalledAgent, real_base.BaseInstalledAgent
+        )
+        # The parity suite's construction shape must work against the
+        # class this module bound at import time.
+        agent = harbor_fa_agent.FaAgent.__new__(harbor_fa_agent.FaAgent)
+        agent.logs_dir = Path("/nonexistent/logs")
+        self.assertEqual(agent.logs_dir, Path("/nonexistent/logs"))
 
 
 if __name__ == "__main__":
