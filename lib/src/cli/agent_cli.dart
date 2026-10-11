@@ -127,6 +127,7 @@ import '../mcp/mcp_config.dart';
 import '../mcp/mcp_manager.dart';
 import '../model.dart';
 import '../model_roles/model_roles.dart';
+import '../session_deadline.dart';
 import 'tool_phase_labels.dart';
 import 'tool_rows.dart';
 import '../model_roles/vision_models.dart';
@@ -332,7 +333,8 @@ class AgentCli {
        _waitingSleep =
            waitingSleep ?? ((Duration d) => Future<void>.delayed(d)),
        _useTui = useTui && io.supportsRawMode,
-       sigintPolicy = sigintPolicy ?? SigintPolicy() {
+       sigintPolicy = sigintPolicy ?? SigintPolicy(),
+       _deadline = config.deadline ?? SessionDeadline() {
     // Sleep prevention (issue #325): null runner (tests, web) → none.
     _powerAssertions = sessionPowerAssertions(config, this.io.writeln);
     _env = CwdOverrideEnv(config.env);
@@ -642,6 +644,10 @@ class AgentCli {
     );
     _toolRegistry = stack.registry;
     _agent = stack.agent;
+    // gh-1556: the session deadline's per-turn budget line rides every
+    // LLM request payload while armed (`time-left: 5min`); unarmed keeps
+    // the request byte-for-byte (the provider returns null).
+    _agent.budgetLineProvider = _deadline.budgetLine;
     // The FinalizeGate (gh-1412): unattended sessions (the bench / headless
     // autopilot mode) emit the task ledger — the loop parses the final
     // answer's `task-ledger` block and the CLI persists it as a hidden
@@ -998,6 +1004,9 @@ class AgentCli {
   /// [SessionVarsExecutionEnv]). Read live per exec: the session is created
   /// after tool wiring, and `/provider`/`/model` switches must show up in
   /// later commands. Never secret values — ids, paths, kinds, model ids.
+  /// gh-1556: the armed deadline rides along as `FA_DEADLINE_EPOCH_MS`, so
+  /// a mid-session `/timer` adjustment is picked up by the next command —
+  /// the chip, the request line and the shell all see the ONE clock.
   Future<Map<String, String>> _sessionEnvVars() async {
     final session = _session;
     final metadata = session == null ? null : await session.getMetadata();
@@ -1006,9 +1015,20 @@ class AgentCli {
       if (metadata != null) sessionFileEnvVar: metadata.path,
       providerEnvVar: _providerKind,
       modelEnvVar: _agent.state.model.id,
+      if (_deadline.isArmed)
+        deadlineEpochMsEnvVar: '${_deadline.deadlineEpochMs}',
       ..._runtimeSecrets,
     };
   }
+
+  /// Test seam: the session-correlation env vars a bash exec would see
+  /// right now (gh-1556 wiring asserts the deadline var's live override).
+  @visibleForTesting
+  Future<Map<String, String>> sessionEnvVarsForTest() => _sessionEnvVars();
+
+  /// Test seam: the live session deadline clock (gh-1556).
+  @visibleForTesting
+  SessionDeadline get deadlineForTest => _deadline;
 
   /// The `task` tool's session config: child tool surface, stream wiring,
   /// and the background [TaskJobManager] whose completions are injected
@@ -1167,6 +1187,14 @@ class AgentCli {
   late final Agent _agent;
   late final ApprovalManager _approval;
   late final ToolRegistry _toolRegistry;
+
+  /// The session deadline clock (gh-1556) — the ONE wall-clock budget
+  /// source this session projects: the per-turn `time-left:` request line,
+  /// the one-shot wrap-up steering notices, the TUI countdown chip, and
+  /// the `FA_DEADLINE_EPOCH_MS` bash env var. Lives on the config's
+  /// instance (injected by tests with a fake clock; built live otherwise)
+  /// so env < flag < `/timer` all write the same value.
+  final SessionDeadline _deadline;
 
   /// Capability-gated tool availability (issue #19) — state for the
   /// `agent_cli_tools.dart` extension: the static tool set grouped by
