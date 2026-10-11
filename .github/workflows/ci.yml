@@ -339,6 +339,31 @@ jobs:
       - name: CRAP badge/config sync guard
         run: python3 scripts/check_crap_guards.py
 
+      # gh-1476 AC5 (PR #1479 owner directive): the GEO layer is built at
+      # deploy time — gitignored, never committed, nothing to drift
+      # against. So the gate builds to a temp dir and validates the
+      # OUTPUT: test/site/* (no-JS crawl, robots contract, sitemap
+      # integrity, JSON-LD, llms guards) serve the temp tree over loopback
+      # HTTP via FA_SITE_ROOT. Stronger than the old `--check` drift gate:
+      # it tests the builder itself, and hand-edited generated HTML is
+      # uncommittable by construction.
+      - name: GEO site build + validation (gh-1476 AC5)
+        run: |
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          # The builder's post input is the site/blog/posts COPY of the
+          # canonical blog/posts — keep them pinned together so the gate
+          # can never validate a stale or hand-edited copy (gh-1476
+          # review). PRE-sync diff: an in-place edit of the copy is red
+          # (the deploy's build_blog would silently discard it). Sync,
+          # then POST-sync diff: a new or edited canonical post that was
+          # never copied into site/blog/posts is red.
+          git diff --exit-code -- site/blog/posts site/blog/posts.json
+          dart scripts/build_blog.dart
+          git diff --exit-code -- site/blog/posts site/blog/posts.json
+          dart scripts/build_site.dart --out "$d/site"
+          FA_SITE_ROOT="$d/site" dart test/site/
+
       # gh-1199 AC2: the deterministic-gate boundary is self-enforcing —
       # an integration-tagged test that looks live (real provider URL, or
       # a credential-key literal with no mock/loopback in sight) without
