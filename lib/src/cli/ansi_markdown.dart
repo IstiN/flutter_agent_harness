@@ -688,9 +688,15 @@ const _blockMarkerChars = {0x23, 0x3E, 0x2D, 0x2A, 0x2B, 0x20};
 /// Two correctness rules beyond the escape safety:
 ///
 /// - Word-aware: breaks at spaces when possible (a hard mid-word cut only
-///   happens for a single word longer than [width]); a boundary space stays
-///   at the end of the closing row, so reassembling the rows reproduces the
-///   original text.
+///   happens for a single word longer than [width]); a boundary space that
+///   fits stays at the end of the closing row, and one that lands exactly
+///   at the wrap edge CARRIES to the continuation row (terminal autowrap)
+///   instead of being dropped — a dropped space collapses the two words in
+///   the rendered screen buffer ("memory round-tripcomplete", gh-1510).
+///   Reassembling the rows therefore reproduces the original text up to
+///   trailing whitespace — the one documented drop is a row holding only
+///   the line's trailing boundary space (invisible either way), with or
+///   without trailing SGR codes.
 /// - SGR state carries across the cut EXPLICITLY: the closed row ends with
 ///   a reset and the continuation row re-opens the active styles. dart_tui
 ///   redraws rows independently, so relying on the terminal to keep SGR
@@ -715,6 +721,11 @@ List<String> wrapAnsiLine(String line, int width) {
   // visible length.
   final wordTokens = <String>[];
   var wordVisible = 0;
+  // True while the current row holds ONLY a boundary space carried across
+  // the wrap (its word ended exactly at the last column): a following word
+  // that no longer fits hard-cuts across rows from here instead of pushing
+  // the space onto its own blank row.
+  var carriedBoundarySpace = false;
 
   void closeRow() {
     if (activeSgr.isNotEmpty) row.write('\x1b[0m');
@@ -726,6 +737,12 @@ List<String> wrapAnsiLine(String line, int width) {
   }
 
   void writeToken(String token, int visibleLen) {
+    // A space keeps the carried state (a multi-space run fills the
+    // continuation row before wrapping — terminal-faithful); a zero-width
+    // SGR token keeps it too (a trailing reset after a boundary space
+    // would otherwise resurrect the dropped-space row, gh-1517 review).
+    // Only a visible non-space token ends it.
+    if (visibleLen > 0 && token != ' ') carriedBoundarySpace = false;
     row.write(token);
     col += visibleLen;
     if (token.startsWith('\x1b')) {
@@ -739,9 +756,17 @@ List<String> wrapAnsiLine(String line, int width) {
 
   void flushWord() {
     if (wordTokens.isEmpty) return;
-    if (wordVisible > width) {
-      // A single word longer than the width: hard-cut it across rows.
-      if (col > 0) closeRow();
+    final carried = carriedBoundarySpace;
+    // A zero-visible-width word (pure SGR tokens, e.g. a trailing reset)
+    // keeps the carried-space state untouched, so the end-of-line drop
+    // guard treats 'aaaa \x1b[0m' exactly like 'aaaa '.
+    if (wordVisible > 0) carriedBoundarySpace = false;
+    // A word one cell short of the full width still fits after a carried
+    // space; at `width` or more it hard-cuts across rows starting here.
+    if (wordVisible > width || (carried && wordVisible >= width)) {
+      // A single word longer than the row (or than the row minus a carried
+      // boundary space): hard-cut it across rows.
+      if (col > 0 && !carried) closeRow();
       for (final token in wordTokens) {
         final tokenWidth = _tokenWidth(token);
         // Close before an overflowing token, but never emit an empty row
@@ -765,12 +790,17 @@ List<String> wrapAnsiLine(String line, int width) {
     final token = match.group(0)!;
     if (token == ' ') {
       flushWord();
-      // A boundary space ends the closing row when it fits; at the very edge
-      // it is dropped rather than becoming an invisible leading space.
+      // A boundary space ends the closing row when it fits; at the very
+      // edge (the word filled the row exactly) it CARRIES to the
+      // continuation row — terminal autowrap — so the rendered screen
+      // buffer keeps the separating space instead of collapsing the words
+      // (gh-1510).
       if (col + 1 <= width) {
         writeToken(token, 1);
       } else {
         closeRow();
+        writeToken(token, 1);
+        carriedBoundarySpace = true;
       }
       continue;
     }
@@ -778,8 +808,10 @@ List<String> wrapAnsiLine(String line, int width) {
     if (!token.startsWith('\x1b')) wordVisible += _tokenWidth(token);
   }
   flushWord();
-  // A row holding only re-emitted SGR codes (no visible columns) is dropped.
-  if (col > 0) closeRow();
+  // A row holding only re-emitted SGR codes (no visible columns), or only
+  // a trailing boundary space (the line's trailing whitespace — invisible
+  // either way), is dropped.
+  if (col > 0 && !carriedBoundarySpace) closeRow();
   return rows;
 }
 

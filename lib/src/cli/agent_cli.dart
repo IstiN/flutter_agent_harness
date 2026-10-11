@@ -404,6 +404,11 @@ class AgentCli {
       onConfigChanged: () => unawaited(_refreshMemorySection()),
       // Semantic search + consolidate() need an LLM: memory → smol → main.
       llmProvider: HarnessLlmProvider(resolve: () => _resolveMemoryLlmSlot()),
+      // gh-1510: the memory package logs via print(); in TUI mode that
+      // writes raw bytes into the CellRenderer's frame stream and desyncs
+      // the screen (visibly eaten characters). Route those lines to the
+      // diagnostic log instead.
+      printSink: (line) => _logDiagnostic('[memory] $line'),
     );
 
     // Issue #1079 slice 2: the core stack — env chain, capability-gated
@@ -2058,6 +2063,15 @@ class AgentCli {
   final Map<String, String> _runtimeSecrets = {};
 
   var _diagnosticLogDirEnsured = false;
+
+  /// Size cap of the shared diagnostics log (`~/.fah/logs/fa.log`): on the
+  /// first write of a process, an oversized log rotates to `fa.log.1`.
+  /// The memory package's print sink (gh-1510) appends prompt-sized debug
+  /// lines per memory op, so the append-only design now needs a bound —
+  /// without one, an active-memory session grows fa.log far faster than
+  /// the pre-existing lifecycle lines ever did.
+  @visibleForTesting
+  static const diagnosticLogMaxBytes = 4 * 1024 * 1024;
 
   String? _activeCustomName;
   Completer<String?>? _wizardPickerAnswer;
