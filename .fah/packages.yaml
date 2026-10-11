@@ -1,6 +1,0 @@
-# Built-in plugin switches: a falsy value opts OUT (hub: false = the CLI
-# never connects to the DAP hub — no hub presence, no [hub] connect line;
-# messaging falls back to the file fabric). Issue #988 tracks the real fix
-# (fa_hub_client crashes on a malformed peer x25519 in a presence frame);
-# flip this back to true (or delete the line) once that ships.
-hub: false

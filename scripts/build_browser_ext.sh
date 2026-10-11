@@ -234,6 +234,8 @@ open(sys.argv[2], "w").write(json.dumps(m, indent=2) + "\n")
 elif command -v node >/dev/null 2>&1; then
   node -e 'const fs=require("fs"); const m=JSON.parse(fs.readFileSync(process.argv[1], "utf8").replace(/^\s*\/\/.*$/gm, "")); delete m.key; fs.writeFileSync(process.argv[2], JSON.stringify(m, null, 2) + "\n")' "$manifest" build/pack/manifest.json
 else
+  echo "WARNING: no python3/node — packaging the RAW source manifest;" \
+       "the strict guard below is expected to fail (CWS needs stripped JSON)" >&2
   cp "$manifest" build/pack/manifest.json
 fi
 

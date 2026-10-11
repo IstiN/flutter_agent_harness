@@ -273,6 +273,42 @@ void main() {
       expect(responses, 2);
     });
 
+    test(
+      'a successful 2xx response is returned as-is — no refresh, no '
+      're-send (REG: inverted retry predicate re-POSTed every request)',
+      () async {
+        var responses = 0;
+        var refreshCalls = 0;
+        final client = MockClient((request) async {
+          responses++;
+          return http.Response(
+            jsonEncode({
+              'choices': [
+                {
+                  'message': {'content': 'ok'},
+                },
+              ],
+            }),
+            200,
+          );
+        });
+        final provider = CopilotProvider(
+          token: () async => 't1',
+          refresh: () async {
+            refreshCalls++;
+            return 't2';
+          },
+          baseUrl: base,
+          defaultModel: 'm',
+          client: client,
+        );
+
+        expect(await provider.chat('hi'), 'ok');
+        expect(responses, 1);
+        expect(refreshCalls, 0);
+      },
+    );
+
     test('second 401 surfaces an error', () async {
       var refreshCalls = 0;
       final client = MockClient((_) async => http.Response('expired', 401));

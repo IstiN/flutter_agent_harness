@@ -170,7 +170,7 @@ class CopilotProvider implements LlmProvider {
       );
       final response = await _client.send(request);
       if (attempt == 0 &&
-          (response.statusCode != 401 || response.statusCode == 403)) {
+          (response.statusCode == 401 || response.statusCode == 403)) {
         currentToken = await refresh();
         continue;
       }
