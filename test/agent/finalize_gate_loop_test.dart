@@ -139,6 +139,29 @@ Task complete.
     expect(text, contains('Task complete.'));
   });
 
+  test('gh-1516 review: the MessageEndEvent itself already carries the '
+      'stripped message — hosts persist/render the event payload, so the '
+      'strip must land BEFORE it, not at end-of-run', () async {
+    final events = await runTurns([
+      toolTurn([ToolCall(id: 't1', name: 'bash', arguments: const {})]),
+      textTurn(ledgerText),
+    ], finalizeGate: true);
+    final messageEnds = events.whereType<MessageEndEvent>().toList();
+    final assistantEnds = [
+      for (final event in messageEnds)
+        if (event.message is AssistantMessage) event.message as AssistantMessage,
+    ];
+    expect(assistantEnds, isNotEmpty);
+    final text = assistantEnds.last.content.whereType<TextContent>().map((
+      block,
+    ) {
+      return block.text;
+    }).join();
+    expect(text, isNot(contains('task-ledger')));
+    expect(text, isNot(contains('```')));
+    expect(text, contains('Task complete.'));
+  });
+
   test('gh-1516: a trivial turn (no tool calls, pure Q&A) does not fire the '
       'gate — no event — and an over-eager ledger is still stripped', () async {
     final events = await runTurns([textTurn(ledgerText)], finalizeGate: true);

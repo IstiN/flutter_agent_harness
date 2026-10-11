@@ -648,6 +648,14 @@ class AgentCli {
     // watching every turn and stays gate-free. The loop parses the final
     // answer's `task-ledger` block and the CLI persists it as a hidden
     // `task_ledger` session record.
+    //
+    // gh-1516 review: `fa wire-serve` also runs unattended but
+    // DELIBERATELY stays gate-free — its wire clients drive their own
+    // supervision/verification loop, and keying `headlessRun` on for the
+    // serve would flip every other headless-only behavior with it
+    // (prompt contract, aborted-partial persistence, …). If wire runs
+    // should grow near-miss telemetry, thread a dedicated signal rather
+    // than reusing `headlessRun`.
     _agent.finalizeGate = config.headlessRun;
     // The main agent's inbox in the messaging fabric: messages from
     // children (agent_message to "main") and from other Fa instances

@@ -53,6 +53,23 @@ void main() {
     },
   );
 
+  test(
+    'gh-1516 req #1: the trivial-turn clause carries concrete negative '
+    'examples — a "why did you…" and a "what does X do" question',
+    () async {
+      expect(finalizeGateContractPrompt, contains('почему ты баш команды'));
+      expect(finalizeGateContractPrompt, contains('why did you'));
+      expect(finalizeGateContractPrompt, contains('what does the'));
+      // gh-1516 review: the exemption wording matches the telemetry —
+      // "no tool calls at all", not "no state-changing commands".
+      expect(finalizeGateContractPrompt, contains('NO tool calls at all'));
+      expect(
+        finalizeGateContractPrompt,
+        isNot(contains('state-changing commands')),
+      );
+    },
+  );
+
   test('headless boots carry the contract under any approval mode', () async {
     for (final mode in [ApprovalMode.alwaysAsk, ApprovalMode.write]) {
       final prompt = await promptOf(mode, headlessRun: true);

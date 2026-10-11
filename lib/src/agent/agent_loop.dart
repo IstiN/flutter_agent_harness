@@ -1055,6 +1055,23 @@ Future<List<Message>> _runAgentLoop({
     tools: context.tools,
   );
   var currentConfig = config;
+  // The FinalizeGate (gh-1516 review): hosts persist
+  // (`_persistIncremental`) and render (`_onAssistantMessageEnd`) the
+  // message a MessageEndEvent carries — both happen DURING the run, long
+  // before any end-of-run rewrite could reach them. The strip therefore
+  // happens at this choke point: the interceptor rewrites every
+  // gate-mode assistant MessageEndEvent to the ledger-free message and
+  // stashes what it stripped; [_emitFinalizeGateFold] consumes the stash
+  // when the run ends. The gate key reads the LIVE config so a mid-run
+  // flip stays consistent between the two halves.
+  final strippedLedgers = <_StrippedLedger>[];
+  if (config.finalizeGate) {
+    emit = _finalizeGateStrippingSink(
+      emit,
+      strippedLedgers,
+      () => currentConfig.finalizeGate,
+    );
+  }
   // Issue #862: breaker counters are per run (per user turn) — a fresh
   // prompt starts from zero consecutive failures.
   config.toolMisuseBreaker?.beginRun();
@@ -1168,93 +1185,127 @@ Future<List<Message>> _runAgentLoop({
   // The FinalizeGate (gh-1412, gh-1516): unattended runs fold the task
   // ledger out of the FINAL assistant message — see [_emitFinalizeGateFold].
   if (currentConfig.finalizeGate) {
-    await _emitFinalizeGateFold(newMessages, currentContext.messages, emit);
+    await _emitFinalizeGateFold(
+      newMessages,
+      currentContext.messages,
+      strippedLedgers,
+      emit,
+    );
   }
 
   await emit(AgentEndEvent(List.unmodifiable(newMessages)));
   return newMessages;
 }
 
-/// Applies the FinalizeGate end-of-run fold (gh-1412, gh-1516): the event
-/// feeds the hidden `task_ledger` record, and the final answer itself is
-/// rewritten so the transcript never shows the ledger (fenced or the
-/// unfenced near-miss shape). A trivial turn (no tool calls — pure Q&A,
-/// nothing produced to verify) does not fire the gate: no event, though an
-/// over-eager ledger is still stripped from the answer. Extracted from
-/// `_runAgentLoop` so the loop stays under the CRAP ratchet — the fold is
-/// a self-contained end-of-run ritual, not loop logic.
+/// One ledger stripped from an assistant message at `MessageEndEvent`
+/// time (gh-1516 review): the parsed ledger plus the original/stripped
+/// message pair. The end-of-run fold matches the TERMINAL message against
+/// this stash — a mid-run strip never satisfies the gate (gh-1412).
+final class _StrippedLedger {
+  _StrippedLedger({
+    required this.ledger,
+    required this.original,
+    required this.stripped,
+  });
+
+  final TaskLedger ledger;
+  final AssistantMessage original;
+  final AssistantMessage stripped;
+}
+
+/// The FinalizeGate `MessageEndEvent` interceptor (gh-1516 review): hosts
+/// persist (`_persistIncremental` appends the event's message straight to
+/// the session JSONL) and render (`_onAssistantMessageEnd` flushes the
+/// answer on it) the message a `MessageEndEvent` carries — anything an
+/// end-of-run fold rewrites later never reaches the persisted transcript
+/// or the flush. In gate mode each assistant message is therefore
+/// stripped at this choke point, BEFORE the event is forwarded, and the
+/// strip is stashed for the end-of-run fold. Non-assistant events,
+/// unstripped messages, and gate-off turns pass through untouched.
+AgentEventSink _finalizeGateStrippingSink(
+  AgentEventSink emit,
+  List<_StrippedLedger> stash,
+  bool Function() gateOn,
+) {
+  return (AgentEvent event) {
+    if (!gateOn() || event is! MessageEndEvent) return emit(event);
+    final stripped = _stripAssistantLedger(event.message, stash);
+    if (stripped == null) return emit(event);
+    return emit(MessageEndEvent(stripped));
+  };
+}
+
+/// Strips the ledger out of an assistant [message] (one resolve per text
+/// block, last block first — the same shape the gate keys on) and records
+/// the strip in [stash]. Returns the stripped message, or null when no
+/// block carries a ledger.
+AssistantMessage? _stripAssistantLedger(
+  Message message,
+  List<_StrippedLedger> stash,
+) {
+  if (message is! AssistantMessage) return null;
+  final content = message.content;
+  for (var i = content.length - 1; i >= 0; i--) {
+    if (content[i] is! TextContent) continue;
+    final block = content[i] as TextContent;
+    final resolution = resolveTaskLedger(block.text);
+    if (resolution == null) continue;
+    final replaced = List<ContentBlock>.of(content);
+    replaced[i] = block.copyWith(text: resolution.strippedText);
+    final stripped = message.copyWith(content: replaced);
+    stash.add(
+      _StrippedLedger(
+        ledger: resolution.ledger,
+        original: message,
+        stripped: stripped,
+      ),
+    );
+    return stripped;
+  }
+  return null;
+}
+
+/// Applies the FinalizeGate end-of-run fold (gh-1412, gh-1516): emits
+/// [TaskLedgerEvent] for the hidden `task_ledger` record and aligns the
+/// in-memory transcript with what the interceptor already streamed and
+/// persisted. The strip itself happened at `MessageEndEvent` time
+/// ([_finalizeGateStrippingSink]); this fold only decides whether the
+/// TERMINAL answer's ledger satisfies the gate (gh-1412: a run must END
+/// on the answer — a mid-run strip, or a run that stopped on tool calls,
+/// never fires) and rewrites `newMessages`/the context copy so the
+/// returned run matches the persisted session.
+///
+/// [producedState] is the gh-1516 trivial-turn rule: ANY tool call in
+/// the run counts as produced state — the loop cannot cheaply classify
+/// which calls mutate, so the telemetry's bar is deliberately coarser
+/// than the prompt's model-facing "state-changing commands" wording
+/// (gh-1516 review): no tool calls, nothing to verify, no event.
 Future<void> _emitFinalizeGateFold(
   List<Message> newMessages,
   List<Message> contextMessages,
+  List<_StrippedLedger> stash,
   AgentEventSink emit,
 ) async {
-  final fold = _foldTaskLedger(newMessages);
-  if (fold == null) return;
-  if (fold.producedState && fold.ledger != null) {
-    await emit(TaskLedgerEvent(fold.ledger!));
+  if (newMessages.isEmpty || newMessages.last is! AssistantMessage) return;
+  final terminal = newMessages.last as AssistantMessage;
+  // The stash's latest entry for the terminal message decides; earlier
+  // entries were mid-run strips — stashed for the transcript, never for
+  // the gate.
+  _StrippedLedger? fold;
+  for (final entry in stash) {
+    if (identical(entry.original, terminal)) fold = entry;
   }
-  if (fold.stripped == null) return;
-  newMessages[fold.messageIndex] = fold.stripped!;
-  final at = contextMessages.lastIndexWhere(
-    (message) => identical(message, fold.original),
-  );
-  if (at >= 0) contextMessages[at] = fold.stripped!;
-}
-
-/// The FinalizeGate end-of-run fold (gh-1412, gh-1516): parses the ledger
-/// out of the run's terminal assistant answer and rewrites the answer's
-/// text so the transcript never shows it. The run must END on that
-/// message — a ledger quoted in an earlier turn's text never satisfies
-/// the gate, and a run that stopped on tool calls (terminate batch,
-/// abort) has no terminal answer to gate on: the last self-check it
-/// quoted predates tool activity that may have changed the produced
-/// state. Returns null when there is no terminal assistant answer or no
-/// ledger in it.
-///
-/// [producedState] is whether the run executed any tool call at all —
-/// the gh-1516 trivial-turn rule: no produced state, nothing to verify,
-/// the gate does not fire (no [TaskLedgerEvent]); the ledger is still
-/// stripped, so an over-eager checklist never renders.
-({
-  TaskLedger? ledger,
-  bool producedState,
-  int messageIndex,
-  AssistantMessage? stripped,
-  Message? original,
-})?
-_foldTaskLedger(List<Message> messages) {
-  if (messages.isEmpty || messages.last is! AssistantMessage) return null;
-  final messageIndex = messages.length - 1;
-  final message = messages[messageIndex] as AssistantMessage;
-  final producedState = messages.any(
+  if (fold == null) return;
+  final matched = fold;
+  final producedState = newMessages.any(
     (m) => m is AssistantMessage && m.content.any((block) => block is ToolCall),
   );
-  for (var i = message.content.length - 1; i >= 0; i--) {
-    if (message.content[i] is! TextContent) continue;
-    final block = message.content[i] as TextContent;
-    final ledger = parseTaskLedger(block.text);
-    if (ledger == null) continue;
-    final strippedText = stripTaskLedger(block.text);
-    if (strippedText == block.text) {
-      return (
-        ledger: ledger,
-        producedState: producedState,
-        messageIndex: messageIndex,
-        stripped: null,
-        original: null,
-      );
-    }
-    final content = List<ContentBlock>.of(message.content);
-    content[i] = block.copyWith(text: strippedText);
-    return (
-      ledger: ledger,
-      producedState: producedState,
-      messageIndex: messageIndex,
-      stripped: message.copyWith(content: content),
-      original: message,
-    );
-  }
-  return null;
+  if (producedState) await emit(TaskLedgerEvent(matched.ledger));
+  newMessages[newMessages.length - 1] = matched.stripped;
+  final at = contextMessages.lastIndexWhere(
+    (message) => identical(message, matched.original),
+  );
+  if (at >= 0) contextMessages[at] = matched.stripped;
 }
 
 /// Emits the run-start sequence: `agent_start`, the first `turn_start`, and

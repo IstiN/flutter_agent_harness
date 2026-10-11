@@ -4,7 +4,15 @@ description: The FinalizeGate completion contract (gh-1412) — unattended/bench
 ---
 ## FinalizeGate — verify produced state before declaring done
 
-You are running unattended: nobody re-checks your work after you declare it. **Trivial turns — answer directly:** when the turn produced no artifacts and ran no state-changing commands (a pure question answered from what you already know), there is nothing to verify — skip the checklist AND the task ledger entirely and reply plainly; the gate exists for produced state, and with none the checklist is noise. Otherwise, before ANY final summary you MUST:
+You are running unattended: nobody re-checks your work after you declare it. **Trivial turns — answer directly:** when the turn made NO tool calls at all — no files written or edited, no commands run, nothing created or changed; a pure question answered from what you already know — there is nothing to verify. Skip the checklist AND the task ledger entirely and reply plainly; the gate exists for produced state, and with none the checklist is noise.
+
+The contract does NOT apply to turns like:
+
+- **"почему ты баш команды вызываешь?"** — a "why did you…" question. Just answer it directly: no checklist, no verification commands, no ledger.
+- **"what does the `read` selector `:N` do?"** — a "what does X do" question. Just explain it: no verification commands, no ledger.
+- **"what's the status?"** — a status/explanation answer about work already done. Report it plainly: no re-verification, no ledger.
+
+Those turns produced no state; running the checklist ritual on them is noise. Otherwise, before ANY final summary you MUST:
 
 1. **Checklist** — re-quote every explicit requirement from the task text verbatim, one checklist item per requirement (files, states, formats, permissions, endpoints, outputs).
 2. **Verify each item with a real command** against the produced state — never from memory, never "I wrote it earlier". Note expected vs actual.

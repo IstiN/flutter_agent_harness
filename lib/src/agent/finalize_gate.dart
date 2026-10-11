@@ -202,15 +202,56 @@ final class _LedgerSpan {
 }
 
 /// The last ledger candidate that parses to a requirement-bearing ledger,
-/// or null. Candidates are tried newest-first so a revised (fenced) ledger
-/// still wins over an earlier near-miss — the "last block decides" rule of
-/// gh-1412, widened to both shapes (gh-1516).
-_LedgerSpan? _lastParseableLedgerSpan(String text) {
+/// or null — carrying the candidate's already-parsed [items] (each
+/// candidate is parsed exactly once; the winner's list is reused, never
+/// re-parsed). Candidates are tried newest-first so a revised (fenced)
+/// ledger still wins over an earlier near-miss — the "last block decides"
+/// rule of gh-1412, widened to both shapes (gh-1516).
+({_LedgerSpan span, List<TaskLedgerItem> items})? _lastParseableLedgerSpan(
+  String text,
+) {
   final spans = _ledgerSpans(text);
   for (final span in spans.reversed) {
-    if (_parseLedgerItems(span.body).isNotEmpty) return span;
+    final items = _parseLedgerItems(span.body);
+    if (items.isNotEmpty) return (span: span, items: items);
   }
   return null;
+}
+
+/// Removes the span's lines from [text], collapsing ONLY the blank runs
+/// touching the vacated range (gh-1516 review): a mid-answer seam keeps a
+/// single blank line of separation; a run the removal pushed to the very
+/// start or end of the answer drops entirely (the edge the ledger
+/// vacated). Everything away from the seam stays byte-identical.
+String _stripSpan(String text, _LedgerSpan span) {
+  final lines = text.split('\n');
+  final kept = <String>[
+    for (var i = 0; i < lines.length; i++)
+      if (i < span.startLine || i > span.endLine) lines[i],
+  ];
+  // Kept coordinates: lines[0, span.startLine) keep their indices; the
+  // first line after the span lands at kept index span.startLine.
+  _collapseSeamBlank(kept, span.startLine, span.startLine == 0);
+  _collapseSeamBlank(kept, span.startLine - 1, span.endLine == lines.length - 1);
+  return kept.join('\n');
+}
+
+/// Collapses the maximal blank run touching kept-coordinate [index] to a
+/// single blank line — or removes it entirely under [dropEntirely] (the
+/// run is the answer's leading/trailing edge, blank only because the
+/// ledger vacated it). Out-of-range and non-blank indices are no-ops.
+void _collapseSeamBlank(List<String> lines, int index, bool dropEntirely) {
+  if (index < 0 || index >= lines.length) return;
+  if (lines[index].trim().isNotEmpty) return;
+  var start = index;
+  while (start > 0 && lines[start - 1].trim().isEmpty) {
+    start--;
+  }
+  var end = index;
+  while (end + 1 < lines.length && lines[end + 1].trim().isEmpty) {
+    end++;
+  }
+  lines.replaceRange(start, end + 1, dropEntirely ? const [] : const ['']);
 }
 
 /// Every ledger-shaped span in [text], in document order: fenced

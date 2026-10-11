@@ -190,6 +190,56 @@ void main() {
       const plain = 'just a plain final answer\nwith two lines';
       expect(stripTaskLedger(plain), plain);
     });
+
+    test('gh-1516 review: strip collapses ONLY the seam blanks — the rest '
+        'of the answer stays byte-identical', () {
+      // Intentional multi-blank formatting away from the ledger must
+      // survive the strip (the pre-review whole-text collapse rewrote
+      // every blank run and trimmed the answer's edges).
+      const withDoubleBlanks =
+          'Section A\n'
+          '\n'
+          '\n'
+          'Section B\n'
+          '\n'
+          '## task-ledger\n'
+          '- requirement: item\n'
+          '  command: true\n'
+          '  status: pass\n';
+      final stripped = stripTaskLedger(withDoubleBlanks);
+      expect(stripped, isNot(contains('task-ledger')));
+      expect(
+        stripped,
+        'Section A\n\n\nSection B\n',
+        reason: 'mid-answer seam keeps one blank; the double blank after '
+            'Section A is untouched',
+      );
+    });
+
+    test('gh-1516 review: a ledger at the very start drops the leading '
+        'blank edge it vacated', () {
+      const leading =
+          '## task-ledger\n'
+          '- requirement: item\n'
+          '  command: true\n'
+          '  status: pass\n'
+          '\n'
+          'Answer text.\n';
+      final stripped = stripTaskLedger(leading);
+      expect(stripped, 'Answer text.\n');
+    });
+
+    test('resolveTaskLedger pairs the parsed ledger with the stripped text '
+        'in one shot (single-scan entry point)', () {
+      final resolution = resolveTaskLedger('Answer.\n$ledgerBlock\n');
+      expect(resolution, isNotNull);
+      expect(resolution!.ledger.items, hasLength(2));
+      expect(resolution.strippedText, isNot(contains('task-ledger')));
+      expect(resolution.strippedText.trimRight(), 'Answer.');
+      // Consistent with the dedicated single-purpose delegates.
+      expect(parseTaskLedger('Answer.\n$ledgerBlock\n'), resolution.ledger);
+      expect(stripTaskLedger('Answer.\n$ledgerBlock\n'), resolution.strippedText);
+    });
   });
 
   group('TaskLedger model', () {
