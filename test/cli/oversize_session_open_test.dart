@@ -12,6 +12,7 @@
 // only when the call site reads windowed.
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
+import 'package:flutter_agent_harness/src/session/windowed_session_storage.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';
@@ -235,6 +236,82 @@ void main() {
       expect(branch.last, isA<MessageRecord>());
     },
   );
+
+  group('headless tail over a >window session (review thread 4)', () {
+    Future<Session> seedLongSession(int count) async {
+      final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+      final session = await repo.create(
+        JsonlSessionCreateOptions(cwd: '/work', metadata: {'agent': 'cli'}),
+      );
+      for (var i = 0; i < count; i++) {
+        await session.appendMessage(UserMessage.text('m$i'));
+      }
+      return session;
+    }
+
+    test(
+      'the fixed poll composition (original session + windowed '
+      'ingestAppended) renders an externally appended record — more '
+      'records than the residency window',
+      () async {
+        final session = await seedLongSession(300);
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final meta = await session.getMetadata();
+
+        // The headless verb's exact composition: windowed resolve, whole-
+        // ledger prime, initial backfill, then poll the ORIGINAL session.
+        final polled = await repo.open(meta, windowed: true);
+        await polled.ensureWholeLedgerResident();
+        final tailer = TrajectoryTailer(width: 80);
+        final backfill = tailer.tail(await polled.getBranch());
+        expect(backfill, hasLength(300));
+
+        // An external writer appends past the primed ledger.
+        await session.appendMessage(UserMessage.text('fresh!'));
+
+        final storage = polled.getStorage();
+        expect(storage, isA<WindowedSessionStorage>());
+        await (storage as WindowedSessionStorage).ingestAppended();
+        final lines = tailer.tail(await polled.getBranch());
+        expect(
+          lines.join('\n'),
+          contains('fresh!'),
+          reason: 'the poll must render the appended record, not stall '
+              'silently (the BLOCKING finding)',
+        );
+      },
+    );
+
+    test(
+      'the regression shape: a fresh windowed re-open per poll after a '
+      'whole-ledger prime still renders the appended record',
+      () async {
+        final session = await seedLongSession(300);
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final meta = await session.getMetadata();
+
+        final polled = await repo.open(meta, windowed: true);
+        await polled.ensureWholeLedgerResident();
+        final tailer = TrajectoryTailer(width: 80);
+        expect(tailer.tail(await polled.getBranch()), hasLength(300));
+
+        await session.appendMessage(UserMessage.text('late!'));
+
+        // The poll-window composition that shipped green: a FRESH
+        // windowed open returns only the resident tail window (~200
+        // records) — shorter than the primed ledger. A count-based
+        // tailer reads that as "nothing new" forever; the id-based
+        // dedupe renders the appended record.
+        final freshWindow = await repo.open(meta, windowed: true);
+        final lines = tailer.tail(await freshWindow.getBranch());
+        expect(
+          lines.join('\n'),
+          contains('late!'),
+          reason: 'windowed poll windows must not silence the tailer',
+        );
+      },
+    );
+  });
 }
 
 /// A repo whose WINDOWED opens fail too — the genuinely-corrupt (not
