@@ -296,7 +296,8 @@ class PresenceCompletenessTest(unittest.TestCase):
 
 def _write_ledger(trial_dir: Path, items: list[dict]) -> None:
     """The hidden `task_ledger` session record exactly as the Dart side
-    persists it (gh-1412): a `custom` record, customType task_ledger."""    sessions = trial_dir / "agent" / "fah-sessions"
+    persists it (gh-1412): a `custom` record, customType task_ledger."""
+    sessions = trial_dir / "agent" / "fah-sessions"
     sessions.mkdir(parents=True)
     record = {"type": "custom", "customType": "task_ledger", "data": {"items": items}}
     (sessions / "session.jsonl").write_text(json.dumps(record) + "\n")

@@ -1052,5 +1052,98 @@ class ProgressWatchAuditTest(unittest.TestCase):
         self.assertEqual(record["policy"], "flat-cap")
 
 
+class DeadlineEnvTest(unittest.TestCase):
+    """gh-1556 AC7: FA_DEADLINE_EPOCH_MS for fa's deadline awareness.
+
+    The deadline comes ONLY from the adapter's own kill cap minus a
+    wrap-up margin — never invented; with no adapter cap (no knobs) the
+    export is absent and fa's deadline awareness stays off.
+    """
+
+    def test_no_knobs_means_no_deadline(self):
+        self.assertIsNone(
+            fa_agent_timeout.deadline_epoch_ms(None, 1_700_000_000_000)
+        )
+        self.assertEqual(fa_agent_timeout.deadline_env_from(clean_env_all()), {})
+
+    def test_watch_mode_deadline_is_abs_ceiling_minus_margin(self):
+        env = clean_env_all(
+            FA_PROGRESS_EXTENSION="1", FA_STALL_GAP_SEC="360"
+        )
+        knobs = TimeoutKnobs.from_env(env)
+        now_ms = 1_700_000_000_000
+        # 3600s abs ceiling - 120s wrap-up margin.
+        self.assertEqual(
+            fa_agent_timeout.deadline_epoch_ms(knobs, now_ms),
+            now_ms + 3480_000,
+        )
+        self.assertEqual(
+            fa_agent_timeout.deadline_env_from(env, now_ms),
+            {"FA_DEADLINE_EPOCH_MS": str(now_ms + 3480_000)},
+        )
+
+    def test_legacy_extension_deadline_is_hard_ceiling_minus_margin(self):
+        env = clean_env_all(
+            FA_AGENT_TIMEOUT_SEC="600", FA_PROGRESS_EXTENSION="1"
+        )
+        knobs = TimeoutKnobs.from_env(env)
+        now_ms = 1_700_000_000_000
+        # Hard ceiling = 600 * 4 = 2400s; minus 120s margin.
+        self.assertEqual(
+            fa_agent_timeout.deadline_epoch_ms(knobs, now_ms),
+            now_ms + 2280_000,
+        )
+
+    def test_flat_cap_deadline_is_base_minus_margin(self):
+        env = clean_env_all(FA_AGENT_TIMEOUT_SEC="600")
+        knobs = TimeoutKnobs.from_env(env)
+        now_ms = 1_700_000_000_000
+        self.assertEqual(
+            fa_agent_timeout.deadline_epoch_ms(knobs, now_ms),
+            now_ms + 480_000,
+        )
+
+    def test_tiny_cap_clamps_to_a_remaining_window(self):
+        # A 60s cap minus the 120s margin would land in the past — the
+        # deadline clamps to a minimal wrap-up window instead of steering
+        # fa into an already-expired clock.
+        env = clean_env_all(FA_AGENT_TIMEOUT_SEC="60")
+        knobs = TimeoutKnobs.from_env(env)
+        now_ms = 1_700_000_000_000
+        self.assertEqual(
+            fa_agent_timeout.deadline_epoch_ms(knobs, now_ms),
+            now_ms + 30_000,
+        )
+
+    def test_test_budget_folds_into_the_watch_cap(self):
+        env = clean_env_all(
+            FA_PROGRESS_EXTENSION="1", FA_STALL_GAP_SEC="360"
+        )
+        knobs = TimeoutKnobs.from_env(env)
+        now_ms = 1_700_000_000_000
+        self.assertEqual(
+            fa_agent_timeout.deadline_epoch_ms(
+                knobs, now_ms, test_budget_sec=300.0
+            ),
+            now_ms + 3780_000,
+        )
+
+    def test_audit_records_the_fa_visible_deadline(self):
+        env = clean_env_all(
+            FA_PROGRESS_EXTENSION="1", FA_STALL_GAP_SEC="360"
+        )
+        knobs = TimeoutKnobs.from_env(env)
+        watch = fa_agent_timeout.ProgressWatch(knobs)
+        record = audit_dict(knobs, watch, "abs_ceiling", deadline_epoch_ms=42)
+        self.assertEqual(record["deadline_epoch_ms"], 42)
+
+    def test_audit_omits_deadline_when_unset(self):
+        # No-knob runs keep the pre-gh-1556 audit shape byte-for-byte.
+        knobs = TimeoutKnobs(base_sec=120.0)
+        ladder = ProgressLadder(knobs)
+        record = audit_dict(knobs, ladder, "stall")
+        self.assertNotIn("deadline_epoch_ms", record)
+
+
 if __name__ == "__main__":
     unittest.main()

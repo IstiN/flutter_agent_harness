@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -99,6 +100,55 @@ class BenchHarborDefaultsTest(unittest.TestCase):
         self.assertEqual(_workflow_input(self.text, "n-concurrent"), "1")
         description = self.text.split("n-concurrent:", 1)[1].split("\n", 2)[1]
         self.assertIn("kimi", description)
+
+    def _step_env(self, name: str):
+        """One `NAME: 'value'` entry from a step env block (quoted)."""
+        m = re.search(rf"^          {re.escape(name)}: '([^']*)'", self.text, re.M)
+        return m.group(1) if m else None
+
+    def test_progress_watch_is_the_shard_default(self):
+        # gh-1556 AC2: progress-watch (#1392/#1430) is the bench default —
+        # every shard exports the watch knobs and the extension flag, so
+        # the adapter's kill decision is the gap-aware ProgressWatch.
+        # Removing these exports is the only way back to the legacy
+        # byte-growth ladder (its round-2 REG stays green).
+        self.assertEqual(self._step_env("FA_STALL_GAP_SEC"), "360")
+        self.assertEqual(self._step_env("FA_AGENT_TIMEOUT_ABS_CEILING_SEC"), "3600")
+        self.assertEqual(self._step_env("FA_PROGRESS_EXTENSION"), "1")
+
+    def test_watch_knobs_resolve_to_progress_watch_mode(self):
+        # The exported values must actually arm the watch: same env
+        # contract the adapter consumes (shared bench/fa_agent_timeout.py).
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        try:
+            import fa_agent_timeout
+        finally:
+            sys.path.remove(str(Path(__file__).resolve().parent.parent))
+        knobs = fa_agent_timeout.TimeoutKnobs.from_env(
+            {
+                "FA_STALL_GAP_SEC": self._step_env("FA_STALL_GAP_SEC"),
+                "FA_AGENT_TIMEOUT_ABS_CEILING_SEC": self._step_env(
+                    "FA_AGENT_TIMEOUT_ABS_CEILING_SEC"
+                ),
+                "FA_PROGRESS_EXTENSION": self._step_env("FA_PROGRESS_EXTENSION"),
+            }
+        )
+        self.assertIsNotNone(knobs)
+        self.assertTrue(knobs.progress_watch)
+        self.assertTrue(knobs.progress_extension)
+
+    def test_stall_gap_never_drops_below_the_watchdog_invariant(self):
+        # gh-1430 invariant: the bench stall-gap must stay above fa's
+        # stream-idle watchdog (300s) + margin — the workflow value can
+        # never drift below the shipped default (the Dart-source REG in
+        # test_fa_agent_timeout.py pins the other side).
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        try:
+            import fa_agent_timeout
+        finally:
+            sys.path.remove(str(Path(__file__).resolve().parent.parent))
+        gap = float(self._step_env("FA_STALL_GAP_SEC"))
+        self.assertGreaterEqual(gap, fa_agent_timeout._STALL_GAP_DEFAULT)
 
 
 @unittest.skipUnless(
