@@ -651,7 +651,8 @@ jobs:
   # are part of the COMMON PR suite: they run on every CI invocation (the
   # Machine SM dispatches ci.yml per PR head), unconditioned by path — a
   # diff that breaks them must red-block THE PR, never the 3:30 nightly.
-  # Main remains backstopped by nightly.yml.
+  # Since gh-1537 retired the post-merge main CI run, nightly.yml is the
+  # whole-tree backstop, not a second merge gate.
   # gh-1300 (2026-10-06): the PTY/CLI shards pay toolchain+boot ONCE per
   # run, not per test. Every integration test spawns a fresh CLI; JIT
   # `dart bin/fah.dart` cost VM start + CFE kernel compile ~30 s PER SPAWN
@@ -2237,8 +2238,12 @@ jobs:
       # Known limit: pull_request/dispatched runs execute THIS file and the
       # checker from the PR's own head — a PR can edit the gate in the same
       # diff. Backstops: reviewers see workflow edits, Dependabot PRs
-      # re-verify on main, and the gate is re-enforced by any post-merge
-      # scheduled run. A hard guarantee needs a separate workflow_call gate
+      # re-verify via their own SM validation dispatch (gh-1537 retired the
+      # post-merge main run; there is no longer a scheduled main re-check —
+      # nightly.yml is the supervised whole-tree backstop), and
+      # sm-merge-guard.yml alarms if a tree lands on main without a
+      # successful dispatched validation. A hard guarantee needs a separate
+      # workflow_call gate
       # pinned by SHA, invoked from a caller that never comes from the PR
       # (follow-up issue, not this PR).
 

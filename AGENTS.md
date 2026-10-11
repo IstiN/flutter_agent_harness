@@ -1668,6 +1668,20 @@ tests are done right:
 
 ## Quality gates (pre-commit hook: `scripts/pre-commit`)
 
+The single CI gate is the SM pre-merge validation run (gh-1537): the
+machine SM (#687, `machine-sm.yml` → factory-sm) updates the branch onto
+main, dispatches `ci.yml` on the updated head, and merges only when green
+— the tree that lands is byte-identical to the validated tree, so the
+retired post-merge main CI run was pure repetition (and #1522's
+tag-sourced versions remove the release-bot commits that retriggered it —
+fewer main pushes → less SM queue churn). `ci.yml` fires on `v*` tags
+(release pipeline), the 2h auto-release coalesce schedule, `release:
+published`, and workflow_dispatch ONLY — never on `push: [main]`. The
+serialized-validation invariant is alarmed by `sm-merge-guard.yml`: every
+main push must carry a tree covered by a successful dispatched
+validation, else one deduplicated `sm-guard` issue files (no nightly
+backstop, per the owner's directive).
+
 Issue #177 restructured CI so a PR pays only for what it touched. The hook
 is a thin wrapper over `scripts/ci_fast_gate.sh`; CI is NOT the same
 process — it implements the same stages as parallel jobs, and since
@@ -1692,7 +1706,8 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   per-PR: no-key legs via `MockLlmServer`, `--exclude-tags llm,browser-ext,
   perf,pty`; child-agent-spawn PTY tests carry `pty` and stay in nightly
   (issue #553). Tag-only CI = llm smoke + publish + binaries; nightly keeps
-  the full real-provider suite (pty-integration).
+  the full real-provider suite (pty-integration). Since gh-1537 there are
+  NO main CI runs — "tag-only" is literal: tags/dispatch/schedule only.
   **The Quality gate is deterministic-only (gh-1199): mock LLM everywhere,
   live models never.** Real-provider files carry
   `@Tags(['integration', 'llm'])` and run ONLY in the tag-only
@@ -1712,11 +1727,20 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   `flake-watch.yml` files the issue and opens the PR) — the gate legs pipe
   their targets through `scripts/apply_quarantine.py`, while nightly
   KEEPS running the file to produce the un-quarantine repeat-run proof.
+  Flake intake consumes PR-dispatch runs only (gh-1537:
+  `scripts/flake_watch.py` filters to `workflow_dispatch` events — the
+  retired main trigger leaves SM validation dispatches and v* tag runs;
+  a red tag run is a release-flow failure, triaged by daily-publish /
+  ci-red-report, never quarantined as a flake). Dedup is per test name
+  (the #1364 lesson): one test red across N runs files ONE issue.
 - `cd flutter_app && flutter test --exclude-tags integration` green
   (includes golden suite; integration-tagged `test/cli_visual` runs in the
   nightly workflow + on demand).
-- Line coverage of `lib/` ≥ 80% (full ratchet on main/nightly; PRs ratchet
-  CHANGED lines via `scripts/diff_coverage.py`); jscpd duplication < 1%
+- Line coverage of `lib/` ≥ 80% (full ratchet on every SM validation
+  dispatch + nightly; ci.yml has no `pull_request` trigger, so the
+  diff-coverage arm in `coverage-gate` is reserve for a future real PR
+  trigger — every run that exists takes the whole-tree
+  `scripts/check_coverage.py 80` path); jscpd duplication < 1%
   core `lib/`, < 3.7% `flutter_app/lib/` (ratchet — only tighten).
 - Cross-module duplication (issue #487): clones spanning module roots
   (`lib`, `bin`, `flutter_app/lib`, `packages/*/lib`, `browser_ext/dart`)
@@ -1790,8 +1814,10 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   SM validation dispatch (gh-1280 binaries-pr idiom); the
   `flutter_app/lib/apps/**`/`lib/src/js_ext/**`/`flutter_app/pubspec.yaml`
   path set in the `changes` job only narrows a future real `pull_request`
-  trigger. Main/tag/schedule/release runs skip it — `nightly.yml` keeps
-  the full-suite macOS backstop there. `nightly.yml` runs the full monolith +
+  trigger. Tag/schedule/release runs skip it — `nightly.yml` keeps
+  the full-suite macOS backstop there (with gh-1537 there are no main ci
+  runs at all; nightly is the supervised whole-tree backstop, not a
+  merge gate). `nightly.yml` runs the full monolith +
   PTY/CLI integration (full real-provider suite with secrets) +
   terminal-visual suites; `coverage-gardener.yml` measures the only-up CLI
   coverage weekly and files an ai-teammate "raise coverage to X" issue —

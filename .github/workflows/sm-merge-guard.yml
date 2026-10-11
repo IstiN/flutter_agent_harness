@@ -31,7 +31,7 @@ jobs:
       contents: read
       issues: write # the sm-guard alarm issue
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410b181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The pushed head is the checked-out HEAD; only its tree sha is
           # read — no history, no blobs.

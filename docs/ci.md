@@ -41,12 +41,20 @@ the safe way to smoke one channel.
 The scheme: `scripts/auto_release.sh` patch-bumps
 `pubspec.yaml` and pushes the bump commit straight to protected `main` as the
 fa-release-bot GitHub App (the ruleset's only bypass actor, gh-1172 — the
-2026-09-29 release-PR stopgap is retired); the push fires the ci.yml
-`release-tag` job, and the tag drives the `publish`/`binaries` jobs. Manual
-`workflow_dispatch` runs are input-gated: `releaseDryRun: true` exercises the
-whole pipeline without the push/tag (AC1), and `releaseDispatch: true` on
-`refs/heads/main` is the real push — bare validation dispatches (the SM's
-per-PR `gh workflow run ci.yml --ref <branch>`) arm nothing. The daily:
+2026-09-29 release-PR stopgap is retired); the push fires
+`release-tag.yml` (extracted from ci.yml by gh-1537 — ci.yml no longer
+triggers on main pushes, so the tag-on-bump phase rides its own minimal
+release-only workflow; its job starts only on the `chore(release):` bump
+commit and runs no validation gates — the enforce-lockfile smoke stays
+the pre-tag gate, and the full quality gate runs on the cut tag BEFORE
+publish/binaries), and the tag drives the `publish`/`binaries` jobs of
+ci.yml's `v*` arm. Manual `workflow_dispatch` runs are input-gated:
+`releaseDryRun: true` exercises the whole pipeline without the push/tag
+(AC1), and `releaseDispatch: true` on `refs/heads/main` is the real push —
+bare validation dispatches (the SM's per-PR `gh workflow run ci.yml
+--ref <branch>`) arm nothing; the 2h coalesce schedule in ci.yml is the
+auto-release catch-up now that the per-main-push arm retired with the
+post-merge main CI run (gh-1537). The daily:
 
 - lets `build-mobile.yml` / `build-macos.yml` derive their version
   themselves (`latest tag + 1` at the child's own dispatch moment). A tag
