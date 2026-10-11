@@ -2229,6 +2229,14 @@
       "completion": 18487,
       "total": 81504,
       "model": "kimi-for-coding"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-11T22:40:43Z",
+      "prompt": 106566,
+      "completion": 34947,
+      "total": 141513,
+      "model": "kimi-for-coding"
     }
   ]
 }
