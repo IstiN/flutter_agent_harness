@@ -13,6 +13,7 @@ import 'dart:convert';
 
 import '../session/session_record.dart';
 import '../session/session_repo.dart';
+import '../session/session_storage.dart';
 import '../session/session_tree.dart';
 import '../trajectory/event_projection.dart';
 import '../trajectory/formatters.dart';
@@ -74,9 +75,21 @@ Future<Session?> resolveTrajectorySession(
   for (final metadata in sessions) {
     if (metadata.id == wanted) return repo.open(metadata, windowed: true);
   }
+  // gh-1555 d4: name match — the bounded scan never full-opens.
+  return _openTrajectoryByName(repo, sessions, wanted);
+}
+
+/// The name-match arm of [resolveTrajectorySession] (gh-1555 d4):
+/// [JsonlSessionRepo] stores answer from the header via the quick scan;
+/// any foreign repo degrades to a bounded windowed open per session —
+/// never a full open per session on either path. Split out to keep the
+/// resolver under the CRAP ratchet (CC ≤ 12).
+Future<Session?> _openTrajectoryByName(
+  SessionRepo repo,
+  List<SessionMetadata> sessions,
+  String wanted,
+) async {
   if (repo is! JsonlSessionRepo) {
-    // Foreign repo: bounded windowed name scan (gh-1555 d4) instead of a
-    // full open per session.
     for (final metadata in sessions) {
       final session = await repo.open(metadata, windowed: true);
       final name = await session.resolveSessionName();

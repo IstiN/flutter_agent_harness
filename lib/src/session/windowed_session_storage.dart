@@ -429,6 +429,20 @@ final class WindowedSessionStorage
   Future<void> loadAllOlder({int maxBytes = maxWalkBlockBytes}) async {
     final top = _windowTopOffset;
     if (!_hasOlder || top == null) return;
+    final scanned = await _scanFileHeadStrips(top, maxBytes);
+    _spliceOlderAbove(scanned.records, scanned.starts, scanned.ends);
+    if (scanned.starts.isNotEmpty) _windowTopOffset = scanned.starts.first;
+    _hasOlder = false;
+    _aboveCount = 0;
+  }
+
+  /// The bounded forward scan behind [loadAllOlder]: reads the strips in
+  /// `[0, top)` chunk by chunk (every byte read and parsed exactly once)
+  /// and returns the new records with their line starts/ends,
+  /// oldest-first. Split out of `loadAllOlder` to keep the CRAP ratchet
+  /// (CC ≤ 12) — the loop is one cohesive pass.
+  Future<({List<SessionRecord> records, List<int> starts, List<int> ends})>
+  _scanFileHeadStrips(int top, int maxBytes) async {
     final records = <SessionRecord>[];
     final starts = <int>[];
     final ends = <int>[];
@@ -448,8 +462,7 @@ final class WindowedSessionStorage
         // belongs to the resident window itself; a known id is a
         // straddler from a concurrent append. All three skip classes
         // keep the window lists file-ordered and duplicate-free.
-        if (entry.offset == 0 || entry.offset >= top) continue;
-        if (_byId.containsKey(entry.record.id)) continue;
+        if (_isScanSkippable(entry, top)) continue;
         records.add(entry.record);
         starts.add(entry.offset);
         ends.add(
@@ -462,6 +475,25 @@ final class WindowedSessionStorage
       if (next <= offset) break;
       offset = next;
     }
+    return (records: records, starts: starts, ends: ends);
+  }
+
+  /// One scan-entry skip test (see `_scanFileHeadStrips`): the session
+  /// header line, anything at/above the window top, and ids the window
+  /// already indexes (a concurrent append's straddler).
+  bool _isScanSkippable(SessionChunkEntry entry, int top) {
+    return entry.offset == 0 ||
+        entry.offset >= top ||
+        _byId.containsKey(entry.record.id);
+  }
+
+  /// The single-prepend splice behind [loadAllOlder]: block-prepends the
+  /// scanned strips to the window lists and re-indexes the records.
+  void _spliceOlderAbove(
+    List<SessionRecord> records,
+    List<int> starts,
+    List<int> ends,
+  ) {
     _entries.insertAll(0, records);
     _offsets.insertAll(0, starts);
     _ends.insertAll(0, ends);
@@ -472,9 +504,6 @@ final class WindowedSessionStorage
       _appendedBelow.remove(record.id);
       updateSessionLabelCache(_labelsById, record);
     }
-    if (starts.isNotEmpty) _windowTopOffset = starts.first;
-    _hasOlder = false;
-    _aboveCount = 0;
   }
 
   /// Record-granular budget trim for the [growOlderUntil] stop (gh-968,
