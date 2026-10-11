@@ -31,14 +31,13 @@ Future<int> _runTrajectoryCommand(
   // Phased open timing (issue #262 AC0): FA_TIMING=1 prints the
   // storage-read+parse, ledger-projection, and render durations to stderr.
   final timing = _envTruthy('FA_TIMING');
+  final parseSw = Stopwatch()..start();
   // gh-1555 W1 (d6): view --at/cost/inspect read the WHOLE branch, but
   // the resolver opened windowed (the only way past the gh-1073
   // full-open backstop). Page the rest in bounded doubling blocks —
   // chunked reads, never the refused materialized whole-file string.
-  final walkSw = Stopwatch()..start();
+  // The walk is storage read+parse, so it rides the parse phase.
   await session.ensureWholeLedgerResident();
-  walkSw.stop();
-  final parseSw = Stopwatch()..start();
   final records = await session.getBranch();
   parseSw.stop();
   final buildSw = Stopwatch()..start();
