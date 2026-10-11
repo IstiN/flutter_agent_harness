@@ -18,7 +18,13 @@ echo "→ Building Fa CLI bundle..."
 dart pub get >/dev/null 2>&1 || dart pub get
 dart build cli --target=bin/fah.dart --output=fa-local
 
-VERSION="$(grep '^version:' pubspec.yaml | awk '{print $2}')"
+# gh-1522: the committed pubspec carries the 0.0.0-dev placeholder (the git
+# tag is the single source of truth) — stamp the build version from git
+# describe: the exact tag when HEAD is tagged, else <tag>-<n>-g<sha>[-dirty].
+# A plain `dart run` (no install) shows 0.0.0-dev — acceptable and
+# self-explanatory.
+VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)"
+VERSION="${VERSION#v}"
 echo "$VERSION" > "$BUNDLE_DIR/version.txt"
 echo "→ Built fa v$VERSION"
 
