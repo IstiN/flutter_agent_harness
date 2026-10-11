@@ -78,8 +78,12 @@ Manual `workflow_dispatch` runs are input-gated: `releaseDryRun: true`
 exercises the whole pipeline without the tag push (AC1), and
 `releaseDispatch: true` on `refs/heads/main` is the real release — bare
 validation dispatches (the SM's per-PR `gh workflow run ci.yml --ref
-<branch>`) arm nothing. The release checklist is: push to main (or
-`releaseDispatch`) → watch the ci.yml `release` job cut the tag → watch
+<branch>`) arm nothing. Since gh-1537 retired the post-merge main CI run,
+ci.yml has no main-push trigger at all: merging to main fires NO CI and
+cuts NO tag — the release job arms on the 2h coalesce schedule (≤1 release
+per 2h, catching up merged commits) and on `releaseDispatch` only. The
+release checklist is: wait for a schedule tick (or fire `releaseDispatch`)
+→ watch the ci.yml `release` job cut the tag → watch
 the tag-scoped `publish`/`binaries` jobs. The daily:
 
 - lets `build-mobile.yml` / `build-macos.yml` derive their version

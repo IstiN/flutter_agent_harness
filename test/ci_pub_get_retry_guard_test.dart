@@ -67,7 +67,10 @@ const expectedUsesPerWorkflow = {
   // get there would be exactly the network roulette AC2 exists to stop.
   // 12 - 1 (gh-1522): the release-tag job is retired with the bot bump flow
   // — releases cut tags without touching files, so nothing on the release
-  // path resolves flutter_app anymore.
+  // path resolves flutter_app anymore. gh-1537 needs no release-tag.yml
+  // entry either: with the post-merge main CI run retired there are no
+  // main-push events, and the tag-only release (gh-1522) cuts its tag
+  // inside the ci.yml release job on schedule/dispatch arms.
   '.github/workflows/ci.yml': 11,
   // gh-1538: nightly slimmed to builds + integration-only — the
   // full-quality / cli-visual / flutter-app-macos jobs (3 of the 4
