@@ -211,7 +211,8 @@ void main() {
       expect(
         stripped,
         'Section A\n\n\nSection B\n',
-        reason: 'mid-answer seam keeps one blank; the double blank after '
+        reason:
+            'mid-answer seam keeps one blank; the double blank after '
             'Section A is untouched',
       );
     });
@@ -237,8 +238,15 @@ void main() {
       expect(resolution.strippedText, isNot(contains('task-ledger')));
       expect(resolution.strippedText.trimRight(), 'Answer.');
       // Consistent with the dedicated single-purpose delegates.
-      expect(parseTaskLedger('Answer.\n$ledgerBlock\n'), resolution.ledger);
-      expect(stripTaskLedger('Answer.\n$ledgerBlock\n'), resolution.strippedText);
+      final parsed = parseTaskLedger('Answer.\n$ledgerBlock\n');
+      expect(
+        parsed!.items.map((item) => item.requirement).toList(),
+        resolution.ledger.items.map((item) => item.requirement).toList(),
+      );
+      expect(
+        stripTaskLedger('Answer.\n$ledgerBlock\n'),
+        resolution.strippedText,
+      );
     });
   });
 

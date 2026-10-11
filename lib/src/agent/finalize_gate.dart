@@ -232,7 +232,11 @@ String _stripSpan(String text, _LedgerSpan span) {
   // Kept coordinates: lines[0, span.startLine) keep their indices; the
   // first line after the span lands at kept index span.startLine.
   _collapseSeamBlank(kept, span.startLine, span.startLine == 0);
-  _collapseSeamBlank(kept, span.startLine - 1, span.endLine == lines.length - 1);
+  _collapseSeamBlank(
+    kept,
+    span.startLine - 1,
+    span.endLine == lines.length - 1,
+  );
   return kept.join('\n');
 }
 

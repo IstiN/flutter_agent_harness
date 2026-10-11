@@ -149,7 +149,8 @@ Task complete.
     final messageEnds = events.whereType<MessageEndEvent>().toList();
     final assistantEnds = [
       for (final event in messageEnds)
-        if (event.message is AssistantMessage) event.message as AssistantMessage,
+        if (event.message is AssistantMessage)
+          event.message as AssistantMessage,
     ];
     expect(assistantEnds, isNotEmpty);
     final text = assistantEnds.last.content.whereType<TextContent>().map((
