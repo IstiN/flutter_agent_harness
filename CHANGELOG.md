@@ -1,5 +1,66 @@
 # Changelog
 
+Older entries: [CHANGELOG_ARCHIVE.md](CHANGELOG_ARCHIVE.md) — moved out
+on 2026-10-09 (gh-1452): pub.dev server-rejects a publish whose
+CHANGELOG.md exceeds its 262144-byte content cap, so this file keeps a
+bounded recent window and `scripts/check_changelog_size.sh` fails fast when the cap is
+approached. Since gh-1522 this file is CURATED-ONLY: add new lines under
+`## Unreleased` and the release folds them into the tag's section at
+publish-staging time — the published artifact's changelog is generated
+(and trimmed under the cap by `stamp_staged_release.sh`), and the
+publish job only WARNS on this repo file, so this file's size can never
+block a release again.
+
+## Unreleased
+
+- gh-1522: tag-sourced versions — the git tag is the single source of
+  truth. The release-bot file bumps are retired: cutting a release = a
+  tag + GitHub Release (zero commits to main, zero file mutations).
+  Both pubspecs carry the fixed `0.0.0-dev` placeholder (CI guards
+  hand-bumps), the publish job stamps the staged pubspec + generated
+  changelog section from the tag (`scripts/stamp_staged_release.sh`,
+  staged version == tag guarded pre-upload), store builds stamp
+  `--build-name/--build-number` from the derived tag version
+  (`pubspec.lock` stops churning across releases), and
+  `install_local.sh` stamps `version.txt` from `git describe`.
+
+- feat(usage): gh-1460 — the `fa-tokens:` segment-close line carries the
+  session's model id, so every token row the factory publishes is
+  attributable to a model and therefore priceable. The fold now captures
+  each segment's LAST-SEEN model id (the model that served the final
+  request, the same string settings/UI display — mid-session fallback
+  take-overs attribute the segment to the model that actually finished it;
+  zero-filled fallbacks never clobber a seen model) and the pinned line
+  shape grows an OPTIONAL `"model":"<id>"` key after `"segment"` — omitted
+  when no model was observed, so legacy lines parse unchanged and the
+  pinned regex (`usageTokensLogPattern`, gh-1241 AC7) keeps matching both
+  shapes. usage.json's schema is untouched (the model is rebuildable from
+  the chain, I6); old consumers using tolerant JSON ignore the new key,
+  and the repo's single strict consumer (the pinned constant) is updated
+  in the same change.
+
+- fix(test): gh-1460 rework — the `wrap_ansi_line_perf_test` growth-shape
+  legs measure the doubling ratio with the MINIMUM over 9 runs instead of
+  the median of 5 (CI run 38112524699, core shard 0/4: a scheduling pause
+  inflated the doubled-size median — 12.09ms against a true ~7ms — and
+  tripped the 3.2 bound at 3.65x on a genuinely linear wrap). Runner
+  jitter only ever inflates a wall-clock sample, so the min converges on
+  the true compute time; genuine superlinearity still trips the ratio
+  (the gh-1496 quadratic candidates measure ~4x by min). The absolute-
+  budget legs keep the median — their gh-1357 headroom already prices in
+  jitter. A synthetic regression test pins the pause-proof property.
+
+## 1.0.506
+
+- fix(#1044): AIIN mobile/macOS add-provider — sign-in completes but the provider is never added (#1194)
+- fix(ci): pass flutter-version explicitly — awf no longer defaults a toolchain (#1205)
+
+## 1.0.507
+
+- gh-1208 [BENCH] fix-git task image broken on CI runners — docker compose build fails in BOTH TBench-1 runs (unknown_agent_error, trial never starts) (#1218)
+- gh-1206 WIP auto-save 2026-10-04T05-52-28 (#1216)
+- gh-1209 [BENCH] usage fold skips failed trials — agent_timeout rows report 0/0 tokens though the session JSONL has full usage (#1123 follow-up) (#1215)
+
 ## 1.0.508
 
 - fix(cli): gh-1459 — headless `fa -p` no longer orphans live background
@@ -98,26 +159,6 @@
   stated, not accidental), the wake cap is single-sourced from
   `InboxWakePolicy.defaultMaxInboxWakeStreak`, and the policy file lost
   a stale copy-pasted `ignore_for_file`.
-
-
-
-Older entries: [CHANGELOG_ARCHIVE.md](CHANGELOG_ARCHIVE.md) — moved out
-on 2026-10-09 (gh-1452): pub.dev server-rejects a publish whose
-CHANGELOG.md exceeds its 262144-byte content cap, so this file keeps a
-bounded recent window and `scripts/check_changelog_size.sh` (release
-pre-tag + publish gates) fails fast when the cap is approached again.
-
-
-## 1.0.506
-
-- fix(#1044): AIIN mobile/macOS add-provider — sign-in completes but the provider is never added (#1194)
-- fix(ci): pass flutter-version explicitly — awf no longer defaults a toolchain (#1205)
-
-## 1.0.507
-
-- gh-1208 [BENCH] fix-git task image broken on CI runners — docker compose build fails in BOTH TBench-1 runs (unknown_agent_error, trial never starts) (#1218)
-- gh-1206 WIP auto-save 2026-10-04T05-52-28 (#1216)
-- gh-1209 [BENCH] usage fold skips failed trials — agent_timeout rows report 0/0 tokens though the session JSONL has full usage (#1123 follow-up) (#1215)
 
 ## 1.0.509
 
@@ -385,31 +426,3 @@ pre-tag + publish gates) fails fast when the cap is approached again.
 ## 1.0.551
 
 - gh-1459 [BUG] Headless exits with live background shell jobs (detached, results lost) — must drain+steer like subagents (gh-1440 run orphaned its full-suite job) (#1463)
-
-## Unreleased
-
-- feat(usage): gh-1460 — the `fa-tokens:` segment-close line carries the
-  session's model id, so every token row the factory publishes is
-  attributable to a model and therefore priceable. The fold now captures
-  each segment's LAST-SEEN model id (the model that served the final
-  request, the same string settings/UI display — mid-session fallback
-  take-overs attribute the segment to the model that actually finished it;
-  zero-filled fallbacks never clobber a seen model) and the pinned line
-  shape grows an OPTIONAL `"model":"<id>"` key after `"segment"` — omitted
-  when no model was observed, so legacy lines parse unchanged and the
-  pinned regex (`usageTokensLogPattern`, gh-1241 AC7) keeps matching both
-  shapes. usage.json's schema is untouched (the model is rebuildable from
-  the chain, I6); old consumers using tolerant JSON ignore the new key,
-  and the repo's single strict consumer (the pinned constant) is updated
-  in the same change.
-
-- fix(test): gh-1460 rework — the `wrap_ansi_line_perf_test` growth-shape
-  legs measure the doubling ratio with the MINIMUM over 9 runs instead of
-  the median of 5 (CI run 38112524699, core shard 0/4: a scheduling pause
-  inflated the doubled-size median — 12.09ms against a true ~7ms — and
-  tripped the 3.2 bound at 3.65x on a genuinely linear wrap). Runner
-  jitter only ever inflates a wall-clock sample, so the min converges on
-  the true compute time; genuine superlinearity still trips the ratio
-  (the gh-1496 quadratic candidates measure ~4x by min). The absolute-
-  budget legs keep the median — their gh-1357 headroom already prices in
-  jitter. A synthetic regression test pins the pause-proof property.
