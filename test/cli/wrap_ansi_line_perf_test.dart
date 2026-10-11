@@ -210,18 +210,26 @@ void main() {
   });
 
   test('wrap time grows linearly: ASCII prose, 2x input <= 3.2x time', () {
-    expectLinearGrowth(asciiProse, 100000, 'ASCII prose');
+    // 500k base cells, not 100k: at ~3ms per wrap the sample sits on the
+    // scheduler-noise floor of a shared CI runner — the run at PR #1526
+    // measured ratio 3.78x purely from jitter (one scheduling pause on the
+    // doubled sample) and red-blocked the gate. At ~16ms per wrap the same
+    // pause is proportionally ~5x smaller; the 3.2 threshold (linear ~2x,
+    // quadratic candidates ~4x+) keeps its detection margin. The sibling
+    // absolute tests already wrap 1M cells, so this scale is the intended
+    // operating point of the fixture builders, not a new one.
+    expectLinearGrowth(asciiProse, 500000, 'ASCII prose');
   });
 
   test('wrap time grows linearly: CJK prose, 2x input <= 3.2x time', () {
     // CJK walks the wide-rune tables per rune — no ASCII batching — so a
     // regression that re-measures or re-scans per emitted row would show
-    // here first.
-    expectLinearGrowth(cjkProse, 100000, 'CJK prose');
+    // here first. 500k for the same scheduler-noise reason as ASCII.
+    expectLinearGrowth(cjkProse, 500000, 'CJK prose');
   });
 
   test('wrap time grows linearly: hard-cut single word, 2x <= 3.2x', () {
-    expectLinearGrowth(oneGiantWord, 100000, 'single word');
+    expectLinearGrowth(oneGiantWord, 500000, 'single word');
   });
 
   test('wrapped output stays contract-clean at scale', () {
