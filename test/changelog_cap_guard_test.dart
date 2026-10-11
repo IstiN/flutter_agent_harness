@@ -77,6 +77,32 @@ void main() {
     },
   );
 
+  test(
+    'repo CHANGELOG.md carries EXACTLY ONE ## Unreleased section (gh-1522 curation convention)',
+    () {
+      // PR #1526 thread: the merge with main's bot commit left a SECOND,
+      // empty `## Unreleased` at the file's bottom. The machinery survives
+      // it (release_notes.sh reads only the FIRST Unreleased body; the
+      // stamper drops every Unreleased header), but the trap is silent —
+      // a contributor appending to the bottom section writes entries that
+      // never ship. One header, under it the curated window, newest-first
+      // below — pinned here.
+      final text = read('CHANGELOG.md');
+      final headers = RegExp(
+        '^## Unreleased[ \\t]*\$',
+        multiLine: true,
+      ).allMatches(text).length;
+      expect(
+        headers,
+        1,
+        reason:
+            'CHANGELOG.md must carry exactly one ## Unreleased section — '
+            'a second (usually empty, bottom-of-file) section is invisible '
+            'to release_notes.sh and silently never ships (PR #1526)',
+      );
+    },
+  );
+
   test('missing changelog fails loudly', () {
     final dir = _fixture('missing');
     expect(_run(const [], dir), 1);
