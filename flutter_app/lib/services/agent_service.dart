@@ -105,6 +105,7 @@ part 'agent_service_transcript.dart';
 part 'agent_service_inbox.dart';
 part 'agent_service_history.dart';
 part 'agent_service_wiring.dart';
+part 'agent_service_host_builder.dart';
 part 'agent_service_media.dart';
 part 'agent_service_background.dart';
 part 'agent_service_subagents.dart';
@@ -595,24 +596,18 @@ class AgentService extends ChangeNotifier
     // Session-correlation env vars (FAH_SESSION_ID/FILE/PROVIDER/MODEL) for
     // the bash tool, resolved live per exec; sits OUTSIDE the secrets
     // wrapper so neither layer can shadow the other (disjoint FAH_ names).
-    final toolEnv = SessionVarsExecutionEnv(env, _sessionEnvVars);
-    // Subagent + memory infrastructure (Phase 3a-3c): the task tool spawns
-    // children, monitoring tools let the model query/steer them, memory tools
-    // persist facts across sessions. The messaging fabric gives every agent
-    // (main + children) a file inbox colocated with the sessions — any Fa
-    // instance sharing this root can exchange messages with them.
+    // Issue #1079 slice 5: the LAYER is appended by the shared builder
+    // (baseEnv → session vars) — no hand-built `toolEnv` anymore.
+    //
+    // The messaging root: sessions root + encoded session scope +
+    // `/messages`. The builder computes the same path for the fabric
+    // (buildAgentFabric over sessionRoot + sessionCwd); this copy feeds
+    // the receipt trail and the queue closures.
     final messagesRoot =
         '$sessionsRoot/${encodeSessionCwd(env.sessionCwd)}/messages';
-    final fileFabricRepo = FileMessagingRepository(
-      env: env,
-      root: messagesRoot,
-      decodeSessionCwd: decodeSessionCwd,
-      homeDir: null,
-    );
-    // The fabric behind the agent is swappable: opting into the hub
-    // network (issue #402) swaps the hub-primary composite in without
-    // touching any holder of the reference.
-    final fabricRepo = SwappableMessagingRepository(fileFabricRepo);
+    // The swappable file fabric arrives from the builder below; the queue
+    // closures are lazy and only dereference it on delivery.
+    SwappableMessagingRepository? wiredFileFabric;
     // gh-1180 AC4: the persisted receipt trail for scheduled mail —
     // scheduled / delivered / delivery_failed / scan_failed — so a
     // post-mortem can tell "timer never fired" from "wake refused"
@@ -626,7 +621,7 @@ class AgentService extends ChangeNotifier
     );
     _scheduledMessages = ScheduledMessageQueue(
       env: env,
-      repo: () => fabricRepo,
+      repo: () => wiredFileFabric!,
       root: () => messagesRoot,
       // Self-reminders must target the session's real mailbox — the legacy
       // literal 'self' leaked them into a phantom mailbox (the fired mail
@@ -646,21 +641,6 @@ class AgentService extends ChangeNotifier
     // Arm the delivery timer; best-effort (an unwritable root keeps the
     // app booting, the tools just report unavailable).
     unawaited(_scheduledMessages.start());
-    _subagentManager = SubagentManager(
-      parentSessionId: '',
-      messaging: fabricRepo,
-      selfId: 'main',
-    );
-    // The app agent's opt-in hub membership (issue #402 AC3): the
-    // controller owns the settings store and swaps the hub-primary
-    // composite over the file fabric when enabled.
-    final network = AgentNetworkController(
-      env: env,
-      fileLayer: fileFabricRepo,
-      fileFabric: fabricRepo,
-    );
-    _agentNetwork = network;
-    unawaited(network.start());
     // Real JSONL child sessions at completion (fast register keeps the
     // steering race away; transcript lands when the child finishes).
     Future<Session> childSessionFactory(String parentId, String childId) async {
@@ -763,34 +743,6 @@ class AgentService extends ChangeNotifier
           AppLog.i('roles', notice.describe());
       _taskRolesResolver!.sessionId = () => _session?.cachedId;
     }
-    // Task tool config: childTools is set after the full registry is built
-    // (children inherit the core surface minus `task` itself). ONE shared
-    // job manager across both configs (placeholder + final) so task_cancel
-    // and the tool always see the same jobs.
-    final taskJobManager = TaskJobManager();
-    _taskConfig = TaskToolConfig(
-      childTools: const [],
-      // Live accessors (resolved per spawn): a provider switch or SSO
-      // re-auth re-points `_agent.streamFunction`, and children spawned
-      // afterwards must inherit the live credential — a wiring frozen at
-      // boot would send the stale key (401).
-      streamFunction: () => _agent.streamFunction,
-      model: () => _agent.state.model,
-      subagentManager: _subagentManager,
-      jobManager: taskJobManager,
-    );
-    // Background shell jobs (bash background: true / steer-yielded commands).
-    // Sandboxed environments without the BackgroundShell capability answer a
-    // clean "not supported" note; completions re-enter via sendText (steer
-    // mid-run, fresh turn while idle).
-    _shellJobs = ShellJobRegistry(env: toolEnv, onSettled: _onShellJobSettled);
-    // Background `task` jobs settle the same way (issue #958): the settled
-    // child's async-result re-enters the conversation — steered mid-run,
-    // a fresh turn while idle. Without this the orchestrator sits idle
-    // until the user pings.
-    _taskCompletionsSub = taskJobManager.completions.listen(
-      _onTaskJobCompleted,
-    );
     // gh-1164 Part B: JS app render/runtime/load errors ride the shared
     // error channel — a gated notice re-enters the conversation the same
     // way (steered mid-run, a fresh system-notice turn while idle).
@@ -799,186 +751,74 @@ class AgentService extends ChangeNotifier
     // the `dynamic_message` tool — session-scoped JS widgets rendered
     // inline in the transcript with the full installed-app engine surface.
     dynamicMessages = _buildDynamicMessages();
-    final registry = ToolRegistry([
-      ...builtinTools(
-        toolEnv,
-        webSearch: isOnDevice ? null : webSearchConfig,
-        shellJobs: _shellJobs,
-        onPasswordPrompt: (prompt) async => passwordPromptHandler?.call(prompt),
-        // Self-configuration on every host (issue #29 S5/AC10/AC11): the
-        // same core the `fa config` CLI verbs wrap, over THIS host's env —
-        // desktop container, browser storage, or mobile sandbox. Hosts
-        // without host-process spawning answer "not applicable" for
-        // stdio-only config keys instead of writing dead config.
-        config: ConfigService(
-          env: toolEnv,
-          homeDir: desktopHomeDir(),
-          supportsProcesses: !_noProcessPlatforms.contains(currentFaPlatform),
-        ),
+    // Issue #1079 slice 5: the core stack — env chain, capability-gated
+    // core tools, messaging fabric, task/subagent complex, registry and
+    // agent — is wired by the shared builder over the app host profile
+    // (`flutter-app`) and this shell's typed services. The shell keeps
+    // lifecycle glue: stores, prompt composition, availability, and the
+    // post-construction attachments.
+    final wired = wireAgentCore(
+      profile: flutterAppHostProfile,
+      services: _appHostServices(
+        webSearchConfig: webSearchConfig,
+        isOnDevice: isOnDevice,
+        childSessionFactory: childSessionFactory,
+        rolesResolver: _taskRolesResolver,
+        officeApi: officeApi,
       ),
-      ...memoryTools(
-        _memoryController,
-        onChanged: () => unawaited(_refreshMemorySection()),
+    );
+    wiredFileFabric = wired.fileFabric;
+    // Builder-owned complex (issue #1079 slice 3): the shell keeps only
+    // handles + callbacks.
+    _subagentManager = wired.subagentManager!;
+    _taskConfig = wired.taskConfig;
+    _shellJobs = wired.shellJobs;
+    // The app agent's opt-in hub membership (issue #402 AC3): the
+    // controller owns the settings store and swaps the hub-primary
+    // composite over the builder's file fabric when enabled.
+    final network = AgentNetworkController(
+      env: env,
+      fileLayer: wired.fileLayer!,
+      fileFabric: wired.fileFabric!,
+    );
+    _agentNetwork = network;
+    unawaited(network.start());
+    // Background `task` jobs settle the same way (issue #958): the settled
+    // child's async-result re-enters the conversation — steered mid-run,
+    // a fresh turn while idle. Without this the orchestrator sits idle
+    // until the user pings.
+    _taskCompletionsSub = wired.taskConfig!.jobManager.completions.listen(
+      _onTaskJobCompleted,
+    );
+
+    // Owner context-window cap (gh-1077): `agent.contextWindowCap`, the
+    // same project < user config chain the CLI honors. Null = uncapped.
+    _contextWindowCap = loadAppContextWindowCap(env.sessionCwd);
+    // Registry + agent: assembled by the shared builder (issue #1079
+    // slice 5) — core tools, then the app-platform extension, then the
+    // gated task surface, the canonical composition. The shell passes the
+    // composed prompt and the live stream-function picker; the builder
+    // owns every gating decision.
+    final stack = wired.buildAgentStack(
+      streamFunction: streamFunction ?? _streamFunctionFor(config),
+      spec: AgentWiringSpec(
+        model: config.toModel(),
+        systemPrompt: _composeSystemPrompt(config),
+        // The loop's over-window guard measures against the effective
+        // (capped) window, and issue #387 relief gives a hard overflow ONE
+        // synchronous compaction before the turn dies — CLI parity.
+        contextWindowCap: _contextWindowCap,
+        overWindowRelief: (overWindow) => _relieveOverWindow(overWindow),
       ),
-      // schedule_message: self-addressed delayed notes, delivered by the
-      // fabric's idle-wake (shared with the CLI). gh-970: inside a subagent
-      // run "your own mailbox" is the CHILD's — the queue's selfMailbox
-      // always resolves main.
-      scheduleMessageTool(
-        _scheduledMessages,
-        senderMailbox: () {
-          final id = activeSubagentId();
-          final manager = _subagentManager;
-          if (id == null || manager == null) return null;
-          return manager.mailboxOf(id);
-        },
-      ),
-      ...subagentMonitoringTools(
-        manager: _subagentManager,
-        jobs: taskJobManager,
-      ),
-      // taskTool is registered AFTER the child surface is built (below).
-      askTool(callback: _answerAskQuestions),
-      // Secret requests: the agent asks the user for a missing credential
-      // through the chat screen's bottom sheet; a grant is persisted into
-      // the Keys store and made live (see [_handleSecretRequest]).
-      requestSecretTool(callback: _handleSecretRequest),
-      // Interactive dynamic messages (issue #102): the agent renders a
-      // session-scoped JS widget as a chat message; the tool resolves when
-      // the host presents it. Hosts without a chat surface never register
-      // a callback, so the tool stays absent there (the CLI).
-      dynamicMessageTool(
-        callback: (request) => dynamicMessages.present(request),
-      ),
-      // System-calendar access (macOS/iOS via the `fah/calendar` channel;
-      // the tools themselves report a clean note where unsupported).
-      if (calendarPlatformSupported) ...[
-        calendarEventsTool(createCalendarService()),
-        calendarCalendarsTool(createCalendarService()),
-        calendarAddTool(createCalendarService()),
-        calendarUpdateTool(createCalendarService()),
-        calendarDeleteTool(createCalendarService()),
-      ],
-      // System-contacts access (macOS/iOS via the `fah/contacts` channel;
-      // the tools themselves report a clean note where unsupported).
-      if (contactsPlatformSupported) ...[
-        contactsSearchTool(createContactService()),
-        contactsAddTool(createContactService()),
-        contactsCallTool(createContactService()),
-        contactsSmsTool(createContactService()),
-      ],
-      // Health data (iOS-only HealthKit via the `fah/health` channel; the
-      // tool itself reports a clean note where unsupported).
-      if (healthPlatformSupported) ...[
-        healthSummaryTool(createHealthService()),
-      ],
-      // Home control (iOS-only HomeKit via the `fah/home` channel; the
-      // tools themselves report a clean note where unsupported).
-      if (homePlatformSupported) ...[
-        homeDevicesTool(createHomeService()),
-        homePowerTool(createHomeService(), turnOn: true),
-        homePowerTool(createHomeService(), turnOn: false),
-        homeSetTool(createHomeService()),
-      ],
-      // On-device automation (issue #622): mobile.* over the Android
-      // accessibility/projection/shizuku channels. The store flavor
-      // registers launch/logs only — the capability floor gates the rest
-      // with the honest sideload reason.
-      if (mobilePlatformSupported) ...mobileToolsForFlavor(),
-      // Microphone recording (macOS/iOS via the `fah/mic` channel; the
-      // tool itself reports a clean note where unsupported). Pairs with
-      // transcribe_audio below.
-      if (asrPlatformSupported) micRecordTool(createAsrService(), env),
-      // Local notifications (macOS/iOS via the `fah/notify` channel; the
-      // tool itself reports a clean note where unsupported).
-      if (notifyPlatformSupported) notifyTool(createNotifyService()),
-      // iCloud Drive sync of the sandbox sessions/apps trees (macOS/iOS
-      // via the `fah/icloud` channel; manual trigger, last-write-wins by
-      // file mtime — the tool reports guidance when the container is
-      // unavailable).
-      if (icloudSyncSupported) icloudSyncTool(createICloudSyncService(env)),
-      // Audio transcription via the media_models.json `transcription` slot
-      // when configured, otherwise the active provider (Whisper
-      // /audio/transcriptions) — resolved per call, so slot edits and
-      // provider switches are picked up. Transcribes mic_record takes and
-      // any audio file in the sandbox.
-      if (!isOnDevice)
-        transcriptionTool(
-          env,
-          () => whisperTranscriberForGateway(_mediaGateway!),
-        ),
-      // Media generation (image / TTS / music / video) against the
-      // per-modality endpoints in media_models.json, falling back to the
-      // main connection; the tools report an actionable error when the slot
-      // has no usable endpoint. Skipped for the on-device backends, which
-      // keep only the core coding tools (small tool-instruction block).
-      if (!isOnDevice) ...[
-        generateImageTool(_mediaGateway!),
-        speakTool(_mediaGateway!),
-        generateMusicTool(_mediaGateway!),
-        generateVideoTool(_mediaGateway!),
-        // Video reading through the `vision` slot (or the main connection
-        // when its model accepts images); frames come from the `fah/video`
-        // channel — the tool reports a clean note where unsupported.
-        readVideoTool(env, _videoReader!),
-      ],
-      // The widgets catalog: browse / search read-tier; the write twin
-      // (install / remove / get-source) rides the same surface gated by
-      // the approval mode.
-      appsCatalogTool(env: env),
-      appsCatalogWriteTool(env: env),
-      // Outlook taskpane (issue #182): the outlook.* mail surface over the
-      // OfficeHostBridge — present only in the office-hosted web build
-      // (FA_HOST=office) or when a test injects an api. Bodies enter
-      // context only through the quarantine fence (see outlook_tools);
-      // approval overrides for the always-prompting pair are seeded into
-      // the gate in the initializer above.
-      if (officeApi != null) ...outlookTools(officeApi),
-    ]);
-    _toolRegistry = registry;
+    );
+    _toolRegistry = stack.registry;
+    _agent = stack.agent;
     // Boot beacon for the office pane e2e (issue #182): proves the app
     // booted WITH the mail surface when running as the Outlook taskpane.
     if (officeApi != null) {
       debugPrint('[fah] office: outlook.* tools registered (office host)');
     }
-    // Wire the task tool's child surface: all tools except `task` itself
-    // and the child-only pair the executor injects per spawn — passing them
-    // through registers `reply` twice and every child dies with
-    // "Duplicate tool name" (the CLI passes coreTools, which never
-    // contains them).
-    final childSurface = registry.tools
-        .where(
-          (t) =>
-              t.name != taskToolName &&
-              !childInjectedToolNames.contains(t.name),
-        )
-        .cast<AgentTool>()
-        .toList();
-    _taskConfig = TaskToolConfig(
-      childTools: childSurface,
-      streamFunction: () => _agent.streamFunction,
-      model: () => _agent.state.model,
-      rolesResolver: _taskRolesResolver,
-      subagentManager: _subagentManager,
-      childSessionFactory: _childSessionFactory,
-      jobManager: taskJobManager,
-    );
-    // Re-register the task tool with the real child surface.
-    registry.register(taskTool(config: _taskConfig!));
-    // Owner context-window cap (gh-1077): `agent.contextWindowCap`, the
-    // same project < user config chain the CLI honors. Null = uncapped.
-    _contextWindowCap = loadAppContextWindowCap(env.sessionCwd);
-    _agent = Agent(
-      model: config.toModel(),
-      systemPrompt: _composeSystemPrompt(config),
-      streamFunction: streamFunction ?? _streamFunctionFor(config),
-      toolRegistry: registry,
-      // The loop's over-window guard measures against the effective
-      // (capped) window, and issue #387 relief gives a hard overflow ONE
-      // synchronous compaction before the turn dies — CLI parity.
-      contextWindowCap: _contextWindowCap,
-      overWindowRelief: (overWindow) => _relieveOverWindow(overWindow),
-    );
+
     // gh-1409: publish the boot discovery's enabled skills — the pin
     // registry's source set. Derived state (P2): re-published on consent
     // and toggle changes; without this the app host's pin mechanism is a
@@ -1008,17 +848,17 @@ class AgentService extends ChangeNotifier
       session: () => _session,
     );
     _compactExpand = compactExpand;
-    registry.register(compactExpand.tool);
-    _agent.state.tools = registry.tools;
+    stack.registry.register(compactExpand.tool);
+    _agent.state.tools = stack.registry.tools;
     _agent.subscribe(_onAgentEvent);
     // Capability-gated tool availability (issue #19): capabilities follow
     // the actual wiring above, the gate hides/restores per config, and the
     // seeded store choices apply before the first run.
     _toolsAvailability = AgentToolAvailability(
       agent: _agent,
-      tools: registry.tools,
+      tools: stack.registry.tools,
       onDevice: isOnDevice,
-      registry: registry,
+      registry: stack.registry,
       initialConfig: initialToolsConfig ?? const ToolsConfig(),
       // yaml `tools:` scopes under the runtime store (AC2/E1).
       configScopes: [

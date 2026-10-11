@@ -71,6 +71,16 @@ void main() {
       appSource = await File(
         'flutter_app/lib/services/agent_service.dart',
       ).readAsString();
+      // Issue #1079 slice 5: the app constructs its stack through
+      // wireAgentCore too — the interactive factories register in the
+      // builder's assembly (same region as the CLI scan above); the
+      // shell's half is the callback services in its host-builder part.
+      // Scoped to the part that builds the services: a callback passed
+      // anywhere else must not satisfy the shell guard.
+      const appWiringPath =
+          'flutter_app/lib/services/agent_service_host_builder.dart';
+      appSource += await File(appWiringPath).readAsString();
+      appSource += wiringSource.substring(assemblyStart);
     });
 
     test('every interactive tool factory is wired in the CLI', () {
@@ -84,11 +94,25 @@ void main() {
     });
 
     test('every interactive tool factory is wired in the app', () {
+      // Slice 5: the factories live in the builder's assembly (scanned
+      // above via the wiring source); the shell must pass the CALLBACK
+      // services — the app-side half of each interactive wiring.
+      const shellCallbacks = <String, String>{
+        'askTool(': 'onAsk:',
+        'requestSecretTool(': 'onRequestSecret:',
+      };
       for (final (factory, desc) in _interactiveTools) {
         expect(
           appSource,
           contains(factory),
-          reason: 'App does not register $factory — $desc',
+          reason: 'The builder assembly lost $factory — $desc',
+        );
+        expect(
+          appSource,
+          contains(shellCallbacks[factory]!),
+          reason:
+              'App does not pass ${shellCallbacks[factory]} (the '
+              '${factory.trimRight()} callback service) — $desc',
         );
       }
     });
