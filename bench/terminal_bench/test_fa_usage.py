@@ -13,6 +13,7 @@ harbor stub is conditional (gh-1535): clobbering a real harbor install
 would break the parity tests in test_fa_agent_timeout loaded later by the
 same `unittest discover` process.
 """
+import importlib.metadata
 import importlib.util
 import json
 import sys
@@ -121,9 +122,30 @@ def _real_harbor_available() -> bool:
     """
     try:
         module = importlib.import_module("harbor.agents.installed.base")
-    except ImportError:
+    except ImportError as e:
+        # gh-1535 rework: a missing TRANSITIVE dep (e.g. pydantic with a
+        # --no-deps harbor install) means harbor is present but broken —
+        # fail loudly rather than silently stubbing over it and
+        # recreating the original "FaAgent() takes no arguments" CI shape.
+        if e.name is not None and not e.name.startswith("harbor"):
+            raise
         return False
     return getattr(module, "__file__", None) is not None
+
+
+def _harbor_distribution_present() -> bool:
+    """True when a `harbor` distribution is installed, importable or not.
+
+    Distinguishes "harbor not installed" (tests may skip) from "harbor
+    installed but the sys.modules stub is bound" — the gh-1535 regression,
+    which must FAIL loudly. Distribution metadata is the signal (not
+    find_spec: a parked stub module has __spec__ None, so find_spec raises
+    ValueError and cannot answer the question).
+    """
+    try:
+        return importlib.metadata.distribution("harbor") is not None
+    except importlib.metadata.PackageNotFoundError:
+        return False
 
 
 _stub_terminal_bench()
@@ -477,16 +499,27 @@ class HarborStubHygieneTest(unittest.TestCase):
 
     def test_fa_agent_binds_real_base_when_harbor_installed(self):
         if not _real_harbor_available():
+            # gh-1535 rework: never silently disengage in the regressed
+            # state. An installed harbor distribution whose import resolves
+            # to the stub parked in sys.modules IS the bug — fail with the
+            # exact signal the parity tests would hit.
+            if _harbor_distribution_present():
+                self.fail(
+                    "harbor is installed but the sys.modules stub is bound"
+                    " (gh-1535 regression: FaAgent(logs_dir) would raise"
+                    " 'takes no arguments' in test_fa_agent_timeout)"
+                )
             self.skipTest("real harbor not installed")
         import harbor.agents.installed.base as real_base
 
         self.assertIs(
             harbor_fa_agent.BaseInstalledAgent, real_base.BaseInstalledAgent
         )
-        # The parity suite's construction shape must work against the
-        # class this module bound at import time.
-        agent = harbor_fa_agent.FaAgent.__new__(harbor_fa_agent.FaAgent)
-        agent.logs_dir = Path("/nonexistent/logs")
+        # gh-1535: exercise the REAL constructor shape the parity suite
+        # uses — FaAgent(logs_dir). __new__ + attribute assignment would
+        # pass even against the bare-stub base (no __init__), masking the
+        # regression this test exists to catch.
+        agent = harbor_fa_agent.FaAgent(Path("/nonexistent/logs"))
         self.assertEqual(agent.logs_dir, Path("/nonexistent/logs"))
 
 
