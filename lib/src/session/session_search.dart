@@ -243,79 +243,132 @@ final class SessionSearchQuery {
 /// for a quantifier. Ambiguous-alternation shapes such as `(a|aa)+` are
 /// deliberately NOT screened (see the honesty note on
 /// [sessionSearchRegexTextCapChars]).
-bool _hasNestedQuantifier(String pattern) {
-  // Per open group: the body contains a quantified atom.
-  final groupHasQuantified = <bool>[];
-  var inClass = false;
-  var escaped = false;
-  var lastAtomQuantified = false;
-  var lastAtomWasGroup = false;
-  var lastGroupHasQuantified = false;
-  for (var i = 0; i < pattern.length; i++) {
-    final ch = pattern[i];
-    if (escaped) {
-      escaped = false;
-      lastAtomQuantified = false;
-      lastAtomWasGroup = false;
-      continue;
+bool _hasNestedQuantifier(String pattern) =>
+    _NestedQuantifierScanner(pattern).scan();
+
+/// One-pass scanner behind [_hasNestedQuantifier], split so every helper
+/// stays far below the repo's CRAP ratchet (crap4dart, thresholds only
+/// down): the loop dispatches, the per-shape helpers each decide one
+/// regex construct. State is the exact field set the original local
+/// variables held — behavior-identical by construction.
+final class _NestedQuantifierScanner {
+  _NestedQuantifierScanner(this._pattern);
+
+  final String _pattern;
+
+  /// Per open group: the body contains a quantified atom.
+  final _groupHasQuantified = <bool>[];
+  var _inClass = false;
+  var _escaped = false;
+  var _lastAtomQuantified = false;
+  var _lastAtomWasGroup = false;
+  var _lastGroupHasQuantified = false;
+
+  bool scan() {
+    for (_i = 0; _i < _pattern.length; _i++) {
+      if (_step()) return true;
     }
-    if (inClass) {
-      if (ch == r'\') {
-        escaped = true;
-      } else if (ch == ']') {
-        inClass = false;
-        lastAtomQuantified = false;
-        lastAtomWasGroup = false;
-      }
-      continue;
-    }
+    return false;
+  }
+
+  var _i = 0;
+
+  /// Consumes one character; true when it finds a nested quantifier.
+  bool _step() {
+    final ch = _pattern[_i];
+    if (_consumeEscapeOrClassChar(ch)) return false;
     switch (ch) {
       case r'\':
-        escaped = true;
+        _escaped = true;
       case '[':
-        inClass = true;
+        _inClass = true;
       case '(':
-        groupHasQuantified.add(false);
-        // `(?:`, `(?=`, `(?!` — group syntax, never a quantifier on the
-        // empty atom before the body.
-        if (i + 1 < pattern.length && pattern[i + 1] == '?') i++;
-        lastAtomQuantified = false;
-        lastAtomWasGroup = false;
+        _openGroup();
       case ')':
-        if (groupHasQuantified.isNotEmpty) {
-          lastGroupHasQuantified = groupHasQuantified.removeLast();
-          lastAtomWasGroup = true;
-          lastAtomQuantified = false;
-        }
+        _closeGroup();
       case '+' || '*':
-        if (lastAtomWasGroup && lastGroupHasQuantified) return true;
-        lastAtomQuantified = true;
-        if (groupHasQuantified.isNotEmpty) groupHasQuantified.last = true;
+        return _applyQuantifier();
       case '?':
-        if (lastAtomQuantified) {
-          // Lazy/possessive modifier riding the previous quantifier.
-          lastAtomQuantified = false;
-          break;
-        }
-        // `?` never nests catastrophically (the group applies once).
-        lastAtomQuantified = true;
-        if (groupHasQuantified.isNotEmpty) groupHasQuantified.last = true;
+        return _applyOptional();
       case '{':
-        final isQuantifier = _boundedQuantifierAt(pattern, i);
-        if (!isQuantifier) {
-          lastAtomQuantified = false;
-          lastAtomWasGroup = false;
-          break;
-        }
-        if (lastAtomWasGroup && lastGroupHasQuantified) return true;
-        lastAtomQuantified = true;
-        if (groupHasQuantified.isNotEmpty) groupHasQuantified.last = true;
+        return _applyBounded();
       default:
-        lastAtomQuantified = false;
-        lastAtomWasGroup = false;
+        _resetAtom();
+    }
+    return false;
+  }
+
+  /// Handles the escaped-character and character-class contexts; true
+  /// when the character was consumed inside one of them.
+  bool _consumeEscapeOrClassChar(String ch) {
+    if (_escaped) {
+      _escaped = false;
+      _resetAtom();
+      return true;
+    }
+    if (!_inClass) return false;
+    if (ch == r'\') {
+      _escaped = true;
+    } else if (ch == ']') {
+      _inClass = false;
+      _resetAtom();
+    }
+    return true;
+  }
+
+  void _openGroup() {
+    _groupHasQuantified.add(false);
+    // `(?:`, `(?=`, `(?!` — group syntax, never a quantifier on the
+    // empty atom before the body.
+    if (_i + 1 < _pattern.length && _pattern[_i + 1] == '?') _i++;
+    _resetAtom();
+  }
+
+  void _closeGroup() {
+    if (_groupHasQuantified.isNotEmpty) {
+      _lastGroupHasQuantified = _groupHasQuantified.removeLast();
+      _lastAtomWasGroup = true;
+      _lastAtomQuantified = false;
     }
   }
-  return false;
+
+  /// A quantifier on the last atom: catastrophic iff the atom was a
+  /// group whose body quantifies.
+  bool _applyQuantifier() {
+    if (_lastAtomWasGroup && _lastGroupHasQuantified) return true;
+    _lastAtomQuantified = true;
+    _markEnclosingGroupQuantified();
+    return false;
+  }
+
+  bool _applyOptional() {
+    if (_lastAtomQuantified) {
+      // Lazy/possessive modifier riding the previous quantifier.
+      _lastAtomQuantified = false;
+      return false;
+    }
+    // `?` never nests catastrophically (the group applies once).
+    _lastAtomQuantified = true;
+    _markEnclosingGroupQuantified();
+    return false;
+  }
+
+  bool _applyBounded() {
+    if (!_boundedQuantifierAt(_pattern, _i)) {
+      _resetAtom();
+      return false;
+    }
+    return _applyQuantifier();
+  }
+
+  void _markEnclosingGroupQuantified() {
+    if (_groupHasQuantified.isNotEmpty) _groupHasQuantified.last = true;
+  }
+
+  void _resetAtom() {
+    _lastAtomQuantified = false;
+    _lastAtomWasGroup = false;
+  }
 }
 
 /// Whether [pattern] has a `{n}`, `{n,}` or `{n,m}` quantifier at [at]
