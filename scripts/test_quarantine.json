@@ -160,6 +160,16 @@
         38018978560,
         37962382097
       ]
+    },
+    {
+      "file": "test/integration/fa_tui_follow_pty_test.dart",
+      "test": "PTY: scroll-up mid-run holds the fold, arrivals count, End returns live",
+      "issue": "https://github.com/IstiN/flutter_agent_harness/issues/1467",
+      "since": "2026-10-11",
+      "runs": [
+        38047875908,
+        38041880102
+      ]
     }
   ]
 }
