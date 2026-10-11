@@ -96,8 +96,7 @@ int _stopwatchUs(void Function() body) {
 /// they could depress the ratio and leave the test green while
 /// asserting nothing).
 final class ContendedClock {
-  ContendedClock({required Set<int> spiked, this.spikeMs = 30})
-    : _spiked = spiked;
+  ContendedClock({required this._spiked, this.spikeMs = 30});
 
   final Set<int> _spiked;
 
@@ -135,31 +134,38 @@ double medianWrapMs(
   return times[runs ~/ 2];
 }
 
+/// Independent doubling samples per growth assertion (gh-1532): the
+/// superlinear guard is gated on the MIN ratio across the attempts —
+/// contention can only ADD wall time, so the min approaches the
+/// uncontended ratio. A genuine regression measures ~4x+ in every
+/// attempt and still fails.
+const _growthAttempts = 3;
+
+/// Upper bound of the doubling ratio for a linear wrap: linear wraps
+/// measure ~2x here; the old quadratic candidates (re-scan per emitted
+/// row) measure ~4x+. 3.2 sits between with room for CI scheduler
+/// jitter on both sides.
+const _maxLinearRatio = 3.2;
+
+/// Lower bound of the doubling ratio across the attempts (linear ≈ 2x):
+/// the max must clear it so a degenerate flat measurement cannot pass
+/// — the retry-min must not become a rubber stamp.
+const _minGrowthRatio = 1.5;
+
 /// Growth-shape contract: doubling the input must not more than
-/// [maxLinearRatio] the median time. Linear wraps measure ~2x here; the
-/// old quadratic candidates (re-scan per emitted row) measure ~4x+. 3.2
-/// sits between with room for CI scheduler jitter on both sides.
-///
-/// Hermetic against loaded runners (gh-1532): instead of a single doubling
-/// sample, [attempts] independent samples are taken. Contention can only
-/// ADD wall time, so the min ratio across attempts approaches the
-/// uncontended value and is used for the superlinear guard — a genuine
-/// regression measures ~4x+ in every attempt and still fails. The max
-/// ratio across attempts must clear [minGrowthRatio] (linear ≈ 2x) so a
-/// degenerate flat measurement cannot pass: the retry-min must not become
-/// a rubber stamp.
+/// [_maxLinearRatio] the median time — see the constants above for the
+/// guard bounds and the gh-1532 rationale (min across attempts gates
+/// the superlinear guard; the max across attempts must clear
+/// [_minGrowthRatio] so a degenerate flat measurement fails).
 void expectLinearGrowth(
   String Function(int cells) build,
   int baseCells,
   String label, {
-  int attempts = 3,
-  double maxLinearRatio = 3.2,
-  double minGrowthRatio = 1.5,
   ElapsedUs? elapsedUs,
 }) {
   var minRatio = double.infinity;
   var maxRatio = 0.0;
-  for (var a = 0; a < attempts; a++) {
+  for (var a = 0; a < _growthAttempts; a++) {
     final small = medianWrapMs(build(baseCells), 80, elapsedUs: elapsedUs);
     final doubled = medianWrapMs(
       build(baseCells * 2),
@@ -172,19 +178,19 @@ void expectLinearGrowth(
   }
   expect(
     minRatio,
-    lessThan(maxLinearRatio),
+    lessThan(_maxLinearRatio),
     reason:
         '$label wrap is superlinear in input size: best doubling ratio '
-        'across $attempts attempts is ${minRatio.toStringAsFixed(2)}x '
+        'across $_growthAttempts attempts is ${minRatio.toStringAsFixed(2)}x '
         '($baseCells -> ${baseCells * 2} cells)',
   );
   expect(
     maxRatio,
-    greaterThan(minGrowthRatio),
+    greaterThan(_minGrowthRatio),
     reason:
-        '$label doubling ratio never exceeded ${minGrowthRatio}x '
-        '(${maxRatio.toStringAsFixed(2)}x across $attempts attempts) — '
-        'the measurement is degenerate and asserts nothing',
+        '$label doubling ratio never exceeded ${_minGrowthRatio}x '
+        '(${maxRatio.toStringAsFixed(2)}x across $_growthAttempts '
+        'attempts) — the measurement is degenerate and asserts nothing',
   );
 }
 
@@ -257,7 +263,11 @@ void main() {
       // exact call layout (3 attempts × 2 sizes × 5 timed runs). If that
       // layout ever changes the spikes silently land on the wrong
       // measurements — this assertion turns that into a loud failure.
-      expect(spike.calls, 30, reason: 'the spiked indices encode the call layout');
+      expect(
+        spike.calls,
+        30,
+        reason: 'the spiked indices encode the call layout',
+      );
     },
   );
 
