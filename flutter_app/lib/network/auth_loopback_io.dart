@@ -35,6 +35,7 @@ final class LoopbackOAuthReceiver implements OAuthCallbackReceiver {
   final HttpServer _server;
   final Completer<Uri> _completer = Completer<Uri>();
   StreamSubscription<HttpRequest>? _subscription;
+  Timer? _timer;
 
   @override
   final Uri redirectUri;
@@ -53,7 +54,8 @@ final class LoopbackOAuthReceiver implements OAuthCallbackReceiver {
       }
     });
     // The flow must not wait on the browser forever.
-    Timer(timeout, () {
+    _timer = Timer(timeout, () {
+      _timer = null;
       if (!_completer.isCompleted) {
         _completer.completeError(
           const AuthFlowException(
@@ -66,6 +68,8 @@ final class LoopbackOAuthReceiver implements OAuthCallbackReceiver {
 
   @override
   void close() {
+    _timer?.cancel();
+    _timer = null;
     // Fire-and-forget: cancel/close futures resolve on the zone's event
     // queue — awaiting them inside a fake-async test wedges the runner.
     final subscription = _subscription;
@@ -82,16 +86,12 @@ final class LoopbackOAuthReceiver implements OAuthCallbackReceiver {
 Future<OAuthCallbackReceiver> startOAuthCallbackReceiverImpl() async {
   if (Platform.isIOS || Platform.isAndroid) {
     final appLinks = AppLinks();
-    Uri? initial;
-    try {
-      initial = await appLinks.getInitialLink();
-    } on Object {
-      // Best-effort: the stream listener below is the primary path.
-      initial = null;
-    }
-    return DeepLinkOAuthReceiver.bind(
+    // Subscribe to the link stream BEFORE checking the initial link —
+    // a link delivered in between is dropped otherwise (see
+    // DeepLinkOAuthReceiver.bindWithInitialLink).
+    return DeepLinkOAuthReceiver.bindWithInitialLink(
       links: appLinks.uriLinkStream,
-      initialLink: initial,
+      getInitialLink: appLinks.getInitialLink,
     );
   }
   return LoopbackOAuthReceiver.bind();
