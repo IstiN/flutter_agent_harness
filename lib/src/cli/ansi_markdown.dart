@@ -25,7 +25,7 @@ library;
 
 import 'package:meta/meta.dart';
 
-import 'tui_text_width.dart' show tuiTextWidth;
+import 'tui_text_width.dart' show tuiRuneCellWidth, tuiTextWidth;
 import 'tui_theme.dart';
 import 'pi_mode.dart' show isTruthyEnvValue;
 
@@ -668,12 +668,270 @@ final class AnsiMarkdown {
       tuiTextWidth(text.replaceAll(_ansiRe, ''));
 }
 
-/// Tokenizer for [wrapAnsiLine] — hoisted: it runs per wrapped line, and
-/// building the RegExp there dominated the wrap cost on long histories.
-final _ansiTokenRe = RegExp(r'\x1b\[[0-9;]*m|.', unicode: true);
-
 /// First-byte markers for markdown block candidates (#, >, -, *, +, space).
 const _blockMarkerChars = {0x23, 0x3E, 0x2D, 0x2A, 0x2B, 0x20};
+
+/// One batched wrap token: a maximal run of same-width plain runes, one
+/// SGR escape, one zero-width rune, or a boundary space. Batching is what
+/// makes the wrap single-allocation per RUN instead of per character (the
+/// old per-char regex tokenizer allocated a String and a width call for
+/// every visible cell, which dominated transcript render profiles).
+/// [runeWidth] is the per-rune cell width; [runes] the rune count;
+/// [isStyle] marks SGR escapes (and lone ESC bytes, which the old
+/// tokenizer's `.` alternative matched as a visible zero-width rune and
+/// writeToken parked in the active-style list — reproduced verbatim);
+/// [isSpace] marks the word-boundary space event.
+final class _WrapPart {
+  _WrapPart(this.text, this.runeWidth, this.runes)
+    : isStyle = false,
+      isSpace = false;
+
+  _WrapPart.style(this.text)
+    : runeWidth = 0,
+      runes = 0,
+      isStyle = true,
+      isSpace = false;
+
+  _WrapPart.space()
+    : text = ' ',
+      runeWidth = 1,
+      runes = 1,
+      isStyle = false,
+      isSpace = true;
+
+  final String text;
+  final int runeWidth;
+  final int runes;
+  final bool isStyle;
+  final bool isSpace;
+}
+
+/// Mutable wrap cursor shared by the wrap helpers: emitted rows, the row
+/// under construction, SGR codes active at the write position (since the
+/// last reset), the current visible column, and the word being accumulated
+/// (whole parts + its visible length — widths are carried on the parts; the
+/// old code re-measured every token inside flushWord).
+final class _WrapState {
+  _WrapState(this.width);
+
+  final int width;
+  final rows = <String>[];
+  final row = StringBuffer();
+  final activeSgr = <String>[];
+  final wordParts = <_WrapPart>[];
+  var wordVisible = 0;
+  var col = 0;
+}
+
+/// Closes the row under construction: active styles end with a reset, and
+/// the continuation row re-opens them (dart_tui redraws rows independently,
+/// so terminal state never carries across a newline).
+void _wrapCloseRow(_WrapState s) {
+  if (s.activeSgr.isNotEmpty) s.row.write('\x1b[0m');
+  s.rows.add(s.row.toString());
+  s.row
+    ..clear()
+    ..writeAll(s.activeSgr);
+  s.col = 0;
+}
+
+/// Writes one SGR token, tracking the active-style list that closeRow
+/// re-emits (`\x1b[0m` clears; anything else stacks).
+void _wrapWriteStyle(_WrapState s, String token) {
+  s.row.write(token);
+  if (token == '\x1b[0m') {
+    s.activeSgr.clear();
+  } else {
+    s.activeSgr.add(token);
+  }
+}
+
+/// True for the bytes the SGR body accepts between `[` and `m`.
+bool _isSgrParamByte(int unit) =>
+    (unit >= 0x30 && unit <= 0x39) || unit == 0x3b;
+
+/// Length of the complete SGR escape starting at unit [i]
+/// (`ESC [ [0-9;]* m` — the exact shape the old wrap regex matched), or 0
+/// when the ESC byte does not head one.
+int _sgrTokenLength(List<int> units, int i, int n) {
+  var k = i + 1;
+  if (k >= n || units[k] != 0x5b) return 0;
+  k++;
+  while (k < n && _isSgrParamByte(units[k])) {
+    k++;
+  }
+  if (k < n && units[k] == 0x6d) return k + 1 - i;
+  return 0;
+}
+
+/// True when [i] sits on a high surrogate paired with a low surrogate —
+/// the two units are ONE rune (the old unicode-aware regex `.` matched
+/// them as a single token).
+bool _isSurrogatePairAt(List<int> units, int i, int unit) =>
+    unit >= 0xd800 &&
+    unit <= 0xdbff &&
+    i + 1 < units.length &&
+    units[i + 1] >= 0xdc00 &&
+    units[i + 1] <= 0xdfff;
+
+/// Hard-cut one same-width run across rows: per-rune equivalence with the
+/// old token walk — close before the first rune that overflows a
+/// non-empty row; a rune landing on a fresh row is written even when it
+/// alone overflows (never an empty overflowing row).
+///
+/// The char offset of the rune cursor is carried FORWARD incrementally
+/// (one decode step per rune, O(runes) per part) — re-walking from the
+/// start per slice made non-ASCII hard-cuts O(runes²). Whole-unit runs
+/// (`runes == unit count`: all ASCII, all BMP CJK) skip the decode.
+void _wrapWriteRunSliced(_WrapState s, _WrapPart part) {
+  final w = part.runeWidth;
+  final units = part.text.codeUnits;
+  final oneUnitRunes = part.runes == part.text.length;
+  var from = 0; // rune cursor
+  var off = 0; // char offset of rune [from]
+  while (from < part.runes) {
+    if (s.col > 0 && s.col + w > s.width) _wrapCloseRow(s);
+    final cap = s.col == 0
+        ? (w > s.width ? 1 : s.width ~/ w)
+        : (s.width - s.col) ~/ w;
+    if (cap <= 0) continue; // row was full: _wrapCloseRow above emptied it
+    var take = cap < part.runes - from ? cap : part.runes - from;
+    final start = off;
+    if (oneUnitRunes) {
+      off += take;
+    } else {
+      for (var r = 0; r < take; r++) {
+        off += _isSurrogatePairAt(units, off, units[off]) ? 2 : 1;
+      }
+    }
+    s.row.write(part.text.substring(start, off));
+    s.col += take * w;
+    from += take;
+  }
+}
+
+/// The hard-cut branch of [_wrapFlushWord]: a word wider than [width].
+/// Styles are written wherever the cursor is (the old walk only closed on
+/// visible tokens); zero-width runes keep the same close check as any
+/// token — `col + 0 > width` is false on rows within the width, but a row
+/// already overflowing (a wide rune written on an empty row) closes before
+/// the rune, exactly like the old per-token walk.
+void _wrapFlushHardCut(_WrapState s) {
+  for (final part in s.wordParts) {
+    if (part.isStyle) {
+      _wrapWriteStyle(s, part.text);
+    } else if (part.runeWidth == 0) {
+      if (s.col > s.width) _wrapCloseRow(s);
+      s.row.write(part.text);
+    } else {
+      _wrapWriteRunSliced(s, part);
+    }
+  }
+}
+
+/// The fitting branch of [_wrapFlushWord]: the whole word goes on the
+/// current row once it fits (after at most one close).
+void _wrapFlushFit(_WrapState s) {
+  if (s.col > 0 && s.col + s.wordVisible > s.width) _wrapCloseRow(s);
+  for (final part in s.wordParts) {
+    if (part.isStyle) {
+      _wrapWriteStyle(s, part.text);
+    } else {
+      s.row.write(part.text);
+      s.col += part.runes * part.runeWidth;
+    }
+  }
+}
+
+/// Emits one accumulated word: hard-cut when it is wider than the row,
+/// else written whole after a possible single close.
+void _wrapFlushWord(_WrapState s) {
+  if (s.wordParts.isEmpty) return;
+  if (s.wordVisible > s.width) {
+    // A single word longer than the width: hard-cut it across rows.
+    if (s.col > 0) _wrapCloseRow(s);
+    _wrapFlushHardCut(s);
+  } else {
+    _wrapFlushFit(s);
+  }
+  s.wordParts.clear();
+  s.wordVisible = 0;
+}
+
+/// Tokenizes [line] into [_WrapPart]s: maximal same-width plain runs, SGR
+/// escapes (or lone ESC bytes), zero-width runes, and boundary spaces. The
+/// old tokenizer emitted one token per rune; batching adjacent equal-width
+/// runes into one substring keeps the token stream's semantics (order,
+/// widths, close positions) while removing the per-character regex match +
+/// String allocation.
+List<_WrapPart> _tokenizeWrapParts(String line) {
+  final parts = <_WrapPart>[];
+  // Pending same-width plain run, flushed when a rune of another class
+  // arrives ([end] = index just past the run's last unit).
+  var runStart = -1;
+  var runWidth = 0;
+  var runRunes = 0;
+
+  void endRun(int end) {
+    if (runStart < 0) return;
+    parts.add(_WrapPart(line.substring(runStart, end), runWidth, runRunes));
+    runStart = -1;
+  }
+
+  final units = line.codeUnits;
+  final n = units.length;
+  var i = 0;
+  while (i < n) {
+    final u = units[i];
+    if (u == 0x20) {
+      endRun(i);
+      parts.add(_WrapPart.space());
+      i++;
+      continue;
+    }
+    if (u == 0x1b) {
+      endRun(i);
+      // SGR escape, or a lone visible ESC byte (the regex's `.`
+      // alternative matched it as a zero-width rune).
+      final len = _sgrTokenLength(units, i, n);
+      if (len > 0) {
+        parts.add(_WrapPart.style(line.substring(i, i + len)));
+        i += len;
+      } else {
+        parts.add(_WrapPart.style('\x1b'));
+        i++;
+      }
+      continue;
+    }
+    // Decode one rune (surrogate pairs stay one token).
+    int rune;
+    var len = 1;
+    if (_isSurrogatePairAt(units, i, u)) {
+      rune = 0x10000 + ((u - 0xd800) << 10) + (units[i + 1] - 0xdc00);
+      len = 2;
+    } else {
+      rune = u;
+    }
+    final w = tuiRuneCellWidth(rune);
+    if (w == 0) {
+      endRun(i);
+      parts.add(_WrapPart(line.substring(i, i + len), 0, 1));
+      i += len;
+      continue;
+    }
+    if (runStart < 0 || w != runWidth) {
+      endRun(i);
+      runStart = i;
+      runWidth = w;
+      runRunes = 1;
+    } else {
+      runRunes++;
+    }
+    i += len;
+  }
+  endRun(n);
+  return parts;
+}
 
 /// Wraps one ANSI-styled line to [width] visible CELL columns WITHOUT
 /// cutting inside SGR escape sequences — dart_tui's viewport wrap slices raw
@@ -706,96 +964,28 @@ List<String> wrapAnsiLine(String line, int width) {
       : tuiTextWidth(line);
   if (visible <= width) return [line];
 
-  final rows = <String>[];
-  final row = StringBuffer();
-  var col = 0;
-  // SGR codes active at the current write position (since the last reset).
-  final activeSgr = <String>[];
-  // The word being accumulated: whole tokens (chars + inline SGR) and its
-  // visible length.
-  final wordTokens = <String>[];
-  var wordVisible = 0;
-
-  void closeRow() {
-    if (activeSgr.isNotEmpty) row.write('\x1b[0m');
-    rows.add(row.toString());
-    row
-      ..clear()
-      ..writeAll(activeSgr);
-    col = 0;
-  }
-
-  void writeToken(String token, int visibleLen) {
-    row.write(token);
-    col += visibleLen;
-    if (token.startsWith('\x1b')) {
-      if (token == '\x1b[0m') {
-        activeSgr.clear();
+  final s = _WrapState(width);
+  for (final part in _tokenizeWrapParts(line)) {
+    if (part.isSpace) {
+      _wrapFlushWord(s);
+      // A boundary space ends the closing row when it fits; at the very
+      // edge it is dropped rather than becoming an invisible leading
+      // space.
+      if (s.col + 1 <= width) {
+        s.row.write(' ');
+        s.col++;
       } else {
-        activeSgr.add(token);
-      }
-    }
-  }
-
-  void flushWord() {
-    if (wordTokens.isEmpty) return;
-    if (wordVisible > width) {
-      // A single word longer than the width: hard-cut it across rows.
-      if (col > 0) closeRow();
-      for (final token in wordTokens) {
-        final tokenWidth = _tokenWidth(token);
-        // Close before an overflowing token, but never emit an empty row
-        // (a single wide token on a 1-cell row just overflows as-is).
-        if (col > 0 && !token.startsWith('\x1b') && col + tokenWidth > width) {
-          closeRow();
-        }
-        writeToken(token, tokenWidth);
+        _wrapCloseRow(s);
       }
     } else {
-      if (col > 0 && col + wordVisible > width) closeRow();
-      for (final token in wordTokens) {
-        writeToken(token, _tokenWidth(token));
-      }
+      s.wordParts.add(part);
+      if (!part.isStyle) s.wordVisible += part.runes * part.runeWidth;
     }
-    wordTokens.clear();
-    wordVisible = 0;
   }
-
-  for (final match in _ansiTokenRe.allMatches(line)) {
-    final token = match.group(0)!;
-    if (token == ' ') {
-      flushWord();
-      // A boundary space ends the closing row when it fits; at the very edge
-      // it is dropped rather than becoming an invisible leading space.
-      if (col + 1 <= width) {
-        writeToken(token, 1);
-      } else {
-        closeRow();
-      }
-      continue;
-    }
-    wordTokens.add(token);
-    if (!token.startsWith('\x1b')) wordVisible += _tokenWidth(token);
-  }
-  flushWord();
+  _wrapFlushWord(s);
   // A row holding only re-emitted SGR codes (no visible columns) is dropped.
-  if (col > 0) closeRow();
-  return rows;
-}
-
-/// The cell width of one wrap token: SGR escapes take no columns, anything
-/// else is measured by grapheme cluster (fast path: a single ASCII rune).
-int _tokenWidth(String token) {
-  if (token.startsWith('\x1b')) return 0;
-  if (token.length == 1) {
-    final unit = token.codeUnitAt(0);
-    // ASCII fast path: C0 controls are zero-width, printable ASCII is one
-    // cell; everything wider/combining falls to the full measurement.
-    if (unit < 0x80) {
-      return (unit < 0x20 || unit == 0x7f) ? 0 : 1;
-    }
-  }
-  return tuiTextWidth(token);
+  if (s.col > 0) _wrapCloseRow(s);
+  return s.rows;
 }
 
 /// Incremental transcript formatter backing the fa TUI's `_WrapCache`
@@ -864,9 +1054,13 @@ final class TranscriptMarkdown {
 
   // Durable caches for src[0.._through): formatted lines, wrapped rows and
   // the line-to-row start index (total-row sentinel appended).
-  List<String> _formatted = const [];
-  List<String> _rows = const [];
-  List<int> _starts = const [0];
+  // MUTATED IN PLACE by [_commitTo]/[_rollbackGrownTail] — copying the
+  // whole accumulated arrays on every sync was O(transcript) per flush,
+  // O(total²) across a session (gh-1496). Published views are re-exposed
+  // by [_expose] on every sync, so no stale alias is ever served.
+  List<String> _formatted = <String>[];
+  List<String> _rows = <String>[];
+  List<int> _starts = <int>[0];
 
   // Published views = durable caches (plus nothing today: an open-table
   // tail re-renders wholesale on the NEXT sync instead of being frozen
@@ -885,10 +1079,10 @@ final class TranscriptMarkdown {
   /// Start index into [_formatted] per SOURCE line (sentinel = current
   /// length) — lets the rollback drop exactly one source line's formatted
   /// output without a per-line map on the hot path.
-  List<int> _srcFmtStarts = const [0];
+  List<int> _srcFmtStarts = <int>[0];
 
   /// Start row into [_rows] per SOURCE line (sentinel = current length).
-  List<int> _srcRowStarts = const [0];
+  List<int> _srcRowStarts = <int>[0];
 
   // Work counters — contract tests assert these, never timings.
   static int debugFullRebuilds = 0;
@@ -923,14 +1117,20 @@ final class TranscriptMarkdown {
   String? get debugBoundaryFirstForTest => _boundaryFirst;
 
   /// Formatted lines rendered so far.
+  ///
+  /// Live view: the lists published by the last [sync] — clean commits
+  /// publish the durable caches directly (gh-1496 removed the per-sync
+  /// spread copies, so a clean sync is zero-copy), never partially
+  /// mutated between syncs. Treat as read-only: mutate your own copy.
   List<String> get formattedLines => _viewFormatted;
 
-  /// Wrapped physical rows rendered so far.
+  /// Wrapped physical rows rendered so far. Live view — see
+  /// [formattedLines].
   List<String> get wrappedRows => _viewRows;
 
   /// `lineStartRows[i]` = first wrapped row of rendered line `i`; final
   /// entry is the total-row-count sentinel (the exact shape `_WrapCache`
-  /// stores).
+  /// stores). Live view — see [formattedLines].
   List<int> get lineStartRows => _viewStarts;
 
   /// Brings every view in line with [src]; returns [formattedLines].
@@ -1094,25 +1294,26 @@ final class TranscriptMarkdown {
   void _commitTo(_WalkResult r, List<String> src, {required int from}) {
     final upto = r.lastClean + 1; // count of leading final steps
     if (upto <= 0) return;
-    final formatted = [..._formatted];
-    final rows = [..._rows];
-    final starts = [..._starts]..removeLast(); // per formatted line
-    final fmtStarts = [..._srcFmtStarts]..removeLast(); // per source line
-    final rowStarts = [..._srcRowStarts]..removeLast(); // per source line
+    // In-place append (gh-1496): the old spread-copies rebuilt the ENTIRE
+    // accumulated arrays on every sync — O(transcript) per flush and
+    // O(total²) per session. [_expose] republishes fresh views right
+    // after, so aliases are never served stale (same pattern as
+    // [_rollbackGrownTail]).
+    _starts.removeLast(); // per formatted line
+    _srcFmtStarts.removeLast(); // per source line
+    _srcRowStarts.removeLast(); // per source line
     for (var step = 0; step < upto; step++) {
-      fmtStarts.add(formatted.length);
-      rowStarts.add(rows.length);
+      _srcFmtStarts.add(_formatted.length);
+      _srcRowStarts.add(_rows.length);
       for (final line in r.outsPerLine[step]) {
-        starts.add(rows.length);
-        formatted.add(line);
-        rows.addAll(wrapAnsiLine(line, width));
+        _starts.add(_rows.length);
+        _formatted.add(line);
+        _rows.addAll(wrapAnsiLine(line, width));
       }
     }
-    _formatted = formatted;
-    _rows = rows;
-    _starts = [...starts, rows.length];
-    _srcFmtStarts = [...fmtStarts, formatted.length];
-    _srcRowStarts = [...rowStarts, rows.length];
+    _starts.add(_rows.length);
+    _srcFmtStarts.add(_formatted.length);
+    _srcRowStarts.add(_rows.length);
     _through = from + upto;
     if (from == 0) _boundaryFirst ??= src.first;
     _boundaryLast = src[_through - 1];
