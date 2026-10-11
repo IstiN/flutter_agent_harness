@@ -10,7 +10,11 @@
 //   (1) the composer input row holds ONLY the cursor — zero submitted text;
 //   (2) the sent echo appears EXACTLY ONCE, directly above the ticker row;
 //   (3) the ticker updates IN PLACE (between two 1 Hz ticks only the
-//       spinner glyph and the seconds cell move, on the busy row alone);
+//       spinner glyph and the seconds cell move, on the busy row alone;
+//       gh-1413: the transcript ABOVE the ticker is not part of this
+//       contract — legitimate mid-run appends land there between the
+//       samples — the pinned block from the ticker row down is what must
+//       stay static);
 //   (4) the footer is on its own last row, above it the input-frame rule;
 //   (5) zero wrapped/overlapping rows: the frame is exactly the screen
 //       height and no row exceeds the width.
@@ -55,8 +59,23 @@ void main() {
         ..enqueueText('seeds done')
         // Turn 2 is the probe submit's own run: a long tool call keeps the
         // ticker alive while the queue fills and the frames are sampled.
-        ..enqueueToolCall('bash', '{"command": "sleep 25"}')
+        // gh-1413: 55s — far beyond the probe-to-sampling horizon (~10s
+        // even on a loaded runner) yet still under the bash tool's 60s
+        // bare-sleep denial (#1349), so the probe turn cannot hand the run
+        // to the queue drain while the frames are being compared.
+        ..enqueueToolCall('bash', '{"command": "sleep 55"}')
         ..enqueueText('probe turn done');
+      // gh-1413: the queue drain runs one turn per filler after the busy
+      // run ends, and each turn is one API call. The mock answers an
+      // unscripted request with HTTP 500 `script exhausted`, and the CLI
+      // surfaces every retry as a `[net] connection lost … retrying`
+      // transcript notice — run 37774628085 caught one landing exactly
+      // between the two sampled frames (5 changed rows instead of 1).
+      // Script every drain turn (plus spares) so that ladder can never
+      // arm, whichever failure mode ends the busy run early.
+      for (var i = 0; i < _queueFillers + 4; i++) {
+        server.enqueueText('drain ack ${i + 1}');
+      }
       addTearDown(server.stop);
       File('${tempHome.path}/.fah/config.yaml')
         ..createSync(recursive: true)
@@ -192,22 +211,36 @@ tui:
       }
 
       // ── (3) the ticker updates IN PLACE ─────────────────────────────────
+      // gh-1413: the transcript ABOVE the ticker is not part of this grid
+      // contract — legitimate mid-run output (a queued-turn reply, a
+      // `[net] connection lost … retrying` notice) appends there between
+      // the two samples and shifts the fold header, which is exactly what
+      // red run 37774628085 caught (5 changed rows instead of 1). The #496
+      // regression class lives in the PINNED BLOCK from the ticker row
+      // down: queue chrome, input row and footer must not move at all,
+      // and the ticker row itself must move only in its seconds cell
+      // (gh-1446 retired the spinner glyph).
       expect(gridB.length, gridA.length, reason: 'no row count drift');
-      var changed = 0;
-      var busyIdx = -1;
-      for (var i = 0; i < gridA.length; i++) {
-        if (gridA[i] != gridB[i]) {
-          changed++;
-          busyIdx = i;
-        }
-      }
-      expect(changed, 1,
-          reason: 'only the busy row may move between ticks:\n'
+      final busyIdx = busyRows.single;
+      expect(gridB[busyIdx], contains('· submit'),
+          reason: 'the ticker stays on its row between ticks:\n'
               'A:\n${dump(gridA)}\nB:\n${dump(gridB)}');
-      expect(busyIdx, busyRows.single);
+      for (var i = busyIdx + 1; i < gridA.length; i++) {
+        expect(gridB[i], gridA[i],
+            reason: 'below the ticker every row is static between ticks '
+                '(row $i):\nA:\n${dump(gridA)}\nB:\n${dump(gridB)}');
+      }
+      // The ticker actually ticked: any 1.2s window crosses a second
+      // boundary, so the elapsed cell always moves.
+      expect(gridA[busyIdx], isNot(gridB[busyIdx]),
+          reason: 'the ticker row moved between ticks:\n'
+              'A:\n${dump(gridA)}\nB:\n${dump(gridB)}');
       // gh-1446 retired the face zone: the row is plain text, only the
       // seconds digits move. (kKaomojiFaceZoneCells survives only as the
-      // retired-zone constant; nothing is stripped here anymore.)
+      // retired-zone constant; nothing is stripped here anymore. gh-1413:
+      // the busy row's label is stable across one tick — the phase can
+      // only change via a relabel message, never spontaneously — so the
+      // whole-row digit strip compares label + suffix byte-for-byte.)
       String masked(String row) => row.replaceAll(RegExp(r'\d'), '#');
       expect(masked(gridA[busyIdx]), masked(gridB[busyIdx]),
           reason: 'inside the ticker only spinner + seconds move');
