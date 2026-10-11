@@ -16,6 +16,7 @@ library;
 import 'dart:async';
 import 'dart:ui' show PlatformDispatcher;
 
+import 'package:fa/boot/boot_watchdog.dart';
 import 'package:fa/firebase_options.dart';
 import 'package:fa/l10n/app_localizations.dart';
 import 'package:fa/network/key_wallet.dart';
@@ -131,6 +132,12 @@ final class BootStores {
   final QuotaStore quotas;
 }
 
+/// The process-wide boot watchdog (gh-1507): one instance, installed once
+/// — [BootWatchdog.install] is idempotent. The first frame cancels the
+/// pre-frame phase; the restore phase ([BootWatchdog.beginRestore] →
+/// [BootWatchdog.restoreDone]) covers the post-frame restore chain.
+final BootWatchdog kBootWatchdog = BootWatchdog();
+
 /// The boot pipeline. `main()` constructs it with the app's routes stage
 /// and calls [run] — zero logic in `main()` itself.
 final class FaAppBoot {
@@ -160,7 +167,13 @@ final class FaAppBoot {
   /// never saw it.
   Future<void> run() async {
     bootWindow();
+    // gh-1507: the first-frame watchdog goes up right after the window
+    // stage (the binding exists now) so a pre-frame wedge is breadcrumbed
+    // with the last completed boot step.
+    kBootWatchdog.install();
+    BootSteps.mark('window');
     await bootServices();
+    BootSteps.mark('services');
     return _runStages(await createEnv());
   }
 
@@ -171,7 +184,10 @@ final class FaAppBoot {
   /// [_runStages], so no stage executes twice.
   Future<void> runWithEnv(ExecutionEnv env) async {
     bootWindow();
+    kBootWatchdog.install();
+    BootSteps.mark('window');
     await bootServices();
+    BootSteps.mark('services');
     return _runStages(env);
   }
 
@@ -181,9 +197,13 @@ final class FaAppBoot {
     );
     // From here the in-app log also persists to logs/app.log in the sandbox.
     AppLog.attach(env);
+    BootSteps.mark('env');
     final stores = await loadBootStores(env);
+    BootSteps.mark('storage');
     final analytics = await bootTelemetry();
+    BootSteps.mark('telemetry');
     await routes(stores, analytics);
+    BootSteps.mark('routes-mounted');
   }
 }
 
@@ -229,32 +249,56 @@ Future<BootStores> loadBootStores(ExecutionEnv env) async {
   // iOS/macOS persist API keys in the platform Keychain (see
   // [KeychainStore]); other platforms fall back to file/session storage.
   const keychain = KeychainStore();
+  BootSteps.begin('storage:sessionKeys');
   final sessionKeys = await SessionKeysStore.load(env, keychain: keychain);
+  BootSteps.mark('storage:sessionKeys');
+  BootSteps.begin('storage:registry');
   final registry = await ProviderRegistry.load(
     env,
     keychain: keychain,
     // Copilot deletes must reach the entry-scoped token's fallback home.
     sessionKeys: sessionKeys,
   );
+  BootSteps.mark('storage:registry');
   debugPrint('[fah] provider registry loaded');
+  BootSteps.begin('storage:lastConnection');
   final lastConnection = await LastConnectionStore.load(env);
+  BootSteps.mark('storage:lastConnection');
   debugPrint('[fah] last connection loaded');
+  BootSteps.begin('storage:theme');
   final themeController = await ThemeController.load(env);
+  BootSteps.mark('storage:theme');
+  BootSteps.begin('storage:onboarding');
   final onboardingStore = await OnboardingStore.load(env);
+  BootSteps.mark('storage:onboarding');
+  BootSteps.begin('storage:themePacks');
   final themePacks = await ThemePackStore.load(env);
+  BootSteps.mark('storage:themePacks');
   final skillsAccessStore = SkillsAccessStore(env);
+  BootSteps.begin('storage:mediaModels');
   final mediaModels = await MediaModelsStore.load(env);
+  BootSteps.mark('storage:mediaModels');
+  BootSteps.begin('storage:taskModels');
   final taskModels = await TaskModelsStore.load(env);
+  BootSteps.mark('storage:taskModels');
+  BootSteps.begin('storage:onDeviceConfig');
   final onDeviceConfig = await OnDeviceConfigStore.load(env);
+  BootSteps.mark('storage:onDeviceConfig');
   final imagePreviews = ImagePreviewStore(env);
+  BootSteps.begin('storage:imagePreviews');
   await imagePreviews.load();
+  BootSteps.mark('storage:imagePreviews');
   // fa_ui's provider UI resolves named keys through the app's chain
   // (dart-defines → saved keys → .env), exactly like the connection form.
   FaUiHost.keyResolver = (name) => settingsKeyEnv(name, sessionKeys);
   // Network mode (issue #955): the device wallet (keychain-first, file
   // fallback), the persisted mode picker state, and the session manager.
+  BootSteps.begin('storage:networkWallet');
   final networkWallet = await _loadNetworkWallet(env);
+  BootSteps.mark('storage:networkWallet');
+  BootSteps.begin('storage:networkMode');
   final networkMode = NetworkModeController(await NetworkModeStore.load(env));
+  BootSteps.mark('storage:networkMode');
   final networkSessions = NetworkSessionManager(
     baseUrl: Uri.parse(faNetworkBaseUrl),
     authBaseUrl: Uri.parse(faAuthBaseUrl),
