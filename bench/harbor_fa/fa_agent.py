@@ -109,6 +109,12 @@ class FaAgent(BaseInstalledAgent):
         key_var = json.loads(os.environ["FA_PROVIDER_CONFIG"]).get("apiKeyEnvVar")
         if key_var and os.environ.get(key_var):
             env[f"{key_var}_BASE64"] = _b64(os.environ[key_var])
+        # gh-1556 AC7: fa's deadline awareness rides the same env — the
+        # adapter's effective kill cap minus the wrap-up margin, computed
+        # at launch. With no timeout knob there is no adapter cap (the
+        # dataset-declared task caps are harbor's own) and the export is
+        # absent: fa never invents a clock.
+        env.update(_timeout.deadline_env_from())
         return env
 
     async def install(self, environment: BaseEnvironment) -> None:
@@ -197,7 +203,18 @@ class FaAgent(BaseInstalledAgent):
         completion (including a non-zero fa exit) re-raises whatever the
         exec raised, byte-for-byte today's semantics.
         """
-        ladder = _timeout.ProgressLadder(knobs)
+        ladder = (
+            # gh-1556 (Class C): parity with bench/terminal_bench/
+            # fa_agent.py — when a watch knob is set the kill decision is
+            # the gap-aware ProgressWatch (issue #1392/#1430), not the
+            # retired byte-growth ladder. bench-harbor.yml now sets the
+            # knobs on every shard, so watch mode is the bench default;
+            # with knobs removed the legacy ProgressLadder runs
+            # byte-for-byte (round-2 REG).
+            _timeout.ProgressWatch(knobs)
+            if knobs.progress_watch
+            else _timeout.ProgressLadder(knobs)
+        )
         loop = asyncio.get_running_loop()
         start = loop.time()
         outcome = None
@@ -214,13 +231,25 @@ class FaAgent(BaseInstalledAgent):
                 loop.time() - start, await self._progress_bytes(environment)
             )
             if outcome:
-                # procps may be missing in slim task images; if neither
-                # signal nor pkill lands, harbor's own task timeout still
+                # gh-1556 AC1: the kill is best-effort and can never
+                # replace the ladder's TimeoutError. The pre-fix command
+                # was `pkill -f 'fa --session-root'` — the exec wrapper's
+                # OWN cmdline contains that pattern, so pkill SIGTERMed
+                # its own shell (exit 143), the exception skipped the
+                # audit write AND the TimeoutError, and harbor recorded a
+                # ladder kill as an agent crash (TB 2.0 run 38150649548:
+                # a SOLVED task scored 0). The bracket trick matches the
+                # agent process but not this command line, and any kill
+                # failure is swallowed: harbor's own task timeout still
                 # bounds the trial.
-                await self.exec_as_root(
-                    environment, command="pkill -f 'fa --session-root' || true",
-                    timeout_sec=15,
-                )
+                try:
+                    await self.exec_as_root(
+                        environment,
+                        command="pkill -f '[f]a --session-root' || true",
+                        timeout_sec=15,
+                    )
+                except Exception:
+                    pass
                 try:
                     await asyncio.wait_for(asyncio.shield(exec_task), timeout=60)
                 except Exception:
@@ -253,6 +282,9 @@ class FaAgent(BaseInstalledAgent):
         await self._write_audit(
             environment, knobs, ladder,
             outcome or ("crashed" if error is not None else "completed"),
+            deadline_epoch_ms=_timeout.deadline_epoch_ms(
+                knobs, int(asyncio.get_running_loop().time() * 1000)
+            ),
         )
         if outcome:
             raise asyncio.TimeoutError(
