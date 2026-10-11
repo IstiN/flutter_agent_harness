@@ -423,6 +423,17 @@ void main() {
   ) async {
     final io = FakeCliIO();
     final shell = _DrainShell();
+    // gh-1543 hermeticity: the drain's ceiling decision reads the
+    // waiting clock, and this test's ceiling is 60 ms of WALL time —
+    // on a contended runner the OS real-time clock can lag wall time
+    // across the drain (the 2026-10-11 Hostile-leg red: the deadline
+    // never expired on the clock while the 10 event-loop rounds ran,
+    // so the detach line named the round cap, not the ceiling). Drive
+    // the clock from the sleeps themselves — every requested sleep
+    // advances it by exactly its duration — so the ceiling expires
+    // deterministically at the deadline (same seam as the liveness
+    // sibling test).
+    var clock = DateTime.now();
     final stream = _RoutingStream(
       leadTurns: [
         toolTurn([
@@ -446,6 +457,11 @@ void main() {
       ),
       io: io,
       streamFunction: stream.call,
+      waitingClock: () => clock,
+      waitingSleep: (d) {
+        clock = clock.add(d);
+        return Future<void>.value();
+      },
     );
     final code = await cli.runHeadless('watch the CI run');
     return (io, stream, shell, code);
