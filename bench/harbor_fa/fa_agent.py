@@ -185,6 +185,10 @@ class FaAgent(BaseInstalledAgent):
     ) -> None:
         knobs = _timeout.TimeoutKnobs.from_env()
         if knobs is None:
+            # gh-1556 AC7: no adapter cap => no deadline export (also
+            # clear any stash from a previous supervised run on a
+            # re-used agent object — fa never sees a stale clock).
+            self._deadline_epoch_ms = None
             await self.exec_as_agent(
                 environment, command=self._agent_command(instruction),
                 env=self._provider_env,

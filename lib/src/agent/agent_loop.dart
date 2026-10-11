@@ -531,7 +531,7 @@ final class AgentLoopConfig {
   /// every provider call, so the line refreshes per turn; returning null
   /// (deadline unarmed/cleared) leaves the payload byte-for-byte
   /// untouched. Payload-only — the transcript is never modified.
-  final String Function()? budgetLineProvider;
+  final String? Function()? budgetLineProvider;
 
   /// gh-1449: the session's one-shot latch of already-reported orphan
   /// results ([orphanReportKey]s). The loop adds every key it reports in
