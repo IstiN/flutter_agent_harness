@@ -72,6 +72,13 @@ jobs:
       silent-token: ${{ github.token }}
       # Dispatch-only CI: this repo's CI file (the SM dispatches it on PR
       # heads; default 'quality.yml' fits dmtools-dart, not this repo).
+      # gh-1537: the dispatched run is the SINGLE pre-merge gate — ci.yml
+      # no longer fires on push:main (post-merge main CI retired), so the
+      # validation dispatch must cover every whole-tree gate (crap4dart
+      # baseline, coverage ratchet, jscpd, app-crap-gate — all full-gate on
+      # non-PR events). The serialized-validation invariant (#687) is
+      # alarmed repo-side by sm-merge-guard.yml: a main push whose tree no
+      # successful dispatch covered files an sm-guard issue.
       ci-workflow: ci.yml
       # Bridge-free mode (factory #510): the tick stamps the three required
       # protection checks itself — ci-gate.yml bridge is deleted in this PR.
