@@ -2003,6 +2003,14 @@
       "completion": 10036,
       "total": 54049,
       "model": ""
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-11T10:06:18Z",
+      "prompt": 92663,
+      "completion": 9093,
+      "total": 101756,
+      "model": ""
     }
   ],
   "pr-1536": [
