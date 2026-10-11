@@ -1635,6 +1635,14 @@
       "completion": 2950,
       "total": 101252,
       "model": ""
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-11T00:02:08Z",
+      "prompt": 106114,
+      "completion": 2738,
+      "total": 108852,
+      "model": ""
     }
   ],
   "issue-1522": [
