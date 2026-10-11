@@ -89,6 +89,11 @@ AgentTool scheduleMessageTool(
         from: sender,
       );
       final due = DateTime.now().add(delay).toIso8601String();
+      // CROSS-TOOL CONTRACT: the obligations ledger's pending-wait arming
+      // (AgentCliPersist.recordPendingWait) parses the scheduled id out
+      // of this line's `scheduled <id> for ` prefix — keep it stable or
+      // update both sides together (pinned by
+      // test/cli/agent_cli_persist_pending_wait_test.dart).
       return ToolExecutionResult.text(
         'scheduled $id for $due — it will arrive as [scheduled] mail'
         '${sender == null ? '' : ' in $sender'}',

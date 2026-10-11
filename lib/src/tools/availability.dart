@@ -54,6 +54,7 @@ const knownToolIds = <String>{
   'mcp',
   'memory',
   'schedule_message',
+  'session_search',
   'ask',
   'request_secret',
   'obligations',
@@ -125,6 +126,7 @@ const coreToolFamilies = <String, Set<String>>{
   'ask': {'ask'},
   'request_secret': {'request_secret'},
   'obligations': {'obligation_mark_done'},
+  'session_search': {'session_search'},
   'task': {
     'task',
     'task_cancel',

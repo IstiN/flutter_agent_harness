@@ -76,6 +76,15 @@ const structuredCheckpointPrompt =
 const pinnedOperativePrompt =
     'PINNED SKILL DIRECTIVES: the PINNED OPERATIVE LINES section above lists directives pinned verbatim from skill manifests. Copy EVERY one of them into your checkpoint output character-for-character, each on its own line, preserving the exact wording, order, and quoting. These lines override any generalization you would otherwise make: do not paraphrase, shorten, merge, translate, or drop them, even when they look redundant with the conversation. If a pinned line has no bearing on the folded span, still reproduce it under `## Critical Context` marked as "(pinned directive)". A checkpoint that loses a pinned line is repaired from the pin registry downstream, but you must not rely on that: your output is the primary carrier.';
 
+/// The recall-hygiene contract (issue #1380) — reference equals search, the
+/// resume ritual over the obligations ledger, committing in the open, the
+/// durable-versus-session boundary, and the dig idioms over the session
+/// archive. Rendered only under the structured compaction engine.
+///
+/// Source: `prompts/compaction/recall_hygiene.md`.
+const recallHygienePrompt =
+    '## Session recall — never answer about the past from assumption\n\n1. **Reference = search.** When the user references any past decision, rule, task, or artifact ("remember when…", "the rules we made", "that issue from last week"), call `session_search` BEFORE answering. Never answer about the past from assumption.\n2. **Resume ritual.** After a compaction boundary is crossed or the session resumes, read the obligations ledger block (the `<system-notice>` titled "obligations ledger") first; it is the contract of what is still owed.\n3. **Commit in the open.** Before promising a follow-up, check the ledger. When you arm a timer or watch (`schedule_message`), state the reason clearly in the message text — the engine writes a `pending-wait` ledger entry from it, and the fired timer re-enters a context that knows why it exists.\n4. **Durable ≠ session.** Cross-session rules go to long-term memory immediately (`memory_add`); session-scoped obligations stay in the ledger. Never misuse either layer for the other.\n5. **Dig idioms.** Markers are the TOC. `session_search` locates, `compact_expand` reads. `read \$FAH_SESSION_FILE:<line>` is the zero-tool fallback.';
+
 /// System prompt template for the Fa CLI default coding mode.
 ///
 /// Source: `prompts/cli/mode_code.md`.
