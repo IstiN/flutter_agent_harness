@@ -382,4 +382,8 @@ pre-tag + publish gates) fails fast when the cap is approached again.
 
 - chore: pin factory_ref to agents-rel-20261011-002034 (aa5ddd8bd78e64c9ce77a43b31bc63b40b0f8d7a) — minter fix (gh-848/#849): gh-748 never cancels pre-materialization; unblocks fa #1457/#1520 (ghost-seized) (#1527)
 
+## 1.0.551
+
+- gh-1459 [BUG] Headless exits with live background shell jobs (detached, results lost) — must drain+steer like subagents (gh-1440 run orphaned its full-suite job) (#1463)
+
 ## Unreleased
