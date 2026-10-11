@@ -62,8 +62,9 @@ concurrency:
 #                   host-locked, see issue #177 E5 discussion)
 #   flutter-app-exzone → JS-engine exclusion-zone tests on macOS (issue
 #               #1267 N1; runs in every SM validation dispatch — path-blind
-#               under dispatch-only CI, gh-1280 idiom; the nightly macos leg
-#               stays the main/tag backstop)
+#               under dispatch-only CI, gh-1280 idiom; gh-1538 retired the
+#               nightly full-suite macOS backstop, so this pre-merge leg is
+#               the only macOS test surface)
 #   test-faui → packages/fa_ui tests sharded ×3 by manifest   (app/core/shared;
 #               issue #283 — same template as test-core: manifest assert,
 #               per-shard coverage merged to ONE report, junit durations
@@ -262,6 +263,13 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # gh-1538: the publish dry-run below rehearses the tag-stamped
+          # stage (gh-1522), moved here from the retired nightly
+          # full-quality leg — tag math needs the full tag graph
+          # (blobless per gh-1477, same incantation that leg used).
+          fetch-depth: 0
+          filter: blob:none
 
       - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
         with:
@@ -444,6 +452,18 @@ jobs:
           # failure (staged resolution re-pinning vendor/dart_tui through
           # pubspec_overrides.yaml) must redden the PR, not the tag.
           bash scripts/stage_publish_package.sh /tmp/pr-dry-run-stage
+          # gh-1538: the STAMP rehearsal moved here from the retired nightly
+          # full-quality leg — the pre-merge gate is the single test gate
+          # now, so a stamp failure (placeholder leak, changelog-section
+          # generation, staged-version desync, cap trim) must redden the
+          # PR, not surface at tag time. Rehearses the NEXT tag's payload
+          # exactly like the nightly leg did (gh-1522).
+          latest=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          latest="${latest#v}"
+          IFS='.' read -r major minor patch <<< "$latest"
+          next="$major.$minor.$((patch + 1))"
+          echo "rehearsing the stamp of the NEXT tag: v$next"
+          bash scripts/stamp_staged_release.sh /tmp/pr-dry-run-stage "$next"
           # The staged tree must ANALYZE clean: v0.1.411 shipped files
           # with broken imports (the staging filter pruned lib/src/memory;
           # imports of fork-only dart_tui symbols) that only a consumer's
@@ -535,8 +555,9 @@ jobs:
       # (>= 80% ratchet, PR diff-coverage, CRAP — jsr_cli.dart at 0% reads
       # CRAP 156 > 12), so they run into shard 0's coverage dir; the gate
       # merge is a union, so one shard carrying them is enough. Keep this
-      # list in sync with scripts/ci_fast_gate.sh stage_test_core and
-      # nightly.yml.
+      # list in sync with scripts/ci_fast_gate.sh stage_test_core (gh-1538
+      # retired the nightly full-quality copy — the pre-merge gate is the
+      # single unit-lcov producer now).
       - name: dart test --tags integration (jsr delegate trio → unit lcov)
         if: matrix.shard == 0 && (needs.changes.outputs.core == 'true' || needs.changes.outputs.shared == 'true')
         run: >-
@@ -658,7 +679,8 @@ jobs:
   # are part of the COMMON PR suite: they run on every CI invocation (the
   # Machine SM dispatches ci.yml per PR head), unconditioned by path — a
   # diff that breaks them must red-block THE PR, never the 3:30 nightly.
-  # Main remains backstopped by nightly.yml.
+  # gh-1538: nightly is builds + integration-only now — this PR leg IS the
+  # only Terminal-visual run (the nightly cli-visual duplicate is retired).
   # gh-1300 (2026-10-06): the PTY/CLI shards pay toolchain+boot ONCE per
   # run, not per test. Every integration test spawns a fresh CLI; JIT
   # `dart bin/fah.dart` cost VM start + CFE kernel compile ~30 s PER SPAWN
@@ -1068,7 +1090,8 @@ jobs:
   # JetBrainsMono font (no host system fonts), and pty2 allocates the PTY
   # via libc openpty FFI. Nothing needs macOS — the old fa-m5 / macos-latest
   # routing (10x hosted-macOS minute cost, single-runner queue risk) is
-  # gone; the nightly keeps an eyeball-only screenshot leg.
+  # gone; gh-1538 retired the nightly eyeball-only duplicate, so this PR
+  # leg is the only screenshot run.
   pty-visual:
     name: Terminal visual (PTY screenshots, PR)
     runs-on: ubuntu-24.04-arm
@@ -1531,8 +1554,10 @@ jobs:
   # therefore path-BLIND on dispatches: it runs in EVERY SM validation
   # (one hosted-macOS leg beside the build-macos/build-ios legs already
   # paid there), and the exzone path set only narrows a future real
-  # pull_request trigger. Main/tag/schedule/release runs skip it — the
-  # nightly flutter-app-macos leg stays the full-suite backstop there.
+  # pull_request trigger. Main/tag/schedule/release runs skip it —
+  # gh-1538 retired the nightly flutter-app-macos full-suite backstop
+  # (nightly is builds + integration-only now), so this pre-merge leg is
+  # the macOS coverage for the JS-engine surface.
   # ─────────────────────────────────────────────────────────────────────────
   flutter-app-exzone:
     name: Exclusion zone (macOS JS-engine tests)
@@ -1546,7 +1571,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Same SDK incantation as the nightly flutter-app-macos leg.
+      # Pinned stable channel, same as the retired nightly
+      # flutter-app-macos leg used (gh-1538).
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
@@ -1812,8 +1838,9 @@ jobs:
           key: pubcache-flutter-${{ runner.os }}-${{ hashFiles('**/pubspec.yaml') }}
           restore-keys: pubcache-flutter-${{ runner.os }}-
 
-      # Same placeholder assets the nightly cli-visual job and the ubuntu
-      # flutter-tests leg create (see those jobs for the why).
+      # gh-1538: the nightly cli-visual job is retired (this PR leg runs the
+      # same suite pre-merge) — placeholder rationale lives with the
+      # flutter-tests leg.
       - name: Create placeholder .env asset
         working-directory: flutter_app
         run: touch .env
