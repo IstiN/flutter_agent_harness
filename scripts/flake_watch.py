@@ -5,6 +5,14 @@ Scans the failed ci.yml Quality-gate runs of the last N hours; a test that
 is RED in >=2 runs with DISTINCT head SHAs within the window is a proven
 flake candidate (the #1171 signature: same SHA can flip green/red, so a
 single SHA never proves anything — and one red run is just a regression).
+
+gh-1537: only `workflow_dispatch` runs are considered — the post-merge
+main CI trigger is retired, so the remaining ci.yml runs are the SM's
+pre-merge validation dispatches (on PR heads) and the v* tag runs. A red
+TAG run is a release-flow failure (triaged by daily-publish /
+ci-red-report), never a flake to quarantine; filtering by event keeps the
+watcher on the PR-dispatch population. Dedup is per (file, test name) so
+one test red across N runs files ONE issue (the #1364 lesson).
 For each candidate the watcher:
 
     1. creates a `flake`-labelled GitHub issue (or updates the existing
@@ -51,6 +59,11 @@ def failed_runs(repo: str, window_hours: int) -> list:
              "--limit", "100")
     runs = []
     for r in json.loads(out):
+        # gh-1537: PR-dispatch runs only (the SM's validation dispatches).
+        # v* tag runs are release flow — a red tag run is a release failure,
+        # not a test flake, and must never reach the quarantine list.
+        if r.get("event") != "workflow_dispatch":
+            continue
         if r.get("conclusion") != "failure":
             continue
         created = datetime.fromisoformat(
