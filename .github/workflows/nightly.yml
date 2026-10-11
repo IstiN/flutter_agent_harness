@@ -71,7 +71,11 @@ jobs:
       - name: dart build cli (AOT bundle, gh-1300)
         run: |
           dart build cli --target=bin/fah.dart --output=fa-local
-          version=$(sed -n 's/^version: //p' pubspec.yaml)
+          # gh-1522: the committed pubspec is the 0.0.0-dev placeholder —
+          # stamp the bundle version from git describe (exact tag when
+          # HEAD is tagged, distance+sha otherwise).
+          version=$(git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
+          version="${version#v}"
           echo "$version" > fa-local/bundle/version.txt
           test -x fa-local/bundle/bin/fah
           ./fa-local/bundle/bin/fah --version
