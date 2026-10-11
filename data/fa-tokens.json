@@ -1883,6 +1883,14 @@
       "completion": 42405,
       "total": 184984,
       "model": ""
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-11T08:36:54Z",
+      "prompt": 27231,
+      "completion": 9314,
+      "total": 36545,
+      "model": ""
     }
   ],
   "issue-1535": [
