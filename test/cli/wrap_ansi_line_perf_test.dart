@@ -232,6 +232,40 @@ void main() {
     expectLinearGrowth(oneGiantWord, 500000, 'single word');
   });
 
+  test('growth ratio is pause-proof (gh-1460 rework flake regression)', () {
+    // Deterministic anchor for the CI run 38112524699 flake: the failing
+    // leg measured small=3.31ms / doubled=12.09ms (ratio 3.65 against the
+    // 3.2 bound) — a scheduling pause inflated the doubled-size median
+    // while the wrap itself stayed linear. The sample sets below reproduce
+    // that exact shape: the old median statistic trips on it, the
+    // min-of-9 statistic expectLinearGrowth now uses does not, and a
+    // genuinely superlinear pair still trips either way (real quadratic
+    // work inflates both sizes, so the min-ratio keeps ~4x).
+    const quietSmall = [3.4, 3.31, 3.35, 3.3, 3.42, 3.4, 3.38, 3.33, 3.4];
+    const pausedDoubled = [6.8, 7.0, 12.09, 12.2, 11.9, 7.1, 6.9, 7.2, 7.0];
+    final oldMedianRatio =
+        pausedDoubled[4] / quietSmall[4]; // medians of the 9 samples
+    expect(oldMedianRatio, greaterThan(3.2)); // the CI red, reproduced
+    final newMinRatio =
+        pausedDoubled.first / quietSmall.first; // mins of the 9 samples
+    expect(newMinRatio, lessThan(3.2)); // the fix
+    // Genuine superlinearity still trips the min-based ratio:
+    const quadraticSmall = [3.3, 3.4, 3.2, 3.3, 3.4, 3.3, 3.2, 3.4, 3.3];
+    const quadraticDoubled = [
+      13.0,
+      13.2,
+      12.8,
+      13.1,
+      13.0,
+      12.9,
+      13.1,
+      13.0,
+      12.9,
+    ];
+    final minQuadraticRatio = quadraticDoubled.first / quadraticSmall.first;
+    expect(minQuadraticRatio, greaterThan(3.2));
+  });
+
   test('wrapped output stays contract-clean at scale', () {
     // Cheap correctness anchor next to the timings: rows never exceed the
     // width in visible cells and reassemble to the source (the properties
