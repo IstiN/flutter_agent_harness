@@ -784,6 +784,10 @@ jobs:
           BETA_APP_FEEDBACK_EMAIL: ${{ vars.BETA_APP_FEEDBACK_EMAIL }}
           BETA_REVIEW_CONTACT_EMAIL: ${{ vars.BETA_REVIEW_CONTACT_EMAIL }}
           BETA_REVIEW_CONTACT_PHONE: ${{ vars.BETA_REVIEW_CONTACT_PHONE }}
+          # gh-1522: the ASC/TestFlight version string rides the derived tag
+          # version (store_pubspec_version prefers BUILD_NAME; the committed
+          # pubspec is the 0.0.0-dev placeholder).
+          BUILD_NAME: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
           if [ -z "${APP_STORE_CONNECT_KEY_CONTENT:-}" ]; then
