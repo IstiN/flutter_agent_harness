@@ -34,8 +34,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The pushed head is the checked-out HEAD; only its tree sha is
-          # read — no history, no blobs.
+          # Pin to the SAME frozen identity PUSHED_SHA uses
+          # (github.event.head_commit.id || github.sha): the tree under
+          # assertion is read from this checkout's HEAD, so an unpinned
+          # checkout could drift to a moved main and have run-for-push-A
+          # certify a newer push B's tree it never examined (same lesson
+          # as the retired ci.yml release-tag BUMP_SHA pin, #1178).
+          ref: ${{ github.event.head_commit.id || github.sha }}
+          # Only the pushed tree sha is read — no history, no blobs.
           fetch-depth: 1
 
       - name: Assert a dispatched validation covers this tree

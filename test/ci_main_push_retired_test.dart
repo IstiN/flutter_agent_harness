@@ -243,5 +243,41 @@ void main() {
             'publish)',
       );
     });
+
+    test('the guard checkout is pinned to the pushed SHA — the tree '
+        'under assertion cannot drift to a moved main', () {
+      final doc =
+          loadYaml(read('.github/workflows/sm-merge-guard.yml')) as YamlMap;
+      final steps =
+          ((doc['jobs'] as YamlMap)['guard'] as YamlMap)['steps']
+              as YamlList;
+      final checkout =
+          steps
+              .map((s) => s as YamlMap)
+              .firstWhere(
+                (s) =>
+                    s['uses']?.toString().startsWith('actions/checkout') ??
+                    false,
+                orElse: () =>
+                    throw TestFailure('guard must check out the repo'),
+              );
+      final options = checkout['with'] as YamlMap;
+      expect(
+        options['ref'].toString(),
+        r'${{ github.event.head_commit.id || github.sha }}',
+        reason:
+            'the tree compared against the validation runs is read '
+            'from the checkout HEAD (`git rev-parse HEAD^{tree}`) — '
+            'without the pin, a busy main drifts run-for-push-A onto a '
+            'newer push B and certifies a tree it never examined '
+            '(PR review: tree drift between the frozen PUSHED_SHA and '
+            'the drifting checkout)',
+      );
+      expect(
+        options['fetch-depth'].toString(),
+        '1',
+        reason: 'only the pushed tree is read — no history, no blobs',
+      );
+    });
   });
 }

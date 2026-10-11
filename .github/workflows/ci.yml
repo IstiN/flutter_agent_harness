@@ -34,7 +34,7 @@ on:
         type: boolean
         default: false
       releaseDispatch:
-        description: 'gh-1172: real release (bump push + tag) on manual dispatch — requires refs/heads/main; bare validation dispatches stay inert'
+        description: 'gh-1172: real release (cuts the annotated tag + GitHub Release directly, gh-1522) on manual dispatch — requires refs/heads/main; bare validation dispatches stay inert'
         required: false
         type: boolean
         default: false

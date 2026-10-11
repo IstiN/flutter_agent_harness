@@ -27,12 +27,16 @@ Future<int> runGuard(
   String subject = _subject,
   String sha = _sha,
   String tree = _tree,
+  bool alarmIssue = false,
+  // A repo that cannot exist: the alarm path must reach gh (and fail
+  // there, cleanly) without any chance of filing a real issue.
+  String repo = 'sm-guard-test/nonexistent-repo',
 }) async {
   final dir = Directory.systemTemp.createTempSync('sm-merge-guard-');
   addTearDown(() => dir.deleteSync(recursive: true));
   final runsFile = File('${dir.path}/runs.json')
     ..writeAsStringSync(jsonEncode(runs));
-  final proc = await Process.run('python3', [
+  final args = [
     _script,
     '--sha',
     sha,
@@ -42,7 +46,11 @@ Future<int> runGuard(
     tree,
     '--runs-json',
     runsFile.path,
-  ]);
+  ];
+  if (alarmIssue) {
+    args.addAll(['--alarm-issue', '--repo', repo]);
+  }
+  final proc = await Process.run('python3', args);
   final out = '${proc.stdout}${proc.stderr}';
   expect(
     out,
@@ -108,6 +116,26 @@ void main() {
     },
   );
 
+  test('a run entry WITHOUT a conclusion key does NOT validate (only '
+      'confirmed successes count — for every caller by construction)', () async {
+    final code = await runGuard([
+      // A future caller that builds run dicts without a 'conclusion'
+      // key must not get a pass from a run that was never confirmed
+      // green — the exact-SHA fast-forward match included.
+      {'database_id': 11, 'head_sha': _sha, 'tree_sha': 'differenttree'},
+      _run(id: 12, sha: 'validatedhead', tree: _tree)
+        ..remove('conclusion'),
+    ]);
+    expect(
+      code,
+      3,
+      reason:
+          'a run that was never confirmed successful is the alarm '
+          'class — a missing conclusion sneaking in as a pass is how '
+          'a red validation would silently certify a push',
+    );
+  });
+
   test('a push/tag-event run match does NOT validate (must be the SM '
       'dispatch population)', () async {
     // fetch_validated_runs filters --event workflow_dispatch; the seam
@@ -141,6 +169,24 @@ void main() {
   test('the release-bot bump push skips the guard even with no runs', () async {
     final code = await runGuard([], subject: 'chore(release): v0.1.999');
     expect(code, 0, reason: 'the v* tag run gates the bump commit');
+  });
+
+  test('an empty commit subject still alarms cleanly — the alarm path '
+      'must never traceback on `splitlines()[0]`', () async {
+    final code = await runGuard(
+      [],
+      subject: '',
+      alarmIssue: true,
+    );
+    expect(
+      code,
+      1,
+      reason:
+          'gh fails for the deliberately fake repo — the guard must '
+          'surface a clean tooling error (exit 1), never an unhandled '
+          'IndexError that would lose the alarm for exactly the push '
+          'that tripped it',
+    );
   });
 
   test('missing --tree is a usage error, not an alarm', () async {

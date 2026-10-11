@@ -97,10 +97,12 @@ def decide(subject: str, pushed_sha: str, pushed_tree: str,
         return {"verdict": "skipped",
                 "reason": "release-bot bump push — the v* tag run gates it"}
     for run in runs:
-        # Only successes validate. fetch_validated_runs pre-filters, but the
-        # test seam (and any future caller) may pass mixed conclusions —
-        # a run that validated the tree and went RED is the alarm case.
-        if run.get("conclusion") not in (None, "success"):
+        # Only successes validate — a run with NO conclusion was never
+        # confirmed green, so it can never certify a push
+        # (fetch_validated_runs pre-filters, but the test seam and any
+        # future caller may pass mixed or incomplete run dicts — the
+        # invariant holds by construction).
+        if run.get("conclusion") != "success":
             continue
         if run.get("head_sha") == pushed_sha:
             return {"verdict": "ok",
@@ -126,9 +128,15 @@ def alarm_issue(repo: str, pushed_sha: str, subject: str, reason: str,
         f"- https://github.com/{repo}/actions/runs/{r.get('database_id')}"
         f" (head `{r.get('head_sha')}`)"
         for r in runs[:10])
+    # An empty commit message (git commit --allow-empty-message / the Git
+    # API) would crash the alarm itself on splitlines()[0] — the one path
+    # where the sm-guard issue would be lost for exactly the push that
+    # tripped it. Degrade to a placeholder instead.
+    subject_line = (subject.splitlines()[0]
+                    if subject.splitlines() else "(empty commit message)")
     body = (
         f"**Pushed SHA**: `{pushed_sha}`\n"
-        f"**Subject**: {subject.splitlines()[0]}\n\n"
+        f"**Subject**: {subject_line}\n\n"
         f"**Why this is an alarm** (gh-1537 AC5): the SM queue must be "
         f"strictly serialized and validate the exact tree that merges. "
         f"This push to main has no successful ci.yml validation dispatch "
