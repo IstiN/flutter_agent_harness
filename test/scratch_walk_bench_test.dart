@@ -82,15 +82,15 @@ void main() {
     print('windowed open: ${t.elapsedMilliseconds}ms');
 
     t.reset();
-    final ok = await windowed.ensureWholeLedgerResident();
-    print('ensureWholeLedgerResident: ${t.elapsedMilliseconds}ms ok=$ok');
+    await windowed.ensureWholeLedgerResident();
+    print('ensureWholeLedgerResident: ${t.elapsedMilliseconds}ms');
     t.reset();
     final walkedBranch = await windowed.getBranch();
     print('getBranch after walk: ${t.elapsedMilliseconds}ms '
         '(${walkedBranch.length} records)');
     t.reset();
-    final again = await windowed.ensureWholeLedgerResident();
+    await windowed.ensureWholeLedgerResident();
     print('ensureWholeLedgerResident again (no-op): '
-        '${t.elapsedMilliseconds}ms ok=$again');
+        '${t.elapsedMilliseconds}ms');
   }, timeout: const Timeout(Duration(minutes: 5)));
 }

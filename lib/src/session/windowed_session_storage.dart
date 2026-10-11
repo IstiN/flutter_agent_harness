@@ -416,6 +416,67 @@ final class WindowedSessionStorage
   static const maxWalkBlockRecords = 4096;
   static const maxWalkBlockBytes = 64 << 20;
 
+  /// Brings the whole file into residency with a sequential forward scan
+  /// (gh-1555 W1 — the read-everything trajectory surfaces): strips read
+  /// upward from the file head in bounded chunks, every byte read and
+  /// parsed exactly once, spliced into the window in ONE prepend.
+  /// [growOlderUntil] cannot do this cheaply: its doubling strips answer
+  /// "where is the NEARBY boundary", and its per-strip record cap
+  /// truncates each strip — a whole-ledger walk under that cap measured
+  /// ~13x read+parse amplification on a 30k-record ledger (each 8 MiB
+  /// strip kept only its newest few hundred records). A no-op when the
+  /// window already reaches the file head.
+  Future<void> loadAllOlder({int maxBytes = maxWalkBlockBytes}) async {
+    final top = _windowTopOffset;
+    if (!_hasOlder || top == null) return;
+    final records = <SessionRecord>[];
+    final starts = <int>[];
+    final ends = <int>[];
+    var offset = 0;
+    while (offset < top) {
+      final budget = top - offset;
+      final chunk = await _reader.readForward(
+        offset,
+        maxBytes: budget < maxBytes ? budget : maxBytes,
+      );
+      if (chunk.isEmpty) break;
+      final entries = chunk.entries;
+      for (var i = 0; i < entries.length; i++) {
+        final entry = entries[i];
+        // The offset-0 line is the session header, not a record
+        // (readBlockBefore's contract); anything at/above the window top
+        // belongs to the resident window itself; a known id is a
+        // straddler from a concurrent append. All three skip classes
+        // keep the window lists file-ordered and duplicate-free.
+        if (entry.offset == 0 || entry.offset >= top) continue;
+        if (_byId.containsKey(entry.record.id)) continue;
+        records.add(entry.record);
+        starts.add(entry.offset);
+        ends.add(
+          i + 1 < entries.length
+              ? entries[i + 1].offset
+              : entry.offset + entry.bytes + 1,
+        );
+      }
+      final next = chunk.limitOffset;
+      if (next <= offset) break;
+      offset = next;
+    }
+    _entries.insertAll(0, records);
+    _offsets.insertAll(0, starts);
+    _ends.insertAll(0, ends);
+    for (var i = 0; i < records.length; i++) {
+      final record = records[i];
+      _byId[record.id] = record;
+      _offsetById[record.id] = starts[i];
+      _appendedBelow.remove(record.id);
+      updateSessionLabelCache(_labelsById, record);
+    }
+    if (starts.isNotEmpty) _windowTopOffset = starts.first;
+    _hasOlder = false;
+    _aboveCount = 0;
+  }
+
   /// Record-granular budget trim for the [growOlderUntil] stop (gh-968,
   /// AC-R4): un-indexes the OLDEST resident records down to the cut
   /// [projectedBranchBudgetCut] finds walking the branch from the newest
@@ -850,10 +911,11 @@ final class WindowedSessionStorage
       final starts = List<int>.filled(n, 0);
       final ends = List<int>.filled(n, 0);
       for (var i = 0; i < n; i++) {
-        final slot = n - 1 - i; // newest-first == the old loop's order
-        records[slot] = chunk.entries[i].record;
-        starts[slot] = chunk.entries[i].offset;
-        ends[slot] = endOf(i);
+        // File order == chunk order; the old per-record insert(0) loop
+        // produced exactly this head layout.
+        records[i] = chunk.entries[i].record;
+        starts[i] = chunk.entries[i].offset;
+        ends[i] = endOf(i);
       }
       _entries.insertAll(0, records);
       _offsets.insertAll(0, starts);

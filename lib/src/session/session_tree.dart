@@ -240,21 +240,16 @@ final class Session {
     );
   }
 
-  /// Pages older chunks until the file head is resident — the
-  /// read-everything surfaces (the headless trajectory cost/inspect
-  /// views, gh-1555 W1) on a windowed open. The walk rides
-  /// [WindowedSessionStorage.growOlderUntil]'s bounded doubling blocks
-  /// (eviction suspended, tail anchored), so a ledger past the gh-1073
-  /// full-open backstop still resolves: the read is chunked, never one
-  /// materialized whole-file string. Returns false only on [maxPages]
-  /// exhaustion; a no-op reporting true for full storages.
-  Future<bool> ensureWholeLedgerResident({int maxPages = 512}) async {
+  /// Brings the whole file into residency for the read-everything
+  /// surfaces (the headless trajectory cost/inspect views, gh-1555 W1)
+  /// on a windowed open: a sequential forward scan in bounded chunks, so
+  /// a ledger past the gh-1073 full-open backstop still resolves — the
+  /// read is chunked, never one materialized whole-file string. A no-op
+  /// for full storages.
+  Future<void> ensureWholeLedgerResident() async {
     final storage = _storage;
-    if (storage is! WindowedSessionStorage) return true;
-    // A predicate that never matches: the walk stops only at the file
-    // head (or maxPages) — everything older pages in, unlike the
-    // token-budgeted resume walk which stops at the context boundary.
-    return storage.growOlderUntil((_) => false, maxPages: maxPages);
+    if (storage is! WindowedSessionStorage) return;
+    await storage.loadAllOlder();
   }
 
   Future<String> _append(

@@ -226,9 +226,10 @@ void main() {
       final metadata = await byName!.getMetadata();
       expect(metadata.id, isNotEmpty);
 
-      // The cost/inspect surfaces page the whole ledger in bounded blocks
-      // instead of materializing one giant string (gh-1555 W1).
-      expect(await byName.ensureWholeLedgerResident(), isTrue);
+      // The cost/inspect surfaces read the whole ledger in bounded
+      // sequential strips instead of materializing one giant string
+      // (gh-1555 W1).
+      await byName.ensureWholeLedgerResident();
       final branch = await byName.getBranch();
       expect(branch, isNotEmpty);
       expect(branch.last, isA<MessageRecord>());

@@ -467,7 +467,7 @@ void main() {
         // The tail window alone does not cover 800 records.
         expect((await windowed.getBranch()).length, lessThan(800));
 
-        expect(await windowed.ensureWholeLedgerResident(), isTrue);
+        await windowed.ensureWholeLedgerResident();
         final branch = await windowed.getBranch();
         expect(branch, hasLength(800));
         expect(branch.last.id, await windowed.getLeafId());
@@ -493,7 +493,7 @@ void main() {
         final meta = await session.getMetadata();
 
         final windowed = await repo.open(meta, windowed: true);
-        expect(await windowed.ensureWholeLedgerResident(), isTrue);
+        await windowed.ensureWholeLedgerResident();
         final branch = await windowed.getBranch();
         final fullBranch = await (await repo.open(meta)).getBranch();
         expect(
@@ -508,7 +508,7 @@ void main() {
       await session.appendMessage(UserMessage.text('one'));
       final meta = await session.getMetadata();
       final reopened = await repo.open(meta);
-      expect(await reopened.ensureWholeLedgerResident(), isTrue);
+      await reopened.ensureWholeLedgerResident();
       expect((await reopened.getBranch()).length, 1);
     });
   });
