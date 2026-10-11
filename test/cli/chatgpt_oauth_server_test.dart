@@ -111,6 +111,7 @@ void main() {
         // First listed candidate occupied → the server falls back to the
         // next listed port, and the callback actually serves there (AC2).
         final fallbackServer = ChatGptOAuthLocalCallbackServer();
+        addTearDown(fallbackServer.close);
         final url = await fallbackServer.start(
           timeout: const Duration(seconds: 5),
           ports: [occupiedPort, 0],
@@ -125,9 +126,13 @@ void main() {
         expect(response.body, contains('Authorized'));
         await fallbackServer.close();
 
-        // First listed candidate available → it wins even with a later
-        // listed port occupied.
+        // The always-available port-0 candidate binds while the held port
+        // stays occupied. This is a negative-only check: it proves the
+        // server skips an occupied listed port, but not that it honors
+        // list order — a positive order assertion would need the
+        // freed-port TOCTOU probe this fix removes.
         final firstServer = ChatGptOAuthLocalCallbackServer();
+        addTearDown(firstServer.close);
         final firstUrl = await firstServer.start(
           timeout: const Duration(seconds: 5),
           ports: [0, occupiedPort],
