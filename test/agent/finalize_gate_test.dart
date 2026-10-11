@@ -181,14 +181,13 @@ void main() {
       expect(ledger!.items.single.requirement, 'create script.py');
       expect(
         stripTaskLedger(
-              'Answer.\n'
-              '\n'
-              'task-ledger\n'
-              '- requirement: create script.py\n'
-              '  command: test -f script.py\n'
-              '  status: pass\n',
-            )
-            .trimRight(),
+          'Answer.\n'
+          '\n'
+          'task-ledger\n'
+          '- requirement: create script.py\n'
+          '  command: test -f script.py\n'
+          '  status: pass\n',
+        ).trimRight(),
         'Answer.',
       );
     });

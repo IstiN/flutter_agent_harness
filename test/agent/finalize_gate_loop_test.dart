@@ -27,7 +27,9 @@ void main() {
     StopReason stopReason = StopReason.stop,
   }) {
     final empty = testAssistant();
-    final partial = assistant([TextContent(text: text)], stopReason: stopReason);
+    final partial = assistant([
+      TextContent(text: text),
+    ], stopReason: stopReason);
     return [
       StartEvent(partial: empty),
       TextStartEvent(contentIndex: 0, partial: empty),
@@ -213,11 +215,12 @@ Task complete.
         '  command: true\n'
         '  status: pass\n'
         '```\n';
-    final draftMessage = testAssistant(
-      content: [TextContent(text: draft)],
-    );
+    final draftMessage = testAssistant(content: [TextContent(text: draft)]);
     final bothMessage = testAssistant(
-      content: [TextContent(text: draft), TextContent(text: revised)],
+      content: [
+        TextContent(text: draft),
+        TextContent(text: revised),
+      ],
     );
     final events = await runTurns([
       toolTurn([ToolCall(id: 't1', name: 'bash', arguments: const {})]),
@@ -233,10 +236,7 @@ Task complete.
     // The gate still keys on the LAST ledger (gh-1412) …
     final ledgerEvents = events.whereType<TaskLedgerEvent>().toList();
     expect(ledgerEvents, hasLength(1));
-    expect(
-      ledgerEvents.single.ledger.items.single.requirement,
-      'revised item',
-    );
+    expect(ledgerEvents.single.ledger.items.single.requirement, 'revised item');
     // …but BOTH blocks leave the transcript.
     final end = events.whereType<AgentEndEvent>().single;
     final lastAssistant =

@@ -45,34 +45,38 @@ AgentEventSink _finalizeGateStrippingSink(
   };
 }
 
-/// Strips the ledger out of an assistant [message] (one resolve per text
-/// block, last block first — the same shape the gate keys on) and records
-/// the strip in [stash]. Returns the stripped message, or null when no
-/// block carries a ledger.
+/// Strips the ledger out of EVERY ledger-bearing text block of an
+/// assistant [message] (one resolve per text block, last block first) and
+/// records ONE stash entry per stripped message. The stash entry's ledger
+/// stays the LAST ledger-bearing block's (gh-1412: the last block
+/// decides) — earlier blocks are stripped from the transcript but never
+/// key the gate. Returns the stripped message, or null when no block
+/// carries a ledger.
 AssistantMessage? _stripAssistantLedger(
   Message message,
   List<_StrippedLedger> stash,
 ) {
   if (message is! AssistantMessage) return null;
   final content = message.content;
+  var current = message;
+  TaskLedger? ledger;
   for (var i = content.length - 1; i >= 0; i--) {
     if (content[i] is! TextContent) continue;
     final block = content[i] as TextContent;
     final resolution = resolveTaskLedger(block.text);
     if (resolution == null) continue;
-    final replaced = List<ContentBlock>.of(content);
+    // First hit in reverse order = the LAST ledger-bearing block: the
+    // gate's key (gh-1412). Blocks after this only leave the transcript.
+    ledger ??= resolution.ledger;
+    final replaced = List<ContentBlock>.of(current.content);
     replaced[i] = block.copyWith(text: resolution.strippedText);
-    final stripped = message.copyWith(content: replaced);
-    stash.add(
-      _StrippedLedger(
-        ledger: resolution.ledger,
-        original: message,
-        stripped: stripped,
-      ),
-    );
-    return stripped;
+    current = current.copyWith(content: replaced);
   }
-  return null;
+  if (ledger == null) return null;
+  stash.add(
+    _StrippedLedger(ledger: ledger, original: message, stripped: current),
+  );
+  return current;
 }
 
 /// Applies the FinalizeGate end-of-run fold (gh-1412, gh-1516): emits

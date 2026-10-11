@@ -188,17 +188,22 @@ final RegExp _fieldLine = RegExp(r'^\s+([A-Za-z_]+)\s*:\s?(.*)$');
 /// One candidate ledger span in the answer text: the fenced block (span =
 /// opening fence through closing fence) or the unfenced heading + bullets
 /// (span = the heading through the last entry line). [body] carries the
-/// entry lines only — the parser's exact input shape.
+/// entry lines only — the parser's exact input shape. [isUnfenced] marks
+/// the near-miss shape, which is also what a model DOCUMENTING the format
+/// emits — it is accepted only with real verification evidence
+/// ([_unfencedLooksLikeLedger]).
 final class _LedgerSpan {
   _LedgerSpan({
     required this.startLine,
     required this.endLine,
     required this.body,
+    this.isUnfenced = false,
   });
 
   final int startLine;
   final int endLine;
   final String body;
+  final bool isUnfenced;
 }
 
 /// The last ledger candidate that parses to a requirement-bearing ledger,
@@ -213,9 +218,28 @@ final class _LedgerSpan {
   final spans = _ledgerSpans(text);
   for (final span in spans.reversed) {
     final items = _parseLedgerItems(span.body);
-    if (items.isNotEmpty) return (span: span, items: items);
+    if (items.isEmpty) continue;
+    if (span.isUnfenced && !_unfencedLooksLikeLedger(items)) continue;
+    return (span: span, items: items);
   }
   return null;
+}
+
+/// The unfenced near-miss shape is also exactly what a model answering
+/// "what does the task-ledger look like?" emits — a verbatim quote of the
+/// shape with placeholder fields (gh-1516 review). Accept the unfenced
+/// shape only when it carries real verification evidence: two-plus
+/// entries, or a single entry with an actual `command`/`expected`/`actual`
+/// field. A status claim alone is not evidence — it is also the shape of
+/// a format quote (`status: pass|fixed|fail`) — and a lone
+/// `- requirement:` bullet never classifies a prose section as a ledger:
+/// the strip is silent and user-facing.
+bool _unfencedLooksLikeLedger(List<TaskLedgerItem> items) {
+  if (items.length >= 2) return true;
+  final only = items.single;
+  return only.command.trim().isNotEmpty ||
+      only.expected.trim().isNotEmpty ||
+      only.actual.trim().isNotEmpty;
 }
 
 /// Removes the span's lines from [text], collapsing ONLY the blank runs
@@ -338,7 +362,12 @@ _SpanScan? _unfencedLedgerSpanAt(List<String> lines, int i) {
     j++;
   }
   return (
-    span: _LedgerSpan(startLine: i, endLine: lastEntry, body: body.join('\n')),
+    span: _LedgerSpan(
+      startLine: i,
+      endLine: lastEntry,
+      body: body.join('\n'),
+      isUnfenced: true,
+    ),
     nextLine: j,
   );
 }
