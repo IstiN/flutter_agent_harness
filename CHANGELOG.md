@@ -402,3 +402,14 @@ pre-tag + publish gates) fails fast when the cap is approached again.
   the chain, I6); old consumers using tolerant JSON ignore the new key,
   and the repo's single strict consumer (the pinned constant) is updated
   in the same change.
+
+- fix(test): gh-1460 rework — the `wrap_ansi_line_perf_test` growth-shape
+  legs measure the doubling ratio with the MINIMUM over 9 runs instead of
+  the median of 5 (CI run 38112524699, core shard 0/4: a scheduling pause
+  inflated the doubled-size median — 12.09ms against a true ~7ms — and
+  tripped the 3.2 bound at 3.65x on a genuinely linear wrap). Runner
+  jitter only ever inflates a wall-clock sample, so the min converges on
+  the true compute time; genuine superlinearity still trips the ratio
+  (the gh-1496 quadratic candidates measure ~4x by min). The absolute-
+  budget legs keep the median — their gh-1357 headroom already prices in
+  jitter. A synthetic regression test pins the pause-proof property.
