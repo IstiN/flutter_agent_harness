@@ -1939,6 +1939,14 @@
       "completion": 53731,
       "total": 194807,
       "model": ""
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-11T08:21:18Z",
+      "prompt": 66335,
+      "completion": 22763,
+      "total": 89098,
+      "model": ""
     }
   ],
   "pr-1536": [
