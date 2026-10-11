@@ -14,7 +14,12 @@
 # comment) must NOT enter the stage: version solving would re-pin the
 # path dep and fail (the v0.1.407 failure, exit 66).
 #
-# Usage: stage_publish_package.sh <target-dir>
+# Usage: stage_publish_package.sh <target-dir> [version]
+#   version (gh-1522, optional) — the release version WITHOUT the leading v;
+#   when given, the staged pubspec/CHANGELOG are stamped from the tag via
+#   scripts/stamp_staged_release.sh (the repo files carry the 0.0.0-dev
+#   placeholder and are never mutated). The publish job passes
+#   "${GITHUB_REF_NAME#v}" so the staged version always equals the tag.
 # Exits non-zero (with ::error) when the staged tree exceeds the guard.
 # The repo root hosts sub-projects that are NOT part of the pub package
 # (flutter_app, yoclip, browser_ext, office_addin, vendored forks, docs)
@@ -61,4 +66,12 @@ echo "staged package: ${size} MB"
 if [ "$size" -gt 90 ]; then
   echo "::error::staged package is ${size} MB (>90) — pub.dev caps uploads at 100 MB. Trim the staging excludes."
   exit 1
+fi
+
+# gh-1522: stamp the staged tree from the release tag (pubspec version +
+# generated changelog section). Runs AFTER the size guard, BEFORE the
+# caller's `dart pub get` + `dart pub publish` — the stamp is part of the
+# staged artifact, never of the repo.
+if [ "${2:-}" ]; then
+  bash "$(dirname "${BASH_SOURCE[0]}")/stamp_staged_release.sh" "$target" "$2"
 fi
