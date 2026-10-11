@@ -37,6 +37,14 @@ extension AgentCliPromptComposition on AgentCli {
         _enabledSkills,
         touchedPaths: _touchedPaths,
         cwd: _env.cwd,
+        // gh-1440 freshness disclosure: the stamp is the LAST SCAN's
+        // wall-clock (not "now"), so an unchanged fingerprint renders a
+        // byte-identical section (AC1); genuinely new entries carry the
+        // mid-session flag; the knob-off mode swaps the stamp for the
+        // staleness footer (AC7).
+        scannedAt: _skillsScannedAt,
+        midSessionNames: _midSessionSkillNames,
+        liveRediscovery: config.skillsLiveRediscovery,
       ),
       memorySection: _memorySection,
       messagingSection: _messagingSection(),

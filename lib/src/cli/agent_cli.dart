@@ -86,6 +86,7 @@ import '../task/delivery_slo.dart';
 import '../skills/builtin_skills.dart';
 import '../skills/skill_availability.dart';
 import '../skills/skills.dart';
+import '../skills/skills_freshness.dart';
 import '../skills/operative_pins.dart' show operativePinNotice;
 import '../skills/skill_renderer.dart';
 import '../prompts/prompts.g.dart'
@@ -1458,6 +1459,23 @@ class AgentCli {
   /// Mutable: the startup consent dialog and `/skills access` change it;
   /// the host persists it via [AgentCliConfig.onSkillsAccessChanged].
   late SkillsAccess _skillsAccess = config.skillsAccess;
+
+  /// gh-1440 skills-freshness state (all derived — the session JSONL stays
+  /// byte-identical): the stat-level root fingerprint recorded at the last
+  /// discovery scan, the wall-clock stamp the prompt's skills section
+  /// renders (`scanned at` — NOT per-composition time, so an unchanged
+  /// fingerprint renders byte-identical sections), the lowercase skill
+  /// names frozen at the boot scan (the `added mid-session` baseline),
+  /// the names at the last scan (the dropped-from-disk note baseline), and
+  /// the warn-once latch for freshness-check failures plus the
+  /// malformed-file paths already warned about.
+  SkillRootsFingerprint? _skillRootsFingerprint;
+  DateTime? _skillsScannedAt;
+  Set<String>? _bootSkillNames;
+  Set<String> _lastScanSkillNames = const {};
+  bool _skillsFreshnessWarned = false;
+  bool _rescanning = false;
+  Set<String> _warnedMalformedSkillPaths = const {};
 
   /// Whether any third-party skill/agent root exists on disk — drives the
   /// one-time consent dialog and the "disabled" hint. Computed by

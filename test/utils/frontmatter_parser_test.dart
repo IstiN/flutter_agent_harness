@@ -48,4 +48,39 @@ void main() {
       expect(body, 'body text');
     });
   });
+
+  group('frontmatterWellFormed (gh-1440 AC6 gate)', () {
+    test('no fence is well-formed', () {
+      expect(frontmatterWellFormed('just a body\n'), isTrue);
+    });
+
+    test('a valid yaml map fence is well-formed', () {
+      expect(frontmatterWellFormed('---\nname: x\n---\nbody'), isTrue);
+    });
+
+    test('an opened fence that is never closed is malformed (torn write)',
+        () {
+      expect(frontmatterWellFormed('---\nname: x\n'), isFalse);
+    });
+
+    test('unparseable yaml is malformed', () {
+      expect(frontmatterWellFormed('---\n\ta: b\n---\nbody'), isFalse);
+    });
+
+    test('a yaml list fence is malformed (no map to read metadata from)',
+        () {
+      expect(frontmatterWellFormed('---\n- a\n- b\n---\nbody'), isFalse);
+    });
+
+    // gh-1440 review: an empty (or comment-only) fence is well-formed
+    // "no metadata" — the skill loads with the directory fallback name
+    // and an empty description, exactly like pre-gh-1440 discovery.
+    test('an empty fence is well-formed "no metadata"', () {
+      expect(frontmatterWellFormed('---\n---\nbody'), isTrue);
+    });
+
+    test('a comment-only fence is well-formed "no metadata"', () {
+      expect(frontmatterWellFormed('---\n# note\n---\nbody'), isTrue);
+    });
+  });
 }

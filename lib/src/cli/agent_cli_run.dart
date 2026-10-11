@@ -123,6 +123,11 @@ extension AgentCliRun on AgentCli {
     // (issue #1085 round-1): a fresh prompt re-arms the funnel's abort
     // gate.
     _runAbortRequested = false;
+    // gh-1440 skills freshness: a skill dropped on disk since the last
+    // scan joins the index BEFORE this turn's request is composed (the
+    // stat is metadata-only; a rescan rides `_reloadSkills` verbatim).
+    // Real user prompts only — auto-continues never rescan mid-turn (I5).
+    await _checkSkillsFreshness();
     // Pre-flight context guard: when the LIVE context already exceeds the
     // compaction threshold, compact BEFORE sending the request — a failed
     // post-run compaction (quota-limited smol role, provider outage) used to

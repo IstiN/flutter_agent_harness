@@ -422,6 +422,15 @@ String _normalize(String jsonl) => jsonl
     // (like `timestamp`, it is wall-clock per run; the record itself is
     // identical across the three legacy configs and stays compared).
     .replaceAllMapped(RegExp(r'"at":"[^"]*"'), (_) => '"at":"T"')
+    // gh-1440: the skills section's `scanned at` disclosure stamp is the
+    // last discovery scan's wall-clock (rendered into the system prompt),
+    // so it differs per run exactly like `timestamp`; the rest of the
+    // prompt is identical across the three legacy configs and stays
+    // compared.
+    .replaceAllMapped(
+      RegExp(r'skills index scanned at [0-9T:.\-+]+Z'),
+      (_) => 'skills index scanned at T',
+    )
     // Content hashes computed over uuid-carrying text differ per run.
     .replaceAllMapped(
       RegExp(r'"([a-zA-Z]*[hH]ash)":"[0-9a-f]{8,}"'),

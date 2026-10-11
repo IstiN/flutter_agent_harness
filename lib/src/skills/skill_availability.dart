@@ -44,15 +44,22 @@ bool skillToggleValue(String name, Object? value) {
 ///
 /// Keys are skill names (case-insensitively resolved at resolution time —
 /// the canonical entry keeps the last written casing). Values must be
-/// booleans; `access` and `disableShellExecution` are the section's other
-/// keys and are NOT accepted here (the CLI config parser handles them
-/// alongside this).
+/// booleans; `access`, `disableShellExecution` and `liveRediscovery`
+/// (gh-1440) are the section's reserved keys and are NOT accepted here
+/// (the CLI config parser handles them alongside this).
 final class SkillsConfig {
   SkillsConfig({Map<String, bool> skills = const {}})
     : skills = Map.unmodifiable(skills);
 
   /// Per-skill on/off wishes.
   final Map<String, bool> skills;
+
+  /// The section's reserved keys — never skill names.
+  static const reservedKeys = {
+    'access',
+    'disableShellExecution',
+    'liveRediscovery',
+  };
 
   /// An empty config (no wishes).
   const SkillsConfig.empty() : skills = const {};
@@ -68,7 +75,7 @@ final class SkillsConfig {
     final skills = <String, bool>{};
     for (final key in node.keys) {
       final name = '$key';
-      if (name == 'access' || name == 'disableShellExecution') continue;
+      if (reservedKeys.contains(name)) continue;
       skills[name] = skillToggleValue(name, node[key]);
     }
     return SkillsConfig(skills: skills);
