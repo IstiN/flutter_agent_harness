@@ -1953,6 +1953,14 @@
       "completion": 31119,
       "total": 132024,
       "model": ""
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-11T09:20:57Z",
+      "prompt": 43577,
+      "completion": 9713,
+      "total": 53290,
+      "model": ""
     }
   ],
   "issue-1537": [
