@@ -143,7 +143,7 @@ jobs:
       # gh-1477 (commit metadata only — the exact incantation the static
       # stamp rehearsal uses). Schedule events only: every other arm
       # short-circuits in the script and must not pay the fetch.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410b181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: github.event_name == 'schedule'
         with:
           fetch-depth: 0

@@ -121,6 +121,7 @@ void main() {
     test('every schedule-reachable gate job requires release-pending and '
         'ANDs the guard into its if', () {
       for (final id in _guardedJobs(jobs)) {
+        if (id == 'release-pending') continue; // the pre-check guards itself
         final job = jobs[id] as YamlMap;
         expect(
           _needsOf(job),
