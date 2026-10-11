@@ -74,6 +74,11 @@ Future<void> _runApp(List<String> args) async {
       flagSpec: parsed.timer ?? parsed.deadline,
     );
   } on FormatException catch (error) {
+    // Not dead code: parseCliArgs's `_validateDeadlineFlag` only checks
+    // the spec's SHAPE — a well-formed but PAST epoch (e.g.
+    // `--deadline 1893456000000`) passes there and throws here, at
+    // `SessionDeadline.setEpochMs`. Keep this catch; it defends that one
+    // narrow path.
     _fail('invalid --timer/--deadline: ${error.message}');
   }
 

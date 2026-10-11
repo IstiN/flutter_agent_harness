@@ -99,6 +99,10 @@ table>, attempts: 1` (e.g. `dataset: 2.1, tasks: fix-git, attempts: 1`).
 Once green, dispatch the full run (`tasks:` empty,
 `confirm-full-run: true` for 2.0/2.1/3.0).
 
+**gh-1556 gate (AC9)**: no full 2.1 dispatch until the gh-1556 bench
+pipeline changes land AND a smoke dispatch (`family=2.0, tasks=<smoke
+task>`) shows a green aggregate with a rendered step summary.
+
 Comparability discipline (issue #1124): a cross-version run set uses the
 **same model and the same fa bundle** (commit) for every version, and
 each ledger row names both.

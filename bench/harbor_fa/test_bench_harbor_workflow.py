@@ -150,6 +150,40 @@ class BenchHarborDefaultsTest(unittest.TestCase):
         gap = float(self._step_env("FA_STALL_GAP_SEC"))
         self.assertGreaterEqual(gap, fa_agent_timeout._STALL_GAP_DEFAULT)
 
+    def _shard_run_block(self):
+        """The harbor shard step's `run: |` body."""
+        run_block = self.text.split("Run harbor (fa agent", 1)[1]
+        return run_block.split("run: |", 1)[1].split("Upload harbor job", 1)[0]
+
+    def test_agent_timeout_input_clips_the_watch_ceiling(self):
+        # gh-1556 rework review: under the watch the abs ceiling is the
+        # cap that actually kills a progressing trial, so an explicit
+        # agent-timeout input must clip it to base x4 (pre-PR the legacy
+        # ladder did exactly this) — otherwise the tighter cap the
+        # operator asked for is silently ignored in favor of the flat
+        # 3600s step-env default.
+        self.assertIn(
+            "FA_AGENT_TIMEOUT_ABS_CEILING_SEC < AGENT_TIMEOUT * 4",
+            self._shard_run_block(),
+        )
+
+    def test_progress_extension_input_can_still_turn_the_extension_off(self):
+        # gh-1556 rework review: the step env exports FA_PROGRESS_EXTENSION=1
+        # (the watch default, AC2) — an explicit progress-extension: false
+        # dispatch must still win by unsetting it, otherwise the input is
+        # a silent no-op while the comment claims otherwise.
+        self.assertRegex(
+            self._shard_run_block(),
+            r"false\|FALSE\|False\|no\|off\) unset FA_PROGRESS_EXTENSION",
+        )
+
+    def test_watch_comment_does_not_claim_inputs_win_silently(self):
+        # gh-1556 rework review: the old comment claimed the input-derived
+        # exports "still win where they are set" while the step env made
+        # both inputs no-ops — the wording must describe the real
+        # precedence (clip for agent-timeout, unset for the extension).
+        self.assertNotIn("still win where they are set", self.text)
+
 
 @unittest.skipUnless(
     _BENCH_YML.exists(), "bench.yml not found (standalone bench checkout)"

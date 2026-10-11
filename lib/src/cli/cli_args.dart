@@ -1241,13 +1241,7 @@ final class _CliArgValues {
         'cannot combine --stream-thinking and --no-stream-thinking',
       );
     }
-    if (timer != null && deadline != null) {
-      throw const CliArgsException(
-        'cannot combine --timer and --deadline (they set the same clock)',
-      );
-    }
-    _validateDeadlineFlag(timer, '--timer');
-    _validateDeadlineFlag(deadline, '--deadline');
+    _validateDeadlineFlags();
     _validateBackendModeFlags();
     return CliArgs(
       model: model,
@@ -1288,6 +1282,22 @@ final class _CliArgValues {
       deadline: deadline,
       attachments: List.unmodifiable(attachments),
     );
+  }
+
+  /// gh-1556 deadline-flag validation, split out of [finish] to keep its
+  /// complexity under the repo's CRAP gate (same rationale as
+  /// [_validateBackendModeFlags]): `--timer` and `--deadline` set the
+  /// same clock, so they cannot combine; each spec's shape is validated
+  /// here (the past-epoch check rides the application-time clock in
+  /// `SessionDeadline.setFromSpec`).
+  void _validateDeadlineFlags() {
+    if (timer != null && deadline != null) {
+      throw const CliArgsException(
+        'cannot combine --timer and --deadline (they set the same clock)',
+      );
+    }
+    _validateDeadlineFlag(timer, '--timer');
+    _validateDeadlineFlag(deadline, '--deadline');
   }
 
   /// Backend agent mode flag validation (issue #155), split out of

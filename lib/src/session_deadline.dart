@@ -212,10 +212,6 @@ final class SessionDeadline {
   /// The armed epoch-ms deadline, or null when unarmed.
   int? get deadlineEpochMs => _deadlineEpochMs;
 
-  /// The epoch-ms the current arming happened at (drives the 50%
-  /// crossing); null when unarmed.
-  int? get armedAtEpochMs => isArmed ? _armedAtEpochMs : null;
-
   int get _nowMs => _clock().millisecondsSinceEpoch;
 
   /// Milliseconds remaining on the armed deadline (negative once passed).
