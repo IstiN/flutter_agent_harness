@@ -737,10 +737,12 @@ List<String> wrapAnsiLine(String line, int width) {
   }
 
   void writeToken(String token, int visibleLen) {
-    // Only a visible token ends the carried-space state: a zero-width SGR
-    // token must not disturb it (a trailing reset after a boundary space
+    // A space keeps the carried state (a multi-space run fills the
+    // continuation row before wrapping — terminal-faithful); a zero-width
+    // SGR token keeps it too (a trailing reset after a boundary space
     // would otherwise resurrect the dropped-space row, gh-1517 review).
-    if (visibleLen > 0) carriedBoundarySpace = false;
+    // Only a visible non-space token ends it.
+    if (visibleLen > 0 && token != ' ') carriedBoundarySpace = false;
     row.write(token);
     col += visibleLen;
     if (token.startsWith('\x1b')) {

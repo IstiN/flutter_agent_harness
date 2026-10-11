@@ -192,6 +192,18 @@ void main() {
         expect(rows.single.replaceAll(AnsiMarkdown.ansiSgrPattern, ''), 'aaaa');
       });
 
+      test('a multi-space run at the exact wrap edge fills the continuation '
+          'row before wrapping (terminal-faithful) — review on #1517', () {
+        // Regression: the carried-state guard in writeToken() ended the
+        // carried state on ANY visible token including a second boundary
+        // space, so the next word started on its own row and the
+        // continuation row held only spaces ('aaaa' / '  ' / 'bbbb'). A
+        // real terminal with deferred autowrap fills the row first.
+        expect(wrapAnsiLine('aaaa  bbbb', 4), ['aaaa', '  bb', 'bb']);
+        // The single-space behavior is unchanged.
+        expect(wrapAnsiLine('aaaa bbbb', 4), ['aaaa', ' bbb', 'b']);
+      });
+
       test('property: seeded random text at random widths round-trips '
           'through the wrap (visible text preserved) — gh-1510', () {
         // Never-again for the space-eating class: whatever the wrap point,

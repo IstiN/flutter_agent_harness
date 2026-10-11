@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:test/test.dart';
 
@@ -17,7 +15,7 @@ void main() {
     final cli = AgentCli(
       config: AgentCliConfig(
         model: testModel,
-        apiKey: 'test-key',
+        apiKey: '[REDACTED:Sensitive Value]',
         env: env,
         sessionRoot: '/sessions',
         homeDir: '/home',
@@ -51,7 +49,7 @@ void main() {
       'process', () async {
     final env = MemoryExecutionEnv(cwd: '/work');
     await env.createDir('/home/.fah/logs', recursive: true);
-    // Seed fa.log beyond the cap (the memory print sink can now append
+    // Seed fa.log beyond the cap (the memory print sink can append
     // prompt-sized lines per memory op, so unbounded growth is real).
     await env.writeFile(
       '/home/.fah/logs/fa.log',
@@ -77,13 +75,13 @@ void main() {
     io.sendLine('/exit');
     await run;
 
+    // MemoryExecutionEnv is renamable, so the production rename path runs:
+    // the oversized log moves to fa.log.1 and the boot line lands in a
+    // fresh fa.log.
+    final rotated = await env.readTextFile('/home/.fah/logs/fa.log.1');
+    expect(rotated.valueOrNull, contains('xxxx'));
     final result = await env.readTextFile('/home/.fah/logs/fa.log');
     final log = result.valueOrNull ?? '';
-    expect(
-      log.length,
-      lessThan(AgentCli.diagnosticLogMaxBytes),
-      reason: 'the oversized log must not survive rotation',
-    );
     expect(log, isNot(contains('xxxx')));
     expect(log, contains('fa boot'));
   });
@@ -118,16 +116,16 @@ void main() {
     expect(log, contains('fa boot'));
   });
 
-  test('rotation on a renamable filesystem preserves the prior log as '
-      'fa.log.1', () async {
-    final env = _RenamingMemoryEnv();
+  test('rotation on a backend without rename truncates the oversized log '
+      'in place', () async {
+    // SandboxedExecutionEnv (passthrough with a null spec) is an
+    // ExecutionEnv WITHOUT the rename capability: CwdOverrideEnv reports
+    // rename as notSupported, so the truncate fallback branch runs.
+    final env = SandboxedExecutionEnv(MemoryExecutionEnv(cwd: '/work'), null);
     await env.createDir('/home/.fah/logs', recursive: true);
-    await env.writeFile('/home/.fah/logs/fa.log', 'precious prior line\n');
-    // Push the file over the cap without losing the marker line.
-    final over = await env.readTextFile('/home/.fah/logs/fa.log');
     await env.writeFile(
       '/home/.fah/logs/fa.log',
-      '${over.valueOrNull}${'y' * (AgentCli.diagnosticLogMaxBytes + 1)}',
+      'x' * (AgentCli.diagnosticLogMaxBytes + 1),
     );
     final io = FakeCliIO();
     final fake = FakeStreamFunction([textTurn('ok')]);
@@ -149,111 +147,16 @@ void main() {
     io.sendLine('/exit');
     await run;
 
-    final rotated = await env.readTextFile('/home/.fah/logs/fa.log.1');
-    expect(rotated.valueOrNull, contains('precious prior line'));
-    final fresh = await env.readTextFile('/home/.fah/logs/fa.log');
-    final log = fresh.valueOrNull ?? '';
+    final result = await env.readTextFile('/home/.fah/logs/fa.log');
+    final log = result.valueOrNull ?? '';
+    expect(
+      log.length,
+      lessThan(AgentCli.diagnosticLogMaxBytes),
+      reason: 'the oversized log must not survive the truncate fallback',
+    );
+    expect(log, isNot(contains('xxxx')));
     expect(log, contains('fa boot'));
-    expect(log, isNot(contains('precious prior line')));
+    final rotated = await env.exists('/home/.fah/logs/fa.log.1');
+    expect(rotated.valueOrNull ?? false, isFalse);
   });
-}
-
-/// [ExecutionEnv] decorator adding the rename capability on top of a
-/// [MemoryExecutionEnv]: exercises the rotation path the production env
-/// (LocalExecutionEnv) takes, where the oversized log moves to `fa.log.1`
-/// instead of being truncated.
-final class _RenamingMemoryEnv implements ExecutionEnv, RenamableFileSystem {
-  _RenamingMemoryEnv() : _delegate = MemoryExecutionEnv(cwd: '/work');
-
-  final MemoryExecutionEnv _delegate;
-
-  @override
-  String get cwd => _delegate.cwd;
-
-  @override
-  Future<Result<String, FileError>> absolutePath(String path) =>
-      _delegate.absolutePath(path);
-
-  @override
-  Future<Result<String, FileError>> joinPath(List<String> parts) =>
-      _delegate.joinPath(parts);
-
-  @override
-  Future<Result<String, FileError>> readTextFile(String path) =>
-      _delegate.readTextFile(path);
-
-  @override
-  Future<Result<Uint8List, FileError>> readBinaryFile(String path) =>
-      _delegate.readBinaryFile(path);
-
-  @override
-  Future<Result<List<String>, FileError>> readTextLines(
-    String path, {
-    int? maxLines,
-  }) => _delegate.readTextLines(path, maxLines: maxLines);
-
-  @override
-  Future<Result<void, FileError>> writeBinaryFile(
-    String path,
-    Uint8List content,
-  ) => _delegate.writeBinaryFile(path, content);
-
-  @override
-  Future<Result<void, FileError>> writeFile(String path, String content) =>
-      _delegate.writeFile(path, content);
-
-  @override
-  Future<Result<void, FileError>> appendFile(String path, String content) =>
-      _delegate.appendFile(path, content);
-
-  @override
-  Future<Result<FileInfo, FileError>> fileInfo(String path) =>
-      _delegate.fileInfo(path);
-
-  @override
-  Future<Result<List<FileInfo>, FileError>> listDir(String path) =>
-      _delegate.listDir(path);
-
-  @override
-  Future<Result<bool, FileError>> exists(String path) =>
-      _delegate.exists(path);
-
-  @override
-  Future<Result<void, FileError>> createDir(
-    String path, {
-    bool recursive = true,
-  }) => _delegate.createDir(path, recursive: recursive);
-
-  @override
-  Future<Result<void, FileError>> remove(
-    String path, {
-    bool recursive = false,
-    bool force = false,
-  }) => _delegate.remove(path, recursive: recursive, force: force);
-
-  @override
-  Future<Result<ShellExecResult, ExecutionError>> exec(
-    String command, {
-    ShellExecOptions? options,
-  }) => _delegate.exec(command, options: options);
-
-  @override
-  Future<Result<void, FileError>> renamePath(String from, String to) async {
-    final content = await _delegate.readBinaryFile(from);
-    final bytes = content.valueOrNull;
-    if (bytes == null) {
-      return Err(
-        FileError(FileErrorCode.notFound, 'no such file', path: from),
-      );
-    }
-    final written = await _delegate.writeBinaryFile(to, bytes);
-    if (written.isErr) {
-      return Err(
-        written.errorOrNull ??
-            const FileError(FileErrorCode.unknown, 'write failed'),
-      );
-    }
-    await _delegate.remove(from);
-    return const Ok(null);
-  }
 }
