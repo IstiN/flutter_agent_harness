@@ -67,7 +67,11 @@ const expectedUsesPerWorkflow = {
   // resolves flutter_app through the shared action (bounded retry + skew
   // fail-fast) before its macOS `flutter test test/apps` run — a bare pub
   // get there would be exactly the network roulette AC2 exists to stop.
-  '.github/workflows/ci.yml': 12,
+  // 12 + 1 (issue #1267 N2): the flutter-app-lock-smoke legs resolve
+  // flutter_app through the shared action before their linux/windows
+  // release builds — the smoke that catches a floated transitive (#1265)
+  // must itself resolve against the COMMITTED lockfile, never re-float it.
+  '.github/workflows/ci.yml': 13,
   '.github/workflows/nightly.yml': 4,
   '.github/workflows/build-mobile.yml': 4,
   '.github/workflows/build-macos.yml': 1,
