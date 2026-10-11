@@ -26,6 +26,18 @@ int tuiGraphemeWidth(String grapheme) {
   return hasNonZero ? 1 : 0;
 }
 
+/// Terminal cells occupied by ONE rune (code point): the same classification
+/// [tuiGraphemeWidth] gives a single-rune string, without building that
+/// string. Zero-width (controls, combining marks, variation selectors) = 0,
+/// wide (CJK, emoji, fullwidth) = 2, everything else = 1. Wrap scanners
+/// classify per rune (a wrap token is one code point) so they need the
+/// per-rune table walk, not grapheme segmentation.
+int tuiRuneCellWidth(int rune) {
+  if (rune < 0x80) return (rune < 0x20 || rune == 0x7f) ? 0 : 1;
+  if (_isZeroWidth(rune)) return 0;
+  return _isWide(rune) ? 2 : 1;
+}
+
 /// Terminal-cell width of [text]: the sum of its grapheme clusters' widths.
 ///
 /// Two acceleration layers over the table walk, both pure-function safe:

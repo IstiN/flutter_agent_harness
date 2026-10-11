@@ -1713,9 +1713,11 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   their targets through `scripts/apply_quarantine.py`, while nightly
   KEEPS running the file to produce the un-quarantine repeat-run proof.
 - `cd flutter_app && flutter test --exclude-tags integration` green
-  (includes golden suite; integration-tagged `test/cli_visual` runs in the
-  nightly workflow + on demand).
-- Line coverage of `lib/` ≥ 80% (full ratchet on main/nightly; PRs ratchet
+  (includes golden suite; integration-tagged `test/cli_visual` runs
+  pre-merge in ci.yml's `pty-visual` leg — gh-1538 retired the nightly
+  duplicate — and on demand).
+- Line coverage of `lib/` ≥ 80% (full ratchet in the pre-merge SM
+  validation gate; PRs ratchet
   CHANGED lines via `scripts/diff_coverage.py`); jscpd duplication < 1%
   core `lib/`, < 3.7% `flutter_app/lib/` (ratchet — only tighten).
 - Cross-module duplication (issue #487): clones spanning module roots
@@ -1770,7 +1772,7 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   weekly from junit durations; shard jobs emit junit-shard-N artifacts and
   `shard_files.py` bin-packs manifest-missing new test dirs at runtime),
   `coverage-gate`, `guards`, `flutter-tests` (ubuntu; goldens stay
-  host-locked in build-macos/nightly) → one aggregate `Quality gate`
+  host-locked in build-macos.yml) → one aggregate `Quality gate`
   required check, plus `step-timings` (per-step duration telemetry) and a
   `watchdog` (>2x-baseline timeouts; a timed-out PR leg gets ONE
   empty-commit retrigger — never `gh run rerun`, which reallocates into
@@ -1790,12 +1792,18 @@ and `scripts/check_goldens.py --quick` (skipped for docs-only commits).
   SM validation dispatch (gh-1280 binaries-pr idiom); the
   `flutter_app/lib/apps/**`/`lib/src/js_ext/**`/`flutter_app/pubspec.yaml`
   path set in the `changes` job only narrows a future real `pull_request`
-  trigger. Main/tag/schedule/release runs skip it — `nightly.yml` keeps
-  the full-suite macOS backstop there. `nightly.yml` runs the full monolith +
-  PTY/CLI integration (full real-provider suite with secrets) +
-  terminal-visual suites; `coverage-gardener.yml` measures the only-up CLI
-  coverage weekly and files an ai-teammate "raise coverage to X" issue —
-  the baseline itself only moves through a reviewed PR (issue #927).
+  trigger. Main/tag/schedule/release runs skip it — gh-1538 retired the
+  nightly full-suite macOS backstop, so this pre-merge leg is the macOS
+  coverage for the JS-engine surface. **Nightly (gh-1538) is builds +
+  integration-only**: `nightly.yml` keeps the release-mode build matrix
+  (all store/desktop targets) + PTY/CLI integration (full real-provider
+  suite with secrets, un-quarantined per gh-1199); unit shards, analyze,
+  coverage, CRAP/jscpd and the duplicated cli-visual / flutter-app-macos
+  legs moved out as pre-merge-gate duplication (#1537 makes the SM
+  validation the single test gate). `coverage-gardener.yml` measures the
+  only-up CLI coverage weekly and files an ai-teammate "raise coverage to
+  X" issue — the baseline itself only moves through a reviewed PR
+  (issue #927).
 
 ## Cross-platform parity
 
@@ -1867,22 +1875,38 @@ trajectory are SDK invariants with no override point (AC9).
 - Commit identity: human/AI contributors commit as `ai.teammate
   <agent.ai.native@gmail.com>` (history was rewritten to it — set
   `git config user.name ai.teammate` + `git config user.email
-  agent.ai.native@gmail.com` repo-locally). Release commits from
+  agent.ai.native@gmail.com` repo-locally). Release TAGS from
   `scripts/auto_release.sh` are authored `fa-release-bot[bot]
-  <fa-release-bot[bot]@users.noreply.github.com>` — the gh-1172 ruleset-
-  bypass App pushes the bump straight to protected main, so the App identity
-  is what auditability hangs on. gh-1402 rule: ANY automation that
-  commits/pushes release-path changes (store metadata fixes, version bumps,
-  changelogs) MUST use the fa-release-bot GitHub App token — never a PAT,
-  never the default `GITHUB_TOKEN` (main's required status checks reject
-  both, #1098).
+  <fa-release-bot[bot]@users.noreply.github.com>` — the gh-1172 App pushes
+  the annotated tag, so the App identity is what auditability hangs on.
+  gh-1402 rule: ANY automation that commits/pushes release-path changes
+  (store metadata fixes, release tags/releases) MUST use the fa-release-bot
+  GitHub App token — never a PAT, never the default `GITHUB_TOKEN`
+  (main's required status checks reject both, #1098).
 - Commit subjects: `type(scope): ...` (`feat:`, `fix:`, `fix(example):`,
   `ci:`, `test(providers):`, `refactor(prompts):`).
-- Every push to `main` auto-releases a patch to pub.dev
-  (`scripts/auto_release.sh` via `ci.yml`) — intended. The version scheme is
-  `1.0.<counter>` (gh-785: App Store Connect approved 1.0.0 and enforces a
-  monotonic `CFBundleShortVersionString`, so the pre-promotion `0.1.<counter>`
-  train can never upload again); the core and app pubspecs bump in lockstep.
+- Every push to `main` cuts an annotated TAG + GitHub Release
+  (`scripts/auto_release.sh` via `ci.yml`) — ZERO commits land on main
+  (gh-1522: the retired flow pushed a 4-file `chore(release):` bot commit
+  per release). The git TAG is the single source of truth for versions:
+  both pubspecs carry the FIXED `0.0.0-dev` placeholder (a hand-bump fails
+  the Static `Version placeholder guard`), `pubspec.lock` never churns, and
+  CI stamps the version at the edges: the `publish` job stamps the STAGED
+  publish tree (pubspec version + generated changelog section prepend via
+  `scripts/stamp_staged_release.sh`, staged version == tag guarded
+  pre-upload), store/mobile builds stamp `--build-name/--build-number` from
+  the derived tag version, `install_local.sh` stamps `version.txt` from
+  `git describe`. CHANGELOG.md is curated-only: PRs add lines under
+  `## Unreleased`; the release folds it into the tag's section AT STAGE
+  TIME (`scripts/release_notes.sh` preference order: curated `## <version>`
+  section → curated `## Unreleased` body → conventional commits since the
+  previous tag). The version scheme is `1.0.<counter>` (gh-785: App Store
+  Connect approved 1.0.0 and enforces a monotonic
+  `CFBundleShortVersionString`, so the pre-promotion `0.1.<counter>`
+  train can never upload again). Release checklist: push to main (or the
+  `releaseDispatch` dispatch) → watch the ci.yml `release` job cut the tag
+  → watch the tag-scoped `publish` + `binaries` jobs. `fa --version` reads
+  the stamped `version.txt` first, the placeholder pubspec second.
 - CLI binaries build per tag (`ci.yml` `binaries` job), attach to the
   GitHub Release (`fa-<os>-<arch>[.exe]`); `installer-smoke` verifies
   installers.
@@ -1917,9 +1941,9 @@ trajectory are SDK invariants with no override point (AC9).
   its `flutter_agent_harness` pin must EXIST and equal the root
   `pubspec.yaml` version — a stale OR MISSING pin (e.g. a merge conflict
   resolved by dropping the entry) makes every
-  `flutter pub get --enforce-lockfile` consumer red —
-  the release bump re-pins the lock itself (`scripts/auto_release.sh`
-  ships the re-pin inside the `chore(release):` commit), and the Static
+  `flutter pub get --enforce-lockfile` consumer red — the pins are
+  `0.0.0-dev` on both sides and NEVER churn across releases (gh-1522: the
+  tag is the version; the release flow mutates zero files), and the Static
   gate catches any other path to the drift at PR time. After ANY pubspec.yaml
   dependency change that adds/updates a darwin-native plugin: `cd
   flutter_app/ios && pod install --repo-update` and the same in `macos/`,
