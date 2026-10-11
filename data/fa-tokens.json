@@ -1873,6 +1873,14 @@
       "completion": 23185,
       "total": 102435,
       "model": ""
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-11T08:56:19Z",
+      "prompt": 99474,
+      "completion": 7356,
+      "total": 106830,
+      "model": ""
     }
   ],
   "issue-1532": [
