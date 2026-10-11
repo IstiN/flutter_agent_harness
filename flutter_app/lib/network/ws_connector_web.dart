@@ -3,11 +3,10 @@
 // in the LICENSE file.
 
 /// The browser connector: the WebSocket API cannot set arbitrary headers,
-/// so the bearer token CANNOT ride the handshake on web — a deployment
-/// that wants browser clients must accept `?token=` (not in the fa_network
-/// contract yet) or front the WS with a cookie session. Until then the
-/// web build connects unauthenticated and the server 401s with a clear
-/// error surfaced through [WsError].
+/// so the bearer token CANNOT ride the handshake as `Authorization`.
+/// fa_network (and the DAP hub) accept the session token as a `?token=`
+/// query parameter instead — [connect] lifts `Authorization: Bearer <t>`
+/// into the URI via [liftBearerIntoQuery] before opening the socket.
 library;
 
 import 'dart:async';
@@ -16,6 +15,34 @@ import 'package:stream_channel/stream_channel.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'fa_network_ws.dart';
+
+/// Lifts `Authorization: Bearer <token>` from [headers] into [wsUri] as a
+/// `token` query parameter (browser WebSockets cannot set headers).
+///
+/// Existing query parameters are preserved; a stale `token` param is
+/// replaced by the header value. The bearer auth-scheme match is
+/// case-insensitive per RFC 6750, so `Authorization: bearer <t>` (or any
+/// casing) is accepted too. Returns [wsUri] unchanged when there is no
+/// usable bearer header — the server then 401s with a clear error
+/// surfaced through `WsError`, same as before.
+///
+/// SECURITY: the token lands in the URI query, so any fa_network access
+/// log (or intermediate proxy/CDN log) for `/ws` will capture it. The
+/// deployed server contract requires `token` to be redacted/masked in
+/// access logs with bounded retention; that redaction is server-side and
+/// cannot be enforced from the browser client.
+Uri liftBearerIntoQuery(Uri wsUri, Map<String, String> headers) {
+  final auth = headers['Authorization'] ?? '';
+  // RFC 6750: the auth-scheme is case-insensitive. FaNetworkWs._open
+  // builds the exact 'Authorization' / 'Bearer ' casing today, but the
+  // scheme match below deliberately tolerates any casing.
+  if (!auth.toLowerCase().startsWith('bearer ')) return wsUri;
+  final token = auth.substring('bearer '.length).trim();
+  if (token.isEmpty) return wsUri;
+  return wsUri.replace(
+    queryParameters: {...wsUri.queryParameters, 'token': token},
+  );
+}
 
 /// Web implementation of [WsConnector] (no header support by platform).
 class PlatformWsConnector implements WsConnector {
@@ -26,7 +53,9 @@ class PlatformWsConnector implements WsConnector {
     Uri wsUri,
     Map<String, String> headers,
   ) async {
-    final channel = WebSocketChannel.connect(wsUri);
+    final channel = WebSocketChannel.connect(
+      liftBearerIntoQuery(wsUri, headers),
+    );
     await channel.ready;
     return StreamChannel<String>(
       channel.stream.cast<String>(),
