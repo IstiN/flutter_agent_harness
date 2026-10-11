@@ -7,8 +7,13 @@
 // becomes the next user step, its reply follows — with NO aborted error
 // anywhere on the event stream.
 import http from 'node:http';
-import { expect, FaHarness, skipWithoutChrome, test } from './helpers';
-import { appBundlePresent } from './helpers';
+import {
+  appBundlePresent,
+  expect,
+  FaHarness,
+  skipWithoutChrome,
+  test,
+} from './helpers';
 
 /** One slow OpenAI chat-completions SSE response: 8 deltas, 250ms apart. */
 async function startSlowSseServer(): Promise<{

@@ -177,4 +177,86 @@ test.describe('inbound mail visibility (#320)', () => {
       }),
     ).toBe(false);
   });
+
+  // gh-1521 review: the skips above leave the --with-app leg (the leg that
+  // went red on main) with zero e2e coverage of inbound mail on the app
+  // surface. The Flutter app renders into a <canvas> — nothing a DOM probe
+  // can read — but it consumes the SW's UI port server over a
+  // chrome.runtime port named 'fa-ui-v2', where every host event fans out
+  // verbatim (issue #34 AC16). The test adopts that exact wire through a
+  // probe port on the panel page and asserts the AC18 dedup-by-message-id
+  // invariant there: one attributed user row + one assistant reply for a
+  // delivery pushed twice (at-least-once hub).
+  test('AC1/AC18 app-surface: the --with-app leg sees inbound mail exactly '
+      + 'once over the ui-v2 wire the Flutter app renders from', async ({
+    fa,
+  }) => {
+    test.skip(
+      !appBundlePresent,
+      'needs the --with-app build (browser_ext/panel/app/ missing)',
+    );
+    await fa.bootAgent('unattended');
+
+    // The probe stands in for the app client: same port name, same
+    // envelopes. Connecting AFTER the boot means no SW-revival gap can
+    // orphan it, and an open MV3 port keeps the worker alive for the
+    // whole test.
+    await fa.panel.evaluate(() => {
+      const w = window as unknown as {
+        __faProbe: { msgs: Record<string, unknown>[] };
+        chrome: {
+          runtime: {
+            connect(connectInfo: { name: string }): {
+              onMessage: {
+                addListener(cb: (m: Record<string, unknown>) => void): void;
+              };
+            };
+          };
+        };
+      };
+      const probe = { msgs: [] as Record<string, unknown>[] };
+      const port = w.chrome.runtime.connect({ name: 'fa-ui-v2' });
+      port.onMessage.addListener((m) => probe.msgs.push(m));
+      w.__faProbe = probe;
+    });
+    const probeMsgs = () =>
+      fa.panel.evaluate(
+        () =>
+          (window as unknown as { __faProbe: { msgs: Record<string, unknown>[] } })
+            .__faProbe.msgs,
+      );
+    const userMailRows = (msgs: Record<string, unknown>[]) =>
+      msgs.filter(
+        (m) =>
+          m.kind === 'message_done' &&
+          (m.message as { role?: string }).role === 'user' &&
+          (m.message as { text?: string }).text === MAIL_ROW,
+      );
+    const assistantRows = (msgs: Record<string, unknown>[]) =>
+      msgs.filter(
+        (m) =>
+          m.kind === 'message_done' &&
+          (m.message as { role?: string }).role === 'assistant',
+      );
+
+    // The same delivery twice — AC18's at-least-once hub case.
+    for (let i = 0; i < 2; i++) {
+      await fa.swEval((payload: [string, string]) => {
+        const sw = globalThis as unknown as {
+          faAgent: { pushMail(from: string, text: string): void };
+        };
+        sw.faAgent.pushMail(payload[0], payload[1]);
+      }, ['peer-1', MAIL]);
+    }
+
+    // The first delivery starts exactly one turn: its attributed user row
+    // and the assistant reply each land exactly once on the app wire.
+    await expect.poll(async () => userMailRows(await probeMsgs()).length)
+      .toBe(1);
+    await expect.poll(async () => assistantRows(await probeMsgs()).length)
+      .toBe(1);
+    // Settle past any would-be duplicate turn, then re-assert: still one.
+    await fa.panel.waitForTimeout(1500);
+    expect(userMailRows(await probeMsgs())).toHaveLength(1);
+  });
 });
