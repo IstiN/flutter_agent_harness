@@ -202,20 +202,54 @@ PYS
   echo "bundled fa web app (browser_ext/panel/app/)"
 fi
 
+# A staged app from an earlier --with-app run can outlive the flag (the
+# dir is gitignored and never cleaned): without this, a plain local build
+# zips panel/app/manifest.json verbatim and the guard fails the package
+# (CWS single-manifest rule, #291). Strip unconditionally — idempotent.
+if [ -d browser_ext/panel/app ]; then
+  python3 scripts/ext_package_guard.py strip browser_ext/panel/app
+fi
+
 mkdir -p build
 rm -f build/fa-extension.zip
+
+# CWS-strict manifest (owner report 2026-10-11): the store uploader
+# rejects // comments ("manifest.json:17:2: missing value") that Chrome's
+# local loader tolerates — the zip must carry a comment-STRIPPED manifest
+# while the source keeps its documentation comments. Same strip regex as
+# the pre-zip validation above; staged under build/pack/ so the zip entry
+# name stays exactly "manifest.json". The ext_package_guard check below
+# re-parses the packaged manifest STRICTLY, so a regression here fails
+# the build, never the store upload.
+mkdir -p build/pack
+if command -v python3 >/dev/null 2>&1; then
+  python3 -c '
+import re, sys
+raw = open(sys.argv[1]).read()
+open(sys.argv[2], "w").write(re.sub(r"^\s*//.*$", "", raw, flags=re.M))
+' "$manifest" build/pack/manifest.json
+elif command -v node >/dev/null 2>&1; then
+  node -e 'require("fs").writeFileSync(process.argv[2], require("fs").readFileSync(process.argv[1], "utf8").replace(/^\s*\/\/.*$/gm, ""))' "$manifest" build/pack/manifest.json
+else
+  cp "$manifest" build/pack/manifest.json
+fi
+
 if command -v zip >/dev/null 2>&1; then
-  runtime="manifest.json sw content panel icons offscreen.html offscreen vendor"
+  runtime="sw content panel icons offscreen.html offscreen vendor"
   # panel/app rides inside the panel/ dir — no separate root entry.
+  # The stripped CWS manifest rides from build/pack/ (the verbatim source
+  # manifest.json stays out of the zip on purpose).
   ( cd browser_ext && zip -qr ../build/fa-extension.zip $runtime \
       -x 'sw/agent.js.map' 'sw/agent.js.deps' )
+  ( cd build/pack && zip -q ../fa-extension.zip manifest.json )
 else
 python3 - <<'PY'
 import os, zipfile
 RUNTIME_DIRS = ("sw", "content", "panel", "icons", "offscreen", "vendor")
 SKIP_NAMES = {"README.md", "agent.js.map", "agent.js.deps"}
 with zipfile.ZipFile("build/fa-extension.zip", "w", zipfile.ZIP_DEFLATED) as z:
-    z.write("browser_ext/manifest.json", "manifest.json")
+    # build/pack/manifest.json is the comment-stripped CWS copy made above.
+    z.write("build/pack/manifest.json", "manifest.json")
     z.write("browser_ext/offscreen.html", "offscreen.html")
     for d in RUNTIME_DIRS:
         for root, _, files in os.walk(os.path.join("browser_ext", d)):

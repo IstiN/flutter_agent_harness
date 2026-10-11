@@ -151,17 +151,23 @@ def cmd_check(zip_path: str) -> int:
         # --- root manifest shape: MV3 parse + icons exist ---------------
         if "manifest.json" in names:
             raw = z.read("manifest.json").decode("utf-8")
-            # The manifest carries // comments (Chrome's parser is lenient,
-            # strict JSON validators are not) — same strip as the build
-            # script's pre-zip validation.
-            commented = re.sub(r"^\s*//.*$", "", raw, flags=re.M)
+            # STRICT parse, no comment stripping: the Chrome Web Store
+            # uploader rejects // comments ("manifest.json:17:2: missing
+            # value", owner report 2026-10-11) even though Chrome's local
+            # loader tolerates them. The build script ships a stripped
+            # manifest in the zip; the // commenting stays allowed only in
+            # the SOURCE file. A zip whose manifest needs stripping to
+            # parse is exactly the failure this guard exists to kill.
             try:
-                manifest = json.loads(commented)
+                manifest = json.loads(raw)
             except json.JSONDecodeError as e:
                 error(
                     "manifest-parse",
-                    f"{zip_path}: root manifest.json does not parse: {e}",
+                    f"{zip_path}: root manifest.json is not STRICT JSON "
+                    f"(CWS rejects // comments — the build must package a "
+                    f"stripped manifest): {e}",
                 )
+                failures += 1
                 manifest = None
             if isinstance(manifest, dict):
                 if manifest.get("manifest_version") != 3:

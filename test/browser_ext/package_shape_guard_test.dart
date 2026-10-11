@@ -125,6 +125,24 @@ void main() {
     });
 
     test(
+      'REG (CWS upload 2026-10-11): a //-commented root manifest FAILS — '
+      'the store parses strictly even though Chrome local load is lenient',
+      () {
+        final commented = validRootManifest.replaceFirst(
+          '{',
+          '{\n  // build-time documentation comment\n',
+        );
+        final zip = writeZip('commented.zip', {
+          ...validPackage(),
+          'manifest.json': utf8.encode(commented),
+        });
+        final res = runGuard(['check', zip.path]);
+        expect(res.exitCode, isNot(0));
+        expect('${res.stdout}${res.stderr}', contains('manifest-parse'));
+      },
+    );
+
+    test(
       'nested panel/app/manifest.json fails naming BOTH manifests (AC1)',
       () {
         final zip = writeZip('two-manifests.zip', {
