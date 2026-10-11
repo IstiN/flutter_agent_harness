@@ -20,7 +20,6 @@ library;
 import 'dart:io' as io;
 
 import 'package:dart_tui/src/bubbles/style.dart' show RgbColor, Style;
-import 'package:dart_tui/src/msg.dart' show ColorProfile;
 import 'package:flutter_agent_harness/src/cli/ansi_markdown.dart';
 import 'package:flutter_agent_harness/src/cli/fa_tui.dart';
 import 'package:flutter_agent_harness/src/cli/tui_text_width.dart'

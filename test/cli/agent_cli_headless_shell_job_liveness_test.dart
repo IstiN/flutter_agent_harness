@@ -36,14 +36,12 @@ const _livenessMarker = ' elapsed · tail: ';
 class _LivenessRoutingStream {
   _LivenessRoutingStream({
     required List<List<AssistantMessageEvent>> leadScripts,
-    required List<List<AssistantMessageEvent>> livenessScripts,
-    required List<AssistantMessageEvent> settleScript,
-  }) : _leadScripts = List.of(leadScripts),
-       // SHARED, not copied: the caller populates the liveness reactions
-       // after boot, once the job id is known — the router pops them in
-       // order as the interim notices are steered.
-       _livenessScripts = livenessScripts,
-       _settleScript = settleScript;
+    // SHARED, not copied: the caller populates the liveness reactions
+    // after boot, once the job id is known — the router pops them in
+    // order as the interim notices are steered.
+    required this._livenessScripts,
+    required this._settleScript,
+  }) : _leadScripts = List.of(leadScripts);
 
   final List<List<AssistantMessageEvent>> _leadScripts;
   final List<List<AssistantMessageEvent>> _livenessScripts;
@@ -207,15 +205,13 @@ class _LivenessHarness {
     required this.shell,
     required this.env,
     required this.run,
-    required DateTime Function() clockOf,
-    required void Function(Duration) advanceClock,
-    required List<Completer<void>> gates,
+    required this._clockOf,
+    required this._advanceClock,
+    required this._gates,
     required this.livenessScripts,
     required this.runCode,
     required this.runFailure,
-  }) : _clockOf = clockOf,
-       _advanceClock = advanceClock,
-       _gates = gates;
+  });
 
   final AgentCli cli;
   final FakeCliIO io;
@@ -293,7 +289,7 @@ class _LivenessHarness {
 /// gated sleeps. The caller populates [h.livenessScripts] (and
 /// [h.settleScript]) once the job id is known — the router pops them in
 /// order when the matching notices are steered.
-Future<_LivenessHarness> livenessShape({
+Future<_LivenessHarness> _livenessShape({
   HeadlessConfig headless = const HeadlessConfig(
     shellJobDrainMs: 20 * 60 * 1000,
   ),
@@ -381,7 +377,7 @@ void main() {
     'still drains normally',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
-      final h = await livenessShape();
+      final h = await _livenessShape();
       final job = h.shell.jobs.single;
       // Six log lines — the notice tail shows the LAST FIVE.
       await h.env.writeFile(
@@ -456,7 +452,7 @@ void main() {
       // The reaction to the 5m notice: the model probes the job itself
       // through the real bash_job tool path — that counts as liveness
       // (gh-1459 ask #4).
-      final h = await livenessShape();
+      final h = await _livenessShape();
       final job = h.shell.jobs.single;
       h.livenessScripts.add(
         toolTurn([
@@ -525,7 +521,7 @@ void main() {
     'newly-crossed quiet bucket — a burst never collapses crossings',
     timeout: const Timeout(Duration(seconds: 120)),
     () async {
-      final h = await livenessShape();
+      final h = await _livenessShape();
       final job = h.shell.jobs.single;
       await h.env.writeFile(job.logPath, 'quiet so far');
       // One reaction script per notice the burst may steer (3 total).
@@ -585,7 +581,8 @@ void main() {
       expect(
         noticeTexts().length,
         3,
-        reason: 'the budget holds exactly: 3 crossings, 3 notices — '
+        reason:
+            'the budget holds exactly: 3 crossings, 3 notices — '
             'the settle ends the drain before the 20m crossing',
       );
       h.io.close();

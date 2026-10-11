@@ -9,16 +9,11 @@
 ///   the live policy allows run.
 /// - `REG-NET-1` — with no cube (no gate) the recorded requests are the
 ///   pre-gate golden (AC4).
+library;
+
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'dart:async';
 
-import 'package:flutter_agent_harness/src/agent/agent_loop.dart';
-import 'package:flutter_agent_harness/src/cube/config/cube_spec.dart';
-import 'package:flutter_agent_harness/src/cube/config/network_policy.dart';
-import 'package:flutter_agent_harness/src/cube/config/tool_policy.dart';
-import 'package:flutter_agent_harness/src/cube/network_gate.dart';
-import 'package:flutter_agent_harness/src/secrets/secrets_store.dart';
-import 'package:flutter_agent_harness/src/web_search/web_search.dart';
 import 'package:http/http.dart' as http;
 import 'package:test/test.dart';
 

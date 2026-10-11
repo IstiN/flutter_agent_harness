@@ -50,6 +50,7 @@ import 'dart:math' as math;
 // ponytail: these src/ paths are not semver-covered; the fork patches
 // these exact files and 2.0.0→2.1.0 kept them stable. Revisit if
 // upstream moves them (then: propose the pure shim upstream).
+// ignore: implementation_imports — fork-patched src path, stable 2.0.0→2.1.0 (see ponytail note above).
 import 'package:dart_tui/src/bubbles/style.dart' show RgbColor, Style;
 import '../kaomoji_faces.dart' show kKaomojiEyeArgb, kKaomojiMouthArgb;
 import 'tui_symbols.dart';
@@ -67,6 +68,7 @@ export 'tui_symbols.dart';
 /// of this file's public API surface — consumers theme through here, not
 /// through the vendored TUI package.
 export 'package:dart_tui/src/msg.dart' show ColorProfile;
+// ignore: implementation_imports — ColorProfile rides this file's public API; dart_tui's barrel hides it.
 import 'package:dart_tui/src/msg.dart' show ColorProfile;
 import 'tool_rows.dart' show LaidOutToolRow, ToolRowState;
 import 'tui_repl.dart' show MenuItem;

@@ -2,7 +2,7 @@
 /// (source of truth `prompts/skills/js-apps/SKILL.md`, compiled into
 /// `builtinSkillFiles` by `scripts/gen_prompts.dart`) — invocable on every
 /// host (CLI + app), with the incident-hardened content: the decisive
-/// apps/<id>-vs-dynamic_message routing table, the calculator anti-pattern
+/// `apps/<id>`-vs-dynamic_message routing table, the calculator anti-pattern
 /// named, and the pre-flight/error-channel contract taught.
 @TestOn('vm')
 library;

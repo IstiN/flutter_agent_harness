@@ -198,60 +198,58 @@ void main() {
         final contexts = <Context>[];
         var calls = 0;
         late final AgentCli cli;
-        final streamFn =
-            (Model model, Context context, {CancelToken? cancelToken}) {
-              contexts.add(
-                Context(
-                  systemPrompt: context.systemPrompt,
-                  messages: List.of(context.messages),
-                  tools: context.tools,
-                ),
-              );
-              final turn = calls++;
-              final events = AssistantMessageEventStream();
-              if (turn == 0) {
-                // First call: list what is discoverable (no arguments).
-                for (final event in toolTurn([
-                  const ToolCall(
-                    id: 'c1',
-                    name: 'discover_tools',
-                    arguments: {},
-                  ),
-                ])) {
-                  events.push(event);
-                }
-              } else if (turn == 1) {
-                // Follow-up: mount the first name the listing reported (the
-                // real model flow).
-                final listing = cli.agent.state.messages
-                    .whereType<ToolResultMessage>()
-                    .map((m) => (m.content.single as TextContent).text)
-                    .last;
-                final line = listing
-                    .split('\n')
-                    .firstWhere((l) => l.startsWith('- '), orElse: () => '');
-                final name = line.isEmpty
-                    ? ''
-                    : line.substring(2).split(': ')[0];
-                for (final event in toolTurn([
-                  ToolCall(
-                    id: 'c2',
-                    name: 'discover_tools',
-                    arguments: {
-                      'mount': [name],
-                    },
-                  ),
-                ])) {
-                  events.push(event);
-                }
-              } else {
-                for (final event in textTurn('mounted')) {
-                  events.push(event);
-                }
-              }
-              events.end();
-              return events;
-            };
+        AssistantMessageEventStream streamFn(
+          Model model,
+          Context context, {
+          CancelToken? cancelToken,
+        }) {
+          contexts.add(
+            Context(
+              systemPrompt: context.systemPrompt,
+              messages: List.of(context.messages),
+              tools: context.tools,
+            ),
+          );
+          final turn = calls++;
+          final events = AssistantMessageEventStream();
+          if (turn == 0) {
+            // First call: list what is discoverable (no arguments).
+            for (final event in toolTurn([
+              const ToolCall(id: 'c1', name: 'discover_tools', arguments: {}),
+            ])) {
+              events.push(event);
+            }
+          } else if (turn == 1) {
+            // Follow-up: mount the first name the listing reported (the
+            // real model flow).
+            final listing = cli.agent.state.messages
+                .whereType<ToolResultMessage>()
+                .map((m) => (m.content.single as TextContent).text)
+                .last;
+            final line = listing
+                .split('\n')
+                .firstWhere((l) => l.startsWith('- '), orElse: () => '');
+            final name = line.isEmpty ? '' : line.substring(2).split(': ')[0];
+            for (final event in toolTurn([
+              ToolCall(
+                id: 'c2',
+                name: 'discover_tools',
+                arguments: {
+                  'mount': [name],
+                },
+              ),
+            ])) {
+              events.push(event);
+            }
+          } else {
+            for (final event in textTurn('mounted')) {
+              events.push(event);
+            }
+          }
+          events.end();
+          return events;
+        }
+
         cli = cliFor(streamFn, AgentLoadMode.omp);
         final run = cli.run();
         await waitForIt(() => io.out.toString().contains('fa>'));

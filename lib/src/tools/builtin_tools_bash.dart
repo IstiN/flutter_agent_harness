@@ -334,7 +334,7 @@ Future<ToolExecutionResult> _runForegroundBash(
   required Duration retryBackoff,
   String? rewriteNotice,
 }) async {
-  final notices = <String>[if (rewriteNotice != null) rewriteNotice];
+  final notices = <String>[?rewriteNotice];
   for (var attempt = 1; ; attempt++) {
     final canRetry = attempt <= bashToolMaxRetries;
     final Result<ShellExecResult, ExecutionError> result;

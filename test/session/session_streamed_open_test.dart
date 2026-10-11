@@ -80,8 +80,7 @@ final class CountingFileSystem
       _delegate.listDir(path);
 
   @override
-  Future<Result<bool, FileError>> exists(String path) =>
-      _delegate.exists(path);
+  Future<Result<bool, FileError>> exists(String path) => _delegate.exists(path);
 
   @override
   Future<Result<void, FileError>> createDir(
@@ -128,7 +127,7 @@ void main() {
       jsonEncode({
         'type': 'message',
         'id': id,
-        if (parentId != null) 'parentId': parentId,
+        'parentId': ?parentId,
         'timestamp': '2026-09-07T00:00:01.000Z',
         'message': {'role': 'user', 'content': text},
       });
@@ -145,7 +144,7 @@ void main() {
   }) => jsonEncode({
     'type': 'custom',
     'id': id,
-    if (parentId != null) 'parentId': parentId,
+    'parentId': ?parentId,
     'timestamp': '2026-09-07T00:00:02.000Z',
     'customType': customType,
     'data': data ?? 'p' * padChars,
@@ -161,12 +160,15 @@ void main() {
       ]);
       final counting = CountingFileSystem(fs);
       final storage = await JsonlSessionStorage.open(counting, path);
-      expect(counting.readTextFileCalls, 0,
-          reason: 'a range-capable filesystem must stream, never '
-              'readTextFile the whole session');
+      expect(
+        counting.readTextFileCalls,
+        0,
+        reason:
+            'a range-capable filesystem must stream, never '
+            'readTextFile the whole session',
+      );
       expect(counting.readRangeCalls, greaterThan(0));
-      expect((await storage.getEntries()).map((e) => e.id),
-          ['m1', 'c1', 'm2']);
+      expect((await storage.getEntries()).map((e) => e.id), ['m1', 'c1', 'm2']);
       expect(await storage.getLeafId(), 'm2');
     });
 
@@ -206,21 +208,14 @@ void main() {
 
     test('giant NON-custom records keep full fidelity', () async {
       final big = 'x' * (128 * 1024);
-      await writeLines([
-        headerLine(),
-        messageLine('m1', text: big),
-      ]);
+      await writeLines([headerLine(), messageLine('m1', text: big)]);
       final storage = await JsonlSessionStorage.open(fs, path);
       final entry = (await storage.getEntries()).single as MessageRecord;
       expect((entry.message as dynamic).content, big);
     });
 
-    test('open above the size backstop refuses with a repair hint',
-        () async {
-      await writeLines([
-        headerLine(),
-        messageLine('m1'),
-      ]);
+    test('open above the size backstop refuses with a repair hint', () async {
+      await writeLines([headerLine(), messageLine('m1')]);
       final info = (await fs.fileInfo(path)).getOrThrow();
       // At the bound exactly the open proceeds; past it, it refuses.
       final storage = await JsonlSessionStorage.open(
@@ -243,38 +238,37 @@ void main() {
       );
     });
 
-    test('torn writes heal through the streamed path byte-identically',
-        () async {
-      final good = [
-        headerLine(),
-        messageLine('m1'),
-        messageLine('m2', parentId: 'm1'),
-      ];
-      await fs.writeFile(
-        path,
-        '${good.join('\n')}\n{"type":"message","id":"to', // torn write
-      );
-      final storage = await JsonlSessionStorage.open(fs, path);
-      expect(storage.quarantinedEntries, 1);
-      expect((await storage.getEntries()).map((e) => e.id), ['m1', 'm2']);
-      // The file is rewritten from the surviving records so later opens
-      // see whole JSONL.
-      final healed = (await fs.readTextFile(path)).getOrThrow();
-      final lines = healed.trim().split('\n');
-      expect(lines.length, 3);
-      expect(jsonDecode(lines[0]), isA<Map<String, dynamic>>());
-      expect((jsonDecode(lines[1]) as Map)['id'], 'm1');
-      expect((jsonDecode(lines[2]) as Map)['id'], 'm2');
-      // Quarantine sidecar holds the torn bytes.
-      final corrupt = (await fs.readTextFile('$path.corrupt')).getOrThrow();
-      expect(corrupt, contains('"to'));
-    });
+    test(
+      'torn writes heal through the streamed path byte-identically',
+      () async {
+        final good = [
+          headerLine(),
+          messageLine('m1'),
+          messageLine('m2', parentId: 'm1'),
+        ];
+        await fs.writeFile(
+          path,
+          '${good.join('\n')}\n{"type":"message","id":"to', // torn write
+        );
+        final storage = await JsonlSessionStorage.open(fs, path);
+        expect(storage.quarantinedEntries, 1);
+        expect((await storage.getEntries()).map((e) => e.id), ['m1', 'm2']);
+        // The file is rewritten from the surviving records so later opens
+        // see whole JSONL.
+        final healed = (await fs.readTextFile(path)).getOrThrow();
+        final lines = healed.trim().split('\n');
+        expect(lines.length, 3);
+        expect(jsonDecode(lines[0]), isA<Map<String, dynamic>>());
+        expect((jsonDecode(lines[1]) as Map)['id'], 'm1');
+        expect((jsonDecode(lines[2]) as Map)['id'], 'm2');
+        // Quarantine sidecar holds the torn bytes.
+        final corrupt = (await fs.readTextFile('$path.corrupt')).getOrThrow();
+        expect(corrupt, contains('"to'));
+      },
+    );
 
     test('blank lines are skipped without breaking spans', () async {
-      await fs.writeFile(
-        path,
-        '${headerLine()}\n\n${messageLine('m1')}\n\n',
-      );
+      await fs.writeFile(path, '${headerLine()}\n\n${messageLine('m1')}\n\n');
       final counting = CountingFileSystem(fs);
       final storage = await JsonlSessionStorage.open(counting, path);
       expect((await storage.getEntries()).map((e) => e.id), ['m1']);

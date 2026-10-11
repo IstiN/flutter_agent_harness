@@ -215,7 +215,6 @@ import '../plugins/plugin.dart';
 import '../redact/redaction_cli.dart';
 import '../redact/redaction_hooks.dart';
 import '../redact/redaction_pipeline.dart';
-import '../redact/redaction_types.dart';
 import '../spill/spill.dart';
 import '../ttsr/ttsr.dart';
 import '../types.dart';

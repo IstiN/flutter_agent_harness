@@ -6,6 +6,7 @@
 // barrel's `Theme`. Byte-identical role data EXCEPT the roles tagged
 // `gh-671 readability:` — deliberate contrast-floor adjustments (muted /
 // toolOutput / toolErrorBg for nord and dracula), not upstream drift.
+// ignore: implementation_imports — fork-only #444 roles (issue #613); hosted dart_tui exports no Style/Border/RgbColor.
 import 'package:dart_tui/src/bubbles/style.dart' show Border, RgbColor, Style;
 
 /// A named collection of [Style] presets for common semantic roles.

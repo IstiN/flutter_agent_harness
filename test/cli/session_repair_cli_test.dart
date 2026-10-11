@@ -2,8 +2,6 @@ import 'dart:convert';
 
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/session_repair_command.dart';
-import 'package:flutter_agent_harness/src/env/memory_execution_env.dart';
-import 'package:flutter_agent_harness/src/session/session_repo.dart';
 import 'package:test/test.dart';
 
 /// Output sink for the repair command (a CliIO tear-off pair shape).
@@ -53,8 +51,7 @@ void main() {
       final repo = JsonlSessionRepo(fs: fs, sessionsRoot: '/sessions');
       final metadata = await resolveRepairableSession(repo, 'repair-me');
       expect(metadata, isNotNull);
-      final content =
-          (await fs.readTextFile(metadata!.path)).getOrThrow();
+      final content = (await fs.readTextFile(metadata!.path)).getOrThrow();
       final lines = content.trim().split('\n');
       expect(
         lines
@@ -82,8 +79,7 @@ void main() {
       expect(io.buffer.toString(), contains('dry run: nothing written'));
       final repo = JsonlSessionRepo(fs: fs, sessionsRoot: '/sessions');
       final metadata = await resolveRepairableSession(repo, 'dry-run-me');
-      final content =
-          (await fs.readTextFile(metadata!.path)).getOrThrow();
+      final content = (await fs.readTextFile(metadata!.path)).getOrThrow();
       expect(content, contains('model_request_summary'));
       expect((await fs.exists('${metadata.path}.bak')).getOrThrow(), isFalse);
     });
@@ -104,8 +100,7 @@ void main() {
       expect(code, 1);
       expect(io.buffer.toString(), contains('is live'));
       // The file is untouched — nothing was rewritten under the writer.
-      final content =
-          (await fs.readTextFile(metadata.path)).getOrThrow();
+      final content = (await fs.readTextFile(metadata.path)).getOrThrow();
       expect(content, contains('model_request_summary'));
     });
 
@@ -123,10 +118,7 @@ void main() {
       );
       expect(code, 0);
       expect(io.buffer.toString(), contains('repaired'));
-      expect(
-        (await fs.exists('${metadata.path}.bak')).getOrThrow(),
-        isTrue,
-      );
+      expect((await fs.exists('${metadata.path}.bak')).getOrThrow(), isTrue);
     });
 
     test('a live session is refused', () async {
