@@ -2192,5 +2192,15 @@
       "total": 57592,
       "model": "kimi-for-coding"
     }
+  ],
+  "issue-1555": [
+    {
+      "leg": "dev",
+      "at": "2026-10-11T21:05:28Z",
+      "prompt": 189147,
+      "completion": 70294,
+      "total": 259441,
+      "model": "kimi-for-coding"
+    }
   ]
 }
