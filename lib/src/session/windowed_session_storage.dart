@@ -923,6 +923,7 @@ final class WindowedSessionStorage
       for (var i = 0; i < n; i++) {
         final record = records[i];
         _byId[record.id] = record;
+        _offsetById[record.id] = starts[i];
         _appendedBelow.remove(record.id);
         updateSessionLabelCache(_labelsById, record);
       }

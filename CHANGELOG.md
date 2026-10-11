@@ -23,11 +23,16 @@ block a release again.
   full open when the boundary walk exhausts its page cap (it proceeds
   with the tail-anchored windowed session; the boot cap owns over-window
   residue); and the headless `fa trajectory` resolver opens windowed,
-  paging the whole ledger in bounded doubling blocks via the new
-  `SessionTree.ensureWholeLedgerResident` for the read-everything
-  cost/inspect views. Trajectory export streaming (AC3a), split-and-retain
-  rotation activation (W2), and the opt-in write-side caps (W3) remain
-  follow-up work.
+  reading the whole ledger for the cost/inspect views through the new
+  `SessionTree.ensureWholeLedgerResident` — a sequential forward scan in
+  bounded strips (`WindowedSessionStorage.loadAllOlder`), not the
+  boundary-walk's doubling strips (whose per-strip record cap measured
+  ~13x read/parse amplification over the whole file). The same change
+  block-prepends paged chunks in `_indexChunk` (one `insertAll` per
+  list), removing an O(n²) the suspended-eviction walk paid per record.
+  Trajectory export streaming (AC3a), split-and-retain rotation
+  activation (W2), and the opt-in write-side caps (W3) remain follow-up
+  work.
 
 - gh-1522: tag-sourced versions — the git tag is the single source of
   truth. The release-bot file bumps are retired: cutting a release = a
