@@ -387,3 +387,5 @@ pre-tag + publish gates) fails fast when the cap is approached again.
 - gh-1459 [BUG] Headless exits with live background shell jobs (detached, results lost) — must drain+steer like subagents (gh-1440 run orphaned its full-suite job) (#1463)
 
 ## Unreleased
+
+- gh-1528 [BUG] FLAKE: chatgpt_oauth_server_test binds port 40581 → SocketException (EADDRINUSE) under Hostile ambient env leg — port-fallback test rewritten hermetic (held ephemeral occupant + port-0 candidates, no bind ever targets a freed port)
