@@ -439,4 +439,291 @@ void main() {
       );
     });
   });
+
+  // ── gh-1522 — the tag is the version; the stage is stamped from it ───────
+  // The committed pubspecs carry the FIXED 0.0.0-dev placeholder (CI guards
+  // hand-bumps in the static job) and the real version is stamped into the
+  // STAGED tree at publish time. These tests pin the stamp contract so the
+  // tag↔staged-file invariant cannot silently rot.
+  group('gh-1522 — tag-sourced version stamp', () {
+    test('committed pubspecs carry the 0.0.0-dev placeholder', () {
+      for (final f in ['pubspec.yaml', 'flutter_app/pubspec.yaml']) {
+        final pubspec = loadYaml(File(f).readAsStringSync()) as YamlMap;
+        final version = pubspec['version']?.toString() ?? '';
+        expect(
+          version.split('+').first,
+          '0.0.0-dev',
+          reason:
+              '$f must carry the 0.0.0-dev placeholder (gh-1522) — the git '
+              'tag is the single source of truth; a hand-bump desyncs the '
+              'staged stamp and reintroduces the lockfile churn this ticket '
+              'retires',
+        );
+      }
+    });
+
+    test(
+      'stage script forwards an optional version to the stamper, after the size guard',
+      () {
+        final script = File(_stagingScript).readAsStringSync();
+        final guard = script.indexOf('size=\$(du -sm');
+        final stamp = script.indexOf('/stamp_staged_release.sh"');
+        expect(
+          stamp,
+          greaterThan(guard),
+          reason:
+              'the stamp must run on the COMPLETE staged tree (after the '
+              'rsync + size guard), never before',
+        );
+        expect(script, contains('if [ "\${2:-}" ]'));
+      },
+    );
+
+    test('stamper enforces the tag↔staged-version invariant before upload', () {
+      final stamp = File('scripts/stamp_staged_release.sh').readAsStringSync();
+      // The stamp writes the version, then GUARDS staged == <version> —
+      // a desync (missing version line, second version field) fails before
+      // the upload instead of shipping 0.0.0-dev to pub.dev.
+      final sed = stamp.indexOf('sed -i "s/^version:');
+      final guard = stamp.indexOf("!= \"\$version\"");
+      expect(sed, greaterThan(-1));
+      expect(guard, greaterThan(sed));
+      // The changelog section comes from release_notes.sh (curated section →
+      // curated Unreleased → conventional-commits fallback) and the staged
+      // file never shows an `## Unreleased` header.
+      expect(stamp, contains('release_notes.sh'));
+      expect(stamp, contains('## Unreleased'));
+    });
+
+    test(
+      'staged changelog is capped: guard runs, oldest sections trim, re-check',
+      () {
+        // Mirrors the changelog_cap_guard wiring — asserted here as part of
+        // the stamp contract (the stage is a publish surface).
+        final stamp = File(
+          'scripts/stamp_staged_release.sh',
+        ).readAsStringSync();
+        expect(stamp, contains('check_changelog_size.sh'));
+        expect(stamp, contains('keeping only the fresh section'));
+      },
+    );
+
+    test(
+      'ci.yml publish stage passes the tag version and verifies the staged stamp',
+      () {
+        final ci = File('.github/workflows/ci.yml').readAsStringSync();
+        final publish = ci.indexOf('  publish:');
+        expect(publish, greaterThan(0));
+        expect(
+          ci.contains(
+            'stage_publish_package.sh /tmp/publish-stage "\${GITHUB_REF_NAME#v}"',
+          ),
+          isTrue,
+          reason:
+              'the publish job must stamp the stage from the TAG '
+              '(v1.0.550 → 1.0.550), not ship the placeholder',
+        );
+        final stage = ci.indexOf(
+          'stage_publish_package.sh /tmp/publish-stage',
+          publish,
+        );
+        final verify = ci.indexOf('Verify staged version matches tag', stage);
+        expect(
+          verify,
+          greaterThan(stage),
+          reason:
+              'the staged-version↔tag guard must run after staging, before '
+              'the upload (gh-1522)',
+        );
+      },
+    );
+
+    test(
+      'install_local.sh stamps version.txt from git describe, not the pubspec',
+      () {
+        // gh-1522 AC4: `fa --version` shows the stamped value from
+        // install_local.sh builds — the committed pubspec is the 0.0.0-dev
+        // placeholder, so the build entry point must derive the version from
+        // the tags (`git describe`), never from a pubspec grep.
+        final install = File('install_local.sh').readAsStringSync();
+        expect(install, contains('git describe --tags'));
+        expect(
+          RegExp(r"grep .^.version:").hasMatch(install),
+          isFalse,
+          reason:
+              'install_local.sh must not read the version from pubspec.yaml — '
+              'that is the 0.0.0-dev placeholder now (gh-1522)',
+        );
+        expect(install, contains('version.txt'));
+      },
+    );
+
+    test('nightly dry-run rehearses the tag-stamped stage', () {
+      final nightly = File('.github/workflows/nightly.yml').readAsStringSync();
+      expect(
+        nightly.contains(
+          'stage_publish_package.sh /tmp/publish-stage "\$next"',
+        ),
+        isTrue,
+        reason:
+            'the nightly publish dry-run must validate the STAMPED staged '
+            'tree (gh-1522 risk note: the dry-run now also validates the '
+            'stamp, not only the payload)',
+      );
+    });
+  });
+
+  // ── gh-1522 rework (PR #1526 thread) — the stamper, exercised ────────────
+  // The string assertions above pin the WIRING; this group runs the real
+  // script against a fixture stage and asserts the staged BYTES — a bad
+  // stamp ships 0.0.0-dev or a malformed changelog to pub.dev. The fixture
+  // repo dir doubles as the CWD: release_notes.sh reads CHANGELOG.md from
+  // the CWD, exactly like the publish job running at the repo root.
+  group('gh-1522 rework — stamp_staged_release.sh behavior', () {
+    final tmp = Directory.systemTemp.createTempSync('stamp-fixture-');
+
+    /// A fixture "repo" (CWD for the run) plus a staged tree inside it.
+    _StampFixture fixture({String? repoChangelog, String? stagedChangelog}) {
+      final dir = Directory(
+        '${tmp.path}/fx-${tmp.listSync().length}',
+      )..createSync(recursive: true);
+      final repo = '${dir.path}/repo';
+      final stage = '${dir.path}/stage';
+      Directory(repo).createSync();
+      Directory(stage).createSync();
+      File('$repo/CHANGELOG.md').writeAsStringSync(
+        repoChangelog ??
+            '# Changelog\n\nCurated window.\n\n## Unreleased\n\n'
+                '- pending bullet\n\n## 1.0.998\n\n- old entry\n',
+      );
+      File('$stage/pubspec.yaml').writeAsStringSync(
+        'name: fa\nversion: 0.0.0-dev\n',
+      );
+      File('$stage/CHANGELOG.md').writeAsStringSync(
+        stagedChangelog ?? File('$repo/CHANGELOG.md').readAsStringSync(),
+      );
+      return _StampFixture(repo: repo, stage: stage);
+    }
+
+    ProcessResult stamp(_StampFixture fx, String version) => Process.runSync(
+      'bash',
+      [
+        File('scripts/stamp_staged_release.sh').absolute.path,
+        fx.stage,
+        version,
+      ],
+      workingDirectory: fx.repo,
+    );
+
+    test('stamps the pubspec to exactly the tag version', () {
+      final fx = fixture();
+      final r = stamp(fx, '1.0.999');
+      expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+      expect(
+        File('${fx.stage}/pubspec.yaml').readAsStringSync(),
+        contains('version: 1.0.999'),
+      );
+    });
+
+    test(
+      'folds the curated Unreleased body under the tag section; no Unreleased header survives',
+      () {
+        final fx = fixture();
+        final r = stamp(fx, '1.0.999');
+        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+        final staged = File('${fx.stage}/CHANGELOG.md').readAsStringSync();
+        expect(staged, isNot(contains('## Unreleased')));
+        expect(staged, contains('## 1.0.999'));
+        expect(staged, contains('- pending bullet'));
+        // the older curated section is preserved after the fresh one
+        expect(staged, contains('## 1.0.998'));
+        expect(
+          staged.indexOf('## 1.0.999'),
+          lessThan(staged.indexOf('## 1.0.998')),
+        );
+      },
+    );
+
+    test(
+      'generated section matches the repo formatting convention (blank lines, PR #1526 thread 4)',
+      () {
+        final fx = fixture();
+        final r = stamp(fx, '1.0.999');
+        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+        final staged = File('${fx.stage}/CHANGELOG.md').readAsStringSync();
+        // blank line after the fresh section header, and a blank line
+        // between the fresh section and the next `## ` — raw markdown must
+        // not run sections together (the repo's hand-curated convention).
+        expect(staged, contains('## 1.0.999\n\n- pending bullet'));
+        expect(staged, contains('- pending bullet\n\n## 1.0.998'));
+      },
+    );
+
+    test(
+      'over-cap staged file trims oldest-first, keeping the fresh section',
+      () {
+        // A ~300 KiB older section plus the small fresh one: the trim must
+        // drop the old section so the staged file lands under the pub.dev
+        // cap.
+        final old = 'x' * 300000;
+        final fx = fixture(
+          stagedChangelog:
+              '# Changelog\n\n## Unreleased\n\n- pending bullet\n\n'
+              '## 1.0.998\n\n- $old\n',
+        );
+        final r = stamp(fx, '1.0.999');
+        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+        final stagedFile = File('${fx.stage}/CHANGELOG.md');
+        expect(
+          stagedFile.lengthSync(),
+          lessThan(262144),
+          reason: 'the staged changelog must fit the pub.dev cap',
+        );
+        final staged = stagedFile.readAsStringSync();
+        expect(staged, contains('## 1.0.999'));
+        expect(staged, contains('- pending bullet'));
+        expect(staged, isNot(contains('## 1.0.998')));
+      },
+    );
+
+    test(
+      'a curated ## <version> section for the same version never duplicates',
+      () {
+        // The repo file already carries a curated section for the version
+        // being released (release_notes.sh prefers it): the stamper must
+        // not prepend a generated copy AND keep the existing one.
+        final fx = fixture(
+          repoChangelog:
+              '# Changelog\n\n## 1.0.999\n\n- curated notes\n\n'
+              '## 1.0.998\n\n- old entry\n',
+        );
+        final r = stamp(fx, '1.0.999');
+        expect(r.exitCode, 0, reason: '${r.stdout}${r.stderr}');
+        final staged = File('${fx.stage}/CHANGELOG.md').readAsStringSync();
+        expect('## 1.0.999\n'.allMatches(staged).length, 1);
+        expect(staged, contains('- curated notes'));
+      },
+    );
+
+    test('staged pubspec missing the version line fails loud', () {
+      final fx = fixture();
+      File('${fx.stage}/pubspec.yaml').writeAsStringSync('name: fa\n');
+      final r = stamp(fx, '1.0.999');
+      expect(r.exitCode, 1, reason: 'a stage without a version line must fail');
+      expect(
+        '${r.stdout}${r.stderr}',
+        contains('refusing to publish'),
+        reason:
+            'the loud fail must name the tag↔file invariant — a bare '
+            'set -e death with no message is a silent failure',
+      );
+    });
+  });
+}
+
+class _StampFixture {
+  _StampFixture({required this.repo, required this.stage});
+
+  final String repo;
+  final String stage;
 }

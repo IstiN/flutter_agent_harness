@@ -1867,22 +1867,38 @@ trajectory are SDK invariants with no override point (AC9).
 - Commit identity: human/AI contributors commit as `ai.teammate
   <agent.ai.native@gmail.com>` (history was rewritten to it — set
   `git config user.name ai.teammate` + `git config user.email
-  agent.ai.native@gmail.com` repo-locally). Release commits from
+  agent.ai.native@gmail.com` repo-locally). Release TAGS from
   `scripts/auto_release.sh` are authored `fa-release-bot[bot]
-  <fa-release-bot[bot]@users.noreply.github.com>` — the gh-1172 ruleset-
-  bypass App pushes the bump straight to protected main, so the App identity
-  is what auditability hangs on. gh-1402 rule: ANY automation that
-  commits/pushes release-path changes (store metadata fixes, version bumps,
-  changelogs) MUST use the fa-release-bot GitHub App token — never a PAT,
-  never the default `GITHUB_TOKEN` (main's required status checks reject
-  both, #1098).
+  <fa-release-bot[bot]@users.noreply.github.com>` — the gh-1172 App pushes
+  the annotated tag, so the App identity is what auditability hangs on.
+  gh-1402 rule: ANY automation that commits/pushes release-path changes
+  (store metadata fixes, release tags/releases) MUST use the fa-release-bot
+  GitHub App token — never a PAT, never the default `GITHUB_TOKEN`
+  (main's required status checks reject both, #1098).
 - Commit subjects: `type(scope): ...` (`feat:`, `fix:`, `fix(example):`,
   `ci:`, `test(providers):`, `refactor(prompts):`).
-- Every push to `main` auto-releases a patch to pub.dev
-  (`scripts/auto_release.sh` via `ci.yml`) — intended. The version scheme is
-  `1.0.<counter>` (gh-785: App Store Connect approved 1.0.0 and enforces a
-  monotonic `CFBundleShortVersionString`, so the pre-promotion `0.1.<counter>`
-  train can never upload again); the core and app pubspecs bump in lockstep.
+- Every push to `main` cuts an annotated TAG + GitHub Release
+  (`scripts/auto_release.sh` via `ci.yml`) — ZERO commits land on main
+  (gh-1522: the retired flow pushed a 4-file `chore(release):` bot commit
+  per release). The git TAG is the single source of truth for versions:
+  both pubspecs carry the FIXED `0.0.0-dev` placeholder (a hand-bump fails
+  the Static `Version placeholder guard`), `pubspec.lock` never churns, and
+  CI stamps the version at the edges: the `publish` job stamps the STAGED
+  publish tree (pubspec version + generated changelog section prepend via
+  `scripts/stamp_staged_release.sh`, staged version == tag guarded
+  pre-upload), store/mobile builds stamp `--build-name/--build-number` from
+  the derived tag version, `install_local.sh` stamps `version.txt` from
+  `git describe`. CHANGELOG.md is curated-only: PRs add lines under
+  `## Unreleased`; the release folds it into the tag's section AT STAGE
+  TIME (`scripts/release_notes.sh` preference order: curated `## <version>`
+  section → curated `## Unreleased` body → conventional commits since the
+  previous tag). The version scheme is `1.0.<counter>` (gh-785: App Store
+  Connect approved 1.0.0 and enforces a monotonic
+  `CFBundleShortVersionString`, so the pre-promotion `0.1.<counter>`
+  train can never upload again). Release checklist: push to main (or the
+  `releaseDispatch` dispatch) → watch the ci.yml `release` job cut the tag
+  → watch the tag-scoped `publish` + `binaries` jobs. `fa --version` reads
+  the stamped `version.txt` first, the placeholder pubspec second.
 - CLI binaries build per tag (`ci.yml` `binaries` job), attach to the
   GitHub Release (`fa-<os>-<arch>[.exe]`); `installer-smoke` verifies
   installers.
@@ -1917,9 +1933,9 @@ trajectory are SDK invariants with no override point (AC9).
   its `flutter_agent_harness` pin must EXIST and equal the root
   `pubspec.yaml` version — a stale OR MISSING pin (e.g. a merge conflict
   resolved by dropping the entry) makes every
-  `flutter pub get --enforce-lockfile` consumer red —
-  the release bump re-pins the lock itself (`scripts/auto_release.sh`
-  ships the re-pin inside the `chore(release):` commit), and the Static
+  `flutter pub get --enforce-lockfile` consumer red — the pins are
+  `0.0.0-dev` on both sides and NEVER churn across releases (gh-1522: the
+  tag is the version; the release flow mutates zero files), and the Static
   gate catches any other path to the drift at PR time. After ANY pubspec.yaml
   dependency change that adds/updates a darwin-native plugin: `cd
   flutter_app/ios && pod install --repo-update` and the same in `macos/`,

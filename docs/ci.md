@@ -38,15 +38,49 @@ the safe way to smoke one channel.
 
 ## Versioning
 
-The scheme: `scripts/auto_release.sh` patch-bumps
-`pubspec.yaml` and pushes the bump commit straight to protected `main` as the
-fa-release-bot GitHub App (the ruleset's only bypass actor, gh-1172 — the
-2026-09-29 release-PR stopgap is retired); the push fires the ci.yml
-`release-tag` job, and the tag drives the `publish`/`binaries` jobs. Manual
-`workflow_dispatch` runs are input-gated: `releaseDryRun: true` exercises the
-whole pipeline without the push/tag (AC1), and `releaseDispatch: true` on
-`refs/heads/main` is the real push — bare validation dispatches (the SM's
-per-PR `gh workflow run ci.yml --ref <branch>`) arm nothing. The daily:
+The scheme (gh-1522): the git TAG is the single source of truth —
+`scripts/auto_release.sh` cuts an annotated tag (latest tag + 1) directly
+on `origin/main` plus the GitHub Release, authenticated as the fa-release-bot
+GitHub App (gh-1172 — its token triggers the tag-scoped jobs, which
+`GITHUB_TOKEN` pushes never do). ZERO commits land on main: the retired
+flow pushed a 4-file `chore(release):` bot commit (`pubspec.yaml`,
+`CHANGELOG.md`, `flutter_app/pubspec.{yaml,lock}`) per release — noisy
+history, a direct-to-main bot path, CHANGELOG growth toward the pub.dev
+256 KiB cap (gh-1452) and pubspec.lock churn invalidating
+`--enforce-lockfile` (gh-1265). Both pubspecs now carry the FIXED
+`0.0.0-dev` placeholder (a hand-bump fails the Static
+`Version placeholder guard` — it would desync the tag↔staged-file
+invariant), and CI stamps the real version at every edge:
+
+- **pub.dev** — the `publish` job stages the package
+  (`scripts/stage_publish_package.sh /tmp/publish-stage "${GITHUB_REF_NAME#v}"`)
+  and the stage-time stamper (`scripts/stamp_staged_release.sh`) writes the
+  tag version into the staged pubspec, guards staged == tag pre-upload, and
+  PREPENDS the tag's generated changelog section to the staged CHANGELOG
+  (the repo file is never mutated). CHANGELOG.md in-repo is curated-only:
+  PRs add lines under `## Unreleased`; `scripts/release_notes.sh` picks
+  curated `## <version>` → curated `## Unreleased` body → conventional
+  commits since the previous tag. The pub.dev 262144-byte changelog cap is
+  enforced on the STAGED file (oldest staged sections trim), so it can
+  never block a release again — the publish job's repo-file check is
+  ADVISORY (`::warning::` pointing at `CHANGELOG_ARCHIVE.md`), never a
+  hard gate (gh-1522 rework, PR #1526).
+- **App builds** — `build-mobile.yml` / `build-macos.yml` derive
+  `latest tag + 1` and pass it via `--build-name`/`--build-number`
+  (BUILD_NUMBER = run number); the fastlane `store_pubspec_version` helper
+  prefers the derived `BUILD_NAME` env.
+- **Local / CLI** — `install_local.sh` stamps `version.txt` from
+  `git describe --tags`; `fa --version` reads the stamped `version.txt`
+  first, the placeholder pubspec second (a plain `dart run` shows
+  `0.0.0-dev` — self-explanatory).
+
+Manual `workflow_dispatch` runs are input-gated: `releaseDryRun: true`
+exercises the whole pipeline without the tag push (AC1), and
+`releaseDispatch: true` on `refs/heads/main` is the real release — bare
+validation dispatches (the SM's per-PR `gh workflow run ci.yml --ref
+<branch>`) arm nothing. The release checklist is: push to main (or
+`releaseDispatch`) → watch the ci.yml `release` job cut the tag → watch
+the tag-scoped `publish`/`binaries` jobs. The daily:
 
 - lets `build-mobile.yml` / `build-macos.yml` derive their version
   themselves (`latest tag + 1` at the child's own dispatch moment). A tag
@@ -58,26 +92,27 @@ per-PR `gh workflow run ci.yml --ref <branch>`) arm nothing. The daily:
 - never publishes to pub.dev itself (see the pub.dev row above) — pub.dev
   movement stays 100% in the auto_release → ci.yml tag job path, with the
   daily as verifier and rerun-recovery;
-- keeps NO daily-side wedge alarm for a tag that is never cut (#1368): the
-  old 1h `tag_cut_grace` horizon false-alarmed «never triggered» on a
-  10.5h-old bump that self-healed 3 minutes later, so an untagged bump now
-  reads `release-in-flight` ⏭️ in the daily for as long as it takes. The
-  remaining tripwires for a genuinely stuck release: `auto_release.sh`'s
-  one-time «pushed but untagged … proceeding so the next range absorbs it»
-  log, the plan job's release-unresolved re-arm (every daily re-verifies
-  while pub.dev is behind), and the tag-run selector in
+- keeps NO daily-side wedge alarm for a tag that never publishes (#1368):
+  a freshly cut tag reads `release-in-flight` ⏭️ in the daily for as long
+  as its outcome is unobservable (young tag inside the grace window, run
+  queued past the terminal-wait budget). The version under test is the
+  LATEST REMOTE TAG (`git ls-remote`), never a file read. The remaining
+  tripwires for a genuinely stuck release: the plan job's
+  release-unresolved re-arm (every daily re-verifies while pub.dev is
+  behind the latest tag), and the tag-run selector in
   `scripts/verify_pubdev_release.sh`, which alarms `only non-push run(s)`
-  once a tag exists but only release-event runs registered.
+  once a tag exists but only non-push runs registered.
 
 **Change baseline**: legs run only when `main` moved since the last green
 daily **that ran all legs** (schedule runs, or `legs=all` dispatches). A
 single-leg green dispatch never advances the baseline, so a partial smoke
 can't make the next scheduled run skip the legs it never exercised.
-One exception (gh-1192): a release-in-flight pubdev leg exits 0, so that
-green daily becomes the baseline at the bump's sha — the plan gate
-(`scripts/daily_plan.sh`) therefore still forces the legs while main's
-pubspec version is not yet served by pub.dev, keeping the re-verification
-and the failed-run recovery alive on a quiet main. A failing `plan` job
+One exception (gh-1192, reworked gh-1522): a release-in-flight pubdev leg
+exits 0, so that green daily becomes the baseline — the plan gate
+(`scripts/daily_plan.sh`) therefore still forces the legs while the
+LATEST TAG's version is not yet served by pub.dev, keeping the
+re-verification and the failed-run recovery alive on a quiet main. A
+failing `plan` job
 (not just legs) files its own
 `[daily-publish] plan leg failed` issue — nothing escapes the loop.
 
@@ -145,8 +180,10 @@ No orphan drafts, one naming scheme, a truthful `Latest`, useful notes:
   re-asserts it via `gh release edit --latest` when attaching to a
   release another path created first). Guards and the sweeper only ever
   delete — a failed run can never capture the badge.
-- **Notes** — `scripts/release_notes.sh` renders the CHANGELOG.md section
-  for the version, falling back to conventional commits since the
+- **Notes** — `scripts/release_notes.sh` renders the curated CHANGELOG.md
+  `## <version>` section when one exists, else the curated `## Unreleased`
+  body (gh-1522: the release folds Unreleased into the tag's section at
+  stage time, never in-repo), else conventional commits since the
   previous tag grouped Features/Fixes/Maintenance (capped at 50 +
   "…and N more"), with a clean "No changes" body for re-tags. The literal
   `Release vX.Y.Z` filler bodies are gone.

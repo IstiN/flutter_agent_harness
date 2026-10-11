@@ -3,7 +3,10 @@ description: >-
   Fa — the Flutter Agent app: a chat UI that runs the agent with a mobile
   ExecutionEnv backed by path_provider and Process.run.
 publish_to: 'none'
-version: 1.0.551+1
+# gh-1522: static placeholder — store builds stamp the version via
+# `flutter build --build-name/--build-number` from the derived tag version,
+# so this file never churns and pubspec.lock stays stable across releases.
+version: 0.0.0-dev+1
 
 environment:
   sdk: ^3.12.2
