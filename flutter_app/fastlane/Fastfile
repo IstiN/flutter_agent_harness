@@ -54,7 +54,14 @@ def store_latest_changelog(lang)
   match ? match[1].strip : ""
 end
 
+# gh-1522: the version string every store lane reports/verifies. The
+# derived BUILD_NAME env (build-mobile.yml / build-macos.yml version job,
+# from the latest tag + 1) wins — the committed pubspec carries the static
+# 0.0.0-dev placeholder now, so the pubspec parse is only the LAST-resort
+# fallback (a hand-run lane outside the CI env).
 def store_pubspec_version
+  derived = ENV["BUILD_NAME"].to_s.strip
+  return derived unless derived.empty?
   pubspec_path = File.expand_path("../pubspec.yaml", __dir__)
   return "1.0.0" unless File.exist?(pubspec_path)
   match = File.read(pubspec_path).match(/version:\s+([0-9.]+)/)
@@ -827,11 +834,14 @@ platform :android do
   desc "Build the release AAB only (CI split build/submit pattern; #289 build_release)"
   lane :build_release do
     sh("flutter", "pub", "get")
-    if ENV["BUILD_NUMBER"]
-      sh("flutter", "build", "appbundle", "--release", "--flavor", "store", "--build-number=#{ENV['BUILD_NUMBER']}")
-    else
-      sh("flutter", "build", "appbundle", "--release", "--flavor", "store")
-    end
+    # gh-1522: stamp the versionName from the derived BUILD_NAME (latest tag
+    # + 1) so the AAB's version string matches the iOS/macOS builds — the
+    # committed pubspec carries the static 0.0.0-dev placeholder and never
+    # churns. BUILD_NUMBER stays the run number (Play versionCode).
+    args = ["flutter", "build", "appbundle", "--release", "--flavor", "store"]
+    args << "--build-name=#{ENV['BUILD_NAME']}" if ENV["BUILD_NAME"].to_s.strip != ""
+    args << "--build-number=#{ENV['BUILD_NUMBER']}" if ENV["BUILD_NUMBER"].to_s.strip != ""
+    sh(*args)
     aab = PlayUploadPreflight.default_aab_path(File.expand_path("..", __dir__))
     UI.user_error!("AAB not found at #{aab} after the build") unless File.exist?(aab)
     UI.success("Release AAB built: #{aab}")

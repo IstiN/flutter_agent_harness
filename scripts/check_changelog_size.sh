@@ -8,11 +8,16 @@
 # guard.
 #
 # Callers (keep both wired — test/changelog_cap_guard_test.dart asserts the
-# wiring):
-#   - scripts/auto_release.sh   — BEFORE the bump commit/tag (pre-tag
-#     fast-fail: the push is what fires tag_release + the publish job);
-#   - .github/workflows/ci.yml `publish` job gate — BEFORE staging/upload
-#     (the server reject is the worst possible discovery point).
+# wiring; gh-1522 rework):
+#   - scripts/stamp_staged_release.sh — on the STAGED CHANGELOG right after
+#     the tag's section is prepended (pre-upload; over-cap trims the oldest
+#     staged sections and re-checks);
+#   - .github/workflows/ci.yml `publish` job gate — on the repo CHANGELOG.md
+#     BEFORE staging/upload, ADVISORY (gh-1522 rework, PR #1526 thread):
+#     the repo file is curated-only and is not what pub packs, so an
+#     over-cap repo file must ::warning::, never fail the release train —
+#     the hard pre-upload gate is the stamper re-measure on the STAGED
+#     changelog.
 #
 # Usage: check_changelog_size.sh [file] [cap_bytes]
 #   file  defaults to CHANGELOG.md (the file pub packs);
