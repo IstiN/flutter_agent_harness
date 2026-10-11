@@ -11,7 +11,14 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # gh-1537: NO `branches: [main]` here — the post-merge main CI run is
+    # retired. The SM's pre-merge validation dispatch (machine-sm.yml ->
+    # factory-sm, strictly serialized) validates the exact tree that
+    # merges, so a main-push run would be pure repetition; retiring it
+    # kills the duplicate wall time AND the release-bot-commit churn that
+    # retriggered it (#1522 lands the tag-sourced versions). The v* tag
+    # push stays: the release pipeline (publish/binaries) keys on it, and
+    # the full quality gate runs on the tag BEFORE anything publishes.
     tags: ['v*']
   # Dispatch-only CI on PR heads (2026-09 machine-loop redesign): pushes
   # fire NO CI — the SM (machine-sm.yml → factory-sm) is the only trigger.
@@ -27,7 +34,7 @@ on:
         type: boolean
         default: false
       releaseDispatch:
-        description: 'gh-1172: real release (bump push + tag) on manual dispatch — requires refs/heads/main; bare validation dispatches stay inert'
+        description: 'gh-1172: real release (cuts the annotated tag + GitHub Release directly, gh-1522) on manual dispatch — requires refs/heads/main; bare validation dispatches stay inert'
         required: false
         type: boolean
         default: false
@@ -42,8 +49,8 @@ on:
     # window, this releases the pending commits (pub.dev caps ~12 publishes/day).
     - cron: '23 */2 * * *'
 
-# Superseded PR runs die instantly (issue #177 wave 1). Main/tag runs are
-# never cancelled mid-flight — release flow must not be preempted.
+# Superseded PR runs die instantly (issue #177 wave 1). Tag/schedule
+# runs are never cancelled mid-flight — release flow must not be preempted.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -129,8 +136,13 @@ jobs:
           # gh-1477: blobless — historical blobs are never read; git
           # lazy-fetches the rare blob a diff actually touches.
           filter: blob:none
-      # Non-PR events (main push, tags, schedule, dispatch): everything is
-      # affected — the full gate always guards main and releases.
+      # Non-PR events (tags, schedule, dispatch): everything is
+      # affected — the full gate always guards releases. Since gh-1537
+      # there are NO main-push events at all; the SM validation dispatch
+      # (workflow_dispatch on the rebased PR head) is the pre-merge gate
+      # and lands in this arm, so every validation runs the whole-tree
+      # gates (crap4dart baseline, coverage ratchet, jscpd) — nothing was
+      # ever main-only.
       - id: filter
         if: github.event_name != 'pull_request'
         run: |
@@ -723,6 +735,9 @@ jobs:
   # diff that breaks them must red-block THE PR, never the 3:30 nightly.
   # gh-1538: nightly is builds + integration-only now — this PR leg IS the
   # only Terminal-visual run (the nightly cli-visual duplicate is retired).
+  # gh-1537 retired the post-merge main CI run, so this pre-merge leg is
+  # the only Terminal-visual gate any tree ever sees; nightly's remaining
+  # legs are a scheduled backstop, not a second merge gate.
   # gh-1300 (2026-10-06): the PTY/CLI shards pay toolchain+boot ONCE per
   # run, not per test. Every integration test spawns a fresh CLI; JIT
   # `dart bin/fah.dart` cost VM start + CFE kernel compile ~30 s PER SPAWN
@@ -2398,8 +2413,12 @@ jobs:
       # Known limit: pull_request/dispatched runs execute THIS file and the
       # checker from the PR's own head — a PR can edit the gate in the same
       # diff. Backstops: reviewers see workflow edits, Dependabot PRs
-      # re-verify on main, and the gate is re-enforced by any post-merge
-      # scheduled run. A hard guarantee needs a separate workflow_call gate
+      # re-verify via their own SM validation dispatch (gh-1537 retired the
+      # post-merge main run; there is no longer a scheduled main re-check —
+      # nightly.yml is the supervised whole-tree backstop), and
+      # sm-merge-guard.yml alarms if a tree lands on main without a
+      # successful dispatched validation. A hard guarantee needs a separate
+      # workflow_call gate
       # pinned by SHA, invoked from a caller that never comes from the PR
       # (follow-up issue, not this PR).
 
@@ -3623,18 +3642,21 @@ jobs:
     runs-on: ubuntu-latest
     needs: quality-gate
     timeout-minutes: 10
-    # gh-1522: the release IS the tag. Every push to main cuts an annotated
-    # tag (latest tag + 1) on origin/main plus the GitHub Release — coalesced
+    # gh-1522: the release IS the tag. gh-1537: NO main-push arm — ci.yml
+    # no longer triggers on pushes to main (the post-merge main CI run is
+    # retired), so releases arm on the 2h coalesce schedule and the two
+    # gated dispatches only. Every armed tick cuts an annotated tag
+    # (latest tag + 1) on origin/main plus the GitHub Release — coalesced
     # to <=1 per 2h (pub.dev rate-limits publishes, ~12/day; hit on
     # 2026-07-18). ZERO commits land on main: the retired flow pushed a
     # 4-file 'chore(release):' bot commit (pubspec.yaml, CHANGELOG.md,
-    # flutter_app/pubspec.{yaml,lock}); the tag now drives everything and CI
-    # stamps version/changelog into the STAGED publish tree at publish time.
-    # The tag push rides the fa-release-bot App token because GITHUB_TOKEN
-    # pushes never trigger the tag-scoped publish/binaries jobs (gh-1172);
-    # the App no longer needs the main-ruleset bypass (no branch push), but
-    # remains the release-path actor (gh-1402). Scheduled runs catch up
-    # commits that outpaced the coalesce window.
+    # flutter_app/pubspec.{yaml,lock}); the tag now drives everything and
+    # CI stamps version/changelog into the STAGED publish tree at publish
+    # time. The tag push rides the fa-release-bot App token because
+    # GITHUB_TOKEN pushes never trigger the tag-scoped publish/binaries
+    # jobs (gh-1172); the App no longer needs the main-ruleset bypass (no
+    # branch push), but remains the release-path actor (gh-1402).
+    # Scheduled runs catch up commits that outpaced the coalesce window.
     # !cancelled() + explicit gate check: GitHub propagates "skipped"
     # TRANSITIVELY through an always()-job's needs graph. quality-gate uses
     # if: always() and its needs include path-gated legs (perf-gate etc.)
@@ -3651,8 +3673,7 @@ jobs:
     # releaseDispatch on refs/heads/main is the manual catch-up release.
     if: >-
       !cancelled() && needs.quality-gate.result == 'success' &&
-      ((github.event_name == 'push' && github.ref == 'refs/heads/main')
-      || github.event_name == 'schedule'
+      (github.event_name == 'schedule'
       || (github.event_name == 'workflow_dispatch' && inputs.releaseDryRun == true)
       || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.releaseDispatch == true))
     concurrency:
@@ -3672,7 +3693,8 @@ jobs:
       # credential must not exist in a run that executes the (possibly
       # untrusted) dispatched ref's auto_release.sh — "dry-run never pushes"
       # may not depend on the script under test honoring the flag. The real
-      # arms (push, schedule, releaseDispatch) see a non-true releaseDryRun
+      # arms (schedule, releaseDispatch — gh-1537 retired the main-push
+      # trigger, so there is no push arm) see a non-true releaseDryRun
       # and mint as before.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
@@ -3824,9 +3846,11 @@ jobs:
           echo "binaries-pr result: ${{ needs.binaries-pr.result }}"
           exit 1
 
-  # Every failing push/tag run must reach a human-facing tracker item the
-  # moment it goes red (user ask 2026-09-17): PR failures are visible on
-  # the PR itself, but main/tag reds used to live only in the Actions
+  # Every failing TAG run must reach a human-facing tracker item the
+  # moment it goes red (user ask 2026-09-17): PR-dispatch failures are
+  # visible on the PR itself, and gh-1537 retired the post-merge main CI
+  # run — so the only `push` events this workflow ever receives are v*
+  # tag pushes (release flow), whose reds used to live only in the Actions
   # tab. Files/updates one issue per red run, always assigned to
   # ai-teammate. quality-gate aggregates every leg (always()), so its
   # failure verdict covers the whole matrix — the fa#456 lesson on
