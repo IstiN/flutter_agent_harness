@@ -11,7 +11,14 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # gh-1537: NO `branches: [main]` here — the post-merge main CI run is
+    # retired. The SM's pre-merge validation dispatch (machine-sm.yml ->
+    # factory-sm, strictly serialized) validates the exact tree that
+    # merges, so a main-push run would be pure repetition; retiring it
+    # kills the duplicate wall time AND the release-bot-commit churn that
+    # retriggered it (#1522 lands the tag-sourced versions). The v* tag
+    # push stays: the release pipeline (publish/binaries) keys on it, and
+    # the full quality gate runs on the tag BEFORE anything publishes.
     tags: ['v*']
   # Dispatch-only CI on PR heads (2026-09 machine-loop redesign): pushes
   # fire NO CI — the SM (machine-sm.yml → factory-sm) is the only trigger.
@@ -42,8 +49,8 @@ on:
     # window, this releases the pending commits (pub.dev caps ~12 publishes/day).
     - cron: '23 */2 * * *'
 
-# Superseded PR runs die instantly (issue #177 wave 1). Main/tag runs are
-# never cancelled mid-flight — release flow must not be preempted.
+# Superseded PR runs die instantly (issue #177 wave 1). Tag/schedule
+# runs are never cancelled mid-flight — release flow must not be preempted.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -118,8 +125,13 @@ jobs:
           # gh-1477: blobless — historical blobs are never read; git
           # lazy-fetches the rare blob a diff actually touches.
           filter: blob:none
-      # Non-PR events (main push, tags, schedule, dispatch): everything is
-      # affected — the full gate always guards main and releases.
+      # Non-PR events (tags, schedule, dispatch): everything is
+      # affected — the full gate always guards releases. Since gh-1537
+      # there are NO main-push events at all; the SM validation dispatch
+      # (workflow_dispatch on the rebased PR head) is the pre-merge gate
+      # and lands in this arm, so every validation runs the whole-tree
+      # gates (crap4dart baseline, coverage ratchet, jscpd) — nothing was
+      # ever main-only.
       - id: filter
         if: github.event_name != 'pull_request'
         run: |
@@ -3414,16 +3426,22 @@ jobs:
     runs-on: ubuntu-latest
     needs: quality-gate
     timeout-minutes: 15
-    # Every push to main gets a release with an auto-incremented patch version
-    # (0.1.x -> 0.1.y), coalesced to <=1 per 2h — pub.dev rate-limits publishes
-    # (~12/day; hit on 2026-07-18). Release commits are skipped (loop guard).
+    # gh-1537: NO main-push arm — ci.yml no longer triggers on pushes to
+    # main (the post-merge main CI run is retired), so releases arm on the
+    # 2h coalesce schedule and the gated dispatches only. Every scheduled
+    # tick with pending work gets a release with an auto-incremented patch
+    # version (0.1.x -> 0.1.y), coalesced to <=1 per 2h — pub.dev
+    # rate-limits publishes (~12/day; hit on 2026-07-18). Release commits
+    # are skipped by the untagged guard inside auto_release.sh.
     # gh-1172: the bump pushes DIRECTLY to protected main authenticated as the
     # fa-release-bot GitHub App — the only bypass actor on the main ruleset
     # (the PR stopgap from 2026-09-29 is retired: it burned a full CI queue
     # cycle + machine review round on every chore bump). The App token is
     # minted job-locally; nothing else in the repo can read RELEASE_APP_*.
-    # release-tag below cuts the tag from the pushed commit. Scheduled runs
-    # catch up commits that outpaced the coalesce window.
+    # release-tag.yml cuts the tag from the pushed bump commit (its push
+    # trigger is the one remaining main-push consumer — release flow, not
+    # CI). Scheduled runs catch up commits that outpaced the coalesce
+    # window.
     # !cancelled() + explicit gate check: GitHub propagates "skipped"
     # TRANSITIVELY through an always()-job's needs graph. quality-gate uses
     # if: always() and its needs include path-gated legs (perf-gate etc.)
@@ -3440,8 +3458,7 @@ jobs:
     # releaseDispatch on refs/heads/main is the manual catch-up release.
     if: >-
       !cancelled() && needs.quality-gate.result == 'success' &&
-      ((github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(release):'))
-      || github.event_name == 'schedule'
+      (github.event_name == 'schedule'
       || (github.event_name == 'workflow_dispatch' && inputs.releaseDryRun == true)
       || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.releaseDispatch == true))
     concurrency:
@@ -3509,83 +3526,13 @@ jobs:
           RELEASE_DRY_RUN: ${{ github.event.inputs.releaseDryRun == 'true' && '1' || '0' }}
         run: bash scripts/auto_release.sh
 
-  # Cuts the annotated tag + GitHub Release from the pushed 'chore(release):'
-  # bump commit (see scripts/tag_release.sh). The bump lands via direct push
-  # to protected main as the fa-release-bot App (gh-1172), so the tag phase
-  # keys on that push. Tag push rides the App token (checkout token) —
-  # GITHUB_TOKEN pushes never trigger the tag-scoped binaries/publish jobs.
-  # Serialized with the bump push job via the release-main group: tag first,
-  # next bump after.
-  release-tag:
-    name: Auto-release (tag on push)
-    runs-on: ubuntu-latest
-    needs: quality-gate
-    timeout-minutes: 10
-    if: >-
-      !cancelled() && needs.quality-gate.result == 'success' &&
-      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
-      startsWith(github.event.head_commit.message, 'chore(release):')
-    concurrency:
-      group: release-main
-      cancel-in-progress: false
-    permissions:
-      contents: write
-    steps:
-      # Same fa-release-bot App as the bump job (gh-1172): the tag push and
-      # `gh release create` ride the App installation token — without an
-      # explicit GH_TOKEN the create || true in tag_release.sh was a
-      # guaranteed silent no-op and the curated CHANGELOG notes never reached
-      # the release object (BLOCK finding on PR #1093, live review 2026-09-30).
-      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        id: app-token
-        with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          # Least privilege (gh-1172 round-2 review): contents:write only —
-          # the tag push + `gh release create` need nothing else.
-          permissions: contents:write
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          # gh-1477: blobless — tag math reads commit metadata only.
-          filter: blob:none
-          # App token so the pushed tag triggers the publish job —
-          # GITHUB_TOKEN pushes never trigger downstream workflow runs.
-          token: ${{ steps.app-token.outputs.token }}
-
-      # gh-1299 NG2/AC3: the tag step smokes `flutter pub get --enforce-lockfile`
-      # on the bump commit BEFORE tagging/publishing (a release commit that
-      # cannot resolve its own lockfile is never tagged, never published) —
-      # the gate needs flutter on PATH, pinned to the same 3.47.x the
-      # consuming build legs use (PR #1304 rework thread 8).
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
-        with:
-          flutter-version: '3.47.x'
-          channel: stable
-          cache: true
-
-      # gh-1310 rework (review thread 1): warm the pub cache with the shared
-      # bounded-retry action so tag_release.sh's own enforce-lockfile smoke
-      # rides it — the smoke stays in the script (release_hygiene NG2/AC3
-      # pins it) but is no longer the job's first resolution, so one
-      # transient git-dep clone reset cannot abort the pre-tag gate on a
-      # cold cache (the v1.0.516 build-macos exit-69 class, on the release
-      # path).
-      - uses: ./.github/actions/flutter-pub-get
-
-      - name: Cut annotated tag + GitHub Release
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          # gh-1192 AC3: pin the tag to the bump commit the push event
-          # carried. head_commit.id is frozen at event time; a default
-          # checkout can land on a main that moved in the seconds between the
-          # bump push and this job starting (v1.0.498 captured the #1178
-          # interloper that way). tag_release.sh validates the sha (exact
-          # bump subject + matching pubspec version) before tagging and
-          # refuses to tag a moving HEAD when nothing qualifies.
-          BUMP_SHA: ${{ github.event.head_commit.id || github.sha }}
-        run: bash scripts/tag_release.sh
+  # The tag-on-bump phase lives in release-tag.yml (gh-1537): it needs a
+  # push-to-main trigger, and ci.yml no longer has one — the post-merge
+  # main CI run is retired. release-tag.yml is release flow, not CI: its
+  # job fires only on the release-bot's 'chore(release):' bump commit,
+  # never on SM merge commits, and it runs no validation gates — the full
+  # quality gate runs on the cut v* tag (this workflow's tags arm) BEFORE
+  # publish/binaries.
 
   # PR-gate twin of the release `binaries` job: the CLI bundle must compile
   # on every supported platform and actually run (`fa --help`) BEFORE a PR
@@ -3699,9 +3646,11 @@ jobs:
           echo "binaries-pr result: ${{ needs.binaries-pr.result }}"
           exit 1
 
-  # Every failing push/tag run must reach a human-facing tracker item the
-  # moment it goes red (user ask 2026-09-17): PR failures are visible on
-  # the PR itself, but main/tag reds used to live only in the Actions
+  # Every failing TAG run must reach a human-facing tracker item the
+  # moment it goes red (user ask 2026-09-17): PR-dispatch failures are
+  # visible on the PR itself, and gh-1537 retired the post-merge main CI
+  # run — so the only `push` events this workflow ever receives are v*
+  # tag pushes (release flow), whose reds used to live only in the Actions
   # tab. Files/updates one issue per red run, always assigned to
   # ai-teammate. quality-gate aggregates every leg (always()), so its
   # failure verdict covers the whole matrix — the fa#456 lesson on

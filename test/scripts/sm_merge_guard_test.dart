@@ -53,7 +53,12 @@ Map<String, Object?> _run({
   String? tree,
   String conclusion = 'success',
 }) =>
-    {'database_id': id, 'head_sha': sha, 'tree_sha': tree};
+    {
+      'database_id': id,
+      'head_sha': sha,
+      'tree_sha': tree,
+      'conclusion': conclusion,
+    };
 
 void main() {
   test('a successful dispatch run with the SAME tree validates the push '

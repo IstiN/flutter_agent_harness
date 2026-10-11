@@ -1186,8 +1186,10 @@ void main() {
           contains('RELEASE_FLIGHT_GRACE_SECS:-900'));
     });
 
-    test('ci.yml release-tag pins the tag to the push event bump sha', () {
-      final ci = read('.github/workflows/ci.yml');
+    test('release-tag.yml pins the tag to the push event bump sha', () {
+      // gh-1537: the job moved out of ci.yml (no main-push trigger there
+      // anymore) — the pin moved verbatim with it.
+      final ci = read('.github/workflows/release-tag.yml');
       expect(
         ci,
         contains('BUMP_SHA: \${{ github.event.head_commit.id || github.sha }}'),

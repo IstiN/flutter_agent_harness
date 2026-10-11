@@ -42,9 +42,12 @@ const actionUses = './.github/actions/flutter-pub-get';
 const actionPath = '.github/actions/flutter-pub-get/action.yml';
 
 /// The seven workflows that resolved flutter_app with
-/// `flutter pub get --enforce-lockfile` before the gh-1310 migration.
+/// `flutter pub get --enforce-lockfile` before the gh-1310 migration, plus
+/// release-tag.yml (gh-1537: the tag-on-bump job moved out of ci.yml with
+/// its steps verbatim).
 const workflows = [
   '.github/workflows/ci.yml',
+  '.github/workflows/release-tag.yml',
   '.github/workflows/nightly.yml',
   '.github/workflows/build-mobile.yml',
   '.github/workflows/build-macos.yml',
@@ -67,7 +70,10 @@ const expectedUsesPerWorkflow = {
   // resolves flutter_app through the shared action (bounded retry + skew
   // fail-fast) before its macOS `flutter test test/apps` run — a bare pub
   // get there would be exactly the network roulette AC2 exists to stop.
-  '.github/workflows/ci.yml': 12,
+  // gh-1537: 12 - 1 = 11 — the release-tag job moved to release-tag.yml
+  // (its pub-get warm-up step moved with it verbatim, counted there).
+  '.github/workflows/ci.yml': 11,
+  '.github/workflows/release-tag.yml': 1,
   '.github/workflows/nightly.yml': 4,
   '.github/workflows/build-mobile.yml': 4,
   '.github/workflows/build-macos.yml': 1,

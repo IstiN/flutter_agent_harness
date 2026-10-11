@@ -1652,9 +1652,15 @@ gh release create "v9.9.9" \
         // (push auth) — and release-tag additionally exports it as GH_TOKEN
         // for `gh release create` (the #1093 BLOCK finding: without an
         // explicit token the create was a guaranteed silent no-op).
-        final ci = jobsOf('.github/workflows/ci.yml');
+        // gh-1537: release-tag moved out of ci.yml (the main-push trigger is
+        // retired there) into release-tag.yml — the App-token wiring moved
+        // verbatim, so each job is read from its own file.
+        final jobFiles = {
+          'release': '.github/workflows/ci.yml',
+          'release-tag': '.github/workflows/release-tag.yml',
+        };
         for (final jobName in ['release', 'release-tag']) {
-          final job = ci[jobName] as YamlMap;
+          final job = jobsOf(jobFiles[jobName]!)[jobName] as YamlMap;
           final steps = job['steps'] as YamlList;
           final mint = steps
               .map((s) => s as YamlMap)
@@ -1711,7 +1717,9 @@ gh release create "v9.9.9" \
                 'falls back to github.token when the dry-run gate skips the mint)',
           );
         }
-        final tagSteps = ci['release-tag']['steps'] as YamlList;
+        final tagSteps =
+            jobsOf('.github/workflows/release-tag.yml')['release-tag']
+                ['steps'] as YamlList;
         final tagStep = tagSteps
             .map((s) => s as YamlMap)
             .firstWhere(
@@ -1984,8 +1992,9 @@ gh release create "v9.9.9" \
         // still described the retired release-PR mechanism (merged release PR,
         // RELEASE_PAT, "bump PR job") and contradicted the job it documents.
         // This repo treats CI comments as binding contract docs — pin the
-        // rewrite so the retired text cannot return.
-        final lines = read('.github/workflows/ci.yml').split('\n');
+        // rewrite so the retired text cannot return. gh-1537: the job (and
+        // its contract comment) lives in release-tag.yml now.
+        final lines = read('.github/workflows/release-tag.yml').split('\n');
         final jobLine = lines.indexWhere((l) => l == '  release-tag:');
         expect(jobLine, greaterThan(0), reason: 'release-tag job must exist');
         var start = jobLine - 1;
@@ -2390,9 +2399,13 @@ gh release create "v9.9.9" \
     test(
       'AC3 — the release workflow jobs that run the gates get flutter on PATH',
       () {
-        final jobs = jobsOf('.github/workflows/ci.yml');
+        final jobFiles = {
+          'release': '.github/workflows/ci.yml',
+          'release-tag': '.github/workflows/release-tag.yml',
+        };
         for (final name in ['release', 'release-tag']) {
-          final steps = jobs[name]['steps'] as YamlList;
+          final steps =
+              jobsOf(jobFiles[name]!)[name]['steps'] as YamlList;
           final flutterSteps = steps
               .whereType<YamlMap>()
               .where(
