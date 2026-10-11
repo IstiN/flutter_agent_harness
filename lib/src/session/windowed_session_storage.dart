@@ -837,11 +837,36 @@ final class WindowedSessionStorage
           : entry.offset + entry.bytes + 1;
     }
 
-    // Prepending iterates newest-first: each insert lands at index 0, so
-    // the oldest entry must go in LAST to keep file order.
-    final first = prepend ? chunk.entries.length - 1 : 0;
-    final step = prepend ? -1 : 1;
-    for (var i = first; i >= 0 && i < chunk.entries.length; i += step) {
+    if (prepend) {
+      // Block-prepend in ONE insertAll per list. The per-record
+      // insert(0) above is O(window) each; a growOlderUntil walk runs
+      // with eviction suspended, so the window is unbounded and the
+      // walk degraded to O(n²) (measured gh-1555: 30k records cost
+      // ~11× the full open). One memmove per page keeps the walk
+      // linear. Side effects stay per-record in the old loop's
+      // newest-first order.
+      final n = chunk.entries.length;
+      final records = List<SessionRecord>.filled(n, chunk.entries[0].record);
+      final starts = List<int>.filled(n, 0);
+      final ends = List<int>.filled(n, 0);
+      for (var i = 0; i < n; i++) {
+        final slot = n - 1 - i; // newest-first == the old loop's order
+        records[slot] = chunk.entries[i].record;
+        starts[slot] = chunk.entries[i].offset;
+        ends[slot] = endOf(i);
+      }
+      _entries.insertAll(0, records);
+      _offsets.insertAll(0, starts);
+      _ends.insertAll(0, ends);
+      for (var i = 0; i < n; i++) {
+        final record = records[i];
+        _byId[record.id] = record;
+        _appendedBelow.remove(record.id);
+        updateSessionLabelCache(_labelsById, record);
+      }
+      return;
+    }
+    for (var i = 0; i < chunk.entries.length; i++) {
       add(chunk.entries[i], endOf(i));
     }
   }
