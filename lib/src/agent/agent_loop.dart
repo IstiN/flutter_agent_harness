@@ -1063,8 +1063,11 @@ Future<List<Message>> _runAgentLoop({
   // happens at this choke point: the interceptor rewrites every
   // gate-mode assistant MessageEndEvent to the ledger-free message and
   // stashes what it stripped; [_emitFinalizeGateFold] consumes the stash
-  // when the run ends. The gate key reads the LIVE config so a mid-run
-  // flip stays consistent between the two halves.
+  // when the run ends (including the error/aborted early return —
+  // [_terminalRunMessages]). The gate key is read per event from the
+  // loop's live config so the interceptor and the fold always agree on
+  // the same value; within a run it is constant — nothing in the loop
+  // mutates `finalizeGate` mid-run.
   final strippedLedgers = <_StrippedLedger>[];
   if (config.finalizeGate) {
     emit = _finalizeGateStrippingSink(
@@ -1131,7 +1134,14 @@ Future<List<Message>> _runAgentLoop({
       );
       newMessages.add(message);
 
-      final terminal = await _terminalRunMessages(message, newMessages, emit);
+      final terminal = await _terminalRunMessages(
+        message,
+        newMessages,
+        currentContext.messages,
+        strippedLedgers,
+        currentConfig.finalizeGate,
+        emit,
+      );
       if (terminal != null) return terminal;
 
       final toolPhase = await _runToolCallPhase(
@@ -1218,14 +1228,29 @@ Future<void> _emitTurnStart(bool firstTurn, AgentEventSink emit) async {
 /// Ends the run when the assistant [message] failed or was aborted, emitting
 /// the closing `turn_end`/`agent_end` and returning the run's messages.
 /// Returns `null` for a healthy message so the turn continues.
+///
+/// The FinalizeGate fold runs on this path too (gh-1516 review): the
+/// `MessageEndEvent` interceptor already stripped the ledger out of the
+/// PERSISTED answer during the run, so without the fold an error/aborted
+/// run would discard the hidden `task_ledger` record — the self-check of
+/// precisely the near-miss case the gate exists to capture — and ship the
+/// unstripped original in `AgentEndEvent`, disagreeing with the session
+/// JSONL. An aborted run still ends on an assistant answer, so gh-1412's
+/// "run must end on the answer" rule is satisfied.
 Future<List<Message>?> _terminalRunMessages(
   AssistantMessage message,
   List<Message> newMessages,
+  List<Message> contextMessages,
+  List<_StrippedLedger> stash,
+  bool finalizeGate,
   AgentEventSink emit,
 ) async {
   if (message.stopReason != StopReason.error &&
       message.stopReason != StopReason.aborted) {
     return null;
+  }
+  if (finalizeGate) {
+    await _emitFinalizeGateFold(newMessages, contextMessages, stash, emit);
   }
   await emit(TurnEndEvent(message: message, toolResults: const []));
   await emit(AgentEndEvent(List.unmodifiable(newMessages)));

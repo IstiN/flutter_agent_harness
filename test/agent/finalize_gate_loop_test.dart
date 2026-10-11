@@ -9,24 +9,30 @@ import '../support/scripted_stream_harness.dart';
 /// flag). AC2's engine half: the record the hosts persist exists as an
 /// event by the time the run ends.
 void main() {
-  AssistantMessage assistant(List<ContentBlock> content) => AssistantMessage(
+  AssistantMessage assistant(
+    List<ContentBlock> content, {
+    StopReason stopReason = StopReason.stop,
+  }) => AssistantMessage(
     content: content,
     api: 'test-api',
     provider: 'test-provider',
     model: 'test-model',
     usage: Usage.zero,
-    stopReason: StopReason.stop,
+    stopReason: stopReason,
     timestamp: DateTime.utc(2026),
   );
 
-  List<AssistantMessageEvent> textTurn(String text) {
+  List<AssistantMessageEvent> textTurn(
+    String text, {
+    StopReason stopReason = StopReason.stop,
+  }) {
     final empty = testAssistant();
-    final partial = assistant([TextContent(text: text)]);
+    final partial = assistant([TextContent(text: text)], stopReason: stopReason);
     return [
       StartEvent(partial: empty),
       TextStartEvent(contentIndex: 0, partial: empty),
       TextDeltaEvent(contentIndex: 0, delta: text, partial: partial),
-      DoneEvent(reason: StopReason.stop, message: partial),
+      DoneEvent(reason: stopReason, message: partial),
     ];
   }
 
@@ -161,6 +167,88 @@ Task complete.
     expect(text, isNot(contains('task-ledger')));
     expect(text, isNot(contains('```')));
     expect(text, contains('Task complete.'));
+  });
+
+  test('gh-1516 review: an error/aborted terminal answer still folds — the '
+      'hidden record persists and the end payload ships the stripped '
+      'message', () async {
+    // The run terminates on an error assistant message: the MessageEndEvent
+    // interceptor already stripped the ledger from the PERSISTED answer
+    // during the run, so without the terminal fold the hidden record would
+    // be unrecoverable (and AgentEndEvent would ship the unstripped
+    // original, disagreeing with the persisted session).
+    final events = await runTurns([
+      toolTurn([ToolCall(id: 't1', name: 'bash', arguments: const {})]),
+      textTurn(ledgerText, stopReason: StopReason.error),
+    ], finalizeGate: true);
+    final ledgerEvents = events.whereType<TaskLedgerEvent>().toList();
+    expect(ledgerEvents, hasLength(1));
+    expect(ledgerEvents.single.ledger.items, hasLength(2));
+    final end = events.whereType<AgentEndEvent>().single;
+    final lastAssistant =
+        end.messages.lastWhere((message) => message is AssistantMessage)
+            as AssistantMessage;
+    final text = lastAssistant.content.whereType<TextContent>().map((block) {
+      return block.text;
+    }).join();
+    expect(text, isNot(contains('task-ledger')));
+    expect(text, isNot(contains('```')));
+    expect(text, contains('Task complete.'));
+  });
+
+  test('gh-1516 review: EVERY ledger-bearing text block is stripped — a '
+      'second block never survives in the transcript (the gate key stays '
+      'the last ledger)', () async {
+    const draft =
+        'Draft answer.\n'
+        '```task-ledger\n'
+        '- requirement: draft item\n'
+        '  command: true\n'
+        '  status: pass\n'
+        '```\n';
+    const revised =
+        'Revised answer.\n'
+        '```task-ledger\n'
+        '- requirement: revised item\n'
+        '  command: true\n'
+        '  status: pass\n'
+        '```\n';
+    final draftMessage = testAssistant(
+      content: [TextContent(text: draft)],
+    );
+    final bothMessage = testAssistant(
+      content: [TextContent(text: draft), TextContent(text: revised)],
+    );
+    final events = await runTurns([
+      toolTurn([ToolCall(id: 't1', name: 'bash', arguments: const {})]),
+      [
+        StartEvent(partial: testAssistant()),
+        TextStartEvent(contentIndex: 0, partial: testAssistant()),
+        TextDeltaEvent(contentIndex: 0, delta: draft, partial: draftMessage),
+        TextStartEvent(contentIndex: 1, partial: draftMessage),
+        TextDeltaEvent(contentIndex: 1, delta: revised, partial: bothMessage),
+        DoneEvent(reason: StopReason.stop, message: bothMessage),
+      ],
+    ], finalizeGate: true);
+    // The gate still keys on the LAST ledger (gh-1412) …
+    final ledgerEvents = events.whereType<TaskLedgerEvent>().toList();
+    expect(ledgerEvents, hasLength(1));
+    expect(
+      ledgerEvents.single.ledger.items.single.requirement,
+      'revised item',
+    );
+    // …but BOTH blocks leave the transcript.
+    final end = events.whereType<AgentEndEvent>().single;
+    final lastAssistant =
+        end.messages.lastWhere((message) => message is AssistantMessage)
+            as AssistantMessage;
+    final text = lastAssistant.content.whereType<TextContent>().map((block) {
+      return block.text;
+    }).join();
+    expect(text, isNot(contains('task-ledger')));
+    expect(text, isNot(contains('```')));
+    expect(text, contains('Draft answer.'));
+    expect(text, contains('Revised answer.'));
   });
 
   test('gh-1516: a trivial turn (no tool calls, pure Q&A) does not fire the '

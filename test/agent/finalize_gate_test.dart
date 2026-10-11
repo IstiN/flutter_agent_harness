@@ -149,6 +149,50 @@ void main() {
       expect(ledger!.items.single.requirement, 'only item');
     });
 
+    test('gh-1516 review: a model DOCUMENTING the ledger format is not '
+        'stripped — the unfenced shape needs real verification evidence', () {
+      // A "what does the task-ledger look like?" answer quotes the shape
+      // verbatim: a bare heading + one `- requirement:` bullet with the
+      // status placeholder. Without verification evidence (a second entry
+      // or a real status/command field) that prose must not classify as
+      // a ledger — the strip is silent and user-facing.
+      const documenting =
+          'The contract asks for a checklist like this:\n'
+          '\n'
+          '## task-ledger\n'
+          '- requirement: <verbatim requirement quote>\n'
+          '  status: pass|fixed|fail\n'
+          '\n'
+          'Each entry quotes the requirement verbatim.';
+      expect(parseTaskLedger(documenting), isNull);
+      expect(stripTaskLedger(documenting), documenting);
+    });
+
+    test('gh-1516 review: a single-entry near-miss with a real command '
+        'still parses (verification evidence present)', () {
+      final ledger = parseTaskLedger(
+        'Answer.\n'
+        '\n'
+        'task-ledger\n'
+        '- requirement: create script.py\n'
+        '  command: test -f script.py\n'
+        '  status: pass\n',
+      );
+      expect(ledger!.items.single.requirement, 'create script.py');
+      expect(
+        stripTaskLedger(
+              'Answer.\n'
+              '\n'
+              'task-ledger\n'
+              '- requirement: create script.py\n'
+              '  command: test -f script.py\n'
+              '  status: pass\n',
+            )
+            .trimRight(),
+        'Answer.',
+      );
+    });
+
     test(
       'a task-ledger heading without requirement bullets is not a ledger',
       () {
