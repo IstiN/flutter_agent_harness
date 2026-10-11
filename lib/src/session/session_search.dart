@@ -646,26 +646,46 @@ final class _ScanAccumulator {
     if (_stopped) return;
     recordsTotal++;
     if (censusOnly) {
-      _trackTree(record);
-      switch (record) {
-        case CompactCheckpointRecord checkpoint:
-          _checkpoints.add(checkpoint);
-          _ordinalWanted
-            ..add(checkpoint.firstRecordId)
-            ..add(checkpoint.lastRecordId)
-            ..addAll(checkpoint.coversRecordIds);
-        default:
-          break;
-      }
+      _seeCensusRecord(record);
       return;
     }
+    if (_skipForContinuation(record)) return;
+    _examineRecord(record);
+    if (query.mode != SessionSearchMode.map) _tryHit(record);
+  }
+
+  /// The census pass: structure only — tree facts plus the checkpoint /
+  /// ordinal seeding the real pass's map fold and branch cap rely on.
+  void _seeCensusRecord(SessionRecord record) {
+    _trackTree(record);
+    switch (record) {
+      case CompactCheckpointRecord checkpoint:
+        _checkpoints.add(checkpoint);
+        _ordinalWanted
+          ..add(checkpoint.firstRecordId)
+          ..add(checkpoint.lastRecordId)
+          ..addAll(checkpoint.coversRecordIds);
+      default:
+        break;
+    }
+  }
+
+  /// Continuation replay: records before the token are re-counted but
+  /// never re-examined. True when [record] was skipped.
+  bool _skipForContinuation(SessionRecord record) {
     if (_skipped < query.continuation) {
       _skipped++;
       // Continued scans still need tree facts (leaf/parents) to stay
       // correct — bookkeeping runs even for skipped records.
       _trackTree(record);
-      return;
+      return true;
     }
+    return false;
+  }
+
+  /// Post-skip bookkeeping: census counters and per-kind tallies for
+  /// every record the scan actually examines.
+  void _examineRecord(SessionRecord record) {
     recordsExamined++;
     _trackTree(record);
     _kindCounts.update(record.type, (n) => n + 1, ifAbsent: () => 1);
@@ -678,21 +698,15 @@ final class _ScanAccumulator {
       default:
         break;
     }
-    if (query.mode == SessionSearchMode.map) return;
+  }
+
+  /// Match + cap + append, search mode only.
+  void _tryHit(SessionRecord record) {
     final pattern = _pattern;
     if (pattern == null) return;
     if (!_passesFilters(record, query)) return;
     if (!_matches(record, pattern)) return;
-    if (query.scope == SessionSearchScope.branch &&
-        _branchIds.isNotEmpty &&
-        !_branchIds.contains(record.id)) {
-      // An abandoned-fork hit, known OFF the archive's FINAL active
-      // branch (the census pass resolved the true leaf): finish() would
-      // drop it, so it must not consume the result cap — the default
-      // scope has to deliver full branch pages, not page fork records
-      // (the under-delivery + O(n²)-paging bug).
-      return;
-    }
+    if (_isOffBranch(record)) return;
     if (_hits.length >= query.maxHits) {
       // Cap reached BEFORE this record — stop here; the continuation
       // token re-enters AT this record (recordsTotal counts it), so a
@@ -708,6 +722,17 @@ final class _ScanAccumulator {
         preview: sessionSearchPreview(sessionSearchText(record)),
       ),
     );
+  }
+
+  /// An abandoned-fork hit, known OFF the archive's FINAL active branch
+  /// (the census pass resolved the true leaf): finish() would drop it,
+  /// so it must not consume the result cap — the default scope has to
+  /// deliver full branch pages, not page fork records (the
+  /// under-delivery + O(n²)-paging bug).
+  bool _isOffBranch(SessionRecord record) {
+    return query.scope == SessionSearchScope.branch &&
+        _branchIds.isNotEmpty &&
+        !_branchIds.contains(record.id);
   }
 
   void _trackTree(SessionRecord record) {
@@ -762,46 +787,7 @@ final class _ScanAccumulator {
   /// Folds the collected state into the call outcome.
   SessionSearchOutcome finish() {
     final inMapMode = query.mode == SessionSearchMode.map;
-    List<CheckpointMapEntry> checkpointEntries = const [];
-    var maxDepth = 0;
-    final entries = <CheckpointMapEntry>[];
-    if (inMapMode && _checkpoints.isNotEmpty) {
-      // Nesting depth over file-order record spans: a checkpoint's span
-      // runs from its first to its last covered record; another
-      // checkpoint NESTS it when its span is a strict superset. Ids the
-      // scan never saw (off-chain references) degrade to the
-      // checkpoint's own position — depth stays computable, never fatal.
-      int spanStart(CompactCheckpointRecord checkpoint, int fallback) =>
-          _ordinalOf[checkpoint.firstRecordId] ?? fallback;
-      int spanEnd(CompactCheckpointRecord checkpoint, int fallback) =>
-          _ordinalOf[checkpoint.lastRecordId] ?? fallback;
-      for (var i = 0; i < _checkpoints.length; i++) {
-        final checkpoint = _checkpoints[i];
-        final start = spanStart(checkpoint, i);
-        final end = spanEnd(checkpoint, i);
-        var depth = 1;
-        for (var j = 0; j < _checkpoints.length; j++) {
-          if (j == i) continue;
-          final otherStart = spanStart(_checkpoints[j], j);
-          final otherEnd = spanEnd(_checkpoints[j], j);
-          final strictlyContains =
-              (otherStart < start && otherEnd >= end) ||
-              (otherStart <= start && otherEnd > end);
-          if (strictlyContains) depth++;
-        }
-        maxDepth = depth > maxDepth ? depth : maxDepth;
-        entries.add(
-          CheckpointMapEntry(
-            id: checkpoint.id,
-            firstRecordId: checkpoint.firstRecordId,
-            lastRecordId: checkpoint.lastRecordId,
-            coversCount: checkpoint.coversRecordIds.length,
-            depth: depth,
-          ),
-        );
-      }
-      checkpointEntries = entries;
-    }
+    final checkpointMap = _checkpointMap(inMapMode);
     // Branch scope, search mode: the census-seeded FINAL branch set is
     // the truth (hits were already capped against it at collection);
     // without a census (tree scope, map mode) the walk from the leaf
@@ -809,35 +795,115 @@ final class _ScanAccumulator {
     final branchIds = _branchIds.isNotEmpty
         ? _branchIds
         : _walkChain(_activeLeaf);
-    final hits = query.scope == SessionSearchScope.branch
+    return SessionSearchOutcome(
+      hits: _visibleHits(branchIds),
+      recordsExamined: recordsExamined,
+      recordsTotal: recordsTotal,
+      truncated: _stopped,
+      nextContinuation: _continuationToken(),
+      map: inMapMode
+          ? _archiveMap(
+              checkpointMap.entries,
+              checkpointMap.maxDepth,
+              branchIds,
+            )
+          : null,
+      truncationReason: _stopReason,
+    );
+  }
+
+  /// The checkpoint map fold: nesting depth over file-order record
+  /// spans, plus one entry per checkpoint. Empty (depth 0) outside map
+  /// mode or when the scan saw no checkpoints.
+  ({List<CheckpointMapEntry> entries, int maxDepth}) _checkpointMap(
+    bool inMapMode,
+  ) {
+    if (!inMapMode || _checkpoints.isEmpty) {
+      return (entries: const <CheckpointMapEntry>[], maxDepth: 0);
+    }
+    var maxDepth = 0;
+    final entries = <CheckpointMapEntry>[];
+    for (var i = 0; i < _checkpoints.length; i++) {
+      final checkpoint = _checkpoints[i];
+      final start = _spanStartOf(checkpoint, i);
+      final end = _spanEndOf(checkpoint, i);
+      final depth = _nestingDepth(i, start, end);
+      maxDepth = depth > maxDepth ? depth : maxDepth;
+      entries.add(
+        CheckpointMapEntry(
+          id: checkpoint.id,
+          firstRecordId: checkpoint.firstRecordId,
+          lastRecordId: checkpoint.lastRecordId,
+          coversCount: checkpoint.coversRecordIds.length,
+          depth: depth,
+        ),
+      );
+    }
+    return (entries: entries, maxDepth: maxDepth);
+  }
+
+  /// A checkpoint's span runs from its first to its last covered
+  /// record; ids the scan never saw (off-chain references) degrade to
+  /// the checkpoint's own position — depth stays computable, never
+  /// fatal.
+  int _spanStartOf(CompactCheckpointRecord checkpoint, int fallback) =>
+      _ordinalOf[checkpoint.firstRecordId] ?? fallback;
+
+  int _spanEndOf(CompactCheckpointRecord checkpoint, int fallback) =>
+      _ordinalOf[checkpoint.lastRecordId] ?? fallback;
+
+  /// How many sibling checkpoints strictly contain checkpoint [at]'s
+  /// span ([start], [end]), plus one for the checkpoint itself. A
+  /// checkpoint NESTS another when its span is a strict superset.
+  int _nestingDepth(int at, int start, int end) {
+    var depth = 1;
+    for (var j = 0; j < _checkpoints.length; j++) {
+      if (j == at) continue;
+      final otherStart = _spanStartOf(_checkpoints[j], j);
+      final otherEnd = _spanEndOf(_checkpoints[j], j);
+      final strictlyContains =
+          (otherStart < start && otherEnd >= end) ||
+          (otherStart <= start && otherEnd > end);
+      if (strictlyContains) depth++;
+    }
+    return depth;
+  }
+
+  /// Branch scope keeps only hits on the resolved branch set; the
+  /// default scope delivers every collected hit.
+  List<SessionSearchHit> _visibleHits(Set<String> branchIds) {
+    return query.scope == SessionSearchScope.branch
         ? [
             for (final hit in _hits)
               if (branchIds.contains(hit.id)) hit,
           ]
         : _hits;
-    return SessionSearchOutcome(
-      hits: hits,
-      recordsExamined: recordsExamined,
-      recordsTotal: recordsTotal,
-      truncated: _stopped,
-      nextContinuation:
-          _stopped &&
-              (_stopReason == 'result cap' || _stopReason == 'time budget')
-          ? recordsTotal - 1
-          : null,
-      map: inMapMode
-          ? SessionArchiveMap(
-              recordCount: recordsTotal,
-              kindCounts: _kindCounts,
-              hiddenRangeCount: _hiddenRangeCount,
-              hiddenRecordIdCount: _hiddenRecordIdCount,
-              checkpoints: checkpointEntries,
-              maxCheckpointDepth: maxDepth,
-              branchRecordCount: branchIds.length,
-              leafId: _activeLeaf.isEmpty ? null : _activeLeaf,
-            )
-          : null,
-      truncationReason: _stopReason,
+  }
+
+  /// The continuation token only when the scan stopped on a RESUMABLE
+  /// budget (cap or clock) — any other stop shape ends the scan.
+  int? _continuationToken() {
+    return _stopped &&
+            (_stopReason == 'result cap' || _stopReason == 'time budget')
+        ? recordsTotal - 1
+        : null;
+  }
+
+  /// The map-mode [SessionArchiveMap] payload.
+  SessionArchiveMap _archiveMap(
+    List<CheckpointMapEntry> checkpointEntries,
+    int maxDepth,
+    Set<String> branchIds,
+  ) {
+    return SessionArchiveMap(
+      recordCount: recordsTotal,
+      kindCounts: _kindCounts,
+      hiddenRangeCount: _hiddenRangeCount,
+      hiddenRecordIdCount: _hiddenRecordIdCount,
+      checkpoints: checkpointEntries,
+      maxCheckpointDepth: maxDepth,
+      branchRecordCount: branchIds.length,
+      leafId: _activeLeaf.isEmpty ? null : _activeLeaf,
     );
   }
 }
@@ -899,21 +965,53 @@ Future<void> _scanSessionSegment(
   // a ternary does not stick, so upcast first and probe that.
   final Object maybeRanged = fs;
   final ranged = maybeRanged is RangedReadFileSystem ? maybeRanged : null;
-  if (ranged == null) {
-    final read = await fs.readTextLines(path);
-    if (read.isErr) return;
-    for (final line in read.valueOrNull ?? const <String>[]) {
-      accumulator.seeLine(line);
-      if (accumulator.stopped) return;
-      accumulator.checkDeadline();
-    }
+  if (ranged != null) {
+    await _scanRanged(ranged, path, accumulator, blockBytes);
     return;
   }
+  await _scanWholeFile(fs, path, accumulator);
+}
+
+/// The whole-file fallback for file systems without ranged reads.
+Future<void> _scanWholeFile(
+  FileSystem fs,
+  String path,
+  _ScanAccumulator accumulator,
+) async {
+  final read = await fs.readTextLines(path);
+  if (read.isErr) return;
+  for (final line in read.valueOrNull ?? const <String>[]) {
+    accumulator.seeLine(line);
+    if (accumulator.stopped) return;
+    accumulator.checkDeadline();
+  }
+}
+
+/// The ranged-read path: stat first (a missing path or a directory is
+/// an empty scan), then stream blocks.
+Future<void> _scanRanged(
+  RangedReadFileSystem fs,
+  String path,
+  _ScanAccumulator accumulator,
+  int blockBytes,
+) async {
   final info = await fs.fileInfo(path);
   if (info.isErr) return;
   final meta = info.valueOrNull;
   if (meta == null || meta.kind != FileKind.file) return;
-  final size = meta.size;
+  await _scanFileBlocks(fs, path, accumulator, blockBytes, meta.size);
+}
+
+/// The bounded block stream: whole lines go to the accumulator as they
+/// complete; a partial tail carries into the next block (or drains once
+/// at EOF).
+Future<void> _scanFileBlocks(
+  RangedReadFileSystem fs,
+  String path,
+  _ScanAccumulator accumulator,
+  int blockBytes,
+  int size,
+) async {
   var offset = 0;
   // Partial line carried as raw BYTES (the session_chunk_reader
   // technique): a UTF-8 multibyte sequence split at a block boundary
@@ -921,33 +1019,45 @@ Future<void> _scanSessionSegment(
   var carry = <int>[];
   while (offset < size) {
     final end = (offset + blockBytes).clamp(0, size);
-    final read = await ranged.readRange(path, offset, end);
+    final read = await fs.readRange(path, offset, end);
     if (read.isErr) return;
     offset = end;
-    final block = read.valueOrNull!;
-    var start = 0;
-    for (;;) {
-      final nl = block.indexOf(0x0A, start);
-      if (nl < 0) break;
-      if (carry.isNotEmpty) {
-        carry.addAll(block.sublist(start, nl));
-        accumulator.seeLine(json_conv.utf8.decode(carry, allowMalformed: true));
-        carry = <int>[];
-      } else {
-        accumulator.seeLine(
-          json_conv.utf8.decode(block.sublist(start, nl), allowMalformed: true),
-        );
-      }
-      if (accumulator.stopped) return;
-      start = nl + 1;
-    }
-    if (start < block.length) carry.addAll(block.sublist(start));
+    carry = _scanBlock(accumulator, read.valueOrNull!, carry);
     accumulator.checkDeadline();
     if (accumulator.stopped) return;
   }
   if (carry.isNotEmpty) {
     accumulator.seeLine(json_conv.utf8.decode(carry, allowMalformed: true));
   }
+}
+
+/// Feeds every complete line in [block] (splicing a carried partial
+/// from the previous block) and returns the bytes after the last
+/// newline — the next block's carry. An empty return means the
+/// accumulator stopped: the scan ends without draining the tail.
+List<int> _scanBlock(
+  _ScanAccumulator accumulator,
+  List<int> block,
+  List<int> carry,
+) {
+  var start = 0;
+  for (;;) {
+    final nl = block.indexOf(0x0A, start);
+    if (nl < 0) break;
+    if (carry.isNotEmpty) {
+      carry.addAll(block.sublist(start, nl));
+      accumulator.seeLine(json_conv.utf8.decode(carry, allowMalformed: true));
+      carry = <int>[];
+    } else {
+      accumulator.seeLine(
+        json_conv.utf8.decode(block.sublist(start, nl), allowMalformed: true),
+      );
+    }
+    if (accumulator.stopped) return const <int>[];
+    start = nl + 1;
+  }
+  if (start < block.length) carry.addAll(block.sublist(start));
+  return carry;
 }
 
 /// Searches a whole session file chain — the production path behind the
