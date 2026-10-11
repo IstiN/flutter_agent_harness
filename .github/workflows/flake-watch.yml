@@ -1,7 +1,10 @@
 # gh-1199 AC6 — flake safety net. Hourly: scan the failed ci.yml gate runs
 # of the last 24h; a test red in >=2 DISTINCT-SHA runs is a proven flake
 # (the #1171 signature — one SHA flipping green/red is noise, one red run
-# is a regression). The watcher files/updates a `flake`-labelled issue
+# is a regression). gh-1537: the watcher consumes PR-dispatch runs only
+# (workflow_dispatch events) — the post-merge main CI trigger is retired,
+# and a red v* tag run is a release-flow failure (daily-publish triage),
+# never a flake to quarantine. The watcher files/updates a `flake`-labelled issue
 # with the failing runs and opens a reviewable PR adding the file to
 # scripts/test_quarantine.json, which the gate legs apply via
 # scripts/apply_quarantine.py (the file leaves the deterministic gate
