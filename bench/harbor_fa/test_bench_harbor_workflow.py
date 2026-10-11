@@ -487,18 +487,67 @@ class ShardDatasetEnvRegTest(unittest.TestCase):
     def setUpClass(cls):
         cls.text = _HARBOR_YML.read_text()
 
+    @staticmethod
+    def _slice_job(text: str, start_marker: str, end_marker: str) -> str:
+        # Slice a job body between two literal markers. Assert the markers
+        # exist FIRST so a workflow re-indent or a stray `summary:` string
+        # fails with a message naming the YAML-shape assumption, not an
+        # opaque IndexError from a bare str.split.
+        start = text.find(start_marker)
+        if start == -1:
+            raise AssertionError(
+                f"bench-harbor.yml shape changed: marker {start_marker!r} not found"
+            )
+        end = text.find(end_marker, start + len(start_marker))
+        if end == -1:
+            raise AssertionError(
+                f"bench-harbor.yml shape changed: end marker {end_marker!r}"
+                f" not found after {start_marker!r}"
+            )
+        return text[start:end]
+
+    def setUp(self):
+        # Fail loudly (naming the missing marker) before any test slices.
+        for marker in ("\n  bench:", "\n  summary:"):
+            self.assertIn(
+                marker,
+                self.text,
+                f"bench-harbor.yml shape changed: {marker!r} marker gone",
+            )
+
     def _bench_job(self) -> str:
         # The bench (shard) job body: from its `needs: setup` marker to
         # the summary job boundary.
-        return self.text.split("\n  bench:", 1)[1].split("\n  summary:", 1)[0]
+        return self._slice_job(self.text, "\n  bench:", "\n  summary:")
+
+    def _harbor_run_step_env(self) -> str:
+        # The Run harbor step header + env block (up to its `run:` block) —
+        # exactly the region where a step-level env key could re-declare
+        # (and override) the job env.
+        return self._slice_job(self._bench_job(), "- name: Run harbor", "\n        run:")
 
     def test_no_cross_job_step_refs_in_the_bench_job(self):
         self.assertNotIn("steps.family.outputs", self._bench_job())
 
     def test_harbor_run_step_takes_dataset_from_setup_outputs(self):
+        # The dataset reaches the shard via the JOB-level env
+        # (`env:` under `jobs.bench`); the step must not re-declare it.
         self.assertIn(
             "DATASET: ${{ needs.setup.outputs.dataset }}", self._bench_job()
         )
+
+    def test_harbor_step_does_not_redeclare_dataset(self):
+        # A step env OVERRIDES the job env — that override class is what
+        # killed run 38126875911. The step must inherit DATASET from the
+        # job env instead of re-declaring the key.
+        self.assertNotIn("DATASET:", self._harbor_run_step_env())
+
+    def test_slicing_failure_names_the_missing_marker(self):
+        # Structural-change guard (review thread): a missing marker must
+        # raise AssertionError naming the marker, not an opaque IndexError.
+        with self.assertRaises(AssertionError) as ctx:
+            self._slice_job("jobs:\n  other:\n    x: 1", "\n  bench:", "\n  summary:")
+        self.assertIn("\\n  bench:", str(ctx.exception))
 
     def test_setup_job_internal_family_ref_stays(self):
         # The setup job's shard step legitimately reads its OWN family

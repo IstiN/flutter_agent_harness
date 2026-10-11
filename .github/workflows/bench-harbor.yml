@@ -493,10 +493,11 @@ jobs:
           ATTEMPTS: ${{ inputs.attempts }}
           NCONC: ${{ inputs.n-concurrent }}
           ENV_TYPE: ${{ matrix.env }}
-          # needs.*, NOT steps.family.* — the family step lives in the
-          # setup job; a steps.* ref here is empty and harbor dies with
-          # "Dataset  not found" (run 38126875911).
-          DATASET: ${{ needs.setup.outputs.dataset }}
+          # No step-level DATASET here: a step env overrides the job env,
+          # and a steps.* ref to the setup job's family step evaluates
+          # EMPTY — harbor died with "Dataset  not found" (run 38126875911).
+          # DATASET comes from the bench job's env block above
+          # (needs.setup.outputs.dataset).
           AGENT_TIMEOUT: ${{ inputs.agent-timeout }}
           PROGRESS_EXTENSION: ${{ inputs.progress-extension }}
           # shard task names: dataset dir names, no whitespace — safe to word-split.
