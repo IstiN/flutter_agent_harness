@@ -14,10 +14,12 @@
 ///       push arm is gone; `refs/heads/main` survives only in the
 ///       ref-restricted releaseDispatch dispatch arm, which is a dispatch,
 ///       not a push),
-///  AC3  the release flow keeps working WITHOUT main CI: release-tag.yml
-///       owns the tag-on-bump, triggered by the release-bot's chore(release)
-///       push to main (release flow, not CI — the job filters on the bump
-///       subject, SM merges never start it),
+///  AC3  the release flow keeps working WITHOUT main CI: the tag-only
+///       release (gh-1522) cuts its tag inside ci.yml's `release` job
+///       (no release-tag job, no chore(release) bump commit — they
+///       retired together with scripts/tag_release.sh), armed by the
+///       2h coalesce schedule and the gated dispatches; the pushed v*
+///       tag triggers the tag-scoped publish/binaries jobs,
 ///  AC4  flake intake consumes PR-dispatch runs: flake_watch.py filters
 ///       ci.yml failures to workflow_dispatch events (tag/release reds are
 ///       release-flow failures, triaged by daily-publish/ci-red-report —
@@ -137,54 +139,60 @@ void main() {
 
   group('AC3 — the release flow keeps working without main CI', () {
     test(
-      'release-tag.yml owns the tag-on-bump off the chore(release) push',
+      'the ci.yml release job owns the tag cut (gh-1522 tag-only flow) — '
+      'no release-tag job anywhere',
       () {
-        final path = '.github/workflows/release-tag.yml';
-        final raw = read(path);
-        final doc = loadYaml(raw) as YamlMap;
-        final on = doc['on'] as YamlMap;
-        final push = on['push'] as YamlMap;
-        expect(
-          (push['branches'] as YamlList).toString(),
-          contains('main'),
-          reason:
-              'the release-bot bump push to main is the one remaining '
-              'main-push consumer — it is release flow, not CI (gh-1537 AC1 '
-              'retired the ci.yml main trigger, not the release chain)',
-        );
-        expect(
-          on.containsKey('tags'),
-          isFalse,
-          reason: 'tag pushes must not re-trigger the tag cutter',
-        );
-        final jobs = doc['jobs'] as YamlMap;
-        final tagIf = (jobs['release-tag'] as YamlMap)['if'].toString();
-        expect(
-          tagIf,
-          contains(
-            "startsWith(github.event.head_commit.message, 'chore(release):')",
-          ),
-          reason:
-              'SM merge commits (squash subjects like `KEY summary '
-              '(#PR)`) must never start the tag cutter — only the '
-              'release-bot bump commit does',
-        );
-        expect(
-          raw,
-          contains(
-            r'BUMP_SHA: ${{ github.event.head_commit.id || github.sha }}',
-          ),
-          reason:
-              'the tag pins to the push-event bump sha (the #1178 '
-              'interloper capture) — the move out of ci.yml must not drop '
-              'the pin',
-        );
-        // ci.yml must no longer carry the job (one owner, no drifted twins).
+        // gh-1522 retired the bump flow BEFORE this PR merged: zero
+        // commits land on main, so there is no 'chore(release):' bump
+        // push to key a tag-on-bump workflow off — and with the
+        // post-merge main CI run retired (gh-1537) ci.yml has no
+        // main-push trigger to hand such a workflow either. The release
+        // job cuts the annotated tag + GitHub Release in one step,
+        // armed by the 2h coalesce schedule and the gated dispatches
+        // (AC2); the pushed v* tag fires this workflow's tags arm,
+        // which runs the full quality gate BEFORE publish/binaries.
         final ci = read('.github/workflows/ci.yml');
         expect(
           ci,
-          isNot(contains('  release-tag:')),
-          reason: 'release-tag lives in release-tag.yml exclusively',
+          isNot(contains('release-tag')),
+          reason:
+              'the release-tag job (and scripts/tag_release.sh) retired '
+              'with the bot bump flow (gh-1522) — auto_release.sh cuts '
+              'the tag directly; a tag-on-bump workflow would also be '
+              'dead code now that nothing pushes chore(release) commits '
+              'and ci.yml has no main-push trigger (gh-1537)',
+        );
+        expect(
+          File('.github/workflows/release-tag.yml').existsSync(),
+          isFalse,
+          reason:
+              'gh-1537 originally extracted release-tag.yml to carry the '
+              'tag-on-bump off the retired ci.yml main trigger — but '
+              'gh-1522 retired the bump flow itself (this workflow goes '
+              'with it, as its own header anticipated)',
+        );
+        expect(
+          ci,
+          isNot(contains('tag_release.sh')),
+          reason: 'the script is deleted from the repo',
+        );
+        final jobs = loadYaml(ci)['jobs'] as YamlMap;
+        final release = jobs['release'] as YamlMap;
+        final steps = release['steps'] as YamlList;
+        final cut = steps
+            .map((s) => s as YamlMap)
+            .firstWhere(
+              (s) => s['run']?.toString().contains('auto_release.sh') ?? false,
+              orElse: () =>
+                  throw TestFailure('release must run scripts/auto_release.sh'),
+            );
+        expect(
+          (cut['env'] as YamlMap)['GH_TOKEN']?.toString(),
+          r'${{ steps.app-token.outputs.token }}',
+          reason:
+              'gh release create rides the App token (gh-1172) — without '
+              'an explicit GH_TOKEN the create would be a silent no-op; '
+              'the wiring must survive the gh-1537 main-trigger removal',
         );
       },
     );

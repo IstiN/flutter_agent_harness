@@ -23,10 +23,10 @@ the validated tree", so `git rev-parse HEAD^{tree}` of the push is
 compared against the tree of each recent successful dispatch run's head
 (with an exact head-SHA match accepted as the fast-forward case).
 
-Release-bot bump pushes (`chore(release):` subjects) skip the guard: the
-bump commit is authored by the gated release job itself and is gated
-downstream — tag_release.sh's enforce-lockfile smoke pre-tag, and the
-full quality gate runs on the v* tag BEFORE publish/binaries.
+Release-bot bump pushes (`chore(release):` subjects) skip the guard —
+defense-in-depth: gh-1522 retired the bump flow so none land anymore, but
+if one ever returns it is release-flow, gated downstream by the full
+quality gate that runs on the cut v* tag BEFORE publish/binaries.
 
 Exit codes: 0 = validated / skipped, 3 = invariant violated (alarm filed
 when --alarm-issue), 1 = gh/tooling error, 2 = usage error.

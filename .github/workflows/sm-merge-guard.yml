@@ -8,9 +8,10 @@
 # `sm-guard` issue (event-driven, seconds of runner time — explicitly NOT
 # a nightly/polling backstop, per the owner's directive).
 #
-# The release-bot's chore(release) bump pushes skip the guard (the v* tag
-# run gates them: tag_release.sh's enforce-lockfile smoke pre-tag, the
-# full quality gate on the tag before publish). SM merge commits and any
+# A `chore(release):` bump push would skip the guard (defense-in-depth —
+# gh-1522 retired the bump flow, so none land anymore; if one ever
+# returns it is release-flow, gated downstream by the v* tag run's full
+# quality gate BEFORE publish/binaries). SM merge commits and any
 # human/admin push are checked — tree identity, so both fast-forward
 # (same SHA) and squash/merge-commit (same tree) landings validate.
 name: SM merge guard
@@ -43,7 +44,8 @@ jobs:
           REPO: ${{ github.repository }}
           # head_commit.id is frozen at push time — the checkout can drift
           # to a main that moved in the seconds before the job starts
-          # (same lesson as the ci.yml release-tag BUMP_SHA pin, #1178).
+          # (same lesson as the retired ci.yml release-tag BUMP_SHA pin,
+          # #1178 — gh-1522 folded tag cutting back into the release job).
           PUSHED_SHA: ${{ github.event.head_commit.id || github.sha }}
           PUSHED_SUBJECT: ${{ github.event.head_commit.message }}
         run: |
