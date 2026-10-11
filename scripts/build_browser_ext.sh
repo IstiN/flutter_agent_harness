@@ -207,7 +207,12 @@ fi
 # zips panel/app/manifest.json verbatim and the guard fails the package
 # (CWS single-manifest rule, #291). Strip unconditionally — idempotent.
 if [ -d browser_ext/panel/app ]; then
-  python3 scripts/ext_package_guard.py strip browser_ext/panel/app
+  if command -v python3 >/dev/null 2>&1; then
+    python3 scripts/ext_package_guard.py strip browser_ext/panel/app
+  else
+    echo "WARNING: no python3 — cannot strip browser_ext/panel/app;" \
+         "the packaging guard below hard-requires python3 anyway" >&2
+  fi
 fi
 
 mkdir -p build
