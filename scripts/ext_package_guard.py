@@ -170,6 +170,18 @@ def cmd_check(zip_path: str) -> int:
                 failures += 1
                 manifest = None
             if isinstance(manifest, dict):
+                if "key" in manifest:
+                    # CWS upload rule (owner report 2026-10-11: "key field
+                    # is not allowed in manifest"): the store owns the
+                    # signing key; the source manifest's dev "key" pins the
+                    # local id only and must be stripped at packaging.
+                    error(
+                        "manifest-key",
+                        f"{zip_path}: root manifest.json carries \"key\" — "
+                        "CWS rejects it on upload (the store owns the key; "
+                        "the build must strip the dev pin)",
+                    )
+                    failures += 1
                 if manifest.get("manifest_version") != 3:
                     error(
                         "manifest-mv3",

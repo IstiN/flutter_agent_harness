@@ -214,22 +214,25 @@ mkdir -p build
 rm -f build/fa-extension.zip
 
 # CWS-strict manifest (owner report 2026-10-11): the store uploader
-# rejects // comments ("manifest.json:17:2: missing value") that Chrome's
-# local loader tolerates — the zip must carry a comment-STRIPPED manifest
-# while the source keeps its documentation comments. Same strip regex as
-# the pre-zip validation above; staged under build/pack/ so the zip entry
-# name stays exactly "manifest.json". The ext_package_guard check below
-# re-parses the packaged manifest STRICTLY, so a regression here fails
-# the build, never the store upload.
+# rejects // comments ("manifest.json:17:2: missing value") AND the dev
+# "key" field ("key field is not allowed in manifest" — CWS owns the
+# key, the source pins it only for a stable local dev id). The zip must
+# carry a comment-stripped, key-less manifest while the source keeps
+# both. Staged under build/pack/ so the zip entry name stays exactly
+# "manifest.json". The ext_package_guard check below re-parses the
+# packaged manifest STRICTLY and rejects "key", so a regression here
+# fails the build, never the store upload.
 mkdir -p build/pack
 if command -v python3 >/dev/null 2>&1; then
   python3 -c '
-import re, sys
+import json, re, sys
 raw = open(sys.argv[1]).read()
-open(sys.argv[2], "w").write(re.sub(r"^\s*//.*$", "", raw, flags=re.M))
+m = json.loads(re.sub(r"^\s*//.*$", "", raw, flags=re.M))
+m.pop("key", None)
+open(sys.argv[2], "w").write(json.dumps(m, indent=2) + "\n")
 ' "$manifest" build/pack/manifest.json
 elif command -v node >/dev/null 2>&1; then
-  node -e 'require("fs").writeFileSync(process.argv[2], require("fs").readFileSync(process.argv[1], "utf8").replace(/^\s*\/\/.*$/gm, ""))' "$manifest" build/pack/manifest.json
+  node -e 'const fs=require("fs"); const m=JSON.parse(fs.readFileSync(process.argv[1], "utf8").replace(/^\s*\/\/.*$/gm, "")); delete m.key; fs.writeFileSync(process.argv[2], JSON.stringify(m, null, 2) + "\n")' "$manifest" build/pack/manifest.json
 else
   cp "$manifest" build/pack/manifest.json
 fi
