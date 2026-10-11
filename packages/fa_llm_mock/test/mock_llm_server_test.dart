@@ -359,18 +359,18 @@ responses:
 
   test(
     'client abort mid-request leaks no unhandled error, queue stays aligned '
-    '(issue #1385)',
+    '(gh-1538 rework — CI red: subagent_board_pty_test.dart took the '
+    'unhandled-zone-error attribution)',
     () async {
       server.enqueueText('after the abort');
       // A client that dies mid-request the way a SIGKILLed CLI does
-      // (steering PTY test phase 2: hardKill races the soft-yield turn's
-      // request): headers declare a 64-byte body, 5 bytes arrive, then a
-      // clean FIN. TCP orders data before EOF, so the server parser is
-      // deterministically mid-body when the socket closes — the exact
-      // shape that used to rethrow
-      // `HttpException("Connection closed while receiving data",
+      // (a PTY test's hardKill races the in-flight turn request):
+      // headers declare a 64-byte body, 5 bytes arrive, then a clean FIN.
+      // TCP orders data before EOF, so the server parser is deterministically
+      // mid-body when the socket closes — the exact shape that used to
+      // rethrow `HttpException("Connection closed while receiving data",
       // uri: /v1/chat/completions)` out of the handler and into the test
-      // zone as an unhandled error (the 2026-10-07 shard reds).
+      // zone as an unhandled error (run 38122663643, shard 2/3).
       final socket = await Socket.connect('127.0.0.1', server.port);
       socket.add(
         utf8.encode(
@@ -405,7 +405,9 @@ responses:
   );
 
   test(
-    'client abort mid-response leaks no unhandled error (issue #1385)',
+    'client abort mid-response leaks no unhandled error (gh-1538 rework — '
+    'CI red: subagent_board_pty_test.dart took the unhandled-zone-error '
+    'attribution)',
     () async {
       server.enqueueText('doomed');
       server.enqueueText('next');

@@ -126,18 +126,21 @@ final class MockLlmServer {
   /// Closes the server and every open connection.
   Future<void> stop() => _server.close(force: true);
 
-  /// Serves one request, tolerating CLIENT-side connection aborts (issue
-  /// #1385). A PTY test's `hardKill` (SIGKILL of the CLI) lands wherever
-  /// the scheduler decides — including mid-request-send, so the server's
-  /// parser sees a half-delivered body and `_HttpIncoming.listen` rethrows
-  /// the parser's `HttpException("Connection closed while receiving data")`
-  /// carrying the request-line path (`uri = /v1/chat/completions` — the
-  /// exact 2026-10-07 shard-red signature). Unguarded, that error escaped
-  /// `_handle` into `HttpServer.listen`'s handler-error sink — an UNHANDLED
-  /// ZONE ERROR in the test isolate, which dart test attributes to whichever
-  /// test is active. Tolerated here instead: the client is gone, nothing can
-  /// consume a response, and the scripted queue stays aligned (the aborted
-  /// request never reached `_nextEntry`, so no response is popped).
+  /// Serves one request, tolerating CLIENT-side connection aborts (gh-1538
+  /// rework: run 38122663643's shard-2 red — `subagent_board_pty_test.dart`
+  /// took the unhandled-zone-error attribution for exactly this leak; the
+  /// fix on `fix/1385-pty-steering-flake` was never merged). A PTY test's
+  /// `hardKill` (SIGKILL of the CLI) lands wherever the scheduler decides —
+  /// including mid-request-send, so the server's parser sees a
+  /// half-delivered body and `_HttpIncoming.listen` rethrows the parser's
+  /// `HttpException("Connection closed while receiving data")` carrying the
+  /// request-line path (`uri = /v1/chat/completions`). Unguarded, that
+  /// error escaped `_handle` into `HttpServer.listen`'s handler-error sink —
+  /// an UNHANDLED ZONE ERROR in the test isolate, which dart test attributes
+  /// to whichever test is active. Tolerated here instead: the client is
+  /// gone, nothing can consume a response, and the scripted queue stays
+  /// aligned (the aborted request never reached `_nextEntry`, so no
+  /// response is popped).
   ///
   /// Deliberately CLASS-based (HttpException / SocketException — dart:io's
   /// dead-peer shapes for the read and write legs) rather than

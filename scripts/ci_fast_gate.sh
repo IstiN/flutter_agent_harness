@@ -226,7 +226,8 @@ stage_test_core() {
   # diff-coverage, CRAP: jsr_cli.dart at 0% line coverage reads CRAP 156
   # against the 12.0 ceiling), so the trio runs into the SAME coverage/
   # dir; format_coverage merges the per-isolate files. Keep this list in
-  # sync with ci.yml (test-core shard 0) and nightly.yml.
+  # sync with ci.yml (test-core shard 0); gh-1538 retired the nightly.yml
+  # full-quality copy — the pre-merge gate is the single unit-lcov producer.
   dart test ${conc:+--concurrency=$conc} --tags integration \
     test/cli/jsr_cli_test.dart \
     test/cli/cli_args_jsr_test.dart \
