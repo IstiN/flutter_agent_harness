@@ -20,13 +20,13 @@ construction and runs in the deterministic gate.
 | `integration-mock` leg (no-key) | excluded (`--exclude-tags llm,...`) | run |
 | tag-only provider-smoke job (`v*` tags) | run, with secrets | — |
 | `nightly.yml` | run, with secrets (supervised, unsharded) | run |
+| bench harnesses (terminal-bench / harbor / MLS) | run under supervision | — |
+| your machine (debugging) | `dart test --tags "integration && llm"` | `dart test --tags integration --exclude-tags llm` |
 
 gh-1538: `nightly.yml` is builds + integration-only — the unit shards,
 analyze, coverage and CRAP/jscpd gates run exclusively in the pre-merge SM
 validation gate (#1537); nightly keeps the release build matrix plus these
 integration suites.
-| bench harnesses (terminal-bench / harbor / MLS) | run under supervision | — |
-| your machine (debugging) | `dart test --tags "integration && llm"` | `dart test --tags integration --exclude-tags llm` |
 
 The boundary is enforced, not aspirational:
 
