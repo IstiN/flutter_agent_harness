@@ -26,6 +26,18 @@ Host-side inputs (environment):
   trail lands in /logs/agent/fa-timeout-metadata.json, synced back with
   the other agent logs. No knobs set => today's single awaited exec.
 
+  Round 3 (gh-1556, harbor parity for #1392/#1430): when a watch knob is
+  set (FA_STALL_GAP_SEC / FA_AGENT_TIMEOUT_ABS_CEILING_SEC — bench-harbor.yml
+  sets both on every shard, so progress-watch is the bench default), the
+  kill decision is the gap-aware ProgressWatch, not the byte-growth
+  ladder; a stall/ceiling kill also exports FA_DEADLINE_EPOCH_MS to fa
+  (effective cap minus a 120s wrap-up margin) so fa can land partial
+  results before the guillotine. The kill path uses the `[f]a` bracket
+  trick: the pre-fix self-matching `pkill -f 'fa --session-root'`
+  SIGTERMed the exec wrapper's own shell (exit 143 skipped the audit AND
+  the TimeoutError, classifying ladder kills as agent crashes) — and the
+  kill is wrapped so its failure can never replace the TimeoutError.
+
 Usage:
   PYTHONPATH=bench/harbor_fa harbor run -d terminal-bench/terminal-bench@4.0.0 \
     -a fa_agent:FaAgent -e docker -m glm-5.3-flash
@@ -39,6 +51,7 @@ import json
 import os
 import shlex
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -111,10 +124,13 @@ class FaAgent(BaseInstalledAgent):
             env[f"{key_var}_BASE64"] = _b64(os.environ[key_var])
         # gh-1556 AC7: fa's deadline awareness rides the same env — the
         # adapter's effective kill cap minus the wrap-up margin, computed
-        # at launch. With no timeout knob there is no adapter cap (the
-        # dataset-declared task caps are harbor's own) and the export is
-        # absent: fa never invents a clock.
-        env.update(_timeout.deadline_env_from())
+        # once when the deadline run starts (see _run_with_deadline, which
+        # stashes the exact value the audit then records). With no timeout
+        # knob there is no adapter cap (the dataset-declared task caps are
+        # harbor's own) and the export is absent: fa never invents a clock.
+        deadline = getattr(self, "_deadline_epoch_ms", None)
+        if deadline is not None:
+            env["FA_DEADLINE_EPOCH_MS"] = str(deadline)
         return env
 
     async def install(self, environment: BaseEnvironment) -> None:
@@ -215,6 +231,12 @@ class FaAgent(BaseInstalledAgent):
             if knobs.progress_watch
             else _timeout.ProgressLadder(knobs)
         )
+        # gh-1556 AC7: the wrap-up deadline exported to fa (via
+        # _provider_env) is computed once here, at run start, and the
+        # audit below records this exact value.
+        self._deadline_epoch_ms = _timeout.deadline_epoch_ms(
+            knobs, int(time.time() * 1000)
+        )
         loop = asyncio.get_running_loop()
         start = loop.time()
         outcome = None
@@ -282,9 +304,7 @@ class FaAgent(BaseInstalledAgent):
         await self._write_audit(
             environment, knobs, ladder,
             outcome or ("crashed" if error is not None else "completed"),
-            deadline_epoch_ms=_timeout.deadline_epoch_ms(
-                knobs, int(asyncio.get_running_loop().time() * 1000)
-            ),
+            deadline_epoch_ms=self._deadline_epoch_ms,
         )
         if outcome:
             raise asyncio.TimeoutError(
@@ -306,7 +326,9 @@ class FaAgent(BaseInstalledAgent):
             pass
         return None
 
-    async def _write_audit(self, environment, knobs, ladder, outcome) -> None:
+    async def _write_audit(
+        self, environment, knobs, ladder, outcome, deadline_epoch_ms=None
+    ) -> None:
         # AC4 (issue #1122): audit trail synced back with the agent logs.
         # AC6 (issue #1185): the audit also documents the harness-originated
         # share of the progress sample — the ⏳ liveness lines the pane
@@ -324,6 +346,7 @@ class FaAgent(BaseInstalledAgent):
                     outcome,
                     progress_bytes=progress,
                     liveness_bytes=liveness,
+                    deadline_epoch_ms=deadline_epoch_ms,
                 )
             ).encode()
         ).decode()
