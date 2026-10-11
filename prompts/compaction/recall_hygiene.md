@@ -1,6 +1,6 @@
 ---
 name: recall_hygiene
-description: The recall-hygiene contract (issue #1380) — reference equals search, the resume ritual over the obligations ledger, committing in the open, the durable-versus-session boundary, and the dig idioms over the session archive. Rendered only under the structured compaction engine.
+description: "The recall-hygiene contract (issue #1380) — reference equals search, the resume ritual over the obligations ledger, committing in the open, the durable-versus-session boundary, and the dig idioms over the session archive. Rendered only under the structured compaction engine."
 ---
 ## Session recall — never answer about the past from assumption
 
