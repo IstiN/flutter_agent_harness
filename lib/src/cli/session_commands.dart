@@ -81,6 +81,9 @@ extension on AgentCli {
     _ttsr?.reset();
     _session = await _createSession(name: trimmed);
     _syncMailboxPrefix();
+    // herdr pane state (issue #1481): in-process session switch — re-report
+    // the new session, never a release.
+    _herdrSessionSwitched();
     // Re-claim ownership for the new session (#428): free → drive,
     // live lease → viewer (no takeover ever).
     await _releaseSessionLease();
@@ -130,6 +133,9 @@ extension on AgentCli {
     await _loadAgentContext();
     _session = await _loadSession(metadata);
     _syncMailboxPrefix();
+    // herdr pane state (issue #1481): in-process session switch — re-report
+    // the new session, never a release.
+    _herdrSessionSwitched();
     // Re-claim ownership for the new session (#428): free → drive,
     // live lease → viewer (no takeover ever).
     await _releaseSessionLease();
@@ -260,6 +266,9 @@ extension on AgentCli {
     _ttsr?.reset();
     _session = await _createSession(name: trimmed);
     _syncMailboxPrefix();
+    // herdr pane state (issue #1481): in-process session switch — re-report
+    // the new session, never a release.
+    _herdrSessionSwitched();
     // Re-claim ownership for the new session (#428): free → drive,
     // live lease → viewer (no takeover ever).
     await _releaseSessionLease();

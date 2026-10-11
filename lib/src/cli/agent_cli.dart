@@ -249,6 +249,7 @@ import 'text_format.dart';
 import 'terminal_setup.dart';
 import 'tui_helpers.dart';
 import 'tui_prompt.dart';
+import 'herdr_reporter.dart';
 import 'scripted_test_stream.dart';
 import 'tui_replay.dart';
 import 'tui_repl.dart';
@@ -305,6 +306,7 @@ part 'agent_cli_input.dart';
 part 'agent_cli_pickers.dart';
 part 'agent_cli_run.dart';
 part 'agent_cli_usage_ledger.dart';
+part 'agent_cli_herdr.dart';
 
 /// The CLI harness: agent + built-in tools + session persistence +
 /// compaction, driven by a [CliIO].
@@ -332,7 +334,12 @@ class AgentCli {
        _waitingSleep =
            waitingSleep ?? ((Duration d) => Future<void>.delayed(d)),
        _useTui = useTui && io.supportsRawMode,
-       sigintPolicy = sigintPolicy ?? SigintPolicy() {
+       sigintPolicy = sigintPolicy ?? SigintPolicy(),
+       _herdr = HerdrReporter(
+         envLookup: config.herdrEnvLookup,
+         runProcess: config.herdrSpawn,
+         clock: waitingClock,
+       ) {
     // Sleep prevention (issue #325): null runner (tests, web) → none.
     _powerAssertions = sessionPowerAssertions(config, this.io.writeln);
     _env = CwdOverrideEnv(config.env);
@@ -1353,6 +1360,14 @@ class AgentCli {
   );
   Session? _session;
 
+  /// The herdr pane reporter (issue #1481): fire-and-forget pane-state
+  /// reports while this CLI runs inside a herdr pane. The gate is
+  /// evaluated once in the constructor — outside herdr (and in every test
+  /// that leaves [AgentCliConfig.herdrEnvLookup] unset) this stays inert
+  /// for the process lifetime and the hooks in agent_cli_herdr.dart are
+  /// no-ops.
+  late final HerdrReporter _herdr;
+
   /// Issue-385 blob persistence state: one persister per session (dedup
   /// sets live in it); recreated when the session changes.
   TrajectoryBlobPersister? _trajectoryBlobPersister;
@@ -1618,6 +1633,9 @@ class AgentCli {
     // Due scheduled messages (schedule_message): re-arm any pending records
     // from previous runs — restart-survivable reminders.
     unawaited(_scheduledMessages.start());
+    // herdr pane state (issue #1481): the boot report — the pane never sits
+    // `unknown` before the first turn. No-op outside herdr.
+    _herdrBootIdle();
     final interruptSub = io.interrupts.listen((_) {
       if (isBusy) {
         // Line-mode abort marker: the settle path uses it to DROP the
