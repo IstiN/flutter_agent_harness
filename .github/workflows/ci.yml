@@ -371,6 +371,17 @@ jobs:
       - name: Duration budget gate self-test (gh-1300 AC6)
         run: bash scripts/duration_budget_selftest.sh
 
+      # gh-1364: the flake watcher's issue dedup is fixture-self-tested
+      # against a stubbed gh (no network) — a tracker whose title carries
+      # the `(#<digits>...` suffix GitHub search silently cannot see is
+      # still found (no --search anywhere; dedup keys on the body's
+      # **File**: path, not the truncated title), a create landing beside
+      # an existing open tracker closes itself and fails loudly, a closed
+      # tracker is re-opened instead of re-filed next to, and runs already
+      # in comments are not re-commented (#1100 pattern).
+      - name: Flake watcher dedup self-test (gh-1364)
+        run: bash scripts/flake_watch_selftest.sh
+
       # #1431: the size-budget gate's own red exits are fixture-tested
       # (#1100 pattern) — an engine rev-hash rename must UPDATE not NEW,
       # vendored engine churn warns instead of reddening, first-party

@@ -110,12 +110,36 @@ def quarantine_entry(file: str, test: str, issue_url: str,
     }, indent=2)
 
 
-def find_issue(repo: str, title_key: str):
+def list_flake_issues(repo: str, state: str = "open") -> list:
+    """Open/closed `flake` issues, listed outright — no `--search`.
+
+    gh-1364: GitHub issue search silently returns [] for an unquoted
+    `(#<digits>` title fragment (seven duplicate trackers got minted that
+    way, one per hourly run), and a freshly created issue only surfaces
+    in search after an indexing lag. The label+state listing has neither
+    failure mode; matching happens in Python.
+    """
     out = gh("issue", "list", "--repo", repo, "--label", FLAKE_LABEL,
-             "--state", "open", "--search", f"in:title {title_key}",
-             "--json", "number,title,url")
-    for i in json.loads(out):
-        if title_key in i["title"]:
+             "--state", state, "--limit", "500",
+             "--json", "number,title,url,body")
+    return json.loads(out)
+
+
+def issue_tracks_file(issue: dict, file: str) -> bool:
+    """True when the issue body's `**File**:` line names `file`.
+
+    The quarantined path is the dedup key — unique per flake — never the
+    truncated test title (two tests may share their first 77 chars, and
+    the `(#<digits>` suffix in those titles is what GitHub search cannot
+    see, gh-1364).
+    """
+    return f"**File**: `{file}`" in (issue.get("body") or "")
+
+
+def find_issue(repo: str, file: str):
+    """The open flake tracker for `file`, or None."""
+    for i in list_flake_issues(repo):
+        if issue_tracks_file(i, file):
             return i
     return None
 
@@ -141,22 +165,69 @@ def issue_body(file: str, test: str, repo: str, runs: list,
         "(gh-1199 AC4):\n\n```json\n" + entry + "\n```\n")
 
 
+def tracker_runs(repo: str, number: int) -> str:
+    """The issue's body plus every comment body, concatenated.
+
+    Run mentions must count across BOTH (gh-1364): ensure_issue appends
+    missing runs as comments, so a run counted against the body only is
+    re-commented on every pass while the body stays stale. Callers match
+    mentions by their `/runs/<id>` link tail — a bare id substring would
+    false-positive on digit-bearing title fragments (`(#573 review`)."""
+    out = gh("issue", "view", str(number), "--repo", repo,
+             "--json", "body,comments")
+    doc = json.loads(out)
+    return "\n".join([doc.get("body") or ""] +
+                     [c.get("body") or "" for c in doc.get("comments", [])])
+
+
+def _assert_sole_tracker(repo: str, file: str, created_url: str) -> None:
+    """gh-1364 guard rail: a tracker we just minted must own the file's
+    ONLY open issue. Any other open flake issue carrying the same
+    `**File**:` line means the dedup above missed — close the fresh
+    duplicate and fail loudly (the watcher run goes red, a human looks)
+    instead of silently minting one duplicate per hourly run."""
+    number = created_url.rstrip("/").rsplit("/", 1)[-1]
+    others = [i["number"] for i in list_flake_issues(repo)
+              if issue_tracks_file(i, file) and str(i["number"]) != number]
+    if others:
+        gh("issue", "close", str(number), "--repo", repo)
+        raise RuntimeError(
+            f"flake dedup missed: created {created_url} for {file} but "
+            f"open tracker(s) {others} already carry the same file — "
+            f"closed the fresh duplicate, check find_issue")
+
+
 def ensure_issue(repo: str, file: str, test: str, runs: list,
                  shas: list) -> str:
-    """Create or update the flake issue; returns its URL."""
+    """Create or update the flake issue; returns its URL.
+
+    Dedup keys on `file` (see find_issue). A CLOSED tracker for the same
+    file is re-opened and refreshed instead of re-filed next to: the
+    watcher's window keeps holding the pre-fix red runs after a flake is
+    fixed and its tracker proof-closed, and minting a fresh tracker there
+    unlinks the closure proof — exactly how #1365 landed next to
+    proof-closed #1362 (gh-1364 round 3).
+    """
     title_key = test if len(test) <= 80 else test[:77] + "..."
-    title = f"Flake: {title_key}"
-    existing = find_issue(repo, title_key)
+    existing = find_issue(repo, file)
     if existing is None:
-        out = gh("issue", "create", "--repo", repo, "--title", title,
+        closed = [i for i in list_flake_issues(repo, "closed")
+                  if issue_tracks_file(i, file)]
+        if closed:
+            existing = max(closed, key=lambda i: i["number"])
+            gh("issue", "reopen", str(existing["number"]), "--repo", repo)
+    if existing is None:
+        out = gh("issue", "create", "--repo", repo,
+                 "--title", f"Flake: {title_key}",
                  "--label", FLAKE_LABEL,
                  "--body", issue_body(file, test, repo, runs, shas))
         # `gh issue create` prints the URL on success.
-        return out.strip().splitlines()[-1]
-    # Update: append any runs not already mentioned in the body.
-    body = gh("issue", "view", str(existing["number"]), "--repo", repo,
-              "--json", "body", "--jq", ".body")
-    missing = [r for r in runs if str(r) not in body]
+        url = out.strip().splitlines()[-1]
+        _assert_sole_tracker(repo, file, url)
+        return url
+    # Update: append any run not already mentioned in body or comments.
+    known = tracker_runs(repo, existing["number"])
+    missing = [r for r in runs if f"/runs/{r}" not in known]
     if missing:
         gh("issue", "comment", str(existing["number"]), "--repo", repo,
            "--body", "Additional red runs: " +
