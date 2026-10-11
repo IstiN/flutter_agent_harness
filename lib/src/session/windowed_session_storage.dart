@@ -426,12 +426,41 @@ final class WindowedSessionStorage
   /// ~13x read+parse amplification on a 30k-record ledger (each 8 MiB
   /// strip kept only its newest few hundred records). A no-op when the
   /// window already reaches the file head.
-  Future<void> loadAllOlder({int maxBytes = maxWalkBlockBytes}) async {
+  ///
+  /// gh-1073-honest-degradation pre-check (review): materializing the
+  /// whole ledger is the same heap exhaustion the full-open backstop
+  /// refuses, so a ledger past [maxWholeLedgerBytes] is refused with the
+  /// same `tooLarge` [SessionException] (repair hint included) BEFORE
+  /// the scan starts — a clean fast refusal instead of a multi-minute
+  /// whole-file scan followed by a probable VM crash. Until AC3a
+  /// streaming lands, the merely-large ledger pages in chunked while
+  /// the truly-giant one fails honestly.
+  Future<void> loadAllOlder({
+    int maxBytes = maxWalkBlockBytes,
+    int maxWholeLedgerBytes = defaultMaxFullOpenBytes,
+  }) async {
     final top = _windowTopOffset;
     if (!_hasOlder || top == null) return;
+    final info = await _reader.stat();
+    if (info != null && info.size > maxWholeLedgerBytes) {
+      throw SessionException(
+        'Refusing to page session $_filePath into whole-ledger '
+        'residency: ${formatSessionBytes(info.size)} exceeds the '
+        '${formatSessionBytes(maxWholeLedgerBytes)} whole-ledger bound. '
+        'Shrink the ledger with `fa session repair` — materializing the '
+        'whole ledger would exhaust the heap (gh-1073).',
+        code: SessionErrorCode.tooLarge,
+      );
+    }
     final scanned = await _scanFileHeadStrips(top, maxBytes);
-    _spliceOlderAbove(scanned.records, scanned.starts, scanned.ends);
+    _blockPrepend(scanned.records, scanned.starts, scanned.ends);
     if (scanned.starts.isNotEmpty) _windowTopOffset = scanned.starts.first;
+    // The scan ended: either the file head was reached, or the walk
+    // broke early on an EMPTY read below `top` — the file was truncated
+    // mid-scan (same "empty read ends the walk" convention as
+    // [_readOlderBlock]); the window claims full residency either way,
+    // but an early-empty read means TRUNCATION, not a clean EOF at the
+    // head.
     _hasOlder = false;
     _aboveCount = 0;
   }
@@ -453,6 +482,9 @@ final class WindowedSessionStorage
         offset,
         maxBytes: budget < maxBytes ? budget : maxBytes,
       );
+      // An empty read BELOW `top` is not a clean EOF at the head — it
+      // means the file was TRUNCATED below the window top mid-scan (the
+      // same "empty read ends the walk" convention as [_readOlderBlock]).
       if (chunk.isEmpty) break;
       final entries = chunk.entries;
       for (var i = 0; i < entries.length; i++) {
@@ -487,9 +519,15 @@ final class WindowedSessionStorage
         _byId.containsKey(entry.record.id);
   }
 
-  /// The single-prepend splice behind [loadAllOlder]: block-prepends the
-  /// scanned strips to the window lists and re-indexes the records.
-  void _spliceOlderAbove(
+  /// THE window-list block-prepend splice (review): three parallel
+  /// `insertAll(0, …)` calls — ONE memmove per list instead of O(window)
+  /// per record — plus the per-record re-index (id/offset maps,
+  /// `_appendedBelow` reconciliation, label cache). Exactly one copy
+  /// exists so the window-list invariant (the three parallel lists kept
+  /// in the same file order) cannot drift between two sites when the
+  /// layout next changes. Callers: [_indexChunk] (`prepend` — a
+  /// loadOlder page) and [loadAllOlder] (the whole-file head scan).
+  void _blockPrepend(
     List<SessionRecord> records,
     List<int> starts,
     List<int> ends,
@@ -928,13 +966,12 @@ final class WindowedSessionStorage
     }
 
     if (prepend) {
-      // Block-prepend in ONE insertAll per list. The per-record
-      // insert(0) above is O(window) each; a growOlderUntil walk runs
-      // with eviction suspended, so the window is unbounded and the
-      // walk degraded to O(n²) (measured gh-1555: 30k records cost
-      // ~11× the full open). One memmove per page keeps the walk
-      // linear. Side effects stay per-record in the old loop's
-      // newest-first order.
+      // Block-prepend in ONE insertAll per list — the shared
+      // [_blockPrepend] splice (see its doc for the O(n²) history: the
+      // per-record insert(0) loop degraded growOlderUntil walks, which
+      // run with eviction suspended, to measured ~11x the full open on
+      // a 30k-record ledger). Side effects stay per-record in the old
+      // loop's newest-first order.
       final n = chunk.entries.length;
       final records = List<SessionRecord>.filled(n, chunk.entries[0].record);
       final starts = List<int>.filled(n, 0);
@@ -946,16 +983,7 @@ final class WindowedSessionStorage
         starts[i] = chunk.entries[i].offset;
         ends[i] = endOf(i);
       }
-      _entries.insertAll(0, records);
-      _offsets.insertAll(0, starts);
-      _ends.insertAll(0, ends);
-      for (var i = 0; i < n; i++) {
-        final record = records[i];
-        _byId[record.id] = record;
-        _offsetById[record.id] = starts[i];
-        _appendedBelow.remove(record.id);
-        updateSessionLabelCache(_labelsById, record);
-      }
+      _blockPrepend(records, starts, ends);
       return;
     }
     for (var i = 0; i < chunk.entries.length; i++) {

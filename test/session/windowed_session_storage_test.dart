@@ -353,6 +353,61 @@ void main() {
     });
   });
 
+  group('WindowedSessionStorage.loadAllOlder', () {
+    test('pages the whole file head in when under the size bound', () async {
+      final full = await seed(120);
+      final expected = idsOf(await full.getEntries());
+
+      final windowed = await WindowedSessionStorage.open(
+        fs,
+        path,
+        chunkRecords: 30,
+      );
+      expect((await windowed.getEntries()).length, lessThan(120));
+
+      await windowed.loadAllOlder();
+      expect(windowed.hasOlder, isFalse);
+      expect(idsOf(await windowed.getEntries()), expected);
+    });
+
+    test(
+      'refuses past the whole-ledger size bound with the gh-1073 tooLarge '
+      'SessionException (repair hint) BEFORE the scan starts — the '
+      'honest-degradation contract for truly-giant ledgers',
+      () async {
+        await seed(120);
+        final windowed = await WindowedSessionStorage.open(
+          fs,
+          path,
+          chunkRecords: 30,
+        );
+        expect(windowed.hasOlder, isTrue);
+
+        // A bound below the file size: the pre-check must fire before
+        // any strip scan, with the same code and remediation hint the
+        // full-open backstop throws.
+        expect(
+          () => windowed.loadAllOlder(maxWholeLedgerBytes: 1),
+          throwsA(
+            isA<SessionException>()
+                .having(
+                  (e) => e.code,
+                  'code',
+                  SessionErrorCode.tooLarge,
+                )
+                .having(
+                  (e) => e.message,
+                  'message',
+                  allOf(contains('fa session repair'), contains('gh-1073')),
+                ),
+          ),
+        );
+        // Nothing was paged in: the window still reports more above.
+        expect(windowed.hasOlder, isTrue);
+      },
+    );
+  });
+
   group('WindowedSessionStorage byte cap', () {
     test(
       'keeps at least one record even when it alone exceeds the cap',

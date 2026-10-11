@@ -12,7 +12,6 @@
 // only when the call site reads windowed.
 import 'package:flutter_agent_harness/flutter_agent_harness.dart';
 import 'package:flutter_agent_harness/src/cli/trajectory_tui.dart';
-import 'package:flutter_agent_harness/src/session/windowed_session_storage.dart';
 import 'package:test/test.dart';
 
 import 'agent_cli_test_support.dart';

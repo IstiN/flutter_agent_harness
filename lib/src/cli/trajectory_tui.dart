@@ -117,15 +117,24 @@ final class TrajectoryTailer {
   final int width;
 
   final TrajectorySnapshotBuilder _builder = TrajectorySnapshotBuilder();
-  int _seen = 0;
+  final Set<String> _seenIds = {};
   int _rendered = 0;
 
   /// Renders the records appended since the previous call (nothing while
-  /// the record list has not grown).
+  /// no new record ids appear).
+  ///
+  /// gh-1555 W1 rework (review BLOCKING): the dedupe is by RECORD ID, not
+  /// by list length. The headless `fa trajectory tail` poll feeds this
+  /// from a windowed session whose resident window SLIDES (head eviction
+  /// drops the oldest records as new ones append), so the branch list can
+  /// shrink or hold flat in length while genuinely growing at the tail —
+  /// a count-based dedupe misread that as "nothing new" and went
+  /// permanently silent for any session larger than the window.
   List<String> tail(List<SessionRecord> records) {
-    if (records.length <= _seen) return const [];
-    final fresh = records.sublist(_seen);
-    _seen = records.length;
+    final fresh = <SessionRecord>[];
+    for (final record in records) {
+      if (_seenIds.add(record.id)) fresh.add(record);
+    }
     final lines = <String>[];
     for (final record in fresh) {
       final snapshot = _builder.append(record);

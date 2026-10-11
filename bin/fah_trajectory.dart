@@ -87,31 +87,9 @@ Future<int> _runTrajectoryCommand(
       );
       break;
     case 'tail':
-      io.writeln('trajectory: following records — Ctrl+C to stop');
-      final tailer = TrajectoryTailer(width: io.columns);
-      final metadata = await session.getMetadata();
-      for (final line in tailer.tail(records)) {
-        io.write('$line\n');
-      }
-      while (true) {
-        await Future<void>.delayed(trajectoryPollInterval);
-        final List<SessionRecord> fresh;
-        try {
-          // gh-1555 W1: the poll re-open stays windowed — the tailer
-          // consumes only the appended suffix, so a giant ledger's poll
-          // must not ride a refused (and needless) full open.
-          fresh = await (await repo.open(
-            metadata,
-            windowed: true,
-          )).getBranch();
-        } on Object catch (error) {
-          io.writeln('trajectory: tail failed: $error');
-          return 1;
-        }
-        for (final line in tailer.tail(fresh)) {
-          io.write('$line\n');
-        }
-      }
+      // Never returns: follows until interrupted. Runs AFTER the
+      // render-stop below is unreachable on purpose.
+      return _runTrajectoryTail(io, session, records);
   }
   renderSw.stop();
   if (timing) {
@@ -132,6 +110,47 @@ int _printTrajectory(CliIO io, List<String> lines) {
     io.write('$line\n');
   }
   return 0;
+}
+
+/// The `fa trajectory tail` follower, split out of
+/// [_runTrajectoryCommand] to keep the command dispatcher under the
+/// CRAP ratchet (CC ≤ 12). Prints the whole-ledger backfill [records]
+/// first, then polls until interrupted.
+///
+/// gh-1555 W1 rework (review BLOCKING): the poll reads the ORIGINAL
+/// [session] — after `ensureWholeLedgerResident` its window covers the
+/// whole ledger, and the windowed live-tail ingest picks up the
+/// appended suffix on every poll. Re-opening a fresh windowed session
+/// each poll returned only the ~200-record resident window, so the
+/// primed tailer (whole-ledger `_seen`) never saw the list grow and
+/// went permanently silent for any session larger than the window.
+Future<int> _runTrajectoryTail(
+  CliIO io,
+  Session session,
+  List<SessionRecord> records,
+) async {
+  io.writeln('trajectory: following records — Ctrl+C to stop');
+  final tailer = TrajectoryTailer(width: io.columns);
+  for (final line in tailer.tail(records)) {
+    io.write('$line\n');
+  }
+  while (true) {
+    await Future<void>.delayed(trajectoryPollInterval);
+    final List<SessionRecord> fresh;
+    try {
+      final storage = session.getStorage();
+      if (storage is WindowedSessionStorage) {
+        await storage.ingestAppended();
+      }
+      fresh = await session.getBranch();
+    } on Object catch (error) {
+      io.writeln('trajectory: tail failed: $error');
+      return 1;
+    }
+    for (final line in tailer.tail(fresh)) {
+      io.write('$line\n');
+    }
+  }
 }
 
 /// `fa serve --a2a` — mounts the fully-configured agent as an A2A endpoint
