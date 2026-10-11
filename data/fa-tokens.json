@@ -1824,5 +1824,15 @@
       "total": 36132,
       "model": ""
     }
+  ],
+  "issue-1460": [
+    {
+      "leg": "rework",
+      "at": "2026-10-11T05:27:31Z",
+      "prompt": 79250,
+      "completion": 23185,
+      "total": 102435,
+      "model": ""
+    }
   ]
 }
