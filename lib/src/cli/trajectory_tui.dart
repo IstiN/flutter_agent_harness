@@ -15,6 +15,7 @@ import '../session/session_record.dart';
 import '../session/session_repo.dart';
 import '../session/session_storage.dart';
 import '../session/session_tree.dart';
+import '../session/windowed_session_storage.dart';
 import '../trajectory/event_projection.dart';
 import '../trajectory/formatters.dart';
 import '../trajectory/trajectory_blobs.dart';
@@ -106,15 +107,49 @@ Future<Session?> _openTrajectoryByName(
   return null;
 }
 
+/// The verb's read contract (gh-1555 W1 rework, review IMPORTANT):
+/// `view`/`cost`/`inspect` read the whole branch, so the whole ledger is
+/// primed through the bounded chunked scan first (past the gh-1073 bound
+/// that prime refuses honestly with `tooLarge` + the repair hint);
+/// `tail` follows the resident window plus the live-tail ingest and
+/// NEVER primes — priming would re-raise the refusal for
+/// over-the-backstop sessions (gratuitous: the tailer never reads the
+/// head) and materialize an unbounded ledger into the window just to
+/// print the backfill. The tail backfill is therefore the resident
+/// window, not the whole ledger — the honest trade for a verb whose
+/// contract is "follow the tail": memory-bounded at ANY ledger size.
+Future<List<SessionRecord>> trajectoryVerbRecords(
+  Session session,
+  String verb,
+) async {
+  if (verb != 'tail') {
+    await session.ensureWholeLedgerResident();
+  }
+  return session.getBranch();
+}
+
 /// Incremental tail renderer: feed it the session's records on every poll
 /// and it renders only the suffix appended since the last call. One builder
 /// stays alive across calls, so projection costs O(new records), not O(n).
 final class TrajectoryTailer {
-  /// Creates a tailer rendering rows at [width] columns.
-  TrajectoryTailer({this.width = 80});
+  /// Creates a tailer rendering rows at [width] columns. [seenIdsCap]
+  /// bounds the dedupe set (review): a tail held open for days on a
+  /// busy session otherwise accumulates every record id ever seen.
+  TrajectoryTailer({this.width = 80, int seenIdsCap = defaultSeenIdsCap})
+    : _seenIdsCap = seenIdsCap;
 
   /// Row width in columns.
   final int width;
+
+  /// Default cap on the dedupe set: a small multiple of the windowed
+  /// residency cap. The resident window only slides FORWARD on an
+  /// append-only ledger, so an id that fell out of residency can never
+  /// legitimately re-enter the render path — the oldest insertions are
+  /// safe to evict past the cap.
+  static const int defaultSeenIdsCap =
+      4 * WindowedSessionStorage.defaultResidentRecords;
+
+  final int _seenIdsCap;
 
   final TrajectorySnapshotBuilder _builder = TrajectorySnapshotBuilder();
   final Set<String> _seenIds = {};
@@ -134,6 +169,15 @@ final class TrajectoryTailer {
     final fresh = <SessionRecord>[];
     for (final record in records) {
       if (_seenIds.add(record.id)) fresh.add(record);
+    }
+    // Bound the dedupe set (review): `_seenIds` otherwise grows for the
+    // lifetime of a tail that runs until interrupted. Evict the oldest
+    // insertions past the cap (Dart's default Set iterates insertion
+    // order); the only theoretical cost is a duplicate render if a
+    // truncation re-anchor ever pulls an evicted id back into the
+    // branch — impossible on an append-only ledger.
+    while (_seenIds.length > _seenIdsCap) {
+      _seenIds.remove(_seenIds.first);
     }
     final lines = <String>[];
     for (final record in fresh) {

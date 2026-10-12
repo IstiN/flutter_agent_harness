@@ -413,6 +413,29 @@ void main() {
         );
       },
     );
+
+    test(
+      'the dedupe set is bounded: past the cap the oldest ids evict, so '
+      'a long-running tail does not accumulate every id forever '
+      '(review thread 6)',
+      () {
+        final tailer = TrajectoryTailer(width: 200, seenIdsCap: 10);
+        final firstBatch = [
+          for (var i = 0; i < 10; i++)
+            _userRecord('u$i', parentId: i == 0 ? null : 'u${i - 1}'),
+        ];
+        expect(tailer.tail(firstBatch), hasLength(10));
+        final secondBatch = [
+          for (var i = 10; i < 20; i++) _userRecord('u$i', parentId: 'u${i - 1}'),
+        ];
+        expect(tailer.tail(secondBatch), hasLength(10));
+        // The cap evicted the oldest ids: re-feeding an evicted id (only
+        // possible after a truncation re-anchor on an append-only
+        // ledger) re-renders it — the documented trade-off for a
+        // bounded set.
+        expect(tailer.tail([firstBatch.first]), isNotEmpty);
+      },
+    );
   });
 
   group('trajectoryJsonLine', () {

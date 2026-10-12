@@ -37,8 +37,11 @@ Future<int> _runTrajectoryCommand(
   // full-open backstop). Page the rest in bounded doubling blocks —
   // chunked reads, never the refused materialized whole-file string.
   // The walk is storage read+parse, so it rides the parse phase.
-  await session.ensureWholeLedgerResident();
-  final records = await session.getBranch();
+  // `tail` is excluded (trajectoryVerbRecords): it follows the resident
+  // window + live-tail ingest and never needs the head — priming would
+  // re-raise the gh-1073 refusal for over-the-backstop sessions and
+  // un-boundedly materialize the ledger just to print the backfill.
+  final records = await trajectoryVerbRecords(session, command.verb);
   parseSw.stop();
   final buildSw = Stopwatch()..start();
   final baseSnapshot = trajectorySnapshotOf(records);
@@ -114,8 +117,8 @@ int _printTrajectory(CliIO io, List<String> lines) {
 
 /// The `fa trajectory tail` follower, split out of
 /// [_runTrajectoryCommand] to keep the command dispatcher under the
-/// CRAP ratchet (CC ≤ 12). Prints the whole-ledger backfill [records]
-/// first, then polls until interrupted.
+/// CRAP ratchet (CC ≤ 12). Prints the resident-window backfill
+/// [records] first, then polls until interrupted.
 ///
 /// gh-1555 W1 rework (review BLOCKING): the poll reads the ORIGINAL
 /// [session] — after `ensureWholeLedgerResident` its window covers the

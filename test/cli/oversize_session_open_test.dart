@@ -310,6 +310,39 @@ void main() {
         );
       },
     );
+
+    test(
+      'the tail verb never primes the whole ledger: it tails an '
+      'over-the-whole-ledger-bound session windowed (review thread 5)',
+      () async {
+        final session = await seedLongSession(300);
+        final repo = JsonlSessionRepo(fs: env, sessionsRoot: '/sessions');
+        final meta = await session.getMetadata();
+        final windowed = await repo.open(meta, windowed: true);
+        final storage = windowed.getStorage();
+        expect(storage, isA<WindowedSessionStorage>());
+
+        // The prime refuses past the gh-1073 whole-ledger bound (proven
+        // with a tiny bound standing in for the 2 GiB incident shape)...
+        await expectLater(
+          windowed.ensureWholeLedgerResident(maxWholeLedgerBytes: 1),
+          throwsA(isA<SessionException>()),
+        );
+        // ...but the tail verb's read contract skips the prime: the
+        // backfill is the resident window and `hasOlder` stays lit.
+        final records = await trajectoryVerbRecords(windowed, 'tail');
+        expect(records, isNotEmpty);
+        expect(records.length, lessThan(300));
+        expect((storage as WindowedSessionStorage).hasOlder, isTrue);
+
+        // view/cost/inspect keep priming the whole ledger under the
+        // real bound (the honest-degradation contract is unchanged
+        // there).
+        final whole = await trajectoryVerbRecords(windowed, 'view');
+        expect(whole, hasLength(300));
+        expect(storage.hasOlder, isFalse);
+      },
+    );
   });
 }
 
