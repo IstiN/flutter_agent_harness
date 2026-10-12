@@ -496,6 +496,9 @@ Model buildCatalogModel(
   List<String>? input,
   String? thinkingLevel,
   String? authHeader,
+  Duration? connectTimeout,
+  Duration? streamIdleTimeout,
+  String? timeoutScopeLabel,
 }) {
   final spec = catalogProvider(provider);
   if (spec == null) {
@@ -537,6 +540,12 @@ Model buildCatalogModel(
     // ride the model so the status surfaces can render them — never
     // dropped at the build boundary (gh-1426 rework).
     capabilityNotes: caps.notes,
+    // Request-scoped watchdog windows from a roles chain entry (issue
+    // #1554): the top precedence layer, riding the model like every other
+    // per-entry config field (thinkingLevel/authHeader precedent).
+    connectTimeout: connectTimeout,
+    streamIdleTimeout: streamIdleTimeout,
+    timeoutScopeLabel: timeoutScopeLabel,
   );
 }
 

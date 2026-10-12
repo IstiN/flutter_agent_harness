@@ -274,6 +274,112 @@ void main() {
   );
 
   group(
+    '1554/UT — scoped precedence chain (role > customProviders > models > '
+    'global > default), per FIELD',
+    () {
+      test('per-field fall-through across same-base entries: the deeper '
+          'registration wins its field, the other falls to the lower entry',
+        () {
+          providerTuningRegistry.clear();
+          addTearDown(providerTuningRegistry.clear);
+          // Seed order = the boot order with the 1554 fix: models.custom
+          // first (lowest), customProviders second, role entries last.
+          providerTuningRegistry.register(
+            name: 'models.custom.slow',
+            baseUrl: 'https://shared.example/v1',
+            connect: const Duration(seconds: 45),
+          );
+          providerTuningRegistry.register(
+            name: 'glm-relay',
+            baseUrl: 'https://shared.example/v1',
+            streamIdle: const Duration(milliseconds: 1500),
+          );
+          final resolved = resolveProviderTimeouts(
+            url: Uri.parse('https://shared.example/v1/chat/completions'),
+          );
+          // customProviders entry (registered later) wins the field IT
+          // declares; the field it leaves null falls through to the
+          // models.custom entry — never straight to global.
+          expect(resolved.connect, const Duration(seconds: 45));
+          expect(resolved.connectSourceLabel, 'provider:models.custom.slow');
+          expect(resolved.streamIdle, const Duration(milliseconds: 1500));
+          expect(resolved.streamIdleSourceLabel, 'provider:glm-relay');
+        },
+      );
+
+      test('same-field collision: the later-registered (higher) surface '
+          'wins — customProviders over models.custom over nothing', () {
+        providerTuningRegistry.clear();
+        addTearDown(providerTuningRegistry.clear);
+        providerTuningRegistry.register(
+          name: 'models.custom.slow',
+          baseUrl: 'https://shared.example/v1',
+          streamIdle: const Duration(seconds: 120),
+        );
+        providerTuningRegistry.register(
+          name: 'glm-relay',
+          baseUrl: 'https://shared.example/v1',
+          streamIdle: const Duration(milliseconds: 1500),
+        );
+        final resolved = resolveProviderTimeouts(
+          url: Uri.parse('https://shared.example/v1/chat'),
+        );
+        expect(resolved.streamIdle, const Duration(milliseconds: 1500));
+        expect(resolved.streamIdleSourceLabel, 'provider:glm-relay');
+      });
+
+      test('unmatched fields fall to global, then default', () {
+        providerTuningRegistry.clear();
+        providerTimeoutsOverride = ProviderTimeoutsOverride(
+          connect: const Duration(seconds: 90),
+          streamIdle: const Duration(seconds: 240),
+        );
+        addTearDown(providerTuningRegistry.clear);
+        addTearDown(() => providerTimeoutsOverride = null);
+        providerTuningRegistry.register(
+          name: 'idle-only',
+          baseUrl: 'https://idle.example/v1',
+          streamIdle: const Duration(seconds: 42),
+        );
+        final resolved = resolveProviderTimeouts(
+          url: Uri.parse('https://idle.example/v1/chat'),
+        );
+        expect(resolved.streamIdle, const Duration(seconds: 42));
+        expect(resolved.connect, const Duration(seconds: 90));
+        expect(resolved.connectSourceLabel, 'global');
+        // A host the table never matches gets the GLOBAL layer for both
+        // fields (the override reaches every endpoint).
+        final elsewhere = resolveProviderTimeouts(
+          url: Uri.parse('https://other.example/v1/chat'),
+        );
+        expect(elsewhere.connect, const Duration(seconds: 90));
+        expect(elsewhere.streamIdle, const Duration(seconds: 240));
+      });
+
+      test('wire helpers walk the same chain per field', () {
+        providerTuningRegistry.clear();
+        addTearDown(providerTuningRegistry.clear);
+        providerTuningRegistry.register(
+          name: 'models.custom.slow',
+          baseUrl: 'https://shared.example/v1',
+          connect: const Duration(seconds: 45),
+        );
+        providerTuningRegistry.register(
+          name: 'glm-relay',
+          baseUrl: 'https://shared.example/v1',
+          streamIdle: const Duration(milliseconds: 1500),
+        );
+        final url = Uri.parse('https://shared.example/v1/chat');
+        expect(providerConnectTimeoutForUrl(url), const Duration(seconds: 45));
+        expect(
+          providerStreamIdleTimeoutForUrl(url),
+          const Duration(milliseconds: 1500),
+        );
+      });
+    },
+  );
+
+  group(
     'AC2/UT — server-advertised backoff (Retry-After preferred, 60s cap)',
     () {
       test('no header → the ladder step for that attempt', () {

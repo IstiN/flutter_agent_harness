@@ -312,6 +312,59 @@ streamIdleTimeoutMs: 240000
       );
     });
 
+    test('1554/AC3 — seed order makes customProviders outrank models.custom '
+        'and role entries outrank both', () {
+      providerTuningRegistry.clear();
+      addTearDown(providerTuningRegistry.clear);
+      seedProviderTuning(
+        customProviders: [
+          CustomProviderEntry(
+            name: 'glm-relay',
+            apiType: 'openai',
+            baseUrl: 'https://shared.example/v1',
+            modelId: 'glm-5.3-flash',
+            connectTimeout: const Duration(seconds: 60),
+            streamIdleTimeout: const Duration(milliseconds: 1500),
+          ),
+        ],
+        customModels: {
+          'slow': CustomModelDefinition(
+            provider: 'openai',
+            baseUrl: 'https://shared.example/v1',
+            model: 'thinker',
+            connectTimeout: const Duration(seconds: 45),
+            streamIdleTimeout: const Duration(seconds: 120),
+          ),
+        },
+        roleRefs: [
+          ModelRef(
+            provider: 'openai',
+            modelId: 'm',
+            baseUrl: 'https://shared.example/v1',
+            streamIdleTimeout: const Duration(seconds: 77),
+          ),
+        ],
+      );
+      final resolved = resolveProviderTimeouts(
+        url: Uri.parse('https://shared.example/v1/chat/completions'),
+      );
+      // customProviders beats models.custom where both declare the field.
+      expect(resolved.connect, const Duration(seconds: 60));
+      expect(resolved.connectSourceLabel, 'provider:glm-relay');
+      // The role entry wins the field it declares…
+      expect(resolved.streamIdle, const Duration(seconds: 77));
+      expect(resolved.streamIdleSourceLabel, 'provider:role:openai/m');
+      // …and the per-entry boot notice for the role entry falls through
+      // per field to the customProviders entry (connect), never to global
+      // — the name+url chain walks BOTH surfaces.
+      final roleView = resolveProviderTimeouts(
+        name: 'role:openai/m',
+        url: Uri.parse('https://shared.example/v1/x'),
+      );
+      expect(roleView.streamIdle, const Duration(seconds: 77));
+      expect(roleView.connect, const Duration(seconds: 60));
+    });
+
     test('re-seeding replaces a changed entry (E4: next request wins)', () {
       providerTuningRegistry.clear();
       addTearDown(providerTuningRegistry.clear);

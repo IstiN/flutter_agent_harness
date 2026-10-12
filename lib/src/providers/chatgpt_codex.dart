@@ -297,7 +297,14 @@ final class _ChatGptCodexSession {
   /// abort during a silent stretch must not wait for the next line or the
   /// idle watchdog.
   Future<void> _consumeSseLines(http.StreamedResponse response) async {
-    final idle = effectiveProviderStreamIdleTimeout;
+    // Issue #1554: the model's request-scoped idle window wins over the
+    // global effective value.
+    final idle = model.streamIdleTimeout ?? effectiveProviderStreamIdleTimeout;
+    // The stall line names a scoped override so a wide window never reads
+    // as a hang.
+    final scopedNote = model.timeoutScopeLabel == null
+        ? ''
+        : ' — idle window ${idle.inSeconds}s (${model.timeoutScopeLabel})';
     final lines = StreamIterator<String>(
       response.stream.transform(utf8.decoder).transform(const LineSplitter()),
     );
@@ -321,7 +328,7 @@ final class _ChatGptCodexSession {
           providerIdleStallFired(response, idle);
           throw TimeoutException(
             'chatgpt-codex ${redactProviderUrl(_endpoint)} stalled: no SSE '
-            'bytes for ${idle.inSeconds}s (stream idle timeout)',
+            'bytes for ${idle.inSeconds}s (stream idle timeout$scopedNote)',
           );
         },
       )) {
@@ -376,6 +383,10 @@ final class _ChatGptCodexSession {
       client,
       request,
       cancelToken,
+      // Issue #1554: the model's request-scoped watchdog windows ride the
+      // send — null falls through to the per-provider table, then global.
+      connectTimeout: model.connectTimeout,
+      timeoutSource: model.timeoutScopeLabel,
     );
     // Cloudflare sets its cookies even on error responses — store always.
     _cookies.store(uri, response.headers);

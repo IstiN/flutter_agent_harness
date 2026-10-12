@@ -5,8 +5,12 @@
 /// (`sendWatchedProviderRequest` connect watchdog, `createSseIterator`
 /// idle watchdog) resolve per request URL.
 ///
-/// Resolution order (one, documented): **provider entry > the global
-/// `providerTimeouts:` section > the built-in defaults**, per field.
+/// Resolution order (one, documented — issue #1398 AC1, surface order
+/// extended by issue #1554): **role chain entry > customProviders entry >
+/// `models:` custom entry > the global `providerTimeouts:` section > the
+/// built-in defaults**, per field — encoded as registration order (later
+/// wins at the same base depth) and walked per field by
+/// [ProviderTuningRegistry.matchesForUrl].
 ///
 /// Lifecycle (boot-scoped, review r2): the production seeder runs at
 /// BOOT only — the config pass in `bin/fah_runapp.dart` and, later, the
@@ -52,8 +56,13 @@ void seedProviderTuning({
   if (reset) providerTuningRegistry.clear();
   providerTuningRegistry.registerAll(
     [
-      ...?customProviders?.map(_customProviderTuning),
+      // Registration order IS the same-depth precedence order (later wins,
+      // issue #1554 AC3): `models:` custom entries first (lowest), then
+      // customProviders entries, then role chain entries, then the bench
+      // queue pass — the designed table role entry > custom-provider
+      // entry > models: entry, per field.
       ...?customModels?.entries.map(_customModelTuning),
+      ...?customProviders?.map(_customProviderTuning),
       ...?roleRefs?.map(_roleRefTuning),
       ...?queueEntries?.map(_queueEntryTuning),
     ].nonNulls,

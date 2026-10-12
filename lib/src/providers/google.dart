@@ -291,7 +291,15 @@ Future<void> _consumeSseStream(
   CancelToken? cancelToken,
   _GoogleChunkHandler handler,
 ) async {
-  final iterator = createSseIterator(response, cancelToken);
+  // Issue #1554: the model's request-scoped watchdog windows ride the
+  // stream — null falls through to the per-provider table, then the
+  // global effective value.
+  final iterator = createSseIterator(
+    response,
+    cancelToken,
+    idleTimeout: handler._model.streamIdleTimeout,
+    timeoutSource: handler._model.timeoutScopeLabel,
+  );
 
   while (await iterator.moveNext()) {
     final data = iterator.current.data.trim();
