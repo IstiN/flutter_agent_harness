@@ -817,6 +817,14 @@ String redactProviderUrl(Uri url) {
   return '${url.scheme}://${url.host}$port${url.path}';
 }
 
+/// Renders a watchdog window for stall notes: whole seconds at or above
+/// 1s, milliseconds below — a scoped 400ms window must never read as
+/// `idle window 0s` (issue #1554 review round 2).
+String providerWindowLabel(Duration window) =>
+    window.inMilliseconds < 1000
+        ? '${window.inMilliseconds}ms'
+        : '${window.inSeconds}s';
+
 /// Connect/first-headers watchdog for provider calls: an endpoint that
 /// never answers the request would otherwise hang the turn forever. Three
 /// minutes on purpose: loaded reasoning endpoints (kimi-k3 et al.) may hold
@@ -1210,7 +1218,8 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
       unawaited(_quietCancel(_inner.cancel()));
       final scopedNote = timeoutSource == null
           ? ''
-          : ' — idle window ${_idleTimeout.inSeconds}s ($timeoutSource)';
+          : ' — idle window ${providerWindowLabel(_idleTimeout)} '
+              '($timeoutSource)';
       completer.completeError(
         TimeoutException(
           'no events from the endpoint for '

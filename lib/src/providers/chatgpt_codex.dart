@@ -312,7 +312,8 @@ final class _ChatGptCodexSession {
     // the bare stall text (per-leg labels, review round 1).
     final scopedNote = model.streamIdleTimeout == null
         ? ''
-        : ' — idle window ${idle.inSeconds}s (${model.timeoutScopeLabel})';
+        : ' — idle window ${providerWindowLabel(idle)} '
+            '(${model.timeoutScopeLabel})';
     final lines = StreamIterator<String>(
       response.stream.transform(utf8.decoder).transform(const LineSplitter()),
     );

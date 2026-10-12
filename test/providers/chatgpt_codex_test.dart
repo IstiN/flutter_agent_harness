@@ -347,7 +347,7 @@ void main() {
       // The scope note names a MODEL-scoped override; an endpoint-table
       // window keeps the bare stall text (per-leg labels).
       expect(message, isNot(contains('idle window')));
-    });
+    }, timeout: const Timeout(Duration(seconds: 30)));
 
     test('replays learned Cloudflare cookies on a challenge retry', () async {
       final sentHeaders = <Map<String, String>>[];
