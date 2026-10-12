@@ -254,8 +254,8 @@ final class ModelRolesResolver {
         streamIdleTimeout: ref.streamIdleTimeout,
         timeoutScopeLabel:
             ref.connectTimeout == null && ref.streamIdleTimeout == null
-                ? null
-                : 'role $role override',
+            ? null
+            : 'role $role override',
       ),
       keyRing: ring,
       streamForKey: (apiKey) {

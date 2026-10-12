@@ -279,9 +279,7 @@ void main() {
       final resolver = ModelRolesResolver(
         config: ModelRolesConfig(
           roles: {
-            'default': [
-              ModelRef(provider: 'openai', modelId: 'plain'),
-            ],
+            'default': [ModelRef(provider: 'openai', modelId: 'plain')],
           },
         ),
         secrets: const {'OPENAI_API_KEY': 'k'},

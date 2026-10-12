@@ -396,8 +396,9 @@ final class _ChatGptCodexSession {
       // The scope label cites THE LEG THAT RAN: a model without a scoped
       // connect leg keeps the bare stall text (review round 1).
       connectTimeout: model.connectTimeout,
-      timeoutSource:
-          model.connectTimeout == null ? null : model.timeoutScopeLabel,
+      timeoutSource: model.connectTimeout == null
+          ? null
+          : model.timeoutScopeLabel,
     );
     // Cloudflare sets its cookies even on error responses — store always.
     _cookies.store(uri, response.headers);

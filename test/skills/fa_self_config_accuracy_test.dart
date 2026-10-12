@@ -131,6 +131,8 @@ const _nestedKeySources = <String, String>{
   'roles.*.[].contextWindow': 'lib/src/model_roles/roles_config.dart',
   'roles.*.[].maxTokens': 'lib/src/model_roles/roles_config.dart',
   'roles.*.[].thinkingLevel': 'lib/src/model_roles/roles_config.dart',
+  'roles.*.[].connectTimeoutMs': 'lib/src/model_roles/roles_config.dart',
+  'roles.*.[].streamIdleTimeoutMs': 'lib/src/model_roles/roles_config.dart',
   'modelOverrides.[].path': 'lib/src/model_roles/roles_config.dart',
   'modelOverrides.[].roles': 'lib/src/model_roles/roles_config.dart',
   'modelOverrides.[].roles.*': 'lib/src/model_roles/roles_config.dart',

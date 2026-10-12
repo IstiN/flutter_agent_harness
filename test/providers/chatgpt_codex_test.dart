@@ -323,6 +323,9 @@ void main() {
           controller.stream,
           200,
           headers: {'content-type': 'text/event-stream'},
+          // The tuned lookup keys on the request URL — the mock must ride
+          // it like a real http response does.
+          request: request,
         );
       });
 

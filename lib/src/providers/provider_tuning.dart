@@ -366,10 +366,7 @@ ResolvedProviderTimeouts resolveProviderTimeouts({Uri? url, String? name}) {
   ) {
     for (final entry in chain) {
       if (pick(entry) != null) {
-        return (
-          source: ProviderTimeoutSource.providerEntry,
-          name: entry.name,
-        );
+        return (source: ProviderTimeoutSource.providerEntry, name: entry.name);
       }
     }
     return providerTimeoutsOverride != null &&
@@ -381,11 +378,7 @@ ResolvedProviderTimeouts resolveProviderTimeouts({Uri? url, String? name}) {
   final connectResolved = source((e) => e.connect, (g) => g.connect);
   final idleResolved = source((e) => e.streamIdle, (g) => g.streamIdle);
   return ResolvedProviderTimeouts(
-    connect: field(
-      (e) => e.connect,
-      (g) => g.connect,
-      providerConnectTimeout,
-    ),
+    connect: field((e) => e.connect, (g) => g.connect, providerConnectTimeout),
     streamIdle: field(
       (e) => e.streamIdle,
       (g) => g.streamIdle,
