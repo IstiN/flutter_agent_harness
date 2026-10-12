@@ -2527,6 +2527,14 @@
       "completion": 38084,
       "total": 195495,
       "model": "glm-5.3-flash"
+    },
+    {
+      "leg": "rework",
+      "at": "2026-10-12T22:13:56Z",
+      "prompt": 352560,
+      "completion": 32154,
+      "total": 384714,
+      "model": "glm-5.3-flash"
     }
   ]
 }
