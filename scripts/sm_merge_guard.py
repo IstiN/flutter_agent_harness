@@ -75,15 +75,22 @@ def fetch_validated_runs(repo: str, window_hours: int) -> list:
         runs.append({
             "database_id": r["databaseId"],
             "head_sha": r["headSha"],
+            # decide() re-checks conclusion on every run; without the
+            # field every fetched run read as None != "success" and was
+            # skipped — the guard alarmed on every push (gh-1568).
+            "conclusion": r.get("conclusion"),
             "tree_sha": None,  # resolved below
             "created_at": r["createdAt"],
         })
     # Newest first — the match is almost always the first lookup.
     for run in runs[:MAX_TREE_LOOKUPS]:
         try:
+            # The commits API nests the tree under `commit` — `.tree.sha`
+            # resolves to null/empty (gh-1568: every tree match silently
+            # failed and every merge-commit landing false-alarmed).
             tree = gh("api", f"repos/{repo}/commits/{run['head_sha']}",
-                      "--jq", ".tree.sha").strip()
-            run["tree_sha"] = tree
+                      "--jq", ".commit.tree.sha").strip()
+            run["tree_sha"] = tree or None
         except RuntimeError as e:
             print(f"::warning::{e}", file=sys.stderr)
     return runs
@@ -126,7 +133,9 @@ def alarm_issue(repo: str, pushed_sha: str, subject: str, reason: str,
     convention: one open issue per guard, comments for repeats)."""
     links = "\n".join(
         f"- https://github.com/{repo}/actions/runs/{r.get('database_id')}"
-        f" (head `{r.get('head_sha')}`)"
+        f" (head `{r.get('head_sha')}`"
+        + (f", tree `{r['tree_sha']}`" if r.get("tree_sha") else "")
+        + ")"
         for r in runs[:10])
     # An empty commit message (git commit --allow-empty-message / the Git
     # API) would crash the alarm itself on splitlines()[0] — the one path
