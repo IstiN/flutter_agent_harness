@@ -135,8 +135,7 @@ final class TrajectoryTailer {
   /// Creates a tailer rendering rows at [width] columns. [seenIdsCap]
   /// bounds the dedupe set (review): a tail held open for days on a
   /// busy session otherwise accumulates every record id ever seen.
-  TrajectoryTailer({this.width = 80, int seenIdsCap = defaultSeenIdsCap})
-    : _seenIdsCap = seenIdsCap;
+  TrajectoryTailer({this.width = 80, this.seenIdsCap = defaultSeenIdsCap});
 
   /// Row width in columns.
   final int width;
@@ -149,7 +148,8 @@ final class TrajectoryTailer {
   static const int defaultSeenIdsCap =
       4 * WindowedSessionStorage.defaultResidentRecords;
 
-  final int _seenIdsCap;
+  /// Upper bound on the dedupe set (see [defaultSeenIdsCap]).
+  final int seenIdsCap;
 
   final TrajectorySnapshotBuilder _builder = TrajectorySnapshotBuilder();
   final Set<String> _seenIds = {};
@@ -176,7 +176,7 @@ final class TrajectoryTailer {
     // order); the only theoretical cost is a duplicate render if a
     // truncation re-anchor ever pulls an evicted id back into the
     // branch — impossible on an append-only ledger.
-    while (_seenIds.length > _seenIdsCap) {
+    while (_seenIds.length > seenIdsCap) {
       _seenIds.remove(_seenIds.first);
     }
     final lines = <String>[];

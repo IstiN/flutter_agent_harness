@@ -121,12 +121,17 @@ int _printTrajectory(CliIO io, List<String> lines) {
 /// [records] first, then polls until interrupted.
 ///
 /// gh-1555 W1 rework (review BLOCKING): the poll reads the ORIGINAL
-/// [session] — after `ensureWholeLedgerResident` its window covers the
-/// whole ledger, and the windowed live-tail ingest picks up the
-/// appended suffix on every poll. Re-opening a fresh windowed session
-/// each poll returned only the ~200-record resident window, so the
-/// whole-ledger-primed tailer never saw a longer list and went
-/// permanently silent for any session larger than the window.
+/// [session] and the windowed live-tail ingest picks up the appended
+/// suffix on every poll. Re-opening a fresh windowed session each poll
+/// returned only the ~200-record resident window, so the tailer never
+/// saw the appended records land and went permanently silent for any
+/// session larger than the window. The tailer dedupes by record id, so
+/// the window's head eviction (records sliding out of residency) cannot
+/// re-silence it either.
+///
+/// Review IMPORTANT (same rework round): `tail` never primes the whole
+/// ledger (see [trajectoryVerbRecords]) — this follower is memory-
+/// bounded by the resident window at ANY ledger size.
 Future<int> _runTrajectoryTail(
   CliIO io,
   Session session,
