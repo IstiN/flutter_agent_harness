@@ -671,19 +671,21 @@ Future<void> _runApp(List<String> args) async {
     // `/provider <name>` switch takes in roles mode. Roles the config
     // pins explicitly keep their chains; unpinned roles inherit the
     // default, so every resolution (default/smol/slow/plan) lands on the
-    // env provider. A keyless declaration cannot form a chain entry
-    // (chains require a key) — roles keep owning selection there, and
-    // the boot note says so.
-    if (faPreconfig case final preconfig? when preconfig.apiKeyEnvVar != null) {
-      rolesResolver.addSecret(preconfig.apiKeyEnvVar!, preconfig.apiKey);
+    // env provider. A keyless declaration pins TOO (gh-1570 AC8/M8): a
+    // localhost bench endpoint needs no key, and the bench must measure
+    // the PRECONFIGURED provider — saved roles never outrank the env.
+    if (faPreconfig case final preconfig?) {
+      final keyVar = preconfig.apiKeyEnvVar;
+      if (keyVar != null) rolesResolver.addSecret(keyVar, preconfig.apiKey);
       rolesResolver.setDefaultChain([
         ModelRef(
           provider: preconfig.spec.name,
           modelId: preconfig.modelId,
           baseUrl: preconfig.baseUrl,
-          apiKeyName: preconfig.apiKeyEnvVar,
+          apiKeyName: keyVar,
           input: preconfig.input,
           thinkingLevel: preconfig.thinkingLevel,
+          keyless: keyVar == null,
         ),
       ]);
     }
@@ -924,9 +926,10 @@ Future<void> _runApp(List<String> args) async {
     if (defaultRoleResolved) {
       io.writeln(
         preconfig.apiKeyEnvVar == null
-            ? 'note: FA_PROVIDER_* preconfig applies to the fallback model '
-                  'only (roles: section is active; a keyless declaration '
-                  'cannot pin a roles chain)'
+            ? 'note: FA_PROVIDER_* keyless preconfig is the session default '
+                  '— all model roles resolve to it unless roles: pins a '
+                  'chain (gh-1570: the bench measures the preconfigured '
+                  'provider)'
             : 'note: FA_PROVIDER_* preconfig is the session default — all '
                   'model roles resolve to it unless roles: pins a chain',
       );

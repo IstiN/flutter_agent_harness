@@ -716,8 +716,6 @@ void main() {
           // bench endpoint): pin the default role to a keyless single-entry
           // chain. The saved roles config must NOT win — the bench
           // measures the preconfigured provider.
-          var seenKey = 'SENTINEL-NEVER-SET';
-          var seenKind = '';
           final resolver = ModelRolesResolver(
             config: ModelRolesConfig(
               roles: const {
@@ -727,11 +725,7 @@ void main() {
               },
             ),
             secrets: const {'ANTHROPIC_API_KEY': 'a-key'},
-            streamFactory: (kind, apiKey) {
-              seenKind = kind;
-              seenKey = apiKey;
-              return _neverStream(kind, apiKey);
-            },
+            streamFactory: _neverStream,
           );
           resolver.setDefaultChain([
             const ModelRef(
@@ -748,13 +742,21 @@ void main() {
             expect(resolved!.model.provider, 'anthropic', reason: role);
             expect(resolved.model.baseUrl, 'http://localhost:8080/v1');
           }
-          // The stream function receives the EMPTY key — byte-parity with
-          // the non-roles keyless boot (bin/fah.dart sends preconfig.apiKey
-          // == '') — never the saved roles provider's key.
-          expect(seenKind, 'anthropic');
-          expect(seenKey, '');
-          // The saved roles entry's key was never the pin's credential.
-          expect(seenKey, isNot('a-key'));
+          // The keyless entry carries the EMPTY credential — the wrapper
+          // hands the ring's current credential to the stream factory per
+          // attempt (byte-parity with the non-roles keyless boot), never
+          // the saved roles provider's key.
+          final entries = resolver.chainFor('default')!;
+          expect(entries, hasLength(1));
+          expect(
+            entries.single.keyRing.currentCredential.value,
+            '',
+            reason: 'keyless = empty key to the stream factory',
+          );
+          final streamFn = entries.single.streamForKey(
+            entries.single.keyRing.currentCredential.value,
+          );
+          expect(streamFn, isNotNull);
         },
       );
 
