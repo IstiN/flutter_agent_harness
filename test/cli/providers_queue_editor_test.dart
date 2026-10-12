@@ -41,6 +41,7 @@ providersQueue:
     provider_config:
       model: queue-b
       apiKeyEnv: K_B
+      baseUrl: http://127.0.0.1:1/v1
 ''';
 
   setUp(() {
@@ -211,7 +212,7 @@ providersQueue:
 [
   {
     "provider_type": "openai-completions",
-    "provider_config": {"model": "env-queue", "apiKeyEnv": "K_X"}
+    "provider_config": {"model": "env-queue", "apiKeyEnv": "K_X", "baseUrl": "http://127.0.0.1:1/v1"}
   }
 ]
 ''',
@@ -223,7 +224,8 @@ providersQueue:
       providerQueueEnv: const {
         'FA_PROVIDERS_QUEUE':
             '[{"provider_type":"openai-completions",'
-            '"provider_config":{"model":"env-queue","apiKeyEnv":"K_X"}}]',
+            '"provider_config":{"model":"env-queue","apiKeyEnv":"K_X",'
+            '"baseUrl":"http://127.0.0.1:1/v1"}}]',
       },
     );
     await runCli(cli, '/providers queue remove 0');
