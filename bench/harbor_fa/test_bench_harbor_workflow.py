@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -99,6 +100,103 @@ class BenchHarborDefaultsTest(unittest.TestCase):
         self.assertEqual(_workflow_input(self.text, "n-concurrent"), "1")
         description = self.text.split("n-concurrent:", 1)[1].split("\n", 2)[1]
         self.assertIn("kimi", description)
+
+    def _step_env(self, name: str):
+        """One `NAME: 'value'` entry from a step env block (quoted)."""
+        m = re.search(rf"^          {re.escape(name)}: '([^']*)'", self.text, re.M)
+        return m.group(1) if m else None
+
+    def test_progress_watch_is_the_shard_default(self):
+        # gh-1556 AC2: progress-watch (#1392/#1430) is the bench default —
+        # every shard exports the watch knobs and the extension flag, so
+        # the adapter's kill decision is the gap-aware ProgressWatch.
+        # Removing these exports is the only way back to the legacy
+        # byte-growth ladder (its round-2 REG stays green).
+        self.assertEqual(self._step_env("FA_STALL_GAP_SEC"), "360")
+        self.assertEqual(self._step_env("FA_AGENT_TIMEOUT_ABS_CEILING_SEC"), "3600")
+        self.assertEqual(self._step_env("FA_PROGRESS_EXTENSION"), "1")
+
+    def test_watch_knobs_resolve_to_progress_watch_mode(self):
+        # The exported values must actually arm the watch: same env
+        # contract the adapter consumes (shared bench/fa_agent_timeout.py).
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        try:
+            import fa_agent_timeout
+        finally:
+            sys.path.remove(str(Path(__file__).resolve().parent.parent))
+        knobs = fa_agent_timeout.TimeoutKnobs.from_env(
+            {
+                "FA_STALL_GAP_SEC": self._step_env("FA_STALL_GAP_SEC"),
+                "FA_AGENT_TIMEOUT_ABS_CEILING_SEC": self._step_env(
+                    "FA_AGENT_TIMEOUT_ABS_CEILING_SEC"
+                ),
+                "FA_PROGRESS_EXTENSION": self._step_env("FA_PROGRESS_EXTENSION"),
+            }
+        )
+        self.assertIsNotNone(knobs)
+        self.assertTrue(knobs.progress_watch)
+        self.assertTrue(knobs.progress_extension)
+
+    def test_stall_gap_never_drops_below_the_watchdog_invariant(self):
+        # gh-1430 invariant: the bench stall-gap must stay above fa's
+        # stream-idle watchdog (300s) + margin — the workflow value can
+        # never drift below the shipped default (the Dart-source REG in
+        # test_fa_agent_timeout.py pins the other side).
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        try:
+            import fa_agent_timeout
+        finally:
+            sys.path.remove(str(Path(__file__).resolve().parent.parent))
+        gap = float(self._step_env("FA_STALL_GAP_SEC"))
+        self.assertGreaterEqual(gap, fa_agent_timeout._STALL_GAP_DEFAULT)
+
+    def _shard_run_block(self):
+        """The harbor shard step's `run: |` body."""
+        run_block = self.text.split("Run harbor (fa agent", 1)[1]
+        return run_block.split("run: |", 1)[1].split("Upload harbor job", 1)[0]
+
+    def test_agent_timeout_input_clips_the_watch_ceiling(self):
+        # gh-1556 rework review: under the watch the abs ceiling is the
+        # cap that actually kills a progressing trial, so an explicit
+        # agent-timeout input must clip it to base x4 (pre-PR the legacy
+        # ladder did exactly this) — otherwise the tighter cap the
+        # operator asked for is silently ignored in favor of the flat
+        # 3600s step-env default.
+        self.assertIn(
+            "FA_AGENT_TIMEOUT_ABS_CEILING_SEC < AGENT_TIMEOUT * 4",
+            self._shard_run_block(),
+        )
+
+    def test_agent_timeout_clip_defaults_the_ceiling_when_export_removed(self):
+        # gh-1556 rework re-review (suggestion): the escape hatch is
+        # "remove the watch exports to restore the legacy ladder" — but
+        # the exports are load-bearing individually: unsetting ONLY
+        # FA_AGENT_TIMEOUT_ABS_CEILING_SEC (keeping agent-timeout set)
+        # must not die on an unbound variable under `set -euo pipefail`;
+        # the ceiling defaults to base x4 (exactly what the legacy
+        # ladder would have used) before the clip runs.
+        run_block = self._shard_run_block()
+        self.assertIn(
+            '${FA_AGENT_TIMEOUT_ABS_CEILING_SEC:-$((AGENT_TIMEOUT * 4))}',
+            run_block,
+        )
+
+    def test_progress_extension_input_can_still_turn_the_extension_off(self):
+        # gh-1556 rework review: the step env exports FA_PROGRESS_EXTENSION=1
+        # (the watch default, AC2) — an explicit progress-extension: false
+        # dispatch must still win by unsetting it, otherwise the input is
+        # a silent no-op while the comment claims otherwise.
+        self.assertRegex(
+            self._shard_run_block(),
+            r"false\|FALSE\|False\|no\|off\) unset FA_PROGRESS_EXTENSION",
+        )
+
+    def test_watch_comment_does_not_claim_inputs_win_silently(self):
+        # gh-1556 rework review: the old comment claimed the input-derived
+        # exports "still win where they are set" while the step env made
+        # both inputs no-ops — the wording must describe the real
+        # precedence (clip for agent-timeout, unset for the extension).
+        self.assertNotIn("still win where they are set", self.text)
 
 
 @unittest.skipUnless(
