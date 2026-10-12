@@ -137,8 +137,8 @@ if $PROGRAM_NAME == __FILE__
     listing[:skip_upload_images] == true && listing[:skip_upload_screenshots] == true
   raise "FAIL: listing lane must not invent release notes" unless
     listing[:skip_upload_changelogs] == true
-  raise "FAIL: listing texts commit must opt out of auto-review (gh-1330/gh-1367)" unless
-    listing[:changes_not_sent_for_review] == true
+  raise "FAIL: listing texts commit must NOT set the auto-review opt-out (gh-1560: Play rejects it on auto-send accounts)" unless
+    listing[:changes_not_sent_for_review] == false
   raise "FAIL: track not mapped on the listing options" unless listing[:track] == "internal"
   ok("listing options: no binary, texts via supply, images via PlayListingSync")
 
