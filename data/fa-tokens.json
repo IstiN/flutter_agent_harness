@@ -2405,6 +2405,14 @@
       "completion": 23342,
       "total": 110713,
       "model": "kimi-for-coding"
+    },
+    {
+      "leg": "review",
+      "at": "2026-10-12T16:09:18Z",
+      "prompt": 112310,
+      "completion": 8911,
+      "total": 121221,
+      "model": "glm-5.3-flash"
     }
   ],
   "pr-1563": [
