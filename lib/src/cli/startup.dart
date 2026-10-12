@@ -247,17 +247,17 @@ resolveEffectiveCliArgs(
     explicitOverride: explicitOverride,
   );
   // gh-1570 (L9/E2): an endpoint-conflict DEGRADE must not inherit the
-  // stale pair — the saved kind was refused over its baseUrl, so the
-  // baseUrl+modelId are poison unless they still cohere with the
-  // DEGRADED kind's own endpoint (the codex-over-openrouter partial
-  // write keeps working; a copilot pin over a stale gateway is dropped).
+  // stale pair — the saved kind was refused over its baseUrl. "Stale" is
+  // the binding's verdict, not the URL's spelling: the pair rides the
+  // degraded boot only when it still resolves through the one validating
+  // constructor (E2 "rebuilds a valid binding") — the gh-760
+  // mock-endpoint partial write keeps serving, the codex-over-openrouter
+  // default spelling keeps working, and a pair the degraded kind cannot
+  // bind (a claude id pinned over api.openai.com) is dropped.
   final degraded = restore.endpointConflict && !explicitOverride;
   final degradedDefault = resolveCliProviderSpec(provider)?.defaultBaseUrl;
   final keepSavedPair =
-      !degraded ||
-      (degradedDefault != null &&
-          saved.baseUrl.isNotEmpty &&
-          sameEndpoint(saved.baseUrl, degradedDefault));
+      !degraded || _degradedPairResolves(provider, saved);
   final modelId = parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
   final baseUrl = parsed.baseUrl ?? faPreconfig?.baseUrl ?? saved.baseUrl;
   final effective = CliArgs(
@@ -318,6 +318,31 @@ resolveEffectiveCliArgs(
       spec.endpointLocked &&
       saved.baseUrl != spec.defaultBaseUrl;
   return (raw: raw, spec: spec, endpointConflict: endpointConflict);
+}
+
+/// Whether the saved model+baseUrl pair still forms a VALID binding under
+/// the [degradedKind] the boot fell back to (gh-1570 L9/E2): the degrade
+/// refuses the SAVED KIND, not every endpoint it was pointed at — a pair
+/// the one validating constructor accepts (a custom endpoint the degraded
+/// kind can serve, gh-760's mock-endpoint partial write; the openrouter
+/// default spelling) keeps riding the boot, and a pair it rejects (a
+/// foreign-dialect model id on a family-exclusive canonical endpoint) is
+/// the L9 poison the caller drops. A blank half is no binding at all.
+bool _degradedPairResolves(String degradedKind, CliConfig saved) {
+  if (saved.modelId.trim().isEmpty || saved.baseUrl.trim().isEmpty) {
+    return false;
+  }
+  try {
+    ProviderModelBinding.resolve(
+      providerKind: degradedKind,
+      modelId: saved.modelId,
+      baseUrl: saved.baseUrl,
+      provenance: BindingProvenance.restore,
+    );
+    return true;
+  } on ConfigException {
+    return false;
+  }
 }
 
 /// The boot provider: an explicit `--provider` flag or an `FA_PROVIDER_*`

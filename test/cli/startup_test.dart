@@ -524,20 +524,22 @@ void main() {
       expect(resolved.args.model, 'gpt-5');
     });
 
-    test('an endpoint-conflict degrade drops the stale saved pair when it '
-        'does not cohere with the degraded kind (gh-1570 L9/E2)', () {
+    test('an endpoint-conflict degrade drops the stale saved pair when no '
+        'valid binding survives under the degraded kind (gh-1570 L9/E2)',
+        () {
+      // A claude-family id pinned over the openai canonical endpoint
+      // cannot bind as openai-completions — the pair is the L9 poison and
+      // is dropped rather than riding the degrade.
       final resolved = resolveEffectiveCliArgs(
         const CliArgs(),
         CliConfig(
           providerKind: 'chatgpt-codex',
-          modelId: 'gpt-5-codex',
-          baseUrl: 'https://stale-gateway.example/v1',
+          modelId: 'claude-sonnet-4-5',
+          baseUrl: 'https://api.openai.com/v1',
         ),
         env: const {},
       );
       expect(resolved.incompatibleSavedEndpoint, 'chatgpt-codex');
-      // The poison (the codex model id + stale gateway URL) must not
-      // ride the degraded openai-completions boot.
       expect(resolved.args.model, isNull);
       expect(resolved.args.baseUrl, isNull);
     });
@@ -557,6 +559,31 @@ void main() {
       expect(resolved.provider, 'openai-completions');
       expect(resolved.args.model, 'gpt-5-codex');
       expect(resolved.args.baseUrl, 'https://openrouter.ai/api/v1');
+    });
+
+    test('an endpoint-conflict degrade keeps a saved pair that still '
+        'resolves through the binding (gh-760 AC1: the mock endpoint '
+        'partial write keeps serving — never bricks)', () {
+      // gh-760's blocking pair-guard contract: codex pointed at a foreign
+      // (mock) endpoint degrades to openai-completions and the turn
+      // COMPLETES on the saved pair — the degrade refuses the KIND, not a
+      // custom endpoint the degraded kind can bind (E2: rebuild a valid
+      // binding). Dropping this pair would brick the boot with
+      // `provider "openai-completions" requires --model <id>`.
+      const mock = 'http://127.0.0.1:9/v1';
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(),
+        CliConfig(
+          providerKind: 'chatgpt-codex',
+          modelId: 'mock-model',
+          baseUrl: mock,
+        ),
+        env: const {},
+      );
+      expect(resolved.incompatibleSavedEndpoint, 'chatgpt-codex');
+      expect(resolved.provider, 'openai-completions');
+      expect(resolved.args.model, 'mock-model');
+      expect(resolved.args.baseUrl, mock);
     });
 
     test('an FA_PROVIDER_* declaration wins over the saved kind and '
