@@ -114,6 +114,7 @@ final class AgentCliConfig {
     this.waiting = const WaitingConfig(),
     this.jobs = const JobsConfig(),
     this.headless = const HeadlessConfig(),
+    this.deadline,
     this.streamThinking = false,
     this.noStreamThinking = false,
     this.cubeSpec,
@@ -869,6 +870,17 @@ final class AgentCliConfig {
   /// (`shellJobDrainMs`, default 30 min; 0 = off) for the headless
   /// background-job drain after the final answer.
   final HeadlessConfig headless;
+
+  /// The session deadline clock (gh-1556): the ONE wall-clock budget
+  /// source this session projects everywhere — the per-turn `time-left:`
+  /// request line ([Agent.budgetLineProvider]), the one-shot wrap-up
+  /// steering notices, the TUI countdown chip, and the
+  /// `FA_DEADLINE_EPOCH_MS` bash env var. Injected so tests drive it with
+  /// a fake clock; null (the default) builds a live `SessionDeadline()`.
+  /// The executable seeds it from `FA_DEADLINE_EPOCH_MS` <
+  /// `--timer`/`--deadline` via `resolveSessionDeadline`; `/timer`
+  /// adjusts it live mid-session.
+  final SessionDeadline? deadline;
 
   /// The effective gh-1198 thinking-stream setting for the run
   /// (`--stream-thinking` flag OR the `output.streamThinking` config,
