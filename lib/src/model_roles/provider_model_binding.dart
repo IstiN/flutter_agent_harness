@@ -84,12 +84,20 @@ final class ProviderModelBinding {
   ProviderModelBinding._({
     required this.recordName,
     required this.providerKind,
+    required this.catalogRecord,
     required this.baseUrl,
     required this.modelId,
     required this.keyEnvRef,
     required this.provenance,
     required this.wireOverride,
   });
+
+  /// The RESOLVED catalog record the binding rides — `spec.name` from the
+  /// one `resolveCliProviderSpec` lookup (or the record the caller
+  /// passed). Callers that need the spec (e.g. the provider queue's
+  /// model/adapter factory) read it here instead of re-deriving the
+  /// legacy openai/openrouter rule from the kind + URL.
+  final String catalogRecord;
 
   /// Resolves and VALIDATES one provider+model choice.
   ///
@@ -199,6 +207,7 @@ final class ProviderModelBinding {
 
     return ProviderModelBinding._(
       recordName: name.isEmpty ? null : name,
+      catalogRecord: spec.name,
       providerKind: wireKind,
       baseUrl: normalizeBaseUrl(effectiveBaseUrl),
       modelId: modelId.trim(),
@@ -416,6 +425,17 @@ String normalizeBaseUrl(String baseUrl) {
   return trimmed.endsWith('/')
       ? trimmed.substring(0, trimmed.length - 1)
       : trimmed;
+}
+
+/// Whether [baseUrl] merely SPELLS the record's own default endpoint
+/// (E1): the record resolved WITHOUT the URL carries that URL as its
+/// default, so the URL adds no identity — `openai-completions` +
+/// `https://openrouter.ai/api/v1` is the openrouter record spelled out,
+/// not a generic openai record pinned at that host.
+bool _defaultSpellsRecord(String id, String baseUrl) {
+  final bare = resolveCliProviderSpec(id);
+  if (bare == null || bare.defaultBaseUrl.isEmpty) return false;
+  return sameEndpoint(bare.defaultBaseUrl, baseUrl);
 }
 
 /// The model id shape every binding (and every free-text `/model` entry)

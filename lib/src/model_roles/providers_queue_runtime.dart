@@ -205,18 +205,12 @@ List<ChainEntry> buildProviderQueueChain(
         'the queue blob; name the env var holding the key',
       );
     }
-    final stack = collectKeyStack(secrets, keyEnv);
-    if (stack.isEmpty) {
-      skipped_.add('${entry.label} (missing API key: set $keyEnv)');
-      continue;
-    }
-    final ring = ApiKeyRing(baseName: keyEnv, credentials: stack);
     // gh-1570 (AC6/M5): every queue entry resolves through the binding —
     // model id shape, wire⇄endpoint dialect, and the endpoint-shared
-    // kind's identity all validate HERE. A name-less `openai-completions`
-    // entry has no identity (openai/openrouter/kimi/codemie share the
-    // wire) and is rejected instead of silently riding openrouter.ai
-    // with its key.
+    // kind's identity all validate BEFORE the key check. A name-less
+    // `openai-completions` entry has no identity (openai/openrouter/
+    // kimi/codemie share the wire) and is rejected — even keyless —
+    // instead of silently riding openrouter.ai once a key shows up.
     final ProviderModelBinding binding;
     try {
       binding = ProviderModelBinding.resolve(
@@ -231,9 +225,13 @@ List<ChainEntry> buildProviderQueueChain(
         'queue entry ${entry.label}: ${error.message}',
       );
     }
-    final spec = catalogProvider(
-      queueKindCatalogName(binding.providerKind, entry.baseUrl),
-    )!;
+    final stack = collectKeyStack(secrets, keyEnv);
+    if (stack.isEmpty) {
+      skipped_.add('${entry.label} (missing API key: set $keyEnv)');
+      continue;
+    }
+    final ring = ApiKeyRing(baseName: keyEnv, credentials: stack);
+    final spec = catalogProvider(binding.catalogRecord)!;
     final inner = factory(spec.kind, stack.first.value);
     chain.add(
       ChainEntry(
