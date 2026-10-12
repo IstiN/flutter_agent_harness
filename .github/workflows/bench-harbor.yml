@@ -294,15 +294,31 @@ jobs:
               if ! printf '%s' "$PROVIDER_CONFIG" | jq -e 'if has("thinkingLevel") then (.thinkingLevel | if type == "string" then (test("^\\s*$") or (. as $l | ["minimal","low","medium","high","xhigh","max"] | index($l) != null)) else false end) else true end' >/dev/null 2>&1; then
                 echo "::error::provider-config \"thinkingLevel\" must be one of minimal, low, medium, high, xhigh, max (the Dart preconfig's ladder)"; exit 1
               fi
-              # Required: a non-empty https:// baseUrl and a model — the
-              # plain-http ban keeps the bench key off a cleartext wire.
+              # Required: a non-empty baseUrl and a model. https://
+              # always passes; http:// passes ONLY on private/LAN hosts
+              # (localhost, *.local, host.docker.internal, loopback,
+              # RFC1918, link-local) — the bench key must not cross a
+              # public cleartext wire, a LAN proxy stays dispatchable.
               for field in baseUrl model; do
                 if ! printf '%s' "$PROVIDER_CONFIG" | jq -e --arg f "$field" '.[$f] | type == "string" and length > 0' >/dev/null 2>&1; then
                   echo "::error::provider-config is missing a non-empty \"$field\" — required: baseUrl, model"; exit 1
                 fi
               done
-              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e '.baseUrl | startswith("https://")' >/dev/null 2>&1; then
-                echo "::error::provider-config baseUrl must start with https:// (a plaintext endpoint would expose the bench key) — got: $(printf '%s' "$PROVIDER_CONFIG" | jq -r '.baseUrl')"; exit 1
+              if ! printf '%s' "$PROVIDER_CONFIG" | jq -e '
+                .baseUrl |
+                if startswith("https://") then true
+                else startswith("http://")
+                  and ((sub("^https?://"; "") | sub("[/:].*$"; "") | ascii_downcase) as $h
+                       | $h == "localhost"
+                         or $h == "host.docker.internal"
+                         or ($h | endswith(".local"))
+                         or ($h | test("^127\\."))
+                         or ($h | test("^10\\."))
+                         or ($h | test("^192\\.168\\."))
+                         or ($h | test("^172\\.(1[6-9]|2[0-9]|3[01])\\."))
+                         or ($h | test("^169\\.254\\.")))
+                end' >/dev/null 2>&1; then
+                echo "::error::provider-config baseUrl must be https://, or http:// on a private/LAN host (a public plaintext endpoint would expose the bench key) — got: $(printf '%s' "$PROVIDER_CONFIG" | jq -r '.baseUrl')"; exit 1
               fi
               # Passthrough: every declared field rides the config
               # verbatim EXCEPT "type" — it already rides the dedicated
