@@ -132,9 +132,7 @@ extension AgentCliPersist on AgentCli {
   /// tail, and a resident-view rehydration would let the next snapshot
   /// silently erase every entry under it (#488 class, review-blocking on
   /// this slice). Rebuilt lazily when the session switches.
-  Future<ObligationsLedgerWriter> _obligationsWriterFor(
-    Session session,
-  ) async {
+  Future<ObligationsLedgerWriter> _obligationsWriterFor(Session session) async {
     final existing = _obligationsWriter;
     if (existing != null && identical(_obligationsWriterSession, session)) {
       return existing;
@@ -147,9 +145,7 @@ extension AgentCliPersist on AgentCli {
 
   /// The latest snapshot payload over the session's full file chain (the
   /// repo's streamed, rotation-aware scan), or an empty ledger.
-  Future<ObligationsLedger> _latestObligationsFromScan(
-    Session session,
-  ) async {
+  Future<ObligationsLedger> _latestObligationsFromScan(Session session) async {
     final repo = _repo;
     if (repo is! JsonlSessionRepo) return const ObligationsLedger([]);
     final records = await repo.readCustomRecordsOfType(
@@ -159,6 +155,80 @@ extension AgentCliPersist on AgentCli {
     return records.isEmpty
         ? const ObligationsLedger([])
         : ObligationsLedger.fromPayload(records.last.data);
+  }
+
+  /// The `session_search` host path (issue #1380 A2): one archive search
+  /// over the LIVE session's file chain through the repo's streamed scan.
+  /// A memory-backed repo (no file) degrades to an honest cannot-search
+  /// result — the tool stays registered under the same graceful-null
+  /// contract as ask/request_secret.
+  Future<SessionSearchOutcome> searchSessionArchive(
+    SessionSearchQuery query,
+  ) async {
+    final session = _session;
+    final repo = _repo;
+    if (session == null || repo is! JsonlSessionRepo) {
+      // The honest graceful-null degradation: the archive was NOT
+      // searched (there is nothing to search) — the formatter prints
+      // this verbatim instead of a completed-but-empty scan, which
+      // would read as "no records match" (the dishonest rendering the
+      // rework pass called out).
+      return const SessionSearchOutcome(
+        hits: [],
+        recordsExamined: 0,
+        recordsTotal: 0,
+        truncated: false,
+        unavailableReason:
+            'no session file backs this host — nothing was searched',
+      );
+    }
+    return repo.searchArchive(await session.getMetadata(), query);
+  }
+
+  /// The pending-wait write path (issue #1380 AC5): a successful
+  /// `schedule_message` arms a timer — this records the `pending-wait`
+  /// obligation whose text is the timer's reason (verbatim from the call)
+  /// and whose source points at the scheduled-message record, so the
+  /// fired timer re-enters a context that already knows why it exists.
+  /// Structured-engine sessions only (a classic session never grows
+  /// ledger records, E3). Returns the human-readable outcome for the
+  /// attach site; failures are REPORTED here and swallowed by the
+  /// afterToolCall wrapper — the schedule itself already succeeded and
+  /// must never fail because its ledger note could not land.
+  Future<String> recordPendingWait({
+    required String resultText,
+    required Map<String, dynamic> arguments,
+  }) async {
+    if (_effectiveCompactionEngine() == CompactionEngine.classic) {
+      return 'classic engine — no obligations ledger';
+    }
+    final session = _session;
+    if (session == null) return 'no session is open — no ledger';
+    final scheduledId = RegExp(r'^scheduled (\S+) for ').firstMatch(resultText);
+    if (scheduledId == null) {
+      return 'schedule_message result did not carry a scheduled id — no '
+          'pending-wait entry written';
+    }
+    final text = arguments['text'];
+    final writer = await _obligationsWriterFor(session);
+    final payload = writer.ingestPendingWait(
+      text: text is String ? text : '',
+      sourceRecordId: scheduledId.group(1)!,
+    );
+    if (payload == null) {
+      return 'pending-wait already recorded for this timer';
+    }
+    try {
+      await session.appendCustomEntry(
+        customType: obligationsLedgerRecordType,
+        data: payload,
+      );
+    } on Object {
+      return 'recording the pending-wait failed — the snapshot did not '
+          'persist; it rides the next successful ledger write';
+    }
+    return 'pending-wait recorded: the ledger now carries the reason this '
+        'timer exists';
   }
 
   /// Handles a CodeMie auth-session expiry if [message] matches one. Returns
@@ -249,5 +319,38 @@ extension AgentCliPersist on AgentCli {
       data: {'rules': ruleNames},
     );
     _persistedCount++;
+  }
+
+  /// Composes the pending-wait watcher onto the agent's `afterToolCall`
+  /// hook (issue #1380 AC5) — the same prior-chain composition
+  /// `attachToolPhaseLabels` uses, so every earlier hook keeps running.
+  /// Only a SUCCESSFUL `schedule_message` writes: the scheduled id comes
+  /// from the tool's own result line, the reason from its arguments.
+  /// The outcome is reported on the CLI log when it is NOT a clean
+  /// recording — a silently-dropped ledger note must stay discoverable
+  /// (it used to be constructed and discarded, indistinguishable from
+  /// success).
+  void _attachObligationPendingWaits() {
+    final priorAfter = _agent.afterToolCall;
+    _agent.afterToolCall = (context, cancelToken) async {
+      if (!context.isError && context.toolCall.name == 'schedule_message') {
+        try {
+          final outcome = await recordPendingWait(
+            resultText: context.result.content
+                .whereType<TextContent>()
+                .map((block) => block.text)
+                .join('\n'),
+            arguments: context.toolCall.arguments,
+          );
+          if (!outcome.startsWith('pending-wait recorded')) {
+            io.writeln('[obligations] pending-wait not recorded: $outcome');
+          }
+        } on Object {
+          // The schedule itself succeeded; a failed ledger note must
+          // never fail the tool call that armed the timer.
+        }
+      }
+      return priorAfter == null ? null : await priorAfter(context, cancelToken);
+    };
   }
 }
