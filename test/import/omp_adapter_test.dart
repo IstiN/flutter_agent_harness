@@ -159,8 +159,12 @@ void main() {
 
   test('blob images embed when present and within bounds (GOAL O5)', () async {
     Directory('${home.path}/.omp/agent/blobs').createSync(recursive: true);
-    File('${home.path}/.omp/agent/blobs/abc123')
-        .writeAsStringSync('aGVsbG8='); // "hello"
+    // Same 64-hex digest the committed fixture references (sha256-hex is
+    // what the adapter's traversal gate accepts).
+    File(
+      '${home.path}/.omp/agent/blobs/'
+      'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    ).writeAsStringSync('aGVsbG8='); // "hello"
     await writeBucket({'modern.jsonl': fixture('omp_modern.jsonl')});
     final adapter = OmpAdapter();
     final summaries = await adapter.discover(

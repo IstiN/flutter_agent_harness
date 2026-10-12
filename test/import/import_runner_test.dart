@@ -80,7 +80,7 @@ void main() {
     expect(result.exitCode, 0);
     expect(lines, hasLength(1));
     expect(lines.single, startsWith('imported 1f9d2a6b'));
-    expect(lines.single, matches(RegExp(r'\(\d+ records, skipped \d+\)$')));
+    expect(lines.single, matches(RegExp(r'\(\d+ records, skipped \d+\)(\s*\[[^\]]*\])?$')));
 
     final sessions = await repo.list(cwd: project.path);
     expect(sessions, hasLength(1));

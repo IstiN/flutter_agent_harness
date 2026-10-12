@@ -343,7 +343,14 @@ void main() {
         .whereType<PlannedCustom>()
         .toList();
     final customTypes = customs.map((c) => c.customType).toSet();
-    expect(customTypes, contains('import.claude'));
+    // AC6/M-invariant: every unmapped type lands namespaced as
+    // import.<harness>.<type>, never a bare import.claude line.
+    expect(customTypes, containsAll([
+      'import.claude.session',
+      'import.claude.last-prompt',
+      'import.claude.permission-mode',
+    ]));
+    expect(customTypes.contains('import.claude'), isFalse);
     final inertTypes = customs
         .map((c) => c.data is Map ? (c.data as Map)['type'] : null)
         .toSet();

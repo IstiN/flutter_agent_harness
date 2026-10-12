@@ -15,7 +15,7 @@
 {"type":"message","id":"m2b","parentId":"lb1","timestamp":"2026-10-10T10:02:30.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"call-partial","name":"edit","partialArgs":"{\"pa"}],"stopReason":"aborted","timestamp":1760000000000}}
 {"type":"title_change","id":"tc1","parentId":"m2b","timestamp":"2026-10-10T10:03:00.000Z","title":"Fix the login flow (renamed)","source":"user"}
 {"type":"message","id":"m4","parentId":"tc1","timestamp":"2026-10-10T10:03:30.000Z","message":{"role":"assistant","content":[],"stopReason":"aborted","timestamp":1760000000000}}
-{"type":"message","id":"m5","parentId":"m4","timestamp":"2026-10-10T10:04:00.000Z","message":{"role":"user","content":[{"type":"text","text":"with a screenshot"},{"type":"image","data":"blob:sha256:abc123","mimeType":"image/png"}],"timestamp":1760000000000}}
+{"type":"message","id":"m5","parentId":"m4","timestamp":"2026-10-10T10:04:00.000Z","message":{"role":"user","content":[{"type":"text","text":"with a screenshot"},{"type":"image","data":"blob:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mimeType":"image/png"}],"timestamp":1760000000000}}
 {"type":"message","id":"m6","parentId":"m5","timestamp":"2026-10-10T10:04:10.000Z","message":{"role":"bashExecution","content":"echo hi","timestamp":1760000000000}}
 {"type":"compaction","id":"comp1","parentId":"m6","timestamp":"2026-10-10T10:05:00.000Z","summary":"The conversation so far fixed the login flow","shortSummary":"login fixed","firstKeptEntryId":"m4","tokensBefore":42000}
 {"type":"message","id":"m7","parentId":"comp1","timestamp":"2026-10-10T10:06:00.000Z","message":{"role":"user","content":"continue after compaction","timestamp":1760000000000}}

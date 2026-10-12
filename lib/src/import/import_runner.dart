@@ -5,6 +5,8 @@
 /// the FA session header metadata (GOAL F12).
 library;
 
+import 'dart:convert';
+
 import '../env/execution_env.dart';
 import '../exceptions.dart';
 import '../session/session_record.dart';
@@ -91,7 +93,10 @@ Future<ImportResult> runImport({
     emit('import: no session matches "${selector.id}"');
     return ImportResult(exitCode: 3, lines: lines);
   }
-  if (targeted.length > 1) {
+  // Exact-id/prefix selectors must be unambiguous (GOAL F13). --all is
+  // the explicit "every discovered session" request (AC2) — never
+  // ambiguous, no matter how many sessions the store holds.
+  if (!selector.isAll && targeted.length > 1) {
     emit(
       'import: "${selector.id}" is ambiguous — '
       '${targeted.map((s) => s.sourceId).join(', ')}',
@@ -100,9 +105,17 @@ Future<ImportResult> runImport({
   }
 
   final markers = await _importMarkers(repo, cwd);
+  final batchSeen = <String>{};
   var imported = 0;
   var alreadyImported = 0;
   for (final summary in targeted) {
+    // Two store files can carry the same header id (GOAL E9b): import
+    // the first occurrence once, count the rest like the E6 skip case.
+    if (!batchSeen.add(summary.sourceId)) {
+      alreadyImported++;
+      emit('skipped ${summary.sourceId} (duplicate in store)');
+      continue;
+    }
     final existing = markers[summary.sourceId];
     if (existing != null) {
       if (await _isComplete(repo, existing, adapter.id)) {
@@ -311,6 +324,16 @@ Future<ForeignSessionSummary> describeForeignSession({
   for (final record in parse.records) {
     if (record is ForeignMessage) note(record.contents);
   }
+  var searchText = search.toString();
+  // The cap is named bytes — clip on the UTF-8 boundary (a UTF-16
+  // .length cap overruns it ~2x for CJK-heavy sessions).
+  final encodedIndex = utf8.encode(searchText);
+  if (encodedIndex.length > limits.searchIndexBytes) {
+    searchText = utf8.decode(
+      encodedIndex.sublist(0, limits.searchIndexBytes),
+      allowMalformed: true,
+    );
+  }
   return ForeignSessionSummary(
     harness: summary.harness,
     sourceId: summary.sourceId,
@@ -321,7 +344,7 @@ Future<ForeignSessionSummary> describeForeignSession({
     titleSource: summary.titleSource,
     firstPreview: first ?? '-',
     lastPreview: last ?? '-',
-    searchText: search.toString(),
+    searchText: searchText,
     mtimeMs: summary.mtimeMs,
   );
 }

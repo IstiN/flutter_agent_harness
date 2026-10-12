@@ -53,7 +53,11 @@ final class ClaudeAdapter implements HarnessAdapter {
     if (bucket.isErr) return const [];
     final summaries = <ForeignSessionSummary>[];
     for (final (path, size, mtimeMs) in await listSessionFiles(fs, bucketPath)) {
-      final headerCwd = await _firstCwd(fs, path);
+      final headerCwd = await _firstCwd(
+        fs,
+        path,
+        maxFileBytes: limits.maxFileBytes,
+      );
       // The slug is dash-ambiguous — discovery compares the recorded cwd
       // too and never decodes the slug (GOAL C1 negative test / E12).
       if (!headerCwdMatches(headerCwd, cwd)) continue;
@@ -200,7 +204,11 @@ final class ClaudeAdapter implements HarnessAdapter {
 
   /// The recorded cwd from the file's first lines — claude lines carry it
   /// per record; a bounded prefix read keeps discovery cheap.
-  Future<String> _firstCwd(FileSystem fs, String path) async {
+  Future<String> _firstCwd(
+    FileSystem fs,
+    String path, {
+    required int maxFileBytes,
+  }) async {
     String? prefix;
     if (fs is RangedReadFileSystem) {
       final ranged = fs as RangedReadFileSystem;
@@ -209,6 +217,15 @@ final class ClaudeAdapter implements HarnessAdapter {
           ? null
           : utf8.decode(read.valueOrNull ?? const [], allowMalformed: true);
     } else {
+      // Non-ranged backends have no partial read: consult the size gate
+      // BEFORE the whole-file read (mirror of omp _readPrefix) — no
+      // backend pulls an oversized file into memory during discovery.
+      final info = await fs.fileInfo(path);
+      final file = info.valueOrNull;
+      if (info.isErr || file == null || file.kind != FileKind.file) {
+        return '';
+      }
+      if (file.size > maxFileBytes) return '';
       final read = await fs.readTextFile(path);
       if (read.isErr) return '';
       final text = read.valueOrNull!;

@@ -15,6 +15,7 @@ library;
 import '../compaction/compaction_engine.dart';
 import '../config/config_service.dart';
 import '../exceptions.dart';
+import '../import/harness_adapter.dart';
 import '../redact/redaction_types.dart';
 import '../session_deadline.dart';
 import '../tools/availability.dart';
@@ -1485,7 +1486,9 @@ const String _importUsage =
 /// The harness names `--harness` accepts (the identical CLI/TUI surface;
 /// kimi/opencode parse but report their pending format spike at run time).
 /// Single source of truth: the import layer's registry.
-const Set<String> importHarnessNames = {'omp', 'kimi', 'opencode', 'claude'};
+final Set<String> importHarnessNames = {
+  for (final harness in importHarnessRegistry) harness.id,
+};
 
 /// Parses the `import` subcommand operands. Unknown flags and a missing or
 /// conflicting selector are usage errors so a typo never becomes a prompt
@@ -1592,6 +1595,13 @@ void _validateImportOperands(_ImportOperands operands) {
     throw CliArgsException(
       'fa import takes exactly one of --all or --session, not both\n'
       '$_importUsage',
+    );
+  }
+  // `--session=` (empty value) would become a match-everything prefix —
+  // a typo, not a wildcard. Usage error (GOAL F7).
+  if (operands.session != null && operands.session!.trim().isEmpty) {
+    throw CliArgsException(
+      '--session requires a non-empty id or prefix\n$_importUsage',
     );
   }
 }

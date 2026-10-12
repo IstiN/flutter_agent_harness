@@ -50,6 +50,23 @@ void main() {
     expect(() => parse([]), throwsA(isA<CliArgsException>()));
   });
 
+  test('an empty --session value is a usage error, not a wildcard (F7)', () {
+    expect(
+      () => parse(['--harness=omp', '--session=']),
+      throwsA(
+        isA<CliArgsException>().having(
+          (e) => e.message,
+          'message',
+          contains('non-empty id or prefix'),
+        ),
+      ),
+    );
+    expect(
+      () => parse(['--harness=omp', '--session', '   ']),
+      throwsA(isA<CliArgsException>()),
+    );
+  });
+
   test('unknown harness names are usage errors', () {
     expect(
       () => parse(['--harness=pi', '--all']),

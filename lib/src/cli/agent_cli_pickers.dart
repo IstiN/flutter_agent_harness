@@ -253,27 +253,15 @@ extension AgentCliPickers on AgentCli {
   /// Step 1 of the flow (GOAL UX contract): the harness picker — four
   /// entries, type-to-filter free, Esc cancels with zero writes.
   void _openImportHarnessPicker() {
+    // Rows derive from the import layer's single registry (same order)
+    // so the TUI surface cannot drift from the CLI validation set.
     final items = [
-      MenuItem(
-        key: 'omp',
-        label: 'omp',
-        description: '~/.omp/agent/sessions — pinned format',
-      ),
-      MenuItem(
-        key: 'claude',
-        label: 'claude',
-        description: '~/.claude/projects — partial pin (taxonomy spike open)',
-      ),
-      MenuItem(
-        key: 'opencode',
-        label: 'opencode',
-        description: 'pending format discovery spike',
-      ),
-      MenuItem(
-        key: 'kimi',
-        label: 'kimi',
-        description: 'pending format discovery spike',
-      ),
+      for (final harness in importHarnessRegistry)
+        MenuItem(
+          key: harness.id,
+          label: harness.id,
+          description: harness.description,
+        ),
     ];
     importHarnessItemsForTest = items;
     _tuiController?.openPicker('import-harness', 'Import sessions', items);

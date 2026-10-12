@@ -86,7 +86,7 @@ void main() {
 
     await cli.tuiPickImportHarnessForTest('kimi');
     expect(io.out.toString(), contains('pending its format discovery spike'));
-    expect(Directory.listSync(faRoot.path), isEmpty);
+    expect(faRoot.listSync(), isEmpty);
 
     io.sendLine('/exit');
     await run;

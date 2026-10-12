@@ -12,10 +12,42 @@ import 'dart:typed_data';
 import '../env/execution_env.dart';
 import 'foreign_session.dart';
 
+/// The single ORDERED import-harness registry (issue #1562 review): every
+/// surface derives from this one list — the `--harness` validation set
+/// (`importHarnessNames` in cli_args.dart), the implemented-adapter set
+/// below, and the TUI picker rows — so they cannot drift when the AC7
+/// spike lands a kimi/opencode adapter. Order = picker order.
+typedef ImportHarnessSpec = ({String id, String description, bool implemented});
+
+const List<ImportHarnessSpec> importHarnessRegistry = [
+  (
+    id: 'omp',
+    description: '~/.omp/agent/sessions — pinned format',
+    implemented: true,
+  ),
+  (
+    id: 'claude',
+    description: '~/.claude/projects — partial pin (taxonomy spike open)',
+    implemented: true,
+  ),
+  (
+    id: 'opencode',
+    description: 'pending format discovery spike',
+    implemented: false,
+  ),
+  (
+    id: 'kimi',
+    description: 'pending format discovery spike',
+    implemented: false,
+  ),
+];
+
 /// Harnesses with a pinned format and a shipped adapter (kimi/opencode ship
-/// only after their discovery spike, GOAL AC7/K1). The `--harness` name set
-/// lives in `cli_args.dart` (`importHarnessNames`).
-const implementedHarnesses = {'omp', 'claude'};
+/// only after their discovery spike, GOAL AC7/K1).
+final implementedHarnesses = {
+  for (final harness in importHarnessRegistry)
+    if (harness.implemented) harness.id,
+};
 
 /// The expected foreign store root for [harness] under [homeDir] — the path
 /// exit 2 names (and the path an unpinned harness's message points at).
