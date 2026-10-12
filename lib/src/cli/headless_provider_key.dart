@@ -9,8 +9,7 @@ import 'dart:io';
 
 import '../model_roles/provider_catalog.dart';
 import '../secrets/secure_key_store.dart';
-import 'custom_providers.dart'
-    show CustomProviderRegistry, sameEndpoint;
+import 'custom_providers.dart' show CustomProviderRegistry, sameEndpoint;
 
 /// The env names that can hold [provider]'s API key: the catalog spec's
 /// names ([providerCatalog]; copilot → COPILOT_GITHUB_TOKEN,

@@ -306,8 +306,9 @@ Future<void> _runApp(List<String> args) async {
         // which only runs when the abandoned fetch itself settles.
         final probe = http.Client();
         try {
-          final latest = await fetchLatestTag(client: probe)
-              .timeout(const Duration(seconds: 3), onTimeout: () => null);
+          final latest = await fetchLatestTag(
+            client: probe,
+          ).timeout(const Duration(seconds: 3), onTimeout: () => null);
           if (latest != null &&
               compareVersions(latest, packageVersion) > 0 &&
               !autoUpdateTuiOwnsScreen) {
@@ -893,9 +894,9 @@ Future<void> _runApp(List<String> args) async {
 
   // The FA_PROVIDER_* notice: names the declaration (type, resolved name,
   // key ref — or its keyless absence) — never the key value. The pinned
-  // declaration is the session default for every model role; only a
-  // keyless declaration under an active roles: section (which cannot pin
-  // a chain) stays fallback-only, and the note says so.
+  // declaration is the session default for every model role; a keyless
+  // declaration pins too (gh-1570 AC8 — the pin carries the empty key),
+  // and the note below says when roles: still outranks it.
   if (faPreconfig case final preconfig?) {
     io.writeln(
       'note: provider ${preconfig.name} (${preconfig.spec.name}) '

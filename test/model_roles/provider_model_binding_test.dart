@@ -329,6 +329,10 @@ void main() {
       'http://evil.example/x',
       'id\ninjected',
       "quote'id",
+      // C1 controls (U+0080–U+009F) are not letters — NEL/CSI must not
+      // ride the `rune >= 0x80` non-ASCII pass (gh-1570 E5 review).
+      'ctl\u0091x',
+      'id\u0085next',
     ]) {
       test('rejects model id ${bad.isEmpty ? '(empty)' : '"$bad"'}', () {
         expect(
@@ -342,16 +346,37 @@ void main() {
       });
     }
 
-    test('rejects a lowercase key ref (env indirections are env names)', () {
-      expect(
-        () => ProviderModelBinding.resolve(
-          providerKind: 'openrouter',
-          modelId: 'openai/gpt-4o-mini',
-          keyEnvRef: 'not-an-env-name',
-          provenance: BindingProvenance.env,
-        ),
-        throwsA(isA<ConfigException>()),
+    test('accepts a lowercase env name — a legacy apiKeyEnvVar/apiKeyEnv '
+        'keeps booting (gh-1570 key-ref review)', () {
+      final binding = ProviderModelBinding.resolve(
+        providerKind: 'openrouter',
+        modelId: 'openai/gpt-4o-mini',
+        keyEnvRef: 'my_key',
+        provenance: BindingProvenance.env,
       );
+      expect(binding.keyEnvRef, 'my_key');
+    });
+
+    test('key ref stays an env REFERENCE: whitespace and = are rejected '
+        '(a value never enters a binding, S3)', () {
+      for (final bad in const ['has space', 'KEY=value', 'tab\tref']) {
+        expect(
+          () => ProviderModelBinding.resolve(
+            providerKind: 'openrouter',
+            modelId: 'openai/gpt-4o-mini',
+            keyEnvRef: bad,
+            provenance: BindingProvenance.queue,
+          ),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              allOf(contains(bad), isNot(contains('is not an environment'))),
+            ),
+          ),
+          reason: 'key ref "$bad"',
+        );
+      }
     });
 
     test('accepts a well-formed id with dots, slashes, colons and plus', () {

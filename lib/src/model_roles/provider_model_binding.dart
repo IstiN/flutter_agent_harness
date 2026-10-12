@@ -194,14 +194,18 @@ final class ProviderModelBinding {
       );
     }
 
-    // Key indirection: an environment-variable NAME (S3 — values never
-    // enter a binding).
+    // Key indirection: an environment-variable REFERENCE (S3 — values
+    // never enter a binding). Any name a host can look up passes —
+    // lowercase and mixed-case names were always legal on every host and
+    // previously-working `apiKeyEnvVar`/`apiKeyEnv` configs keep booting
+    // (gh-1570 key-ref review); only value-shaped strings (whitespace,
+    // `=`, control characters) are refused.
     final keyRef = keyEnvRef?.trim() ?? '';
-    if (keyRef.isNotEmpty && !RegExp(r'^[A-Z][A-Z0-9_]*$').hasMatch(keyRef)) {
+    if (keyRef.isNotEmpty && !_isValidEnvReference(keyRef)) {
       throw ConfigException(
-        'binding key reference "$keyRef" is not an environment variable '
-        'name — bindings carry the key\'s env indirection (key:$keyRef '
-        'style), never the key value',
+        'binding key reference "$keyRef" is not a usable environment '
+        'variable reference (no whitespace, "=" or control characters) — '
+        'bindings carry the key\'s env indirection, never the key value',
       );
     }
 
@@ -418,6 +422,7 @@ String? _familyExclusiveEndpointDialect(String baseUrl) {
   }
   return verdict;
 }
+
 /// Strips ONE trailing slash — the [sameEndpoint] normalization a
 /// persisted binding round-trips through (E1).
 String normalizeBaseUrl(String baseUrl) {
@@ -440,11 +445,11 @@ bool _defaultSpellsRecord(String id, String baseUrl) {
 
 /// The model id shape every binding (and every free-text `/model` entry)
 /// passes through before anything else runs (E5): non-empty, bounded, no
-/// whitespace or control characters, no URL scheme, no shell/SQL-ish
-/// metacharacters — an id is a label the endpoint receives verbatim,
-/// never a resource locator or an injection vector. Letters and digits
-/// beyond ASCII (a non-ASCII catalog id) pass; ASCII punctuation outside
-/// the label set does not.
+/// whitespace or control characters (ASCII and the C1 range alike), no
+/// URL scheme, no shell/SQL-ish metacharacters — an id is a label the
+/// endpoint receives verbatim, never a resource locator or an injection
+/// vector. Letters and digits beyond ASCII (a non-ASCII catalog id)
+/// pass; ASCII punctuation outside the label set does not.
 void validateModelIdShape(String modelId) {
   final id = modelId.trim();
   String fail(String why) =>
@@ -453,15 +458,42 @@ void validateModelIdShape(String modelId) {
   if (id.length > 200) fail('longer than 200 characters');
   if (id.contains('://')) fail('URL schemes are not model ids');
   for (final rune in id.runes) {
-    final c = String.fromCharCode(rune);
-    final allowed =
-        (rune >= 0x30 && rune <= 0x39) || // 0-9
-        (rune >= 0x41 && rune <= 0x5a) || // A-Z
-        (rune >= 0x61 && rune <= 0x7a) || // a-z
-        rune >= 0x80 || // non-ASCII letters/digits pass
-        const {'.', '_', '-', '/', ':', '@', '+', '~'}.contains(c);
-    if (!allowed) {
-      fail('"$c" is not a model id character');
+    if (!_isModelIdRune(rune)) {
+      fail('"${String.fromCharCode(rune)}" is not a model id character');
     }
   }
+}
+
+/// ASCII label chars, the label punctuation set, and non-ASCII
+/// letters/digits — MINUS the C1 control range U+0080–U+009F (NEL, CSI,
+/// …): "non-ASCII passes" must never re-admit controls through the
+/// `rune >= 0x80` arm (gh-1570 E5 review).
+bool _isModelIdRune(int rune) =>
+    (rune >= 0x30 && rune <= 0x39) || // 0-9
+    (rune >= 0x41 && rune <= 0x5a) || // A-Z
+    (rune >= 0x61 && rune <= 0x7a) || // a-z
+    (rune >= 0x00a0) || // non-ASCII letters/digits pass, C1 controls don't
+    const {
+      '.',
+      '_',
+      '-',
+      '/',
+      ':',
+      '@',
+      '+',
+      '~',
+    }.contains(String.fromCharCode(rune));
+
+/// Whether [name] is a usable environment-variable REFERENCE: non-empty,
+/// no whitespace, no `=`, no control characters. Case is deliberately
+/// unchecked — lowercase env names are legal on every host and were
+/// never validated before gh-1570 (key-ref review).
+bool _isValidEnvReference(String name) {
+  for (final rune in name.runes) {
+    if (rune <= 0x20 || rune == 0x7f || (rune >= 0x80 && rune <= 0x9f)) {
+      return false;
+    }
+    if (rune == 0x3d) return false; // '=' — the value separator
+  }
+  return true;
 }

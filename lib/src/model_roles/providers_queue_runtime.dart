@@ -163,23 +163,6 @@ final _timeoutPatterns = [
   RegExp(r'zero-byte stall'),
 ];
 
-/// Maps a queue adapter kind to the catalog provider NAME the model
-/// builder keys off — derived from the catalog ([resolveCliProviderSpec],
-/// issue #772 AC3), never a hand-maintained map: a catalog addition flows
-/// through with no edit here. `openai-completions` keeps the historical
-/// CLI rule: a custom baseUrl reports provider `openai`, the default
-/// reports `openrouter`.
-String queueKindCatalogName(String kind, String? baseUrl) {
-  final spec = resolveCliProviderSpec(kind, baseUrl: baseUrl);
-  if (spec == null) {
-    throw ConfigException(
-      'unknown provider kind "$kind" — supported: '
-      '${providerQueueKinds.join(', ')}',
-    );
-  }
-  return spec.name;
-}
-
 /// Builds the [ChainEntry] list for a resolved queue: one model per entry
 /// (catalog defaults + the entry's overrides), a single key stack per
 /// entry from its `apiKeyEnv` (the `_2`/`_3` stack convention rides along
@@ -221,9 +204,7 @@ List<ChainEntry> buildProviderQueueChain(
         provenance: BindingProvenance.queue,
       );
     } on ConfigException catch (error) {
-      throw ConfigException(
-        'queue entry ${entry.label}: ${error.message}',
-      );
+      throw ConfigException('queue entry ${entry.label}: ${error.message}');
     }
     final stack = collectKeyStack(secrets, keyEnv);
     if (stack.isEmpty) {

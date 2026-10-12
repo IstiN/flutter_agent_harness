@@ -276,19 +276,24 @@ resolveEffectiveCliArgs(
     sessionRoot: parsed.sessionRoot,
     session: parsed.session,
   );
-  // gh-1570 (AC3/H2): an explicit `--model` over a restored binding is a
-  // PARTIAL override — the model is revalidated against the binding it
-  // would ride and a dialect mismatch is a boot-time rejection naming
-  // both sides, never a silent cross-provider ride (`--model gpt-5` over
-  // a saved anthropic binding dies here, before any network call).
-  if (parsed.model != null && !parsed.providerExplicit && faPreconfig == null) {
-    ProviderModelBinding.resolve(
-      providerKind: provider,
-      modelId: parsed.model!,
-      baseUrl: keepSavedPair ? baseUrl : (parsed.baseUrl ?? degradedDefault),
-      provenance: BindingProvenance.flag,
-    );
-  }
+  // gh-1570 (AC3/H2): an explicit `--model`/`--base-url` over a restored
+  // or preconfigured binding is a PARTIAL override — the effective
+  // binding (flag slot winning, everything else from the current source)
+  // is revalidated through the one constructor and a mismatch is a
+  // boot-time rejection naming both sides, never a silent cross-provider
+  // ride (`--model gpt-5` over a saved/active anthropic binding dies
+  // here, before any network call). An ACTIVE FA_PROVIDER_* preconfig is
+  // a binding too (AC3/H2 review): its kind survives and the flag wins
+  // its slot, so the same joint check applies.
+  _revalidatePartialOverride(
+    parsed,
+    faPreconfig,
+    saved,
+    provider: provider,
+    baseUrl: baseUrl,
+    keepSavedPair: keepSavedPair,
+    degradedDefault: degradedDefault,
+  );
   return (
     args: effective,
     provider: provider,
@@ -340,6 +345,35 @@ bool _degradedPairResolves(String degradedKind, CliConfig saved) {
   } on ConfigException {
     return false;
   }
+}
+
+/// The AC3/H2 partial-override gate (gh-1570): an explicit `--model` or
+/// `--base-url` over a restored or preconfigured binding revalidates the
+/// EFFECTIVE binding (flag slot winning, the rest from the current
+/// source) through the one validating constructor — a dialect mismatch
+/// dies here naming both sides, before any network call. A blank
+/// effective model is no binding to revalidate (`--base-url` over a
+/// model-less saved config fails later at the model gate, unchanged).
+void _revalidatePartialOverride(
+  CliArgs parsed,
+  EnvProviderPreconfig? faPreconfig,
+  CliConfig saved, {
+  required String provider,
+  required String baseUrl,
+  required bool keepSavedPair,
+  required String? degradedDefault,
+}) {
+  if (parsed.providerExplicit) return;
+  if (parsed.model == null && parsed.baseUrl == null) return;
+  final effectiveModelId =
+      parsed.model ?? faPreconfig?.modelId ?? saved.modelId;
+  if (effectiveModelId.trim().isEmpty) return;
+  ProviderModelBinding.resolve(
+    providerKind: provider,
+    modelId: effectiveModelId,
+    baseUrl: keepSavedPair ? baseUrl : (parsed.baseUrl ?? degradedDefault),
+    provenance: BindingProvenance.flag,
+  );
 }
 
 /// The boot provider: an explicit `--provider` flag or an `FA_PROVIDER_*`

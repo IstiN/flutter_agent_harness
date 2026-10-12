@@ -121,6 +121,24 @@ maxTokens: 4096
         ),
         throwsA(isA<ConfigException>()),
       );
+      // keyless + apiKeyName on one entry is a named config error — the
+      // key name would be silently ignored (gh-1570 review).
+      expect(
+        () => ModelRef.fromYaml(
+          _yaml(
+            'provider: openai-completions\nmodel: qwen3\n'
+            'baseUrl: http://localhost:8080/v1\n'
+            'keyless: true\napiKeyName: MY_KEY\n',
+          ),
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('keyless'), contains('apiKeyName')),
+          ),
+        ),
+      );
     });
 
     test('authHeader round-trips yaml-special tokens losslessly '

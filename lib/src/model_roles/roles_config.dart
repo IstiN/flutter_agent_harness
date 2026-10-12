@@ -121,10 +121,19 @@ final class ModelRef {
             'model chain entry${role == null ? '' : ' in role "$role"'}';
         final authHeader = parseAuthHeaderName(entry['authHeader'], where);
         validateAuthHeaderDialect(authHeader, catalogProvider(provider), where);
+        final keyless = _optionalBool(entry, 'keyless', role);
+        final keyName = _optionalString(entry, 'apiKeyName', role);
+        if (keyless && keyName != null) {
+          throw ConfigException(
+            '$where: "keyless" and "apiKeyName" are mutually exclusive — '
+            'a keyless endpoint takes no credential, so "$keyName" would '
+            'be silently ignored',
+          );
+        }
         return ModelRef(
           provider: provider.trim(),
           modelId: model.trim(),
-          apiKeyName: _optionalString(entry, 'apiKeyName', role),
+          apiKeyName: keyName,
           baseUrl: _optionalString(entry, 'baseUrl', role),
           contextWindow: _optionalInt(entry, 'contextWindow', role),
           maxTokens: _optionalInt(entry, 'maxTokens', role),
@@ -143,7 +152,7 @@ final class ModelRef {
             'streamIdleTimeoutMs',
             where,
           ),
-          keyless: _optionalBool(entry, 'keyless', role),
+          keyless: keyless,
         );
       default:
         throw ConfigException(

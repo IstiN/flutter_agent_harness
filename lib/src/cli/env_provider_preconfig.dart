@@ -347,12 +347,7 @@ void _takeConfigEntry(String key, Object? value, _ParsedConfig into) {
     case 'thinkingLevel':
       into.thinkingLevel = _parseThinkingLevel(value);
     case 'wire':
-      if (value is! String) {
-        throw ConfigException(
-          'FA_PROVIDER_CONFIG key "wire" must be a string, got: $value',
-        );
-      }
-      if (value.trim().isNotEmpty) into.wire = value;
+      into.wire = _parseWire(value);
     case 'contextWindow' || 'maxTokens':
       final parsed = _parseCapabilityInt(key, value);
       if (parsed != null) {
@@ -440,6 +435,19 @@ String? _parseThinkingLevel(Object? value) {
         'FA_PROVIDER_CONFIG "thinkingLevel" must be one of '
         '${configThinkingLevels.join(', ')}, got: $value',
       ));
+}
+
+/// The `wire:` override (gh-1570 AC2): a non-string is a named config
+/// error; a blank string is ABSENT (the binding validates the kind
+/// itself — an empty override must never silence a dialect check).
+String? _parseWire(Object? value) {
+  if (value is! String) {
+    throw ConfigException(
+      'FA_PROVIDER_CONFIG key "wire" must be a string, got: $value',
+    );
+  }
+  if (value.trim().isEmpty) return null;
+  return value;
 }
 
 /// The first name among [base], `[base]-2`, `[base]-3`, ... not in

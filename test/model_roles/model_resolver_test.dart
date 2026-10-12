@@ -707,58 +707,55 @@ void main() {
         },
       );
 
-      test(
-        'a keyless pin resolves with NO credential — localhost preconfig '
-        'beats saved roles (gh-1570 AC8/UT-8)',
-        () {
-          // The exact sequence bin/fah.dart performs for a KEYLESS
-          // FA_PROVIDER_* declaration (no apiKeyEnvVar — a localhost
-          // bench endpoint): pin the default role to a keyless single-entry
-          // chain. The saved roles config must NOT win — the bench
-          // measures the preconfigured provider.
-          final resolver = ModelRolesResolver(
-            config: ModelRolesConfig(
-              roles: const {
-                'default': [
-                  ModelRef(provider: 'anthropic', modelId: 'claude-old'),
-                ],
-              },
-            ),
-            secrets: const {'ANTHROPIC_API_KEY': 'a-key'},
-            streamFactory: _neverStream,
-          );
-          resolver.setDefaultChain([
-            const ModelRef(
-              provider: 'anthropic',
-              modelId: 'claude-sonnet-4-5',
-              baseUrl: 'http://localhost:8080/v1',
-              keyless: true,
-            ),
-          ]);
+      test('a keyless pin resolves with NO credential — localhost preconfig '
+          'beats saved roles (gh-1570 AC8/UT-8)', () {
+        // The exact sequence bin/fah.dart performs for a KEYLESS
+        // FA_PROVIDER_* declaration (no apiKeyEnvVar — a localhost
+        // bench endpoint): pin the default role to a keyless single-entry
+        // chain. The saved roles config must NOT win — the bench
+        // measures the preconfigured provider.
+        final resolver = ModelRolesResolver(
+          config: ModelRolesConfig(
+            roles: const {
+              'default': [
+                ModelRef(provider: 'anthropic', modelId: 'claude-old'),
+              ],
+            },
+          ),
+          secrets: const {'ANTHROPIC_API_KEY': 'a-key'},
+          streamFactory: _neverStream,
+        );
+        resolver.setDefaultChain([
+          const ModelRef(
+            provider: 'anthropic',
+            modelId: 'claude-sonnet-4-5',
+            baseUrl: 'http://localhost:8080/v1',
+            keyless: true,
+          ),
+        ]);
 
-          for (final role in ['default', 'slow', 'plan']) {
-            final resolved = resolver.resolveRole(role);
-            expect(resolved, isNotNull, reason: role);
-            expect(resolved!.model.provider, 'anthropic', reason: role);
-            expect(resolved.model.baseUrl, 'http://localhost:8080/v1');
-          }
-          // The keyless entry carries the EMPTY credential — the wrapper
-          // hands the ring's current credential to the stream factory per
-          // attempt (byte-parity with the non-roles keyless boot), never
-          // the saved roles provider's key.
-          final entries = resolver.chainFor('default')!;
-          expect(entries, hasLength(1));
-          expect(
-            entries.single.keyRing.currentCredential.value,
-            '',
-            reason: 'keyless = empty key to the stream factory',
-          );
-          final streamFn = entries.single.streamForKey(
-            entries.single.keyRing.currentCredential.value,
-          );
-          expect(streamFn, isNotNull);
-        },
-      );
+        for (final role in ['default', 'slow', 'plan']) {
+          final resolved = resolver.resolveRole(role);
+          expect(resolved, isNotNull, reason: role);
+          expect(resolved!.model.provider, 'anthropic', reason: role);
+          expect(resolved.model.baseUrl, 'http://localhost:8080/v1');
+        }
+        // The keyless entry carries the EMPTY credential — the wrapper
+        // hands the ring's current credential to the stream factory per
+        // attempt (byte-parity with the non-roles keyless boot), never
+        // the saved roles provider's key.
+        final entries = resolver.chainFor('default')!;
+        expect(entries, hasLength(1));
+        expect(
+          entries.single.keyRing.currentCredential.value,
+          '',
+          reason: 'keyless = empty key to the stream factory',
+        );
+        final streamFn = entries.single.streamForKey(
+          entries.single.keyRing.currentCredential.value,
+        );
+        expect(streamFn, isNotNull);
+      });
 
       test(
         'the preconfig input modalities reach the pinned chain model (#638)',

@@ -508,6 +508,71 @@ void main() {
       expect(resolved.args.model, 'claude-opus-4');
     });
 
+    test('an explicit --model of another dialect over an ACTIVE '
+        'FA_PROVIDER_* preconfig is rejected too — the preconfig binding '
+        'is superseded by the flag (gh-1570 AC3/H2 review)', () {
+      // The preconfig IS a binding: `_bootProvider` keeps its kind and
+      // `modelId = parsed.model ?? preconfig.modelId` lets the flag win
+      // the model slot — the same partial override as the saved case.
+      expect(
+        () => resolveEffectiveCliArgs(
+          const CliArgs(model: 'gpt-5'),
+          CliConfig(),
+          env: const {
+            'FA_PROVIDER_TYPE': 'anthropic',
+            'FA_PROVIDER_CONFIG':
+                '{"baseUrl":"https://api.anthropic.com",'
+                '"model":"claude-sonnet-4-5","apiKeyEnvVar":"K"}',
+            'K': 'v',
+          },
+        ),
+        throwsA(
+          isA<ConfigException>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('gpt-5'), contains('api.anthropic.com')),
+          ),
+        ),
+      );
+    });
+
+    test('an explicit --base-url over an active preconfig revalidates the '
+        'preconfig model against the FLAG endpoint (gh-1570 AC3/H2 '
+        'review: the preconfig binding was validated with ITS endpoint)', () {
+      // The preconfig model (claude, anthropic wire) pointed at the openai
+      // canonical endpoint by the flag is the same cross-dialect ride.
+      expect(
+        () => resolveEffectiveCliArgs(
+          const CliArgs(baseUrl: 'https://api.openai.com/v1'),
+          CliConfig(),
+          env: const {
+            'FA_PROVIDER_TYPE': 'anthropic',
+            'FA_PROVIDER_CONFIG':
+                '{"baseUrl":"https://api.anthropic.com",'
+                '"model":"claude-sonnet-4-5","apiKeyEnvVar":"K"}',
+            'K': 'v',
+          },
+        ),
+        throwsA(isA<ConfigException>()),
+      );
+    });
+
+    test('a flag model of the preconfig binding\'s own family passes', () {
+      final resolved = resolveEffectiveCliArgs(
+        const CliArgs(model: 'claude-opus-4'),
+        CliConfig(),
+        env: const {
+          'FA_PROVIDER_TYPE': 'anthropic',
+          'FA_PROVIDER_CONFIG':
+              '{"baseUrl":"https://api.anthropic.com",'
+              '"model":"claude-sonnet-4-5","apiKeyEnvVar":"K"}',
+          'K': 'v',
+        },
+      );
+      expect(resolved.provider, 'anthropic');
+      expect(resolved.args.model, 'claude-opus-4');
+    });
+
     test('an explicit --model with an explicit --provider is manual '
         'control — no joint validation against the saved binding', () {
       final resolved = resolveEffectiveCliArgs(
