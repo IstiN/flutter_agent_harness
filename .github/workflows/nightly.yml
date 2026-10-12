@@ -181,6 +181,12 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
+      # gh-1468: pre-seed the flutter_gemma LiteRT-LM Android cache on the
+      # android matrix row (no-op elsewhere) — same release-asset CDN
+      # roulette as the PR leg, same fix.
+      - uses: ./.github/actions/flutter-gemma-android-seed
+        if: matrix.target == 'android'
+
       # Linux desktop toolchain + plugin native deps (gtk3 for the runner,
       # gstreamer for audioplayers_linux).
       - name: Install Linux desktop toolchain
