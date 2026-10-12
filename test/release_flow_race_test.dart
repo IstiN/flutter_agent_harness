@@ -102,6 +102,16 @@ if [ -f "\$GH_STUB_DIR/curl-fail" ]; then
   echo "curl: simulated pub.dev API failure" >&2
   exit 1
 fi
+# gh-1561 seam: flip to the NEW version after N total reads — the shape of
+# a push run completing DURING the leg (the start-of-leg reads serve the
+# stale replica; the post-run re-read catches up). Absent = legacy behavior.
+if [ -f "\$GH_STUB_DIR/pubdev-switch-after" ]; then
+  c="\$GH_STUB_DIR/curl-count"; n=\$(cat "\$c" 2>/dev/null || echo 0); n=\$((n+1)); echo "\$n" > "\$c"
+  if [ "\$n" -gt "\$(cat "\$GH_STUB_DIR/pubdev-switch-after")" ]; then
+    cat "\$GH_STUB_DIR/pubdev-new.json"
+    exit 0
+  fi
+fi
 if [ -f "\$GH_STUB_DIR/rerun-done" ] && [ -f "\$GH_STUB_DIR/pubdev-new.json" ]; then
   cat "\$GH_STUB_DIR/pubdev-new.json"
 else
@@ -197,12 +207,19 @@ Map<String, String> _parseOutputs(String path) {
 }
 
 class VerifyRun {
-  VerifyRun(this.exitCode, this.output, this.outputs, this.ghLog);
+  VerifyRun(
+    this.exitCode,
+    this.output,
+    this.outputs,
+    this.ghLog,
+    this.origin,
+  );
 
   final int exitCode;
   final String output; // stdout+stderr
   final Map<String, String> outputs; // GITHUB_OUTPUT key=values
   final List<String> ghLog; // stubbed gh invocations
+  final String origin; // the bare origin repo (re-arm assertions read it)
 
   String get status => outputs['status'] ?? '';
   bool get errored => output.contains('::error::');
@@ -240,6 +257,14 @@ VerifyRun runVerify(
   bool publishToNone = false,
   String? runsJson = '[]',
   String? secondReadJson,
+  String? thirdReadJson,
+  // gh-1561: flip the curl fixture to the NEW version after N total reads —
+  // the shape of a push run completing during the leg (the top-of-leg reads
+  // serve the stale replica, the post-success re-read catches up).
+  int? pubdevSwitchAfterReads,
+  // gh-1561: the re-arm's push destination override — 'origin' pushes to
+  // this sandbox's bare remote (production derives the App-token URL).
+  String? rearmPushTo,
   String conclusion = 'success',
   bool rerunToSuccess = false,
   // #1368 fixture seams: the run-view Nth-read override (run-<id>.1.json)
@@ -304,6 +329,14 @@ VerifyRun runVerify(
   if (secondReadJson != null) {
     File('${dir.path}/runs-v$version.2.json').writeAsStringSync(secondReadJson);
   }
+  if (thirdReadJson != null) {
+    File('${dir.path}/runs-v$version.3.json').writeAsStringSync(thirdReadJson);
+  }
+  if (pubdevSwitchAfterReads != null) {
+    File(
+      '${dir.path}/pubdev-switch-after',
+    ).writeAsStringSync('${pubdevSwitchAfterReads}');
+  }
   if (lsremoteFailFirst) {
     File('${dir.path}/lsremote-fail-first').writeAsStringSync('');
   }
@@ -344,6 +377,7 @@ VerifyRun runVerify(
 
   if (runsJson != null) plantRun(runsJson);
   if (secondReadJson != null) plantRun(secondReadJson);
+  if (thirdReadJson != null) plantRun(thirdReadJson);
 
   final outPath = '${dir.path}/github_output';
   final res = Process.runSync(
@@ -361,6 +395,7 @@ VerifyRun runVerify(
       // Test seams — production defaults live in the script.
       'PUBDEV_READ_SLEEP_SECS': '0',
       'PUBDEV_POLL_SLEEP_SECS': '0',
+      if (rearmPushTo != null) 'RELEASE_APP_PUSH_URL': rearmPushTo!,
       ...extraEnv,
     },
   );
@@ -371,6 +406,7 @@ VerifyRun runVerify(
     File('${dir.path}/gh.log').existsSync()
         ? File('${dir.path}/gh.log').readAsLinesSync()
         : <String>[],
+    origin,
   );
 }
 
@@ -721,6 +757,132 @@ void main() {
         );
       },
     );
+  });
+
+  // ── gh-1561 — never-triggered self-heal: App-token tag re-arm ────────────
+  // The 2026-10-12 v1.0.557 class: the tag landed (App-token push + GitHub
+  // Release) but its PUSH twin never registered, and the daily's never-
+  // triggered alarm is manual-only. The leg must first try to re-arm the
+  // tag (same commit, fresh annotated tag object — a new tag-push event),
+  // and only alarm when that cannot produce a run.
+  group('gh-1561 — never-triggered arms re-arm the tag, then alarm', () {
+    test(
+      're-arm registers the fresh push run -> the leg continues with it (neutral skip)',
+      () {
+        final r = runVerify(
+          'rearm-registers',
+          tagAge: const Duration(hours: 2),
+          runsJson: '[]',
+          secondReadJson: '[]',
+          thirdReadJson:
+              '[{"databaseId":4242,"status":"queued","conclusion":null,"event":"push"}]',
+          rearmPushTo: 'origin',
+          extraEnv: const {
+            'RELEASE_APP_TOKEN': 'stub-token',
+            'PUBDEV_MAX_POLLS': '2',
+          },
+        );
+        expect(r.exitCode, 0, reason: r.output);
+        expect(r.inFlight, isTrue, reason: r.output);
+        expect(r.errored, isFalse, reason: 'no alarm when the re-arm heals');
+        expect(r.output, contains('re-armed'));
+        expect(
+          r.outputs['run_url'],
+          'https://github.com/OWNER/REPO/actions/runs/4242',
+        );
+        // The re-arm must NEVER move the commit: only the tagger date moves
+        // (the seeded tag was backdated 2h; the re-cut one reads as now).
+        final taggerDate = int.parse(
+          _gitOut([
+            'for-each-ref',
+            'refs/tags/v0.1.497',
+            '--format=%(creatordate:unix)',
+          ], cwd: r.origin),
+        );
+        final seeded = DateTime.now().toUtc().subtract(const Duration(hours: 2));
+        final actual = DateTime.fromMillisecondsSinceEpoch(
+          taggerDate * 1000,
+          isUtc: true,
+        );
+        expect(
+          actual.difference(seeded).inMinutes.abs(),
+          lessThan(10),
+          reason: 'the re-arm re-cut the tag at the SAME commit (fresh date)',
+        );
+      },
+    );
+
+    test(
+      're-armed run completes during the leg and pub.dev caught up -> green',
+      () {
+        final r = runVerify(
+          'rearm-completes-green',
+          tagAge: const Duration(hours: 2),
+          runsJson: '[]',
+          secondReadJson: '[]',
+          thirdReadJson:
+              '[{"databaseId":4242,"status":"completed","conclusion":"success","event":"push"}]',
+          pubdevSwitchAfterReads: 3,
+          rearmPushTo: 'origin',
+          extraEnv: const {'RELEASE_APP_TOKEN': 'stub-token'},
+        );
+        expect(r.exitCode, 0, reason: r.output);
+        expect(r.errored, isFalse, reason: r.output);
+        expect(r.status, 'up-to-date', reason: r.output);
+        expect(r.outputs['published'], '0.1.497');
+        expect(
+          r.output,
+          contains('pub.dev now serves 0.1.497'),
+          reason: 'the fresh run green + caught-up pub.dev is NOT an alarm',
+        );
+      },
+    );
+
+    test('re-arm push fails -> the exact manual-fix alarm, unchanged', () {
+      final r = runVerify(
+        'rearm-push-fails',
+        tagAge: const Duration(hours: 2),
+        runsJson:
+            '[{"databaseId":777,"status":"completed","conclusion":"success","event":"release"}]',
+        extraEnv: const {
+          'RELEASE_APP_TOKEN': 'stub-token',
+          'RELEASE_APP_PUSH_URL': '/nonexistent-rearm-target',
+        },
+      );
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(r.errored, isTrue);
+      expect(
+        r.output,
+        contains(
+          'only non-push run(s) exist — the publish job fires on push-event tag runs only',
+        ),
+      );
+      expect(
+        r.ghLog.where((l) => l.contains('--branch v0.1.497')),
+        hasLength(2),
+        reason: 'a failed re-arm must not read the run list again',
+      );
+    });
+
+    test('re-arm pushed but the fresh run is not registered yet -> alarm '
+        '(the next daily re-verifies)', () {
+      final r = runVerify(
+        'rearm-not-registered',
+        tagAge: const Duration(hours: 2),
+        runsJson: '[]',
+        secondReadJson: '[]',
+        rearmPushTo: 'origin',
+        extraEnv: const {'RELEASE_APP_TOKEN': 'stub-token'},
+      );
+      expect(r.exitCode, isNot(0), reason: r.output);
+      expect(r.errored, isTrue);
+      expect(r.output, contains('no run registered past the 900s grace window'));
+      expect(
+        r.ghLog.where((l) => l.contains('--branch v0.1.497')),
+        hasLength(3),
+        reason: 'exactly one re-read after the re-arm (E4 doctrine)',
+      );
+    });
   });
 
   // ── #1368 — twin-run selection, bounded waits, true-state errors ─────────
