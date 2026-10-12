@@ -13,6 +13,27 @@ block a release again.
 
 ## Unreleased
 
+- gh-1556: bench pipeline stops bleeding score + fa deadline awareness.
+  Bench: the harbor ladder kill uses the `[f]a` bracket trick and is
+  wrapped so a kill failure can never replace the `TimeoutError` (the
+  pre-fix self-matching `pkill` classified TB 2.0 ladder kills as agent
+  crashes — a SOLVED task scored 0); progress-watch (stall-gap 360s per
+  the gh-1430 watchdog invariant, flat abs ceiling 3600s) is the
+  bench-harbor.yml default on every shard, with the harbor adapter
+  picking the gap-aware `ProgressWatch` for parity with the
+  terminal-bench adapter; the aggregate counts completeness by
+  `result.json` presence (errored trials report as their own breakdown
+  line; exit 1 only on genuinely lost trials) and renders the full
+  report — table, errored breakdown, ledger row — to
+  `$GITHUB_STEP_SUMMARY` (TB1 parity). Both bench adapters export
+  `FA_DEADLINE_EPOCH_MS` (effective cap − 120s wrap-up margin) into the
+  agent session and audit the exact value. fa core: deadline awareness —
+  `FA_DEADLINE_EPOCH_MS` / `--timer`/`--deadline` / `/timer` write one
+  session clock, the per-turn context carries a `time-left:` line while
+  armed, and one-shot system notices steer wrap-up at ~50%, T-3min
+  (drain background jobs), and T-30s; absent deadline = byte-for-byte
+  today's behavior.
+
 - gh-1522: tag-sourced versions — the git tag is the single source of
   truth. The release-bot file bumps are retired: cutting a release = a
   tag + GitHub Release (zero commits to main, zero file mutations).
