@@ -30,11 +30,16 @@ cost from the same pricing.json accounting, n/a when unpriced). Without
 no ledger block).
 
 A trial is resolved when every verifier reward is 1.0; the resolution rate
-is resolved trials / attempted trials. harbor exits 0 even with unresolved
-trials, so the exit code is the verdict on run COMPLETENESS only: 1 when
-nothing was produced or fewer than --expected-trials trials were attempted
-(lost shard). Unresolved trials are the scoreboard, not an infra failure —
-reported without failing the step.
+is resolved trials / scored (non-errored) trials. harbor exits 0 even with
+unresolved trials, so the exit code is the verdict on run COMPLETENESS
+only: 1 when nothing was produced or fewer than --expected-trials trials
+produced a readable result.json (lost shard). gh-1556 AC3: the
+completeness count is by PRESENCE — a trial whose result.json was written
+counts as attempted regardless of exception class, so legitimate
+dataset-cap or ladder timeouts (errored before a verdict) can never redden
+the job; the errored class gets its own breakdown line instead, and exit 1
+is reserved for genuinely lost trials. Unresolved trials are the
+scoreboard, not an infra failure — reported without failing the step.
 """
 import argparse
 import glob
@@ -166,6 +171,7 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None)
         return lines, problems
 
     total_resolved = total_rows = 0
+    total_attempted = 0
     total_in = total_out = total_est = 0
     costs: list[float] = []
     unpriced = 0
@@ -178,6 +184,10 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None)
         if not rows:
             table.append(f"| {label} | 0/0 | no trials | — | n/a |")
             continue
+        # gh-1556 AC3: presence counts — every trial that produced a
+        # readable result.json attempted the task; the errored subset is
+        # scored separately below (it errored before a verdict).
+        total_attempted += len(rows)
         scored = [r for r in rows if not r["exception"]]
         errored = len(rows) - len(scored)
         resolved = sum(1 for r in scored if r["resolved"])
@@ -197,6 +207,12 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None)
             f"| {label} | {resolved}/{len(scored)} | {note} | {split_in}/{split_out} | {cost_cell} |"
         )
     lines.append(f"**Resolution: {total_resolved}/{total_rows} scored trials**")
+    if total_attempted != total_rows:
+        lines.append(
+            f"**Attempted: {total_attempted} trials produced a result.json "
+            f"({total_attempted - total_rows} errored before a verdict — "
+            "see the errored breakdown below)**"
+        )
     if total_in or total_out:
         cost_total = f"${sum(costs):.4f}" if costs else "n/a"
         suffix = f" — {unpriced} trial(s) unpriced (model missing from pricing.json)" if unpriced else ""
@@ -241,17 +257,18 @@ def render(splits: dict, expected=None, title=None, ledger=None, run_label=None)
             "Errored trials (harness/infra failure, not scored): "
             + ", ".join(f"{k} ×{v}" for k, v in sorted(exceptions.items()))
         )
-        problems.append(
-            f"{sum(exceptions.values())} trial(s) errored before producing a verdict"
-        )
+        # gh-1556 AC3: the errored class is REPORTED (breakdown line
+        # above), never a verdict — its trials produced a result.json, so
+        # the lost-shard guard below (presence-counted) keeps its teeth
+        # only for genuinely missing trials.
 
-    if expected is not None and total_rows < expected:
+    if expected is not None and total_attempted < expected:
         lines.append("")
         lines.append(
-            f"**Incomplete run: {total_rows}/{expected} expected trials attempted"
+            f"**Incomplete run: {total_attempted}/{expected} expected trials attempted"
             " (lost or timed-out shard).**"
         )
-        problems.append(f"only {total_rows}/{expected} expected trials attempted")
+        problems.append(f"only {total_attempted}/{expected} expected trials attempted")
 
     if ledger:
         rate = f"{total_resolved / total_rows:.1%}" if total_rows else "no trials"

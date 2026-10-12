@@ -53,18 +53,15 @@ class HarborSummaryTest(unittest.TestCase):
         }
 
     def test_ut3_split_totals_and_overall_spend(self):
-        # Errored trial + shortfall are the pre-existing completeness
-        # verdict; this test pins the token/cost columns next to them.
+        # gh-1556 AC3: presence counts — all three trials produced a
+        # result.json, so with expected=3 the errored class REPORTS
+        # (breakdown line) but the run is complete: no problems.
         lines, problems = summary.render(self._build(), expected=3)
         out = "\n".join(lines)
-        self.assertEqual(
-            problems,
-            [
-                "1 trial(s) errored before producing a verdict",
-                "only 2/3 expected trials attempted",
-            ],
-        )
+        self.assertEqual(problems, [])
         self.assertIn("Resolution: 1/2 scored trials", out)
+        self.assertIn("Attempted: 3 trials produced a result.json "
+                      "(1 errored before a verdict", out)
         # Only scored, priced trials sum: 310+50 in / 80+10 out; $0.0001 total.
         self.assertIn("Spend: $0.0001 — tokens in/out: 360/90", out)
         self.assertIn("1 trial(s) unpriced", out)
@@ -72,11 +69,15 @@ class HarborSummaryTest(unittest.TestCase):
         self.assertIn("| CPU shards | 1/2 | 1 errored | 360/90 | $0.0001 |", out)
         self.assertIn("| GPU shards | 0/0 | no trials | — | n/a |", out)
 
-    def test_errored_trials_reported_and_fail_step(self):
+    def test_errored_trials_reported_without_failing_step(self):
+        # gh-1556 AC3: the errored class is its own breakdown line, never
+        # a verdict — exit 1 is reserved for genuinely lost trials.
         rows = self._build()
         lines, problems = summary.render(rows)
-        self.assertEqual(problems, ["1 trial(s) errored before producing a verdict"])
-        self.assertIn("TimeoutError ×1", "\n".join(lines))
+        self.assertEqual(problems, [])
+        out = "\n".join(lines)
+        self.assertIn("TimeoutError ×1", out)
+        self.assertIn("Errored trials (harness/infra failure, not scored)", out)
 
     def test_no_jobs_reports_problem(self):
         lines, problems = summary.render({"cpu": [], "gpu": []})
