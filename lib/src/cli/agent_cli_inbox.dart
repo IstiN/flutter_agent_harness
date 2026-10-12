@@ -18,6 +18,15 @@ extension AgentCliMessagingFlow on AgentCli {
   /// input) lands as the user's own words with a dim attribution prefix,
   /// not an agent chat line.
   Future<List<Message>> _mainInboxMessages() async {
+    // gh-1556: deadline crossing notices ride the SAME steering flow, ahead
+    // of the mail — one-shot per crossing per arming (the clock latches),
+    // wrapped in the standard <system-notice> envelope. Unarmed = nothing.
+    final messages = <Message>[
+      for (final notice in _deadline.pollNotices())
+        UserMessage.text(
+          '<system-notice>\n${notice.text}\n</system-notice>',
+        ),
+    ];
     final queued = await _subagentManager.drainMessages(
       _subagentManager.selfId,
     );
@@ -32,14 +41,14 @@ extension AgentCliMessagingFlow on AgentCli {
     // The btw panels: each drained fabric message lands as a bordered
     // panel block at delivery time (issue #277).
     _hubPanelsForInbox(queued);
-    final messages = [
+    messages.addAll([
       for (final message in queued)
         _steeringLine(
           message.fromId,
           message.text,
           userInput: message.isUserInput,
         ),
-    ];
+    ]);
     // Plugin inboxes (e.g. the hub) join the same steering flow, after
     // the fabric mail. A source that throws is skipped — the steering
     // contract is that this closure never throws.
