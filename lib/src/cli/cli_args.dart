@@ -1486,9 +1486,9 @@ const String _importUsage =
 /// The harness names `--harness` accepts (the identical CLI/TUI surface;
 /// kimi/opencode parse but report their pending format spike at run time).
 /// Single source of truth: the import layer's registry.
-final Set<String> importHarnessNames = {
+final Set<String> importHarnessNames = Set.unmodifiable({
   for (final harness in importHarnessRegistry) harness.id,
-};
+});
 
 /// Parses the `import` subcommand operands. Unknown flags and a missing or
 /// conflicting selector are usage errors so a typo never becomes a prompt

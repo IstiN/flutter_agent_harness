@@ -86,7 +86,16 @@ void main() {
 
     await cli.tuiPickImportHarnessForTest('kimi');
     expect(io.out.toString(), contains('pending its format discovery spike'));
-    expect(faRoot.listSync(), isEmpty);
+    // The live boot itself creates the current-folder bucket here; the
+    // contract is that the pending-spike pick writes NOTHING importer-
+    // owned (same marker filter the 'selecting All' test below uses).
+    final repo = JsonlSessionRepo(fs: env, sessionsRoot: faRoot.path);
+    final imported = [
+      for (final session in await repo.list(cwd: project.path))
+        if ((session.metadata?['importedFrom'] as Map?)?['sourceId'] != null)
+          session,
+    ];
+    expect(imported, isEmpty);
 
     io.sendLine('/exit');
     await run;
@@ -150,9 +159,15 @@ void main() {
     ];
     expect(imported, hasLength(2));
 
-    // Re-importing the same rows skips idempotently (E6 in the TUI too).
+    // Re-importing the same rows skips idempotently (E6 in the TUI too);
+    // the skip line carries the FULL sourceId (runner format).
     await cli.tuiPickImportSessionForTest('all');
-    expect(io.out.toString(), contains('skipped 1f9d2a6b (already imported)'));
+    expect(
+      io.out.toString(),
+      contains(
+        'skipped 1f9d2a6b-9c0d-4f34-a111-000000000001 (already imported)',
+      ),
+    );
 
     io.sendLine('/exit');
     await run;

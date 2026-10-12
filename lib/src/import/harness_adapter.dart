@@ -44,10 +44,10 @@ const List<ImportHarnessSpec> importHarnessRegistry = [
 
 /// Harnesses with a pinned format and a shipped adapter (kimi/opencode ship
 /// only after their discovery spike, GOAL AC7/K1).
-final implementedHarnesses = {
+final implementedHarnesses = Set.unmodifiable({
   for (final harness in importHarnessRegistry)
     if (harness.implemented) harness.id,
-};
+});
 
 /// The expected foreign store root for [harness] under [homeDir] — the path
 /// exit 2 names (and the path an unpinned harness's message points at).
