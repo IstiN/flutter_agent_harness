@@ -7,10 +7,10 @@ import 'package:flutter_agent_harness/src/cli/browser_bridge_commands.dart';
 import 'package:test/test.dart';
 
 final class _FakeBridge implements BrowserBridgeHandle {
-  _FakeBridge({this.session, this.status, this.connectError});
+  _FakeBridge({this.session, this.statusResult, this.connectError});
 
   BrowserBridgeSession? session;
-  BrowserBridgeStatus? status;
+  BrowserBridgeStatus? statusResult;
   Object? connectError;
 
   int connectCalls = 0;
@@ -31,18 +31,20 @@ final class _FakeBridge implements BrowserBridgeHandle {
   }
 
   @override
-  Future<BrowserBridgeStatus> status() async => status!;
+  Future<BrowserBridgeStatus> status() async => statusResult!;
 }
 
 void main() {
   group('runBrowserCommand', () {
-    test('a null handle answers the unavailable note for every subcommand',
-        () async {
-      final note = contains('not available on this host');
-      expect(await runBrowserCommand(null, ''), hasLength(1));
-      expect(await runBrowserCommand(null, 'connect'), everyElement(note));
-      expect(await runBrowserCommand(null, 'status'), everyElement(note));
-    });
+    test(
+      'a null handle answers the unavailable note for every subcommand',
+      () async {
+        final note = contains('not available on this host');
+        expect(await runBrowserCommand(null, ''), hasLength(1));
+        expect(await runBrowserCommand(null, 'connect'), everyElement(note));
+        expect(await runBrowserCommand(null, 'status'), everyElement(note));
+      },
+    );
 
     test('an unknown subcommand names it and prints usage', () async {
       final lines = await runBrowserCommand(null, 'bogus');
@@ -68,7 +70,10 @@ void main() {
       );
       final lines = await runBrowserCommand(handle, '');
       expect(lines[0], 'bridge: started on ws://127.0.0.1:8777/ws');
-      expect(lines[1], contains('token (one-time — old tokens are invalid): abc123'));
+      expect(
+        lines[1],
+        contains('token (one-time — old tokens are invalid): abc123'),
+      );
       expect(lines[2], contains('pair as: browser-ext/<agentId>'));
       expect(lines.where((l) => l.startsWith('keys:')), isEmpty);
       expect(handle.seenPort, bridgeDefaultPort);
@@ -83,23 +88,27 @@ void main() {
           alreadyRunning: true,
         ),
       );
-      expect((await runBrowserCommand(handle, 'start')).first,
-          'bridge: already running on ws://127.0.0.1:9000/ws');
+      expect(
+        (await runBrowserCommand(handle, 'start')).first,
+        'bridge: already running on ws://127.0.0.1:9000/ws',
+      );
     });
 
-    test('--copy-keys reaches the handle and adds the copy-on-pair line',
-        () async {
-      final handle = _FakeBridge(
-        session: const BrowserBridgeSession(
-          url: 'ws://127.0.0.1:8777/ws',
-          token: 't',
-          alreadyRunning: false,
-        ),
-      );
-      final lines = await runBrowserCommand(handle, 'connect --copy-keys');
-      expect(handle.seenCopyKeys, isTrue);
-      expect(lines.last, contains('keys: copy-on-pair'));
-    });
+    test(
+      '--copy-keys reaches the handle and adds the copy-on-pair line',
+      () async {
+        final handle = _FakeBridge(
+          session: const BrowserBridgeSession(
+            url: 'ws://127.0.0.1:8777/ws',
+            token: 't',
+            alreadyRunning: false,
+          ),
+        );
+        final lines = await runBrowserCommand(handle, 'connect --copy-keys');
+        expect(handle.seenCopyKeys, isTrue);
+        expect(lines.last, contains('keys: copy-on-pair'));
+      },
+    );
 
     test('an explicit port reaches the handle verbatim', () async {
       final handle = _FakeBridge(
@@ -113,18 +122,20 @@ void main() {
       expect(handle.seenPort, 9999);
     });
 
-    test('a throwing connect surfaces the error as a line, not a crash',
-        () async {
-      final handle = _FakeBridge(connectError: Exception('port busy'));
-      final lines = await runBrowserCommand(handle, 'connect');
-      expect(lines, ['bridge: Exception: port busy']);
-    });
+    test(
+      'a throwing connect surfaces the error as a line, not a crash',
+      () async {
+        final handle = _FakeBridge(connectError: Exception('port busy'));
+        final lines = await runBrowserCommand(handle, 'connect');
+        expect(lines, ['bridge: Exception: port busy']);
+      },
+    );
   });
 
   group('/browser status', () {
     test('not running: says so and lists no extensions', () async {
       final handle = _FakeBridge(
-        status: const BrowserBridgeStatus(
+        statusResult: const BrowserBridgeStatus(
           running: false,
           url: null,
           extensions: [],
@@ -139,7 +150,7 @@ void main() {
 
     test('running: endpoint, extensions, and mailboxes with cwd', () async {
       final handle = _FakeBridge(
-        status: const BrowserBridgeStatus(
+        statusResult: const BrowserBridgeStatus(
           running: true,
           url: 'ws://127.0.0.1:8777/ws',
           extensions: ['ext-a', 'ext-b'],

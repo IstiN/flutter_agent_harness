@@ -37,19 +37,22 @@ void main() {
       );
     });
 
-    test('an unknown key throws ConfigException (a typo never silently '
-        'keeps the default)', () {
-      expect(
-        () => parseOutputSection(loadYaml('streamThnking: true')),
-        throwsA(
-          isA<ConfigException>().having(
-            (e) => e.message,
-            'message',
-            contains('unknown "output" key: streamThnking'),
+    test(
+      'an unknown key throws ConfigException (a typo never silently '
+      'keeps the default)',
+      () {
+        expect(
+          () => parseOutputSection(loadYaml('streamThnking: true')),
+          throwsA(
+            isA<ConfigException>().having(
+              (e) => e.message,
+              'message',
+              contains('unknown "output" key: streamThnking'),
+            ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
 
     test('a non-boolean streamThinking throws ConfigException', () {
       expect(
@@ -67,14 +70,18 @@ void main() {
 
   group('outputStreamThinkingValue', () {
     test('true only when explicitly set to true', () {
-      expect(outputStreamThinkingValue(loadYaml('streamThinking: true')),
-          isTrue);
+      expect(
+        outputStreamThinkingValue(loadYaml('streamThinking: true')),
+        isTrue,
+      );
     });
 
     test('false when the key is absent, false, or the node is not a map', () {
       expect(outputStreamThinkingValue(null), isFalse);
-      expect(outputStreamThinkingValue(loadYaml('streamThinking: false')),
-          isFalse);
+      expect(
+        outputStreamThinkingValue(loadYaml('streamThinking: false')),
+        isFalse,
+      );
       expect(outputStreamThinkingValue('not a map'), isFalse);
     });
   });

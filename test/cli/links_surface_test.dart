@@ -8,25 +8,25 @@ import 'package:test/test.dart';
 
 void main() {
   group('renderAppStoreBlockHtml', () {
-    test('default config renders all three surfaces and the coming-soon slot',
-        () {
-      final html = renderAppStoreBlockHtml(const LinksConfig());
-      expect(html, contains(defaultAppStoreUrl));
-      expect(html, contains(defaultTestFlightUrl));
-      expect(html, contains(defaultSiteUrl));
-      // Android not live: the disabled coming-soon button, twice (button +
-      // release-channel pill).
-      expect(RegExp('coming soon').allMatches(html).length, 2);
-      expect(html, contains('btn-soon'));
-      expect(html, contains('aria-disabled="true"'));
-      expect(html, isNot(contains('Get it on Google Play')));
-    });
+    test(
+      'default config renders all three surfaces and the coming-soon slot',
+      () {
+        final html = renderAppStoreBlockHtml(const LinksConfig());
+        expect(html, contains(defaultAppStoreUrl));
+        expect(html, contains(defaultTestFlightUrl));
+        expect(html, contains(defaultSiteUrl));
+        // Android not live: the disabled coming-soon button, twice (button +
+        // release-channel pill).
+        expect(RegExp('coming soon').allMatches(html).length, 2);
+        expect(html, contains('btn-soon'));
+        expect(html, contains('aria-disabled="true"'));
+        expect(html, isNot(contains('Get it on Google Play')));
+      },
+    );
 
     test('a live play link replaces the coming-soon slot', () {
       const play = 'https://play.google.com/store/apps?id=dev.fa';
-      final html = renderAppStoreBlockHtml(
-        const LinksConfig(play: play),
-      );
+      final html = renderAppStoreBlockHtml(const LinksConfig(play: play));
       expect(html, contains(play));
       expect(html, contains('Get it on Google Play'));
       expect(html, contains('on Google Play'));
@@ -34,16 +34,19 @@ void main() {
       expect(html, isNot(contains('btn-soon')));
     });
 
-    test('config values are attribute-escaped — a hostile link cannot '
-        'break out of the href', () {
-      const hostile = 'https://x.test/a?b=1&c="><script>alert(1)</script>';
-      final html = renderAppStoreBlockHtml(
-        const LinksConfig(appstore: hostile),
-      );
-      expect(html, contains('&amp;'));
-      expect(html, contains('&quot;&gt;&lt;script&gt;'));
-      expect(html, isNot(contains('"><script')));
-    });
+    test(
+      'config values are attribute-escaped — a hostile link cannot '
+      'break out of the href',
+      () {
+        const hostile = 'https://x.test/a?b=1&c="><script>alert(1)</script>';
+        final html = renderAppStoreBlockHtml(
+          const LinksConfig(appstore: hostile),
+        );
+        expect(html, contains('&amp;'));
+        expect(html, contains('&quot;&gt;&lt;script&gt;'));
+        expect(html, isNot(contains('"><script')));
+      },
+    );
   });
 
   group('header badge and hero CTA', () {
@@ -63,8 +66,7 @@ void main() {
   });
 
   group('StoreBannerView', () {
-    test('carries every URL from the config — the widget never hard-codes',
-        () {
+    test('carries every URL from the config (the widget hard-codes none)', () {
       final view = StoreBannerView.from(
         const LinksConfig(
           appstore: 'https://apps.test/a',
@@ -79,8 +81,7 @@ void main() {
       expect(view.siteUrl, 'https://site.test');
     });
 
-    test('android slot: coming soon while play is unset, live label after',
-        () {
+    test('android slot: coming soon while unset, live label after', () {
       final before = StoreBannerView.from(const LinksConfig());
       expect(before.androidComingSoon, isTrue);
       expect(before.androidLabel, 'Android: coming soon');

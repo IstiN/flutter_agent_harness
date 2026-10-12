@@ -20,8 +20,8 @@ void main() {
     });
 
     test('caps at 100 columns with an ellipsis', () {
-      // 4 chars of "k=v," per entry × 30 entries > 100 — the join must be
-      // truncated to exactly 100 chars + '...'.
+      // Entries render as k<N>="<v>" — ~9 chars each over 30 entries, far
+      // past the cap: the join must truncate to exactly 100 chars + '...'.
       final args = {
         for (var i = 0; i < 30; i++) 'k$i': 'v$i',
       };
@@ -33,8 +33,10 @@ void main() {
 
     test('output of exactly 100 chars is not truncated', () {
       final key = 'k';
-      final value = 'v' * 98; // 'k=' + 98 = 100 chars
-      expect(formatArgs({key: value}), 'k=${'v' * 98}');
+      // Rendered as k=" + 96 v's + " — 'k=' (2) + 2 quote chars + 96
+      // values = exactly 100 chars, so the cap must not touch it.
+      final value = 'v' * 96;
+      expect(formatArgs({key: value}), 'k=${'v' * 96}');
     });
 
     test('empty args render as an empty string', () {
@@ -59,8 +61,7 @@ void main() {
       expect(safeJsonEncode(Object()), '[unserializable]');
     });
 
-    test('matches jsonEncode for serializable input (wrapper is lossless)',
-        () {
+    test('matches jsonEncode for serializable input (lossless)', () {
       final value = {'list': [1, 2, 3], 'nested': {'b': true}};
       expect(safeJsonEncode(value), jsonEncode(value));
     });
