@@ -165,3 +165,35 @@ See the on-page FAQ for the same answers with anchors:
 - Machine-readable catalog:
   https://github.com/IstiN/fa_widgets/releases/latest/download/catalog.json
 - Sources and contribution guide: https://github.com/IstiN/fa_widgets
+
+## Blog
+
+- Index: https://fa1.dev/blog/ — every post is a static, no-JavaScript
+  page with BlogPosting structured data, crawlable by agents and search.
+- [We burned 40 billion tokens (~$20k) building a harness. Am I crazy?](https://fa1.dev/blog/2026-09-20-we-burned-40-billion-tokens/):
+  40B tokens, 3 months, zero human-written lines of code — the honest
+  receipt for building >_Fa: the money, the features, and what it
+  actually cost.
+
+## Docs
+
+- [Tool availability](https://fa1.dev/docs/tool-availability/): the
+  `tools:` config section — global/project/session/runtime scopes
+  stacked over the host capability floor; load modes.
+- [Secret redaction](https://fa1.dev/docs/redaction/): the layered
+  `RedactionPipeline` and the exact-value `SecretRedactor` — layers,
+  attach points, configuration.
+- [Migrating from Claude Code, Copilot, or Codex](https://fa1.dev/docs/migrating-from-claude-copilot-codex/):
+  config, skills, agents, hooks, and command surfaces mapped onto their
+  Fa equivalents.
+- [HEP — the Harness Event Protocol](https://fa1.dev/docs/hep/): strict
+  JSONL event frames on stdout for server-side supervisors of headless
+  `fa` runs.
+- [DAP — the device access protocol](https://fa1.dev/docs/dap/): the
+  local hub lifecycle, enrollment, and how Fa instances pair through it.
+
+## Full text for LLM agents
+
+- https://fa1.dev/llms-full.txt — the fact sheet above plus every blog
+  post and the docs pages in full, each section headed by its canonical
+  URL. For agents with large context windows.
