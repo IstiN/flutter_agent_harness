@@ -540,8 +540,20 @@ jobs:
       # (gh-1172), the App's push can (the same mechanism ci.yml's release
       # job uses to cut tags). Job-scoped, expires with the job; this job's
       # own GITHUB_TOKEN stays read-scoped.
+      # Skip, never fail, when the App is not configured (forks, rotation
+      # gap): the check step then runs tokenless and the script's
+      # manual-re-push alarm fires exactly as before this change.
+      # Access scope: owner/repositories default to the CURRENT repository
+      # at this action pin, so the minted token cannot leave this repo. The
+      # `permissions` ceiling input used by ci.yml's release job is NOT
+      # copied deliberately — this pin (v3.2.0, actions/logs confirm)
+      # ignores it with an "Unexpected input(s)" warning; the step's own
+      # GITHUB_TOKEN is the enforceable least-privilege surface here.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
+        if: secrets.RELEASE_APP_ID != '' && secrets.RELEASE_APP_PRIVATE_KEY != ''
+        permissions:
+          contents: none
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
@@ -551,8 +563,10 @@ jobs:
         # gh-1192: the classification (up-to-date / release-in-flight /
         # recovered + the unchanged alarms) lives in the extracted script so
         # it is shell-harness testable (test/release_flow_race_test.dart).
+        # RELEASE_APP_TOKEN is empty when the mint above skipped (App not
+        # configured) — the script then fails over to the manual-re-push
+        # alarm instead of attempting a re-arm.
         env:
-          GH_TOKEN: ${{ github.token }}
           RELEASE_APP_TOKEN: ${{ steps.app-token.outputs.token }}
         run: bash scripts/verify_pubdev_release.sh
 

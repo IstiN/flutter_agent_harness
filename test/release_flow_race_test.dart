@@ -790,8 +790,10 @@ void main() {
           r.outputs['run_url'],
           'https://github.com/OWNER/REPO/actions/runs/4242',
         );
-        // The re-arm must NEVER move the commit: only the tagger date moves
-        // (the seeded tag was backdated 2h; the re-cut one reads as now).
+        // The re-arm must NEVER move the commit: only the tagger date moves.
+        // Two directions pinned: the fresh object is cut ~now, and the
+        // seeded 2h-backdated object is gone (a no-op same-oid push would
+        // have left the backdate in place — not a re-arm).
         final taggerDate = int.parse(
           _gitOut([
             'for-each-ref',
@@ -799,15 +801,20 @@ void main() {
             '--format=%(creatordate:unix)',
           ], cwd: r.origin),
         );
-        final seeded = DateTime.now().toUtc().subtract(const Duration(hours: 2));
         final actual = DateTime.fromMillisecondsSinceEpoch(
           taggerDate * 1000,
           isUtc: true,
         );
+        final now = DateTime.now().toUtc();
         expect(
-          actual.difference(seeded).inMinutes.abs(),
+          now.difference(actual).inMinutes.abs(),
           lessThan(10),
-          reason: 'the re-arm re-cut the tag at the SAME commit (fresh date)',
+          reason: 'the re-arm re-cut the tag object (tagger date ~now)',
+        );
+        expect(
+          actual.isBefore(now.subtract(const Duration(minutes: 90))),
+          isFalse,
+          reason: 'the seeded 2h-backdated tag object must have been replaced',
         );
       },
     );
@@ -864,8 +871,8 @@ void main() {
       );
     });
 
-    test('re-arm pushed but the fresh run is not registered yet -> alarm '
-        '(the next daily re-verifies)', () {
+    test('re-arm pushed but the fresh run is not registered yet -> neutral '
+        'skip (the next daily re-verifies)', () {
       final r = runVerify(
         'rearm-not-registered',
         tagAge: const Duration(hours: 2),
@@ -874,13 +881,23 @@ void main() {
         rearmPushTo: 'origin',
         extraEnv: const {'RELEASE_APP_TOKEN': 'stub-token'},
       );
-      expect(r.exitCode, isNot(0), reason: r.output);
-      expect(r.errored, isTrue);
-      expect(r.output, contains('no run registered past the 900s grace window'));
+      expect(r.exitCode, 0, reason: r.output);
+      expect(r.inFlight, isTrue, reason: r.output);
+      expect(
+        r.errored,
+        isFalse,
+        reason: 'an unregistered fresh run is unobserved, never failed (#1370)',
+      );
+      expect(r.output, contains('was re-armed by this leg'));
+      expect(
+        r.outputs['run_url'] ?? '',
+        isEmpty,
+        reason: 'no run exists to link yet',
+      );
       expect(
         r.ghLog.where((l) => l.contains('--branch v0.1.497')),
-        hasLength(3),
-        reason: 'exactly one re-read after the re-arm (E4 doctrine)',
+        hasLength(8),
+        reason: 'initial + grace re-read + 6 registration reads (default)',
       );
     });
   });

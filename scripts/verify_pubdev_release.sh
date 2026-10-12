@@ -116,14 +116,21 @@ fi
 
 # pub.dev API reads lag minutes behind a fresh publish (CDN replicas) — a
 # single stale read must not send us into recovery. Three spaced reads, take
-# the newest by version.
+# the newest by version. Fails (non-zero) when the API is unreachable —
+# callers decide whether that is fatal.
+read_published_version() {
+  local acc="" v attempt
+  for attempt in 1 2 3; do
+    v=$(curl -fsS --retry 3 \
+      https://pub.dev/api/packages/flutter_agent_harness | jq -r '.latest.version')
+    acc=$(printf '%s\n%s\n' "$acc" "$v" | sed '/^$/d' | sort -V | tail -1)
+    [ "$attempt" = 3 ] || sleep "$read_sleep"
+  done
+  printf '%s' "$acc"
+}
+
 published=""
-for attempt in 1 2 3; do
-  v=$(curl -fsS --retry 3 \
-    https://pub.dev/api/packages/flutter_agent_harness | jq -r '.latest.version')
-  published=$(printf '%s\n%s\n' "$published" "$v" | sed '/^$/d' | sort -V | tail -1)
-  [ "$attempt" = 3 ] || sleep "$read_sleep"
-done
+published=$(read_published_version)
 emit "published=$published"
 echo "pubspec=$pubspec published=$published"
 newest=$(printf '%s\n%s\n' "$pubspec" "$published" | sort -V | tail -1)
@@ -249,17 +256,32 @@ if [ -z "$tag_run" ]; then
   # push twin never fired, and a release-API tag (server-side creation)
   # never fires a push event at all. Re-arm before alarming (see above).
   if rearm_tag; then
-    sleep "$read_sleep"
-    runs_json=$(fetch_runs)
-    tag_run=$(push_run_of "$runs_json")
+    # A fresh tag-push run takes tens of seconds to register — one 10s
+    # re-read would alarm (and self-file a «re-push the tag» issue!)
+    # exactly when the self-heal worked. Bounded registration wait instead;
+    # past it the outcome is UNOBSERVED, never failed (#1370 doctrine):
+    # neutral skip — the next daily re-verifies the run the re-arm left
+    # behind (E4: a completed fresh run verifies normally).
+    registration_reads="${REARM_REG_READS:-6}"
+    attempt=1
+    while [ "$attempt" -le "$registration_reads" ]; do
+      sleep "$read_sleep"
+      runs_json=$(fetch_runs)
+      tag_run=$(push_run_of "$runs_json")
+      [ -n "$tag_run" ] && break
+      attempt=$(( attempt + 1 ))
+    done
     if [ -n "$tag_run" ]; then
       echo "::notice::$tag re-armed — its fresh push ci.yml run registered, continuing with it"
+    fi
+    if [ -z "$tag_run" ]; then
+      in_flight "$tag was re-armed by this leg but its fresh push run has not registered yet — outcome unobserved, the next daily re-verifies"
     fi
   fi
   if [ -z "$tag_run" ]; then
     # AC2 — no push run (e.g. a GITHUB_TOKEN push cannot cascade) and the
-    # re-arm did not produce one; the next daily re-verifies the fresh run
-    # a successful re-arm left behind.
+    # re-arm could not run or push (no token, push rejected): the manual
+    # alarm, text unchanged.
     never_triggered "$reason"
   fi
 fi
@@ -299,15 +321,12 @@ if [ "$conclusion" = "success" ]; then
   # The run may have completed DURING this leg (a re-armed tag, or the E4
   # operator re-push): its publish job verifies pub.dev itself before going
   # green, so the start-of-leg read is stale — re-read before any verdict
-  # (gh-1561).
-  fresh=""
-  for attempt in 1 2 3; do
-    v=$(curl -fsS --retry 3 \
-      https://pub.dev/api/packages/flutter_agent_harness | jq -r '.latest.version') || v=""
-    fresh=$(printf '%s\n%s\n' "$fresh" "$v" | sed '/^$/d' | sort -V | tail -1)
-    [ "$fresh" = "$pubspec" ] && break
-    [ "$attempt" = 3 ] || sleep "$read_sleep"
-  done
+  # (gh-1561). A blipping API yields an empty read: outcome UNOBSERVED —
+  # neutral skip, never a false green and never a false «did not upload».
+  fresh=$(read_published_version)
+  if [ -z "$fresh" ]; then
+    in_flight "the $tag push run succeeded but the pub.dev API is unreachable — outcome unobserved, the next daily re-verifies"
+  fi
   if [ "$fresh" = "$pubspec" ]; then
     emit "published=$fresh"
     emit "status=up-to-date"
