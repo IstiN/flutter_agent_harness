@@ -2536,5 +2536,15 @@
       "total": 384714,
       "model": "glm-5.3-flash"
     }
+  ],
+  "pr-1571": [
+    {
+      "leg": "rework",
+      "at": "2026-10-12T22:38:21Z",
+      "prompt": 73972,
+      "completion": 15393,
+      "total": 89365,
+      "model": "glm-5.3-flash"
+    }
   ]
 }
