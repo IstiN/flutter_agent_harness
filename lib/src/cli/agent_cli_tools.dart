@@ -160,6 +160,7 @@ extension AgentCliTools on AgentCli {
           : const ToolCapability.absent('no mcp: config'),
       'memory': on,
       'schedule_message': on,
+      'session_search': on,
       'ask': on,
       'request_secret': on,
       'task': on,
