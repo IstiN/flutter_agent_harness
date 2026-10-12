@@ -195,6 +195,7 @@ class Agent {
     this.beforeToolCall,
     this.afterToolCall,
     this.transformContext,
+    this.budgetLineProvider,
     this.prepareNextTurn,
     this.externalSteeringSource,
     this.externalSteeringProbe,
@@ -320,6 +321,13 @@ class Agent {
   /// Rewrites the message list sent to the provider before each call.
   /// See [TransformContextHook].
   TransformContextHook? transformContext;
+
+  /// gh-1556: the session deadline's per-turn budget line provider
+  /// (`time-left: 5min`), threaded into every [AgentLoopConfig] the agent
+  /// builds. Consulted live before each provider call; null/absent keeps
+  /// the request payload byte-for-byte. Mutable like [transformContext]:
+  /// hosts attach it after construction.
+  String? Function()? budgetLineProvider;
 
   /// Adjusts context/model between turns. See [PrepareNextTurnHook].
   PrepareNextTurnHook? prepareNextTurn;
@@ -604,6 +612,7 @@ class Agent {
       beforeToolCall: beforeToolCall,
       afterToolCall: afterToolCall,
       transformContext: transformContext,
+      budgetLineProvider: budgetLineProvider,
       prepareNextTurn: prepareNextTurn == null
           ? null
           : (context) => prepareNextTurn?.call(context),

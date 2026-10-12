@@ -424,6 +424,7 @@ final class AgentLoopConfig {
     this.finalizeGate = false,
     this.operativeSkills = const [],
     this.reportedOrphanKeys,
+    this.budgetLineProvider,
   });
 
   /// The model to call each turn.
@@ -526,6 +527,13 @@ final class AgentLoopConfig {
   /// requests are byte-identical to the pre-pin loop (F4 compat guard).
   final List<Skill> operativeSkills;
 
+  /// gh-1556: the session deadline's per-turn budget line for the LLM
+  /// request context (e.g. `time-left: 5min`). Consulted LIVE before
+  /// every provider call, so the line refreshes per turn; returning null
+  /// (deadline unarmed/cleared) leaves the payload byte-for-byte
+  /// untouched. Payload-only — the transcript is never modified.
+  final String? Function()? budgetLineProvider;
+
   /// gh-1449: the session's one-shot latch of already-reported orphan
   /// results ([orphanReportKey]s). The loop adds every key it reports in
   /// [ToolPairingRepairReport.notedOrphanKeys] back into the set, so the
@@ -558,6 +566,7 @@ final class AgentLoopConfig {
       finalizeGate: finalizeGate,
       operativeSkills: operativeSkills,
       reportedOrphanKeys: reportedOrphanKeys,
+      budgetLineProvider: budgetLineProvider,
     );
   }
 }
@@ -1814,6 +1823,19 @@ Future<(Context, ToolPairingRepairReport)> _buildRequestContext(
     requestContext = Context(
       systemPrompt: requestContext.systemPrompt,
       messages: repaired.messages,
+      tools: requestContext.tools,
+    );
+  }
+  // gh-1556: an armed session deadline rides every request payload as a
+  // trailing `time-left:` line — a standalone user message, so it can
+  // never break a call/result run (same seat as the misuse note below).
+  // Payload-only: the transcript is never touched, and a null provider
+  // result (deadline unset/cleared) keeps the request byte-for-byte.
+  final budgetLine = config.budgetLineProvider?.call();
+  if (budgetLine != null) {
+    requestContext = Context(
+      systemPrompt: requestContext.systemPrompt,
+      messages: [...requestContext.messages, UserMessage.text(budgetLine)],
       tools: requestContext.tools,
     );
   }
