@@ -2265,6 +2265,12 @@ jobs:
 
       - uses: ./.github/actions/flutter-pub-get
 
+      # gh-1468: pre-seed the flutter_gemma LiteRT-LM Android cache so the
+      # build hook never downloads litertlm-android_arm64.tar.gz mid-build
+      # — one release-asset CDN 500 red'd this leg and the aggregate
+      # Quality gate. Same hardening as the macOS companion-dylibs step.
+      - uses: ./.github/actions/flutter-gemma-android-seed
+
       - name: flutter build apk (debug)
         run: cd flutter_app && flutter build apk --debug --flavor store
 
