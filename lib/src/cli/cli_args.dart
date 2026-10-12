@@ -16,6 +16,7 @@ import '../compaction/compaction_engine.dart';
 import '../config/config_service.dart';
 import '../exceptions.dart';
 import '../redact/redaction_types.dart';
+import '../session_deadline.dart';
 import '../tools/availability.dart';
 
 /// The provider kinds accepted by `--provider`. Static — the set of every
@@ -112,6 +113,8 @@ final class CliArgs extends CliArgsResult {
     this.noFormat = false,
     this.streamThinking = false,
     this.noStreamThinking = false,
+    this.timer,
+    this.deadline,
   }) : super._();
 
   /// `--model <id>`.
@@ -293,6 +296,18 @@ final class CliArgs extends CliArgsResult {
   /// default since gh-1433) it restores legacy thinking silence for the
   /// run. Cannot combine with `--stream-thinking`.
   final bool noStreamThinking;
+
+  /// `--timer <duration>` (gh-1556): arm the session deadline
+  /// `duration` from boot (`25m`, `90s`, `1h30m`). Sets the SAME single
+  /// session clock the host env var and `/timer` write; wins over the
+  /// `FA_DEADLINE_EPOCH_MS` env. Alias of [deadline].
+  final String? timer;
+
+  /// `--deadline <duration|epoch-ms>` (gh-1556): arm the session deadline
+  /// from a duration (`25m`, `90s`, `1h30m`) or an absolute epoch-ms
+  /// timestamp. Sets the SAME single session clock the host env var and
+  /// `/timer` write; wins over the env. Alias of [timer].
+  final String? deadline;
 
   /// Whether this invocation runs a single headless prompt instead of the
   /// interactive REPL.
@@ -1033,6 +1048,8 @@ const _valueFlags = <String, _ValueFlag>{
   '--output': ('--output', _setOutput),
   '--output-format': ('--output-format', _setOutputFormat),
   '--attach': ('--attach', _addAttachment),
+  '--timer': ('--timer', _setTimer),
+  '--deadline': ('--deadline', _setDeadline),
 };
 
 void _setOutput(_CliArgValues v, String value) {
@@ -1139,6 +1156,21 @@ void _setCompactionEngine(_CliArgValues v, String value) {
 void _setLogFile(_CliArgValues v, String value) => v.logFile = value;
 void _setPrompt(_CliArgValues v, String value) => v.prompt = value;
 void _setPromptFile(_CliArgValues v, String value) => v.promptFile = value;
+void _setTimer(_CliArgValues v, String value) => v.timer = value;
+void _setDeadline(_CliArgValues v, String value) => v.deadline = value;
+
+/// The `--timer`/`--deadline` shape check (gh-1556): the flag value is the
+/// user's own words, so a malformed spec fails HERE as a usage error —
+/// never booting with a silently wrong deadline. (Past-epoch checks ride
+/// the application-time clock in `SessionDeadline.setFromSpec`.)
+void _validateDeadlineFlag(String? flag, String canonical) {
+  if (flag == null) return;
+  try {
+    parseDeadlineSpec(flag);
+  } on FormatException catch (error) {
+    throw CliArgsException('invalid $canonical value: ${error.message}');
+  }
+}
 
 /// Accumulates flag values while [parseCliArgs] walks the argument list,
 /// then validates the combinations and builds the [CliArgs].
@@ -1173,6 +1205,8 @@ final class _CliArgValues {
   RedactionConfig? redact;
   String? prompt;
   String? promptFile;
+  String? timer;
+  String? deadline;
   String? logFile;
   String? output;
   String? outputFormat;
@@ -1207,6 +1241,7 @@ final class _CliArgValues {
         'cannot combine --stream-thinking and --no-stream-thinking',
       );
     }
+    _validateDeadlineFlags();
     _validateBackendModeFlags();
     return CliArgs(
       model: model,
@@ -1243,8 +1278,26 @@ final class _CliArgValues {
       noFormat: noFormat,
       streamThinking: streamThinking,
       noStreamThinking: noStreamThinking,
+      timer: timer,
+      deadline: deadline,
       attachments: List.unmodifiable(attachments),
     );
+  }
+
+  /// gh-1556 deadline-flag validation, split out of [finish] to keep its
+  /// complexity under the repo's CRAP gate (same rationale as
+  /// [_validateBackendModeFlags]): `--timer` and `--deadline` set the
+  /// same clock, so they cannot combine; each spec's shape is validated
+  /// here (the past-epoch check rides the application-time clock in
+  /// `SessionDeadline.setFromSpec`).
+  void _validateDeadlineFlags() {
+    if (timer != null && deadline != null) {
+      throw const CliArgsException(
+        'cannot combine --timer and --deadline (they set the same clock)',
+      );
+    }
+    _validateDeadlineFlag(timer, '--timer');
+    _validateDeadlineFlag(deadline, '--deadline');
   }
 
   /// Backend agent mode flag validation (issue #155), split out of
