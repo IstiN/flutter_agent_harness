@@ -33,7 +33,9 @@ Future<int> _runImportCommand(ImportCliCommand command, CliArgs args) async {
     limits: const ImportLimits(),
     homeDir: home,
     tempDir: Directory.systemTemp.path,
-    onLine: io.writeln,
+    // AC11: ids/counts are the command's PRODUCT — stdout, never the
+    // diagnostics stream (in headless mode `writeln` is stderr).
+    onLine: (line) => io.write('$line\n'),
   );
   return result.exitCode;
 }

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_agent_harness/io.dart';
+import 'package:flutter_agent_harness/src/context.dart';
 import 'package:flutter_agent_harness/src/import/claude_adapter.dart';
 import 'package:flutter_agent_harness/src/import/foreign_session.dart';
 import 'package:flutter_agent_harness/src/import/import_mapper.dart';

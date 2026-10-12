@@ -398,7 +398,12 @@ extension AgentCliPickers on AgentCli {
     final harness = _importHarness;
     final adapter = harness == null ? null : adapterFor(harness);
     final repo = _repo;
-    if (adapter == null || repo is! JsonlSessionRepo) return;
+    if (adapter == null || repo is! JsonlSessionRepo) {
+      // A non-Jsonl store cannot import — observable dead end, never a
+      // silent no-op after the user picked a harness and a session.
+      io.writeln('import: this session store does not support import');
+      return;
+    }
     final selected = key == 'all'
         ? _importSummaries
         : _importSummaries.where((s) => s.sourceId == key.substring(2));

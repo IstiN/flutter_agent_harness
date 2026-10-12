@@ -26,20 +26,22 @@ void main() {
     'test/import/fixtures/$name',
   ).readAsStringSync().replaceAll('__CWD__', project.path);
 
-  String get ompRoot => '${home.path}/.omp/agent/sessions';
+  // Local getters are invalid Dart — these are local functions (they
+  // close over the `late` temp dirs that setUp assigns).
+  String ompRoot() => '${home.path}/.omp/agent/sessions';
 
-  String get ompBucket =>
-      '$ompRoot/--${project.path.replaceFirst('/', '').replaceAll('/', '-')}--';
+  String ompBucket() =>
+      '${ompRoot()}/--${project.path.replaceFirst('/', '').replaceAll('/', '-')}--';
 
   Future<void> writeOmpStore(Map<String, String> files) async {
-    Directory(ompBucket).createSync(recursive: true);
+    Directory(ompBucket()).createSync(recursive: true);
     for (final entry in files.entries) {
-      File('${ompBucket.path}/${entry.key}').writeAsStringSync(entry.value);
+      File('${ompBucket()}/${entry.key}').writeAsStringSync(entry.value);
     }
   }
 
-  Future<ImportResult> run({
-    required ImportSelector selector,
+  Future<ImportResult> run(
+    ImportSelector selector, {
     ImportLimits limits = const ImportLimits(),
     String harness = 'omp',
   }) {
@@ -128,11 +130,11 @@ void main() {
   test('E7: an absent store exits 2 naming the expected path', () async {
     final result = await run(const ImportSelector.all());
     expect(result.exitCode, 2);
-    expect(lines.single, contains(ompRoot));
+    expect(lines.single, contains(ompRoot()));
   });
 
   test('E8: a store without current-folder sessions exits 3', () async {
-    Directory(ompRoot).createSync(recursive: true);
+    Directory(ompRoot()).createSync(recursive: true);
     final result = await run(const ImportSelector.all());
     expect(result.exitCode, 3);
   });
@@ -174,8 +176,8 @@ void main() {
       () async {
     final linesText = fixture('omp_legacy.jsonl').split('\n');
     linesText.insert(2, '{this is not json');
-    Directory(ompBucket).createSync(recursive: true);
-    File('$ompBucket/corrupt.jsonl').writeAsStringSync(linesText.join('\n'));
+    Directory(ompBucket()).createSync(recursive: true);
+    File('${ompBucket()}/corrupt.jsonl').writeAsStringSync(linesText.join('\n'));
     final result = await run(const ImportSelector.all());
     expect(result.exitCode, 0);
     expect(lines.single, matches(RegExp(r'skipped [1-9]+\)')));
@@ -233,7 +235,7 @@ void main() {
       'b.jsonl': fixture('omp_legacy.jsonl'),
     });
     final foreignBefore = <String, String>{
-      for (final file in Directory(ompBucket).listSync().whereType<File>())
+      for (final file in Directory(ompBucket()).listSync().whereType<File>())
         file.path: file.readAsStringSync(),
     };
     final homeBefore = _treeSnapshot(home);

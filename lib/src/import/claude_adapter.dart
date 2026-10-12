@@ -132,34 +132,45 @@ final class ClaudeAdapter implements HarnessAdapter {
           (json['type'] == 'user' || json['type'] == 'assistant') &&
           message is Map<String, dynamic>) {
         final rawContent = message['content'];
+        final toolResults = <Map<String, dynamic>>[];
+        final parentBlocks = <dynamic>[];
         if (rawContent is List) {
           // Claude pairs tool results as `tool_result` blocks inside the
           // following user message; lift each into its own toolResult
-          // record so pairing semantics match the omp shape.
+          // record so pairing semantics match the omp shape. Lifted
+          // blocks are partitioned OUT of the parent parse —
+          // parseForeignContent counts every tool_result it sees as a
+          // skip, and a block that survives as its own record is not a
+          // dropped one.
           for (final block in rawContent) {
             if (block is Map<String, dynamic> &&
                 block['type'] == 'tool_result') {
-              records.add(
-                ForeignMessage(
-                  lineNumber: number,
-                  role: 'toolResult',
-                  contents: parseForeignContent(
-                    block['content'],
-                    () => skippedBlocks++,
-                  ),
-                  rawMessage: block,
-                  toolCallId: block['tool_use_id'] as String?,
-                ),
-              );
+              toolResults.add(block);
+            } else {
+              parentBlocks.add(block);
             }
           }
+        }
+        for (final block in toolResults) {
+          records.add(
+            ForeignMessage(
+              lineNumber: number,
+              role: 'toolResult',
+              contents: parseForeignContent(
+                block['content'],
+                () => skippedBlocks++,
+              ),
+              rawMessage: block,
+              toolCallId: block['tool_use_id'] as String?,
+            ),
+          );
         }
         records.add(
           ForeignMessage(
             lineNumber: number,
             role: message['role'] as String? ?? json['type'] as String? ?? '',
             contents: parseForeignContent(
-              message['content'],
+              rawContent is List ? parentBlocks : rawContent,
               () => skippedBlocks++,
             ),
             rawMessage: message,

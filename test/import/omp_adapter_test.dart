@@ -81,7 +81,7 @@ void main() {
 
   test('a header cwd that does not match the launch folder is skipped', () async {
     final bucket = await writeBucket({});
-    File('${bucket.path}/elsewhere.jsonl').writeAsStringSync(
+    File('$bucket/elsewhere.jsonl').writeAsStringSync(
       '{"type":"session","version":3,"id":"x1","timestamp":'
       '"2026-01-01T00:00:00.000Z","cwd":"${project.path}-other"}\n'
       '{"type":"message","id":"x2","parentId":"x1","timestamp":'
@@ -213,7 +213,7 @@ void main() {
     final good =
         '{"type":"session","version":3,"id":"corrupt-1","timestamp":'
         '"2026-01-01T00:00:00.000Z","cwd":"${project.path}"}';
-    File('${bucket.path}/corrupt.jsonl').writeAsStringSync(
+    File('$bucket/corrupt.jsonl').writeAsStringSync(
       '$good\n'
       '{not json at all\n'
       '{"type":"message","id":"c1","parentId":null,"timestamp":'
@@ -242,7 +242,7 @@ void main() {
       'session.jsonl': fixture('omp_legacy.jsonl'),
     });
     // The sibling artifacts dir: full sidecar sessions + a dead marker.
-    final artifacts = Directory('${bucket.path}/20260101T000000-legacy-0001');
+    final artifacts = Directory('$bucket/20260101T000000-legacy-0001');
     artifacts.createSync();
     File('${artifacts.path}/out-1.jsonl').writeAsStringSync('{}\n');
     File('${artifacts.path}/out-1.jsonl.tombstone').writeAsStringSync('');
@@ -280,7 +280,7 @@ void main() {
       throwsA(isA<ForeignFileError>()),
     );
     // The refusal never touched the store file.
-    expect(File('${bucket.path}/big.jsonl').readAsStringSync(), isNotEmpty);
+    expect(File('$bucket/big.jsonl').readAsStringSync(), isNotEmpty);
   });
 
   test('a headerless file refuses with a named error', () async {

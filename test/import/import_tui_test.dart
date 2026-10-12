@@ -23,7 +23,9 @@ void main() {
     'test/import/fixtures/$name',
   ).readAsStringSync().replaceAll('__CWD__', project.path);
 
-  String get ompBucket =>
+  // Local getters are invalid Dart — a local function closing over the
+  // `late` temp dirs that setUp assigns.
+  String ompBucket() =>
       '${home.path}/.omp/agent/sessions/--${project.path
           .replaceFirst('/', '')
           .replaceAll('/', '-')}--';
@@ -32,9 +34,13 @@ void main() {
     home = Directory.systemTemp.createTempSync('fa_import_tui_home');
     project = Directory.systemTemp.createTempSync('fa_import_tui_proj');
     faRoot = Directory.systemTemp.createTempSync('fa_import_tui_fa');
-    Directory(ompBucket).createSync(recursive: true);
-    File('$ompBucket/modern.jsonl').writeAsStringSync(fixture('omp_modern.jsonl'));
-    File('$ompBucket/legacy.jsonl').writeAsStringSync(fixture('omp_legacy.jsonl'));
+    Directory(ompBucket()).createSync(recursive: true);
+    File('${ompBucket()}/modern.jsonl').writeAsStringSync(
+      fixture('omp_modern.jsonl'),
+    );
+    File('${ompBucket()}/legacy.jsonl').writeAsStringSync(
+      fixture('omp_legacy.jsonl'),
+    );
     env = LocalExecutionEnv(cwd: project.path);
     io = FakeCliIO();
   });

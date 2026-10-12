@@ -107,7 +107,7 @@ final class MappedImport {
 MappedImport mapForeignSession(ForeignParseResult parse, String harness) {
   final prefix = 'import.$harness';
   final items = <MappedItem>[];
-  var skippedRecords = parse.skippedRecords;
+  final skippedRecords = parse.skippedRecords;
   final droppedFields = <String, int>{};
   void dropField(String field) =>
       droppedFields[field] = (droppedFields[field] ?? 0) + 1;

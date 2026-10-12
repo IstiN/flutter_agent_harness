@@ -56,7 +56,11 @@ final class OmpAdapter implements HarnessAdapter {
       }
       for (final (path, size, mtimeMs)
           in await listSessionFiles(fs, entry.path)) {
-        final header = await _readHeader(fs, path);
+        final header = await _readHeader(
+          fs,
+          path,
+          maxFileBytes: limits.maxFileBytes,
+        );
         if (header == null) continue;
         if (!headerCwdMatches(header.cwd, cwd)) continue;
         summaries.add(
@@ -177,12 +181,21 @@ final class OmpAdapter implements HarnessAdapter {
   }
 
   Future<({String id, String cwd, String title, String titleSource})?>
-  _readHeader(FileSystem fs, String path) async {
+  _readHeader(
+    FileSystem fs,
+    String path, {
+    required int maxFileBytes,
+  }) async {
     // The header sits in the first bytes (optional 256-byte title slot,
     // then the header line): a bounded prefix read keeps discovery cheap
     // on marathon files and lets oversized files still be DISCOVERED —
     // the size-cap refusal happens at read time, as a counted warning.
-    final prefix = await _readPrefix(fs, path, 4096);
+    final prefix = await _readPrefix(
+      fs,
+      path,
+      4096,
+      maxFileBytes: limits.maxFileBytes,
+    );
     if (prefix == null) return null;
     var slotTitle = ('', '');
     for (final line in const LineSplitter().convert(prefix).take(4)) {
@@ -213,15 +226,26 @@ final class OmpAdapter implements HarnessAdapter {
     return null;
   }
 
-  /// The first [bytes] of [path] as text, or null when unreadable. Range
-  /// reads on ranged backends; a whole-file read fallback elsewhere.
-  Future<String?> _readPrefix(FileSystem fs, String path, int bytes) async {
+  /// The first [bytes] of [path] as text, or null when unreadable or
+  /// over [maxFileBytes]. Range reads on ranged backends; elsewhere a
+  /// whole-file read fallback that consults the size gate FIRST, so no
+  /// backend ever pulls an oversized file into memory during discovery.
+  Future<String?> _readPrefix(
+    FileSystem fs,
+    String path,
+    int bytes, {
+    required int maxFileBytes,
+  }) async {
     if (fs is RangedReadFileSystem) {
       final ranged = fs as RangedReadFileSystem;
       final read = await ranged.readRange(path, 0, bytes);
       if (read.isErr) return null;
       return utf8.decode(read.valueOrNull ?? const [], allowMalformed: true);
     }
+    final info = await fs.fileInfo(path);
+    final file = info.valueOrNull;
+    if (info.isErr || file == null || file.kind != FileKind.file) return null;
+    if (file.size > maxFileBytes) return null;
     final read = await fs.readTextFile(path);
     if (read.isErr) return null;
     final text = read.valueOrNull!;
@@ -381,7 +405,10 @@ final class OmpAdapter implements HarnessAdapter {
     final hash = blobRef.startsWith('blob:sha256:')
         ? blobRef.substring('blob:sha256:'.length)
         : null;
-    if (hash == null || hash.isEmpty) {
+    // The blob dir is content-addressed: only a real sha256 hex digest
+    // may reach a path — a crafted `blob:sha256:../…` ref must never
+    // escape the blob dir (path traversal).
+    if (hash == null || !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(hash)) {
       return ForeignImage.skipped('malformed blob ref: $blobRef');
     }
     final blobPath = '$homeDir/.omp/agent/blobs/$hash';

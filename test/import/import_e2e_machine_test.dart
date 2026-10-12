@@ -25,6 +25,9 @@ void main() {
         'machine-gated: requires FA_IMPORT_E2E=1 and a real '
         '~/.omp/agent/sessions store',
       );
+      // markTestSkipped does NOT halt the body — return so the real-store
+      // discovery/read never runs on a machine without the gate.
+      return;
     }
     final env = LocalExecutionEnv(cwd: Directory.current.path);
     final adapter = OmpAdapter();

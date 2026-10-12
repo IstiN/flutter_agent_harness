@@ -235,9 +235,9 @@ Future<(String, String)> _importOne({
         await session.appendModelChange(provider: provider, modelId: modelId);
       case PlannedThinkingLevel(:final level):
         await session.appendThinkingLevelChange(level);
-      case PlannedCompaction(:final summary):
+      case PlannedCompaction(summary: final compactionSummary):
         await session.appendCompaction(
-          summary: summary,
+          summary: compactionSummary,
           firstKeptEntryId: '',
           tokensBefore: 0,
         );
