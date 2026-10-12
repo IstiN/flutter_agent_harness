@@ -37,6 +37,7 @@ import 'package:yaml/yaml.dart';
 
 import '../approval/approval.dart' show kAutopilotLabel;
 import '../exceptions.dart';
+import '../session_deadline.dart' show formatTimeLeft;
 import '../trajectory/formatters.dart' show formatTokens;
 import 'tui_text_width.dart';
 import 'tui_theme.dart';
@@ -155,6 +156,12 @@ final class StatusLineSnapshot {
   /// cadence (idle wall clock excluded).
   final Duration elapsed;
 
+  /// gh-1556: LIVE remaining deadline budget in ms for the `timer`
+  /// countdown chip; negative hides the segment. The host recomputes this
+  /// from its `SessionDeadline` per frame tick — the chip is a pure
+  /// projection of the one clock, never a second timer source.
+  final int deadlineRemainingMs;
+
   /// Wall clock for the `time` segment. Injected (never read from the
   /// system here) so renders stay pure and testable on a virtual clock.
   final DateTime? now;
@@ -202,6 +209,7 @@ final class StatusLineSnapshot {
     this.sessionId,
     this.subagents = 0,
     this.elapsed = Duration.zero,
+    this.deadlineRemainingMs = -1,
     this.now,
     this.hostname,
     this.idle = true,
@@ -483,6 +491,9 @@ kStatusLinePresets = {
       'pr',
       'context_pct',
       'cost',
+      // gh-1556: the deadline countdown chip — hidden until armed, so the
+      // unarmed band renders byte-identically.
+      'timer',
     ],
     right: ['session_name'],
     separator: StatusLineSeparatorStyle.powerlineThin,
@@ -596,11 +607,12 @@ const List<String> kStatusLinePresetNames = [
   'custom',
 ];
 
-/// The omp 27 segment ids (`schema.ts` `STATUS_LINE_SEGMENT_IDS`). Ids
-/// with no fa counterpart data (`usage`, `collab`, `vim`, `cache_hit`)
-/// — and `stream`, hidden since #920 (the composer header owns the
-/// spinner) — stay valid and render hidden: custom configs referencing
-/// them keep working (umbrella D2, E7).
+/// The omp 27 segment ids (`schema.ts` `STATUS_LINE_SEGMENT_IDS`) plus
+/// fa's `timer` extension (gh-1556, the deadline countdown chip — renders
+/// hidden until a deadline is armed). Ids with no fa counterpart data
+/// (`usage`, `collab`, `vim`, `cache_hit`) — and `stream`, hidden since
+/// #920 (the composer header owns the spinner) — stay valid and render
+/// hidden: custom configs referencing them keep working (umbrella D2, E7).
 const List<String> kStatusLineSegmentIds = [
   'pi',
   'status',
@@ -629,6 +641,7 @@ const List<String> kStatusLineSegmentIds = [
   'collab',
   'stream',
   'vim',
+  'timer',
 ];
 
 /// Separator styles (`tui.statusLine.separator`). omp's `none` renders as
@@ -1287,6 +1300,21 @@ LaidSegment? _renderVim(StatusLineSnapshot s, StatusLineSpec spec) {
   return null;
 }
 
+/// The gh-1556 deadline countdown chip: renders ONLY while a deadline is
+/// armed (`deadlineRemainingMs >= 0`, the host's live projection per frame
+/// tick). Flips to the warn role inside the final-answer window; a
+/// non-positive budget reads `0s` — the chip never lies about the clock.
+LaidSegment? _renderTimer(StatusLineSnapshot s, StatusLineSpec spec) {
+  if (s.deadlineRemainingMs < 0) return null;
+  final role = s.deadlineRemainingMs <= 30 * 1000
+      ? StatusLineRoleKey.warn
+      : StatusLineRoleKey.time;
+  return LaidSegment('timer', [
+    ('⏱ ', role),
+    (formatTimeLeft(s.deadlineRemainingMs), role),
+  ]);
+}
+
 LaidSegment? _renderModel(StatusLineSnapshot s, StatusLineSpec spec) {
   final model = s.modelName;
   if (model == null || model.isEmpty) return null;
@@ -1580,6 +1608,7 @@ kStatusLineSegments = UnmodifiableMapView(
     'collab': _renderCollab,
     'stream': _renderStream,
     'vim': _renderVim,
+    'timer': _renderTimer,
   },
 );
 

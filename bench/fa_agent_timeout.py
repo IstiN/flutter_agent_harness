@@ -62,6 +62,12 @@ default workflow run keeps today's byte-for-byte behavior):
                                extension can never pass (default 3600, flat;
                                the ADAPTER does not fold a test budget in)
 
+gh-1556 AC7: when any knob above arms an adapter-side cap, the adapters
+also export FA_DEADLINE_EPOCH_MS = now + (effective cap - 120s wrap-up
+margin) into the agent session, so fa's own deadline awareness can steer
+wrap-up before the kill. With no knobs the export is absent — fa never
+invents a clock (see deadline_epoch_ms / deadline_env_from).
+
 Extension signal (E1): the counters fed to ProgressLadder measure the
 agent process's own output bytes. The harness itself emits nothing into
 that stream on a timer — EXCEPT fa's own liveness lines (the ⏳ tool
@@ -77,6 +83,7 @@ from __future__ import annotations
 
 import math
 import os
+import time
 from dataclasses import dataclass, field
 
 _BASE_DEFAULT = 360.0
@@ -369,6 +376,7 @@ def audit_dict(
     outcome: str | None,
     progress_bytes: int | None = None,
     liveness_bytes: int | None = None,
+    deadline_epoch_ms: int | None = None,
 ):
     """Trial-artifact audit record (what extended, when, why).
 
@@ -390,6 +398,14 @@ def audit_dict(
             else ("progress-aware" if knobs.progress_extension else "flat-cap")
         ),
         "outcome": outcome or "completed",
+        # gh-1556 AC7: the deadline exported to fa as FA_DEADLINE_EPOCH_MS
+        # is audited next to the knobs it derives from, so a trial's
+        # fa-timeout-metadata.json shows the clock fa actually saw.
+        **(
+            {"deadline_epoch_ms": deadline_epoch_ms}
+            if deadline_epoch_ms is not None
+            else {}
+        ),
         "knobs": {
             "base_sec": knobs.base_sec,
             "progress_extension": knobs.progress_extension,
@@ -467,3 +483,89 @@ def liveness_bytes_of(stream: str | bytes | None) -> int | None:
             if index < len(lines) - 1:
                 total += 1  # the newline this line ends with
     return total
+
+
+# gh-1556 AC7 — fa-side deadline awareness. The adapters export
+# FA_DEADLINE_EPOCH_MS into the agent session so fa can shift into
+# wrap-up (land partial results, drain background jobs, run its checks)
+# BEFORE the harness guillotine. Two binding rules from the ticket:
+# - the deadline comes ONLY from the adapter's own effective kill cap
+#   minus a wrap-up margin — never invented, never extended; with no
+#   adapter cap (no knobs: harbor's dataset-declared task caps are
+#   invisible to the adapter) fa's deadline awareness stays OFF;
+# - the margin exists so the wrap-up turn completes before the kill —
+#   a deadline at the cap itself would steer fa into its own SIGKILL.
+_DEADLINE_MARGIN_SEC = 120.0
+# A tiny configured cap must still leave fa a wrap-up window: the
+# deadline is clamped to at least this much remaining time rather than
+# landing in the past.
+_DEADLINE_MIN_REMAINING_SEC = 30.0
+
+
+def effective_cap_sec(knobs: TimeoutKnobs, test_budget_sec: float = 0.0) -> float:
+    """The adapter's own kill cap — the only honest deadline source.
+
+    Progress-watch mode: the flat abs ceiling (+ the caller's test
+    budget where one is folded in, as tb does NOT — it leaves the
+    verifier phase to the harness) — but ONLY while the extension is on;
+    with the extension off ProgressWatch pins kill_at to the flat
+    base_sec, so promising the abs ceiling would be a lie over the real
+    guillotine (never lie about the clock). Legacy progress-aware
+    ladder: the byte-growth hard ceiling. Flat ladder: the flat base
+    cap.
+    """
+    if knobs.progress_watch:
+        cap = (
+            knobs.watch_abs_ceiling_sec
+            if knobs.progress_extension
+            else knobs.base_sec
+        )
+        return cap + test_budget_sec
+    if knobs.progress_extension:
+        return knobs.ceiling_sec
+    return knobs.base_sec
+
+
+def deadline_epoch_ms(
+    knobs: TimeoutKnobs | None,
+    now_ms: int,
+    test_budget_sec: float = 0.0,
+    margin_sec: float = _DEADLINE_MARGIN_SEC,
+) -> int | None:
+    """Epoch-ms deadline for fa's FA_DEADLINE_EPOCH_MS, or None when off.
+
+    now_ms is injected (not read from a wall clock) so the decision is
+    deterministic and unit-testable. None propagates the "no adapter cap
+    => feature off" contract — fa never sees a fabricated clock.
+    """
+    if knobs is None:
+        return None
+    remaining = max(
+        effective_cap_sec(knobs, test_budget_sec) - margin_sec,
+        _DEADLINE_MIN_REMAINING_SEC,
+    )
+    return int(now_ms + remaining * 1000)
+
+
+def deadline_env_from(
+    env=None,
+    now_ms: int | None = None,
+    test_budget_sec: float = 0.0,
+) -> dict[str, str]:
+    """`{"FA_DEADLINE_EPOCH_MS": ...}` for the agent session, or {}.
+
+    env defaults to os.environ; now_ms defaults to the wall clock (the
+    adapters call this at launch time). Empty when no timeout knob is
+    set — the harness's own caps are invisible to the adapter, so fa
+    stays blind to wall-clock budgets exactly as before gh-1556.
+    """
+    knobs = TimeoutKnobs.from_env(env)
+    if knobs is None:
+        return {}
+    if now_ms is None:
+        now_ms = int(time.time() * 1000)
+    return {
+        "FA_DEADLINE_EPOCH_MS": str(
+            deadline_epoch_ms(knobs, now_ms, test_budget_sec)
+        )
+    }
