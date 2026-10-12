@@ -31,7 +31,10 @@ extension AgentCliPromptComposition on AgentCli {
       return;
     }
     _agent.state.systemPrompt = _mcp.composePrompt(
-      _withFinalizeGate(config.systemPrompt ?? _currentMode.systemPrompt),
+      _withFinalizeGate(
+        config.systemPrompt ??
+            _withRecallContract(_currentMode.systemPrompt),
+      ),
       contextSection: formatProjectContext(_contextFiles),
       skillsSection: formatSkillsForPrompt(
         _enabledSkills,
@@ -54,6 +57,24 @@ extension AgentCliPromptComposition on AgentCli {
       config.approvalMode == ApprovalMode.unattended
       ? '$base\n\n$finalizeGateContractPrompt'
       : base;
+
+  /// The recall-hygiene contract (issue #1380 A3): structured-engine
+  /// sessions run with the total-recall contract appended to the MODE
+  /// prompt — reference = search, the resume ritual over the obligations
+  /// ledger, commit in the open, the durable-vs-session boundary, the dig
+  /// idioms. Present iff the boot-resolved engine is structured (AC6 —
+  /// the same expression the compaction driver and the ledger ingest
+  /// gate on); a classic session's prompt stays byte-identical (E3).
+  /// NOT composed in pi mode (the benchmark profile strips the compaction
+  /// tools the contract names — a prompt referencing absent tools lies)
+  /// and NOT composed over an explicit `systemPrompt` override (an
+  /// override IS the whole prompt, byte-exact — the prompt_overrides
+  /// suite pins that equality; the caller applies this only to the mode
+  /// prompt).
+  String _withRecallContract(String base) =>
+      _effectiveCompactionEngine() != CompactionEngine.structured
+      ? base
+      : '$base\n\n$recallHygienePrompt';
 
   /// The `## Agent messaging` prompt section: the agent's own mailbox in
   /// the fabric + how discovery/addressing work. Empty until the session
