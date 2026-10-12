@@ -346,7 +346,7 @@ ResolvedProviderTimeouts resolveProviderTimeouts({Uri? url, String? name}) {
     if (name != null) ?providerTuningRegistry.forName(name),
     if (url != null) ...providerTuningRegistry.matchesForUrl(url),
   ];
-  Duration? field(
+  Duration field(
     Duration? Function(ProviderTuningEntry) pick,
     Duration? Function(ProviderTimeoutsOverride) globalPick,
     Duration fallback,

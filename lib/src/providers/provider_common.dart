@@ -1214,7 +1214,7 @@ class _IdleWatchdogSseIterator implements StreamIterator<ServerSentEvent> {
       completer.completeError(
         TimeoutException(
           'no events from the endpoint for '
-          '${_idleTimeout.inSeconds}s (stream idle timeout$scopeNote)',
+          '${_idleTimeout.inSeconds}s (stream idle timeout$scopedNote)',
           _idleTimeout,
         ),
       );
